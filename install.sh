@@ -6,9 +6,6 @@ MASTER_SETUP_VERSION="2026.07.26-r8"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
-WG_INIT_ENV_FILE="/run/master-wg-easy-init.env"
-WG_INIT_OVERRIDE_FILE="/run/master-wg-easy-init.compose.yaml"
-WG_BOOTSTRAP_MARKER="/data/wg-easy/config/.master-r8-bootstrap-complete"
 
 # Aşama 0 kullanıcı girdileri normal konsolda kalır. Onaydan sonra Stage 1-7
 # ayrıntıları root-only loga yönlendirilir; TTY'de yalnız gerçek kilometre
@@ -38,7 +35,6 @@ APT_DAILY_UPGRADE_TIMER_WAS_ACTIVE=0
 RECONCILE_TIMER_REENABLED=0
 APT_DAILY_TIMER_REENABLED=0
 APT_DAILY_UPGRADE_TIMER_REENABLED=0
-WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET=0
 DNS_STACK_STATE_CAPTURED=0
 DNSMASQ_WAS_ACTIVE=0
 DNSMASQ_INITIAL_LOAD_STATE="not-found"
@@ -271,43 +267,6 @@ restore_stopped_timers_on_exit() {
     return "$restore_rc"
 }
 
-scrub_wg_bootstrap_container() {
-    local inspect_env=""
-
-    [[ "${WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET:-0}" -eq 1 ]] ||
-        return 0
-    if ! command -v docker >/dev/null 2>&1 ||
-       [[ ! -r /root/docker/compose.yaml ||
-          ! -r /root/docker/.env ]]; then
-        return 1
-    fi
-
-    # Base Compose, INIT override verilmeden aynı bind mount ile yeniden
-    # oluşturulur. Kalıcı wg-easy DB/anahtarları korunur; yalnız container
-    # metadata'sındaki ilk-kurulum değişkenleri temizlenir.
-    if timeout 120 docker compose \
-            --env-file /root/docker/.env \
-            -f /root/docker/compose.yaml \
-            up -d --no-deps --force-recreate wg-easy >/dev/null 2>&1; then
-        inspect_env="$(
-            docker inspect -f \
-                '{{range .Config.Env}}{{println .}}{{end}}' \
-                wg-easy 2>/dev/null || true
-        )"
-        if ! grep -Eq \
-                '^(INIT_PASSWORD|INIT_USERNAME|INIT_HOST|INIT_PORT)=|^INIT_ENABLED=true$' \
-                <<<"$inspect_env"; then
-            WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET=0
-            return 0
-        fi
-    fi
-
-    # Secretsiz recreation mümkün değilse yalnız stateless container'ı kaldır;
-    # /data/wg-easy/config bind mount'u ve bütün peer verileri yerinde kalır.
-    docker container rm -f wg-easy >/dev/null 2>&1 || return 1
-    WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET=0
-}
-
 restore_dns_stack_on_failure() {
     local exit_rc="${1:-0}" restore_rc=0 daemon="" was_active=0
     local load_state="" unit_file_state=""
@@ -363,18 +322,9 @@ restore_dns_stack_on_failure() {
 }
 
 cleanup_master_setup() {
-    local rc=$? restore_rc=0 scrub_rc=0 dns_restore_rc=0 error_tail=""
+    local rc=$? restore_rc=0 dns_restore_rc=0 error_tail=""
     trap - ERR EXIT INT TERM
     set +e
-
-    scrub_wg_bootstrap_container || scrub_rc=$?
-    # Unattended wg-easy bootstrap sırrı yalnız ilk container başlangıcında
-    # kullanılır. Başarı/hata/sinyal yollarının hiçbirinde /run altında kalmaz.
-    rm -f -- "$WG_INIT_ENV_FILE" "$WG_INIT_OVERRIDE_FILE"
-    if [[ "$scrub_rc" -ne 0 ]]; then
-        echo "HATA: wg-easy bootstrap container sırrı temizlenemedi." >&2
-        [[ "$rc" -ne 0 ]] || rc="$scrub_rc"
-    fi
 
     restore_dns_stack_on_failure "$rc" || dns_restore_rc=$?
     if [[ "$dns_restore_rc" -ne 0 && "$rc" -eq 0 ]]; then
@@ -476,12 +426,6 @@ wg_ui_probe() {
     [[ "$curl_rc" -eq 0 && "$WG_UI_HTTP_CODE" =~ ^[23][0-9][0-9]$ ]]
 }
 
-wg_ui_configured() {
-    wg_ui_probe &&
-        [[ "$WG_UI_LOCATION" != "/setup" &&
-           "$WG_UI_LOCATION" != /setup/* ]]
-}
-
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "HATA: Bu betik root kullanıcısı olarak çalıştırılmalıdır." >&2
     exit 1
@@ -581,11 +525,6 @@ echo
 echo "==> 0/7 Kurulum bilgileri soruluyor..."
 echo
 
-echo "Tailscale auth key (tskey-auth-...) girin."
-echo "Boş bırakıp Enter'a basarsanız tarayıcı ile giriş yapılır."
-read -rp "TS_AUTHKEY: " TS_AUTHKEY_INPUT </dev/tty
-echo
-
 read -rp "İndirme/medya dizini için host yolu [/downloads]: " DOWNLOADS_PATH_INPUT </dev/tty
 DOWNLOADS_PATH="${DOWNLOADS_PATH_INPUT:-/downloads}"
 
@@ -605,60 +544,6 @@ case "$DOWNLOADS_PATH" in
         ;;
 esac
 echo
-
-# wg-easy v15'in resmî unattended setup değişkenleri yalnız ilk kurulumda
-# kullanılır. R8 marker'ı, DB mevcut olsa bile yarım kalmış eski/ilk çalıştırmayı
-# sessizce "hazır" saymayı önler. Yapılandırılmış DB'de INIT_* değerleri image
-# tarafından uygulanmaz; başarılı doğrulama sonrasında marker oluşturulur.
-WG_BOOTSTRAP_REQUIRED=0
-WG_ADMIN_USERNAME=""
-WG_ADMIN_PASSWORD=""
-if [[ -s /data/wg-easy/config/wg-easy.db &&
-      ! -s "$WG_BOOTSTRAP_MARKER" ]]; then
-    echo "HATA: Mevcut wg-easy veritabanı bulundu fakat doğrulanmış R8 marker'ı yok." >&2
-    echo "INIT_* değerleri mevcut veritabanında parolayı güvenle değiştiremez." >&2
-    echo "Veriyi korumak için otomatik bootstrap yapılmadı." >&2
-    exit 1
-elif [[ ! -s /data/wg-easy/config/wg-easy.db ]]; then
-    WG_BOOTSTRAP_REQUIRED=1
-elif command -v curl >/dev/null 2>&1; then
-    if wg_ui_probe &&
-       [[ "$WG_UI_LOCATION" == "/setup" ||
-          "$WG_UI_LOCATION" == /setup/* ]]; then
-        echo "HATA: Marker ve veritabanı mevcut, ancak wg-easy hâlâ setup ekranında." >&2
-        echo "Otomatik credential değişikliği yapılmadı." >&2
-        exit 1
-    fi
-fi
-
-if [[ "$WG_BOOTSTRAP_REQUIRED" -eq 1 ]]; then
-    echo "wg-easy ilk kurulumu otomatik tamamlanacak."
-    read -rp "wg-easy yönetici kullanıcı adı [admin]: " \
-        WG_ADMIN_USERNAME_INPUT </dev/tty
-    WG_ADMIN_USERNAME="${WG_ADMIN_USERNAME_INPUT:-admin}"
-    if [[ ! "$WG_ADMIN_USERNAME" =~ ^[A-Za-z0-9._-]{3,64}$ ]]; then
-        echo "HATA: wg-easy kullanıcı adı 3-64 güvenli karakter olmalıdır." >&2
-        exit 1
-    fi
-
-    read -rsp "wg-easy yönetici parolası (en az 12 karakter): " \
-        WG_ADMIN_PASSWORD </dev/tty
-    echo
-    read -rsp "wg-easy yönetici parolasını tekrar girin: " \
-        WG_ADMIN_PASSWORD_CONFIRM </dev/tty
-    echo
-    if [[ "$WG_ADMIN_PASSWORD" != "$WG_ADMIN_PASSWORD_CONFIRM" ]]; then
-        echo "HATA: wg-easy parolaları eşleşmiyor." >&2
-        exit 1
-    fi
-    if (( ${#WG_ADMIN_PASSWORD} < 12 || ${#WG_ADMIN_PASSWORD} > 128 )) ||
-       [[ ! "$WG_ADMIN_PASSWORD" =~ ^[A-Za-z0-9._!@%+=:,/-]+$ ]]; then
-        echo "HATA: wg-easy parolası 12-128 karakter olmalı; boşluk, #, \$ veya ters eğik çizgi içermemelidir." >&2
-        exit 1
-    fi
-    unset WG_ADMIN_PASSWORD_CONFIRM WG_ADMIN_USERNAME_INPUT
-    echo
-fi
 
 echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
 echo "Örnek: portainer.ayc, file.ayc, qbit.ayc"
@@ -701,21 +586,13 @@ echo
 
 echo "--- Özet ---"
 echo "İşletim sistemi   : ${PRETTY_NAME}"
-if [[ -n "$TS_AUTHKEY_INPUT" ]]; then
-    echo "TS_AUTHKEY         : girildi"
-else
-    echo "TS_AUTHKEY         : boş -> mevcut bağlantı korunur; yoksa tarayıcı ile giriş"
-fi
+echo "Tailscale girişi   : mevcut bağlantı korunur; yoksa tarayıcıda etkileşimli giriş"
 echo "İndirme dizini     : $DOWNLOADS_PATH"
 echo "Zaman dilimi       : $TIMEZONE"
 echo "Public IPv4        : varsayılan rota üzerinden otomatik tespit edilecek"
 echo "qBittorrent portu  : ${QBIT_PUBLIC_PORT}/tcp + udp (yalnız public IPv4)"
 echo "wg-easy portu      : ${WG_PUBLIC_PORT}/udp (host ve container içinde aynı)"
-if [[ "$WG_BOOTSTRAP_REQUIRED" -eq 1 ]]; then
-    echo "wg-easy bootstrap  : otomatik (kullanıcı: $WG_ADMIN_USERNAME)"
-else
-    echo "wg-easy bootstrap  : mevcut yapılandırma korunacak"
-fi
+echo "wg-easy admin      : ilk web erişiminde elle oluşturulacak (otomatik değil)"
 if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
     echo "Tailnet DNS        : .$LOCAL_DOMAIN (dnsmasq + Caddy)"
 else
@@ -745,51 +622,6 @@ if systemctl list-jobs --no-legend 2>/dev/null |
     echo "HATA: Aktif shutdown/reboot transaction'ı var; kurulum başlatılmadı." >&2
     exit 1
 fi
-
-# r3 ve daha eski kurulumların günlük 04:15 reboot unit'lerini idempotent
-# biçimde kaldır. Yeni mimaride reboot yalnız operatör tarafından konsoldan
-# yapılır; eski timer dosyasını yalnız heredoc'tan çıkarmak onu durdurmazdı.
-remove_managed_scheduled_reboot() {
-    local legacy_found=0 unit="" load_state=""
-
-    for unit in scheduled-reboot.timer scheduled-reboot.service; do
-        load_state="$(systemctl show "$unit" -p LoadState --value 2>/dev/null || true)"
-        if [[ -n "$load_state" && "$load_state" != "not-found" ]]; then
-            legacy_found=1
-        fi
-    done
-    if [[ -e /etc/systemd/system/scheduled-reboot.timer ||
-          -L /etc/systemd/system/timers.target.wants/scheduled-reboot.timer ||
-          -e /etc/systemd/system/scheduled-reboot.service ]]; then
-        legacy_found=1
-    fi
-
-    systemctl stop scheduled-reboot.timer scheduled-reboot.service \
-        >/dev/null 2>&1 || true
-    systemctl disable scheduled-reboot.timer >/dev/null 2>&1 || true
-
-    rm -f \
-        /etc/systemd/system/timers.target.wants/scheduled-reboot.timer \
-        /etc/systemd/system/scheduled-reboot.timer \
-        /etc/systemd/system/scheduled-reboot.service
-    systemctl daemon-reload
-    systemctl reset-failed scheduled-reboot.timer scheduled-reboot.service \
-        >/dev/null 2>&1 || true
-
-    for unit in scheduled-reboot.timer scheduled-reboot.service; do
-        if systemctl is-active --quiet "$unit" 2>/dev/null ||
-           systemctl is-enabled --quiet "$unit" 2>/dev/null ||
-           [[ "$(systemctl show "$unit" -p LoadState --value 2>/dev/null || true)" != "not-found" ]]; then
-            echo "HATA: Eski otomatik reboot unit'i kaldırılamadı: $unit" >&2
-            return 1
-        fi
-    done
-
-    if [[ "$legacy_found" -eq 1 ]]; then
-        echo "Eski günlük otomatik reboot unit'leri kaldırıldı; reboot artık manuel."
-    fi
-}
-remove_managed_scheduled_reboot
 
 # Timer durumunu değiştirmeden önce mevcut aktiflik vektörünü kaydet. İlk
 # kurulumda master unit'lerinin henüz bulunmaması normaldir.
@@ -875,7 +707,13 @@ timedatectl set-timezone "$TIMEZONE"
 progress_stage_note 30 "Debian paket listeleri indiriliyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 45 "Debian sistem güncellemeleri uygulanıyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" full-upgrade -y
+# Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
+# durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
+# güncel sürümünü yalnız hiç yerel değişiklik yoksa uygula.
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    full-upgrade -y
 progress_stage_note 80 "Temel ağ ve sistem araçları kuruluyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
@@ -1074,25 +912,6 @@ if tailscale ip -4 >/dev/null 2>&1; then
 
     echo "Sunucu zaten bir Tailscale ağına bağlı."
     tailscale status --self 2>/dev/null | head -n 1 || true
-    if [[ -n "$TS_AUTHKEY_INPUT" ]]; then
-        progress_clear_line
-        {
-            echo "UYARI: Girilen auth key mevcut bağlantıya uygulanmayacak."
-            echo "Yanlış Tailnet'e bağlıysa kurulumu durdurun, bağlantıyı bilinçli olarak"
-            echo "kaldırın ve ardından betiği yeniden çalıştırın."
-        } | tee -a "$MASTER_LOG_FILE" >&5
-        printf 'Mevcut Tailscale bağlantısıyla devam edilsin mi? [e/H]: ' >&5
-        read -r KEEP_TS_CONNECTION </dev/tty
-        KEEP_TS_CONNECTION="${KEEP_TS_CONNECTION:-H}"
-        if [[ ! "$KEEP_TS_CONNECTION" =~ ^[EeYy]$ ]]; then
-            echo "Kurulum mevcut Tailscale bağlantısı değiştirilmeden durduruldu."
-            exit 1
-        fi
-        progress_stage_resume
-    fi
-elif [[ -n "$TS_AUTHKEY_INPUT" ]]; then
-    echo "Auth key ile otomatik bağlanılıyor..."
-    tailscale up --auth-key="$TS_AUTHKEY_INPUT"
 else
     progress_clear_line
     printf 'Tailscale girişi gerekiyor; aşağıdaki bağlantıyı tarayıcıda açın:\n' >&5
@@ -1101,8 +920,6 @@ else
     tailscale up 2>&1 | tee -a "$MASTER_LOG_FILE" >&5
     progress_stage_resume
 fi
-
-unset TS_AUTHKEY_INPUT
 
 progress_stage_note 70 "Tailscale IPv4 ve online durumu doğrulanıyor"
 TAILSCALE_CONNECTED=0
@@ -1162,6 +979,9 @@ progress_stage_note 15 "Docker daemon yapılandırması hazırlanıyor"
 # host tarafındaki tailscaled/dnsmasq/Caddy çözümlemesi bu ayardan etkilenmez.
 # Yalnız "dns" anahtarı yönetilir: data-root/live-restore gibi sonradan
 # eklenmiş daemon ayarları jq birleştirmesiyle olduğu gibi korunur.
+# Sonuç: host ve container'lar kasıtlı olarak iki farklı DNS çözümleme yolu
+# izler — host tailscaled/MagicDNS'i kullanmaya devam edebilir, container'lar
+# ise her zaman yukarıdaki sabit genel çözücüleri kullanır.
 DOCKER_WAS_ACTIVE=0
 if systemctl is-active --quiet docker.service 2>/dev/null; then
     DOCKER_WAS_ACTIVE=1
@@ -1695,7 +1515,10 @@ check_ipv6_policy() {
         "-A $POLICY_CHAIN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN"
     )
 
-    [[ -n "$IP6TABLES_BIN" ]] || return 1
+    if [[ -z "$IP6TABLES_BIN" ]]; then
+        echo "HATA: ip6tables bulunamadı; IPv6 firewall politikası doğrulanamıyor." >&2
+        return 1
+    fi
     if [[ -n "$WAN6_IF" ]]; then
         ts_rules+=(
             "-A $TS_GUARD_CHAIN -i $TS_IF -o $WAN6_IF -j MARK --set-xmark 0x40000/0xff0000"
@@ -1832,6 +1655,35 @@ progress_stage_begin 4 "Dizinler, Compose ve reconcile tanımları yazılıyor"
 install -d -m 0700 -o root -g root /data/portainer/data
 install -d -m 0750 -o 1000 -g 1000 /data/qbittorrent/appdata
 install -d -m 0700 -o root -g root /data/wg-easy/config
+
+# wg-easy container'ının kendi SYS_MODULE capability'sine ihtiyaç duymaması
+# için WireGuard çekirdek modülünü burada, host'ta, bağımsız bir hazırlık
+# adımı olarak yüklemeyi dene. Bu, Tailscale'in kendi tun/userspace yoluyla
+# ilişkisizdir; yalnız wg-easy'nin ihtiyacı için var. Modül zaten çekirdeğe
+# gömülüyse ya da yüklüyse bu adım no-op'tur; başarısız olursa yalnız uyarı
+# verir, kurulumu durdurmaz.
+if ! modprobe wireguard 2>/tmp/modprobe-wireguard.err; then
+    echo "UYARI: 'modprobe wireguard' başarısız oldu:" >&2
+    cat /tmp/modprobe-wireguard.err >&2 || true
+fi
+rm -f /tmp/modprobe-wireguard.err
+
+# Yalnız bu boot oturumu değil, her reboot'ta wg-easy başlamadan önce modül
+# otomatik yüklensin diye systemd-modules-load.service'e kalıcı olarak kaydet.
+cat >/etc/modules-load.d/wg-easy.conf <<'MODULES_EOF'
+wireguard
+MODULES_EOF
+chown root:root /etc/modules-load.d/wg-easy.conf
+chmod 0644 /etc/modules-load.d/wg-easy.conf
+
+# modprobe başarısız olsa bile WireGuard çekirdeğe gömülü (built-in) olabilir;
+# "modül var mı" varsayımı yerine gerçek işlevselliği geçici bir arayüz
+# oluşturup hemen silerek doğrula.
+if ip link add wg-easy-probe0 type wireguard 2>/dev/null; then
+    ip link del wg-easy-probe0
+else
+    echo "UYARI: Host çekirdeği WireGuard arayüzü oluşturamıyor; wg-easy başlatılamayabilir." >&2
+fi
 install -d -m 0750 -o 1000 -g 1000 \
     /data/sftpgo/storage /data/sftpgo/config
 install -d -m 0750 -o 1000 -g 1000 \
@@ -1843,26 +1695,14 @@ install -d -m 0700 -o root -g root /root/docker
 install -d -m 0700 -o root -g root /etc/master-stack
 install -d -m 0755 -o root -g root /usr/local/share/master-stack
 
-# Rerun, mevcut peer config'lerinde kayıtlı endpoint'i sessizce yeni public
-# IPv4 olarak işaretlemesin. Fresh bootstrap'ta güncel IP kullanılır; mevcut
-# kurulumda doğrulanmış marker endpoint'i canonical state'e taşınır ve olası
-# public-IP değişimi reconcile tarafından açık hata olarak raporlanır.
+# wg-easy admin/peer kurulumu artık elle yapılıyor (unattended bootstrap yok);
+# script'in mevcut peer config'lerine hangi endpoint'in gömülü olduğuna dair
+# doğrulanmış bir kaydı yok. state.env her çalıştırmada güncel public IPv4'ü
+# yazar; reconcile timer'ı iki çalışma arasındaki sapmayı yine de yakalar,
+# ancak iki install.sh çalıştırması arasında değişen bir public IP artık
+# ayrıca işaretlenmez. Public IP değiştiğinde istemci config'lerini elle
+# kontrol edin.
 WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
-if [[ "$WG_BOOTSTRAP_REQUIRED" -eq 0 ]]; then
-    WG_MARKER_ENDPOINT="$(
-        awk -F= '$1 == "endpoint" {print $2; exit}' \
-            "$WG_BOOTSTRAP_MARKER" 2>/dev/null || true
-    )"
-    WG_MARKER_HOST="${WG_MARKER_ENDPOINT%:*}"
-    WG_MARKER_PORT="${WG_MARKER_ENDPOINT##*:}"
-    if [[ ! "$WG_MARKER_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ||
-          "$WG_MARKER_PORT" != "$WG_PUBLIC_PORT" ]]; then
-        echo "HATA: wg-easy bootstrap marker endpoint'i geçersiz." >&2
-        echo "Tespit edilen: ${WG_MARKER_ENDPOINT:-yok}" >&2
-        exit 1
-    fi
-    WG_ENDPOINT_HOST_FOR_STATE="$WG_MARKER_HOST"
-fi
 
 cat >/etc/master-stack/state.env <<EOF
 STACK_SCHEMA=8
@@ -1885,7 +1725,14 @@ chmod 0644 /usr/local/share/master-stack/SHA256SUMS
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
-chown -R 1000:1000 "$DOWNLOADS_PATH/media"
+# Idempotency: her rerun'da tüm ağacı koşulsuz chown etmek yerine, yalnız
+# sahipliği zaten 1000:1000 olmayan girdiler değiştirilir. Büyük medya
+# kütüphanelerinde ağacın büyük kısmı zaten doğru sahipken gereksiz disk
+# yazımını önler; yeni eklenmiş veya farklı sahiplikte kalan dosyalar yine
+# düzeltilir.
+find "$DOWNLOADS_PATH/media" \
+    \( ! -uid 1000 -o ! -gid 1000 \) \
+    -exec chown 1000:1000 {} +
 progress_stage_note 15 "Veri ve medya dizinleri hazırlandı"
 
 cat >/root/docker/compose.yaml <<YAML_EOF
@@ -1926,6 +1773,10 @@ services:
     container_name: qbittorrent
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    cpus: 2.0
     environment:
       PUID: "1000"
       PGID: "1000"
@@ -1947,6 +1798,10 @@ services:
     user: "1000:1000"
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       TZ: "${TIMEZONE}"
       UN_LOG_FILE: "/downloads/.unpackerr/unpackerr.log"
@@ -1984,16 +1839,18 @@ services:
       start_period: 60s
       start_interval: 5s
     environment:
+      # wg-easy admin arayüzünün secure-cookie zorunluluğunu kapatır; bu
+      # yalnızca Caddy'nin arayüzü tailnet üzerinden düz HTTP ile
+      # reverse-proxy yapması nedeniyle gerekli (bkz. Caddyfile, Stage 6).
+      # Bu ayar Tailnet-only + Caddy-loopback mimarisine bağımlıdır.
       INSECURE: "true"
     ports:
       - "\${PUBLIC_IPV4}:${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT}/udp"
       - "127.0.0.1:51821:51821/tcp"
     volumes:
       - /data/wg-easy/config:/etc/wireguard
-      - /lib/modules:/lib/modules:ro
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
     sysctls:
       net.ipv4.ip_forward: "1"
       net.ipv4.conf.all.src_valid_mark: "1"
@@ -2052,32 +1909,6 @@ TAILSCALE_IPV4=$TS_IP
 EOF
 chown root:root /root/docker/.env
 chmod 0600 /root/docker/.env
-
-if [[ "$WG_BOOTSTRAP_REQUIRED" -eq 1 ]]; then
-    # Resmî wg-easy v15 INIT_* değişkenleri yalnız bootstrap container'ına
-    # verilir. Ana Compose dosyasına/parola loguna yazılmaz; ilk kurulumdan
-    # sonra container secretsiz ana tanımla yeniden oluşturulur.
-    install -m 0600 -o root -g root /dev/null "$WG_INIT_ENV_FILE"
-    {
-        printf 'INIT_ENABLED=true\n'
-        printf 'INIT_USERNAME=%s\n' "$WG_ADMIN_USERNAME"
-        printf 'INIT_PASSWORD=%s\n' "$WG_ADMIN_PASSWORD"
-        printf 'INIT_HOST=%s\n' "$PUBLIC_IPV4"
-        printf 'INIT_PORT=%s\n' "$WG_PUBLIC_PORT"
-    } >"$WG_INIT_ENV_FILE"
-
-    cat >"$WG_INIT_OVERRIDE_FILE" <<EOF
-services:
-  wg-easy:
-    # Güç kesintisi bootstrap ile secretsiz recreation arasına denk gelse bile
-    # INIT_PASSWORD içeren geçici container reboot'ta otomatik başlamaz.
-    restart: "no"
-    env_file:
-      - $WG_INIT_ENV_FILE
-EOF
-    chown root:root "$WG_INIT_ENV_FILE" "$WG_INIT_OVERRIDE_FILE"
-    chmod 0600 "$WG_INIT_ENV_FILE" "$WG_INIT_OVERRIDE_FILE"
-fi
 
 cat >/usr/local/sbin/master-compose-ipv4 <<'IP_REFRESH_SCRIPT'
 #!/usr/bin/env bash
@@ -2165,7 +1996,6 @@ set -Eeuo pipefail
 
 IP_BIN="$(command -v ip)"
 AWK_BIN="$(command -v awk)"
-ETHTOOL_BIN="$(command -v ethtool)"
 SYSTEMCTL_BIN="$(command -v systemctl)"
 SYSCTL_BIN="$(command -v sysctl)"
 IPTABLES_BIN="$(command -v iptables)"
@@ -2352,12 +2182,6 @@ CURRENT_PUBLIC_IPV4="$(
     "$AWK_BIN" \
         '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' \
         <<<"$ROUTE_LINE"
-)"
-CURRENT_WAN6_IF="$(
-    "$IP_BIN" -6 -o route get 2001:4860:4860::8888 2>/dev/null |
-        "$AWK_BIN" \
-            '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}' ||
-        true
 )"
 CURRENT_TAILSCALE_IPV4="$(
     "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
@@ -3019,38 +2843,9 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" ]]; then
     fi
 fi
 
-GRO_INACTIVE=0
-GRO_DRIFTED=0
-GRO_LOAD_STATE="$(
-    "$SYSTEMCTL_BIN" show tailscale-udp-gro.service \
-        --property=LoadState --value 2>/dev/null || true
-)"
-if [[ -n "$GRO_LOAD_STATE" && "$GRO_LOAD_STATE" != "not-found" ]] &&
-   ! "$SYSTEMCTL_BIN" is-active --quiet tailscale-udp-gro.service; then
-    GRO_INACTIVE=1
-fi
-
-declare -A GRO_CHECKED_NETDEVS=()
-for gro_netdev in "$CURRENT_WAN4_IF" "$CURRENT_WAN6_IF"; do
-    [[ -n "$gro_netdev" && -z "${GRO_CHECKED_NETDEVS[$gro_netdev]:-}" ]] ||
-        continue
-    GRO_CHECKED_NETDEVS["$gro_netdev"]=1
-
-    GRO_FEATURES="$("$ETHTOOL_BIN" -k "$gro_netdev" 2>/dev/null || true)"
-    if ! grep -q '^rx-udp-gro-forwarding:' <<<"$GRO_FEATURES" ||
-       ! grep -q '^rx-gro-list:' <<<"$GRO_FEATURES"; then
-        continue
-    fi
-    if grep -E '^rx-udp-gro-forwarding:.*\[fixed\]|^rx-gro-list:.*\[fixed\]' \
-        <<<"$GRO_FEATURES" >/dev/null; then
-        continue
-    fi
-    if ! grep -q '^rx-udp-gro-forwarding: on' <<<"$GRO_FEATURES" ||
-       ! grep -q '^rx-gro-list: off' <<<"$GRO_FEATURES"; then
-        GRO_DRIFTED=1
-    fi
-done
-
+# UDP GRO yalnızca Stage 2'de bir kez (+ her boot'ta unit ile) uygulanan bir
+# performans ayarıdır; reconcile artık bunu sürekli izlemez/onarmaz — bkz.
+# docs/design-decisions.md.
 all_critical_state_healthy() {
     [[ "$ADDRESS_CHANGED" -eq 0 &&
        "$WG_ENDPOINT_DRIFTED" -eq 0 &&
@@ -3071,11 +2866,6 @@ all_critical_state_healthy() {
        "$DNSMASQ_RUNTIME_DRIFTED" -eq 0 ]]
 }
 
-all_managed_state_healthy() {
-    all_critical_state_healthy &&
-        [[ "$GRO_INACTIVE" -eq 0 && "$GRO_DRIFTED" -eq 0 ]]
-}
-
 if [[ "$MODE" == "--check" ]]; then
     printf '%s\n' \
         "address=$ADDRESS_CHANGED forwarding=$FORWARDING_DRIFTED" \
@@ -3085,15 +2875,14 @@ if [[ "$MODE" == "--check" ]]; then
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
         "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
-        "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
-        "gro_unit=$GRO_INACTIVE gro_runtime=$GRO_DRIFTED"
+        "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED"
     if all_critical_state_healthy; then
         exit 0
     fi
     exit 1
 fi
 
-if all_managed_state_healthy; then
+if all_critical_state_healthy; then
     exit 0
 fi
 
@@ -3127,8 +2916,6 @@ fi
     echo "Caddy active/işlev durumu sapmış; yeniden başlatılacak."
 [[ "$DNSMASQ_INACTIVE" -eq 0 && "$DNSMASQ_RUNTIME_DRIFTED" -eq 0 ]] ||
     echo "dnsmasq active/işlev durumu sapmış; yeniden başlatılacak."
-[[ "$GRO_INACTIVE" -eq 0 && "$GRO_DRIFTED" -eq 0 ]] ||
-    echo "UDP GRO çalışma değeri sapmış; yeniden uygulanacak."
 
 RECOVERY_FAILED=0
 CORE_RECOVERY_SCHEDULED=0
@@ -3324,19 +3111,6 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" ]] &&
     fi
 fi
 
-if [[ "$GRO_INACTIVE" -eq 1 || "$GRO_DRIFTED" -eq 1 ]]; then
-    if [[ "$GRO_INACTIVE" -eq 1 ]]; then
-        GRO_ACTION=start
-    else
-        GRO_ACTION=restart
-    fi
-    if ! "$SYSTEMCTL_BIN" "$GRO_ACTION" tailscale-udp-gro.service; then
-        echo "UYARI: Opsiyonel UDP GRO uygulanamadı; sonraki periyotta yeniden denenecek." >&2
-        "$SYSTEMCTL_BIN" reset-failed tailscale-udp-gro.service \
-            >/dev/null 2>&1 || true
-    fi
-fi
-
 if [[ "$DOCKER_NETFILTER_DRIFTED" -eq 1 ]] &&
    docker_host_netfilter_ok; then
     # Container restart/recreate eksik DNAT kaydını zaten geri getirmiş olabilir.
@@ -3524,59 +3298,6 @@ systemd-analyze verify \
     master-network-reconcile.timer
 systemctl enable master-compose.service
 
-if [[ "$WG_BOOTSTRAP_REQUIRED" -eq 1 ]]; then
-    progress_stage_note 68 "wg-easy ilk kurulumu 65171/udp ile tamamlanıyor"
-    WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET=1
-    docker compose \
-        --env-file /root/docker/.env \
-        -f /root/docker/compose.yaml \
-        -f "$WG_INIT_OVERRIDE_FILE" \
-        config --quiet
-    docker compose \
-        --env-file /root/docker/.env \
-        -f /root/docker/compose.yaml \
-        -f "$WG_INIT_OVERRIDE_FILE" \
-        up -d wg-easy --wait --wait-timeout 180
-
-    WG_BOOTSTRAP_PORT="$(
-        docker exec wg-easy wg show wg0 listen-port 2>/dev/null || true
-    )"
-    WG_BOOTSTRAP_UI_OK=0
-    wg_ui_configured && WG_BOOTSTRAP_UI_OK=1
-    if [[ "$WG_BOOTSTRAP_PORT" != "$WG_PUBLIC_PORT" ||
-          "$WG_BOOTSTRAP_UI_OK" -ne 1 ]]; then
-        echo "HATA: wg-easy unattended bootstrap doğrulanamadı." >&2
-        echo "İç port: ${WG_BOOTSTRAP_PORT:-yok}, HTTP: ${WG_UI_HTTP_CODE:-yok}, UI: ${WG_UI_LOCATION:-yok}" >&2
-        exit 1
-    fi
-
-    # Bootstrap doğrulanır doğrulanmaz aynı bind mount ile secretsiz base
-    # container'a geç. Firewall veya kalan stack adımlarını bekletme.
-    docker compose \
-        --env-file /root/docker/.env \
-        -f /root/docker/compose.yaml \
-        up -d --no-deps --force-recreate wg-easy \
-        --wait --wait-timeout 180
-    WG_FINAL_ENV="$(
-        docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
-            wg-easy
-    )"
-    if grep -Eq \
-            '^(INIT_PASSWORD|INIT_USERNAME|INIT_HOST|INIT_PORT)=|^INIT_ENABLED=true$' \
-            <<<"$WG_FINAL_ENV"; then
-        echo "HATA: wg-easy bootstrap değişkenleri container ortamından temizlenemedi." >&2
-        exit 1
-    fi
-    WG_BOOTSTRAP_CONTAINER_MAY_CONTAIN_SECRET=0
-    install -m 0600 -o root -g root /dev/null "$WG_BOOTSTRAP_MARKER"
-    printf 'version=%s\nendpoint=%s:%s\n' \
-        "$MASTER_SETUP_VERSION" "$PUBLIC_IPV4" "$WG_PUBLIC_PORT" \
-        >"$WG_BOOTSTRAP_MARKER"
-    rm -f -- "$WG_INIT_ENV_FILE" "$WG_INIT_OVERRIDE_FILE"
-    WG_ADMIN_PASSWORD=""
-    unset WG_ADMIN_PASSWORD WG_FINAL_ENV
-fi
-
 progress_stage_note 75 "Firewall uygulanıp Compose stack başlatılıyor"
 # Re-run: daemon.json değiştiyse Docker restart'ı buraya, tüm helper/unit ve
 # compose dosyaları yazılıp daemon-reload yapıldıktan sonraya ertelendi.
@@ -3598,13 +3319,6 @@ else
     systemctl start master-compose.service
 fi
 echo "Container'lar başlatıldı."
-
-if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' wg-easy |
-    grep -Eq \
-        '^(INIT_PASSWORD|INIT_USERNAME|INIT_HOST|INIT_PORT)=|^INIT_ENABLED=true$'; then
-    echo "HATA: wg-easy bootstrap değişkenlerinden biri container ortamında kaldı." >&2
-    exit 1
-fi
 
 progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
 
@@ -4088,22 +3802,6 @@ if [[ "$CURRENT_TIMEZONE" != "$TIMEZONE" ]]; then
     exit 1
 fi
 
-for removed_reboot_unit in scheduled-reboot.timer scheduled-reboot.service; do
-    if systemctl is-active --quiet "$removed_reboot_unit" 2>/dev/null ||
-       systemctl is-enabled --quiet "$removed_reboot_unit" 2>/dev/null ||
-       [[ "$(systemctl show "$removed_reboot_unit" \
-            -p LoadState --value 2>/dev/null || true)" != "not-found" ]]; then
-        echo "HATA: Kaldırılmış otomatik reboot unit'i hâlâ yüklü: $removed_reboot_unit" >&2
-        exit 1
-    fi
-done
-if [[ -e /etc/systemd/system/scheduled-reboot.timer ||
-      -L /etc/systemd/system/timers.target.wants/scheduled-reboot.timer ||
-      -e /etc/systemd/system/scheduled-reboot.service ]]; then
-    echo "HATA: Eski otomatik reboot dosyalarından biri hâlâ mevcut." >&2
-    exit 1
-fi
-
 if ! grep -Fxq "OnCalendar=*-*-* *:00/5:00" \
         /etc/systemd/system/master-network-reconcile.timer ||
    ! grep -Fxq "RandomizedDelaySec=0" \
@@ -4371,19 +4069,13 @@ if [[ -n "$FAILED_UNITS" ]]; then
     printf '%s\n' "$FAILED_UNITS" >&2
 fi
 
-# R8 fresh kurulumunda unattended bootstrap tamamlanmış olmalıdır. Docker
-# publish kaydı tek başına yetmez; gerçek wg0 iç portu ve setup durumu zorunlu
-# postcondition'dır.
+# wg-easy admin/peer kurulumu artık elle yapılıyor (unattended bootstrap
+# yok); durumu aşağıdaki özet için kaydediyoruz ama kurulumu bu yüzden
+# durdurmuyoruz. Taze bir kurulumda wg-easy'nin hâlâ /setup ekranında olması
+# beklenen bir durumdur.
 WG_INTERNAL_PORT="$(docker exec wg-easy wg show wg0 listen-port 2>/dev/null || true)"
-WG_UI_CONFIGURED=0
-wg_ui_configured && WG_UI_CONFIGURED=1
+wg_ui_probe || true
 WG_SETUP_LOCATION="$WG_UI_LOCATION"
-if [[ "$WG_INTERNAL_PORT" != "$WG_PUBLIC_PORT" ||
-      "$WG_UI_CONFIGURED" -ne 1 ]]; then
-    echo "HATA: wg-easy R8 postcondition başarısız." >&2
-    echo "İç port: ${WG_INTERNAL_PORT:-yok}; HTTP: ${WG_UI_HTTP_CODE:-yok}; UI: ${WG_SETUP_LOCATION:-yok}" >&2
-    exit 1
-fi
 
 # Başlangıçta bilinçli inactive bırakılmış apt timer'larını açma; yalnız
 # kurulum öncesinde aktif olanları geri getir. Bu adım ve systemd journal
@@ -4468,9 +4160,40 @@ echo "Ağ uzlaştırma     : 5 dakikada bir düşük maliyetli güvenlik kontrol
 echo "Oneshot kurtarma  : İç restart yok; Docker/Tailscale olayı + reconcile"
 echo "Kurulum logu      : $MASTER_LOG_FILE"
 echo
+echo "UYARI: Aşağıdaki yönetilen dosyalar 5 dakikada bir bu kurulumun ürettiği"
+echo "canonical kopyayla karşılaştırılır; kaynağı ne olursa olsun (elle yapılan"
+echo "bir değişiklik dahil) sapma tespit edilirse sessizce eski haline"
+echo "döndürülür. Kalıcı bir değişiklik için install.sh'i düzenleyip yeniden"
+echo "çalıştırın:"
+echo "  /etc/master-stack/state.env"
+if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
+    echo "  /etc/dnsmasq.d/local-services.conf, /etc/caddy/Caddyfile"
+    echo "  ve ilgili systemd drop-in'leri"
+fi
+echo
+echo "UYARI: docker-tailscale-fw.service, master-compose.service$(
+    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' ve caddy.service'
+) systemd"
+echo "PartOf ile docker.service ve/veya tailscaled.service'e bağlıdır."
+echo "'systemctl restart tailscaled' veya 'systemctl restart docker' gibi"
+echo "rutin bir komut, firewall'u, tüm Compose stack'ini$(
+    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' ve Caddy'\''yi'
+) de birlikte"
+echo "durdurup yeniden başlatır. Bu, sistemin sıralamayı ve tutarlılığı"
+echo "korumasını sağlayan kasıtlı bir tasarımdır."
+echo
 echo "Public IPv4 portları:"
 echo "  qBittorrent peer: ${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}/tcp+udp"
 echo "  wg-easy Docker  : ${PUBLIC_IPV4}:${WG_PUBLIC_PORT}/udp"
+echo
+echo "UYARI: Portainer, wg-easy ve SFTPGo yönetici hesaplarını script"
+echo "oluşturmaz; her birinin ilk web erişiminde admin hesabını hemen siz"
+echo "oluşturun. Bu servisler yalnız 127.0.0.1/tailnet üzerinden erişilebilir"
+echo "olsa da, oluşturulmamış bir admin hesabı tailnet'teki başka bir"
+echo "cihazın önce erişip kurulumu tamamlamasına açık kalır."
+echo "  Portainer: https://127.0.0.1:9443$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://portainer.%s' "$LOCAL_DOMAIN")"
+echo "  wg-easy  : http://127.0.0.1:51821$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://wg.%s' "$LOCAL_DOMAIN")"
+echo "  SFTPGo   : http://127.0.0.1:9981$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://sftpgo.%s' "$LOCAL_DOMAIN")"
 echo
 echo "Apple TV / Infuse doğrudan Tailnet WebDAV:"
 echo "  Adres   : $TS_IP"

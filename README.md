@@ -1,0 +1,324 @@
+# Debian Server Installer
+
+## Project Overview
+
+`install.sh` is a single, self-contained Bash script that turns a fresh
+**Debian 13 (trixie)** host into a hardened **Tailscale exit-node** running a
+fixed **Docker Compose** service bundle (VPN, file management, torrent
+client, and optional Tailnet-only reverse proxy/DNS).
+
+The script is designed to be run as root, interactively, on a dedicated
+server. It is **idempotent by design**: it can be re-run safely against an
+already-provisioned host to reconcile drift, pick up new image versions, or
+recover from a partially failed prior run. Beyond the initial install, it
+also writes a **5-minute self-healing reconcile timer** that continuously
+verifies and repairs network addressing, firewall state, container health,
+and (optionally) DNS/Caddy configuration for the lifetime of the server.
+
+The script has seven sequential installation stages (0–7), root-only
+structured logging with a live progress bar, layered rollback/cleanup traps,
+and an extensive runtime verification pass at the end of the install.
+
+## Features
+
+- **OS guard**: refuses to run on anything other than Debian 13 (trixie);
+  requires root, an interactive TTY, and a held `systemd-inhibit` lock for
+  the duration of the run.
+- **Tailscale exit-node**: installs Tailscale, brings it up (interactive
+  browser login, or keeps an existing connection if the host is already
+  enrolled), and configures it as an exit-node with stateful filtering,
+  netfilter mode, and subnet SNAT.
+- **Hardened Docker/Tailscale firewall**: a generated helper script
+  (`docker-tailscale-fw`) builds dedicated `iptables`/`ip6tables` chains
+  using an atomic "staging chain" swap technique so that Docker's
+  `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
+  default, with narrow, explicit allow rules for the public services.
+- **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr,
+  wg-easy, and SFTPGo, deployed with pinned image versions.
+- **Optional Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to
+  `tailscale0` only) and Caddy (bound to the current Tailscale IPv4) can be
+  provisioned for friendly `*.<domain>` names to each service.
+- **Self-healing reconcile timer**: a `master-network-reconcile.timer`
+  (every 5 minutes) re-verifies and repairs WAN/Tailscale addressing,
+  firewall rule sets, Tailscale preferences, container health/port
+  bindings, and managed DNS/Caddy configuration, with restart cooldowns to
+  avoid flapping.
+- **Layered rollback on failure**: a single `EXIT` trap restores
+  pre-install timer state and unwinds a partially-configured DNS/Caddy
+  stack, regardless of where the script failed.
+- **Root-only logging with live progress**: verbose stage-by-stage logs go
+  to `/var/log/master-setup/`, while the interactive terminal only shows a
+  compact `[stage/7] [bar] percent · label` progress line.
+- **Extensive self-verification (Stage 7)**: re-checks systemd unit
+  dependency graphs (`systemd-analyze verify` plus explicit
+  `Requires`/`After`/`PartOf`/`OnFailure` assertions), firewall rule content
+  and ordering, container port bindings, and live HTTP/DNS/WebDAV endpoints
+  before declaring success.
+
+## Current Architecture
+
+The script runs as seven stages, gated by `progress_stage_begin`/
+`progress_stage_done` and driven by `set -Eeuo pipefail` with `ERR`/`EXIT`/
+`INT`/`TERM` traps for cleanup:
+
+| Stage | Purpose |
+|-------|---------|
+| 0 | Interactive prompts (downloads path, optional local DNS domain), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
+| 1 | Base OS prep: apt/timer quiescing, timezone, base packages |
+| 2 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
+| 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
+| 4 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` helper scripts, systemd units for Compose and reconcile |
+| 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
+| 7 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+
+Custom systemd units created by the script:
+
+- `tailscale-udp-gro.service` — one-shot UDP GRO forwarding tuning
+- `docker-tailscale-fw.service` — applies the dedicated firewall chains
+- `master-compose.service` — brings up the Compose stack once WAN/Tailscale
+  addresses are ready
+- `master-network-reconcile.service` + `.timer` — the 5-minute self-healing
+  check/repair pass
+- `master-docker-netfilter-recovery.service` — last-resort Docker daemon
+  restart to recover Docker-owned DNAT/FORWARD rules
+- `caddy.service.d` / `dnsmasq.service.d` / `tailscaled.service.d`
+  drop-ins — ordering and `PartOf`/`OnFailure` wiring for the optional
+  DNS/Caddy stack
+
+See [`docs/architecture.md`](docs/architecture.md) for a deeper breakdown
+and [`docs/design-decisions.md`](docs/design-decisions.md) for the
+rationale behind specific choices (e.g. the staging-chain firewall swap,
+the canonical-bundle checksum model for reconcile).
+
+## Installation Flow
+
+1. **Stage 0** collects all interactive input up front (downloads path,
+   optional local DNS domain) and prints a summary before asking for final
+   confirmation. All subsequent stages run non-interactively.
+2. Once confirmed, logging switches to `/var/log/master-setup/master-setup-<timestamp>-<pid>.log`;
+   the terminal only shows the live progress bar from this point on.
+3. Stages 1–3 prepare the base OS, Tailscale, and Docker plus the dedicated
+   firewall helper — each stage validates its own preconditions and exits
+   non-zero on failure, which triggers the `EXIT` trap's rollback logic.
+4. Stage 4 writes all state (`/etc/master-stack/state.env`), the Compose
+   file, and the reconcile/recovery helper scripts, but does not yet start
+   anything.
+5. Stage 5 pulls images, verifies the systemd dependency graph
+   (`systemd-analyze verify`), and applies the firewall and starts the
+   Compose stack. wg-easy comes up unconfigured on a fresh install — its
+   admin account is created manually via its web UI afterward, the same
+   as Portainer's and SFTPGo's.
+6. Stage 6 optionally provisions `dnsmasq` + Caddy for Tailnet-only service
+   names, using a fail-closed pattern (services are `mask`ed until their
+   generated configuration is validated).
+7. Stage 7 re-derives all addresses (they may have changed during a long
+   install) and runs a comprehensive battery of runtime checks — systemd
+   unit properties, firewall rule content/order, container port bindings,
+   HTTP/DNS/WebDAV probes — before printing the final summary and enabling
+   the 5-minute reconcile timer.
+
+Re-running the script against an already-provisioned host is expected and
+supported: most stages detect existing state (Docker daemon.json content,
+canonical config checksums, timer states) and skip or reconcile rather
+than blindly re-applying.
+
+## Docker Services
+
+All services are defined in a single generated `/root/docker/compose.yaml`
+with pinned image tags and shared JSON-file logging (10m × 3 files).
+
+| Service | Image (pinned) | Exposure | Purpose |
+|---------|-----------------|----------|---------|
+| `portainer` | `portainer/portainer-ce` | `127.0.0.1:9443` (+ optional Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
+| `filebrowser` | `filebrowser/filebrowser` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file browser over the downloads/media tree |
+| `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
+| `unpackerr` | `ghcr.io/unpackerr/unpackerr` | none (no published ports) | Watches the media tree and extracts nested archives |
+| `wg-easy` | `ghcr.io/wg-easy/wg-easy` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
+| `sftpgo` | `drakkan/sftpgo` | `127.0.0.1:9981` (admin), `127.0.0.1:65113` + `<tailscale-ip>:65113` (WebDAV) | WebDAV server for Apple TV/Infuse and general file access, read-only mount of the media tree |
+
+Notes:
+
+- `wg-easy` runs with `cap_add: [NET_ADMIN]` only and `INSECURE: "true"`
+  (required because Caddy reverse-proxies it over plain HTTP inside the
+  Tailnet). The WireGuard kernel module is loaded independently on the
+  host in Stage 4 (a standalone, best-effort `modprobe wireguard`, unrelated
+  to Tailscale's own networking path) so the container itself never needs
+  `SYS_MODULE` or a `/lib/modules` mount (resolved 2026-07-27, see **H1**
+  in `SECURITY_REVIEW.md`).
+- `filebrowser` uses Docker-managed named volumes (`filebrowser_database`,
+  `filebrowser_config`) rather than host bind mounts for its own state.
+- The downloads/media tree is bind-mounted read-write into `qbittorrent`
+  and `unpackerr`, and read-only into `sftpgo`.
+- Only `wg-easy` currently defines a Compose healthcheck; the reconcile
+  timer substitutes external port/HTTP/DNS probes for the rest of the
+  stack.
+- The service set is currently fixed — there is no per-service opt-out or
+  installation profile (see **Current Limitations** and
+  [`docs/profiles.md`](docs/profiles.md)).
+
+## Networking
+
+- **Exit-node**: Tailscale is configured with `--advertise-exit-node
+  --stateful-filtering=true --netfilter-mode=on --snat-subnet-routes=true`.
+  The WAN interface and public IPv4 are auto-detected from the default
+  route (`ip route get 1.1.1.1`).
+- **Dedicated firewall chains**: the `docker-tailscale-fw` helper builds
+  two custom chains — `MASTER-DOCKER` (filter/`DOCKER-USER`) and
+  `MASTER-TS-FORWARD` (mangle/`FORWARD`) — using a randomized staging-chain
+  name that is fully populated and then atomically renamed into place, so
+  the firewall is never briefly open or briefly fully closed during an
+  update.
+- **Default posture is fail-closed**: any WAN → Tailnet or Tailnet →
+  Docker/LAN traffic that isn't explicitly allowed is dropped; the exit-node
+  path (`tailscale0` → detected WAN interface) is the one broad ACCEPT.
+- **Narrow public exposure**: only the qBittorrent peer port and the
+  wg-easy WireGuard UDP port are DNAT'd to the public IPv4. SFTPGo's WebDAV
+  port is bound only to `127.0.0.1` and the current Tailscale IPv4 — never
+  to the public IPv4 — via a dedicated `--ctorigdst`/`--ctorigdstport`
+  mangle rule rather than a broad interface allow.
+- **Dynamic addressing**: WAN IPv4 and Tailscale IPv4 can change at
+  runtime (DHCP renewal, node re-registration); `master-compose-ipv4` and
+  the reconcile timer keep `/root/docker/.env`, the firewall rules, and
+  (if enabled) dnsmasq/Caddy bindings in sync with the current addresses.
+- **Optional Tailnet-only DNS/Caddy**: when enabled, `dnsmasq` listens only
+  on `tailscale0` and answers a private zone (`*.your-domain`) with
+  interface-derived A records; Caddy binds only to the current Tailscale
+  IPv4 and reverse-proxies each service under a friendly hostname. Both are
+  installed `mask`ed and only unmasked after their generated configuration
+  passes validation, so a partially-configured daemon can never be
+  reachable on reboot.
+- **Docker container networking**: `wg-easy` runs on its own bridge network
+  (`wg`, `10.42.42.0/24` + a ULA IPv6 range) so its internal WireGuard
+  routing doesn't interact with the default Docker bridge used by the other
+  services.
+
+See [`docs/architecture.md`](docs/architecture.md) for rule-level detail
+and the reconcile drift-detection model.
+
+## Security Notes
+
+A full, line-referenced audit is tracked in
+[`SECURITY_REVIEW.md`](SECURITY_REVIEW.md). Highlights:
+
+- **No script-managed secrets**: as of 2026-07-27, `install.sh` no longer
+  handles any service admin credentials at all — wg-easy's unattended
+  bootstrap subsystem was removed (**M6**), so Portainer, wg-easy, and
+  SFTPGo admin accounts are all created manually by the operator through
+  each service's own web UI. `state.env`, `compose.yaml`, and `.env`
+  remain `root:root 0600` for the non-secret configuration they do hold.
+- **Docker socket exposure (accepted risk, 2026-07-28)**: `portainer`
+  mounts `/var/run/docker.sock` directly — a compromise of Portainer is
+  equivalent to root on the host. A docker-socket-proxy was considered
+  and rejected: Portainer's actual management features (creating/
+  recreating containers, deploying stacks) need close to the same broad
+  API access that makes this risky in the first place, so a meaningfully
+  restrictive proxy would break Portainer's usefulness rather than
+  contain the risk. (A read-only socket mount is not a real mitigation
+  either — Unix domain sockets don't gate read/write access via the
+  mount's `ro` flag.) The user confirmed Portainer is actively used for
+  container monitoring/intervention and accepted this as the highest-value
+  target in the stack, scoped down by network exposure (`127.0.0.1` +
+  tailnet-only) rather than by API restriction. See **C1** in
+  `SECURITY_REVIEW.md`.
+- **Fail-closed defaults**: firewall, dnsmasq, and Caddy are all brought up
+  in a masked/deny-by-default state and only opened once their final,
+  validated configuration is in place — including across a mid-install
+  failure (the `EXIT` trap restores the pre-install masked/active state).
+- **Self-healing vs. operator changes**: the reconcile timer treats the
+  canonical (installer-written) copies of the firewall/dnsmasq/Caddy
+  configuration as the source of truth and will silently restore them
+  within 5 minutes if they drift — including manual operator edits made
+  outside the script.
+- **Container capabilities**: `wg-easy` was previously granted `SYS_MODULE`
+  in addition to `NET_ADMIN`; this was removed on 2026-07-27 in favor of a
+  host-level `modprobe wireguard` step, so the container now runs with
+  only `NET_ADMIN` (see **H1** in `SECURITY_REVIEW.md`).
+- **Tailscale device registration is not ephemeral**: the interactive
+  browser login used to join the tailnet registers a normal, persistent
+  device. Rebuilding this server (e.g. reinstalling from scratch) will
+  leave the old device entry behind in the Tailscale admin console —
+  remove it manually there; `install.sh` has no way to control this from
+  its side (see **L2** in `SECURITY_REVIEW.md`).
+- **First-run admin setup isn't automated**: Portainer, wg-easy, and
+  SFTPGo all require the operator to create their admin account through
+  each service's own web UI on first access (the install summary reminds
+  you of this and lists the URLs). Do this promptly — until it's done,
+  anyone else who can already reach the tailnet could complete that
+  service's setup screen first (see **L5** in `SECURITY_REVIEW.md`).
+
+## Current Limitations
+
+- **Monolithic script**: all logic — including the ~600-line firewall
+  helper and the ~1300-line reconcile helper — lives in a single
+  `install.sh`, embedded as heredocs. These embedded scripts are not
+  covered by running `shellcheck`/`bash -n` against `install.sh` itself.
+- **No installation profiles**: the six-service Compose bundle is fixed;
+  there is no way to opt out of an individual service (e.g. skip Portainer
+  to avoid exposing `docker.sock`, or skip the torrent stack). See
+  [`docs/profiles.md`](docs/profiles.md).
+- **No CI, and only partial unit-test coverage**: end-to-end correctness
+  is still only verified by the script's own Stage 7 runtime checks
+  against a real, provisioned host, and there is no CI pipeline. Static
+  analysis of the embedded heredoc scripts (`scripts/lint-embedded-scripts.sh`)
+  and `bats-core` unit tests for a growing subset of their pure-logic
+  functions (`test/*.bats` — currently `state_value`, `owned_file_ok`,
+  `route_value`, and five firewall-chain predicate functions) do exist.
+  See [`docs/testing.md`](docs/testing.md) for what's covered and what
+  isn't yet.
+- **No per-container resource limits or extra hardening**: containers run
+  without CPU/memory limits, `no-new-privileges`, or reduced capability
+  sets, even for services that process untrusted downloaded content
+  (qBittorrent, Unpackerr).
+- **Tight service coupling**: several systemd units use `PartOf=docker.service
+  tailscaled.service`, meaning a routine `systemctl restart tailscaled`
+  (or `docker`) also stops and restarts the entire Compose stack, the
+  firewall, and (if enabled) Caddy — a non-obvious side effect for
+  operators.
+- **`chown -R` on every run**: the downloads/media tree ownership is
+  reapplied unconditionally on every re-run, which is not cheap on large
+  media libraries.
+
+See [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md)
+for the full, prioritized list.
+
+## Roadmap
+
+Tracked in detail in [`TODO.md`](TODO.md). Done so far: the `TS_AUTHKEY`
+prompt was removed entirely (**C2**) and the wg-easy unattended-bootstrap
+subsystem was removed in favor of manual admin setup (**M6**), both on
+2026-07-27. Remaining, at a high level:
+
+- Extend `bats-core` unit-test coverage to the remaining pure-logic
+  functions in the embedded scripts, and stand up Tier 3 (disposable-VM)
+  integration testing — see [`docs/testing.md`](docs/testing.md).
+- Introduce opt-in/opt-out installation profiles per service (starting
+  with Portainer, given its `docker.sock` exposure) — see
+  [`docs/profiles.md`](docs/profiles.md).
+- Add container-level hardening (resource limits, `no-new-privileges`,
+  capability reduction) for untrusted-content-handling services.
+- Stand up a CI pipeline: static analysis for all embedded scripts, plus a
+  disposable-VM based end-to-end integration test — see
+  [`docs/testing.md`](docs/testing.md).
+- Document (and/or make configurable) the `PartOf` service-coupling
+  behavior so operators aren't surprised by cascading restarts.
+
+## Development Workflow
+
+- **Do not run the installer against a live/production host** while
+  iterating — it makes systemd, firewall, and Docker daemon-level changes
+  that are only safely testable on a disposable Debian 13 VM or container
+  with real `systemd`.
+- Before proposing any change to `install.sh`, run:
+  - `bash -n install.sh` (syntax check)
+  - `shellcheck install.sh` (static analysis — note this does **not**
+    cover the embedded heredoc scripts; see **Current Limitations**)
+- Read [`CLAUDE.md`](CLAUDE.md) for repository-specific working
+  conventions before making changes.
+- Design rationale for non-obvious choices (staging-chain firewall swaps,
+  the canonical-bundle checksum model, `PartOf` coupling, etc.) belongs in
+  [`docs/design-decisions.md`](docs/design-decisions.md) — check there
+  before "fixing" something that may be intentional.
+- Track in-progress work and open questions in [`SESSION.md`](SESSION.md)
+  and prioritized work items in [`TODO.md`](TODO.md).
+- Record user-facing changes in [`CHANGELOG.md`](CHANGELOG.md).
