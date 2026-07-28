@@ -64,6 +64,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     4370 lines. Verified with `bash -n`, `shellcheck`,
     `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
 
+### Removed
+
+- `qbittorrent`'s `mem_limit` and `cpus` ceilings removed entirely
+  (`compose.yaml` → `services.qbittorrent`). Even at `4g`, sustained
+  high-throughput download load showed throughput fluctuating again; a
+  further raise to `6g`/`3.0` was tried locally (never committed) before
+  the user decided the ceiling itself was the problem, not its value. On
+  a 4 CPU / ~8GB host, a limit that has to be raised each time real usage
+  grows past it stops being containment and only remains a throughput
+  risk — the last value tried (`6g`) already sat above the highest
+  observed unlimited usage (~4.7GB), so it constrained nothing while
+  still being able to throttle a future workload.
+  - **What this does not change:** the hardening that actually contains
+    this container is untouched — `security_opt: no-new-privileges`,
+    `cap_drop: [ALL]`, and the minimal `cap_add` set (**M1**).
+    `unpackerr` keeps its own `mem_limit: 512m` / `cpus: 1.0`, which
+    never constrained it under a real extraction workload.
+  - **Trade-off, accepted by the user:** a runaway `qbittorrent` is now
+    bounded by the host's global OOM killer rather than its own cgroup,
+    so the blast radius of that (unobserved so far) failure mode widens
+    from one container to the host. Recorded under **M1** in
+    `SECURITY_REVIEW.md` as an accepted deviation, not a regression to
+    re-fix.
+  - `install.sh` 4370 → 4376 lines. Verified with `bash -n`,
+    `shellcheck`, `scripts/lint-embedded-scripts.sh`, and `bats test/`
+    (all clean).
+
 ## [1.0.0] - 2026-07-28
 
 ### Added

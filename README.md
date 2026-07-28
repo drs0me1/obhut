@@ -305,11 +305,14 @@ as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
 **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), plus two further findings
 (**H5**, **H6**) discovered and fixed via live install testing. Notably:
 - **M1** (container hardening) is fully applied: `security_opt:
-  no-new-privileges`, hardware-sized resource ceilings, and an
-  empirically-determined minimal `cap_drop`/`cap_add` set for both
-  `qbittorrent` and `unpackerr`, plus `read_only: true` for `unpackerr`
-  (found to break `qbittorrent`'s `PUID`/`PGID` handling, so deliberately
-  not applied there).
+  no-new-privileges` and an empirically-determined minimal
+  `cap_drop`/`cap_add` set for both `qbittorrent` and `unpackerr`, plus
+  `read_only: true` for `unpackerr` (found to break `qbittorrent`'s
+  `PUID`/`PGID` handling, so deliberately not applied there).
+  `unpackerr` also has hardware-sized `mem_limit`/`cpus` ceilings;
+  `qbittorrent`'s were removed after real usage showed each raise was
+  chasing the workload rather than bounding it — an accepted deviation
+  documented under **M1** in `SECURITY_REVIEW.md`.
 - **M7**'s testing strategy: Tier 1 (static analysis of all six embedded
   heredoc scripts) is done; Tier 2 has 32 `bats-core` unit tests; Tier 3
   has succeeded end-to-end on four separate live installs, followed by a

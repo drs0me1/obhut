@@ -11,7 +11,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4365 lines. Originally **tagged R1.0**
+architecture review; file is now 4376 lines. Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1.1 work).
 Do not start work on any item without explicit user approval (per
@@ -330,3 +330,18 @@ _All Low findings resolved — see Completed below._
       `install.sh`. `install.sh` 4365 → 4370 lines. Verified with
       `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
       `bats test/`.
+- [x] **`qbittorrent` resource ceilings removed (2026-07-28).** Even at
+      `4g`, sustained high-throughput load fluctuated again; a `6g`/
+      `cpus: 3.0` attempt (tried locally, never committed) made it clear
+      each raise was chasing real usage rather than bounding abuse — on
+      this 4 CPU / ~8GB host, `6g` already exceeded the highest observed
+      unlimited usage (~4.7GB), so it constrained nothing while still
+      able to throttle a future workload. Both `mem_limit` and `cpus`
+      removed from `services.qbittorrent`. **M1**'s privilege hardening
+      (`no-new-privileges`, `cap_drop: [ALL]`, minimal `cap_add`) and
+      `unpackerr`'s own `512m`/`1.0` ceilings are unchanged. Residual
+      risk accepted by the user and recorded under **M1** in
+      `SECURITY_REVIEW.md`: a runaway `qbittorrent` is now bounded by the
+      host's global OOM killer rather than its own cgroup. `install.sh`
+      4370 → 4376 lines. Verified with `bash -n`, `shellcheck`,
+      `scripts/lint-embedded-scripts.sh`, `bats test/`.

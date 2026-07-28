@@ -127,8 +127,12 @@ Unpackerr, wg-easy, SFTPGo) are defined in one generated
 `/root/docker/compose.yaml` with pinned image tags.
 
 `qbittorrent` and `unpackerr` (2026-07-28, **M1**) run with `cap_drop:
-[ALL]` and hardware-sized resource ceilings. `unpackerr` (already
-non-root) also runs `read_only: true`. `qbittorrent` gets back the
+[ALL]` and `security_opt: no-new-privileges`. `unpackerr` (already
+non-root) also runs `read_only: true` and keeps hardware-sized
+`mem_limit`/`cpus` ceilings; `qbittorrent`'s ceilings were removed the
+same day after real high-throughput usage showed each raise was chasing
+the workload rather than bounding it (see `SECURITY_REVIEW.md` M1 for
+the accepted residual risk). `qbittorrent` gets back the
 minimal capability set its linuxserver.io entrypoint needs to fix
 `PUID`/`PGID` ownership on first run (`cap_add: [CHOWN, SETUID, SETGID,
 DAC_OVERRIDE, FOWNER]`) — `read_only` was tested and found to break that

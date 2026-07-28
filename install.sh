@@ -1824,13 +1824,19 @@ services:
       - SETGID
       - DAC_OVERRIDE
       - FOWNER
-    # 2g başlangıçta seçilmişti ama gerçek yüksek-hızlı indirme testinde (2026-07-28)
-    # qBittorrent'in disk önbelleğini kısıtlayıp throughput'u ~170MB/s'e düşürdüğü
-    # (asıl kısıtlayıcının CPU değil bellek olduğu, cpus=2.0 sabit tutulup yalnız
-    # mem_limit 4g'ye çıkarılınca 275MB/s'e ulaşarak doğrulandı) empirik olarak
-    # tespit edildi. Bkz. SECURITY_REVIEW.md M1.
-    mem_limit: 4g
-    cpus: 2.0
+    # No mem_limit/cpus here, deliberately. M1 originally set 2g/2.0, but
+    # live testing (2026-07-28) showed the memory ceiling — not CPU —
+    # throttling qBittorrent's disk cache and capping throughput at
+    # ~170MB/s against 218-278MB/s unlimited; raising it to 4g, then 6g/3.0
+    # under sustained load, only chased the workload upward until the
+    # ceiling no longer constrained anything on this 4 CPU / ~8GB host.
+    # A ceiling that has to be raised to match real usage isn't
+    # containment, it's a throughput risk, so both were dropped. The
+    # hardening that does contain this container (no-new-privileges,
+    # cap_drop: [ALL] + a minimal cap_add set) is unaffected; unpackerr
+    # keeps its own ceilings, which never constrained it. Trade-off: a
+    # runaway qbittorrent is now bounded by the host's global OOM killer
+    # rather than its own cgroup. See SECURITY_REVIEW.md M1.
     environment:
       PUID: "1000"
       PGID: "1000"
