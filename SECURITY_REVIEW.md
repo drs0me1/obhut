@@ -21,13 +21,13 @@ weight from an old (r3-and-earlier) automatic-reboot mechanism this tool
 no longer installs, kept only as a migration shim. The user confirmed this
 deployment target is always a fresh Debian 13 install with no r3-or-earlier
 history to migrate away from, so the shim had no remaining purpose.
-`install.sh` is now 4290 lines (unchanged by **H4**, which only added a new
-standalone `scripts/lint-embedded-scripts.sh`; grew by 15 lines from
-**H5**'s and **H1**'s regression fix, both applied 2026-07-28 after the
-first live Tier 3 test — see below); every `Location:` reference below for
-still-open findings has been re-checked and updated to match the current
-file after each remediation. Resolved findings keep their original
-("historical") line numbers for the record.
+`install.sh` is now 4296 lines (unchanged by **H4**, which only added a new
+standalone `scripts/lint-embedded-scripts.sh`; grew net from **H5**'s and
+**H1**'s regression fix plus **H6**'s one-line removal, all applied
+2026-07-28 across two live Tier 3 test attempts — see below); every
+`Location:` reference below for still-open findings has been re-checked
+and updated to match the current file after each remediation. Resolved
+findings keep their original ("historical") line numbers for the record.
 
 Each finding lists its location, a description, its impact, a recommended
 fix, and the estimated risk of making that fix.
@@ -35,16 +35,16 @@ fix, and the estimated risk of making that fix.
 ## Current findings
 
 18 findings total from the original 2026-07-27 static audit (corrected
-from an earlier miscount of 19); 15 resolved, 3 currently **open**. One
-additional finding, **H5**, was discovered on 2026-07-28 via a live Tier 3
-install test (not part of the original static audit — static review
-alone could not have caught it, see its entry below) and resolved the
-same day.
+from an earlier miscount of 19); 15 resolved, 3 currently **open**. Two
+additional findings, **H5** and **H6**, were discovered on 2026-07-28 via
+live Tier 3 install tests (not part of the original static audit — static
+review alone could not have caught either, see their entries below) and
+both resolved the same day.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 5 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, 2026-07-28 — post-audit) |
+| High     | 0 | 6 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, 2026-07-28 — post-audit) |
 | Medium   | 3 | 4 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, 2026-07-28) |
 | Low      | 0 | 5 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, 2026-07-28) |
 
@@ -52,9 +52,9 @@ Note: **H2**, **H3**, and **C1** were resolved by explicit user decision to
 *keep* the existing behavior/design as an accepted trade-off plus add
 documentation — not by changing `install.sh`'s functional behavior.
 **M1** is counted as open above but is partially addressed — see its
-entry below for what's done vs. deferred to the live SSH test. **H5** is
-not counted in the "18 findings total" above since it postdates that
-audit; it's a genuine 19th, separately-tracked finding.
+entry below for what's done vs. deferred to the live SSH test. **H5**/**H6**
+are not counted in the "18 findings total" above since they postdate that
+audit; they're genuine 19th/20th, separately-tracked findings.
 
 ## Critical issues
 
@@ -300,6 +300,55 @@ audit; it's a genuine 19th, separately-tracked finding.
   the script already designs around; does not change what the healthcheck
   protects against (a container where WireGuard never starts at all still
   fails it).
+
+### H6 — Stage 7's postcondition gate can never pass on a fresh install after M6 — ✅ RESOLVED (2026-07-28, found via the same live Tier 3 test, second attempt)
+- **Location:** `install.sh` → embedded `master-network-reconcile` heredoc,
+  `check_compose_runtime()`'s `/setup/*` branch
+- **Description:** Found on the second live Tier 3 attempt, after **H1**
+  and **H5** were fixed — the install got all the way through Stage 6
+  (DNS/Caddy, previously never reached) and failed at Stage 7's own
+  `master-network-reconcile --check` postcondition call. Root cause:
+  `check_compose_runtime()` set `runtime_ok=1` whenever wg-easy's web UI
+  redirected to `/setup` (i.e., first-run admin setup not done yet) — the
+  exact same expected-after-**M6** state **H5** already accounts for.
+  That `runtime_ok=1` fed into `COMPOSE_RUNTIME_DRIFTED`, which
+  `all_critical_state_healthy()` treats as a hard failure — and Stage 7
+  calls `master-network-reconcile --check` under `set -e`, so this
+  aborted the entire installer. The script's own comment at the final
+  summary ("wg-easy admin/peer kurulumu artık elle yapılıyor... kurulumu
+  bu yüzden durdurmuyoruz") states the intended tolerance explicitly, but
+  this earlier, separate gate didn't implement it — an M6-era
+  inconsistency between stated intent and actual control flow, invisible
+  to static review, only surfaced by actually reaching Stage 7 live (which
+  the **H1**/**H5** fixes were themselves required to reach).
+- **Confirmed live before fixing:** manually invoked
+  `master-network-reconcile --check` against the live, otherwise fully
+  healthy host — every other field it reports (`address`, `forwarding`,
+  `wg_endpoint`, `tailscale_*`, `firewall`, `docker_netfilter`,
+  `compose_unit`, `config`, `canonical_invalid`, `caddy_*`, `dnsmasq_*`)
+  was `0`; only `compose_runtime=1`, solely due to the "wg-easy ilk
+  kurulumu tamamlanmamış" condition.
+- **Impact:** Every fresh install would fail at Stage 7, even after
+  fixing **H1** and **H5** — the final postcondition check itself was
+  the last remaining blocker to ever completing a fresh install
+  end-to-end.
+- **Resolution:** Removed `runtime_ok=1` from the `/setup/*` branch only
+  (kept the diagnostic `echo` and `WG_CONFIGURATION_INVALID=1`). This
+  means: the periodic reconcile timer's own, separate `RECOVERY_FAILED`
+  reporting (a later, independent check keyed on `WG_CONFIGURATION_INVALID`
+  directly, unaffected by this change) still surfaces "wg-easy setup
+  pending" to operators via journald, but it no longer counts as
+  `compose_runtime` drift for `all_critical_state_healthy()` — the
+  signal Stage 7's `--check` gate (and the timer's own
+  restart-vs-no-restart decision) actually depends on. The other two
+  branches of the same `if`/`elif` chain (WireGuard port mismatch after
+  setup, netfilter drift) are unchanged and still count as real drift.
+  Verified with `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
+  and `bats test/` (all clean/passing).
+- **Change risk:** Low — a one-line removal scoped to exactly the branch
+  that represents an expected, non-actionable state; does not touch the
+  two sibling branches that represent genuine drift, nor the periodic
+  timer's own separate operator-visible reporting of the same condition.
 
 ## Medium
 
@@ -664,3 +713,4 @@ remain open as of this review.
 | 2026-07-28 | Claude Code (remediation) | New: `scripts/lint-embedded-scripts.sh` | **H4** resolved: extracts and lints all 6 embedded heredoc scripts independently (`bash -n` + `shellcheck`, `SC2016` excluded as a documented false-positive class); first real run found `master-docker-netfilter-recovery` clean and only expected `SC2016` notices elsewhere; verified the tool detects real failures too via a synthetic syntax error in a scratch copy; `install.sh` untouched |
 | 2026-07-28 | Claude Code (testing) | New: `test/gro_functions.bats`; surveyed `master-compose-ipv4`, `master-docker-netfilter-recovery`, `caddy-tailnet-env` | **M7** Tier 2 continued: 5 new test cases for `tailscale-udp-gro`'s `add_default_netdev` (all self-skip on this workstation's bash 3.2, which lacks associative arrays; the Debian target's bash 5.x is unaffected); the other three remaining embedded scripts surveyed and found to have no standalone pure-logic functions to extract, only wait-loops plus real side effects — left to Tier 3; `install.sh` untouched |
 | 2026-07-28 | User + Claude Code (live Tier 3 test) | Live install on the user's reimaged server (`docs/testing.md` Tier 3, first real attempt) | Real end-to-end install run, driven interactively over SSH/tmux. Failed at Stage 5. Diagnosed two real bugs: **H1** had a regression (`ip6_tables`/`ip6table_nat` never loaded on host, breaking `wg-quick up wg0`'s legacy-ip6tables PostUp rules) and a new finding, **H5** (wg-easy healthcheck's fixed-port assertion could never pass after **M6** made the port a manual, web-UI-only setting). Both confirmed live (manual `modprobe` + container restart before touching `install.sh`) then fixed permanently in `install.sh` Stage 4 and the `compose.yaml` heredoc; `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` all clean after the fix |
+| 2026-07-28 | User + Claude Code (live Tier 3 test, second attempt) | Second live install on the same server, reimaged clean again, with the **H1**/**H5** fixes in place | Install progressed much further this time — Stages 0-6 all succeeded (including wg-easy passing its healthcheck and DNS/Caddy, neither reached on the first attempt) — then failed at Stage 7's own `master-network-reconcile --check` postcondition call. Diagnosed a new finding, **H6**: `check_compose_runtime()` counted wg-easy's still-pending first-run setup as `compose_runtime` drift, which `all_critical_state_healthy()` (and so `--check`'s exit code) treats as a hard failure — contradicting the script's own stated intent not to block on this expected, **M6**-era state. Confirmed live: a manual `--check` run against the otherwise fully healthy host showed every field `0` except `compose_runtime=1`, solely due to the pending-setup message. An attempt to patch the already-deployed reconcile script directly on the server (to verify without a third reimage) was blocked by the auto-mode classifier as an unreviewed live edit — reasonably so; fixed in tracked `install.sh` instead (one-line removal) and verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/`, pending a third live end-to-end confirmation |

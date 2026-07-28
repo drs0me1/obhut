@@ -1,15 +1,15 @@
 # TODO
 
 Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
-(18 findings total, not 19 — an earlier miscount was corrected), plus one
-additional finding (**H5**) discovered 2026-07-28 via the first live Tier
-3 install test.
+(18 findings total, not 19 — an earlier miscount was corrected), plus two
+additional findings (**H5**, **H6**) discovered 2026-07-28 across two live
+Tier 3 install test attempts.
 `install.sh` line references below were refreshed after fifteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 **L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**), a
-regression fix to **H1** plus the new **H5** fix (both from the live test),
-one unnumbered cleanup (legacy reboot-timer removal), and one partial
-remediation (**M1** — see below); file is now 4290 lines. Do not start
+regression fix to **H1** plus the new **H5**/**H6** fixes (all from live
+tests), one unnumbered cleanup (legacy reboot-timer removal), and one
+partial remediation (**M1** — see below); file is now 4296 lines. Do not start
 work on any item without explicit user approval (per `CLAUDE.md`).
 
 ## Critical
@@ -54,11 +54,12 @@ _All High findings resolved — see Completed below._
       unit-testing — each is essentially a wait loop plus real side
       effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
       integration-shaped, likely Tier 3 instead); CI wiring. Tier 3 itself
-      had its first real attempt on 2026-07-28 (see Completed below and
-      `docs/testing.md`) — it found and fixed two real bugs (**H1**
-      regression, **H5**) but the install didn't reach a fully successful
-      end-to-end completion in that run; the server is mid-install and
-      needs a follow-up run to actually finish Stage 5-7.
+      had two real attempts on 2026-07-28 (see Completed below and
+      `docs/testing.md`) — found and fixed three real bugs (**H1**
+      regression, **H5**, **H6**) across both, progressing from failing at
+      Stage 5 to failing at Stage 7; a third attempt is planned to confirm
+      a fully successful end-to-end completion with all three fixes in
+      place.
 
 ## Low
 
@@ -222,3 +223,18 @@ _All Low findings resolved — see Completed below._
       setting (no env var). Removed the port assertion; healthcheck now
       only checks that `wg0` exists and is up. `bash -n` + `shellcheck`
       clean (2026-07-28).
+- [x] Second live Tier 3 install test (2026-07-28) — server reimaged
+      clean again with the **H1**/**H5** fixes in place. Stages 0-6 all
+      succeeded this time (a first); failed at Stage 7.
+- [x] **H6** (new finding, resolved same day) — `check_compose_runtime()`
+      counted wg-easy's still-pending first-run setup as `compose_runtime`
+      drift, which Stage 7's `master-network-reconcile --check`
+      postcondition gate treats as a hard failure under `set -e` — every
+      fresh install would fail here even with **H1**/**H5** fixed.
+      Confirmed live (manual `--check` run showed every other field `0`,
+      only `compose_runtime=1` due to the pending-setup message). Fixed by
+      removing `runtime_ok=1` from that one branch only (kept the
+      diagnostic message and `WG_CONFIGURATION_INVALID=1`); the periodic
+      reconcile timer's own separate operator reporting of this condition
+      is unaffected. `bash -n` + `shellcheck` clean (2026-07-28). A third
+      live end-to-end run is planned to confirm Stage 7 now completes.

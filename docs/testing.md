@@ -3,15 +3,16 @@
 ## Planned testing strategy
 
 > **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
-> tests); Tier 3 had its first real, manual attempt (found and fixed two
-> real bugs, **H1** regression + **H5** — see below); CI wiring still not
-> attempted.** There is still no automated test suite or CI pipeline for
-> this repository (finding **M7** in `SECURITY_REVIEW.md`). The only
-> end-to-end correctness signal remains a real, human-supervised install
-> run — Stage 7's own runtime verification never actually ran to
-> completion in the 2026-07-28 attempt, since it failed earlier at Stage
-> 5. This document proposes a staged strategy to eventually make this
-> repeatable via CI, without requiring a human to relay every prompt by
+> tests); Tier 3 had two real, manual attempts so far (found and fixed
+> three real bugs across both — **H1** regression, **H5**, **H6** — see
+> below); CI wiring still not attempted.** There is still no automated
+> test suite or CI pipeline for this repository (finding **M7** in
+> `SECURITY_REVIEW.md`). The only end-to-end correctness signal remains a
+> real, human-supervised install run — Stage 7's own runtime verification
+> hasn't yet run to completion in either 2026-07-28 attempt (the first
+> failed at Stage 5, the second at Stage 7 itself); a third attempt is
+> planned. This document proposes a staged strategy to eventually make
+> this repeatable via CI, without requiring a human to relay every prompt by
 > hand each time.
 
 ### Why this is hard
@@ -176,6 +177,21 @@ alone.
   - This is exactly the kind of bug static analysis structurally cannot
     catch — validates the value of this tier even at the cost of the
     manual, relayed-interactivity overhead.
+- **Second real attempt (2026-07-28, same day):** the user reimaged the
+  same server clean again specifically to re-test with the H1/H5 fixes
+  in place, same tmux-relay methodology. Progress: Stages 0-6 all
+  succeeded this time — including wg-easy passing its healthcheck and
+  the full DNS/Caddy stage, neither reached on the first attempt — then
+  it failed at Stage 7's own `master-network-reconcile --check`
+  postcondition call. Found and fixed a third bug, **H6**: the same
+  "wg-easy setup pending" condition **H5** already accounts for was also
+  independently tripping Stage 7's final health gate, via
+  `check_compose_runtime()` counting it as `compose_runtime` drift. An
+  attempt to verify the fix by patching the already-deployed reconcile
+  script directly on the server (skipping a third reimage) was blocked
+  by the auto-mode classifier as an unreviewed live edit — a reasonable
+  guardrail; fixed in tracked `install.sh` instead. A third attempt is
+  planned to confirm Stage 7 now completes end-to-end.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

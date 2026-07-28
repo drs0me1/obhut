@@ -9,13 +9,13 @@ can pick up without re-deriving context.
 Same session, continued into a much bigger phase: after finishing the M7
 Tier 2 survey (see below), did a full live audit of the user's actual
 production server over SSH (`ssh nrm`), then — with the user's explicit,
-turn-by-turn approval — ran the first real Tier 3 install test against
-that same server after they reimaged it clean. The install failed at
-Stage 5; diagnosed and fixed two real bugs (**H1** regression, new
-finding **H5**) directly in `install.sh`. The server is currently
-mid-install (Stages 0-4 done, 5-7 not yet completed) and needs a
-follow-up run. See `CHANGELOG.md`'s "First live Tier 3 install test"
-entry for the full narrative.
+turn-by-turn approval — ran two real Tier 3 install tests against that
+same server, reimaged clean each time. First attempt failed at Stage 5
+(**H1** regression + **H5**, both fixed). Second attempt got all the way
+through Stage 6 (a first) and failed at Stage 7 (**H6**, found and
+fixed). The user is now reimaging the server a third time to test with
+all three fixes in place. See `CHANGELOG.md`'s two "live Tier 3 install
+test" entries for the full narrative.
 
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
@@ -176,12 +176,14 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Remaining Work
 
-- **Finish the live install**: the server is mid-install (Stages 0-4 done,
-  5 failed and fixed, 6/7 never ran). Needs a follow-up run — either
-  re-running `install.sh` end-to-end again, or manually continuing from
-  where it stopped. Same rules apply: explicit per-step approval, this
-  assistant relays prompts rather than choosing values, tmux-based
-  interaction for the `/dev/tty` prompts (see `docs/testing.md` Tier 3).
+- **Confirm the third live install run succeeds end-to-end**: two prior
+  attempts each got one stage further (Stage 5, then Stage 7) before
+  hitting a real bug; a third attempt, with all three fixes (**H1**
+  regression, **H5**, **H6**) in place, is in progress/planned to confirm
+  Stage 7 finally completes cleanly. Same rules apply: explicit per-step
+  approval, this assistant relays prompts rather than choosing values,
+  tmux-based interaction for the `/dev/tty` prompts (see `docs/testing.md`
+  Tier 3).
 - **M1 remainder**: `cap_drop: [ALL]` for `qbittorrent`/`unpackerr` and
   `read_only` rootfs — was deferred to "the live SSH test phase," which
   has now started; worth revisiting once the install actually completes.
@@ -200,7 +202,7 @@ resolved, plus one unnumbered cleanup and two partial items:
 - **Known documentation drift, still not fixed** (flagged in a prior
   session, still open): `README.md`'s "Roadmap" section intro still says
   only **C2**/**M6** are "done so far," undercounting everything done
-  since, including today's **H1** regression fix and **H5**.
+  since, including today's **H1** regression fix and **H5**/**H6**.
 
 ## Recommended Next Step
 
@@ -237,8 +239,9 @@ for heredoc changes), show the diff, then update
   "don't commit each time" preference — commit after every completed unit
   of work now, without asking first. (Recorded in this assistant's
   cross-session memory as well, not just here.)
-- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H5, M1-M7,
-  L1-L5 — note **H5** is new, post-audit) before starting any remediation
+- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H6, M1-M7,
+  L1-L5 — note **H5**/**H6** are new, post-audit) before starting any
+  remediation
   so status stays consistent across `TODO.md`, `CHANGELOG.md`, and this
   file.
 - The persistent memory file `project_intended_architecture.md` (outside

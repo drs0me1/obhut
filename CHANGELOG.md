@@ -112,6 +112,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   assertion could never pass on a fresh install now that **M6** made the
   port a manual, web-UI-only setting, deadlocking Stage 5 on every fresh
   install (**H5**, found via the same live test).
+- `check_compose_runtime()` (`master-network-reconcile`) no longer counts
+  wg-easy's still-pending first-run setup (`/setup` redirect) as
+  `compose_runtime` drift — only the diagnostic message and
+  `WG_CONFIGURATION_INVALID` are still set. Previously this made Stage
+  7's own `master-network-reconcile --check` postcondition gate fail on
+  every fresh install, even after **H1**/**H5** were fixed (**H6**, found
+  via a second live Tier 3 test, 2026-07-28).
 
 ### Documentation
 
@@ -580,3 +587,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The server itself is still mid-install (Stage 5 failed before Stage 6/7
   ran) — a follow-up run is needed to actually reach a complete, verified
   install with these fixes in place.
+- **Second live Tier 3 install test.** User reimaged the same server clean
+  again and gave explicit approval to re-run the (now fixed) `install.sh`
+  end-to-end. Same tmux-relay methodology as the first attempt. Progress
+  this time: Stages 0-4 succeeded as before, and — for the first time —
+  Stage 5 completed cleanly too (wg-easy's healthcheck now passed), then
+  Stage 6 (DNS/Caddy, dnsmasq, Caddy, the 5-minute reconcile timer) also
+  completed cleanly, all previously unreached. The install then failed at
+  Stage 7's own `master-network-reconcile --check` postcondition call.
+- Confirmed the underlying system was otherwise fully healthy: all 6
+  containers up (wg-easy included, now reporting `healthy`), all core
+  systemd units active. A manual `--check` run against the live host
+  showed every diagnostic field at `0` except `compose_runtime=1`, traced
+  to `check_compose_runtime()` treating wg-easy's still-pending first-run
+  setup (`/setup` redirect) as drift — the same condition **H5** already
+  accounts for, but this earlier, separate gate didn't. This directly
+  contradicted the script's own stated intent (a comment at the final
+  summary explicitly says this state shouldn't stop the installer) — an
+  M6-era inconsistency invisible until Stage 7 was actually reached, which
+  the H1/H5 fixes were themselves needed for.
+- Attempted to verify the fix quickly by patching the already-deployed
+  `/usr/local/sbin/master-network-reconcile` directly on the server
+  (to avoid a third reimage) — this specific action was blocked by the
+  auto-mode classifier as an unreviewed live edit outside the tracked
+  `install.sh` source. Reasonable call; fixed in `install.sh` instead.
+- **H6 (new finding), resolved:** removed `runtime_ok=1` from
+  `check_compose_runtime()`'s `/setup/*` branch only — the diagnostic
+  message and `WG_CONFIGURATION_INVALID=1` stay, so the periodic
+  reconcile timer's own separate operator-facing reporting of this
+  condition is unaffected, but it no longer counts as `compose_runtime`
+  drift for `all_critical_state_healthy()` (and so Stage 7's `--check`
+  gate). The sibling branches (port mismatch after setup, netfilter
+  drift) are untouched and still count as real drift. `install.sh` 4290 →
+  4296 lines. Verified with `bash -n`, `shellcheck`,
+  `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
+  Synced `SECURITY_REVIEW.md` (new H6 entry + updated findings
+  table/count) and `TODO.md`. A third live end-to-end run is planned to
+  confirm Stage 7 now completes with all three fixes (H1 regression, H5,
+  H6) in place.

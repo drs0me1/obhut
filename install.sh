@@ -2632,9 +2632,15 @@ check_compose_runtime() {
                 }' || true
         )"
         if [[ "$setup_location" == /setup/* ]]; then
+            # Taze bir kurulumda wg-easy'nin hâlâ /setup ekranında olması
+            # beklenen bir durumdur (bkz. M6) — bu yüzden runtime_ok'u
+            # etkilemez; yalnızca WG_CONFIGURATION_INVALID üzerinden
+            # (aşağıdaki RECOVERY_FAILED kontrolü ile) raporlanır. Aksi
+            # halde her taze kurulum, --check modunda (Stage 7'nin
+            # postcondition doğrulaması dahil) bu beklenen durum yüzünden
+            # başarısız sayılırdı.
             echo "HATA: wg-easy ilk kurulumu tamamlanmamış." >&2
             WG_CONFIGURATION_INVALID=1
-            runtime_ok=1
         elif [[ "$wg_port" != "$WG_PUBLIC_PORT" ]]; then
             echo "HATA: wg-easy iç portu ${wg_port:-yok}; beklenen $WG_PUBLIC_PORT." >&2
             WG_CONFIGURATION_INVALID=1
