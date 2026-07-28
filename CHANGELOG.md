@@ -812,4 +812,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   limits, real WireGuard/Tailscale traffic, CPU stress), and this final
   architecture review turning up no functional defects. **M3** (install
   profiles) and **M7**'s remainder (CI wiring, a few more unit tests)
-  remain open, deliberately deferred, not blocking this tag.
+  remain open, deliberately deferred, not blocking this tag. The
+  annotated `R1.0` git tag was created pointing at this state, and the
+  resulting `install.sh` was exported to `~/Desktop/install-R1.0.sh`
+  (hash-verified identical to the tracked copy) at the user's request.
+
+## End-of-session documentation pass — 2026-07-28
+
+Reviewed every Markdown document in the repository for accuracy against
+the current `install.sh` (4343 lines, tagged `R1.0`) and updated the ones
+affected by today's work, beyond what was already synced commit-by-commit
+above:
+
+- `README.md`: added a version header (`R1.0`); refreshed the **Current
+  Limitations** section, which still claimed containers ran "without
+  CPU/memory limits, `no-new-privileges`, or reduced capability sets"
+  (stale since **M1** was fully resolved earlier today) and still listed
+  the unconditional `chown -R` as a limitation (stale since **M2**,
+  resolved in an earlier session) — replaced with an accurate note about
+  the new disk-space check's inherent limitation (report-only, no
+  auto-repair); refreshed the bats-core test count/list; added **M1**'s
+  `cap_drop`/`cap_add`/`read_only` details and the `ip6_tables`/
+  `ip6table_nat` addition to the **Docker Services** notes.
+- `docs/architecture.md`: refreshed all stage/heredoc line-number ranges
+  (shifted by today's edits, now 4343 lines total); added the disk-space
+  check to reconcile's described check list; added **M1**'s container
+  hardening to the service inventory notes; noted `DOWNLOADS_PATH` now
+  being in `state.env`.
+- `docs/design-decisions.md`: added **DD-12** (why wg-easy's pending
+  first-run setup must never gate Stage 7/`--check` — the **H6** fix) and
+  **DD-13** (why the new disk-space check reports but never
+  auto-repairs); added a live-confirmation note to **DD-8** (container
+  DNS independence, verified today); updated the "nftables vs. legacy
+  backend" rejected-alternative note, since today's **H1** investigation
+  concretely answered a question that note had previously left open.
+- `docs/profiles.md`, `docs/testing.md`: reviewed, found already
+  accurate and unaffected by anything not already captured in this
+  file's entries above — no changes needed.
+- `TODO.md`, `SECURITY_REVIEW.md`, `SESSION.md`: reviewed and confirmed
+  current (see `SESSION.md` for this session's final Current
+  Task/Completed/Remaining/Next-Step summary).
+
+No changes to `install.sh` in this pass (documentation-only, per
+instruction). No commit was created for this pass, per instruction — all
+of the above are uncommitted working-tree changes as of this writing.

@@ -17,14 +17,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 523–612 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 613–725 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | 726–953 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
-| 3 | 954–1649 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
-| 4 | 1650–3326 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` helper scripts, systemd units for Compose and reconcile |
-| 5 | 3327–3374 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3375–3687 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
-| 7 | 3688–4324 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 525–614 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 615–728 | Base OS prep: apt/timer quiescing, timezone, base packages |
+| 2 | 729–956 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
+| 3 | 957–1652 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1062–1588`) and its systemd unit |
+| 4 | 1653–3348 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` (`2032–3233`) helper scripts, systemd units for Compose and reconcile |
+| 5 | 3349–3396 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 3397–3709 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
+| 7 | 3710–4343 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+
+(Line numbers as of `install.sh` 4343 lines, R1.0 — 2026-07-28.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -124,16 +126,29 @@ and volumes. All six services (Portainer, Filebrowser, qBittorrent,
 Unpackerr, wg-easy, SFTPGo) are defined in one generated
 `/root/docker/compose.yaml` with pinned image tags.
 
+`qbittorrent` and `unpackerr` (2026-07-28, **M1**) run with `cap_drop:
+[ALL]` and hardware-sized resource ceilings. `unpackerr` (already
+non-root) also runs `read_only: true`. `qbittorrent` gets back the
+minimal capability set its linuxserver.io entrypoint needs to fix
+`PUID`/`PGID` ownership on first run (`cap_add: [CHOWN, SETUID, SETGID,
+DAC_OVERRIDE, FOWNER]`) — `read_only` was tested and found to break that
+same mechanism (files end up owned by the image's default UID/GID
+instead of `1000:1000`), so it's deliberately not applied there. See
+`SECURITY_REVIEW.md` (M1) for how these were determined.
+
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:1980-3209`, ~1230
+`master-network-reconcile` (generated at `install.sh:2032-3233`, ~1200
 lines) runs every 5 minutes via `master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
-Tailscale preferences and netfilter backbone, the dedicated firewall
-chains (via `docker-tailscale-fw --check`), Docker's own DNAT/FORWARD
-rules, Compose container health and port bindings, the canonical
-config-file bundle (state/dnsmasq/Caddy), and — if local DNS is enabled —
-live DNS and Caddy HTTP responses.
+**disk space on the filesystem backing `$DOWNLOADS_PATH`** (added
+2026-07-28 — reported via `disk_space_ok()` when usage crosses 90%, but
+never auto-repaired, since deleting user data isn't a safe automated
+action), Tailscale preferences and netfilter backbone, the dedicated
+firewall chains (via `docker-tailscale-fw --check`), Docker's own
+DNAT/FORWARD rules, Compose container health and port bindings, the
+canonical config-file bundle (state/dnsmasq/Caddy), and — if local DNS is
+enabled — live DNS and Caddy HTTP responses.
 
 Repairs are scoped and cooldown-gated:
 
@@ -159,7 +174,7 @@ the final install summary so operators aren't surprised by it.
 
 | Path | Mode | Purpose |
 |------|------|---------|
-| `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint) |
+| `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint, downloads path — the last one added 2026-07-28 for reconcile's disk-space check) |
 | `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift |
 | `/root/docker/compose.yaml`, `/root/docker/.env` | `root:root 0600` | The Compose stack definition and its dynamic address values |
 

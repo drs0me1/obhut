@@ -143,6 +143,12 @@ comments plus structural inference from the 2026-07-27 audit
 - **Trade-off:** Host-level and container-level name resolution now follow
   two different paths on the same machine (see **L4** in
   `SECURITY_REVIEW.md`).
+- **Confirmed live (2026-07-28):** on a real installed host with Tailscale
+  DNS override active (`/etc/resolv.conf` → `100.100.100.100`), a
+  container's own `resolv.conf` correctly showed `127.0.0.11` (Docker's
+  embedded resolver) forwarding to `1.1.1.1`/`1.0.0.1`, and
+  `nslookup ... 1.1.1.1` from inside a container succeeded with both A and
+  AAAA records — the firewall does not block this egress path.
 
 ### DD-9: Everything lives in one script, deployed via heredocs
 
@@ -246,13 +252,73 @@ comments plus structural inference from the 2026-07-27 audit
   review, a concrete illustration of why H4 is a real gap and not just a
   theoretical one.
 
+### DD-12: wg-easy's pending first-run setup must never gate Stage 7 or `--check` (2026-07-28)
+
+- **Decision:** `check_compose_runtime()`'s `/setup`-redirect branch (the
+  case where wg-easy's admin account hasn't been created yet) sets
+  `WG_CONFIGURATION_INVALID=1` but deliberately **not** `runtime_ok=1` —
+  so it doesn't count toward `COMPOSE_RUNTIME_DRIFTED` or
+  `all_critical_state_healthy()`. The other two branches in the same
+  `if`/`elif` chain (WireGuard port mismatch after setup, netfilter
+  drift) are unaffected and still count as real drift.
+- **Context:** `SECURITY_REVIEW.md` finding **H6**, found via the second
+  live Tier 3 install attempt (2026-07-28) — every fresh install failed
+  at Stage 7's `master-network-reconcile --check` postcondition call
+  specifically because of this branch, before this fix.
+- **Rationale:** A pending wg-easy setup is the *expected* state of every
+  fresh install (M6 made it fully manual) — not a real problem
+  `--check`/Stage 7 should ever fail on. The periodic reconcile timer's
+  own, separate `RECOVERY_FAILED` reporting (keyed directly on
+  `WG_CONFIGURATION_INVALID`, further down the script) still surfaces it
+  to operators via journald on every cycle until the human completes
+  setup — this decision only affects the two callers of
+  `all_critical_state_healthy()` (`--check` mode and the non-check mode's
+  own early-exit), not operator visibility.
+- **Trade-off:** None identified — this is a strict correction of an
+  oversight in how **M6** interacted with a check written before it.
+  Anyone extending `check_compose_runtime()` with a new "expected,
+  non-actionable" state should follow the same pattern: track it via a
+  separate flag consumed by `RECOVERY_FAILED`, not `runtime_ok`.
+
+### DD-13: Reconcile's disk-space check reports but never auto-repairs (2026-07-28)
+
+- **Decision:** `disk_space_ok()` (checks the filesystem backing
+  `$DOWNLOADS_PATH`, now persisted in `state.env`) is wired into
+  `all_critical_state_healthy()` and the final postcondition
+  re-verification block, but there is **no** repair action anywhere in
+  the script for low disk space.
+- **Context:** Added after a user-requested final architecture review
+  considering the server's actual workload (continuous
+  downloading/extraction) — previously the one realistic operational
+  failure mode reconcile had zero visibility into.
+- **Rationale:** Every other reconcile-managed drift has a safe,
+  well-defined repair (reapply a sysctl, rewrite a firewall chain,
+  restart a container from a known-good image). There is no equivalent
+  safe action for "disk is full" — deleting files would mean guessing at
+  which of the user's downloaded/extracted data is safe to remove, which
+  this project has no basis to do automatically. The check exists purely
+  to surface the condition early (via `--check`'s exit code and the
+  periodic timer's own failed-unit visibility), not to fix it.
+- **Trade-off:** Unlike most other critical-state components, this one
+  will not resolve itself on the next cycle — it stays failed until a
+  human frees space or grows the disk. Considered and rejected: an
+  automatic prune of the oldest files in the downloads tree (too risky/
+  presumptuous to implement without the user's explicit, scoped
+  instruction on what's safe to delete).
+
 ## Rejected Alternatives
 
 - **Using `nftables` directly instead of `iptables`/`ip6tables`:** not
   pursued; Debian 13's `iptables` package already provides the
   nftables-backed `iptables`/`ip6tables` compatibility binaries, so the
-  existing rule-based logic works without a rewrite. Not verified in the
-  script itself whether the nft vs. legacy backend is explicitly asserted.
+  existing rule-based logic works without a rewrite. **Partially
+  verified 2026-07-28:** the host's own `iptables`/`ip6tables` do run
+  through the nftables backend (`nf_tables`/`nft_compat` kernel modules)
+  — discovered as the root cause of the **H1** regression, where
+  wg-easy's container uses the **legacy** backend instead (needing its
+  own separate `ip6_tables`/`ip6table_nat` modules the host's nft-backed
+  usage never loads). Not verified beyond this one concrete case whether
+  anything else in the script assumes one backend over the other.
 - **Merging operator config changes into the canonical bundle instead of
   reverting them (see DD-3):** rejected as intractable to do safely for
   security-sensitive firewall/proxy configuration; a deterministic

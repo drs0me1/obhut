@@ -1,5 +1,8 @@
 # Debian Server Installer
 
+**Version: R1.0** (2026-07-28) — see [`CHANGELOG.md`](CHANGELOG.md) for
+the full release history.
+
 ## Project Overview
 
 `install.sh` is a single, self-contained Bash script that turns a fresh
@@ -141,11 +144,22 @@ Notes:
 
 - `wg-easy` runs with `cap_add: [NET_ADMIN]` only and `INSECURE: "true"`
   (required because Caddy reverse-proxies it over plain HTTP inside the
-  Tailnet). The WireGuard kernel module is loaded independently on the
-  host in Stage 4 (a standalone, best-effort `modprobe wireguard`, unrelated
-  to Tailscale's own networking path) so the container itself never needs
-  `SYS_MODULE` or a `/lib/modules` mount (resolved 2026-07-27, see **H1**
-  in `SECURITY_REVIEW.md`).
+  Tailnet). The WireGuard kernel module, plus `ip6_tables`/`ip6table_nat`
+  (needed by `wg-quick`'s legacy-mode ip6tables rules — not loaded by
+  anything else on the host, which uses the nftables backend for its own
+  firewall), are loaded independently on the host in Stage 4 (standalone,
+  best-effort `modprobe` calls, unrelated to Tailscale's own networking
+  path) so the container itself never needs `SYS_MODULE` or a
+  `/lib/modules` mount (resolved 2026-07-27, see **H1** in
+  `SECURITY_REVIEW.md`; the `ip6_tables`/`ip6table_nat` gap was a
+  regression found and fixed via live testing on 2026-07-28).
+- `qbittorrent` and `unpackerr` run with `cap_drop: [ALL]`; `unpackerr`
+  (already non-root) also runs `read_only: true`. `qbittorrent` gets back
+  the minimal capability set its linuxserver.io entrypoint needs
+  (`cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`) — `read_only`
+  was tested and found to break that entrypoint's `PUID`/`PGID` handling,
+  so it's deliberately not applied there (see **M1** in
+  `SECURITY_REVIEW.md`).
 - `filebrowser` uses Docker-managed named volumes (`filebrowser_database`,
   `filebrowser_config`) rather than host bind mounts for its own state.
 - The downloads/media tree is bind-mounted read-write into `qbittorrent`
@@ -257,27 +271,26 @@ A full, line-referenced audit is tracked in
   there is no way to opt out of an individual service (e.g. skip Portainer
   to avoid exposing `docker.sock`, or skip the torrent stack). See
   [`docs/profiles.md`](docs/profiles.md).
-- **No CI, and only partial unit-test coverage**: end-to-end correctness
-  is still only verified by the script's own Stage 7 runtime checks
-  against a real, provisioned host, and there is no CI pipeline. Static
-  analysis of the embedded heredoc scripts (`scripts/lint-embedded-scripts.sh`)
-  and `bats-core` unit tests for a growing subset of their pure-logic
-  functions (`test/*.bats` — currently `state_value`, `owned_file_ok`,
-  `route_value`, and five firewall-chain predicate functions) do exist.
-  See [`docs/testing.md`](docs/testing.md) for what's covered and what
-  isn't yet.
-- **No per-container resource limits or extra hardening**: containers run
-  without CPU/memory limits, `no-new-privileges`, or reduced capability
-  sets, even for services that process untrusted downloaded content
-  (qBittorrent, Unpackerr).
+- **No CI; unit + live-integration testing exist but aren't automated**:
+  end-to-end correctness has been verified via real, live installs (four
+  successful ones as of 2026-07-28, plus a full operational stress test —
+  see [`docs/testing.md`](docs/testing.md)), but there is no CI pipeline
+  running any of this automatically, and Tier 3 still requires a human to
+  relay `install.sh`'s interactive prompts. Static analysis of the
+  embedded heredoc scripts (`scripts/lint-embedded-scripts.sh`) and 32
+  `bats-core` unit tests for their pure-logic functions (`test/*.bats`)
+  do exist. See [`docs/testing.md`](docs/testing.md) for the full
+  breakdown.
 - **Tight service coupling**: several systemd units use `PartOf=docker.service
   tailscaled.service`, meaning a routine `systemctl restart tailscaled`
   (or `docker`) also stops and restarts the entire Compose stack, the
   firewall, and (if enabled) Caddy — a non-obvious side effect for
   operators.
-- **`chown -R` on every run**: the downloads/media tree ownership is
-  reapplied unconditionally on every re-run, which is not cheap on large
-  media libraries.
+- **No automatic disk-space recovery**: reconcile (as of 2026-07-28)
+  reports when the filesystem backing the downloads path crosses 90%
+  used, but never frees space itself — deleting user data isn't a safe
+  automated action. A full disk stays a reported, non-self-healing
+  failure state until an operator intervenes.
 
 See [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md)
 for the full, prioritized list.
@@ -304,6 +317,12 @@ as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
   into the reconcile loop, resource-limit enforcement, real
   WireGuard/Tailscale-exit-node traffic, CPU stress) — see
   [`docs/testing.md`](docs/testing.md) for the full results.
+- A final architecture review (reconcile's full monitored-state list,
+  systemd dependencies, IPv6, container DNS, wg-easy's kernel-module
+  approach, Caddy/dnsmasq boot-race safety) found no functional defects,
+  and added the one real gap found — disk-space monitoring for the
+  filesystem backing `$DOWNLOADS_PATH` — to `master-network-reconcile`.
+  Tagged **R1.0**.
 
 **Remaining, at a high level:**
 

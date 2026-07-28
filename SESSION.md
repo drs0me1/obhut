@@ -6,40 +6,27 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-Same session, continued into a much bigger phase: after finishing the M7
-Tier 2 survey (see below), did a full live audit of the user's actual
-production server over SSH (`ssh nrm`), then — with the user's explicit,
-turn-by-turn approval — ran four real Tier 3 install tests against that
-same server, reimaged clean each time. First attempt failed at Stage 5
-(**H1** regression + **H5**, both fixed). Second attempt got all the way
-through Stage 6 (a first) and failed at Stage 7 (**H6**, found and
-fixed). Third attempt completed all 7 stages successfully end-to-end —
-the first fully clean install of this repo's `install.sh`. **M1**'s
-deferred capability hardening was then determined empirically (throwaway
-`docker run` tests) and applied to `install.sh`; a fourth install
-confirmed it didn't regress anything. The user then granted broad
-testing latitude on this now-disposable-for-testing server and asked for
-a full operational stress test: real service configuration, real
-WireGuard/Tailscale-exit-node traffic, a full reboot, deliberate
-drift-injection into reconcile, resource-limit enforcement, and CPU
-stress — **everything passed**, no new bugs found. See `CHANGELOG.md`'s
-four "live Tier 3 install test" entries and the "full operational stress
-test" entry for the full narrative. This closes out the first full
-validation cycle of the 2026-07-28 remediation work.
+**Session complete.** This was one continuous, very large session:
+docs scaffolding and the original static audit (prior sub-session) → M7
+Tier 2 unit-test survey → a full live audit of the user's server →
+four live Tier 3 install attempts (three found and fixed real bugs —
+**H1** regression, **H5**, **H6** — the fourth, with **M1**'s hardening
+added, succeeded cleanly) → a full operational stress test (reboot,
+deliberate drift injection, resource-limit enforcement, real
+WireGuard/Tailscale-exit-node traffic, CPU stress — everything passed)
+→ a final architecture review (reconcile's monitored-state list, systemd
+dependencies, IPv6, container DNS, wg-easy's kernel-module approach,
+Caddy/dnsmasq boot-race safety — no functional defects found) → one new
+feature from that review (disk-space monitoring in reconcile) → tagging
+**R1.0** and exporting `install.sh` to `~/Desktop/install-R1.0.sh` → this
+end-of-session documentation pass (reviewed every `.md` file in the repo
+for accuracy against the final 4343-line `install.sh`; fixed several
+that had gone stale during the day — see `CHANGELOG.md`'s "End-of-session
+documentation pass" entry for exactly what changed and why).
 
-Session then closed out with a final architecture review requested by
-the user, considering the server's actual intended use and how its
-systems relate: `master-network-reconcile`'s full monitored-state list,
-systemd dependencies, IPv6, container DNS, and wg-easy's kernel-module
-approach — all confirmed working as intended, no functional defects
-found (see `CHANGELOG.md`'s "Final architecture review" entry for the
-full writeup, including the Caddy/dnsmasq boot-race analysis, which was
-the user's main worry and turned out to already be defended in depth).
-The one real gap found — no disk-space monitoring, despite this being a
-continuous-download server — was added to `master-network-reconcile`
-(`disk_space_ok()`) and tested live (real disk + an artificially filled
-tmpfs). Tailscale key-expiry monitoring was considered and declined by
-the user. Repo tagged **R1.0**.
+**As of this update, the working tree has uncommitted documentation
+changes** (this pass) — the user explicitly asked not to commit them.
+Everything else through the `R1.0` tag (commit `7138c2f`) is committed.
 
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
@@ -197,55 +184,80 @@ resolved, plus one unnumbered cleanup and two partial items:
     Stage 7 (final verification) never ran because Stage 5 aborted first.
     It needs a follow-up install run (or a manual continuation) to reach
     a complete, verified state.
+- **H6 + third/fourth live installs + M1 completion (2026-07-28)**: a
+  second live attempt reached Stage 7 before failing on a different bug
+  (**H6** — see `SECURITY_REVIEW.md`/`docs/design-decisions.md` DD-12);
+  fixed, then a third attempt completed all 7 stages successfully for the
+  first time. **M1**'s deferred `cap_drop`/`cap_add`/`read_only` config
+  was then determined empirically via throwaway `docker run` containers
+  (never the real stack) and applied; a fourth live install confirmed no
+  regression. See `CHANGELOG.md` for full detail on each attempt.
+- **Full operational stress test (2026-07-28)**: with the user's explicit
+  broad testing latitude (no production data on the host), validated real
+  admin-configured services, a real WireGuard client (0% loss, ~58-107ms
+  RTT), genuinely-active Tailscale exit-node routing, a full host reboot
+  (confirming **H1**'s fix persists, not incidental), deliberate
+  simultaneous drift injection (all three repaired within one reconcile
+  cycle — the first proof this project's self-healing loop actively
+  repairs, not just reports), cgroup memory-limit enforcement, a real
+  `unpackerr` extraction workload, and a 4-core CPU stress test. No new
+  bugs found — confirmatory.
+- **Final architecture review + disk-space monitoring + R1.0
+  (2026-07-28)**: reviewed reconcile's full monitored-state list, systemd
+  dependencies, IPv6, container DNS, and wg-easy's kernel-module approach
+  against the server's actual intended use, with live verification of
+  each — no functional defects found (see `docs/design-decisions.md`
+  DD-12/DD-13 and `CHANGELOG.md` for the full writeup, including the
+  Caddy/dnsmasq boot-race analysis). Added the one real gap found —
+  disk-space monitoring — to `master-network-reconcile`, tested live
+  against both a real disk and an artificially filled tmpfs. Tagged
+  **R1.0** and exported `install.sh` to `~/Desktop/install-R1.0.sh`
+  (hash-verified identical).
+- **End-of-session documentation pass (2026-07-28, this update, not
+  committed)**: reviewed every `.md` file in the repo; found and fixed
+  staleness in `README.md` (Current Limitations still claimed containers
+  had no resource limits/hardening — false since **M1**; still listed
+  `chown -R` as a limitation — false since **M2**, an earlier session)
+  and `docs/architecture.md` (stage/heredoc line ranges had drifted from
+  today's edits); added `docs/design-decisions.md` DD-12/DD-13. See
+  `CHANGELOG.md`'s "End-of-session documentation pass" entry for the
+  complete list.
 
 ## Remaining Work
 
-- **M1, H1**: fully resolved and now confirmed under real operational
-  conditions (reboot, real workload, resource-limit enforcement) — no
-  remainder left.
-- **M3**: installation-profile scoping (`docs/profiles.md`) — the user
-  explicitly asked to skip this for now ("m3 şimdilik atlayalım").
-- **M7 remainder**:
-  - `check_ipv4_policy`/`check_ipv6_policy` — more integration-shaped;
-    arguably now partially covered in spirit by the live drift-injection
-    testing (firewall drift was injected and confirmed repaired), but not
-    as a repeatable automated test.
-  - `master-docker-netfilter-recovery`'s restart-cooldown check is a
-    possible future unit-test candidate, but only after extracting it
-    into a named function (a small `install.sh` refactor, not attempted).
-  - CI pipeline wiring — no CI exists in this repo yet, not confirmed as
-    wanted. Tier 3 itself remains manual/relayed rather than automated;
-    real CI wiring would also need a non-interactive invocation mode,
-    which doesn't exist today.
-- **Known documentation drift, still not fixed** (flagged in a prior
-  session, still open): `README.md`'s "Roadmap" section intro still says
-  only **C2**/**M6** are "done so far," undercounting everything done
-  since, including today's **H1** regression fix, **H5**/**H6**, **M1**,
-  and the full operational stress-test round.
-- **The server itself**: currently configured with real admin accounts
-  on every service, a real WireGuard client (the user's Mac), and
-  Tailscale exit-node routing enabled — it's no longer in a "just
-  installed, nothing configured" state. Worth checking with the user
-  whether they want to keep using this as their actual production server
-  going forward, or keep reimaging it for further test cycles.
+- Nothing security/functionality-related is open that isn't a deliberate,
+  user-confirmed deferral: **M3** (installation profiles — "m3 şimdilik
+  atlayalım") and **M7**'s remainder (CI wiring needs a non-interactive
+  invocation mode that doesn't exist yet; `check_ipv4_policy`/
+  `check_ipv6_policy` unit tests are more integration-shaped; Tier 3
+  itself stays manual/relayed rather than CI-automated).
+- **The server itself**: configured with real admin accounts on every
+  service, a real WireGuard client (the user's Mac), and Tailscale
+  exit-node routing enabled — no longer a "just installed" blank state.
+  Whether the user keeps using this specific host as real production or
+  keeps reimaging it for further test cycles is their call, not yet
+  decided in-session.
+- **This documentation pass is uncommitted** (by explicit instruction) —
+  a future session (or the user directly) should commit it once reviewed,
+  or ask for the commit if it's still needed.
 
 ## Recommended Next Step
 
-1. The `README.md` Roadmap drift cleanup remains a small, low-risk,
-   documentation-only task that could be picked up any time — the most
-   concrete loose end left.
-2. Ask the user whether this server should now become "real" production
-   (in which case further destructive testing should stop) or stay a
-   disposable test target.
-3. If more testing is wanted: **M7**'s remaining Tier 2/3 items, or
-   designing **M3** (installation profiles) if the user is ready to
-   revisit it.
+1. Commit this documentation pass (`README.md`, `docs/architecture.md`,
+   `docs/design-decisions.md`, `CHANGELOG.md`, `TODO.md`, `SESSION.md`) —
+   left uncommitted per this turn's explicit instruction, but there's no
+   reason to leave it that way indefinitely once reviewed.
+2. Decide the server's fate: real production vs. continued disposable
+   test target — affects how freely future sessions can test against it.
+3. If more work is wanted: **M3** (installation profiles) or **M7**'s
+   remainder, both deliberately deferred, not urgent.
 
 Whichever is chosen, keep following the standing per-change rule: analyze
 and flag risk first, apply only after explicit approval, verify with
 `bash -n`/`shellcheck`/`bats test/` (and `scripts/lint-embedded-scripts.sh`
 for heredoc changes), show the diff, then update
-`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then commit.
+`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then commit (unless told
+not to, as in this turn).
 
 ## Notes
 
@@ -268,10 +280,14 @@ for heredoc changes), show the diff, then update
   cross-session memory as well, not just here.)
 - Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H6, M1-M7,
   L1-L5 — note **H5**/**H6** are new, post-audit) before starting any
-  remediation
-  so status stays consistent across `TODO.md`, `CHANGELOG.md`, and this
-  file.
-- The persistent memory file `project_intended_architecture.md` (outside
-  this repo, under Claude Code's memory directory) records the user's own
-  narrated target architecture; consult it if a future session needs that
-  context again.
+  remediation, so status stays consistent across `TODO.md`,
+  `CHANGELOG.md`, and this file.
+- **Correction:** an earlier version of this file referenced a persistent
+  memory file, `project_intended_architecture.md`, as recording the
+  user's own narrated target architecture. That file does not actually
+  exist in this assistant's cross-session memory directory (verified
+  2026-07-28) — the reference was stale/incorrect. This project's two
+  real memory files are `debian-server-installer-language-pref` and
+  `debian-server-installer-commit-policy`; there is no separate
+  architecture-narration memory. Rely on this repo's own docs
+  (`docs/architecture.md`, `docs/design-decisions.md`) instead.
