@@ -284,31 +284,55 @@ for the full, prioritized list.
 
 ## Roadmap
 
-Tracked in detail in [`TODO.md`](TODO.md). Done so far: the `TS_AUTHKEY`
-prompt was removed entirely (**C2**) and the wg-easy unattended-bootstrap
-subsystem was removed in favor of manual admin setup (**M6**), both on
-2026-07-27. Remaining, at a high level:
+Tracked in detail in [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md).
 
-- Extend `bats-core` unit-test coverage to the remaining pure-logic
-  functions in the embedded scripts, and stand up Tier 3 (disposable-VM)
-  integration testing — see [`docs/testing.md`](docs/testing.md).
-- Introduce opt-in/opt-out installation profiles per service (starting
-  with Portainer, given its `docker.sock` exposure) — see
+**Done, as of 2026-07-28:** all but two of the original 18 audit findings
+are resolved (**C2**, **M6**, **M5**, **H1**, **H2**/**H3** — documented
+as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
+**L5**, **M2**, **L3**, **C1**, **H4**, **M1**), plus two further findings
+(**H5**, **H6**) discovered and fixed via live install testing. Notably:
+- **M1** (container hardening) is fully applied: `security_opt:
+  no-new-privileges`, hardware-sized resource ceilings, and an
+  empirically-determined minimal `cap_drop`/`cap_add` set for both
+  `qbittorrent` and `unpackerr`, plus `read_only: true` for `unpackerr`
+  (found to break `qbittorrent`'s `PUID`/`PGID` handling, so deliberately
+  not applied there).
+- **M7**'s testing strategy: Tier 1 (static analysis of all six embedded
+  heredoc scripts) is done; Tier 2 has 32 `bats-core` unit tests; Tier 3
+  has succeeded end-to-end on four separate live installs, followed by a
+  full operational validation round (reboot, deliberate drift injection
+  into the reconcile loop, resource-limit enforcement, real
+  WireGuard/Tailscale-exit-node traffic, CPU stress) — see
+  [`docs/testing.md`](docs/testing.md) for the full results.
+
+**Remaining, at a high level:**
+
+- Design and implement opt-in/opt-out installation profiles per service
+  (**M3** — explicitly deferred by the user for now) — see
   [`docs/profiles.md`](docs/profiles.md).
-- Add container-level hardening (resource limits, `no-new-privileges`,
-  capability reduction) for untrusted-content-handling services.
-- Stand up a CI pipeline: static analysis for all embedded scripts, plus a
-  disposable-VM based end-to-end integration test — see
-  [`docs/testing.md`](docs/testing.md).
-- Document (and/or make configurable) the `PartOf` service-coupling
-  behavior so operators aren't surprised by cascading restarts.
+- Finish **M7**: unit tests for `check_ipv4_policy`/`check_ipv6_policy`
+  (more integration-shaped, likely a better fit for Tier 3 than a unit
+  test); a non-interactive/answer-file invocation mode for `install.sh`
+  (needed before Tier 3 can be automated in CI rather than run manually);
+  standing up an actual CI pipeline.
+- Consider making the `PartOf` service-coupling behavior configurable,
+  not just documented (**H3** confirmed it as intentional; no
+  opt-out exists today).
 
 ## Development Workflow
 
-- **Do not run the installer against a live/production host** while
-  iterating — it makes systemd, firewall, and Docker daemon-level changes
-  that are only safely testable on a disposable Debian 13 VM or container
-  with real `systemd`.
+- **Running the installer requires the user's explicit, specific
+  approval for that exact action, every time** — it makes systemd,
+  firewall, and Docker daemon-level changes that only mean something
+  against a real host with real `systemd`. A prior approval does not
+  carry over to a later turn or a different action, and an AI assistant
+  must never choose configuration values on the user's behalf — every
+  prompt is relayed to and answered by the user directly. In practice
+  (2026-07-28), this has been exercised successfully against the user's
+  own server, reimaged clean between attempts specifically so there was
+  no production data at risk — see [`docs/testing.md`](docs/testing.md)
+  Tier 3 for the full methodology (including how to drive the script's
+  `/dev/tty`-based prompts non-interactively via `tmux`) and results.
 - Before proposing any change to `install.sh`, run:
   - `bash -n install.sh` (syntax check)
   - `shellcheck install.sh` (static analysis — note this does **not**
