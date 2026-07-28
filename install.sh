@@ -429,6 +429,20 @@ wg_ui_probe() {
     [[ "$curl_rc" -eq 0 && "$WG_UI_HTTP_CODE" =~ ^[23][0-9][0-9]$ ]]
 }
 
+# systemd unit dosyaları ve drop-in'leri sır içermez; içerikleri yol ve
+# systemd direktifidir. Betiğin başındaki umask 077 yüzünden `cat >` ile
+# yazıldıklarında 0600 oluşuyorlardı ve systemd her daemon-reload'da
+# "marked world-inaccessible ... has no effect" uyarısı basıyordu (tek bir
+# boot'ta 12 satır). Aşama 6'nın drop-in'leri zaten açıkça 0644'e
+# çekiliyordu; bu yardımcı aynı muameleyi tek yerden, hepsine uygular.
+set_unit_file_mode() {
+    local unit_path=""
+    for unit_path in "$@"; do
+        chown root:root "$unit_path"
+        chmod 0644 "$unit_path"
+    done
+}
+
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "HATA: Bu betik root kullanıcısı olarak çalıştırılmalıdır." >&2
     exit 1
@@ -870,6 +884,7 @@ TimeoutStartSec=30s
 [Install]
 WantedBy=multi-user.target
 SYSTEMD
+set_unit_file_mode /etc/systemd/system/tailscale-udp-gro.service
 
 systemctl daemon-reload
 systemctl enable tailscale-udp-gro.service
@@ -1650,6 +1665,7 @@ TimeoutStartSec=600s
 [Install]
 WantedBy=multi-user.target
 FW_SYSTEMD
+set_unit_file_mode /etc/systemd/system/docker-tailscale-fw.service
 
 # Docker her başlatıldığında ayrı firewall unit'ini de çeker. Politika yalnız
 # bu unit tarafından uygulanır; aynı helper Docker ExecStartPost'tan ikinci kez
@@ -1661,6 +1677,7 @@ Wants=network-online.target docker-tailscale-fw.service master-compose.service
 After=network-online.target
 RequiresMountsFor=$DOWNLOADS_PATH
 DROPIN
+set_unit_file_mode /etc/systemd/system/docker.service.d/99-tailscale-forward.conf
 
 # Ayrı bir stop/start tailscaled akışında PartOf ile duran firewall ve Compose
 # unit'leri timer'ı beklemeden doğrudan geri çekilsin. Mutual Wants/Requires
@@ -1671,6 +1688,7 @@ cat >/etc/systemd/system/tailscaled.service.d/98-master-stack.conf <<'TS_STACK_D
 Wants=docker-tailscale-fw.service master-compose.service
 Before=docker-tailscale-fw.service master-compose.service
 TS_STACK_DROPIN
+set_unit_file_mode /etc/systemd/system/tailscaled.service.d/98-master-stack.conf
 
 systemctl daemon-reload
 # İlk aktivasyonu bütün helper/unit dosyaları ve OnFailure hedefi yazıldıktan
@@ -2099,6 +2117,7 @@ TimeoutStartSec=330
 [Install]
 WantedBy=multi-user.target
 COMPOSE_SYSTEMD
+set_unit_file_mode /etc/systemd/system/master-compose.service
 
 # WAN veya Tailscale IPv4, daemon yeniden başlamadan değişirse Docker publish
 # adreslerini, dar firewall kuralını ve yönetilen Tailnet servislerini uzlaştır.
@@ -3430,6 +3449,7 @@ ExecStart=/usr/local/sbin/master-docker-netfilter-recovery
 Restart=no
 TimeoutStartSec=1800
 CORE_RECOVERY_SYSTEMD
+set_unit_file_mode /etc/systemd/system/master-docker-netfilter-recovery.service
 
 cat >/etc/systemd/system/master-network-reconcile.service <<'RECONCILE_SYSTEMD'
 [Unit]
@@ -3450,6 +3470,7 @@ ExecStart=/usr/local/sbin/master-network-reconcile
 # bırakır. Sağlıklı kontrol bu sunucuda yalnız milisaniyeler sürer.
 TimeoutStartSec=1800s
 RECONCILE_SYSTEMD
+set_unit_file_mode /etc/systemd/system/master-network-reconcile.service
 
 cat >/etc/systemd/system/master-network-reconcile.timer <<'RECONCILE_TIMER'
 [Unit]
@@ -3469,6 +3490,7 @@ Unit=master-network-reconcile.service
 [Install]
 WantedBy=timers.target
 RECONCILE_TIMER
+set_unit_file_mode /etc/systemd/system/master-network-reconcile.timer
 
 progress_stage_note 95 "Compose ve systemd tanımları son kontrolden geçiriliyor"
 echo "Compose dosyası: /root/docker/compose.yaml"
@@ -3575,9 +3597,7 @@ StartLimitBurst=5
 Restart=on-failure
 RestartSec=10s
 DNSMASQ_DROPIN
-    chown root:root \
-        /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
-    chmod 0644 \
+    set_unit_file_mode \
         /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
 
     cat >/etc/dnsmasq.d/local-services.conf <<EOF
@@ -3705,9 +3725,7 @@ Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=330s
 CADDY_DROPIN
-    chown root:root \
-        /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
-    chmod 0644 \
+    set_unit_file_mode \
         /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
 
     # PartOf stop/restart'i Caddy'ye taşır; bu ters Wants ilişkisi de ayrı bir
@@ -3718,9 +3736,7 @@ CADDY_DROPIN
 Wants=caddy.service
 Before=caddy.service
 TS_CADDY_DROPIN
-    chown root:root \
-        /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
-    chmod 0644 \
+    set_unit_file_mode \
         /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
 
     cat >/etc/caddy/Caddyfile <<EOF

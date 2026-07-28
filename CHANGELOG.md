@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **systemd unit files were written mode `0600`**, so systemd logged
+  `marked world-inaccessible ... has no effect` on every `daemon-reload`
+  — 12 such lines in a single boot. Cause: the script's top-level
+  `umask 077` applies to every `cat >` heredoc. The three drop-ins
+  written in Stage 6 were already being chmod'ed to `0644` explicitly,
+  so the eight units written in Stages 2/3/4 were the only ones affected
+  — the same kind of "two treatments for one kind of file" inconsistency
+  this release has been removing.
+  - `0600` bought nothing here: unit files hold paths and systemd
+    directives, no secrets, and systemd's own message says the
+    restriction has no effect because the data is served over its APIs
+    regardless. Debian's own units are `0644`.
+  - Fixed with a single `set_unit_file_mode()` helper now used at all
+    **eleven** unit/drop-in write sites, replacing both the eight missing
+    cases and Stage 6's three hand-written `chown`/`chmod` pairs. No
+    behavioural change; the canonical bundle's checksums are unaffected
+    because file *contents* did not change.
+
 ### Changed
 
 - **Consistency pass over `install.sh`** (no behavioural change intended;
