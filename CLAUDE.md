@@ -82,10 +82,15 @@ even when working in this repository only.
   renames, or reformatting outside the requested scope, especially inside
   `install.sh`.
 - **Show diff before committing.** Always show the resulting diff (or
-  `git diff`) after an edit and before creating any Git commit; let the
-  user review it first.
-- **Use small Git commits.** Prefer one logical change per commit over
-  large batched commits. Only commit when explicitly asked to.
+  `git diff`) after an edit and before creating any Git commit.
+- **Use small Git commits, and commit after every completed unit of
+  work.** Prefer one logical change per commit over large batched
+  commits. Commit as soon as a change is verified (`bash -n`/`shellcheck`/
+  `bats test/` clean, diff shown) without waiting to be asked each time
+  (reversed 2026-07-28 from an earlier "only commit when explicitly
+  asked" convention) — but this doesn't apply to actions outside git
+  commits (file edits, live host commands, etc.), which still need their
+  own explicit approval per the rules above.
 - **Update tracking docs after every `install.sh` change.** Immediately
   after any change to `install.sh` is applied and verified, update
   `TODO.md` (move the item to Completed / adjust its status),
