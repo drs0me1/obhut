@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Portainer rejected every write request (stop a container, remove an
+  image, etc.) made through `portainer.$LOCAL_DOMAIN` — the Tailnet DNS
+  name proxied through Caddy — with a CSRF "origin invalid" error.
+  Found via real usage after R1.0. Root cause: Caddy always presents
+  `Host: 127.0.0.1:9443` to Portainer (its own dial address), while the
+  browser's `Origin`/`Referer` is `http://portainer.$LOCAL_DOMAIN` — a
+  mismatch Portainer's CSRF protection treats as cross-origin. Fixed by
+  setting Portainer's `TRUSTED_ORIGINS` environment variable, only when
+  local DNS is enabled (**H7** in `SECURITY_REVIEW.md`).
+  - **A wrong fix was caught before reaching `install.sh`.** The first
+    attempt set `TRUSTED_ORIGINS=http://portainer.$LOCAL_DOMAIN`
+    (`scheme://host`), matching how Portainer's current `develop` branch
+    validates this value (it recently migrated to Go's native
+    `http.CrossOriginProtection`). Tested directly against the live
+    deployed `compose.yaml` first, specifically to verify before
+    committing to `install.sh` — Portainer **crashed on startup**
+    (fatal: "invalid url for trusted origin"). The pinned `2.39.5`
+    release still uses the older `gorilla/csrf` library, whose validator
+    does the *opposite*: it rejects any value containing `"://"` and
+    expects a bare hostname. Caught by reading `2.39.5`'s actual tagged
+    source on GitHub rather than trusting `develop`'s (newer, different)
+    behavior. Reverted the live container immediately, corrected the
+    value to `portainer.$LOCAL_DOMAIN` (no scheme), and confirmed live:
+    container starts and stays up, and a simulated write request with
+    the original failing `Origin`/`Referer` headers now returns `401`
+    (reaches the authentication layer) instead of `403`
+    ("origin invalid"). Applied to `install.sh` only after this live
+    confirmation.
+  - `install.sh` 4343 → 4365 lines. Verified with `bash -n`, `shellcheck`,
+    `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
+
 ## [1.0.0] - 2026-07-28
 
 ### Added

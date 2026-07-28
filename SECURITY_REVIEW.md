@@ -35,16 +35,17 @@ fix, and the estimated risk of making that fix.
 ## Current findings
 
 18 findings total from the original 2026-07-27 static audit (corrected
-from an earlier miscount of 19); 16 resolved, 2 currently **open**. Two
-additional findings, **H5** and **H6**, were discovered on 2026-07-28 via
-live Tier 3 install tests (not part of the original static audit — static
-review alone could not have caught either, see their entries below) and
-both resolved the same day.
+from an earlier miscount of 19); 16 resolved, 2 currently **open**. Three
+additional findings, **H5**, **H6**, and **H7**, were discovered on
+2026-07-28 — the first two via live Tier 3 install tests, **H7** via real
+post-R1.0 usage — (not part of the original static audit — static review
+alone could not have caught any of them, see their entries below) and all
+three resolved the same day.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 6 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, 2026-07-28 — post-audit) |
+| High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
 | Medium   | 2 | 5 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, 2026-07-28) |
 | Low      | 0 | 5 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, 2026-07-28) |
 
@@ -53,8 +54,8 @@ Note: **H2**, **H3**, and **C1** were resolved by explicit user decision to
 documentation — not by changing `install.sh`'s functional behavior.
 **M1** is now fully resolved, including the Tier 2 capability testing that
 was previously deferred to the live SSH test (see its entry below).
-**H5**/**H6** are not counted in the "18 findings total" above since they postdate that
-audit; they're genuine 19th/20th, separately-tracked findings.
+**H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
+audit; they're genuine 19th/20th/21st, separately-tracked findings.
 
 ## Critical issues
 
@@ -359,6 +360,56 @@ audit; they're genuine 19th/20th, separately-tracked findings.
   that represents an expected, non-actionable state; does not touch the
   two sibling branches that represent genuine drift, nor the periodic
   timer's own separate operator-visible reporting of the same condition.
+
+### H7 — Portainer rejects every write request made through the Tailnet DNS name — ✅ RESOLVED (2026-07-28, found via real post-R1.0 usage)
+- **Location:** `install.sh` → `compose.yaml` heredoc,
+  `services.portainer.environment`
+- **Description:** Found while actually using the server after R1.0 —
+  every mutating action in Portainer's UI (stop a container, remove an
+  image, etc.) failed silently in the browser when accessed via
+  `portainer.$LOCAL_DOMAIN` (the Tailnet DNS name proxied through Caddy).
+  Portainer's own logs showed `error="origin invalid"` from its CSRF
+  middleware: Caddy always presents `Host: 127.0.0.1:9443` to Portainer
+  (its own dial address), but the browser's `Origin`/`Referer` is
+  `http://portainer.$LOCAL_DOMAIN` — a mismatch Portainer's CSRF
+  protection treats as cross-origin and rejects unless the origin is
+  explicitly trusted (`trusted_origins=[]` by default). Read-only
+  access (browsing, viewing logs) still worked; only state-changing
+  requests were blocked.
+- **Impact:** Portainer was effectively read-only when accessed via the
+  intended Tailnet DNS path — the one meant for convenient day-to-day
+  use without an SSH tunnel. Direct access via `127.0.0.1:9443` (SSH
+  tunnel) was unaffected, since there Origin and Host naturally match.
+- **Resolution:** Portainer supports a `TRUSTED_ORIGINS` environment
+  variable for exactly this reverse-proxy-with-different-hostname case.
+  Added it to the `portainer` service, set to `portainer.$LOCAL_DOMAIN`
+  only when local DNS is enabled (empty/unset otherwise, since without
+  Caddy in the picture there's no mismatch to correct).
+- **A wrong fix caught before being applied to `install.sh`:** the first
+  attempt used `TRUSTED_ORIGINS=http://portainer.$LOCAL_DOMAIN`
+  (`scheme://host`, matching how Portainer's current `develop` branch —
+  which has since migrated to Go's native `http.CrossOriginProtection`
+  — validates this value). Applied directly to the live deployed
+  `compose.yaml` first specifically to test it before committing to
+  `install.sh` — Portainer **crashed on startup** (`FTL`: "invalid url
+  for trusted origin"), because the pinned `2.39.5` release still uses
+  the older `gorilla/csrf` library, whose `validate.IsTrustedOrigin`
+  does the *opposite* validation: it explicitly **rejects** any value
+  containing `"://"` and expects a bare hostname instead. Confirmed by
+  reading `2.39.5`'s actual tagged source (not `develop`, which reflects
+  newer, different behavior — the version mismatch was the root cause of
+  the first wrong guess). Reverted the live container immediately,
+  corrected to the bare-hostname form (`portainer.$LOCAL_DOMAIN`,
+  no scheme), and confirmed live: container starts cleanly, and a
+  simulated write request with the original failing `Origin`/`Referer`
+  headers now returns `401` (reaches the auth layer) instead of `403`
+  ("origin invalid").
+- **Change risk:** Low once corrected — a single, conditional environment
+  variable read directly from an already-known state variable
+  (`LOCAL_DOMAIN`); no effect when local DNS is disabled. Verified with
+  `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`, and
+  `bats test/`, plus live confirmation against the pinned image version
+  specifically (not just the library's current docs/source).
 
 ## Medium
 
@@ -737,9 +788,10 @@ Suggested order of remediation (also tracked in `TODO.md`):
 
 Sixteen numbered remediations applied so far (**C2**, **M6**, **M5**,
 **H1**, **H2**, **H3**, **M4**, **L1**, **L2**, **L4**, **L5**, **M2**,
-**L3**, **C1**, **H4**, **M1**) plus two post-audit findings from live
-testing (**H5**, **H6**) and one unnumbered cleanup (legacy reboot-timer
-removal); only **M3**/**M7** remain open as of this review.
+**L3**, **C1**, **H4**, **M1**) plus three post-audit findings from live
+testing and real usage (**H5**, **H6**, **H7**) and one unnumbered cleanup
+(legacy reboot-timer removal); only **M3**/**M7** remain open as of this
+review.
 
 ## Review History
 
@@ -765,3 +817,4 @@ removal); only **M3**/**M7** remain open as of this review.
 | 2026-07-28 | User + Claude Code (live Tier 3 test, third attempt) | Third live install on the same server, reimaged clean again, with **H1** (regression), **H5**, and **H6** all fixed | **First fully successful end-to-end install**: all 7 stages completed, ending in "AŞAMA 7/7 TAMAMLANDI" and the script's own success summary. Confirmed live: all 6 containers up (`wg-easy`/`filebrowser` reporting `healthy`), all core systemd units (`docker`, `tailscaled`, `docker-tailscale-fw`, `master-compose`, `caddy`, `dnsmasq`, `master-network-reconcile.timer`) active, no failed units, and a manual `master-network-reconcile --check` now exits `0` (still prints the informational "wg-easy ilk kurulumu tamamlanmamış" diagnostic, exactly as **H6** intended — visible but non-blocking). This closes out the first full validation cycle of the 2026-07-28 remediation work; **M1**'s remainder and **H1**'s original real-server verification are the natural next live-testing items |
 | 2026-07-28 | Claude Code (live capability testing) | `compose.yaml` → `services.qbittorrent`, `services.unpackerr` | **M1** fully resolved: determined the minimal working `cap_drop`/`cap_add`/`read_only` configuration for both containers empirically, using isolated throwaway `docker run` test containers (never the real stack) — `unpackerr` confirmed clean with `cap_drop: [ALL]` + `read_only: true`; `qbittorrent` confirmed clean with `cap_drop: [ALL]` + `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`, and `read_only: true` confirmed to actively break its PUID/PGID mechanism (911:1001 instead of 1000:1000) so deliberately not applied. Applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/`. Mid-testing, a `docker rm -f` filtered by image name accidentally removed the real production `qbittorrent` container alongside test containers — caught immediately, recreated via `docker compose up -d --no-deps qbittorrent` with no data loss (`/config` is a host bind mount; no real config had been set yet on this fresh install) |
 | 2026-07-28 | User + Claude Code (live Tier 3 test, fourth attempt + operational testing) | Fourth live install (server reimaged clean, all fixes incl. **M1** in place), followed by a full round of post-install operational testing on the same host | Fourth install succeeded end-to-end again — **M1**'s hardening didn't regress Stage 5. With the user's explicit broad testing latitude (host had no production data), ran a comprehensive operational validation: real admin accounts configured for every service; a real WireGuard client connected (confirmed via `wg show` handshake + `docker exec wg-easy ping`ing the peer from inside the container's netns: 0% loss, ~58-107ms RTT); Tailscale exit-node confirmed genuinely routing real traffic (not just configured) via `MASTER-TS-FORWARD` mangle-chain packet counters; a full host reboot confirmed **H1**'s module-loading fix persists across reboots (not just within the install session) and all services recover automatically; three deliberate drifts injected simultaneously (stopped container, disabled IP forwarding, deleted a firewall rule) were all detected and repaired by reconcile within one 5-minute cycle; **M1**'s `mem_limit` confirmed to actually enforce via a throwaway container OOM test; `unpackerr`'s new hardening confirmed to survive a real archive-extraction workload, not just idle; a 4-core CPU stress test showed all services responding in single-digit milliseconds throughout, with a reconcile cycle completing successfully mid-stress. No new bugs found — this round was confirmatory, validating that today's four fixes hold up under real operational conditions, not just a clean install |
+| 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.portainer` | **H7** found and resolved: Portainer rejected every write request made via `portainer.ayc` ("origin invalid" CSRF error — Caddy always presents `Host: 127.0.0.1:9443` to Portainer while the browser's Origin is `http://portainer.ayc`). Added `TRUSTED_ORIGINS`. First attempt (`http://portainer.$LOCAL_DOMAIN`, matching Portainer's current `develop`-branch validation) was tested directly against the live deployed `compose.yaml` before touching `install.sh` and **crashed Portainer on startup** — the pinned `2.39.5` release uses the older `gorilla/csrf` library, whose validator does the opposite (rejects any `"://"`, expects a bare hostname). Caught by reading `2.39.5`'s actual tagged source, not `develop`. Reverted immediately, corrected to `portainer.$LOCAL_DOMAIN` (no scheme), confirmed live (container stable, simulated write request now reaches the auth layer — `401` instead of `403`), then applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |

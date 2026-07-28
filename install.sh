@@ -1746,6 +1746,24 @@ find "$DOWNLOADS_PATH/media" \
     -exec chown 1000:1000 {} +
 progress_stage_note 15 "Veri ve medya dizinleri hazırlandı"
 
+# Portainer 2.39.5'in kendi CSRF koruması (gorilla/csrf), Origin başlığı Host ile
+# eşleşmeyen istekleri reddeder. Caddy, portainer.$LOCAL_DOMAIN üzerinden proxy'lerken
+# Portainer'a her zaman Host: 127.0.0.1:9443 gönderir, ama tarayıcının Origin'i
+# http://portainer.$LOCAL_DOMAIN olur — bu eşleşmezlik olmadan her yazma isteği
+# (container durdurma, image silme vb.) "origin invalid" ile reddedilir. Yalnız
+# yerel DNS açıksa gerekli; kapalıyken Portainer'a zaten yalnız 127.0.0.1:9443
+# üzerinden (Caddy'siz) erişiliyor, orada Origin/Host doğal olarak eşleşir.
+# ÖNEMLİ: gorilla/csrf'in TrustedOrigins'i şema İÇERMEYEN çıplak host adı bekler
+# (validate.IsTrustedOrigin, 2.39.5 etiketinde: "://" varsa reddeder) — bu,
+# Portainer'ın daha yeni sürümlerinde (Go'nun native http.CrossOriginProtection'ına
+# geçiş) kullanılan "scheme://host" formatının TERSİ. "http://..." ile denenip
+# canlıda doğrulanmış: değer geçersiz sayılır ve container fatal hata ile
+# restart döngüsüne girer (2.39.5'e pin'liyken şema OLMADAN kullanın).
+PORTAINER_TRUSTED_ORIGINS=""
+if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
+    PORTAINER_TRUSTED_ORIGINS="portainer.${LOCAL_DOMAIN}"
+fi
+
 cat >/root/docker/compose.yaml <<YAML_EOF
 x-logging: &default-logging
   driver: json-file
@@ -1759,6 +1777,10 @@ services:
     container_name: portainer
     restart: unless-stopped
     logging: *default-logging
+    environment:
+      # Caddy'nin portainer.$LOCAL_DOMAIN üzerinden proxy'lediği istekler için
+      # CSRF Origin kontrolünü geçmesi gerekli (bkz. Stage 4'teki açıklama).
+      TRUSTED_ORIGINS: "${PORTAINER_TRUSTED_ORIGINS}"
     ports:
       - "127.0.0.1:9443:9443/tcp"
     volumes:

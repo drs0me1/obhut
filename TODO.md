@@ -1,18 +1,21 @@
 # TODO
 
 Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
-(18 findings total, not 19 — an earlier miscount was corrected), plus two
-additional findings (**H5**, **H6**) discovered 2026-07-28 across two live
-Tier 3 install test attempts.
+(18 findings total, not 19 — an earlier miscount was corrected), plus
+three additional findings (**H5**, **H6**, **H7**) discovered 2026-07-28
+— the first two via live Tier 3 install tests, **H7** via real post-R1.0
+usage.
 `install.sh` line references below were refreshed after sixteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 **L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), a
-regression fix to **H1** plus the new **H5**/**H6** fixes (all from live
-tests), one unnumbered cleanup (legacy reboot-timer removal), and a new
-disk-space monitoring check added to `master-network-reconcile` after a
-final architecture review; file is now 4343 lines. **Tagged as R1.0**
-(2026-07-28). Do not start work on any item without explicit user
-approval (per `CLAUDE.md`).
+regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
+unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
+monitoring check added to `master-network-reconcile` after a final
+architecture review; file is now 4365 lines. Originally **tagged R1.0**
+(2026-07-28) before **H7** was found — the tag itself is not moved/
+retagged; **H7** is simply the first fix that postdates it (v1.1 work).
+Do not start work on any item without explicit user approval (per
+`CLAUDE.md`).
 
 ## Critical
 
@@ -293,3 +296,20 @@ _All Low findings resolved — see Completed below._
       `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`.
       Tailscale key-expiry monitoring was considered and declined by the
       user (tracked manually instead). **Tagged R1.0.**
+- [x] **H7 (new finding, resolved, 2026-07-28, first v1.1 fix).** Found
+      via real usage after R1.0: Portainer rejected every write request
+      made through `portainer.ayc` (CSRF "origin invalid" — Caddy always
+      presents `Host: 127.0.0.1:9443` to Portainer while the browser's
+      Origin is `http://portainer.ayc`). Fixed with Portainer's
+      `TRUSTED_ORIGINS` env var. First attempt
+      (`http://portainer.$LOCAL_DOMAIN`, matching Portainer's `develop`
+      branch) was tested against the live deployed `compose.yaml` first
+      and **crashed Portainer** — the pinned `2.39.5` release uses the
+      older `gorilla/csrf` library, which expects a bare hostname (no
+      scheme) and rejects anything containing `"://"`. Caught by reading
+      `2.39.5`'s actual tagged source rather than `develop`. Reverted
+      immediately, corrected to `portainer.$LOCAL_DOMAIN`, confirmed live
+      (container stable; a simulated write request now returns `401`
+      instead of `403`), then applied to `install.sh`. `install.sh` 4343
+      → 4365 lines. Verified with `bash -n`, `shellcheck`,
+      `scripts/lint-embedded-scripts.sh`, `bats test/`.
