@@ -3,17 +3,16 @@
 ## Planned testing strategy
 
 > **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
-> tests); Tier 3 had two real, manual attempts so far (found and fixed
-> three real bugs across both — **H1** regression, **H5**, **H6** — see
-> below); CI wiring still not attempted.** There is still no automated
-> test suite or CI pipeline for this repository (finding **M7** in
-> `SECURITY_REVIEW.md`). The only end-to-end correctness signal remains a
-> real, human-supervised install run — Stage 7's own runtime verification
-> hasn't yet run to completion in either 2026-07-28 attempt (the first
-> failed at Stage 5, the second at Stage 7 itself); a third attempt is
-> planned. This document proposes a staged strategy to eventually make
-> this repeatable via CI, without requiring a human to relay every prompt by
-> hand each time.
+> tests); Tier 3 had its first three real, manual attempts, ending in a
+> full success (found and fixed three real bugs along the way — **H1**
+> regression, **H5**, **H6** — see below); CI wiring still not attempted.**
+> There is still no automated test suite or CI pipeline for this
+> repository (finding **M7** in `SECURITY_REVIEW.md`). The third 2026-07-28
+> attempt is the first time this repo's `install.sh` has completed a real
+> install end-to-end successfully, including Stage 7's own runtime
+> verification. This document proposes a staged strategy to eventually
+> make this repeatable via CI, without requiring a human to relay every
+> prompt by hand each time.
 
 ### Why this is hard
 
@@ -134,7 +133,7 @@ alone.
   toward the modularization discussed in `docs/design-decisions.md`
   (DD-9), without requiring the full heredoc-to-file migration up front.
 
-### Tier 3 — Integration testing (disposable VM) — 🟡 FIRST REAL ATTEMPT (2026-07-28)
+### Tier 3 — Integration testing (disposable VM) — ✅ FIRST FULL SUCCESS (2026-07-28)
 
 - Full end-to-end verification requires actually running `install.sh` —
   this must only ever happen against a host with no data worth losing,
@@ -190,8 +189,18 @@ alone.
   attempt to verify the fix by patching the already-deployed reconcile
   script directly on the server (skipping a third reimage) was blocked
   by the auto-mode classifier as an unreviewed live edit — a reasonable
-  guardrail; fixed in tracked `install.sh` instead. A third attempt is
-  planned to confirm Stage 7 now completes end-to-end.
+  guardrail; fixed in tracked `install.sh` instead.
+- **Third real attempt (2026-07-28, same day) — first full success:** the
+  server was reimaged clean a third time with all three fixes (H1
+  regression, H5, H6) in place. All 7 stages completed successfully,
+  ending in "AŞAMA 7/7 TAMAMLANDI." Confirmed live afterward: all 6
+  containers up (`wg-easy`/`filebrowser` healthy), all core systemd units
+  active, zero failed units, and `master-network-reconcile --check` now
+  exits `0` (still reports wg-easy's pending manual setup informationally,
+  as intended, but no longer blocks on it). This is the first time this
+  repo's `install.sh` has completed a real, end-to-end install
+  successfully — three attempts, three real bugs found and fixed, each
+  attempt progressing one stage further than the last.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

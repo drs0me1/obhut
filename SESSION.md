@@ -9,13 +9,17 @@ can pick up without re-deriving context.
 Same session, continued into a much bigger phase: after finishing the M7
 Tier 2 survey (see below), did a full live audit of the user's actual
 production server over SSH (`ssh nrm`), then — with the user's explicit,
-turn-by-turn approval — ran two real Tier 3 install tests against that
+turn-by-turn approval — ran three real Tier 3 install tests against that
 same server, reimaged clean each time. First attempt failed at Stage 5
 (**H1** regression + **H5**, both fixed). Second attempt got all the way
 through Stage 6 (a first) and failed at Stage 7 (**H6**, found and
-fixed). The user is now reimaging the server a third time to test with
-all three fixes in place. See `CHANGELOG.md`'s two "live Tier 3 install
-test" entries for the full narrative.
+fixed). **Third attempt completed all 7 stages successfully
+end-to-end** — the first fully clean install of this repo's `install.sh`,
+confirmed live (all containers healthy, all core units active, zero
+failed units, `master-network-reconcile --check` exits `0`). See
+`CHANGELOG.md`'s three "live Tier 3 install test" entries for the full
+narrative. This closes out the first full validation cycle of the
+2026-07-28 remediation work.
 
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
@@ -176,17 +180,13 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Remaining Work
 
-- **Confirm the third live install run succeeds end-to-end**: two prior
-  attempts each got one stage further (Stage 5, then Stage 7) before
-  hitting a real bug; a third attempt, with all three fixes (**H1**
-  regression, **H5**, **H6**) in place, is in progress/planned to confirm
-  Stage 7 finally completes cleanly. Same rules apply: explicit per-step
-  approval, this assistant relays prompts rather than choosing values,
-  tmux-based interaction for the `/dev/tty` prompts (see `docs/testing.md`
-  Tier 3).
 - **M1 remainder**: `cap_drop: [ALL]` for `qbittorrent`/`unpackerr` and
   `read_only` rootfs — was deferred to "the live SSH test phase," which
-  has now started; worth revisiting once the install actually completes.
+  has now happened and produced a fully working server; a good next
+  candidate to test live, empirically, on this same host.
+- **H1's original deferred item**: real-server confirmation that wg-easy
+  brings up `wg0` successfully — now confirmed, repeatedly, across all
+  three Tier 3 attempts.
 - **M3**: installation-profile scoping (`docs/profiles.md`) — the user
   explicitly asked to skip this for now ("m3 şimdilik atlayalım").
 - **M7 remainder**:
@@ -206,13 +206,14 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Recommended Next Step
 
-1. Finish the live install on the server (see above) — the natural,
-   most direct next step, since the fixes just applied specifically
-   target the failure that stopped it.
-2. Once installed, revisit **M1**'s remainder (`cap_drop`, `read_only`)
-   live, now that a real host is available to test against empirically.
-3. The `README.md` Roadmap drift cleanup remains a small, low-risk,
+1. Revisit **M1**'s remainder (`cap_drop: [ALL]`, `read_only`) live on
+   the now fully-installed server — the natural next live-testing item,
+   directly enabled by the Tier 3 success.
+2. The `README.md` Roadmap drift cleanup remains a small, low-risk,
    documentation-only task that could be picked up any time.
+3. Consider whether the user wants to keep this specific server as the
+   long-term production box now, or continue treating it as a disposable
+   test target for further changes.
 
 Whichever is chosen, keep following the standing per-change rule: analyze
 and flag risk first, apply only after explicit approval, verify with

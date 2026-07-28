@@ -622,6 +622,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   4296 lines. Verified with `bash -n`, `shellcheck`,
   `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
   Synced `SECURITY_REVIEW.md` (new H6 entry + updated findings
-  table/count) and `TODO.md`. A third live end-to-end run is planned to
-  confirm Stage 7 now completes with all three fixes (H1 regression, H5,
-  H6) in place.
+  table/count) and `TODO.md`.
+- **Third live Tier 3 install test — first full success.** User reimaged
+  the server clean a third time and gave explicit approval to re-run
+  `install.sh` again, with all three fixes (H1 regression, H5, H6) in
+  place. Same tmux-relay methodology, same default answers as before
+  (default downloads path, local DNS enabled, domain `ayc`). All 7 stages
+  completed successfully end-to-end for the first time, ending in
+  "AŞAMA 7/7 TAMAMLANDI" and the script's own success summary.
+- Confirmed live afterward: all 6 containers up (`wg-easy`/`filebrowser`
+  reporting `healthy`), all core systemd units (`docker`, `tailscaled`,
+  `docker-tailscale-fw`, `master-compose`, `caddy`, `dnsmasq`,
+  `master-network-reconcile.timer`) active, zero failed units, and a
+  manual `master-network-reconcile --check` now exits `0` — it still
+  prints the informational "wg-easy ilk kurulumu tamamlanmamış" message
+  (wg-easy's admin account still needs manual first-time setup via its
+  web UI, exactly as **M6** intends), but no longer treats that as a
+  blocking failure, exactly as **H6** intended.
+- This closes out the first full validation cycle for the 2026-07-28
+  remediation work (H1 regression, H5, H6) across three live attempts,
+  each progressing one stage further than the last (Stage 5 → Stage 7 →
+  full success). Synced `SECURITY_REVIEW.md` (Review History), `TODO.md`,
+  and `docs/testing.md` to record the successful outcome.

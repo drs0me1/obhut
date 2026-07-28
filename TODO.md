@@ -54,12 +54,11 @@ _All High findings resolved — see Completed below._
       unit-testing — each is essentially a wait loop plus real side
       effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
       integration-shaped, likely Tier 3 instead); CI wiring. Tier 3 itself
-      had two real attempts on 2026-07-28 (see Completed below and
+      had three real attempts on 2026-07-28 (see Completed below and
       `docs/testing.md`) — found and fixed three real bugs (**H1**
-      regression, **H5**, **H6**) across both, progressing from failing at
-      Stage 5 to failing at Stage 7; a third attempt is planned to confirm
-      a fully successful end-to-end completion with all three fixes in
-      place.
+      regression, **H5**, **H6**) across the first two, then the third
+      attempt completed all 7 stages successfully end-to-end, the first
+      fully clean install of this repo's `install.sh`.
 
 ## Low
 
@@ -236,5 +235,12 @@ _All Low findings resolved — see Completed below._
       removing `runtime_ok=1` from that one branch only (kept the
       diagnostic message and `WG_CONFIGURATION_INVALID=1`); the periodic
       reconcile timer's own separate operator reporting of this condition
-      is unaffected. `bash -n` + `shellcheck` clean (2026-07-28). A third
-      live end-to-end run is planned to confirm Stage 7 now completes.
+      is unaffected. `bash -n` + `shellcheck` clean (2026-07-28).
+- [x] **Third live Tier 3 install test (2026-07-28) — first full success.**
+      Server reimaged clean again with all three fixes (**H1** regression,
+      **H5**, **H6**) in place. All 7 stages completed successfully
+      end-to-end for the first time. Confirmed live: all 6 containers up
+      (`wg-easy`/`filebrowser` healthy), all core systemd units active, no
+      failed units, and a manual `master-network-reconcile --check` now
+      exits `0` (still prints the informational wg-easy-setup-pending
+      message, exactly as **H6** intended — visible, non-blocking).
