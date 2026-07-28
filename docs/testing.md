@@ -296,7 +296,9 @@ alone.
     byte-identical to the live file), the manifest lists all eight
     entries in the expected order, `master-network-reconcile --check`
     reports every field `0` — including the new `compose_file=0` — and
-    exits `0`, the install banner shows `2026.07.28-v1.1`, `state.env`
+    exits `0`, the install banner shows `2026.07.28-v1.1` (the release
+    string was renamed to `-v1b` immediately afterwards, so the next run
+    will show that instead), `state.env`
     finally carries `DOWNLOADS_PATH`, and `qbittorrent` runs with
     `Memory=0 NanoCpus=0`.
   - **The finding this run produced:** the deployed `compose.yaml` was

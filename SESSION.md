@@ -231,7 +231,7 @@ resolved, plus one unnumbered cleanup and two partial items:
     local-DNS-disabled path is guarded before validation, so **H7**'s
     crash can't recur there.
   - **M8**/**M9**/**L6** fixed plus the stale `MASTER_SETUP_VERSION`
-    (`2026.07.26-r8` → `2026.07.28-v1.1`; `STACK_SCHEMA=8` deliberately
+    (`2026.07.26-r8` → `2026.07.28-v1b`; `STACK_SCHEMA=8` deliberately
     left alone) — commit `77be777`. Added DD-14 and DD-15.
   - **M10** fixed with a narrowed scope — `compose.yaml` drift is
     detected and reported, never restored, and deliberately outside

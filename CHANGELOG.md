@@ -99,7 +99,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `MASTER_SETUP_VERSION` corrected from the stale `2026.07.26-r8` to
-  `2026.07.28-v1.1`, and reconcile's two summary lines no longer print an
+  `2026.07.28-v1b`, and reconcile's two summary lines no longer print an
   "R8" prefix — logs, the install banner and the success summary now
   identify which release actually ran. `STACK_SCHEMA=8` is deliberately
   unchanged: it versions `state.env`'s on-disk format, which did not

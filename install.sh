@@ -5,7 +5,7 @@ umask 077
 # Release identity of this installer. Distinct from STACK_SCHEMA below,
 # which versions state.env's on-disk format and only changes when that
 # format does.
-MASTER_SETUP_VERSION="2026.07.28-v1.1"
+MASTER_SETUP_VERSION="2026.07.28-v1b"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300

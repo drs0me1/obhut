@@ -15,7 +15,7 @@ unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
 architecture review; file is now 4449 lines. Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
-retagged; **H7** is simply the first fix that postdates it (v1.1 work).
+retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
 `CLAUDE.md`).
 
@@ -308,7 +308,7 @@ _All High findings resolved — see Completed below._
       `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`.
       Tailscale key-expiry monitoring was considered and declined by the
       user (tracked manually instead). **Tagged R1.0.**
-- [x] **H7 (new finding, resolved, 2026-07-28, first v1.1 fix).** Found
+- [x] **H7 (new finding, resolved, 2026-07-28, first v1b fix).** Found
       via real usage after R1.0: Portainer rejected every write request
       made through `portainer.ayc` (CSRF "origin invalid" — Caddy always
       presents `Host: 127.0.0.1:9443` to Portainer while the browser's
@@ -398,7 +398,7 @@ _All High findings resolved — see Completed below._
       pass and deferring it would strand the published bindings on a
       stale IP.
 - [x] **Version string corrected (2026-07-28).** `MASTER_SETUP_VERSION`
-      `2026.07.26-r8` → `2026.07.28-v1.1`, and reconcile's two summary
+      `2026.07.26-r8` → `2026.07.28-v1b`, and reconcile's two summary
       lines no longer print an "R8" prefix, so logs identify which
       release actually ran. `STACK_SCHEMA=8` deliberately left alone — it
       versions `state.env`'s on-disk format, which did not change; a
