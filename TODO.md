@@ -55,6 +55,25 @@ _All High findings resolved — see Completed below._
       attempt completed all 7 stages successfully end-to-end, the first
       fully clean install of this repo's `install.sh`.
 
+- [ ] **Unit-test `canonical_bundle_ok()`'s two manifest branches**
+      (2026-07-28, **deferred to the next version by the user**). **M8**
+      (manifest generation, Stage 6) and **M10** (the expected-entry list
+      in `canonical_bundle_ok`) both touched the local-DNS-**disabled**
+      branch, which has never executed in any of the five live runs. The
+      two sides must agree exactly — one produces the manifest, the other
+      compares it with a literal string equality — and a mismatch makes
+      reconcile `exit 1` at its first gate, disabling self-healing
+      entirely. Neither `bash -n` nor `shellcheck` can see this class of
+      error.
+      Cheap to close without a host: extract `canonical_bundle_ok`'s body
+      with the same technique `test/reconcile_functions.bats` already
+      uses, override `owned_file_ok` inside the test so it doesn't need
+      GNU `stat`, and assert both branches plus a deliberately corrupted
+      manifest — roughly four cases. Counts toward **M7**'s Tier 2.
+      Note the live-install scenario for this path is *not* worth
+      chasing: local DNS is always enabled on this deployment (see
+      `docs/testing.md`), so the unit test is the whole remedy.
+
 ## Low
 
 - [ ] **L7** (2026-07-28, whole-file review, **deferred by the user**) —

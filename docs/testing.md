@@ -339,8 +339,15 @@ narrative above); unchecked items still describe intent only.
 - [x] Fresh install, local DNS enabled (exercised on all four 2026-07-28
       attempts; the no-local-DNS path itself remains unexercised — see
       below)
-- [ ] Fresh install, no local DNS (Tailscale login is always interactive
-      browser login as of 2026-07-27 — see **C2**)
+- [ ] Fresh install, no local DNS — **not a pending gap; effectively
+      unused by design.** The user confirmed (2026-07-28) that local DNS
+      is always installed on this deployment; the Stage 0 question exists
+      only because the *domain name* is decided per install, not because
+      the feature is optional in practice. Every live run to date has
+      answered `E`. Leave this unchecked as a record of what has not been
+      exercised, but do not treat closing it as valuable work on its own
+      — the code path's real risk is covered by the unit test tracked in
+      `TODO.md` instead, which is cheaper and does not need a host.
 - [x] Fresh install, verify wg-easy comes up unconfigured (`/setup`) and
       the final summary instructs manual completion — confirmed via
       `check_compose_runtime()`'s "wg-easy ilk kurulumu tamamlanmamış"
