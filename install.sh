@@ -2,7 +2,10 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.07.26-r8"
+# Release identity of this installer. Distinct from STACK_SCHEMA below,
+# which versions state.env's on-disk format and only changes when that
+# format does.
+MASTER_SETUP_VERSION="2026.07.28-v1.1"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -1213,8 +1216,18 @@ ensure_forward_prefix() {
     local bin="$1" target="" last_rule=""
     [[ -n "$bin" ]] || return 0
 
+    # These three chains are created by Docker and Tailscale, not by this
+    # script, and their names/layout are internal details of those
+    # projects rather than a stable interface. Name the missing one
+    # explicitly: a silent failure here aborts the whole helper under
+    # set -e, and the most likely cause — a Docker release that renamed
+    # or restructured its FORWARD chains — is otherwise invisible.
     for target in DOCKER-USER DOCKER-FORWARD ts-forward; do
-        "$bin" -w 5 -L "$target" -n >/dev/null 2>&1 || return 1
+        if ! "$bin" -w 5 -L "$target" -n >/dev/null 2>&1; then
+            echo "HATA: Beklenen firewall zinciri bulunamadı: $target ($bin)." >&2
+            echo "Docker veya Tailscale sürümü bu betiğin varsaydığı zincir düzenini değiştirmiş olabilir." >&2
+            return 1
+        fi
     done
 
     # Önce yeni doğru prefix'i ekle, sonra aşağıdaki eski kopyaları satır
@@ -1726,13 +1739,19 @@ DOWNLOADS_PATH=$DOWNLOADS_PATH
 EOF
 chown root:root /etc/master-stack/state.env
 chmod 0600 /etc/master-stack/state.env
-install -m 0600 -o root -g root \
-    /etc/master-stack/state.env \
-    /usr/local/share/master-stack/state.env
-(cd /usr/local/share/master-stack &&
-    sha256sum -- state.env >SHA256SUMS)
-chown root:root /usr/local/share/master-stack/SHA256SUMS
-chmod 0644 /usr/local/share/master-stack/SHA256SUMS
+
+# The canonical copy of state.env is deliberately NOT published here. The
+# canonical bundle is only ever published as one atomic set — state.env
+# plus, when local DNS is enabled, the six dnsmasq/Caddy files — at the
+# end of Stage 6, because reconcile's canonical_bundle_ok() cross-checks
+# the manifest's entry list against the LOCAL_DNS_ENABLED value inside
+# the canonical state.env. Publishing state.env here would leave that
+# pair inconsistent (a fresh LOCAL_DNS_ENABLED=1 state.env alongside a
+# state.env-only manifest) for the whole of Stages 4-6, so an interrupted
+# run would leave reconcile permanently unable to validate the bundle.
+# Deferring instead means a re-run that fails mid-way leaves the previous
+# run's complete, self-consistent bundle in place, and reconcile keeps
+# enforcing that last known-good configuration.
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
@@ -3084,7 +3103,24 @@ if [[ "$ADDRESS_CHANGED" -eq 1 ||
       "$TAILSCALE_NETFILTER_DRIFTED" -eq 1 ||
       "$FIREWALL_DRIFTED" -eq 1 ||
       "$FW_INACTIVE" -eq 1 ]]; then
-    STACK_RESTART_REQUIRED=1
+    # Same 15-minute budget the per-container restarts already use, so a
+    # drift this pass cannot repair (e.g. a firewall check that keeps
+    # failing) retries every 15 minutes instead of re-running the firewall
+    # reapply plus `docker compose up --wait` on every 5-minute cycle
+    # forever. An address change is exempt: it self-clears after one
+    # successful pass, and deferring it would leave the published
+    # bindings pointing at a stale IP for up to 15 minutes.
+    if [[ "$ADDRESS_CHANGED" -eq 1 ]] ||
+       restart_budget_available master-compose; then
+        STACK_RESTART_REQUIRED=1
+        record_container_restart master-compose
+    else
+        echo "HATA: master-compose stack yenilemesi 15 dakikalık cooldown içinde; tekrarlanmadı." >&2
+        RECOVERY_FAILED=1
+    fi
+fi
+
+if [[ "$STACK_RESTART_REQUIRED" -eq 1 ]]; then
     if ! "$SYSTEMCTL_BIN" stop master-compose.service; then
         echo "HATA: master-compose.service kontrollü durdurulamadı." >&2
         RECOVERY_FAILED=1
@@ -3259,9 +3295,9 @@ if [[ "$RECOVERY_FAILED" -ne 0 ]]; then
 fi
 
 if [[ "$CORE_RECOVERY_SCHEDULED" -eq 1 ]]; then
-    echo "R8 yerel onarımları tamamlandı; Docker core netfilter recovery sıraya alındı."
+    echo "Yerel onarımlar tamamlandı; Docker core netfilter recovery sıraya alındı."
 else
-    echo "R8 ağ, firewall, container, DNS ve Caddy durumu uzlaştırıldı."
+    echo "Ağ, firewall, container, DNS ve Caddy durumu uzlaştırıldı."
 fi
 RECONCILE_SCRIPT
 chmod 0755 /usr/local/sbin/master-network-reconcile
@@ -3700,6 +3736,12 @@ fi
 
 # Canonical bundle yanlış/yarım bir kopyadan çalışan daemon'ları yeniden
 # başlatmamak için kendi manifestiyle doğrulanır. Manifest atomik yenilenir.
+# state.env's canonical copy is published here rather than in Stage 4 (see
+# the comment there) so that the manifest and the LOCAL_DNS_ENABLED value
+# it is validated against always become visible together.
+install -m 0600 -o root -g root \
+    /etc/master-stack/state.env \
+    /usr/local/share/master-stack/state.env
 CANONICAL_MANIFEST_TMP="$(
     mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
 )"

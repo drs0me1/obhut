@@ -339,3 +339,62 @@ comments plus structural inference from the 2026-07-27 audit
   backend (`boringtun`/`wireguard-go`) that would need no kernel module at
   all — the latter needs a forked/customized image and hasn't been
   attempted.
+
+### DD-14: The canonical bundle is published once, atomically, at the end of Stage 6 (2026-07-28)
+
+- **Decision:** Stage 4 writes `/etc/master-stack/state.env` but does not
+  publish a canonical copy or a `SHA256SUMS` manifest. The entire
+  canonical bundle — `state.env` plus, when local DNS is enabled, the six
+  dnsmasq/Caddy files — is published as one atomic set at the end of
+  Stage 6.
+- **Context:** `SECURITY_REVIEW.md` finding **M8**.
+- **Rationale:** `canonical_bundle_ok()` validates the manifest's entry
+  list *against the `LOCAL_DNS_ENABLED` value inside the canonical
+  `state.env`*. Those two must therefore always become visible together.
+  Publishing `state.env` in Stage 4 alongside a state.env-only manifest
+  broke that invariant for the whole of Stages 4-6, and an interrupted
+  re-run left reconcile hard-exiting on every cycle with no self-healing.
+- **Alternatives rejected:** deleting Stage 4's manifest write alone (a
+  fresh install then has no manifest, and a re-run's stale manifest no
+  longer matches the newly written `state.env` — both still fail
+  validation); writing the full seven-entry manifest in Stage 4
+  (impossible on a fresh install, where those files don't exist yet).
+- **Consequence worth knowing:** during Stages 4-6 of a re-run,
+  `state_value()` still reads the *previous* run's canonical values. That
+  is deliberate — for a half-applied re-run, the last known-good
+  configuration is the right thing to enforce.
+
+### DD-15: Docker's chain layout is assumed, and Docker itself is deliberately not pinned (2026-07-28)
+
+- **Decision:** `docker-ce`/`containerd.io`/`tailscale`/`caddy` stay
+  unpinned even though container images are pinned to exact tags, and the
+  firewall helper keeps assuming Docker's internal chain layout
+  (`DOCKER-USER`, `DOCKER-FORWARD` and `ts-forward` existing, and being
+  the first three `FORWARD` rules in that order).
+- **Context:** `SECURITY_REVIEW.md` finding **M9**.
+- **Operational fact worth stating explicitly:** because Stage 3 leaves
+  the Docker apt repository configured, **every re-run upgrades Docker to
+  the newest upstream release** via Stage 1's `full-upgrade`. A re-run is
+  therefore also a Docker upgrade, whether or not that was the intent.
+- **Rationale for not pinning:** this host publishes ports to the public
+  IPv4, so freezing Docker's version would trade a hypothetical layout
+  change for a certain loss of CVE fixes. The coupling is the lesser
+  risk.
+- **Failure mode, for the record:** if a Docker release restructures
+  those chains, `ensure_forward_prefix()` returns non-zero and `set -e`
+  aborts the helper before any rule is applied. On a re-run the
+  previously-applied chains survive (the staging swap only happens at the
+  end), so that path fails safe. The real exposure is a **reboot** after
+  such an upgrade: these rules have no persistence layer and are rebuilt
+  from scratch at every boot, so a broken helper means the fail-closed
+  WAN DROP and the Tailnet → Docker/LAN DROP backbone are simply never
+  created.
+- **Mitigation applied:** diagnostics only — the helper now names the
+  missing chain and the likely cause rather than aborting silently.
+  Verified live on 2026-07-28 that Docker 29.6.2 still produces exactly
+  the assumed layout.
+- **Known asymmetry, deliberately left alone:** `apply_ipv6()` degrades
+  gracefully when Docker's IPv6 `DOCKER-USER` chain is missing (warns and
+  skips the IPv6 policy), but `ensure_forward_prefix()` treats the same
+  condition as fatal for either family. Changing it would loosen a
+  fail-closed path, so it is recorded rather than "fixed".

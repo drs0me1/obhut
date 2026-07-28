@@ -4,14 +4,16 @@ Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
 (18 findings total, not 19 — an earlier miscount was corrected), plus
 three additional findings (**H5**, **H6**, **H7**) discovered 2026-07-28
 — the first two via live Tier 3 install tests, **H7** via real post-R1.0
-usage.
+usage — and five more (**M8**, **M9**, **M10**, **L6**, **L7**) from a
+whole-file review of the post-R1.0 script the same day, of which
+**M10**/**L7** were deliberately deferred.
 `install.sh` line references below were refreshed after sixteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 **L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), a
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4376 lines. Originally **tagged R1.0**
+architecture review; file is now 4418 lines. Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1.1 work).
 Do not start work on any item without explicit user approval (per
@@ -53,9 +55,33 @@ _All High findings resolved — see Completed below._
       attempt completed all 7 stages successfully end-to-end, the first
       fully clean install of this repo's `install.sh`.
 
+- [ ] **M10** (2026-07-28, whole-file review) — Extend the canonical
+      integrity model to the files that actually carry the security
+      policy. Today the bundle covers `state.env` + the six
+      dnsmasq/Caddy files, but not `/root/docker/compose.yaml` or
+      `/usr/local/sbin/docker-tailscale-fw` — while it *does* cover the
+      optional `caddy-tailnet-env`. Reconcile also validates the firewall
+      by calling `"$FW_HELPER" --check`, so nothing verifies the
+      verifier. Proposed phase 1: cover `compose.yaml` + the firewall
+      helper, **detect and report only, no auto-restore** (following
+      DD-13's precedent) — auto-restore risks a 5-minute recreate loop
+      and would silently undo deliberate operator changes. Phase 2
+      (auto-restore, more files) only if phase 1's reports prove noisy
+      enough to matter. Scope to be confirmed with the user first.
+
 ## Low
 
-_All Low findings resolved — see Completed below._
+- [ ] **L7** (2026-07-28, whole-file review, **deferred by the user**) —
+      Public ports (`65171`/`65173`/`65113`) are hardcoded inside the
+      single-quoted `docker-tailscale-fw` heredoc while the installer
+      keeps them in variables; the WebDAV port has no top-level variable
+      at all. No defect today — latent only if someone changes a
+      constant. Deferred because this tool only ever installs onto a
+      fresh, empty server, so "edit a port and re-run" is not a real
+      workflow (reimage + reinstall is), and the proper fix touches the
+      most security-critical file in the project. Cheaper alternative if
+      revisited: a Stage 3 tripwire that greps the generated helper for
+      the expected literals and fails the install on a mismatch.
 
 ## Completed
 
@@ -345,3 +371,51 @@ _All Low findings resolved — see Completed below._
       host's global OOM killer rather than its own cgroup. `install.sh`
       4370 → 4376 lines. Verified with `bash -n`, `shellcheck`,
       `scripts/lint-embedded-scripts.sh`, `bats test/`.
+- [x] **Whole-file review of the post-R1.0 script (2026-07-28).** Re-read
+      all 4376 lines end to end after the **H7**/**M1** point fixes, with
+      read-only live verification on the running host. Found five new
+      findings (**M8**, **M9**, **M10**, **L6**, **L7**) — none of them
+      regressions from those two changes. Also cleared the
+      highest-risk-looking hypothesis by reading Portainer 2.39.5's own
+      source: an empty `TRUSTED_ORIGINS` (the local-DNS-disabled path,
+      still never exercised live) is guarded before the validation loop,
+      so **H7**'s startup crash cannot recur there.
+- [x] **M8 (2026-07-28).** Canonical bundle publication moved out of
+      Stage 4 into the single atomic block at the end of Stage 6, so the
+      manifest and the `LOCAL_DNS_ENABLED` value it is validated against
+      always become visible together. Previously Stage 4 truncated the
+      manifest to one entry while publishing a possibly
+      `LOCAL_DNS_ENABLED=1` `state.env`, leaving the bundle
+      self-inconsistent for all of Stages 4-6; a re-run that failed in
+      that window left reconcile hard-exiting at `canonical_bundle_ok()`
+      every 5 minutes with no self-healing at all. Side benefit: a failed
+      re-run now keeps the previous run's complete bundle, so reconcile
+      goes on enforcing the last known-good configuration.
+- [x] **M9 (2026-07-28, accepted risk + diagnostics).** Pinning
+      `docker-ce` was considered and rejected (it would freeze CVE fixes
+      on a host publishing ports to the public IPv4). Instead
+      `ensure_forward_prefix()` now names the missing chain, the binary
+      and the likely cause rather than returning a bare non-zero that
+      `set -e` turns into a silent abort. The coupling itself — the
+      firewall assumes Docker's internal `DOCKER-USER`/`DOCKER-FORWARD`/
+      `ts-forward` layout, and every re-run upgrades Docker via Stage 1's
+      `full-upgrade` — is documented in `docs/design-decisions.md`
+      (DD-15). Verified live: Docker 29.6.2 still matches the assumption.
+- [x] **L6 (2026-07-28).** The stack-level repair path
+      (`STACK_RESTART_REQUIRED`) now reuses the same 15-minute
+      `restart_budget_available`/`record_container_restart` budget the
+      per-container restarts already use, under a `master-compose`
+      pseudo-target, so an unrepairable drift retries every 15 minutes
+      instead of re-running the firewall reapply plus
+      `docker compose up --wait` on every 5-minute cycle forever.
+      `ADDRESS_CHANGED` is exempt — it self-clears after one successful
+      pass and deferring it would strand the published bindings on a
+      stale IP.
+- [x] **Version string corrected (2026-07-28).** `MASTER_SETUP_VERSION`
+      `2026.07.26-r8` → `2026.07.28-v1.1`, and reconcile's two summary
+      lines no longer print an "R8" prefix, so logs identify which
+      release actually ran. `STACK_SCHEMA=8` deliberately left alone — it
+      versions `state.env`'s on-disk format, which did not change; a
+      comment now states that distinction at the definition site.
+      `install.sh` 4376 → 4418 lines. Verified with `bash -n`,
+      `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`.

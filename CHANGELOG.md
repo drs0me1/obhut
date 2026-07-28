@@ -8,6 +8,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Reconcile could be left permanently unable to validate the canonical
+  bundle after an interrupted re-run** (**M8**). Stage 4 unconditionally
+  truncated the canonical `SHA256SUMS` to a single `state.env` entry
+  while publishing a `state.env` that could say `LOCAL_DNS_ENABLED=1`;
+  `canonical_bundle_ok()` cross-checks exactly those two against each
+  other, so the bundle was self-inconsistent by construction for all of
+  Stages 4-6. While `install.sh` is running this is harmless (reconcile
+  defers on the shared lock), but a re-run that *failed* in that window
+  left the `EXIT` trap restoring the previously-active timer, after
+  which every 5-minute cycle hard-exited before reaching any repair
+  logic — no self-healing at all on a half-configured host, reported
+  with a message that reads like corruption rather than "interrupted
+  install". The canonical bundle is now published as one atomic set at
+  the end of Stage 6. Side benefit: a failed re-run leaves the previous
+  run's complete bundle in place, so reconcile keeps enforcing the last
+  known-good configuration.
+- **The stack-level repair path had no restart cooldown** (**L6**).
+  Per-container restarts were budget-gated to once per 15 minutes, but
+  `systemctl stop master-compose` + `systemctl restart
+  docker-tailscale-fw` + `docker compose up --wait` was not, so any
+  drift the pass could not actually repair re-ran that sequence every 5
+  minutes indefinitely. Bounded in practice — `master-compose.service`
+  has no `ExecStop`, so containers were never stopped — but a permanent
+  failing unit plus a pointless firewall reapply every five minutes. It
+  now reuses the existing `restart_budget_available`/
+  `record_container_restart` helpers under a `master-compose`
+  pseudo-target. `ADDRESS_CHANGED` is exempt: it self-clears after one
+  successful pass, and deferring it would leave the published bindings
+  on a stale IP.
+
+### Changed
+
+- `MASTER_SETUP_VERSION` corrected from the stale `2026.07.26-r8` to
+  `2026.07.28-v1.1`, and reconcile's two summary lines no longer print an
+  "R8" prefix — logs, the install banner and the success summary now
+  identify which release actually ran. `STACK_SCHEMA=8` is deliberately
+  unchanged: it versions `state.env`'s on-disk format, which did not
+  change. A comment at the definition site now states that distinction,
+  since the two were easy to conflate.
+- `ensure_forward_prefix()` (`docker-tailscale-fw`) now names the missing
+  chain, the binary and the likely cause instead of returning a bare
+  non-zero that `set -e` turns into a silent abort (**M9**). Behavior is
+  unchanged; this turns a multi-minute diagnosis into one log line. The
+  underlying coupling — the firewall assumes Docker's internal
+  `DOCKER-USER`/`DOCKER-FORWARD`/`ts-forward` layout, and every re-run
+  upgrades Docker via Stage 1's `full-upgrade` because Stage 3 leaves the
+  Docker apt repository configured — was accepted rather than fixed;
+  pinning `docker-ce` would freeze CVE fixes on a host that publishes
+  ports to the public IPv4. See `docs/design-decisions.md` DD-15.
+- `install.sh` 4376 → 4418 lines. Verified with `bash -n`, `shellcheck`,
+  `scripts/lint-embedded-scripts.sh` and `bats test/` (all clean).
+
+### Fixed
+
 - Portainer rejected every write request (stop a container, remove an
   image, etc.) made through `portainer.$LOCAL_DOMAIN` — the Tailnet DNS
   name proxied through Caddy — with a CSRF "origin invalid" error.

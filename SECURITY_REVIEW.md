@@ -40,22 +40,27 @@ additional findings, **H5**, **H6**, and **H7**, were discovered on
 2026-07-28 — the first two via live Tier 3 install tests, **H7** via real
 post-R1.0 usage — (not part of the original static audit — static review
 alone could not have caught any of them, see their entries below) and all
-three resolved the same day.
+three resolved the same day. A further five, **M8**, **M9**, **M10**,
+**L6** and **L7**, came out of a whole-file review of the post-R1.0
+script on 2026-07-28; **M8**, **M9** and **L6** were resolved the same
+day, **M10** and **L7** were deliberately deferred (see their entries).
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
-| Medium   | 2 | 5 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, 2026-07-28) |
-| Low      | 0 | 5 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, 2026-07-28) |
+| Medium   | 3 (**M3**, **M7**, **M10**) | 7 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, 2026-07-28) |
+| Low      | 1 (**L7**) | 6 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, 2026-07-28) |
 
-Note: **H2**, **H3**, and **C1** were resolved by explicit user decision to
-*keep* the existing behavior/design as an accepted trade-off plus add
-documentation — not by changing `install.sh`'s functional behavior.
+Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
+decision to *keep* the existing behavior/design as an accepted trade-off
+plus add documentation or diagnostics — not by changing `install.sh`'s
+functional behavior.
 **M1** is now fully resolved, including the Tier 2 capability testing that
 was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
-audit; they're genuine 19th/20th/21st, separately-tracked findings.
+audit; they're genuine 19th/20th/21st, separately-tracked findings, as
+are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
 
 ## Critical issues
 
@@ -694,6 +699,129 @@ audit; they're genuine 19th/20th/21st, separately-tracked findings.
   medium risk in general (see H4) but this pattern (extract function body
   only, never source the whole heredoc) keeps that risk low in practice.
 
+### M8 — Canonical bundle publication window disabled reconcile after an interrupted re-run — ✅ RESOLVED (2026-07-28, found via whole-file review)
+- **Location (historical):** `install.sh` Stage 4 (canonical `state.env`
+  copy + manifest write), `canonical_bundle_ok()` in the
+  `master-network-reconcile` heredoc
+- **Description:** Stage 4 unconditionally truncated
+  `/usr/local/share/master-stack/SHA256SUMS` to a single `state.env`
+  entry, while the `state.env` it had just published could contain
+  `LOCAL_DNS_ENABLED=1`. The full seven-entry manifest was only written at
+  the end of Stage 6. `canonical_bundle_ok()` cross-checks the manifest's
+  entry list against exactly that `LOCAL_DNS_ENABLED` value, so for the
+  whole of Stages 4-6 the canonical bundle was self-inconsistent by
+  construction.
+- **Impact:** Scoped, and smaller than it first appears — while
+  `install.sh` is actually running, reconcile already defers on the shared
+  `master-stack` lock and never reaches this check. The window only bites
+  after a re-run that *failed* somewhere in Stages 4-6: the `EXIT` trap
+  restores the previously-active reconcile timer, and every subsequent
+  5-minute cycle then hard-exits at `canonical_bundle_ok()` before
+  reaching any repair logic, leaving the half-configured host with no
+  self-healing at all. The message ("Canonical master-stack bundle
+  manifest doğrulaması başarısız") also reads like corruption or
+  tampering rather than "the installer was interrupted". Fresh installs
+  are unaffected: the timer isn't enabled until the end of Stage 6.
+- **Resolution:** The canonical bundle is now published as a single
+  atomic set at the end of Stage 6 — Stage 4 writes
+  `/etc/master-stack/state.env` but no longer publishes a canonical copy
+  or a manifest. Two considered-and-rejected alternatives: simply
+  deleting Stage 4's manifest write (a fresh install would then have no
+  manifest, and a re-run's stale manifest would not match the newly
+  written `state.env` — both still fail), and writing the full
+  seven-entry manifest in Stage 4 (impossible on a fresh install, where
+  the dnsmasq/Caddy files don't exist yet).
+- **Side benefit:** a re-run that fails mid-way now leaves the *previous*
+  run's complete, self-consistent bundle in place, so reconcile keeps
+  enforcing the last known-good configuration instead of going silent.
+  `state_value()` preferring the canonical copy means it reads those
+  older values during the window, which is the correct behavior for a
+  half-applied re-run.
+- **Change risk:** Low — verified that nothing between Stage 4 and Stage 6
+  reads the canonical copy: the firewall helper and `master-compose-ipv4`
+  never read `state.env`, and a reconcile run triggered via `OnFailure=`
+  during Stage 5 defers on the shared lock before reaching any state
+  read.
+
+### M9 — Firewall logic is tightly coupled to Docker's internal chain layout, on unpinned packages — ✅ RESOLVED (2026-07-28, accepted risk + diagnostics)
+- **Location:** `install.sh` Stage 1 (`apt-get full-upgrade`), Stage 3
+  (`apt-get install docker-ce ...`), `ensure_forward_prefix()` and
+  `forward_prefix_is_exact()` in the `docker-tailscale-fw` heredoc
+- **Description:** Container images are pinned to exact tags, but
+  `docker-ce`/`containerd.io`/`tailscale`/`caddy` are installed unpinned.
+  Because Stage 3 leaves the Docker apt repository configured, every
+  *re-run* upgrades Docker to the newest upstream release via Stage 1's
+  `full-upgrade`. The firewall helper meanwhile assumes Docker's internal
+  chain layout exactly: `ensure_forward_prefix()` requires
+  `DOCKER-USER`, `DOCKER-FORWARD` and `ts-forward` to exist, and
+  `forward_prefix_is_exact()` requires them to be the first three
+  `FORWARD` rules in that order. `DOCKER-FORWARD` is an implementation
+  detail introduced in Docker 26, not a stable interface.
+- **Impact:** If a Docker release renames or restructures these chains,
+  `ensure_forward_prefix()` returns non-zero and `set -e` aborts the
+  helper before any rule is applied. On a re-run the previously-applied
+  chains survive (the staging swap only happens at the end), so that path
+  fails safe. The exposure is a **reboot** after such an upgrade: these
+  rules have no persistence layer and are rebuilt from scratch at every
+  boot by `docker-tailscale-fw.service`, so a broken helper means
+  `MASTER-DOCKER`/`MASTER-TS-FORWARD` are never created — losing the
+  fail-closed WAN DROP and the Tailnet → Docker/LAN DROP backbone.
+  Reconcile would also report firewall drift on every cycle.
+- **Decision:** Pinning `docker-ce` was considered and rejected — it
+  would freeze CVE fixes on a host that publishes ports to the public
+  IPv4, a worse trade than the coupling itself. The coupling is accepted
+  as-is.
+- **Resolution:** `ensure_forward_prefix()` now names the missing chain
+  and the binary explicitly and states the likely cause, instead of
+  returning a bare non-zero that `set -e` turns into a silent abort. This
+  does not change behavior; it turns a multi-minute diagnosis into a
+  single log line. The re-run-upgrades-Docker behavior is documented in
+  `docs/design-decisions.md` (DD-15). Verified live on 2026-07-28 that
+  Docker 29.6.2 still produces exactly the assumed layout.
+- **Known related asymmetry (not changed):** `apply_ipv6()` degrades
+  gracefully when Docker's IPv6 `DOCKER-USER` chain is missing (warns,
+  skips the IPv6 policy), but `ensure_forward_prefix()` is fatal for the
+  same condition on either family. A host where Docker manages IPv4 but
+  not IPv6 netfilter would therefore abort the whole helper rather than
+  skip IPv6. Not observed on the target host; recorded here rather than
+  changed, since altering it would loosen a fail-closed path.
+- **Change risk:** None — diagnostics only, no control flow changed.
+
+### M10 — Canonical integrity model excludes the files that carry the security policy
+- **Location:** `install.sh` Stage 6 (manifest contents),
+  `canonical_bundle_ok()` / `config_files_ok()` in the
+  `master-network-reconcile` heredoc
+- **Description:** The canonical bundle covers `state.env` plus the six
+  dnsmasq/Caddy files. It does **not** cover `/root/docker/compose.yaml`
+  (which defines all six services, their capabilities, `security_opt`,
+  port publications and mounts), `/usr/local/sbin/docker-tailscale-fw`
+  (~520 lines of firewall policy), `master-network-reconcile`,
+  `master-compose-ipv4`, `master-docker-netfilter-recovery`, or the
+  systemd units for any of them. It does cover `caddy-tailnet-env` — i.e.
+  the *optional* subsystem's helper is integrity-checked while the core
+  subsystem's are not.
+- **Impact:** Reconcile validates the firewall by invoking
+  `"$FW_HELPER" --check`, so nothing verifies the verifier: a modified
+  helper self-certifies. Drift in `compose.yaml` (e.g. a removed
+  `cap_drop`) is never detected, and `master-compose.service` applies the
+  drifted file on every start. Confirmed concretely on 2026-07-28: the
+  live host's `compose.yaml` still carried `mem_limit: 6g`/`cpus: 3.0`
+  after the repository dropped them, with reconcile reporting healthy
+  throughout.
+- **Recommendation (scoped, not yet applied):** a first phase covering
+  only `compose.yaml` and `docker-tailscale-fw`, detecting and
+  **reporting** drift without auto-restoring — following DD-13's
+  precedent for disk space. Auto-restore was deliberately left out of the
+  proposal: restoring `compose.yaml` only takes effect after a
+  `docker compose up -d`, which risks a 5-minute recreate loop if the
+  drift recurs, and would silently undo deliberate operator changes.
+  Note the inherent limit: reconcile verifying its own script is weak
+  against tampering (a modified reconcile skips the check) — the real
+  value is detecting accidental drift in the other two files.
+- **Change risk:** Medium — adds logic to the reconcile heredoc, which
+  `shellcheck install.sh` cannot see (see **H4**;
+  `scripts/lint-embedded-scripts.sh` mitigates).
+
 ## Low
 
 ### L1 — `apt-get full-upgrade -y` without explicit conffile policy — ✅ RESOLVED (2026-07-27)
@@ -778,6 +906,64 @@ audit; they're genuine 19th/20th/21st, separately-tracked findings.
   URL text for both the local-DNS-enabled and local-DNS-disabled cases.
 - **Change risk:** None remaining — documentation-only, no behavior
   changed.
+
+### L6 — Stack-level repair path had no restart cooldown — ✅ RESOLVED (2026-07-28, found via whole-file review)
+- **Location (historical):** `master-network-reconcile` heredoc,
+  `STACK_RESTART_REQUIRED` block
+- **Description:** Per-container restarts were budget-gated to once per
+  15 minutes (`restart_budget_available`), but the stack-level repair
+  path — `systemctl stop master-compose` + `systemctl restart
+  docker-tailscale-fw` + `docker compose up --wait` — had no equivalent
+  gate. Any drift the pass could not actually repair (most plausibly a
+  firewall check that keeps failing) therefore re-ran that sequence on
+  every 5-minute cycle indefinitely.
+- **Impact:** Bounded. `master-compose.service` has no `ExecStop`, so
+  `systemctl stop` does not stop containers and the loop never killed the
+  stack; the real cost was a permanently failing unit plus a firewall
+  reapply and a Compose convergence pass every five minutes forever.
+- **Resolution:** The block now reuses the existing
+  `restart_budget_available`/`record_container_restart` helpers with a
+  `master-compose` pseudo-target, so an unrepairable drift retries every
+  15 minutes instead of every 5. `ADDRESS_CHANGED` is deliberately
+  exempt: it self-clears after one successful pass, and deferring it
+  would leave published bindings on a stale IP for up to 15 minutes.
+- **Deliberate trade-off:** the budget is recorded *before* the repair is
+  attempted, not after it succeeds — recording only on success would
+  leave exactly the failing-repair loop this fixes. The cost is that a
+  genuinely new firewall drift arriving within 15 minutes of a successful
+  stack repair is deferred, reported via `RECOVERY_FAILED` rather than
+  acted on immediately. This matches the semantics the per-container
+  budget already has.
+- **Change risk:** Low — reuses existing helpers, no new mechanism.
+
+### L7 — Public port numbers are hardcoded inside the firewall heredoc
+- **Location:** `install.sh:502-503` (`WG_PUBLIC_PORT`,
+  `QBIT_PUBLIC_PORT`), against the literals in the `docker-tailscale-fw`
+  heredoc (`apply_tailnet_guard`, `apply_ipv4`, `check_ipv4_policy`)
+- **Description:** The helper is a single-quoted heredoc, so it cannot
+  expand the installer's variables and instead repeats `65171`/`65173`/
+  `65113` literally, both when applying rules and in the expected-rule
+  lists its own `--check` compares against. The WebDAV port has no
+  top-level variable at all — it is written out by hand in `state.env`,
+  `compose.yaml` (three times), the `Caddyfile` and Stage 7.
+- **Impact:** No defect today; the constants and the literals agree.
+  Latent: changing a constant would make Compose publish the new port
+  while the firewall keeps allowing the old one, and the two verifiers
+  would disagree — the helper's `--check` would pass against its own
+  hardcoded expectations while Stage 7 (which uses the variables) fails.
+- **Deferred (2026-07-28):** the user noted this tool only ever installs
+  onto a fresh, empty server, which makes "operator edits a port constant
+  and re-runs" a scenario that effectively does not occur — reimage and
+  reinstall is the actual workflow. Left open rather than fixed, since
+  the fix (having the helper read ports from `state.env` at runtime, the
+  way reconcile already does) touches the most security-critical file in
+  the project for a purely latent problem.
+- **Cheaper alternative if revisited:** a Stage 3 tripwire that greps the
+  generated helper for the expected port literals and fails the install
+  immediately if they don't match the constants — a few lines, no change
+  to the helper itself.
+- **Change risk:** Medium for the runtime-read fix; negligible for the
+  tripwire.
 
 ## Recommendations
 
@@ -877,3 +1063,5 @@ review.
 | 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.portainer` | **H7** found and resolved: Portainer rejected every write request made via `portainer.ayc` ("origin invalid" CSRF error — Caddy always presents `Host: 127.0.0.1:9443` to Portainer while the browser's Origin is `http://portainer.ayc`). Added `TRUSTED_ORIGINS`. First attempt (`http://portainer.$LOCAL_DOMAIN`, matching Portainer's current `develop`-branch validation) was tested directly against the live deployed `compose.yaml` before touching `install.sh` and **crashed Portainer on startup** — the pinned `2.39.5` release uses the older `gorilla/csrf` library, whose validator does the opposite (rejects any `"://"`, expects a bare hostname). Caught by reading `2.39.5`'s actual tagged source, not `develop`. Reverted immediately, corrected to `portainer.$LOCAL_DOMAIN` (no scheme), confirmed live (container stable, simulated write request now reaches the auth layer — `401` instead of `403`), then applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |
 | 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.qbittorrent` | **M1** resource ceilings removed entirely (accepted deviation, not a reopened finding): after the `4g` raise below, sustained high-throughput load fluctuated again and a `6g`/`cpus: 3.0` attempt (tried locally, never committed) made it clear each raise was chasing real usage rather than bounding abuse — `6g` already exceeded the highest observed unlimited usage (~4.7GB) on a ~8GB host, so it constrained nothing while still able to throttle a future workload. Both `mem_limit` and `cpus` dropped from `services.qbittorrent`; `no-new-privileges`/`cap_drop`/`cap_add` and `unpackerr`'s own ceilings unchanged. Residual risk accepted by the user: a runaway `qbittorrent` is now bounded by the host's global OOM killer, widening that failure mode's blast radius from one cgroup to the host. `install.sh` 4370 → 4376 lines; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |
 | 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.qbittorrent` | **M1** `mem_limit` correction: user reported a real download-speed regression (~200MB/s → ~70-80MB/s) and asked whether M1's resource limits were the cause. Live A/B/C test during an actual high-seed torrent download (recreating the container between each measurement window, same active transfer): original `cpus=2.0/mem=2g` capped throughput ~170MB/s with CPU saturating near the 2-core limit; removing all limits reached 218-278MB/s; isolating the variable (`cpus` held at `2.0`, only `mem_limit` raised to `4g`) also reached up to 275MB/s with CPU comfortably under the cap — proving the `2g` memory ceiling, not CPU, was the real constraint (the CPU saturation in the first test was a downstream symptom of memory-constrained disk caching). Raised `mem_limit` to `4g`; `cpus: 2.0` unchanged. Applied to the live `compose.yaml` for testing, then to `install.sh` |
+| 2026-07-28 | Claude Code (whole-file review) + user (live read-only verification) | Full `install.sh` (4376 lines) re-read end to end after the post-R1.0 **H7**/**M1** changes | Five new findings, none of them regressions from those two changes: **M8** (canonical bundle publication window disabled reconcile after an interrupted re-run), **M9** (firewall logic tightly coupled to Docker's internal chain layout, on unpinned `docker-ce`; every re-run silently upgrades Docker via Stage 1's `full-upgrade`), **M10** (canonical integrity model excludes `compose.yaml` and the firewall helper — the files that actually carry the security policy — while covering the optional Caddy subsystem's helper), **L6** (stack-level repair path had no restart cooldown, unlike per-container restarts), **L7** (public ports hardcoded inside the firewall heredoc, no single source of truth). Verified live, read-only, on the running host: Docker 29.6.2 still produces the exact assumed `FORWARD` layout, manifest has all seven entries, reconcile timer active with last exit status `0`, and the live `compose.yaml` was confirmed to still carry `6g`/`3.0` after the repo dropped them — a concrete instance of **M10**. Also cleared the highest-risk-looking hypothesis by reading Portainer 2.39.5's own source: an empty `TRUSTED_ORIGINS` (the never-tested local-DNS-disabled path) is guarded by `if *flags.TrustedOrigins != ""` before the validation loop, so **H7**'s crash cannot recur there |
+| 2026-07-28 | Claude Code (remediation) | Stage 4 + Stage 6 (canonical publication), `ensure_forward_prefix()` in `docker-tailscale-fw`, `STACK_RESTART_REQUIRED` block in `master-network-reconcile`, `MASTER_SETUP_VERSION` | **M8** resolved: canonical bundle now published as one atomic set at the end of Stage 6, so the manifest and the `LOCAL_DNS_ENABLED` value it is validated against always appear together; an interrupted re-run now leaves the previous complete bundle in place instead of bricking reconcile. **M9** resolved as accepted risk plus diagnostics: pinning `docker-ce` rejected (would freeze CVE fixes on a host publishing public ports), `ensure_forward_prefix()` now names the missing chain and the likely cause instead of aborting silently under `set -e`. **L6** resolved: stack-level repair reuses the existing 15-minute `restart_budget_available`/`record_container_restart` budget under a `master-compose` pseudo-target, with `ADDRESS_CHANGED` exempt. Also bumped `MASTER_SETUP_VERSION` from the stale `2026.07.26-r8` to `2026.07.28-v1.1` (`STACK_SCHEMA=8` deliberately unchanged — it versions `state.env`'s format, which did not change) and dropped the "R8" prefix from reconcile's two summary lines. `install.sh` 4376 → 4418 lines; verified with `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` and `bats test/` (all clean) |
