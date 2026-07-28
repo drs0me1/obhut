@@ -6,139 +6,116 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
+_Nothing yet._
 
-- **systemd unit files were written mode `0600`**, so systemd logged
-  `marked world-inaccessible ... has no effect` on every `daemon-reload`
-  — 12 such lines in a single boot. Cause: the script's top-level
-  `umask 077` applies to every `cat >` heredoc. The three drop-ins
-  written in Stage 6 were already being chmod'ed to `0644` explicitly,
-  so the eight units written in Stages 2/3/4 were the only ones affected
-  — the same kind of "two treatments for one kind of file" inconsistency
-  this release has been removing.
-  - `0600` bought nothing here: unit files hold paths and systemd
-    directives, no secrets, and systemd's own message says the
-    restriction has no effect because the data is served over its APIs
-    regardless. Debian's own units are `0644`.
-  - Fixed with a single `set_unit_file_mode()` helper now used at all
-    **eleven** unit/drop-in write sites, replacing both the eight missing
-    cases and Stage 6's three hand-written `chown`/`chmod` pairs. No
-    behavioural change; the canonical bundle's checksums are unaffected
-    because file *contents* did not change.
+## [v1rc] - 2026-07-29
+
+Consistency and coverage release. No new functionality: everything here
+either removes an internal inconsistency, adds test coverage, or closes a
+tracked finding by decision. Validated by a clean install on a reimaged
+host, a re-run against that install, and two reboots.
+
+### Validated
+
+- **Clean install on a freshly reimaged host** (2026-07-28/29): all 7
+  stages, `master-network-reconcile --check` reporting every field `0`
+  and exiting `0`. Followed by a re-run to deploy the unit-permission fix
+  — also clean, and a second exercise of the idempotent re-run path.
+- **Two reboots.** Recovery is ~35s to SSH and ~13s from boot to all six
+  containers healthy. `--check` clean afterwards both times, zero failed
+  units, H1's kernel modules auto-loaded, wg-easy's two peers and its
+  port intact.
+- **Netfilter reconstruction analysed across a reboot.** Nothing persists
+  rules to disk (`iptables-persistent` absent, `nftables.service`
+  disabled), so the whole set is rebuilt every boot — confirmed by packet
+  counters resetting. The rebuilt IPv6 set is byte-identical; the IPv4
+  set differs only inside Docker's own chains, because containers get
+  different bridge IPs depending on start order and Docker rewrites its
+  DNAT/ACCEPT rules accordingly. `MASTER-DOCKER`, `MASTER-TS-FORWARD` and
+  the `FORWARD` prefix come back byte-identical. See
+  `docs/design-decisions.md` DD-16 for why that separation holds and why
+  it matters for how reconcile checks Docker's rules.
+- **Boot ordering measured:** `docker-tailscale-fw` starts at the exact
+  moment `docker.service` becomes active, and Docker is only active once
+  it has created its chains — so the `After=` ordering is a structural
+  guarantee, not a race that happens to be won.
 
 ### Changed
 
-- **Consistency pass over `install.sh`** (no behavioural change intended;
-  every item below is a same-value refactor or a patience fix):
-  - **`WEBDAV_PORT` is now a top-level variable**, alongside its two
-    siblings `WG_PUBLIC_PORT` and `QBIT_PUBLIC_PORT`, which already
-    existed. `65113` had been written out by hand in **17 places**; 13 of
-    those were in contexts that expand variables (`compose.yaml`, the
-    `Caddyfile`, `state.env`, Stage 7's assertions and the summary text)
-    and now use it. The remaining occurrences are the three inside the
-    single-quoted `docker-tailscale-fw` heredoc, which cannot expand
-    outer variables — that is **L7**'s core, and this shrinks it from a
-    17-site problem to a 3-site one.
-  - **Named constants for two duplicated policy values** in
-    `master-network-reconcile`: `DISK_USAGE_THRESHOLD_PCT` (the 90%
-    threshold, previously written at both the detection and the
-    postcondition call sites) and `RESTART_COOLDOWN_SECONDS` (the
-    15-minute "don't repeat the same remedy" budget, previously a bare
-    literal). `master-docker-netfilter-recovery` is a separate script and
-    cannot share the variable, so both sides now carry a comment saying
-    they must change together.
-  - **`ensure_forward_prefix()` now waits for Docker's chains** instead
-    of testing for them once. This was a real ordering defect, not just
-    an inconsistency: `apply_ipv4`/`apply_ipv6` wait up to 30 seconds via
-    `wait_for_docker_user`, but `ensure_forward_prefix` ran *before* them
-    with a bare `-L` check and, being fatal under `set -e`, could kill
-    the helper at boot if the chains were a few seconds late. The wait is
-    now factored into one `wait_for_chain()` used by both, with
-    `wait_for_docker_user` reduced to a thin wrapper.
-  - As a side effect this explains an apparent policy conflict noted
-    during the **M9** review: `apply_ipv6`'s "IPv6 chain missing, skip
-    the policy" branch is effectively unreachable, because
-    `ensure_forward_prefix` would already have aborted. It is kept as a
-    deliberate residual safety net and now says so.
+- **`WEBDAV_PORT` is now a top-level variable** alongside
+  `WG_PUBLIC_PORT` and `QBIT_PUBLIC_PORT`, which already existed. `65113`
+  had been hand-written in **17 places**; the 13 in variable-expanding
+  contexts now use it. This also shrinks **L7** from a 17-site problem to
+  a 3-site one (the remainder is inside the single-quoted firewall
+  heredoc, which cannot expand outer variables).
+- **Named constants for two duplicated policy values** in
+  `master-network-reconcile`: `DISK_USAGE_THRESHOLD_PCT` and
+  `RESTART_COOLDOWN_SECONDS`. `master-docker-netfilter-recovery` is a
+  separate script and cannot share them, so both sides now carry a
+  comment saying they must change together.
+- **`ensure_forward_prefix()` waits for Docker's chains** instead of
+  testing once, via a new `wait_for_chain()` that `wait_for_docker_user`
+  now wraps. It ran *before* the functions that already waited, and being
+  fatal under `set -e` it could in principle have killed the helper at
+  boot. Measured across two reboots: it never actually waits, because of
+  the ordering guarantee above — so this is defensive consistency, not a
+  demonstrated bug fix, and is recorded as such.
 - **Comment language rule reversed to match reality** (`CLAUDE.md`).
   `install.sh` had always been ~73% Turkish-commented while the rule said
   English, so following the rule was producing English blocks inside
-  Turkish ones — 45 such lines had accumulated. All of them are
-  translated back to Turkish, and the rule now states the actual
-  convention: `install.sh` is Turkish throughout, Markdown docs and
-  commit messages stay English, `test/*.bats` and `scripts/*.sh` stay
-  English (bats specifically because Turkish `@test` names break under a
-  `tr_TR.UTF-8` locale). The principle recorded is that each artifact is
-  internally consistent.
+  Turkish ones — 45 such lines were translated back. The rule now records
+  the actual convention, with the principle that each artifact is
+  internally consistent: `install.sh` Turkish throughout, Markdown docs
+  and commit messages English, `test/*.bats` and `scripts/*.sh` English
+  (bats specifically because Turkish `@test` names break under a
+  `tr_TR.UTF-8` locale).
+
+### Fixed
+
+- **systemd unit files were written mode `0600`**, so systemd logged
+  `marked world-inaccessible ... has no effect` 12 times per boot. Cause:
+  the script's top-level `umask 077`. Stage 6's three drop-ins were
+  already chmod'ed to `0644` by hand, which is what made this an
+  inconsistency rather than a uniform choice. Replaced with one
+  `set_unit_file_mode()` helper used at all **eleven** write sites.
+  Verified after the fix: **12 warnings → 0**, no `0600` unit files left.
+  File contents are unchanged, so canonical checksums are unaffected.
 
 ### Added
 
-- `test/canonical_bundle.bats`: 8 `bats-core` unit tests for
-  `canonical_bundle_ok()`, reconcile's first gate — if it returns
-  non-zero the script exits before any detection or repair, so the whole
-  self-healing loop goes silent. Its correctness depends on agreement
-  between two places ~2000 lines apart in `install.sh`: Stage 6 decides
-  which files enter the `SHA256SUMS` manifest, and `canonical_bundle_ok`
-  compares the manifest's entry list against a hardcoded expected list
-  with an exact string equality. Nothing enforced that they stay in sync,
-  and neither `bash -n` nor `shellcheck` can see a mismatch.
-  - The tests **derive both file lists from `install.sh`'s own Stage 6
-    source** rather than restating them, so the two sides are compared
-    against each other. Verified to have teeth: on a scratch copy with
-    `compose.yaml` deliberately dropped from Stage 6's list, the test
-    fails as intended.
-  - Hash verification (`sha256sum`) and ownership checking
-    (`owned_file_ok`) are stubbed out — out of scope here, and both would
-    otherwise require GNU coreutils. All 8 cases run for real on any
-    POSIX host with no skips, unlike the three existing `.bats` files.
-  - Motivated by **M8** and **M10**, which both touched the local-DNS-
-    *disabled* branch — code that has never executed in any live install.
-    Part of **M7**.
-- `test/policy_functions.bats`: 17 `bats-core` unit tests for
-  `check_ipv4_policy()` and `check_ipv6_policy()` — the two composite
-  verifiers that hold the project's entire expected firewall rule set and
-  produce the verdict `docker-tailscale-fw --check` returns, which
-  reconcile trusts wholesale when deciding the firewall has drifted.
-  - `docs/testing.md` had assumed these were too integration-shaped to
-    unit-test and left them to Tier 3. Too pessimistic: they only read
-    state (`-S`/`-C`) and their remaining dependencies are plain globals
-    a test can assign, so a fake dispatching on the `-t` table and `-S`
-    chain suffices.
-  - Covers the healthy policy plus eleven distinct failure shapes
-    (missing terminal WAN DROP, missing Tailnet→Docker DROP, jump not
-    first, duplicated jump, extra rule appended to `DOCKER-USER`,
-    resurrected legacy wide rule, leftover staging chain in either
-    table, terminal DROP inside `DOCKER-FORWARD`, wrong `FORWARD` prefix
-    order, WebDAV allow bound to a stale Tailscale address), plus the
-    IPv6 variants including **M5**'s missing-`ip6tables` diagnostic and
-    the reduced no-IPv6-WAN set. All 17 run with no skips.
-  - Stated limitation: these prove the verifier's decisions, not that the
-    apply path produces what it expects — that coupling stays Tier 3's.
-  - 57 test cases total across `test/`. Part of **M7**.
+- **`test/canonical_bundle.bats`** (8 cases) — `canonical_bundle_ok()`,
+  reconcile's first gate, where a non-zero return silences the entire
+  self-healing loop. Its correctness depends on Stage 6's manifest file
+  list agreeing with a hardcoded expected list ~2000 lines away, which
+  nothing enforced and no static check could see. The tests derive both
+  lists from `install.sh`'s own source rather than restating them, and
+  were mutation-verified on a scratch copy.
+- **`test/policy_functions.bats`** (17 cases) —
+  `check_ipv4_policy()`/`check_ipv6_policy()`, which hold the entire
+  expected firewall rule set and produce the verdict
+  `docker-tailscale-fw --check` returns. Covers the healthy policy plus
+  eleven distinct failure shapes, and the IPv6 variants including **M5**'s
+  missing-`ip6tables` diagnostic and the reduced no-IPv6-WAN set.
+  `docs/testing.md` had assumed these were too integration-shaped to unit
+  test; that judgement is now corrected in place.
+- Test suite: **32 → 57 cases**, and the 25 new ones run with no skips on
+  any POSIX host.
 
 ### Removed
 
 - **M3 (installation profiles) and L7 (ports hardcoded in the firewall
-  heredoc) closed as won't-do.** No code change; both were decided
-  against on the same ground — the deployment model. This installer
-  targets a single-purpose, single-operator host, always built from
-  scratch onto an empty server, with all six services in active use and
-  local DNS enabled every time.
-  - **M3**'s premise (an operator forced to accept exposure they don't
-    need) therefore does not hold, and its security motivation is
-    already covered by **C1**'s accepted Portainer risk. Implementing it
-    would make compose generation, the `state.env` schema,
-    `expected_containers`, the public-port firewall rules and every
-    Stage 7 per-service assertion conditional — a combinatorial set on a
-    project whose Tier 3 testing is still a manual live install.
-    `docs/profiles.md` is kept as a design note, clearly marked closed.
-  - **L7** has no scenario that can trigger it under the same model:
-    ports are fixed at install time and the workflow for changing
-    anything is reimage-and-reinstall. Both candidate fixes — a runtime
-    read from `state.env`, and the cheaper Stage 3 tripwire — were
-    declined.
-  - Either reopens if the installer is ever reused across hosts or by
-    someone other than its author. **M7** is now the only open finding.
+  heredoc) closed as won't-do**, no code change. Same ground for both:
+  this installer targets a single-purpose, single-operator host, always
+  built from scratch, with all six services in active use and local DNS
+  enabled every time. **M3**'s premise does not hold and its security
+  motivation is already covered by **C1**'s accepted risk; **L7** has no
+  scenario that can trigger it. `docs/profiles.md` is kept as a design
+  note, marked closed. Either reopens if the installer is reused across
+  hosts or by another author.
+- **M7's remaining scope (CI) parked**, not closed: the repository stays
+  local with no git remote by decision, so a runner has nowhere to build
+  from. Tier 1 is complete and Tier 2 now has no identified gaps, so **M7
+  is the only open finding and nothing about it is actionable today.**
 
 ## [v1b] - 2026-07-28
 

@@ -6,24 +6,26 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**Session complete; v1b tagged and exported.** Two arcs this session.
+**v1rc tagged and exported; the code is in a finished state.** Three
+arcs across this session: post-R1.0 remediation (→ `v1b`), then a
+consistency-and-coverage pass (→ `v1rc`), then live validation of both.
 
-First, post-R1.0 remediation: dropped `qbittorrent`'s resource ceilings,
-then a whole-file review that produced **M8**, **M9**, **M10**, **L6**,
-**L7**, then three rounds of fixes, then the first-ever live re-run
-against an existing install to validate them. Tagged `v1b`, exported to
-`~/Desktop/install-v1b.sh` (hash-verified).
+`v1rc` contains no new functionality. Everything in it either removes an
+internal inconsistency (`WEBDAV_PORT` as a real variable, named constants
+for two duplicated policy values, one shared `wait_for_chain()`, one
+`set_unit_file_mode()` helper for all eleven unit files, comments all
+Turkish), adds test coverage (32 → 57 cases), or closes a tracked finding
+by decision (**M3** and **L7** won't-do, **M7**'s CI parked).
 
-Second, the v1b cycle itself: two new test files (57 cases total) and
-three findings closed by decision. **M7 is now the only open finding**,
-and its remainder is parked — see Remaining Work.
+**M7 is the only open finding and nothing about it is actionable** while
+the repository stays local — see Remaining Work.
 
-The live re-run's finding is the one to carry forward: the deployed
-`compose.yaml` had been lagging the repository by several fixes, so
-**H7** and **M1** only actually reached the server in that run.
-Portainer had still been rejecting writes via `portainer.ayc` in real
-use, days after **H7** was marked fixed here. **M10** now reports that
-class of gap.
+Validated on a reimaged host: clean install, re-run, two reboots, all
+clean. The netfilter reconstruction across a reboot was analysed in
+detail and is now DD-16/DD-17 — the short version is that Docker
+reshuffles container bridge IPs between boots and rewrites its own rules
+accordingly, while our chains come back byte-identical because they never
+name a container address.
 
 ## Completed Work
 
@@ -256,6 +258,22 @@ resolved, plus one unnumbered cleanup and two partial items:
     `docs/profiles.md` kept as a design note, marked closed.
   - Release string renamed `v1.1` → `v1b` at the user's request; README
     version header updated to match.
+- **v1rc cycle (2026-07-29).**
+  - `WEBDAV_PORT` promoted to a top-level variable; `65113` went from 17
+    hand-written sites to 5, shrinking **L7** to a 3-site problem.
+  - `DISK_USAGE_THRESHOLD_PCT`/`RESTART_COOLDOWN_SECONDS` named.
+  - `wait_for_chain()` shared by `ensure_forward_prefix` and
+    `wait_for_docker_user`. Measured across two reboots: it never waits,
+    because `docker-tailscale-fw` starts exactly when `docker.service`
+    goes active. Recorded as defensive consistency, not a proven fix.
+  - `set_unit_file_mode()` at all eleven unit write sites — 12
+    `world-inaccessible` warnings per boot went to 0.
+  - 45 English comment lines translated back; `CLAUDE.md`'s language rule
+    reversed to match the file.
+  - `test/canonical_bundle.bats` (8) and `test/policy_functions.bats`
+    (17) — the latter corrects an earlier `docs/testing.md` judgement
+    that those functions were too integration-shaped to unit test.
+  - **M3** and **L7** closed as won't-do; **M7**'s CI parked.
 
 ## Remaining Work
 

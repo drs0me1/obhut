@@ -398,3 +398,54 @@ comments plus structural inference from the 2026-07-27 audit
   skips the IPv6 policy), but `ensure_forward_prefix()` treats the same
   condition as fatal for either family. Changing it would loosen a
   fail-closed path, so it is recorded rather than "fixed".
+
+### DD-16: Managed firewall rules never reference container IPs (2026-07-29)
+
+- **Decision:** every rule the `docker-tailscale-fw` helper writes matches
+  on interface names (`tailscale0`, the detected WAN interface) and *host*
+  addresses (the public IPv4, the Tailscale IPv4). None of them names a
+  container's bridge address.
+- **Why this matters, measured 2026-07-29:** across a reboot, Docker
+  assigns container bridge IPs in start order, and that order is not
+  deterministic. On one boot `qbittorrent` held `172.18.0.6`; on the next
+  it held `172.18.0.2`, with `filebrowser`, `sftpgo` and `portainer`
+  likewise shuffled. Docker correctly rewrote all of its own DNAT and
+  ACCEPT rules to match. Because our rules never mention those addresses,
+  `MASTER-DOCKER`, `MASTER-TS-FORWARD` and the `FORWARD` prefix came back
+  **byte-identical** while Docker's chains legitimately changed.
+- **Two consequences worth keeping:**
+  - `check_ipv4_policy()`/`check_ipv6_policy()` assert the exact contents
+    of our chains and the ordering of the `FORWARD` prefix, but say
+    nothing about the contents of Docker's `DOCKER` chain. If they did,
+    `--check` would report drift after every reboot.
+  - `docker_dnat_rule_exists()` in reconcile resolves the container's
+    current IP at check time via `docker_network_tuple()` rather than
+    comparing against a stored value. That is what lets it verify Docker's
+    DNAT rules without breaking when the address changes.
+- **Trade-off:** the narrow public allows are therefore expressed against
+  `--ctorigdst` (the pre-DNAT destination) rather than the container, which
+  is slightly less obvious to read but is the only formulation stable
+  across restarts.
+- **What would break this:** giving containers static bridge addresses and
+  then writing rules against them. Do not — the current arrangement is why
+  a reboot needs no reconciliation at all.
+
+### DD-17: Nothing persists firewall rules to disk (2026-07-29)
+
+- **Decision/observation:** no `iptables-persistent`, no `/etc/iptables`,
+  and `nftables.service` left disabled. The complete rule set is rebuilt
+  from scratch on every boot by `docker.service` (its own chains),
+  `tailscaled` (`ts-*`) and `docker-tailscale-fw.service` (`MASTER-*`).
+- **Confirmed 2026-07-29:** packet counters reset across a reboot, proving
+  the rules are new objects rather than a restored dump, and the rebuilt
+  set matches the previous one apart from Docker's container-IP churn
+  (DD-16).
+- **Rationale:** a persisted dump would be a second source of truth that
+  could drift from `install.sh`, and would restore stale addresses at boot
+  before the helpers had a chance to detect the current ones. Rebuilding
+  is slower by roughly a second and always correct.
+- **Consequence for failure analysis:** if the firewall helper ever fails
+  to run, the host does not fall back to an older policy — it has *no*
+  managed policy until the helper succeeds. That is why
+  `docker-tailscale-fw.service` failing triggers reconcile via
+  `OnFailure=` immediately rather than waiting for the 5-minute timer.

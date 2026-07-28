@@ -1,8 +1,8 @@
 # Debian Server Installer
 
-**Version: v1b** (2026-07-28) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: v1rc** (2026-07-29) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.28-v1b` in its banner, log header and final summary; note this
+`2026.07.29-v1rc` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `8`.
 

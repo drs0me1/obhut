@@ -3,7 +3,7 @@
 ## Planned testing strategy
 
 > **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (57 unit
-> tests); Tier 3 had five real, manual install runs. Four were against a
+> tests); Tier 3 had seven real, manual install runs. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
 > hardening and also succeeded. The fifth was the first re-run against an
@@ -354,6 +354,30 @@ alone.
     through their mask/reinstall/unmask cycle. The two WireGuard peers'
     `latest-handshakes` reset to `0` — configuration and keys survived on
     the volume, and clients re-handshake on their next traffic.
+- **Sixth and seventh runs (2026-07-28/29) — clean install on a reimaged
+  host, then a re-run, then two reboots.** The server was reimaged
+  specifically to validate the v1rc consistency work against a fresh
+  target rather than an aged one. Same tmux-relay methodology; the user
+  supplied all four Stage 0 answers and completed the Tailscale browser
+  login. Both runs finished all 7 stages with `--check` clean.
+  - **Reboot behaviour, measured twice:** ~35s from `systemctl reboot` to
+    SSH, and all six containers healthy ~13s after boot. Zero failed
+    units, H1's modules auto-loaded, wg-easy's port and both peers
+    intact, DNS/Caddy/WebDAV all answering.
+  - **The one defect this round produced** was found by reading the boot
+    journal rather than by anything failing: systemd logged
+    `marked world-inaccessible` 12 times per boot because `umask 077`
+    made the unit files `0600`, while Stage 6's three drop-ins were
+    already being chmod'ed to `0644`. Fixed, redeployed via a re-run, and
+    re-verified across another reboot: 12 warnings → 0.
+  - **`wait_for_chain` did not vindicate itself, and the record says so.**
+    The firewall helper took 772ms at boot versus 702ms at install — it
+    never waited. Measurement showed why: `docker-tailscale-fw` starts at
+    the exact moment `docker.service` becomes active, and Docker is only
+    active once its chains exist. The fix remains defensible consistency,
+    not a demonstrated bug fix.
+  - **Netfilter reconstruction** was analysed in detail and written up as
+    `docs/design-decisions.md` DD-16 and DD-17.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs
