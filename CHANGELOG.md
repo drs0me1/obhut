@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [v1b] - 2026-07-28
+
+Post-R1.0 hardening and review pass. Exported as
+`~/Desktop/install-v1b.sh` (hash-verified identical to `install.sh` at
+tag `v1b`).
+
 ### Verified
 
 - **First live re-run against an already-provisioned host (2026-07-28),**
