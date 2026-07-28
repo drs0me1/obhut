@@ -2,7 +2,7 @@
 
 ## Planned testing strategy
 
-> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (40 unit
+> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (57 unit
 > tests); Tier 3 had five real, manual install runs. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
@@ -137,12 +137,37 @@ alone.
   test actually fails when they diverge. Added because **M8** and **M10**
   both edited the local-DNS-disabled branch, which no live install has
   ever executed.
-- **Remaining:** `check_ipv4_policy`/`check_ipv6_policy` (the composite
-  functions that call the above predicates together against real global
-  state like `TS_GUARD_CHAIN`/`POLICY_CHAIN`/`WAN4_IF`) are not unit
-  tested — they're more integration-shaped (many globals, real `-C`
-  calls against `$IPTABLES_BIN` directly) and are a natural Tier 3
-  (live-host) check instead.
+- **Also implemented:** `test/policy_functions.bats` covers
+  `check_ipv4_policy()` and `check_ipv6_policy()` — the composite
+  verifiers that hold the entire expected firewall rule set and produce
+  the verdict `docker-tailscale-fw --check` returns. 17 cases, no skips.
+  - **This supersedes an earlier judgement in this document**, which said
+    these two were "more integration-shaped" and "a natural Tier 3 check
+    instead". That was too pessimistic: like the five predicates above
+    they only read state (`-S` to list a chain, `-C` to probe one exact
+    rule), and everything else they touch (`TS_GUARD_CHAIN`,
+    `POLICY_CHAIN`, `WAN4_IF`, `WAN6_IF`, `PUBLIC_IPV4`,
+    `TAILSCALE_IPV4`) is a plain global a test can assign. A fake that
+    dispatches on the `-t` table and the `-S` chain is enough.
+  - Covers the healthy policy plus eleven distinct failure shapes:
+    missing terminal WAN DROP, missing Tailnet→Docker DROP, mangle jump
+    not first, duplicated `DOCKER-USER` jump, an extra rule appended to
+    `DOCKER-USER`, a resurrected legacy wide RETURN rule, a leftover
+    staging chain in either table, a terminal DROP inside
+    `DOCKER-FORWARD`, a wrong `FORWARD` prefix order, and a WebDAV allow
+    still bound to a stale Tailscale address. IPv6 adds **M5**'s
+    missing-`ip6tables` diagnostic and the deliberately reduced rule set
+    for a host with no IPv6 WAN.
+  - **Documented limitation:** these prove the verifier's decisions, not
+    that `apply_ipv4`/`apply_tailnet_guard` produce what it expects. The
+    healthy fixture restates the expected rules, so changing the policy
+    makes the healthy case fail — a signal to re-confirm the fixture,
+    not a proof of apply/check agreement. Driving the apply path through
+    a recording fake founders on its staging-chain activation loops;
+    that coupling stays Tier 3's job, and the live install does exercise
+    it end to end.
+- **Remaining in Tier 2:** nothing specific identified. The surveyed
+  gaps are closed; further additions would be opportunistic.
 - Longer-term, a small sourceable library file (extracted once, not
   per-test) would remove the need to re-extract function bodies via
   `sed`/`awk` in every test file — a meaningful, low-risk first step

@@ -28,7 +28,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     POSIX host with no skips, unlike the three existing `.bats` files.
   - Motivated by **M8** and **M10**, which both touched the local-DNS-
     *disabled* branch — code that has never executed in any live install.
-    40 test cases total across `test/`. Part of **M7**.
+    Part of **M7**.
+- `test/policy_functions.bats`: 17 `bats-core` unit tests for
+  `check_ipv4_policy()` and `check_ipv6_policy()` — the two composite
+  verifiers that hold the project's entire expected firewall rule set and
+  produce the verdict `docker-tailscale-fw --check` returns, which
+  reconcile trusts wholesale when deciding the firewall has drifted.
+  - `docs/testing.md` had assumed these were too integration-shaped to
+    unit-test and left them to Tier 3. Too pessimistic: they only read
+    state (`-S`/`-C`) and their remaining dependencies are plain globals
+    a test can assign, so a fake dispatching on the `-t` table and `-S`
+    chain suffices.
+  - Covers the healthy policy plus eleven distinct failure shapes
+    (missing terminal WAN DROP, missing Tailnet→Docker DROP, jump not
+    first, duplicated jump, extra rule appended to `DOCKER-USER`,
+    resurrected legacy wide rule, leftover staging chain in either
+    table, terminal DROP inside `DOCKER-FORWARD`, wrong `FORWARD` prefix
+    order, WebDAV allow bound to a stale Tailscale address), plus the
+    IPv6 variants including **M5**'s missing-`ip6tables` diagnostic and
+    the reduced no-IPv6-WAN set. All 17 run with no skips.
+  - Stated limitation: these prove the verifier's decisions, not that the
+    apply path produces what it expects — that coupling stays Tier 3's.
+  - 57 test cases total across `test/`. Part of **M7**.
+
+### Removed
+
+- **M3 (installation profiles) and L7 (ports hardcoded in the firewall
+  heredoc) closed as won't-do.** No code change; both were decided
+  against on the same ground — the deployment model. This installer
+  targets a single-purpose, single-operator host, always built from
+  scratch onto an empty server, with all six services in active use and
+  local DNS enabled every time.
+  - **M3**'s premise (an operator forced to accept exposure they don't
+    need) therefore does not hold, and its security motivation is
+    already covered by **C1**'s accepted Portainer risk. Implementing it
+    would make compose generation, the `state.env` schema,
+    `expected_containers`, the public-port firewall rules and every
+    Stage 7 per-service assertion conditional — a combinatorial set on a
+    project whose Tier 3 testing is still a manual live install.
+    `docs/profiles.md` is kept as a design note, clearly marked closed.
+  - **L7** has no scenario that can trigger it under the same model:
+    ports are fixed at install time and the workflow for changing
+    anything is reimage-and-reinstall. Both candidate fixes — a runtime
+    read from `state.env`, and the cheaper Stage 3 tripwire — were
+    declined.
+  - Either reopens if the installer is ever reused across hosts or by
+    someone other than its author. **M7** is now the only open finding.
 
 ## [v1b] - 2026-07-28
 

@@ -43,15 +43,17 @@ alone could not have caught any of them, see their entries below) and all
 three resolved the same day. A further five, **M8**, **M9**, **M10**,
 **L6** and **L7**, came out of a whole-file review of the post-R1.0
 script on 2026-07-28; **M8**, **M9** and **L6** were resolved the same
-day, **M10** was resolved with a deliberately narrowed scope, and **L7**
-was deferred (see their entries).
+day, **M10** was resolved with a deliberately narrowed scope, and **L7** was
+first deferred and then closed as won't-do (see their entries). **M3**
+was likewise closed as won't-do on 2026-07-28, leaving **M7** as the
+only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
-| Medium   | 2 (**M3**, **M7**) | 8 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, 2026-07-28) |
-| Low      | 1 (**L7**) | 6 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, 2026-07-28) |
+| Medium   | 1 (**M7**) | 9 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28) |
+| Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
 decision to *keep* the existing behavior/design as an accepted trade-off
@@ -563,7 +565,7 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
 - **Change risk:** None remaining — applied and verified; behavior is a
   strict improvement (same end-state ownership, less unnecessary I/O).
 
-### M3 — No user-selectable installation profile
+### M3 — No user-selectable installation profile — ✅ CLOSED (2026-07-28, won't do)
 - **Location:** `install.sh:523-612` (Stage 0 prompts),
   `install.sh:1777-1930` (compose definition)
 - **Description:** The six-service bundle (Portainer, Filebrowser,
@@ -572,10 +574,27 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
 - **Impact:** A user who only wants VPN or only wants media services must
   still accept exposure they don't need (e.g. Portainer's `docker.sock`
   access).
-- **Recommendation:** See `docs/profiles.md` for a proposed profile model.
-- **Change risk:** Medium-high — touches compose generation, `state.env`
-  schema, and reconcile's `expected_containers` list; requires scoping
-  before implementation.
+- **Decision (2026-07-28): closed as won't do.** The finding's premise —
+  that an operator is forced to accept exposure they don't need — does
+  not hold for this deployment. The user confirmed all six services are
+  in active use, the host is single-purpose and single-operator, it is
+  always installed from scratch onto an empty server, and even the
+  "optional" local DNS is enabled on every install. The security
+  motivation specifically (avoiding Portainer's `docker.sock` access) is
+  already moot: **C1** records that Portainer is actively used and the
+  risk accepted.
+- **Why not just leave it open:** the cost is real and one-directional.
+  Profiles would make compose generation, the `state.env` schema,
+  reconcile's `expected_containers`, the public-port firewall rules and
+  every per-service assertion in Stage 7 conditional — turning one
+  well-tested path into a combinatorial set, on a project whose Tier 3
+  testing is still a manual, human-relayed live install. Carrying it as
+  an open item also meant re-evaluating it at every review.
+- **What would reopen it:** an intention to run this installer on more
+  than this one server, or for someone other than its author. Neither is
+  in view today. `docs/profiles.md` is kept as a design note for that
+  case rather than deleted.
+- **Change risk:** None — no code change.
 
 ### M4 — `INSECURE: "true"` on wg-easy is undocumented in-line — ✅ RESOLVED (2026-07-27)
 - **Location (historical):** `install.sh:1863`
@@ -972,7 +991,7 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   budget already has.
 - **Change risk:** Low — reuses existing helpers, no new mechanism.
 
-### L7 — Public port numbers are hardcoded inside the firewall heredoc
+### L7 — Public port numbers are hardcoded inside the firewall heredoc — ✅ CLOSED (2026-07-28, won't do)
 - **Location:** `install.sh:502-503` (`WG_PUBLIC_PORT`,
   `QBIT_PUBLIC_PORT`), against the literals in the `docker-tailscale-fw`
   heredoc (`apply_tailnet_guard`, `apply_ipv4`, `check_ipv4_policy`)
@@ -994,12 +1013,20 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   the fix (having the helper read ports from `state.env` at runtime, the
   way reconcile already does) touches the most security-critical file in
   the project for a purely latent problem.
-- **Cheaper alternative if revisited:** a Stage 3 tripwire that greps the
-  generated helper for the expected port literals and fails the install
-  immediately if they don't match the constants — a few lines, no change
-  to the helper itself.
-- **Change risk:** Medium for the runtime-read fix; negligible for the
-  tripwire.
+- **Decision (2026-07-28): closed as won't do.** Both candidate fixes
+  were considered and neither earns its cost. Having the helper read
+  ports from `state.env` at runtime is the real single-source fix, but it
+  edits the most security-critical file in the project for a problem that
+  cannot occur under this deployment model — ports are fixed at install
+  time and the workflow for changing anything is reimage-and-reinstall,
+  not edit-and-re-run. A Stage 3 tripwire (grep the generated helper for
+  the expected literals, fail the install on a mismatch) was the cheaper
+  option and was also declined: it adds code to guard a scenario that
+  does not arise.
+- **What would reopen it:** ports becoming configurable per install, or
+  the installer being reused across hosts with different port
+  requirements — i.e. the same condition that would reopen **M3**.
+- **Change risk:** None — no code change.
 
 ## Recommendations
 
@@ -1105,3 +1132,5 @@ review.
 | 2026-07-28 | User + Claude Code (live Tier 3 test, fifth run — first re-run against an existing install) | Full re-run on the production host with the post-R1.0 batch (**M8**, **M9**, **L6**, **M10**, version string) in place | All 7 stages completed. Verified read-only: canonical directory now holds `compose.yaml` (`0:0:600`, byte-identical to the live file), manifest lists all eight entries in the expected order, `master-network-reconcile --check` reports every field `0` including the new `compose_file=0` and exits `0`, banner shows `2026.07.28-v1.1`, `state.env` finally carries `DOWNLOADS_PATH`, `qbittorrent` runs with `Memory=0 NanoCpus=0`, zero failed units, reconcile timer active. **The finding:** the deployed `compose.yaml` predated both **H7** and **M1**, so `TRUSTED_ORIGINS` and the `cap_drop`/`read_only` hardening reached the server for the first time in this run — Portainer had still been rejecting writes via `portainer.ayc` in real use despite **H7** being fixed in the repository days earlier. A repository fix is not a deployed fix, which is exactly the gap **M10** now reports on. Cost: all six containers recreated (not just `qbittorrent` as predicted from the compose diff); no Docker daemon restart (already at the candidate version); the two WireGuard peers' handshakes reset, with configuration and keys intact on the volume |
 | 2026-07-28 | User + Claude Code (rename) | `MASTER_SETUP_VERSION` | Release string renamed `2026.07.28-v1.1` → `2026.07.28-v1b` at the user's request. The date prefix is kept, matching the format used since `2026.07.26-r8`; only the revision component changes. Rows above that quote `-v1.1` are left as-is — they record what the banner actually showed during that run, before the rename. `STACK_SCHEMA=8` again unaffected |
 | 2026-07-28 | Claude Code (testing) | New: `test/canonical_bundle.bats` | **M7** Tier 2 continued, and the first v1b-cycle work: 8 test cases for `canonical_bundle_ok()`, reconcile's first gate — a non-zero return there exits before any detection or repair, silencing self-healing entirely. Its correctness rests on Stage 6's manifest file list agreeing with a hardcoded expected list ~2000 lines away in the same file, which nothing enforced and no static check could see; **M8** and **M10** had both edited the local-DNS-disabled branch, which no live install has ever executed. The tests derive both file lists from `install.sh`'s own source rather than restating them, so the two sides are checked against each other, and were mutation-verified on a scratch copy (dropping `compose.yaml` from Stage 6's list makes the test fail as intended). `sha256sum` and `owned_file_ok` are stubbed as out of scope, so all 8 cases run with no skips on any POSIX host — unlike the three existing `.bats` files. `install.sh` untouched |
+| 2026-07-28 | User decision + Claude Code | **M3** (installation profiles), **L7** (hardcoded ports in the firewall heredoc) | Both **closed as won't do**, no code change. The shared reason is the deployment model the user confirmed during this review: a single-purpose, single-operator host, always installed from scratch onto an empty server, with all six services in active use and local DNS enabled every time. **M3**'s premise (an operator forced to accept exposure they don't need) therefore does not hold, and its security motivation is already covered by **C1**'s accepted risk; carrying it open meant re-evaluating it every review while its implementation would turn one well-tested path into a combinatorial set. **L7** has no scenario that can trigger it under the same model — ports are fixed at install time and the workflow for change is reimage-and-reinstall; both candidate fixes (runtime read from `state.env`, and the cheaper Stage 3 tripwire) were declined. Either would reopen if the installer is ever reused across hosts or by someone other than its author; `docs/profiles.md` is kept as a design note for that case. **M7** is now the only open finding |
+| 2026-07-28 | Claude Code (testing) | New: `test/policy_functions.bats` | **M7** Tier 2 continued: 17 test cases for `check_ipv4_policy()`/`check_ipv6_policy()`, the two composite verifiers that hold the project's entire expected firewall rule set and whose verdict `docker-tailscale-fw --check` returns — the signal reconcile trusts wholesale when deciding the firewall has drifted. `docs/testing.md` had assumed these were too integration-shaped to unit-test and left them to Tier 3; that proved too pessimistic, since they only read state (`-S`/`-C`) and their remaining dependencies are plain assignable globals. Covers the healthy policy plus eleven specific ways it can be wrong (missing terminal WAN DROP, missing Tailnet DROP, jump not first, duplicated jump, extra rule appended to `DOCKER-USER`, resurrected legacy wide rule, leftover staging chain in either table, terminal DROP inside `DOCKER-FORWARD`, wrong `FORWARD` prefix order, and a WebDAV allow bound to a stale Tailscale address), plus the IPv6 variants including **M5**'s missing-`ip6tables` diagnostic and the reduced no-IPv6-WAN rule set. Uses a table/chain-dispatching fake stand-in that avoids bash associative arrays, so all 17 run with no skips on this workstation's bash 3.2. Documented limitation: these prove the verifier's decisions, not that the apply path produces what it expects — that coupling stays Tier 3's job. 57 cases total across `test/`. `install.sh` untouched |

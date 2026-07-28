@@ -329,14 +329,18 @@ as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
 
 **Remaining, at a high level:**
 
-- Design and implement opt-in/opt-out installation profiles per service
-  (**M3** — explicitly deferred by the user for now) — see
-  [`docs/profiles.md`](docs/profiles.md).
-- Finish **M7**: unit tests for `check_ipv4_policy`/`check_ipv6_policy`
-  (more integration-shaped, likely a better fit for Tier 3 than a unit
-  test); a non-interactive/answer-file invocation mode for `install.sh`
-  (needed before Tier 3 can be automated in CI rather than run manually);
-  standing up an actual CI pipeline.
+- Finish **M7**, the only finding still open. Tier 1 is done and Tier 2
+  now has 57 unit tests with no identified gaps left; what remains is a
+  CI pipeline, which is blocked on this repository having no git remote
+  for a runner to build from, and — only if CI is ever wanted for the
+  full install test — a non-interactive/answer-file invocation mode,
+  which would mean changing the deliberate `/dev/tty` prompt design.
+- Installation profiles (**M3**) and the hardcoded firewall ports
+  (**L7**) were **closed as won't-do** on 2026-07-28: this installer
+  targets a single-purpose, single-operator host built from scratch every
+  time, with all six services in use, so neither problem can arise.
+  [`docs/profiles.md`](docs/profiles.md) is kept as a design note in case
+  that ever changes.
 - Consider making the `PartOf` service-coupling behavior configurable,
   not just documented (**H3** confirmed it as intentional; no
   opt-out exists today).

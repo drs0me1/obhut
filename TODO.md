@@ -29,9 +29,6 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] **M3** — Scope and design an opt-in/opt-out installation profile
-      model (see `docs/profiles.md`) before implementing any change to
-      the fixed six-service bundle.
 - [ ] 🟡 **M7** (partially done, 2026-07-28) — Tier 1 (static analysis,
       see **H4**) done. Tier 2 in progress: `test/reconcile_functions.bats`
       covers `state_value`/`owned_file_ok` (7 cases; 2 self-skip on this
@@ -51,7 +48,9 @@ _All High findings resolved — see Completed below._
       surveyed and found to have no standalone pure-logic functions worth
       unit-testing — each is essentially a wait loop plus real side
       effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
-      integration-shaped, likely Tier 3 instead); CI wiring. Tier 3 itself
+      integration-shaped, likely Tier 3 instead — **done 2026-07-28, see
+      Completed**); CI wiring, which is blocked on this repository having
+      no git remote for a runner to build from. Tier 3 itself
       had three real attempts on 2026-07-28 (see Completed below and
       `docs/testing.md`) — found and fixed three real bugs (**H1**
       regression, **H5**, **H6**) across the first two, then the third
@@ -60,17 +59,7 @@ _All High findings resolved — see Completed below._
 
 ## Low
 
-- [ ] **L7** (2026-07-28, whole-file review, **deferred by the user**) —
-      Public ports (`65171`/`65173`/`65113`) are hardcoded inside the
-      single-quoted `docker-tailscale-fw` heredoc while the installer
-      keeps them in variables; the WebDAV port has no top-level variable
-      at all. No defect today — latent only if someone changes a
-      constant. Deferred because this tool only ever installs onto a
-      fresh, empty server, so "edit a port and re-run" is not a real
-      workflow (reimage + reinstall is), and the proper fix touches the
-      most security-critical file in the project. Cheaper alternative if
-      revisited: a Stage 3 tripwire that greps the generated helper for
-      the expected literals and fails the install on a mismatch.
+_All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
@@ -438,3 +427,35 @@ _All High findings resolved — see Completed below._
       `sha256sum` and `owned_file_ok` are stubbed as out of scope, so all
       8 run with no skips on any POSIX host. 40 cases total across
       `test/`. `install.sh` untouched.
+- [x] **M3 — closed as won't do (2026-07-28).** The finding's premise, that
+      an operator is forced to accept exposure they don't need, does not
+      hold here: all six services are in active use, the host is
+      single-purpose and single-operator, always installed from scratch
+      onto an empty server, and local DNS is enabled on every install. The
+      security motivation (avoiding Portainer's `docker.sock`) is already
+      covered by **C1**'s accepted risk. Implementing profiles would make
+      compose generation, the `state.env` schema, `expected_containers`,
+      the public-port firewall rules and every Stage 7 per-service
+      assertion conditional — a combinatorial set on a project whose Tier
+      3 testing is still a manual live install. `docs/profiles.md` is kept
+      as a design note in case the installer is ever reused across hosts
+      or by someone else, which is what would reopen this.
+- [x] **L7 — closed as won't do (2026-07-28).** Both candidate fixes were
+      declined. The runtime-read-from-`state.env` fix is the real
+      single-source solution but edits the most security-critical file in
+      the project for a problem that cannot occur under this deployment
+      model; the cheaper Stage 3 tripwire adds code to guard a scenario
+      that does not arise. Reopens under the same condition as **M3**.
+- [x] **Unit tests for `check_ipv4_policy`/`check_ipv6_policy`
+      (2026-07-28).** `test/policy_functions.bats`, 17 cases. These two
+      functions hold the project's entire expected firewall rule set and
+      produce the verdict `docker-tailscale-fw --check` returns — the
+      signal reconcile trusts wholesale. `docs/testing.md` had assumed
+      they were too integration-shaped to unit-test; that was too
+      pessimistic, since they only read state and their remaining
+      dependencies are assignable globals. Covers the healthy policy plus
+      eleven distinct failure shapes, and the IPv6 variants including
+      **M5**'s missing-`ip6tables` diagnostic and the reduced
+      no-IPv6-WAN set. A table/chain-dispatching fake avoids bash
+      associative arrays, so all 17 run with no skips on this
+      workstation. 57 cases total across `test/`. `install.sh` untouched.

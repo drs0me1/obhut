@@ -2,7 +2,18 @@
 
 ## Planned installation profiles
 
-> **Status: proposed / not yet implemented.** `install.sh` currently
+> **Status (2026-07-28): CLOSED as won't do — kept as a design note.**
+> **M3** was closed rather than implemented: this installer targets a
+> single-purpose, single-operator host that is always built from scratch
+> onto an empty server, with all six services in active use, so the
+> premise below (an operator forced to accept services they don't need)
+> does not hold in practice. See **M3** in `SECURITY_REVIEW.md` for the
+> full reasoning. This document is retained because it would become
+> relevant again the moment the installer is reused across hosts or by
+> someone other than its author — do not treat anything below as a plan
+> of record.
+>
+> **Original status: proposed / not yet implemented.** `install.sh` currently
 > deploys one fixed bundle of six services with no opt-out (finding
 > **M3** in `SECURITY_REVIEW.md`). Everything in this document describes
 > a design proposal for future work, not current behavior. Do not
