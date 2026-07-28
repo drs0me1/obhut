@@ -30,25 +30,45 @@ even when working in this repository only.
 
 ## Execution Rules
 
-- **Never execute `install.sh`.** Do not run it directly, via `bash`,
-  `sh`, `source`, or any wrapper, under any circumstances — it mutates a
-  live system (firewall, Docker, systemd, Tailscale) and cannot be safely
-  dry-run.
+- **Executing `install.sh` (or any other mutating command against a real
+  host) requires the user's explicit, specific approval for that exact
+  action, every time.** It mutates a live system (firewall, Docker,
+  systemd, Tailscale) and cannot be safely dry-run. A prior approval does
+  not carry over to later turns or to different commands/hosts, and an
+  assistant must never choose configuration values on the user's behalf —
+  every interactive prompt is relayed to and answered by the user
+  directly (see [`docs/testing.md`](docs/testing.md) Tier 3 for the
+  `tmux`-based relay methodology this has used in practice, since
+  `install.sh`'s prompts read `/dev/tty` directly and can't be driven via
+  piped stdin). This has been exercised successfully (2026-07-28) against
+  the user's own server, reimaged clean before each attempt specifically
+  so there was no production data at risk — that precondition (a
+  disposable target, or explicit authorization otherwise) is what makes
+  running it acceptable, not a blanket ban.
 - **Never run `sudo` or any destructive command** (`rm -rf`, `iptables`,
   `ip6tables`, `nft`, `systemctl` mutating verbs, `docker` lifecycle
   commands such as `up`/`down`/`rm`/`restart`, `git reset --hard`,
   `git push --force`, etc.) **unless the user explicitly asks for that
   specific action in that turn.** A prior approval does not carry over to
-  later turns or to different commands.
+  later turns or to different commands. When cleaning up throwaway test
+  containers/resources, target them by exact ID, not by a name/image
+  filter that could also match a real running container.
 - Read-only inspection commands (`git status`, `git log`, `git diff`,
   `wc -l`, `grep`, `cat`, `bash -n`, `shellcheck`) are always fine.
 
 ## Working Conventions
 
-- **Prefer static analysis over execution.** Reason about `install.sh` by
-  reading it, tracing logic by hand, and running `bash -n` / `shellcheck`.
-  Do not try to validate behavior by running the script or its generated
-  helpers.
+- **Default to static analysis; escalate to live execution only with
+  explicit approval.** Reason about `install.sh` by reading it, tracing
+  logic by hand, and running `bash -n` / `shellcheck` first — this
+  remains the right default for most changes. Live testing (see
+  **Execution Rules** and [`docs/testing.md`](docs/testing.md) Tier 3)
+  is the tool for anything static review structurally can't catch (three
+  real bugs — **H1**'s regression, **H5**, **H6** — were only found this
+  way) and for validating fixes actually hold up (a reboot, deliberate
+  drift injection, resource-limit enforcement, and a real workload all
+  confirmed **H1**/**M1** on 2026-07-28), but it's still an escalation
+  that needs the user's go-ahead, not the default mode.
 - **Analyze before modifying code.** Read the relevant section (and any
   functions/variables it depends on) in full before proposing an edit.
   Confirm whether the pattern is intentional by checking
