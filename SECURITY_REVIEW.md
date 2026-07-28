@@ -172,6 +172,16 @@ audit; they're genuine 19th/20th, separately-tracked findings.
   restarting the `wg-easy` container, `wg-quick up wg0` succeeded and the
   interface came up cleanly. Verified with `bash -n`/`shellcheck` after
   applying the permanent fix to `install.sh`.
+- **Reboot persistence confirmed (2026-07-28, same day):** rebooted the
+  fully-installed host to verify the fix is genuinely durable, not just
+  correct within the install session that set the modules up. Confirmed:
+  `wireguard`/`ip6_tables`/`ip6table_nat` were all present in `lsmod`
+  immediately after boot, loaded automatically via
+  `/etc/modules-load.d/wg-easy.conf` alone (no manual intervention);
+  `wg-easy` came back `healthy` within seconds, and its peer
+  configuration/keys survived (persisted on the `/data/wg-easy/config`
+  volume). This was the specific real-server verification this finding's
+  resolution note had originally deferred.
 
 ### H2 — Reconcile silently reverts manual operator changes — ✅ RESOLVED (2026-07-27, by design)
 - **Location:** `install.sh:2057-2090` (`canonical_bundle_ok`),
@@ -410,6 +420,19 @@ audit; they're genuine 19th/20th, separately-tracked findings.
   against the real images, not guessed; `qbittorrent`'s `read_only`
   was deliberately left unapplied specifically because testing showed
   real risk.
+- **Real-workload confirmation (2026-07-28, same day):** after applying
+  this config to a fresh install (the fourth live Tier 3 attempt, which
+  also succeeded end-to-end), tested both containers under real
+  conditions rather than just idle startup: (1) an isolated throwaway
+  container with a 256MB `--memory` limit was pushed past it and cleanly
+  `SIGKILL`ed (exit 137) by the cgroup memory controller, without
+  affecting the host or any real container — confirms `mem_limit`
+  actually enforces, not just being present in `compose.yaml`;
+  (2) `unpackerr`, running with its new `cap_drop: [ALL]` +
+  `read_only: true`, was given a real test archive in its watched
+  downloads folder and successfully detected, extracted, and cleaned it
+  up within its normal ~10s poll interval — confirms the hardening
+  survives a genuine extraction workload, not only an idle container.
 
 ### M2 — Unconditional `chown -R` on every run — ✅ RESOLVED (2026-07-28)
 - **Location (historical):** `install.sh:1773`
@@ -741,3 +764,4 @@ removal); only **M3**/**M7** remain open as of this review.
 | 2026-07-28 | User + Claude Code (live Tier 3 test, second attempt) | Second live install on the same server, reimaged clean again, with the **H1**/**H5** fixes in place | Install progressed much further this time — Stages 0-6 all succeeded (including wg-easy passing its healthcheck and DNS/Caddy, neither reached on the first attempt) — then failed at Stage 7's own `master-network-reconcile --check` postcondition call. Diagnosed a new finding, **H6**: `check_compose_runtime()` counted wg-easy's still-pending first-run setup as `compose_runtime` drift, which `all_critical_state_healthy()` (and so `--check`'s exit code) treats as a hard failure — contradicting the script's own stated intent not to block on this expected, **M6**-era state. Confirmed live: a manual `--check` run against the otherwise fully healthy host showed every field `0` except `compose_runtime=1`, solely due to the pending-setup message. An attempt to patch the already-deployed reconcile script directly on the server (to verify without a third reimage) was blocked by the auto-mode classifier as an unreviewed live edit — reasonably so; fixed in tracked `install.sh` instead (one-line removal) and verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |
 | 2026-07-28 | User + Claude Code (live Tier 3 test, third attempt) | Third live install on the same server, reimaged clean again, with **H1** (regression), **H5**, and **H6** all fixed | **First fully successful end-to-end install**: all 7 stages completed, ending in "AŞAMA 7/7 TAMAMLANDI" and the script's own success summary. Confirmed live: all 6 containers up (`wg-easy`/`filebrowser` reporting `healthy`), all core systemd units (`docker`, `tailscaled`, `docker-tailscale-fw`, `master-compose`, `caddy`, `dnsmasq`, `master-network-reconcile.timer`) active, no failed units, and a manual `master-network-reconcile --check` now exits `0` (still prints the informational "wg-easy ilk kurulumu tamamlanmamış" diagnostic, exactly as **H6** intended — visible but non-blocking). This closes out the first full validation cycle of the 2026-07-28 remediation work; **M1**'s remainder and **H1**'s original real-server verification are the natural next live-testing items |
 | 2026-07-28 | Claude Code (live capability testing) | `compose.yaml` → `services.qbittorrent`, `services.unpackerr` | **M1** fully resolved: determined the minimal working `cap_drop`/`cap_add`/`read_only` configuration for both containers empirically, using isolated throwaway `docker run` test containers (never the real stack) — `unpackerr` confirmed clean with `cap_drop: [ALL]` + `read_only: true`; `qbittorrent` confirmed clean with `cap_drop: [ALL]` + `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`, and `read_only: true` confirmed to actively break its PUID/PGID mechanism (911:1001 instead of 1000:1000) so deliberately not applied. Applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/`. Mid-testing, a `docker rm -f` filtered by image name accidentally removed the real production `qbittorrent` container alongside test containers — caught immediately, recreated via `docker compose up -d --no-deps qbittorrent` with no data loss (`/config` is a host bind mount; no real config had been set yet on this fresh install) |
+| 2026-07-28 | User + Claude Code (live Tier 3 test, fourth attempt + operational testing) | Fourth live install (server reimaged clean, all fixes incl. **M1** in place), followed by a full round of post-install operational testing on the same host | Fourth install succeeded end-to-end again — **M1**'s hardening didn't regress Stage 5. With the user's explicit broad testing latitude (host had no production data), ran a comprehensive operational validation: real admin accounts configured for every service; a real WireGuard client connected (confirmed via `wg show` handshake + `docker exec wg-easy ping`ing the peer from inside the container's netns: 0% loss, ~58-107ms RTT); Tailscale exit-node confirmed genuinely routing real traffic (not just configured) via `MASTER-TS-FORWARD` mangle-chain packet counters; a full host reboot confirmed **H1**'s module-loading fix persists across reboots (not just within the install session) and all services recover automatically; three deliberate drifts injected simultaneously (stopped container, disabled IP forwarding, deleted a firewall rule) were all detected and repaired by reconcile within one 5-minute cycle; **M1**'s `mem_limit` confirmed to actually enforce via a throwaway container OOM test; `unpackerr`'s new hardening confirmed to survive a real archive-extraction workload, not just idle; a 4-core CPU stress test showed all services responding in single-digit milliseconds throughout, with a reconcile cycle completing successfully mid-stress. No new bugs found — this round was confirmatory, validating that today's four fixes hold up under real operational conditions, not just a clean install |

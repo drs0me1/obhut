@@ -3,16 +3,16 @@
 ## Planned testing strategy
 
 > **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
-> tests); Tier 3 had its first three real, manual attempts, ending in a
-> full success (found and fixed three real bugs along the way — **H1**
-> regression, **H5**, **H6** — see below); CI wiring still not attempted.**
-> There is still no automated test suite or CI pipeline for this
-> repository (finding **M7** in `SECURITY_REVIEW.md`). The third 2026-07-28
-> attempt is the first time this repo's `install.sh` has completed a real
-> install end-to-end successfully, including Stage 7's own runtime
-> verification. This document proposes a staged strategy to eventually
-> make this repeatable via CI, without requiring a human to relay every
-> prompt by hand each time.
+> tests); Tier 3 had four real, manual install attempts (three found and
+> fixed real bugs — **H1** regression, **H5**, **H6**; the fourth added
+> **M1**'s hardening and also succeeded), plus a full round of
+> post-install operational testing (reboot, deliberate drift injection,
+> resource-limit enforcement, real WireGuard/Tailscale-exit-node traffic,
+> CPU stress) — all passed; CI wiring still not attempted.** There is
+> still no automated test suite or CI pipeline for this repository
+> (finding **M7** in `SECURITY_REVIEW.md`). This document proposes a
+> staged strategy to eventually make Tier 3 repeatable via CI, without
+> requiring a human to relay every prompt by hand each time.
 
 ### Why this is hard
 
@@ -201,6 +201,83 @@ alone.
   repo's `install.sh` has completed a real, end-to-end install
   successfully — three attempts, three real bugs found and fixed, each
   attempt progressing one stage further than the last.
+- **Fourth real attempt (2026-07-28, same day) — M1 hardening included:**
+  after **M1**'s deferred `cap_drop`/`cap_add`/`read_only` config
+  (determined via throwaway `docker run` tests, see **M1**'s
+  `SECURITY_REVIEW.md` entry) was added to `install.sh`, the server was
+  reimaged clean a fourth time to verify the full install still succeeds
+  with all four fixes in place (H1 regression, H5, H6, M1). All 7 stages
+  completed successfully again — the container-hardening changes did not
+  regress Stage 5's health-wait gate. This is the run all the operational
+  testing below was performed against.
+- **Post-install operational testing (2026-07-28, same server/session):**
+  once installed, the user configured a real admin account on every
+  service that needs one (wg-easy, Portainer, SFTPGo, qBittorrent) and
+  added a real WireGuard client profile + enabled Tailscale exit-node
+  routing from their own Mac, explicitly asking for the install to be
+  exercised under realistic operational conditions, not just a clean
+  install/idle state. Findings:
+  - **SFTPGo/WebDAV:** investigated a perceived connection delay for a
+    real WebDAV client (Infuse app on iOS, user "infuse"). Server-side
+    logs showed no technical delay at all — the first login succeeded
+    immediately with 0-7ms request times and no retries; the perceived
+    delay was almost certainly client-side (Tailscale peer connection
+    establishment and/or the time spent creating the user in SFTPGo's
+    admin UI), not a server or `install.sh` issue.
+  - **Reconcile coverage check:** confirmed all 6 services already have
+    a health check in `check_compose_runtime()` (`port_binding_exists`/
+    `http_endpoint_responds` for Portainer included) — no monitoring gap
+    found, nothing needed adding.
+  - **WireGuard tunnel, real client:** a real macOS WireGuard client
+    connected; confirmed via `wg show` (successful handshake, real
+    transfer bytes) and `docker exec wg-easy ping` to the peer's tunnel
+    IP from inside the container's network namespace (the host itself
+    has no route to `10.8.0.0/24` — pinging from the host directly gives
+    a misleading 100% loss): 0% packet loss, ~58-107ms RTT.
+  - **Tailscale exit-node, real client:** confirmed genuinely active (not
+    just configured) via `tailscale status` showing the peer `active;
+    direct` with real tx/rx bytes, and via the `MASTER-TS-FORWARD` mangle
+    chain's packet counters actually incrementing on the
+    `tailscale0 -> eth0` MARK/ACCEPT rules.
+  - **Reboot test:** rebooted the live host. Confirmed **H1**'s fix is
+    genuinely persistent, not incidental to the install session:
+    `wireguard`/`ip6_tables`/`ip6table_nat` were all auto-loaded on boot
+    via `/etc/modules-load.d/wg-easy.conf` alone. All 6 containers were
+    back up (2 already `healthy`) within 22 seconds, all core systemd
+    units active, zero failed units, `master-network-reconcile --check`
+    exit `0`, and the wg-easy peer configs/keys persisted correctly
+    (`/data/wg-easy/config` volume).
+  - **Deliberate drift injection (reconcile self-healing, not just
+    passive reporting):** in a single test, stopped `qbittorrent`, set
+    `net.ipv4.ip_forward=0`, and deleted the
+    `MASTER-DOCKER -i tailscale0 -o eth0 -j ACCEPT` firewall rule. The
+    next scheduled reconcile cycle (within 5 minutes) detected all three
+    drifts and repaired all three: `qbittorrent` restarted, forwarding
+    restored to `1`, the firewall rule reinserted — confirmed via
+    `--check` returning to a clean, all-zero, exit-`0` state, and via a
+    second clean cycle 5 minutes later with no drift messages at all.
+  - **Resource-limit (M1) enforcement test:** an isolated throwaway
+    container with a 256MB memory limit, pushed past that limit, was
+    cleanly `SIGKILL`ed (exit 137) by the cgroup memory controller
+    without affecting the host or any real running container — confirms
+    `mem_limit` actually bites, not just being present in `compose.yaml`.
+  - **`unpackerr` real-workload test (M1):** with its new `cap_drop:
+    [ALL]` + `read_only: true`, a real test archive (zip) placed in the
+    watched downloads folder was detected, extracted, and cleaned up
+    successfully within its normal ~10s poll interval — confirms the new
+    hardening survives a real extraction workload, not just idle startup
+    (which was all that had been tested when **M1** was first applied).
+  - **CPU stress test:** loaded all 4 cores to ~100% for about a minute.
+    All 5 web-facing services still responded in single-digit
+    milliseconds throughout. A `master-network-reconcile.service` run
+    happened to fall inside the stress window and still completed
+    successfully in 4 seconds. Zero failed units throughout.
+  - All of the above ran against the same already-installed host with
+    explicit, broad testing latitude from the user ("test the server
+    without worrying about data loss, we're using it purely for
+    testing") — a meaningfully different authorization than the
+    turn-by-turn approval used for the install runs themselves, granted
+    specifically because the host had no production data on it.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs
@@ -209,30 +286,44 @@ alone.
   would need to change too), and asserts on the same postconditions
   Stage 7 already checks, then destroys the instance. This remains the
   right direction for a repeatable, disposable, no-human-relay version of
-  this tier — the 2026-07-28 run was a one-off manual pass on real
-  (borrowed) infrastructure, not a repeatable CI-shaped test.
+  this tier — the 2026-07-28 runs were manual passes on real (borrowed)
+  infrastructure, not a repeatable CI-shaped test.
 - This tier is the most expensive and the least frequently run (e.g. on
   release branches or nightly, not on every commit).
 
 ### Manual test checklist (until Tier 3 exists)
 
 For any change to `install.sh`, the following scenarios should be
-exercised manually on a disposable Debian 13 VM before merging:
+exercised manually on a disposable Debian 13 VM before merging. Items
+checked below were exercised for real on 2026-07-28 (see the Tier 3
+narrative above); unchecked items still describe intent only.
 
+- [x] Fresh install, local DNS enabled (exercised on all four 2026-07-28
+      attempts; the no-local-DNS path itself remains unexercised — see
+      below)
 - [ ] Fresh install, no local DNS (Tailscale login is always interactive
       browser login as of 2026-07-27 — see **C2**)
-- [ ] Fresh install, local DNS enabled
-- [ ] Fresh install, verify wg-easy comes up unconfigured (`/setup`) and
-      the final summary instructs manual completion — no automated
-      bootstrap exists anymore (see **M6**)
+- [x] Fresh install, verify wg-easy comes up unconfigured (`/setup`) and
+      the final summary instructs manual completion — confirmed via
+      `check_compose_runtime()`'s "wg-easy ilk kurulumu tamamlanmamış"
+      diagnostic appearing (and correctly not blocking Stage 7, per
+      **H6**) on every fresh install before manual setup was done
+- [x] Re-run after simulating firewall drift (manually removing a rule) —
+      confirmed reconcile restores it within one cycle
+- [x] Re-run after simulating a stopped container — confirmed reconcile
+      restarts it within one cycle; the 15-minute restart-cooldown
+      behavior itself (repeated flapping) was not separately stress-tested
+- [x] Reboot the fully-installed host — confirmed all services and
+      **H1**'s module-loading fix survive a real reboot, not just the
+      install session (this scenario wasn't in the original checklist;
+      added after 2026-07-28's testing showed it was a meaningfully
+      different — and important — case from "re-run install.sh")
 - [ ] Re-run against an already-provisioned host (no drift) — should be a
-      near no-op
+      near no-op (not exercised; all four 2026-07-28 runs were against a
+      freshly reimaged host each time, not a re-run against an existing
+      install)
 - [ ] Re-run after simulating WAN/Tailscale address drift — reconcile
       should repair it
-- [ ] Re-run after simulating firewall drift (manually removing a rule) —
-      reconcile should restore it within one cycle
-- [ ] Re-run after simulating a stopped/crash-looped container — restart
-      cooldown behavior should be respected
 - [ ] Toggling local DNS from disabled to enabled on a re-run, and the
       reverse
 - [ ] A forced failure in each stage (1 through 7) to confirm the `EXIT`

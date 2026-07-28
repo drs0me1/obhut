@@ -9,17 +9,23 @@ can pick up without re-deriving context.
 Same session, continued into a much bigger phase: after finishing the M7
 Tier 2 survey (see below), did a full live audit of the user's actual
 production server over SSH (`ssh nrm`), then — with the user's explicit,
-turn-by-turn approval — ran three real Tier 3 install tests against that
+turn-by-turn approval — ran four real Tier 3 install tests against that
 same server, reimaged clean each time. First attempt failed at Stage 5
 (**H1** regression + **H5**, both fixed). Second attempt got all the way
 through Stage 6 (a first) and failed at Stage 7 (**H6**, found and
-fixed). **Third attempt completed all 7 stages successfully
-end-to-end** — the first fully clean install of this repo's `install.sh`,
-confirmed live (all containers healthy, all core units active, zero
-failed units, `master-network-reconcile --check` exits `0`). See
-`CHANGELOG.md`'s three "live Tier 3 install test" entries for the full
-narrative. This closes out the first full validation cycle of the
-2026-07-28 remediation work.
+fixed). Third attempt completed all 7 stages successfully end-to-end —
+the first fully clean install of this repo's `install.sh`. **M1**'s
+deferred capability hardening was then determined empirically (throwaway
+`docker run` tests) and applied to `install.sh`; a fourth install
+confirmed it didn't regress anything. The user then granted broad
+testing latitude on this now-disposable-for-testing server and asked for
+a full operational stress test: real service configuration, real
+WireGuard/Tailscale-exit-node traffic, a full reboot, deliberate
+drift-injection into reconcile, resource-limit enforcement, and CPU
+stress — **everything passed**, no new bugs found. See `CHANGELOG.md`'s
+four "live Tier 3 install test" entries and the "full operational stress
+test" entry for the full narrative. This closes out the first full
+validation cycle of the 2026-07-28 remediation work.
 
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
@@ -180,18 +186,16 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Remaining Work
 
-- **M1 remainder**: `cap_drop: [ALL]` for `qbittorrent`/`unpackerr` and
-  `read_only` rootfs — was deferred to "the live SSH test phase," which
-  has now happened and produced a fully working server; a good next
-  candidate to test live, empirically, on this same host.
-- **H1's original deferred item**: real-server confirmation that wg-easy
-  brings up `wg0` successfully — now confirmed, repeatedly, across all
-  three Tier 3 attempts.
+- **M1, H1**: fully resolved and now confirmed under real operational
+  conditions (reboot, real workload, resource-limit enforcement) — no
+  remainder left.
 - **M3**: installation-profile scoping (`docs/profiles.md`) — the user
   explicitly asked to skip this for now ("m3 şimdilik atlayalım").
 - **M7 remainder**:
-  - `check_ipv4_policy`/`check_ipv6_policy` — more integration-shaped,
-    likely a Tier 3 concern rather than a unit test.
+  - `check_ipv4_policy`/`check_ipv6_policy` — more integration-shaped;
+    arguably now partially covered in spirit by the live drift-injection
+    testing (firewall drift was injected and confirmed repaired), but not
+    as a repeatable automated test.
   - `master-docker-netfilter-recovery`'s restart-cooldown check is a
     possible future unit-test candidate, but only after extracting it
     into a named function (a small `install.sh` refactor, not attempted).
@@ -202,18 +206,26 @@ resolved, plus one unnumbered cleanup and two partial items:
 - **Known documentation drift, still not fixed** (flagged in a prior
   session, still open): `README.md`'s "Roadmap" section intro still says
   only **C2**/**M6** are "done so far," undercounting everything done
-  since, including today's **H1** regression fix and **H5**/**H6**.
+  since, including today's **H1** regression fix, **H5**/**H6**, **M1**,
+  and the full operational stress-test round.
+- **The server itself**: currently configured with real admin accounts
+  on every service, a real WireGuard client (the user's Mac), and
+  Tailscale exit-node routing enabled — it's no longer in a "just
+  installed, nothing configured" state. Worth checking with the user
+  whether they want to keep using this as their actual production server
+  going forward, or keep reimaging it for further test cycles.
 
 ## Recommended Next Step
 
-1. Revisit **M1**'s remainder (`cap_drop: [ALL]`, `read_only`) live on
-   the now fully-installed server — the natural next live-testing item,
-   directly enabled by the Tier 3 success.
-2. The `README.md` Roadmap drift cleanup remains a small, low-risk,
-   documentation-only task that could be picked up any time.
-3. Consider whether the user wants to keep this specific server as the
-   long-term production box now, or continue treating it as a disposable
-   test target for further changes.
+1. The `README.md` Roadmap drift cleanup remains a small, low-risk,
+   documentation-only task that could be picked up any time — the most
+   concrete loose end left.
+2. Ask the user whether this server should now become "real" production
+   (in which case further destructive testing should stop) or stay a
+   disposable test target.
+3. If more testing is wanted: **M7**'s remaining Tier 2/3 items, or
+   designing **M3** (installation profiles) if the user is ready to
+   revisit it.
 
 Whichever is chosen, keep following the standing per-change rule: analyze
 and flag risk first, apply only after explicit approval, verify with

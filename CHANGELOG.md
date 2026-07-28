@@ -688,3 +688,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
   Synced `SECURITY_REVIEW.md` (M1 now fully resolved, findings table
   updated) and `TODO.md`.
+- **Fourth live install + full operational stress test.** With M1's fix
+  applied, the user reimaged the server clean a fourth time and re-ran
+  `install.sh`; all 7 stages succeeded again, confirming the container
+  hardening didn't regress Stage 5. The user then explicitly granted
+  broad testing latitude ("test the server without worrying about data
+  loss, we're using it for testing") and asked for the install to be
+  exercised under realistic operating conditions rather than just
+  idle/clean state — configuring real admin accounts, a real WireGuard
+  client, and Tailscale exit-node routing from their own Mac.
+- Investigated a perceived SFTPGo/WebDAV connection delay (a real client,
+  the Infuse app, connecting as user "infuse"): server-side logs showed
+  no technical delay whatsoever — 0-7ms request times on the very first
+  login, no retries or errors. The delay was almost certainly client-side
+  (Tailscale peer setup and/or manual admin-UI configuration time), not
+  an `install.sh` or server issue.
+- Confirmed reconcile already covers all 6 services (including Portainer,
+  via `port_binding_exists`/`http_endpoint_responds`) — no monitoring gap
+  found, nothing added.
+- Tested the real WireGuard tunnel end-to-end: a real macOS client
+  connected, confirmed via `wg show` (successful handshake, real transfer
+  bytes) and `docker exec wg-easy ping` to the peer's tunnel IP *from
+  inside the container's network namespace* (the host itself has no
+  route to `10.8.0.0/24`, so pinging from the host gives a misleading
+  100% loss) — 0% packet loss, ~58-107ms RTT.
+- Tested the real Tailscale exit-node path: confirmed genuinely active
+  (not just configured) via `tailscale status` showing the peer
+  `active; direct` with real tx/rx bytes, and via the
+  `MASTER-TS-FORWARD` mangle chain's packet counters actually
+  incrementing on the `tailscale0 -> eth0` rules.
+- **Reboot test.** Rebooted the fully-installed, now-realistically-used
+  host. Confirmed **H1**'s fix is genuinely persistent, not incidental to
+  the install session: `wireguard`/`ip6_tables`/`ip6table_nat` all
+  auto-loaded via `/etc/modules-load.d/wg-easy.conf` alone. All 6
+  containers were back up (2 already `healthy`) within 22 seconds, all
+  core systemd units active, zero failed units, `master-network-reconcile
+  --check` exit `0`, and wg-easy's peer configs/keys persisted correctly.
+- **Deliberate drift injection, three at once.** Stopped `qbittorrent`,
+  set `net.ipv4.ip_forward=0`, and deleted the
+  `MASTER-DOCKER -i tailscale0 -o eth0 -j ACCEPT` firewall rule. The next
+  scheduled reconcile cycle detected and repaired all three within 5
+  minutes: container restarted, forwarding restored, firewall rule
+  reinserted — confirmed via `--check` returning to a clean, exit-`0`
+  state, and a second clean cycle 5 minutes later with no drift at all.
+  This is the first time this project's self-healing reconcile loop has
+  been proven to actively repair injected drift, not just passively
+  report a healthy no-op state.
+- **Resource-limit (M1) enforcement test.** An isolated throwaway
+  container with a 256MB memory limit, pushed past it, was cleanly
+  `SIGKILL`ed (exit 137) by the cgroup memory controller without
+  affecting the host or any real container — confirms `mem_limit`
+  actually enforces.
+- **`unpackerr` real-workload test (M1).** With its new `cap_drop: [ALL]`
+  + `read_only: true`, a real test archive placed in the watched
+  downloads folder was detected, extracted, and cleaned up successfully
+  within its normal ~10s poll interval — confirms the new hardening
+  survives a genuine extraction workload, not only idle startup.
+- **CPU stress test.** Loaded all 4 cores to ~100% for about a minute.
+  All 5 web-facing services still responded in single-digit milliseconds
+  throughout; a `master-network-reconcile.service` run happened to fall
+  inside the stress window and still completed successfully in 4
+  seconds. Zero failed systemd units throughout.
+- No new bugs found in this round — confirmatory testing validating that
+  the day's four fixes (H1 regression, H5, H6, M1) hold up under real
+  operational conditions, not just a clean install. Synced
+  `SECURITY_REVIEW.md` (H1 reboot-persistence note, M1 real-workload
+  note, new Review History row), `TODO.md`, and `docs/testing.md` (Tier
+  3 narrative + manual checklist items checked off).

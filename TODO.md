@@ -243,3 +243,29 @@ _All Low findings resolved — see Completed below._
       end up owned by `911:1001` instead of `1000:1000`) so deliberately
       not applied. Applied to `install.sh`; `bash -n`/`shellcheck`/
       `scripts/lint-embedded-scripts.sh`/`bats test/` all clean.
+- [x] **Fourth live Tier 3 install + full operational test (2026-07-28).**
+      Server reimaged clean once more with all fixes (**H1** regression,
+      **H5**, **H6**, **M1**) in place — succeeded end-to-end again. Then,
+      with the user's explicit broad testing latitude (host had no
+      production data), ran a comprehensive operational validation on the
+      live install: real admin accounts configured for every service;
+      real WireGuard client connection confirmed (handshake, 0% loss,
+      ~58-107ms RTT, tested via `docker exec wg-easy ping` from inside
+      the container's own network namespace); Tailscale exit-node
+      confirmed genuinely routing real traffic via firewall mangle-chain
+      counters, not just configured; a full reboot confirmed **H1**'s
+      module-loading fix persists across reboots and all 6 services
+      recover automatically within ~22s; three simultaneous deliberate
+      drifts (stopped container, disabled IP forwarding, deleted firewall
+      rule) were all detected and repaired by reconcile in one 5-minute
+      cycle; **M1**'s `mem_limit` confirmed to actually enforce via a
+      throwaway-container OOM test; `unpackerr`'s new hardening confirmed
+      under a real extraction workload; a 4-core CPU stress test showed
+      all services staying responsive and reconcile completing
+      successfully mid-stress. Investigated a perceived SFTPGo/WebDAV
+      connection delay and found no server-side cause (0-7ms request
+      times, no retries) — very likely client-side (Tailscale peer
+      connection setup / manual admin-UI configuration time). No new
+      bugs found this round — confirmatory testing of the day's four
+      fixes under real operating conditions. See `docs/testing.md`
+      Tier 3 for the full narrative.
