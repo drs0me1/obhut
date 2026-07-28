@@ -6,7 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `test/canonical_bundle.bats`: 8 `bats-core` unit tests for
+  `canonical_bundle_ok()`, reconcile's first gate — if it returns
+  non-zero the script exits before any detection or repair, so the whole
+  self-healing loop goes silent. Its correctness depends on agreement
+  between two places ~2000 lines apart in `install.sh`: Stage 6 decides
+  which files enter the `SHA256SUMS` manifest, and `canonical_bundle_ok`
+  compares the manifest's entry list against a hardcoded expected list
+  with an exact string equality. Nothing enforced that they stay in sync,
+  and neither `bash -n` nor `shellcheck` can see a mismatch.
+  - The tests **derive both file lists from `install.sh`'s own Stage 6
+    source** rather than restating them, so the two sides are compared
+    against each other. Verified to have teeth: on a scratch copy with
+    `compose.yaml` deliberately dropped from Stage 6's list, the test
+    fails as intended.
+  - Hash verification (`sha256sum`) and ownership checking
+    (`owned_file_ok`) are stubbed out — out of scope here, and both would
+    otherwise require GNU coreutils. All 8 cases run for real on any
+    POSIX host with no skips, unlike the three existing `.bats` files.
+  - Motivated by **M8** and **M10**, which both touched the local-DNS-
+    *disabled* branch — code that has never executed in any live install.
+    40 test cases total across `test/`. Part of **M7**.
 
 ## [v1b] - 2026-07-28
 

@@ -55,25 +55,6 @@ _All High findings resolved — see Completed below._
       attempt completed all 7 stages successfully end-to-end, the first
       fully clean install of this repo's `install.sh`.
 
-- [ ] **Unit-test `canonical_bundle_ok()`'s two manifest branches**
-      (2026-07-28, **deferred to the next version by the user**). **M8**
-      (manifest generation, Stage 6) and **M10** (the expected-entry list
-      in `canonical_bundle_ok`) both touched the local-DNS-**disabled**
-      branch, which has never executed in any of the five live runs. The
-      two sides must agree exactly — one produces the manifest, the other
-      compares it with a literal string equality — and a mismatch makes
-      reconcile `exit 1` at its first gate, disabling self-healing
-      entirely. Neither `bash -n` nor `shellcheck` can see this class of
-      error.
-      Cheap to close without a host: extract `canonical_bundle_ok`'s body
-      with the same technique `test/reconcile_functions.bats` already
-      uses, override `owned_file_ok` inside the test so it doesn't need
-      GNU `stat`, and assert both branches plus a deliberately corrupted
-      manifest — roughly four cases. Counts toward **M7**'s Tier 2.
-      Note the live-install scenario for this path is *not* worth
-      chasing: local DNS is always enabled on this deployment (see
-      `docs/testing.md`), so the unit test is the whole remedy.
-
 ## Low
 
 - [ ] **L7** (2026-07-28, whole-file review, **deferred by the user**) —
@@ -440,3 +421,17 @@ _All High findings resolved — see Completed below._
       `all_critical_state_healthy()`'s early exit. `install.sh` 4418 →
       4449 lines. Verified with `bash -n`, `shellcheck`,
       `scripts/lint-embedded-scripts.sh`, `bats test/`.
+- [x] **Unit tests for `canonical_bundle_ok()` (2026-07-28, first v1b-cycle
+      work).** `test/canonical_bundle.bats`, 8 cases. Covers reconcile's
+      first gate — a non-zero return there exits before any detection or
+      repair, silencing self-healing entirely. Its correctness depended on
+      Stage 6's manifest file list agreeing with a hardcoded expected list
+      ~2000 lines away, which nothing enforced and no static check could
+      see; **M8** and **M10** had both edited the local-DNS-disabled
+      branch, which no live install has ever executed. The tests derive
+      both file lists from `install.sh`'s own source rather than restating
+      them, and were mutation-verified on a scratch copy (dropping
+      `compose.yaml` from Stage 6's list makes the test fail as intended).
+      `sha256sum` and `owned_file_ok` are stubbed as out of scope, so all
+      8 run with no skips on any POSIX host. 40 cases total across
+      `test/`. `install.sh` untouched.

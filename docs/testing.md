@@ -2,7 +2,7 @@
 
 ## Planned testing strategy
 
-> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
+> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (40 unit
 > tests); Tier 3 had five real, manual install runs. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
@@ -124,6 +124,19 @@ alone.
   function would be an `install.sh` behavior-preserving refactor, not just
   a test addition, so it's left for a future session if the user wants to
   pursue it explicitly, rather than folded into this survey.
+- **Also implemented:** `test/canonical_bundle.bats` covers
+  `canonical_bundle_ok()` — reconcile's first gate, and the one function
+  whose failure silences the entire self-healing loop. 8 cases, none of
+  which skip on this workstation: hash verification and ownership
+  checking are stubbed (out of scope, and both would drag in GNU
+  coreutils), leaving the manifest entry-list logic as the sole subject.
+  The expected file lists are extracted from `install.sh`'s own Stage 6
+  source rather than restated, so the test compares the two sides of a
+  ~2000-line-apart coupling against each other; a scratch-copy mutation
+  (dropping `compose.yaml` from Stage 6's list) was used to confirm the
+  test actually fails when they diverge. Added because **M8** and **M10**
+  both edited the local-DNS-disabled branch, which no live install has
+  ever executed.
 - **Remaining:** `check_ipv4_policy`/`check_ipv6_policy` (the composite
   functions that call the above predicates together against real global
   state like `TS_GUARD_CHAIN`/`POLICY_CHAIN`/`WAN4_IF`) are not unit
