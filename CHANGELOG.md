@@ -4,10 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-28
 
 ### Added
 
+- `master-network-reconcile`: a new `disk_space_ok()` check monitors the
+  filesystem backing `$DOWNLOADS_PATH` (persisted to `state.env` as of
+  this change) and reports (but cannot auto-repair — deleting user data
+  isn't a safe automated action) once usage crosses 90%. Motivated by
+  this server's actual workload (continuous downloading/extraction),
+  which was previously the one realistic failure mode reconcile had zero
+  visibility into. Tested against both a real disk and an artificially
+  filled tmpfs on the live server.
 - Project documentation scaffolding: `README.md`, `CLAUDE.md`,
   `SECURITY_REVIEW.md`, `TODO.md`, `CHANGELOG.md`, `SESSION.md`, and
   `docs/{architecture,design-decisions,profiles,testing}.md`.
@@ -755,3 +763,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SECURITY_REVIEW.md` (H1 reboot-persistence note, M1 real-workload
   note, new Review History row), `TODO.md`, and `docs/testing.md` (Tier
   3 narrative + manual checklist items checked off).
+- **Final architecture review, disk-space monitoring, R1.0.** At the
+  user's request, considering the server's actual intended use (a
+  personal, long-running download/media/VPN box) and how its systems
+  relate to each other, did a deep-dive review of `master-network-reconcile`
+  (what it tracks and how), systemd unit dependencies, IPv6, container
+  DNS, and wg-easy's kernel-module approach, plus live verification of
+  each. Findings, all confirmed working as intended:
+  - IPv6 works end-to-end, including real egress from inside the
+    `wg-easy` container (`ping -6` to Cloudflare succeeded).
+  - Containers reach `1.1.1.1`/`1.0.0.1` directly for DNS via Docker's
+    own embedded resolver, entirely independent of the host's
+    Tailscale-overridden `/etc/resolv.conf` — confirmed by design (L4)
+    and live (`nslookup ... 1.1.1.1` from inside a container).
+  - wg-easy's host-side kernel-module approach (H1) is the standard
+    hardening pattern, not an indirect workaround; the only more-isolated
+    alternative (fully userspace WireGuard) would require forking the
+    wg-easy image and wasn't pursued (already documented as DD-10's open
+    alternative).
+  - A Tailscale IP change correctly cascades through firewall refresh,
+    `.env` regeneration, and container recreation (traced via
+    `ADDRESS_CHANGED` → `STACK_RESTART_REQUIRED`).
+  - Caddy/dnsmasq boot ordering was the most scrutinized part, given the
+    real risk (losing Tailnet-DNS/Caddy access, though never root SSH
+    access, which is independent) if they raced. Found it's already
+    defended in depth: `dnsmasq` uses `bind-dynamic` so a missing
+    interface at startup never crashes it; `caddy.service`'s
+    `ExecStartPre` actively polls for `tailscale0`'s IPv4 (up to 300s)
+    rather than trusting `After=` ordering alone; a reverse
+    `Wants=`/`Before=` drop-in on `tailscaled.service` re-triggers Caddy;
+    and `OnFailure=master-network-reconcile.service` is the final
+    backstop. Confirmed via real boot logs: `tailscaled` → `dnsmasq` (2s)
+    → `caddy` (1s), zero races observed.
+  - Considered adding Tailscale key-expiry monitoring (the node's key
+    expires 2027-01-24; nothing currently warns in advance) — the user
+    opted to track this themselves rather than add it to `install.sh`.
+- **New: disk-space monitoring for `master-network-reconcile`** (see
+  Added, above) — the one concrete gap found, given this server's actual
+  workload. `install.sh` 4319 → 4343 lines. Verified with `bash -n`,
+  `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`, and a
+  live isolated-function test on the server (real disk: healthy;
+  artificially filled 10MB tmpfs: correctly flagged unhealthy at 90%).
+- **R1.0**: tagged as the first stable, validated release, given the
+  cumulative result of today's work — all resolvable audit findings
+  fixed (**H1**-**H6**, **M1**-**M2**, **M4**-**M6**, **C1**-**C2**,
+  **L1**-**L5**), four successful live end-to-end installs, a full
+  operational stress test (reboot, deliberate drift injection, resource
+  limits, real WireGuard/Tailscale traffic, CPU stress), and this final
+  architecture review turning up no functional defects. **M3** (install
+  profiles) and **M7**'s remainder (CI wiring, a few more unit tests)
+  remain open, deliberately deferred, not blocking this tag.

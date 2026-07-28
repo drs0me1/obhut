@@ -8,8 +8,10 @@ Tier 3 install test attempts.
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 **L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), a
 regression fix to **H1** plus the new **H5**/**H6** fixes (all from live
-tests), and one unnumbered cleanup (legacy reboot-timer removal); file is
-now 4319 lines. Do not start work on any item without explicit user
+tests), one unnumbered cleanup (legacy reboot-timer removal), and a new
+disk-space monitoring check added to `master-network-reconcile` after a
+final architecture review; file is now 4343 lines. **Tagged as R1.0**
+(2026-07-28). Do not start work on any item without explicit user
 approval (per `CLAUDE.md`).
 
 ## Critical
@@ -269,3 +271,25 @@ _All Low findings resolved — see Completed below._
       bugs found this round — confirmatory testing of the day's four
       fixes under real operating conditions. See `docs/testing.md`
       Tier 3 for the full narrative.
+- [x] **Final architecture review + disk-space monitoring (2026-07-28,
+      R1.0).** Deep-dive review of `master-network-reconcile`'s full
+      monitored-state list, systemd unit dependencies, IPv6, container
+      DNS, and wg-easy's kernel-module approach, with live verification
+      of each — no functional defects found. Confirmed: IPv6 egress works
+      end-to-end (including from inside `wg-easy`); containers reach
+      `1.1.1.1`/`1.0.0.1` directly regardless of the host's
+      Tailscale-overridden DNS; wg-easy's H1 approach is the standard
+      hardening pattern, not indirect; a Tailscale IP change correctly
+      cascades to firewall/`.env`/container recreation; Caddy/dnsmasq
+      boot ordering is defended in depth (`bind-dynamic`, an active
+      `ExecStartPre` wait, a reverse systemd trigger, and reconcile as a
+      backstop) and showed zero races in real boot logs. Added the one
+      concrete gap found — disk-space monitoring — to
+      `master-network-reconcile` (new `disk_space_ok()`, checks the
+      filesystem backing `$DOWNLOADS_PATH`, now persisted in
+      `state.env`). Tested live: correctly reports healthy on the real
+      disk and correctly flags an artificially filled 10MB tmpfs at 90%.
+      `install.sh` 4319 → 4343 lines. Verified with `bash -n`,
+      `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`.
+      Tailscale key-expiry monitoring was considered and declined by the
+      user (tracked manually instead). **Tagged R1.0.**

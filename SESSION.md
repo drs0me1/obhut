@@ -27,6 +27,20 @@ four "live Tier 3 install test" entries and the "full operational stress
 test" entry for the full narrative. This closes out the first full
 validation cycle of the 2026-07-28 remediation work.
 
+Session then closed out with a final architecture review requested by
+the user, considering the server's actual intended use and how its
+systems relate: `master-network-reconcile`'s full monitored-state list,
+systemd dependencies, IPv6, container DNS, and wg-easy's kernel-module
+approach — all confirmed working as intended, no functional defects
+found (see `CHANGELOG.md`'s "Final architecture review" entry for the
+full writeup, including the Caddy/dnsmasq boot-race analysis, which was
+the user's main worry and turned out to already be defended in depth).
+The one real gap found — no disk-space monitoring, despite this being a
+continuous-download server — was added to `master-network-reconcile`
+(`disk_space_ok()`) and tested live (real disk + an artificially filled
+tmpfs). Tailscale key-expiry monitoring was considered and declined by
+the user. Repo tagged **R1.0**.
+
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
 + the first two `.bats` files) was already committed as `b549d59`; the M7

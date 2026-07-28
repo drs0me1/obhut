@@ -1722,6 +1722,7 @@ QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 WEBDAV_PORT=65113
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST_FOR_STATE
+DOWNLOADS_PATH=$DOWNLOADS_PATH
 EOF
 chown root:root /etc/master-stack/state.env
 chmod 0600 /etc/master-stack/state.env
@@ -2048,6 +2049,7 @@ CMP_BIN="$(command -v cmp)"
 SHA256SUM_BIN="$(command -v sha256sum)"
 SS_BIN="$(command -v ss)"
 STAT_BIN="$(command -v stat)"
+DF_BIN="$(command -v df)"
 ENV_FILE="/root/docker/.env"
 STATE_FILE="/etc/master-stack/state.env"
 CANONICAL_DIR="/usr/local/share/master-stack"
@@ -2158,6 +2160,7 @@ QBIT_PUBLIC_PORT="$(state_value QBIT_PUBLIC_PORT 65173)"
 WG_PUBLIC_PORT="$(state_value WG_PUBLIC_PORT 65171)"
 WEBDAV_PORT="$(state_value WEBDAV_PORT 65113)"
 WG_ENDPOINT_HOST="$(state_value WG_ENDPOINT_HOST "")"
+DOWNLOADS_PATH="$(state_value DOWNLOADS_PATH "/downloads")"
 if [[ "$STACK_SCHEMA" != "8" ||
       ! "$LOCAL_DNS_ENABLED" =~ ^[01]$ ||
       ! "$QBIT_PUBLIC_PORT" =~ ^[0-9]+$ ||
@@ -2269,6 +2272,20 @@ if [[ "$WG_ENDPOINT_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ &&
       "$WG_ENDPOINT_HOST" != "$CURRENT_PUBLIC_IPV4" ]]; then
     WG_ENDPOINT_DRIFTED=1
 fi
+
+# İndirilenler/medya ağacının bulunduğu dosya sistemi ağırlıklı olarak
+# sürekli indirme/arşiv çıkarma trafiği görür; reconcile bunu otomatik
+# onaramaz (kullanıcı verisini silmek güvenli bir onarım değildir), yalnız
+# operatörü erken uyarır.
+disk_space_ok() {
+    local path="$1" threshold="${2:-90}" usage_pct=""
+    usage_pct="$(
+        "$DF_BIN" --output=pcent "$path" 2>/dev/null |
+            tail -n 1 | tr -dc '0-9'
+    )"
+    [[ -n "$usage_pct" ]] || return 1
+    (( usage_pct < threshold ))
+}
 
 forwarding_ok() {
     [[ "$("$SYSCTL_BIN" -n net.ipv4.ip_forward 2>/dev/null || true)" == "1" &&
@@ -2832,6 +2849,9 @@ if ! forwarding_ok || ! forwarding_config_ok; then
     FORWARDING_DRIFTED=1
 fi
 
+DISK_SPACE_LOW=0
+disk_space_ok "$DOWNLOADS_PATH" 90 || DISK_SPACE_LOW=1
+
 TAILSCALE_OFFLINE=0
 TAILSCALE_PREFS_DRIFTED=0
 TAILSCALE_NETFILTER_DRIFTED=0
@@ -2894,6 +2914,7 @@ all_critical_state_healthy() {
     [[ "$ADDRESS_CHANGED" -eq 0 &&
        "$WG_ENDPOINT_DRIFTED" -eq 0 &&
        "$FORWARDING_DRIFTED" -eq 0 &&
+       "$DISK_SPACE_LOW" -eq 0 &&
        "$TAILSCALE_OFFLINE" -eq 0 &&
        "$TAILSCALE_PREFS_DRIFTED" -eq 0 &&
        "$TAILSCALE_NETFILTER_DRIFTED" -eq 0 &&
@@ -2912,7 +2933,7 @@ all_critical_state_healthy() {
 
 if [[ "$MODE" == "--check" ]]; then
     printf '%s\n' \
-        "address=$ADDRESS_CHANGED forwarding=$FORWARDING_DRIFTED" \
+        "address=$ADDRESS_CHANGED forwarding=$FORWARDING_DRIFTED disk_space_low=$DISK_SPACE_LOW" \
         "wg_endpoint=$WG_ENDPOINT_DRIFTED" \
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
@@ -2936,6 +2957,8 @@ fi
     echo "HATA: WG istemci endpoint'i $WG_ENDPOINT_HOST, güncel public IPv4 $CURRENT_PUBLIC_IPV4; DDNS veya istemci config güncellemesi gerekli." >&2
 [[ "$FORWARDING_DRIFTED" -eq 0 ]] ||
     echo "IP forwarding çalışma değeri sapmış; yönetilen sysctl yeniden uygulanacak."
+[[ "$DISK_SPACE_LOW" -eq 0 ]] ||
+    echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sistemi %90 üzerinde dolu; yeni indirme/çıkarma işlemleri başarısız olabilir. Otomatik onarım yok, elle yer açılması gerekiyor." >&2
 [[ "$TAILSCALE_OFFLINE" -eq 0 ]] ||
     echo "HATA: Tailscale daemon aktif fakat Tailnet online değil." >&2
 [[ "$TAILSCALE_PREFS_DRIFTED" -eq 0 ]] ||
@@ -3176,6 +3199,7 @@ fi
 # Kritik onarımların gerçek postcondition'larını ikinci kez doğrula.
 if ! forwarding_ok ||
    ! forwarding_config_ok ||
+   ! disk_space_ok "$DOWNLOADS_PATH" 90 ||
    ! tailscale_online ||
    ! tailscale_prefs_ok ||
    ! tailscale_netfilter_ok ||
