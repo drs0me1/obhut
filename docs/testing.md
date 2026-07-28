@@ -3,9 +3,12 @@
 ## Planned testing strategy
 
 > **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
-> tests); Tier 3 had four real, manual install attempts (three found and
-> fixed real bugs — **H1** regression, **H5**, **H6**; the fourth added
-> **M1**'s hardening and also succeeded), plus a full round of
+> tests); Tier 3 had five real, manual install runs. Four were against a
+> freshly reimaged host: three of those found and fixed real bugs
+> (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
+> hardening and also succeeded. The fifth was the first re-run against an
+> existing install, and found that the deployed `compose.yaml` had been
+> lagging the repository by several fixes. Plus a full round of
 > post-install operational testing (reboot, deliberate drift injection,
 > resource-limit enforcement, real WireGuard/Tailscale-exit-node traffic,
 > CPU stress) — all passed; CI wiring still not attempted.** There is
@@ -278,6 +281,39 @@ alone.
     testing") — a meaningfully different authorization than the
     turn-by-turn approval used for the install runs themselves, granted
     specifically because the host had no production data on it.
+- **Fifth real run (2026-07-28) — first re-run against an existing
+  install, not a reimage:** run to validate the post-R1.0 batch (**M8**,
+  **M9**, **L6**, **M10** plus the version-string correction) on a host
+  that already had a full stack, real admin accounts, two WireGuard peers
+  and live torrents. Same tmux-relay methodology; the user pre-approved
+  the four Stage 0 answers and supplied them, and this assistant never
+  chose a value. Partway through, the classifier blocked a
+  `tmux send-keys` call; rather than working around it, the remaining two
+  prompts were handed back to the user with the exact commands, and they
+  completed the run.
+  - **Result:** all 7 stages completed. Verified read-only afterwards:
+    the canonical directory now contains `compose.yaml` (`0:0:600`,
+    byte-identical to the live file), the manifest lists all eight
+    entries in the expected order, `master-network-reconcile --check`
+    reports every field `0` — including the new `compose_file=0` — and
+    exits `0`, the install banner shows `2026.07.28-v1.1`, `state.env`
+    finally carries `DOWNLOADS_PATH`, and `qbittorrent` runs with
+    `Memory=0 NanoCpus=0`.
+  - **The finding this run produced:** the deployed `compose.yaml` was
+    far older than assumed — it predated both **H7** and **M1**. So
+    `TRUSTED_ORIGINS=portainer.ayc` and the `cap_drop`/`read_only`
+    hardening reached the server for the first time here, meaning
+    Portainer had still been rejecting writes via `portainer.ayc` in
+    real use despite **H7** being "fixed" in the repository days
+    earlier. A repository fix is not a deployed fix — this is precisely
+    the gap **M10** now reports on, found by the very run that installed
+    **M10**.
+  - **Cost:** all six containers were recreated (not just `qbittorrent`,
+    as predicted from the compose diff alone). Docker was already at the
+    candidate version so there was no daemon restart; dnsmasq/Caddy went
+    through their mask/reinstall/unmask cycle. The two WireGuard peers'
+    `latest-handshakes` reset to `0` — configuration and keys survived on
+    the volume, and clients re-handshake on their next traffic.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs
@@ -318,10 +354,17 @@ narrative above); unchecked items still describe intent only.
       install session (this scenario wasn't in the original checklist;
       added after 2026-07-28's testing showed it was a meaningfully
       different — and important — case from "re-run install.sh")
-- [ ] Re-run against an already-provisioned host (no drift) — should be a
-      near no-op (not exercised; all four 2026-07-28 runs were against a
-      freshly reimaged host each time, not a re-run against an existing
-      install)
+- [x] Re-run against an already-provisioned host — **exercised
+      2026-07-28** (the fifth live run, and the first that was not
+      against a freshly reimaged host). It was **not** a no-op, and the
+      reason is the finding: the deployed `compose.yaml` was much older
+      than assumed, predating **H7** and **M1**, so all six containers
+      were recreated rather than just `qbittorrent`. Everything else
+      behaved as an idempotent re-run should — Docker was already at the
+      candidate version so no daemon restart occurred, `daemon.json` was
+      unchanged, admin accounts / wg-easy peer configs / qBittorrent
+      state all survived on their volumes, and Stage 7 passed clean with
+      zero failed units. See the Tier 3 narrative above.
 - [ ] Re-run after simulating WAN/Tailscale address drift — reconcile
       should repair it
 - [ ] Toggling local DNS from disabled to enabled on a re-run, and the

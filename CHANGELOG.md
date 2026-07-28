@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Verified
+
+- **First live re-run against an already-provisioned host (2026-07-28),**
+  validating this whole batch (**M8**, **M9**, **L6**, **M10** and the
+  version-string correction) on the production server. All 7 stages
+  completed; `master-network-reconcile --check` reports every field `0`,
+  including the new `compose_file=0`, and exits `0`.
+  - This also closed the last un-exercised idempotency scenario in
+    `docs/testing.md` — every prior live run had been against a freshly
+    reimaged host.
+  - **It immediately found something.** The deployed `compose.yaml`
+    predated both **H7** and **M1**, so `TRUSTED_ORIGINS=portainer.ayc`
+    and the `cap_drop`/`read_only` hardening only reached the server in
+    this run. Portainer had therefore still been rejecting writes via
+    `portainer.ayc` in real use, days after **H7** was "fixed" in the
+    repository. A repository fix is not a deployed fix — which is
+    exactly the gap **M10** was added to report, found by the very run
+    that installed it.
+  - Cost: all six containers were recreated rather than just
+    `qbittorrent` (the compose diff alone had suggested otherwise);
+    Docker was already at the candidate version so no daemon restart
+    occurred; admin accounts, wg-easy peer configuration and qBittorrent
+    state all survived on their volumes.
+
 ### Added
 
 - **Reconcile now detects and reports drift in `/root/docker/compose.yaml`**

@@ -6,34 +6,28 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**Session complete.** This was one continuous, very large session:
-docs scaffolding and the original static audit (prior sub-session) → M7
-Tier 2 unit-test survey → a full live audit of the user's server →
-four live Tier 3 install attempts (three found and fixed real bugs —
-**H1** regression, **H5**, **H6** — the fourth, with **M1**'s hardening
-added, succeeded cleanly) → a full operational stress test (reboot,
-deliberate drift injection, resource-limit enforcement, real
-WireGuard/Tailscale-exit-node traffic, CPU stress — everything passed)
-→ a final architecture review (reconcile's monitored-state list, systemd
-dependencies, IPv6, container DNS, wg-easy's kernel-module approach,
-Caddy/dnsmasq boot-race safety — no functional defects found) → one new
-feature from that review (disk-space monitoring in reconcile) → tagging
-**R1.0** and exporting `install.sh` to `~/Desktop/install-R1.0.sh` → this
-end-of-session documentation pass (reviewed every `.md` file in the repo
-for accuracy against the final 4343-line `install.sh`; fixed several
-that had gone stale during the day — see `CHANGELOG.md`'s "End-of-session
-documentation pass" entry for exactly what changed and why).
+**Session complete.** Post-R1.0 work, all committed and all verified
+live. In order: dropped `qbittorrent`'s resource ceilings (the M1
+`mem_limit` chase had reached the point where the ceiling constrained
+nothing), then a full whole-file review of the post-R1.0 script that
+produced five new findings, then three rounds of remediation, then the
+first-ever live re-run against an existing install to validate the lot.
 
-**As of this update, the working tree has uncommitted documentation
-changes** (this pass) — the user explicitly asked not to commit them.
-Everything else through the `R1.0` tag (commit `7138c2f`) is committed.
+Findings from the whole-file review: **M8** (canonical bundle
+publication window), **M9** (firewall coupled to Docker's internal chain
+layout, on unpinned packages), **M10** (integrity model excluded
+`compose.yaml`), **L6** (no cooldown on the stack-level repair path),
+**L7** (ports hardcoded in the firewall heredoc). **M8**, **M9**, **L6**
+and **M10** resolved; **L7** deferred by the user on the grounds that
+this tool only ever installs onto a fresh, empty server, so the scenario
+that would trigger it does not occur.
 
-Note: as of this session start, all prior work (docs scaffolding +
-`install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
-+ the first two `.bats` files) was already committed as `b549d59`; the M7
-Tier 2 survey work (`test/gro_functions.bats`) was committed as `cf4c257`
-partway through this session, once the user changed the commit policy to
-"commit after every completed unit of work" (see Notes below).
+The live re-run's own finding is the one worth carrying forward: the
+deployed `compose.yaml` had been lagging the repository by several
+fixes, so **H7** and **M1** only actually reached the server in that
+run. Portainer had still been rejecting writes via `portainer.ayc` in
+real use, days after **H7** was marked fixed here. **M10** now reports
+that class of gap.
 
 ## Completed Work
 
@@ -66,9 +60,10 @@ resolved, plus one unnumbered cleanup and two partial items:
   r3-era units to migrate away from.
 - **L3** — removed `tailscale-udp-gro.service`'s continuous reconcile
   integration (~54 lines); one-time Stage 2 setup unchanged.
-- **M1 (🟡 partial)** — `no-new-privileges` and hardware-sized
-  `mem_limit`/`cpus` applied to `qbittorrent`/`unpackerr`. `cap_drop:
-  [ALL]` and `read_only` deliberately deferred to the live SSH test.
+- **M1** — `no-new-privileges`, `cap_drop`/`cap_add` and resource
+  ceilings for `qbittorrent`/`unpackerr`. (Later revised twice: the
+  `mem_limit` was raised 2g → 4g, then `qbittorrent`'s ceilings were
+  dropped entirely — see the post-R1.0 section below.)
 - **C1** — resolved as accepted risk (no code change): Portainer's
   `docker.sock` mount stays as-is; a socket-proxy was reconsidered and
   found a weak fit for Portainer specifically; user confirmed active use
@@ -223,41 +218,67 @@ resolved, plus one unnumbered cleanup and two partial items:
   `CHANGELOG.md`'s "End-of-session documentation pass" entry for the
   complete list.
 
+- **Post-R1.0 batch (2026-07-28, after the R1.0 tag).** In order:
+  - `qbittorrent`'s `mem_limit`/`cpus` removed entirely (commit
+    `0b67afe`). The M1 ceiling had been raised 2g → 4g → 6g/3.0 chasing
+    real throughput until it no longer constrained anything on an ~8GB
+    host; the user's call was that a ceiling you keep raising is a
+    throughput risk, not containment. Privilege hardening untouched.
+  - Whole-file review of all 4376 lines, with read-only live
+    verification. Five findings: **M8**, **M9**, **M10**, **L6**, **L7**.
+    Also cleared the riskiest-looking hypothesis by reading Portainer
+    2.39.5's source — an empty `TRUSTED_ORIGINS` on the never-tested
+    local-DNS-disabled path is guarded before validation, so **H7**'s
+    crash can't recur there.
+  - **M8**/**M9**/**L6** fixed plus the stale `MASTER_SETUP_VERSION`
+    (`2026.07.26-r8` → `2026.07.28-v1.1`; `STACK_SCHEMA=8` deliberately
+    left alone) — commit `77be777`. Added DD-14 and DD-15.
+  - **M10** fixed with a narrowed scope — `compose.yaml` drift is
+    detected and reported, never restored, and deliberately outside
+    `all_critical_state_healthy()` so it can't produce a failed unit or
+    block Stage 7 (commit `26c9d1d`). The firewall helper was dropped
+    from the proposed scope; reasoning is in **M10**'s entry.
+  - Fifth live Tier 3 run — the first re-run against an existing install
+    rather than a reimage. All 7 stages passed, `--check` clean including
+    the new `compose_file=0`, and the `6g`/`3.0` live drift is gone.
+
 ## Remaining Work
 
-- Nothing security/functionality-related is open that isn't a deliberate,
-  user-confirmed deferral: **M3** (installation profiles — "m3 şimdilik
-  atlayalım") and **M7**'s remainder (CI wiring needs a non-interactive
-  invocation mode that doesn't exist yet; `check_ipv4_policy`/
-  `check_ipv6_policy` unit tests are more integration-shaped; Tier 3
-  itself stays manual/relayed rather than CI-automated).
-- **The server itself**: configured with real admin accounts on every
-  service, a real WireGuard client (the user's Mac), and Tailscale
-  exit-node routing enabled — no longer a "just installed" blank state.
-  Whether the user keeps using this specific host as real production or
-  keeps reimaging it for further test cycles is their call, not yet
-  decided in-session.
-- **This documentation pass is uncommitted** (by explicit instruction) —
-  a future session (or the user directly) should commit it once reviewed,
-  or ask for the commit if it's still needed.
+- **Open findings:** **M3** (installation profiles) and **M7**'s
+  remainder (CI wiring needs a non-interactive invocation mode that
+  doesn't exist yet; `check_ipv4_policy`/`check_ipv6_policy` are more
+  integration-shaped than unit-testable), both long-standing deliberate
+  deferrals, plus **L7** (deferred 2026-07-28, see above).
+- **Deploy lag is the real lesson of this session.** The repository and
+  the server drifted apart for days without anyone noticing. **M10**
+  reports `compose.yaml` drift now, but nothing reports "the installed
+  `install.sh` is older than the repository's". Worth considering
+  whether that deserves its own check, or just a habit of re-running
+  after every merged fix.
+- **Not covered by M10, by choice:** the firewall helper, the reconcile
+  script itself, and the core systemd units are still outside the
+  canonical bundle. The reasoning is in **M10**'s entry; revisit only if
+  the `compose.yaml` reports prove valuable in practice.
+- One `docs/testing.md` checklist item remains unexercised: a fresh
+  install with local DNS **disabled**. Portainer's empty
+  `TRUSTED_ORIGINS` on that path was cleared by reading 2.39.5's source
+  (the split is guarded by `if *flags.TrustedOrigins != ""`), but the
+  path itself has still never been run.
 
 ## Recommended Next Step
 
-1. Commit this documentation pass (`README.md`, `docs/architecture.md`,
-   `docs/design-decisions.md`, `CHANGELOG.md`, `TODO.md`, `SESSION.md`) —
-   left uncommitted per this turn's explicit instruction, but there's no
-   reason to leave it that way indefinitely once reviewed.
-2. Decide the server's fate: real production vs. continued disposable
-   test target — affects how freely future sessions can test against it.
-3. If more work is wanted: **M3** (installation profiles) or **M7**'s
-   remainder, both deliberately deferred, not urgent.
-
-Whichever is chosen, keep following the standing per-change rule: analyze
-and flag risk first, apply only after explicit approval, verify with
-`bash -n`/`shellcheck`/`bats test/` (and `scripts/lint-embedded-scripts.sh`
-for heredoc changes), show the diff, then update
-`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then commit (unless told
-not to, as in this turn).
+1. **Nothing is blocked or half-finished.** Repository and server agree,
+   every check is green, the working tree is clean.
+2. If more work is wanted, in rough order of value: decide whether the
+   deploy-lag gap deserves its own check (see Remaining Work), then
+   **M3** (installation profiles) or **M7**'s remainder — both
+   long-standing deliberate deferrals, neither urgent.
+3. Whatever is chosen, keep the standing per-change rule: analyze and
+   flag risk first, apply only after explicit approval, verify with
+   `bash -n`/`shellcheck`/`bats test/` (and
+   `scripts/lint-embedded-scripts.sh` for heredoc changes), show the
+   diff, then update `TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then
+   commit.
 
 ## Notes
 
