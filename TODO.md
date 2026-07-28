@@ -49,8 +49,14 @@ _All High findings resolved — see Completed below._
       unit-testing — each is essentially a wait loop plus real side
       effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
       integration-shaped, likely Tier 3 instead — **done 2026-07-28, see
-      Completed**); CI wiring, which is blocked on this repository having
-      no git remote for a runner to build from. Tier 3 itself
+      Completed**). **Remaining scope is CI wiring only, and it is parked
+      rather than pending:** the user decided on 2026-07-28 that this
+      repository stays local with no git remote, and a runner needs
+      somewhere to build from. Kept open at the user's request, but do
+      not re-propose CI at each review — a remote is the only thing that
+      would unpark it. Tier 3 automation would additionally need a
+      non-interactive invocation mode, separately judged not worth
+      changing the `/dev/tty` prompt design for. Tier 3 itself
       had three real attempts on 2026-07-28 (see Completed below and
       `docs/testing.md`) — found and fixed three real bugs (**H1**
       regression, **H5**, **H6**) across the first two, then the third

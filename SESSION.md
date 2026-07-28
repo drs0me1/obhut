@@ -6,28 +6,24 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**Session complete.** Post-R1.0 work, all committed and all verified
-live. In order: dropped `qbittorrent`'s resource ceilings (the M1
-`mem_limit` chase had reached the point where the ceiling constrained
-nothing), then a full whole-file review of the post-R1.0 script that
-produced five new findings, then three rounds of remediation, then the
-first-ever live re-run against an existing install to validate the lot.
+**Session complete; v1b tagged and exported.** Two arcs this session.
 
-Findings from the whole-file review: **M8** (canonical bundle
-publication window), **M9** (firewall coupled to Docker's internal chain
-layout, on unpinned packages), **M10** (integrity model excluded
-`compose.yaml`), **L6** (no cooldown on the stack-level repair path),
-**L7** (ports hardcoded in the firewall heredoc). **M8**, **M9**, **L6**
-and **M10** resolved; **L7** deferred by the user on the grounds that
-this tool only ever installs onto a fresh, empty server, so the scenario
-that would trigger it does not occur.
+First, post-R1.0 remediation: dropped `qbittorrent`'s resource ceilings,
+then a whole-file review that produced **M8**, **M9**, **M10**, **L6**,
+**L7**, then three rounds of fixes, then the first-ever live re-run
+against an existing install to validate them. Tagged `v1b`, exported to
+`~/Desktop/install-v1b.sh` (hash-verified).
 
-The live re-run's own finding is the one worth carrying forward: the
-deployed `compose.yaml` had been lagging the repository by several
-fixes, so **H7** and **M1** only actually reached the server in that
-run. Portainer had still been rejecting writes via `portainer.ayc` in
-real use, days after **H7** was marked fixed here. **M10** now reports
-that class of gap.
+Second, the v1b cycle itself: two new test files (57 cases total) and
+three findings closed by decision. **M7 is now the only open finding**,
+and its remainder is parked — see Remaining Work.
+
+The live re-run's finding is the one to carry forward: the deployed
+`compose.yaml` had been lagging the repository by several fixes, so
+**H7** and **M1** only actually reached the server in that run.
+Portainer had still been rejecting writes via `portainer.ayc` in real
+use, days after **H7** was marked fixed here. **M10** now reports that
+class of gap.
 
 ## Completed Work
 
@@ -241,38 +237,60 @@ resolved, plus one unnumbered cleanup and two partial items:
   - Fifth live Tier 3 run — the first re-run against an existing install
     rather than a reimage. All 7 stages passed, `--check` clean including
     the new `compose_file=0`, and the `6g`/`3.0` live drift is gone.
+- **v1b cycle (2026-07-28, after the tag).**
+  - `test/canonical_bundle.bats` (8 cases, commit `a3269e9`) —
+    `canonical_bundle_ok()`, reconcile's first gate. Derives both manifest
+    file lists from `install.sh`'s own Stage 6 source rather than
+    restating them, and was mutation-verified on a scratch copy. Written
+    because **M8** and **M10** had both edited the local-DNS-disabled
+    branch, which no live install has ever executed.
+  - `test/policy_functions.bats` (17 cases, commit `c2c423b`) —
+    `check_ipv4_policy`/`check_ipv6_policy`, which hold the entire
+    expected firewall rule set. `docs/testing.md` had called these too
+    integration-shaped to unit-test; that was too pessimistic and the
+    document now says so. Covers the healthy policy plus eleven distinct
+    failure shapes, and the IPv6 variants.
+  - **M3** and **L7** closed as won't-do, same commit. Shared reasoning:
+    the deployment model — single-purpose, single-operator host, always
+    built from scratch, all six services in use, local DNS always on.
+    `docs/profiles.md` kept as a design note, marked closed.
+  - Release string renamed `v1.1` → `v1b` at the user's request; README
+    version header updated to match.
 
 ## Remaining Work
 
-- **Open findings:** **M3** (installation profiles) and **M7**'s
-  remainder (CI wiring needs a non-interactive invocation mode that
-  doesn't exist yet; `check_ipv4_policy`/`check_ipv6_policy` are more
-  integration-shaped than unit-testable), both long-standing deliberate
-  deferrals, plus **L7** (deferred 2026-07-28, see above).
-- **Deploy lag is the real lesson of this session.** The repository and
-  the server drifted apart for days without anyone noticing. **M10**
-  reports `compose.yaml` drift now, but nothing reports "the installed
-  `install.sh` is older than the repository's". Worth considering
-  whether that deserves its own check, or just a habit of re-running
-  after every merged fix.
-- **Not covered by M10, by choice:** the firewall helper, the reconcile
-  script itself, and the core systemd units are still outside the
-  canonical bundle. The reasoning is in **M10**'s entry; revisit only if
-  the `compose.yaml` reports prove valuable in practice.
-- One `docs/testing.md` checklist item remains unexercised: a fresh
-  install with local DNS **disabled**. Portainer's empty
-  `TRUSTED_ORIGINS` on that path was cleared by reading 2.39.5's source
-  (the split is guarded by `if *flags.TrustedOrigins != ""`), but the
-  path itself has still never been run.
+- **M7 is the only open finding, and it is parked, not pending.** Tier 1
+  is complete; Tier 2 has 57 cases across five files with no identified
+  gaps left. All that remains is CI — and the user decided (2026-07-28)
+  that **this repository stays local, with no git remote**, so a runner
+  has nowhere to build from. Do not re-propose CI at each review; a
+  remote is the only thing that would unpark it. Tier 3 automation would
+  additionally need a non-interactive invocation mode, separately judged
+  not worth changing the deliberate `/dev/tty` prompt design for.
+- **Deploy lag has no check.** **M10** reports `compose.yaml` drift, but
+  nothing reports "the installed `install.sh` is older than the
+  repository's" — which is what actually bit on 2026-07-28. Open
+  question: its own check, or just a habit of re-running after every
+  merged fix.
+- **Deliberately outside M10's scope:** the firewall helper, the
+  reconcile script itself and the core systemd units are still not in the
+  canonical bundle. Reasoning is in **M10**'s entry; revisit only if the
+  `compose.yaml` reports prove valuable in practice.
+- **One idea not yet proposed to the user:** a single
+  `scripts/check-all.sh` running the four verification commands
+  (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
+  `bats test/`) in one go. It is the local substitute for the CI that
+  will not exist, costs almost nothing, and would remove the current
+  four-command manual ritual.
 
 ## Recommended Next Step
 
-1. **Nothing is blocked or half-finished.** Repository and server agree,
-   every check is green, the working tree is clean.
-2. If more work is wanted, in rough order of value: decide whether the
-   deploy-lag gap deserves its own check (see Remaining Work), then
-   **M3** (installation profiles) or **M7**'s remainder — both
-   long-standing deliberate deferrals, neither urgent.
+1. **Nothing is blocked or half-finished.** Repository, server and the
+   exported artifact all agree; every check is green; the working tree is
+   clean and `v1b` is tagged at the tip.
+2. If more work is wanted, the open items above are the menu — none is
+   urgent, and two of them (**M7**'s CI, the M10 scope extension) are
+   deliberately parked rather than pending.
 3. Whatever is chosen, keep the standing per-change rule: analyze and
    flag risk first, apply only after explicit approval, verify with
    `bash -n`/`shellcheck`/`bats test/` (and

@@ -332,12 +332,13 @@ as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
 
 **Remaining, at a high level:**
 
-- Finish **M7**, the only finding still open. Tier 1 is done and Tier 2
-  now has 57 unit tests with no identified gaps left; what remains is a
-  CI pipeline, which is blocked on this repository having no git remote
-  for a runner to build from, and — only if CI is ever wanted for the
-  full install test — a non-interactive/answer-file invocation mode,
-  which would mean changing the deliberate `/dev/tty` prompt design.
+- **M7** is the only finding still open, and its remainder is **parked**:
+  Tier 1 is done and Tier 2 has 57 unit tests with no identified gaps
+  left, so all that is missing is a CI pipeline — and the repository
+  stays local with no git remote by decision (2026-07-28), leaving a
+  runner nowhere to build from. Running the four checks manually
+  (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
+  `bats test/`) is the substitute.
 - Installation profiles (**M3**) and the hardcoded firewall ports
   (**L7**) were **closed as won't-do** on 2026-07-28: this installer
   targets a single-purpose, single-operator host built from scratch every

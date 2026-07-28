@@ -47,9 +47,9 @@ alone.
   `bash -n`/`shellcheck` them. First real run: `master-docker-netfilter-recovery`
   was clean; the other five had only the expected, now-excluded `SC2016`
   notices.
-- **Not done yet:** wiring this into an actual CI pipeline (e.g. GitHub
-  Actions) — this repo has no CI configuration yet, and standing one up
-  wasn't confirmed as wanted. Run the script manually for now, e.g. as a
+- **CI: parked, not pending (2026-07-28).** The user decided this
+  repository stays local, with no git remote, so there is nowhere for a
+  runner to build from. Run the script manually instead, as a
   pre-commit/pre-push habit whenever `install.sh` changes.
 
 ### Tier 2 — Unit tests for pure-logic functions — 🟡 STARTED (2026-07-28)
@@ -423,16 +423,27 @@ narrative above); unchecked items still describe intent only.
 
 ### CI / Automation
 
-Proposed staged rollout; only Tier 1 is implemented so far, as a
-standalone script (no CI runner wired up yet):
+**Status (2026-07-28): parked.** The user decided this repository stays
+local, with no git remote, so no CI runner has anywhere to build from.
+This is a deliberate workflow choice rather than an unfinished task —
+future reviews should not keep proposing it. A remote is the only thing
+that would change it.
 
-1. ~~Tier 1 (heredoc extraction + `shellcheck`)~~ — **done (2026-07-28)**,
-   see above.
-2. Tier 2 (bats-core unit tests) — requires extracting pure-logic
-   functions; can proceed incrementally, function by function.
-3. Tier 3 (disposable-VM integration test) — requires a non-interactive
-   invocation mode for `install.sh` that doesn't exist today, and a CI
-   runner with nested virtualization; largest lift, highest confidence.
+What the staged rollout looked like, for the record:
+
+1. ~~Tier 1 (heredoc extraction + `shellcheck`)~~ — **done (2026-07-28)**
+   as a standalone script, `scripts/lint-embedded-scripts.sh`.
+2. ~~Tier 2 (bats-core unit tests)~~ — **done (2026-07-28)**: 57 cases
+   across five files, with no identified gaps left.
+3. Tier 3 (disposable-VM integration test) — would additionally require a
+   non-interactive invocation mode for `install.sh`, which does not exist
+   and was judged not worth changing the deliberate `/dev/tty` prompt
+   design for, plus a runner with nested virtualization. The manual,
+   tmux-relayed process documented above remains the way this tier runs.
+
+In the meantime the full local check sequence is four commands:
+`bash -n install.sh`, `shellcheck install.sh`,
+`./scripts/lint-embedded-scripts.sh` and `bats test/`.
 
 ### Known gaps
 
