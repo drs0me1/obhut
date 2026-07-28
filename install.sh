@@ -1824,7 +1824,12 @@ services:
       - SETGID
       - DAC_OVERRIDE
       - FOWNER
-    mem_limit: 2g
+    # 2g başlangıçta seçilmişti ama gerçek yüksek-hızlı indirme testinde (2026-07-28)
+    # qBittorrent'in disk önbelleğini kısıtlayıp throughput'u ~170MB/s'e düşürdüğü
+    # (asıl kısıtlayıcının CPU değil bellek olduğu, cpus=2.0 sabit tutulup yalnız
+    # mem_limit 4g'ye çıkarılınca 275MB/s'e ulaşarak doğrulandı) empirik olarak
+    # tespit edildi. Bkz. SECURITY_REVIEW.md M1.
+    mem_limit: 4g
     cpus: 2.0
     environment:
       PUID: "1000"

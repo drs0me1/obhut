@@ -484,6 +484,36 @@ audit; they're genuine 19th/20th/21st, separately-tracked findings.
   downloads folder and successfully detected, extracted, and cleaned it
   up within its normal ~10s poll interval — confirms the hardening
   survives a genuine extraction workload, not only an idle container.
+- **`mem_limit` sizing correction (2026-07-28, found via real usage):**
+  the user reported a real, significant download-speed regression for
+  `qbittorrent` (from ~200MB/s to ~70-80MB/s) after **M1** was applied,
+  and asked whether the resource limits were the cause. A live A/B/C
+  comparison during an actual high-seed-count torrent download (same
+  container, same active transfer, resource limits changed and the
+  container recreated between each measurement window) found:
+  - `cpus: 2.0, mem_limit: 2g` (original **M1** sizing): throughput
+    capped around ~170MB/s, CPU usage reaching ~197% (essentially
+    saturating the 2-core limit) at the highest observed speeds.
+  - Limits fully removed: 218-278MB/s, CPU using up to ~245% (i.e.,
+    *more* than 2 cores when available) — confirming a real ceiling
+    existed, not just normal swarm variance.
+  - **Isolating the variable** — `cpus` held at `2.0`, only `mem_limit`
+    raised to `4g`: throughput reached up to 275MB/s, matching the
+    fully-unlimited case, with CPU usage comfortably below the 2-core
+    cap (~115-204%) even at peak. This isolates the actual cause: the
+    original `2g` memory ceiling, not the CPU ceiling, was constraining
+    qBittorrent's disk cache/buffering, which was *also* manifesting as
+    higher CPU usage (more frequent, smaller I/O operations) — the CPU
+    saturation observed in the first measurement was a downstream
+    symptom of the memory limit, not an independent bottleneck.
+  - **Resolution:** raised `qbittorrent`'s `mem_limit` from `2g` to `4g`;
+    `cpus: 2.0` is unchanged (confirmed not to be the binding
+    constraint). Applied to the live deployed `compose.yaml` first for
+    the A/B test itself, then to `install.sh` once confirmed.
+  - **Change risk:** Low — a single ceiling value raised based on
+    empirical peak observation (~4.7GB seen under the fully-unlimited
+    test), still well short of the host's total 8GB, leaving headroom
+    for the other five containers and the host itself.
 
 ### M2 — Unconditional `chown -R` on every run — ✅ RESOLVED (2026-07-28)
 - **Location (historical):** `install.sh:1773`
@@ -818,3 +848,4 @@ review.
 | 2026-07-28 | Claude Code (live capability testing) | `compose.yaml` → `services.qbittorrent`, `services.unpackerr` | **M1** fully resolved: determined the minimal working `cap_drop`/`cap_add`/`read_only` configuration for both containers empirically, using isolated throwaway `docker run` test containers (never the real stack) — `unpackerr` confirmed clean with `cap_drop: [ALL]` + `read_only: true`; `qbittorrent` confirmed clean with `cap_drop: [ALL]` + `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`, and `read_only: true` confirmed to actively break its PUID/PGID mechanism (911:1001 instead of 1000:1000) so deliberately not applied. Applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/`. Mid-testing, a `docker rm -f` filtered by image name accidentally removed the real production `qbittorrent` container alongside test containers — caught immediately, recreated via `docker compose up -d --no-deps qbittorrent` with no data loss (`/config` is a host bind mount; no real config had been set yet on this fresh install) |
 | 2026-07-28 | User + Claude Code (live Tier 3 test, fourth attempt + operational testing) | Fourth live install (server reimaged clean, all fixes incl. **M1** in place), followed by a full round of post-install operational testing on the same host | Fourth install succeeded end-to-end again — **M1**'s hardening didn't regress Stage 5. With the user's explicit broad testing latitude (host had no production data), ran a comprehensive operational validation: real admin accounts configured for every service; a real WireGuard client connected (confirmed via `wg show` handshake + `docker exec wg-easy ping`ing the peer from inside the container's netns: 0% loss, ~58-107ms RTT); Tailscale exit-node confirmed genuinely routing real traffic (not just configured) via `MASTER-TS-FORWARD` mangle-chain packet counters; a full host reboot confirmed **H1**'s module-loading fix persists across reboots (not just within the install session) and all services recover automatically; three deliberate drifts injected simultaneously (stopped container, disabled IP forwarding, deleted a firewall rule) were all detected and repaired by reconcile within one 5-minute cycle; **M1**'s `mem_limit` confirmed to actually enforce via a throwaway container OOM test; `unpackerr`'s new hardening confirmed to survive a real archive-extraction workload, not just idle; a 4-core CPU stress test showed all services responding in single-digit milliseconds throughout, with a reconcile cycle completing successfully mid-stress. No new bugs found — this round was confirmatory, validating that today's four fixes hold up under real operational conditions, not just a clean install |
 | 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.portainer` | **H7** found and resolved: Portainer rejected every write request made via `portainer.ayc` ("origin invalid" CSRF error — Caddy always presents `Host: 127.0.0.1:9443` to Portainer while the browser's Origin is `http://portainer.ayc`). Added `TRUSTED_ORIGINS`. First attempt (`http://portainer.$LOCAL_DOMAIN`, matching Portainer's current `develop`-branch validation) was tested directly against the live deployed `compose.yaml` before touching `install.sh` and **crashed Portainer on startup** — the pinned `2.39.5` release uses the older `gorilla/csrf` library, whose validator does the opposite (rejects any `"://"`, expects a bare hostname). Caught by reading `2.39.5`'s actual tagged source, not `develop`. Reverted immediately, corrected to `portainer.$LOCAL_DOMAIN` (no scheme), confirmed live (container stable, simulated write request now reaches the auth layer — `401` instead of `403`), then applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |
+| 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.qbittorrent` | **M1** `mem_limit` correction: user reported a real download-speed regression (~200MB/s → ~70-80MB/s) and asked whether M1's resource limits were the cause. Live A/B/C test during an actual high-seed torrent download (recreating the container between each measurement window, same active transfer): original `cpus=2.0/mem=2g` capped throughput ~170MB/s with CPU saturating near the 2-core limit; removing all limits reached 218-278MB/s; isolating the variable (`cpus` held at `2.0`, only `mem_limit` raised to `4g`) also reached up to 275MB/s with CPU comfortably under the cap — proving the `2g` memory ceiling, not CPU, was the real constraint (the CPU saturation in the first test was a downstream symptom of memory-constrained disk caching). Raised `mem_limit` to `4g`; `cpus: 2.0` unchanged. Applied to the live `compose.yaml` for testing, then to `install.sh` |

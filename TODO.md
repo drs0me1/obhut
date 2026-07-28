@@ -313,3 +313,20 @@ _All Low findings resolved — see Completed below._
       instead of `403`), then applied to `install.sh`. `install.sh` 4343
       → 4365 lines. Verified with `bash -n`, `shellcheck`,
       `scripts/lint-embedded-scripts.sh`, `bats test/`.
+- [x] **M1 `mem_limit` correction (2026-07-28).** User reported a real
+      `qbittorrent` download-speed regression (~200MB/s → ~70-80MB/s)
+      after M1 and asked if the resource limits were the cause. Live
+      A/B/C test during an actual high-seed torrent download (container
+      recreated between each window, same active transfer): original
+      `cpus=2.0/mem=2g` capped throughput ~170MB/s (CPU saturating near
+      the 2-core limit); limits removed reached 218-278MB/s; isolating
+      the variable (`cpus` held at `2.0`, only `mem_limit` raised to
+      `4g`) also reached up to 275MB/s with CPU comfortably under the
+      cap — proving the `2g` memory ceiling (not CPU) was the real
+      constraint; the CPU saturation seen in the first test was a
+      downstream symptom of memory-constrained disk caching, not an
+      independent bottleneck. Raised `mem_limit` to `4g`; `cpus: 2.0`
+      unchanged. Applied to the live `compose.yaml` for the test, then to
+      `install.sh`. `install.sh` 4365 → 4370 lines. Verified with
+      `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
+      `bats test/`.

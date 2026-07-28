@@ -39,6 +39,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `install.sh` 4343 → 4365 lines. Verified with `bash -n`, `shellcheck`,
     `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
 
+### Changed
+
+- `qbittorrent`'s `mem_limit` raised from `2g` to `4g` after the user
+  reported a real download-speed regression (~200MB/s → ~70-80MB/s)
+  following **M1**'s container hardening. A live A/B/C comparison during
+  an actual high-seed-count torrent download (recreating the container
+  between each measurement window, same active transfer throughout)
+  isolated the cause:
+  - Original `cpus=2.0`/`mem=2g`: throughput capped ~170MB/s, CPU usage
+    saturating near the 2-core limit (~197%) at peak.
+  - All limits removed: 218-278MB/s, CPU using up to ~245% (more than 2
+    cores) — confirming a real ceiling existed, not just swarm variance.
+  - `cpus` held at `2.0`, only `mem_limit` raised to `4g`: also reached
+    up to 275MB/s, with CPU comfortably under the 2-core cap throughout.
+    This isolates the actual cause: the `2g` memory ceiling was
+    constraining qBittorrent's disk cache/buffering, which was *also*
+    driving up CPU usage indirectly (more frequent, smaller I/O) — the
+    CPU saturation seen in the first test was a symptom of the memory
+    limit, not an independent bottleneck. `cpus: 2.0` is unchanged,
+    confirmed not to be the binding constraint.
+  - Applied to the live deployed `compose.yaml` first (for the test
+    itself), then to `install.sh` once confirmed. `install.sh` 4365 →
+    4370 lines. Verified with `bash -n`, `shellcheck`,
+    `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
+
 ## [1.0.0] - 2026-07-28
 
 ### Added
