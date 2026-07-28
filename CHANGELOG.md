@@ -61,6 +61,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   resource ceilings (`qbittorrent`: `mem_limit: 2g`, `cpus: 2.0`;
   `unpackerr`: `mem_limit: 512m`, `cpus: 1.0`), tuned against the target
   server's actual 4 CPU / 8 GB RAM and typical 1-2 concurrent torrents.
+- `compose.yaml` → `services.unpackerr`: now `cap_drop: [ALL]` and
+  `read_only: true` — confirmed empirically to run cleanly with neither
+  (**M1**).
+- `compose.yaml` → `services.qbittorrent`: now `cap_drop: [ALL]` with
+  `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]` — the minimal
+  set its linuxserver.io entrypoint needs, confirmed empirically
+  (**M1**). `read_only: true` was tested and deliberately **not**
+  applied — it breaks the entrypoint's `PUID`/`PGID` handling.
 
 ### Removed
 
@@ -644,3 +652,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   each progressing one stage further than the last (Stage 5 → Stage 7 →
   full success). Synced `SECURITY_REVIEW.md` (Review History), `TODO.md`,
   and `docs/testing.md` to record the successful outcome.
+- **M1's remainder, resolved via live capability testing.** User asked to
+  test and apply M1's deferred Tier 2 items. Rather than guess at
+  `qbittorrent`'s minimal capability needs, tested empirically: spun up
+  isolated, throwaway `docker run` containers (same images, never the
+  real running stack) with progressively adjusted `--cap-drop`/
+  `--cap-add`/`--read-only` flags and inspected their logs.
+  `unpackerr` (already non-root) started and ran cleanly with
+  `--cap-drop=ALL` and `--read-only` together, no `cap_add` or `tmpfs`
+  needed. `qbittorrent`'s root-level s6-overlay init failed under a bare
+  `--cap-drop=ALL` (`chown: Operation not permitted`,
+  `s6-applyuidgid: fatal: unable to set supplementary group list`);
+  adding back `CHOWN`/`SETUID`/`SETGID` alone still failed to create
+  `/config/qBittorrent` on a fresh config dir; adding `DAC_OVERRIDE`/
+  `FOWNER` on top made it start cleanly — confirmed as the minimal
+  working set. Separately tested `--read-only` for `qbittorrent`
+  (needing `--tmpfs /run:exec`/`/tmp:exec`/`/var/run:exec` just to get
+  past `s6-overlay-suexec` and `noexec`-tmpfs failures) and found it
+  broke `PUID`/`PGID` handling outright: files ended up owned by the
+  image's default `911:1001` instead of the requested `1000:1000` — a
+  real conflict with the shared downloads-tree ownership model **M2**
+  depends on, so deliberately not applied.
+- **Incident during testing, caught and fixed the same turn:** while
+  cleaning up throwaway test containers with `docker rm -f` filtered by
+  image name, the filter also matched (and removed) the real, running
+  production `qbittorrent` container. Noticed immediately via the
+  container list, recreated it with `docker compose up -d --no-deps
+  qbittorrent` — no data loss (`/config` is a host bind mount, and this
+  fresh install had no real qBittorrent configuration set yet). All
+  subsequent test containers were tracked and cleaned up by their exact
+  container ID instead.
+- **M1 (fully resolved):** applied the confirmed-safe config to
+  `install.sh`'s `compose.yaml` heredoc for both containers. `install.sh`
+  4296 → 4319 lines. Verified with `bash -n`, `shellcheck`,
+  `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
+  Synced `SECURITY_REVIEW.md` (M1 now fully resolved, findings table
+  updated) and `TODO.md`.

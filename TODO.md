@@ -4,13 +4,13 @@ Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
 (18 findings total, not 19 — an earlier miscount was corrected), plus two
 additional findings (**H5**, **H6**) discovered 2026-07-28 across two live
 Tier 3 install test attempts.
-`install.sh` line references below were refreshed after fifteen numbered
+`install.sh` line references below were refreshed after sixteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
-**L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**), a
+**L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), a
 regression fix to **H1** plus the new **H5**/**H6** fixes (all from live
-tests), one unnumbered cleanup (legacy reboot-timer removal), and one
-partial remediation (**M1** — see below); file is now 4296 lines. Do not start
-work on any item without explicit user approval (per `CLAUDE.md`).
+tests), and one unnumbered cleanup (legacy reboot-timer removal); file is
+now 4319 lines. Do not start work on any item without explicit user
+approval (per `CLAUDE.md`).
 
 ## Critical
 
@@ -22,18 +22,6 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **M1** (partially done, 2026-07-28) — `no-new-privileges` and
-      `mem_limit`/`cpus` (2g/2.0 for `qbittorrent`, 512m/1.0 for
-      `unpackerr`, sized against the user's 4 CPU/8 GB host) are applied.
-      Remaining: `cap_drop: [ALL]` for both — deferred to the live SSH
-      test, since `qbittorrent`'s linuxserver.io entrypoint runs a
-      root-level init (for `PUID`/`PGID` volume-ownership fixing) that
-      likely needs some capabilities (`CHOWN`, `SETUID`, `SETGID`,
-      `DAC_OVERRIDE`, `FOWNER`?) added back — verify empirically, then
-      apply the minimal working set. `unpackerr` (already non-root) is
-      likely safe with a bare `cap_drop: [ALL]`, also to be confirmed live.
-      `read_only: true` root filesystem was discussed and intentionally
-      not pursued (see `SECURITY_REVIEW.md`).
 - [ ] **M3** — Scope and design an opt-in/opt-out installation profile
       model (see `docs/profiles.md`) before implementing any change to
       the fixed six-service bundle.
@@ -244,3 +232,14 @@ _All Low findings resolved — see Completed below._
       failed units, and a manual `master-network-reconcile --check` now
       exits `0` (still prints the informational wg-easy-setup-pending
       message, exactly as **H6** intended — visible, non-blocking).
+- [x] **M1 (fully resolved, 2026-07-28)** — determined the minimal
+      working `cap_drop`/`cap_add`/`read_only` config for `qbittorrent`/
+      `unpackerr` empirically, via isolated throwaway `docker run` test
+      containers (never the real stack). `unpackerr`: `cap_drop: [ALL]`
+      + `read_only: true`, both clean. `qbittorrent`: `cap_drop: [ALL]` +
+      `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]` (confirmed
+      minimal — trimming further breaks config-directory creation);
+      `read_only: true` confirmed to break its PUID/PGID mechanism (files
+      end up owned by `911:1001` instead of `1000:1000`) so deliberately
+      not applied. Applied to `install.sh`; `bash -n`/`shellcheck`/
+      `scripts/lint-embedded-scripts.sh`/`bats test/` all clean.

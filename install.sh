@@ -1785,6 +1785,22 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
+    # linuxserver.io's s6-overlay init runs as root to fix PUID/PGID
+    # ownership before dropping to the unprivileged app user; this is the
+    # minimal capability set that lets it do so (confirmed empirically —
+    # without DAC_OVERRIDE/FOWNER it cannot create a fresh config
+    # directory). read_only isn't used here: it was tested and found to
+    # break the PUID/PGID mechanism itself (files end up owned by the
+    # image's baked-in default UID/GID instead of 1000:1000), which would
+    # conflict with the shared downloads-tree ownership model (see M2).
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
     mem_limit: 2g
     cpus: 2.0
     environment:
@@ -1810,6 +1826,13 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
+    # Already runs as a non-root, fixed UID/GID with no init step of its
+    # own; confirmed empirically to start and run cleanly with zero
+    # capabilities and a read-only root filesystem (its only writes are
+    # to /downloads, already a mounted volume).
+    cap_drop:
+      - ALL
+    read_only: true
     mem_limit: 512m
     cpus: 1.0
     environment:

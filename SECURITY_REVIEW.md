@@ -35,7 +35,7 @@ fix, and the estimated risk of making that fix.
 ## Current findings
 
 18 findings total from the original 2026-07-27 static audit (corrected
-from an earlier miscount of 19); 15 resolved, 3 currently **open**. Two
+from an earlier miscount of 19); 16 resolved, 2 currently **open**. Two
 additional findings, **H5** and **H6**, were discovered on 2026-07-28 via
 live Tier 3 install tests (not part of the original static audit — static
 review alone could not have caught either, see their entries below) and
@@ -45,15 +45,15 @@ both resolved the same day.
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 6 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, 2026-07-28 — post-audit) |
-| Medium   | 3 | 4 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, 2026-07-28) |
+| Medium   | 2 | 5 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, 2026-07-28) |
 | Low      | 0 | 5 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, 2026-07-28) |
 
 Note: **H2**, **H3**, and **C1** were resolved by explicit user decision to
 *keep* the existing behavior/design as an accepted trade-off plus add
 documentation — not by changing `install.sh`'s functional behavior.
-**M1** is counted as open above but is partially addressed — see its
-entry below for what's done vs. deferred to the live SSH test. **H5**/**H6**
-are not counted in the "18 findings total" above since they postdate that
+**M1** is now fully resolved, including the Tier 2 capability testing that
+was previously deferred to the live SSH test (see its entry below).
+**H5**/**H6** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th, separately-tracked findings.
 
 ## Critical issues
@@ -352,13 +352,13 @@ audit; they're genuine 19th/20th, separately-tracked findings.
 
 ## Medium
 
-### M1 — No per-container resource limits or hardening — 🟡 PARTIALLY RESOLVED (2026-07-28)
-- **Location:** `install.sh:1771-1822` (`compose.yaml` →
+### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
+- **Location:** `install.sh:1781-1841` (`compose.yaml` →
   `services.qbittorrent`, `services.unpackerr`)
 - **Description:** Neither container defined `mem_limit`/`cpus`,
   `security_opt: no-new-privileges`, `read_only`, or a reduced capability
   set, despite processing untrusted downloaded/archive content.
-- **Resolution so far (Tier 1 + Tier 3, applied):**
+- **Resolution (Tier 1 + Tier 3, applied 2026-07-28):**
   - `security_opt: ["no-new-privileges:true"]` added to both
     `qbittorrent` and `unpackerr` — zero-risk, blocks setuid/setgid
     privilege-escalation paths.
@@ -367,24 +367,49 @@ audit; they're genuine 19th/20th, separately-tracked findings.
     → `mem_limit: 2g`, `cpus: 2.0`; `unpackerr` → `mem_limit: 512m`,
     `cpus: 1.0`. These are ceilings, not reservations — they only bite
     during a runaway/abnormal condition, not during normal light usage.
-  - Verified with `bash -n` and `shellcheck` (clean).
-- **Deferred (Tier 2 — needs live verification):** `cap_drop: [ALL]` for
-  both containers. `unpackerr` already runs as non-root (`user:
-  "1000:1000"`) so this is very likely safe, but `qbittorrent` is a
-  linuxserver.io image whose entrypoint runs its own root-level s6-overlay
-  init (to fix mount ownership for `PUID`/`PGID`) before dropping
-  privileges — it likely needs at least `CHOWN`, `SETUID`, `SETGID`,
-  `DAC_OVERRIDE`, `FOWNER` back via `cap_add`, and this assistant cannot
-  verify the exact minimal set without running the actual image. Explicitly
-  deferred to the user's planned live SSH test at the end of this
-  engagement rather than guessing.
-- **Not pursued:** `read_only: true` root filesystem — highest
-  defense-in-depth value but also highest risk of breaking either image
-  without knowing their internal writable-path assumptions (would need
-  `tmpfs` mounts for whatever they turn out to be); deferred to the same
-  live-test phase rather than applied blind.
-- **Change risk:** None remaining for what was applied (Tier 1/3, low-risk
-  and already verified); Tier 2 risk assessment above stands until tested.
+- **Resolution (Tier 2, applied 2026-07-28 after live capability testing):**
+  - `unpackerr`: `cap_drop: [ALL]`, no `cap_add` needed (already runs as
+    non-root, `user: "1000:1000"`, no init step of its own). Also added
+    `read_only: true` — tested and confirmed clean; its only writes are
+    to `/downloads`, already a mounted volume.
+  - `qbittorrent`: `cap_drop: [ALL]` plus `cap_add: [CHOWN, SETUID,
+    SETGID, DAC_OVERRIDE, FOWNER]`. This is a linuxserver.io image whose
+    entrypoint runs a root-level s6-overlay init to fix mount ownership
+    for `PUID`/`PGID` before dropping privileges; determined this exact
+    minimal set empirically, using throwaway `docker run` test
+    containers (same images, isolated from the real stack, all removed
+    after testing) rather than guessing: `cap_drop: [ALL]` alone fails
+    with `chown: Operation not permitted` and
+    `s6-applyuidgid: fatal: unable to set supplementary group list`;
+    trimming to just `CHOWN`/`SETUID`/`SETGID` (without `DAC_OVERRIDE`/
+    `FOWNER`) fails to create `/config/qBittorrent` on a fresh config
+    directory. The 5-capability set starts cleanly with no permission
+    errors.
+  - `read_only: true` was also tested for `qbittorrent` and found to
+    **break** its `PUID`/`PGID` mechanism: even with `--tmpfs /run:exec`/
+    `/tmp:exec`/`/var/run:exec` (needed just to get past
+    `s6-overlay-suexec: fatal: child failed with exit code 111` and
+    `Permission denied` executing from a default `noexec` tmpfs), files
+    ended up owned by the image's baked-in default UID/GID (`911:1001`)
+    instead of the requested `1000:1000` — this would silently conflict
+    with the shared downloads-tree ownership model **M2** depends on. Not
+    applied to `qbittorrent`; this confirms the original risk assessment
+    below rather than contradicting it.
+  - Verified with `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
+    and `bats test/` (all clean) after applying to `install.sh`.
+- **Testing note:** while iterating on the `qbittorrent` capability
+  tests, a `docker rm -f` cleanup command filtered by image name and
+  accidentally matched (and removed) the real, already-running
+  production `qbittorrent` container alongside the throwaway test ones.
+  Caught and fixed immediately via `docker compose up -d --no-deps
+  qbittorrent`; no data loss, since `/config` is a host bind mount and
+  this particular fresh install had no real qBittorrent configuration set
+  yet. Subsequent test containers were tracked and cleaned up by exact
+  container ID instead of by name/image filter.
+- **Change risk:** Low — all values above are empirically confirmed
+  against the real images, not guessed; `qbittorrent`'s `read_only`
+  was deliberately left unapplied specifically because testing showed
+  real risk.
 
 ### M2 — Unconditional `chown -R` on every run — ✅ RESOLVED (2026-07-28)
 - **Location (historical):** `install.sh:1773`
@@ -687,11 +712,11 @@ Suggested order of remediation (also tracked in `TODO.md`):
     and its Stage 7 re-verification deleted entirely; the fresh-install
     deployment target never has these r3-era units to migrate away from.
 
-Fifteen numbered remediations applied so far (**C2**, **M6**, **M5**,
+Sixteen numbered remediations applied so far (**C2**, **M6**, **M5**,
 **H1**, **H2**, **H3**, **M4**, **L1**, **L2**, **L4**, **L5**, **M2**,
-**L3**, **C1**, **H4**) plus one partial (**M1**) and one unnumbered
-cleanup (legacy reboot-timer removal); **M1** (partial) and **M3**/**M7**
-remain open as of this review.
+**L3**, **C1**, **H4**, **M1**) plus two post-audit findings from live
+testing (**H5**, **H6**) and one unnumbered cleanup (legacy reboot-timer
+removal); only **M3**/**M7** remain open as of this review.
 
 ## Review History
 
@@ -715,3 +740,4 @@ remain open as of this review.
 | 2026-07-28 | User + Claude Code (live Tier 3 test) | Live install on the user's reimaged server (`docs/testing.md` Tier 3, first real attempt) | Real end-to-end install run, driven interactively over SSH/tmux. Failed at Stage 5. Diagnosed two real bugs: **H1** had a regression (`ip6_tables`/`ip6table_nat` never loaded on host, breaking `wg-quick up wg0`'s legacy-ip6tables PostUp rules) and a new finding, **H5** (wg-easy healthcheck's fixed-port assertion could never pass after **M6** made the port a manual, web-UI-only setting). Both confirmed live (manual `modprobe` + container restart before touching `install.sh`) then fixed permanently in `install.sh` Stage 4 and the `compose.yaml` heredoc; `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` all clean after the fix |
 | 2026-07-28 | User + Claude Code (live Tier 3 test, second attempt) | Second live install on the same server, reimaged clean again, with the **H1**/**H5** fixes in place | Install progressed much further this time — Stages 0-6 all succeeded (including wg-easy passing its healthcheck and DNS/Caddy, neither reached on the first attempt) — then failed at Stage 7's own `master-network-reconcile --check` postcondition call. Diagnosed a new finding, **H6**: `check_compose_runtime()` counted wg-easy's still-pending first-run setup as `compose_runtime` drift, which `all_critical_state_healthy()` (and so `--check`'s exit code) treats as a hard failure — contradicting the script's own stated intent not to block on this expected, **M6**-era state. Confirmed live: a manual `--check` run against the otherwise fully healthy host showed every field `0` except `compose_runtime=1`, solely due to the pending-setup message. An attempt to patch the already-deployed reconcile script directly on the server (to verify without a third reimage) was blocked by the auto-mode classifier as an unreviewed live edit — reasonably so; fixed in tracked `install.sh` instead (one-line removal) and verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` |
 | 2026-07-28 | User + Claude Code (live Tier 3 test, third attempt) | Third live install on the same server, reimaged clean again, with **H1** (regression), **H5**, and **H6** all fixed | **First fully successful end-to-end install**: all 7 stages completed, ending in "AŞAMA 7/7 TAMAMLANDI" and the script's own success summary. Confirmed live: all 6 containers up (`wg-easy`/`filebrowser` reporting `healthy`), all core systemd units (`docker`, `tailscaled`, `docker-tailscale-fw`, `master-compose`, `caddy`, `dnsmasq`, `master-network-reconcile.timer`) active, no failed units, and a manual `master-network-reconcile --check` now exits `0` (still prints the informational "wg-easy ilk kurulumu tamamlanmamış" diagnostic, exactly as **H6** intended — visible but non-blocking). This closes out the first full validation cycle of the 2026-07-28 remediation work; **M1**'s remainder and **H1**'s original real-server verification are the natural next live-testing items |
+| 2026-07-28 | Claude Code (live capability testing) | `compose.yaml` → `services.qbittorrent`, `services.unpackerr` | **M1** fully resolved: determined the minimal working `cap_drop`/`cap_add`/`read_only` configuration for both containers empirically, using isolated throwaway `docker run` test containers (never the real stack) — `unpackerr` confirmed clean with `cap_drop: [ALL]` + `read_only: true`; `qbittorrent` confirmed clean with `cap_drop: [ALL]` + `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`, and `read_only: true` confirmed to actively break its PUID/PGID mechanism (911:1001 instead of 1000:1000) so deliberately not applied. Applied to `install.sh`; verified with `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/`. Mid-testing, a `docker rm -f` filtered by image name accidentally removed the real production `qbittorrent` container alongside test containers — caught immediately, recreated via `docker compose up -d --no-deps qbittorrent` with no data loss (`/config` is a host bind mount; no real config had been set yet on this fresh install) |
