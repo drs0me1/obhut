@@ -5,15 +5,15 @@ Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
 three additional findings (**H5**, **H6**, **H7**) discovered 2026-07-28
 — the first two via live Tier 3 install tests, **H7** via real post-R1.0
 usage — and five more (**M8**, **M9**, **M10**, **L6**, **L7**) from a
-whole-file review of the post-R1.0 script the same day, of which
-**M10**/**L7** were deliberately deferred.
+whole-file review of the post-R1.0 script the same day; **M10** was
+resolved with a narrowed scope and **L7** deliberately deferred.
 `install.sh` line references below were refreshed after sixteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 **L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**, **M1**), a
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4418 lines. Originally **tagged R1.0**
+architecture review; file is now 4449 lines. Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1.1 work).
 Do not start work on any item without explicit user approval (per
@@ -54,20 +54,6 @@ _All High findings resolved — see Completed below._
       regression, **H5**, **H6**) across the first two, then the third
       attempt completed all 7 stages successfully end-to-end, the first
       fully clean install of this repo's `install.sh`.
-
-- [ ] **M10** (2026-07-28, whole-file review) — Extend the canonical
-      integrity model to the files that actually carry the security
-      policy. Today the bundle covers `state.env` + the six
-      dnsmasq/Caddy files, but not `/root/docker/compose.yaml` or
-      `/usr/local/sbin/docker-tailscale-fw` — while it *does* cover the
-      optional `caddy-tailnet-env`. Reconcile also validates the firewall
-      by calling `"$FW_HELPER" --check`, so nothing verifies the
-      verifier. Proposed phase 1: cover `compose.yaml` + the firewall
-      helper, **detect and report only, no auto-restore** (following
-      DD-13's precedent) — auto-restore risks a 5-minute recreate loop
-      and would silently undo deliberate operator changes. Phase 2
-      (auto-restore, more files) only if phase 1's reports prove noisy
-      enough to matter. Scope to be confirmed with the user first.
 
 ## Low
 
@@ -419,3 +405,19 @@ _All High findings resolved — see Completed below._
       comment now states that distinction at the definition site.
       `install.sh` 4376 → 4418 lines. Verified with `bash -n`,
       `shellcheck`, `scripts/lint-embedded-scripts.sh`, `bats test/`.
+- [x] **M10 (2026-07-28, narrowed scope).** `/root/docker/compose.yaml`
+      now has a canonical copy, a manifest entry and a `compose_file_ok()`
+      comparison in reconcile. Drift is **reported only** — not restored,
+      not part of `CONFIG_DRIFTED`, not part of
+      `all_critical_state_healthy()` — so it never produces a failed unit
+      and never blocks Stage 7. `docker-tailscale-fw` was dropped from the
+      proposed scope: it is never hand-edited on a single-operator host
+      that is always installed fresh, and checking it is near-theater
+      given reconcile validates the firewall by invoking that same helper.
+      `compose.yaml` earns the check because it genuinely is edited live
+      on this stack, so the value is catching a live change not yet folded
+      back into `install.sh`. Note the message is emitted at detection
+      time, since the drift-reporting block sits after
+      `all_critical_state_healthy()`'s early exit. `install.sh` 4418 →
+      4449 lines. Verified with `bash -n`, `shellcheck`,
+      `scripts/lint-embedded-scripts.sh`, `bats test/`.

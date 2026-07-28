@@ -2103,6 +2103,7 @@ SS_BIN="$(command -v ss)"
 STAT_BIN="$(command -v stat)"
 DF_BIN="$(command -v df)"
 ENV_FILE="/root/docker/.env"
+COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
 CANONICAL_DIR="/usr/local/share/master-stack"
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
@@ -2162,7 +2163,8 @@ canonical_bundle_ok() {
         return 1
     owned_file_ok "$CANONICAL_DIR" 0 0 755 &&
         owned_file_ok "$CANONICAL_DIR/SHA256SUMS" 0 0 644 &&
-        owned_file_ok "$CANONICAL_DIR/state.env" 0 0 600 ||
+        owned_file_ok "$CANONICAL_DIR/state.env" 0 0 600 &&
+        owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 ||
         return 1
 
     dns_enabled="$(
@@ -2173,7 +2175,7 @@ canonical_bundle_ok() {
         "$AWK_BIN" 'NF == 2 {print $2}' "$CANONICAL_DIR/SHA256SUMS"
     )"
     if [[ "$dns_enabled" == "1" ]]; then
-        expected_entries=$'state.env\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
+        expected_entries=$'state.env\ncompose.yaml\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
         [[ "$manifest_entries" == "$expected_entries" ]] || return 1
         owned_file_ok "$CANONICAL_DIR/dnsmasq-local-services.conf" 0 0 644 &&
             owned_file_ok "$CANONICAL_DIR/dnsmasq-99-tailscale-order.conf" 0 0 644 &&
@@ -2183,7 +2185,7 @@ canonical_bundle_ok() {
             owned_file_ok "$CANONICAL_DIR/tailscaled-99-caddy-tailnet.conf" 0 0 644 ||
             return 1
     elif [[ "$dns_enabled" == "0" ]]; then
-        [[ "$manifest_entries" == "state.env" ]] || return 1
+        [[ "$manifest_entries" == $'state.env\ncompose.yaml' ]] || return 1
     else
         return 1
     fi
@@ -2751,6 +2753,18 @@ state_file_ok() {
         owned_file_ok "$STATE_FILE" 0 0 600
 }
 
+# Deliberately NOT wired into config_files_ok()/CONFIG_DRIFTED: unlike the
+# dnsmasq/Caddy files, compose.yaml drift is never auto-restored. Restoring
+# it has no effect until a `docker compose up -d`, which would risk a
+# 5-minute recreate loop if the drift recurs, and it would silently undo a
+# deliberate operator change. This check exists to surface the one case
+# that actually happens on this stack — a change tested live and not yet
+# folded back into install.sh — so it reports and nothing else.
+compose_file_ok() {
+    "$CMP_BIN" -s "$CANONICAL_DIR/compose.yaml" "$COMPOSE_FILE" &&
+        owned_file_ok "$COMPOSE_FILE" 0 0 600
+}
+
 dns_config_files_ok() {
     [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     "$CMP_BIN" -s \
@@ -2940,6 +2954,19 @@ fi
 CANONICAL_CONFIG_INVALID=0
 canonical_runtime_configs_valid || CANONICAL_CONFIG_INVALID=1
 
+# Reported here, at detection time, rather than in the drift-message block
+# below: that block sits after all_critical_state_healthy()'s early exit,
+# and this condition deliberately isn't part of that rollup, so a host
+# whose only deviation is compose.yaml would otherwise report nothing at
+# all. Same placement reason as check_compose_runtime()'s wg-easy
+# pending-setup message.
+COMPOSE_FILE_DRIFTED=0
+if ! compose_file_ok; then
+    COMPOSE_FILE_DRIFTED=1
+    echo "UYARI: /root/docker/compose.yaml kurulumun canonical kopyasından farklı." >&2
+    echo "Otomatik geri yükleme yapılmaz. Kalıcı olması gereken bir değişiklikse install.sh'e işleyin." >&2
+fi
+
 CADDY_INACTIVE=0
 DNSMASQ_INACTIVE=0
 CADDY_RUNTIME_DRIFTED=0
@@ -2990,7 +3017,7 @@ if [[ "$MODE" == "--check" ]]; then
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
-        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID" \
+        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED"
     if all_critical_state_healthy; then
@@ -3742,6 +3769,9 @@ fi
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
     /usr/local/share/master-stack/state.env
+install -m 0600 -o root -g root \
+    /root/docker/compose.yaml \
+    /usr/local/share/master-stack/compose.yaml
 CANONICAL_MANIFEST_TMP="$(
     mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
 )"
@@ -3750,6 +3780,7 @@ if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
         cd /usr/local/share/master-stack
         sha256sum -- \
             state.env \
+            compose.yaml \
             dnsmasq-local-services.conf \
             dnsmasq-99-tailscale-order.conf \
             Caddyfile \
@@ -3760,7 +3791,7 @@ if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
 else
     (
         cd /usr/local/share/master-stack
-        sha256sum -- state.env
+        sha256sum -- state.env compose.yaml
     ) >"$CANONICAL_MANIFEST_TMP"
 fi
 chown root:root "$CANONICAL_MANIFEST_TMP"

@@ -17,16 +17,18 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 525–614 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 615–728 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | 729–956 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
-| 3 | 957–1652 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1062–1588`) and its systemd unit |
-| 4 | 1653–3348 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` (`2032–3233`) helper scripts, systemd units for Compose and reconcile |
-| 5 | 3349–3396 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3397–3709 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
-| 7 | 3710–4343 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 528–617 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 618–731 | Base OS prep: apt/timer quiescing, timezone, base packages |
+| 2 | 732–959 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning (`tailscale-udp-gro` helper at `770–845`) |
+| 3 | 960–1665 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1065–1601`) and its systemd unit |
+| 4 | 1666–3444 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2004–2045`) and `master-network-reconcile` (`2084–3329`) helper scripts, `master-docker-netfilter-recovery` (`3333–3379`), systemd units for Compose and reconcile |
+| 5 | 3445–3492 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 3493–3815 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper ends at `3639`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 3816–4449 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4343 lines, R1.0 — 2026-07-28.)
+(Line numbers as of `install.sh` 4449 lines — 2026-07-28, post-R1.0. They
+drift with every change; regenerate with `grep -n '^progress_stage_begin'`
+rather than trusting them after a batch of edits.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -179,7 +181,7 @@ the final install summary so operators aren't surprised by it.
 | Path | Mode | Purpose |
 |------|------|---------|
 | `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint, downloads path — the last one added 2026-07-28 for reconcile's disk-space check) |
-| `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift |
+| `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/`compose.yaml`/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift. Published as one atomic set at the end of Stage 6 (DD-14). `compose.yaml` is compared and **reported** on drift but never auto-restored (M10), unlike the dnsmasq/Caddy files |
 | `/root/docker/compose.yaml`, `/root/docker/.env` | `root:root 0600` | The Compose stack definition and its dynamic address values |
 
 wg-easy no longer has any dedicated bootstrap/secret files (removed

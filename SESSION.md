@@ -282,12 +282,13 @@ not to, as in this turn).
   L1-L5 — note **H5**/**H6** are new, post-audit) before starting any
   remediation, so status stays consistent across `TODO.md`,
   `CHANGELOG.md`, and this file.
-- **Correction:** an earlier version of this file referenced a persistent
-  memory file, `project_intended_architecture.md`, as recording the
-  user's own narrated target architecture. That file does not actually
-  exist in this assistant's cross-session memory directory (verified
-  2026-07-28) — the reference was stale/incorrect. This project's two
-  real memory files are `debian-server-installer-language-pref` and
-  `debian-server-installer-commit-policy`; there is no separate
-  architecture-narration memory. Rely on this repo's own docs
+- **Cross-session memory:** one memory file exists for this project,
+  `project_intended_architecture.md` (2026-07-27), recording the user's
+  own narrated target architecture as checked against a full read of
+  `install.sh`. An earlier version of this file claimed that file did not
+  exist and named two others (`debian-server-installer-language-pref`,
+  `debian-server-installer-commit-policy`) as the real ones; that
+  correction was itself wrong — re-verified 2026-07-28, the architecture
+  memory is present and those two are not. Note it predates the R1.0 and
+  post-R1.0 work, so for anything current rely on this repo's own docs
   (`docs/architecture.md`, `docs/design-decisions.md`) instead.

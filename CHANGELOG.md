@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Reconcile now detects and reports drift in `/root/docker/compose.yaml`**
+  (**M10**). The canonical bundle previously covered `state.env` and the
+  six dnsmasq/Caddy files, but not the file that defines all six
+  services, their capabilities, `security_opt`, port publications and
+  mounts — so a change made directly to the deployed `compose.yaml` was
+  never noticed, and `master-compose.service` applied it on every start.
+  `compose.yaml` now has a canonical copy, a manifest entry and a
+  `compose_file_ok()` comparison.
+  - **Reported only, never restored**, and deliberately outside both
+    `CONFIG_DRIFTED` and `all_critical_state_healthy()`: restoring the
+    file has no effect until a `docker compose up -d`, which would risk a
+    5-minute recreate loop if the drift recurs and would silently undo a
+    deliberate operator change mid-experiment. It therefore produces no
+    failed unit and does not block Stage 7. Same "surface it, don't act
+    on it" precedent as the disk-space check (DD-13).
+  - The originally proposed scope also covered
+    `/usr/local/sbin/docker-tailscale-fw`; that was dropped on
+    reflection. On a single-operator host that is always installed fresh
+    the firewall helper is never hand-edited, and checking it is close to
+    theater given reconcile validates the firewall by invoking that same
+    helper. `compose.yaml` earns the check because it genuinely is edited
+    live on this stack — the `mem_limit` A/B/C test is a worked example —
+    so the real value is catching a live change not yet folded back into
+    `install.sh`.
+  - Note this changes the manifest's entry list, which
+    `canonical_bundle_ok()` compares exactly, so a reconcile script from
+    this version cannot validate a bundle published by an earlier one.
+    Harmless under this project's deployment model (helper and bundle
+    always come from the same run), but it does mean DD-14's
+    "an interrupted re-run keeps enforcing the last known-good bundle"
+    does not hold across a run that changes the manifest schema.
+
 ### Fixed
 
 - **Reconcile could be left permanently unable to validate the canonical

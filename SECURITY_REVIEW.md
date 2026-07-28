@@ -21,7 +21,7 @@ weight from an old (r3-and-earlier) automatic-reboot mechanism this tool
 no longer installs, kept only as a migration shim. The user confirmed this
 deployment target is always a fresh Debian 13 install with no r3-or-earlier
 history to migrate away from, so the shim had no remaining purpose.
-`install.sh` is now 4296 lines (unchanged by **H4**, which only added a new
+`install.sh` is now 4449 lines (unchanged by **H4**, which only added a new
 standalone `scripts/lint-embedded-scripts.sh`; grew net from **H5**'s and
 **H1**'s regression fix plus **H6**'s one-line removal, all applied
 2026-07-28 across two live Tier 3 test attempts — see below); every
@@ -43,13 +43,14 @@ alone could not have caught any of them, see their entries below) and all
 three resolved the same day. A further five, **M8**, **M9**, **M10**,
 **L6** and **L7**, came out of a whole-file review of the post-R1.0
 script on 2026-07-28; **M8**, **M9** and **L6** were resolved the same
-day, **M10** and **L7** were deliberately deferred (see their entries).
+day, **M10** was resolved with a deliberately narrowed scope, and **L7**
+was deferred (see their entries).
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
-| Medium   | 3 (**M3**, **M7**, **M10**) | 7 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, 2026-07-28) |
+| Medium   | 2 (**M3**, **M7**) | 8 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, 2026-07-28) |
 | Low      | 1 (**L7**) | 6 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -787,7 +788,7 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   changed, since altering it would loosen a fail-closed path.
 - **Change risk:** None — diagnostics only, no control flow changed.
 
-### M10 — Canonical integrity model excludes the files that carry the security policy
+### M10 — Canonical integrity model excludes the files that carry the security policy — ✅ RESOLVED (2026-07-28, narrowed scope)
 - **Location:** `install.sh` Stage 6 (manifest contents),
   `canonical_bundle_ok()` / `config_files_ok()` in the
   `master-network-reconcile` heredoc
@@ -808,19 +809,44 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   live host's `compose.yaml` still carried `mem_limit: 6g`/`cpus: 3.0`
   after the repository dropped them, with reconcile reporting healthy
   throughout.
-- **Recommendation (scoped, not yet applied):** a first phase covering
-  only `compose.yaml` and `docker-tailscale-fw`, detecting and
-  **reporting** drift without auto-restoring — following DD-13's
-  precedent for disk space. Auto-restore was deliberately left out of the
-  proposal: restoring `compose.yaml` only takes effect after a
+- **Resolution (scope deliberately narrowed to `compose.yaml` only):**
+  `compose.yaml` now has a canonical copy, is listed in the manifest, and
+  is compared by a new `compose_file_ok()` alongside the existing
+  `state_file_ok()`. Drift is **reported and nothing else** — not
+  restored, not part of `CONFIG_DRIFTED`, and not part of
+  `all_critical_state_healthy()`, so it produces no failed unit and does
+  not block Stage 7.
+- **Why `docker-tailscale-fw` was dropped from the scope:** on a
+  single-operator host that is always installed fresh, that file is never
+  hand-edited, so accidental drift is ~zero; and against deliberate
+  tampering the check is close to theater, since reconcile validates the
+  firewall by invoking that very helper. `compose.yaml`, by contrast, is
+  edited live as a matter of routine on this stack — the `mem_limit`
+  A/B/C test on 2026-07-28 is a worked example — so the check earns its
+  place by catching the case that actually occurs: a change tested live
+  and not yet folded back into `install.sh`.
+- **Why report-only:** restoring `compose.yaml` has no effect until a
   `docker compose up -d`, which risks a 5-minute recreate loop if the
-  drift recurs, and would silently undo deliberate operator changes.
-  Note the inherent limit: reconcile verifying its own script is weak
-  against tampering (a modified reconcile skips the check) — the real
-  value is detecting accidental drift in the other two files.
-- **Change risk:** Medium — adds logic to the reconcile heredoc, which
-  `shellcheck install.sh` cannot see (see **H4**;
-  `scripts/lint-embedded-scripts.sh` mitigates).
+  drift recurs, and it would silently undo a deliberate operator change
+  mid-experiment. Reporting follows DD-13's precedent (disk space:
+  surface it, never act on it).
+- **Placement detail worth knowing:** the message is emitted at detection
+  time rather than in the drift-reporting block further down, because
+  that block sits after `all_critical_state_healthy()`'s early `exit 0`
+  — a host whose only deviation is `compose.yaml` would otherwise report
+  nothing at all. This mirrors how `check_compose_runtime()` already
+  surfaces wg-easy's pending-setup state.
+- **Known consequence:** adding an entry to the manifest is a schema
+  change, and `canonical_bundle_ok()` compares the entry list exactly. A
+  reconcile script from this version cannot validate a bundle published
+  by an earlier one. That is harmless under this project's deployment
+  model — the helper and the bundle always come from the same
+  `install.sh` run — but it does mean DD-14's "a failed re-run keeps
+  enforcing the last known-good bundle" guarantee does not hold across a
+  run that changes the manifest schema, as this one does.
+- **Change risk:** Low — additive; the new check feeds no repair path and
+  no health rollup. Verified with `bash -n`, `shellcheck`,
+  `scripts/lint-embedded-scripts.sh` and `bats test/`.
 
 ## Low
 
@@ -1065,3 +1091,4 @@ review.
 | 2026-07-28 | User + Claude Code (real post-R1.0 usage) | `compose.yaml` → `services.qbittorrent` | **M1** `mem_limit` correction: user reported a real download-speed regression (~200MB/s → ~70-80MB/s) and asked whether M1's resource limits were the cause. Live A/B/C test during an actual high-seed torrent download (recreating the container between each measurement window, same active transfer): original `cpus=2.0/mem=2g` capped throughput ~170MB/s with CPU saturating near the 2-core limit; removing all limits reached 218-278MB/s; isolating the variable (`cpus` held at `2.0`, only `mem_limit` raised to `4g`) also reached up to 275MB/s with CPU comfortably under the cap — proving the `2g` memory ceiling, not CPU, was the real constraint (the CPU saturation in the first test was a downstream symptom of memory-constrained disk caching). Raised `mem_limit` to `4g`; `cpus: 2.0` unchanged. Applied to the live `compose.yaml` for testing, then to `install.sh` |
 | 2026-07-28 | Claude Code (whole-file review) + user (live read-only verification) | Full `install.sh` (4376 lines) re-read end to end after the post-R1.0 **H7**/**M1** changes | Five new findings, none of them regressions from those two changes: **M8** (canonical bundle publication window disabled reconcile after an interrupted re-run), **M9** (firewall logic tightly coupled to Docker's internal chain layout, on unpinned `docker-ce`; every re-run silently upgrades Docker via Stage 1's `full-upgrade`), **M10** (canonical integrity model excludes `compose.yaml` and the firewall helper — the files that actually carry the security policy — while covering the optional Caddy subsystem's helper), **L6** (stack-level repair path had no restart cooldown, unlike per-container restarts), **L7** (public ports hardcoded inside the firewall heredoc, no single source of truth). Verified live, read-only, on the running host: Docker 29.6.2 still produces the exact assumed `FORWARD` layout, manifest has all seven entries, reconcile timer active with last exit status `0`, and the live `compose.yaml` was confirmed to still carry `6g`/`3.0` after the repo dropped them — a concrete instance of **M10**. Also cleared the highest-risk-looking hypothesis by reading Portainer 2.39.5's own source: an empty `TRUSTED_ORIGINS` (the never-tested local-DNS-disabled path) is guarded by `if *flags.TrustedOrigins != ""` before the validation loop, so **H7**'s crash cannot recur there |
 | 2026-07-28 | Claude Code (remediation) | Stage 4 + Stage 6 (canonical publication), `ensure_forward_prefix()` in `docker-tailscale-fw`, `STACK_RESTART_REQUIRED` block in `master-network-reconcile`, `MASTER_SETUP_VERSION` | **M8** resolved: canonical bundle now published as one atomic set at the end of Stage 6, so the manifest and the `LOCAL_DNS_ENABLED` value it is validated against always appear together; an interrupted re-run now leaves the previous complete bundle in place instead of bricking reconcile. **M9** resolved as accepted risk plus diagnostics: pinning `docker-ce` rejected (would freeze CVE fixes on a host publishing public ports), `ensure_forward_prefix()` now names the missing chain and the likely cause instead of aborting silently under `set -e`. **L6** resolved: stack-level repair reuses the existing 15-minute `restart_budget_available`/`record_container_restart` budget under a `master-compose` pseudo-target, with `ADDRESS_CHANGED` exempt. Also bumped `MASTER_SETUP_VERSION` from the stale `2026.07.26-r8` to `2026.07.28-v1.1` (`STACK_SCHEMA=8` deliberately unchanged — it versions `state.env`'s format, which did not change) and dropped the "R8" prefix from reconcile's two summary lines. `install.sh` 4376 → 4418 lines; verified with `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` and `bats test/` (all clean) |
+| 2026-07-28 | Claude Code (remediation) | Stage 6 (canonical publication + manifest), `canonical_bundle_ok()` / new `compose_file_ok()` in `master-network-reconcile` | **M10** resolved with a deliberately narrowed scope: `/root/docker/compose.yaml` gains a canonical copy, a manifest entry and a `compose_file_ok()` comparison; drift is **reported only** — not restored, not in `CONFIG_DRIFTED`, not in `all_critical_state_healthy()`, so it produces no failed unit and does not block Stage 7. `docker-tailscale-fw` was dropped from the scope on reflection: it is never hand-edited on a single-operator, always-freshly-installed host, and checking it is near-theater given reconcile validates the firewall by invoking that same helper. `compose.yaml` earns the check because it is edited live as routine on this stack (the `mem_limit` A/B/C test being a worked example), so the real value is catching a live change not yet folded back into `install.sh`. The message is emitted at detection time, since the drift-reporting block sits after `all_critical_state_healthy()`'s early exit. `install.sh` 4418 → 4449 lines; verified with `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` and `bats test/` |
