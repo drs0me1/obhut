@@ -21,10 +21,12 @@ weight from an old (r3-and-earlier) automatic-reboot mechanism this tool
 no longer installs, kept only as a migration shim. The user confirmed this
 deployment target is always a fresh Debian 13 install with no r3-or-earlier
 history to migrate away from, so the shim had no remaining purpose.
-`install.sh` is now 4275 lines (unchanged by **H4**, which only added a new
-standalone `scripts/lint-embedded-scripts.sh`); every `Location:` reference
-below for still-open findings has been re-checked and updated to match the
-current file after each remediation. Resolved findings keep their original
+`install.sh` is now 4290 lines (unchanged by **H4**, which only added a new
+standalone `scripts/lint-embedded-scripts.sh`; grew by 15 lines from
+**H5**'s and **H1**'s regression fix, both applied 2026-07-28 after the
+first live Tier 3 test — see below); every `Location:` reference below for
+still-open findings has been re-checked and updated to match the current
+file after each remediation. Resolved findings keep their original
 ("historical") line numbers for the record.
 
 Each finding lists its location, a description, its impact, a recommended
@@ -32,13 +34,17 @@ fix, and the estimated risk of making that fix.
 
 ## Current findings
 
-18 findings total (corrected from an earlier miscount of 19); 15 resolved,
-3 currently **open**:
+18 findings total from the original 2026-07-27 static audit (corrected
+from an earlier miscount of 19); 15 resolved, 3 currently **open**. One
+additional finding, **H5**, was discovered on 2026-07-28 via a live Tier 3
+install test (not part of the original static audit — static review
+alone could not have caught it, see its entry below) and resolved the
+same day.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 4 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28) |
+| High     | 0 | 5 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, 2026-07-28 — post-audit) |
 | Medium   | 3 | 4 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, 2026-07-28) |
 | Low      | 0 | 5 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, 2026-07-28) |
 
@@ -46,7 +52,9 @@ Note: **H2**, **H3**, and **C1** were resolved by explicit user decision to
 *keep* the existing behavior/design as an accepted trade-off plus add
 documentation — not by changing `install.sh`'s functional behavior.
 **M1** is counted as open above but is partially addressed — see its
-entry below for what's done vs. deferred to the live SSH test.
+entry below for what's done vs. deferred to the live SSH test. **H5** is
+not counted in the "18 findings total" above since it postdates that
+audit; it's a genuine 19th, separately-tracked finding.
 
 ## Critical issues
 
@@ -142,14 +150,28 @@ entry below for what's done vs. deferred to the live SSH test.
   this host. Verified with `bash -n` and `shellcheck` (clean).
 - **Change risk:** Low remaining in practice — the functional probe makes
   this close to a real guarantee on any kernel that supports WireGuard at
-  all (essentially certain on stock Debian 13). Still requires a real test
-  run on the target server to confirm wg-easy actually brings up `wg0`
-  end-to-end (this assistant has no access to it and cannot verify
-  directly; deferred to a live SSH test the user will do later). A
-  cleaner, capability-free alternative (running WireGuard fully in
-  userspace via `boringtun`/`wireguard-go`, eliminating any kernel-module
-  dependency at all) was discussed as a further research item — see
+  all (essentially certain on stock Debian 13). A cleaner, capability-free
+  alternative (running WireGuard fully in userspace via
+  `boringtun`/`wireguard-go`, eliminating any kernel-module dependency at
+  all) was discussed as a further research item — see
   `docs/design-decisions.md` (DD-10).
+- **Regression found via live Tier 3 test, fixed (2026-07-28):** a real
+  end-to-end install on a fresh Debian 13 host (the user's own server,
+  reimaged clean — see `docs/testing.md` Tier 3) failed at Stage 5:
+  `wg-quick up wg0` aborted because its PostUp/PostDown rules call the
+  **legacy** `ip6tables` binary, which needs the `ip6_tables`/
+  `ip6table_nat` kernel modules — modules this fix never loaded (only
+  `wireguard` was covered). Nothing else on the host loads them either:
+  Debian 13's own `ip6tables` runs through the nftables backend
+  (`nf_tables`/`nft_compat`), so those legacy modules stay unloaded
+  regardless of whether real IPv6 WAN connectivity exists (it does, on
+  this host — that was a red herring during diagnosis, not the cause).
+  Fixed by extending the same Stage 4 modprobe step (now a loop) and
+  `/etc/modules-load.d/wg-easy.conf` to also cover `ip6_tables` and
+  `ip6table_nat`. Confirmed live: after loading both modules by hand and
+  restarting the `wg-easy` container, `wg-quick up wg0` succeeded and the
+  interface came up cleanly. Verified with `bash -n`/`shellcheck` after
+  applying the permanent fix to `install.sh`.
 
 ### H2 — Reconcile silently reverts manual operator changes — ✅ RESOLVED (2026-07-27, by design)
 - **Location:** `install.sh:2057-2090` (`canonical_bundle_ok`),
@@ -232,6 +254,52 @@ entry below for what's done vs. deferred to the live SSH test.
   `lib/*.sh` files instead of heredocs — also remains open (bigger,
   packaging-model change, not attempted).
 - **Change risk:** None — new standalone script, `install.sh` untouched.
+
+### H5 — wg-easy healthcheck deadlocks every fresh install after M6 — ✅ RESOLVED (2026-07-28, found via live Tier 3 test)
+- **Location:** `install.sh` → embedded `compose.yaml` heredoc,
+  `services.wg-easy.healthcheck`
+- **Description:** Found during the first real end-to-end Tier 3 test (see
+  `docs/testing.md`) on a freshly reimaged Debian 13 host. Stage 5's
+  `docker compose up -d --wait --wait-timeout 180` (`master-compose.service`)
+  failed because wg-easy never reported healthy. Root cause: the
+  healthcheck asserted `wg show wg0 listen-port` equals the install's
+  configured `WG_PUBLIC_PORT` (e.g. `65171`). But wg-easy v15+ no longer
+  accepts the WireGuard listen port via environment variable at all — it's
+  set only through the web UI's first-run setup wizard and persisted to
+  its own database (`wgInterface.port`), which **M6** correctly left fully
+  manual. On a genuinely fresh install, WireGuard therefore always starts
+  on the image's built-in default port (`51820`) until a human completes
+  that one-time manual step — something they can't do until the installer
+  itself finishes. The healthcheck's fixed-port assertion made this
+  impossible to ever satisfy automatically, deadlocking Stage 5 (and by
+  extension Stage 6/7) on every fresh install.
+- **Why this wasn't caught by the original audit:** `check_compose_runtime`
+  (reconcile, `install.sh:2618-2646`) and Stage 7's final summary
+  (`install.sh:4087-4093`) already handle "wg-easy setup not finished yet"
+  correctly and deliberately — they detect the `/setup` redirect, skip
+  auto-restarting wg-easy for a port mismatch, and just report it. Only
+  the Docker-level `healthcheck:` block (a separate, earlier gate that
+  `docker compose up --wait` itself blocks on) still assumed the port
+  would already be correct — an inconsistency invisible to static review,
+  only surfaced by actually running the installer.
+- **Impact:** Every fresh install using this compose.yaml + M6's manual
+  wg-easy setup would fail at Stage 5, before Stage 6 (DNS/Caddy) or Stage
+  7 (final verification) ever ran — a total installer failure, not a
+  degraded/partial outcome.
+- **Resolution:** Removed the port assertion from the healthcheck; it now
+  only checks that the `wg0` interface exists and is up
+  (`wg show | grep -q interface`), matching the same "first-run setup is a
+  human, out-of-band step" model already accepted for Portainer/SFTPGo.
+  Confirmed live (with **H1**'s regression fix also applied) that this
+  condition is met immediately once `wg-quick up wg0` succeeds, regardless
+  of which port the interface is currently on. Verified with `bash -n` and
+  `shellcheck` (the compose.yaml heredoc isn't itself shell, but the
+  surrounding `install.sh` was re-verified after the edit).
+- **Change risk:** Low — strictly loosens an over-specific healthcheck
+  assertion to match a precondition (manual first-run setup) the rest of
+  the script already designs around; does not change what the healthcheck
+  protects against (a container where WireGuard never starts at all still
+  fails it).
 
 ## Medium
 
@@ -595,3 +663,4 @@ remain open as of this review.
 | 2026-07-28 | Claude Code (analysis) | `compose.yaml` → `services.portainer`, `README.md` | **C1** resolved as accepted risk: reconsidered docker-socket-proxy and found it a weak fit for Portainer specifically (its management features need close to the same broad API access); user confirmed active use and accepted the risk, scoped by network exposure rather than API restriction; no `install.sh` functional change, documented in `README.md` |
 | 2026-07-28 | Claude Code (remediation) | New: `scripts/lint-embedded-scripts.sh` | **H4** resolved: extracts and lints all 6 embedded heredoc scripts independently (`bash -n` + `shellcheck`, `SC2016` excluded as a documented false-positive class); first real run found `master-docker-netfilter-recovery` clean and only expected `SC2016` notices elsewhere; verified the tool detects real failures too via a synthetic syntax error in a scratch copy; `install.sh` untouched |
 | 2026-07-28 | Claude Code (testing) | New: `test/gro_functions.bats`; surveyed `master-compose-ipv4`, `master-docker-netfilter-recovery`, `caddy-tailnet-env` | **M7** Tier 2 continued: 5 new test cases for `tailscale-udp-gro`'s `add_default_netdev` (all self-skip on this workstation's bash 3.2, which lacks associative arrays; the Debian target's bash 5.x is unaffected); the other three remaining embedded scripts surveyed and found to have no standalone pure-logic functions to extract, only wait-loops plus real side effects — left to Tier 3; `install.sh` untouched |
+| 2026-07-28 | User + Claude Code (live Tier 3 test) | Live install on the user's reimaged server (`docs/testing.md` Tier 3, first real attempt) | Real end-to-end install run, driven interactively over SSH/tmux. Failed at Stage 5. Diagnosed two real bugs: **H1** had a regression (`ip6_tables`/`ip6table_nat` never loaded on host, breaking `wg-quick up wg0`'s legacy-ip6tables PostUp rules) and a new finding, **H5** (wg-easy healthcheck's fixed-port assertion could never pass after **M6** made the port a manual, web-UI-only setting). Both confirmed live (manual `modprobe` + container restart before touching `install.sh`) then fixed permanently in `install.sh` Stage 4 and the `compose.yaml` heredoc; `bash -n`/`shellcheck`/`scripts/lint-embedded-scripts.sh`/`bats test/` all clean after the fix |

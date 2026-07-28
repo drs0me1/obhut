@@ -6,19 +6,23 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-Continuing **M7** (testing strategy) in a new session (2026-07-28): per
-the previous session's "Recommended Next Step" option 1, surveyed the
-four remaining embedded scripts (`tailscale-udp-gro`, `master-compose-ipv4`,
-`master-docker-netfilter-recovery`, `caddy-tailnet-env`) for further
-pure-logic unit-test candidates, added `test/gro_functions.bats` for the
-one candidate found, and synced `TODO.md`/`SECURITY_REVIEW.md`/
-`CHANGELOG.md`/`docs/testing.md`. No `install.sh` change was made.
+Same session, continued into a much bigger phase: after finishing the M7
+Tier 2 survey (see below), did a full live audit of the user's actual
+production server over SSH (`ssh nrm`), then — with the user's explicit,
+turn-by-turn approval — ran the first real Tier 3 install test against
+that same server after they reimaged it clean. The install failed at
+Stage 5; diagnosed and fixed two real bugs (**H1** regression, new
+finding **H5**) directly in `install.sh`. The server is currently
+mid-install (Stages 0-4 done, 5-7 not yet completed) and needs a
+follow-up run. See `CHANGELOG.md`'s "First live Tier 3 install test"
+entry for the full narrative.
+
 Note: as of this session start, all prior work (docs scaffolding +
 `install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
-+ the first two `.bats` files) was already committed as `b549d59`
-("docs: add project documentation and testing infra; harden install.sh")
-— the previous SESSION.md note calling `install.sh` "uncommitted" was
-stale by the time this session started.
++ the first two `.bats` files) was already committed as `b549d59`; the M7
+Tier 2 survey work (`test/gro_functions.bats`) was committed as `cf4c257`
+partway through this session, once the user changed the commit policy to
+"commit after every completed unit of work" (see Notes below).
 
 ## Completed Work
 
@@ -112,82 +116,131 @@ resolved, plus one unnumbered cleanup and two partial items:
   never executes `install.sh` or its embedded scripts). 32 test cases
   total across `test/`. `install.sh` untouched throughout.
   Synced `TODO.md`, `SECURITY_REVIEW.md` (M7 entry + a new Review History
-  row), `docs/testing.md`, and `CHANGELOG.md` to match. No commit made —
-  standing instruction from the user not to commit each time still
-  applies unless told otherwise.
+  row), `docs/testing.md`, and `CHANGELOG.md` to match. Committed as
+  `cf4c257` ("test: add gro_functions.bats for tailscale-udp-gro; sync M7
+  docs") once the user changed the commit policy this session (see Notes).
+- **Live server audit (this session, 2026-07-28, read-only)**: at the
+  user's request, connected to the live production server (`ssh nrm`,
+  connects directly as `root`) and checked service health, container
+  status, and logs across all 6 services plus `tailscaled`/`docker`/
+  `caddy`/`dnsmasq`/the reconcile timer. Found the stack fully healthy
+  (2+ days with zero reconcile repairs, real traffic flowing through
+  `qbittorrent`/`wg-easy`/`sftpgo`, no errors in any container log). Also
+  discovered the live server was still running the **original,
+  pre-remediation** script (wg-easy still had `CAP_SYS_MODULE`, no `M1`
+  container hardening) — none of this repo's fixes had been deployed yet.
+  A restart of `qbittorrent` (explicitly requested) confirmed its
+  earlier-reported "temporary password" log line was stale — a real
+  password had since been set via the WebUI, so **Critical finding C3**
+  from the original ad-hoc audit report (not a `SECURITY_REVIEW.md`
+  finding — that was from an earlier, pre-`SECURITY_REVIEW.md` audit
+  report given directly to the user in conversation) was already
+  resolved on the live box, just not by this repo's tracked remediations.
+- **Live Tier 3 install test (this session, 2026-07-28)**: user asked to
+  re-run `install.sh` against the live server to bring it up to date, and
+  to use the opportunity to test the script itself. This assistant
+  initially declined to execute `install.sh` per the standing rule, and
+  the user then reimaged the server clean specifically to serve as a
+  disposable test target. Identity was verified independently (same
+  public IP as before, but 2-minute uptime / 1% disk / no Docker — an
+  independent check, not just trusting the `ssh nrm` alias). Given the
+  target was now genuinely empty and the user gave explicit, informed,
+  turn-by-turn approval for each step, this assistant proceeded — see
+  `docs/testing.md` Tier 3 for the full methodology (tmux-based prompt
+  relay, since `install.sh`'s prompts read `/dev/tty` directly and can't
+  be driven via piped stdin) and `CHANGELOG.md` for the full narrative.
+  Result: Stages 0-4 succeeded; Stage 5 failed on wg-easy's healthcheck.
+  Diagnosed and fixed, live-confirmed then applied to `install.sh`:
+  - **H1 regression**: Stage 4 only `modprobe`d `wireguard`, not
+    `ip6_tables`/`ip6table_nat`, which `wg-quick up wg0`'s legacy-ip6tables
+    PostUp rules also need — and nothing else on this host loads them
+    (Debian 13's own `ip6tables` uses the nftables backend). Fixed:
+    Stage 4's modprobe step is now a loop covering all three modules, and
+    `/etc/modules-load.d/wg-easy.conf` was updated to match.
+  - **H5 (new finding)**: wg-easy's `healthcheck` asserted a fixed
+    WireGuard listen port, which can never be right on a fresh install
+    since wg-easy v15+ only accepts the port via its web UI's first-run
+    setup wizard (a deliberate consequence of **M6**, not accounted for
+    when the healthcheck was written). Fixed: the healthcheck now only
+    checks that `wg0` exists and is up.
+  - Both fixes verified with `bash -n`, `shellcheck`,
+    `scripts/lint-embedded-scripts.sh`, and `bats test/` (all clean).
+    `install.sh` 4275 → 4290 lines. `SECURITY_REVIEW.md` (H1 addendum +
+    new H5 entry + updated findings table/count), `TODO.md`, and
+    `CHANGELOG.md` all synced. Committed (see git log for the exact
+    commit — created per the new "commit after every operation" policy).
+  - The server itself is still mid-install: Stage 6 (DNS/Caddy) and
+    Stage 7 (final verification) never ran because Stage 5 aborted first.
+    It needs a follow-up install run (or a manual continuation) to reach
+    a complete, verified state.
 
 ## Remaining Work
 
+- **Finish the live install**: the server is mid-install (Stages 0-4 done,
+  5 failed and fixed, 6/7 never ran). Needs a follow-up run — either
+  re-running `install.sh` end-to-end again, or manually continuing from
+  where it stopped. Same rules apply: explicit per-step approval, this
+  assistant relays prompts rather than choosing values, tmux-based
+  interaction for the `/dev/tty` prompts (see `docs/testing.md` Tier 3).
 - **M1 remainder**: `cap_drop: [ALL]` for `qbittorrent`/`unpackerr` and
-  `read_only` rootfs — explicitly deferred to the live SSH test phase.
+  `read_only` rootfs — was deferred to "the live SSH test phase," which
+  has now started; worth revisiting once the install actually completes.
 - **M3**: installation-profile scoping (`docs/profiles.md`) — the user
   explicitly asked to skip this for now ("m3 şimdilik atlayalım").
-- **M7 remainder** (all four embedded scripts now surveyed; only these
-  are left):
-  - `check_ipv4_policy`/`check_ipv6_policy` (the composite functions that
-    call the tested predicates together against real global state) are
-    more integration-shaped and were left untested here — likely a
-    better fit for Tier 3 than a unit test.
-  - `master-docker-netfilter-recovery`'s restart-cooldown check (inline
-    timestamp/arithmetic logic, not in a function) is a possible future
-    unit-test candidate, but only after extracting it into a named
-    function — a small `install.sh` behavior-preserving refactor, not
-    just a test addition, so it wasn't done as part of this survey.
-  - Tier 3 (disposable-VM integration testing) — not attempted.
-  - CI pipeline wiring (e.g. GitHub Actions) for both
-    `scripts/lint-embedded-scripts.sh` and `bats test/` — no CI exists in
-    this repo yet, not confirmed as wanted.
-- **Live SSH test** (reserved for "the end" per the user's stated plan):
-  verify wg-easy's `wg0` interface actually comes up (H1), verify
-  qbittorrent's linuxserver.io entrypoint still starts if/when
-  `cap_drop: [ALL]` is applied (M1 remainder), and validate the whole
-  stack end-to-end. This assistant must never execute `install.sh` or
-  fabricate test results.
-- **Known documentation drift found but *not* fixed this session** (out
-  of scope per this session's "only touch files affected by today's
-  work" instruction — flagged here for a future doc-sync pass instead):
-  `README.md`'s "Roadmap" section intro still says only **C2**/**M6** are
-  "done so far," and several of its bullets (container hardening, CI/
-  static-analysis) describe work that's since been partially completed
-  (**M1** Tier 1, **H4**). It needs a fuller pass reconciling it against
-  `TODO.md`'s actual Completed section, not just the testing-specific
-  edit made this session.
+- **M7 remainder**:
+  - `check_ipv4_policy`/`check_ipv6_policy` — more integration-shaped,
+    likely a Tier 3 concern rather than a unit test.
+  - `master-docker-netfilter-recovery`'s restart-cooldown check is a
+    possible future unit-test candidate, but only after extracting it
+    into a named function (a small `install.sh` refactor, not attempted).
+  - CI pipeline wiring — no CI exists in this repo yet, not confirmed as
+    wanted. Tier 3 itself remains manual/relayed rather than automated;
+    real CI wiring would also need a non-interactive invocation mode,
+    which doesn't exist today.
+- **Known documentation drift, still not fixed** (flagged in a prior
+  session, still open): `README.md`'s "Roadmap" section intro still says
+  only **C2**/**M6** are "done so far," undercounting everything done
+  since, including today's **H1** regression fix and **H5**.
 
 ## Recommended Next Step
 
-M7's Tier 2 survey is now complete (all six embedded scripts covered, one
-with no further candidates found). Natural next options:
-
-1. Do the flagged `README.md` Roadmap-section drift cleanup (see above) —
-   small, low-risk, documentation-only.
-2. Pick up **M3** (installation profiles) if the user is ready to revisit
-   it, or move toward planning the live SSH test phase, which will also
-   resolve **M1**'s remainder and **H1**'s outstanding real-server
-   verification.
-3. If the user wants deeper M7 progress beyond this, the remaining items
-   all require a bigger decision first: extracting
-   `master-docker-netfilter-recovery`'s cooldown check into a named
-   function (an `install.sh` refactor), standing up Tier 3 (needs a
-   non-interactive/answer-file invocation mode that doesn't exist yet),
-   or wiring CI (not confirmed as wanted).
+1. Finish the live install on the server (see above) — the natural,
+   most direct next step, since the fixes just applied specifically
+   target the failure that stopped it.
+2. Once installed, revisit **M1**'s remainder (`cap_drop`, `read_only`)
+   live, now that a real host is available to test against empirically.
+3. The `README.md` Roadmap drift cleanup remains a small, low-risk,
+   documentation-only task that could be picked up any time.
 
 Whichever is chosen, keep following the standing per-change rule: analyze
 and flag risk first, apply only after explicit approval, verify with
 `bash -n`/`shellcheck`/`bats test/` (and `scripts/lint-embedded-scripts.sh`
 for heredoc changes), show the diff, then update
-`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`.
+`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then commit.
 
 ## Notes
 
-- `install.sh` must never be executed as part of this work — analysis is
-  static only (`bash -n`, `shellcheck`, `bats test/`, manual reading).
+- **`install.sh` execution policy (revised 2026-07-28):** the original
+  blanket "never execute `install.sh`" rule has been superseded by real
+  practice — see the Tier 3 write-up above and in `docs/testing.md`. The
+  actual working rule now is: this assistant may run `install.sh` (or any
+  other mutating command against a real host) only with the user's
+  explicit, specific approval for that exact action in that turn, never
+  by inferring consent from an earlier, different approval, and never by
+  choosing configuration values on the user's behalf — those are always
+  relayed to and answered by the user directly. Static analysis
+  (`bash -n`, `shellcheck`, `bats test/`) remains the default mode for
+  everything else.
 - All conversation with the user happens in Turkish; all code, comments,
   commit messages, and documentation stay in English (per `CLAUDE.md`).
-- No commits have been created for any of this session's work; the user
-  has explicitly asked not to commit each time.
-- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H4, M1-M7,
-  L1-L5) before starting any remediation so status stays consistent
-  across `TODO.md`, `CHANGELOG.md`, and this file.
+- **Commit policy (changed 2026-07-28):** the user reversed the earlier
+  "don't commit each time" preference — commit after every completed unit
+  of work now, without asking first. (Recorded in this assistant's
+  cross-session memory as well, not just here.)
+- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H5, M1-M7,
+  L1-L5 — note **H5** is new, post-audit) before starting any remediation
+  so status stays consistent across `TODO.md`, `CHANGELOG.md`, and this
+  file.
 - The persistent memory file `project_intended_architecture.md` (outside
   this repo, under Claude Code's memory directory) records the user's own
   narrated target architecture; consult it if a future session needs that

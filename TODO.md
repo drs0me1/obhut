@@ -1,12 +1,15 @@
 # TODO
 
 Tasks derived from the 2026-07-27 static audit in `SECURITY_REVIEW.md`
-(18 findings total, not 19 — an earlier miscount was corrected).
+(18 findings total, not 19 — an earlier miscount was corrected), plus one
+additional finding (**H5**) discovered 2026-07-28 via the first live Tier
+3 install test.
 `install.sh` line references below were refreshed after fifteen numbered
 remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
-**L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**) plus one
-unnumbered cleanup (legacy reboot-timer removal) and one partial
-remediation (**M1** — see below); file is now 4275 lines. Do not start
+**L1**, **L2**, **L4**, **L5**, **M2**, **L3**, **C1**, **H4**), a
+regression fix to **H1** plus the new **H5** fix (both from the live test),
+one unnumbered cleanup (legacy reboot-timer removal), and one partial
+remediation (**M1** — see below); file is now 4290 lines. Do not start
 work on any item without explicit user approval (per `CLAUDE.md`).
 
 ## Critical
@@ -50,8 +53,12 @@ _All High findings resolved — see Completed below._
       surveyed and found to have no standalone pure-logic functions worth
       unit-testing — each is essentially a wait loop plus real side
       effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
-      integration-shaped, likely Tier 3 instead); Tier 3 (disposable-VM
-      integration test); CI wiring. See `docs/testing.md`.
+      integration-shaped, likely Tier 3 instead); CI wiring. Tier 3 itself
+      had its first real attempt on 2026-07-28 (see Completed below and
+      `docs/testing.md`) — it found and fixed two real bugs (**H1**
+      regression, **H5**) but the install didn't reach a fully successful
+      end-to-end completion in that run; the server is mid-install and
+      needs a follow-up run to actually finish Stage 5-7.
 
 ## Low
 
@@ -197,3 +204,21 @@ _All Low findings resolved — see Completed below._
       non-zero exit. CI wiring (e.g. GitHub Actions) not attempted — no
       CI exists in this repo yet; run manually for now. `install.sh` was
       not modified (2026-07-28).
+- [x] First live Tier 3 install test (2026-07-28) — see `docs/testing.md`.
+      Ran `install.sh` end-to-end, interactively, against the user's own
+      server (freshly reimaged to Debian 13, same host that had been in
+      production). Install failed at Stage 5.
+- [x] **H1 regression fix** — the live test found that **H1**'s fix
+      (removing wg-easy's `SYS_MODULE`) only `modprobe`d `wireguard` on
+      the host, not `ip6_tables`/`ip6table_nat`, which `wg-quick up wg0`
+      also needs for its legacy-ip6tables PostUp/PostDown rules. Fixed by
+      extending the same Stage 4 modprobe step (now a loop) and
+      `/etc/modules-load.d/wg-easy.conf` to cover all three modules.
+      Confirmed live before applying to `install.sh`. `bash -n` +
+      `shellcheck` clean (2026-07-28).
+- [x] **H5** (new finding, resolved same day) — wg-easy's healthcheck
+      asserted a fixed WireGuard listen port, which can never match on a
+      fresh install since **M6** made the port a manual, web-UI-only
+      setting (no env var). Removed the port assertion; healthcheck now
+      only checks that `wg0` exists and is up. `bash -n` + `shellcheck`
+      clean (2026-07-28).

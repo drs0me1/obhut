@@ -1657,21 +1657,31 @@ install -d -m 0750 -o 1000 -g 1000 /data/qbittorrent/appdata
 install -d -m 0700 -o root -g root /data/wg-easy/config
 
 # wg-easy container'ının kendi SYS_MODULE capability'sine ihtiyaç duymaması
-# için WireGuard çekirdek modülünü burada, host'ta, bağımsız bir hazırlık
-# adımı olarak yüklemeyi dene. Bu, Tailscale'in kendi tun/userspace yoluyla
-# ilişkisizdir; yalnız wg-easy'nin ihtiyacı için var. Modül zaten çekirdeğe
-# gömülüyse ya da yüklüyse bu adım no-op'tur; başarısız olursa yalnız uyarı
-# verir, kurulumu durdurmaz.
-if ! modprobe wireguard 2>/tmp/modprobe-wireguard.err; then
-    echo "UYARI: 'modprobe wireguard' başarısız oldu:" >&2
-    cat /tmp/modprobe-wireguard.err >&2 || true
-fi
-rm -f /tmp/modprobe-wireguard.err
+# için gereken çekirdek modüllerini burada, host'ta, bağımsız birer hazırlık
+# adımı olarak yüklemeyi dene. wireguard, WireGuard arayüzü için gerekli.
+# ip6_tables/ip6table_nat ise wg-quick'in PostUp/PostDown kurallarının
+# çağırdığı legacy ip6tables ikilisi için gerekli: host'un kendi ip6tables'ı
+# nftables backend'i üzerinden çalıştığından (nf_tables/nft_compat), bu
+# legacy modülleri host'ta başka hiçbir şey otomatik yüklemez — IPv6 WAN'ın
+# var olup olmaması bunu değiştirmez. Tailscale'in kendi tun/userspace
+# yoluyla ilişkisizdir; yalnız wg-easy'nin ihtiyacı için var. Bir modül
+# zaten çekirdeğe gömülüyse ya da yüklüyse bu adım no-op'tur; başarısız
+# olursa yalnız uyarı verir, kurulumu durdurmaz.
+for wg_module in wireguard ip6_tables ip6table_nat; do
+    if ! modprobe "$wg_module" 2>/tmp/modprobe-wg.err; then
+        echo "UYARI: 'modprobe $wg_module' başarısız oldu:" >&2
+        cat /tmp/modprobe-wg.err >&2 || true
+    fi
+    rm -f /tmp/modprobe-wg.err
+done
 
-# Yalnız bu boot oturumu değil, her reboot'ta wg-easy başlamadan önce modül
-# otomatik yüklensin diye systemd-modules-load.service'e kalıcı olarak kaydet.
+# Yalnız bu boot oturumu değil, her reboot'ta wg-easy başlamadan önce
+# modüller otomatik yüklensin diye systemd-modules-load.service'e kalıcı
+# olarak kaydet.
 cat >/etc/modules-load.d/wg-easy.conf <<'MODULES_EOF'
 wireguard
+ip6_tables
+ip6table_nat
 MODULES_EOF
 chown root:root /etc/modules-load.d/wg-easy.conf
 chmod 0644 /etc/modules-load.d/wg-easy.conf
@@ -1829,10 +1839,15 @@ services:
     # İmajın resmî sağlık komutunu ve normal 60 saniyelik aralığını koru.
     # Yalnız başlangıç döneminde 5 saniyelik aralık kullanılır; ilk başarılı
     # kontrol container'ı healthy yapar, sonrasında sürekli ek yük oluşmaz.
+    # Yalnızca arayüzün var/ayakta olduğunu kontrol eder — belirli bir porta
+    # sabitlenmez, çünkü wg-easy v15+ dinleme portunu artık ortam
+    # değişkeniyle değil, yalnızca web arayüzündeki kurulum sihirbazıyla
+    # (elle) ayarlıyor; sabit port kontrolü, taze bir kurulumda bu elle
+    # ayarlama yapılana kadar healthcheck'in hiç geçememesine yol açardı.
     healthcheck:
       test:
         - CMD-SHELL
-        - '/usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface && /usr/bin/wg show wg0 listen-port | /bin/grep -qx ${WG_PUBLIC_PORT}"'
+        - '/usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface"'
       interval: 60s
       timeout: 5s
       retries: 3

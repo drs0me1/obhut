@@ -2,15 +2,17 @@
 
 ## Planned testing strategy
 
-> **Status: Tier 1 implemented (2026-07-28); Tiers 2/3 and CI wiring still
-> proposed / not yet implemented.** There is still no automated test suite
-> or CI pipeline for this repository (finding **M7** in
-> `SECURITY_REVIEW.md`) — Tier 1 exists only as a standalone script run
-> manually so far. The only end-to-end correctness signal remains
-> `install.sh`'s own Stage 7 runtime verification, executed live against a
-> real, provisioned host. This document proposes a staged strategy to
-> close that gap without ever requiring this assistant (or CI) to execute
-> `install.sh` outside of a disposable, purpose-built environment.
+> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (32 unit
+> tests); Tier 3 had its first real, manual attempt (found and fixed two
+> real bugs, **H1** regression + **H5** — see below); CI wiring still not
+> attempted.** There is still no automated test suite or CI pipeline for
+> this repository (finding **M7** in `SECURITY_REVIEW.md`). The only
+> end-to-end correctness signal remains a real, human-supervised install
+> run — Stage 7's own runtime verification never actually ran to
+> completion in the 2026-07-28 attempt, since it failed earlier at Stage
+> 5. This document proposes a staged strategy to eventually make this
+> repeatable via CI, without requiring a human to relay every prompt by
+> hand each time.
 
 ### Why this is hard
 
@@ -131,19 +133,59 @@ alone.
   toward the modularization discussed in `docs/design-decisions.md`
   (DD-9), without requiring the full heredoc-to-file migration up front.
 
-### Tier 3 — Integration testing (disposable VM)
+### Tier 3 — Integration testing (disposable VM) — 🟡 FIRST REAL ATTEMPT (2026-07-28)
 
 - Full end-to-end verification requires actually running `install.sh` —
-  this must only ever happen against **disposable** infrastructure (a
-  throwaway VM or nested-virtualization CI runner with real `systemd`),
-  never a shared or long-lived host, and never initiated by this
-  assistant directly.
-- **Proposed approach:** a CI job (e.g. GitHub Actions with nested
-  virtualization, or a local Vagrant/qemu Debian 13 box) that provisions a
-  fresh instance, runs `install.sh` non-interactively (would require
-  adding a non-interactive/answer-file mode — not present today), and
-  asserts on the same postconditions Stage 7 already checks, then
-  destroys the instance.
+  this must only ever happen against a host with no data worth losing,
+  never a shared or long-lived host with real user data on it.
+- **First real attempt (2026-07-28):** the user reimaged their own server
+  clean (same host/IP that had been running the pre-remediation
+  production stack for about a day) specifically to use as this tier's
+  target, and gave explicit, turn-by-turn approval to run `install.sh`
+  against it. This assistant verified the target was genuinely fresh
+  first (2-minute uptime, 1% disk used, no Docker installed) rather than
+  trusting the hostname alias alone.
+  - **How the interactivity problem was solved:** `install.sh`'s prompts
+    read from `/dev/tty` directly (not stdin — deliberate, so the script
+    stays pipeable from `curl`), so a stdin/heredoc automation trick
+    doesn't work. Instead, the script was run inside a `tmux` session
+    (a real PTY) on the server; this assistant relayed each prompt's
+    text into the conversation, the user supplied every answer, and the
+    answer was sent back via `tmux send-keys`. This assistant chose no
+    configuration values itself.
+  - **What "never initiated by this assistant directly" meant in
+    practice:** every mutating step — installing `tmux`, transferring
+    `install.sh`, starting the interactive install, a targeted container
+    restart to check a log, and the diagnostic `modprobe`/`systemctl
+    restart`/`docker restart` used to confirm a root cause — was proposed
+    first and only run after the user's explicit, specific approval in
+    that turn. The original wording ("never initiated by this assistant
+    directly") predates this first attempt and undersold what turned out
+    to be workable: explicit per-action approval, not zero assistant
+    involvement, is the actual safeguard.
+  - **Result:** Stages 0-4 completed cleanly; Stage 5 failed
+    (`docker compose up --wait` timed out on `wg-easy`'s healthcheck).
+    Diagnosis found two real bugs invisible to static review — a
+    regression in **H1** (missing `ip6_tables`/`ip6table_nat` modprobe)
+    and a new finding, **H5** (a healthcheck assertion that could never
+    pass after **M6**) — both confirmed live before being fixed
+    permanently in `install.sh`. See `SECURITY_REVIEW.md` for details.
+    The server itself is still mid-install (Stage 6/7 never ran); a
+    follow-up run is needed to reach a complete, verified install with
+    the fixes in place.
+  - This is exactly the kind of bug static analysis structurally cannot
+    catch — validates the value of this tier even at the cost of the
+    manual, relayed-interactivity overhead.
+- **Longer-term proposed approach** (still not built): a CI job (e.g.
+  GitHub Actions with nested virtualization, or a local Vagrant/qemu
+  Debian 13 box) that provisions a fresh disposable instance, runs
+  `install.sh` non-interactively (would require adding a non-interactive/
+  answer-file mode — not present today, and the `/dev/tty` prompt design
+  would need to change too), and asserts on the same postconditions
+  Stage 7 already checks, then destroys the instance. This remains the
+  right direction for a repeatable, disposable, no-human-relay version of
+  this tier — the 2026-07-28 run was a one-off manual pass on real
+  (borrowed) infrastructure, not a repeatable CI-shaped test.
 - This tier is the most expensive and the least frequently run (e.g. on
   release branches or nightly, not on every commit).
 

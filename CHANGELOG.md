@@ -102,6 +102,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stage 1 `apt-get full-upgrade` now passes explicit dpkg conffile-policy
   flags (`--force-confdef`/`--force-confold`) so a theoretical
   unattended conffile prompt can never stall the noninteractive install.
+- Stage 4 now also `modprobe`s `ip6_tables` and `ip6table_nat` on the host
+  (added to the existing `wireguard` modprobe/`modules-load.d` step) — a
+  regression in **H1**'s fix that broke `wg-quick up wg0`'s legacy-mode
+  ip6tables PostUp/PostDown rules, found via the first live Tier 3 install
+  test (2026-07-28).
+- wg-easy's `healthcheck` (`compose.yaml`) no longer asserts a fixed
+  WireGuard listen port — only that `wg0` exists and is up. The port
+  assertion could never pass on a fresh install now that **M6** made the
+  port a manual, web-UI-only setting, deadlocking Stage 5 on every fresh
+  install (**H5**, found via the same live test).
 
 ### Documentation
 
@@ -513,3 +523,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `.bats` files in `test/`. `install.sh` untouched. Remaining for **M7**:
   `check_ipv4_policy`/`check_ipv6_policy` (Tier 3 candidate); Tier 3
   itself; CI wiring.
+- **First live Tier 3 install test.** With the user's explicit approval,
+  ran `install.sh` for real, end-to-end, against the user's own server —
+  freshly reimaged to a clean Debian 13 install (same host/IP that had
+  been running the pre-remediation, week-old production stack; the user
+  wiped it themselves before this session). Verified the target was
+  genuinely fresh first (2-minute uptime, 1% disk used, no Docker
+  installed) rather than trusting the hostname alias alone. Transferred
+  `install.sh` via `scp`, verified its SHA-256 matched the local copy.
+  Since `install.sh`'s interactive prompts read from `/dev/tty` directly
+  (not stdin — deliberate, so the script stays pipeable from `curl`), a
+  simple stdin/heredoc-based automation wouldn't work; instead ran it
+  inside a `tmux` session (real PTY) on the server, relaying each prompt's
+  text into the conversation for the user to answer, then sending their
+  answer back via `tmux send-keys`. This assistant did not choose any
+  configuration values itself. Confirmed as instructed each time before
+  the corresponding command ran (this includes: `apt-get install tmux`,
+  `scp`, the interactive install itself, a targeted `qbittorrent`
+  container restart to verify a previously-stale log line, and — after
+  the failure below — a diagnostic `modprobe` + `systemctl restart
+  master-compose.service`/`docker restart wg-easy` to confirm the root
+  cause before touching `install.sh`).
+- The install completed Stages 0-4 cleanly (package install, Tailscale
+  browser re-authentication, Docker/image pulls, systemd units) and
+  failed at Stage 5: `docker compose up --wait` timed out because
+  `wg-easy` never reported healthy. Diagnosed via container health logs,
+  `docker exec wg-easy wg show`/`ip link`, and `docker logs wg-easy`:
+  `wg-quick up wg0` was aborting because its legacy-ip6tables PostUp rules
+  needed `ip6_tables`/`ip6table_nat`, which were never loaded on this host
+  (a regression in **H1**'s fix — see `SECURITY_REVIEW.md`). Host IPv6 WAN
+  connectivity is real and was correctly detected (`ping6` to
+  `2001:4860:4860::8888` succeeded, ~15ms) — a red herring raised and
+  investigated at the user's prompt, ruled out once it became clear the
+  host's own `ip6tables` uses the nftables backend and so never loads the
+  legacy modules wg-easy's container needs.
+- Loaded both modules by hand and restarted `wg-easy`: `wg0` came up
+  successfully, but a **second**, unrelated problem surfaced — `wg show
+  wg0 listen-port` returned the image's default (`51820`), not the
+  install's configured `65171`, because wg-easy v15+ only accepts the
+  WireGuard port via its web UI's first-run setup wizard (persisted to its
+  own database), not an environment variable — something **M6** correctly
+  designed around, but the healthcheck's fixed-port assertion didn't
+  account for. Confirmed the fix (dropping the port assertion, checking
+  only that the interface exists) would work by running the proposed
+  healthcheck command directly against the live container before changing
+  `install.sh`.
+- **H1 regression + H5 (new finding), both resolved:** applied both fixes
+  to `install.sh` — Stage 4's modprobe step now covers `ip6_tables`/
+  `ip6table_nat` alongside `wireguard` (loop instead of one-off, plus
+  `/etc/modules-load.d/wg-easy.conf` updated for reboot persistence), and
+  the `compose.yaml` heredoc's wg-easy `healthcheck` no longer checks the
+  listen port. `install.sh` 4275 → 4290 lines. Verified with `bash -n`,
+  `shellcheck`, `scripts/lint-embedded-scripts.sh`, and `bats test/` (all
+  clean/passing). Synced `SECURITY_REVIEW.md` (H1 addendum + new **H5**
+  entry + updated findings table) and `TODO.md`.
+- The server itself is still mid-install (Stage 5 failed before Stage 6/7
+  ran) — a follow-up run is needed to actually reach a complete, verified
+  install with these fixes in place.
