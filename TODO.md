@@ -41,11 +41,17 @@ _All High findings resolved — see Completed below._
       covers `route_value`, `chain_rules_exact`, `jump_is_first_and_single`,
       `forward_prefix_is_exact`, `docker_forward_has_no_terminal_drop`,
       `no_stale_staging_chains` (20 cases) via a fake iptables/`ip`
-      stand-in — 27 cases total, all passing. Remaining: `check_ipv4_policy`/
-      `check_ipv6_policy` (more integration-shaped, likely Tier 3 instead);
-      survey the other four embedded scripts for further pure-logic
-      candidates; Tier 3 (disposable-VM integration test); CI wiring. See
-      `docs/testing.md`.
+      stand-in; `test/gro_functions.bats` covers `tailscale-udp-gro`'s
+      `add_default_netdev` (5 cases, all self-skipping on this
+      workstation's bash 3.2, which lacks associative arrays — runs for
+      real on the Debian target's bash 5.x) — 32 cases total. The other
+      three remaining embedded scripts (`master-compose-ipv4`,
+      `master-docker-netfilter-recovery`, `caddy-tailnet-env`) were
+      surveyed and found to have no standalone pure-logic functions worth
+      unit-testing — each is essentially a wait loop plus real side
+      effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
+      integration-shaped, likely Tier 3 instead); Tier 3 (disposable-VM
+      integration test); CI wiring. See `docs/testing.md`.
 
 ## Low
 

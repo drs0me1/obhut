@@ -35,6 +35,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `forward_prefix_is_exact`, `docker_forward_has_no_terminal_drop`,
   `no_stale_staging_chains`), using fake `ip`/iptables/ip6tables
   stand-ins instead of the real binaries. Part of **M7**.
+- `test/gro_functions.bats`: `bats-core` unit tests for
+  `add_default_netdev`, the only standalone function in
+  `tailscale-udp-gro`, using a fake `ip` stand-in. All 5 cases self-skip
+  on this macOS dev workstation's bash 3.2, which lacks associative
+  arrays (the function's dedup guard needs `SEEN` declared as one); they
+  run for real on the Debian target's bash 5.x. Part of **M7**.
 
 ### Changed
 
@@ -483,3 +489,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`tailscale-udp-gro`, `master-compose-ipv4`,
   `master-docker-netfilter-recovery`, `caddy-tailnet-env`) for further
   pure-logic candidates; Tier 3; CI wiring.
+- Surveyed the four remaining embedded scripts for further Tier 2
+  candidates, as agreed with the user. `tailscale-udp-gro` has one
+  standalone function, `add_default_netdev` (dedupes discovered
+  default-route interfaces). The other three
+  (`master-compose-ipv4`, `master-docker-netfilter-recovery`,
+  `caddy-tailnet-env`) turned out to have none: each is almost entirely a
+  `sleep`-based wait loop plus real side effects (`mktemp`+`mv` file
+  writes, `flock`, `systemctl restart/start`), with no isolable pure logic
+  to extract without first refactoring `install.sh` itself (out of scope
+  for a testing-only pass).
+- **Remediation 19 (M7, Medium — still partial, further progress):** added
+  `test/gro_functions.bats`, covering `add_default_netdev` from the
+  `tailscale-udp-gro` heredoc, tested against a fake `ip` returning canned
+  `ip route get` output — same extraction technique as the other two
+  `.bats` files. 5 new test cases. All 5 self-skip here: the function's
+  dedup guard reads/writes `SEEN`, a bash associative array (bash 4+
+  only), and this macOS dev workstation's default `/bin/bash` is 3.2,
+  which pre-dates associative arrays entirely, unlike the Debian 13
+  target's bash 5.x — detected via a `declare -gA` probe in `setup()`,
+  mirroring the existing `HAS_GNU_STAT` self-skip pattern from
+  `test/reconcile_functions.bats`. 32 test cases total across all three
+  `.bats` files in `test/`. `install.sh` untouched. Remaining for **M7**:
+  `check_ipv4_policy`/`check_ipv6_policy` (Tier 3 candidate); Tier 3
+  itself; CI wiring.

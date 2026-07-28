@@ -6,14 +6,19 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-End-of-session documentation review (2026-07-28): closing out this
-session's work on **M7** (testing strategy) — two new `bats-core` test
-files were added, and every Markdown document was re-read to sync
-`TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`/`docs/testing.md` and (where
-today's work made an existing claim false) `README.md`/`CLAUDE.md`/
-`docs/design-decisions.md`. No `install.sh` change was made in this
-session; `install.sh` still carries the cumulative, uncommitted edits from
-prior sessions (currently 4275 lines, `bash -n`/`shellcheck` clean).
+Continuing **M7** (testing strategy) in a new session (2026-07-28): per
+the previous session's "Recommended Next Step" option 1, surveyed the
+four remaining embedded scripts (`tailscale-udp-gro`, `master-compose-ipv4`,
+`master-docker-netfilter-recovery`, `caddy-tailnet-env`) for further
+pure-logic unit-test candidates, added `test/gro_functions.bats` for the
+one candidate found, and synced `TODO.md`/`SECURITY_REVIEW.md`/
+`CHANGELOG.md`/`docs/testing.md`. No `install.sh` change was made.
+Note: as of this session start, all prior work (docs scaffolding +
+`install.sh` hardening through **M2**/**L3**/**M1**-partial/**C1**/**H4**
++ the first two `.bats` files) was already committed as `b549d59`
+("docs: add project documentation and testing infra; harden install.sh")
+— the previous SESSION.md note calling `install.sh` "uncommitted" was
+stale by the time this session started.
 
 ## Completed Work
 
@@ -79,13 +84,37 @@ resolved, plus one unnumbered cleanup and two partial items:
     specific cases now self-skip with a clear reason on this non-GNU-stat
     macOS workstation instead of failing.
   - `install.sh` was not touched by any of this.
-- Documentation sync (this session): updated `docs/testing.md`,
+- Documentation sync (prior session): updated `docs/testing.md`,
   `SECURITY_REVIEW.md` (M7 entry), `TODO.md` (M7 entry), `CHANGELOG.md`
   (two new dated entries), `README.md` ("No CI..." limitation bullet +
   one Roadmap bullet), `CLAUDE.md` (Testing Expectations section), and
   `docs/design-decisions.md` (DD-9's "proposed mitigation" language,
   since a real one now partially exists) — all specifically because
-  today's bats-test work made their previous wording inaccurate.
+  that session's bats-test work made their previous wording inaccurate.
+- **M7 continued (this session, 2026-07-28)**: surveyed the four
+  remaining embedded scripts for pure-logic unit-test candidates.
+  `tailscale-udp-gro` has one standalone function, `add_default_netdev`;
+  the other three (`master-compose-ipv4`,
+  `master-docker-netfilter-recovery`, `caddy-tailnet-env`) have none —
+  each is almost entirely a `sleep`-based wait loop plus real side
+  effects (file writes, `flock`, `systemctl restart/start`), with no
+  isolable pure logic short of refactoring `install.sh` itself (out of
+  scope for a testing-only pass; flagged in `docs/testing.md` instead of
+  attempted). Added `test/gro_functions.bats` (5 cases) using the same
+  extraction technique as the other two `.bats` files. All 5 cases
+  self-skip on this dev workstation: this macOS's default `/bin/bash` is
+  3.2, which has no associative-array support at all (unlike the
+  reconcile tests' GNU-`stat` gap, which was just a flag difference) —
+  `add_default_netdev`'s dedup guard needs `SEEN` declared as one, so a
+  `declare -gA` feature probe in `setup()` self-skips with a clear reason
+  instead of misbehaving under a plain array. Runs for real on the
+  Debian 13 target's bash 5.x (not verified live here — this assistant
+  never executes `install.sh` or its embedded scripts). 32 test cases
+  total across `test/`. `install.sh` untouched throughout.
+  Synced `TODO.md`, `SECURITY_REVIEW.md` (M7 entry + a new Review History
+  row), `docs/testing.md`, and `CHANGELOG.md` to match. No commit made —
+  standing instruction from the user not to commit each time still
+  applies unless told otherwise.
 
 ## Remaining Work
 
@@ -93,15 +122,17 @@ resolved, plus one unnumbered cleanup and two partial items:
   `read_only` rootfs — explicitly deferred to the live SSH test phase.
 - **M3**: installation-profile scoping (`docs/profiles.md`) — the user
   explicitly asked to skip this for now ("m3 şimdilik atlayalım").
-- **M7 remainder**:
+- **M7 remainder** (all four embedded scripts now surveyed; only these
+  are left):
   - `check_ipv4_policy`/`check_ipv6_policy` (the composite functions that
     call the tested predicates together against real global state) are
     more integration-shaped and were left untested here — likely a
     better fit for Tier 3 than a unit test.
-  - The other four embedded scripts (`tailscale-udp-gro`,
-    `master-compose-ipv4`, `master-docker-netfilter-recovery`,
-    `caddy-tailnet-env`) haven't been surveyed yet for further
-    pure-logic unit-test candidates.
+  - `master-docker-netfilter-recovery`'s restart-cooldown check (inline
+    timestamp/arithmetic logic, not in a function) is a possible future
+    unit-test candidate, but only after extracting it into a named
+    function — a small `install.sh` behavior-preserving refactor, not
+    just a test addition, so it wasn't done as part of this survey.
   - Tier 3 (disposable-VM integration testing) — not attempted.
   - CI pipeline wiring (e.g. GitHub Actions) for both
     `scripts/lint-embedded-scripts.sh` and `bats test/` — no CI exists in
@@ -124,21 +155,21 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Recommended Next Step
 
-No explicit next topic was agreed before this session-end review. Natural
-options, roughly in order of how directly they continue what's in
-progress:
+M7's Tier 2 survey is now complete (all six embedded scripts covered, one
+with no further candidates found). Natural next options:
 
-1. Continue **M7**: survey the four remaining embedded scripts
-   (`tailscale-udp-gro`, `master-compose-ipv4`,
-   `master-docker-netfilter-recovery`, `caddy-tailnet-env`) for further
-   pure-logic unit-test candidates, following the same extract-the-
-   function-body pattern.
-2. Do the flagged `README.md` Roadmap-section drift cleanup (see above) —
+1. Do the flagged `README.md` Roadmap-section drift cleanup (see above) —
    small, low-risk, documentation-only.
-3. Pick up **M3** (installation profiles) if the user is ready to revisit
+2. Pick up **M3** (installation profiles) if the user is ready to revisit
    it, or move toward planning the live SSH test phase, which will also
    resolve **M1**'s remainder and **H1**'s outstanding real-server
    verification.
+3. If the user wants deeper M7 progress beyond this, the remaining items
+   all require a bigger decision first: extracting
+   `master-docker-netfilter-recovery`'s cooldown check into a named
+   function (an `install.sh` refactor), standing up Tier 3 (needs a
+   non-interactive/answer-file invocation mode that doesn't exist yet),
+   or wiring CI (not confirmed as wanted).
 
 Whichever is chosen, keep following the standing per-change rule: analyze
 and flag risk first, apply only after explicit approval, verify with

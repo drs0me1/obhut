@@ -96,15 +96,35 @@ alone.
     fit for the extract-a-function-body technique used here, which is why
     `route_value` (its underlying reusable parsing logic) is tested
     instead.
+- **Also implemented:** `test/gro_functions.bats` covers
+  `add_default_netdev`, the one standalone function in the
+  `tailscale-udp-gro` heredoc (dedupes discovered default-route interfaces
+  into `NETDEVS`/`SEEN`). Tested the same way, against a fake `IP_BIN`
+  returning canned `ip route get` output. 5 test cases.
+  - All 5 cases self-skip on this macOS dev workstation: the function's
+    dedup guard requires `SEEN` to be a bash associative array (bash 4+),
+    and this workstation's default `/bin/bash` is 3.2, which pre-dates
+    associative arrays entirely — unlike the Debian 13 target's bash 5.x.
+    They run for real on Linux (or with a bash 4+ install on macOS, e.g.
+    via `brew install bash`, not done here since it wasn't requested).
+- Surveyed the other three embedded scripts
+  (`master-compose-ipv4`, `master-docker-netfilter-recovery`,
+  `caddy-tailnet-env`) for further pure-logic candidates and found none:
+  each is almost entirely a `sleep`-based wait loop plus real side effects
+  (file writes via `mktemp`+`mv`, `flock`, `systemctl restart/start`) with
+  no standalone function to extract. The one piece of non-trivial logic
+  worth calling out — `master-docker-netfilter-recovery`'s restart-cooldown
+  check (timestamp read + `NOW - LAST < COOLDOWN_SECONDS`) — is inline at
+  the script's top level, not in a function; extracting it into a testable
+  function would be an `install.sh` behavior-preserving refactor, not just
+  a test addition, so it's left for a future session if the user wants to
+  pursue it explicitly, rather than folded into this survey.
 - **Remaining:** `check_ipv4_policy`/`check_ipv6_policy` (the composite
   functions that call the above predicates together against real global
   state like `TS_GUARD_CHAIN`/`POLICY_CHAIN`/`WAN4_IF`) are not unit
   tested — they're more integration-shaped (many globals, real `-C`
   calls against `$IPTABLES_BIN` directly) and are a natural Tier 3
-  (live-host) check instead. Other embedded scripts
-  (`tailscale-udp-gro`, `master-compose-ipv4`,
-  `master-docker-netfilter-recovery`, `caddy-tailnet-env`) haven't been
-  reviewed yet for further pure-logic unit-test candidates.
+  (live-host) check instead.
 - Longer-term, a small sourceable library file (extracted once, not
   per-test) would remove the need to re-extract function bodies via
   `sed`/`awk` in every test file — a meaningful, low-risk first step

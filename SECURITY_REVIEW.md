@@ -397,12 +397,25 @@ entry below for what's done vs. deferred to the live SSH test.
     on failure — already covered by `bash -n`/`shellcheck` directly, and
     not a fit for this extraction technique, which is why `route_value`
     (its reusable parsing logic) was tested instead.
+- Also added `test/gro_functions.bats`: 5 test cases for
+  `add_default_netdev`, the only standalone function in `tailscale-udp-gro`
+  (dedupes discovered default-route interfaces into `NETDEVS`/`SEEN`),
+  tested the same way against a fake `ip`. All 5 self-skip on this macOS
+  dev workstation: the function's dedup guard needs `SEEN` declared as a
+  bash associative array (bash 4+), and this workstation's default
+  `/bin/bash` is 3.2, which predates associative arrays entirely — a local
+  test-environment gap, not a functional bug (the Debian production target
+  ships bash 5.x). Surveyed the other three remaining embedded scripts
+  (`master-compose-ipv4`, `master-docker-netfilter-recovery`,
+  `caddy-tailnet-env`) for further pure-logic candidates and found none:
+  each is almost entirely a `sleep`-based wait loop plus real side effects
+  (file writes, `flock`, `systemctl restart/start`), with no standalone
+  function to extract. `install.sh` untouched throughout.
 - **Remaining:** `check_ipv4_policy`/`check_ipv6_policy` (composite
   functions coupled to real global state, more integration-shaped — left
-  for Tier 3 instead); pure-logic candidates in the other four embedded
-  scripts haven't been surveyed yet; Tier 3 (disposable-VM integration
-  testing); CI pipeline wiring (no CI exists in this repo). See
-  `docs/testing.md` for the full staged plan.
+  for Tier 3 instead); Tier 3 (disposable-VM integration testing); CI
+  pipeline wiring (no CI exists in this repo). See `docs/testing.md` for
+  the full staged plan.
 - **Change risk:** None so far — new standalone test file only,
   `install.sh` untouched. Extracting logic for further unit tests remains
   medium risk in general (see H4) but this pattern (extract function body
@@ -581,3 +594,4 @@ remain open as of this review.
 | 2026-07-28 | Claude Code (remediation) | `compose.yaml` → `services.qbittorrent`, `services.unpackerr` | **M1** partially resolved: `no-new-privileges` and hardware-sized `mem_limit`/`cpus` (2g/2.0 and 512m/1.0, sized against the user's 4 CPU/8 GB host) added to both; `cap_drop: [ALL]` deliberately deferred to the live SSH test (qbittorrent's linuxserver.io entrypoint likely needs some capabilities back); `bash -n` + `shellcheck` clean |
 | 2026-07-28 | Claude Code (analysis) | `compose.yaml` → `services.portainer`, `README.md` | **C1** resolved as accepted risk: reconsidered docker-socket-proxy and found it a weak fit for Portainer specifically (its management features need close to the same broad API access); user confirmed active use and accepted the risk, scoped by network exposure rather than API restriction; no `install.sh` functional change, documented in `README.md` |
 | 2026-07-28 | Claude Code (remediation) | New: `scripts/lint-embedded-scripts.sh` | **H4** resolved: extracts and lints all 6 embedded heredoc scripts independently (`bash -n` + `shellcheck`, `SC2016` excluded as a documented false-positive class); first real run found `master-docker-netfilter-recovery` clean and only expected `SC2016` notices elsewhere; verified the tool detects real failures too via a synthetic syntax error in a scratch copy; `install.sh` untouched |
+| 2026-07-28 | Claude Code (testing) | New: `test/gro_functions.bats`; surveyed `master-compose-ipv4`, `master-docker-netfilter-recovery`, `caddy-tailnet-env` | **M7** Tier 2 continued: 5 new test cases for `tailscale-udp-gro`'s `add_default_netdev` (all self-skip on this workstation's bash 3.2, which lacks associative arrays; the Debian target's bash 5.x is unaffected); the other three remaining embedded scripts surveyed and found to have no standalone pure-logic functions to extract, only wait-loops plus real side effects — left to Tier 3; `install.sh` untouched |
