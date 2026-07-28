@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 umask 077
 
-# Release identity of this installer. Distinct from STACK_SCHEMA below,
-# which versions state.env's on-disk format and only changes when that
-# format does.
+# Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
+# o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
+# değişirse değişir.
 MASTER_SETUP_VERSION="2026.07.28-v1b"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
@@ -504,6 +504,9 @@ export DEBIAN_FRONTEND=noninteractive
 TIMEZONE="Europe/Berlin"
 WG_PUBLIC_PORT="65171"
 QBIT_PUBLIC_PORT="65173"
+# SFTPGo WebDAV portu. WG/qBittorrent portlarıyla aynı kategoride; daha önce
+# yalnız elle yazılıyordu ve dosyada onlarca yerde tekrar ediyordu.
+WEBDAV_PORT="65113"
 
 # 20-23 Temmuz 2026 tarihlerinde doğrulanan production sürümleri.
 # SFTPGo, 25 Temmuz 2026'da güvenlik yamaları içeren v2.7.5'e yükseltildi.
@@ -1135,15 +1138,22 @@ fi
 # IPv6 WAN opsiyoneldir; yokluğu beklemeyi gerektirmez.
 WAN6_IF="$(route_value -6 2001:4860:4860::8888 dev || true)"
 
-wait_for_docker_user() {
-    local bin="$1"
+# Docker ve Tailscale'in oluşturduğu zincirler boot'ta hemen hazır olmaz.
+# Bu bekleme tek bir yerde tanımlıdır; hem DOCKER-USER hem de FORWARD
+# prefix'indeki diğer zincirler aynı sabrı kullanır.
+wait_for_chain() {
+    local bin="$1" chain="$2"
     for _ in $(seq 1 30); do
-        if "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1; then
+        if "$bin" -w 5 -L "$chain" -n >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
     done
     return 1
+}
+
+wait_for_docker_user() {
+    wait_for_chain "$1" DOCKER-USER
 }
 
 remove_legacy_wide_rules() {
@@ -1216,14 +1226,20 @@ ensure_forward_prefix() {
     local bin="$1" target="" last_rule=""
     [[ -n "$bin" ]] || return 0
 
-    # These three chains are created by Docker and Tailscale, not by this
-    # script, and their names/layout are internal details of those
-    # projects rather than a stable interface. Name the missing one
-    # explicitly: a silent failure here aborts the whole helper under
-    # set -e, and the most likely cause — a Docker release that renamed
-    # or restructured its FORWARD chains — is otherwise invisible.
+    # Bu üç zinciri bu betik değil, Docker ve Tailscale oluşturur; adları
+    # ve düzenleri o projelerin iç detayıdır, kararlı bir arayüz değil.
+    # Eksik olanı açıkça adlandır: buradaki sessiz bir hata set -e ile
+    # helper'ın tamamını sonlandırır ve en olası neden (Docker'ın FORWARD
+    # zincirlerini yeniden adlandırması/yapılandırması) aksi halde
+    # görünmez kalır.
+    #
+    # Bekleme, apply_ipv4/apply_ipv6'nın kullandığı sabrin aynısıdır.
+    # Daha önce burada beklemesiz tek bir -L kontrolü vardı; bu fonksiyon
+    # o ikisinden ÖNCE çalıştığı için boot'ta sabırsız kontrol sabırlı
+    # olanların önüne geçiyor ve zincirler birkaç saniye gecikirse helper
+    # daha beklemeye başlamadan ölüyordu.
     for target in DOCKER-USER DOCKER-FORWARD ts-forward; do
-        if ! "$bin" -w 5 -L "$target" -n >/dev/null 2>&1; then
+        if ! wait_for_chain "$bin" "$target"; then
             echo "HATA: Beklenen firewall zinciri bulunamadı: $target ($bin)." >&2
             echo "Docker veya Tailscale sürümü bu betiğin varsaydığı zincir düzenini değiştirmiş olabilir." >&2
             return 1
@@ -1390,6 +1406,12 @@ apply_ipv6() {
     local bin="$1" staging_chain=""
     [[ -n "$bin" ]] || return 0
 
+    # Not: ensure_forward_prefix bu noktadan önce zaten aynı zinciri
+    # bekleyip bulamazsa helper'ı sonlandırdığı için buraya normalde
+    # ulaşılmaz. Kasıtlı bir artık güvenlik ağı olarak duruyor: IPv4
+    # zorunlu (apply_ipv4 hata verir), IPv6 ise en iyi çaba sayılır, ve
+    # zincir bu iki adım arasında kaybolursa IPv6 politikası sessizce
+    # atlanır, kurulum durmaz.
     if ! wait_for_docker_user "$bin"; then
         echo "UYARI: IPv6 DOCKER-USER zinciri bulunamadı; IPv6 politikası atlandı." >&2
         return 0
@@ -1733,25 +1755,26 @@ LOCAL_DNS_ENABLED=$SETUP_LOCAL_DNS
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
-WEBDAV_PORT=65113
+WEBDAV_PORT=$WEBDAV_PORT
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST_FOR_STATE
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 EOF
 chown root:root /etc/master-stack/state.env
 chmod 0600 /etc/master-stack/state.env
 
-# The canonical copy of state.env is deliberately NOT published here. The
-# canonical bundle is only ever published as one atomic set — state.env
-# plus, when local DNS is enabled, the six dnsmasq/Caddy files — at the
-# end of Stage 6, because reconcile's canonical_bundle_ok() cross-checks
-# the manifest's entry list against the LOCAL_DNS_ENABLED value inside
-# the canonical state.env. Publishing state.env here would leave that
-# pair inconsistent (a fresh LOCAL_DNS_ENABLED=1 state.env alongside a
-# state.env-only manifest) for the whole of Stages 4-6, so an interrupted
-# run would leave reconcile permanently unable to validate the bundle.
-# Deferring instead means a re-run that fails mid-way leaves the previous
-# run's complete, self-consistent bundle in place, and reconcile keeps
-# enforcing that last known-good configuration.
+# state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
+# Canonical bundle yalnızca tek bir atomik küme hâlinde yayınlanır —
+# state.env, ve yerel DNS açıksa altı dnsmasq/Caddy dosyası — ve bu Aşama
+# 6'nın sonunda olur. Nedeni: reconcile'ın canonical_bundle_ok()'u,
+# manifest'teki girdi listesini canonical state.env içindeki
+# LOCAL_DNS_ENABLED değerine karşı doğrular. state.env'i burada
+# yayınlamak bu ikiliyi Aşama 4-6 boyunca tutarsız bırakırdı (taze bir
+# LOCAL_DNS_ENABLED=1 state.env'in yanında yalnız state.env içeren bir
+# manifest), ve yarıda kesilen bir çalıştırma reconcile'ı bundle'ı hiç
+# doğrulayamaz hâlde bırakırdı. Ertelemek ise şu anlama gelir: yarıda
+# kalan bir yeniden çalıştırma, önceki çalıştırmanın eksiksiz ve kendi
+# içinde tutarlı bundle'ını yerinde bırakır ve reconcile son bilinen iyi
+# yapılandırmayı uygulamaya devam eder.
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
@@ -1827,14 +1850,15 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
-    # linuxserver.io's s6-overlay init runs as root to fix PUID/PGID
-    # ownership before dropping to the unprivileged app user; this is the
-    # minimal capability set that lets it do so (confirmed empirically —
-    # without DAC_OVERRIDE/FOWNER it cannot create a fresh config
-    # directory). read_only isn't used here: it was tested and found to
-    # break the PUID/PGID mechanism itself (files end up owned by the
-    # image's baked-in default UID/GID instead of 1000:1000), which would
-    # conflict with the shared downloads-tree ownership model (see M2).
+    # linuxserver.io imajının s6-overlay init'i, yetkisiz uygulama
+    # kullanıcısına düşmeden önce PUID/PGID sahipliğini düzeltmek için
+    # root çalışır; bu, bunu yapabilmesi için gereken en küçük yetenek
+    # kümesidir (deneysel olarak doğrulandı — DAC_OVERRIDE/FOWNER olmadan
+    # sıfırdan bir config dizini oluşturamıyor). read_only burada
+    # kullanılmıyor: denendi ve PUID/PGID mekanizmasını bozduğu görüldü
+    # (dosyalar 1000:1000 yerine imajın gömülü varsayılan UID/GID'siyle
+    # sahipleniyor), bu da ortak medya ağacı sahiplik modeliyle çakışırdı
+    # (bkz. M2).
     cap_drop:
       - ALL
     cap_add:
@@ -1843,19 +1867,20 @@ services:
       - SETGID
       - DAC_OVERRIDE
       - FOWNER
-    # No mem_limit/cpus here, deliberately. M1 originally set 2g/2.0, but
-    # live testing (2026-07-28) showed the memory ceiling — not CPU —
-    # throttling qBittorrent's disk cache and capping throughput at
-    # ~170MB/s against 218-278MB/s unlimited; raising it to 4g, then 6g/3.0
-    # under sustained load, only chased the workload upward until the
-    # ceiling no longer constrained anything on this 4 CPU / ~8GB host.
-    # A ceiling that has to be raised to match real usage isn't
-    # containment, it's a throughput risk, so both were dropped. The
-    # hardening that does contain this container (no-new-privileges,
-    # cap_drop: [ALL] + a minimal cap_add set) is unaffected; unpackerr
-    # keeps its own ceilings, which never constrained it. Trade-off: a
-    # runaway qbittorrent is now bounded by the host's global OOM killer
-    # rather than its own cgroup. See SECURITY_REVIEW.md M1.
+    # Burada bilinçli olarak mem_limit/cpus yok. M1 başlangıçta 2g/2.0
+    # koymuştu; canlı testte (2026-07-28) kısıtlayanın CPU değil bellek
+    # tavanı olduğu görüldü: qBittorrent'in disk önbelleğini boğup
+    # throughput'u ~170MB/s'e düşürüyordu (limitsizken 218-278MB/s).
+    # Önce 4g'ye, sürdürülen yükte sonra 6g/3.0'a çıkarmak yalnızca iş
+    # yükünün peşinden koşmak oldu; host'un 4 CPU / ~8GB kapasitesinde
+    # tavan artık hiçbir şeyi kısıtlamıyordu. Gerçek kullanıma yetişmek
+    # için sürekli yükseltilen bir tavan koruma değil, throughput riskidir
+    # — bu yüzden ikisi de kaldırıldı. Bu container'ı asıl sınırlayan
+    # sertleştirme (no-new-privileges, cap_drop: [ALL] + minimal cap_add)
+    # etkilenmedi; unpackerr kendi tavanlarını koruyor, orada hiç
+    # kısıtlayıcı olmadılar. Ödünü: kaçak bir qbittorrent artık kendi
+    # cgroup'u yerine host'un genel OOM killer'ı tarafından sınırlanır.
+    # Bkz. SECURITY_REVIEW.md M1.
     environment:
       PUID: "1000"
       PGID: "1000"
@@ -1879,10 +1904,10 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
-    # Already runs as a non-root, fixed UID/GID with no init step of its
-    # own; confirmed empirically to start and run cleanly with zero
-    # capabilities and a read-only root filesystem (its only writes are
-    # to /downloads, already a mounted volume).
+    # Zaten root olmayan, sabit UID/GID ile ve kendine ait bir init adımı
+    # olmadan çalışıyor; sıfır yetenek ve salt okunur kök dosya sistemiyle
+    # temiz başlayıp çalıştığı deneysel olarak doğrulandı (tek yazdığı yer
+    # zaten bağlı bir volume olan /downloads).
     cap_drop:
       - ALL
     read_only: true
@@ -1961,12 +1986,12 @@ services:
     environment:
       TZ: "${TIMEZONE}"
       SFTPGO_SFTPD__BINDINGS__0__PORT: "0"
-      SFTPGO_WEBDAVD__BINDINGS__0__PORT: "65113"
+      SFTPGO_WEBDAVD__BINDINGS__0__PORT: "${WEBDAV_PORT}"
     ports:
       - "127.0.0.1:9981:8080/tcp"
-      - "127.0.0.1:65113:65113/tcp"
+      - "127.0.0.1:${WEBDAV_PORT}:${WEBDAV_PORT}/tcp"
       # Apple TV/Infuse için Caddy ve özel DNS'ten bağımsız Tailnet WebDAV.
-      - "\${TAILSCALE_IPV4}:65113:65113/tcp"
+      - "\${TAILSCALE_IPV4}:${WEBDAV_PORT}:${WEBDAV_PORT}/tcp"
     volumes:
       - /data/sftpgo/storage:/srv/sftpgo
       - /data/sftpgo/config:/var/lib/sftpgo
@@ -2109,6 +2134,14 @@ CANONICAL_DIR="/usr/local/share/master-stack"
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
+# İndirme dosya sisteminin uyarı eşiği. Hem tespit hem de onarım sonrası
+# postcondition aynı değeri kullanır; daha önce ikisine de elle yazılıyordu.
+DISK_USAGE_THRESHOLD_PCT=90
+# "Aynı çareyi bundan sık tekrarlama" politikası: container ve stack
+# yenilemeleri için. master-docker-netfilter-recovery kendi ayrı script'i
+# olduğu için aynı değeri kendi COOLDOWN_SECONDS'ında tutar; biri
+# değişirse diğeri de değişmeli.
+RESTART_COOLDOWN_SECONDS=900
 MODE="${1:-reconcile}"
 
 case "$MODE" in
@@ -2332,7 +2365,7 @@ fi
 # onaramaz (kullanıcı verisini silmek güvenli bir onarım değildir), yalnız
 # operatörü erken uyarır.
 disk_space_ok() {
-    local path="$1" threshold="${2:-90}" usage_pct=""
+    local path="$1" threshold="${2:-$DISK_USAGE_THRESHOLD_PCT}" usage_pct=""
     usage_pct="$(
         "$DF_BIN" --output=pcent "$path" 2>/dev/null |
             tail -n 1 | tr -dc '0-9'
@@ -2610,7 +2643,7 @@ restart_budget_available() {
         read -r last <"$stamp" || last=0
     fi
     [[ "$last" =~ ^[0-9]+$ ]] || last=0
-    (( now - last >= 900 ))
+    (( now - last >= RESTART_COOLDOWN_SECONDS ))
 }
 
 record_container_restart() {
@@ -2753,13 +2786,14 @@ state_file_ok() {
         owned_file_ok "$STATE_FILE" 0 0 600
 }
 
-# Deliberately NOT wired into config_files_ok()/CONFIG_DRIFTED: unlike the
-# dnsmasq/Caddy files, compose.yaml drift is never auto-restored. Restoring
-# it has no effect until a `docker compose up -d`, which would risk a
-# 5-minute recreate loop if the drift recurs, and it would silently undo a
-# deliberate operator change. This check exists to surface the one case
-# that actually happens on this stack — a change tested live and not yet
-# folded back into install.sh — so it reports and nothing else.
+# Bilinçli olarak config_files_ok()/CONFIG_DRIFTED'a bağlanmadı:
+# dnsmasq/Caddy dosyalarının aksine compose.yaml sapması hiçbir zaman
+# otomatik geri yüklenmez. Geri yüklemek `docker compose up -d` olmadan
+# etkisizdir, sapma tekrarlarsa 5 dakikalık bir yeniden yaratma döngüsü
+# riski taşır, ve operatörün bilinçli bir değişikliğini sessizce geri
+# alır. Bu kontrol, bu stack'te gerçekten yaşanan tek durumu görünür
+# kılmak için var — canlıda denenip henüz install.sh'e işlenmemiş bir
+# değişiklik — yani yalnız raporlar, başka bir şey yapmaz.
 compose_file_ok() {
     "$CMP_BIN" -s "$CANONICAL_DIR/compose.yaml" "$COMPOSE_FILE" &&
         owned_file_ok "$COMPOSE_FILE" 0 0 600
@@ -2916,7 +2950,7 @@ if ! forwarding_ok || ! forwarding_config_ok; then
 fi
 
 DISK_SPACE_LOW=0
-disk_space_ok "$DOWNLOADS_PATH" 90 || DISK_SPACE_LOW=1
+disk_space_ok "$DOWNLOADS_PATH" || DISK_SPACE_LOW=1
 
 TAILSCALE_OFFLINE=0
 TAILSCALE_PREFS_DRIFTED=0
@@ -2954,12 +2988,12 @@ fi
 CANONICAL_CONFIG_INVALID=0
 canonical_runtime_configs_valid || CANONICAL_CONFIG_INVALID=1
 
-# Reported here, at detection time, rather than in the drift-message block
-# below: that block sits after all_critical_state_healthy()'s early exit,
-# and this condition deliberately isn't part of that rollup, so a host
-# whose only deviation is compose.yaml would otherwise report nothing at
-# all. Same placement reason as check_compose_runtime()'s wg-easy
-# pending-setup message.
+# Aşağıdaki sapma-mesajı bloğunda değil, burada — tespit anında —
+# raporlanıyor: o blok all_critical_state_healthy()'nin erken çıkışının
+# altında kalıyor ve bu koşul bilinçli olarak o toplamın parçası değil,
+# dolayısıyla tek sapması compose.yaml olan bir host aksi hâlde hiçbir
+# şey raporlamazdı. check_compose_runtime()'daki wg-easy kurulum-bekliyor
+# mesajı da aynı nedenle orada duruyor.
 COMPOSE_FILE_DRIFTED=0
 if ! compose_file_ok; then
     COMPOSE_FILE_DRIFTED=1
@@ -3037,7 +3071,7 @@ fi
 [[ "$FORWARDING_DRIFTED" -eq 0 ]] ||
     echo "IP forwarding çalışma değeri sapmış; yönetilen sysctl yeniden uygulanacak."
 [[ "$DISK_SPACE_LOW" -eq 0 ]] ||
-    echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sistemi %90 üzerinde dolu; yeni indirme/çıkarma işlemleri başarısız olabilir. Otomatik onarım yok, elle yer açılması gerekiyor." >&2
+    echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sistemi %${DISK_USAGE_THRESHOLD_PCT} üzerinde dolu; yeni indirme/çıkarma işlemleri başarısız olabilir. Otomatik onarım yok, elle yer açılması gerekiyor." >&2
 [[ "$TAILSCALE_OFFLINE" -eq 0 ]] ||
     echo "HATA: Tailscale daemon aktif fakat Tailnet online değil." >&2
 [[ "$TAILSCALE_PREFS_DRIFTED" -eq 0 ]] ||
@@ -3130,13 +3164,13 @@ if [[ "$ADDRESS_CHANGED" -eq 1 ||
       "$TAILSCALE_NETFILTER_DRIFTED" -eq 1 ||
       "$FIREWALL_DRIFTED" -eq 1 ||
       "$FW_INACTIVE" -eq 1 ]]; then
-    # Same 15-minute budget the per-container restarts already use, so a
-    # drift this pass cannot repair (e.g. a firewall check that keeps
-    # failing) retries every 15 minutes instead of re-running the firewall
-    # reapply plus `docker compose up --wait` on every 5-minute cycle
-    # forever. An address change is exempt: it self-clears after one
-    # successful pass, and deferring it would leave the published
-    # bindings pointing at a stale IP for up to 15 minutes.
+    # Container restart'larının zaten kullandığı 15 dakikalık bütçenin
+    # aynısı: bu turda onarılamayan bir sapma (örneğin sürekli başarısız
+    # olan bir firewall kontrolü) her 5 dakikalık döngüde firewall'u
+    # yeniden uygulayıp `docker compose up --wait` çalıştırmak yerine 15
+    # dakikada bir yeniden denenir. Adres değişimi muaftır: bir başarılı
+    # turdan sonra kendiliğinden temizlenir ve ertelemek yayınlanan
+    # binding'leri 15 dakikaya kadar eski bir IP'de bırakırdı.
     if [[ "$ADDRESS_CHANGED" -eq 1 ]] ||
        restart_budget_available master-compose; then
         STACK_RESTART_REQUIRED=1
@@ -3295,7 +3329,7 @@ fi
 # Kritik onarımların gerçek postcondition'larını ikinci kez doğrula.
 if ! forwarding_ok ||
    ! forwarding_config_ok ||
-   ! disk_space_ok "$DOWNLOADS_PATH" 90 ||
+   ! disk_space_ok "$DOWNLOADS_PATH" ||
    ! tailscale_online ||
    ! tailscale_prefs_ok ||
    ! tailscale_netfilter_ok ||
@@ -3338,6 +3372,9 @@ umask 077
 LOCK_FILE="/run/lock/master-stack.lock"
 STATE_DIR="/run/master-network-reconcile"
 STAMP_FILE="$STATE_DIR/docker-core.last-restart"
+# master-network-reconcile aynı politikayı kendi RESTART_COOLDOWN_SECONDS
+# sabitinde tutar; ayrı script oldukları için değeri paylaşamazlar, biri
+# değişirse diğeri de değişmeli.
 COOLDOWN_SECONDS=900
 
 exec 8>"$LOCK_FILE"
@@ -3718,7 +3755,7 @@ http://sftpgo.${LOCAL_DOMAIN} {
 }
 
 http://webdav.${LOCAL_DOMAIN} {
-	reverse_proxy 127.0.0.1:65113
+	reverse_proxy 127.0.0.1:${WEBDAV_PORT}
 }
 
 http://health.${LOCAL_DOMAIN} {
@@ -3763,9 +3800,9 @@ fi
 
 # Canonical bundle yanlış/yarım bir kopyadan çalışan daemon'ları yeniden
 # başlatmamak için kendi manifestiyle doğrulanır. Manifest atomik yenilenir.
-# state.env's canonical copy is published here rather than in Stage 4 (see
-# the comment there) so that the manifest and the LOCAL_DNS_ENABLED value
-# it is validated against always become visible together.
+# state.env'in canonical kopyası Aşama 4'te değil burada yayınlanır (bkz.
+# oradaki açıklama), böylece manifest ile onun doğrulandığı
+# LOCAL_DNS_ENABLED değeri her zaman birlikte görünür olur.
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
     /usr/local/share/master-stack/state.env
@@ -4062,7 +4099,7 @@ fi
 echo
 echo "--- Dinlenen portlar ---"
 ss -lntup | grep -E \
-    ":(53|80|9443|7113|13087|${QBIT_PUBLIC_PORT}|${WG_PUBLIC_PORT}|51821|9981|65113)([[:space:]]|$)" || true
+    ":(53|80|9443|7113|13087|${QBIT_PUBLIC_PORT}|${WG_PUBLIC_PORT}|51821|9981|${WEBDAV_PORT})([[:space:]]|$)" || true
 
 assert_docker_binding() {
     local container="$1" container_port="$2" expected_binding="$3" bindings=""
@@ -4078,8 +4115,8 @@ assert_docker_binding() {
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/tcp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLIC_PORT}"
-assert_docker_binding sftpgo "65113/tcp" "127.0.0.1:65113"
-assert_docker_binding sftpgo "65113/tcp" "${TS_IP}:65113"
+assert_docker_binding sftpgo "${WEBDAV_PORT}/tcp" "127.0.0.1:${WEBDAV_PORT}"
+assert_docker_binding sftpgo "${WEBDAV_PORT}/tcp" "${TS_IP}:${WEBDAV_PORT}"
 
 # Runtime publish kayıtlarına ek olarak dar firewall izinlerinin güncel özgün
 # hedef adreslerini kullandığını doğrula. Böylece yerel curl testinin atladığı
@@ -4087,7 +4124,7 @@ assert_docker_binding sftpgo "65113/tcp" "${TS_IP}:65113"
 if ! iptables -w 5 -t mangle -C MASTER-TS-FORWARD \
         -i tailscale0 -p tcp \
         -m conntrack --ctstate NEW \
-        --ctorigdst "$TS_IP" --ctorigdstport 65113 \
+        --ctorigdst "$TS_IP" --ctorigdstport "$WEBDAV_PORT" \
         -j ACCEPT; then
     echo "HATA: Güncel Tailscale IPv4 için dar WebDAV firewall izni bulunamadı." >&2
     exit 1
@@ -4187,7 +4224,7 @@ for _ in $(seq 1 20); do
             --noproxy '*' \
             --connect-timeout 2 --max-time 5 \
             -X OPTIONS \
-            "http://${TS_IP}:65113/" || true
+            "http://${TS_IP}:${WEBDAV_PORT}/" || true
     )"
     [[ "$direct_webdav_code" == "401" ]] && break
     sleep 1
@@ -4196,7 +4233,7 @@ if [[ "$direct_webdav_code" != "401" ]]; then
     echo "HATA: Doğrudan Tailnet WebDAV beklenen 401 yerine ${direct_webdav_code} döndürdü." >&2
     exit 1
 fi
-echo "Doğrudan Tailnet WebDAV doğrulandı: ${TS_IP}:65113 -> HTTP ${direct_webdav_code}"
+echo "Doğrudan Tailnet WebDAV doğrulandı: ${TS_IP}:${WEBDAV_PORT} -> HTTP ${direct_webdav_code}"
 progress_stage_note 85 "Doğrudan Tailnet WebDAV erişimi doğrulandı"
 
 if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
@@ -4307,7 +4344,7 @@ progress_stage_note 99 "Tüm çalışma ve bağlantı testleri tamamlandı"
         "$PUBLIC_IPV4" "$QBIT_PUBLIC_PORT"
     printf 'wg-easy public: %s:%s/udp\n' \
         "$PUBLIC_IPV4" "$WG_PUBLIC_PORT"
-    printf 'WebDAV Tailnet: http://%s:65113\n' "$TS_IP"
+    printf 'WebDAV Tailnet: http://%s:%s\n' "$TS_IP" "$WEBDAV_PORT"
     if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
         printf 'Tailnet yerel DNS: *.%s -> %s\n' "$LOCAL_DOMAIN" "$TS_IP"
     else
@@ -4371,7 +4408,7 @@ echo "  SFTPGo   : http://127.0.0.1:9981$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && prin
 echo
 echo "Apple TV / Infuse doğrudan Tailnet WebDAV:"
 echo "  Adres   : $TS_IP"
-echo "  Port    : 65113"
+echo "  Port    : ${WEBDAV_PORT}"
 echo "  Protokol: WebDAV (HTTP)"
 echo "  Wi-Fi DNS ayarı: Otomatik"
 echo

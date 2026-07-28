@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Consistency pass over `install.sh`** (no behavioural change intended;
+  every item below is a same-value refactor or a patience fix):
+  - **`WEBDAV_PORT` is now a top-level variable**, alongside its two
+    siblings `WG_PUBLIC_PORT` and `QBIT_PUBLIC_PORT`, which already
+    existed. `65113` had been written out by hand in **17 places**; 13 of
+    those were in contexts that expand variables (`compose.yaml`, the
+    `Caddyfile`, `state.env`, Stage 7's assertions and the summary text)
+    and now use it. The remaining occurrences are the three inside the
+    single-quoted `docker-tailscale-fw` heredoc, which cannot expand
+    outer variables — that is **L7**'s core, and this shrinks it from a
+    17-site problem to a 3-site one.
+  - **Named constants for two duplicated policy values** in
+    `master-network-reconcile`: `DISK_USAGE_THRESHOLD_PCT` (the 90%
+    threshold, previously written at both the detection and the
+    postcondition call sites) and `RESTART_COOLDOWN_SECONDS` (the
+    15-minute "don't repeat the same remedy" budget, previously a bare
+    literal). `master-docker-netfilter-recovery` is a separate script and
+    cannot share the variable, so both sides now carry a comment saying
+    they must change together.
+  - **`ensure_forward_prefix()` now waits for Docker's chains** instead
+    of testing for them once. This was a real ordering defect, not just
+    an inconsistency: `apply_ipv4`/`apply_ipv6` wait up to 30 seconds via
+    `wait_for_docker_user`, but `ensure_forward_prefix` ran *before* them
+    with a bare `-L` check and, being fatal under `set -e`, could kill
+    the helper at boot if the chains were a few seconds late. The wait is
+    now factored into one `wait_for_chain()` used by both, with
+    `wait_for_docker_user` reduced to a thin wrapper.
+  - As a side effect this explains an apparent policy conflict noted
+    during the **M9** review: `apply_ipv6`'s "IPv6 chain missing, skip
+    the policy" branch is effectively unreachable, because
+    `ensure_forward_prefix` would already have aborted. It is kept as a
+    deliberate residual safety net and now says so.
+- **Comment language rule reversed to match reality** (`CLAUDE.md`).
+  `install.sh` had always been ~73% Turkish-commented while the rule said
+  English, so following the rule was producing English blocks inside
+  Turkish ones — 45 such lines had accumulated. All of them are
+  translated back to Turkish, and the rule now states the actual
+  convention: `install.sh` is Turkish throughout, Markdown docs and
+  commit messages stay English, `test/*.bats` and `scripts/*.sh` stay
+  English (bats specifically because Turkish `@test` names break under a
+  `tr_TR.UTF-8` locale). The principle recorded is that each artifact is
+  internally consistent.
+
 ### Added
 
 - `test/canonical_bundle.bats`: 8 `bats-core` unit tests for

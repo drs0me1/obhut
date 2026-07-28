@@ -24,9 +24,25 @@ even when working in this repository only.
 
 - **Speak to the user in Turkish.** All conversational replies, questions,
   and explanations directed at the user must be in Turkish.
-- **Keep all code, comments, and documentation in English.** This applies
-  to `install.sh`, generated helper scripts, systemd unit files, Markdown
-  docs, and commit messages — regardless of the conversation language.
+- **`install.sh` is Turkish throughout** — both its comments and the
+  messages it prints. This includes the generated helper scripts and
+  systemd unit descriptions embedded in it. (Revised 2026-07-29: the rule
+  used to say "keep all code and comments in English", but the file had
+  always been ~73% Turkish-commented, and following the old rule was
+  producing English blocks inside Turkish ones. The rule now matches the
+  file; the English comments added on 2026-07-28 were translated back.)
+- **Markdown documentation and commit messages stay in English.** These
+  are already consistently English across every file, and they are the
+  project's technical record rather than something read alongside the
+  script's Turkish output. Do not mix languages within either.
+- **`test/*.bats` and `scripts/*.sh` stay English** for comments and, in
+  the case of bats, for `@test` names specifically: Turkish `@test` names
+  were found to break `bats` under this workstation's `tr_TR.UTF-8`
+  locale. Their user-facing error strings may be Turkish, matching
+  `install.sh`.
+- The short version: **each artifact is internally consistent.** When
+  adding to a file, match the language already in it rather than the
+  language of the conversation.
 
 ## Execution Rules
 
