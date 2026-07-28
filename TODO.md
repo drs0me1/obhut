@@ -42,7 +42,10 @@ _All High findings resolved — see Completed below._
       stand-in; `test/gro_functions.bats` covers `tailscale-udp-gro`'s
       `add_default_netdev` (5 cases, all self-skipping on this
       workstation's bash 3.2, which lacks associative arrays — runs for
-      real on the Debian target's bash 5.x) — 32 cases total. The other
+      real on the Debian target's bash 5.x); `test/canonical_bundle.bats`
+      covers `canonical_bundle_ok()`'s two manifest branches (8 cases, no
+      skips, lists derived from `install.sh`'s own Stage 6 source) — 40
+      cases total. The other
       three remaining embedded scripts (`master-compose-ipv4`,
       `master-docker-netfilter-recovery`, `caddy-tailnet-env`) were
       surveyed and found to have no standalone pure-logic functions worth
