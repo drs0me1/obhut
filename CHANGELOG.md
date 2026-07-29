@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 `MASTER_SETUP_VERSION` is `2026.07.29-V1-1`; `install.sh` is 4701 lines.
+Exported as `versiyon/install-V1-1.sh`. **Live-verified** by a full
+install on 2026-07-29 (19:52:55 → 19:54:45, 1m50s): 7/7 stages, zero
+warnings, zero failed units, six containers up, `--check` all-zero exit 0,
+7/7 DNS names, Caddy 200/200/200/302/302/401/200, WebDAV reachable on the
+Tailscale IPv4 and refused on the public IPv4.
 
 ### Fixed
 
@@ -31,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   package download would change routing state earlier than necessary.
   Invisible on the project's test host, whose VPS image sets 64 MiB at
   boot, which is why DD-18's original verification missed it.
+
+  The install confirmed the **ordering** from the log —
+  `Aşama 2: 22% - UDP soket buffer tabanı ayarlanıyor` and
+  `net.core.rmem_max = 67108864` both precede
+  `Aşama 2: 25% - Tailscale paketi kuruluyor` — but not the **effect**,
+  for two independent reasons: the package was already at its newest
+  version so the postinst never ran and `tailscaled` was never restarted,
+  and the host's ceiling was already 64 MiB before either ordering could
+  matter. What was fixed is correct; how much it was worth is still
+  unquantified.
 
 ### Changed
 

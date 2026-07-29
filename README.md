@@ -1,10 +1,12 @@
 # Debian Server Installer
 
-**Version: v1rc** (2026-07-29) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-1** (2026-07-29) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.29-v1rc` in its banner, log header and final summary; note this
+`2026.07.29-V1-1` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
-format and is currently `8`.
+format and is currently `8`. The latest tagged release is `V1`; `V1-1`
+adds the **M11** socket-buffer ordering fix on top of it and has been
+verified by a live install.
 
 ## Project Overview
 
@@ -70,8 +72,8 @@ The script runs as seven stages, gated by `progress_stage_begin`/
 | Stage | Purpose |
 |-------|---------|
 | 0 | Interactive prompts (downloads path, optional local DNS domain), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
-| 1 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
+| 1 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages |
+| 2 | UDP-socket-buffer sysctl, Tailscale install, interactive browser login, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
 | 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
 | 4 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` helper scripts, systemd units for Compose and reconcile |
 | 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
