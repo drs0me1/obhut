@@ -614,9 +614,11 @@ reordering is not proposed a second time on the same reasoning.
 - **Separable ideas that did not cause the revert.** The framed login
   banner (bell + bold-cyan frame closing *before* the URL, so the link is
   the last thing on screen) and the Stage 0 heads-up are independent of
-  ordering and could be re-applied on their own. So is the `M11` sysctl
-  ordering defect below, which the reorder happened to fix as a side
-  effect and which the revert reintroduced.
+  ordering and could be re-applied on their own. So was the **M11** sysctl
+  ordering defect, which the reorder happened to fix as a side effect and
+  which the revert reintroduced — it was then fixed on its own in `V1-1`
+  by moving the netbuf block ahead of `apt-get install -y tailscale`,
+  without any of the Stage 1/2 restructuring.
 - **A packaging fact both orderings have to respect.** Debian's
   `tailscale.postinst` runs `deb-systemd-invoke restart
   'tailscaled.service'`, so the daemon starts inside `apt-get install -y

@@ -6,8 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`install.sh` is byte-identical to the `V1` tag / `versiyon/install-V1F.sh`
-(`2026.07.29-V1`, 4683 lines). Documentation-only changes below.
+`MASTER_SETUP_VERSION` is `2026.07.29-V1-1`; `install.sh` is 4701 lines.
+
+### Fixed
+
+- **M11 — the UDP socket-buffer floor now takes effect before
+  `tailscaled` opens its socket.** The netbuf `sysctl.d` write and its
+  `sysctl -p` moved from after the Tailscale package install to
+  immediately before it. Debian's `tailscale.postinst` runs
+  `deb-systemd-invoke restart tailscaled.service`, so the daemon comes up
+  *inside* `apt-get install -y tailscale` — the script's own `systemctl
+  enable --now tailscaled` only guarantees the enable, it never performs
+  the start. Verified from the 2026-07-29 install: `dpkg configure
+  tailscale` 19:17:24, `systemd: Starting tailscaled.service` 19:17:24,
+  `status installed` 19:17:25. Since `wireguard-go` requests its large UDP
+  receive buffer once at socket-open time and is clamped against the
+  ceiling then in effect, DD-18's 16 MiB floor was reaching the running
+  daemon only after the first restart on any host whose provider image
+  does not pre-set `net.core.rmem_max` — a ~70× shortfall against
+  Debian's 208 KB default, silently costing exit-node throughput. The
+  forwarding sysctl deliberately did **not** move: `ip_forward` is read
+  dynamically and is only needed before `tailscale set
+  --advertise-exit-node`, and hoisting IPv6 forwarding ahead of the
+  package download would change routing state earlier than necessary.
+  Invisible on the project's test host, whose VPS image sets 64 MiB at
+  boot, which is why DD-18's original verification missed it.
 
 ### Changed
 
@@ -46,10 +69,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   restart. Invisible on the project's test host, whose VPS image sets
   64 MiB at boot, which is why DD-18's original verification missed it.
   Found while reordering, fixed incidentally by `v1.1-1`, reintroduced by
-  the revert. The candidate fix is a ~15-line relocation within Stage 2
-  and needs none of the reverted restructuring, but one question is open
-  first: whether `tailscale up`/`set` rebinds magicsock's UDP socket later
-  in the stage, which would narrow or eliminate the defect.
+  the revert, and fixed on its own in `V1-1` (see **Fixed** above). One
+  question remains unanswered but is no longer blocking: whether
+  `tailscale up`/`set` rebinds magicsock's UDP socket later in the stage,
+  which would mean the defect was narrower than described. Raising a
+  permitting ceiling earlier cannot hurt either way (DD-18), so the fix
+  is safe regardless — but the size of what was fixed is not quantified.
 
 ## [V1] - 2026-07-29
 

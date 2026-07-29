@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-V1"
+MASTER_SETUP_VERSION="2026.07.29-V1-1"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -824,18 +824,23 @@ curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.li
     -o /etc/apt/sources.list.d/tailscale.list
 
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
-progress_stage_note 25 "Tailscale paketi kuruluyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y tailscale
-systemctl enable --now tailscaled
-progress_stage_note 40 "IP forwarding ve UDP GRO hazırlanıyor"
+progress_stage_note 22 "UDP soket buffer tabanı ayarlanıyor"
 
-cat >/etc/sysctl.d/99-tailscale.conf <<'SYSCTL'
-net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
-SYSCTL
-chown root:root /etc/sysctl.d/99-tailscale.conf
-chmod 0644 /etc/sysctl.d/99-tailscale.conf
-sysctl -p /etc/sysctl.d/99-tailscale.conf
+# Bu blok, Tailscale paketi kurulmadan ÖNCE çalışmak zorunda. Debian'ın
+# tailscale.postinst'i 'deb-systemd-invoke restart tailscaled.service'
+# çalıştırır, yani daemon 'apt-get install' içinde ayağa kalkar; scriptin
+# aşağıdaki 'systemctl enable --now tailscaled' satırı yalnız enable'ı
+# garantiler, başlatma işini yapmaz. wireguard-go ise büyük UDP buffer'ını
+# soketi açarken BİR KEZ ister ve talep o anki tavana göre kırpılır. Tavan
+# soket açıldıktan sonra yükseltilirse ayar ilk reboot'a kadar etkisiz kalır.
+# Sağlayıcı imajı rmem_max'ı zaten yüksek set eden makinelerde bu fark
+# görünmez; taban Debian varsayılanındayken ~70x'lik bir kayıptır.
+# Bkz. SECURITY_REVIEW.md M11.
+#
+# Forwarding sysctl'i kasten burada değil, aşağıda kalır: ip_forward dinamik
+# okunur ve yalnız 'tailscale set --advertise-exit-node' öncesinde gerekli,
+# ayrıca IPv6 forwarding'i erkene almak paket indirmesinden önce yönlendirme
+# durumunu değiştirmiş olurdu.
 
 # Tailscale userspace WireGuard (wireguard-go) kendi UDP soketi için büyük bir
 # alma/gönderme buffer'ı talep eder; bu talep net.core.{r,w}mem_max ile
@@ -877,6 +882,19 @@ SYSCTL_NETBUF
 chown root:root /etc/sysctl.d/99-master-stack-netbuf.conf
 chmod 0644 /etc/sysctl.d/99-master-stack-netbuf.conf
 sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf
+
+progress_stage_note 25 "Tailscale paketi kuruluyor"
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y tailscale
+systemctl enable --now tailscaled
+progress_stage_note 40 "IP forwarding ve UDP GRO hazırlanıyor"
+
+cat >/etc/sysctl.d/99-tailscale.conf <<'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+SYSCTL
+chown root:root /etc/sysctl.d/99-tailscale.conf
+chmod 0644 /etc/sysctl.d/99-tailscale.conf
+sysctl -p /etc/sysctl.d/99-tailscale.conf
 
 cat >/usr/local/sbin/tailscale-udp-gro <<'GRO_SCRIPT'
 #!/usr/bin/env bash

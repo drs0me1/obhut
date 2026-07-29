@@ -29,21 +29,6 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] **M11 — move the netbuf sysctl above `apt-get install -y
-      tailscale`** (Stage 2; note the package's own postinst starts the
-      daemon, so moving it above the script's `systemctl enable --now`
-      line would achieve nothing). `wireguard-go` requests its large UDP
-      receive buffer once at socket-open time and is clamped against the
-      `net.core.rmem_max` in effect then, so DD-18's 16 MiB floor does not
-      reach `tailscaled` on a first install. ~15-line relocation; needs
-      none of the Stage 1/2 restructuring reverted with `v1.1-1`. **Settle
-      the open question first:** whether `tailscale up`/`set` rebinds
-      magicsock's UDP socket later in Stage 2, which would narrow or
-      eliminate the defect. Not reproducible on the current test host (its
-      VPS image sets 64 MiB at boot), so verification needs a host without
-      that, or a before/after `ss -uapm` around a deliberate `rmem_max`
-      reset. See `SECURITY_REVIEW.md` M11 and DD-19.
-
 - [ ] 🟡 **M7** (partially done, 2026-07-28) — Tier 1 (static analysis,
       see **H4**) done. Tier 2 in progress: `test/reconcile_functions.bats`
       covers `state_value`/`owned_file_ok` (7 cases; 2 self-skip on this
@@ -83,6 +68,17 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **M11 — netbuf sysctl moved above `apt-get install -y tailscale`**
+      (2026-07-29, `V1-1`). Debian's `tailscale.postinst` runs
+      `deb-systemd-invoke restart tailscaled.service`, so the daemon comes
+      up inside the package install and the script's own `systemctl enable
+      --now tailscaled` never starts it. `wireguard-go` requests its large
+      UDP receive buffer once at socket-open time and is clamped against
+      the ceiling then in effect, so DD-18's floor was reaching the daemon
+      only after the first restart on hosts whose provider image does not
+      pre-set `net.core.rmem_max`. The forwarding sysctl deliberately
+      stayed put. See `SECURITY_REVIEW.md` M11 and DD-19.
 
 - [x] Full static audit of `install.sh` (4552 lines) across security,
       secrets handling, destructive operations, firewall/network safety,
