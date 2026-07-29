@@ -5,9 +5,10 @@
 `install.sh` provisions a single Debian 13 (trixie) host as a Tailscale
 exit-node plus a fixed Docker Compose service bundle, and leaves behind a
 continuously self-healing reconcile loop. This section describes the
-system as it exists today, derived directly from reading the script (no
-part of this is aspirational — see `docs/profiles.md` for planned, not-yet
--implemented changes).
+system as it exists today, derived directly from reading the script.
+Nothing here is aspirational: the one document that was
+(`docs/profiles.md`) describes a model that was closed as won't-do on
+2026-07-28 and is retained only as a design note.
 
 ### Installation stages
 
@@ -17,16 +18,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 528–617 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 618–731 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | 732–959 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning (`tailscale-udp-gro` helper at `770–845`) |
-| 3 | 960–1665 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1065–1601`) and its systemd unit |
-| 4 | 1666–3444 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2004–2045`) and `master-network-reconcile` (`2084–3329`) helper scripts, `master-docker-netfilter-recovery` (`3333–3379`), systemd units for Compose and reconcile |
-| 5 | 3445–3492 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3493–3815 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper ends at `3639`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 3816–4449 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 543–634 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 635–748 | Base OS prep: apt/timer quiescing, timezone, base packages |
+| 2 | 749–977 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning (`tailscale-udp-gro` helper at `787–862`) |
+| 3 | 978–1705 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1083–1638`) and its systemd unit |
+| 4 | 1706–3503 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2047–2088`) and `master-network-reconcile` (`2128–3382`) helper scripts, `master-docker-netfilter-recovery` (`3386–3435`), systemd units for Compose and reconcile |
+| 5 | 3504–3551 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 3552–3868 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper ends at `3696`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 3869–4502 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4449 lines — 2026-07-28, post-R1.0. They
+(Line numbers as of `install.sh` 4502 lines — `v1rc`, 2026-07-29. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 
@@ -79,7 +80,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1098-1621`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1083-1638`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -144,7 +145,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2032-3233`, ~1200
+`master-network-reconcile` (generated at `install.sh:2128-3382`, ~1250
 lines) runs every 5 minutes via `master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
 **disk space on the filesystem backing `$DOWNLOADS_PATH`** (added

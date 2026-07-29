@@ -302,11 +302,15 @@ for the full, prioritized list.
 
 Tracked in detail in [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md).
 
-**Done, as of 2026-07-28:** all but two of the original 18 audit findings
-are resolved (**C2**, **M6**, **M5**, **H1**, **H2**/**H3** — documented
-as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
-**L5**, **M2**, **L3**, **C1**, **H4**, **M1**), plus two further findings
-(**H5**, **H6**) discovered and fixed via live install testing. Notably:
+**Done, as of 2026-07-29 (`v1rc`):** every finding is now resolved,
+accepted or closed except **M7**, whose remainder is parked. That covers
+the original 18 audit findings (**C2**, **M6**, **M5**, **H1**,
+**H2**/**H3** and **C1** — documented as intentional design or accepted
+risk rather than changed — **M4**, **L1**, **L2**, **L4**, **L5**,
+**M2**, **L3**, **H4**, **M1**, plus **M3** closed as won't-do), the
+three found through live testing and real use (**H5**, **H6**, **H7**),
+and the five from the post-R1.0 whole-file review (**M8**, **M9**,
+**M10**, **L6**, and **L7** closed as won't-do). Notably:
 - **M1** (container hardening) is fully applied: `security_opt:
   no-new-privileges` and an empirically-determined minimal
   `cap_drop`/`cap_add` set for both `qbittorrent` and `unpackerr`, plus
@@ -317,11 +321,12 @@ as intentional design, not changed — **M4**, **L1**, **L2**, **L4**,
   chasing the workload rather than bounding it — an accepted deviation
   documented under **M1** in `SECURITY_REVIEW.md`.
 - **M7**'s testing strategy: Tier 1 (static analysis of all six embedded
-  heredoc scripts) is done; Tier 2 has 32 `bats-core` unit tests; Tier 3
-  has succeeded end-to-end on four separate live installs, followed by a
-  full operational validation round (reboot, deliberate drift injection
-  into the reconcile loop, resource-limit enforcement, real
-  WireGuard/Tailscale-exit-node traffic, CPU stress) — see
+  heredoc scripts) is done; Tier 2 has **57** `bats-core` unit tests
+  across five files with no identified gaps left; Tier 3 has succeeded
+  end-to-end on seven separate live installs, plus a full operational
+  validation round (deliberate drift injection into the reconcile loop,
+  resource-limit enforcement, real WireGuard/Tailscale-exit-node
+  traffic, CPU stress) and four reboots — see
   [`docs/testing.md`](docs/testing.md) for the full results.
 - A final architecture review (reconcile's full monitored-state list,
   systemd dependencies, IPv6, container DNS, wg-easy's kernel-module

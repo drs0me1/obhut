@@ -10,6 +10,9 @@ _Nothing yet._
 
 ## [v1rc] - 2026-07-29
 
+Tagged `v1rc` and exported to `~/Desktop/install-v1rc.sh`, hash-verified
+identical to `install.sh` at the tag. `install.sh` is 4502 lines.
+
 Consistency and coverage release. No new functionality: everything here
 either removes an internal inconsistency, adds test coverage, or closes a
 tracked finding by decision. Validated by a clean install on a reimaged

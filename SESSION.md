@@ -6,26 +6,30 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**v1rc tagged and exported; the code is in a finished state.** Three
-arcs across this session: post-R1.0 remediation (→ `v1b`), then a
-consistency-and-coverage pass (→ `v1rc`), then live validation of both.
+**None open. `v1rc` is tagged, exported and live-validated; the working
+tree is clean.** This session ran three arcs: post-R1.0 remediation
+(→ `v1b`), a consistency-and-coverage pass (→ `v1rc`), and live
+validation of both on a reimaged host.
 
-`v1rc` contains no new functionality. Everything in it either removes an
-internal inconsistency (`WEBDAV_PORT` as a real variable, named constants
-for two duplicated policy values, one shared `wait_for_chain()`, one
-`set_unit_file_mode()` helper for all eleven unit files, comments all
-Turkish), adds test coverage (32 → 57 cases), or closes a tracked finding
-by decision (**M3** and **L7** won't-do, **M7**'s CI parked).
+`v1rc` adds no functionality. Every change either removes an internal
+inconsistency, adds test coverage, or closes a tracked finding by
+decision. **M7 is the only finding still open, and nothing about it is
+actionable** while the repository stays local — see Remaining Work.
 
-**M7 is the only open finding and nothing about it is actionable** while
-the repository stays local — see Remaining Work.
+Two things from this session are worth carrying forward more than the
+change list itself:
 
-Validated on a reimaged host: clean install, re-run, two reboots, all
-clean. The netfilter reconstruction across a reboot was analysed in
-detail and is now DD-16/DD-17 — the short version is that Docker
-reshuffles container bridge IPs between boots and rewrites its own rules
-accordingly, while our chains come back byte-identical because they never
-name a container address.
+- **A repository fix is not a deployed fix.** The server had been
+  lagging the repo by several fixes — **H7** and **M1** only reached it
+  in this session's re-run, so Portainer had still been rejecting writes
+  via `portainer.ayc` in real use days after **H7** was marked resolved
+  here. **M10** now reports `compose.yaml` drift, but nothing reports
+  "the installed `install.sh` is older than the repository's".
+- **Measure before asserting.** Three of this session's findings came
+  from measuring rather than recalling: the 17 hand-written `65113`
+  sites, the 12-per-boot `world-inaccessible` warnings, and the fact
+  that `wait_for_chain` never actually waits. The last one is recorded
+  as defensive consistency rather than a proven fix, deliberately.
 
 ## Completed Work
 
@@ -277,39 +281,49 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Remaining Work
 
-- **M7 is the only open finding, and it is parked, not pending.** Tier 1
-  is complete; Tier 2 has 57 cases across five files with no identified
-  gaps left. All that remains is CI — and the user decided (2026-07-28)
-  that **this repository stays local, with no git remote**, so a runner
-  has nowhere to build from. Do not re-propose CI at each review; a
-  remote is the only thing that would unpark it. Tier 3 automation would
-  additionally need a non-interactive invocation mode, separately judged
-  not worth changing the deliberate `/dev/tty` prompt design for.
-- **Deploy lag has no check.** **M10** reports `compose.yaml` drift, but
-  nothing reports "the installed `install.sh` is older than the
-  repository's" — which is what actually bit on 2026-07-28. Open
-  question: its own check, or just a habit of re-running after every
-  merged fix.
-- **Deliberately outside M10's scope:** the firewall helper, the
-  reconcile script itself and the core systemd units are still not in the
-  canonical bundle. Reasoning is in **M10**'s entry; revisit only if the
-  `compose.yaml` reports prove valuable in practice.
-- **One idea not yet proposed to the user:** a single
-  `scripts/check-all.sh` running the four verification commands
-  (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
-  `bats test/`) in one go. It is the local substitute for the CI that
-  will not exist, costs almost nothing, and would remove the current
-  four-command manual ritual.
+- **M7 — the only open finding, and parked.** Tier 1 complete; Tier 2 at
+  57 cases across five files with no identified gaps left. All that
+  remains is CI, and the user decided (2026-07-28) that **the repository
+  stays local with no git remote**, so a runner has nowhere to build
+  from. Do not re-propose CI at each review; a remote is the only thing
+  that would unpark it. Tier 3 automation would additionally need a
+  non-interactive invocation mode, separately judged not worth changing
+  the deliberate `/dev/tty` prompt design for.
+- **Deploy lag has no check.** See Current Task. Open question, not a
+  decision: does it deserve its own mechanism (e.g. recording
+  `INSTALLER_VERSION` in `state.env` so one command can compare host
+  against repo), or just the habit of re-running after every merged fix?
+  The user declined the `state.env` approach on 2026-07-29 on the grounds
+  that a clean reinstall settles it — that reasoning holds while the
+  server is a test target and should be revisited if it becomes
+  long-lived.
+- **Deliberately outside M10's scope:** the firewall helper, the reconcile
+  script itself and the core systemd units are still not in the canonical
+  bundle. Reasoning is in **M10**'s entry — chiefly that reconcile
+  validates the firewall by invoking the very helper it would be
+  checking. Revisit only if the `compose.yaml` reports ever fire for a
+  reason other than a deliberate live edit.
+- **Two won't-do closures that would reopen together:** **M3**
+  (installation profiles) and **L7** (ports hardcoded in the firewall
+  heredoc). Both were closed because this installer targets a
+  single-purpose, single-operator host built from scratch every time.
+  Both reopen if it is ever reused across hosts or by another author.
+- **One idea never proposed to the user:** a single `scripts/check-all.sh`
+  running the four verification commands in one go — the local substitute
+  for the CI that will not exist.
 
 ## Recommended Next Step
 
 1. **Nothing is blocked or half-finished.** Repository, server and the
-   exported artifact all agree; every check is green; the working tree is
-   clean and `v1b` is tagged at the tip.
-2. If more work is wanted, the open items above are the menu — none is
-   urgent, and two of them (**M7**'s CI, the M10 scope extension) are
-   deliberately parked rather than pending.
-3. Whatever is chosen, keep the standing per-change rule: analyze and
+   exported artifact all agree. All 57 tests pass; `bash -n`,
+   `shellcheck` and `scripts/lint-embedded-scripts.sh` are clean.
+2. **This session's documentation pass was left uncommitted by explicit
+   instruction.** Review and commit it, or ask whether it is still
+   wanted, before starting anything else.
+3. If more work is wanted, the Remaining Work list is the menu — none of
+   it is urgent, and three of the five items are deliberately parked or
+   closed rather than pending.
+4. Whatever is chosen, keep the standing per-change rule: analyze and
    flag risk first, apply only after explicit approval, verify with
    `bash -n`/`shellcheck`/`bats test/` (and
    `scripts/lint-embedded-scripts.sh` for heredoc changes), show the

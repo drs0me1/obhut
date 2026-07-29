@@ -21,7 +21,7 @@ weight from an old (r3-and-earlier) automatic-reboot mechanism this tool
 no longer installs, kept only as a migration shim. The user confirmed this
 deployment target is always a fresh Debian 13 install with no r3-or-earlier
 history to migrate away from, so the shim had no remaining purpose.
-`install.sh` is now 4449 lines (unchanged by **H4**, which only added a new
+`install.sh` is now 4502 lines at `v1rc` (unchanged by **H4**, which only added a new
 standalone `scripts/lint-embedded-scripts.sh`; grew net from **H5**'s and
 **H1**'s regression fix plus **H6**'s one-line removal, all applied
 2026-07-28 across two live Tier 3 test attempts — see below); every
@@ -718,7 +718,7 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   The tests extract both lists from `install.sh` itself rather than
   restating them, and were mutation-verified on a scratch copy. Hash
   verification and ownership checking are stubbed as out of scope, so all
-  8 run with no skips on any POSIX host. 40 cases total across `test/`.
+  8 run with no skips on any POSIX host.
 - **Remaining, and parked (2026-07-28):** only CI wiring. Tier 1 is
   complete and Tier 2 now has 57 cases across five files with no
   identified gaps left — `check_ipv4_policy`/`check_ipv6_policy`, the
