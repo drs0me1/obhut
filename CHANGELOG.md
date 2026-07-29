@@ -24,6 +24,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from the exit code, since GRO is throughput-only. Amends DD-11, which
   had removed continuous ethtool-flag polling — that part stays removed.
 
+- `MASTER_SETUP_VERSION` now carries a revision suffix
+  (`2026.07.29-v1rc-1`), incremented on every `install.sh` change. A
+  deployed host previously could not report which revision it was built
+  from, which is how the server ran several fixes behind the repository
+  on 2026-07-28 with nothing noticing. Git tags stay separate and are
+  created only after live verification. Convention recorded in
+  `CLAUDE.md`.
+
 ### Fixed
 
 - `tailscale-udp-gro.service`'s unit comment claimed reconcile retried it

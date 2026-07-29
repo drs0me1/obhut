@@ -107,6 +107,17 @@ even when working in this repository only.
   asked" convention) — but this doesn't apply to actions outside git
   commits (file edits, live host commands, etc.), which still need their
   own explicit approval per the rules above.
+- **Bump the version suffix on every `install.sh` change.**
+  `MASTER_SETUP_VERSION` (line 8) carries a revision suffix after the base
+  version: `2026.07.29-v1rc-1`, `-2`, and so on. Increment it as part of
+  the same edit that changes `install.sh`, and state the resulting version
+  when reporting the change back to the user. The counter restarts at `-1`
+  when the base version changes (e.g. `v1rc` → `v1`). Its purpose is
+  identification, not release management: it makes a deployed host
+  self-report exactly which revision it was built from, which is the gap
+  that let the server run several fixes behind the repository on
+  2026-07-28 without anything noticing. Git tags remain separate and are
+  created only after live verification.
 - **Update tracking docs after every `install.sh` change.** Immediately
   after any change to `install.sh` is applied and verified, update
   `TODO.md` (move the item to Completed / adjust its status),
