@@ -6,7 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- Stage 2 now writes `/etc/sysctl.d/99-master-stack-netbuf.conf`, flooring
+  `net.core.rmem_max` / `wmem_max` at `max(current, 16 MiB)`. These were
+  previously only correct by accident on the live host — the 64 MiB
+  values came from the VPS provider's own image, not from this installer,
+  and would have fallen back to Debian's 208 KB anywhere else. The
+  beneficiary is Tailscale (userspace WireGuard), whose `tailscaled` was
+  measured holding a 14 MiB socket buffer; kernel WireGuard is unaffected.
+  Raise-only, so a provider that already sets more keeps it. See DD-18.
+- `master-network-reconcile` now checks `tailscale-udp-gro.service`'s
+  `ActiveState` and restarts it, with the existing 15-minute cooldown,
+  when it is not active. The unit is `Restart=no`, so a boot-time failure
+  previously persisted until the next reboot. Reported as `gro_unit=` in
+  `--check`; deliberately excluded from `all_critical_state_healthy()` and
+  from the exit code, since GRO is throughput-only. Amends DD-11, which
+  had removed continuous ethtool-flag polling — that part stays removed.
+
+### Fixed
+
+- `tailscale-udp-gro.service`'s unit comment claimed reconcile retried it
+  every five minutes. That had been untrue since DD-11 removed the code
+  in question on 2026-07-28. The change above makes the claim true again;
+  the comment is rewritten to state what actually happens.
 
 ## [v1rc] - 2026-07-29
 

@@ -784,6 +784,47 @@ chown root:root /etc/sysctl.d/99-tailscale.conf
 chmod 0644 /etc/sysctl.d/99-tailscale.conf
 sysctl -p /etc/sysctl.d/99-tailscale.conf
 
+# Tailscale userspace WireGuard (wireguard-go) kendi UDP soketi için büyük bir
+# alma/gönderme buffer'ı talep eder; bu talep net.core.{r,w}mem_max ile
+# kırpılır. Debian varsayılanı 208 KB'dır ve tailscaled'in istediği ~14 MB'ın
+# çok altındadır, yani taban garanti edilmezse exit-node throughput'u sessizce
+# düşer. Ölçümde bu değerin yalnız sağlayıcı imajının kendi sysctl.d
+# dosyasından geldiği görüldü; kurulum ona bağımlı kalmamalı.
+#
+# Yalnız *tavan* yükseltilir. rmem_max hiçbir bellek tahsis etmez; sadece bir
+# uygulamanın setsockopt(SO_RCVBUF) ile isteyebileceği üst sınırdır. Bu yüzden
+# yükseltmek hiçbir şeyi yavaşlatamaz — cgroup mem_limit'in tam tersi yönde
+# çalışır. rmem_default'a kasten dokunulmaz: o, boyut belirtmeyen her sokete
+# uygulanır ve genel bellek kullanımını artırırdı.
+#
+# Kernel WireGuard (wg-easy) bu değerlerden etkilenmez: encap_rcv callback'i
+# paketi soket alma kuyruğuna hiç girmeden tüketir. Ayar Tailscale içindir.
+# Bkz. docs/design-decisions.md DD-18.
+NET_BUF_FLOOR_BYTES=16777216
+CURRENT_RMEM_MAX="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
+CURRENT_WMEM_MAX="$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)"
+[[ "$CURRENT_RMEM_MAX" =~ ^[0-9]+$ ]] || CURRENT_RMEM_MAX=0
+[[ "$CURRENT_WMEM_MAX" =~ ^[0-9]+$ ]] || CURRENT_WMEM_MAX=0
+
+# Mevcut değer tabandan büyükse asla düşürülmez (bazı sağlayıcı imajları
+# 64 MB set ediyor). max() alındığı için yeniden çalıştırma da idempotenttir.
+TARGET_RMEM_MAX="$NET_BUF_FLOOR_BYTES"
+TARGET_WMEM_MAX="$NET_BUF_FLOOR_BYTES"
+if (( CURRENT_RMEM_MAX > TARGET_RMEM_MAX )); then
+    TARGET_RMEM_MAX="$CURRENT_RMEM_MAX"
+fi
+if (( CURRENT_WMEM_MAX > TARGET_WMEM_MAX )); then
+    TARGET_WMEM_MAX="$CURRENT_WMEM_MAX"
+fi
+
+cat >/etc/sysctl.d/99-master-stack-netbuf.conf <<SYSCTL_NETBUF
+net.core.rmem_max = $TARGET_RMEM_MAX
+net.core.wmem_max = $TARGET_WMEM_MAX
+SYSCTL_NETBUF
+chown root:root /etc/sysctl.d/99-master-stack-netbuf.conf
+chmod 0644 /etc/sysctl.d/99-master-stack-netbuf.conf
+sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf
+
 cat >/usr/local/sbin/tailscale-udp-gro <<'GRO_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -867,10 +908,12 @@ cat >/etc/systemd/system/tailscale-udp-gro.service <<'SYSTEMD'
 Description=Tailscale UDP GRO forwarding optimization
 Wants=network-online.target
 After=network-online.target
-# Bu oneshot kendi restart döngüsünü kurmaz. Başarısızlık yalnız düşük
-# öncelikli performans kaybıdır; master-network-reconcile beş dakikada bir
-# yeniden dener. Geniş sınır yalnız dışarıdan gelen gerçek start fırtınasını
-# keser; normal boot/yönetim çağrılarını sınırlamaz.
+# Bu oneshot kendi restart döngüsünü kurmaz (Restart=no). Başarısızlık yalnız
+# düşük öncelikli performans kaybıdır; master-network-reconcile unit'in
+# ActiveState'ini beş dakikada bir denetler ve 15 dakikalık cooldown ile
+# yeniden başlatır — bkz. docs/design-decisions.md DD-11. Geniş sınır yalnız
+# dışarıdan gelen gerçek start fırtınasını keser; normal boot/yönetim
+# çağrılarını sınırlamaz.
 StartLimitIntervalSec=60
 StartLimitBurst=10
 
@@ -3039,9 +3082,25 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" ]]; then
     fi
 fi
 
-# UDP GRO yalnızca Stage 2'de bir kez (+ her boot'ta unit ile) uygulanan bir
-# performans ayarıdır; reconcile artık bunu sürekli izlemez/onarmaz — bkz.
-# docs/design-decisions.md.
+# UDP GRO'nun ethtool bayrakları reboot'ta sıfırlandığı için oneshot unit her
+# boot'ta yeniden uygular. Ancak unit Restart=no ile tanımlıdır: boot sırasında
+# ağ henüz hazır değilken başarısız olursa bir sonraki reboot'a kadar failed
+# kalırdı. Burada yalnız *unit'in durumu* denetlenir; ethtool bayraklarının
+# beş dakikada bir yoklanması DD-11 gereği hâlâ kapsam dışıdır.
+#
+# Saf throughput ayarı olduğu için all_critical_state_healthy() içine
+# alınmaz: bir GRO arızası bağlantıyı etkilemez, dolayısıyla reconcile'ın
+# exit kodunu veya --check sonucunu bozmamalıdır.
+GRO_SERVICE_INACTIVE=0
+GRO_LOAD_STATE="$(
+    "$SYSTEMCTL_BIN" show tailscale-udp-gro.service \
+        --property=LoadState --value 2>/dev/null || true
+)"
+if [[ -n "$GRO_LOAD_STATE" && "$GRO_LOAD_STATE" != "not-found" ]] &&
+   ! "$SYSTEMCTL_BIN" is-active --quiet tailscale-udp-gro.service; then
+    GRO_SERVICE_INACTIVE=1
+fi
+
 all_critical_state_healthy() {
     [[ "$ADDRESS_CHANGED" -eq 0 &&
        "$WG_ENDPOINT_DRIFTED" -eq 0 &&
@@ -3072,11 +3131,37 @@ if [[ "$MODE" == "--check" ]]; then
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
         "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
-        "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED"
+        "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
+        "gro_unit=$GRO_SERVICE_INACTIVE"
     if all_critical_state_healthy; then
         exit 0
     fi
     exit 1
+fi
+
+# GRO onarımı bilinçli olarak all_critical_state_healthy() kapısının önünde
+# durur: sistemin geri kalanı sağlıklıyken de çalışması gerekir, çünkü aşağıdaki
+# erken exit 0 aksi hâlde bu bloğa hiç ulaşılmamasına yol açardı. Buna karşılık
+# başarısızlığı reconcile'ın exit kodunu değiştirmez — GRO throughput ayarıdır,
+# bağlantı koşulu değil.
+#
+# restart_budget_available/record_container_restart yardımcıları adlarına
+# rağmen jeneriktir: damga dosyasının adı dışında container'a özgü hiçbir iş
+# yapmazlar, bu yüzden unit için de kullanılıyorlar. Damga start denemesinden
+# *önce* yazılır; böylece kalıcı bir arıza her periyotta yeniden denenmez.
+if [[ "$GRO_SERVICE_INACTIVE" -eq 1 ]]; then
+    if restart_budget_available tailscale-udp-gro; then
+        echo "tailscale-udp-gro.service aktif değil; yeniden başlatılıyor."
+        record_container_restart tailscale-udp-gro
+        "$SYSTEMCTL_BIN" reset-failed tailscale-udp-gro.service >/dev/null 2>&1 || true
+        if "$SYSTEMCTL_BIN" start tailscale-udp-gro.service; then
+            GRO_SERVICE_INACTIVE=0
+        else
+            echo "UYARI: UDP GRO optimizasyonu uygulanamadı; yalnız throughput etkilenir, bağlantı değil." >&2
+        fi
+    else
+        echo "UYARI: tailscale-udp-gro.service aktif değil; restart cooldown nedeniyle bu periyot atlandı." >&2
+    fi
 fi
 
 if all_critical_state_healthy; then

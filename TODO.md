@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4502 lines (v1rc). Originally **tagged R1.0**
+architecture review; file is now 4587 lines (post-v1rc). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -465,3 +465,28 @@ _All Low findings resolved or closed — see Completed below._
       no-IPv6-WAN set. A table/chain-dispatching fake avoids bash
       associative arrays, so all 17 run with no skips on this
       workstation. 57 cases total across `test/`. `install.sh` untouched.
+- [x] **UDP socket buffer ceilings are now floored by the installer
+      (2026-07-29).** Stage 2 writes
+      `/etc/sysctl.d/99-master-stack-netbuf.conf` with
+      `net.core.rmem_max`/`wmem_max` at `max(current, 16 MiB)`. On the live
+      host both were already 64 MiB — but from the VPS provider's own
+      image file, not from `install.sh`, so the value was correct by
+      accident and would have been Debian's 208 KB anywhere else.
+      Originally proposed as a WireGuard optimization; measurement showed
+      that was wrong (kernel WireGuard consumes packets via `encap_rcv`
+      before the socket receive queue, and the container netns reported
+      `RcvbufErrors 0` after 5M datagrams). The real beneficiary is
+      Tailscale — userspace WireGuard — whose `tailscaled` was observed
+      holding a 14 MiB buffer. Raise-only and idempotent; `rmem_default`
+      deliberately untouched. See DD-18.
+- [x] **Reconcile now guards `tailscale-udp-gro.service` (2026-07-29).**
+      The unit is `Type=oneshot` with `Restart=no`, so a boot-time failure
+      — the case Stage 2 already anticipates and `reset-failed`s —
+      persisted until the next reboot. Reconcile now reads its
+      `ActiveState` and restarts it under the existing 15-minute cooldown.
+      Deliberately narrower than the ~54 lines DD-11 removed: the *unit*
+      is checked, ethtool flags are still not polled. Excluded from
+      `all_critical_state_healthy()` and the exit code since GRO is
+      throughput-only; reported as `gro_unit=` in `--check`. Also fixes
+      the unit comment, which had claimed reconcile retried it — untrue
+      since DD-11.

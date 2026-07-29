@@ -226,7 +226,7 @@ comments plus structural inference from the 2026-07-27 audit
   (helper script + oneshot systemd unit, re-applied at every boot) is
   kept, but the ~54 lines that used to make `master-network-reconcile`
   detect and repair GRO drift every 5 minutes were removed.
-- **Context:** `install.sh:767-866` (setup); the removed reconcile logic
+- **Context:** `install.sh:830-940` (setup); the removed reconcile logic
   previously lived around where `all_critical_state_healthy()` is now
   defined in the `master-network-reconcile` heredoc.
 - **Rationale:** UDP GRO forwarding is a pure throughput optimization for
@@ -251,6 +251,29 @@ comments plus structural inference from the 2026-07-27 audit
   inside heredoc bodies (see **H4**) — this had to be caught by manual
   review, a concrete illustration of why H4 is a real gap and not just a
   theoretical one.
+- **Amended 2026-07-29 — the *unit* is now checked, the *flags* still are
+  not.** This decision removed two different things at once, and only one
+  of them should have gone. Reconcile now reads
+  `tailscale-udp-gro.service`'s `ActiveState` and restarts it (15-minute
+  cooldown via the existing `restart_budget_available` stamp) when it is
+  not active. Polling ethtool flags every five minutes remains removed, so
+  the reasoning above still stands in full — the reinstated check is a
+  handful of lines, needs no `ETHTOOL_BIN`, and does not resurrect the
+  dead variables.
+- **The gap that motivated the amendment.** The unit is `Type=oneshot`
+  with `Restart=no`. If it fails at boot — the exact case Stage 2 already
+  anticipates, where the network is not ready yet and `install.sh` prints
+  "reconcile yeniden deneyecek" and calls `reset-failed` — then nothing
+  retried it. It stayed `failed` until the next reboot or `install.sh`
+  re-run. The unit file's own comment claimed reconcile retried every five
+  minutes, which had been **false since this decision removed that code**;
+  that stale comment is corrected in the same change.
+- **Placement detail worth knowing.** The repair runs *before* the
+  `all_critical_state_healthy()` early `exit 0`, because otherwise a
+  healthy system would return before ever reaching it. It is still
+  excluded from that function and from the exit code: a GRO failure is
+  throughput-only and must not make `--check` report an unhealthy host.
+  It is reported as `gro_unit=` in `--check` output.
 
 ### DD-12: wg-easy's pending first-run setup must never gate Stage 7 or `--check` (2026-07-28)
 
@@ -449,3 +472,56 @@ comments plus structural inference from the 2026-07-27 audit
   managed policy until the helper succeeds. That is why
   `docker-tailscale-fw.service` failing triggers reconcile via
   `OnFailure=` immediately rather than waiting for the 5-minute timer.
+
+### DD-18: UDP socket buffer ceilings are floored by the installer, and they are a Tailscale setting — not a WireGuard one (2026-07-29)
+
+- **Decision:** Stage 2 writes `/etc/sysctl.d/99-master-stack-netbuf.conf`
+  with `net.core.rmem_max` / `wmem_max` set to
+  `max(current_value, 16 MiB)`. `rmem_default` is deliberately left alone.
+- **Why it was needed:** on the live host both values were already 64 MiB
+  — but from `/etc/sysctl.d/99-nc-kernel.conf`, a **file shipped by the
+  VPS provider's image**, not by this installer. Nothing in `install.sh`
+  set them. On any host without that file they fall back to Debian's
+  default of 208 KB.
+- **Who actually benefits — and the mis-attribution that produced this
+  entry.** This was first proposed as a *WireGuard* optimization. That was
+  wrong, and measurement is what caught it. Kernel WireGuard (what
+  `wg-easy` uses) attaches an `encap_rcv` callback to its UDP socket;
+  `udp_queue_rcv_one_skb()` hands the packet to that callback **before**
+  the socket receive queue is involved, so `rmem_max` never gates its data
+  path. The evidence, taken inside the container's netns after 6.19 GiB of
+  real peer traffic:
+
+  ```
+  Udp: InDatagrams 5074319 ... RcvbufErrors 0  SndbufErrors 0  MemErrors 0
+  /proc/net/udp  00000000:FE93 (port 65171 = wg0)  rx_queue=00000000  drops=0
+  ```
+
+  The setting matters for **Tailscale**, which is *userspace* WireGuard
+  (`wireguard-go`) and does read from a UDP socket: `tailscaled` was
+  observed holding `rb14680064` (14 MiB). At Debian's 208 KB ceiling that
+  request would have been clamped ~70× smaller, silently costing
+  exit-node throughput. Since being a Tailscale exit-node is this host's
+  primary function, the finding survived — it just changed owner.
+- **Why raising a ceiling is safe here, and why the qBittorrent
+  experience does not apply.** `mem_limit`/`cpus` are cgroup ceilings that
+  *constrain*: hitting one takes throughput away, which is exactly what
+  happened in **M1**. `rmem_max` is the opposite kind of ceiling — it
+  allocates nothing and only sets the largest value a process may request
+  via `setsockopt(SO_RCVBUF)`. Raising it cannot slow anything down; it
+  can only stop clamping. `rmem_default` *is* applied to every socket that
+  does not ask for a size, so touching that one would have raised baseline
+  memory use across the system — which is why it is excluded.
+- **Raise-only, never lower.** The value is computed as a `max()` against
+  whatever is already in effect, so a provider that sets 64 MiB keeps it
+  and a re-run is idempotent. Simulated across the Debian default, a
+  provider 64 MiB, an exact-floor value, and malformed/empty input.
+- **Not reconciled, and that is deliberate.** Unlike ethtool flags, a
+  `sysctl.d` file survives reboots by construction — the file on disk *is*
+  the guarantee, so there is nothing for a 5-minute loop to repair. This
+  is the same reasoning as DD-11, applied to a setting that happens to be
+  persistent rather than volatile.
+- **Known limitation:** `sysctl.d` applies files in lexical order, so a
+  provider file sorting after ours that sets a *lower* value would win.
+  The `max()` handles the realistic case (provider sets it higher); the
+  inverted case is accepted as exotic and is not defended against.
