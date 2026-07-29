@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V1] - 2026-07-29
+
+Final release. `MASTER_SETUP_VERSION` is `2026.07.29-V1`; `install.sh` is
+4683 lines. Exported as `versiyon/install-V1F.sh`.
+
+Everything below this heading shipped in V1. The functional content is
+identical to the live-verified `v1rc-4` tag — the only `install.sh`
+changes since it are the version string and the qBittorrent socket-buffer
+reminder in the final summary, neither of which touches an executable
+path.
+
 ## [Unreleased]
 
 ### Added
