@@ -45,14 +45,18 @@ three resolved the same day. A further five, **M8**, **M9**, **M10**,
 script on 2026-07-28; **M8**, **M9** and **L6** were resolved the same
 day, **M10** was resolved with a deliberately narrowed scope, and **L7** was
 first deferred and then closed as won't-do (see their entries). **M3**
-was likewise closed as won't-do on 2026-07-28, leaving **M7** as the
-only open finding in the project.
+was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
+**M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
+`v1.1-1` login-placement experiment; the reorder fixed it as a side
+effect and the revert of that experiment reintroduced it, so it is
+tracked here as **open**. **M7** and **M11** are the project's open
+findings.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
-| Medium   | 1 (**M7**) | 9 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28) |
+| Medium   | 2 (**M7**, **M11**) | 9 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -888,6 +892,62 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   no health rollup. Verified with `bash -n`, `shellcheck`,
   `scripts/lint-embedded-scripts.sh` and `bats test/`.
 
+### M11 — The UDP socket-buffer sysctl is applied after `tailscaled` has already opened its socket — ⚠️ OPEN (2026-07-29)
+- **Location:** `install.sh` Stage 2 — `apt-get install -y tailscale` runs
+  before `/etc/sysctl.d/99-master-stack-netbuf.conf` is written and
+  `sysctl -p`'d
+- **Description:** DD-18 floors `net.core.rmem_max`/`wmem_max` at
+  `max(current, 16 MiB)` so that Tailscale's userspace WireGuard
+  (`wireguard-go`) can obtain the large UDP receive buffer it asks for.
+  But `wireguard-go` requests that buffer **once**, via
+  `setsockopt(SO_RCVBUF)` when it opens the socket, and the kernel clamps
+  the request against the ceiling *in effect at that moment*. Stage 2
+  raises the ceiling only after `tailscaled` is already running, so on a
+  first install the floor does not reach the already-open socket.
+
+  Crucially, the daemon is **not** started by the script's own
+  `systemctl enable --now tailscaled` — that line is a no-op. Debian's
+  `tailscale.postinst` runs `deb-systemd-invoke restart
+  'tailscaled.service'`, so the daemon comes up inside `apt-get install
+  -y tailscale` itself. Verified on the 2026-07-29 install: `dpkg
+  configure tailscale` at 19:17:24, `systemd: Starting tailscaled.service`
+  at 19:17:24, `status installed` at 19:17:25. Any fix must therefore put
+  the sysctls **before the package install**, not merely before the
+  `systemctl` line.
+- **Impact:** On any host where the provider image does not already set a
+  high `net.core.rmem_max`, `tailscaled` runs with Debian's 208 KB
+  ceiling — roughly 70× below its ~14 MiB request — until something
+  restarts the daemon (typically the first reboot). Exit-node throughput
+  is silently reduced for that window. The effect is invisible on the
+  project's test host because its VPS image sets 64 MiB at boot from its
+  own `sysctl.d` file, which is why the defect survived DD-18's original
+  verification.
+- **Evidence:** On the `v1.1-1` install (which had the sysctls moved
+  ahead of the daemon start), `tailscaled`'s IPv4 and IPv6 sockets both
+  read `rb14680064` (14 MiB) on the original PID with no restart. That
+  measurement does **not** isolate the fix, since this host's ceiling was
+  already 64 MiB before either ordering ran — it confirms the request
+  succeeds, not that the ordering mattered here.
+- **Fix (candidate, not yet applied):** Move the netbuf `sysctl.d` write
+  and its `sysctl -p` above `apt-get install -y tailscale`. The two
+  sysctls are pure kernel settings with no dependency on the Tailscale
+  package, so this is a ~15-line relocation within Stage 2 and needs none
+  of the Stage 1/2 restructuring reverted with `v1.1-1` (DD-19). An
+  alternative that preserves an "install first, tune after" reading is to
+  keep the current order and `systemctl restart tailscaled` after the
+  sysctls, at the cost of an extra daemon cycle mid-install.
+- **Open question before fixing:** whether `tailscale up`/`tailscale set`
+  causes magicsock to rebind its UDP socket later in Stage 2. If it does,
+  the ceiling raised before `tailscale up` would already apply and the
+  defect would be narrower than described — or absent. This was not
+  determined on the 2026-07-29 install because that host's ceiling was
+  already 64 MiB at boot, which masks the difference. Determining it
+  needs a host without a provider-set `rmem_max`, or a deliberate
+  before/after `ss -uapm` around a temporarily lowered ceiling.
+- **Status:** Open. Found 2026-07-29, fixed incidentally by the `v1.1-1`
+  reorder, reintroduced when that reorder was reverted at the user's
+  request. Not yet fixed on its own.
+
 ## Low
 
 ### L1 — `apt-get full-upgrade -y` without explicit conffile policy — ✅ RESOLVED (2026-07-27)
@@ -1154,4 +1214,4 @@ review.
 | 2026-07-29 | User (reading the new prompt) + Claude Code (remediation) | Stage 0 domain prompt, traced against Stage 6's config writes | The `v1rc-2` re-run fix stopped the abort but left a worse-hidden defect: the domain question still defaulted to a hardcoded `ayc` while the new banner claimed "varsayılan: korunur". On any host using a different domain, pressing Enter would silently switch it — and because Stage 6 writes both `/etc/dnsmasq.d/local-services.conf` and `/etc/caddy/Caddyfile` with `>` rather than `>>`, the old names are replaced, not duplicated, so nothing would look wrong until DNS stopped resolving the previous hostnames. Found by the user asking what the new prompt actually does rather than by any check; the wording could not answer the question, which was the tell. Fixed: the default now reads `LOCAL_DOMAIN` from `/etc/master-stack/state.env` (flowing through the existing length/charset/label validation, so a corrupt state file is caught) and falls back to `ayc` only when there is nothing to read; the prompt names the detected domain and states both branches explicitly — `E` regenerates from the same domain, `h` stops the installer rather than skipping. Verified across four `state.env` shapes (populated, empty value, different domain, missing file) and all three prompt scenarios. `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` clean; 57/57 bats pass |
 | 2026-07-29 | User (prompt design) + Claude Code (remediation) | Stage 0 re-run branch restructured | Third and final pass on the same prompt. `v1rc-2` stopped Enter aborting and `v1rc-3` made the domain default truthful, but the question itself was still the fresh-install one: asking "kurulsun mu?" against an install that already has DNS made `h` mean "abort the installer" rather than "leave it alone" — a reading no user would arrive at from the prompt text, which is what prompted the user to ask what each answer actually did. The re-run branch now asks whether the *domain* changes: `e` prompts for a new one, Enter/`H` keeps the existing domain and structure and the run continues. The `exit 1` path is removed rather than merely defaulted away from, so declining to change is an ordinary outcome; the guarantee that DNS/Caddy is never silently torn down is now structural (the option is never presented) instead of enforced by aborting, and a note states that removal is not something this script does. Enter means "change nothing" in both branches. Domain validation consolidated into a single block every branch flows through, so the `state.env`-sourced value is validated on exactly the same path as typed input. Verified across nine branch combinations (fresh/existing × Enter/H/e × default/typed domain, plus a non-`ayc` existing domain). `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` clean; 57/57 bats pass |
 | 2026-07-29 | User (applied the setting mid-download) + Claude Code (measurement) | qBittorrent UDP socket buffer under real load; DD-18's `rmem_max` floor validated end-to-end | The user set qBittorrent's socket receive buffer while a ~278 MB/s download was running, which produced a natural A/B on the same torrent minutes apart. **Before** (208 KB system default): the uTP/DHT socket read `r216576 / rb212992` — queue at 101% of the buffer, saturated — and drops climbed from 14,735 to 15,636 in roughly 90 seconds. **After** (buffer applied live): 288,201 packets received in 30 seconds with **zero** `RcvbufErrors`, queue at 3.4 MB of 128 MiB (2.7%), throughput 222 MB/s sustained. The granted buffer was exactly `2 × net.core.rmem_max` (134,217,728), confirming the kernel clamped the application's 434 MiB request to the ceiling and doubled it — which makes DD-18's floor the load-bearing half of the fix: on Debian's default `rmem_max` of 212,992 the identical request would have yielded 416 KB, 300× smaller, and the saturation would have persisted. This closes the open question from earlier in the session and confirms the user's judgement that no `rmem_default` change was needed: the application requests its own size, so a system-wide default would have been the broader change for no extra benefit. **Residual gap, accepted by the user (2026-07-29):** `install.sh` does not manage qBittorrent's configuration — the same deliberate model as the wg-easy/Portainer/SFTPGo admin accounts — so a fresh install silently reverts to 208 KB and will saturate again at this host's real throughput. Mitigated by documentation only: the final install summary now names the setting, the measured reason, and a suggested 16 MiB value. Note the earlier probe attempt was inconclusive by construction and is not the evidence here — this measurement is |
-| 2026-07-29 | User (field report) + Claude Code (diagnosis + remediation, `v1.1-1`) | Stage 1/2 ordering, the Tailscale interactive login, `tailscale_login_banner()`, netbuf sysctl vs `tailscaled` start order | Reported as a UX defect: "the Tailscale login link falls behind, I can't see it; it only shows up after a very long wait." Diagnosis rejected the obvious hypothesis — there is no buffering problem, since `tee`'s stdout is fd 5 (`/dev/tty`) and glibc line-buffers it, so the URL reaches the terminal the instant `tailscale up` emits it. The cause was purely positional: the login sat mid-Stage 2, behind two `apt-get update` runs, `apt-get full-upgrade`, and two package installs, and because Stage 0's confirmation redirects all output to the log file, the operator watched a single redrawn progress-bar line for minutes before the link appeared inside that same stream. Fixed by reordering rather than by rendering tricks: the TUN check, Tailscale repo/keyring, forwarding and socket-buffer sysctls, `apt-get install tailscale`, `systemctl enable --now tailscaled`, the socket wait, and the login all moved into Stage 1; `full-upgrade` moved behind them. The constraining dependency chain is short and was verified — `kmod` for `modprobe tun`, `curl`+`ca-certificates` for the repo, `procps` for `sysctl`, all still installed first — and nothing in the moved set reads post-upgrade state. Total install time is unchanged; the shape is what changed, with the single interactive step now first and everything after it unattended. **Latent bug found while reordering, not reported:** `/etc/sysctl.d/99-master-stack-netbuf.conf` was written *after* `systemctl enable --now tailscaled`, but `wireguard-go` requests its large UDP receive buffer once at socket-open time and is clamped against the ceiling in effect then — so on a first install DD-18's 16 MiB floor did not reach the running `tailscaled` until something restarted it. Both sysctls now precede the first `tailscaled` start. The IPv4/online verification loop also moved behind `full-upgrade`, since the upgrade can refresh the `tailscale` package and restart the daemon. Added `tailscale_login_banner()`: terminal bell plus a framed bold-cyan header whose frame closes *before* `tailscale up` runs, so the last thing on screen while the script blocks is the URL itself; degrades to plain ASCII under `TERM=dumb` or a non-TTY fd 5. Stage 0 gained a one-line heads-up after the confirmation. Stage labels and `progress_stage_note` percentages renumbered across both stages. `bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh` clean; 57/57 bats pass; banner rendering verified in isolation. **Not yet live-verified** — no install has been run against a host since the reorder; see DD-19 |
+| 2026-07-29 | User (field report + revert decision) + Claude Code (reorder, live measurement, revert) | Stage 1/2 ordering experiment `v1.1-1`, then reverted to V1 | Shipped a reorder that moved the Tailscale login ahead of `apt-get full-upgrade`, then measured it on a clean install and reverted it the same day at the user's direction. **The reorder worked and did not fix the complaint.** Measured: Stage 1 began 19:17:15, the login banner hit the screen at 19:17:25 (+10s, versus ~4-6 minutes before), `control: RegisterReq` went out at 19:17:25 — and `control: AuthURL is …` did not arrive until 19:22:06. **4m41s of the user's "very long wait" is Tailscale's control plane answering the first registration request**, which no ordering in `install.sh` can affect. The URL reached the terminal in the same second `tailscaled` received it, which also settles the buffering question permanently: `tee`'s stdout is fd 5 (`/dev/tty`), glibc line-buffers it, delivery is immediate. Network eliminated as a cause — IPv4 and IPv6 both reached `controlplane.tailscale.com` in ~25 ms, 1500-byte frames passed `-M do` on both stacks, the control-plane TCP connection stayed `ESTAB` with an empty queue, and `tailscaled` logged nothing at all between 19:17:30 and 19:22:06. The install itself was otherwise clean: 7/7 stages, zero warnings, zero failed units, six containers up, `--check` all-zero exit 0, 7/7 DNS names, Caddy 200/200/200/302/302/401/200, WebDAV reachable on the Tailscale IPv4 and refused on the public IPv4. Reverted because the reorder addressed ~4-6 minutes of apt work while leaving the dominant 4m41s untouched, and cost a real 3-6 second settling window between `systemctl enable --now tailscaled` and `tailscale up` that the GRO block previously provided — `login-interactive` was issued in the same second `tailscaled` logged `health(warnable=warming-up): error: Tailscale is starting. Please wait.` `install.sh` is now byte-identical to `versiyon/install-V1F.sh` (`4fa60e28…`, 4683 lines, `2026.07.29-V1`). Two findings retained from the experiment: **M11** (netbuf sysctl applied after `tailscaled` opens its socket — a real defect the reorder fixed incidentally and the revert reintroduced) is now tracked open, and DD-19 records the measurement so the reorder is not proposed again on the same reasoning. Also unverified in this run and still unknown: `full-upgrade` reported `0 upgraded, 0 newly installed`, so the "upgrade restarts `tailscaled`" path the reorder was designed around never executed |

@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4736 lines (v1.1-1). Originally **tagged R1.0**
+architecture review; file is now 4587 lines (post-v1rc). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -28,6 +28,21 @@ _All Critical findings resolved — see Completed below._
 _All High findings resolved — see Completed below._
 
 ## Medium
+
+- [ ] **M11 — move the netbuf sysctl above `apt-get install -y
+      tailscale`** (Stage 2; note the package's own postinst starts the
+      daemon, so moving it above the script's `systemctl enable --now`
+      line would achieve nothing). `wireguard-go` requests its large UDP
+      receive buffer once at socket-open time and is clamped against the
+      `net.core.rmem_max` in effect then, so DD-18's 16 MiB floor does not
+      reach `tailscaled` on a first install. ~15-line relocation; needs
+      none of the Stage 1/2 restructuring reverted with `v1.1-1`. **Settle
+      the open question first:** whether `tailscale up`/`set` rebinds
+      magicsock's UDP socket later in Stage 2, which would narrow or
+      eliminate the defect. Not reproducible on the current test host (its
+      VPS image sets 64 MiB at boot), so verification needs a host without
+      that, or a before/after `ss -uapm` around a deliberate `rmem_max`
+      reset. See `SECURITY_REVIEW.md` M11 and DD-19.
 
 - [ ] 🟡 **M7** (partially done, 2026-07-28) — Tier 1 (static analysis,
       see **H4**) done. Tier 2 in progress: `test/reconcile_functions.bats`
@@ -68,18 +83,6 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
-
-- [x] **UX: Tailscale login link buried behind the install stream**
-      (2026-07-29, `v1.1-1`). The one interactive step sat mid-Stage 2,
-      behind `apt-get full-upgrade` and two package installs — minutes
-      during which the terminal showed only a redrawn progress bar.
-      Reordered so the TUN check, Tailscale repo, forwarding/socket-buffer
-      sysctls, package install, `tailscaled` start, socket wait and login
-      all run in Stage 1, with `full-upgrade` moved behind them; added
-      `tailscale_login_banner()` (bell + framed header closing before the
-      URL) and a Stage 0 heads-up. Also fixed a latent ordering bug found
-      on the way: the netbuf sysctl was applied after `tailscaled` had
-      already opened its UDP socket. See DD-19.
 
 - [x] Full static audit of `install.sh` (4552 lines) across security,
       secrets handling, destructive operations, firewall/network safety,
