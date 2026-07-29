@@ -44,6 +44,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Stage 0's domain prompt defaulted to a hardcoded `ayc` regardless of the
+  domain the existing install actually uses, so on a host configured with
+  any other domain, pressing Enter silently switched it — Stage 6 writes
+  both `local-services.conf` and the `Caddyfile` with `>`, so the old
+  names are replaced rather than duplicated, and the change would have
+  been invisible until DNS stopped resolving. The default now comes from
+  `LOCAL_DOMAIN` in `/etc/master-stack/state.env` and falls back to `ayc`
+  only when there is nothing to read. The prompt also now names the
+  detected domain and spells out what each answer does: `E` regenerates
+  from the same domain, `h` stops the installer rather than skipping. The
+  previous wording ("varsayılan: korunur") overstated the `E` branch,
+  which regenerates rather than preserves, and said nothing about `h`
+  aborting. (`v1rc-3`)
 - Stage 0's Tailnet-DNS prompt defaulted to `H` even when a managed
   DNS/Caddy install was already present — and that answer makes the same
   Stage 0 abort with "Önceki yönetilen DNS/Caddy kurulumu bulundu".

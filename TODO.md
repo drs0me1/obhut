@@ -512,3 +512,16 @@ _All Low findings resolved or closed — see Completed below._
       `[fixed]`) counts as healthy, matching the helper's own success
       cases so the two cannot disagree into a restart loop. ~15 lines
       versus the ~54 DD-11 removed. Reported as `gro_flags=` in `--check`.
+- [x] **Stage 0's domain prompt now defaults to the installed domain
+      (2026-07-29, `v1rc-3`).** The `v1rc-2` fix stopped the re-run abort
+      but left the domain question defaulting to a hardcoded `ayc`, and
+      told the user "varsayılan: korunur" — a promise the code did not
+      keep on any host using a different domain. Stage 6 writes both
+      `local-services.conf` and the `Caddyfile` with `>`, so a changed
+      domain replaces the old names rather than duplicating them: the
+      switch would have been silent until DNS stopped resolving. The
+      default now reads `LOCAL_DOMAIN` from `state.env` (validated by the
+      existing domain checks, so a corrupt file is caught) and the prompt
+      states the detected domain plus what each branch does — `E`
+      regenerates, `h` aborts. Found by the user reading the new prompt
+      and asking what it actually does, which the wording did not answer.

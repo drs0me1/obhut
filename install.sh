@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-v1rc-2"
+MASTER_SETUP_VERSION="2026.07.29-v1rc-3"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -575,15 +575,40 @@ if [[ -e /etc/dnsmasq.d/local-services.conf ||
     EXISTING_MANAGED_DNS=1
 fi
 
+# Mevcut kurulumun alan adı, alan adı sorusunun varsayılanı olur. Sabit 'ayc'
+# varsayılanı, farklı bir alan adı kullanan bir kurulumda Enter'a basıldığında
+# domain'i sessizce değiştirirdi: Stage 6 hem local-services.conf'u hem
+# Caddyfile'ı '>' ile sıfırdan yazar, yani eski adlar iki kayıt olarak kalmaz,
+# silinir. Bu değer aşağıdaki alan adı doğrulamasından geçer, dolayısıyla
+# bozuk bir state.env yakalanır.
+EXISTING_LOCAL_DOMAIN=""
+if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -r /etc/master-stack/state.env ]]; then
+    EXISTING_LOCAL_DOMAIN="$(
+        awk -F= '$1=="LOCAL_DOMAIN"{print $2; exit}' \
+            /etc/master-stack/state.env 2>/dev/null
+    )"
+fi
+DEFAULT_LOCAL_DOMAIN="${EXISTING_LOCAL_DOMAIN:-ayc}"
+
 echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
-echo "Örnek: portainer.ayc, file.ayc, qbit.ayc"
+echo "Örnek: portainer.$DEFAULT_LOCAL_DOMAIN, file.$DEFAULT_LOCAL_DOMAIN, qbit.$DEFAULT_LOCAL_DOMAIN"
 
 # Yeniden çalıştırmada varsayılan "koru" olmalı. Aksi hâlde Enter'a basmak
 # SETUP_LOCAL_DNS=0 üretir ve hemen aşağıdaki kontrol kurulumu Stage 0'da
 # abort eder — yani varsayılan, betiğin kendi re-run yolunu bozardı
 # (2026-07-29'da canlı doğrulama koşusunda tam olarak bu yaşandı).
+#
+# Her iki dalın da ne yaptığı açıkça yazılır: "korunur" ifadesi tek başına
+# fazla iddialıydı, çünkü E dalı yapılandırmayı korumaz — aynı alan adından
+# yeniden üretir; h dalı ise atlamaz, kurulumu tamamen durdurur.
 if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
-    echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi; varsayılan: korunur."
+    if [[ -n "$EXISTING_LOCAL_DOMAIN" ]]; then
+        echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi (.$EXISTING_LOCAL_DOMAIN)."
+    else
+        echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi."
+    fi
+    echo "  E = aynı alan adıyla yeniden üretilir (mevcut yapı korunur)"
+    echo "  h = kurulum durur; DNS/Caddy sessizce kaldırılmaz"
     DNS_PROMPT_HINT="[E/h]"
     DNS_PROMPT_DEFAULT="E"
 else
@@ -595,8 +620,8 @@ LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-$DNS_PROMPT_DEFAULT}"
 
 if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
     SETUP_LOCAL_DNS=1
-    read -rp "Yerel alan adı uzantısı [ayc]: " LOCAL_DOMAIN_INPUT </dev/tty
-    LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-ayc}"
+    read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
+    LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
     LOCAL_DOMAIN="$(printf '%s' "$LOCAL_DOMAIN" | tr '[:upper:]' '[:lower:]')"
 
     if [[ ${#LOCAL_DOMAIN} -gt 253 ||
