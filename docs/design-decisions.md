@@ -580,22 +580,37 @@ reordering is not proposed a second time on the same reasoning.
   control plane was `ESTAB` with an empty queue the whole time.
   `tailscaled` logged nothing between `19:17:30` and `19:22:06`; it was
   simply waiting.
-- **Why it was reverted rather than kept.** The user's call, and the
-  evidence supports it. The reorder bought ~4-6 minutes of apt work moved
-  behind the login while leaving the dominant ~4m41s untouched, and it
-  cost something real: in the original order the GRO block
-  (`daemon-reload` + `enable` + `start`) sits between `systemctl enable
-  --now tailscaled` and `tailscale up`, giving the daemon 3-6 seconds to
-  settle. The reorder cut that to zero, so `login-interactive` was issued
-  in the same second `tailscaled` logged `health(warmable=warming-up):
-  error: Tailscale is starting. Please wait.` Whether that contributed to
-  the 4m41s is unproven, but trading a real settling window for a fix that
-  does not address the dominant cost is a bad trade.
-- **What a future attempt should establish first.** Whether the control
-  plane's slow `RegisterReq` response is specific to this host/provider or
-  reproducible elsewhere, and whether issuing `LoginInteractive` after the
-  `warming-up` health warnable clears changes it. Until that is measured,
-  reordering the installer is optimizing the wrong half.
+- **Why it was reverted.** The user's call: the reorder bought ~4-6
+  minutes of apt work moved behind the login while leaving the dominant
+  ~4m41s untouched, so it did not solve the reported problem.
+- **The `RegisterReq` latency is control-plane variance, and a warm-up
+  race was ruled out.** A V1 install run 22 minutes later on the same
+  host, with the original ordering, produced:
+
+  ```
+  19:39:47  Starting tailscaled.service
+  19:39:48  health(warnable=warming-up): error: Tailscale is starting.
+  19:39:48  StartLoginInteractiveAs("root")
+  19:39:48  control: RegisterReq: fup=false
+  19:39:53  health(warnable=warming-up): ok
+  19:39:54  control: RegisterReq: got response; authURL=true
+  ```
+
+  **6 seconds instead of 4m41s** — and note that the original ordering
+  issues `LoginInteractive` one second after the daemon starts, *inside*
+  the same warm-up window. An earlier draft of this entry claimed the GRO
+  block gives the daemon "3-6 seconds to settle" that the reorder removed;
+  that is wrong, and this measurement is what disproves it. Both orderings
+  log in during warm-up, so warm-up cannot explain the difference. The
+  4m41s was Tailscale-side variance, not something either ordering
+  caused.
+- **What a future attempt would have to beat.** With the control-plane
+  latency established as variable and usually small, the only thing left
+  for a reorder to buy is the apt time ahead of the login — real on a
+  genuinely fresh host, near-zero on a re-install (the V1 run above
+  completed Stage 1 in 7 seconds because `full-upgrade` and the packages
+  were already current). Measure that on a cleanly reimaged host before
+  proposing the restructuring again.
 - **Separable ideas that did not cause the revert.** The framed login
   banner (bell + bold-cyan frame closing *before* the URL, so the link is
   the last thing on screen) and the Stage 0 heads-up are independent of
