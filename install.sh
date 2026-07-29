@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-v1rc-4"
+MASTER_SETUP_VERSION="2026.07.29-v1rc-5"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -4593,6 +4593,15 @@ echo "cihazın önce erişip kurulumu tamamlamasına açık kalır."
 echo "  Portainer: https://127.0.0.1:9443$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://portainer.%s' "$LOCAL_DOMAIN")"
 echo "  wg-easy  : http://127.0.0.1:51821$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://wg.%s' "$LOCAL_DOMAIN")"
 echo "  SFTPGo   : http://127.0.0.1:9981$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://sftpgo.%s' "$LOCAL_DOMAIN")"
+echo
+echo "ELLE AYAR: qBittorrent soket alma buffer'ı."
+echo "Bu betik qBittorrent'in yapılandırmasını yönetmez, dolayısıyla taze bir"
+echo "kurulumda bu ayar sistem varsayılanına (208 KB) döner. 2026-07-29'da"
+echo "yaklaşık 278 MB/s'lik gerçek bir indirmede ölçüldü: 208 KB ile uTP/DHT"
+echo "soketi doyup paket düşürüyor, ayarlandığında aynı yükte drop sıfırlanıyor."
+echo "  Tools > Options > Advanced > Socket receive buffer size"
+echo "  Önerilen: 16777216 (16 MiB). Çekirdek isteği net.core.rmem_max ile"
+echo "  kırpar; bu kurulum o tavanı en az 16 MiB olacak şekilde garanti eder."
 echo
 echo "Apple TV / Infuse doğrudan Tailnet WebDAV:"
 echo "  Adres   : $TS_IP"

@@ -541,3 +541,20 @@ _All Low findings resolved or closed — see Completed below._
       validation consolidated into one block that every branch — including
       the `state.env`-sourced value — passes through. Verified across nine
       branch combinations.
+- [x] **qBittorrent's socket receive buffer documented as a manual
+      post-install step (2026-07-29, `v1rc-5`).** Measured rather than
+      assumed: during a real ~278 MB/s download the uTP/DHT socket sat at
+      101% of the 208 KB default buffer and accumulated ~900 drops in
+      roughly 90 seconds; once the application-level setting was applied
+      mid-download, the same load pushed 288,201 packets through in 30
+      seconds with **zero** drops. The kernel granted `2 × rmem_max`
+      (128 MiB), which proves DD-18's `rmem_max` floor is the load-bearing
+      half of the fix — without it the same request would have been
+      clamped to 416 KB on Debian's default, 300× smaller. `rmem_default`
+      was considered and rejected: the application requests its own size,
+      so raising a system-wide default would have been the broader change
+      for no additional benefit. Since `install.sh` deliberately does not
+      manage qBittorrent's config (same model as the wg-easy/Portainer/
+      SFTPGo admin accounts), the setting is lost on a fresh install — so
+      the install summary now states it, with the measured rationale and
+      a suggested 16 MiB value.

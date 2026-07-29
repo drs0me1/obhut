@@ -44,6 +44,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The final install summary now names qBittorrent's socket receive buffer
+  as a required manual step, with the measured reason and a suggested
+  value. This script does not manage qBittorrent's configuration, so the
+  setting reverts to the system default on any fresh install — measured
+  on 2026-07-29 during a ~278 MB/s download: at the 208 KB default the
+  uTP/DHT socket saturates and drops packets; once raised, the same load
+  ran 288,201 packets in 30s with zero drops. The `rmem_max` floor from
+  DD-18 is what permits the raise (the kernel clamps the request to it),
+  so the two are complementary rather than alternatives. (`v1rc-5`)
 - Stage 0 now asks a different question on a re-run. When a managed
   DNS/Caddy install is detected the prompt is no longer "should DNS be
   installed?" — DNS is already installed, so the only meaningful question
