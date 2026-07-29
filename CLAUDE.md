@@ -201,15 +201,3 @@ even when working in this repository only.
 - Do not claim a change "works" without either static verification or the
   user's own confirmation from a real test run — this assistant must never
   execute the script itself (see **Execution Rules**).
-
-## Related Documentation
-
-- [`README.md`](README.md) — what the project does and how it's structured
-- [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md) — known findings by severity
-- [`TODO.md`](TODO.md) — prioritized outstanding work
-- [`CHANGELOG.md`](CHANGELOG.md) — history of user-facing changes
-- [`SESSION.md`](SESSION.md) — notes carried between sessions
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/design-decisions.md`](docs/design-decisions.md)
-- [`docs/profiles.md`](docs/profiles.md)
-- [`docs/testing.md`](docs/testing.md)
