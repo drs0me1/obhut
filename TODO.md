@@ -525,3 +525,19 @@ _All Low findings resolved or closed — see Completed below._
       states the detected domain plus what each branch does — `E`
       regenerates, `h` aborts. Found by the user reading the new prompt
       and asking what it actually does, which the wording did not answer.
+- [x] **Stage 0's re-run prompt now asks about changing the domain, not
+      installing DNS (2026-07-29, `v1rc-4`).** `v1rc-2` and `v1rc-3` fixed
+      the default and the domain source, but the question itself was still
+      wrong for a re-run: asking "kurulsun mu?" when DNS is already
+      installed made `h` mean "abort" rather than "leave it alone", which
+      is not what any user reading that prompt would expect. The re-run
+      branch now asks "Alan adı değiştirilsin mi? [e/H]" — `e` prompts for
+      the new domain, Enter/`H` preserves the existing domain and
+      structure and the install continues. The abort path is deleted
+      rather than defaulted away from: refusing to change is a normal
+      outcome, and the guarantee that DNS is never silently removed is now
+      structural, because that option is never offered. Enter means
+      "change nothing" in both the fresh and re-run branches. Domain
+      validation consolidated into one block that every branch — including
+      the `state.env`-sourced value — passes through. Verified across nine
+      branch combinations.

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-v1rc-3"
+MASTER_SETUP_VERSION="2026.07.29-v1rc-4"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -590,38 +590,54 @@ if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -r /etc/master-stack/state.env ]]; then
 fi
 DEFAULT_LOCAL_DOMAIN="${EXISTING_LOCAL_DOMAIN:-ayc}"
 
-echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
-echo "Örnek: portainer.$DEFAULT_LOCAL_DOMAIN, file.$DEFAULT_LOCAL_DOMAIN, qbit.$DEFAULT_LOCAL_DOMAIN"
-
-# Yeniden çalıştırmada varsayılan "koru" olmalı. Aksi hâlde Enter'a basmak
-# SETUP_LOCAL_DNS=0 üretir ve hemen aşağıdaki kontrol kurulumu Stage 0'da
-# abort eder — yani varsayılan, betiğin kendi re-run yolunu bozardı
-# (2026-07-29'da canlı doğrulama koşusunda tam olarak bu yaşandı).
+# Sorulan soru kurulumun durumuna göre değişir; ortak nokta, her iki dalda da
+# Enter'ın "hiçbir şeyi değiştirme" anlamına gelmesidir.
 #
-# Her iki dalın da ne yaptığı açıkça yazılır: "korunur" ifadesi tek başına
-# fazla iddialıydı, çünkü E dalı yapılandırmayı korumaz — aynı alan adından
-# yeniden üretir; h dalı ise atlamaz, kurulumu tamamen durdurur.
+#   Taze kurulum : "Kurulsun mu?"          Enter -> kurulmaz
+#   Mevcut kurulum: "Değiştirilsin mi?"    Enter -> mevcut alan adı korunur
+#
+# Mevcut kurulumda soru artık "kurulsun mu" değil, çünkü DNS zaten kurulu;
+# sorulacak tek anlamlı şey alan adının değişip değişmeyeceği. Bu aynı zamanda
+# eski abort yolunu ortadan kaldırır: DNS'i sessizce kaldırma seçeneği hiç
+# sunulmadığı için koruma, kurulumu durdurmak yerine yapısal hale gelir.
 if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
+    SETUP_LOCAL_DNS=1
     if [[ -n "$EXISTING_LOCAL_DOMAIN" ]]; then
         echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi (.$EXISTING_LOCAL_DOMAIN)."
     else
         echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi."
     fi
-    echo "  E = aynı alan adıyla yeniden üretilir (mevcut yapı korunur)"
-    echo "  h = kurulum durur; DNS/Caddy sessizce kaldırılmaz"
-    DNS_PROMPT_HINT="[E/h]"
-    DNS_PROMPT_DEFAULT="E"
-else
-    DNS_PROMPT_HINT="[e/H]"
-    DNS_PROMPT_DEFAULT="H"
-fi
-read -rp "Kurulsun mu? $DNS_PROMPT_HINT: " LOCAL_DNS_INPUT </dev/tty
-LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-$DNS_PROMPT_DEFAULT}"
+    echo "  e = yeni alan adı sorulur; eski adlar silinir, yenileri kurulur"
+    echo "  H = mevcut alan adı ve yapı olduğu gibi korunur"
+    echo "Not: DNS/Caddy kaldırma işlemi bu betikle yapılmaz."
+    read -rp "Alan adı değiştirilsin mi? [e/H]: " LOCAL_DOMAIN_CHANGE </dev/tty
+    LOCAL_DOMAIN_CHANGE="${LOCAL_DOMAIN_CHANGE:-H}"
 
-if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
-    SETUP_LOCAL_DNS=1
-    read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
-    LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
+    if [[ "$LOCAL_DOMAIN_CHANGE" =~ ^[EeYy]$ ]]; then
+        read -rp "Yeni alan adı nedir? [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
+        LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
+    else
+        LOCAL_DOMAIN="$DEFAULT_LOCAL_DOMAIN"
+    fi
+else
+    echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
+    echo "Örnek: portainer.$DEFAULT_LOCAL_DOMAIN, file.$DEFAULT_LOCAL_DOMAIN, qbit.$DEFAULT_LOCAL_DOMAIN"
+    read -rp "Kurulsun mu? [e/H]: " LOCAL_DNS_INPUT </dev/tty
+    LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-H}"
+
+    if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
+        SETUP_LOCAL_DNS=1
+        read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
+        LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
+    else
+        SETUP_LOCAL_DNS=0
+        LOCAL_DOMAIN=""
+    fi
+fi
+
+# Doğrulama tek yerde: hangi dalda üretilmiş olursa olsun, state.env'den
+# okunmuş değer de dahil, kullanılacak her alan adı buradan geçer.
+if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
     LOCAL_DOMAIN="$(printf '%s' "$LOCAL_DOMAIN" | tr '[:upper:]' '[:lower:]')"
 
     if [[ ${#LOCAL_DOMAIN} -gt 253 ||
@@ -638,15 +654,6 @@ if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
             exit 1
         fi
     done
-else
-    SETUP_LOCAL_DNS=0
-    LOCAL_DOMAIN=""
-    if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
-        echo "HATA: Önceki yönetilen DNS/Caddy kurulumu bulundu." >&2
-        echo "Rerun sırasında mevcut yapıyı korumak için DNS sorusuna 'E' yanıtı verin." >&2
-        echo "Bu betik DNS/Caddy kaldırma işlemini sessizce yapmaz." >&2
-        exit 1
-    fi
 fi
 echo
 

@@ -44,6 +44,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Stage 0 now asks a different question on a re-run. When a managed
+  DNS/Caddy install is detected the prompt is no longer "should DNS be
+  installed?" — DNS is already installed, so the only meaningful question
+  is whether the domain changes. It reads
+  "Alan adı değiştirilsin mi? [e/H]": `e` asks for the new domain, and
+  Enter (or `H`) keeps the existing domain and structure untouched while
+  the install continues. This removes the abort path entirely rather than
+  just defaulting away from it — declining to change is now a normal
+  outcome instead of a fatal one, and the protection against silently
+  tearing down DNS becomes structural (the option is never offered)
+  instead of a `exit 1`. Enter now means "change nothing" in both
+  branches, fresh and re-run. Domain validation moved to a single block
+  that every branch flows through, including the value read from
+  `state.env`. (`v1rc-4`)
 - Stage 0's domain prompt defaulted to a hardcoded `ayc` regardless of the
   domain the existing install actually uses, so on a host configured with
   any other domain, pressing Enter silently switched it — Stage 6 writes
