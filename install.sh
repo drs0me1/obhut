@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-v1rc-1"
+MASTER_SETUP_VERSION="2026.07.29-v1rc-2"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -565,10 +565,33 @@ case "$DOWNLOADS_PATH" in
 esac
 echo
 
+# Mevcut yönetilen DNS/Caddy kurulumu bir kez tespit edilir; hem aşağıdaki
+# varsayılanı hem de "sessizce kaldırma yok" kontrolünü aynı koşul besler,
+# böylece ikisi birbirinden ayrı düşemez.
+EXISTING_MANAGED_DNS=0
+if [[ -e /etc/dnsmasq.d/local-services.conf ||
+      -e /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf ||
+      -e /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf ]]; then
+    EXISTING_MANAGED_DNS=1
+fi
+
 echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
 echo "Örnek: portainer.ayc, file.ayc, qbit.ayc"
-read -rp "Kurulsun mu? [e/H]: " LOCAL_DNS_INPUT </dev/tty
-LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-H}"
+
+# Yeniden çalıştırmada varsayılan "koru" olmalı. Aksi hâlde Enter'a basmak
+# SETUP_LOCAL_DNS=0 üretir ve hemen aşağıdaki kontrol kurulumu Stage 0'da
+# abort eder — yani varsayılan, betiğin kendi re-run yolunu bozardı
+# (2026-07-29'da canlı doğrulama koşusunda tam olarak bu yaşandı).
+if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
+    echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi; varsayılan: korunur."
+    DNS_PROMPT_HINT="[E/h]"
+    DNS_PROMPT_DEFAULT="E"
+else
+    DNS_PROMPT_HINT="[e/H]"
+    DNS_PROMPT_DEFAULT="H"
+fi
+read -rp "Kurulsun mu? $DNS_PROMPT_HINT: " LOCAL_DNS_INPUT </dev/tty
+LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-$DNS_PROMPT_DEFAULT}"
 
 if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
     SETUP_LOCAL_DNS=1
@@ -593,9 +616,7 @@ if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
 else
     SETUP_LOCAL_DNS=0
     LOCAL_DOMAIN=""
-    if [[ -e /etc/dnsmasq.d/local-services.conf ||
-          -e /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf ||
-          -e /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf ]]; then
+    if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
         echo "HATA: Önceki yönetilen DNS/Caddy kurulumu bulundu." >&2
         echo "Rerun sırasında mevcut yapıyı korumak için DNS sorusuna 'E' yanıtı verin." >&2
         echo "Bu betik DNS/Caddy kaldırma işlemini sessizce yapmaz." >&2
@@ -2189,6 +2210,8 @@ SHA256SUM_BIN="$(command -v sha256sum)"
 SS_BIN="$(command -v ss)"
 STAT_BIN="$(command -v stat)"
 DF_BIN="$(command -v df)"
+# UDP GRO bayrak denetimi için; sürücü özelliği bildirmiyorsa da çalışır.
+ETHTOOL_BIN="$(command -v ethtool || true)"
 ENV_FILE="/root/docker/.env"
 COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
@@ -3082,23 +3105,46 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" ]]; then
     fi
 fi
 
-# UDP GRO'nun ethtool bayrakları reboot'ta sıfırlandığı için oneshot unit her
-# boot'ta yeniden uygular. Ancak unit Restart=no ile tanımlıdır: boot sırasında
-# ağ henüz hazır değilken başarısız olursa bir sonraki reboot'a kadar failed
-# kalırdı. Burada yalnız *unit'in durumu* denetlenir; ethtool bayraklarının
-# beş dakikada bir yoklanması DD-11 gereği hâlâ kapsam dışıdır.
+# UDP GRO iki ayrı şekilde kaybolabilir ve ikisi de burada denetlenir:
+#
+#   1) Unit başarısız olur (Restart=no olduğu için kendi kendine dönmez).
+#   2) ethtool bayrakları unit çökmeden silinir — NIC sürücü reload'u, canlı
+#      göç. Bu durumda unit RemainAfterExit=yes sayesinde hâlâ "active"
+#      görünür, yani (1)'i denetlemek bunu yakalamaz.
+#
+# 2026-07-29 canlı testi bu ayrımı ölçtü: `systemctl stop` sonrası bayraklar
+# `on` kalmıştı, yani unit denetimi tek başına throughput'un gerçekten
+# korunduğunu göstermiyor. Onarım her iki durumda da unit'i yeniden
+# başlatmaktır; helper idempotenttir ve bayraklar doğruysa erken çıkar.
 #
 # Saf throughput ayarı olduğu için all_critical_state_healthy() içine
 # alınmaz: bir GRO arızası bağlantıyı etkilemez, dolayısıyla reconcile'ın
 # exit kodunu veya --check sonucunu bozmamalıdır.
+gro_flags_ok() {
+    local features=""
+    # Denetleyemediğimiz durumlar drift sayılmaz: ethtool yok, WAN arayüzü
+    # henüz tespit edilmedi, sürücü bu özellikleri hiç bildirmiyor veya
+    # [fixed] olarak sabitlemiş. Helper de aynı durumlarda başarıyla çıkar.
+    [[ -n "$ETHTOOL_BIN" && -n "$CURRENT_WAN4_IF" ]] || return 0
+    features="$("$ETHTOOL_BIN" -k "$CURRENT_WAN4_IF" 2>/dev/null || true)"
+    grep -q '^rx-udp-gro-forwarding:' <<<"$features" || return 0
+    grep -q '^rx-gro-list:' <<<"$features" || return 0
+    grep -qE '^rx-udp-gro-forwarding:.*\[fixed\]|^rx-gro-list:.*\[fixed\]' \
+        <<<"$features" && return 0
+    grep -q '^rx-udp-gro-forwarding: on' <<<"$features" &&
+        grep -q '^rx-gro-list: off' <<<"$features"
+}
+
 GRO_SERVICE_INACTIVE=0
+GRO_FLAGS_DRIFTED=0
 GRO_LOAD_STATE="$(
     "$SYSTEMCTL_BIN" show tailscale-udp-gro.service \
         --property=LoadState --value 2>/dev/null || true
 )"
-if [[ -n "$GRO_LOAD_STATE" && "$GRO_LOAD_STATE" != "not-found" ]] &&
-   ! "$SYSTEMCTL_BIN" is-active --quiet tailscale-udp-gro.service; then
-    GRO_SERVICE_INACTIVE=1
+if [[ -n "$GRO_LOAD_STATE" && "$GRO_LOAD_STATE" != "not-found" ]]; then
+    "$SYSTEMCTL_BIN" is-active --quiet tailscale-udp-gro.service ||
+        GRO_SERVICE_INACTIVE=1
+    gro_flags_ok || GRO_FLAGS_DRIFTED=1
 fi
 
 all_critical_state_healthy() {
@@ -3132,7 +3178,7 @@ if [[ "$MODE" == "--check" ]]; then
         "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
-        "gro_unit=$GRO_SERVICE_INACTIVE"
+        "gro_unit=$GRO_SERVICE_INACTIVE gro_flags=$GRO_FLAGS_DRIFTED"
     if all_critical_state_healthy; then
         exit 0
     fi
@@ -3149,18 +3195,27 @@ fi
 # rağmen jeneriktir: damga dosyasının adı dışında container'a özgü hiçbir iş
 # yapmazlar, bu yüzden unit için de kullanılıyorlar. Damga start denemesinden
 # *önce* yazılır; böylece kalıcı bir arıza her periyotta yeniden denenmez.
-if [[ "$GRO_SERVICE_INACTIVE" -eq 1 ]]; then
+if [[ "$GRO_SERVICE_INACTIVE" -eq 1 || "$GRO_FLAGS_DRIFTED" -eq 1 ]]; then
+    if [[ "$GRO_SERVICE_INACTIVE" -eq 1 ]]; then
+        GRO_REASON="unit aktif değil"
+    else
+        GRO_REASON="ethtool bayrakları sapmış (unit aktif)"
+    fi
     if restart_budget_available tailscale-udp-gro; then
-        echo "tailscale-udp-gro.service aktif değil; yeniden başlatılıyor."
+        echo "tailscale-udp-gro: $GRO_REASON; yeniden uygulanıyor."
         record_container_restart tailscale-udp-gro
         "$SYSTEMCTL_BIN" reset-failed tailscale-udp-gro.service >/dev/null 2>&1 || true
-        if "$SYSTEMCTL_BIN" start tailscale-udp-gro.service; then
+        # Bayrak sapmasında unit "active" olduğu için start no-op olurdu;
+        # restart helper'ı gerçekten yeniden çalıştırır ve tek yürütme yolu
+        # systemd olarak kalır (unit durumu gerçeği yansıtmayı sürdürür).
+        if "$SYSTEMCTL_BIN" restart tailscale-udp-gro.service; then
             GRO_SERVICE_INACTIVE=0
+            gro_flags_ok && GRO_FLAGS_DRIFTED=0
         else
             echo "UYARI: UDP GRO optimizasyonu uygulanamadı; yalnız throughput etkilenir, bağlantı değil." >&2
         fi
     else
-        echo "UYARI: tailscale-udp-gro.service aktif değil; restart cooldown nedeniyle bu periyot atlandı." >&2
+        echo "UYARI: tailscale-udp-gro $GRO_REASON; restart cooldown nedeniyle bu periyot atlandı." >&2
     fi
 fi
 

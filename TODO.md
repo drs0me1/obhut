@@ -490,3 +490,25 @@ _All Low findings resolved or closed — see Completed below._
       throughput-only; reported as `gro_unit=` in `--check`. Also fixes
       the unit comment, which had claimed reconcile retried it — untrue
       since DD-11.
+- [x] **Stage 0's DNS prompt no longer aborts its own re-run
+      (2026-07-29, `v1rc-2`).** The prompt defaulted to `H` regardless of
+      whether a managed DNS/Caddy install existed — and that answer makes
+      Stage 0 abort a few lines later with "Önceki yönetilen DNS/Caddy
+      kurulumu bulundu". Pressing Enter on a re-run killed the installer.
+      Found the hard way during the 2026-07-29 live verification run, not
+      by reading the code. Existing-install detection now happens once and
+      feeds both the default (`E`, shown as `[E/h]`) and the abort check,
+      so the two cannot drift apart. Fresh installs still default to `H`.
+- [x] **Reconcile now guards the UDP GRO ethtool flags, not just the unit
+      (2026-07-29, `v1rc-2`).** Fault injection proved the unit check
+      alone was insufficient: after `systemctl stop tailscale-udp-gro`,
+      `rx-udp-gro-forwarding` was still `on`, so the throughput
+      optimization had never actually degraded and a unit-only check
+      verifies bookkeeping rather than the thing it protects. Added
+      `gro_flags_ok()` reading `CURRENT_WAN4_IF` (already computed) via a
+      reinstated `ETHTOOL_BIN`; repair for either signal is `systemctl
+      restart`, so systemd remains the single execution path. Everything
+      unevaluable (no ethtool, no WAN interface, feature unreported or
+      `[fixed]`) counts as healthy, matching the helper's own success
+      cases so the two cannot disagree into a restart loop. ~15 lines
+      versus the ~54 DD-11 removed. Reported as `gro_flags=` in `--check`.

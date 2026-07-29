@@ -251,15 +251,34 @@ comments plus structural inference from the 2026-07-27 audit
   inside heredoc bodies (see **H4**) — this had to be caught by manual
   review, a concrete illustration of why H4 is a real gap and not just a
   theoretical one.
-- **Amended 2026-07-29 — the *unit* is now checked, the *flags* still are
-  not.** This decision removed two different things at once, and only one
-  of them should have gone. Reconcile now reads
-  `tailscale-udp-gro.service`'s `ActiveState` and restarts it (15-minute
-  cooldown via the existing `restart_budget_available` stamp) when it is
-  not active. Polling ethtool flags every five minutes remains removed, so
-  the reasoning above still stands in full — the reinstated check is a
-  handful of lines, needs no `ETHTOOL_BIN`, and does not resurrect the
-  dead variables.
+- **Amended 2026-07-29 (first pass) — the unit is checked again.**
+  Reconcile reads `tailscale-udp-gro.service`'s `ActiveState` and restarts
+  it (15-minute cooldown via the existing `restart_budget_available`
+  stamp) when it is not active.
+- **Amended again 2026-07-29 (second pass) — the flags are checked too,
+  because live testing showed the unit check alone proves nothing about
+  throughput.** The fault-injection run made the gap concrete: after
+  `systemctl stop tailscale-udp-gro`, `ethtool -k eth0` still reported
+  `rx-udp-gro-forwarding: on`. Stopping the unit does not undo the flags,
+  so a unit-only check verifies bookkeeping rather than the optimization
+  it exists to protect. Reconcile now also runs `gro_flags_ok()` against
+  `CURRENT_WAN4_IF` (already computed for address-drift detection) and
+  repairs on either signal. `ETHTOOL_BIN` is reinstated for this — the
+  variable this decision originally noted as dead code.
+  - **What is still *not* re-added:** the removed logic polled both the
+    IPv4 and IPv6 default interfaces and reimplemented the helper's apply
+    path. The new check reads the IPv4 WAN interface only and never
+    applies anything itself — repair is always `systemctl restart`, so
+    systemd stays the single execution path and the unit's state keeps
+    reflecting reality. That is why this is ~15 lines rather than the ~54
+    that were removed.
+  - **Everything the check cannot evaluate is treated as healthy:** no
+    `ethtool` binary, no detected WAN interface, a driver that does not
+    report the two features, or one that reports them `[fixed]`. This
+    mirrors the helper, which exits successfully in exactly those cases,
+    so the two cannot disagree and produce a restart loop.
+  - Reported as `gro_flags=` alongside `gro_unit=` in `--check`; both stay
+    outside `all_critical_state_healthy()` and the exit code.
 - **The gap that motivated the amendment.** The unit is `Type=oneshot`
   with `Restart=no`. If it fails at boot — the exact case Stage 2 already
   anticipates, where the network is not ready yet and `install.sh` prints

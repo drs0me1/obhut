@@ -32,8 +32,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   created only after live verification. Convention recorded in
   `CLAUDE.md`.
 
+- Reconcile now also verifies the UDP GRO **ethtool flags**, not just the
+  unit's `ActiveState`, and repairs on either signal. Live fault injection
+  showed the unit check alone proves nothing: after
+  `systemctl stop tailscale-udp-gro`, `rx-udp-gro-forwarding` was still
+  `on`, so the optimization had never actually degraded. Reported as
+  `gro_flags=` in `--check`. Anything the check cannot evaluate (no
+  `ethtool`, no WAN interface, feature unreported or `[fixed]`) counts as
+  healthy, matching the helper's own success cases. Amends DD-11 a second
+  time. (`v1rc-2`)
+
 ### Fixed
 
+- Stage 0's Tailnet-DNS prompt defaulted to `H` even when a managed
+  DNS/Caddy install was already present — and that answer makes the same
+  Stage 0 abort with "Önceki yönetilen DNS/Caddy kurulumu bulundu".
+  Pressing Enter on a re-run therefore killed the installer, which is
+  exactly what happened during the 2026-07-29 verification run. The
+  prompt now detects the existing install once, defaults to `E`, and
+  shows `[E/h]`; the abort check reuses that same detection instead of
+  re-testing the three files, so the two cannot drift apart. Fresh
+  installs are unaffected and still default to `H`. (`v1rc-2`)
 - `tailscale-udp-gro.service`'s unit comment claimed reconcile retried it
   every five minutes. That had been untrue since DD-11 removed the code
   in question on 2026-07-28. The change above makes the claim true again;

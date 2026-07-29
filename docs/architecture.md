@@ -155,11 +155,16 @@ action), Tailscale preferences and netfilter backbone, the dedicated
 firewall chains (via `docker-tailscale-fw --check`), Docker's own
 DNAT/FORWARD rules, Compose container health and port bindings, the
 canonical config-file bundle (state/dnsmasq/Caddy), and — if local DNS is
-enabled — live DNS and Caddy HTTP responses. It also checks whether
-`tailscale-udp-gro.service` is active and restarts it if not (added
-2026-07-29): that unit is `Restart=no`, so a boot-time failure would
-otherwise persist until the next reboot. This one check sits outside
-`all_critical_state_healthy()` and does not affect the exit code, because
+enabled — live DNS and Caddy HTTP responses. It also guards UDP GRO
+(added 2026-07-29) on two independent signals: whether
+`tailscale-udp-gro.service` is active, and whether the `ethtool` flags on
+the IPv4 WAN interface are actually set. The unit is `Restart=no`, so a
+boot-time failure would otherwise persist until the next reboot; and
+because the unit uses `RemainAfterExit=yes`, flags cleared without the
+unit failing would leave it reading `active` while the optimization is
+gone. Repair for either signal is `systemctl restart`, keeping systemd the
+single execution path. Both checks sit outside
+`all_critical_state_healthy()` and do not affect the exit code, because
 UDP GRO is a throughput optimization rather than a connectivity
 precondition — see DD-11.
 
