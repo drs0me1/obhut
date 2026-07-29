@@ -70,8 +70,8 @@ The script runs as seven stages, gated by `progress_stage_begin`/
 | Stage | Purpose |
 |-------|---------|
 | 0 | Interactive prompts (downloads path, optional local DNS domain), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
-| 1 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | Tailscale install, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
+| 1 | Base OS prep: apt/timer quiescing, timezone, base packages, forwarding + UDP-socket-buffer sysctls, Tailscale install, and the interactive browser login — deliberately placed *before* `full-upgrade` so the one interactive step comes first and the long unattended work follows |
+| 2 | UDP GRO tuning, exit-node + stateful filtering + netfilter configuration |
 | 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
 | 4 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` helper scripts, systemd units for Compose and reconcile |
 | 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |

@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+`MASTER_SETUP_VERSION` is `2026.07.29-v1.1-1`; `install.sh` is 4736 lines.
+
+### Changed
+
+- **The Tailscale browser login now runs before `apt-get full-upgrade`,
+  in Stage 1 instead of mid-Stage 2.** It is the installer's only step
+  that blocks on a human, and it used to sit behind two `apt-get update`
+  runs, the full system upgrade, and two package installs — several
+  minutes during which the terminal showed nothing but a redrawn progress
+  bar, because Stage 0's confirmation redirects all output to the log
+  file. Reported by the user as "the link falls behind, I can't see it;
+  it only shows up after a very long wait." Moved up into Stage 1: the
+  TUN check, the Tailscale repo/keyring, the forwarding and socket-buffer
+  sysctls, `apt-get install tailscale`, `systemctl enable --now
+  tailscaled`, the socket wait, and the login itself. Moved down, behind
+  the login: `apt-get full-upgrade`. Total install time is unchanged;
+  what changes is that the interactive step comes first and everything
+  after it is unattended, so the operator can authenticate and walk away.
+  See DD-19.
+- Stage labels renamed to match: Stage 1 is now "Temel sistem ve
+  Tailscale girişi", Stage 2 is "Exit-node ve ağ optimizasyonu".
+  `progress_stage_note` percentages renumbered in both.
+- The Tailscale IPv4/online verification loop now runs *after*
+  `full-upgrade` rather than before it, since the upgrade can refresh the
+  `tailscale` package and restart `tailscaled`.
+- Stage 0 now prints a one-line heads-up right after the confirmation,
+  telling the operator that a browser link will appear within about a
+  minute if a login is needed.
+
+### Added
+
+- `tailscale_login_banner()` — prints a terminal bell and a framed,
+  bold-cyan header before `tailscale up` runs. The frame closes *before*
+  the URL is emitted, so the last thing on screen while the script blocks
+  is the link itself. Degrades to plain ASCII with no colors under
+  `TERM=dumb` or a non-TTY fd 5.
+
+### Fixed
+
+- `/etc/sysctl.d/99-master-stack-netbuf.conf` was written *after*
+  `systemctl enable --now tailscaled`. `wireguard-go` requests its large
+  UDP receive buffer once, when it opens the socket, and that request is
+  clamped against the `net.core.rmem_max` in effect at that moment — so on
+  a first install DD-18's 16 MiB floor did not reach the running
+  `tailscaled` until something restarted it. Both sysctls are now written
+  before `tailscaled` is started for the first time. Found while
+  reordering for the login fix, not by a report.
+
 ## [V1] - 2026-07-29
 
 Final release. `MASTER_SETUP_VERSION` is `2026.07.29-V1`; `install.sh` is
@@ -14,8 +64,6 @@ identical to the live-verified `v1rc-4` tag — the only `install.sh`
 changes since it are the version string and the qBittorrent socket-buffer
 reminder in the final summary, neither of which touches an executable
 path.
-
-## [Unreleased]
 
 ### Added
 

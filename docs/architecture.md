@@ -18,22 +18,25 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 543–634 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 635–748 | Base OS prep: apt/timer quiescing, timezone, base packages |
-| 2 | 749–1020 | Tailscale install, exit-node + stateful filtering + netfilter configuration, forwarding and UDP-socket-buffer sysctls, UDP GRO tuning (`tailscale-udp-gro` helper at `830–903`) |
-| 3 | 1021–1748 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1126–1681`) and its systemd unit |
-| 4 | 1749–3588 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2090–2131`) and `master-network-reconcile` (`2171–3467`) helper scripts, `master-docker-netfilter-recovery` (`3471–3520`), systemd units for Compose and reconcile |
-| 5 | 3589–3636 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3637–3953 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper ends at `3781`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 3954–4587 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 543–682 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 694–989 | Base OS prep: apt/timer quiescing, timezone, base packages, forwarding + UDP-socket-buffer sysctls, Tailscale install, **the interactive browser login**, then `apt-get full-upgrade` |
+| 2 | 990–1125 | UDP GRO tuning (`tailscale-udp-gro` helper at `993–1066`), exit-node + stateful filtering + netfilter configuration |
+| 3 | 1126–1853 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1231–1786`) and its systemd unit |
+| 4 | 1854–3727 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2195–2235`) and `master-network-reconcile` (`2276–3605`) helper scripts, `master-docker-netfilter-recovery` (`3610–3658`), systemd units for Compose and reconcile |
+| 5 | 3728–3775 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 3776–4092 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper at `3888–3919`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4093–4736 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4587 lines — post-`v1rc`, 2026-07-29. They
+(Line numbers as of `install.sh` 4736 lines — `v1.1-1`, 2026-07-29. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 
-Stage 0 is the only interactive stage; once the user confirms, output is
+Stage 0 is the only stage that *prompts*; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
 terminal shows only a compact progress bar for the remainder of the run.
+Stage 1 still blocks once, on the Tailscale browser login — see
+`docs/design-decisions.md` DD-19 for why that step sits where it does and
+why it prints its own framed banner rather than a plain line.
 
 Note: as of 2026-07-27, wg-easy's admin/peer configuration is intentionally
 **not** automated — the script only provisions the container, port, volume,
@@ -80,7 +83,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1126-1681`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1231-1786`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -145,7 +148,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2171-3467`, ~1295
+`master-network-reconcile` (generated at `install.sh:2276-3605`, ~1329
 lines) runs every 5 minutes via `master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
 **disk space on the filesystem backing `$DOWNLOADS_PATH`** (added
@@ -194,7 +197,7 @@ the final install summary so operators aren't surprised by it.
 |------|------|---------|
 | `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint, downloads path — the last one added 2026-07-28 for reconcile's disk-space check) |
 | `/etc/sysctl.d/99-tailscale.conf` | `root:root 0644` | IPv4/IPv6 forwarding; content and ownership are verified and repaired by reconcile |
-| `/etc/sysctl.d/99-master-stack-netbuf.conf` | `root:root 0644` | UDP socket buffer ceilings (`net.core.rmem_max`/`wmem_max`), floored at 16 MiB and never lowered. Not reconciled — a `sysctl.d` file survives reboots by construction, so the file on disk is the guarantee (DD-18) |
+| `/etc/sysctl.d/99-master-stack-netbuf.conf` | `root:root 0644` | UDP socket buffer ceilings (`net.core.rmem_max`/`wmem_max`), floored at 16 MiB and never lowered. Written *before* `tailscaled` is first started, since `wireguard-go` requests its buffer once at socket-open time and is clamped against the ceiling then in effect (DD-19). Not reconciled — a `sysctl.d` file survives reboots by construction, so the file on disk is the guarantee (DD-18) |
 | `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/`compose.yaml`/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift. Published as one atomic set at the end of Stage 6 (DD-14). `compose.yaml` is compared and **reported** on drift but never auto-restored (M10), unlike the dnsmasq/Caddy files |
 | `/root/docker/compose.yaml`, `/root/docker/.env` | `root:root 0600` | The Compose stack definition and its dynamic address values |
 

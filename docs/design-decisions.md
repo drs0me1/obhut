@@ -544,3 +544,51 @@ comments plus structural inference from the 2026-07-27 audit
   provider file sorting after ours that sets a *lower* value would win.
   The `max()` handles the realistic case (provider sets it higher); the
   inverted case is accepted as exotic and is not defended against.
+
+### DD-19: The Tailscale browser login runs before `full-upgrade`, and prints its own framed banner (2026-07-29)
+
+`install.sh` has exactly one step that blocks on a human: `tailscale up`
+prints a `login.tailscale.com` URL and waits for the browser flow to
+complete. Until `v1.1-1` that step sat in the middle of Stage 2, behind
+two `apt-get update` runs, `apt-get full-upgrade`, the base-package
+install, and the Tailscale package install — several minutes on a fresh
+provider image. Because Stage 0's confirmation redirects all output to the
+log file, the operator watched a single redrawn progress-bar line the
+whole time, then the URL appeared inside that same stream. Reported by the
+user as "the link falls behind, I can't see it; it only shows up after a
+very long wait."
+
+- **The fix is ordering, not rendering.** The delay was never buffering.
+  `tee`'s stdout is fd 5 (`/dev/tty`), so glibc line-buffers it and the URL
+  reaches the terminal the moment `tailscale up` emits it. What made it
+  late was simply everything scheduled in front of it.
+- **What moved.** TUN check, Tailscale repo/keyring, the forwarding and
+  socket-buffer sysctls, `apt-get install tailscale`,
+  `systemctl enable --now tailscaled`, the socket wait, and the login all
+  moved up into Stage 1. `apt-get full-upgrade` moved down, behind the
+  login. The dependency chain that constrains this is short: `kmod` for
+  `modprobe tun`, `curl` + `ca-certificates` for the repo, `procps` for
+  `sysctl` — all from Stage 1's base-package install, which still runs
+  first. Nothing in the moved set depends on post-upgrade state.
+- **The real win is not the clock, it's the shape.** Total install time is
+  unchanged. What changed is that the interactive step now comes first and
+  everything after it is unattended, instead of the reverse. The operator
+  can authenticate and walk away.
+- **A latent bug fixed on the way.** `99-master-stack-netbuf.conf` used to
+  be written *after* `systemctl enable --now tailscaled`. `wireguard-go`
+  requests its large UDP buffer once, when it opens the socket, and the
+  request is clamped against the ceiling in effect at that moment — so on a
+  first install the 16 MiB floor from DD-18 did not apply to the running
+  `tailscaled` until something restarted it. Both sysctls are now written
+  before `tailscaled` is started for the first time.
+- **Online verification runs after `full-upgrade`, not before.** The
+  upgrade can refresh the `tailscale` package and restart `tailscaled`;
+  putting the IPv4/online wait behind it means the check confirms the state
+  the rest of the install actually depends on.
+- **Why a banner and not a plain line.** `tailscale_login_banner()` emits a
+  terminal bell, a blank line, and a framed, bold-cyan header — and the
+  frame *closes before* `tailscale up` runs. That ordering is the point:
+  the last thing on screen is the URL itself, with nothing printed over it
+  while the script blocks. `progress_stage_resume` redraws the progress bar
+  only after login completes. Under `TERM=dumb` or a non-TTY fd 5 the
+  colors drop out and the frame degrades to plain ASCII.

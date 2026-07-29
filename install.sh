@@ -5,14 +5,15 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-V1"
+MASTER_SETUP_VERSION="2026.07.29-v1.1-1"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
 
 # Aşama 0 kullanıcı girdileri normal konsolda kalır. Onaydan sonra Stage 1-7
 # ayrıntıları root-only loga yönlendirilir; TTY'de yalnız gerçek kilometre
-# taşlarına dayanan ilerleme çubuğu görünür. Kurulum komutları foreground ve
+# taşlarına dayanan ilerleme çubuğu ve Aşama 1'deki Tailscale giriş bağlantısı
+# görünür (bkz. tailscale_login_banner, DD-19). Kurulum komutları foreground ve
 # sıralı kalır; progress için ayrı bir worker/process oluşturulmaz.
 MASTER_LOG_DIR="/var/log/master-setup"
 MASTER_LOG_FILE=""
@@ -682,10 +683,16 @@ fi
 
 progress_setup_logging
 
+# Etkileşimli tek adım Tailscale girişidir ve kasten aşama 1'in başına
+# alınmıştır. Kullanıcı ne zaman ekrana bakması gerektiğini baştan bilsin.
+printf 'Tailscale girişi gerekiyorsa, tarayıcı bağlantısı yaklaşık bir\n' >&5 ||
+    true
+printf 'dakika içinde çerçeveli olarak bu ekranda görünecek.\n\n' >&5 || true
+
 # ==================================================
-# AŞAMA 1 — Temel hazırlık
+# AŞAMA 1 — Temel hazırlık + Tailscale girişi
 # ==================================================
-progress_stage_begin 1 "Temel Debian sistemi hazırlanıyor"
+progress_stage_begin 1 "Temel sistem ve Tailscale girişi hazırlanıyor"
 
 # Inhibitor alınmadan hemen önce başlamış bir reboot transaction'ı varsa yeni
 # mutasyona geçme. Inhibitor sonraki normal reboot isteklerini bloke eder.
@@ -777,29 +784,23 @@ timedatectl set-timezone "$TIMEZONE"
 # DPkg::Lock::Timeout: apt-daily/apt-daily-upgrade yukarıda durdurulsa da,
 # ileride benzer bir arka plan sürecinin kilit tutma ihtimaline karşı her
 # apt-get çağrısı kilidi hemen vermek yerine sınırlı süre bekler.
-progress_stage_note 30 "Debian paket listeleri indiriliyor"
+progress_stage_note 25 "Debian paket listeleri indiriliyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
-progress_stage_note 45 "Debian sistem güncellemeleri uygulanıyor"
-# Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
-# durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
-# güncel sürümünü yalnız hiç yerel değişiklik yoksa uygula.
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" \
-    -o Dpkg::Options::="--force-confdef" \
-    -o Dpkg::Options::="--force-confold" \
-    full-upgrade -y
-progress_stage_note 80 "Temel ağ ve sistem araçları kuruluyor"
+progress_stage_note 35 "Temel ağ ve sistem araçları kuruluyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
     iptables coreutils util-linux diffutils jq
 
 echo "İşletim sistemi: ${PRETTY_NAME}, zaman dilimi: $TIMEZONE"
-progress_stage_note 95 "Temel sistem doğrulanıyor"
 
-# ==================================================
-# AŞAMA 2 — Tailscale + exit node
-# ==================================================
-progress_stage_done
-progress_stage_begin 2 "Tailscale ve exit-node hazırlanıyor"
+# Tailscale kurulumu ve etkileşimli girişi, kasten full-upgrade'den ÖNCE
+# yapılır. Kurulumun tek etkileşimli adımı budur; dakikalarca süren sistem
+# yükseltmesinin arkasında kalırsa kullanıcı ekranı izlemeyi bırakıyor ve
+# tarayıcı bağlantısını kaçırıyor. Aşağıdaki blokların hiçbiri full-upgrade
+# sonrası duruma bağlı değil; tek gereksinimleri yukarıdaki temel paketler
+# (kmod, curl, ca-certificates, procps). Böylece etkileşimli kısım başa,
+# gözetimsiz kısım sona alınmış olur.
+progress_stage_note 40 "TUN aygıtı ve Tailscale deposu hazırlanıyor"
 
 if ! modprobe tun 2>/tmp/modprobe-tun.err; then
     echo "UYARI: 'modprobe tun' başarısız oldu:" >&2
@@ -812,7 +813,6 @@ if [[ ! -c /dev/net/tun ]]; then
     exit 1
 fi
 
-progress_stage_note 10 "Tailscale paket deposu hazırlanıyor"
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
     -o /tmp/tailscale-archive-keyring.gpg
@@ -824,10 +824,12 @@ curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.li
     -o /etc/apt/sources.list.d/tailscale.list
 
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
-progress_stage_note 25 "Tailscale paketi kuruluyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y tailscale
-systemctl enable --now tailscaled
-progress_stage_note 40 "IP forwarding ve UDP GRO hazırlanıyor"
+
+# Her iki sysctl de tailscaled BAŞLAMADAN önce yazılır. rmem_max burada
+# özellikle kritik: wireguard-go büyük UDP buffer'ını soketi açarken bir kez
+# ister ve talep o anki tavana göre kırpılır. Tavan sonradan yükseltilirse
+# zaten açılmış soket küçük kalır ve ilk boot'ta optimizasyon etkisiz olur.
+progress_stage_note 45 "IP forwarding ve UDP soket buffer tabanı ayarlanıyor"
 
 cat >/etc/sysctl.d/99-tailscale.conf <<'SYSCTL'
 net.ipv4.ip_forward = 1
@@ -878,6 +880,117 @@ chown root:root /etc/sysctl.d/99-master-stack-netbuf.conf
 chmod 0644 /etc/sysctl.d/99-master-stack-netbuf.conf
 sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf
 
+progress_stage_note 55 "Tailscale paketi kuruluyor"
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y tailscale
+systemctl enable --now tailscaled
+
+progress_stage_note 60 "tailscaled soketi ve Tailnet girişi bekleniyor"
+SOCKET_PATH="/run/tailscale/tailscaled.sock"
+echo "tailscaled soketi bekleniyor..."
+TAILSCALED_READY=0
+for _ in $(seq 1 30); do
+    if [[ -S "$SOCKET_PATH" ]]; then
+        TAILSCALED_READY=1
+        break
+    fi
+    sleep 1
+done
+
+if [[ "$TAILSCALED_READY" -ne 1 ]]; then
+    echo "HATA: tailscaled soketi 30 saniyede oluşmadı: $SOCKET_PATH" >&2
+    exit 1
+fi
+
+tailscale_is_online() {
+    local self_line=""
+    self_line="$(tailscale status --self 2>/dev/null | head -n 1 || true)"
+    [[ -n "$self_line" && "$self_line" != *offline* ]]
+}
+
+# Giriş bağlantısı ilerleme çubuğunun akışı içinde kaybolmasın diye kendi
+# çerçevesiyle basılır. Çerçeve URL'den ÖNCE kapanır: böylece ekranda en son
+# görünen satır bağlantının kendisi olur, üstüne başka çıktı binmez.
+tailscale_login_banner() {
+    local rule="" accent="" reset=""
+
+    [[ "$MASTER_PROGRESS_TTY_FD_OPEN" -eq 1 ]] || return 0
+    printf -v rule '%*s' 62 ''
+    rule="${rule// /=}"
+    if [[ "$MASTER_PROGRESS_ANSI" -eq 1 ]]; then
+        accent=$'\033[1;36m'
+        reset=$'\033[0m'
+    fi
+
+    {
+        printf '\a\n%s%s\n' "$accent" "$rule"
+        printf '  TAILSCALE GİRİŞİ GEREKİYOR\n'
+        printf '  Kurulum bu noktada bekliyor; giriş tamamlanınca\n'
+        printf '  kendiliğinden devam edecek.\n'
+        printf '  Aşağıdaki bağlantıyı tarayıcınızda açın:\n'
+        printf '%s%s\n\n' "$rule" "$reset"
+    } >&5 || true
+}
+
+if tailscale ip -4 >/dev/null 2>&1; then
+    echo "Kayıtlı Tailscale bağlantısının online olması bekleniyor..."
+    for _ in $(seq 1 60); do
+        tailscale_is_online && break
+        sleep 1
+    done
+    if ! tailscale_is_online; then
+        echo "HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
+        echo "Ağ/control-plane erişimini veya mevcut profili kontrol edip yeniden çalıştırın." >&2
+        exit 1
+    fi
+
+    echo "Sunucu zaten bir Tailscale ağına bağlı."
+    tailscale status --self 2>/dev/null | head -n 1 || true
+else
+    progress_clear_line
+    tailscale_login_banner
+    printf '[%s] Etkileşimli Tailscale girişi başladı.\n' \
+        "$(date --iso-8601=seconds)" >>"$MASTER_LOG_FILE"
+    tailscale up 2>&1 | tee -a "$MASTER_LOG_FILE" >&5
+    progress_stage_resume
+fi
+
+# Buradan sonrası gözetimsizdir: kullanıcı girişi tamamladıktan sonra ekrana
+# bakmak zorunda değil. full-upgrade bu yüzden girişin ARDINA alındı.
+progress_stage_note 70 "Debian sistem güncellemeleri uygulanıyor"
+# Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
+# durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
+# güncel sürümünü yalnız hiç yerel değişiklik yoksa uygula.
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    full-upgrade -y
+
+# Online/IPv4 doğrulaması bilerek full-upgrade'in SONRASINDA: yükseltme
+# tailscale paketini de tazeleyip tailscaled'i yeniden başlatabilir, bu
+# durumda bağlantının geri geldiğini burada teyit etmiş oluruz.
+progress_stage_note 90 "Tailscale IPv4 ve online durumu doğrulanıyor"
+TAILSCALE_CONNECTED=0
+for _ in $(seq 1 90); do
+    if tailscale ip -4 >/dev/null 2>&1 && tailscale_is_online; then
+        TAILSCALE_CONNECTED=1
+        break
+    fi
+    sleep 2
+done
+
+if [[ "$TAILSCALE_CONNECTED" -ne 1 ]]; then
+    echo "HATA: Tailscale 180 saniye içinde IPv4 adresi alamadı." >&2
+    exit 1
+fi
+progress_stage_note 95 "Temel sistem doğrulanıyor"
+
+# ==================================================
+# AŞAMA 2 — Exit-node ve ağ optimizasyonu
+# ==================================================
+progress_stage_done
+progress_stage_begin 2 "Exit-node ve ağ optimizasyonu hazırlanıyor"
+
+progress_stage_note 15 "UDP GRO optimizasyonu hazırlanıyor"
 cat >/usr/local/sbin/tailscale-udp-gro <<'GRO_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -992,67 +1105,7 @@ if ! systemctl start tailscale-udp-gro.service; then
     systemctl reset-failed tailscale-udp-gro.service >/dev/null 2>&1 || true
 fi
 
-progress_stage_note 55 "tailscaled ve Tailnet bağlantısı bekleniyor"
-SOCKET_PATH="/run/tailscale/tailscaled.sock"
-echo "tailscaled soketi bekleniyor..."
-TAILSCALED_READY=0
-for _ in $(seq 1 30); do
-    if [[ -S "$SOCKET_PATH" ]]; then
-        TAILSCALED_READY=1
-        break
-    fi
-    sleep 1
-done
-
-if [[ "$TAILSCALED_READY" -ne 1 ]]; then
-    echo "HATA: tailscaled soketi 30 saniyede oluşmadı: $SOCKET_PATH" >&2
-    exit 1
-fi
-
-tailscale_is_online() {
-    local self_line=""
-    self_line="$(tailscale status --self 2>/dev/null | head -n 1 || true)"
-    [[ -n "$self_line" && "$self_line" != *offline* ]]
-}
-
-if tailscale ip -4 >/dev/null 2>&1; then
-    echo "Kayıtlı Tailscale bağlantısının online olması bekleniyor..."
-    for _ in $(seq 1 60); do
-        tailscale_is_online && break
-        sleep 1
-    done
-    if ! tailscale_is_online; then
-        echo "HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
-        echo "Ağ/control-plane erişimini veya mevcut profili kontrol edip yeniden çalıştırın." >&2
-        exit 1
-    fi
-
-    echo "Sunucu zaten bir Tailscale ağına bağlı."
-    tailscale status --self 2>/dev/null | head -n 1 || true
-else
-    progress_clear_line
-    printf 'Tailscale girişi gerekiyor; aşağıdaki bağlantıyı tarayıcıda açın:\n' >&5
-    printf '[%s] Etkileşimli Tailscale girişi başladı.\n' \
-        "$(date --iso-8601=seconds)" >>"$MASTER_LOG_FILE"
-    tailscale up 2>&1 | tee -a "$MASTER_LOG_FILE" >&5
-    progress_stage_resume
-fi
-
-progress_stage_note 70 "Tailscale IPv4 ve online durumu doğrulanıyor"
-TAILSCALE_CONNECTED=0
-for _ in $(seq 1 90); do
-    if tailscale ip -4 >/dev/null 2>&1 && tailscale_is_online; then
-        TAILSCALE_CONNECTED=1
-        break
-    fi
-    sleep 2
-done
-
-if [[ "$TAILSCALE_CONNECTED" -ne 1 ]]; then
-    echo "HATA: Tailscale 180 saniye içinde IPv4 adresi alamadı." >&2
-    exit 1
-fi
-
+progress_stage_note 70 "Exit-node ve stateful filtering uygulanıyor"
 tailscale set \
     --advertise-exit-node \
     --stateful-filtering=true \

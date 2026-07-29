@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4587 lines (post-v1rc). Originally **tagged R1.0**
+architecture review; file is now 4736 lines (v1.1-1). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -68,6 +68,18 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **UX: Tailscale login link buried behind the install stream**
+      (2026-07-29, `v1.1-1`). The one interactive step sat mid-Stage 2,
+      behind `apt-get full-upgrade` and two package installs — minutes
+      during which the terminal showed only a redrawn progress bar.
+      Reordered so the TUN check, Tailscale repo, forwarding/socket-buffer
+      sysctls, package install, `tailscaled` start, socket wait and login
+      all run in Stage 1, with `full-upgrade` moved behind them; added
+      `tailscale_login_banner()` (bell + framed header closing before the
+      URL) and a Stage 0 heads-up. Also fixed a latent ordering bug found
+      on the way: the netbuf sysctl was applied after `tailscaled` had
+      already opened its UDP socket. See DD-19.
 
 - [x] Full static audit of `install.sh` (4552 lines) across security,
       secrets handling, destructive operations, firewall/network safety,
