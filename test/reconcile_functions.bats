@@ -67,11 +67,11 @@ teardown() {
 @test "state_value: returns the value of an existing key" {
     STATE_FILE="$FIXTURE_DIR/state.env"
     CANONICAL_DIR="$FIXTURE_DIR/no-such-canonical-dir"
-    printf 'STACK_SCHEMA=8\nLOCAL_DNS_ENABLED=1\n' >"$STATE_FILE"
+    printf 'STACK_SCHEMA=9\nWEBDAV_PORT=65113\n' >"$STATE_FILE"
 
-    run state_value LOCAL_DNS_ENABLED 0
+    run state_value WEBDAV_PORT 0
     [ "$status" -eq 0 ]
-    [ "$output" = "1" ]
+    [ "$output" = "65113" ]
 }
 
 @test "state_value: falls back to the default for a missing key" {

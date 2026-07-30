@@ -14,14 +14,17 @@
 #     hardcoded expected list, with an exact string equality.
 #
 # Nothing enforces that those two stay in sync, and neither `bash -n` nor
-# `shellcheck` can see the mismatch. The local-DNS-*disabled* branch is
-# especially exposed: it has never executed in any live install (local
-# DNS is always enabled on this deployment, see docs/testing.md), so a
-# typo there would go unnoticed until the first install that turns DNS
-# off. These tests therefore derive the expected file lists from
-# install.sh's own Stage 6 source rather than restating them, so the two
-# sides are compared against each other rather than against this file's
-# assumptions.
+# `shellcheck` can see the mismatch. These tests therefore derive the
+# expected file list from install.sh's own Stage 6 source rather than
+# restating it, so the two sides are compared against each other rather
+# than against this file's assumptions.
+#
+# Revised for V1-8: local DNS is no longer optional, so the manifest has
+# exactly one shape and the function has one branch. The former
+# DNS-disabled cases are gone; what replaces them is a regression guard
+# that the old two-entry shape is now *rejected* (see the truncated-list
+# test below), because a host still carrying a pre-V1-8 bundle must be
+# caught rather than silently accepted.
 #
 # Scope: the manifest entry-list logic only. Hash verification is
 # sha256sum's job and is stubbed out; ownership/mode checking is
@@ -47,28 +50,16 @@ extract_function() {
         '
 }
 
-# The file list Stage 6 feeds to sha256sum when local DNS is enabled,
-# read straight out of install.sh: a multi-line continuation ending at
-# the first line without a trailing backslash.
-stage6_manifest_files_dns_enabled() {
+# The file list Stage 6 feeds to sha256sum, read straight out of
+# install.sh: a multi-line continuation ending at the first line without a
+# trailing backslash.
+stage6_manifest_files() {
     awk '
         /sha256sum -- \\$/ { collecting=1; next }
         collecting {
             sub(/^[[:space:]]+/, "")
             if (sub(/[[:space:]]*\\$/, "")) { print; next }
             print
-            exit
-        }
-    ' "$INSTALL_SH"
-}
-
-# The single-line form Stage 6 uses when local DNS is disabled.
-stage6_manifest_files_dns_disabled() {
-    awk '
-        /sha256sum -- state\.env/ && !/\\$/ {
-            sub(/.*sha256sum -- /, "")
-            n = split($0, parts, " ")
-            for (i = 1; i <= n; i++) print parts[i]
             exit
         }
     ' "$INSTALL_SH"
@@ -85,6 +76,13 @@ write_manifest() {
             "0000000000000000000000000000000000000000000000000000000000000000" \
             "$entry" >>"$CANONICAL_DIR/SHA256SUMS"
     done
+}
+
+write_stage6_manifest() {
+    local files=()
+    while IFS= read -r line; do files+=("$line"); done \
+        < <(stage6_manifest_files)
+    write_manifest "${files[@]}"
 }
 
 setup() {
@@ -107,6 +105,7 @@ setup() {
     AWK_BIN="$(command -v awk)"
     CANONICAL_DIR="$FIXTURE_DIR/canonical"
     mkdir -p "$CANONICAL_DIR"
+    printf 'STACK_SCHEMA=9\n' >"$CANONICAL_DIR/state.env"
 
     # Stub sha256sum: these tests assert on the manifest's entry list, not
     # on digest verification.
@@ -114,45 +113,38 @@ setup() {
     printf '#!/bin/sh\nexit 0\n' >"$SHA256SUM_BIN"
     chmod 0755 "$SHA256SUM_BIN"
 
-    # Sanity-check the two extractors before any test relies on them; an
-    # empty list would make every assertion below vacuously pass.
-    [ -n "$(stage6_manifest_files_dns_enabled)" ]
-    [ -n "$(stage6_manifest_files_dns_disabled)" ]
+    # Sanity-check the extractor before any test relies on it; an empty
+    # list would make every assertion below vacuously pass.
+    [ -n "$(stage6_manifest_files)" ]
 }
 
 teardown() {
     rm -rf "$FIXTURE_DIR"
 }
 
-set_dns_enabled() {
-    printf 'STACK_SCHEMA=8\nLOCAL_DNS_ENABLED=%s\n' "$1" \
-        >"$CANONICAL_DIR/state.env"
-}
-
-@test "canonical_bundle_ok: accepts Stage 6's own manifest list with local DNS enabled" {
-    set_dns_enabled 1
-    local files=()
-    while IFS= read -r line; do files+=("$line"); done \
-        < <(stage6_manifest_files_dns_enabled)
-    write_manifest "${files[@]}"
+@test "canonical_bundle_ok: accepts Stage 6's own manifest list" {
+    write_stage6_manifest
 
     run canonical_bundle_ok
     [ "$status" -eq 0 ]
 }
 
-@test "canonical_bundle_ok: accepts Stage 6's own manifest list with local DNS disabled" {
-    set_dns_enabled 0
+@test "canonical_bundle_ok: Stage 6 publishes exactly the eight expected entries" {
+    # Pins the manifest's shape as well as its content. If someone adds a
+    # ninth managed file to Stage 6 without extending canonical_bundle_ok's
+    # expected list (or vice versa), the acceptance test above would still
+    # pass on the derived list while the real function drifted; this one
+    # catches the count changing at all.
     local files=()
     while IFS= read -r line; do files+=("$line"); done \
-        < <(stage6_manifest_files_dns_disabled)
-    write_manifest "${files[@]}"
+        < <(stage6_manifest_files)
 
-    run canonical_bundle_ok
-    [ "$status" -eq 0 ]
+    [ "${#files[@]}" -eq 8 ]
+    [ "${files[0]}" = "state.env" ]
+    [ "${files[1]}" = "compose.yaml" ]
 }
 
-@test "canonical_bundle_ok: rejects the pre-M10 list that omits compose.yaml (DNS enabled)" {
-    set_dns_enabled 1
+@test "canonical_bundle_ok: rejects the pre-M10 list that omits compose.yaml" {
     write_manifest \
         state.env \
         dnsmasq-local-services.conf \
@@ -166,22 +158,22 @@ set_dns_enabled() {
     [ "$status" -ne 0 ]
 }
 
-@test "canonical_bundle_ok: rejects the pre-M10 list that omits compose.yaml (DNS disabled)" {
-    set_dns_enabled 0
-    write_manifest state.env
+@test "canonical_bundle_ok: rejects the pre-V1-8 two-entry bundle" {
+    # Before V1-8 a DNS-disabled install published a manifest of just
+    # state.env and compose.yaml, and canonical_bundle_ok accepted it. Now
+    # that DNS/Caddy are a fixed part of the stack, that shape means a host
+    # is carrying a stale bundle and must be caught, not tolerated.
+    write_manifest state.env compose.yaml
 
     run canonical_bundle_ok
     [ "$status" -ne 0 ]
 }
 
-@test "canonical_bundle_ok: rejects a DNS-disabled manifest when state.env says DNS is enabled" {
-    # The exact inconsistency M8 fixed: Stage 4 used to publish a
-    # state.env-only manifest alongside a LOCAL_DNS_ENABLED=1 state.env.
-    set_dns_enabled 1
+@test "canonical_bundle_ok: rejects an extra entry appended to a correct list" {
     local files=()
     while IFS= read -r line; do files+=("$line"); done \
-        < <(stage6_manifest_files_dns_disabled)
-    write_manifest "${files[@]}"
+        < <(stage6_manifest_files)
+    write_manifest "${files[@]}" unexpected-extra.conf
 
     run canonical_bundle_ok
     [ "$status" -ne 0 ]
@@ -191,31 +183,19 @@ set_dns_enabled() {
     # Documents that the comparison is order-sensitive: it is a single
     # string equality, not a set comparison. Anyone reordering Stage 6's
     # sha256sum arguments must reorder the expected list to match.
-    set_dns_enabled 0
     local files=()
     while IFS= read -r line; do files+=("$line"); done \
-        < <(stage6_manifest_files_dns_disabled)
+        < <(stage6_manifest_files)
     [ "${#files[@]}" -ge 2 ]
-    write_manifest "${files[1]}" "${files[0]}"
+    write_manifest "${files[1]}" "${files[0]}" "${files[@]:2}"
 
     run canonical_bundle_ok
     [ "$status" -ne 0 ]
 }
 
 @test "canonical_bundle_ok: rejects an unreadable manifest" {
-    set_dns_enabled 1
+    write_stage6_manifest
     rm -f "$CANONICAL_DIR/SHA256SUMS"
-
-    run canonical_bundle_ok
-    [ "$status" -ne 0 ]
-}
-
-@test "canonical_bundle_ok: rejects a state.env with no usable LOCAL_DNS_ENABLED" {
-    printf 'STACK_SCHEMA=8\n' >"$CANONICAL_DIR/state.env"
-    local files=()
-    while IFS= read -r line; do files+=("$line"); done \
-        < <(stage6_manifest_files_dns_enabled)
-    write_manifest "${files[@]}"
 
     run canonical_bundle_ok
     [ "$status" -ne 0 ]

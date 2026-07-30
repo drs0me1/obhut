@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-8`; `install.sh` is 4956 lines.
+
+### Changed
+
+- **Tailnet DNS + Caddy are no longer optional (`V1-8`, `STACK_SCHEMA`
+  8 → 9).** They were always installed in practice, so the "Kurulsun mu?"
+  prompt was a branch that existed only to be answered the same way every
+  time. Stage 0 now asks for the domain alone (default `ayc`, or the
+  existing domain on a re-run; Enter still means "change nothing").
+
+  The user asked whether it was enough to hardcode the flag to `1` and
+  leave the plumbing, or better to remove it. Measured first: 36
+  references and ~25 conditional branches, plus a two-shape canonical
+  bundle and 6 of `canonical_bundle.bats`'s 8 tests devoted to the
+  branching. Hardcoding would have kept all of that alive and
+  permanently unreachable — still linted, still tested, still needing to
+  stay consistent through every future refactor, while `state.env`
+  advertised an option that no longer existed. Removed instead:
+  - `SETUP_LOCAL_DNS` and `LOCAL_DNS_ENABLED` are gone entirely (0
+    references remain).
+  - `canonical_bundle_ok()` has **one** manifest shape instead of two,
+    which is the part that matters for the planned modularization: the
+    bundle contract is now a single fixed eight-entry list.
+  - `LOCAL_DNS_ENABLED` dropped from `state.env`, hence the schema bump.
+    A host built by an older revision will fail reconcile's state
+    validation until it is re-installed — acceptable here because the
+    deployment is reimaged routinely, but it *is* a breaking change.
+  - `canonical_bundle.bats` rewritten: the DNS-disabled cases are gone,
+    replaced by a guard that the old two-entry bundle is now **rejected**
+    (a host still carrying one must be caught, not tolerated), plus new
+    cases for an extra appended entry and for the manifest being exactly
+    eight entries. 7 cases, no skips. Suite total 57 → 56.
+
+  Net effect: `install.sh` 5046 → 4956 lines.
+
+## [V1-7] - 2026-07-30
+
 `MASTER_SETUP_VERSION` is `2026.07.30-V1-7`; `install.sh` is 5046 lines.
 **Live-verified** by a full install on 2026-07-30 (22:35:51 → 22:36:13,
 22 seconds): 7/7 stages, one expected warning (wg-easy's admin is a manual

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.30-V1-7"
+MASTER_SETUP_VERSION="2026.07.30-V1-8"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -600,71 +600,41 @@ if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -r /etc/master-stack/state.env ]]; then
 fi
 DEFAULT_LOCAL_DOMAIN="${EXISTING_LOCAL_DOMAIN:-ayc}"
 
-# Sorulan soru kurulumun durumuna göre değişir; ortak nokta, her iki dalda da
-# Enter'ın "hiçbir şeyi değiştirme" anlamına gelmesidir.
-#
-#   Taze kurulum : "Kurulsun mu?"          Enter -> kurulmaz
-#   Mevcut kurulum: "Değiştirilsin mi?"    Enter -> mevcut alan adı korunur
-#
-# Mevcut kurulumda soru artık "kurulsun mu" değil, çünkü DNS zaten kurulu;
-# sorulacak tek anlamlı şey alan adının değişip değişmeyeceği. Bu aynı zamanda
-# eski abort yolunu ortadan kaldırır: DNS'i sessizce kaldırma seçeneği hiç
-# sunulmadığı için koruma, kurulumu durdurmak yerine yapısal hale gelir.
-if [[ "$EXISTING_MANAGED_DNS" -eq 1 ]]; then
-    SETUP_LOCAL_DNS=1
-    if [[ -n "$EXISTING_LOCAL_DOMAIN" ]]; then
-        echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi (.$EXISTING_LOCAL_DOMAIN)."
-    else
-        echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi."
-    fi
-    echo "  e = yeni alan adı sorulur; eski adlar silinir, yenileri kurulur"
-    echo "  H = mevcut alan adı ve yapı olduğu gibi korunur"
-    echo "Not: DNS/Caddy kaldırma işlemi bu betikle yapılmaz."
-    read -rp "Alan adı değiştirilsin mi? [e/H]: " LOCAL_DOMAIN_CHANGE </dev/tty
-    LOCAL_DOMAIN_CHANGE="${LOCAL_DOMAIN_CHANGE:-H}"
-
-    if [[ "$LOCAL_DOMAIN_CHANGE" =~ ^[EeYy]$ ]]; then
-        read -rp "Yeni alan adı nedir? [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
-        LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
-    else
-        LOCAL_DOMAIN="$DEFAULT_LOCAL_DOMAIN"
-    fi
+# Tailnet DNS + Caddy artık opsiyonel değil, yığının sabit parçası (V1-8).
+# "Kurulsun mu?" sorusu kaldırıldı; sorulan tek şey alan adı. Enter her iki
+# durumda da "hiçbir şeyi değiştirme" demektir: taze kurulumda varsayılan
+# 'ayc', mevcut kurulumda o an kullanılan alan adı. Farklı bir ad yazmak
+# eski adları siler ve yenilerini kurar — Aşama 6 hem local-services.conf'u
+# hem Caddyfile'ı '>' ile sıfırdan yazdığı için eski kayıtlar birikmez.
+if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -n "$EXISTING_LOCAL_DOMAIN" ]]; then
+    echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi (.$EXISTING_LOCAL_DOMAIN)."
+    echo "Enter mevcut alan adını korur; farklı bir ad yazarsanız eski adlar"
+    echo "silinip yenileri kurulur."
 else
-    echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulsun mu?"
+    echo "Servisler için Tailnet'e özel DNS adları (dnsmasq + Caddy) kurulacak."
     echo "Örnek: portainer.$DEFAULT_LOCAL_DOMAIN, file.$DEFAULT_LOCAL_DOMAIN, qbit.$DEFAULT_LOCAL_DOMAIN"
-    read -rp "Kurulsun mu? [e/H]: " LOCAL_DNS_INPUT </dev/tty
-    LOCAL_DNS_INPUT="${LOCAL_DNS_INPUT:-H}"
+fi
+read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
+LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
 
-    if [[ "$LOCAL_DNS_INPUT" =~ ^[EeYy]$ ]]; then
-        SETUP_LOCAL_DNS=1
-        read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
-        LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
-    else
-        SETUP_LOCAL_DNS=0
-        LOCAL_DOMAIN=""
-    fi
+# Doğrulama tek yerde: elle girilmiş de olsa state.env'den okunmuş da olsa,
+# kullanılacak her alan adı buradan geçer.
+LOCAL_DOMAIN="$(printf '%s' "$LOCAL_DOMAIN" | tr '[:upper:]' '[:lower:]')"
+
+if [[ ${#LOCAL_DOMAIN} -gt 253 ||
+      ! "$LOCAL_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ||
+      "$LOCAL_DOMAIN" == *..* ]]; then
+    echo "HATA: Geçersiz yerel alan adı: $LOCAL_DOMAIN" >&2
+    exit 1
 fi
 
-# Doğrulama tek yerde: hangi dalda üretilmiş olursa olsun, state.env'den
-# okunmuş değer de dahil, kullanılacak her alan adı buradan geçer.
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    LOCAL_DOMAIN="$(printf '%s' "$LOCAL_DOMAIN" | tr '[:upper:]' '[:lower:]')"
-
-    if [[ ${#LOCAL_DOMAIN} -gt 253 ||
-          ! "$LOCAL_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ||
-          "$LOCAL_DOMAIN" == *..* ]]; then
-        echo "HATA: Geçersiz yerel alan adı: $LOCAL_DOMAIN" >&2
+IFS='.' read -r -a DOMAIN_LABELS <<<"$LOCAL_DOMAIN"
+for label in "${DOMAIN_LABELS[@]}"; do
+    if [[ -z "$label" || ${#label} -gt 63 || "$label" == -* || "$label" == *- ]]; then
+        echo "HATA: Geçersiz DNS etiketi: $label" >&2
         exit 1
     fi
-
-    IFS='.' read -r -a DOMAIN_LABELS <<<"$LOCAL_DOMAIN"
-    for label in "${DOMAIN_LABELS[@]}"; do
-        if [[ -z "$label" || ${#label} -gt 63 || "$label" == -* || "$label" == *- ]]; then
-            echo "HATA: Geçersiz DNS etiketi: $label" >&2
-            exit 1
-        fi
-    done
-fi
+done
 echo
 
 # WebDAV (Apple TV/Infuse) kimlik bilgisi. Parola hiçbir aşamada düz metin
@@ -722,11 +692,7 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
 else
     echo "WebDAV kullanıcısı : mevcut htpasswd korunuyor"
 fi
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    echo "Tailnet DNS        : .$LOCAL_DOMAIN (dnsmasq + Caddy)"
-else
-    echo "Tailnet DNS        : kurulmayacak"
-fi
+echo "Tailnet DNS        : .$LOCAL_DOMAIN (dnsmasq + Caddy)"
 echo
 
 read -rp "Devam edilsin mi? [E/h]: " CONFIRM </dev/tty
@@ -1951,10 +1917,9 @@ WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 # tutmaz. Bu yüzden şema 8'de kalır — STACK_SCHEMA yalnız format anlayışı
 # değiştiğinde yükselir.
 cat >/etc/master-stack/state.env <<EOF
-STACK_SCHEMA=8
+STACK_SCHEMA=9
 STACK_VERSION=$MASTER_SETUP_VERSION
 STACK_SHA256=$MASTER_SETUP_SHA256
-LOCAL_DNS_ENABLED=$SETUP_LOCAL_DNS
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
@@ -1981,18 +1946,15 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
 fi
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
-# Canonical bundle yalnızca tek bir atomik küme hâlinde yayınlanır —
-# state.env, ve yerel DNS açıksa altı dnsmasq/Caddy dosyası — ve bu Aşama
-# 6'nın sonunda olur. Nedeni: reconcile'ın canonical_bundle_ok()'u,
-# manifest'teki girdi listesini canonical state.env içindeki
-# LOCAL_DNS_ENABLED değerine karşı doğrular. state.env'i burada
-# yayınlamak bu ikiliyi Aşama 4-6 boyunca tutarsız bırakırdı (taze bir
-# LOCAL_DNS_ENABLED=1 state.env'in yanında yalnız state.env içeren bir
-# manifest), ve yarıda kesilen bir çalıştırma reconcile'ı bundle'ı hiç
-# doğrulayamaz hâlde bırakırdı. Ertelemek ise şu anlama gelir: yarıda
-# kalan bir yeniden çalıştırma, önceki çalıştırmanın eksiksiz ve kendi
-# içinde tutarlı bundle'ını yerinde bırakır ve reconcile son bilinen iyi
-# yapılandırmayı uygulamaya devam eder.
+# Canonical bundle tek bir atomik küme hâlinde — state.env, compose.yaml ve
+# altı dnsmasq/Caddy dosyası — Aşama 6'nın sonunda yayınlanır. Nedeni:
+# reconcile'ın canonical_bundle_ok()'u manifest'i sekiz girdinin tamamına
+# karşı doğrular, dolayısıyla state.env'i burada yayınlamak Aşama 4-6
+# boyunca eksik bir bundle bırakır ve yarıda kesilen bir çalıştırma
+# reconcile'ı bundle'ı hiç doğrulayamaz hâlde bırakırdı. Ertelemek ise şu
+# anlama gelir: yarıda kalan bir yeniden çalıştırma, önceki çalıştırmanın
+# eksiksiz ve kendi içinde tutarlı bundle'ını yerinde bırakır ve reconcile
+# son bilinen iyi yapılandırmayı uygulamaya devam eder.
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
@@ -2019,10 +1981,7 @@ progress_stage_note 15 "Veri ve medya dizinleri hazırlandı"
 # geçiş) kullanılan "scheme://host" formatının TERSİ. "http://..." ile denenip
 # canlıda doğrulanmış: değer geçersiz sayılır ve container fatal hata ile
 # restart döngüsüne girer (2.39.5'e pin'liyken şema OLMADAN kullanın).
-PORTAINER_TRUSTED_ORIGINS=""
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    PORTAINER_TRUSTED_ORIGINS="portainer.${LOCAL_DOMAIN}"
-fi
+PORTAINER_TRUSTED_ORIGINS="portainer.${LOCAL_DOMAIN}"
 
 cat >/root/docker/compose.yaml <<YAML_EOF
 x-logging: &default-logging
@@ -2390,8 +2349,10 @@ owned_file_ok() {
        "$actual" == "$expected_uid:$expected_gid:$expected_mode" ]]
 }
 
+# Manifest tek şekillidir: DNS/Caddy V1-8'den beri yığının sabit parçası,
+# yani "DNS kapalı" diye ikinci bir bundle şekli yok (şema 9).
 canonical_bundle_ok() {
-    local dns_enabled="" manifest_entries="" expected_entries=""
+    local manifest_entries="" expected_entries=""
     [[ -r "$CANONICAL_DIR/SHA256SUMS" ]] &&
         (cd "$CANONICAL_DIR" &&
             "$SHA256SUM_BIN" -c --status SHA256SUMS) ||
@@ -2402,28 +2363,18 @@ canonical_bundle_ok() {
         owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 ||
         return 1
 
-    dns_enabled="$(
-        "$AWK_BIN" -F= '$1 == "LOCAL_DNS_ENABLED" {print $2; exit}' \
-            "$CANONICAL_DIR/state.env" 2>/dev/null || true
-    )"
     manifest_entries="$(
         "$AWK_BIN" 'NF == 2 {print $2}' "$CANONICAL_DIR/SHA256SUMS"
     )"
-    if [[ "$dns_enabled" == "1" ]]; then
-        expected_entries=$'state.env\ncompose.yaml\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
-        [[ "$manifest_entries" == "$expected_entries" ]] || return 1
-        owned_file_ok "$CANONICAL_DIR/dnsmasq-local-services.conf" 0 0 644 &&
-            owned_file_ok "$CANONICAL_DIR/dnsmasq-99-tailscale-order.conf" 0 0 644 &&
-            owned_file_ok "$CANONICAL_DIR/Caddyfile" 0 0 644 &&
-            owned_file_ok "$CANONICAL_DIR/caddy-99-tailnet-bind.conf" 0 0 644 &&
-            owned_file_ok "$CANONICAL_DIR/caddy-tailnet-env" 0 0 755 &&
-            owned_file_ok "$CANONICAL_DIR/tailscaled-99-caddy-tailnet.conf" 0 0 644 ||
-            return 1
-    elif [[ "$dns_enabled" == "0" ]]; then
-        [[ "$manifest_entries" == $'state.env\ncompose.yaml' ]] || return 1
-    else
-        return 1
-    fi
+    expected_entries=$'state.env\ncompose.yaml\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
+    [[ "$manifest_entries" == "$expected_entries" ]] || return 1
+
+    owned_file_ok "$CANONICAL_DIR/dnsmasq-local-services.conf" 0 0 644 &&
+        owned_file_ok "$CANONICAL_DIR/dnsmasq-99-tailscale-order.conf" 0 0 644 &&
+        owned_file_ok "$CANONICAL_DIR/Caddyfile" 0 0 644 &&
+        owned_file_ok "$CANONICAL_DIR/caddy-99-tailnet-bind.conf" 0 0 644 &&
+        owned_file_ok "$CANONICAL_DIR/caddy-tailnet-env" 0 0 755 &&
+        owned_file_ok "$CANONICAL_DIR/tailscaled-99-caddy-tailnet.conf" 0 0 644
 }
 
 # --status: kilit almayan, salt-okunur tek ekran durum özeti. Ayrıntılı
@@ -2518,15 +2469,13 @@ if ! canonical_bundle_ok; then
 fi
 
 STACK_SCHEMA="$(state_value STACK_SCHEMA 0)"
-LOCAL_DNS_ENABLED="$(state_value LOCAL_DNS_ENABLED 0)"
 LOCAL_DOMAIN="$(state_value LOCAL_DOMAIN "")"
 QBIT_PUBLIC_PORT="$(state_value QBIT_PUBLIC_PORT 65173)"
 WG_PUBLIC_PORT="$(state_value WG_PUBLIC_PORT 65171)"
 WEBDAV_PORT="$(state_value WEBDAV_PORT 65113)"
 WG_ENDPOINT_HOST="$(state_value WG_ENDPOINT_HOST "")"
 DOWNLOADS_PATH="$(state_value DOWNLOADS_PATH "/downloads")"
-if [[ "$STACK_SCHEMA" != "8" ||
-      ! "$LOCAL_DNS_ENABLED" =~ ^[01]$ ||
+if [[ "$STACK_SCHEMA" != "9" ||
       ! "$QBIT_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WEBDAV_PORT" =~ ^[0-9]+$ ||
@@ -3066,7 +3015,6 @@ compose_file_ok() {
 }
 
 dns_config_files_ok() {
-    [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     "$CMP_BIN" -s \
         "$CANONICAL_DIR/dnsmasq-local-services.conf" \
         /etc/dnsmasq.d/local-services.conf &&
@@ -3080,7 +3028,6 @@ dns_config_files_ok() {
 }
 
 caddy_config_files_ok() {
-    [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     "$CMP_BIN" -s \
             "$CANONICAL_DIR/Caddyfile" \
             /etc/caddy/Caddyfile &&
@@ -3108,7 +3055,6 @@ config_files_ok() {
 }
 
 canonical_runtime_configs_valid() {
-    [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     dnsmasq --test \
         --conf-file="$CANONICAL_DIR/dnsmasq-local-services.conf" \
         >/dev/null 2>&1 &&
@@ -3154,7 +3100,6 @@ caddy_listener_ok() {
 
 dns_runtime_ok() {
     local answer="" external_status=""
-    [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     command -v dig >/dev/null 2>&1 || return 1
     dnsmasq --test >/dev/null 2>&1 || return 1
     answer="$(
@@ -3176,7 +3121,6 @@ dns_runtime_ok() {
 
 caddy_runtime_ok() {
     local env_ip="" body="" webdav_code=""
-    [[ "$LOCAL_DNS_ENABLED" == "1" ]] || return 0
     env_ip="$(
         "$AWK_BIN" -F= '$1 == "TS_IPV4" {print $2; exit}' \
             /run/caddy-tailnet/tailscale.env 2>/dev/null || true
@@ -3286,19 +3230,17 @@ CADDY_INACTIVE=0
 DNSMASQ_INACTIVE=0
 CADDY_RUNTIME_DRIFTED=0
 DNSMASQ_RUNTIME_DRIFTED=0
-if [[ "$LOCAL_DNS_ENABLED" == "1" ]]; then
-    "$SYSTEMCTL_BIN" is-active --quiet caddy.service ||
-        CADDY_INACTIVE=1
-    "$SYSTEMCTL_BIN" is-active --quiet dnsmasq.service ||
-        DNSMASQ_INACTIVE=1
-    if ! dns_runtime_ok; then
-        sleep 1
-        dns_runtime_ok || DNSMASQ_RUNTIME_DRIFTED=1
-    fi
-    if ! caddy_runtime_ok; then
-        sleep 1
-        caddy_runtime_ok || CADDY_RUNTIME_DRIFTED=1
-    fi
+"$SYSTEMCTL_BIN" is-active --quiet caddy.service ||
+    CADDY_INACTIVE=1
+"$SYSTEMCTL_BIN" is-active --quiet dnsmasq.service ||
+    DNSMASQ_INACTIVE=1
+if ! dns_runtime_ok; then
+    sleep 1
+    dns_runtime_ok || DNSMASQ_RUNTIME_DRIFTED=1
+fi
+if ! caddy_runtime_ok; then
+    sleep 1
+    caddy_runtime_ok || CADDY_RUNTIME_DRIFTED=1
 fi
 
 # UDP GRO iki ayrı şekilde kaybolabilir ve ikisi de burada denetlenir:
@@ -3603,8 +3545,7 @@ if [[ "$STATE_CONFIG_DRIFTED" -eq 1 &&
     fi
 fi
 
-if [[ "$LOCAL_DNS_ENABLED" == "1" &&
-      "$DNS_CONFIG_DRIFTED" -eq 1 &&
+if [[ "$DNS_CONFIG_DRIFTED" -eq 1 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     if ! "$INSTALL_BIN" -m 0644 -o root -g root \
             "$CANONICAL_DIR/dnsmasq-local-services.conf" \
@@ -3619,8 +3560,7 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" &&
     fi
 fi
 
-if [[ "$LOCAL_DNS_ENABLED" == "1" &&
-      "$CADDY_CONFIG_DRIFTED" -eq 1 &&
+if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     if ! "$INSTALL_BIN" -m 0644 -o root -g root \
             "$CANONICAL_DIR/Caddyfile" /etc/caddy/Caddyfile ||
@@ -3669,8 +3609,7 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
     fi
 fi
 
-if [[ "$LOCAL_DNS_ENABLED" == "1" ]] &&
-   [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
+if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$DNS_CONFIG_DRIFTED" -eq 1 ||
       "$DNSMASQ_INACTIVE" -eq 1 ||
       "$DNSMASQ_RUNTIME_DRIFTED" -eq 1 ]] &&
@@ -3683,8 +3622,7 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" ]] &&
     fi
 fi
 
-if [[ "$LOCAL_DNS_ENABLED" == "1" ]] &&
-   [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
+if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$CADDY_CONFIG_DRIFTED" -eq 1 ||
       "$CADDY_INACTIVE" -eq 1 ||
       "$CADDY_RUNTIME_DRIFTED" -eq 1 ]] &&
@@ -4070,40 +4008,39 @@ progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
 # ==================================================
 progress_stage_done
 progress_stage_begin 6 "Opsiyonel Tailnet DNS ve Caddy hazırlanıyor"
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    progress_stage_note 10 ".$LOCAL_DOMAIN için dnsmasq kuruluyor"
+progress_stage_note 10 ".$LOCAL_DOMAIN için dnsmasq kuruluyor"
 
-    DNS_STACK_STATE_CAPTURED=1
-    DNSMASQ_INITIAL_LOAD_STATE="$(
-        systemctl show dnsmasq.service -p LoadState --value 2>/dev/null || true
-    )"
-    DNSMASQ_INITIAL_UNIT_FILE_STATE="$(
-        systemctl is-enabled dnsmasq.service 2>/dev/null || true
-    )"
-    DNSMASQ_INITIAL_LOAD_STATE="${DNSMASQ_INITIAL_LOAD_STATE:-not-found}"
-    DNSMASQ_INITIAL_UNIT_FILE_STATE="${DNSMASQ_INITIAL_UNIT_FILE_STATE:-not-found}"
-    systemctl is-active --quiet dnsmasq.service 2>/dev/null &&
-        DNSMASQ_WAS_ACTIVE=1
-    CADDY_INITIAL_LOAD_STATE="$(
-        systemctl show caddy.service -p LoadState --value 2>/dev/null || true
-    )"
-    CADDY_INITIAL_UNIT_FILE_STATE="$(
-        systemctl is-enabled caddy.service 2>/dev/null || true
-    )"
-    CADDY_INITIAL_LOAD_STATE="${CADDY_INITIAL_LOAD_STATE:-not-found}"
-    CADDY_INITIAL_UNIT_FILE_STATE="${CADDY_INITIAL_UNIT_FILE_STATE:-not-found}"
-    systemctl is-active --quiet caddy.service 2>/dev/null &&
-        CADDY_WAS_ACTIVE=1
+DNS_STACK_STATE_CAPTURED=1
+DNSMASQ_INITIAL_LOAD_STATE="$(
+    systemctl show dnsmasq.service -p LoadState --value 2>/dev/null || true
+)"
+DNSMASQ_INITIAL_UNIT_FILE_STATE="$(
+    systemctl is-enabled dnsmasq.service 2>/dev/null || true
+)"
+DNSMASQ_INITIAL_LOAD_STATE="${DNSMASQ_INITIAL_LOAD_STATE:-not-found}"
+DNSMASQ_INITIAL_UNIT_FILE_STATE="${DNSMASQ_INITIAL_UNIT_FILE_STATE:-not-found}"
+systemctl is-active --quiet dnsmasq.service 2>/dev/null &&
+    DNSMASQ_WAS_ACTIVE=1
+CADDY_INITIAL_LOAD_STATE="$(
+    systemctl show caddy.service -p LoadState --value 2>/dev/null || true
+)"
+CADDY_INITIAL_UNIT_FILE_STATE="$(
+    systemctl is-enabled caddy.service 2>/dev/null || true
+)"
+CADDY_INITIAL_LOAD_STATE="${CADDY_INITIAL_LOAD_STATE:-not-found}"
+CADDY_INITIAL_UNIT_FILE_STATE="${CADDY_INITIAL_UNIT_FILE_STATE:-not-found}"
+systemctl is-active --quiet caddy.service 2>/dev/null &&
+    CADDY_WAS_ACTIVE=1
 
-    # Paket postinst aşamasında varsayılan wildcard listener açılmasını engelle.
-    # Kalıcı maske, kurulum bu blokta yarıda kalırsa reboot sonrasında da
-    # fail-closed kalır; yalnız güvenli özel yapılandırma doğrulanınca kaldırılır.
-    systemctl stop dnsmasq.service 2>/dev/null || true
-    systemctl mask dnsmasq.service >/dev/null
-    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y dnsmasq dnsutils
+# Paket postinst aşamasında varsayılan wildcard listener açılmasını engelle.
+# Kalıcı maske, kurulum bu blokta yarıda kalırsa reboot sonrasında da
+# fail-closed kalır; yalnız güvenli özel yapılandırma doğrulanınca kaldırılır.
+systemctl stop dnsmasq.service 2>/dev/null || true
+systemctl mask dnsmasq.service >/dev/null
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y dnsmasq dnsutils
 
-    install -d -m 0755 /etc/systemd/system/dnsmasq.service.d
-    cat >/etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf <<'DNSMASQ_DROPIN'
+install -d -m 0755 /etc/systemd/system/dnsmasq.service.d
+cat >/etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf <<'DNSMASQ_DROPIN'
 [Unit]
 Wants=tailscaled.service
 After=tailscaled.service
@@ -4117,10 +4054,10 @@ StartLimitBurst=5
 Restart=on-failure
 RestartSec=10s
 DNSMASQ_DROPIN
-    set_unit_file_mode \
-        /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
+set_unit_file_mode \
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
 
-    cat >/etc/dnsmasq.d/local-services.conf <<EOF
+cat >/etc/dnsmasq.d/local-services.conf <<EOF
 # Yalnız tailscale0 üzerinde dinamik olarak dinle.
 interface=tailscale0
 except-interface=lo
@@ -4142,45 +4079,45 @@ interface-name=webdav.$LOCAL_DOMAIN,tailscale0/4
 interface-name=health.$LOCAL_DOMAIN,tailscale0/4
 EOF
 
-    chown root:root /etc/dnsmasq.d/local-services.conf
-    chmod 0644 /etc/dnsmasq.d/local-services.conf
-    dnsmasq --test
-    install -d -m 0755 -o root -g root /usr/local/share/master-stack
-    install -m 0644 -o root -g root \
-        /etc/dnsmasq.d/local-services.conf \
-        /usr/local/share/master-stack/dnsmasq-local-services.conf
-    install -m 0644 -o root -g root \
-        /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
-        /usr/local/share/master-stack/dnsmasq-99-tailscale-order.conf
-    systemctl daemon-reload
-    systemctl unmask dnsmasq.service
-    systemctl enable dnsmasq
-    systemctl restart dnsmasq
-    progress_stage_note 35 "dnsmasq yalnız tailscale0 üzerinde hazır"
+chown root:root /etc/dnsmasq.d/local-services.conf
+chmod 0644 /etc/dnsmasq.d/local-services.conf
+dnsmasq --test
+install -d -m 0755 -o root -g root /usr/local/share/master-stack
+install -m 0644 -o root -g root \
+    /etc/dnsmasq.d/local-services.conf \
+    /usr/local/share/master-stack/dnsmasq-local-services.conf
+install -m 0644 -o root -g root \
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
+    /usr/local/share/master-stack/dnsmasq-99-tailscale-order.conf
+systemctl daemon-reload
+systemctl unmask dnsmasq.service
+systemctl enable dnsmasq
+systemctl restart dnsmasq
+progress_stage_note 35 "dnsmasq yalnız tailscale0 üzerinde hazır"
 
-    progress_stage_note 45 "Caddy paket deposu hazırlanıyor"
-    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
-        debian-keyring debian-archive-keyring apt-transport-https
+progress_stage_note 45 "Caddy paket deposu hazırlanıyor"
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
+    debian-keyring debian-archive-keyring apt-transport-https
 
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-        gpg --batch --yes --dearmor \
-            -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
+    gpg --batch --yes --dearmor \
+        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-        -o /etc/apt/sources.list.d/caddy-stable.list
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    -o /etc/apt/sources.list.d/caddy-stable.list
 
-    chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    chmod 0644 /etc/apt/sources.list.d/caddy-stable.list
+chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+chmod 0644 /etc/apt/sources.list.d/caddy-stable.list
 
-    # dnsmasq ile aynı fail-closed model: doğrulanmış Tailnet-only Caddyfile ve
-    # systemd drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
-    systemctl stop caddy.service 2>/dev/null || true
-    systemctl mask caddy.service >/dev/null
-    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
-    progress_stage_note 60 "Caddy paketi kuruluyor"
-    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y caddy
+# dnsmasq ile aynı fail-closed model: doğrulanmış Tailnet-only Caddyfile ve
+# systemd drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
+systemctl stop caddy.service 2>/dev/null || true
+systemctl mask caddy.service >/dev/null
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+progress_stage_note 60 "Caddy paketi kuruluyor"
+apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y caddy
 
-    cat >/usr/local/sbin/caddy-tailnet-env <<'CADDY_ENV_SCRIPT'
+cat >/usr/local/sbin/caddy-tailnet-env <<'CADDY_ENV_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
@@ -4194,29 +4131,29 @@ WAIT_SECONDS=300
 mkdir -p "$RUNTIME_DIR"
 
 for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
-    TS_IPV4="$(
-        "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
-            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
-    )"
+TS_IPV4="$(
+    "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
+        "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
+)"
 
-    if [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        TMP_FILE="$(mktemp "$RUNTIME_DIR/tailscale.env.XXXXXX")"
-        printf 'TS_IPV4=%s\n' "$TS_IPV4" >"$TMP_FILE"
-        mv -f "$TMP_FILE" "$ENV_FILE"
-        echo "Caddy Tailscale IPv4: $TS_IPV4"
-        exit 0
-    fi
+if [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    TMP_FILE="$(mktemp "$RUNTIME_DIR/tailscale.env.XXXXXX")"
+    printf 'TS_IPV4=%s\n' "$TS_IPV4" >"$TMP_FILE"
+    mv -f "$TMP_FILE" "$ENV_FILE"
+    echo "Caddy Tailscale IPv4: $TS_IPV4"
+    exit 0
+fi
 
-    sleep 1
+sleep 1
 done
 
 echo "HATA: tailscale0 IPv4 adresi ${WAIT_SECONDS} saniyede oluşmadı." >&2
 exit 1
 CADDY_ENV_SCRIPT
-    chmod 0755 /usr/local/sbin/caddy-tailnet-env
+chmod 0755 /usr/local/sbin/caddy-tailnet-env
 
-    install -d -m 0755 /etc/systemd/system/caddy.service.d
-    cat >/etc/systemd/system/caddy.service.d/99-tailnet-bind.conf <<'CADDY_DROPIN'
+install -d -m 0755 /etc/systemd/system/caddy.service.d
+cat >/etc/systemd/system/caddy.service.d/99-tailnet-bind.conf <<'CADDY_DROPIN'
 [Unit]
 Wants=tailscaled.service docker.service
 After=tailscaled.service docker.service
@@ -4244,21 +4181,21 @@ Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=330s
 CADDY_DROPIN
-    set_unit_file_mode \
-        /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
+set_unit_file_mode \
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
 
-    # PartOf stop/restart'i Caddy'ye taşır; bu ters Wants ilişkisi de ayrı bir
-    # "stop tailscaled" + "start tailscaled" akışında Caddy'yi geri başlatır.
-    install -d -m 0755 /etc/systemd/system/tailscaled.service.d
-    cat >/etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf <<'TS_CADDY_DROPIN'
+# PartOf stop/restart'i Caddy'ye taşır; bu ters Wants ilişkisi de ayrı bir
+# "stop tailscaled" + "start tailscaled" akışında Caddy'yi geri başlatır.
+install -d -m 0755 /etc/systemd/system/tailscaled.service.d
+cat >/etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf <<'TS_CADDY_DROPIN'
 [Unit]
 Wants=caddy.service
 Before=caddy.service
 TS_CADDY_DROPIN
-    set_unit_file_mode \
-        /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
+set_unit_file_mode \
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
 
-    cat >/etc/caddy/Caddyfile <<EOF
+cat >/etc/caddy/Caddyfile <<EOF
 {
 	# Her başlangıçta /run/caddy-tailnet/tailscale.env içinden alınır.
 	# Caddy public IPv4/IPv6 wildcard adreslerinde dinlemez.
@@ -4296,46 +4233,43 @@ http://health.${LOCAL_DOMAIN} {
 }
 EOF
 
-    chown root:root /etc/caddy/Caddyfile
-    chmod 0644 /etc/caddy/Caddyfile
+chown root:root /etc/caddy/Caddyfile
+chmod 0644 /etc/caddy/Caddyfile
 
-    # Servisi açmadan önce mevcut Tailscale IPv4 ile Caddyfile'ı doğrula.
-    TS_IPV4="$TS_IP" caddy validate --config /etc/caddy/Caddyfile
-    install -m 0644 -o root -g root \
-        /etc/caddy/Caddyfile \
-        /usr/local/share/master-stack/Caddyfile
-    install -m 0644 -o root -g root \
-        /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
-        /usr/local/share/master-stack/caddy-99-tailnet-bind.conf
-    install -m 0755 -o root -g root \
-        /usr/local/sbin/caddy-tailnet-env \
-        /usr/local/share/master-stack/caddy-tailnet-env
-    install -m 0644 -o root -g root \
-        /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
-        /usr/local/share/master-stack/tailscaled-99-caddy-tailnet.conf
+# Servisi açmadan önce mevcut Tailscale IPv4 ile Caddyfile'ı doğrula.
+TS_IPV4="$TS_IP" caddy validate --config /etc/caddy/Caddyfile
+install -m 0644 -o root -g root \
+    /etc/caddy/Caddyfile \
+    /usr/local/share/master-stack/Caddyfile
+install -m 0644 -o root -g root \
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
+    /usr/local/share/master-stack/caddy-99-tailnet-bind.conf
+install -m 0755 -o root -g root \
+    /usr/local/sbin/caddy-tailnet-env \
+    /usr/local/share/master-stack/caddy-tailnet-env
+install -m 0644 -o root -g root \
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
+    /usr/local/share/master-stack/tailscaled-99-caddy-tailnet.conf
 
-    progress_stage_note 85 "Caddy Tailnet binding'i başlatılıp doğrulanıyor"
-    systemctl daemon-reload
-    systemctl unmask caddy.service
-    systemd-analyze verify caddy.service
-    systemctl enable caddy
-    systemctl restart caddy
+progress_stage_note 85 "Caddy Tailnet binding'i başlatılıp doğrulanıyor"
+systemctl daemon-reload
+systemctl unmask caddy.service
+systemd-analyze verify caddy.service
+systemctl enable caddy
+systemctl restart caddy
 
-    caddy validate \
-        --envfile /run/caddy-tailnet/tailscale.env \
-        --config /etc/caddy/Caddyfile
+caddy validate \
+    --envfile /run/caddy-tailnet/tailscale.env \
+    --config /etc/caddy/Caddyfile
 
-    DNS_STACK_STATE_CAPTURED=0
-    echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
-else
-    progress_stage_note 90 "Tailnet DNS seçilmedi; bu aşama atlandı"
-fi
+DNS_STACK_STATE_CAPTURED=0
+echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
 
 # Canonical bundle yanlış/yarım bir kopyadan çalışan daemon'ları yeniden
 # başlatmamak için kendi manifestiyle doğrulanır. Manifest atomik yenilenir.
 # state.env'in canonical kopyası Aşama 4'te değil burada yayınlanır (bkz.
-# oradaki açıklama), böylece manifest ile onun doğrulandığı
-# LOCAL_DNS_ENABLED değeri her zaman birlikte görünür olur.
+# oradaki açıklama), böylece state.env ve manifest tek atomik küme hâlinde
+# ve her zaman birbiriyle tutarlı yayınlanır.
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
     /usr/local/share/master-stack/state.env
@@ -4345,25 +4279,18 @@ install -m 0600 -o root -g root \
 CANONICAL_MANIFEST_TMP="$(
     mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
 )"
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    (
-        cd /usr/local/share/master-stack
-        sha256sum -- \
-            state.env \
-            compose.yaml \
-            dnsmasq-local-services.conf \
-            dnsmasq-99-tailscale-order.conf \
-            Caddyfile \
-            caddy-99-tailnet-bind.conf \
-            caddy-tailnet-env \
-            tailscaled-99-caddy-tailnet.conf
-    ) >"$CANONICAL_MANIFEST_TMP"
-else
-    (
-        cd /usr/local/share/master-stack
-        sha256sum -- state.env compose.yaml
-    ) >"$CANONICAL_MANIFEST_TMP"
-fi
+(
+    cd /usr/local/share/master-stack
+    sha256sum -- \
+        state.env \
+        compose.yaml \
+        dnsmasq-local-services.conf \
+        dnsmasq-99-tailscale-order.conf \
+        Caddyfile \
+        caddy-99-tailnet-bind.conf \
+        caddy-tailnet-env \
+        tailscaled-99-caddy-tailnet.conf
+) >"$CANONICAL_MANIFEST_TMP"
 chown root:root "$CANONICAL_MANIFEST_TMP"
 chmod 0644 "$CANONICAL_MANIFEST_TMP"
 mv -f "$CANONICAL_MANIFEST_TMP" \
@@ -4523,25 +4450,23 @@ for reconciled_oneshot in \
     assert_unit_property_equals "$reconciled_oneshot" StartLimitBurst 10
 done
 
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    assert_unit_property_contains tailscaled.service Wants caddy.service
-    assert_unit_property_contains caddy.service Wants \
-        docker.service tailscaled.service
-    assert_unit_property_contains caddy.service After \
-        docker.service tailscaled.service
-    assert_unit_property_contains caddy.service PartOf tailscaled.service
-    assert_unit_property_contains dnsmasq.service Wants tailscaled.service
-    assert_unit_property_contains dnsmasq.service After tailscaled.service
-    for guarded_daemon in caddy.service dnsmasq.service; do
-        assert_unit_property_contains "$guarded_daemon" OnFailure \
-            master-network-reconcile.service
-        assert_unit_property_equals "$guarded_daemon" Restart on-failure
-    done
-    assert_unit_property_equals dnsmasq.service StartLimitIntervalUSec 1min
-    assert_unit_property_equals dnsmasq.service StartLimitBurst 5
-    assert_unit_property_equals caddy.service StartLimitIntervalUSec 15min
-    assert_unit_property_equals caddy.service StartLimitBurst 2
-fi
+assert_unit_property_contains tailscaled.service Wants caddy.service
+assert_unit_property_contains caddy.service Wants \
+    docker.service tailscaled.service
+assert_unit_property_contains caddy.service After \
+    docker.service tailscaled.service
+assert_unit_property_contains caddy.service PartOf tailscaled.service
+assert_unit_property_contains dnsmasq.service Wants tailscaled.service
+assert_unit_property_contains dnsmasq.service After tailscaled.service
+for guarded_daemon in caddy.service dnsmasq.service; do
+    assert_unit_property_contains "$guarded_daemon" OnFailure \
+        master-network-reconcile.service
+    assert_unit_property_equals "$guarded_daemon" Restart on-failure
+done
+assert_unit_property_equals dnsmasq.service StartLimitIntervalUSec 1min
+assert_unit_property_equals dnsmasq.service StartLimitBurst 5
+assert_unit_property_equals caddy.service StartLimitIntervalUSec 15min
+assert_unit_property_equals caddy.service StartLimitBurst 2
 echo "Systemd bağımlılık ve kurtarma modeli etkin manager özelliklerinden doğrulandı."
 progress_stage_note 30 "Systemd servis ve kurtarma modeli doğrulandı"
 
@@ -4778,37 +4703,35 @@ fi
 echo "Doğrudan Tailnet WebDAV doğrulandı: ${TS_IP}:${WEBDAV_PORT} -> HTTP ${direct_webdav_code}"
 progress_stage_note 85 "Doğrudan Tailnet WebDAV erişimi doğrulandı"
 
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    echo
-    echo "--- dnsmasq ve Caddy ---"
-    for unit in dnsmasq.service caddy.service; do
-        if ! systemctl is-active --quiet "$unit"; then
-            echo "HATA: Tailnet DNS/Caddy servisi aktif değil: $unit" >&2
-            systemctl --no-pager --full status "$unit" || true
-            exit 1
-        fi
-    done
-    systemctl --no-pager --full status dnsmasq caddy
-
-    for name in portainer file qbit wg webdav health; do
-        answer="$(dig +short A "${name}.${LOCAL_DOMAIN}" @"${TS_IP}" 2>/dev/null | head -n 1 || true)"
-        if [[ "$answer" != "$TS_IP" ]]; then
-            echo "HATA: ${name}.${LOCAL_DOMAIN} beklenen A kaydını döndürmedi." >&2
-            exit 1
-        fi
-    done
-    echo "DNS A kayıtları doğrulandı: $TS_IP"
-
-    HEALTH_BODY="$(
-        curl --noproxy '*' -fsS \
-            --connect-timeout 2 --max-time 4 \
-            -H "Host: health.${LOCAL_DOMAIN}" \
-            "http://${TS_IP}/" 2>/dev/null || true
-    )"
-    if [[ "$HEALTH_BODY" != "ok" ]]; then
-        echo "HATA: Caddy health uç noktası beklenen 'ok' yanıtını vermedi." >&2
+echo
+echo "--- dnsmasq ve Caddy ---"
+for unit in dnsmasq.service caddy.service; do
+    if ! systemctl is-active --quiet "$unit"; then
+        echo "HATA: Tailnet DNS/Caddy servisi aktif değil: $unit" >&2
+        systemctl --no-pager --full status "$unit" || true
         exit 1
     fi
+done
+systemctl --no-pager --full status dnsmasq caddy
+
+for name in portainer file qbit wg webdav health; do
+    answer="$(dig +short A "${name}.${LOCAL_DOMAIN}" @"${TS_IP}" 2>/dev/null | head -n 1 || true)"
+    if [[ "$answer" != "$TS_IP" ]]; then
+        echo "HATA: ${name}.${LOCAL_DOMAIN} beklenen A kaydını döndürmedi." >&2
+        exit 1
+    fi
+done
+echo "DNS A kayıtları doğrulandı: $TS_IP"
+
+HEALTH_BODY="$(
+    curl --noproxy '*' -fsS \
+        --connect-timeout 2 --max-time 4 \
+        -H "Host: health.${LOCAL_DOMAIN}" \
+        "http://${TS_IP}/" 2>/dev/null || true
+)"
+if [[ "$HEALTH_BODY" != "ok" ]]; then
+    echo "HATA: Caddy health uç noktası beklenen 'ok' yanıtını vermedi." >&2
+    exit 1
 fi
 
 MASTER_STACK_LOCK_HELD=1 \
@@ -4887,11 +4810,7 @@ progress_stage_note 99 "Tüm çalışma ve bağlantı testleri tamamlandı"
     printf 'wg-easy public: %s:%s/udp\n' \
         "$PUBLIC_IPV4" "$WG_PUBLIC_PORT"
     printf 'WebDAV Tailnet: http://%s:%s\n' "$TS_IP" "$WEBDAV_PORT"
-    if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-        printf 'Tailnet yerel DNS: *.%s -> %s\n' "$LOCAL_DOMAIN" "$TS_IP"
-    else
-        echo "Tailnet yerel DNS: kurulmadı"
-    fi
+    printf 'Tailnet yerel DNS: *.%s -> %s\n' "$LOCAL_DOMAIN" "$TS_IP"
     printf 'Bitiş: %s\n' "$(date --iso-8601=seconds)"
 } >>"$MASTER_LOG_FILE"
 
@@ -4921,19 +4840,14 @@ echo "bir değişiklik dahil) sapma tespit edilirse sessizce eski haline"
 echo "döndürülür. Kalıcı bir değişiklik için install.sh'i düzenleyip yeniden"
 echo "çalıştırın:"
 echo "  /etc/master-stack/state.env"
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    echo "  /etc/dnsmasq.d/local-services.conf, /etc/caddy/Caddyfile"
-    echo "  ve ilgili systemd drop-in'leri"
-fi
+echo "  /etc/dnsmasq.d/local-services.conf, /etc/caddy/Caddyfile"
+echo "  ve ilgili systemd drop-in'leri"
 echo
-echo "UYARI: docker-tailscale-fw.service, master-compose.service$(
-    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' ve caddy.service'
-) systemd"
+echo "UYARI: docker-tailscale-fw.service, master-compose.service ve"
+echo "caddy.service systemd"
 echo "PartOf ile docker.service ve/veya tailscaled.service'e bağlıdır."
 echo "'systemctl restart tailscaled' veya 'systemctl restart docker' gibi"
-echo "rutin bir komut, firewall'u, tüm Compose stack'ini$(
-    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' ve Caddy'\''yi'
-) de birlikte"
+echo "rutin bir komut, firewall'u, tüm Compose stack'ini ve Caddy'yi de birlikte"
 echo "durdurup yeniden başlatır. Bu, sistemin sıralamayı ve tutarlılığı"
 echo "korumasını sağlayan kasıtlı bir tasarımdır."
 echo
@@ -4946,8 +4860,8 @@ echo "her birinin ilk web erişiminde admin hesabını hemen siz oluşturun."
 echo "Bu servisler yalnız 127.0.0.1/tailnet üzerinden erişilebilir olsa da,"
 echo "oluşturulmamış bir admin hesabı tailnet'teki başka bir cihazın önce"
 echo "erişip kurulumu tamamlamasına açık kalır."
-echo "  Portainer: https://127.0.0.1:9443$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://portainer.%s' "$LOCAL_DOMAIN")"
-echo "  wg-easy  : http://127.0.0.1:51821$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://wg.%s' "$LOCAL_DOMAIN")"
+echo "  Portainer: https://127.0.0.1:9443 veya http://portainer.${LOCAL_DOMAIN}"
+echo "  wg-easy  : http://127.0.0.1:51821 veya http://wg.${LOCAL_DOMAIN}"
 echo
 echo "ELLE AYAR: qBittorrent soket alma buffer'ı."
 echo "Bu betik qBittorrent'in yapılandırmasını yönetmez, dolayısıyla taze bir"
@@ -4968,9 +4882,7 @@ echo "WebDAV (host rclone servisi, salt okunur):"
 echo "  Sunulan dizin : ${DOWNLOADS_PATH}/media"
 echo "  Kullanıcı adı : ${WEBDAV_SUMMARY_USER:-<htpasswd okunamadı>}"
 echo "  Parola        : Aşama 0'da belirlediğiniz parola"
-echo "  Adres         : ${TS_IP}$(
-    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya webdav.%s' "$LOCAL_DOMAIN"
-)"
+echo "  Adres         : ${TS_IP} veya webdav.${LOCAL_DOMAIN}"
 echo "  Port          : ${WEBDAV_PORT}"
 echo "  Protokol      : WebDAV (HTTP, HTTPS değil)"
 echo "  Tam URL       : http://${TS_IP}:${WEBDAV_PORT}"
@@ -5004,23 +4916,21 @@ else
     echo "  wg-easy ayarındaki WireGuard portunu ${WG_PUBLIC_PORT} olarak düzeltin."
 fi
 
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    echo
-    echo "Tailnet servis adresleri:"
-    echo "  http://portainer.${LOCAL_DOMAIN}"
-    echo "  http://file.${LOCAL_DOMAIN}"
-    echo "  http://qbit.${LOCAL_DOMAIN}"
-    echo "  http://wg.${LOCAL_DOMAIN}"
-    echo "  http://webdav.${LOCAL_DOMAIN}"
-    echo
-    echo "Tailscale Admin -> DNS -> Nameservers -> Custom:"
-    echo "  Nameserver IP      : $TS_IP"
-    echo "  Restrict to domain : $LOCAL_DOMAIN"
-    echo
-    echo "NOT: dnsmasq ve Caddy güncel tailscale0 IPv4'ünü dinamik kullanır."
-    echo "Tailscale cihazı silinip yeniden kaydedilirse yalnız Admin DNS nameserver"
-    echo "adresinin yeni Tailscale IPv4 ile güncellenmesi gerekir."
-fi
+echo
+echo "Tailnet servis adresleri:"
+echo "  http://portainer.${LOCAL_DOMAIN}"
+echo "  http://file.${LOCAL_DOMAIN}"
+echo "  http://qbit.${LOCAL_DOMAIN}"
+echo "  http://wg.${LOCAL_DOMAIN}"
+echo "  http://webdav.${LOCAL_DOMAIN}"
+echo
+echo "Tailscale Admin -> DNS -> Nameservers -> Custom:"
+echo "  Nameserver IP      : $TS_IP"
+echo "  Restrict to domain : $LOCAL_DOMAIN"
+echo
+echo "NOT: dnsmasq ve Caddy güncel tailscale0 IPv4'ünü dinamik kullanır."
+echo "Tailscale cihazı silinip yeniden kaydedilirse yalnız Admin DNS nameserver"
+echo "adresinin yeni Tailscale IPv4 ile güncellenmesi gerekir."
 
 echo
 echo "Tailscale Admin -> Machines bölümünde:"

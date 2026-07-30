@@ -510,16 +510,20 @@ playback remain untested.
 
 - **Decision:** Stage 4 writes `/etc/master-stack/state.env` but does not
   publish a canonical copy or a `SHA256SUMS` manifest. The entire
-  canonical bundle — `state.env` plus, when local DNS is enabled, the six
+  canonical bundle — `state.env`, `compose.yaml` and the six
   dnsmasq/Caddy files — is published as one atomic set at the end of
   Stage 6.
 - **Context:** `SECURITY_REVIEW.md` finding **M8**.
 - **Rationale:** `canonical_bundle_ok()` validates the manifest's entry
-  list *against the `LOCAL_DNS_ENABLED` value inside the canonical
-  `state.env`*. Those two must therefore always become visible together.
-  Publishing `state.env` in Stage 4 alongside a state.env-only manifest
-  broke that invariant for the whole of Stages 4-6, and an interrupted
-  re-run left reconcile hard-exiting on every cycle with no self-healing.
+  list, and a partial bundle fails that check. Publishing `state.env` in
+  Stage 4 alongside a state.env-only manifest left the bundle incomplete
+  for the whole of Stages 4-6, and an interrupted re-run left reconcile
+  hard-exiting on every cycle with no self-healing.
+  *(As originally written this rationale turned on the manifest being
+  validated against the `LOCAL_DNS_ENABLED` value inside the canonical
+  `state.env`. `V1-8` removed that key — local DNS is no longer optional —
+  so the manifest now has a single fixed shape. The decision stands
+  unchanged; only its justification simplified.)*
 - **Alternatives rejected:** deleting Stage 4's manifest write alone (a
   fresh install then has no manifest, and a re-run's stale manifest no
   longer matches the newly written `state.env` — both still fail
