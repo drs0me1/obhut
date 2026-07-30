@@ -25,9 +25,9 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 4 | 1834–3946 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2187–2228`) and `master-network-reconcile` (`2268–3691`) helper scripts, `master-docker-netfilter-recovery` (`3695–3744`), systemd units for Compose and reconcile |
 | 5 | 3947–4009 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
 | 6 | 4010–4312 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4120–4152`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4313–4956 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 7 | 4313–4975 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4956 lines — `V1-8`, 2026-07-30. They
+(Line numbers as of `install.sh` 4975 lines — `V1-9`, 2026-07-31. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 
@@ -59,7 +59,7 @@ docker-tailscale-fw.service ──Requires/After/PartOf──> docker.service, t
 master-compose.service     ──Requires/After/PartOf──> docker.service, docker-tailscale-fw.service, tailscaled.service
                            ──OnFailure──────────────> master-network-reconcile.service
 
-master-network-reconcile.timer ──(every 5 min)──> master-network-reconcile.service
+master-network-reconcile.timer ──(every 20 min)──> master-network-reconcile.service
 master-network-reconcile.service ──After──────────> docker.service, tailscaled.service
                                   ──(may start)────> master-docker-netfilter-recovery.service
 
@@ -162,7 +162,7 @@ and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
 — installed version + script SHA256 from `state.env`, per-container
 state/health, failed systemd units, downloads-disk usage, the
 `/run`-based repair stamps, and a full `--check` run whose exit code the
-mode passes through. It runs every 5 minutes via
+mode passes through. It runs every 20 minutes via
 `master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
 **disk space on the filesystem backing `$DOWNLOADS_PATH`** (added
@@ -208,7 +208,7 @@ Repairs are scoped and cooldown-gated:
 
 Reconcile treats the canonical (installer-written) copies of
 firewall/dnsmasq/Caddy configuration as the source of truth: any drift,
-including a manual operator edit, is reverted within one 5-minute cycle.
+including a manual operator edit, is reverted within one 20-minute cycle.
 See `docs/design-decisions.md` for the rationale. **Confirmed intentional
 by the user (2026-07-27):** this guarantees dnsmasq/Caddy reachability
 against accidental or unauthorized drift, and is documented explicitly in

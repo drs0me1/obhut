@@ -8,7 +8,7 @@ every new session, before touching `install.sh` or any other file.
 
 This repository contains `install.sh`, a single Bash script that turns a
 fresh Debian 13 (trixie) host into a Tailscale exit-node running a fixed
-Docker Compose service bundle, plus a 5-minute self-healing reconcile
+Docker Compose service bundle, plus a 20-minute self-healing reconcile
 timer. See [`README.md`](README.md) for the full functional overview and
 [`docs/architecture.md`](docs/architecture.md) /
 [`docs/design-decisions.md`](docs/design-decisions.md) for deeper technical

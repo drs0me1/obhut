@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.30-V1-8"
+MASTER_SETUP_VERSION="2026.07.31-V1-9"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1006,7 +1006,7 @@ Wants=network-online.target
 After=network-online.target
 # Bu oneshot kendi restart döngüsünü kurmaz (Restart=no). Başarısızlık yalnız
 # düşük öncelikli performans kaybıdır; master-network-reconcile unit'in
-# ActiveState'ini beş dakikada bir denetler ve 15 dakikalık cooldown ile
+# ActiveState'ini yirmi dakikada bir denetler ve 15 dakikalık cooldown ile
 # yeniden başlatır — bkz. docs/design-decisions.md DD-11. Geniş sınır yalnız
 # dışarıdan gelen gerçek start fırtınasını keser; normal boot/yönetim
 # çağrılarını sınırlamaz.
@@ -1776,7 +1776,7 @@ PartOf=docker.service tailscaled.service
 OnFailure=master-network-reconcile.service
 # Firewall helper tek seferlik ve kendi içinde tüm hazır-olma beklemelerini
 # yapar. Otomatik restart döngüsü yoktur; ilk hata reconcile'ı bir kez
-# tetikler, kalıcı hata sonraki beş dakikalık timer'a bırakılır. Geniş sınır
+# tetikler, kalıcı hata sonraki yirmi dakikalık timer'a bırakılır. Geniş sınır
 # yalnız dışarıdan gelen gerçek start fırtınasını keser.
 StartLimitIntervalSec=60
 StartLimitBurst=10
@@ -2454,7 +2454,7 @@ fi
 
 # Sağlıklı kontrol yaklaşık yarım saniye sürer. Snapshot ve olası onarım aynı
 # master.sh/master-maintenance kilidi altında kalır. Kilit doluysa bu periyot
-# hata sayılmaz; sonraki beş dakikalık çağrı yeniden dener.
+# hata sayılmaz; sonraki yirmi dakikalık çağrı yeniden dener.
 if [[ "${MASTER_STACK_LOCK_HELD:-0}" != "1" ]]; then
     exec 8>/run/lock/master-stack.lock
     if ! "$FLOCK_BIN" -n 8; then
@@ -3004,7 +3004,7 @@ state_file_ok() {
 # Bilinçli olarak config_files_ok()/CONFIG_DRIFTED'a bağlanmadı:
 # dnsmasq/Caddy dosyalarının aksine compose.yaml sapması hiçbir zaman
 # otomatik geri yüklenmez. Geri yüklemek `docker compose up -d` olmadan
-# etkisizdir, sapma tekrarlarsa 5 dakikalık bir yeniden yaratma döngüsü
+# etkisizdir, sapma tekrarlarsa periyodik bir yeniden yaratma döngüsü
 # riski taşır, ve operatörün bilinçli bir değişikliğini sessizce geri
 # alır. Bu kontrol, bu stack'te gerçekten yaşanan tek durumu görünür
 # kılmak için var — canlıda denenip henüz install.sh'e işlenmemiş bir
@@ -3468,9 +3468,11 @@ if [[ "$ADDRESS_CHANGED" -eq 1 ||
       "$FW_INACTIVE" -eq 1 ]]; then
     # Container restart'larının zaten kullandığı 15 dakikalık bütçenin
     # aynısı: bu turda onarılamayan bir sapma (örneğin sürekli başarısız
-    # olan bir firewall kontrolü) her 5 dakikalık döngüde firewall'u
-    # yeniden uygulayıp `docker compose up --wait` çalıştırmak yerine 15
-    # dakikada bir yeniden denenir. Adres değişimi muaftır: bir başarılı
+    # olan bir firewall kontrolü) her turda firewall'u yeniden uygulayıp
+    # `docker compose up --wait` çalıştırmak yerine 15 dakikada bir
+    # yeniden denenir. Timer aralığı (20 dk) bu bütçeden büyük olduğu için
+    # pratikte her zamanlanmış koşu eyleme geçebilir; bütçe asıl olarak
+    # olay-tetiklemeli (OnFailure) çağrıları sınırlar. Adres değişimi muaftır: bir başarılı
     # turdan sonra kendiliğinden temizlenir ve ertelemek yayınlanan
     # binding'leri 15 dakikaya kadar eski bir IP'de bırakırdı.
     if [[ "$ADDRESS_CHANGED" -eq 1 ]] ||
@@ -3787,10 +3789,26 @@ Description=Periodically check WAN, Tailnet bindings and managed services
 
 [Timer]
 # Tek duvar-saati tetikleyicisi eski service timestamp'lerinden etkilenmez ve
-# enable --now ile ayrıca manuel start arasında çift çağrı üretmez. Beş dakika,
-# olay-tetiklemeli Docker/Tailscale kurtarmalarına karışmadan nadir IP/firewall
-# sapmalarını düşük maliyetle yakalar.
-OnCalendar=*-*-* *:00/5:00
+# enable --now ile ayrıca manuel start arasında çift çağrı üretmez.
+#
+# Aralık V1-9'da 5 dakikadan 20'ye çıkarıldı; gerekçe maliyet değil,
+# RESTART_COOLDOWN_SECONDS=900 ile hizalanmaktır. Onarım bütçesi 15 dakika
+# olduğu için 5 dakikalık kontrol kalıcı bir arızada her üç koşudan ikisini
+# "tespit et ama cooldown nedeniyle eyleme geçme" durumuna sokuyordu; o
+# koşular RECOVERY_FAILED=1 ile exit 1 verip başarısız unit ve log gürültüsü
+# üretiyordu. 20 > 15 olduğundan artık her zamanlanmış koşu gerçekten
+# onarabilir ve cooldown yalnız olay-tetiklemeli yollar için emniyet supabı
+# olarak kalır.
+#
+# 20 bilerek seçildi: 60'ı tam böler, yani :00/:20/:40. 18 veya 24 gibi
+# bölmeyen değerler saat başında kısa bir aralık bırakır (18 -> :00 :18 :36
+# :54, ardından yalnız 6 dakika).
+#
+# Bedeli: olay tetikleyicisi olmayan sapmaların (adres değişimi, elle config
+# düzenlemesi, GRO bayrağı kaybı, dolan disk) kurtarma gecikmesi 20 dakikaya
+# çıkar. Çökme yolları etkilenmez — beş OnFailure kancası ve PartOf/Wants
+# zincirleri reconcile'ı timer'dan bağımsız, anında çağırır.
+OnCalendar=*-*-* *:00/20:00
 AccuracySec=10s
 RandomizedDelaySec=0
 Persistent=false
@@ -4298,7 +4316,7 @@ mv -f "$CANONICAL_MANIFEST_TMP" \
 
 # İlk kurulumun servis değişiklikleri bittikten sonra periyodik adres kontrolünü
 # aç; böylece timer kurulum sürerken Compose/Caddy ile yarışmaz.
-progress_stage_note 95 "Beş dakikalık reconcile timer etkinleştiriliyor"
+progress_stage_note 95 "Yirmi dakikalık reconcile timer etkinleştiriliyor"
 systemctl enable --now master-network-reconcile.timer
 if ! systemctl is-active --quiet master-network-reconcile.timer; then
     echo "HATA: master-network-reconcile.timer başlatılamadı." >&2
@@ -4828,13 +4846,14 @@ echo "Tailscale IPv4    : $TS_IP"
 echo "İndirme dizini    : $DOWNLOADS_PATH"
 echo "Zaman dilimi      : $TIMEZONE"
 echo "Otomatik reboot   : Kapalı (manuel: systemctl reboot)"
-echo "Ağ uzlaştırma     : 5 dakikada bir düşük maliyetli güvenlik kontrolü"
+echo "Ağ uzlaştırma     : 20 dakikada bir düşük maliyetli güvenlik kontrolü"
+echo "                    (çökmeler OnFailure ile anında kurtarılır)"
 echo "Oneshot kurtarma  : İç restart yok; Docker/Tailscale olayı + reconcile"
 echo "Kurulum logu      : $MASTER_LOG_FILE"
 echo "Durum özeti       : master-network-reconcile --status"
 echo "                    (kurulu sürüm/hash, container'lar, --check sonucu)"
 echo
-echo "UYARI: Aşağıdaki yönetilen dosyalar 5 dakikada bir bu kurulumun ürettiği"
+echo "UYARI: Aşağıdaki yönetilen dosyalar 20 dakikada bir bu kurulumun ürettiği"
 echo "canonical kopyayla karşılaştırılır; kaynağı ne olursa olsun (elle yapılan"
 echo "bir değişiklik dahil) sapma tespit edilirse sessizce eski haline"
 echo "döndürülür. Kalıcı bir değişiklik için install.sh'i düzenleyip yeniden"

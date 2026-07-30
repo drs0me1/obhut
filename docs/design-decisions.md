@@ -472,6 +472,45 @@ membership exactly as designed. **Still unconfirmed:** Infuse itself has
 not been pointed at the service, so real-client `Range`/seek behavior and
 playback remain untested.
 
+### DD-21: The reconcile timer runs every 20 minutes, aligned with the repair cooldown (2026-07-31)
+
+- **Decision:** `master-network-reconcile.timer` fires every 20 minutes
+  (`OnCalendar=*-*-* *:00/20:00`), not every 5 as it did from R1.0
+  through `V1-8`.
+- **Rationale — not cost.** A healthy check takes about half a second, so
+  at 5-minute intervals the duty cycle was under 0.2%; CPU was never the
+  argument. The real problem was a cadence mismatch that had been there
+  all along: `RESTART_COOLDOWN_SECONDS` is 900. On a *persistent* fault
+  the 5-minute timer produced one run that repaired and then two that
+  could only detect — each logging `cooldown içinde; tekrarlanmadı`,
+  setting `RECOVERY_FAILED=1`, exiting non-zero and leaving a failed
+  unit behind. Two thirds of the runs were noise that could not act. With
+  the interval above the cooldown, every scheduled run can actually
+  repair, and the budget goes back to being what it was meant to be — a
+  brake on the event-driven (`OnFailure`) paths, which can fire at any
+  moment.
+- **Why 20 specifically:** it divides 60, so the schedule is `:00 :20
+  :40` — evenly spaced. Values that do not divide 60 leave a short gap at
+  the hour boundary: `*:00/18:00` yields `:00 :18 :36 :54` and then only
+  6 minutes to the next `:00`. An interval that is silently uneven is
+  worse than a longer even one.
+- **What this costs:** drift with no event trigger now takes up to 20
+  minutes to be corrected instead of 5 — address changes (Tailscale or
+  public IPv4), manual edits to managed config, GRO flags cleared by a
+  driver reload, a filling disk. The address case is the one a user would
+  feel, since WebDAV, Caddy and dnsmasq all bind the Tailscale IPv4. It
+  is accepted because on this deployment the public IPv4 is static and
+  the Tailscale address only changes on node re-registration, which in
+  practice means a reinstall — and `install.sh` corrects it directly.
+- **What this does not change:** crash recovery. Five `OnFailure=` hooks
+  plus the `PartOf`/`Wants` cascades from `docker.service` and
+  `tailscaled.service` invoke reconcile immediately, independent of the
+  timer. The timer was never the mechanism for a service falling over; it
+  is the net for *silent* drift, and only that latency moved.
+- **Reversing it:** change the single `OnCalendar` line. Nothing else
+  depends on the interval — the cooldown is expressed in seconds and the
+  checks are stateless.
+
 ## Rejected Alternatives
 
 - **Using `nftables` directly instead of `iptables`/`ip6tables`:** not

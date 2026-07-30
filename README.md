@@ -1,8 +1,8 @@
 # Debian Server Installer
 
-**Version: V1-8** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-9** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.30-V1-8` in its banner, log header and final summary; note this
+`2026.07.31-V1-9` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `9`. The latest tagged release is `V1-1` (the
 **M11** socket-buffer ordering fix, verified by a live install). Since
@@ -24,7 +24,7 @@ The script is designed to be run as root, interactively, on a dedicated
 server. It is **idempotent by design**: it can be re-run safely against an
 already-provisioned host to reconcile drift, pick up new image versions, or
 recover from a partially failed prior run. Beyond the initial install, it
-also writes a **5-minute self-healing reconcile timer** that continuously
+also writes a **20-minute self-healing reconcile timer** that continuously
 verifies and repairs network addressing, firewall state, container health,
 and (optionally) DNS/Caddy configuration for the lifetime of the server.
 
@@ -54,7 +54,7 @@ and an extensive runtime verification pass at the end of the install.
   `tailscale0` only) and Caddy (bound to the current Tailscale IPv4) can be
   provisioned for friendly `*.<domain>` names to each service.
 - **Self-healing reconcile timer**: a `master-network-reconcile.timer`
-  (every 5 minutes) re-verifies and repairs WAN/Tailscale addressing,
+  (every 20 minutes) re-verifies and repairs WAN/Tailscale addressing,
   firewall rule sets, Tailscale preferences, container health/port
   bindings, and managed DNS/Caddy configuration, with restart cooldowns to
   avoid flapping.
@@ -95,7 +95,7 @@ Custom systemd units created by the script:
   addresses are ready
 - `master-webdav.service` — hardened `rclone serve webdav` unit, read-only
   over the media tree, bound to the Tailscale IPv4 only (`V1-3`, DD-20)
-- `master-network-reconcile.service` + `.timer` — the 5-minute self-healing
+- `master-network-reconcile.service` + `.timer` — the 20-minute self-healing
   check/repair pass
 - `master-docker-netfilter-recovery.service` — last-resort Docker daemon
   restart to recover Docker-owned DNAT/FORWARD rules
@@ -134,7 +134,7 @@ the canonical-bundle checksum model for reconcile).
    install) and runs a comprehensive battery of runtime checks — systemd
    unit properties, firewall rule content/order, container port bindings,
    HTTP/DNS/WebDAV probes — before printing the final summary and enabling
-   the 5-minute reconcile timer.
+   the 20-minute reconcile timer.
 
 Re-running the script against an already-provisioned host is expected and
 supported: most stages detect existing state (Docker daemon.json content,
@@ -267,7 +267,7 @@ A full, line-referenced audit is tracked in
 - **Self-healing vs. operator changes**: the reconcile timer treats the
   canonical (installer-written) copies of the firewall/dnsmasq/Caddy
   configuration as the source of truth and will silently restore them
-  within 5 minutes if they drift — including manual operator edits made
+  within 20 minutes if they drift — including manual operator edits made
   outside the script.
 - **Container capabilities**: `wg-easy` was previously granted `SYS_MODULE`
   in addition to `NET_ADMIN`; this was removed on 2026-07-27 in favor of a

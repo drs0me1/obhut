@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4956 lines (V1-8). Originally **tagged R1.0**
+architecture review; file is now 4975 lines (V1-9). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per

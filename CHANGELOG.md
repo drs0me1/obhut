@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-9`; `install.sh` is 4975 lines.
+
+### Changed
+
+- **The reconcile timer now runs every 20 minutes instead of every 5
+  (`V1-9`, DD-21).** The user asked for a longer interval on the grounds
+  that the system is stable; the measurement found a better reason. A
+  healthy check costs about half a second, so cost was never the issue —
+  but `RESTART_COOLDOWN_SECONDS` is 900, so on a persistent fault the
+  5-minute timer gave one run that repaired and two that could only
+  detect, each logging `cooldown içinde; tekrarlanmadı`, exiting
+  non-zero and leaving a failed unit. Two thirds of the runs were noise
+  that could not act. Above the cooldown, every scheduled run can repair.
+
+  20 was chosen over the suggested 18–24 because it divides 60 evenly
+  (`:00 :20 :40`). `*:00/18:00` would give `:00 :18 :36 :54` and then a
+  6-minute gap at the hour boundary — a silently uneven interval.
+
+  Cost, stated plainly: drift with no event trigger (address changes,
+  manual config edits, GRO flag loss, disk filling) now takes up to 20
+  minutes to correct rather than 5. Crash recovery is unaffected — the
+  five `OnFailure=` hooks and the `PartOf`/`Wants` cascades still invoke
+  reconcile immediately.
+
+## [V1-8] - 2026-07-30
+
 `MASTER_SETUP_VERSION` is `2026.07.30-V1-8`; `install.sh` is 4956 lines.
 **Live-verified** by a full install on 2026-07-30 (23:01:37 → 23:01:58,
 21 seconds): 7/7 stages, zero failed units, `--check` all-zero at exit 0.
