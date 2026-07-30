@@ -18,16 +18,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 543–687 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 688–801 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 802–1091 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `899–974`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1092–1819 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1197–1752`) and its systemd unit |
-| 4 | 1820–3693 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2161–2202`) and `master-network-reconcile` (`2242–3572`) helper scripts, `master-docker-netfilter-recovery` (`3576–3625`), systemd units for Compose and reconcile |
-| 5 | 3694–3741 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3742–4058 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper at `3854–3886`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4059–4701 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 554–698 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 699–812 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 813–1102 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `910–985`), interactive login, exit-node + stateful filtering + netfilter configuration |
+| 3 | 1103–1830 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1208–1763`) and its systemd unit |
+| 4 | 1831–3782 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2178–2219`) and `master-network-reconcile` (`2259–3661`) helper scripts, `master-docker-netfilter-recovery` (`3665–3714`), systemd units for Compose and reconcile |
+| 5 | 3783–3830 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 3831–4147 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper at `3854–3886`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4148–4792 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4701 lines — `V1-1`, 2026-07-29. They
+(Line numbers as of `install.sh` 4792 lines — `V1-2`, 2026-07-30. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 
@@ -145,8 +145,15 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2242-3572`, ~1330
-lines) runs every 5 minutes via `master-network-reconcile.timer` and
+`master-network-reconcile` (generated at `install.sh:2259-3661`, ~1400
+lines) accepts three modes: the default `reconcile` (detect + repair),
+`--check` (read-only drift report, used by Stage 7 and by `--status`),
+and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
+— installed version + script SHA256 from `state.env`, per-container
+state/health, failed systemd units, downloads-disk usage, the
+`/run`-based repair stamps, and a full `--check` run whose exit code the
+mode passes through. It runs every 5 minutes via
+`master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
 **disk space on the filesystem backing `$DOWNLOADS_PATH`** (added
 2026-07-28 — reported via `disk_space_ok()` when usage crosses 90%, but
@@ -192,7 +199,7 @@ the final install summary so operators aren't surprised by it.
 
 | Path | Mode | Purpose |
 |------|------|---------|
-| `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint, downloads path — the last one added 2026-07-28 for reconcile's disk-space check) |
+| `/etc/master-stack/state.env` | `root:root 0600` | Live copy of stack configuration (schema version, ports, local DNS domain, wg-easy endpoint, downloads path — the last one added 2026-07-28 for reconcile's disk-space check). Since `V1-2` it also records `STACK_VERSION` and `STACK_SHA256` (the installing script's own hash), so a host self-reports which revision built it; both keys are informational — shown by `master-network-reconcile --status`, required by nothing — so `STACK_SCHEMA` stays `8` |
 | `/etc/sysctl.d/99-tailscale.conf` | `root:root 0644` | IPv4/IPv6 forwarding; content and ownership are verified and repaired by reconcile |
 | `/etc/sysctl.d/99-master-stack-netbuf.conf` | `root:root 0644` | UDP socket buffer ceilings (`net.core.rmem_max`/`wmem_max`), floored at 16 MiB and never lowered. Written **before** `apt-get install -y tailscale`, because the package's postinst starts `tailscaled` and `wireguard-go` requests its buffer once at socket-open time (M11). Not reconciled — a `sysctl.d` file survives reboots by construction, so the file on disk is the guarantee (DD-18) |
 | `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/`compose.yaml`/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift. Published as one atomic set at the end of Stage 6 (DD-14). `compose.yaml` is compared and **reported** on drift but never auto-restored (M10), unlike the dnsmasq/Caddy files |

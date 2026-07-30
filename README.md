@@ -1,12 +1,13 @@
 # Debian Server Installer
 
-**Version: V1-1** (2026-07-29) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-2** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.29-V1-1` in its banner, log header and final summary; note this
+`2026.07.29-V1-2` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
-format and is currently `8`. The latest tagged release is `V1`; `V1-1`
-adds the **M11** socket-buffer ordering fix on top of it and has been
-verified by a live install.
+format and is currently `8`. The latest tagged release is `V1-1` (the
+**M11** socket-buffer ordering fix, verified by a live install); `V1-2`
+adds version/hash self-reporting on the host (`state.env`) and a
+read-only `master-network-reconcile --status` summary on top of it.
 
 ## Project Overview
 

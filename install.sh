@@ -5,7 +5,18 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-V1-1"
+MASTER_SETUP_VERSION="2026.07.29-V1-2"
+# Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
+# sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
+# kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
+# 2026-07-28 boşluğunun sunucu tarafı yarısı). stdin/boru üzerinden
+# çalıştırmada okunabilir bir dosya yolu olmayabilir; o durumda değer
+# "bilinmiyor" kalır, kurulum durmaz.
+MASTER_SETUP_SHA256="$(
+    sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
+)"
+[[ "$MASTER_SETUP_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    MASTER_SETUP_SHA256="bilinmiyor"
 MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
@@ -1881,8 +1892,14 @@ install -d -m 0755 -o root -g root /usr/local/share/master-stack
 # kontrol edin.
 WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 
+# STACK_VERSION/STACK_SHA256 bilgilendirme amaçlıdır: reconcile bunları
+# yalnız --status çıktısında gösterir, hiçbir tüketici varlığını zorunlu
+# tutmaz. Bu yüzden şema 8'de kalır — STACK_SCHEMA yalnız format anlayışı
+# değiştiğinde yükselir.
 cat >/etc/master-stack/state.env <<EOF
 STACK_SCHEMA=8
+STACK_VERSION=$MASTER_SETUP_VERSION
+STACK_SHA256=$MASTER_SETUP_SHA256
 LOCAL_DNS_ENABLED=$SETUP_LOCAL_DNS
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
@@ -2280,10 +2297,10 @@ RESTART_COOLDOWN_SECONDS=900
 MODE="${1:-reconcile}"
 
 case "$MODE" in
-    reconcile|--check)
+    reconcile|--check|--status)
         ;;
     *)
-        echo "HATA: Kullanım: master-network-reconcile [--check]" >&2
+        echo "HATA: Kullanım: master-network-reconcile [--check|--status]" >&2
         exit 2
         ;;
 esac
@@ -2358,6 +2375,78 @@ canonical_bundle_ok() {
         return 1
     fi
 }
+
+# --status: kilit almayan, salt-okunur tek ekran durum özeti. Ayrıntılı
+# sağlık denetimini alt süreçteki --check yapar ve kilidi de o alır; bu
+# modun çıkış kodu o denetimin sonucudur (0 = temiz, 75 = kilit dolu).
+# state.env okunamıyorsa alanlar "bilinmiyor" kalır — özet, sistem
+# bozukken de çalışabilmek zorunda olduğu için burada canonical bundle
+# doğrulaması dahil hiçbir ön koşul zorlanmaz; bozuksa bunu --check
+# çıktısı zaten raporlar.
+if [[ "$MODE" == "--status" ]]; then
+    status_check_rc=0
+    status_check_output="$("$0" --check 2>&1)" || status_check_rc=$?
+    status_downloads_path="$(state_value DOWNLOADS_PATH /downloads)"
+
+    echo "=== Master Stack durum özeti ==="
+    echo "Kurulum sürümü : $(state_value STACK_VERSION bilinmiyor)"
+    echo "Betik SHA256   : $(state_value STACK_SHA256 bilinmiyor)"
+    echo "Durum şeması   : $(state_value STACK_SCHEMA bilinmiyor)"
+    echo
+    echo "Container durumları:"
+    for status_container in \
+        filebrowser portainer qbittorrent sftpgo unpackerr wg-easy; do
+        status_container_state="$(
+            "$DOCKER_BIN" inspect -f \
+                '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
+                "$status_container" 2>/dev/null || echo "yok"
+        )"
+        printf '  %-12s %s\n' "$status_container" "$status_container_state"
+    done
+    echo
+    status_failed_units="$(
+        "$SYSTEMCTL_BIN" --failed --no-legend --plain 2>/dev/null |
+            "$AWK_BIN" '{print "  " $1}' || true
+    )"
+    if [[ -n "$status_failed_units" ]]; then
+        echo "Başarısız systemd unit'leri:"
+        printf '%s\n' "$status_failed_units"
+    else
+        echo "Başarısız systemd unit yok."
+    fi
+    echo
+    status_disk_line="$(
+        "$DF_BIN" -h --output=pcent,avail,target \
+            "$status_downloads_path" 2>/dev/null |
+            "$AWK_BIN" 'NR == 2 {
+                print "kullanım " $1 ", boş " $2 " (" $3 ")"
+            }' || true
+    )"
+    echo "İndirme diski  : ${status_disk_line:-okunamadı}"
+    echo
+    status_stamps_found=0
+    for status_stamp_file in "$RESTART_STATE_DIR"/*.last-restart; do
+        [[ -r "$status_stamp_file" ]] || continue
+        status_stamp_epoch=""
+        read -r status_stamp_epoch <"$status_stamp_file" ||
+            status_stamp_epoch=""
+        [[ "$status_stamp_epoch" =~ ^[0-9]+$ ]] || continue
+        if [[ "$status_stamps_found" -eq 0 ]]; then
+            echo "Son onarım damgaları (yeniden başlatmada sıfırlanır):"
+            status_stamps_found=1
+        fi
+        status_stamp_name="${status_stamp_file##*/}"
+        printf '  %-12s %s\n' "${status_stamp_name%.last-restart}" \
+            "$(date -d "@$status_stamp_epoch" '+%Y-%m-%d %H:%M:%S')"
+    done
+    if [[ "$status_stamps_found" -eq 0 ]]; then
+        echo "Son yeniden başlatmadan beri onarım damgası yok."
+    fi
+    echo
+    echo "Reconcile --check sonucu (rc=$status_check_rc):"
+    printf '%s\n' "$status_check_output" | "$AWK_BIN" '{print "  " $0}'
+    exit "$status_check_rc"
+fi
 
 # Sağlıklı kontrol yaklaşık yarım saniye sürer. Snapshot ve olası onarım aynı
 # master.sh/master-maintenance kilidi altında kalır. Kilit doluysa bu periyot
@@ -4576,6 +4665,8 @@ echo "Otomatik reboot   : Kapalı (manuel: systemctl reboot)"
 echo "Ağ uzlaştırma     : 5 dakikada bir düşük maliyetli güvenlik kontrolü"
 echo "Oneshot kurtarma  : İç restart yok; Docker/Tailscale olayı + reconcile"
 echo "Kurulum logu      : $MASTER_LOG_FILE"
+echo "Durum özeti       : master-network-reconcile --status"
+echo "                    (kurulu sürüm/hash, container'lar, --check sonucu)"
 echo
 echo "UYARI: Aşağıdaki yönetilen dosyalar 5 dakikada bir bu kurulumun ürettiği"
 echo "canonical kopyayla karşılaştırılır; kaynağı ne olursa olsun (elle yapılan"

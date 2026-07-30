@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+`MASTER_SETUP_VERSION` is `2026.07.29-V1-2`; `install.sh` is 4792 lines.
+
+### Added
+
+- **The host now self-reports which installer revision built it.**
+  `install.sh` computes its own SHA256 at startup and writes
+  `STACK_VERSION` + `STACK_SHA256` into `/etc/master-stack/state.env`
+  (falling back to `bilinmiyor` if the script has no readable path, e.g.
+  piped stdin). Both keys are informational — no consumer requires them —
+  so `STACK_SCHEMA` stays `8`. This closes the server-side half of the
+  gap that let the host run several fixes behind the repository on
+  2026-07-28 without anything noticing (`MASTER_SETUP_VERSION` itself was
+  the script-side half).
+- **`master-network-reconcile --status`** — a lock-free, read-only
+  one-screen summary: installed version + script hash from `state.env`,
+  per-container state/health for all six services, failed systemd units,
+  downloads-disk usage, the `/run`-based repair stamps, and a full
+  `--check` run (executed as a child process, which takes the lock) whose
+  exit code the mode passes through (0 = clean, 75 = another stack
+  transaction holds the lock). Deliberately enforces no preconditions —
+  not even the canonical-bundle validation — because a status command
+  must work exactly when the system is broken; a broken bundle shows up
+  in the embedded `--check` output instead. The final install summary
+  now points at the command.
+
+## [V1-1] - 2026-07-29
+
 `MASTER_SETUP_VERSION` is `2026.07.29-V1-1`; `install.sh` is 4701 lines.
 Exported as `versiyon/install-V1-1.sh`. **Live-verified** by a full
 install on 2026-07-29 (19:52:55 → 19:54:45, 1m50s): 7/7 stages, zero
