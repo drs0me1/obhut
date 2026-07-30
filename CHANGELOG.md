@@ -6,9 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.30-V1-6`; `install.sh` is 5039 lines.
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-7`; `install.sh` is 5046 lines.
+**Live-verified** by a full install on 2026-07-30 (22:35:51 → 22:36:13,
+22 seconds): 7/7 stages, one expected warning (wg-easy's admin is a manual
+step), zero failed units, `--check` all-zero at exit 0.
 
 ### Fixed
+
+- **Stage 5 could not restart a rate-limited `master-webdav.service`
+  (`V1-7`).** After a failed install the unit can be sitting in
+  `failed` with its `StartLimitBurst` exhausted; `systemctl restart` then
+  returns non-zero with `Start request repeated too quickly` and the
+  install dies at Stage 5. Found on the very next re-run after `V1-6`.
+  Stage 5 now issues `systemctl reset-failed` first — idempotent, a no-op
+  on a healthy unit, and the same order reconcile's repair path already
+  used. The inconsistency between the two paths was the actual defect.
+
 
 - **Three bugs in the `V1-3` WebDAV service, all found by the first live
   install (`V1-6`, 2026-07-30).** The install failed at Stage 7; static

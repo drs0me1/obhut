@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 5039 lines (V1-6). Originally **tagged R1.0**
+architecture review; file is now 5046 lines (V1-7). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -120,6 +120,17 @@ _All Low findings resolved or closed — see Completed below._
       (missing `AF_NETLINK`, a silently-swallowed `ip` error, and all
       three 401 probes written against sftpgo's `OPTIONS` behavior rather
       than rclone's). See below.
+- [x] **Stage 5 could not restart a rate-limited `master-webdav.service`
+      (2026-07-30, `V1-7`).** Found on the re-run immediately after
+      `V1-6`. A unit left `failed` with `StartLimitBurst` exhausted (the
+      normal state after a failed install) makes `systemctl restart`
+      return non-zero with `Start request repeated too quickly`, killing
+      the install at Stage 5. Stage 5 now does `reset-failed` first, the
+      same order reconcile's repair path already used — the
+      inconsistency between the two was the real defect. **Install then
+      succeeded: 7/7 stages in 22 seconds**, `--check` all-zero at exit
+      0, and a deliberate drift test (stopping the unit) was detected as
+      `webdav_unit=1 webdav_runtime=1` and repaired by reconcile.
 - [x] **Three `V1-3` WebDAV bugs found by live testing and fixed
       (2026-07-30, `V1-6`).** All three passed static analysis; only a
       real install surfaced them. (1) `RestrictAddressFamilies` lacked

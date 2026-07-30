@@ -1,8 +1,8 @@
 # Debian Server Installer
 
-**Version: V1-6** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-7** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.30-V1-6` in its banner, log header and final summary; note this
+`2026.07.30-V1-7` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `8`. The latest tagged release is `V1-1` (the
 **M11** socket-buffer ordering fix, verified by a live install). Since

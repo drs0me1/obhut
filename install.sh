@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.30-V1-6"
+MASTER_SETUP_VERSION="2026.07.30-V1-7"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -4054,6 +4054,13 @@ echo "Container'lar başlatıldı."
 # iki durumda da güncel tanımla tek başlangıç üretir (fresh kurulumda start
 # ile eşdeğer). Docker'dan bağımsızdır; tailscaled Aşama 2'den beri ayakta.
 progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
+# reset-failed önce gelmeli. Başarısız bir önceki kurulumdan kalan unit
+# StartLimitBurst'ü tüketmiş olabilir; o durumda systemd restart'ı "Start
+# request repeated too quickly" ile reddeder ve kurulum burada ölür —
+# 2026-07-30'da tam olarak bu yaşandı. reset-failed idempotenttir ve
+# sağlıklı bir unit'te no-op'tur. Reconcile'ın onarım yolu da aynı sırayı
+# kullanır.
+systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
 
 progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
