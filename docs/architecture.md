@@ -27,7 +27,7 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 6 | 4010–4312 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4120–4152`), then the single atomic publication of the canonical bundle (see DD-14) |
 | 7 | 4313–4975 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4975 lines — `V1-9`, 2026-07-31. They
+(Line numbers as of `install.sh` 4975 lines — `V1-10`, 2026-07-31. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 

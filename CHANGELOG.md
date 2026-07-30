@@ -6,7 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-9`; `install.sh` is 4975 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-10`; `install.sh` is 4975 lines.
+**Live-verified:** timer reads `OnCalendar=*-*-* *:00/20:00` with the next
+three firings at `23:40`, `00:00`, `00:20` — evenly spaced across the hour
+boundary, which was the point of choosing 20. Install 7/7, `--check` rc 0,
+WebDAV 401/207.
+
+`V1-10` is `V1-9` plus one fix: Stage 7 asserts the timer's `OnCalendar`
+line against a literal, and that literal still said `*:00/5:00`, so the
+first `V1-9` install failed its own verification at Stage 7. Worth noting
+as a small vindication of that assertion existing — the script caught an
+incomplete change of mine that `bash -n`, `shellcheck` and the bats suite
+all passed.
 
 ### Changed
 

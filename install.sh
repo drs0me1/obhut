@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-9"
+MASTER_SETUP_VERSION="2026.07.31-V1-10"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -4496,13 +4496,13 @@ if [[ "$CURRENT_TIMEZONE" != "$TIMEZONE" ]]; then
     exit 1
 fi
 
-if ! grep -Fxq "OnCalendar=*-*-* *:00/5:00" \
+if ! grep -Fxq "OnCalendar=*-*-* *:00/20:00" \
         /etc/systemd/system/master-network-reconcile.timer ||
    ! grep -Fxq "RandomizedDelaySec=0" \
         /etc/systemd/system/master-network-reconcile.timer ||
    ! grep -Fxq "Persistent=false" \
         /etc/systemd/system/master-network-reconcile.timer ||
-   ! systemd-analyze calendar "*-*-* *:00/5:00" >/dev/null; then
+   ! systemd-analyze calendar "*-*-* *:00/20:00" >/dev/null; then
     echo "HATA: Reconcile timer beklenen deterministik zamanlamayla eşleşmiyor." >&2
     exit 1
 fi
