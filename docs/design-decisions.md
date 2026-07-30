@@ -427,12 +427,50 @@ local DNS is enabled and is part of the canonical bundle contract, while
 the WebDAV helper is unconditional. Merging them means reworking that
 contract — worth doing, but not inside this change.
 
-**Not verified live.** Static analysis only at the time of writing: no
-install has run with `rclone` serving, and Infuse has not been pointed at
-it. The specific things a live run has to confirm are that the
-`master-webdav` user can actually read the media tree through gid 1000,
-that rclone 1.60.1's WebDAV `PROPFIND`/`Range` handling satisfies Infuse,
-and that the `--status`/reconcile checks read 401 as expected.
+**Live verification (2026-07-30) — the first install failed, and found
+three real bugs.** Static analysis had passed cleanly on all of them.
+
+1. **`RestrictAddressFamilies=AF_INET AF_INET6` broke the service.**
+   `ExecStart`'s first act is `ip addr show` to find the Tailscale
+   address, and iproute2 talks to the kernel over a **netlink** socket —
+   a separate address family. Measured directly: with the two-family
+   restriction, `Cannot open netlink socket: Address family not supported
+   by protocol`; adding `AF_NETLINK`, it works. rclone itself needs only
+   AF_INET/AF_INET6.
+2. **The failure was invisible.** The wait loop had `2>/dev/null … ||
+   true` on the `ip` call, so a hard configuration error was
+   indistinguishable from "the address hasn't appeared yet". The unit
+   reported `active (running)` for the full 300-second window while
+   getting nowhere; the install only failed later, at Stage 7's listener
+   assertion. The loop now separates the two cases and reports the first
+   `ip` error immediately. (The first attempt at this used `mktemp` for
+   stderr, which itself failed under `ProtectSystem=strict` with
+   `Read-only file system` — caught in the same session. stderr is now
+   captured into a variable, which also avoids creating 300 temp files.)
+3. **Every 401 probe was wrong.** rclone deliberately exempts `OPTIONS`
+   — the WebDAV discovery preflight — from authentication and answers
+   `200`. sftpgo returned `401` there, and all three probes
+   (`webdav_direct_ok()`, Stage 7's direct check, `caddy_runtime_ok()`'s
+   vhost check) had been written against that behavior. Left as-is,
+   Stage 7 would fail every install and reconcile would classify WebDAV
+   as drifted on every cycle and restart it. They now use `PROPFIND`
+   with `Depth: 0`, a protected method — which is a **stronger** signal
+   than the original, since a 401 there proves the htpasswd is actually
+   being enforced rather than merely that something answered.
+
+   Worth stating plainly because it looked alarming mid-diagnosis:
+   authentication was never broken. Measured on the running service —
+   unauthenticated `GET` and `PROPFIND` both `401`, wrong password `401`,
+   correct password `207`, and an unauthenticated `GET` returns the body
+   `Unauthorized`. Only `OPTIONS` is open, and it discloses nothing.
+
+**Confirmed working after the fixes**, on the live host: the listener
+binds `<tailscale-ip>:65113` and nothing else (connection refused on the
+public IPv4), unauthenticated `PROPFIND` → 401, authenticated → 207, and
+the `master-webdav` user reads the 0750 media tree through its gid 1000
+membership exactly as designed. **Still unconfirmed:** Infuse itself has
+not been pointed at the service, so real-client `Range`/seek behavior and
+playback remain untested.
 
 ## Rejected Alternatives
 

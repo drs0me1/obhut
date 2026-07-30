@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4996 lines (V1-5). Originally **tagged R1.0**
+architecture review; file is now 5039 lines (V1-6). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -115,10 +115,26 @@ _All Low findings resolved or closed — see Completed below._
       systemd `LoadCredential`). Removed the last Tailnet → Docker
       firewall exception, one container, one image pin, a DNAT check,
       three port-binding checks and two Stage 7 binding assertions.
-      Reconcile now watches the unit on two signals. Static-verified
-      only; **not live-verified** — DD-20 lists the three things a live
-      run must confirm (gid-1000 read access, rclone 1.60.1 vs Infuse,
-      the 401 probes).
+      Reconcile now watches the unit on two signals. **Live-tested
+      2026-07-30 and it failed at Stage 7** — three bugs fixed in `V1-6`
+      (missing `AF_NETLINK`, a silently-swallowed `ip` error, and all
+      three 401 probes written against sftpgo's `OPTIONS` behavior rather
+      than rclone's). See below.
+- [x] **Three `V1-3` WebDAV bugs found by live testing and fixed
+      (2026-07-30, `V1-6`).** All three passed static analysis; only a
+      real install surfaced them. (1) `RestrictAddressFamilies` lacked
+      `AF_NETLINK`, which iproute2 needs, so `ExecStart` could never
+      resolve the Tailscale address and the service never bound. (2) The
+      wait loop discarded `ip`'s stderr, so that hard failure looked like
+      an ordinary wait and the unit read `active (running)` for 300
+      seconds — now the two cases are distinguished and the first error
+      is reported immediately. (3) rclone does not authenticate
+      `OPTIONS` (it answers 200 where sftpgo answered 401), so every 401
+      probe was wrong; they now use `PROPFIND` with `Depth: 0`, which
+      additionally proves the htpasswd is enforced. Authentication itself
+      was never broken. Re-verified live: listener on the Tailscale IPv4
+      only, unauthenticated 401, authenticated 207, gid-1000 media read
+      confirmed. **Still untested: Infuse as a real client.**
 - [x] **Host-side version self-reporting + `--status` summary
       (2026-07-30, `V1-2`).** `install.sh` now hashes itself at startup
       and writes `STACK_VERSION`/`STACK_SHA256` into `state.env`

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.30-V1-5"
+MASTER_SETUP_VERSION="2026.07.30-V1-6"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2890,12 +2890,19 @@ http_endpoint_responds() {
        "$code" =~ ^[1-4][0-9][0-9]$ ]]
 }
 
+# Probe OPTIONS değil PROPFIND kullanır. rclone, WebDAV keşif preflight'ı
+# olan OPTIONS'ı bilerek kimlik doğrulamadan muaf tutar ve 200 döner —
+# 2026-07-30 canlı testinde ölçüldü; eski sftpgo burada 401 dönüyordu ve
+# probe ona göre yazılmıştı. Depth: 0'lık bir PROPFIND ise korumalı yoldur:
+# 401 hem servise ulaşıldığını hem de htpasswd'nin gerçekten uygulandığını
+# kanıtlar, yani OPTIONS'tan daha güçlü bir sinyaldir.
 webdav_direct_ok() {
     local host="$1" code=""
     code="$(
         "$CURL_BIN" --noproxy "*" -sS \
             --connect-timeout 2 --max-time 4 \
-            -X OPTIONS -o /dev/null -w '%{http_code}' \
+            -X PROPFIND -H "Depth: 0" \
+            -o /dev/null -w '%{http_code}' \
             "http://$host:$WEBDAV_PORT/" 2>/dev/null || true
     )"
     [[ "$code" == "401" ]]
@@ -3185,10 +3192,12 @@ caddy_runtime_ok() {
             "http://$CURRENT_TAILSCALE_IPV4/" 2>/dev/null || true
     )"
     [[ "$body" == "ok" ]] || return 1
+    # PROPFIND, OPTIONS değil — gerekçe webdav_direct_ok()'un başında.
     webdav_code="$(
         "$CURL_BIN" --noproxy "*" -sS \
             --connect-timeout 2 --max-time 4 \
-            -X OPTIONS -H "Host: webdav.$LOCAL_DOMAIN" \
+            -X PROPFIND -H "Depth: 0" \
+            -H "Host: webdav.$LOCAL_DOMAIN" \
             -o /dev/null -w '%{http_code}' \
             "http://$CURRENT_TAILSCALE_IPV4/" 2>/dev/null || true
     )"
@@ -3884,19 +3893,46 @@ WAIT_SECONDS=300
 : "${WEBDAV_PORT:?WEBDAV_PORT tanımlı değil}"
 : "${CREDENTIALS_DIRECTORY:?systemd LoadCredential dizini yok}"
 
+# 'ip' hatası yutulmaz. Adresin henüz oluşmamış olması normaldir ve
+# beklenir; 'ip'in çalışamaması ise yapılandırma hatasıdır (örneğin unit'te
+# AF_NETLINK kapalıysa 'Cannot open netlink socket'). İkisi ayrılmazsa
+# ikincisi de 300 saniyelik bir bekleyiş gibi görünür ve unit bu süre
+# boyunca 'active (running)' raporlar — 2026-07-30'da tam olarak bu oldu,
+# hata ancak Aşama 7'de fark edildi. Bu yüzden ilk denemede stderr
+# yakalanıp bir kez raporlanır.
 TS_IPV4=""
+IP_PROBE_REPORTED=0
 for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
-    TS_IPV4="$(
-        "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
-            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
-    )"
-    [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && break
-    TS_IPV4=""
+    # stderr, geçici dosya değil değişken üzerinden toplanır: bu döngü 300
+    # kez dönebilir ve ProtectSystem=strict altında yazılabilir bir yol
+    # garanti değildir (mktemp burada 'Read-only file system' ile patlıyor).
+    IP_RC=0
+    IP_OUTPUT="$(
+        "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>&1
+    )" || IP_RC=$?
+
+    if [[ "$IP_RC" -ne 0 ]]; then
+        if [[ "$IP_PROBE_REPORTED" -eq 0 ]]; then
+            echo "HATA: tailscale0 adresi sorgulanamıyor: ${IP_OUTPUT}" >&2
+            IP_PROBE_REPORTED=1
+        fi
+    else
+        TS_IPV4="$(
+            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' \
+                <<<"$IP_OUTPUT"
+        )"
+        [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && break
+        TS_IPV4=""
+    fi
     sleep 1
 done
 
 if [[ -z "$TS_IPV4" ]]; then
-    echo "HATA: tailscale0 IPv4 adresi ${WAIT_SECONDS} saniyede oluşmadı." >&2
+    if [[ "$IP_PROBE_REPORTED" -eq 1 ]]; then
+        echo "HATA: 'ip' komutu çalışamadığı için adres hiç okunamadı." >&2
+    else
+        echo "HATA: tailscale0 IPv4 adresi ${WAIT_SECONDS} saniyede oluşmadı." >&2
+    fi
     exit 1
 fi
 
@@ -3949,7 +3985,12 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_NETLINK şart: ExecStart'ın ilk işi 'ip addr show' ile tailscale0
+# adresini bulmak ve iproute2 çekirdekle netlink soketi üzerinden konuşur.
+# Yalnız AF_INET/AF_INET6 verildiğinde 'Cannot open netlink socket' alınır
+# (2026-07-30 canlı testinde ölçüldü). rclone'un kendisi için AF_INET ve
+# AF_INET6 yeterlidir.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -4707,15 +4748,17 @@ fi
 progress_stage_note 75 "IPv4/IPv6 firewall omurgası doğrulandı"
 
 # Host WebDAV'ın (rclone) doğrudan güncel Tailscale IPv4'te dinlediğini
-# kimlik bilgisi kullanmadan doğrula. 401, servise ulaşıldığını ve Basic
-# kimlik doğrulamasının beklendiğini gösterir.
+# kimlik bilgisi kullanmadan doğrula. Korumalı bir metot (PROPFIND)
+# kullanılır: 401 hem servise ulaşıldığını hem de htpasswd'nin gerçekten
+# uygulandığını gösterir. OPTIONS bu iş için uygun değildir — rclone onu
+# kimlik doğrulamadan muaf tutar ve 200 döner (2026-07-30 canlı ölçümü).
 direct_webdav_code=""
 for _ in $(seq 1 20); do
     direct_webdav_code="$(
         curl -sS -o /dev/null -w '%{http_code}' \
             --noproxy '*' \
             --connect-timeout 2 --max-time 5 \
-            -X OPTIONS \
+            -X PROPFIND -H "Depth: 0" \
             "http://${TS_IP}:${WEBDAV_PORT}/" || true
     )"
     [[ "$direct_webdav_code" == "401" ]] && break

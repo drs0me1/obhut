@@ -6,9 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-6`; `install.sh` is 5039 lines.
+
+### Fixed
+
+- **Three bugs in the `V1-3` WebDAV service, all found by the first live
+  install (`V1-6`, 2026-07-30).** The install failed at Stage 7; static
+  analysis had passed cleanly on every one of them. See DD-20 for the
+  measurements.
+  - **`RestrictAddressFamilies` was missing `AF_NETLINK`.** `ExecStart`
+    resolves the Tailscale address with `ip addr show`, and iproute2 uses
+    a netlink socket. With only `AF_INET AF_INET6` the call failed with
+    `Cannot open netlink socket`, so the service never bound. rclone
+    itself needs only the two inet families.
+  - **That failure was silent.** The wait loop discarded `ip`'s stderr,
+    making a hard configuration error look identical to "the address
+    hasn't appeared yet" — the unit read `active (running)` for the full
+    300-second window. The loop now distinguishes the two and reports the
+    first `ip` error immediately. stderr is captured into a variable
+    rather than a temp file, since `mktemp` fails under
+    `ProtectSystem=strict`.
+  - **All three 401 probes used `OPTIONS`, which rclone does not
+    authenticate.** rclone exempts the WebDAV discovery preflight and
+    answers `200`; sftpgo had answered `401`, and the probes were written
+    against that. Uncorrected, Stage 7 would fail every install and
+    reconcile would mark WebDAV drifted every cycle. `webdav_direct_ok()`,
+    Stage 7's direct check and `caddy_runtime_ok()`'s vhost check now use
+    `PROPFIND` with `Depth: 0` — a protected method, so a 401 also proves
+    the htpasswd is enforced. **Authentication itself was never broken:**
+    unauthenticated `GET`/`PROPFIND` and wrong passwords all return 401,
+    correct credentials return 207.
+
+  Verified on the live host after the fixes: listener on
+  `<tailscale-ip>:65113` only (refused on the public IPv4),
+  unauthenticated `PROPFIND` 401, authenticated 207, and the
+  `master-webdav` user reading the 0750 media tree via gid 1000.
+
+## [V1-5] - 2026-07-30
+
 `MASTER_SETUP_VERSION` is `2026.07.30-V1-5`; `install.sh` is 4996 lines.
-**Nothing in this section has been live-verified** — static analysis only
-(`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`, 57/57 bats).
+Static analysis only.
 
 ### Changed
 
