@@ -23,7 +23,7 @@
 # and rejects each specific way it can be wrong — a missing terminal
 # DROP, a jump that isn't first, a duplicated jump, an extra rule
 # appended to DOCKER-USER, a leftover staging chain, a resurrected legacy
-# wide rule, a stale Tailscale address in the WebDAV allow.
+# wide rule, a resurrected narrow WebDAV allow (removed in V1-3).
 #
 # WHAT THEY DO NOT PROVE: that the *apply* path (apply_ipv4 /
 # apply_tailnet_guard) actually produces the rules these verifiers
@@ -103,7 +103,7 @@ load_healthy_ipv4() {
     FAKE4_filter_FORWARD=$'-P FORWARD DROP\n-A FORWARD -j DOCKER-USER\n-A FORWARD -j DOCKER-FORWARD\n-A FORWARD -j ts-forward'
     FAKE4_filter_DOCKER_FORWARD=$'-N DOCKER-FORWARD\n-A DOCKER-FORWARD -j DOCKER-CT'
     FAKE4_filter_DOCKER_USER=$'-N DOCKER-USER\n-A DOCKER-USER -j MASTER-DOCKER'
-    FAKE4_mangle_MASTER_TS_FORWARD=$'-N MASTER-TS-FORWARD\n-A MASTER-TS-FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -o eth0 -j MARK --set-xmark 0x40000/0xff0000\n-A MASTER-TS-FORWARD -i tailscale0 -o eth0 -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -p tcp -m conntrack --ctstate NEW --ctorigdst 100.64.0.5 --ctorigdstport 65113 -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -j DROP\n-A MASTER-TS-FORWARD -o tailscale0 -j DROP\n-A MASTER-TS-FORWARD -j RETURN'
+    FAKE4_mangle_MASTER_TS_FORWARD=$'-N MASTER-TS-FORWARD\n-A MASTER-TS-FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -o eth0 -j MARK --set-xmark 0x40000/0xff0000\n-A MASTER-TS-FORWARD -i tailscale0 -o eth0 -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -j DROP\n-A MASTER-TS-FORWARD -o tailscale0 -j DROP\n-A MASTER-TS-FORWARD -j RETURN'
     FAKE4_filter_MASTER_DOCKER=$'-N MASTER-DOCKER\n-A MASTER-DOCKER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n-A MASTER-DOCKER -i tailscale0 -o eth0 -j ACCEPT\n-A MASTER-DOCKER -o tailscale0 -j DROP\n-A MASTER-DOCKER -i eth0 -p tcp -m conntrack --ctstate NEW --ctorigdst 203.0.113.5 --ctorigdstport 65173 -j RETURN\n-A MASTER-DOCKER -i eth0 -p udp -m conntrack --ctstate NEW --ctorigdst 203.0.113.5 --ctorigdstport 65173 -j RETURN\n-A MASTER-DOCKER -i eth0 -p udp -m conntrack --ctstate NEW --ctorigdst 203.0.113.5 --ctorigdstport 65171 -j RETURN\n-A MASTER-DOCKER -i eth0 -j DROP\n-A MASTER-DOCKER -j RETURN'
     # Whole-table dumps, used only by no_stale_staging_chains.
     FAKE4_mangle_ALL=$'-P FORWARD ACCEPT\n-N MASTER-TS-FORWARD'
@@ -237,11 +237,12 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
-@test "check_ipv4_policy: rejects a WebDAV allow bound to a stale Tailscale address" {
-    # The scenario reconcile's address-drift path exists for: the node
-    # re-registered and got a new Tailscale IP, so the narrow WebDAV
-    # allow now names an address the host no longer holds.
-    TAILSCALE_IPV4="100.64.0.99"
+@test "check_ipv4_policy: rejects a resurrected narrow WebDAV allow" {
+    # V1-3 moved WebDAV to a host service, so the Tailnet guard chain has
+    # no exceptions left at all. An old-style --ctorigdst allow reappearing
+    # (a stale helper, a partial upgrade) must read as drift, not be
+    # tolerated as harmless.
+    FAKE4_mangle_MASTER_TS_FORWARD="${FAKE4_mangle_MASTER_TS_FORWARD/$'-A MASTER-TS-FORWARD -i tailscale0 -j DROP'/$'-A MASTER-TS-FORWARD -i tailscale0 -p tcp -m conntrack --ctstate NEW --ctorigdst 100.64.0.5 --ctorigdstport 65113 -j ACCEPT\n-A MASTER-TS-FORWARD -i tailscale0 -j DROP'}"
 
     run check_ipv4_policy
     [ "$status" -ne 0 ]
@@ -289,9 +290,12 @@ teardown() {
 }
 
 @test "check_ipv6_policy: rejects an IPv4-shaped rule set when an IPv6 WAN exists" {
-    # Guards against the two families' expected sets being conflated: the
-    # v4 set carries a WebDAV allow that must never appear in v6.
-    FAKE6_mangle_MASTER_TS_FORWARD="$FAKE4_mangle_MASTER_TS_FORWARD"
+    # Guards against the two families' expected sets being conflated. This
+    # swaps the *policy* chain, not the guard chain: since V1-3 removed the
+    # v4-only WebDAV allow, both families' guard chains are legitimately
+    # identical, and the remaining real difference is that only v4 carries
+    # the public qBittorrent/wg-easy port RETURNs and the WAN DROP.
+    FAKE6_filter_MASTER_DOCKER="$FAKE4_filter_MASTER_DOCKER"
 
     run check_ipv6_policy
     [ "$status" -ne 0 ]

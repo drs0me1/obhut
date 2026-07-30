@@ -1,13 +1,16 @@
 # Debian Server Installer
 
-**Version: V1-2** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-3** (2026-07-30) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.29-V1-2` in its banner, log header and final summary; note this
+`2026.07.30-V1-3` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `8`. The latest tagged release is `V1-1` (the
-**M11** socket-buffer ordering fix, verified by a live install); `V1-2`
-adds version/hash self-reporting on the host (`state.env`) and a
-read-only `master-network-reconcile --status` summary on top of it.
+**M11** socket-buffer ordering fix, verified by a live install). Since
+then, **unreleased and not yet live-verified**: `V1-2` added version/hash
+self-reporting on the host plus `master-network-reconcile --status`, and
+`V1-3` replaced the `sftpgo` container with `master-webdav.service`, a
+hardened host `rclone serve webdav` unit — which also removed the last
+Tailnet → Docker firewall exception (DD-20).
 
 ## Project Overview
 
@@ -42,8 +45,10 @@ and an extensive runtime verification pass at the end of the install.
   using an atomic "staging chain" swap technique so that Docker's
   `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
   default, with narrow, explicit allow rules for the public services.
-- **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr,
-  wg-easy, and SFTPGo, deployed with pinned image versions.
+- **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr
+  and wg-easy, deployed with pinned image versions, plus a hardened host
+  `rclone` WebDAV unit (`master-webdav.service`) serving the media tree
+  read-only to the Tailnet.
 - **Optional Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to
   `tailscale0` only) and Caddy (bound to the current Tailscale IPv4) can be
   provisioned for friendly `*.<domain>` names to each service.
@@ -72,11 +77,11 @@ The script runs as seven stages, gated by `progress_stage_begin`/
 
 | Stage | Purpose |
 |-------|---------|
-| 0 | Interactive prompts (downloads path, optional local DNS domain), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
+| 0 | Interactive prompts (downloads path, optional local DNS domain, WebDAV username/password), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
 | 1 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages |
 | 2 | UDP-socket-buffer sysctl, Tailscale install, interactive browser login, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
 | 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
-| 4 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` helper scripts, systemd units for Compose and reconcile |
+| 4 | Data directories, `compose.yaml` + `.env` generation, WebDAV `htpasswd`, `master-compose-ipv4` / `master-network-reconcile` / `master-webdav-serve` helper scripts, systemd units for Compose, WebDAV and reconcile |
 | 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
 | 6 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
 | 7 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
@@ -87,6 +92,8 @@ Custom systemd units created by the script:
 - `docker-tailscale-fw.service` — applies the dedicated firewall chains
 - `master-compose.service` — brings up the Compose stack once WAN/Tailscale
   addresses are ready
+- `master-webdav.service` — hardened `rclone serve webdav` unit, read-only
+  over the media tree, bound to the Tailscale IPv4 only (`V1-3`, DD-20)
 - `master-network-reconcile.service` + `.timer` — the 5-minute self-healing
   check/repair pass
 - `master-docker-netfilter-recovery.service` — last-resort Docker daemon
@@ -103,8 +110,9 @@ the canonical-bundle checksum model for reconcile).
 ## Installation Flow
 
 1. **Stage 0** collects all interactive input up front (downloads path,
-   optional local DNS domain) and prints a summary before asking for final
-   confirmation. All subsequent stages run non-interactively.
+   optional local DNS domain, and — unless a credential file already
+   exists — the WebDAV username/password) and prints a summary before
+   asking for final confirmation. All subsequent stages run non-interactively.
 2. Once confirmed, logging switches to `/var/log/master-setup/master-setup-<timestamp>-<pid>.log`;
    the terminal only shows the live progress bar from this point on.
 3. Stages 1–3 prepare the base OS, Tailscale, and Docker plus the dedicated
@@ -117,7 +125,7 @@ the canonical-bundle checksum model for reconcile).
    (`systemd-analyze verify`), and applies the firewall and starts the
    Compose stack. wg-easy comes up unconfigured on a fresh install — its
    admin account is created manually via its web UI afterward, the same
-   as Portainer's and SFTPGo's.
+   as Portainer's.
 6. Stage 6 optionally provisions `dnsmasq` + Caddy for Tailnet-only service
    names, using a fail-closed pattern (services are `mask`ed until their
    generated configuration is validated).
@@ -144,7 +152,13 @@ with pinned image tags and shared JSON-file logging (10m × 3 files).
 | `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
 | `unpackerr` | `ghcr.io/unpackerr/unpackerr` | none (no published ports) | Watches the media tree and extracts nested archives |
 | `wg-easy` | `ghcr.io/wg-easy/wg-easy` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
-| `sftpgo` | `drakkan/sftpgo` | `127.0.0.1:9981` (admin), `127.0.0.1:65113` + `<tailscale-ip>:65113` (WebDAV) | WebDAV server for Apple TV/Infuse and general file access, read-only mount of the media tree |
+
+WebDAV is **not** a container. `master-webdav.service` (a host systemd
+unit, since `V1-3`) runs `rclone serve webdav --read-only` against the
+media tree, bound to `<tailscale-ip>:65113` only — never loopback, never
+the public IPv4. Credentials come from a bcrypt `htpasswd` file created
+from a Stage 0 prompt and passed in via systemd `LoadCredential=`. See
+DD-20 for why it stopped being a container.
 
 Notes:
 
@@ -169,7 +183,7 @@ Notes:
 - `filebrowser` uses Docker-managed named volumes (`filebrowser_database`,
   `filebrowser_config`) rather than host bind mounts for its own state.
 - The downloads/media tree is bind-mounted read-write into `qbittorrent`
-  and `unpackerr`, and read-only into `sftpgo`.
+  and `unpackerr`; the host WebDAV unit reads it directly, read-only.
 - Only `wg-easy` currently defines a Compose healthcheck; the reconcile
   timer substitutes external port/HTTP/DNS probes for the rest of the
   stack.
@@ -193,10 +207,11 @@ Notes:
   Docker/LAN traffic that isn't explicitly allowed is dropped; the exit-node
   path (`tailscale0` → detected WAN interface) is the one broad ACCEPT.
 - **Narrow public exposure**: only the qBittorrent peer port and the
-  wg-easy WireGuard UDP port are DNAT'd to the public IPv4. SFTPGo's WebDAV
-  port is bound only to `127.0.0.1` and the current Tailscale IPv4 — never
-  to the public IPv4 — via a dedicated `--ctorigdst`/`--ctorigdstport`
-  mangle rule rather than a broad interface allow.
+  wg-easy WireGuard UDP port are DNAT'd to the public IPv4. WebDAV binds
+  directly to the current Tailscale IPv4 and nothing else; since `V1-3`
+  the Tailnet → Docker direction has **no** firewall exceptions at all
+  (the `--ctorigdst` WebDAV allow was the last one, and it left with the
+  container — DD-20).
 - **Dynamic addressing**: WAN IPv4 and Tailscale IPv4 can change at
   runtime (DHCP renewal, node re-registration); `master-compose-ipv4` and
   the reconcile timer keep `/root/docker/.env`, the firewall rules, and
@@ -223,9 +238,12 @@ A full, line-referenced audit is tracked in
 
 - **No script-managed secrets**: as of 2026-07-27, `install.sh` no longer
   handles any service admin credentials at all — wg-easy's unattended
-  bootstrap subsystem was removed (**M6**), so Portainer, wg-easy, and
-  SFTPGo admin accounts are all created manually by the operator through
-  each service's own web UI. `state.env`, `compose.yaml`, and `.env`
+  bootstrap subsystem was removed (**M6**), so Portainer and wg-easy
+  admin accounts are created manually by the operator through each
+  service's own web UI. The one exception since `V1-3` is the WebDAV
+  credential: Stage 0 prompts for it, and Stage 4 writes only its bcrypt
+  hash to `/etc/master-stack/webdav.htpasswd` (`root:root 0600`) — the
+  plaintext never reaches disk. `state.env`, `compose.yaml`, and `.env`
   remain `root:root 0600` for the non-secret configuration they do hold.
 - **Docker socket exposure (accepted risk, 2026-07-28)**: `portainer`
   mounts `/var/run/docker.sock` directly — a compromise of Portainer is
@@ -260,8 +278,8 @@ A full, line-referenced audit is tracked in
   leave the old device entry behind in the Tailscale admin console —
   remove it manually there; `install.sh` has no way to control this from
   its side (see **L2** in `SECURITY_REVIEW.md`).
-- **First-run admin setup isn't automated**: Portainer, wg-easy, and
-  SFTPGo all require the operator to create their admin account through
+- **First-run admin setup isn't automated**: Portainer and wg-easy both
+  require the operator to create their admin account through
   each service's own web UI on first access (the install summary reminds
   you of this and lists the URLs). Do this promptly — until it's done,
   anyone else who can already reach the tailnet could complete that
@@ -273,7 +291,8 @@ A full, line-referenced audit is tracked in
   helper and the ~1300-line reconcile helper — lives in a single
   `install.sh`, embedded as heredocs. These embedded scripts are not
   covered by running `shellcheck`/`bash -n` against `install.sh` itself.
-- **No installation profiles**: the six-service Compose bundle is fixed;
+- **No installation profiles**: the five-container Compose bundle plus the
+  host WebDAV unit is fixed;
   there is no way to opt out of an individual service (e.g. skip Portainer
   to avoid exposing `docker.sock`, or skip the torrent stack). See
   [`docs/profiles.md`](docs/profiles.md).

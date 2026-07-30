@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-3`; `install.sh` is 4988 lines.
+**Nothing in this section has been live-verified** — static analysis only
+(`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`, 57/57 bats).
+
+### Changed
+
+- **WebDAV is now a host service, not a container (`V1-3`, DD-20).** The
+  `sftpgo` container was removed and replaced by `master-webdav.service`,
+  running `rclone serve webdav $DOWNLOADS_PATH/media --read-only` bound to
+  the Tailscale IPv4 only. Consequences:
+  - **The last Tailnet → Docker firewall exception is gone.** The narrow
+    `--ctorigdst $TAILSCALE_IPV4 --ctorigdstport 65113` ACCEPT in the
+    mangle guard chain existed solely for the sftpgo container; a host
+    service receives traffic on the INPUT path the guard chain never
+    inspects. That direction now has zero exceptions.
+  - Stage 0 prompts for a WebDAV username and password (skipped when
+    `/etc/master-stack/webdav.htpasswd` already exists, so re-runs keep
+    the existing credential). Only the bcrypt hash is written; the
+    plaintext never touches disk. The service reads it via systemd
+    `LoadCredential=`, so the file stays `root:root 0600`.
+  - The unit runs as a dedicated `master-webdav` system user holding gid
+    1000 to read the 0750 media tree, under `ProtectSystem=strict`,
+    `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `NoNewPrivileges` and
+    `RestrictAddressFamilies` — a tighter sandbox than the `:ro` bind
+    mount it replaces.
+  - `rclone` and `apache2-utils` (for `htpasswd` only) join the Stage 1
+    base packages. The `sftpgo.<domain>` DNS name and Caddy vhost are
+    gone; `webdav.<domain>` now proxies to `{$TS_IPV4}:65113` instead of
+    loopback, because Debian's rclone (1.60.1) accepts a single `--addr`.
+  - Reconcile monitors it on two independent signals — unit active, and a
+    real `OPTIONS` 401 against the current Tailscale IPv4 — with restart
+    repair, unconditionally (not gated on the local-DNS option).
+  - **The user's motivating symptom is not addressed by this.** The
+    change was requested to fix intermittent Infuse playback stalls
+    attributed to the container layer; the more likely causes are DERP
+    relay fallback or `wireguard-go` throughput, and DD-20 records that
+    plainly so the question stays open.
+
+  Two implementation notes worth carrying forward. Copying Caddy's
+  `ExecStartPre` + `EnvironmentFile` pattern would have been **wrong
+  here**: systemd reads environment files before any `Exec*` runs, so on
+  first start `${TS_IPV4}` would expand to empty and `--addr :65113`
+  would become a wildcard bind on the public IPv4. Caddy escapes this
+  only because its binary re-reads the file via `--envfile`. The address
+  is therefore resolved inside `ExecStart` by `master-webdav-serve`.
+  Separately, `--config /dev/null` is passed explicitly so rclone does
+  not search `$HOME/.config`, which does not exist under `ProtectHome`.
+
+- **Test fixtures updated for the removed firewall rule.** The healthy
+  IPv4 policy fixture no longer contains the WebDAV allow. Two tests
+  changed meaning rather than being deleted: the stale-address test
+  became "rejects a resurrected narrow WebDAV allow" (drift detection for
+  a rule that should no longer exist anywhere), and the v4/v6 conflation
+  test now swaps the *policy* chain instead of the guard chain, because
+  with the WebDAV rule gone both families' guard chains are legitimately
+  identical and the remaining real difference is the public-port RETURNs.
+
+## [V1-2] - 2026-07-30
+
 `MASTER_SETUP_VERSION` is `2026.07.29-V1-2`; `install.sh` is 4792 lines.
 
 ### Added

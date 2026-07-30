@@ -28,6 +28,7 @@ SCRIPTS=(
     "master-network-reconcile:RECONCILE_SCRIPT"
     "master-docker-netfilter-recovery:CORE_RECOVERY_SCRIPT"
     "caddy-tailnet-env:CADDY_ENV_SCRIPT"
+    "master-webdav-serve:WEBDAV_SERVE_SCRIPT"
 )
 
 # SC2016 fires on every single-quoted awk program passed to `awk`/`gawk`

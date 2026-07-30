@@ -348,6 +348,92 @@ comments plus structural inference from the 2026-07-27 audit
   presumptuous to implement without the user's explicit, scoped
   instruction on what's safe to delete).
 
+### DD-20: WebDAV is a hardened host service (rclone), not a container (2026-07-30)
+
+The `sftpgo` container was removed and replaced by
+`master-webdav.service`, a systemd unit running `rclone serve webdav
+$DOWNLOADS_PATH/media --read-only`, bound to the Tailscale IPv4 only.
+
+**Why, honestly.** The user's stated motivation was intermittent playback
+stalls on Apple TV/Infuse, attributed to the container layer. That
+attribution is probably wrong and was said so at the time: on the direct
+path (`TS_IP:65113`) Docker's DNAT happens in the kernel and
+`docker-proxy` is not involved — Docker's own OUTPUT rule excludes
+loopback (`! -d 127.0.0.0/8`), so only the `webdav.<domain>` Caddy path
+went through a userspace relay. The likelier causes of intermittent
+stalls are Tailscale falling back to a DERP relay, `wireguard-go`'s
+single-core userspace throughput, or the send-side socket buffer. **None
+of those are fixed by this change**, and if the stalls persist, that is
+where to look next — not here.
+
+What the change *is* justified by, independently of throughput:
+
+- **The security win is the real one.** The narrow `--ctorigdst
+  $TAILSCALE_IPV4 --ctorigdstport 65113` ACCEPT in the mangle guard chain
+  was the **only** Tailnet → Docker exception in an otherwise fail-closed
+  policy. A host service receives its traffic on the INPUT path, which
+  the guard chain never inspects (the same reason Caddy and dnsmasq need
+  no exception), so that rule is simply gone. The Tailnet → Docker
+  direction now has zero exceptions.
+- **Less to keep alive.** One container, one image pin, one DNAT rule,
+  three port-binding checks, two `assert_docker_binding` calls and the
+  `--ctorigdst` install-time assertion all disappeared.
+- **Sandboxing did not regress.** The container gave a `:ro` bind mount.
+  The unit gives `ProtectSystem=strict` + `ProtectHome` + `PrivateTmp` +
+  `PrivateDevices` + `NoNewPrivileges` + `RestrictAddressFamilies`, plus
+  `rclone --read-only`, running as a dedicated `master-webdav` system
+  user that holds gid 1000 purely to read the 0750 media tree.
+
+**Why rclone and not Apache/mod_dav or a host SFTPGo.** rclone is in
+Debian trixie (1.60.1), is a single binary with no configuration file,
+and takes everything as flags. Apache would deliver higher raw throughput
+via `sendfile` and could natively `Listen` on two addresses, but the
+bottleneck here is `wireguard-go`, not the file server — the extra
+package tree and config surface buys nothing. Host SFTPGo was rejected
+outright: it is not in Debian, so it would add an external apt repo or a
+GitHub release to a project that pins everything, and it keeps all of
+SFTPGo's complexity while removing only the veth hop.
+
+**Two constraints that shaped the implementation.**
+
+1. *Single `--addr`.* Debian's rclone is 1.60.1; repeatable `--addr` came
+   later. The service therefore binds the Tailscale IPv4 **only**, and
+   Caddy's `webdav.<domain>` vhost proxies to `{$TS_IPV4}:65113` rather
+   than loopback. Binding `0.0.0.0` and relying on a firewall rule was
+   rejected: a specific bind is a stronger primitive than a rule that can
+   drift.
+2. *`EnvironmentFile` is read before `ExecStartPre`.* The obvious design —
+   copy Caddy's `caddy-tailnet-env` `ExecStartPre` writing
+   `/run/.../tailscale.env`, consumed via `EnvironmentFile=` — is **broken
+   for this service**, and was caught in review before it shipped. systemd
+   loads environment files when the unit starts, before any `Exec*`
+   command runs, so on a first start the file does not exist yet,
+   `${TS_IPV4}` expands to empty, and `--addr :65113` becomes a **wildcard
+   bind — the public IPv4**. Caddy escapes this only because the `caddy`
+   binary re-reads the file itself via `--envfile`; rclone has no
+   equivalent. The fix is to resolve the address *inside* `ExecStart`:
+   `master-webdav-serve` waits for `tailscale0`, then `exec`s rclone. This
+   removes the failure class rather than working around it.
+
+`rclone --config /dev/null` is passed explicitly: the service uses no
+remotes, and without it rclone searches `$HOME/.config`, which does not
+exist under `ProtectHome=yes` — behavior there varies by version, so it
+is pinned rather than left to chance.
+
+**Candidate cleanup, not done:** `master-webdav-serve` and
+`caddy-tailnet-env` now contain the same tailscale0-address wait loop.
+They were left separate because `caddy-tailnet-env` is generated only when
+local DNS is enabled and is part of the canonical bundle contract, while
+the WebDAV helper is unconditional. Merging them means reworking that
+contract — worth doing, but not inside this change.
+
+**Not verified live.** Static analysis only at the time of writing: no
+install has run with `rclone` serving, and Infuse has not been pointed at
+it. The specific things a live run has to confirm are that the
+`master-webdav` user can actually read the media tree through gid 1000,
+that rclone 1.60.1's WebDAV `PROPFIND`/`Range` handling satisfies Infuse,
+and that the `--status`/reconcile checks read 401 as expected.
+
 ## Rejected Alternatives
 
 - **Using `nftables` directly instead of `iptables`/`ip6tables`:** not

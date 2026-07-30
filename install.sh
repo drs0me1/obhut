@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.29-V1-2"
+MASTER_SETUP_VERSION="2026.07.30-V1-3"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -529,17 +529,16 @@ export DEBIAN_FRONTEND=noninteractive
 TIMEZONE="Europe/Berlin"
 WG_PUBLIC_PORT="65171"
 QBIT_PUBLIC_PORT="65173"
-# SFTPGo WebDAV portu. WG/qBittorrent portlarıyla aynı kategoride; daha önce
-# yalnız elle yazılıyordu ve dosyada onlarca yerde tekrar ediyordu.
+# WebDAV portu (host rclone servisi, Tailscale IPv4). WG/qBittorrent
+# portlarıyla aynı kategoride; daha önce yalnız elle yazılıyordu ve
+# dosyada onlarca yerde tekrar ediyordu.
 WEBDAV_PORT="65113"
 
 # 20-23 Temmuz 2026 tarihlerinde doğrulanan production sürümleri.
-# SFTPGo, 25 Temmuz 2026'da güvenlik yamaları içeren v2.7.5'e yükseltildi.
 PORTAINER_IMAGE="portainer/portainer-ce:2.39.5"
 FILEBROWSER_IMAGE="filebrowser/filebrowser:v2.63.18"
 QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.13-ls469"
 WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3.0"
-SFTPGO_IMAGE="drakkan/sftpgo:v2.7.5"
 UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15.2"
 
 echo "=================================================="
@@ -668,6 +667,47 @@ if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
 fi
 echo
 
+# WebDAV (Apple TV/Infuse) kimlik bilgisi. Parola hiçbir aşamada düz metin
+# olarak diske yazılmaz; Aşama 4 yalnız bcrypt hash'ini
+# /etc/master-stack/webdav.htpasswd'ye yazar (bkz. C2'deki "betik sır
+# taşımaz" ilkesi — burada taşınan tek şey kullanıcının kendi belirlediği
+# parolanın hash'idir). Mevcut htpasswd varsa idempotency gereği korunur ve
+# soru hiç sorulmaz; sıfırlamak için dosyayı silip betiği yeniden çalıştırın.
+WEBDAV_HTPASSWD_FILE="/etc/master-stack/webdav.htpasswd"
+WEBDAV_SETUP_CREDENTIALS=0
+WEBDAV_USER=""
+WEBDAV_PASSWORD=""
+if [[ -s "$WEBDAV_HTPASSWD_FILE" ]]; then
+    echo "Mevcut WebDAV kimlik bilgisi korunuyor: $WEBDAV_HTPASSWD_FILE"
+    echo "Sıfırlamak için bu dosyayı silip betiği yeniden çalıştırın."
+else
+    WEBDAV_SETUP_CREDENTIALS=1
+    echo "WebDAV (Apple TV/Infuse) erişimi için kimlik bilgisi belirleyin."
+    read -rp "WebDAV kullanıcı adı [infuse]: " WEBDAV_USER_INPUT </dev/tty
+    WEBDAV_USER="${WEBDAV_USER_INPUT:-infuse}"
+    if [[ ! "$WEBDAV_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]]; then
+        echo "HATA: Kullanıcı adı küçük harfle başlamalı ve yalnız" >&2
+        echo "a-z, 0-9, nokta, alt çizgi, tire içermelidir (en çok 32)." >&2
+        exit 1
+    fi
+    while :; do
+        read -rsp "WebDAV parolası (en az 8 karakter): " WEBDAV_PASSWORD </dev/tty
+        echo
+        if (( ${#WEBDAV_PASSWORD} < 8 )); then
+            echo "Parola en az 8 karakter olmalı; yeniden deneyin."
+            continue
+        fi
+        read -rsp "Parola (tekrar): " WEBDAV_PASSWORD_CONFIRM </dev/tty
+        echo
+        if [[ "$WEBDAV_PASSWORD" == "$WEBDAV_PASSWORD_CONFIRM" ]]; then
+            break
+        fi
+        echo "Parolalar eşleşmedi; yeniden deneyin."
+    done
+    unset WEBDAV_PASSWORD_CONFIRM
+fi
+echo
+
 echo "--- Özet ---"
 echo "İşletim sistemi   : ${PRETTY_NAME}"
 echo "Tailscale girişi   : mevcut bağlantı korunur; yoksa tarayıcıda etkileşimli giriş"
@@ -677,6 +717,11 @@ echo "Public IPv4        : varsayılan rota üzerinden otomatik tespit edilecek"
 echo "qBittorrent portu  : ${QBIT_PUBLIC_PORT}/tcp + udp (yalnız public IPv4)"
 echo "wg-easy portu      : ${WG_PUBLIC_PORT}/udp (host ve container içinde aynı)"
 echo "wg-easy admin      : ilk web erişiminde elle oluşturulacak (otomatik değil)"
+if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
+    echo "WebDAV kullanıcısı : $WEBDAV_USER (yeni; host rclone servisi, salt okunur)"
+else
+    echo "WebDAV kullanıcısı : mevcut htpasswd korunuyor"
+fi
 if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
     echo "Tailnet DNS        : .$LOCAL_DOMAIN (dnsmasq + Caddy)"
 else
@@ -799,9 +844,12 @@ apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" \
     -o Dpkg::Options::="--force-confold" \
     full-upgrade -y
 progress_stage_note 80 "Temel ağ ve sistem araçları kuruluyor"
+# rclone: host WebDAV servisi (master-webdav.service, Aşama 4/5).
+# apache2-utils: yalnız 'htpasswd' aracı için — WebDAV kimlik dosyasının
+# bcrypt hash'ini üretir; Apache'nin kendisi kurulmaz.
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
-    iptables coreutils util-linux diffutils jq
+    iptables coreutils util-linux diffutils jq rclone apache2-utils
 
 echo "İşletim sistemi: ${PRETTY_NAME}, zaman dilimi: $TIMEZONE"
 progress_stage_note 95 "Temel sistem doğrulanıyor"
@@ -1472,21 +1520,11 @@ apply_tailnet_guard() {
             -i "$TS_IF" -o "$wan_if" -j ACCEPT
     fi
 
-    # Apple TV/Infuse için yalnız SFTPGo WebDAV'ın Tailscale IPv4 bind'ına
-    # gelen 65113/tcp akışını Docker'a geçir. --ctorigdst* eşleşmeleri DNAT
-    # öncesindeki özgün hedefi denetler; diğer Tailnet -> Docker/LAN akışları
-    # aşağıdaki genel DROP kuralında kapalı kalır.
-    if [[ "$family" == "4" ]]; then
-        "$bin" -w 5 -t mangle -A "$staging_chain" \
-            -i "$TS_IF" -p tcp \
-            -m conntrack --ctstate NEW \
-            --ctorigdst "$TAILSCALE_IPV4" --ctorigdstport 65113 \
-            -j ACCEPT
-    fi
-
-    # Caddy/dnsmasq host INPUT yolundadır ve bu kurallardan etkilenmez.
-    # Yukarıdaki dar WebDAV izni dışında Tailnet -> Docker/LAN ve
-    # Docker/LAN/WAN -> Tailnet yeni akışlarını kapat.
+    # WebDAV host servisi (master-webdav) Caddy/dnsmasq gibi host INPUT
+    # yolundadır ve bu kurallardan etkilenmez; eski sftpgo container'ının
+    # gerektirdiği dar --ctorigdst 65113 istisnası V1-3'te kaldırıldı
+    # (DD-20). Tailnet -> Docker/LAN ve Docker/LAN/WAN -> Tailnet yeni
+    # akışları artık istisnasız kapalı.
     "$bin" -w 5 -t mangle -A "$staging_chain" -i "$TS_IF" -j DROP
     "$bin" -w 5 -t mangle -A "$staging_chain" -o "$TS_IF" -j DROP
     "$bin" -w 5 -t mangle -A "$staging_chain" -j RETURN
@@ -1645,7 +1683,6 @@ check_ipv4_policy() {
         "-A $TS_GUARD_CHAIN -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
         "-A $TS_GUARD_CHAIN -i $TS_IF -o $WAN4_IF -j MARK --set-xmark 0x40000/0xff0000"
         "-A $TS_GUARD_CHAIN -i $TS_IF -o $WAN4_IF -j ACCEPT"
-        "-A $TS_GUARD_CHAIN -i $TS_IF -p tcp -m conntrack --ctstate NEW --ctorigdst $TAILSCALE_IPV4 --ctorigdstport 65113 -j ACCEPT"
         "-A $TS_GUARD_CHAIN -i $TS_IF -j DROP"
         "-A $TS_GUARD_CHAIN -o $TS_IF -j DROP"
         "-A $TS_GUARD_CHAIN -j RETURN"
@@ -1810,8 +1847,8 @@ set_unit_file_mode /etc/systemd/system/docker.service.d/99-tailscale-forward.con
 install -d -m 0755 /etc/systemd/system/tailscaled.service.d
 cat >/etc/systemd/system/tailscaled.service.d/98-master-stack.conf <<'TS_STACK_DROPIN'
 [Unit]
-Wants=docker-tailscale-fw.service master-compose.service
-Before=docker-tailscale-fw.service master-compose.service
+Wants=docker-tailscale-fw.service master-compose.service master-webdav.service
+Before=docker-tailscale-fw.service master-compose.service master-webdav.service
 TS_STACK_DROPIN
 set_unit_file_mode /etc/systemd/system/tailscaled.service.d/98-master-stack.conf
 
@@ -1873,8 +1910,6 @@ else
     echo "UYARI: Host çekirdeği WireGuard arayüzü oluşturamıyor; wg-easy başlatılamayabilir." >&2
 fi
 install -d -m 0750 -o 1000 -g 1000 \
-    /data/sftpgo/storage /data/sftpgo/config
-install -d -m 0750 -o 1000 -g 1000 \
     "$DOWNLOADS_PATH/media" \
     "$DOWNLOADS_PATH/media/movies" \
     "$DOWNLOADS_PATH/media/series" \
@@ -1882,6 +1917,25 @@ install -d -m 0750 -o 1000 -g 1000 \
 install -d -m 0700 -o root -g root /root/docker
 install -d -m 0700 -o root -g root /etc/master-stack
 install -d -m 0755 -o root -g root /usr/local/share/master-stack
+
+# Host WebDAV servisi (rclone) medya ağacını uid 1000'in konteyner içi
+# rolünün host karşılığı olarak okur: ağaç 0750 1000:1000 olduğundan,
+# servise gid 1000'e üyelik verilir — DynamicUser'ın rastgele uid'i ağacı
+# okuyamazdı, dosya izinlerini genişletmek (M2'nin kaldırdığı türden bir
+# recursive chown/chmod) ise seçenek değil. gid 1000'in bir grup kaydı
+# yoksa (taze imajda normal kullanıcı yaratılmamışsa olağan) kayıt burada
+# açılır; varsa mevcut adı kullanılır.
+MEDIA_GROUP="$(getent group 1000 | cut -d: -f1 || true)"
+if [[ -z "$MEDIA_GROUP" ]]; then
+    groupadd -g 1000 mediadata
+    MEDIA_GROUP="mediadata"
+fi
+if ! id -u master-webdav >/dev/null 2>&1; then
+    useradd --system --home-dir /nonexistent --no-create-home \
+        --shell /usr/sbin/nologin master-webdav
+fi
+# usermod -aG idempotenttir; yeniden çalıştırmada üyelik korunur.
+usermod -aG "$MEDIA_GROUP" master-webdav
 
 # wg-easy admin/peer kurulumu artık elle yapılıyor (unattended bootstrap yok);
 # script'in mevcut peer config'lerine hangi endpoint'in gömülü olduğuna dair
@@ -1910,6 +1964,21 @@ DOWNLOADS_PATH=$DOWNLOADS_PATH
 EOF
 chown root:root /etc/master-stack/state.env
 chmod 0600 /etc/master-stack/state.env
+
+# WebDAV htpasswd yalnız Aşama 0'da yeni kimlik bilgisi alındıysa yazılır;
+# aksi hâlde mevcut dosya olduğu gibi korunur. Düz metin parola diske hiç
+# değmez: bcrypt hash doğrudan htpasswd -i -B ile üretilir ve değişken bu
+# noktada silinir. Dosyayı servis LoadCredential ile okur (bkz. unit);
+# bu yüzden root:root 0600 yeterlidir, servis kullanıcısına izin gerekmez.
+if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
+    WEBDAV_HTPASSWD_TMP="$(mktemp /etc/master-stack/.webdav.htpasswd.XXXXXX)"
+    printf '%s' "$WEBDAV_PASSWORD" |
+        htpasswd -i -B "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_USER"
+    unset WEBDAV_PASSWORD
+    chown root:root "$WEBDAV_HTPASSWD_TMP"
+    chmod 0600 "$WEBDAV_HTPASSWD_TMP"
+    mv -f "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_HTPASSWD_FILE"
+fi
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
 # Canonical bundle yalnızca tek bir atomik küme hâlinde yayınlanır —
@@ -2126,25 +2195,6 @@ services:
       wg:
         ipv4_address: 10.42.42.42
         ipv6_address: fdcc:ad94:bacf:61a3::2a
-
-  sftpgo:
-    image: ${SFTPGO_IMAGE}
-    container_name: sftpgo
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      TZ: "${TIMEZONE}"
-      SFTPGO_SFTPD__BINDINGS__0__PORT: "0"
-      SFTPGO_WEBDAVD__BINDINGS__0__PORT: "${WEBDAV_PORT}"
-    ports:
-      - "127.0.0.1:9981:8080/tcp"
-      - "127.0.0.1:${WEBDAV_PORT}:${WEBDAV_PORT}/tcp"
-      # Apple TV/Infuse için Caddy ve özel DNS'ten bağımsız Tailnet WebDAV.
-      - "\${TAILSCALE_IPV4}:${WEBDAV_PORT}:${WEBDAV_PORT}/tcp"
-    volumes:
-      - /data/sftpgo/storage:/srv/sftpgo
-      - /data/sftpgo/config:/var/lib/sftpgo
-      - ${DOWNLOADS_PATH}/media:/srv/sftpgo/data/downloads:ro
 
 networks:
   wg:
@@ -2395,7 +2445,7 @@ if [[ "$MODE" == "--status" ]]; then
     echo
     echo "Container durumları:"
     for status_container in \
-        filebrowser portainer qbittorrent sftpgo unpackerr wg-easy; do
+        filebrowser portainer qbittorrent unpackerr wg-easy; do
         status_container_state="$(
             "$DOCKER_BIN" inspect -f \
                 '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
@@ -2403,6 +2453,9 @@ if [[ "$MODE" == "--status" ]]; then
         )"
         printf '  %-12s %s\n' "$status_container" "$status_container_state"
     done
+    printf '  %-12s %s (host servisi)\n' "webdav" "$(
+        "$SYSTEMCTL_BIN" is-active master-webdav.service 2>/dev/null || true
+    )"
     echo
     status_failed_units="$(
         "$SYSTEMCTL_BIN" --failed --no-legend --plain 2>/dev/null |
@@ -2488,6 +2541,7 @@ for managed_unit in \
     tailscaled.service \
     docker-tailscale-fw.service \
     master-compose.service \
+    master-webdav.service \
     tailscale-udp-gro.service \
     caddy.service \
     dnsmasq.service; do
@@ -2762,9 +2816,7 @@ docker_host_netfilter_ok() {
         docker_dnat_rule_exists qbittorrent udp "$QBIT_PUBLIC_PORT" \
             "$CURRENT_PUBLIC_IPV4" &&
         docker_dnat_rule_exists wg-easy udp "$WG_PUBLIC_PORT" \
-            "$CURRENT_PUBLIC_IPV4" &&
-        docker_dnat_rule_exists sftpgo tcp "$WEBDAV_PORT" \
-            "$CURRENT_TAILSCALE_IPV4"
+            "$CURRENT_PUBLIC_IPV4"
 }
 
 wg_container_netfilter_ok() {
@@ -2884,7 +2936,7 @@ check_compose_runtime() {
     local wg_port="" setup_location=""
     local runtime_ok=0
     local -a expected_containers=(
-        filebrowser portainer qbittorrent sftpgo unpackerr wg-easy
+        filebrowser portainer qbittorrent unpackerr wg-easy
     )
 
     COMPOSE_RESTART_TARGETS=()
@@ -2927,14 +2979,6 @@ check_compose_runtime() {
     port_binding_exists wg-easy "$WG_PUBLIC_PORT/udp" \
         "$CURRENT_PUBLIC_IPV4:$WG_PUBLIC_PORT" ||
         { add_compose_restart_target wg-easy; runtime_ok=1; }
-    port_binding_exists sftpgo 8080/tcp "127.0.0.1:9981" ||
-        { add_compose_restart_target sftpgo; runtime_ok=1; }
-    port_binding_exists sftpgo "$WEBDAV_PORT/tcp" \
-        "127.0.0.1:$WEBDAV_PORT" ||
-        { add_compose_restart_target sftpgo; runtime_ok=1; }
-    port_binding_exists sftpgo "$WEBDAV_PORT/tcp" \
-        "$CURRENT_TAILSCALE_IPV4:$WEBDAV_PORT" ||
-        { add_compose_restart_target sftpgo; runtime_ok=1; }
 
     if ! http_endpoint_responds https://127.0.0.1:9443/ 1; then
         add_compose_restart_target portainer
@@ -2950,15 +2994,6 @@ check_compose_runtime() {
     fi
     if ! qbittorrent_peer_listener_ok; then
         add_compose_restart_target qbittorrent
-        runtime_ok=1
-    fi
-    if ! http_endpoint_responds http://127.0.0.1:9981/; then
-        add_compose_restart_target sftpgo
-        runtime_ok=1
-    fi
-    if ! webdav_direct_ok 127.0.0.1 ||
-       ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4"; then
-        add_compose_restart_target sftpgo
         runtime_ok=1
     fi
     if ! http_endpoint_responds http://127.0.0.1:51821/; then
@@ -3225,6 +3260,19 @@ if ! compose_file_ok; then
     echo "Otomatik geri yükleme yapılmaz. Kalıcı olması gereken bir değişiklikse install.sh'e işleyin." >&2
 fi
 
+# Host WebDAV (rclone) DNS opsiyonundan bağımsız, koşulsuz kuruludur.
+# İki bağımsız sinyal: unit aktifliği ve Tailscale IPv4 üzerinden gerçek
+# 401 cevabı (unit aktif görünürken yanlış IP'ye bağlanmış olabilir —
+# adres değişimi tam da bunu üretir).
+WEBDAV_UNIT_INACTIVE=0
+WEBDAV_RUNTIME_DRIFTED=0
+"$SYSTEMCTL_BIN" is-active --quiet master-webdav.service ||
+    WEBDAV_UNIT_INACTIVE=1
+if ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4"; then
+    sleep 1
+    webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" || WEBDAV_RUNTIME_DRIFTED=1
+fi
+
 CADDY_INACTIVE=0
 DNSMASQ_INACTIVE=0
 CADDY_RUNTIME_DRIFTED=0
@@ -3301,6 +3349,8 @@ all_critical_state_healthy() {
        "$COMPOSE_RUNTIME_DRIFTED" -eq 0 &&
        "$CONFIG_DRIFTED" -eq 0 &&
        "$CANONICAL_CONFIG_INVALID" -eq 0 &&
+       "$WEBDAV_UNIT_INACTIVE" -eq 0 &&
+       "$WEBDAV_RUNTIME_DRIFTED" -eq 0 &&
        "$CADDY_INACTIVE" -eq 0 &&
        "$CADDY_RUNTIME_DRIFTED" -eq 0 &&
        "$DNSMASQ_INACTIVE" -eq 0 &&
@@ -3315,6 +3365,7 @@ if [[ "$MODE" == "--check" ]]; then
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
         "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
+        "webdav_unit=$WEBDAV_UNIT_INACTIVE webdav_runtime=$WEBDAV_RUNTIME_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
         "gro_unit=$GRO_SERVICE_INACTIVE gro_flags=$GRO_FLAGS_DRIFTED"
@@ -3390,6 +3441,8 @@ fi
     echo "Yönetilen Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."
 [[ "$CANONICAL_CONFIG_INVALID" -eq 0 ]] ||
     echo "HATA: Canonical DNS/Caddy yapılandırması geçersiz; çalışan daemon'lar korunacak." >&2
+[[ "$WEBDAV_UNIT_INACTIVE" -eq 0 && "$WEBDAV_RUNTIME_DRIFTED" -eq 0 ]] ||
+    echo "Host WebDAV (master-webdav) active/işlev durumu sapmış; yeniden başlatılacak."
 [[ "$CADDY_INACTIVE" -eq 0 && "$CADDY_RUNTIME_DRIFTED" -eq 0 ]] ||
     echo "Caddy active/işlev durumu sapmış; yeniden başlatılacak."
 [[ "$DNSMASQ_INACTIVE" -eq 0 && "$DNSMASQ_RUNTIME_DRIFTED" -eq 0 ]] ||
@@ -3578,6 +3631,35 @@ if [[ "$LOCAL_DNS_ENABLED" == "1" &&
     fi
 fi
 
+# Host WebDAV onarımı Caddy/dnsmasq kalıbını izler: reset-failed + restart
+# + işlevsel postcondition. Tailscale adresi değiştiyse unit aktif görünse
+# bile eski IP'ye bağlı kalmıştır; restart, ExecStartPre'nin güncel IPv4'ü
+# yazmasını sağlar. rclone Type=simple olduğundan restart soketin dinlemeye
+# geçmesini beklemez; postcondition bu yüzden kısa bir tekrar penceresi
+# kullanır.
+if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
+      "$WEBDAV_UNIT_INACTIVE" -eq 1 ||
+      "$WEBDAV_RUNTIME_DRIFTED" -eq 1 ]]; then
+    "$SYSTEMCTL_BIN" reset-failed master-webdav.service >/dev/null 2>&1 || true
+    if ! "$SYSTEMCTL_BIN" restart master-webdav.service; then
+        echo "HATA: master-webdav.service yeniden başlatılamadı." >&2
+        RECOVERY_FAILED=1
+    else
+        WEBDAV_REPAIRED=0
+        for _ in $(seq 1 10); do
+            if webdav_direct_ok "$CURRENT_TAILSCALE_IPV4"; then
+                WEBDAV_REPAIRED=1
+                break
+            fi
+            sleep 1
+        done
+        if [[ "$WEBDAV_REPAIRED" -ne 1 ]]; then
+            echo "HATA: Host WebDAV işlevsel postcondition başarısız." >&2
+            RECOVERY_FAILED=1
+        fi
+    fi
+fi
+
 if [[ "$LOCAL_DNS_ENABLED" == "1" ]] &&
    [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$DNS_CONFIG_DRIFTED" -eq 1 ||
@@ -3639,6 +3721,7 @@ if ! forwarding_ok ||
    ! grep -Fxq "PUBLIC_IPV4=$CURRENT_PUBLIC_IPV4" "$ENV_FILE" ||
    ! grep -Fxq "TAILSCALE_IPV4=$CURRENT_TAILSCALE_IPV4" "$ENV_FILE" ||
    ! check_compose_runtime ||
+   ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" ||
    ! canonical_bundle_ok ||
    ! canonical_runtime_configs_valid ||
    ! config_files_ok ||
@@ -3771,6 +3854,108 @@ WantedBy=timers.target
 RECONCILE_TIMER
 set_unit_file_mode /etc/systemd/system/master-network-reconcile.timer
 
+# ---- Host WebDAV (rclone) — sftpgo container'ının yerini alır (DD-20) ----
+# Medya ağacını Apple TV/Infuse'a doğrudan Tailscale IPv4 üzerinden sunar.
+# Trafik artık FORWARD/DNAT değil, Caddy/dnsmasq gibi host INPUT yolundan
+# akar; guard zincirindeki tek Tailnet->Docker istisnası bu sayede kalktı.
+# Trixie'nin rclone'u (1.60) tek --addr kabul eder; bu yüzden yalnız
+# Tailscale IPv4'e bağlanılır ve Caddy'nin webdav vhost'u loopback yerine
+# {$TS_IPV4}'e proxy'ler. 0.0.0.0'a bağlanmak public IPv4'e açılmak
+# demek olurdu; spesifik bind, firewall kuralından daha güvenli ilkeldir.
+
+# Adresi bulup rclone'u exec eden tek helper. Caddy'nin ExecStartPre +
+# env-file kalıbı burada BİLİNÇLİ olarak kullanılmıyor: systemd
+# EnvironmentFile'ı unit başlarken, ExecStartPre çalışmadan ÖNCE okur, yani
+# ilk başlangıçta dosya henüz yokken $TS_IPV4 boş kalır ve '--addr :65113'
+# wildcard bind'a — public IPv4'e açılmaya — dönüşürdü. Caddy bundan
+# --envfile bayrağıyla kaçınır; rclone'da böyle bir bayrak yok. Adresi
+# ExecStart'ın kendi içinde çözmek bu sınıfı tümden ortadan kaldırır.
+cat >/usr/local/sbin/master-webdav-serve <<'WEBDAV_SERVE_SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+IP_BIN="$(command -v ip)"
+AWK_BIN="$(command -v awk)"
+RCLONE_BIN="$(command -v rclone)"
+WAIT_SECONDS=300
+
+: "${MEDIA_DIR:?MEDIA_DIR tanımlı değil}"
+: "${WEBDAV_PORT:?WEBDAV_PORT tanımlı değil}"
+: "${CREDENTIALS_DIRECTORY:?systemd LoadCredential dizini yok}"
+
+TS_IPV4=""
+for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
+    TS_IPV4="$(
+        "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
+            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
+    )"
+    [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && break
+    TS_IPV4=""
+    sleep 1
+done
+
+if [[ -z "$TS_IPV4" ]]; then
+    echo "HATA: tailscale0 IPv4 adresi ${WAIT_SECONDS} saniyede oluşmadı." >&2
+    exit 1
+fi
+
+echo "WebDAV dinleniyor: ${TS_IPV4}:${WEBDAV_PORT} -> ${MEDIA_DIR} (salt okunur)"
+# --config /dev/null: bu servis hiçbir rclone remote'u kullanmaz, yalnız
+# yerel bir dizini sunar. Açıkça verilmezse rclone $HOME/.config altında
+# bir yapılandırma arar; ProtectSystem=strict + ProtectHome=yes altında bu
+# yol yoktur ve davranış rclone sürümüne göre değişir. /dev/null,
+# PrivateDevices=yes'in sağladığı minimal /dev içinde her zaman vardır.
+exec "$RCLONE_BIN" serve webdav "$MEDIA_DIR" \
+    --config /dev/null \
+    --addr "${TS_IPV4}:${WEBDAV_PORT}" \
+    --htpasswd "$CREDENTIALS_DIRECTORY/htpasswd" \
+    --read-only
+WEBDAV_SERVE_SCRIPT
+chmod 0755 /usr/local/sbin/master-webdav-serve
+
+# Parola dosyası LoadCredential ile içeri alınır: dosya root:root 0600
+# kalır, servis kullanıcısının kendisine okuma izni gerekmez ve rclone
+# hash'leri $CREDENTIALS_DIRECTORY (%d) altından okur. Servis, medya
+# ağacının 0750 1000:1000 iznine gid 1000 üyeliğiyle erişen kalıcı
+# 'master-webdav' sistem kullanıcısı olarak koşar (yukarıda oluşturuldu).
+cat >/etc/systemd/system/master-webdav.service <<WEBDAV_SYSTEMD
+[Unit]
+Description=Salt okunur Tailnet WebDAV servisi (rclone, medya ağacı)
+Wants=tailscaled.service
+After=network-online.target tailscaled.service
+# Tailscaled restart'ında birlikte durur; tailscaled'in 98-master-stack
+# drop-in'indeki Wants ile güncel Tailscale IPv4'ü alarak geri başlar.
+PartOf=tailscaled.service
+OnFailure=master-network-reconcile.service
+# ExecStartPre Tailscale IPv4 için en çok 300 saniye bekleyebilir; iki uzun
+# denemeden sonra pencere kapanır, sonraki reconcile periyodu yeniden dener.
+StartLimitIntervalSec=900
+StartLimitBurst=2
+
+[Service]
+User=master-webdav
+Environment=MEDIA_DIR=${DOWNLOADS_PATH}/media
+Environment=WEBDAV_PORT=${WEBDAV_PORT}
+LoadCredential=htpasswd:/etc/master-stack/webdav.htpasswd
+ExecStart=/usr/local/sbin/master-webdav-serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=330s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+WEBDAV_SYSTEMD
+set_unit_file_mode /etc/systemd/system/master-webdav.service
+
 progress_stage_note 95 "Compose ve systemd tanımları son kontrolden geçiriliyor"
 echo "Compose dosyası: /root/docker/compose.yaml"
 echo "Sabit image sürümleri:"
@@ -3795,10 +3980,12 @@ systemd-analyze verify \
     tailscale-udp-gro.service \
     docker-tailscale-fw.service \
     master-compose.service \
+    master-webdav.service \
     master-docker-netfilter-recovery.service \
     master-network-reconcile.service \
     master-network-reconcile.timer
 systemctl enable master-compose.service
+systemctl enable master-webdav.service
 
 progress_stage_note 75 "Firewall uygulanıp Compose stack başlatılıyor"
 # Re-run: daemon.json değiştiyse Docker restart'ı buraya, tüm helper/unit ve
@@ -3821,6 +4008,12 @@ else
     systemctl start master-compose.service
 fi
 echo "Container'lar başlatıldı."
+
+# Yeniden çalıştırmada unit tanımı/htpasswd değişmiş olabilir; restart her
+# iki durumda da güncel tanımla tek başlangıç üretir (fresh kurulumda start
+# ile eşdeğer). Docker'dan bağımsızdır; tailscaled Aşama 2'den beri ayakta.
+progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
+systemctl restart master-webdav.service
 
 progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
 
@@ -3897,7 +4090,6 @@ interface-name=portainer.$LOCAL_DOMAIN,tailscale0/4
 interface-name=file.$LOCAL_DOMAIN,tailscale0/4
 interface-name=qbit.$LOCAL_DOMAIN,tailscale0/4
 interface-name=wg.$LOCAL_DOMAIN,tailscale0/4
-interface-name=sftpgo.$LOCAL_DOMAIN,tailscale0/4
 interface-name=webdav.$LOCAL_DOMAIN,tailscale0/4
 interface-name=health.$LOCAL_DOMAIN,tailscale0/4
 EOF
@@ -4045,12 +4237,10 @@ http://wg.${LOCAL_DOMAIN} {
 	reverse_proxy 127.0.0.1:51821
 }
 
-http://sftpgo.${LOCAL_DOMAIN} {
-	reverse_proxy 127.0.0.1:9981
-}
-
 http://webdav.${LOCAL_DOMAIN} {
-	reverse_proxy 127.0.0.1:${WEBDAV_PORT}
+	# Host rclone servisi trixie rclone'unun tek --addr sınırı nedeniyle
+	# yalnız Tailscale IPv4'te dinler; loopback hedefi yoktur.
+	reverse_proxy {\$TS_IPV4}:${WEBDAV_PORT}
 }
 
 http://health.${LOCAL_DOMAIN} {
@@ -4171,7 +4361,7 @@ if [[ "$ENV_PUBLIC_IPV4" != "$PUBLIC_IPV4" || "$ENV_TAILSCALE_IPV4" != "$TS_IP" 
     exit 1
 fi
 
-for unit in tailscaled.service docker.service docker-tailscale-fw.service master-compose.service master-network-reconcile.timer; do
+for unit in tailscaled.service docker.service docker-tailscale-fw.service master-compose.service master-webdav.service master-network-reconcile.timer; do
     if ! systemctl is-active --quiet "$unit"; then
         echo "HATA: Zorunlu servis aktif değil: $unit" >&2
         systemctl --no-pager --full status "$unit" || true
@@ -4228,9 +4418,16 @@ assert_unit_property_excludes() {
 }
 
 assert_unit_property_contains tailscaled.service Wants \
-    docker-tailscale-fw.service master-compose.service
+    docker-tailscale-fw.service master-compose.service master-webdav.service
 assert_unit_property_contains docker.service Wants \
     docker-tailscale-fw.service master-compose.service
+
+assert_unit_property_contains master-webdav.service PartOf \
+    tailscaled.service
+assert_unit_property_contains master-webdav.service After \
+    tailscaled.service
+assert_unit_property_contains master-webdav.service OnFailure \
+    master-network-reconcile.service
 
 assert_unit_property_contains docker-tailscale-fw.service Requires \
     docker.service tailscaled.service
@@ -4394,7 +4591,7 @@ fi
 echo
 echo "--- Dinlenen portlar ---"
 ss -lntup | grep -E \
-    ":(53|80|9443|7113|13087|${QBIT_PUBLIC_PORT}|${WG_PUBLIC_PORT}|51821|9981|${WEBDAV_PORT})([[:space:]]|$)" || true
+    ":(53|80|9443|7113|13087|${QBIT_PUBLIC_PORT}|${WG_PUBLIC_PORT}|51821|${WEBDAV_PORT})([[:space:]]|$)" || true
 
 assert_docker_binding() {
     local container="$1" container_port="$2" expected_binding="$3" bindings=""
@@ -4410,18 +4607,18 @@ assert_docker_binding() {
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/tcp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLIC_PORT}"
-assert_docker_binding sftpgo "${WEBDAV_PORT}/tcp" "127.0.0.1:${WEBDAV_PORT}"
-assert_docker_binding sftpgo "${WEBDAV_PORT}/tcp" "${TS_IP}:${WEBDAV_PORT}"
 
-# Runtime publish kayıtlarına ek olarak dar firewall izinlerinin güncel özgün
-# hedef adreslerini kullandığını doğrula. Böylece yerel curl testinin atladığı
-# tailscale0 -> Docker FORWARD yolu da kurulum sırasında denetlenmiş olur.
-if ! iptables -w 5 -t mangle -C MASTER-TS-FORWARD \
-        -i tailscale0 -p tcp \
-        -m conntrack --ctstate NEW \
-        --ctorigdst "$TS_IP" --ctorigdstport "$WEBDAV_PORT" \
-        -j ACCEPT; then
-    echo "HATA: Güncel Tailscale IPv4 için dar WebDAV firewall izni bulunamadı." >&2
+# WebDAV artık host servisi: Docker publish kaydı ve mangle guard
+# istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
+# host soket tablosundan doğrula — Tailscale IPv4'te var, public IPv4'te
+# yok. 401 içerik testi aşağıda ayrıca yapılır.
+if ! ss -lnt "( sport = :${WEBDAV_PORT} )" | grep -q "${TS_IP}:${WEBDAV_PORT}"; then
+    echo "HATA: Host WebDAV dinleyicisi ${TS_IP}:${WEBDAV_PORT} adresinde bulunamadı." >&2
+    exit 1
+fi
+if ss -lnt "( sport = :${WEBDAV_PORT} )" |
+    grep -qE "(${PUBLIC_IPV4}|0\.0\.0\.0|\*):${WEBDAV_PORT}"; then
+    echo "HATA: Host WebDAV dinleyicisi public/wildcard adrese açılmış." >&2
     exit 1
 fi
 
@@ -4509,8 +4706,8 @@ fi
 /usr/local/sbin/docker-tailscale-fw --check
 progress_stage_note 75 "IPv4/IPv6 firewall omurgası doğrulandı"
 
-# SFTPGo WebDAV'ın doğrudan güncel Tailscale IPv4'e publish edildiğini
-# kimlik bilgisi kullanmadan doğrula. 401, SFTPGo'ya ulaşıldığını ve Basic
+# Host WebDAV'ın (rclone) doğrudan güncel Tailscale IPv4'te dinlediğini
+# kimlik bilgisi kullanmadan doğrula. 401, servise ulaşıldığını ve Basic
 # kimlik doğrulamasının beklendiğini gösterir.
 direct_webdav_code=""
 for _ in $(seq 1 20); do
@@ -4543,7 +4740,7 @@ if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
     done
     systemctl --no-pager --full status dnsmasq caddy
 
-    for name in portainer file qbit wg sftpgo webdav health; do
+    for name in portainer file qbit wg webdav health; do
         answer="$(dig +short A "${name}.${LOCAL_DOMAIN}" @"${TS_IP}" 2>/dev/null | head -n 1 || true)"
         if [[ "$answer" != "$TS_IP" ]]; then
             echo "HATA: ${name}.${LOCAL_DOMAIN} beklenen A kaydını döndürmedi." >&2
@@ -4694,14 +4891,13 @@ echo "Public IPv4 portları:"
 echo "  qBittorrent peer: ${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}/tcp+udp"
 echo "  wg-easy Docker  : ${PUBLIC_IPV4}:${WG_PUBLIC_PORT}/udp"
 echo
-echo "UYARI: Portainer, wg-easy ve SFTPGo yönetici hesaplarını script"
-echo "oluşturmaz; her birinin ilk web erişiminde admin hesabını hemen siz"
-echo "oluşturun. Bu servisler yalnız 127.0.0.1/tailnet üzerinden erişilebilir"
-echo "olsa da, oluşturulmamış bir admin hesabı tailnet'teki başka bir"
-echo "cihazın önce erişip kurulumu tamamlamasına açık kalır."
+echo "UYARI: Portainer ve wg-easy yönetici hesaplarını script oluşturmaz;"
+echo "her birinin ilk web erişiminde admin hesabını hemen siz oluşturun."
+echo "Bu servisler yalnız 127.0.0.1/tailnet üzerinden erişilebilir olsa da,"
+echo "oluşturulmamış bir admin hesabı tailnet'teki başka bir cihazın önce"
+echo "erişip kurulumu tamamlamasına açık kalır."
 echo "  Portainer: https://127.0.0.1:9443$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://portainer.%s' "$LOCAL_DOMAIN")"
 echo "  wg-easy  : http://127.0.0.1:51821$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://wg.%s' "$LOCAL_DOMAIN")"
-echo "  SFTPGo   : http://127.0.0.1:9981$([[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya http://sftpgo.%s' "$LOCAL_DOMAIN")"
 echo
 echo "ELLE AYAR: qBittorrent soket alma buffer'ı."
 echo "Bu betik qBittorrent'in yapılandırmasını yönetmez, dolayısıyla taze bir"
@@ -4718,9 +4914,10 @@ echo "  Port    : ${WEBDAV_PORT}"
 echo "  Protokol: WebDAV (HTTP)"
 echo "  Wi-Fi DNS ayarı: Otomatik"
 echo
-echo "SFTPGo WebDAV kullanıcı yapılandırması:"
-echo "  Container medya yolu: /srv/sftpgo/data/downloads"
-echo "  Host karşılığı      : ${DOWNLOADS_PATH}/media (salt okunur)"
+echo "WebDAV (host rclone servisi):"
+echo "  Sunulan dizin  : ${DOWNLOADS_PATH}/media (salt okunur)"
+echo "  Kimlik dosyası : /etc/master-stack/webdav.htpasswd (bcrypt)"
+echo "  Sıfırlama      : dosyayı silip install.sh'i yeniden çalıştırın"
 echo
 echo "Filebrowser yalnız şu dizini görür:"
 echo "  ${DOWNLOADS_PATH}/media -> /srv/media"
@@ -4756,7 +4953,6 @@ if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
     echo "  http://file.${LOCAL_DOMAIN}"
     echo "  http://qbit.${LOCAL_DOMAIN}"
     echo "  http://wg.${LOCAL_DOMAIN}"
-    echo "  http://sftpgo.${LOCAL_DOMAIN}"
     echo "  http://webdav.${LOCAL_DOMAIN}"
     echo
     echo "Tailscale Admin -> DNS -> Nameservers -> Custom:"

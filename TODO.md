@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4792 lines (V1-2). Originally **tagged R1.0**
+architecture review; file is now 4988 lines (V1-3). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -69,6 +69,18 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **sftpgo container → host `rclone` WebDAV service (2026-07-30,
+      `V1-3`, DD-20).** Second item of the 2026-07-30 structural plan.
+      Replaced the `sftpgo` container with `master-webdav.service`
+      (`rclone serve webdav --read-only`, bound to the Tailscale IPv4
+      only, credentials from a Stage 0 prompt via bcrypt `htpasswd` +
+      systemd `LoadCredential`). Removed the last Tailnet → Docker
+      firewall exception, one container, one image pin, a DNAT check,
+      three port-binding checks and two Stage 7 binding assertions.
+      Reconcile now watches the unit on two signals. Static-verified
+      only; **not live-verified** — DD-20 lists the three things a live
+      run must confirm (gid-1000 read access, rclone 1.60.1 vs Infuse,
+      the 401 probes).
 - [x] **Host-side version self-reporting + `--status` summary
       (2026-07-30, `V1-2`).** `install.sh` now hashes itself at startup
       and writes `STACK_VERSION`/`STACK_SHA256` into `state.env`

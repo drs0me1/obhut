@@ -18,16 +18,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 554–698 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 699–812 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 813–1102 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `910–985`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1103–1830 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1208–1763`) and its systemd unit |
-| 4 | 1831–3782 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2178–2219`) and `master-network-reconcile` (`2259–3661`) helper scripts, `master-docker-netfilter-recovery` (`3665–3714`), systemd units for Compose and reconcile |
-| 5 | 3783–3830 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 3831–4147 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper at `3854–3886`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4148–4792 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 554–743 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 744–860 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 861–1150 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `958–1033`), interactive login, exit-node + stateful filtering + netfilter configuration |
+| 3 | 1151–1867 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1256–1800`) and its systemd unit |
+| 4 | 1868–3966 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2228–2269`) and `master-network-reconcile` (`2309–3743`) helper scripts, `master-docker-netfilter-recovery` (`3747–3796`), systemd units for Compose and reconcile |
+| 5 | 3967–4022 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4023–4336 | Optional Tailnet-only `dnsmasq` + Caddy provisioning (`caddy-tailnet-env` helper at `4134–4166`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4337–4988 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4792 lines — `V1-2`, 2026-07-30. They
+(Line numbers as of `install.sh` 4988 lines — `V1-3`, 2026-07-30. They
 drift with every change; regenerate with `grep -n '^progress_stage_begin'`
 rather than trusting them after a batch of edits.)
 
@@ -38,7 +38,7 @@ terminal shows only a compact progress bar for the remainder of the run.
 Note: as of 2026-07-27, wg-easy's admin/peer configuration is intentionally
 **not** automated — the script only provisions the container, port, volume,
 network, and firewall rules. The user creates the admin account through
-wg-easy's own web UI on first access, the same as Portainer and SFTPGo. See
+wg-easy's own web UI on first access, the same as Portainer. See
 `docs/design-decisions.md` (DD-7) for the history of this decision.
 
 ### Systemd unit graph
@@ -63,6 +63,9 @@ master-network-reconcile.timer ──(every 5 min)──> master-network-reconci
 master-network-reconcile.service ──After──────────> docker.service, tailscaled.service
                                   ──(may start)────> master-docker-netfilter-recovery.service
 
+master-webdav.service      ──Wants/After/PartOf──> tailscaled.service
+                           ──OnFailure──────────────> master-network-reconcile.service
+
 dnsmasq.service / caddy.service (optional) ──Wants/After──> tailscaled.service
                                             ──OnFailure───> master-network-reconcile.service
 caddy.service ──PartOf──> tailscaled.service
@@ -80,7 +83,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1197-1752`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1256-1800`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -99,14 +102,18 @@ Default posture is fail-closed: any WAN → Tailnet or Tailnet → Docker/LAN
 traffic not explicitly allowed is dropped. The one broad ACCEPT is the
 exit-node path itself (`tailscale0` → detected WAN interface, marked and
 accepted in both the mangle and filter tables so Tailscale's own
-`ts-postrouting` MASQUERADE still applies). Only three narrow allows exist
+`ts-postrouting` MASQUERADE still applies). Only two narrow allows exist
 beyond that:
 
 - qBittorrent's peer port (TCP+UDP) DNAT'd to the public IPv4
 - wg-easy's WireGuard UDP port DNAT'd to the public IPv4
-- SFTPGo's WebDAV TCP port, allowed only for packets whose *original*
-  destination (via `--ctorigdst`) is the current Tailscale IPv4 — never
-  the public IPv4
+
+Both are WAN → Docker. As of `V1-3` the **Tailnet → Docker direction has
+no exceptions at all**: the one that existed — SFTPGo's WebDAV TCP port,
+allowed only for packets whose original destination (via `--ctorigdst`)
+was the current Tailscale IPv4 — disappeared when WebDAV moved to a host
+service, whose traffic arrives on the INPUT path the guard chain never
+sees. See DD-20.
 
 ### Network topology
 
@@ -125,9 +132,12 @@ beyond that:
 ### Service inventory
 
 See `README.md` → **Docker Services** for the full table of images, ports,
-and volumes. All six services (Portainer, Filebrowser, qBittorrent,
-Unpackerr, wg-easy, SFTPGo) are defined in one generated
-`/root/docker/compose.yaml` with pinned image tags.
+and volumes. All five containers (Portainer, Filebrowser, qBittorrent,
+Unpackerr, wg-easy) are defined in one generated
+`/root/docker/compose.yaml` with pinned image tags. WebDAV is the sixth
+service but is **not** a container: since `V1-3` it is `master-webdav.service`,
+a hardened host unit running `rclone serve webdav` read-only against
+`$DOWNLOADS_PATH/media`, bound to the Tailscale IPv4 only (DD-20).
 
 `qbittorrent` and `unpackerr` (2026-07-28, **M1**) run with `cap_drop:
 [ALL]` and `security_opt: no-new-privileges`. `unpackerr` (already
@@ -145,7 +155,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2259-3661`, ~1400
+`master-network-reconcile` (generated at `install.sh:2309-3743`, ~1435
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -161,8 +171,17 @@ never auto-repaired, since deleting user data isn't a safe automated
 action), Tailscale preferences and netfilter backbone, the dedicated
 firewall chains (via `docker-tailscale-fw --check`), Docker's own
 DNAT/FORWARD rules, Compose container health and port bindings, the
-canonical config-file bundle (state/dnsmasq/Caddy), and — if local DNS is
-enabled — live DNS and Caddy HTTP responses. It also guards UDP GRO
+canonical config-file bundle (state/dnsmasq/Caddy), **the host WebDAV
+service** (added `V1-3`, unconditional — unlike Caddy/dnsmasq it does not
+depend on the local-DNS option), and — if local DNS is enabled — live DNS
+and Caddy HTTP responses. WebDAV is checked on two independent signals,
+the same shape as UDP GRO's: whether `master-webdav.service` is active,
+and whether a real `OPTIONS` request to the *current* Tailscale IPv4
+returns 401. The second catches the case the first cannot — the unit
+reading `active` while `rclone` is still bound to a Tailscale address the
+host no longer holds, which is exactly what a node re-registration
+produces. Repair is `systemctl restart`, whose `ExecStart` re-resolves the
+address. It also guards UDP GRO
 (added 2026-07-29) on two independent signals: whether
 `tailscale-udp-gro.service` is active, and whether the `ethtool` flags on
 the IPv4 WAN interface are actually set. The unit is `Restart=no`, so a
@@ -204,6 +223,7 @@ the final install summary so operators aren't surprised by it.
 | `/etc/sysctl.d/99-master-stack-netbuf.conf` | `root:root 0644` | UDP socket buffer ceilings (`net.core.rmem_max`/`wmem_max`), floored at 16 MiB and never lowered. Written **before** `apt-get install -y tailscale`, because the package's postinst starts `tailscaled` and `wireguard-go` requests its buffer once at socket-open time (M11). Not reconciled — a `sysctl.d` file survives reboots by construction, so the file on disk is the guarantee (DD-18) |
 | `/usr/local/share/master-stack/` | `root:root 0755` | Canonical copies of state/`compose.yaml`/dnsmasq/Caddy config + `SHA256SUMS` manifest, used by reconcile to detect drift. Published as one atomic set at the end of Stage 6 (DD-14). `compose.yaml` is compared and **reported** on drift but never auto-restored (M10), unlike the dnsmasq/Caddy files |
 | `/root/docker/compose.yaml`, `/root/docker/.env` | `root:root 0600` | The Compose stack definition and its dynamic address values |
+| `/etc/master-stack/webdav.htpasswd` | `root:root 0600` | WebDAV Basic-auth credential (bcrypt) for `master-webdav.service`, generated in Stage 4 from the Stage 0 prompt. The service reads it via systemd `LoadCredential=`, so the file never needs to be readable by the service user. Deliberately **not** part of the canonical bundle: reconcile must not revert or recreate a credential. Preserved across re-runs — delete it and re-run to set a new one |
 
 wg-easy no longer has any dedicated bootstrap/secret files (removed
 2026-07-27, see `docs/design-decisions.md` DD-7) — its admin/peer
