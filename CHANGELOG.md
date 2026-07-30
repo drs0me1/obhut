@@ -6,11 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.30-V1-3`; `install.sh` is 4988 lines.
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-4`; `install.sh` is 5015 lines.
 **Nothing in this section has been live-verified** — static analysis only
 (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`, 57/57 bats).
 
 ### Changed
+
+- **The final install summary now spells out both WebDAV access paths
+  (`V1-4`).** The previous two short blocks left it ambiguous which
+  address to type into Infuse. The summary now names the username (read
+  back from the `htpasswd` file, so it is correct on a re-run that
+  preserved an existing credential), gives the full direct URL
+  (`http://<tailscale-ip>:65113`, marked as the recommended one for Apple
+  TV), the Caddy name path (`http://webdav.<domain>`, shown only when
+  local DNS is enabled) with its trade-off stated, and — the part most
+  likely to trip someone up — that `127.0.0.1:65113` is **no longer
+  listening** at all, since the old sftpgo container published there and
+  the rclone service does not.
 
 - **WebDAV is now a host service, not a container (`V1-3`, DD-20).** The
   `sftpgo` container was removed and replaced by `master-webdav.service`,
