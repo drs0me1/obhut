@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.30-V1-4"
+MASTER_SETUP_VERSION="2026.07.30-V1-5"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -4918,33 +4918,14 @@ echo "WebDAV (host rclone servisi, salt okunur):"
 echo "  Sunulan dizin : ${DOWNLOADS_PATH}/media"
 echo "  Kullanıcı adı : ${WEBDAV_SUMMARY_USER:-<htpasswd okunamadı>}"
 echo "  Parola        : Aşama 0'da belirlediğiniz parola"
-echo
-echo "  Erişim yolu 1 — DOĞRUDAN (Apple TV / Infuse için önerilen):"
-echo "    Adres    : ${TS_IP}"
-echo "    Port     : ${WEBDAV_PORT}"
-echo "    Protokol : WebDAV (HTTP, HTTPS değil)"
-echo "    Tam URL  : http://${TS_IP}:${WEBDAV_PORT}"
-echo "    Apple TV'de Wi-Fi DNS ayarı 'Otomatik' kalabilir; bu yol özel"
-echo "    DNS'e ihtiyaç duymaz."
-if [[ "$SETUP_LOCAL_DNS" -eq 1 ]]; then
-    echo
-    echo "  Erişim yolu 2 — İSİMLE (Caddy üzerinden, port yazmadan):"
-    echo "    Tam URL  : http://webdav.${LOCAL_DOMAIN}"
-    echo "    80 portundan Caddy'ye gider, o da içeriden"
-    echo "    ${TS_IP}:${WEBDAV_PORT}'e proxy'ler. Tailscale IP'si değişse bile"
-    echo "    adres sabit kalır; karşılığında araya bir proxy girer."
-    echo "    Bu yol için istemcinin DNS'i ${TS_IP} olmalıdır."
-fi
-echo
-echo "  NOT: Servis YALNIZ ${TS_IP} adresine bağlıdır. 127.0.0.1:${WEBDAV_PORT}"
-echo "  artık dinlenmiyor (eski sftpgo container'ı dinliyordu); sunucu"
-echo "  üzerinden test ederken de Tailscale IP'sini kullanın."
-echo "  Tailscale IP'si değişirse reconcile servisi 5 dakika içinde yeni"
-echo "  adrese yeniden bağlar; yalnız 1. yoldaki istemci adresini elle"
-echo "  güncellemeniz gerekir."
-echo
-echo "  Kimlik dosyası : /etc/master-stack/webdav.htpasswd (bcrypt)"
-echo "  Sıfırlama      : dosyayı silip install.sh'i yeniden çalıştırın"
+echo "  Adres         : ${TS_IP}$(
+    [[ "$SETUP_LOCAL_DNS" -eq 1 ]] && printf ' veya webdav.%s' "$LOCAL_DOMAIN"
+)"
+echo "  Port          : ${WEBDAV_PORT}"
+echo "  Protokol      : WebDAV (HTTP, HTTPS değil)"
+echo "  Tam URL       : http://${TS_IP}:${WEBDAV_PORT}"
+echo "  Kimlik dosyası: /etc/master-stack/webdav.htpasswd (bcrypt)"
+echo "  Sıfırlama     : dosyayı silip install.sh'i yeniden çalıştırın"
 echo
 echo "Filebrowser yalnız şu dizini görür:"
 echo "  ${DOWNLOADS_PATH}/media -> /srv/media"

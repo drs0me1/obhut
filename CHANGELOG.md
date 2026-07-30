@@ -6,23 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.30-V1-4`; `install.sh` is 5015 lines.
+`MASTER_SETUP_VERSION` is `2026.07.30-V1-5`; `install.sh` is 4996 lines.
 **Nothing in this section has been live-verified** — static analysis only
 (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`, 57/57 bats).
 
 ### Changed
 
-- **The final install summary now spells out both WebDAV access paths
-  (`V1-4`).** The previous two short blocks left it ambiguous which
-  address to type into Infuse. The summary now names the username (read
-  back from the `htpasswd` file, so it is correct on a re-run that
-  preserved an existing credential), gives the full direct URL
-  (`http://<tailscale-ip>:65113`, marked as the recommended one for Apple
-  TV), the Caddy name path (`http://webdav.<domain>`, shown only when
-  local DNS is enabled) with its trade-off stated, and — the part most
-  likely to trip someone up — that `127.0.0.1:65113` is **no longer
-  listening** at all, since the old sftpgo container published there and
-  the rclone service does not.
+- **The final install summary's WebDAV block was reworked (`V1-4`, then
+  trimmed in `V1-5`).** The `V1-3` version left it ambiguous which
+  address to type into Infuse: it printed the Tailscale IP and port in
+  one block and the served directory in another, with no full URL.
+  `V1-4` added the username, the full URL, both access paths and their
+  trade-offs; the user judged that over-long, so `V1-5` cut it back to
+  the fields actually needed at the end of an install:
+
+  ```
+  WebDAV (host rclone servisi, salt okunur):
+    Sunulan dizin : /downloads/media
+    Kullanıcı adı : infuse
+    Parola        : Aşama 0'da belirlediğiniz parola
+    Adres         : 100.x.y.z veya webdav.<domain>
+    Port          : 65113
+    Protokol      : WebDAV (HTTP, HTTPS değil)
+    Tam URL       : http://100.x.y.z:65113
+    Kimlik dosyası: /etc/master-stack/webdav.htpasswd (bcrypt)
+    Sıfırlama     : dosyayı silip install.sh'i yeniden çalıştırın
+  ```
+
+  The address line appends `veya webdav.<domain>` only when local DNS is
+  enabled, using whichever domain the operator chose. The username is
+  read back from the `htpasswd` file rather than from `$WEBDAV_USER`,
+  which is empty on a re-run that preserved an existing credential. The
+  printed IP has always been the live one — Stage 7 re-derives `TS_IP`
+  from `tailscale0` before the summary — and the explanatory material
+  (Caddy path trade-off, the removed `127.0.0.1:65113` binding,
+  reconcile's re-bind on address change) now lives in DD-20 and
+  `docs/architecture.md` rather than the console output.
 
 - **WebDAV is now a host service, not a container (`V1-3`, DD-20).** The
   `sftpgo` container was removed and replaced by `master-webdav.service`,

@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 5015 lines (V1-4). Originally **tagged R1.0**
+architecture review; file is now 4996 lines (V1-5). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -69,12 +69,19 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
-- [x] **Final summary spells out both WebDAV access paths (2026-07-30,
-      `V1-4`).** Follow-up to `V1-3` after the user pointed out the
-      summary did not make clear which address to enter in Infuse. Now
-      names the username (read back from `htpasswd`), the full direct URL
-      as the recommended path, the Caddy name path with its trade-off,
-      and that `127.0.0.1:65113` no longer listens.
+- [x] **WebDAV block in the final summary reworked (2026-07-30, `V1-4`
+      then `V1-5`).** `V1-4` was a follow-up to `V1-3` after the user
+      pointed out the summary did not make clear which address to enter
+      in Infuse; it added the username (read back from `htpasswd`, so it
+      is right on a re-run that kept an existing credential), the full
+      URL, both access paths and several caveats. The user then judged it
+      over-long, so `V1-5` cut it to the fields actually needed —
+      directory, username, address (`<tailscale-ip>` plus
+      `webdav.<domain>` when local DNS is on, using whatever domain was
+      chosen), port, protocol, full URL, credential file, reset. The
+      explanatory paragraphs about the Caddy path, the removed loopback
+      binding and reconcile's re-bind behavior live in DD-20 and
+      `docs/architecture.md` instead.
 - [x] **sftpgo container → host `rclone` WebDAV service (2026-07-30,
       `V1-3`, DD-20).** Second item of the 2026-07-30 structural plan.
       Replaced the `sftpgo` container with `master-webdav.service`
