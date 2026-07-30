@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 `MASTER_SETUP_VERSION` is `2026.07.30-V1-8`; `install.sh` is 4956 lines.
+**Live-verified** by a full install on 2026-07-30 (23:01:37 → 23:01:58,
+21 seconds): 7/7 stages, zero failed units, `--check` all-zero at exit 0.
+The schema 8 → 9 migration was exercised in place — the host went in with
+`STACK_SCHEMA=8` + `LOCAL_DNS_ENABLED=1` and came out with `9` and the key
+gone, canonical manifest still eight entries. Two drift tests passed:
+appending a line to `/etc/caddy/Caddyfile` was detected as
+`config=1 caddy_config=1` and reverted, and the WebDAV checks stayed
+green throughout.
 
 ### Changed
 
