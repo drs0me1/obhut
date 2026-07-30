@@ -69,6 +69,31 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Application-state backup/restore — ✅ CLOSED (2026-07-30, won't
+      do).** Proposed as item 3 of the 2026-07-30 structural plan and
+      independently recommended as a priority by an external review;
+      **the user declined it after seeing the design.** Recorded here so
+      it is not re-proposed at each review — only a change in the user's
+      workflow should reopen it.
+
+      The design that was scoped and rejected, for reference: a
+      **pull** model (`ssh nrm 'master-stack-backup --stdout' > file`
+      from the Mac) so the disposable host holds no destination
+      credential and needs nothing reinstalled after a reimage;
+      consistency via `flock master-stack.lock` + `systemctl stop
+      master-compose` around the snapshot (~30s downtime) because
+      Portainer/Filebrowser/qBittorrent all use SQLite and a live `tar`
+      risks a silently torn database; scope limited to application state
+      — `/data/{portainer,qbittorrent,wg-easy}`, the two Filebrowser
+      Docker volumes and `/etc/master-stack/webdav.htpasswd` — with
+      `state.env`, `compose.yaml` and `.env` **deliberately excluded**,
+      since they carry the old host's public and Tailscale addresses and
+      restoring them would inject stale values into the canonical bundle
+      and fight reconcile. Two caveats that would have needed stating in
+      the docs: the archive contains wg-easy's WireGuard private key, so
+      it is itself a secret; and restoring wg-easy recovers peers and
+      keys but not the endpoint IP baked into existing client configs, so
+      a public-IP change still breaks clients regardless.
 - [x] **WebDAV block in the final summary reworked (2026-07-30, `V1-4`
       then `V1-5`).** `V1-4` was a follow-up to `V1-3` after the user
       pointed out the summary did not make clear which address to enter
