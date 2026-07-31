@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 **Live-verified:** 25s install, `STACK_SCHEMA=10`, five digests recorded,
 `--check` rc 0, zero failed units, containers untouched.
 
+**Reboot-verified (2026-07-31):** the host returned in 56 seconds with all
+nine units active unaided, five containers up, `rclone` re-bound to the
+Tailscale IPv4 by itself, the firewall rebuilt to exactly two narrow public
+allows with a single `DOCKER-USER` jump, five `.ayc` names resolving and
+answering, the exit node advertised and GRO flags correct, and `--check`
+rc 0 with zero failed units. Also the **first reboot the `V1-12`/`V1-13`
+digest record has been through**: `--status` showed all five short digests
+with no divergence marker, so the `state.env` record still matches what is
+actually running after a full restart — the mechanism had been introduced
+and verified within a single uptime until now.
+
 `V1-14` puts every network-dependent step behind `retry_network`: three
 attempts, an explicit per-attempt `timeout`, 5s/15s backoff. Applied to
 `apt-get update`, the Tailscale keyring and repo list, the Docker GPG key,
