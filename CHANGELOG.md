@@ -79,11 +79,47 @@ symlink escape 404 and invisible. The public IPv4 refuses 7113. WebDAV still
 answers 207 on the same credentials. `state.env` records
 `IMAGE_DIGEST_DUFS=sha256:8dd3b750…` matching the running image.
 
-**Known leftover:** the two `filebrowser_*` named volumes survive the
-upgrade — `docker compose` does not remove named volumes with
-`--remove-orphans`, and deleting user data is not the installer's call.
-Remove them by hand once the rollback window has passed:
-`docker volume rm filebrowser_database filebrowser_config`.
+**Leftover volumes removed (2026-08-01, manual).** The two `filebrowser_*`
+named volumes survived the upgrade, because `--remove-orphans` removes
+orphaned containers but not named volumes, and deleting what might still be
+wanted is deliberately not the installer's call. Both were inspected before
+deletion: unreferenced by any container, 44K and 8K, holding only
+filebrowser's own state (its SQLite database with the auto-generated admin
+user, and `settings.json`) — no media data. Removed with `docker volume rm
+filebrowser_database filebrowser_config`; dufs kept answering 401/200
+throughout. A fresh install never creates them, so `install.sh` is unchanged.
+
+**Reboot persistence verified (2026-08-01).** The host returned ~31 seconds
+after `systemctl reboot` with all nine managed units active and no
+intervention (`tailscaled`, `docker`, `master-compose`,
+`docker-tailscale-fw`, `master-webdav`, `dnsmasq`, `caddy`,
+`tailscale-udp-gro`, the reconcile timer), five containers up, zero failed
+units, and `systemctl is-system-running` reporting `running` rather than
+`degraded`.
+
+The point of the test was dufs, which had never been through a restart: it
+came back with `read_only=true`, `cap_drop=[ALL]`, `user=1000:1000` intact
+and its credential still enforced — anonymous 401 on loopback *and* through
+Caddy, wrong password 401, correct 200, `PUT` 201 landing as `1000:1000`,
+`DELETE` 204, `PROPFIND` 207. Its bind-mounted config survived as a plain
+file, which is the practical payoff of statelessness: nothing to migrate,
+nothing to recover.
+
+The rest of the stack held too: `--check` rc 0 with every field 0, the
+recorded image digests still matching the running images (`--status` showed
+no divergence marker), the firewall rebuilt to a single `DOCKER-USER →
+MASTER-DOCKER` jump with three public allows over the fail-closed DROP
+backbone, 7 DNAT entries (exactly the published ports of the five
+containers), exit node re-advertising `0.0.0.0/0` and `::/0` with
+`NetfilterMode: 2`, GRO flags `off`/`on`, WebDAV 207 on the Tailscale IPv4
+and refused on the public one, and all six `.ayc` names resolving through
+Caddy (portainer 200, file 401→200, qbit 200, wg 302, webdav 401, health
+200).
+
+One note for future sweeps: `dig @127.0.0.1` fails with "connection
+refused", which is correct and not a fault. dnsmasq binds `tailscale0`
+only — never loopback, never public — so `.ayc` names must be queried
+against the Tailscale IPv4.
 
 `V1-19` finishes what `V1-18` started. `V1-18` learned to *diagnose* a node
 deleted from the Tailscale panel; it still told the operator to run

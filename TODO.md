@@ -105,17 +105,17 @@ _All High findings resolved — see Completed below._
       latest release would be the natural closer, but it needs network
       access at a point in the run where the script currently has none.
 
-- [ ] **L10 — the two `filebrowser_*` named volumes survive the upgrade.**
-      `docker compose up --remove-orphans` removed the orphaned
-      `filebrowser` container but does not delete named volumes, and
-      destroying what might still be wanted is deliberately not the
-      installer's job. They are inert (nothing mounts them) and small.
-      Remove by hand once the rollback window has passed:
-      `docker volume rm filebrowser_database filebrowser_config`.
-      Only affects hosts upgraded from `V1-20` or earlier; a fresh install
-      never creates them.
 
 ## Completed
+
+- [x] **L10 (2026-08-01) — the orphaned `filebrowser_*` volumes removed.**
+      Inspected before deleting: both were unreferenced by any container,
+      44K and 8K, and held only filebrowser's own state (the SQLite DB with
+      its auto-generated admin user, and `settings.json`) — no media data.
+      Removed with `docker volume rm filebrowser_database
+      filebrowser_config`; dufs kept answering 401/200 throughout. This was
+      a one-time cleanup for hosts upgraded from `V1-20` or earlier; a
+      fresh install never creates them, so nothing in `install.sh` changed.
 
 - [x] **L8 — bounded retry + mandatory timeout for network steps
       (2026-07-31, `V1-14`, DD-24).** Observed when Docker Hub's anonymous
