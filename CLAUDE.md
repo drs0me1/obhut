@@ -46,31 +46,46 @@ even when working in this repository only.
 
 ## Execution Rules
 
-- **Executing `install.sh` (or any other mutating command against a real
-  host) requires the user's explicit, specific approval for that exact
-  action, every time.** It mutates a live system (firewall, Docker,
-  systemd, Tailscale) and cannot be safely dry-run. A prior approval does
-  not carry over to later turns or to different commands/hosts, and an
-  assistant must never choose configuration values on the user's behalf —
-  every interactive prompt is relayed to and answered by the user
-  directly (see [`docs/testing.md`](docs/testing.md) Tier 3 for the
-  `tmux`-based relay methodology this has used in practice, since
-  `install.sh`'s prompts read `/dev/tty` directly and can't be driven via
-  piped stdin). This has been exercised successfully (2026-07-28) against
-  the user's own server, reimaged clean before each attempt specifically
-  so there was no production data at risk — that precondition (a
-  disposable target, or explicit authorization otherwise) is what makes
-  running it acceptable, not a blanket ban.
-- **Never run `sudo` or any destructive command** (`rm -rf`, `iptables`,
-  `ip6tables`, `nft`, `systemctl` mutating verbs, `docker` lifecycle
-  commands such as `up`/`down`/`rm`/`restart`, `git reset --hard`,
-  `git push --force`, etc.) **unless the user explicitly asks for that
-  specific action in that turn.** A prior approval does not carry over to
-  later turns or to different commands. When cleaning up throwaway test
-  containers/resources, target them by exact ID, not by a name/image
-  filter that could also match a real running container.
+- **The `nrm` host is a disposable test target under standing
+  authorization (2026-07-31).** The user's instruction: unless they say
+  otherwise, that server exists to test whatever needs testing, the data
+  on it is worthless, and the assistant may take full control of it. So
+  on `nrm` — and only on `nrm` — running `install.sh`, `sudo`,
+  `systemctl` mutating verbs, `docker` lifecycle commands, firewall
+  changes, service resets, wiping state, and rebooting no longer need
+  per-turn approval. Answer every `install.sh` prompt automatically —
+  the default for each value, `E` (yes) for each confirmation, and
+  `12345test` for the WebDAV password (see
+  [`docs/testing.md`](docs/testing.md) Tier 3 for the `tmux` relay
+  methodology, still needed because the prompts read `/dev/tty` and
+  can't be driven via piped stdin) — and report the answers used rather
+  than asking. A *non*-default configuration value is still the user's
+  call.
+- **The one prompt that must still be relayed is the Tailscale login
+  URL.** Only the user can complete that browser authentication, so
+  forward the `https://login.tailscale.com/a/...` link the moment it
+  appears and wait. It expires (410) if it sits unused while other
+  round-trips happen — which is exactly why every *other* prompt is now
+  answered locally instead of relayed.
+- **That authorization is scoped to the test host and does not travel.**
+  Everything below still needs the user's explicit, specific approval in
+  the turn it happens:
+  - anything on the user's local Mac outside this repository's working
+    tree — and inside it, `git reset --hard`, `git push`,
+    `git push --force`, tag deletion, or any history rewrite;
+  - anything on a *different* host, or on the user's Tailscale account
+    itself (removing tailnet nodes, changing ACLs, rotating auth keys)
+    — account state outlives the reimaged server;
+  - anything whose blast radius reaches outside the disposable host,
+    including publishing, sending, or otherwise transmitting repository
+    content anywhere.
 - Read-only inspection commands (`git status`, `git log`, `git diff`,
-  `wc -l`, `grep`, `cat`, `bash -n`, `shellcheck`) are always fine.
+  `wc -l`, `grep`, `cat`, `bash -n`, `shellcheck`) are always fine, on
+  either machine.
+- **Report what was actually run.** The point of the standing
+  authorization is to remove approval latency, not visibility: state the
+  destructive commands executed and their real outcomes, including
+  failures.
 
 ## Working Conventions
 
