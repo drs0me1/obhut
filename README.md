@@ -192,6 +192,32 @@ would need its own copy of the canonical unit/firewall/Compose/DNS
 definitions, and the entire self-healing model depends on there being
 exactly one.
 
+## Deploying to a host
+
+`versiyon/` holds a single exported copy of `install.sh` plus `deploy.sh`,
+which copies it to a host, verifies the transfer by SHA256, and optionally
+starts the install inside `tmux`:
+
+```sh
+./versiyon/deploy.sh nrm           # copy + verify
+./versiyon/deploy.sh nrm --run     # copy + verify + run in tmux
+```
+
+The expected hash is **computed from the local export at run time, not
+hardcoded** — a stored constant would be a second copy needing manual
+update on every export swap, and this repository has already been bitten
+by exactly that class of drift more than once (the repair cooldown, the
+architecture stage table, the "fixed image versions" wording). The script
+also refuses to run unless `versiyon/` contains exactly one export, so a
+stale copy left behind cannot be deployed by accident.
+
+`--run` uses `tmux new-session -A -s master-setup`, because an SSH drop
+mid-install can leave a firewall window open after Stage 1. It also warns
+about the Tailscale login: a pending registration dies with
+`410 auth path not found` if the session is restarted or the URL is left
+too long, so the link must be opened promptly and the session left alone
+until it is authorized.
+
 ## Docker Services
 
 All services are defined in a single generated `/root/docker/compose.yaml`
