@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-15"
+MASTER_SETUP_VERSION="2026.07.31-V1-16"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -4119,7 +4119,7 @@ set_unit_file_mode /etc/systemd/system/master-webdav.service
 
 progress_stage_note 95 "Compose ve systemd tanımları son kontrolden geçiriliyor"
 echo "Compose dosyası: /root/docker/compose.yaml"
-echo "Sabit image sürümleri:"
+echo "Image etiketleri (yama seviyesinde hareketli — bkz. DD-23):"
 grep -E '^    image:' /root/docker/compose.yaml | sed 's/^/  /'
 
 # ==================================================
@@ -4131,7 +4131,7 @@ progress_stage_begin 5 "Container image'ları ve servisleri başlatılıyor"
 cd /root/docker
 progress_stage_note 10 "Compose yapılandırması doğrulanıyor"
 docker compose --env-file /root/docker/.env config --quiet
-progress_stage_note 20 "Sabit container image sürümleri indiriliyor"
+progress_stage_note 20 "Container image'ları indiriliyor"
 retry_network "Container image indirme" \
     "$NET_RETRY_BULK_FIRST" "$NET_RETRY_BULK_NEXT" -- \
     docker compose --env-file /root/docker/.env pull
@@ -5125,7 +5125,8 @@ echo "                    (çökmeler OnFailure ile anında kurtarılır)"
 echo "Oneshot kurtarma  : İç restart yok; Docker/Tailscale olayı + reconcile"
 echo "Kurulum logu      : $MASTER_LOG_FILE"
 echo "Durum özeti       : master-network-reconcile --status"
-echo "                    (kurulu sürüm/hash, container'lar, --check sonucu)"
+echo "                    (kurulu sürüm/hash, container'lar ve çalışan"
+echo "                    image digest'leri, --check sonucu)"
 echo
 echo "UYARI: Aşağıdaki yönetilen dosyalar 20 dakikada bir bu kurulumun ürettiği"
 echo "canonical kopyayla karşılaştırılır; kaynağı ne olursa olsun (elle yapılan"

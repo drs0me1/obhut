@@ -6,7 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-15`; `install.sh` is 5249 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-16`; `install.sh` is 5250 lines.
+
+`V1-16` is text only: three operator-facing strings still described the old
+world. Stage 4 printed "Sabit image sürümleri" and Stage 5's progress note
+said "Sabit container image sürümleri indiriliyor", both left over from
+before `V1-12` moved the images to floating tags — the script was telling
+the operator the opposite of what it does. The `--status` one-liner in the
+final summary also predates `V1-12` and did not mention that the mode now
+prints the running image digests.
+
+Caught by the user reading the install output, not by any check. Worth
+noting where the gap is: Stage 7 asserts behaviour thoroughly but asserts
+nothing about the words the script uses to describe itself, and neither
+does the bats suite. Every string of this kind found so far — three
+documentation defects on 2026-07-31 plus these three — has been found by
+reading, never by tooling.
+
+Not live-verified: the test host was offline. The changed lines were
+render-tested locally for alignment; no logic changed.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-15`; `install.sh` was 5249 lines.
 
 `V1-15` closes the last structural item on the list: the repair cooldown
 was written out independently in two embedded scripts, and the fact

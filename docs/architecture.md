@@ -25,9 +25,9 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 4 | 1936–4108 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2290–2331`) and `master-network-reconcile` (`2371–3837`) helper scripts, `master-docker-netfilter-recovery` (`3841–3890`), `master-webdav-serve` (`3982–4050`), systemd units for Compose, WebDAV and reconcile |
 | 5 | 4129–4231 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
 | 6 | 4232–4547 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4335–4367`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4548–5249 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 7 | 4548–5250 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5249 lines — `V1-15`, 2026-07-31. They
+(Line numbers as of `install.sh` 5250 lines — `V1-16`, 2026-07-31. They
 drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
 rather than trusting them after a batch of edits — the stage 5–7 rows had
 silently drifted 18 lines before `V1-11` caught it, which is why the
