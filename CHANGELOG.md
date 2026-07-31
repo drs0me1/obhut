@@ -20,9 +20,14 @@ were briefly mistaken for evidence. After wiping wg-easy's config to
 restore `/setup/1`, the replay gave five `UYARI` lines and **zero `HATA`**
 across three runs, both repair runs printing the warning twice — the same
 double-print that accompanied `exit 1` under `V1-10` — with all three
-exiting 0. The opposite branch (a real internal-port mismatch must still
-fail) is unreachable until wg-easy's setup is done, and when it briefly
-was, the port matched; it still rests on code reading alone.
+exiting 0. **The opposite branch is measured too**, once the user
+completed wg-easy's web setup and made the failing `elif` reachable:
+`wg set wg0 listen-port 51820` (runtime-only, reversible, `wg0.conf`
+untouched) gave `HATA: wg-easy iç portu 51820; beklenen 65171.`,
+`compose_runtime=1` and `exit 1`, with no automatic wg-easy restart;
+restoring the port returned `exit 0`, `--check` all fields 0 and the peer
+intact. Both branches of `V1-11` are therefore measured, not one measured
+and one reasoned.
 
 `V1-11` separates "wg-easy is waiting for its first web setup" from
 "wg-easy is misconfigured". Both used to set `WG_CONFIGURATION_INVALID`,

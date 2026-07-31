@@ -829,6 +829,18 @@ reordering is not proposed a second time on the same reasoning.
 - **The restart suppression stays in both branches** deliberately.
   Restarting a container that is waiting for its first web setup does not
   advance it, and would reset whatever partial setup state exists.
+- **Both branches are measured, not one measured and one reasoned.** The
+  failing branch stayed untestable while wg-easy sat on `/setup`, because
+  `wg show wg0 listen-port` has no interface to report on until setup is
+  done. Once the operator completed it (2026-07-31),
+  `wg set wg0 listen-port 51820` — runtime-only, reversible, `wg0.conf`
+  untouched — produced `HATA: wg-easy iç portu 51820; beklenen 65171.`,
+  `compose_runtime=1` and `exit 1`, with wg-easy correctly *not*
+  restarted. Restoring the port returned `exit 0` with the peer intact.
+  This is worth recording as a method as much as a result: the two
+  branches of a split like this one are only trustworthy when the
+  *negative* case has been shown to still fail, otherwise "we stopped
+  failing" is indistinguishable from "we stopped checking".
 - **What would remove the condition entirely:** provisioning wg-easy's
   admin account unattended (the open `INIT_*` item), which is the real fix
   for the underlying awkwardness — a freshly installed stack that is not
