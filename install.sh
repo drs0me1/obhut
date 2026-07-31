@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-13"
+MASTER_SETUP_VERSION="2026.07.31-V1-14"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -210,6 +210,73 @@ progress_close_tty() {
         exec 5>&-
         MASTER_PROGRESS_TTY_FD_OPEN=0
     fi
+}
+
+# Ağ bağımlı adımlar için sınırlı retry + zorunlu timeout (L8).
+#
+# Buradaki asıl amaç retry değil TIMEOUT. Betik systemd-inhibit
+# --mode=block altında çalışıyor ve reconcile ile paylaşılan flock'u tutuyor;
+# dolayısıyla asılı kalan tek bir indirme hem shutdown'ı hem de 20 dakikalık
+# reconcile timer'ını süresiz olarak rehin alır. Bugünkü davranış "sonsuz
+# bekle"; aşağıdaki her şey o sonsuzluğu sınırlamak içindir. 2026-07-31'de
+# yaşanan Docker Hub 502'si ise gürültülü ve güvenli düştü — retry onu
+# kurtarır, ama tehlikeli olan senaryo o değildi.
+#
+# Hata sınıflandırması bilinçli olarak YOK. Kalıcı hatalar (manifest unknown,
+# unauthorized, disk dolu) saniyeler içinde döner, dolayısıyla körlemesine üç
+# deneme onlara yalnız ~20 saniye backoff'a mal olur ve ardından net hatayla
+# durulur. Gerçek süreyi sadece geçici hatalar ve asılmalar harcar, ki hedef
+# zaten onlar. stderr metnini eşleştirmek locale'e ve upstream mesaj
+# formatına bağımlı olurdu; kazancı yok.
+#
+# Süreler 2026-07-31'de bu host'ta ÖLÇÜLEN taban değerlere göre seçildi:
+# soğuk `docker compose pull` 10.9s (885 MB, üç registry), sıcak pull 3.2s,
+# apt-get update 0.9s, keyring curl'leri 36-127 ms. Bulk sınırı ölçülenin
+# ~27 katı; yani hattın bu host'tan 27 kat yavaş olması hâlinde meşru bir
+# indirme kesilir — o durumda bile operatör bütçeyi adıyla söyleyen bir
+# zaman aşımı mesajı alır, sessiz bir asılma değil.
+NET_RETRY_ATTEMPTS=3
+NET_RETRY_BULK_FIRST=300
+NET_RETRY_BULK_NEXT=180
+NET_RETRY_SMALL_FIRST=60
+NET_RETRY_SMALL_NEXT=30
+
+retry_network() {
+    local label="$1" first_timeout="$2" retry_timeout="$3"
+    shift 3
+    [[ "${1:-}" == "--" ]] && shift
+
+    local attempt=1 rc=0 limit="$first_timeout" backoff=5
+    while :; do
+        rc=0
+        # --kill-after: TERM'i yok sayan bir alt sürecin timeout'u da
+        # anlamsızlaştırmasını engeller.
+        timeout --signal=TERM --kill-after=30s "$limit" "$@" || rc=$?
+        [[ "$rc" -eq 0 ]] && return 0
+
+        if [[ "$attempt" -ge "$NET_RETRY_ATTEMPTS" ]]; then
+            # 124 = timeout'un kendi zaman aşımı kodu, 137 = KILL sonrası.
+            # "Cevap vermedi" ile "hata döndürdü" operatör için farklı
+            # şeylerdir; ayrımı mesajda koru.
+            if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+                echo "HATA: ${label}: son deneme ${limit} saniyede tamamlanmadı (zaman aşımı)." >&2
+            else
+                echo "HATA: ${label}: ${NET_RETRY_ATTEMPTS} denemenin tamamı başarısız (son çıkış kodu ${rc})." >&2
+            fi
+            return "$rc"
+        fi
+
+        echo "UYARI: ${label}: ${attempt}. deneme başarısız (çıkış kodu ${rc}); ${backoff}s sonra yeniden denenecek." >&2
+        # İlerleme çubuğu donmuş görünmesin: operatör donmuş bir çubuğa
+        # bakarsa kurulumu elle keser, ki kaçınmak istediğimiz tam olarak bu.
+        progress_stage_note "$MASTER_CURRENT_PERCENT" \
+            "${MASTER_CURRENT_STAGE_LABEL} (yeniden deneniyor: $((attempt + 1))/${NET_RETRY_ATTEMPTS})"
+        sleep "$backoff"
+
+        attempt=$((attempt + 1))
+        limit="$retry_timeout"
+        backoff=15
+    done
 }
 
 append_master_service_journal() {
@@ -823,7 +890,9 @@ timedatectl set-timezone "$TIMEZONE"
 # ileride benzer bir arka plan sürecinin kilit tutma ihtimaline karşı her
 # apt-get çağrısı kilidi hemen vermek yerine sınırlı süre bekler.
 progress_stage_note 30 "Debian paket listeleri indiriliyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 45 "Debian sistem güncellemeleri uygulanıyor"
 # Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
 # durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
@@ -862,16 +931,22 @@ fi
 
 progress_stage_note 10 "Tailscale paket deposu hazırlanıyor"
 install -d -m 0755 /usr/share/keyrings
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
+retry_network "Tailscale keyring indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
     -o /tmp/tailscale-archive-keyring.gpg
 install -m 0644 /tmp/tailscale-archive-keyring.gpg \
     /usr/share/keyrings/tailscale-archive-keyring.gpg
 rm -f /tmp/tailscale-archive-keyring.gpg
 
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list" \
+retry_network "Tailscale depo listesi indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list" \
     -o /etc/apt/sources.list.d/tailscale.list
 
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 22 "UDP soket buffer tabanı ayarlanıyor"
 
 # Bu blok, Tailscale paketi kurulmadan ÖNCE çalışmak zorunda. Debian'ın
@@ -1140,7 +1215,9 @@ progress_stage_done
 progress_stage_begin 3 "Docker ve dar firewall politikası hazırlanıyor"
 
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg \
+retry_network "Docker GPG anahtarı indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
     -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
@@ -1210,7 +1287,9 @@ if [[ "$DOCKER_WAS_ACTIVE" -eq 1 && "$DOCKER_DAEMON_JSON_CHANGED" -eq 0 ]]; then
 fi
 
 progress_stage_note 30 "Docker paket listeleri ve bileşenleri kuruluyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
@@ -4033,7 +4112,9 @@ cd /root/docker
 progress_stage_note 10 "Compose yapılandırması doğrulanıyor"
 docker compose --env-file /root/docker/.env config --quiet
 progress_stage_note 20 "Sabit container image sürümleri indiriliyor"
-docker compose --env-file /root/docker/.env pull
+retry_network "Container image indirme" \
+    "$NET_RETRY_BULK_FIRST" "$NET_RETRY_BULK_NEXT" -- \
+    docker compose --env-file /root/docker/.env pull
 progress_stage_note 60 "Systemd bağımlılık grafiği doğrulanıyor"
 systemctl daemon-reload
 systemd-analyze verify \
@@ -4220,11 +4301,22 @@ progress_stage_note 45 "Caddy paket deposu hazırlanıyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     debian-keyring debian-archive-keyring apt-transport-https
 
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-    gpg --batch --yes --dearmor \
-        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+# Ağ indirmesi yerel gpg işleminden ayrıldı: retry yalnız ağ adımını
+# kapsamalı. `gpg --dearmor` başarısızlığı bir ağ sorunu değildir ve
+# yeniden denenmesi anlamsızdır (bozuk girdi üç kez de bozuktur).
+CADDY_GPG_TMP="$(mktemp)"
+retry_network "Caddy GPG anahtarı indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    -o "$CADDY_GPG_TMP"
+gpg --batch --yes --dearmor \
+    -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    <"$CADDY_GPG_TMP"
+rm -f "$CADDY_GPG_TMP"
 
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+retry_network "Caddy depo listesi indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
     -o /etc/apt/sources.list.d/caddy-stable.list
 
 chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -4234,7 +4326,9 @@ chmod 0644 /etc/apt/sources.list.d/caddy-stable.list
 # systemd drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
 systemctl stop caddy.service 2>/dev/null || true
 systemctl mask caddy.service >/dev/null
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 60 "Caddy paketi kuruluyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y caddy
 

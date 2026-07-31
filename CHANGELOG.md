@@ -6,7 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-13`; `install.sh` is 5104 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-14`; `install.sh` is 5198 lines.
+**Live-verified:** 25s install, `STACK_SCHEMA=10`, five digests recorded,
+`--check` rc 0, zero failed units, containers untouched.
+
+`V1-14` puts every network-dependent step behind `retry_network`: three
+attempts, an explicit per-attempt `timeout`, 5s/15s backoff. Applied to
+`apt-get update`, the Tailscale keyring and repo list, the Docker GPG key,
+the Caddy GPG key and repo list, and `docker compose pull`.
+
+**The timeout turned out to matter more than the retry**, which inverts
+how the finding was originally written up. A Docker Hub 502 during
+`docker compose pull` is what prompted it, and a retry does fix that — but
+that failure was loud and safe: the install stopped and the immediate
+re-run succeeded. Reading the surrounding code showed the worse case had
+no bound at all. The script runs under `systemd-inhibit
+--what=shutdown:sleep --mode=block` and holds the `flock` it shares with
+`master-network-reconcile`, so a single hung download blocks shutdown
+*and* leaves the 20-minute reconcile timer unable to run, indefinitely.
+
+No error classification, deliberately. Permanent failures (`manifest
+unknown`, `unauthorized`, a full disk) return within seconds, so three
+blind attempts cost them about 20s of backoff and then the same clear
+error; only transient faults and hangs consume real time, and those are
+the target. Matching upstream stderr text would be locale- and
+format-dependent for no gain.
+
+Budgets came from measurement rather than guesswork: cold
+`docker compose pull` 10.9s for 885 MB across three registries, warm pull
+3.2s, `apt-get update` 0.9s, keyring fetches 36–127 ms. Bulk transfers get
+300s then 180s (~27× the measured cold pull), small fetches 60s then 30s.
+A hung pull is now bounded at about 11 minutes instead of forever.
+
+Worth keeping in mind from those numbers: **the warm pull still costs
+3.2s** because it re-checks manifests at all three registries. The pull is
+a hard network dependency on every run, including runs where nothing has
+changed — which is precisely how a transient registry fault reached an
+otherwise no-op re-run.
+
+`apt-get full-upgrade` and `apt-get install` are deliberately not wrapped:
+they drive dpkg transactions, and reissuing an interrupted one is a
+different problem class that interacts with the `--force-conf*` handling.
+The Caddy GPG fetch was restructured rather than wrapped as-is — it was
+`curl … | gpg --dearmor`, and retrying the pipeline would also retry a
+local dearmor that retrying can never fix.
+
+`test/retry_network.bats` covers all four control-flow paths plus argument
+pass-through. The design note preceding this change claimed the recovery
+path could not be tested deterministically without a real flaky network;
+that was wrong, and a stub that fails once then succeeds reproduces it
+exactly. The suite self-skips where GNU `timeout` is absent, so it skips
+on the macOS workstation and runs for real on Debian — where the **full
+62-case suite passes with zero skips**.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-13`; `install.sh` was 5104 lines.
 **Live-verified:** installed in 25s, `STACK_SCHEMA=10`, all five
 `IMAGE_DIGEST_*` keys recorded and matching the running images, `--status`
 printing the short digests, `--check` rc 0, zero failed units.

@@ -910,3 +910,57 @@ reordering is not proposed a second time on the same reasoning.
   intended behaviour, and the second time in three revisions that a Stage 7
   literal assertion caught a change that `bash -n`, `shellcheck` and the
   bats suite all passed.
+
+### DD-24: Network steps get a bounded retry and a mandatory timeout (2026-07-31)
+
+- **Decision:** every network-dependent step in `install.sh` runs through
+  `retry_network` — three attempts, an explicit per-attempt `timeout`,
+  5s/15s backoff. Applied to `apt-get update`, the three keyring/repo
+  fetches, and `docker compose pull`. Not applied to
+  `apt-get full-upgrade` or `apt-get install`.
+- **The timeout is the point, not the retry** — the reverse of how the
+  finding (L8) was originally framed. What prompted it was a Docker Hub
+  502 during `docker compose pull`, and a retry does fix that. But
+  reading the surrounding code moved the priority: the script runs under
+  `systemd-inhibit --what=shutdown:sleep --mode=block` and holds the
+  `flock` it shares with `master-network-reconcile`. A hung download
+  therefore blocks shutdown *and* prevents the 20-minute reconcile timer
+  from running, with no bound at all. The 502 failed loudly and safely —
+  install stopped, re-run succeeded. A hang would have failed silently
+  and held two locks while doing it.
+- **No error classification, deliberately.** The first design sketched
+  matching stderr to decide what was retryable. It is unnecessary:
+  permanent failures (`manifest unknown`, `unauthorized`, a full disk)
+  return within seconds, so three blind attempts cost them roughly 20s of
+  backoff and then the same clear error. Only transient faults and hangs
+  consume meaningful time, and those are precisely what we want retried
+  or bounded. String-matching upstream error text would also be locale-
+  and format-dependent — fragile, for no gain.
+- **Budgets measured, not guessed** (2026-07-31, netcup host): cold
+  `docker compose pull` 10.9s for 885 MB across three registries, warm
+  pull 3.2s, `apt-get update` 0.9s, keyring fetches 36–127 ms. Bulk gets
+  300s then 180s (~27× the measured cold pull); small fetches 60s then
+  30s. A link would have to be ~27× slower than this host for a legitimate
+  pull to be cut — and even then the operator gets a timeout message
+  naming the budget rather than a silent stall.
+- **Why apt transactions are excluded:** `full-upgrade` and `install`
+  drive dpkg. Interrupting one mid-transaction and reissuing it is a
+  different problem class, and it interacts with the `--force-confdef
+  --force-confold` handling. Wrapping them would relocate the risk rather
+  than reduce it. `apt-get update` is wrapped because it is genuinely
+  idempotent.
+- **The Caddy GPG fetch was restructured** rather than wrapped as-is: it
+  used to be `curl … | gpg --dearmor`, and retrying the whole pipeline
+  would also retry the local dearmor step, which can never be fixed by
+  retrying (bad input is bad three times). The download now goes to a
+  temp file inside the retry, and `gpg` runs once outside it.
+- **All four control-flow paths are verified**, and the design note that
+  preceded this entry was wrong to claim otherwise. It said the recovery
+  path — transient failure followed by success — could not be tested
+  deterministically without a real flaky network. A stub that fails once
+  and then succeeds reproduces it exactly. `test/retry_network.bats`
+  covers first-attempt success, exhaustion, timeout (asserting `124` and
+  that the message differs from an ordinary failure), recovery, and
+  argument pass-through. The suite self-skips where GNU `timeout` is
+  absent, so it skips on the macOS workstation and runs for real on the
+  Debian target — where the **full 62-case suite passes with zero skips**.

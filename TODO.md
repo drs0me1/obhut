@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 5104 lines (V1-13). Originally **tagged R1.0**
+architecture review; file is now 5198 lines (V1-14). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -43,7 +43,10 @@ _All High findings resolved — see Completed below._
       covers `canonical_bundle_ok()`'s single manifest shape (7 cases, no
       skips, lists derived from `install.sh`'s own Stage 6 source); and
       `test/policy_functions.bats` covers `check_ipv4_policy`/
-      `check_ipv6_policy` (17 cases) — **56 cases total**. The other
+      `check_ipv6_policy` (17 cases); and `test/retry_network.bats` covers
+      `retry_network`'s four control-flow paths plus argument pass-through
+      (5 cases, self-skipping where GNU `timeout` is absent) — **62 cases
+      total, and all 62 pass with zero skips on the Debian target**. The other
       three remaining embedded scripts (`master-compose-ipv4`,
       `master-docker-netfilter-recovery`, `caddy-tailnet-env`) were
       surveyed and found to have no standalone pure-logic functions worth
@@ -66,22 +69,30 @@ _All High findings resolved — see Completed below._
 
 ## Low
 
-- [ ] 🔵 **L8** (observed 2026-07-31, not yet scoped) — `docker compose
-      pull` in Stage 5 has no retry, so a transient registry error fails
-      the entire install. Observed for real: Docker Hub's anonymous token
-      endpoint returned **502 Bad Gateway** mid-pull and the run died at
-      Stage 5 with `rc=1`; the immediate re-run succeeded. Nothing in the
-      script is at fault, and the failure is loud and safe (the install
-      stops rather than continuing with missing images). Worth a bounded
-      retry — two or three attempts with a short backoff — but it touches
-      the one place where a hang would block the whole install, so the
-      timeout interaction needs thinking through rather than wrapping the
-      call in a loop. Slightly more likely to be hit since `V1-12`, which
-      pulls floating tags on every run.
-
-_All other Low findings resolved or closed — see Completed below._
+_All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **L8 — bounded retry + mandatory timeout for network steps
+      (2026-07-31, `V1-14`, DD-24).** Observed when Docker Hub's anonymous
+      token endpoint returned **502 Bad Gateway** mid-`docker compose pull`
+      and the install died at Stage 5; the immediate re-run succeeded.
+      Reading the surrounding code inverted the priority: the retry fixes
+      the 502, but the script runs under `systemd-inhibit
+      --what=shutdown:sleep --mode=block` and holds the `flock` it shares
+      with reconcile, so an unbounded hang would block shutdown *and* stop
+      the 20-minute reconcile timer from ever running. The timeout was the
+      real gap; the 502 had at least failed loudly. `retry_network` now
+      wraps `apt-get update`, the three keyring/repo fetches and the
+      Compose pull — three attempts, per-attempt `timeout`, 5s/15s
+      backoff, no error classification (permanent failures already return
+      in seconds, so blind retries cost them ~20s and stderr matching
+      would be locale-dependent). Budgets came from measurement, not
+      guesswork: cold pull 10.9s/885 MB, warm pull 3.2s, `apt-get update`
+      0.9s, keyrings 36–127 ms → 300s/180s for bulk, 60s/30s for small.
+      `full-upgrade`/`install` deliberately excluded (dpkg transactions
+      are a different problem class). The Caddy GPG fetch was split from
+      its `gpg --dearmor` pipe so the retry covers only the network half.
 
 - [x] **Application-state backup/restore — ✅ CLOSED (2026-07-30, won't
       do).** Proposed as item 3 of the 2026-07-30 structural plan and

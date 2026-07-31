@@ -18,16 +18,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 577–732 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 733–849 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 850–1139 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `924–999`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1140–1856 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1222–1766`) and its systemd unit |
-| 4 | 1857–4029 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2210–2251`) and `master-network-reconcile` (`2291–3758`) helper scripts, `master-docker-netfilter-recovery` (`3762–3811`), `master-webdav-serve` (`3903–3971`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4030–4130 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4131–4433 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4241–4273`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4434–5104 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 644–799 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 800–918 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 919–1214 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1022–1097`), interactive login, exit-node + stateful filtering + netfilter configuration |
+| 3 | 1215–1935 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1324–1868`) and its systemd unit |
+| 4 | 1936–4108 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2290–2331`) and `master-network-reconcile` (`2371–3837`) helper scripts, `master-docker-netfilter-recovery` (`3841–3890`), `master-webdav-serve` (`3982–4050`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4109–4211 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4212–4527 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4335–4367`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4528–5198 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5104 lines — `V1-13`, 2026-07-31. They
+(Line numbers as of `install.sh` 5198 lines — `V1-14`, 2026-07-31. They
 drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
 rather than trusting them after a batch of edits — the stage 5–7 rows had
 silently drifted 18 lines before `V1-11` caught it, which is why the
@@ -85,7 +85,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1222-1766`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1324-1868`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -157,7 +157,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2291-3758`, 1467
+`master-network-reconcile` (generated at `install.sh:2371-3837`, 1467
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -232,6 +232,46 @@ See `docs/design-decisions.md` for the rationale. **Confirmed intentional
 by the user (2026-07-27):** this guarantees dnsmasq/Caddy reachability
 against accidental or unauthorized drift, and is documented explicitly in
 the final install summary so operators aren't surprised by it.
+
+### Network-dependent steps: bounded retry, mandatory timeout
+
+Every step that talks to the network goes through `retry_network`
+(`install.sh:244`): three attempts, an explicit per-attempt `timeout`, and
+a 5s/15s backoff. Applied at five call sites — `apt-get update` (four
+occurrences), the Tailscale keyring and repo list, the Docker GPG key, the
+Caddy GPG key and repo list, and `docker compose pull`.
+
+**The timeout matters more than the retry**, which is the inverse of how
+L8 was first framed. The script runs under `systemd-inhibit
+--what=shutdown:sleep --mode=block` and holds the `flock` it shares with
+reconcile, so a single hung download blocks shutdown *and* leaves the
+20-minute reconcile timer unable to run, indefinitely. The Docker Hub 502
+that prompted this failed loudly and safely — the install stopped and the
+immediate re-run succeeded. A hang would not have.
+
+**No error classification.** Permanent failures (`manifest unknown`,
+`unauthorized`, a full disk) return in seconds, so three blind attempts
+cost them ~20s of backoff before the same clear error. Only transient
+faults and hangs consume real time, and those are the target. Matching
+stderr text would be locale- and upstream-format-dependent for no gain.
+
+Budgets were chosen against measured baselines rather than guessed
+(2026-07-31, on the netcup host): cold `docker compose pull` 10.9s for
+885 MB across three registries, warm pull 3.2s, `apt-get update` 0.9s,
+keyring fetches 36–127 ms. Bulk transfers get 300s then 180s — ~27× the
+measured cold pull — and small fetches 60s then 30s. Worst case for a true
+hang at the pull is about 11 minutes instead of forever.
+
+One measurement worth keeping in mind: **the warm pull still takes 3.2s**,
+because it re-checks manifests at all three registries. The pull step is a
+hard network dependency on *every* run, including runs where nothing has
+changed — which is exactly how a transient registry fault reached an
+otherwise no-op re-run.
+
+`apt-get full-upgrade` and `apt-get install` are deliberately **not**
+wrapped: they drive dpkg transactions, and interrupting and reissuing one
+is a different problem class that interacts with `--force-conf*`. Wrapping
+them would move the risk, not reduce it.
 
 ### Re-running the installer
 
