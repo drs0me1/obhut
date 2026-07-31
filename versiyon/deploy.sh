@@ -8,9 +8,15 @@
 # sınıftan (cooldown sabiti, mimari tablosu, "sabit image" ibaresi) birden
 # fazla sapma yaşandı. Burada hesaplanan hash sapamaz.
 #
+# tmux kullanılmıyor (operatör kararı, 2026-07-31): kurulum sağlayıcı
+# konsolundan da çalıştırılabildiği için SSH kopmasına karşı sarmalayıcıya
+# gerek görülmedi. Bilinen bedeli: SSH üzerinden çalıştırılırken bağlantı
+# Aşama 1'den sonra koparsa kurulum yarıda kalır. Çareyi betiğin kendisi
+# sağlıyor — yeniden çalıştırmak idempotenttir.
+#
 # Kullanım:
 #   ./deploy.sh [host]           kopyala + doğrula
-#   ./deploy.sh [host] --run     kopyala + doğrula + tmux'ta kurulumu başlat
+#   ./deploy.sh [host] --run     kopyala + doğrula + kurulumu başlat
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,22 +67,18 @@ if [[ "$MODE" != "--run" ]]; then
     echo
     echo "Kurulumu başlatmak için:"
     echo "  $0 $HOST --run"
-    echo "veya elle:"
-    echo "  ssh -t ${SSH_OPTS[*]} $HOST 'bash /root/master.sh'"
+    echo "Sağlayıcı konsolundan:"
+    echo "  bash /root/master.sh"
     exit 0
 fi
 
-# tmux: kurulum ortasında SSH kopması Aşama 1 sonrası bir firewall penceresi
-# bırakabilir. tmux ile bağlantı düşse de kurulum sürer, `tmux attach -t
-# master-setup` ile geri dönülür.
-ssh "${SSH_OPTS[@]}" "$HOST" \
-    'command -v tmux >/dev/null || { export DEBIAN_FRONTEND=noninteractive; apt-get install -y -qq tmux; }'
-
+# Tailscale girişi hakkında: bekleyen bir kayıt isteği, kurulum yeniden
+# başlatılırsa ölür. Yeniden başlatma yeni bir nodekey üretir ve önceki auth
+# yolunu geçersiz kılar; sonuç "410 auth path not found" olur. 2026-07-31'de
+# üç deneme tam olarak buna gitti. Yavaş bir giriş için çare beklemektir.
 echo
-echo "Kurulum tmux oturumu 'master-setup' içinde başlatılıyor."
-echo "Tailscale giriş linki geldiğinde TARAYICIDA HEMEN açın: bekleyen bir"
-echo "kayıt isteği, oturuma müdahale edilirse veya süresi dolarsa"
-echo "'410 auth path not found' ile ölür ve yeniden başlatmak gerekir."
+echo "Kurulum başlatılıyor. Tailscale giriş linki geldiğinde TARAYICIDA"
+echo "HEMEN açın ve oturuma dokunmayın; yeniden başlatmak bekleyen kayıt"
+echo "isteğini '410 auth path not found' ile öldürür."
 echo
-exec ssh -t "${SSH_OPTS[@]}" "$HOST" \
-    'tmux new-session -A -s master-setup "bash /root/master.sh"'
+exec ssh -t "${SSH_OPTS[@]}" "$HOST" 'bash /root/master.sh'

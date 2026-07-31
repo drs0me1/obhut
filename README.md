@@ -211,12 +211,17 @@ architecture stage table, the "fixed image versions" wording). The script
 also refuses to run unless `versiyon/` contains exactly one export, so a
 stale copy left behind cannot be deployed by accident.
 
-`--run` uses `tmux new-session -A -s master-setup`, because an SSH drop
-mid-install can leave a firewall window open after Stage 1. It also warns
-about the Tailscale login: a pending registration dies with
-`410 auth path not found` if the session is restarted or the URL is left
-too long, so the link must be opened promptly and the session left alone
-until it is authorized.
+`--run` executes the installer directly over SSH. It deliberately does not
+wrap it in `tmux` (operator decision, 2026-07-31): the install can equally
+be started from the provider console, so the extra dependency was not worth
+it. The accepted cost is that an SSH drop after Stage 1 leaves the install
+incomplete — the remedy is built in, since re-running is idempotent.
+
+It does warn about the Tailscale login. A pending registration dies with
+`410 auth path not found` if the installer is restarted, because a restart
+generates a new nodekey and invalidates the previous auth path. Three
+attempts were spent on this before the cause was identified; the fix for a
+slow login is to wait, not to retry.
 
 ## Docker Services
 
