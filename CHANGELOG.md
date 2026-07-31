@@ -33,6 +33,21 @@ URL, and then a complete install — `STACK_SCHEMA=10`, five digests, nine
 units, five containers, WebDAV 401/401/207 with the public IPv4 refusing,
 `--check` rc 0.
 
+**`V1-20` fresh-install verified (2026-07-31).** The host was reimaged and
+`V1-20` installed from scratch: `STACK_VERSION=2026.07.31-V1-20`,
+`STACK_SCHEMA=10`, five image digests recorded, nine units active, five
+containers, **zero failed units**, `--check` every field 0 at `rc 0`.
+WebDAV bound to the Tailscale IPv4 alone with the public IPv4 refusing,
+five `.ayc` names resolving and answering through Caddy, firewall at
+exactly two narrow public allows with a single `DOCKER-USER` jump and no
+IPv6 allows, exit node advertised, GRO `off`/`on`.
+
+Worth noting in that output: `--check` reported
+`UYARI: wg-easy ilk kurulumu tamamlanmamış` and still returned `rc 0`.
+That is `V1-11`'s fix working on a fresh install — the condition is
+expected before the operator has opened `wg.ayc`, and it no longer
+contaminates the exit code.
+
 `V1-20` is a one-word consequence of reading that log: the first line still
 said `HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı`, so a
 **successful** install left an error line behind it. The severity is now
