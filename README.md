@@ -1,8 +1,8 @@
 # Debian Server Installer
 
-**Version: V1-10** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-11** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.31-V1-10` in its banner, log header and final summary; note this
+`2026.07.31-V1-11` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `9`. The latest tagged release is `V1-1` (the
 **M11** socket-buffer ordering fix, verified by a live install). Since
@@ -11,7 +11,12 @@ self-reporting on the host plus `master-network-reconcile --status`, and
 `V1-3` replaced the `sftpgo` container with `master-webdav.service`, a
 hardened host `rclone serve webdav` unit — which also removed the last
 Tailnet → Docker firewall exception (DD-20) — and `V1-4`/`V1-5` reworked the WebDAV
-block in the final install summary.
+block in the final install summary. `V1-6` through `V1-8` were driven by
+live installs (four bugs no static check caught), `V1-9`/`V1-10` moved the
+reconcile timer to 20 minutes (DD-21), and `V1-11` stopped reconcile from
+reporting failure after a successful repair on a host whose wg-easy web
+setup is still pending. The `V1-10` install and its four-scenario sweep are
+live-verified; the `V1-11` fix on top of it is not yet.
 
 ## Project Overview
 

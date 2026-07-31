@@ -797,3 +797,39 @@ reordering is not proposed a second time on the same reasoning.
   daemon opens its UDP socket — `net.core.rmem_max` in particular. It does
   not apply to `ip_forward`, which is read dynamically and only needs to
   be set before `tailscale set --advertise-exit-node`.
+
+### DD-22: A wg-easy still on its `/setup` screen is reported, not failed (2026-07-31)
+
+- **Decision:** the reconcile helper distinguishes "wg-easy is waiting for
+  its first web setup" (`WG_SETUP_PENDING`, reported as `UYARI`, no effect
+  on the exit code) from "wg-easy's internal WireGuard port does not match
+  `WG_PUBLIC_PORT`" (`WG_CONFIGURATION_INVALID`, `HATA`, sets
+  `RECOVERY_FAILED` → exit 1). Both still suppress wg-easy's automatic
+  restart.
+- **Why:** until `V1-11` both used the single `WG_CONFIGURATION_INVALID`
+  flag, and the resulting exit code was wrong in a specific and unhelpful
+  way. Because `all_critical_state_healthy()` returns early with `exit 0`,
+  a fresh install where nothing had drifted looked fine — while any pass
+  that actually *repaired* something fell through that gate to the
+  `RECOVERY_FAILED` check and exited 1, with every repair having
+  succeeded. The signal was therefore correct only while reconcile was
+  idle and wrong as soon as it did work, which is the inverse of what a
+  monitoring signal is for. `master-network-reconcile.service` being the
+  `OnFailure=` target of five other units made it worse: a chronically
+  red unit is one an operator learns to ignore.
+- **How it was found:** two drift scenarios on a live host on 2026-07-31 —
+  stopping `master-webdav.service`, and appending a line to
+  `/etc/caddy/Caddyfile`. Both repaired correctly (WebDAV back to 207, the
+  Caddyfile restored byte-for-byte) and both exited 1. The healthy pass
+  immediately afterwards exited 0. Static review had not caught it, and
+  would have had a hard time: the comment above the check already
+  described the intended behavior, so reading the comment and the code
+  together produced a false sense that the intent was implemented. It was
+  — but only along one of the two paths out of the function.
+- **The restart suppression stays in both branches** deliberately.
+  Restarting a container that is waiting for its first web setup does not
+  advance it, and would reset whatever partial setup state exists.
+- **What would remove the condition entirely:** provisioning wg-easy's
+  admin account unattended (the open `INIT_*` item), which is the real fix
+  for the underlying awkwardness — a freshly installed stack that is not
+  actually finished. `V1-11` only stops it from being misreported.

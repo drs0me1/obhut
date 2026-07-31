@@ -6,7 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-10`; `install.sh` is 4975 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-11`; `install.sh` is 4984 lines.
+
+`V1-11` separates "wg-easy is waiting for its first web setup" from
+"wg-easy is misconfigured". Both used to set `WG_CONFIGURATION_INVALID`,
+and the consequence was a reconcile exit code that lied precisely when it
+mattered. On a fresh install — before anyone has opened `wg.ayc` — a
+healthy pass exited 0 via the `all_critical_state_healthy()` early return,
+but any pass that actually *repaired* something fell past that gate into
+the `RECOVERY_FAILED` check and exited 1, with every repair having
+succeeded. Since `master-network-reconcile.service` is the `OnFailure=`
+target of five other units, that turned the operator's red/green signal
+red at the exact moment the system was doing its job.
+
+The setup-pending case now has its own `WG_SETUP_PENDING` flag: reported
+as `UYARI` rather than `HATA`, still suppressing wg-easy's automatic
+restart (restarting a container that is waiting for its first web setup
+fixes nothing), but no longer failing the run. A real internal-port
+mismatch keeps `WG_CONFIGURATION_INVALID` and keeps failing.
+
+**Found by live testing on a freshly reimaged host, not by review.** The
+comment above the check already stated the intent — that a `/setup` screen
+on a fresh install is expected and must not fail the run — and the code
+delivered that intent only along the early-exit path. The two drift
+scenarios (stopping `master-webdav`, appending a line to the Caddyfile)
+were the first cases to exercise the other path.
+
+Docs corrected in the same pass: `docs/architecture.md`'s stage table had
+silently drifted 18 lines for stages 5–7, and its reconcile section still
+described the WebDAV probe as `OPTIONS`, which `V1-6` had already changed
+to `PROPFIND` after discovering rclone answers `OPTIONS` 200.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-10`; `install.sh` was 4975 lines.
 **Live-verified:** timer reads `OnCalendar=*-*-* *:00/20:00` with the next
 three firings at `23:40`, `00:00`, `00:20` — evenly spaced across the hour
 boundary, which was the point of choosing 20. Install 7/7, `--check` rc 0,

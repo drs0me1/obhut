@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4975 lines (V1-10). Originally **tagged R1.0**
+architecture review; file is now 4984 lines (V1-11). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -41,8 +41,9 @@ _All High findings resolved — see Completed below._
       workstation's bash 3.2, which lacks associative arrays — runs for
       real on the Debian target's bash 5.x); `test/canonical_bundle.bats`
       covers `canonical_bundle_ok()`'s single manifest shape (7 cases, no
-      skips, lists derived from `install.sh`'s own Stage 6 source) — 40
-      cases total. The other
+      skips, lists derived from `install.sh`'s own Stage 6 source); and
+      `test/policy_functions.bats` covers `check_ipv4_policy`/
+      `check_ipv6_policy` (17 cases) — **56 cases total**. The other
       three remaining embedded scripts (`master-compose-ipv4`,
       `master-docker-netfilter-recovery`, `caddy-tailnet-env`) were
       surveyed and found to have no standalone pure-logic functions worth

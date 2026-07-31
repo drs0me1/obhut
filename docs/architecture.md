@@ -22,14 +22,16 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 1 | 710–826 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
 | 2 | 827–1116 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `924–999`), interactive login, exit-node + stateful filtering + netfilter configuration |
 | 3 | 1117–1833 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1222–1766`) and its systemd unit |
-| 4 | 1834–3946 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2187–2228`) and `master-network-reconcile` (`2268–3691`) helper scripts, `master-docker-netfilter-recovery` (`3695–3744`), systemd units for Compose and reconcile |
-| 5 | 3947–4009 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4010–4312 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4120–4152`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4313–4975 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 4 | 1834–3973 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2187–2228`) and `master-network-reconcile` (`2268–3702`) helper scripts, `master-docker-netfilter-recovery` (`3706–3755`), `master-webdav-serve` (`3847–3915`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 3974–4036 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4037–4339 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4147–4179`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4340–4984 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 4975 lines — `V1-10`, 2026-07-31. They
-drift with every change; regenerate with `grep -n '^progress_stage_begin'`
-rather than trusting them after a batch of edits.)
+(Line numbers as of `install.sh` 4984 lines — `V1-11`, 2026-07-31. They
+drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
+rather than trusting them after a batch of edits — the stage 5–7 rows had
+silently drifted 18 lines before `V1-11` caught it, which is why the
+regeneration command above is worth actually running.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -155,7 +157,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2268-3691`, ~1425
+`master-network-reconcile` (generated at `install.sh:2268-3702`, 1433
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -176,8 +178,12 @@ service** (added `V1-3`, unconditional — unlike Caddy/dnsmasq it does not
 depend on the local-DNS option), and — if local DNS is enabled — live DNS
 and Caddy HTTP responses. WebDAV is checked on two independent signals,
 the same shape as UDP GRO's: whether `master-webdav.service` is active,
-and whether a real `OPTIONS` request to the *current* Tailscale IPv4
-returns 401. The second catches the case the first cannot — the unit
+and whether a real `PROPFIND` request (`Depth: 0`) to the *current*
+Tailscale IPv4 returns 401. `PROPFIND` rather than `OPTIONS` because
+rclone does not authenticate `OPTIONS` at all and answers it 200 — the
+`V1-6` live test found all three of the installer's 401 probes were
+measuring a method rclone leaves open, where sftpgo had returned 401.
+The second signal catches the case the first cannot — the unit
 reading `active` while `rclone` is still bound to a Tailscale address the
 host no longer holds, which is exactly what a node re-registration
 produces. Repair is `systemctl restart`, whose `ExecStart` re-resolves the
@@ -193,6 +199,19 @@ single execution path. Both checks sit outside
 `all_critical_state_healthy()` and do not affect the exit code, because
 UDP GRO is a throughput optimization rather than a connectivity
 precondition — see DD-11.
+
+A wg-easy container still sitting on its `/setup` screen is reported
+(`UYARI`) but is deliberately *not* a failure: it sets `WG_SETUP_PENDING`,
+which suppresses wg-easy's automatic restart — restarting a container
+waiting for its first web setup fixes nothing — without setting
+`RECOVERY_FAILED`. Until `V1-11` both conditions shared the single
+`WG_CONFIGURATION_INVALID` flag, which produced a signal that lied exactly
+when it mattered: a healthy host exited 0 through the
+`all_critical_state_healthy()` early return, but the moment reconcile
+actually repaired something it fell past that gate and exited 1 *despite
+the repair succeeding*. A genuine internal-port mismatch still sets
+`WG_CONFIGURATION_INVALID` and still fails, because that one is a real
+misconfiguration no restart can fix.
 
 Repairs are scoped and cooldown-gated:
 
