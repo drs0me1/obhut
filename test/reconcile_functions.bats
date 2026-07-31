@@ -67,17 +67,31 @@ teardown() {
 @test "state_value: returns the value of an existing key" {
     STATE_FILE="$FIXTURE_DIR/state.env"
     CANONICAL_DIR="$FIXTURE_DIR/no-such-canonical-dir"
-    printf 'STACK_SCHEMA=9\nWEBDAV_PORT=65113\n' >"$STATE_FILE"
+    printf 'STACK_SCHEMA=10\nWEBDAV_PORT=65113\n' >"$STATE_FILE"
 
     run state_value WEBDAV_PORT 0
     [ "$status" -eq 0 ]
     [ "$output" = "65113" ]
 }
 
+@test "state_value: reads an IMAGE_DIGEST_ key written by Stage 5" {
+    # Schema 10 appends IMAGE_DIGEST_* after the heredoc-written block, so the
+    # keys land at the end of the file and carry a colon in their value. Both
+    # properties are things state_value's awk parse could plausibly get wrong.
+    STATE_FILE="$FIXTURE_DIR/state.env"
+    CANONICAL_DIR="$FIXTURE_DIR/no-such-canonical-dir"
+    printf 'STACK_SCHEMA=10\nWEBDAV_PORT=65113\n' >"$STATE_FILE"
+    printf 'IMAGE_DIGEST_WG_EASY=sha256:%064d\n' 0 >>"$STATE_FILE"
+
+    run state_value IMAGE_DIGEST_WG_EASY bilinmiyor
+    [ "$status" -eq 0 ]
+    [ "$output" = "sha256:0000000000000000000000000000000000000000000000000000000000000000" ]
+}
+
 @test "state_value: falls back to the default for a missing key" {
     STATE_FILE="$FIXTURE_DIR/state.env"
     CANONICAL_DIR="$FIXTURE_DIR/no-such-canonical-dir"
-    printf 'STACK_SCHEMA=8\n' >"$STATE_FILE"
+    printf 'STACK_SCHEMA=10\n' >"$STATE_FILE"
 
     run state_value LOCAL_DOMAIN "example"
     [ "$status" -eq 0 ]

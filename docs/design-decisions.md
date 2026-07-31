@@ -845,3 +845,68 @@ reordering is not proposed a second time on the same reasoning.
   admin account unattended (the open `INIT_*` item), which is the real fix
   for the underlying awkwardness — a freshly installed stack that is not
   actually finished. `V1-11` only stops it from being misreported.
+
+### DD-23: Container images float at the patch level, and their digests are recorded (2026-07-31)
+
+- **Decision:** the five container images use moving tags rather than
+  exact versions, and the digest each tag resolved to is written into
+  `state.env` after Stage 5 (`STACK_SCHEMA` 10).
+
+  | Image | Tag | How far it moves |
+  |---|---|---|
+  | wg-easy | `15.3` | patch only |
+  | unpackerr | `0.15` | patch only |
+  | filebrowser | `v2` | anything within the major — no `v2.63` tag is published |
+  | portainer | `lts` | within the LTS line; jumps a major when Portainer declares a new LTS |
+  | qbittorrent | `latest` | upstream stable, including a libtorrent major |
+
+- **Why not exact pins:** they made a re-run deterministic but also froze
+  security and bugfix updates. Debian-sourced host packages (kernel,
+  dnsmasq, systemd) already behave as "patches arrive, majors do not"
+  because trixie is stable; floating container tags extend the same rule
+  to the rest of the stack instead of running two opposite policies side
+  by side.
+- **Why not pin the third-party host packages instead.** That was the
+  first proposal (`docker-ce`, `tailscale`, `caddy` from their own repos
+  can jump majors on a re-run, since their `sources.list` entries persist
+  and Stage 1's `full-upgrade` sees them). The user rejected it on the
+  grounds that it trades away security updates, and that is the correct
+  reading: the existing safety net — upgrade first, rewrite all managed
+  configuration afterwards, then assert in Stage 7 — is what makes an
+  unpinned upgrade survivable, and it is already in place.
+- **Why the float levels are uneven:** because the upstreams' published
+  tags are uneven. Queried from the registries on 2026-07-31; filebrowser
+  publishes no minor tag at all, and linuxserver publishes no float tag
+  for qbittorrent beyond `latest`. Both `lts` and `latest` were verified
+  to resolve to the same digests as the exact pins they replaced, so
+  adopting them changed nothing on the day — which is the safest way to
+  take on a moving tag.
+- **Why digests are recorded, and why that is not optional.** A moving
+  tag deletes the answer to "what is actually running": `compose.yaml`
+  keeps the same checksum while the image underneath it changes. The
+  five `IMAGE_DIGEST_*` keys restore it, `--status` prints the short form
+  next to each container, and Stage 7 asserts that the recorded digest
+  equals the running one — so the record cannot quietly drift from
+  reality. Floating tags without this record would be a straight loss of
+  auditability; the pair is the design, not the tag change alone.
+- **The asymmetry to keep in mind:** upgrading is safe — every one of
+  these containers reads its existing data directory and continues — but
+  **downgrading is not.** Portainer migrates its database forward on
+  start with no reverse path. Re-pinning an old tag therefore does not
+  undo a bad upgrade. The recovery path is a provider-level (netcup) VPS
+  snapshot taken before the run, which the user chose deliberately over
+  an in-script snapshot: a whole-machine image covers the migrated
+  databases, and it keeps rollback out of the installer's scope.
+- **Cost accepted:** a patch-level regression can arrive on a routine
+  re-run. Two things bound it — reconcile never pulls (only Stage 5's
+  explicit `docker compose pull` does, so images never move on the
+  20-minute timer), and the digest record names the version to go back
+  to.
+- **Found while implementing, worth recording:** `RepoDigests` is a field
+  of the *image* object, not the container. `docker inspect <container>`
+  fails with `map has no entry for key "RepoDigests"`, and the first
+  `V1-12` attempt wrote all five digests as `bilinmiyor`. Stage 7's
+  assertion caught it and failed the install with `rc=1, aşama=7` — the
+  intended behaviour, and the second time in three revisions that a Stage 7
+  literal assertion caught a change that `bash -n`, `shellcheck` and the
+  bats suite all passed.

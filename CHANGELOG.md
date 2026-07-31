@@ -6,7 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-11`; `install.sh` is 4984 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-13`; `install.sh` is 5104 lines.
+**Live-verified:** installed in 25s, `STACK_SCHEMA=10`, all five
+`IMAGE_DIGEST_*` keys recorded and matching the running images, `--status`
+printing the short digests, `--check` rc 0, zero failed units.
+
+`V1-12` replaces the exact container image pins with floating tags and
+records the digest each tag resolves to; `V1-13` fixes the digest lookup
+that `V1-12` got wrong.
+
+The change started as the opposite proposal. Re-running `install.sh` also
+upgrades `docker-ce`, `tailscale` and `caddy`, because those three
+third-party `sources.list` entries persist from the previous run and Stage
+1's `full-upgrade` sees them — so pinning *those* was suggested. The user
+rejected it: pinning trades away security updates. That reading is right,
+and it also pointed at the real inconsistency — Debian-sourced packages
+already behave as "patches arrive, majors do not" because trixie is
+stable, while the container images were frozen at exact versions. The
+stack was running two opposite policies at once.
+
+Tags now (queried from the registries, because the upstreams' published
+tags are uneven): wg-easy `15.3` and unpackerr `0.15` move at the patch
+level; filebrowser `v2` moves within the major, since no `v2.63` tag is
+published; portainer `lts` moves within the LTS line and will jump a major
+when Portainer declares a new one; qbittorrent `latest`, because
+linuxserver publishes no float tag at all. Both `lts` and `latest` were
+verified to resolve to the same digests as the exact pins they replaced,
+so adopting them changed nothing on the day.
+
+A moving tag deletes the answer to "what is running" — `compose.yaml`
+keeps its checksum while the image beneath it changes. So the five
+resolved digests are appended to `state.env` after Stage 5, `--status`
+prints them, and **Stage 7 asserts the recorded digest equals the running
+one**. Floating tags without that record would be a straight loss of
+auditability; the pair is the design.
+
+Upgrading is safe — each container reads its existing data directory and
+continues — but downgrading is not: Portainer migrates its database
+forward with no reverse path, so re-pinning an old tag does not undo a bad
+upgrade. Rollback is a provider-level (netcup) VPS snapshot, chosen over an
+in-script snapshot because a whole-machine image also covers the migrated
+databases and keeps rollback out of the installer's scope.
+
+`V1-13` exists because `RepoDigests` is a field of the *image* object, not
+the container: `docker inspect <container>` fails with `map has no entry
+for key "RepoDigests"`, and `V1-12` wrote all five digests as `bilinmiyor`.
+**Stage 7 caught it and failed the install with `rc=1, aşama=7`** — the
+second time in three revisions that a Stage 7 literal assertion caught a
+change that `bash -n`, `shellcheck` and the full bats suite had passed.
+The same wrong lookup was present in `--status` and was fixed with it.
+
+One incidental observation from the same session: a `V1-13` attempt died
+at Stage 5 because Docker Hub's anonymous token endpoint returned **502
+Bad Gateway** during `docker compose pull`. Nothing in the script is at
+fault, but the pull has no retry, so a transient registry error fails the
+whole install. Recorded in `TODO.md`.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-11`; `install.sh` was 4984 lines.
 **Live-verified:** re-installed over `V1-10` on the same host via the
 idempotent path, then both drift scenarios replayed against a wg-easy
 still on `/setup/1` — healthy pass, WebDAV repair and Caddyfile repair all

@@ -105,7 +105,7 @@ setup() {
     AWK_BIN="$(command -v awk)"
     CANONICAL_DIR="$FIXTURE_DIR/canonical"
     mkdir -p "$CANONICAL_DIR"
-    printf 'STACK_SCHEMA=9\n' >"$CANONICAL_DIR/state.env"
+    printf 'STACK_SCHEMA=10\n' >"$CANONICAL_DIR/state.env"
 
     # Stub sha256sum: these tests assert on the manifest's entry list, not
     # on digest verification.

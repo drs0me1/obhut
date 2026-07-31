@@ -1,12 +1,11 @@
 # Debian Server Installer
 
-**Version: V1-11** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-13** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.31-V1-11` in its banner, log header and final summary; note this
+`2026.07.31-V1-13` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
-format and is currently `9`. The latest tagged release is `V1-1` (the
-**M11** socket-buffer ordering fix, verified by a live install). Since
-then, **unreleased and not yet live-verified**: `V1-2` added version/hash
+format and is currently `10`. The latest tag is `V1-11`; `V1-12`/`V1-13`
+are committed but not yet tagged. Earlier history: `V1-2` added version/hash
 self-reporting on the host plus `master-network-reconcile --status`, and
 `V1-3` replaced the `sftpgo` container with `master-webdav.service`, a
 hardened host `rclone serve webdav` unit — which also removed the last
@@ -15,8 +14,9 @@ block in the final install summary. `V1-6` through `V1-8` were driven by
 live installs (four bugs no static check caught), `V1-9`/`V1-10` moved the
 reconcile timer to 20 minutes (DD-21), and `V1-11` stopped reconcile from
 reporting failure after a successful repair on a host whose wg-easy web
-setup is still pending. Both the `V1-10` install with its four-scenario
-sweep and the `V1-11` fix on top of it are live-verified (2026-07-31).
+setup is still pending. `V1-12`/`V1-13` moved the container images from
+exact pins to floating tags, with the digest each tag resolved to recorded
+in `state.env` (DD-23). All of these are live-verified (2026-07-31).
 
 ## Project Overview
 
@@ -52,7 +52,8 @@ and an extensive runtime verification pass at the end of the install.
   `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
   default, with narrow, explicit allow rules for the public services.
 - **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr
-  and wg-easy, deployed with pinned image versions, plus a hardened host
+  and wg-easy, deployed with floating image tags that move at the patch
+  level and whose resolved digests are recorded in `state.env` (DD-23), plus a hardened host
   `rclone` WebDAV unit (`master-webdav.service`) serving the media tree
   read-only to the Tailnet.
 - **Optional Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to
@@ -160,6 +161,12 @@ does restart is `master-webdav`, deliberately and unconditionally, since
 its unit definition or credential may have changed; WebDAV is
 unavailable for a second or two.
 
+Since `V1-12` that measurement carries a qualifier: image tags float, so
+`docker compose pull` may fetch a newer image and `up -d` will then
+recreate **only the containers whose image actually changed**. A re-run is
+a no-op when nothing upstream has moved and a scoped upgrade when
+something has.
+
 Two things to know before re-running:
 
 - **Manual edits to `/root/docker/compose.yaml` are silently
@@ -168,11 +175,14 @@ Two things to know before re-running:
   considered change is not undone behind their back), but `install.sh`
   rewrites the file unconditionally. A change meant to last belongs in
   `install.sh`, not on the host.
-- **A re-run does not silently upgrade anything.** Image tags are pinned
-  to exact versions inside the generated `compose.yaml`, so
-  `docker compose pull` fetches the same digests it already has. Upgrades
-  happen only when the pins in `install.sh` change, which is reviewable
-  in git.
+- **A re-run is where container upgrades happen** (changed in `V1-12`;
+  before that, tags were exact and a re-run pulled the same digests).
+  Reconcile never pulls, so images never move on the 20-minute timer —
+  only an explicit re-run moves them. Upgrading is safe in the sense that
+  every container reads its existing data directory and continues;
+  **downgrading is not**, because Portainer migrates its database forward
+  with no reverse path. The rollback path is a provider-level VPS
+  snapshot taken before the run, not a re-pin.
 
 This is also why there is no separate upgrade script: `install.sh` *is*
 the upgrade path, exercised in place (`V1-10` → `V1-11`). A second script
@@ -183,15 +193,19 @@ exactly one.
 ## Docker Services
 
 All services are defined in a single generated `/root/docker/compose.yaml`
-with pinned image tags and shared JSON-file logging (10m × 3 files).
+with shared JSON-file logging (10m × 3 files). Image tags float so that
+patch and security updates arrive on a re-run while majors do not; the
+digest each tag resolved to is written into `state.env` and asserted by
+Stage 7, so "what is actually running" stays answerable (DD-23). The float
+levels differ because the upstreams' published tags differ.
 
-| Service | Image (pinned) | Exposure | Purpose |
+| Service | Image (tag) | Exposure | Purpose |
 |---------|-----------------|----------|---------|
-| `portainer` | `portainer/portainer-ce` | `127.0.0.1:9443` (+ optional Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
-| `filebrowser` | `filebrowser/filebrowser` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file browser over the downloads/media tree |
-| `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
-| `unpackerr` | `ghcr.io/unpackerr/unpackerr` | none (no published ports) | Watches the media tree and extracts nested archives |
-| `wg-easy` | `ghcr.io/wg-easy/wg-easy` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
+| `portainer` | `portainer/portainer-ce:lts` | `127.0.0.1:9443` (+ optional Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
+| `filebrowser` | `filebrowser/filebrowser:v2` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file browser over the downloads/media tree |
+| `qbittorrent` | `lscr.io/linuxserver/qbittorrent:latest` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
+| `unpackerr` | `ghcr.io/unpackerr/unpackerr:0.15` | none (no published ports) | Watches the media tree and extracts nested archives |
+| `wg-easy` | `ghcr.io/wg-easy/wg-easy:15.3` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
 
 WebDAV is **not** a container. `master-webdav.service` (a host systemd
 unit, since `V1-3`) runs `rclone serve webdav --read-only` against the

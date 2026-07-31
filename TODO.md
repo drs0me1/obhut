@@ -13,7 +13,7 @@ remediations (**C2**, **M6**, **M5**, **H1**, **H2**, **H3**, **M4**,
 regression fix to **H1** plus the new **H5**/**H6**/**H7** fixes, one
 unnumbered cleanup (legacy reboot-timer removal), and a new disk-space
 monitoring check added to `master-network-reconcile` after a final
-architecture review; file is now 4984 lines (V1-11). Originally **tagged R1.0**
+architecture review; file is now 5104 lines (V1-13). Originally **tagged R1.0**
 (2026-07-28) before **H7** was found — the tag itself is not moved/
 retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
@@ -66,7 +66,20 @@ _All High findings resolved — see Completed below._
 
 ## Low
 
-_All Low findings resolved or closed — see Completed below._
+- [ ] 🔵 **L8** (observed 2026-07-31, not yet scoped) — `docker compose
+      pull` in Stage 5 has no retry, so a transient registry error fails
+      the entire install. Observed for real: Docker Hub's anonymous token
+      endpoint returned **502 Bad Gateway** mid-pull and the run died at
+      Stage 5 with `rc=1`; the immediate re-run succeeded. Nothing in the
+      script is at fault, and the failure is loud and safe (the install
+      stops rather than continuing with missing images). Worth a bounded
+      retry — two or three attempts with a short backoff — but it touches
+      the one place where a hang would block the whole install, so the
+      timeout interaction needs thinking through rather than wrapping the
+      call in a loop. Slightly more likely to be hit since `V1-12`, which
+      pulls floating tags on every run.
+
+_All other Low findings resolved or closed — see Completed below._
 
 ## Completed
 

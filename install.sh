@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-11"
+MASTER_SETUP_VERSION="2026.07.31-V1-13"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -534,12 +534,35 @@ QBIT_PUBLIC_PORT="65173"
 # dosyada onlarca yerde tekrar ediyordu.
 WEBDAV_PORT="65113"
 
-# 20-23 Temmuz 2026 tarihlerinde doğrulanan production sürümleri.
-PORTAINER_IMAGE="portainer/portainer-ce:2.39.5"
-FILEBROWSER_IMAGE="filebrowser/filebrowser:v2.63.18"
-QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.13-ls469"
-WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3.0"
-UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15.2"
+# Hareketli (float) etiketler — 2026-07-31'de tam sürüm pin'lerinin yerini
+# aldı. Gerekçe: tam sürüm pin'i, tekrar çalıştırmayı deterministik yapıyordu
+# ama güvenlik/hata düzeltmelerini de kilitliyordu. Debian deposundan gelen
+# host paketleri (çekirdek, dnsmasq, systemd) trixie stable oldukları için
+# zaten "yama gelir, majör gelmez" davranışını veriyor; float etiketler aynı
+# kuralı konteynerlere taşıyor, böylece tüm stack tek kurala uyar.
+#
+# Float seviyeleri kasten eşit değil, çünkü upstream'lerin sunduğu etiketler
+# eşit değil (2026-07-31'de registry'lerden sorgulandı):
+#   wg-easy 15.3, unpackerr 0.15 -> yalnız yama.
+#   filebrowser v2 -> majör içi her şey; v2.63 diye bir etiket yayınlanmıyor,
+#     daha ince bir seçenek yok.
+#   portainer lts -> LTS hattı içinde; Portainer yeni bir LTS ilan ettiğinde
+#     majör atlar. Benimsendiği anda 2.39.5 ile aynı digest'e işaret ediyordu.
+#   qbittorrent latest -> upstream stable, libtorrent majörü dahil. Benimsendiği
+#     anda 5.2.3_v2.0.13-ls469 ile aynı digest'e işaret ediyordu. linuxserver
+#     float etiketi yayınlamadığı için tek seçenek buydu.
+#
+# Hareketli etiketlerin bedeli "çalışan sürümün kaydı yok" olurdu; bu yüzden
+# çözülen digest'ler Aşama 5'ten sonra state.env'e yazılır (bkz. DD-23).
+# Yükseltme ileriye doğru güvenli (konteynerler veri dosyalarını okuyup devam
+# eder) fakat geri dönüş değil: Portainer'ın DB migrasyonu tek yönlüdür.
+# Bozulan bir yükseltmeden dönüş yolu, sağlayıcı seviyesinde (netcup) alınan
+# VPS snapshot'ıdır — bilinçli olarak betiğin sorumluluğunda değildir.
+PORTAINER_IMAGE="portainer/portainer-ce:lts"
+FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"
+QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:latest"
+WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3"
+UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15"
 
 echo "=================================================="
 echo "  OTOMATİK SUNUCU KURULUMU"
@@ -1914,10 +1937,11 @@ WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 
 # STACK_VERSION/STACK_SHA256 bilgilendirme amaçlıdır: reconcile bunları
 # yalnız --status çıktısında gösterir, hiçbir tüketici varlığını zorunlu
-# tutmaz. Bu yüzden şema 8'de kalır — STACK_SCHEMA yalnız format anlayışı
-# değiştiğinde yükselir.
+# tutmaz. Şema yalnız format anlayışı değiştiğinde yükselir; 10'a çıkmasının
+# nedeni IMAGE_DIGEST_* anahtarlarıdır (bkz. DD-23), onlar burada değil
+# Aşama 5'ten sonra eklenir çünkü imajlar o noktada çekilmiş olur.
 cat >/etc/master-stack/state.env <<EOF
-STACK_SCHEMA=9
+STACK_SCHEMA=10
 STACK_VERSION=$MASTER_SETUP_VERSION
 STACK_SHA256=$MASTER_SETUP_SHA256
 LOCAL_DOMAIN=$LOCAL_DOMAIN
@@ -2402,7 +2426,39 @@ if [[ "$MODE" == "--status" ]]; then
                 '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
                 "$status_container" 2>/dev/null || echo "yok"
         )"
-        printf '  %-12s %s\n' "$status_container" "$status_container_state"
+        # Image etiketleri hareketli; çalışan digest'in kısa hâli, "hangi
+        # sürüm ayakta" sorusunun tek doğrudan cevabı. state.env'deki kayıtla
+        # ayrışırsa işaretlenir: bu, kurulum sonrasında image'ın elle
+        # değiştirildiği (veya kaydın bayatladığı) anlamına gelir.
+        # RepoDigests image nesnesindedir, container'da yoktur; önce image
+        # ID okunur (bkz. Aşama 5'teki resolved_image_digest ve DD-23).
+        status_image_id="$(
+            "$DOCKER_BIN" inspect -f '{{.Image}}' \
+                "$status_container" 2>/dev/null || true
+        )"
+        status_running_digest=""
+        if [[ -n "$status_image_id" ]]; then
+            status_running_digest="$(
+                "$DOCKER_BIN" image inspect -f \
+                    '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' \
+                    "$status_image_id" 2>/dev/null || true
+            )"
+            status_running_digest="${status_running_digest#*@}"
+        fi
+        status_recorded_digest="$(
+            state_value \
+                "IMAGE_DIGEST_$(
+                    printf '%s' "$status_container" | tr 'a-z-' 'A-Z_'
+                )" ""
+        )"
+        status_digest_note=""
+        if [[ -n "$status_running_digest" ]]; then
+            status_digest_note="  ${status_running_digest:7:12}"
+            [[ "$status_running_digest" == "$status_recorded_digest" ]] ||
+                status_digest_note+=" (kayıtla ayrışmış)"
+        fi
+        printf '  %-12s %s%s\n' \
+            "$status_container" "$status_container_state" "$status_digest_note"
     done
     printf '  %-12s %s (host servisi)\n' "webdav" "$(
         "$SYSTEMCTL_BIN" is-active master-webdav.service 2>/dev/null || true
@@ -2475,7 +2531,7 @@ WG_PUBLIC_PORT="$(state_value WG_PUBLIC_PORT 65171)"
 WEBDAV_PORT="$(state_value WEBDAV_PORT 65113)"
 WG_ENDPOINT_HOST="$(state_value WG_ENDPOINT_HOST "")"
 DOWNLOADS_PATH="$(state_value DOWNLOADS_PATH "/downloads")"
-if [[ "$STACK_SCHEMA" != "9" ||
+if [[ "$STACK_SCHEMA" != "10" ||
       ! "$QBIT_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WEBDAV_PORT" =~ ^[0-9]+$ ||
@@ -4028,6 +4084,44 @@ progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
 systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
 
+# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:v2 …)
+# "şu anda tam olarak ne çalışıyor" bilgisini compose.yaml'dan siler: dosya
+# değişmeden altındaki imaj değişebilir. Çözülen digest'ler bu yüzden burada
+# state.env'e yazılır — Aşama 5'ten sonra, çünkü imajlar ancak bu noktada
+# çekilmiş ve container'lar ayağa kalkmış olur; Aşama 6'nın canonical
+# yayınından önce, çünkü state.env'in canonical kopyası orada üretilir
+# (DD-14). Bir yükseltme bir şeyi bozarsa geri dönülecek sürümün kaydı
+# budur (DD-23).
+# RepoDigests container nesnesinde DEĞİL, image nesnesinde bulunur —
+# `docker inspect <container>` bu alanı hiç taşımaz ve template
+# "map has no entry" ile patlar. V1-12'nin ilk denemesi tam olarak buna
+# takıldı: beş digest de "bilinmiyor" yazıldı ve Aşama 7 kurulumu rc=1 ile
+# durdurdu. Bu yüzden önce container'ın image ID'si okunur, digest o ID'den
+# alınır. Boş kalırsa (yalnız yerel build'lerde olur) anahtar yine yazılır
+# ki eksiklik Aşama 7'de sessizce geçmesin.
+resolved_image_digest() {
+    local container="$1" image_id="" digest=""
+    image_id="$(docker inspect -f '{{.Image}}' "$container" 2>/dev/null || true)"
+    [[ -n "$image_id" ]] || return 0
+    digest="$(
+        docker image inspect -f \
+            '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' \
+            "$image_id" 2>/dev/null || true
+    )"
+    printf '%s' "${digest#*@}"
+}
+
+progress_stage_note 93 "Çalışan image digest'leri kaydediliyor"
+for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+    service_digest="$(resolved_image_digest "$digest_service")"
+    [[ "$service_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+        service_digest="bilinmiyor"
+    printf 'IMAGE_DIGEST_%s=%s\n' \
+        "$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')" \
+        "$service_digest"
+done >>/etc/master-stack/state.env
+unset digest_service service_digest
+
 progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
 
 # ==================================================
@@ -4607,6 +4701,32 @@ assert_docker_binding() {
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/tcp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLIC_PORT}"
+
+# Image etiketleri hareketli olduğu için "ne çalışıyor" sorusunun tek yazılı
+# cevabı state.env'deki digest kaydı. Kaydın var olduğunu doğrulamak yetmez —
+# gerçekten çalışan image ile aynı olduğunu da doğrula, aksi hâlde kayıt
+# sessizce yalan söyleyebilir (Aşama 5'te bir inspect başarısız olsa "bilinmiyor"
+# yazılırdı ve kimse fark etmezdi).
+for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+    DIGEST_KEY="IMAGE_DIGEST_$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')"
+    RECORDED_DIGEST="$(
+        awk -F= -v k="$DIGEST_KEY" \
+            '$1==k {print substr($0, index($0, "=") + 1); exit}' \
+            /etc/master-stack/state.env
+    )"
+    RUNNING_DIGEST="$(resolved_image_digest "$digest_service")"
+    if [[ ! "$RECORDED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        echo "HATA: $DIGEST_KEY state.env'e yazılamamış (${RECORDED_DIGEST:-boş})." >&2
+        exit 1
+    fi
+    if [[ "$RECORDED_DIGEST" != "$RUNNING_DIGEST" ]]; then
+        echo "HATA: $digest_service çalışan digest'i kayıtla uyuşmuyor." >&2
+        echo "  kayıt   : $RECORDED_DIGEST" >&2
+        echo "  çalışan : ${RUNNING_DIGEST:-tespit edilemedi}" >&2
+        exit 1
+    fi
+done
+unset digest_service DIGEST_KEY RECORDED_DIGEST RUNNING_DIGEST
 
 # WebDAV artık host servisi: Docker publish kaydı ve mangle guard
 # istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
