@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 `MASTER_SETUP_VERSION` is `2026.07.31-V1-11`; `install.sh` is 4984 lines.
+**Live-verified:** re-installed over `V1-10` on the same host via the
+idempotent path, then both drift scenarios replayed against a wg-easy
+still on `/setup/1` — healthy pass, WebDAV repair and Caddyfile repair all
+exit 0, journal reading `UYARI`, zero failed units, `--check` rc 0,
+`--status` reporting `V1-11` / `c33d84f7…`. The opposite branch (a real
+internal-port mismatch must still fail) is unreachable until wg-easy's web
+setup is done and rests on code reading alone.
 
 `V1-11` separates "wg-easy is waiting for its first web setup" from
 "wg-easy is misconfigured". Both used to set `WG_CONFIGURATION_INVALID`,

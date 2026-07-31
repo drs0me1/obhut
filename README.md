@@ -15,8 +15,8 @@ block in the final install summary. `V1-6` through `V1-8` were driven by
 live installs (four bugs no static check caught), `V1-9`/`V1-10` moved the
 reconcile timer to 20 minutes (DD-21), and `V1-11` stopped reconcile from
 reporting failure after a successful repair on a host whose wg-easy web
-setup is still pending. The `V1-10` install and its four-scenario sweep are
-live-verified; the `V1-11` fix on top of it is not yet.
+setup is still pending. Both the `V1-10` install with its four-scenario
+sweep and the `V1-11` fix on top of it are live-verified (2026-07-31).
 
 ## Project Overview
 
