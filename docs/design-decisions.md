@@ -963,4 +963,5 @@ reordering is not proposed a second time on the same reasoning.
   that the message differs from an ordinary failure), recovery, and
   argument pass-through. The suite self-skips where GNU `timeout` is
   absent, so it skips on the macOS workstation and runs for real on the
-  Debian target — where the **full 62-case suite passes with zero skips**.
+  Debian target — where the full suite passes with zero skips (62 cases at
+  the time; 74 after the `M7` coverage correction later the same day).

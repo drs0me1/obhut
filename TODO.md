@@ -29,43 +29,67 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **M7** (partially done, 2026-07-28) — Tier 1 (static analysis,
-      see **H4**) done. Tier 2 in progress: `test/reconcile_functions.bats`
-      covers `state_value`/`owned_file_ok` (7 cases; 2 self-skip on this
-      macOS dev workstation's non-GNU `stat`); `test/firewall_functions.bats`
-      covers `route_value`, `chain_rules_exact`, `jump_is_first_and_single`,
-      `forward_prefix_is_exact`, `docker_forward_has_no_terminal_drop`,
-      `no_stale_staging_chains` (20 cases) via a fake iptables/`ip`
-      stand-in; `test/gro_functions.bats` covers `tailscale-udp-gro`'s
-      `add_default_netdev` (5 cases, all self-skipping on this
-      workstation's bash 3.2, which lacks associative arrays — runs for
-      real on the Debian target's bash 5.x); `test/canonical_bundle.bats`
-      covers `canonical_bundle_ok()`'s single manifest shape (7 cases, no
-      skips, lists derived from `install.sh`'s own Stage 6 source); and
-      `test/policy_functions.bats` covers `check_ipv4_policy`/
-      `check_ipv6_policy` (17 cases); and `test/retry_network.bats` covers
-      `retry_network`'s four control-flow paths plus argument pass-through
-      (5 cases, self-skipping where GNU `timeout` is absent) — **62 cases
-      total, and all 62 pass with zero skips on the Debian target**. The other
-      three remaining embedded scripts (`master-compose-ipv4`,
-      `master-docker-netfilter-recovery`, `caddy-tailnet-env`) were
-      surveyed and found to have no standalone pure-logic functions worth
-      unit-testing — each is essentially a wait loop plus real side
-      effects. Remaining: `check_ipv4_policy`/`check_ipv6_policy` (more
-      integration-shaped, likely Tier 3 instead — **done 2026-07-28, see
-      Completed**). **Remaining scope is CI wiring only, and it is parked
-      rather than pending:** the user decided on 2026-07-28 that this
-      repository stays local with no git remote, and a runner needs
-      somewhere to build from. Kept open at the user's request, but do
-      not re-propose CI at each review — a remote is the only thing that
+- [ ] 🟡 **M7** (partially done; inventory corrected 2026-07-31) — Tier 1
+      (static analysis, see **H4**) done. Tier 2 covers, across six files
+      and **74 cases**: `state_value`/`owned_file_ok`/`restart_budget_available`/
+      `disk_space_ok`/`all_critical_state_healthy`
+      (`test/reconcile_functions.bats`); `route_value`, `chain_rules_exact`,
+      `jump_is_first_and_single`, `forward_prefix_is_exact`,
+      `docker_forward_has_no_terminal_drop`, `no_stale_staging_chains`
+      (`test/firewall_functions.bats`, 20 cases, via a fake iptables/`ip`
+      stand-in); `check_ipv4_policy`/`check_ipv6_policy`
+      (`test/policy_functions.bats`, 17 cases); `canonical_bundle_ok`
+      (`test/canonical_bundle.bats`, 7 cases, lists derived from
+      `install.sh`'s own Stage 6 source); `add_default_netdev`
+      (`test/gro_functions.bats`, 5 cases); and `retry_network`'s four
+      control-flow paths plus argument pass-through
+      (`test/retry_network.bats`, 5 cases). Several suites self-skip on the
+      macOS workstation (non-GNU `stat`, bash 3.2 without associative
+      arrays, no GNU `timeout`); **all 74 run for real with zero skips on
+      the Debian target**, confirmed 2026-07-31.
+
+      **The "remaining scope is CI wiring only" claim was wrong and has
+      been corrected.** It was written on 2026-07-28 against a ~4550-line
+      script; by 2026-07-31 the file was 5198 lines and the functions added
+      or grown since had never been folded back into this inventory. A
+      re-survey found three genuinely unit-testable pure-logic functions
+      with no coverage at all, and they are now covered: `restart_budget_available`
+      (the 15-minute cooldown gate whose mismatch with the old 5-minute
+      timer motivated DD-21 — the constant driving that decision had no
+      test behind it), `disk_space_ok` (threshold parse, including the
+      strict-`<` boundary and the fail-closed unparseable case), and
+      `all_critical_state_healthy` (pure, twenty flags, no external calls;
+      the invariant pinned is that *any single* flag makes it false, plus a
+      guard test asserting the fixture list matches the flags the function
+      actually reads — verified to fail when the list is deliberately
+      shortened, so it is not a vacuous check). This is the third
+      documentation-accuracy defect found on 2026-07-31, after
+      `docs/architecture.md`'s 18-line stage-table drift and its stale
+      `OPTIONS` description of the WebDAV probe.
+
+      Of the 35 functions in the reconcile heredoc, the ones still
+      uncovered are genuinely integration-shaped — `http_endpoint_responds`,
+      `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
+      `tailscale_online`, `check_compose_runtime` and their neighbours all
+      need real network, systemd or Docker. A second tier of parse-only
+      functions (`record_container_restart`, `gro_flags_ok`,
+      `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)
+      is stub-able but has milder failure modes; worth doing, not urgent.
+      The other three embedded scripts (`master-compose-ipv4`,
+      `master-docker-netfilter-recovery`, `caddy-tailnet-env`) remain
+      surveyed and rejected — each is a wait loop plus real side effects.
+
+      **CI wiring is parked, not pending:** the user decided on 2026-07-28
+      that this repository stays local with no git remote, and a runner
+      needs somewhere to build from. Kept open at the user's request, but
+      do not re-propose CI at each review — a remote is the only thing that
       would unpark it. Tier 3 automation would additionally need a
-      non-interactive invocation mode, separately judged not worth
-      changing the `/dev/tty` prompt design for. Tier 3 itself
-      had three real attempts on 2026-07-28 (see Completed below and
-      `docs/testing.md`) — found and fixed three real bugs (**H1**
-      regression, **H5**, **H6**) across the first two, then the third
-      attempt completed all 7 stages successfully end-to-end, the first
-      fully clean install of this repo's `install.sh`.
+      non-interactive invocation mode, separately judged not worth changing
+      the `/dev/tty` prompt design for. Tier 3 itself had three real
+      attempts on 2026-07-28 (see Completed below and `docs/testing.md`) —
+      found and fixed three real bugs (**H1** regression, **H5**, **H6**)
+      across the first two, then the third completed all 7 stages
+      end-to-end, the first fully clean install of this repo's `install.sh`.
 
 ## Low
 

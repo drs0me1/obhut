@@ -35,6 +35,9 @@ setup() {
     {
         extract_function RECONCILE_SCRIPT state_value
         extract_function RECONCILE_SCRIPT owned_file_ok
+        extract_function RECONCILE_SCRIPT restart_budget_available
+        extract_function RECONCILE_SCRIPT disk_space_ok
+        extract_function RECONCILE_SCRIPT all_critical_state_healthy
     } >"$FUNCS_FILE"
 
     # Fail loudly if install.sh's function source ever moves/renames in a
@@ -42,6 +45,9 @@ setup() {
     # an empty no-op function.
     grep -q '^state_value() {' "$FUNCS_FILE"
     grep -q '^owned_file_ok() {' "$FUNCS_FILE"
+    grep -q '^restart_budget_available() {' "$FUNCS_FILE"
+    grep -q '^disk_space_ok() {' "$FUNCS_FILE"
+    grep -q '^all_critical_state_healthy() {' "$FUNCS_FILE"
 
     # shellcheck disable=SC1090
     source "$FUNCS_FILE"
@@ -150,4 +156,187 @@ teardown() {
 @test "owned_file_ok: returns false when the file does not exist" {
     run owned_file_ok "$FIXTURE_DIR/no-such-file.txt" 0 0 600
     [ "$status" -ne 0 ]
+}
+
+# --- restart_budget_available ---
+#
+# The 15-minute per-container restart cooldown. Worth covering on its own:
+# it is the gate that decides whether a detected drift actually gets
+# repaired, and the mismatch between it and the old 5-minute timer is what
+# motivated moving the timer to 20 minutes (DD-21) — the constant driving
+# that decision had no test behind it.
+
+@test "restart_budget_available: allows a restart when no stamp exists" {
+    RESTART_STATE_DIR="$FIXTURE_DIR/stamps"
+    RESTART_COOLDOWN_SECONDS=900
+    mkdir -p "$RESTART_STATE_DIR"
+
+    run restart_budget_available portainer
+    [ "$status" -eq 0 ]
+}
+
+@test "restart_budget_available: allows a restart once the cooldown has elapsed" {
+    RESTART_STATE_DIR="$FIXTURE_DIR/stamps"
+    RESTART_COOLDOWN_SECONDS=900
+    mkdir -p "$RESTART_STATE_DIR"
+    printf '%s\n' "$(( $(date +%s) - 901 ))" \
+        >"$RESTART_STATE_DIR/portainer.last-restart"
+
+    run restart_budget_available portainer
+    [ "$status" -eq 0 ]
+}
+
+@test "restart_budget_available: refuses a restart inside the cooldown" {
+    RESTART_STATE_DIR="$FIXTURE_DIR/stamps"
+    RESTART_COOLDOWN_SECONDS=900
+    mkdir -p "$RESTART_STATE_DIR"
+    printf '%s\n' "$(( $(date +%s) - 60 ))" \
+        >"$RESTART_STATE_DIR/portainer.last-restart"
+
+    run restart_budget_available portainer
+    [ "$status" -ne 0 ]
+}
+
+@test "restart_budget_available: treats a corrupt stamp as no stamp" {
+    # A truncated or garbage stamp must not wedge repairs shut forever;
+    # the function floors it to 0, which reads as "cooldown long expired".
+    RESTART_STATE_DIR="$FIXTURE_DIR/stamps"
+    RESTART_COOLDOWN_SECONDS=900
+    mkdir -p "$RESTART_STATE_DIR"
+    printf 'not-a-timestamp\n' >"$RESTART_STATE_DIR/portainer.last-restart"
+
+    run restart_budget_available portainer
+    [ "$status" -eq 0 ]
+}
+
+@test "restart_budget_available: scopes the stamp to one container" {
+    RESTART_STATE_DIR="$FIXTURE_DIR/stamps"
+    RESTART_COOLDOWN_SECONDS=900
+    mkdir -p "$RESTART_STATE_DIR"
+    printf '%s\n' "$(date +%s)" >"$RESTART_STATE_DIR/portainer.last-restart"
+
+    run restart_budget_available qbittorrent
+    [ "$status" -eq 0 ]
+}
+
+# --- disk_space_ok ---
+#
+# Uses a stub `df` on PATH, the same technique test/firewall_functions.bats
+# uses for iptables. Reported but never auto-repaired: deleting user data is
+# not a safe automated action, so this function's only job is to classify.
+
+# Emits the two-line shape `df --output=pcent` produces: a "Use%" header
+# followed by the percentage. disk_space_ok reads the last line and strips
+# everything that is not a digit, so the header must be present for the
+# test to exercise the real parse rather than a simplified one.
+# Built with echo rather than printf: the percentage being stubbed contains
+# a literal '%', which printf would read as a format specifier. The first
+# draft did exactly that and emitted `printf: invalid format character` on
+# stderr while still passing, because disk_space_ok's `tr -dc '0-9'` strips
+# the mangled output back into something usable — a test helper quietly
+# testing the wrong string.
+stub_df() {
+    mkdir -p "$FIXTURE_DIR/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'echo "Use%"'
+        echo "echo '$1'"
+    } >"$FIXTURE_DIR/bin/df"
+    chmod +x "$FIXTURE_DIR/bin/df"
+    DF_BIN="$FIXTURE_DIR/bin/df"
+}
+
+@test "disk_space_ok: accepts usage below the threshold" {
+    stub_df "2%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run disk_space_ok /downloads
+    [ "$status" -eq 0 ]
+}
+
+@test "disk_space_ok: rejects usage above the threshold" {
+    stub_df "95%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run disk_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
+@test "disk_space_ok: treats the threshold itself as not ok" {
+    # The comparison is strict (<), so 90 with a threshold of 90 is already
+    # a warning. Pinning the boundary here so it cannot drift silently.
+    stub_df "90%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run disk_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
+@test "disk_space_ok: fails closed when df output is unparseable" {
+    mkdir -p "$FIXTURE_DIR/bin"
+    printf '#!/usr/bin/env bash\nprintf "no percentage here\\n"\n' \
+        >"$FIXTURE_DIR/bin/df"
+    chmod +x "$FIXTURE_DIR/bin/df"
+    DF_BIN="$FIXTURE_DIR/bin/df"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run disk_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
+# --- all_critical_state_healthy ---
+#
+# Pure: twenty flag variables, one test expression, no external calls. The
+# contract worth protecting is that ANY single flag set is enough to make it
+# false — a new drift signal added to the reconcile pass but forgotten here
+# would silently stop failing the run, which is the failure shape V1-11 had
+# (a condition that influenced the exit code without being part of this
+# gate). These cases do not reproduce that bug; they pin the invariant that
+# would make a repeat visible.
+
+CRITICAL_FLAGS=(
+    ADDRESS_CHANGED WG_ENDPOINT_DRIFTED FORWARDING_DRIFTED DISK_SPACE_LOW
+    TAILSCALE_OFFLINE TAILSCALE_PREFS_DRIFTED TAILSCALE_NETFILTER_DRIFTED
+    FIREWALL_DRIFTED DOCKER_NETFILTER_DRIFTED FW_INACTIVE COMPOSE_INACTIVE
+    COMPOSE_RUNTIME_DRIFTED CONFIG_DRIFTED CANONICAL_CONFIG_INVALID
+    WEBDAV_UNIT_INACTIVE WEBDAV_RUNTIME_DRIFTED CADDY_INACTIVE
+    CADDY_RUNTIME_DRIFTED DNSMASQ_INACTIVE DNSMASQ_RUNTIME_DRIFTED
+)
+
+clear_critical_flags() {
+    local flag
+    for flag in "${CRITICAL_FLAGS[@]}"; do
+        printf -v "$flag" '%s' 0
+    done
+}
+
+@test "all_critical_state_healthy: true when every flag is clear" {
+    clear_critical_flags
+    run all_critical_state_healthy
+    [ "$status" -eq 0 ]
+}
+
+@test "all_critical_state_healthy: false when any single flag is set" {
+    local flag
+    for flag in "${CRITICAL_FLAGS[@]}"; do
+        clear_critical_flags
+        printf -v "$flag" '%s' 1
+        if all_critical_state_healthy; then
+            printf 'flag %s did not make the gate fail\n' "$flag" >&2
+            return 1
+        fi
+    done
+}
+
+@test "all_critical_state_healthy: covers exactly the flags the function reads" {
+    # Guards against the list above drifting from install.sh. If a flag is
+    # added to the function without being added here, the loop above would
+    # keep passing while covering less than it claims.
+    local body extracted
+    body="$(extract_function RECONCILE_SCRIPT all_critical_state_healthy)"
+    extracted="$(
+        printf '%s\n' "$body" |
+            grep -oE '\$[A-Z_]+' | tr -d '$' | sort -u
+    )"
+    [ "$extracted" = "$(printf '%s\n' "${CRITICAL_FLAGS[@]}" | sort -u)" ]
 }

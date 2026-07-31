@@ -2,8 +2,11 @@
 
 ## Planned testing strategy
 
-> **Status (2026-07-28): Tier 1 implemented; Tier 2 partial (57 unit
-> tests); Tier 3 had seven real, manual install runs. Four were against a
+> **Status (updated 2026-07-31): Tier 1 implemented; Tier 2 partial (74
+> unit cases across six files, all passing with zero skips on the Debian
+> target — several self-skip on the macOS workstation for non-GNU `stat`,
+> bash 3.2 and a missing GNU `timeout`); Tier 3 had seven real, manual
+> install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
 > hardening and also succeeded. The fifth was the first re-run against an
@@ -59,8 +62,13 @@ alone.
   `state_value`, `owned_file_ok`, `chain_rules_exact`,
   `jump_is_first_and_single`, `detect_ipv4_route`'s parsing logic.
 - **Implemented so far:** `test/reconcile_functions.bats` covers
-  `state_value` and `owned_file_ok`, both from the `master-network-reconcile`
-  heredoc. It reuses the same `sed` marker-based extraction as
+  `state_value`, `owned_file_ok`, `restart_budget_available`,
+  `disk_space_ok` and `all_critical_state_healthy` — all from the
+  `master-network-reconcile` heredoc. The last three were added on
+  2026-07-31, when a re-survey found this document's and `TODO.md`'s
+  inventories had gone stale: both still said the only remaining Tier 2
+  scope was CI wiring, an assessment written against a ~4550-line script
+  that was 5198 lines by then. It reuses the same `sed` marker-based extraction as
   `scripts/lint-embedded-scripts.sh` to pull the heredoc body out of
   `install.sh`, then an `awk` pass to isolate just these two function
   definitions (from `name() {` to the matching top-level `}`) — the full
@@ -137,6 +145,21 @@ alone.
   test actually fails when they diverge. Added because **M8** and **M10**
   both edited the local-DNS-disabled branch, which no live install has
   ever executed.
+- **Also implemented:** `test/retry_network.bats` covers `retry_network`,
+  the bounded-retry/mandatory-timeout wrapper around every network step
+  (**L8**, DD-24). Unlike the other suites the function lives in
+  `install.sh`'s own body rather than an embedded heredoc, so it is
+  extracted with a plain `awk` range instead of the marker-based sed pass.
+  5 cases: first-attempt success, exhaustion, timeout (asserting exit
+  `124` *and* that its message differs from an ordinary failure),
+  recovery, and argument pass-through. Self-skips where GNU `timeout` is
+  absent.
+  - **A correction worth keeping:** the design note written before this
+    change claimed the recovery path — transient failure followed by
+    success — could not be tested deterministically without a real flaky
+    network. That was wrong. A stub that fails once and then succeeds
+    reproduces it exactly, which is what the recovery case does.
+
 - **Also implemented:** `test/policy_functions.bats` covers
   `check_ipv4_policy()` and `check_ipv6_policy()` — the composite
   verifiers that hold the entire expected firewall rule set and produce

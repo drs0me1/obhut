@@ -10,6 +10,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 **Live-verified:** 25s install, `STACK_SCHEMA=10`, five digests recorded,
 `--check` rc 0, zero failed units, containers untouched.
 
+**Test coverage corrected (2026-07-31):** `M7`'s inventory claimed the
+only remaining scope was CI wiring. That was written on 2026-07-28 against
+a ~4550-line script and had not been revisited as the file grew to 5198
+lines. A re-survey found three genuinely unit-testable pure-logic functions
+with no coverage at all — `restart_budget_available` (the 15-minute
+cooldown gate whose mismatch with the old 5-minute timer motivated DD-21,
+i.e. the constant that drove a design decision had no test behind it),
+`disk_space_ok` (threshold parse, strict-`<` boundary, fail-closed on
+unparseable output) and `all_critical_state_healthy` (pure, twenty flags,
+no external calls). All three are now covered; the suite goes from 62 to
+**74 cases, all passing with zero skips on the Debian target**.
+
+The `all_critical_state_healthy` suite includes a guard case asserting the
+fixture's flag list matches the flags the function actually reads, so a
+flag added to the reconcile pass but forgotten in the gate becomes visible
+rather than silently reducing what the loop covers. That guard was checked
+against a deliberately shortened list and does fail — it is not vacuous.
+Two smaller things surfaced while writing it: the `df` stub was built with
+`printf` and the stubbed percentage's `%` was read as a format specifier,
+so it emitted an error while still passing because `disk_space_ok`'s
+`tr -dc '0-9'` cleaned up after it; and this is the third
+documentation-accuracy defect of the day, after `docs/architecture.md`'s
+18-line stage-table drift and its stale `OPTIONS` description of the WebDAV
+probe.
+
 **Reboot-verified (2026-07-31):** the host returned in 56 seconds with all
 nine units active unaided, five containers up, `rclone` re-bound to the
 Tailscale IPv4 by itself, the firewall rebuilt to exactly two narrow public
@@ -68,7 +93,8 @@ path could not be tested deterministically without a real flaky network;
 that was wrong, and a stub that fails once then succeeds reproduces it
 exactly. The suite self-skips where GNU `timeout` is absent, so it skips
 on the macOS workstation and runs for real on Debian — where the **full
-62-case suite passes with zero skips**.
+62-case suite passes with zero skips** (74 after the `M7` coverage
+correction later the same day).
 
 ### Previously
 
