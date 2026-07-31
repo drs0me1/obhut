@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 `MASTER_SETUP_VERSION` is `2026.07.31-V1-18`; `install.sh` is 5275 lines.
 
+**Deployment tooling (`versiyon/deploy.sh`, not part of `install.sh`).**
+Copies the single export in `versiyon/` to a host, verifies the transfer by
+SHA256 and optionally runs the installer. The expected hash is computed
+from the local file at run time rather than stored — a stored constant
+would be a second copy needing manual update on every export swap, and this
+repository has been bitten by exactly that three times (the repair cooldown
+across two heredocs, the architecture stage table twice, and the "sabit
+image sürümleri" wording surviving four revisions past the change it
+described). Both guards — exactly one export present, transferred hash
+matching — were verified to fire rather than assumed.
+
+`--run` executes the installer directly over SSH; the `tmux` wrapper was
+dropped at the operator's request, since the install can equally be started
+from the provider console. The cost is stated in the script and the README
+rather than hidden: an SSH drop after Stage 1 leaves the install
+incomplete, with re-running (25s, zero container restarts when nothing
+moved) as the built-in remedy.
+
+It also warns about the Tailscale login, which is what actually cost time:
+restarting the installer generates a new nodekey and invalidates the
+pending auth path, producing `410 auth path not found`. Three attempts went
+to that before the cause was identified — and the cause was the restarts
+themselves. The fix for a slow login is to wait, not retry.
+
 `V1-18` makes Stage 2 say *why* a registered Tailscale profile failed to
 come online. Three unrelated faults produced the same message and have
 different fixes: the control plane is unreachable, the node key has
