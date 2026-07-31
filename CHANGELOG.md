@@ -11,9 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 idempotent path, then both drift scenarios replayed against a wg-easy
 still on `/setup/1` — healthy pass, WebDAV repair and Caddyfile repair all
 exit 0, journal reading `UYARI`, zero failed units, `--check` rc 0,
-`--status` reporting `V1-11` / `c33d84f7…`. The opposite branch (a real
-internal-port mismatch must still fail) is unreachable until wg-easy's web
-setup is done and rests on code reading alone.
+`--status` reporting `V1-11` / `c33d84f7…`. Re-verified from scratch on a
+second reimaged host, where the first attempt accidentally proved nothing:
+wg-easy's web setup was completed three minutes after the install, so the
+scenarios ran against a `/login` container, `WG_SETUP_PENDING` never fired,
+and three `exit 0` results the old code would have produced identically
+were briefly mistaken for evidence. After wiping wg-easy's config to
+restore `/setup/1`, the replay gave five `UYARI` lines and **zero `HATA`**
+across three runs, both repair runs printing the warning twice — the same
+double-print that accompanied `exit 1` under `V1-10` — with all three
+exiting 0. The opposite branch (a real internal-port mismatch must still
+fail) is unreachable until wg-easy's setup is done, and when it briefly
+was, the port matched; it still rests on code reading alone.
 
 `V1-11` separates "wg-easy is waiting for its first web setup" from
 "wg-easy is misconfigured". Both used to set `WG_CONFIGURATION_INVALID`,
