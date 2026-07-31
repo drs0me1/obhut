@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-17"
+MASTER_SETUP_VERSION="2026.07.31-V1-18"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1178,7 +1178,31 @@ if tailscale ip -4 >/dev/null 2>&1; then
     done
     if ! tailscale_is_online; then
         echo "HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
-        echo "Ağ/control-plane erişimini veya mevcut profili kontrol edip yeniden çalıştırın." >&2
+        # Üç ayrı arıza aynı zaman aşımını üretir ve çözümleri farklıdır:
+        # ağ/control-plane erişilemez, node key süresi dolmuş, ya da düğüm
+        # Tailscale panelinden SİLİNMİŞ. Sonuncusu yerelde tamamen normal
+        # görünür — profil kayıtlı, key süresi geçerli, tailscaled active —
+        # ve yalnız journald'deki "node not found" ile ayırt edilir. Bu
+        # 2026-07-31'de gerçekten yaşandı: kurulum doğru biçimde durdu ama
+        # mesaj, gereken tek işlemin `tailscale logout` + yeniden giriş
+        # olduğunu söylemiyordu. Ayrımı burada yap; operatör journald
+        # okumak zorunda kalmasın.
+        # Pencere olarak sabit bir süre değil, BU çalıştırmanın başlangıcı
+        # kullanılıyor: çözülmüş eski bir node-not-found arızasından kalan
+        # kayıt, dakikalar sonra oluşan başka bir arızaya yanlış teşhis
+        # koymasın.
+        if journalctl -u tailscaled \
+                --since "${MASTER_SETUP_STARTED_AT:--5min}" \
+                --no-pager 2>/dev/null |
+                grep -q "node not found"; then
+            echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
+            echo "Düğüm Tailscale panelinden silinmiş; yerel profil geçerli görünse de" >&2
+            echo "sunucu tarafında karşılığı yok. Yeniden kaydolmak gerekiyor:" >&2
+            echo "  tailscale logout && bash $0" >&2
+        else
+            echo "Ağ/control-plane erişimini veya mevcut profili kontrol edip yeniden çalıştırın." >&2
+            echo "Ayrıntı için: journalctl -u tailscaled -n 50" >&2
+        fi
         exit 1
     fi
 

@@ -6,7 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-17`; `install.sh` is 5251 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-18`; `install.sh` is 5275 lines.
+
+`V1-18` makes Stage 2 say *why* a registered Tailscale profile failed to
+come online. Three unrelated faults produced the same message and have
+different fixes: the control plane is unreachable, the node key has
+expired, or **the node has been deleted from the Tailscale admin panel**.
+
+The third looks entirely healthy locally — profile registered, key valid
+until 2027, `tailscaled` active, `tailscale ip -4` returning an address —
+and is only distinguishable by `404: node not found` in journald. It
+happened for real on 2026-07-31, most likely while clearing out the dead
+tailnet entries this project accumulates on every reimage. The install
+stopped correctly and left the host on its previous version, but the
+message did not say that the only fix is `tailscale logout` followed by a
+fresh browser login.
+
+Stage 2 now greps journald for that signature and prints the specific
+cause and the exact remedy. The window is scoped to
+`MASTER_SETUP_STARTED_AT` rather than a fixed `-5min`, so a resolved
+earlier fault cannot misdiagnose a different failure minutes later.
+
+**Not live-verified, and deliberately so:** exercising this path requires
+deleting the node from the Tailscale admin panel, which is account-level
+and outside the standing authorization for the test host.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-17`; `install.sh` was 5251 lines.
 
 `V1-17` trims Stage 0's pre-confirmation summary to the four values the
 operator actually chose: downloads path, timezone, WebDAV username and the
