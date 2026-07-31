@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-11"
+MASTER_SETUP_VERSION="2026.07.31-V1-14"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -210,6 +210,73 @@ progress_close_tty() {
         exec 5>&-
         MASTER_PROGRESS_TTY_FD_OPEN=0
     fi
+}
+
+# Ağ bağımlı adımlar için sınırlı retry + zorunlu timeout (L8).
+#
+# Buradaki asıl amaç retry değil TIMEOUT. Betik systemd-inhibit
+# --mode=block altında çalışıyor ve reconcile ile paylaşılan flock'u tutuyor;
+# dolayısıyla asılı kalan tek bir indirme hem shutdown'ı hem de 20 dakikalık
+# reconcile timer'ını süresiz olarak rehin alır. Bugünkü davranış "sonsuz
+# bekle"; aşağıdaki her şey o sonsuzluğu sınırlamak içindir. 2026-07-31'de
+# yaşanan Docker Hub 502'si ise gürültülü ve güvenli düştü — retry onu
+# kurtarır, ama tehlikeli olan senaryo o değildi.
+#
+# Hata sınıflandırması bilinçli olarak YOK. Kalıcı hatalar (manifest unknown,
+# unauthorized, disk dolu) saniyeler içinde döner, dolayısıyla körlemesine üç
+# deneme onlara yalnız ~20 saniye backoff'a mal olur ve ardından net hatayla
+# durulur. Gerçek süreyi sadece geçici hatalar ve asılmalar harcar, ki hedef
+# zaten onlar. stderr metnini eşleştirmek locale'e ve upstream mesaj
+# formatına bağımlı olurdu; kazancı yok.
+#
+# Süreler 2026-07-31'de bu host'ta ÖLÇÜLEN taban değerlere göre seçildi:
+# soğuk `docker compose pull` 10.9s (885 MB, üç registry), sıcak pull 3.2s,
+# apt-get update 0.9s, keyring curl'leri 36-127 ms. Bulk sınırı ölçülenin
+# ~27 katı; yani hattın bu host'tan 27 kat yavaş olması hâlinde meşru bir
+# indirme kesilir — o durumda bile operatör bütçeyi adıyla söyleyen bir
+# zaman aşımı mesajı alır, sessiz bir asılma değil.
+NET_RETRY_ATTEMPTS=3
+NET_RETRY_BULK_FIRST=300
+NET_RETRY_BULK_NEXT=180
+NET_RETRY_SMALL_FIRST=60
+NET_RETRY_SMALL_NEXT=30
+
+retry_network() {
+    local label="$1" first_timeout="$2" retry_timeout="$3"
+    shift 3
+    [[ "${1:-}" == "--" ]] && shift
+
+    local attempt=1 rc=0 limit="$first_timeout" backoff=5
+    while :; do
+        rc=0
+        # --kill-after: TERM'i yok sayan bir alt sürecin timeout'u da
+        # anlamsızlaştırmasını engeller.
+        timeout --signal=TERM --kill-after=30s "$limit" "$@" || rc=$?
+        [[ "$rc" -eq 0 ]] && return 0
+
+        if [[ "$attempt" -ge "$NET_RETRY_ATTEMPTS" ]]; then
+            # 124 = timeout'un kendi zaman aşımı kodu, 137 = KILL sonrası.
+            # "Cevap vermedi" ile "hata döndürdü" operatör için farklı
+            # şeylerdir; ayrımı mesajda koru.
+            if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+                echo "HATA: ${label}: son deneme ${limit} saniyede tamamlanmadı (zaman aşımı)." >&2
+            else
+                echo "HATA: ${label}: ${NET_RETRY_ATTEMPTS} denemenin tamamı başarısız (son çıkış kodu ${rc})." >&2
+            fi
+            return "$rc"
+        fi
+
+        echo "UYARI: ${label}: ${attempt}. deneme başarısız (çıkış kodu ${rc}); ${backoff}s sonra yeniden denenecek." >&2
+        # İlerleme çubuğu donmuş görünmesin: operatör donmuş bir çubuğa
+        # bakarsa kurulumu elle keser, ki kaçınmak istediğimiz tam olarak bu.
+        progress_stage_note "$MASTER_CURRENT_PERCENT" \
+            "${MASTER_CURRENT_STAGE_LABEL} (yeniden deneniyor: $((attempt + 1))/${NET_RETRY_ATTEMPTS})"
+        sleep "$backoff"
+
+        attempt=$((attempt + 1))
+        limit="$retry_timeout"
+        backoff=15
+    done
 }
 
 append_master_service_journal() {
@@ -534,12 +601,35 @@ QBIT_PUBLIC_PORT="65173"
 # dosyada onlarca yerde tekrar ediyordu.
 WEBDAV_PORT="65113"
 
-# 20-23 Temmuz 2026 tarihlerinde doğrulanan production sürümleri.
-PORTAINER_IMAGE="portainer/portainer-ce:2.39.5"
-FILEBROWSER_IMAGE="filebrowser/filebrowser:v2.63.18"
-QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.13-ls469"
-WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3.0"
-UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15.2"
+# Hareketli (float) etiketler — 2026-07-31'de tam sürüm pin'lerinin yerini
+# aldı. Gerekçe: tam sürüm pin'i, tekrar çalıştırmayı deterministik yapıyordu
+# ama güvenlik/hata düzeltmelerini de kilitliyordu. Debian deposundan gelen
+# host paketleri (çekirdek, dnsmasq, systemd) trixie stable oldukları için
+# zaten "yama gelir, majör gelmez" davranışını veriyor; float etiketler aynı
+# kuralı konteynerlere taşıyor, böylece tüm stack tek kurala uyar.
+#
+# Float seviyeleri kasten eşit değil, çünkü upstream'lerin sunduğu etiketler
+# eşit değil (2026-07-31'de registry'lerden sorgulandı):
+#   wg-easy 15.3, unpackerr 0.15 -> yalnız yama.
+#   filebrowser v2 -> majör içi her şey; v2.63 diye bir etiket yayınlanmıyor,
+#     daha ince bir seçenek yok.
+#   portainer lts -> LTS hattı içinde; Portainer yeni bir LTS ilan ettiğinde
+#     majör atlar. Benimsendiği anda 2.39.5 ile aynı digest'e işaret ediyordu.
+#   qbittorrent latest -> upstream stable, libtorrent majörü dahil. Benimsendiği
+#     anda 5.2.3_v2.0.13-ls469 ile aynı digest'e işaret ediyordu. linuxserver
+#     float etiketi yayınlamadığı için tek seçenek buydu.
+#
+# Hareketli etiketlerin bedeli "çalışan sürümün kaydı yok" olurdu; bu yüzden
+# çözülen digest'ler Aşama 5'ten sonra state.env'e yazılır (bkz. DD-23).
+# Yükseltme ileriye doğru güvenli (konteynerler veri dosyalarını okuyup devam
+# eder) fakat geri dönüş değil: Portainer'ın DB migrasyonu tek yönlüdür.
+# Bozulan bir yükseltmeden dönüş yolu, sağlayıcı seviyesinde (netcup) alınan
+# VPS snapshot'ıdır — bilinçli olarak betiğin sorumluluğunda değildir.
+PORTAINER_IMAGE="portainer/portainer-ce:lts"
+FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"
+QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:latest"
+WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3"
+UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15"
 
 echo "=================================================="
 echo "  OTOMATİK SUNUCU KURULUMU"
@@ -800,7 +890,9 @@ timedatectl set-timezone "$TIMEZONE"
 # ileride benzer bir arka plan sürecinin kilit tutma ihtimaline karşı her
 # apt-get çağrısı kilidi hemen vermek yerine sınırlı süre bekler.
 progress_stage_note 30 "Debian paket listeleri indiriliyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 45 "Debian sistem güncellemeleri uygulanıyor"
 # Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
 # durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
@@ -839,16 +931,22 @@ fi
 
 progress_stage_note 10 "Tailscale paket deposu hazırlanıyor"
 install -d -m 0755 /usr/share/keyrings
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
+retry_network "Tailscale keyring indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
     -o /tmp/tailscale-archive-keyring.gpg
 install -m 0644 /tmp/tailscale-archive-keyring.gpg \
     /usr/share/keyrings/tailscale-archive-keyring.gpg
 rm -f /tmp/tailscale-archive-keyring.gpg
 
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list" \
+retry_network "Tailscale depo listesi indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list" \
     -o /etc/apt/sources.list.d/tailscale.list
 
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 22 "UDP soket buffer tabanı ayarlanıyor"
 
 # Bu blok, Tailscale paketi kurulmadan ÖNCE çalışmak zorunda. Debian'ın
@@ -1117,7 +1215,9 @@ progress_stage_done
 progress_stage_begin 3 "Docker ve dar firewall politikası hazırlanıyor"
 
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg \
+retry_network "Docker GPG anahtarı indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
     -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
@@ -1187,7 +1287,9 @@ if [[ "$DOCKER_WAS_ACTIVE" -eq 1 && "$DOCKER_DAEMON_JSON_CHANGED" -eq 0 ]]; then
 fi
 
 progress_stage_note 30 "Docker paket listeleri ve bileşenleri kuruluyor"
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
@@ -1914,10 +2016,11 @@ WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 
 # STACK_VERSION/STACK_SHA256 bilgilendirme amaçlıdır: reconcile bunları
 # yalnız --status çıktısında gösterir, hiçbir tüketici varlığını zorunlu
-# tutmaz. Bu yüzden şema 8'de kalır — STACK_SCHEMA yalnız format anlayışı
-# değiştiğinde yükselir.
+# tutmaz. Şema yalnız format anlayışı değiştiğinde yükselir; 10'a çıkmasının
+# nedeni IMAGE_DIGEST_* anahtarlarıdır (bkz. DD-23), onlar burada değil
+# Aşama 5'ten sonra eklenir çünkü imajlar o noktada çekilmiş olur.
 cat >/etc/master-stack/state.env <<EOF
-STACK_SCHEMA=9
+STACK_SCHEMA=10
 STACK_VERSION=$MASTER_SETUP_VERSION
 STACK_SHA256=$MASTER_SETUP_SHA256
 LOCAL_DOMAIN=$LOCAL_DOMAIN
@@ -2402,7 +2505,39 @@ if [[ "$MODE" == "--status" ]]; then
                 '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
                 "$status_container" 2>/dev/null || echo "yok"
         )"
-        printf '  %-12s %s\n' "$status_container" "$status_container_state"
+        # Image etiketleri hareketli; çalışan digest'in kısa hâli, "hangi
+        # sürüm ayakta" sorusunun tek doğrudan cevabı. state.env'deki kayıtla
+        # ayrışırsa işaretlenir: bu, kurulum sonrasında image'ın elle
+        # değiştirildiği (veya kaydın bayatladığı) anlamına gelir.
+        # RepoDigests image nesnesindedir, container'da yoktur; önce image
+        # ID okunur (bkz. Aşama 5'teki resolved_image_digest ve DD-23).
+        status_image_id="$(
+            "$DOCKER_BIN" inspect -f '{{.Image}}' \
+                "$status_container" 2>/dev/null || true
+        )"
+        status_running_digest=""
+        if [[ -n "$status_image_id" ]]; then
+            status_running_digest="$(
+                "$DOCKER_BIN" image inspect -f \
+                    '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' \
+                    "$status_image_id" 2>/dev/null || true
+            )"
+            status_running_digest="${status_running_digest#*@}"
+        fi
+        status_recorded_digest="$(
+            state_value \
+                "IMAGE_DIGEST_$(
+                    printf '%s' "$status_container" | tr 'a-z-' 'A-Z_'
+                )" ""
+        )"
+        status_digest_note=""
+        if [[ -n "$status_running_digest" ]]; then
+            status_digest_note="  ${status_running_digest:7:12}"
+            [[ "$status_running_digest" == "$status_recorded_digest" ]] ||
+                status_digest_note+=" (kayıtla ayrışmış)"
+        fi
+        printf '  %-12s %s%s\n' \
+            "$status_container" "$status_container_state" "$status_digest_note"
     done
     printf '  %-12s %s (host servisi)\n' "webdav" "$(
         "$SYSTEMCTL_BIN" is-active master-webdav.service 2>/dev/null || true
@@ -2475,7 +2610,7 @@ WG_PUBLIC_PORT="$(state_value WG_PUBLIC_PORT 65171)"
 WEBDAV_PORT="$(state_value WEBDAV_PORT 65113)"
 WG_ENDPOINT_HOST="$(state_value WG_ENDPOINT_HOST "")"
 DOWNLOADS_PATH="$(state_value DOWNLOADS_PATH "/downloads")"
-if [[ "$STACK_SCHEMA" != "9" ||
+if [[ "$STACK_SCHEMA" != "10" ||
       ! "$QBIT_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WEBDAV_PORT" =~ ^[0-9]+$ ||
@@ -3977,7 +4112,9 @@ cd /root/docker
 progress_stage_note 10 "Compose yapılandırması doğrulanıyor"
 docker compose --env-file /root/docker/.env config --quiet
 progress_stage_note 20 "Sabit container image sürümleri indiriliyor"
-docker compose --env-file /root/docker/.env pull
+retry_network "Container image indirme" \
+    "$NET_RETRY_BULK_FIRST" "$NET_RETRY_BULK_NEXT" -- \
+    docker compose --env-file /root/docker/.env pull
 progress_stage_note 60 "Systemd bağımlılık grafiği doğrulanıyor"
 systemctl daemon-reload
 systemd-analyze verify \
@@ -4027,6 +4164,44 @@ progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
 # kullanır.
 systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
+
+# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:v2 …)
+# "şu anda tam olarak ne çalışıyor" bilgisini compose.yaml'dan siler: dosya
+# değişmeden altındaki imaj değişebilir. Çözülen digest'ler bu yüzden burada
+# state.env'e yazılır — Aşama 5'ten sonra, çünkü imajlar ancak bu noktada
+# çekilmiş ve container'lar ayağa kalkmış olur; Aşama 6'nın canonical
+# yayınından önce, çünkü state.env'in canonical kopyası orada üretilir
+# (DD-14). Bir yükseltme bir şeyi bozarsa geri dönülecek sürümün kaydı
+# budur (DD-23).
+# RepoDigests container nesnesinde DEĞİL, image nesnesinde bulunur —
+# `docker inspect <container>` bu alanı hiç taşımaz ve template
+# "map has no entry" ile patlar. V1-12'nin ilk denemesi tam olarak buna
+# takıldı: beş digest de "bilinmiyor" yazıldı ve Aşama 7 kurulumu rc=1 ile
+# durdurdu. Bu yüzden önce container'ın image ID'si okunur, digest o ID'den
+# alınır. Boş kalırsa (yalnız yerel build'lerde olur) anahtar yine yazılır
+# ki eksiklik Aşama 7'de sessizce geçmesin.
+resolved_image_digest() {
+    local container="$1" image_id="" digest=""
+    image_id="$(docker inspect -f '{{.Image}}' "$container" 2>/dev/null || true)"
+    [[ -n "$image_id" ]] || return 0
+    digest="$(
+        docker image inspect -f \
+            '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' \
+            "$image_id" 2>/dev/null || true
+    )"
+    printf '%s' "${digest#*@}"
+}
+
+progress_stage_note 93 "Çalışan image digest'leri kaydediliyor"
+for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+    service_digest="$(resolved_image_digest "$digest_service")"
+    [[ "$service_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+        service_digest="bilinmiyor"
+    printf 'IMAGE_DIGEST_%s=%s\n' \
+        "$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')" \
+        "$service_digest"
+done >>/etc/master-stack/state.env
+unset digest_service service_digest
 
 progress_stage_note 95 "Container sağlık beklemeleri tamamlandı"
 
@@ -4126,11 +4301,22 @@ progress_stage_note 45 "Caddy paket deposu hazırlanıyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     debian-keyring debian-archive-keyring apt-transport-https
 
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-    gpg --batch --yes --dearmor \
-        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+# Ağ indirmesi yerel gpg işleminden ayrıldı: retry yalnız ağ adımını
+# kapsamalı. `gpg --dearmor` başarısızlığı bir ağ sorunu değildir ve
+# yeniden denenmesi anlamsızdır (bozuk girdi üç kez de bozuktur).
+CADDY_GPG_TMP="$(mktemp)"
+retry_network "Caddy GPG anahtarı indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    -o "$CADDY_GPG_TMP"
+gpg --batch --yes --dearmor \
+    -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    <"$CADDY_GPG_TMP"
+rm -f "$CADDY_GPG_TMP"
 
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+retry_network "Caddy depo listesi indirme" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
     -o /etc/apt/sources.list.d/caddy-stable.list
 
 chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -4140,7 +4326,9 @@ chmod 0644 /etc/apt/sources.list.d/caddy-stable.list
 # systemd drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
 systemctl stop caddy.service 2>/dev/null || true
 systemctl mask caddy.service >/dev/null
-apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
+retry_network "apt-get update" \
+    "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
+    apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 60 "Caddy paketi kuruluyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y caddy
 
@@ -4607,6 +4795,32 @@ assert_docker_binding() {
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/tcp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLIC_PORT}"
+
+# Image etiketleri hareketli olduğu için "ne çalışıyor" sorusunun tek yazılı
+# cevabı state.env'deki digest kaydı. Kaydın var olduğunu doğrulamak yetmez —
+# gerçekten çalışan image ile aynı olduğunu da doğrula, aksi hâlde kayıt
+# sessizce yalan söyleyebilir (Aşama 5'te bir inspect başarısız olsa "bilinmiyor"
+# yazılırdı ve kimse fark etmezdi).
+for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+    DIGEST_KEY="IMAGE_DIGEST_$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')"
+    RECORDED_DIGEST="$(
+        awk -F= -v k="$DIGEST_KEY" \
+            '$1==k {print substr($0, index($0, "=") + 1); exit}' \
+            /etc/master-stack/state.env
+    )"
+    RUNNING_DIGEST="$(resolved_image_digest "$digest_service")"
+    if [[ ! "$RECORDED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        echo "HATA: $DIGEST_KEY state.env'e yazılamamış (${RECORDED_DIGEST:-boş})." >&2
+        exit 1
+    fi
+    if [[ "$RECORDED_DIGEST" != "$RUNNING_DIGEST" ]]; then
+        echo "HATA: $digest_service çalışan digest'i kayıtla uyuşmuyor." >&2
+        echo "  kayıt   : $RECORDED_DIGEST" >&2
+        echo "  çalışan : ${RUNNING_DIGEST:-tespit edilemedi}" >&2
+        exit 1
+    fi
+done
+unset digest_service DIGEST_KEY RECORDED_DIGEST RUNNING_DIGEST
 
 # WebDAV artık host servisi: Docker publish kaydı ve mangle guard
 # istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
