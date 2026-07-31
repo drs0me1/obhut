@@ -18,20 +18,23 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 644–799 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 800–918 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 919–1214 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1022–1097`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1215–1935 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1324–1868`) and its systemd unit |
-| 4 | 1936–4108 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2290–2331`) and `master-network-reconcile` (`2371–3837`) helper scripts, `master-docker-netfilter-recovery` (`3841–3890`), `master-webdav-serve` (`3982–4050`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4129–4231 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4232–4547 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4335–4367`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4548–5250 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 656–813 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 814–932 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 933–1228 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1036–1111`), interactive login, exit-node + stateful filtering + netfilter configuration |
+| 3 | 1229–1949 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1338–1882`) and its systemd unit |
+| 4 | 1950–4129 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2304–2345`) and `master-network-reconcile` (`2385–3851`) helper scripts, `master-docker-netfilter-recovery` (`3855–3911`), `master-webdav-serve` (`4003–4071`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4130–4232 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4233–4548 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4356–4388`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4549–5251 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5250 lines — `V1-16`, 2026-07-31. They
+(Line numbers as of `install.sh` 5251 lines — `V1-17`, 2026-07-31. They
 drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
-rather than trusting them after a batch of edits — the stage 5–7 rows had
-silently drifted 18 lines before `V1-11` caught it, which is why the
-regeneration command above is worth actually running.)
+rather than trusting them after a batch of edits. **This has now drifted
+twice**: 18 lines across stages 5–7 before `V1-11` caught it, and again in
+`V1-15`, where a block added above stage 1 shifted stages 0–4 by 14 lines
+while only the tail of the table was refreshed. Regenerating the *whole*
+table is the only reliable move; patching the rows you think changed is
+what caused both.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -85,7 +88,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1324-1868`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1338-1882`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -157,7 +160,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2371-3837`, 1467
+`master-network-reconcile` (generated at `install.sh:2385-3851`, 1466
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary

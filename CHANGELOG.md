@@ -6,7 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-16`; `install.sh` is 5250 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-17`; `install.sh` is 5251 lines.
+
+`V1-17` trims Stage 0's pre-confirmation summary to the four values the
+operator actually chose: downloads path, timezone, WebDAV username and the
+Tailnet DNS domain. Removed: operating system, Tailscale login behaviour,
+public IPv4, the two fixed service ports, and the wg-easy admin reminder.
+
+The block's job is "confirm your choices before anything is mutated", not
+"inventory what will be installed", and it had drifted into the second.
+Every removed line was verified to survive elsewhere before deleting it —
+the public IPv4 and both ports appear in the final summary (which also
+shows the resolved addresses rather than "will be auto-detected"), and the
+wg-easy admin step appears there as a fuller warning covering Portainer
+too. The OS line was pure redundancy: a host that is not Debian 13 exits at
+the OS guard long before Stage 0 renders.
+
+Both branches (new credential / existing `htpasswd` preserved) were
+render-tested.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-16`; `install.sh` was 5250 lines.
 
 `V1-16` is text only: three operator-facing strings still described the old
 world. Stage 4 printed "Sabit image sürümleri" and Stage 5's progress note

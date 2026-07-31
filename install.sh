@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-16"
+MASTER_SETUP_VERSION="2026.07.31-V1-17"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -781,15 +781,16 @@ else
 fi
 echo
 
+# Bu blok yalnız BU ÇALIŞTIRMADA KULLANICININ BELİRLEDİĞİ değerleri gösterir;
+# amacı "sistemi değiştirmeden önce seçimlerini onayla"dır, kurulacak yapının
+# envanteri değil. Sabit portlar, tespit edilen public IPv4, işletim sistemi
+# ve wg-easy admin adımı buradan kaldırıldı (2026-07-31): hiçbiri kullanıcı
+# girdisi değil ve hepsi kurulum sonu özetinde — orada üstelik daha
+# ayrıntılı — zaten yazılı. İşletim sistemi ise ayrıca gereksizdi, çünkü
+# Debian 13 olmayan bir hostta OS guard bu noktaya gelmeden çıkıyor.
 echo "--- Özet ---"
-echo "İşletim sistemi   : ${PRETTY_NAME}"
-echo "Tailscale girişi   : mevcut bağlantı korunur; yoksa tarayıcıda etkileşimli giriş"
 echo "İndirme dizini     : $DOWNLOADS_PATH"
 echo "Zaman dilimi       : $TIMEZONE"
-echo "Public IPv4        : varsayılan rota üzerinden otomatik tespit edilecek"
-echo "qBittorrent portu  : ${QBIT_PUBLIC_PORT}/tcp + udp (yalnız public IPv4)"
-echo "wg-easy portu      : ${WG_PUBLIC_PORT}/udp (host ve container içinde aynı)"
-echo "wg-easy admin      : ilk web erişiminde elle oluşturulacak (otomatik değil)"
 if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
     echo "WebDAV kullanıcısı : $WEBDAV_USER (yeni; host rclone servisi, salt okunur)"
 else
