@@ -965,3 +965,42 @@ reordering is not proposed a second time on the same reasoning.
   absent, so it skips on the macOS workstation and runs for real on the
   Debian target — where the full suite passes with zero skips (62 cases at
   the time; 74 after the `M7` coverage correction later the same day).
+
+### DD-25: The repair cooldown is duplicated on purpose, and asserted (2026-07-31)
+
+- **Decision:** the 15-minute repair cooldown stays written out in both
+  embedded scripts — `RESTART_COOLDOWN_SECONDS` in
+  `master-network-reconcile`, `COOLDOWN_SECONDS` in
+  `master-docker-netfilter-recovery` — with `install.sh` declaring
+  `MASTER_RESTART_COOLDOWN_SECONDS` as the single source of truth and
+  **Stage 7 asserting all three agree**.
+- **Why not actually share one variable.** Every embedded script must be
+  self-contained, because `scripts/lint-embedded-scripts.sh` extracts each
+  one by its heredoc marker and runs `bash -n` + `shellcheck` on it as a
+  standalone program — the mechanism that answers **H4**, since the outer
+  `shellcheck install.sh` sees these bodies only as string data. Binding
+  the two scripts to a shared variable, or splitting a heredoc so an
+  unquoted prelude could interpolate one, would leave the linted fragment
+  referencing a variable it never assigns. That trades a real property
+  (the linter checks exactly what ships) for a cosmetic one.
+- **What the duplication actually risked** was never the second copy
+  itself; it was *silent* divergence. DD-21 moved the reconcile timer to
+  20 minutes specifically to stop fighting this cooldown, so the two
+  numbers are coupled by a design decision — and one of them could have
+  been changed with the other quietly left behind. Stage 7 now turns that
+  into a failed install naming all three values.
+- **Three copies were removed outright**, which is the part that is a
+  genuine deduplication rather than a guard: the operator-facing messages
+  in both scripts hardcoded the string "15 dakikalık cooldown". They now
+  derive it (`$((RESTART_COOLDOWN_SECONDS / 60))`), so the prose cannot
+  contradict the behaviour.
+- **`StartLimitIntervalSec=900` in three systemd units is deliberately
+  left alone.** It shares the value but not the meaning — systemd's
+  start-rate limiter is a different mechanism from the repair budget, and
+  folding them together would create a coupling that does not exist.
+- **The assertion was verified to discriminate, not assumed to:** a copy
+  of `install.sh` with the recovery constant changed to `800` was
+  installed on the test host and failed at Stage 7 with
+  `install.sh : 900 / reconcile : 900 / recovery : 800`. This is the same
+  discipline applied to `all_critical_state_healthy`'s coverage guard the
+  same day — a guard nobody has seen fail is not yet known to work.

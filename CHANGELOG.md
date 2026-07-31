@@ -6,7 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-14`; `install.sh` is 5198 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-15`; `install.sh` is 5249 lines.
+
+`V1-15` closes the last structural item on the list: the repair cooldown
+was written out independently in two embedded scripts, and the fact
+"15 minutes" appeared in three more places as hardcoded prose in
+operator-facing error messages.
+
+The two code copies **stay**, and that is the decision rather than a
+compromise. Every embedded script has to be self-contained because
+`scripts/lint-embedded-scripts.sh` extracts each one and lints it as a
+standalone program — the mechanism that answers **H4**. Binding them to a
+shared variable, or splitting a heredoc so an unquoted prelude could
+interpolate one, would leave the linted fragment referencing something it
+never assigns: trading a real property (the linter checks exactly what
+ships) for a cosmetic one.
+
+What the duplication actually risked was *silent* divergence, and DD-21
+makes that concrete — the reconcile timer moved to 20 minutes specifically
+to stop fighting this cooldown, so the two numbers are coupled by a design
+decision and one could have been changed with the other left behind.
+`install.sh` now declares `MASTER_RESTART_COOLDOWN_SECONDS` as the single
+source of truth and **Stage 7 asserts all three values agree**, naming
+them all when they do not.
+
+The three prose copies were removed outright — the messages derive the
+figure (`$((RESTART_COOLDOWN_SECONDS / 60))`), so they cannot contradict
+the behaviour. `StartLimitIntervalSec=900` in three systemd units is
+deliberately untouched: same value, different mechanism.
+
+**The assertion was verified to discriminate rather than assumed to.** A
+copy of `install.sh` with the recovery constant set to `800` was installed
+on the test host and failed at Stage 7 with `install.sh : 900 /
+reconcile : 900 / recovery : 800`, then the real version was reinstalled
+clean. Same discipline as the `all_critical_state_healthy` coverage guard
+earlier the same day: a guard nobody has watched fail is not yet known to
+work.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-14`; `install.sh` was 5198 lines.
 **Live-verified:** 25s install, `STACK_SCHEMA=10`, five digests recorded,
 `--check` rc 0, zero failed units, containers untouched.
 

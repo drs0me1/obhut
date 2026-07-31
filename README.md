@@ -1,11 +1,10 @@
 # Debian Server Installer
 
-**Version: V1-14** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-15** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.31-V1-14` in its banner, log header and final summary; note this
+`2026.07.31-V1-15` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
-format and is currently `10`. The latest tag is `V1-13`; `V1-14` is
-committed but not yet tagged. Earlier history: `V1-2` added version/hash
+format and is currently `10`. The latest tags are `V1-14` and the `R2.0` release marker. Earlier history: `V1-2` added version/hash
 self-reporting on the host plus `master-network-reconcile --status`, and
 `V1-3` replaced the `sftpgo` container with `master-webdav.service`, a
 hardened host `rclone serve webdav` unit — which also removed the last
@@ -17,8 +16,9 @@ reporting failure after a successful repair on a host whose wg-easy web
 setup is still pending. `V1-12`/`V1-13` moved the container images from
 exact pins to floating tags, with the digest each tag resolved to recorded
 in `state.env` (DD-23). `V1-14` put every network-dependent step behind a
-bounded retry with a mandatory timeout (DD-24). All of these are
-live-verified (2026-07-31).
+bounded retry with a mandatory timeout (DD-24), and `V1-15` made the
+duplicated repair-cooldown constant a Stage 7 assertion (DD-25). All of
+these are live-verified (2026-07-31).
 
 ## Project Overview
 

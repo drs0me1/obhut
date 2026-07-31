@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-14"
+MASTER_SETUP_VERSION="2026.07.31-V1-15"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -600,6 +600,19 @@ QBIT_PUBLIC_PORT="65173"
 # portlarıyla aynı kategoride; daha önce yalnız elle yazılıyordu ve
 # dosyada onlarca yerde tekrar ediyordu.
 WEBDAV_PORT="65113"
+
+# Onarım cooldown politikasının tek beyan yeri. İki gömülü script bu değeri
+# kendi sabitlerinde tekrar eder (reconcile'da RESTART_COOLDOWN_SECONDS,
+# core-recovery'de COOLDOWN_SECONDS) ve bu tekrar bilinçlidir: her gömülü
+# script bağımsız olarak lint'lenebilmek için kendi kendine yeterli olmak
+# zorunda (bkz. H4 ve scripts/lint-embedded-scripts.sh). Ortak bir değişkene
+# bağlamak o statik analizi bozardı.
+#
+# Tekrarın gerçek riski sessiz ayrışmaydı — özellikle DD-21 timer aralığını
+# tam da bu sabitle hizalamak için değiştirdiği hâlde sabitin kendisi üç ayrı
+# yerde yazılıydı. Aşama 7 artık üçünün de eşit olduğunu doğruluyor, yani
+# biri değişip diğeri unutulursa kurulum durur.
+MASTER_RESTART_COOLDOWN_SECONDS=900
 
 # Hareketli (float) etiketler — 2026-07-31'de tam sürüm pin'lerinin yerini
 # aldı. Gerekçe: tam sürüm pin'i, tekrar çalıştırmayı deterministik yapıyordu
@@ -3623,7 +3636,7 @@ if [[ "$ADDRESS_CHANGED" -eq 1 ||
         STACK_RESTART_REQUIRED=1
         record_container_restart master-compose
     else
-        echo "HATA: master-compose stack yenilemesi 15 dakikalık cooldown içinde; tekrarlanmadı." >&2
+        echo "HATA: master-compose stack yenilemesi $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; tekrarlanmadı." >&2
         RECOVERY_FAILED=1
     fi
 fi
@@ -3651,7 +3664,7 @@ if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
         if restart_budget_available "$restart_target"; then
             ELIGIBLE_RESTART_TARGETS+=("$restart_target")
         else
-            echo "HATA: $restart_target otomatik restart bütçesinde; 15 dakikalık cooldown dolmadan yeniden başlatılmadı." >&2
+            echo "HATA: $restart_target otomatik restart bütçesinde; $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown dolmadan yeniden başlatılmadı." >&2
             RECOVERY_FAILED=1
         fi
     done
@@ -3847,8 +3860,15 @@ LOCK_FILE="/run/lock/master-stack.lock"
 STATE_DIR="/run/master-network-reconcile"
 STAMP_FILE="$STATE_DIR/docker-core.last-restart"
 # master-network-reconcile aynı politikayı kendi RESTART_COOLDOWN_SECONDS
-# sabitinde tutar; ayrı script oldukları için değeri paylaşamazlar, biri
-# değişirse diğeri de değişmeli.
+# sabitinde tutar. Değeri paylaşamazlar ve bu bilinçli: her gömülü script
+# kendi kendine yeterli olmak zorunda, çünkü scripts/lint-embedded-scripts.sh
+# her birini tek başına çıkarıp bağımsız olarak bash -n + shellcheck'ten
+# geçiriyor (H4). Ortak bir değişkene bağlamak o statik analizi bozardı.
+#
+# Sessiz ayrışma riski bunun yerine Aşama 7'de kapatıldı: kurulum, üretilen
+# iki dosyadaki değerin birbiriyle ve install.sh'in kendi
+# MASTER_RESTART_COOLDOWN_SECONDS sabitiyle aynı olduğunu doğruluyor. Yani
+# biri değişip diğeri unutulursa kurulum durur; sessizce sapmaz.
 COOLDOWN_SECONDS=900
 
 exec 8>"$LOCK_FILE"
@@ -3871,7 +3891,7 @@ if [[ -r "$STAMP_FILE" ]]; then
 fi
 [[ "$LAST" =~ ^[0-9]+$ ]] || LAST=0
 if (( NOW - LAST < COOLDOWN_SECONDS )); then
-    echo "HATA: Docker core recovery 15 dakikalık cooldown içinde; restart yinelenmedi." >&2
+    echo "HATA: Docker core recovery $((COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; restart yinelenmedi." >&2
     exit 1
 fi
 
@@ -4821,6 +4841,37 @@ for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
     fi
 done
 unset digest_service DIGEST_KEY RECORDED_DIGEST RUNNING_DIGEST
+
+# Onarım cooldown'ı iki gömülü script'te ayrı ayrı yazılı olmak zorunda
+# (her biri bağımsız lint'lenebilir olmalı, bkz. H4). Bu, tek gerçek riski
+# bırakıyor: birini değiştirip diğerini unutmak. DD-21 timer aralığını tam
+# da bu sabitle hizalamak için değiştirdiğinden, sessiz bir ayrışma
+# doğrudan o kararı geçersiz kılardı. Üçünün de aynı olduğunu burada
+# doğrula — sapma sessiz kalmasın, kurulum dursun.
+RECONCILE_COOLDOWN="$(
+    awk -F= '$1 == "RESTART_COOLDOWN_SECONDS" {print $2; exit}' \
+        /usr/local/sbin/master-network-reconcile
+)"
+RECOVERY_COOLDOWN="$(
+    awk -F= '$1 == "COOLDOWN_SECONDS" {print $2; exit}' \
+        /usr/local/sbin/master-docker-netfilter-recovery
+)"
+if [[ ! "$RECONCILE_COOLDOWN" =~ ^[0-9]+$ ||
+      ! "$RECOVERY_COOLDOWN" =~ ^[0-9]+$ ]]; then
+    echo "HATA: Onarım cooldown sabiti üretilen script'lerden okunamadı." >&2
+    echo "  reconcile: ${RECONCILE_COOLDOWN:-yok}" >&2
+    echo "  recovery : ${RECOVERY_COOLDOWN:-yok}" >&2
+    exit 1
+fi
+if [[ "$RECONCILE_COOLDOWN" != "$MASTER_RESTART_COOLDOWN_SECONDS" ||
+      "$RECOVERY_COOLDOWN" != "$MASTER_RESTART_COOLDOWN_SECONDS" ]]; then
+    echo "HATA: Onarım cooldown sabitleri birbirinden ayrışmış." >&2
+    echo "  install.sh : $MASTER_RESTART_COOLDOWN_SECONDS" >&2
+    echo "  reconcile  : $RECONCILE_COOLDOWN" >&2
+    echo "  recovery   : $RECOVERY_COOLDOWN" >&2
+    exit 1
+fi
+unset RECONCILE_COOLDOWN RECOVERY_COOLDOWN
 
 # WebDAV artık host servisi: Docker publish kaydı ve mangle guard
 # istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
