@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-10"
+MASTER_SETUP_VERSION="2026.07.31-V1-11"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2897,6 +2897,7 @@ check_compose_runtime() {
 
     COMPOSE_RESTART_TARGETS=()
     WG_CONFIGURATION_INVALID=0
+    WG_SETUP_PENDING=0
     for container in "${expected_containers[@]}"; do
         running="$(
             "$DOCKER_BIN" inspect -f '{{.State.Running}}' \
@@ -2976,13 +2977,20 @@ check_compose_runtime() {
         if [[ "$setup_location" == /setup/* ]]; then
             # Taze bir kurulumda wg-easy'nin hâlâ /setup ekranında olması
             # beklenen bir durumdur (bkz. M6) — bu yüzden runtime_ok'u
-            # etkilemez; yalnızca WG_CONFIGURATION_INVALID üzerinden
-            # (aşağıdaki RECOVERY_FAILED kontrolü ile) raporlanır. Aksi
-            # halde her taze kurulum, --check modunda (Stage 7'nin
-            # postcondition doğrulaması dahil) bu beklenen durum yüzünden
-            # başarısız sayılırdı.
-            echo "HATA: wg-easy ilk kurulumu tamamlanmamış." >&2
-            WG_CONFIGURATION_INVALID=1
+            # etkilemez ve WG_CONFIGURATION_INVALID'i de kurmaz. Kendi
+            # bayrağı var: WG_SETUP_PENDING yalnız raporlanır ve wg-easy'nin
+            # otomatik restart'ını baskılar (kurulum ekranındayken yeniden
+            # başlatmak bir şey düzeltmez), fakat RECOVERY_FAILED üretmez.
+            #
+            # 2026-07-31 canlı testi ayrımın neden gerektiğini gösterdi:
+            # tek bayrakken, sağlıklı bir host all_critical_state_healthy()
+            # erken çıkışıyla exit 0 veriyordu, ama reconcile bir şeyi
+            # gerçekten onardığı anda o kapıyı geçip aşağıdaki
+            # RECOVERY_FAILED kontrolüne düşüyor ve onarım başarılı olduğu
+            # hâlde exit 1 raporluyordu. Yani sinyal tam da en çok
+            # gerektiği anda yalan söylüyordu.
+            echo "UYARI: wg-easy ilk kurulumu tamamlanmamış." >&2
+            WG_SETUP_PENDING=1
         elif [[ "$wg_port" != "$WG_PUBLIC_PORT" ]]; then
             echo "HATA: wg-easy iç portu ${wg_port:-yok}; beklenen $WG_PUBLIC_PORT." >&2
             WG_CONFIGURATION_INVALID=1
@@ -3501,7 +3509,8 @@ fi
 if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
     for restart_target in "${COMPOSE_RESTART_TARGETS[@]:-}"; do
         if [[ "$restart_target" == "wg-easy" &&
-              "$WG_CONFIGURATION_INVALID" -eq 1 ]]; then
+              ( "$WG_CONFIGURATION_INVALID" -eq 1 ||
+                "$WG_SETUP_PENDING" -eq 1 ) ]]; then
             continue
         fi
         if restart_budget_available "$restart_target"; then
