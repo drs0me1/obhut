@@ -27,9 +27,24 @@ cause and the exact remedy. The window is scoped to
 `MASTER_SETUP_STARTED_AT` rather than a fixed `-5min`, so a resolved
 earlier fault cannot misdiagnose a different failure minutes later.
 
-**Not live-verified, and deliberately so:** exercising this path requires
-deleting the node from the Tailscale admin panel, which is account-level
-and outside the standing authorization for the test host.
+**Live-verified (2026-07-31).** The user deleted the node from the
+Tailscale admin panel — an account-level action outside the standing
+authorization, so it had to be theirs — and a re-run produced exactly the
+intended output:
+
+```
+HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı.
+NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found).
+Düğüm Tailscale panelinden silinmiş; ...
+  tailscale logout && bash /root/master.sh
+```
+
+The generic branch was correctly *not* taken, and the install stopped at
+`rc=1, aşama=2` without leaving the host half-configured. The state it
+diagnosed is worth recording, because it is why the message earns its
+keep: `tailscale ip -4` returned an address, `tailscaled` was `active` and
+`BackendState` read `Running` — three healthy indicators out of four, with
+only `Online: false` and journald telling the truth.
 
 ### Previously
 
