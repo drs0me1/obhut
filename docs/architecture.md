@@ -137,7 +137,7 @@ sees. See DD-20.
 ### Service inventory
 
 See `README.md` → **Docker Services** for the full table of images, ports,
-and volumes. All five containers (Portainer, Filebrowser, qBittorrent,
+and volumes. All five containers (Portainer, dufs, qBittorrent,
 Unpackerr, wg-easy) are defined in one generated
 `/root/docker/compose.yaml` with pinned image tags. WebDAV is the sixth
 service but is **not** a container: since `V1-3` it is `master-webdav.service`,

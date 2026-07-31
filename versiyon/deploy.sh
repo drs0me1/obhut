@@ -28,7 +28,7 @@ SSH_OPTS=(-o ClearAllForwardings=yes)
 # ExitOnForwardFailure yes taşıyor; portlar doluysa bağlantı hiç kurulmaz.
 
 shopt -s nullglob
-EXPORTS=("$SCRIPT_DIR"/install-V1-*.sh)
+EXPORTS=("$SCRIPT_DIR"/install-V*-*.sh)
 shopt -u nullglob
 
 if [[ "${#EXPORTS[@]}" -ne 1 ]]; then

@@ -93,7 +93,27 @@ _All High findings resolved — see Completed below._
 
 ## Low
 
-_All Low findings resolved or closed — see Completed below._
+- [ ] **L9 — dufs has no floating tag, so upgrades are manual.**
+      `sigoden/dufs` publishes exact versions plus `latest` and nothing in
+      between; there is no `v0.46`. `latest` crosses minor versions on a
+      pre-1.0 project, so `install.sh` pins `v0.46.0` exactly (DD-26).
+      The cost is that dufs is the one container that will *not* pick up
+      upstream fixes on a re-run. Check
+      `https://github.com/sigoden/dufs/releases` periodically and bump
+      `DUFS_IMAGE` by hand. Nothing in the script detects a stale pin
+      today; a check that compares the pinned tag against the upstream
+      latest release would be the natural closer, but it needs network
+      access at a point in the run where the script currently has none.
+
+- [ ] **L10 — the two `filebrowser_*` named volumes survive the upgrade.**
+      `docker compose up --remove-orphans` removed the orphaned
+      `filebrowser` container but does not delete named volumes, and
+      destroying what might still be wanted is deliberately not the
+      installer's job. They are inert (nothing mounts them) and small.
+      Remove by hand once the rollback window has passed:
+      `docker volume rm filebrowser_database filebrowser_config`.
+      Only affects hosts upgraded from `V1-20` or earlier; a fresh install
+      never creates them.
 
 ## Completed
 

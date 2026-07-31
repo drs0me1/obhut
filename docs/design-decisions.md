@@ -1004,3 +1004,93 @@ reordering is not proposed a second time on the same reasoning.
   `install.sh : 900 / reconcile : 900 / recovery : 800`. This is the same
   discipline applied to `all_critical_state_healthy`'s coverage guard the
   same day — a guard nobody has seen fail is not yet known to work.
+
+## DD-26 — filebrowser → dufs, and why the image tag is pinned while the rest float
+
+**Decision (2026-08-01, `V2-1`).** Replace `filebrowser/filebrowser:v2`
+with `sigoden/dufs:v0.46.0` as the web file manager, keep host port
+`7113`, and pin dufs to an exact version even though four of the five
+containers now use floating tags (DD-23).
+
+**Why replace it.** filebrowser prints a wind-down notice at every start:
+the project is archived on **2026-09-01**, after which there are no
+releases and no security fixes. Three of its advisories are already
+permanently unpatched — `GHSA-6759-996p-gpj6` (critical, self-signup users
+inherit the server root as their scope), `GHSA-8c9q-7855-wfxq` (high,
+command allowlist bypass via shell metacharacters), and
+`GHSA-v7vv-5wj2-gfcj` (medium, password reset does not invalidate existing
+JWTs).
+
+The `v2` tag itself was never the problem, and the log line does not say it
+was: on 2026-08-01 `v2`, `latest` and `v2.63.23` all resolved to the same
+digest (`sha256:a469ea07…`), which is what the host was running. The tag
+was current; the project was ending. After the archive date the floating
+tag silently becomes a fixed one — a moving tag with nothing left upstream
+to move to is the worst of both worlds, because DD-23's whole premise
+(patches arrive without intervention) quietly stops holding while the
+configuration still claims otherwise.
+
+**Measured exposure at the time of replacement** — none of the three
+unpatched advisories were reachable on this host, which is why this was a
+scheduled replacement rather than an emergency one: `Sign up: false`,
+`Shell:` empty with `Exec Enabled: false`, `Auth Method: json` (so the
+proxy-auth advisories did not apply), the container bound to
+`127.0.0.1:7113`, and Caddy bound to the Tailscale IPv4 alone.
+
+**Why dufs.** It is a single Rust binary with no database and no writable
+state: 9.7 MB image against filebrowser's 56 MB, 2.9 MB RSS against 18 MB.
+Statelessness is the substantive part, not the size — it removed both named
+volumes, and it makes the container compatible with `read_only: true`,
+`cap_drop: [ALL]` and `no-new-privileges`, which filebrowser's writable
+database directory ruled out. It also speaks WebDAV natively (`PROPFIND`
+returns 207) and serves byte ranges (206 verified at two offsets on a 2 MB
+file), which the previous UI did not.
+
+**Why the tag is pinned when DD-23 floats everything else.** dufs publishes
+no float tag. Upstream ships exact versions plus `latest`, and there is no
+`v0.46` — so the only "moving" option is `latest`, which crosses minor
+versions on a pre-1.0 project where minor bumps are not obliged to preserve
+behaviour. DD-23's rule was never "float for its own sake"; it was "take the
+finest float the upstream actually publishes." For dufs that is nothing, so
+the honest implementation of the same rule is an exact pin plus a manual
+upgrade. This is the same reasoning that gave wg-easy `15.3` and unpackerr
+`0.15` patch-level tags rather than majors.
+
+**`allow-symlink: false` is the deliberate part of the policy.** Symlink
+following alone produced four separate filebrowser advisories — out-of-scope
+read, out-of-scope write, and two out-of-scope deletes. A media tree has no
+use for symlinks, so the setting costs nothing. Verified live: a symlinked
+file and a symlinked directory pointing at `/etc` both return 404 and do not
+appear in the listing at all. `allow-hash` is off for the same reason
+(filebrowser's `GHSA-7whw-q6gh-xr59` was a checksum-disclosure bug) against
+a feature nobody uses.
+
+**One credential, two hashes.** dufs supports only sha-512 crypt (`$6$`)
+and rclone's htpasswd is bcrypt, so the same user-chosen password is hashed
+twice into two files. They are written together and Stage 0's guard requires
+**both** to be present before it skips the prompt — checking only
+`webdav.htpasswd` would leave dufs with no credential on any host upgrading
+from `V1-20`. The plaintext still never reaches disk.
+
+**The policy file is regenerated every run; the credential is not.**
+`dufs.yaml` holds the serve path and the allow-flags, which must track the
+installed script version, so it is rewritten on every run. The one line that
+must survive — the auth rule — lives in `dufs.auth` and is copied in. Merging
+them into one file would force a choice between a frozen policy and a
+password reset on every re-run.
+
+**Stage 7 asserts the credential is actually enforced.** An empty auth list
+does not make dufs fail; it makes it serve the media tree to the whole
+tailnet with anonymous read-*write*. The reconcile probe cannot catch this,
+because `http_endpoint_responds` accepts anything in 1xx–4xx and so treats
+401 and 200 alike. Stage 7 therefore asserts the anonymous response is
+exactly `401`.
+
+**The schema guard was proven to fire, not assumed to.** Following the same
+discipline applied to the cooldown guard (DD-25), a copy of `install.sh`
+with the embedded reconcile's literal reverted to `10` — while
+`MASTER_STACK_SCHEMA` stayed `11` — was installed on the test host. Stage 7
+stopped it with `install.sh : 11 / reconcile : 10`, and it stopped it
+*before* reaching the `--check` call that had produced the original
+symptom-only message. The correct build was then reinstalled and verified
+clean.

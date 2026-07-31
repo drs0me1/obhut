@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-20"
+MASTER_SETUP_VERSION="2026.08.01-V2-2"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -614,6 +614,15 @@ WEBDAV_PORT="65113"
 # biri değişip diğeri unutulursa kurulum durur.
 MASTER_RESTART_COOLDOWN_SECONDS=900
 
+# state.env'in disk formatının sürümü. Cooldown sabitiyle AYNI tuzağı
+# taşıyor: burada yazılıyor, gömülü reconcile script'inde bağımsız olarak
+# tekrar ediliyor (o da kendi kendine yeterli olmak zorunda, bkz. H4) ve
+# ikisi ayrışırsa reconcile kendi kurulumunun state'ini reddeder.
+# V2-1'de tam olarak bu oldu: yazan taraf 11'e çıktı, okuyan taraf 10'da
+# kaldı ve kurulum Aşama 7'de "Canonical state içeriği geçersiz" ile
+# durdu. Aşama 7 artık ikisinin eşitliğini de doğruluyor.
+MASTER_STACK_SCHEMA=11
+
 # Hareketli (float) etiketler — 2026-07-31'de tam sürüm pin'lerinin yerini
 # aldı. Gerekçe: tam sürüm pin'i, tekrar çalıştırmayı deterministik yapıyordu
 # ama güvenlik/hata düzeltmelerini de kilitliyordu. Debian deposundan gelen
@@ -623,9 +632,11 @@ MASTER_RESTART_COOLDOWN_SECONDS=900
 #
 # Float seviyeleri kasten eşit değil, çünkü upstream'lerin sunduğu etiketler
 # eşit değil (2026-07-31'de registry'lerden sorgulandı):
-#   wg-easy 15.3, unpackerr 0.15 -> yalnız yama.
-#   filebrowser v2 -> majör içi her şey; v2.63 diye bir etiket yayınlanmıyor,
-#     daha ince bir seçenek yok.
+#   wg-easy 15.3, unpackerr 0.15, dufs v0.46.0 -> yalnız yama. dufs'ta
+#     hareketli bir etiket YOK: upstream yalnız tam sürüm ve `latest`
+#     yayınlıyor, `v0.46` diye bir etiket yok. `latest` majör/minör atlar,
+#     bu yüzden burada bilinçli olarak tam sürüme pin'lendi — yeni sürüm
+#     çıktığında elle yükseltilir (bkz. DD-26).
 #   portainer lts -> LTS hattı içinde; Portainer yeni bir LTS ilan ettiğinde
 #     majör atlar. Benimsendiği anda 2.39.5 ile aynı digest'e işaret ediyordu.
 #   qbittorrent latest -> upstream stable, libtorrent majörü dahil. Benimsendiği
@@ -639,7 +650,7 @@ MASTER_RESTART_COOLDOWN_SECONDS=900
 # Bozulan bir yükseltmeden dönüş yolu, sağlayıcı seviyesinde (netcup) alınan
 # VPS snapshot'ıdır — bilinçli olarak betiğin sorumluluğunda değildir.
 PORTAINER_IMAGE="portainer/portainer-ce:lts"
-FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"
+DUFS_IMAGE="sigoden/dufs:v0.46.0"
 QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:latest"
 WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3"
 UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15"
@@ -740,23 +751,43 @@ for label in "${DOMAIN_LABELS[@]}"; do
 done
 echo
 
-# WebDAV (Apple TV/Infuse) kimlik bilgisi. Parola hiçbir aşamada düz metin
-# olarak diske yazılmaz; Aşama 4 yalnız bcrypt hash'ini
-# /etc/master-stack/webdav.htpasswd'ye yazar (bkz. C2'deki "betik sır
-# taşımaz" ilkesi — burada taşınan tek şey kullanıcının kendi belirlediği
-# parolanın hash'idir). Mevcut htpasswd varsa idempotency gereği korunur ve
-# soru hiç sorulmaz; sıfırlamak için dosyayı silip betiği yeniden çalıştırın.
+# Dosya erişimi kimlik bilgisi. TEK bir kullanıcı adı/parola iki servisi
+# birden korur: host WebDAV servisi (rclone, salt okunur — Apple TV/Infuse)
+# ve dufs web dosya yöneticisi (okuma-yazma). İkisi de aynı medya ağacını
+# sunduğu için ayrı kimlik tutmak kullanıcıya hiçbir şey kazandırmaz, iki
+# parola ezberletirdi.
+#
+# Parola hiçbir aşamada düz metin olarak diske yazılmaz; Aşama 4 yalnız
+# hash'lerini yazar (bkz. C2'deki "betik sır taşımaz" ilkesi — burada taşınan
+# tek şey kullanıcının kendi belirlediği parolanın hash'idir). İki ayrı hash
+# gerekir çünkü iki servis farklı formatları destekler:
+#   webdav.htpasswd -> bcrypt (htpasswd -B), rclone okur
+#   dufs.auth       -> sha-512 crypt ($6$), dufs'un desteklediği tek hash
+# Bu yüzden aynı parola iki kez, iki farklı algoritmayla hash'lenir.
+#
+# Guard İKİ dosyayı birden arar: biri varken diğeri yoksa kimlik bilgisi
+# yarım demektir (V1-20'den yükseltmede tam olarak bu olur — htpasswd vardır,
+# dufs.auth yoktur) ve soru yeniden sorulup ikisi birlikte yazılır. Tek
+# dosyaya bakmak, dufs'u kimliksiz bırakırdı.
 WEBDAV_HTPASSWD_FILE="/etc/master-stack/webdav.htpasswd"
+DUFS_AUTH_FILE="/etc/master-stack/dufs.auth"
+DUFS_CONFIG_FILE="/etc/master-stack/dufs.yaml"
 WEBDAV_SETUP_CREDENTIALS=0
 WEBDAV_USER=""
 WEBDAV_PASSWORD=""
-if [[ -s "$WEBDAV_HTPASSWD_FILE" ]]; then
-    echo "Mevcut WebDAV kimlik bilgisi korunuyor: $WEBDAV_HTPASSWD_FILE"
-    echo "Sıfırlamak için bu dosyayı silip betiği yeniden çalıştırın."
+if [[ -s "$WEBDAV_HTPASSWD_FILE" && -s "$DUFS_AUTH_FILE" ]]; then
+    echo "Mevcut dosya erişimi kimlik bilgisi korunuyor:"
+    echo "  $WEBDAV_HTPASSWD_FILE"
+    echo "  $DUFS_AUTH_FILE"
+    echo "Sıfırlamak için bu dosyaları silip betiği yeniden çalıştırın."
 else
     WEBDAV_SETUP_CREDENTIALS=1
-    echo "WebDAV (Apple TV/Infuse) erişimi için kimlik bilgisi belirleyin."
-    read -rp "WebDAV kullanıcı adı [infuse]: " WEBDAV_USER_INPUT </dev/tty
+    if [[ -s "$WEBDAV_HTPASSWD_FILE" || -s "$DUFS_AUTH_FILE" ]]; then
+        echo "NOT: Kimlik dosyalarından yalnız biri var; ikisi birden"
+        echo "yeniden oluşturulacak. Parolayı yeniden belirleyin."
+    fi
+    echo "Dosya erişimi (WebDAV + dufs) için kimlik bilgisi belirleyin."
+    read -rp "Kullanıcı adı [infuse]: " WEBDAV_USER_INPUT </dev/tty
     WEBDAV_USER="${WEBDAV_USER_INPUT:-infuse}"
     if [[ ! "$WEBDAV_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]]; then
         echo "HATA: Kullanıcı adı küçük harfle başlamalı ve yalnız" >&2
@@ -764,7 +795,7 @@ else
         exit 1
     fi
     while :; do
-        read -rsp "WebDAV parolası (en az 8 karakter): " WEBDAV_PASSWORD </dev/tty
+        read -rsp "Parola (en az 8 karakter): " WEBDAV_PASSWORD </dev/tty
         echo
         if (( ${#WEBDAV_PASSWORD} < 8 )); then
             echo "Parola en az 8 karakter olmalı; yeniden deneyin."
@@ -792,9 +823,9 @@ echo "--- Özet ---"
 echo "İndirme dizini     : $DOWNLOADS_PATH"
 echo "Zaman dilimi       : $TIMEZONE"
 if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
-    echo "WebDAV kullanıcısı : $WEBDAV_USER (yeni; host rclone servisi, salt okunur)"
+    echo "Dosya erişimi kul. : $WEBDAV_USER (yeni; WebDAV salt okunur + dufs okuma-yazma)"
 else
-    echo "WebDAV kullanıcısı : mevcut htpasswd korunuyor"
+    echo "Dosya erişimi kul. : mevcut kimlik dosyaları korunuyor"
 fi
 echo "Tailnet DNS        : .$LOCAL_DOMAIN (dnsmasq + Caddy)"
 echo
@@ -919,9 +950,13 @@ progress_stage_note 80 "Temel ağ ve sistem araçları kuruluyor"
 # rclone: host WebDAV servisi (master-webdav.service, Aşama 4/5).
 # apache2-utils: yalnız 'htpasswd' aracı için — WebDAV kimlik dosyasının
 # bcrypt hash'ini üretir; Apache'nin kendisi kurulmaz.
+# openssl: dufs kimlik dosyasının sha-512 crypt hash'ini üretir
+# (`openssl passwd -6`). Debian 13'te taban kurulumda zaten bulunur, ama
+# betik "vardır" varsaymaz — Aşama 4 ona koşulsuz bağımlı.
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
-    iptables coreutils util-linux diffutils jq rclone apache2-utils
+    iptables coreutils util-linux diffutils jq rclone apache2-utils \
+    openssl
 
 echo "İşletim sistemi: ${PRETTY_NAME}, zaman dilimi: $TIMEZONE"
 progress_stage_note 95 "Temel sistem doğrulanıyor"
@@ -2086,9 +2121,12 @@ WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 # yalnız --status çıktısında gösterir, hiçbir tüketici varlığını zorunlu
 # tutmaz. Şema yalnız format anlayışı değiştiğinde yükselir; 10'a çıkmasının
 # nedeni IMAGE_DIGEST_* anahtarlarıdır (bkz. DD-23), onlar burada değil
-# Aşama 5'ten sonra eklenir çünkü imajlar o noktada çekilmiş olur.
+# Aşama 5'ten sonra eklenir çünkü imajlar o noktada çekilmiş olur. 11'e
+# çıkmasının nedeni o anahtar kümesinin DEĞİŞMESİ: IMAGE_DIGEST_FILEBROWSER
+# gitti, yerine IMAGE_DIGEST_DUFS geldi (V2-1). Eski şemalı bir state.env'de
+# IMAGE_DIGEST_DUFS hiç bulunmaz, bu yüzden anahtar adı formatın parçasıdır.
 cat >/etc/master-stack/state.env <<EOF
-STACK_SCHEMA=10
+STACK_SCHEMA=$MASTER_STACK_SCHEMA
 STACK_VERSION=$MASTER_SETUP_VERSION
 STACK_SHA256=$MASTER_SETUP_SHA256
 LOCAL_DOMAIN=$LOCAL_DOMAIN
@@ -2110,11 +2148,63 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
     WEBDAV_HTPASSWD_TMP="$(mktemp /etc/master-stack/.webdav.htpasswd.XXXXXX)"
     printf '%s' "$WEBDAV_PASSWORD" |
         htpasswd -i -B "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_USER"
-    unset WEBDAV_PASSWORD
     chown root:root "$WEBDAV_HTPASSWD_TMP"
     chmod 0600 "$WEBDAV_HTPASSWD_TMP"
     mv -f "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_HTPASSWD_FILE"
+
+    # Aynı parolanın dufs tarafı. dufs YALNIZ sha-512 crypt ($6$) destekler,
+    # bcrypt'i tanımaz — bu yüzden htpasswd dosyası yeniden kullanılamaz ve
+    # ikinci bir hash üretilir. Kural olarak ikisi hep birlikte yazılır;
+    # Aşama 0'ın guard'ı da ikisini birden arar.
+    #
+    # Kural biçimi: <kullanıcı>:<hash>@/:rw  -> tüm ağaçta okuma-yazma.
+    # Anonim erişim kuralı (`@/`) bilinçli olarak YOK: kural listesinde
+    # anonim satır olmayınca dufs her isteği kimliğe zorlar.
+    DUFS_AUTH_TMP="$(mktemp /etc/master-stack/.dufs.auth.XXXXXX)"
+    printf '%s:%s@/:rw\n' \
+        "$WEBDAV_USER" \
+        "$(openssl passwd -6 "$WEBDAV_PASSWORD")" >"$DUFS_AUTH_TMP"
+    # 0640 root:1000 — dufs container'ı 1000:1000 olarak çalışır ve dosyayı
+    # okumak zorundadır; htpasswd'nin 0600'ü burada işe yaramaz çünkü onu
+    # systemd LoadCredential ile root okuyup servise veriyordu, burada ise
+    # container doğrudan bind mount'tan okur.
+    chown root:1000 "$DUFS_AUTH_TMP"
+    chmod 0640 "$DUFS_AUTH_TMP"
+    mv -f "$DUFS_AUTH_TMP" "$DUFS_AUTH_FILE"
+
+    unset WEBDAV_PASSWORD
 fi
+
+# dufs.yaml kimlik dosyasının AKSİNE her çalıştırmada yeniden üretilir:
+# içinde yalnız politika var (hangi dizin, hangi izinler) ve politikanın
+# betiğin yeni sürümüyle birlikte güncellenmesi gerekir. Değişmeyen tek
+# satır — kimlik kuralı — bu yüzden ayrı bir dosyada (dufs.auth) tutulur ve
+# buraya olduğu gibi kopyalanır. Tek dosyada birleştirilseydi ya politika
+# donardı ya da her rerun parolayı sıfırlardı.
+#
+# allow-symlink KAPALI ve bu kasıtlı: dufs'un yerini aldığı filebrowser'ın
+# arşivlenmeden önceki güvenlik geçmişinde symlink takibi tek başına dört
+# ayrı advisory üretti (scope dışına okuma, scope dışına yazma, scope dışı
+# silme). Medya ağacında symlink'e ihtiyaç yok, dolayısıyla bedeli sıfır.
+# allow-hash da kapalı — filebrowser'ın GHSA-7whw'sinin dufs'taki karşılığı
+# olabilecek tek uç, ve kimsenin kullanmadığı bir özellik.
+DUFS_CONFIG_TMP="$(mktemp /etc/master-stack/.dufs.yaml.XXXXXX)"
+{
+    printf 'serve-path: /srv\n'
+    printf 'bind: 0.0.0.0\n'
+    printf 'port: 5000\n'
+    printf 'allow-upload: true\n'
+    printf 'allow-delete: true\n'
+    printf 'allow-search: true\n'
+    printf 'allow-archive: true\n'
+    printf 'allow-symlink: false\n'
+    printf 'allow-hash: false\n'
+    printf 'auth:\n'
+    printf '  - "%s"\n' "$(cat "$DUFS_AUTH_FILE")"
+} >"$DUFS_CONFIG_TMP"
+chown root:1000 "$DUFS_CONFIG_TMP"
+chmod 0640 "$DUFS_CONFIG_TMP"
+mv -f "$DUFS_CONFIG_TMP" "$DUFS_CONFIG_FILE"
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
 # Canonical bundle tek bir atomik küme hâlinde — state.env, compose.yaml ve
@@ -2127,7 +2217,7 @@ fi
 # eksiksiz ve kendi içinde tutarlı bundle'ını yerinde bırakır ve reconcile
 # son bilinen iyi yapılandırmayı uygulamaya devam eder.
 
-# Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
+# Var olan medya dosyalarının dufs/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
 # Idempotency: her rerun'da tüm ağacı koşulsuz chown etmek yerine, yalnız
 # sahipliği zaten 1000:1000 olmayan girdiler değiştirilir. Büyük medya
@@ -2177,19 +2267,33 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/portainer/data:/data
 
-  filebrowser:
-    image: ${FILEBROWSER_IMAGE}
-    container_name: filebrowser
+  # dufs, 2026-08-01'de filebrowser'ın yerini aldı: upstream filebrowser
+  # 2026-09-01'de arşivleniyor ve üç advisory'si (biri critical) kalıcı
+  # olarak yamasız. dufs durum tutmaz — kullanıcı DB'si yok, config
+  # volume'u yok — bu yüzden filebrowser'ın iki named volume'u da kaldırıldı.
+  # Kimlik ve politika tek bir salt okunur bind mount'tan gelir.
+  dufs:
+    image: ${DUFS_IMAGE}
+    container_name: dufs
     user: "1000:1000"
     restart: unless-stopped
     logging: *default-logging
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
-      - "127.0.0.1:7113:80/tcp"
+      # Host portu 7113 filebrowser'dan devralındı (Caddy, güvenlik duvarı
+      # port listesi ve reconcile probe'u değişmesin diye); container içi
+      # port dufs'un varsayılanı olan 5000.
+      - "127.0.0.1:7113:5000/tcp"
     volumes:
-      - ${DOWNLOADS_PATH}/media:/srv/media
-      # Uygulama durumu host bind mount'u değil, Docker'ın yönettiği volume'lardır.
-      - filebrowser_database:/database
-      - filebrowser_config:/config
+      # filebrowser /srv/media görüyordu ve kullanıcıya gereksiz bir "media"
+      # klasörü katmanı gösteriyordu; dufs'ta medya ağacı doğrudan köktür.
+      - ${DOWNLOADS_PATH}/media:/srv
+      - ${DUFS_CONFIG_FILE}:/config/dufs.yaml:ro
+    command: ["-c", "/config/dufs.yaml"]
 
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
@@ -2336,17 +2440,15 @@ networks:
       config:
         - subnet: 10.42.42.0/24
         - subnet: fdcc:ad94:bacf:61a3::/64
-
-volumes:
-  filebrowser_database:
-    name: filebrowser_database
-  filebrowser_config:
-    name: filebrowser_config
 YAML_EOF
 
 chown root:root /root/docker/compose.yaml
 chmod 0600 /root/docker/compose.yaml
-progress_stage_note 45 "Altı container için Compose tanımı yazıldı"
+# "Altı container" yazıyordu; sayı sftpgo'nun host rclone servisine
+# taşındığı V1-3'ten beri beşti (2026-08-01'de fark edildi). Named volume
+# bloğu da bu revizyonda tamamen kalktı: filebrowser'ın DB/config
+# volume'ları onunla birlikte gitti, dufs durum tutmuyor.
+progress_stage_note 45 "Beş container için Compose tanımı yazıldı"
 
 cat >/root/docker/.env <<EOF
 PUBLIC_IPV4=$PUBLIC_IPV4
@@ -2567,7 +2669,7 @@ if [[ "$MODE" == "--status" ]]; then
     echo
     echo "Container durumları:"
     for status_container in \
-        filebrowser portainer qbittorrent unpackerr wg-easy; do
+        dufs portainer qbittorrent unpackerr wg-easy; do
         status_container_state="$(
             "$DOCKER_BIN" inspect -f \
                 '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
@@ -2678,7 +2780,7 @@ WG_PUBLIC_PORT="$(state_value WG_PUBLIC_PORT 65171)"
 WEBDAV_PORT="$(state_value WEBDAV_PORT 65113)"
 WG_ENDPOINT_HOST="$(state_value WG_ENDPOINT_HOST "")"
 DOWNLOADS_PATH="$(state_value DOWNLOADS_PATH "/downloads")"
-if [[ "$STACK_SCHEMA" != "10" ||
+if [[ "$STACK_SCHEMA" != "11" ||
       ! "$QBIT_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ||
       ! "$WEBDAV_PORT" =~ ^[0-9]+$ ||
@@ -3095,7 +3197,7 @@ check_compose_runtime() {
     local wg_port="" setup_location=""
     local runtime_ok=0
     local -a expected_containers=(
-        filebrowser portainer qbittorrent unpackerr wg-easy
+        dufs portainer qbittorrent unpackerr wg-easy
     )
 
     COMPOSE_RESTART_TARGETS=()
@@ -3124,8 +3226,8 @@ check_compose_runtime() {
 
     port_binding_exists portainer 9443/tcp "127.0.0.1:9443" ||
         { add_compose_restart_target portainer; runtime_ok=1; }
-    port_binding_exists filebrowser 80/tcp "127.0.0.1:7113" ||
-        { add_compose_restart_target filebrowser; runtime_ok=1; }
+    port_binding_exists dufs 5000/tcp "127.0.0.1:7113" ||
+        { add_compose_restart_target dufs; runtime_ok=1; }
     port_binding_exists qbittorrent 13087/tcp "127.0.0.1:13087" ||
         { add_compose_restart_target qbittorrent; runtime_ok=1; }
     port_binding_exists qbittorrent "$QBIT_PUBLIC_PORT/tcp" \
@@ -3144,8 +3246,14 @@ check_compose_runtime() {
         add_compose_restart_target portainer
         runtime_ok=1
     fi
+    # dufs kimliksiz istekte 401 döner (anonim kural tanımlı değil).
+    # http_endpoint_responds 1xx-4xx'in tamamını "ulaşıldı" saydığı için bu
+    # probe 401 ile 200'ü AYIRT ETMEZ — yani "servis ayakta" der, "kimlik
+    # uygulanıyor" demez. Kimliğin gerçekten yüklendiğini Aşama 7'deki
+    # literal assertion doğrular; burada genel probe'u özelleştirmek onu
+    # dört çağıranın geri kalanı için de değiştirirdi.
     if ! http_endpoint_responds http://127.0.0.1:7113/; then
-        add_compose_restart_target filebrowser
+        add_compose_restart_target dufs
         runtime_ok=1
     fi
     if ! http_endpoint_responds http://127.0.0.1:13087/; then
@@ -4240,7 +4348,7 @@ progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
 systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
 
-# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:v2 …)
+# Hareketli etiketler (portainer:lts, qbittorrent:latest …)
 # "şu anda tam olarak ne çalışıyor" bilgisini compose.yaml'dan siler: dosya
 # değişmeden altındaki imaj değişebilir. Çözülen digest'ler bu yüzden burada
 # state.env'e yazılır — Aşama 5'ten sonra, çünkü imajlar ancak bu noktada
@@ -4268,7 +4376,7 @@ resolved_image_digest() {
 }
 
 progress_stage_note 93 "Çalışan image digest'leri kaydediliyor"
-for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+for digest_service in portainer dufs qbittorrent unpackerr wg-easy; do
     service_digest="$(resolved_image_digest "$digest_service")"
     [[ "$service_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
         service_digest="bilinmiyor"
@@ -4876,7 +4984,7 @@ assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLI
 # gerçekten çalışan image ile aynı olduğunu da doğrula, aksi hâlde kayıt
 # sessizce yalan söyleyebilir (Aşama 5'te bir inspect başarısız olsa "bilinmiyor"
 # yazılırdı ve kimse fark etmezdi).
-for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
+for digest_service in portainer dufs qbittorrent unpackerr wg-easy; do
     DIGEST_KEY="IMAGE_DIGEST_$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')"
     RECORDED_DIGEST="$(
         awk -F= -v k="$DIGEST_KEY" \
@@ -4928,6 +5036,27 @@ if [[ "$RECONCILE_COOLDOWN" != "$MASTER_RESTART_COOLDOWN_SECONDS" ||
 fi
 unset RECONCILE_COOLDOWN RECOVERY_COOLDOWN
 
+# Aynı sınıftan ikinci sabit: state.env şeması. Reconcile onu kendi
+# literal'inde tutmak zorunda (bağımsız lint), yani yazan ve okuyan taraf
+# ayrışabilir. Ayrıştığında sonuç sessiz değil ama teşhisi kolay da değil:
+# reconcile "Canonical state içeriği geçersiz" der ve gerçek nedeni —
+# şema numarası — hiç yazmaz. Burada eşitliği doğrulamak nedeni söyler.
+RECONCILE_SCHEMA="$(
+    awk '/^if \[\[ "[$]STACK_SCHEMA" != / {
+             if (match($0, /"[0-9]+"/)) {
+                 print substr($0, RSTART + 1, RLENGTH - 2)
+                 exit
+             }
+         }' /usr/local/sbin/master-network-reconcile
+)"
+if [[ "$RECONCILE_SCHEMA" != "$MASTER_STACK_SCHEMA" ]]; then
+    echo "HATA: state.env şema numarası install.sh ile reconcile arasında ayrışmış." >&2
+    echo "  install.sh : $MASTER_STACK_SCHEMA" >&2
+    echo "  reconcile  : ${RECONCILE_SCHEMA:-okunamadı}" >&2
+    exit 1
+fi
+unset RECONCILE_SCHEMA
+
 # WebDAV artık host servisi: Docker publish kaydı ve mangle guard
 # istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
 # host soket tablosundan doğrula — Tailscale IPv4'te var, public IPv4'te
@@ -4941,6 +5070,22 @@ if ss -lnt "( sport = :${WEBDAV_PORT} )" |
     echo "HATA: Host WebDAV dinleyicisi public/wildcard adrese açılmış." >&2
     exit 1
 fi
+
+# dufs'un kimlik kuralı gerçekten yüklendi mi? Reconcile probe'u bunu
+# ayırt edemiyor (1xx-4xx'in hepsini kabul eder), bu yüzden literal
+# assertion burada. Boş bir auth listesiyle dufs herkesi içeri alır ve
+# medya ağacı tailnet'e kimliksiz okuma-YAZMA açılır; sessiz geçmemesi
+# gereken tek yapılandırma hatası bu.
+DUFS_ANON_CODE="$(
+    curl --noproxy '*' -sS --connect-timeout 2 --max-time 4 \
+        -o /dev/null -w '%{http_code}' http://127.0.0.1:7113/ 2>/dev/null || true
+)"
+if [[ "$DUFS_ANON_CODE" != "401" ]]; then
+    echo "HATA: dufs kimliksiz isteğe 401 yerine '${DUFS_ANON_CODE:-yanıt yok}' döndü." >&2
+    echo "NEDEN: ${DUFS_CONFIG_FILE} içindeki auth kuralı yüklenmemiş olabilir." >&2
+    exit 1
+fi
+unset DUFS_ANON_CODE
 
 for port_spec in "tcp:${QBIT_PUBLIC_PORT}" "udp:${QBIT_PUBLIC_PORT}" "udp:${WG_PUBLIC_PORT}"; do
     protocol="${port_spec%%:*}"
@@ -5236,10 +5381,19 @@ echo "  Port          : ${WEBDAV_PORT}"
 echo "  Protokol      : WebDAV (HTTP, HTTPS değil)"
 echo "  Tam URL       : http://${TS_IP}:${WEBDAV_PORT}"
 echo "  Kimlik dosyası: /etc/master-stack/webdav.htpasswd (bcrypt)"
-echo "  Sıfırlama     : dosyayı silip install.sh'i yeniden çalıştırın"
 echo
-echo "Filebrowser yalnız şu dizini görür:"
-echo "  ${DOWNLOADS_PATH}/media -> /srv/media"
+echo "dufs (web dosya yöneticisi, okuma-yazma):"
+echo "  Sunulan dizin : ${DOWNLOADS_PATH}/media -> /srv (kök)"
+echo "  Kullanıcı adı : ${WEBDAV_SUMMARY_USER:-<htpasswd okunamadı>} (WebDAV ile aynı)"
+echo "  Parola        : WebDAV ile aynı"
+echo "  Adres         : file.${LOCAL_DOMAIN}"
+echo "  İzinler       : yükleme, silme, arama, klasör arşivi"
+echo "  Symlink takibi: kapalı (medya ağacı dışına çıkış yok)"
+echo "  Kimlik dosyası: ${DUFS_AUTH_FILE} (sha-512 crypt)"
+echo
+echo "Kimlik sıfırlama (ikisi birden):"
+echo "  rm -f ${WEBDAV_HTPASSWD_FILE} ${DUFS_AUTH_FILE}"
+echo "  ve install.sh'i yeniden çalıştırın"
 echo
 echo "Unpackerr:"
 echo "  İzlenen medya ağacı : ${DOWNLOADS_PATH}/media (tüm alt klasörler)"

@@ -6,7 +6,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-20`; `install.sh` is 5305 lines.
+`MASTER_SETUP_VERSION` is `2026.08.01-V2-2`; `install.sh` is 5459 lines.
+
+### 2026-08-01 — `V2-1`/`V2-2`: filebrowser replaced by dufs
+
+filebrowser has been printing a wind-down notice at every container start:
+the upstream project is **archived on 2026-09-01**, after which there are no
+releases and no security fixes, and three of its advisories are already
+permanently unpatched (one critical). The `v2` tag was *not* deprecated and
+was not the subject of that notice — on 2026-08-01 `v2`, `latest` and
+`v2.63.23` all resolved to the same digest, which is what the host was
+running. The tag was current; the project was ending.
+
+Measured exposure at the time was low, which is why this was scheduled
+rather than urgent: signup disabled, shell/exec disabled, `Auth Method:
+json`, container on `127.0.0.1:7113`, Caddy bound to the Tailscale IPv4
+alone. None of the three unpatched advisories were reachable.
+
+`filebrowser/filebrowser:v2` → `sigoden/dufs:v0.46.0`. Full rationale in
+**DD-26**; the parts that changed behaviour:
+
+- **Stateless.** No user database, no config volume — both named volumes
+  (`filebrowser_database`, `filebrowser_config`) are gone from
+  `compose.yaml`, and the `volumes:` block with them. This also made
+  `read_only: true`, `cap_drop: [ALL]` and `no-new-privileges` possible,
+  which filebrowser's writable database directory had ruled out.
+- **One credential for both file services.** The Stage 0 WebDAV
+  user/password now also protects dufs. It is hashed twice — bcrypt into
+  `webdav.htpasswd` for rclone, sha-512 crypt into `dufs.auth` for dufs,
+  which supports no other format. Plaintext still never reaches disk.
+  Stage 0's guard requires **both** files before it skips the prompt, so a
+  host upgrading from `V1-20` is asked once and gets a consistent pair.
+- **Policy regenerated, credential preserved.** `dufs.yaml` (serve path +
+  allow-flags) is rewritten every run so policy tracks the script version;
+  `dufs.auth` is written only when credentials are set.
+- **`allow-symlink: false`.** Symlink following alone produced four
+  separate filebrowser advisories. Verified live: symlinked file and
+  symlinked directory both 404, neither appears in the listing.
+- **The media tree is now the root.** filebrowser showed a `/srv/media`
+  nesting level; dufs serves `$DOWNLOADS_PATH/media` directly at `/`.
+- **Host port 7113 kept** (container port 5000), so the Caddy route, the
+  firewall port list and the reconcile probe are unchanged.
+- **`STACK_SCHEMA` 10 → 11**, because the key set changed:
+  `IMAGE_DIGEST_FILEBROWSER` → `IMAGE_DIGEST_DUFS`.
+- **`openssl` added to the package list** — `openssl passwd -6` produces the
+  dufs hash. Present in Debian 13's base install, but the script does not
+  assume it.
+
+**`V2-2` exists because `V2-1` failed its own Stage 7.** `STACK_SCHEMA` is
+written by `install.sh` and read back by an independent literal in the
+embedded reconcile script, which must stay self-contained to remain
+lintable (H4). The writer went to 11; the reader stayed at 10, and the
+install stopped with "Canonical master-stack state içeriği geçersiz" —
+a message that names the symptom and not the cause. This is the same
+duplicated-constant trap that `MASTER_RESTART_COOLDOWN_SECONDS` hit, so it
+got the same treatment: the schema is now declared once as
+`MASTER_STACK_SCHEMA`, and Stage 7 asserts the installed reconcile's
+literal matches it, reporting both values.
+
+Two stale strings were also corrected, both found by reading output rather
+than by any tool: Stage 4 announced "Altı container" when the count has been
+five since `V1-3` moved WebDAV to a host service, and the Stage 0 summary
+had a one-column misalignment.
+
+**Live verification** (re-run over an existing `V1-20` install, then a
+second re-run): install completed 7/7 with zero failed units; the orphaned
+`filebrowser` container was removed by `--remove-orphans`; `--check` returned
+`rc 0` with every field 0. dufs: anonymous 401 (loopback and through Caddy),
+wrong password 401, correct password 200, `PUT` 201 landing as `1000:1000`,
+`DELETE` 204, `PROPFIND` 207, byte ranges 206 at two offsets in a 2 MB file,
+symlink escape 404 and invisible. The public IPv4 refuses 7113. WebDAV still
+answers 207 on the same credentials. `state.env` records
+`IMAGE_DIGEST_DUFS=sha256:8dd3b750…` matching the running image.
+
+**Known leftover:** the two `filebrowser_*` named volumes survive the
+upgrade — `docker compose` does not remove named volumes with
+`--remove-orphans`, and deleting user data is not the installer's call.
+Remove them by hand once the rollback window has passed:
+`docker volume rm filebrowser_database filebrowser_config`.
 
 `V1-19` finishes what `V1-18` started. `V1-18` learned to *diagnose* a node
 deleted from the Tailscale panel; it still told the operator to run

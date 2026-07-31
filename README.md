@@ -53,7 +53,7 @@ and an extensive runtime verification pass at the end of the install.
   using an atomic "staging chain" swap technique so that Docker's
   `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
   default, with narrow, explicit allow rules for the public services.
-- **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr
+- **Fixed Compose stack**: Portainer, dufs, qBittorrent, Unpackerr
   and wg-easy, deployed with floating image tags that move at the patch
   level and whose resolved digests are recorded in `state.env` (DD-23), plus a hardened host
   `rclone` WebDAV unit (`master-webdav.service`) serving the media tree
@@ -235,7 +235,7 @@ levels differ because the upstreams' published tags differ.
 | Service | Image (tag) | Exposure | Purpose |
 |---------|-----------------|----------|---------|
 | `portainer` | `portainer/portainer-ce:lts` | `127.0.0.1:9443` (+ optional Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
-| `filebrowser` | `filebrowser/filebrowser:v2` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file browser over the downloads/media tree |
+| `dufs` | `sigoden/dufs:v0.46.0` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file manager over the media tree (read-write) |
 | `qbittorrent` | `lscr.io/linuxserver/qbittorrent:latest` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
 | `unpackerr` | `ghcr.io/unpackerr/unpackerr:0.15` | none (no published ports) | Watches the media tree and extracts nested archives |
 | `wg-easy` | `ghcr.io/wg-easy/wg-easy:15.3` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
@@ -267,8 +267,11 @@ Notes:
   was tested and found to break that entrypoint's `PUID`/`PGID` handling,
   so it's deliberately not applied there (see **M1** in
   `SECURITY_REVIEW.md`).
-- `filebrowser` uses Docker-managed named volumes (`filebrowser_database`,
-  `filebrowser_config`) rather than host bind mounts for its own state.
+- `dufs` is stateless: no user database, no config volume. It runs with
+  `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges` and
+  `user: 1000:1000`, reading its policy and credential from a single
+  read-only bind mount (`/etc/master-stack/dufs.yaml`). It replaced
+  `filebrowser` in `V2-1`; see **DD-26**.
 - The downloads/media tree is bind-mounted read-write into `qbittorrent`
   and `unpackerr`; the host WebDAV unit reads it directly, read-only.
 - Only `wg-easy` currently defines a Compose healthcheck; the reconcile
