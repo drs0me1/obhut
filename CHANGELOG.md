@@ -6,7 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-`MASTER_SETUP_VERSION` is `2026.07.31-V1-18`; `install.sh` is 5275 lines.
+`MASTER_SETUP_VERSION` is `2026.07.31-V1-20`; `install.sh` is 5305 lines.
+
+`V1-19` finishes what `V1-18` started. `V1-18` learned to *diagnose* a node
+deleted from the Tailscale panel; it still told the operator to run
+`tailscale logout && bash install.sh` by hand. But at that point the script
+already knows everything it needs: the profile exists locally and has no
+counterpart on the control plane, so it is worthless. It now clears the
+profile itself and falls straight through to the interactive login.
+
+Structurally this collapsed two paths into one. "No profile at all" and
+"profile whose node was deleted" both set `TAILSCALE_NEEDS_LOGIN` and reach
+the same single login block, instead of one exiting and the other logging
+in.
+
+If the automatic `tailscale logout` fails or takes longer than 60s, the
+install stops and says so rather than continuing — `tailscale up` may not
+open a fresh registration over a stale profile, and an operator dropped
+into that state has no way to see why. The network/control-plane branch
+still exits, because there the profile may be perfectly valid and deleting
+it would be wrong.
+
+**Live-verified** against a genuinely deleted node: the log shows the
+diagnosis, `Yerel profil temizlenip yeni kayıt açılıyor...`, a fresh login
+URL, and then a complete install — `STACK_SCHEMA=10`, five digests, nine
+units, five containers, WebDAV 401/401/207 with the public IPv4 refusing,
+`--check` rc 0.
+
+`V1-20` is a one-word consequence of reading that log: the first line still
+said `HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı`, so a
+**successful** install left an error line behind it. The severity is now
+decided per branch — `UYARI` when the script recovers, `HATA` only when it
+exits. This is the same class as `V1-11`: a recoverable condition reported
+as failure.
+
+### Previously
+
+`MASTER_SETUP_VERSION` was `2026.07.31-V1-18`; `install.sh` was 5275 lines.
 
 **Deployment tooling (`versiyon/deploy.sh`, not part of `install.sh`).**
 Copies the single export in `versiyon/` to a host, verifies the transfer by

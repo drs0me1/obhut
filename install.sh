@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-18"
+MASTER_SETUP_VERSION="2026.07.31-V1-20"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1170,14 +1170,26 @@ tailscale_is_online() {
     [[ -n "$self_line" && "$self_line" != *offline* ]]
 }
 
-if tailscale ip -4 >/dev/null 2>&1; then
+# Giriş gerekip gerekmediği tek bir bayrakla taşınıyor, çünkü iki ayrı yol
+# aynı yere çıkıyor: hiç profil yok, ya da profil var ama karşılığı silinmiş.
+# İkincisinde yerel profil değersizdir; bayrak sayesinde ikisi de aşağıdaki
+# tek etkileşimli giriş bloğuna düşer.
+TAILSCALE_NEEDS_LOGIN=0
+
+if ! tailscale ip -4 >/dev/null 2>&1; then
+    TAILSCALE_NEEDS_LOGIN=1
+else
     echo "Kayıtlı Tailscale bağlantısının online olması bekleniyor..."
     for _ in $(seq 1 60); do
         tailscale_is_online && break
         sleep 1
     done
     if ! tailscale_is_online; then
-        echo "HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
+        # Seviye, hangi dala gidileceği belli olmadan yazılmıyor: 404 dalı
+        # kurtarılabilir ve kurulum başarıyla devam eder, dolayısıyla orada
+        # HATA demek yanlış olur — başarılı bir kurulumun logunda HATA satırı
+        # bırakırdı. V1-11 tam olarak bu sınıftandı: kurtarılabilir bir
+        # durumun başarısızlık olarak raporlanması.
         # Üç ayrı arıza aynı zaman aşımını üretir ve çözümleri farklıdır:
         # ağ/control-plane erişilemez, node key süresi dolmuş, ya da düğüm
         # Tailscale panelinden SİLİNMİŞ. Sonuncusu yerelde tamamen normal
@@ -1195,20 +1207,38 @@ if tailscale ip -4 >/dev/null 2>&1; then
                 --since "${MASTER_SETUP_STARTED_AT:--5min}" \
                 --no-pager 2>/dev/null |
                 grep -q "node not found"; then
+            echo "UYARI: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
             echo "Düğüm Tailscale panelinden silinmiş; yerel profil geçerli görünse de" >&2
-            echo "sunucu tarafında karşılığı yok. Yeniden kaydolmak gerekiyor:" >&2
-            echo "  tailscale logout && bash $0" >&2
+            echo "sunucu tarafında karşılığı yok." >&2
+            # Buraya gelindiğinde teşhis kesin: profil yerelde duruyor ama
+            # sunucu tarafında yok, yani değersiz. Operatöre "tailscale
+            # logout çalıştırıp betiği yeniden başlat" demek gereksiz bir
+            # manuel adımdı — betik zaten bilmesi gereken her şeyi biliyor.
+            # Profili temizleyip aşağıdaki etkileşimli giriş bloğuna düş.
+            echo "Yerel profil temizlenip yeni kayıt açılıyor..." >&2
+            if ! timeout 60 tailscale logout; then
+                # Otomatik kurtarmanın tek adımı başarısızsa sessizce devam
+                # etme: `tailscale up` eski profille yeni kayıt açmayabilir
+                # ve operatör nedenini anlamadığı bir duruma düşer.
+                echo "HATA: Yerel Tailscale profili temizlenemedi." >&2
+                echo "Elle deneyin: tailscale logout && bash $0" >&2
+                exit 1
+            fi
+            TAILSCALE_NEEDS_LOGIN=1
         else
+            echo "HATA: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "Ağ/control-plane erişimini veya mevcut profili kontrol edip yeniden çalıştırın." >&2
             echo "Ayrıntı için: journalctl -u tailscaled -n 50" >&2
+            exit 1
         fi
-        exit 1
+    else
+        echo "Sunucu zaten bir Tailscale ağına bağlı."
+        tailscale status --self 2>/dev/null | head -n 1 || true
     fi
+fi
 
-    echo "Sunucu zaten bir Tailscale ağına bağlı."
-    tailscale status --self 2>/dev/null | head -n 1 || true
-else
+if [[ "$TAILSCALE_NEEDS_LOGIN" -eq 1 ]]; then
     progress_clear_line
     printf 'Tailscale girişi gerekiyor; aşağıdaki bağlantıyı tarayıcıda açın:\n' >&5
     printf '[%s] Etkileşimli Tailscale girişi başladı.\n' \

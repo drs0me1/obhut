@@ -1,8 +1,8 @@
 # Debian Server Installer
 
-**Version: V1-18** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
+**Version: V1-20** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
 the full release history. The script reports itself as
-`2026.07.31-V1-18` in its banner, log header and final summary; note this
+`2026.07.31-V1-20` in its banner, log header and final summary; note this
 is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
 format and is currently `10`. The latest tags are `V1-14` and the `R2.0` release marker. Earlier history: `V1-2` added version/hash
 self-reporting on the host plus `master-network-reconcile --status`, and
