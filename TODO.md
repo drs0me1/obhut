@@ -95,6 +95,22 @@ _All Low findings resolved or closed — see Completed below._
       it is itself a secret; and restoring wg-easy recovers peers and
       keys but not the endpoint IP baked into existing client configs, so
       a public-IP change still breaks clients regardless.
+
+      **Revisited 2026-07-31 and still closed**, when the user asked
+      whether a separate upgrade *and* backup script was warranted. The
+      original reasoning holds unchanged. What is now nameable is the
+      exposure: wg-easy's WireGuard private key and peer list are the
+      only expensive state on the host, because losing them means
+      re-provisioning every client device, whereas the Portainer account
+      and qBittorrent session are minutes to recreate. If that ever
+      becomes worth automating it is roughly ten lines — stop wg-easy,
+      `tar` `/data/wg-easy/config`, start it — not the subsystem scoped
+      above, and exporting each peer's config from wg-easy's UI at
+      creation time covers the same ground with no code at all. The
+      separate *upgrade* script was declined outright: `install.sh` is
+      the upgrade path (see `docs/architecture.md` → Re-running the
+      installer), and a second script would need its own copy of the
+      canonical definitions.
 - [x] **WebDAV block in the final summary reworked (2026-07-30, `V1-4`
       then `V1-5`).** `V1-4` was a follow-up to `V1-3` after the user
       pointed out the summary did not make clear which address to enter

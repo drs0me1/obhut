@@ -146,6 +146,40 @@ supported: most stages detect existing state (Docker daemon.json content,
 canonical config checksums, timer states) and skip or reconcile rather
 than blindly re-applying.
 
+**Measured, 2026-07-31** — a re-run against a healthy host took **25
+seconds and restarted no container at all**: all five `StartedAt`
+timestamps were byte-identical before and after, the wg-easy peer and
+WireGuard port survived, Portainer's `InstanceID` was unchanged, and
+`webdav.htpasswd` was not rewritten. This falls out of the unit design
+rather than luck: `master-compose.service` is `Type=oneshot` with
+`RemainAfterExit=yes` and **no `ExecStop`**, so Stage 5's
+`systemctl stop master-compose` only marks the unit inactive — the
+containers keep running, and the subsequent `docker compose up -d --wait`
+is a no-op unless `compose.yaml` actually changed. The one service that
+does restart is `master-webdav`, deliberately and unconditionally, since
+its unit definition or credential may have changed; WebDAV is
+unavailable for a second or two.
+
+Two things to know before re-running:
+
+- **Manual edits to `/root/docker/compose.yaml` are silently
+  overwritten.** There is a deliberate asymmetry here: reconcile only
+  *reports* Compose drift and never reverts it (M10, so an operator's
+  considered change is not undone behind their back), but `install.sh`
+  rewrites the file unconditionally. A change meant to last belongs in
+  `install.sh`, not on the host.
+- **A re-run does not silently upgrade anything.** Image tags are pinned
+  to exact versions inside the generated `compose.yaml`, so
+  `docker compose pull` fetches the same digests it already has. Upgrades
+  happen only when the pins in `install.sh` change, which is reviewable
+  in git.
+
+This is also why there is no separate upgrade script: `install.sh` *is*
+the upgrade path, exercised in place (`V1-10` → `V1-11`). A second script
+would need its own copy of the canonical unit/firewall/Compose/DNS
+definitions, and the entire self-healing model depends on there being
+exactly one.
+
 ## Docker Services
 
 All services are defined in a single generated `/root/docker/compose.yaml`

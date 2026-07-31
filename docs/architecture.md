@@ -233,6 +233,47 @@ by the user (2026-07-27):** this guarantees dnsmasq/Caddy reachability
 against accidental or unauthorized drift, and is documented explicitly in
 the final install summary so operators aren't surprised by it.
 
+### Re-running the installer
+
+`install.sh` is the upgrade path; there is no separate upgrade script,
+and adding one would mean a second copy of the canonical
+unit/firewall/Compose/DNS definitions when the whole self-healing model
+depends on there being exactly one.
+
+Measured on 2026-07-31 against a healthy host: **25 seconds, zero
+container restarts.** All five `StartedAt` timestamps identical before
+and after, the wg-easy peer and `wg0` listen port intact, Portainer's
+`InstanceID` unchanged, `webdav.htpasswd` untouched, `--check` rc 0.
+
+That is a property of the unit design rather than a happy accident.
+`master-compose.service` is `Type=oneshot` with `RemainAfterExit=yes`
+and **no `ExecStop`**, so Stage 5's `systemctl stop master-compose` marks
+the unit inactive without signalling the containers; the following
+`docker compose up -d --wait` then converges to the same state and does
+nothing. Containers are only recreated when `compose.yaml` genuinely
+changes. `master-webdav` is the one service restarted unconditionally,
+because its unit definition or its `LoadCredential` source may have
+changed — a second or two of WebDAV unavailability.
+
+What a re-run rewrites regardless: `compose.yaml`, every embedded helper
+script, every systemd unit, the firewall chains, the dnsmasq/Caddy
+configuration and the canonical bundle. What it preserves: the media
+tree, `/data/*` (wg-easy keys and peers, Portainer's database,
+qBittorrent's session), `webdav.htpasswd`, the Tailscale node identity
+and login, and gid-1000 group membership.
+
+Two consequences worth stating plainly:
+
+- **Manual edits to `compose.yaml` are silently overwritten.** Reconcile
+  deliberately only reports Compose drift and never reverts it (M10), but
+  `install.sh` rewrites the file unconditionally — the asymmetry is
+  intentional and easy to be surprised by. A lasting change belongs in
+  `install.sh`.
+- **A re-run upgrades nothing by itself.** Image tags are pinned to exact
+  versions in the generated `compose.yaml`, so `docker compose pull`
+  fetches what is already present. Upgrades happen only when the pins in
+  `install.sh` change.
+
 ### State and configuration files
 
 | Path | Mode | Purpose |
