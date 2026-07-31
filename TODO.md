@@ -106,6 +106,30 @@ _All High findings resolved — see Completed below._
       access at a point in the run where the script currently has none.
 
 
+- [ ] **L11 — dufs's built-in UI is plainer than filebrowser's.**
+      Operator feedback on the `V2-2` install (2026-08-01): it works and
+      covers the need, but it is visibly more basic than what it replaced.
+      Recorded so the trade-off is not forgotten — the swap was driven by
+      filebrowser's archival and its unpatched advisories (DD-26), not by
+      the interface, and the interface is the one axis on which the change
+      was a step down.
+
+      dufs supports replacing the UI wholesale with `--assets <dir>`
+      (a directory containing `index.html`, optionally `404.html`, using
+      the `__INDEX_DATA__` / `__ASSETS_PREFIX__` placeholders). Two
+      third-party themes exist and were alive when checked on 2026-08-01:
+      `TransparentLC/dufs-material-assets` (156 stars, last pushed
+      2026-07-20) and `cercky/dufs_web` (8 stars, 2026-06-03).
+
+      Not adopted, and the reason matters: a bundled third-party asset
+      directory is unreviewed HTML/JS served from inside the trust
+      boundary, on the same origin as an authenticated read-write file
+      manager. That is a larger security decision than a theme, and it
+      would need its own review plus a pinned, verifiable source — not a
+      `git clone` at install time. The cheaper alternative if this becomes
+      annoying is a different tool entirely; revisit before investing in
+      assets.
+
 ## Completed
 
 - [x] **L10 (2026-08-01) — the orphaned `filebrowser_*` volumes removed.**
