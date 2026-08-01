@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-6"
+MASTER_SETUP_VERSION="2026.08.01-Q1-7"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -3229,7 +3229,7 @@ record_container_restart() {
 
 check_compose_runtime() {
     local container="" running="" health="" wg_running=""
-    local wg_port="" setup_location=""
+    local wg_port="" setup_location="" quantum_default_code=""
     local runtime_ok=0
     local -a expected_containers=(
         filebrowser portainer qbittorrent unpackerr wg-easy
@@ -3284,6 +3284,44 @@ check_compose_runtime() {
     if ! http_endpoint_responds http://127.0.0.1:7113/; then
         add_compose_restart_target filebrowser
         runtime_ok=1
+    fi
+
+    # filebrowser (Quantum) hâlâ varsayılan admin/admin ile mi girilebiliyor?
+    #
+    # Kurulum bu hesabı bilerek kurmuyor; container kendi quickSetup()'ında
+    # yaratıyor ve parolayı operatör arayüzden değiştiriyor (bkz. DD-27).
+    # Yani taze bir kurulumda admin/admin BEKLENEN durumdur ve bu kontrol
+    # bir hata değil, hatırlatmadır: runtime_ok'a dokunmaz, çıkış kodunu
+    # değiştirmez. wg-easy'nin WG_SETUP_PENDING'i ile aynı şablon ve aynı
+    # gerekçe — "henüz yapılmamış bir operatör adımı"nı raporlamak, onu
+    # arıza saymadan. Tek fark: wg-easy'de bayrak bir restart'ı baskılamak
+    # için okunuyor, burada baskılanacak bir şey yok — varsayılan parola
+    # yeniden başlatmayla düzelmez. O yüzden bayrak yok, yalnız uyarı var
+    # (shellcheck SC2034 ile de tutarlı: okunmayan bir bayrak tutulmuyor).
+    #
+    # Neden gerekli: bu, kurulumdan SONRA geri gelebilen bir durum. Volume
+    # silinir veya container sıfırdan yaratılırsa Quantum varsayılan hesabı
+    # yeniden kurar ve mevcut sinyallerin HİÇBİRİ bunu görmez — Docker
+    # healthy der, yukarıdaki probe 200 alır, --check temiz çıkar.
+    #
+    # Neden giriş denemesi: daha az müdahaleci bir yol arandı ve yok.
+    # Kullanıcı nesnesindeki showFirstLogin, "ilk giriş uyarısı gösterildi
+    # mi"yi izliyor, "parola değişti mi"yi değil; uyarıyı kapatıp parolayı
+    # bırakan bir operatörde yanlış negatif verirdi (2026-08-01'de ölçüldü).
+    # Bedeli 20 dakikada bir tek log satırı.
+    if [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
+             2>/dev/null || true)" == "true" ]]; then
+        quantum_default_code="$(
+            "$CURL_BIN" --noproxy '*' -sS --connect-timeout 2 --max-time 6 \
+                -o /dev/null -w '%{http_code}' \
+                -X POST -H 'X-Password: admin' \
+                'http://127.0.0.1:7113/api/auth/login?username=admin' \
+                2>/dev/null || true
+        )"
+        if [[ "$quantum_default_code" == "200" ]]; then
+            echo "UYARI: filebrowser admin parolası hâlâ varsayılan (admin/admin)." >&2
+            echo "http://file.${LOCAL_DOMAIN} adresinden değiştirin." >&2
+        fi
     fi
     if ! http_endpoint_responds http://127.0.0.1:13087/; then
         add_compose_restart_target qbittorrent

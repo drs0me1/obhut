@@ -1297,3 +1297,46 @@ directory, where Docker creating one is correct, and `webdav.htpasswd`
 reaches its service through systemd `LoadCredential` rather than a mount —
 if that file goes missing the unit fails loudly, which is the behaviour we
 want.
+
+### DD-30: Reconcile reports the default filebrowser password without failing on it (2026-08-01)
+
+**Decision.** On every reconcile cycle, attempt a login as `admin`/`admin`
+against filebrowser. If it succeeds, warn — and do nothing else. The exit
+code, `compose_runtime`, and the restart logic are all untouched.
+
+**Why report at all.** DD-27 leaves the initial account to the container, so
+`admin`/`admin` on a fresh install is the *expected* state, not a fault.
+What makes it worth surfacing is that it can come back **after** install: if
+the volume is deleted or the container is recreated from scratch, Quantum
+runs `quickSetup()` again and re-creates the default account. Nothing else in
+the system notices — Docker reports the container healthy, the HTTP probe
+gets its 200, and `--check` is clean. A security property that can silently
+regress and that no existing signal covers is exactly what a 20-minute
+reconcile loop is for.
+
+**Why a warning rather than a failure.** Failing would make every fresh
+install report `rc 1` until the operator got round to changing the password,
+which trains people to ignore the exit code — the precise failure mode
+`V1-11` was fixed to avoid. This is the same shape as wg-easy's
+`WG_SETUP_PENDING`: an operator step that has not happened yet is reported,
+not treated as a fault.
+
+**Why no flag variable.** `WG_SETUP_PENDING` exists because it is *read* —
+it suppresses a pointless wg-easy restart. Here there is nothing to suppress:
+restarting the container does not change a password. An unread flag would
+also fail `shellcheck` (SC2034), which is how the first draft was caught.
+The warning is the whole feature.
+
+**Why a login attempt, when something less invasive would be preferable.**
+One was looked for and does not exist. The user object exposes
+`showFirstLogin`, which tracks whether the first-login notice has been
+displayed — not whether the password changed. Measured on 2026-08-01: it had
+already flipped to `false` on a host whose password was still `admin`, so
+relying on it would produce false negatives for exactly the operator who
+dismissed the notice and moved on. The cost of the real check is one log line
+per cycle — 72 a day against a `json-file` driver capped at 10 MB × 3.
+
+Verified in both directions: with the default password the warning appears in
+`--check`, in `--status`, and in the timer-driven run's journal, with `rc 0`
+and `compose_runtime=0` throughout; after changing the password it goes
+silent, still at `rc 0`.
