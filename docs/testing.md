@@ -63,7 +63,8 @@ alone.
   `jump_is_first_and_single`, `detect_ipv4_route`'s parsing logic.
 - **Implemented so far:** `test/reconcile_functions.bats` covers
   `state_value`, `owned_file_ok`, `restart_budget_available`,
-  `disk_space_ok` and `all_critical_state_healthy` — all from the
+  `disk_space_ok`, `inode_space_ok` and `all_critical_state_healthy` —
+  all from the
   `master-network-reconcile` heredoc. The last three were added on
   2026-07-31, when a re-survey found this document's and `TODO.md`'s
   inventories had gone stale: both still said the only remaining Tier 2

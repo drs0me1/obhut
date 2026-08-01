@@ -170,10 +170,13 @@ state/health, failed systemd units, downloads-disk usage, the
 mode passes through. It runs every 20 minutes via
 `master-network-reconcile.timer` and
 checks, in order: WAN/Tailscale address drift, IP forwarding sysctls,
-**disk space on the filesystem backing `$DOWNLOADS_PATH`** (added
-2026-07-28 — reported via `disk_space_ok()` when usage crosses 90%, but
-never auto-repaired, since deleting user data isn't a safe automated
-action), Tailscale preferences and netfilter backbone, the dedicated
+**space on the filesystem backing `$DOWNLOADS_PATH`, in bytes *and* in
+inodes*** (bytes added 2026-07-28 via `disk_space_ok()`, inodes `Q1-8`
+via `inode_space_ok()`, both at 90% and neither auto-repaired, since
+deleting user data isn't a safe automated action; the two are separate
+because a filesystem can be empty in bytes and full in inodes — measured
+on the target at 1% bytes / 100% inodes, where the byte check reports
+healthy while every new file gets `ENOSPC`), Tailscale preferences and netfilter backbone, the dedicated
 firewall chains (via `docker-tailscale-fw --check`), Docker's own
 DNAT/FORWARD rules, Compose container health and port bindings, the
 canonical config-file bundle (state/dnsmasq/Caddy), **the host WebDAV

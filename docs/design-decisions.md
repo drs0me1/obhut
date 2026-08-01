@@ -1340,3 +1340,45 @@ Verified in both directions: with the default password the warning appears in
 `--check`, in `--status`, and in the timer-driven run's journal, with `rc 0`
 and `compose_runtime=0` throughout; after changing the password it goes
 silent, still at `rc 0`.
+
+### DD-31: Inodes are checked separately from bytes, and `-` counts as healthy (2026-08-01)
+
+**Decision.** `inode_space_ok()` sits alongside `disk_space_ok()` with its
+own flag, its own message, and a shared threshold — and treats a `-` in the
+`IUse%` column as healthy rather than as unreadable.
+
+**Why a second check at all.** The two are not the same measurement. ext4
+fixes its inode table at `mkfs` time, so a tree of many small files can
+exhaust it while the filesystem is nearly empty in bytes. Measured on the
+Debian target on 2026-08-01 with a 32 MB image made with `-N 64`: after 52
+files, `df -h` read **1% used** and `df -i` read **100% used**. The byte
+check returned healthy on that filesystem while `touch` returned `ENOSPC` —
+which is exactly the state a torrent tree can reach, and exactly what the
+existing check structurally cannot see.
+
+**Why a separate flag rather than folding it into `DISK_SPACE_LOW`.** The
+remedy differs, and it is counter-intuitive: deleting large files frees
+bytes and no inodes at all. An operator reading "filesystem over 90% full"
+against a `df -h` showing hundreds of free gigabytes would reasonably
+conclude the check was broken. The message says which resource ran out and
+that the fix is deleting *many small* files. A separate flag also keeps
+`--check` diagnostic (`inode_space_low=`) instead of overloading one key.
+
+**Why `-` is healthy and not fail-closed.** Filesystems that allocate inodes
+dynamically report `-` in this column. Measured on the target the same day
+against a btrfs loop device: `IUse%` is `-`, and the digit filter the byte
+check uses leaves an empty string — which under that check's fail-closed
+rule would raise a permanent, unfixable warning on every 20-minute cycle for
+anyone on btrfs. `-` does not mean "could not read", it means "there is no
+table to exhaust". Genuinely unparseable output still fails closed, and the
+two cases are separated by testing the raw field for `-` before filtering
+digits, not after.
+
+**Why the threshold is shared.** Both are the same "this filesystem is
+filling up" policy; a second constant would be a second thing to keep in
+sync for no gain.
+
+Reported, never repaired — the same contract as the byte check, for the same
+reason. Wired through detection, `all_critical_state_healthy`, `--check`,
+`--status` (a new `inode` column), and the post-repair postcondition. Five
+bats cases added, including the btrfs `-` case; suite 74 → 79.

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-7"
+MASTER_SETUP_VERSION="2026.08.01-Q1-8"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2760,10 +2760,10 @@ if [[ "$MODE" == "--status" ]]; then
     fi
     echo
     status_disk_line="$(
-        "$DF_BIN" -h --output=pcent,avail,target \
+        "$DF_BIN" -h --output=pcent,avail,ipcent,target \
             "$status_downloads_path" 2>/dev/null |
             "$AWK_BIN" 'NR == 2 {
-                print "kullanım " $1 ", boş " $2 " (" $3 ")"
+                print "kullanım " $1 ", boş " $2 ", inode " $3 " (" $4 ")"
             }' || true
     )"
     echo "İndirme diski  : ${status_disk_line:-okunamadı}"
@@ -2937,6 +2937,34 @@ disk_space_ok() {
         "$DF_BIN" --output=pcent "$path" 2>/dev/null |
             tail -n 1 | tr -dc '0-9'
     )"
+    [[ -n "$usage_pct" ]] || return 1
+    (( usage_pct < threshold ))
+}
+
+# Aynı dosya sistemi bayt olarak boşken inode olarak dolabilir. ext4 inode
+# tablosunu mkfs anında sabitler; çok sayıda küçük dosyadan oluşan bir
+# torrent ağacı bunu bitirdiğinde `df -h` hâlâ yüzlerce GB boş gösterirken
+# her yeni dosya ENOSPC alır. Bayt kontrolü bu durumu yapı gereği göremez,
+# bu yüzden ayrı ölçülür. Eşik ortak: ikisi de aynı "dosya sistemi doluyor"
+# politikasının parçası, tek bir yerden ayarlanır.
+#
+# btrfs gibi inode'u dinamik ayıran dosya sistemlerinde df bu sütuna "-"
+# basar (2026-08-01'de nrm üzerinde btrfs loop cihazıyla ölçüldü: IUse% "-",
+# rakam süzgecinden geçince boş string; aynı komut ext4'te "1%" veriyor).
+# Bu "okunamadı" değil "tükenecek bir tablo yok" demek — bayt tarafının
+# fail-closed davranışı burada her döngüde kalıcı yanlış alarm üretirdi,
+# o yüzden "-" açıkça sağlıklı sayılır. Gerçekten okunamayan çıktı (boş
+# veya rakamsız) bayt tarafındaki gibi kapalı düşer.
+inode_space_ok() {
+    local path="$1" threshold="${2:-$DISK_USAGE_THRESHOLD_PCT}" raw="" usage_pct=""
+    raw="$(
+        "$DF_BIN" --output=ipcent "$path" 2>/dev/null |
+            tail -n 1 | tr -d '[:space:]'
+    )"
+    if [[ "$raw" == "-" ]]; then
+        return 0
+    fi
+    usage_pct="${raw//[^0-9]/}"
     [[ -n "$usage_pct" ]] || return 1
     (( usage_pct < threshold ))
 }
@@ -3550,6 +3578,9 @@ fi
 DISK_SPACE_LOW=0
 disk_space_ok "$DOWNLOADS_PATH" || DISK_SPACE_LOW=1
 
+INODE_SPACE_LOW=0
+inode_space_ok "$DOWNLOADS_PATH" || INODE_SPACE_LOW=1
+
 TAILSCALE_OFFLINE=0
 TAILSCALE_PREFS_DRIFTED=0
 TAILSCALE_NETFILTER_DRIFTED=0
@@ -3676,6 +3707,7 @@ all_critical_state_healthy() {
        "$WG_ENDPOINT_DRIFTED" -eq 0 &&
        "$FORWARDING_DRIFTED" -eq 0 &&
        "$DISK_SPACE_LOW" -eq 0 &&
+       "$INODE_SPACE_LOW" -eq 0 &&
        "$TAILSCALE_OFFLINE" -eq 0 &&
        "$TAILSCALE_PREFS_DRIFTED" -eq 0 &&
        "$TAILSCALE_NETFILTER_DRIFTED" -eq 0 &&
@@ -3696,7 +3728,7 @@ all_critical_state_healthy() {
 
 if [[ "$MODE" == "--check" ]]; then
     printf '%s\n' \
-        "address=$ADDRESS_CHANGED forwarding=$FORWARDING_DRIFTED disk_space_low=$DISK_SPACE_LOW" \
+        "address=$ADDRESS_CHANGED forwarding=$FORWARDING_DRIFTED disk_space_low=$DISK_SPACE_LOW inode_space_low=$INODE_SPACE_LOW" \
         "wg_endpoint=$WG_ENDPOINT_DRIFTED" \
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
@@ -3758,6 +3790,8 @@ fi
     echo "IP forwarding çalışma değeri sapmış; yönetilen sysctl yeniden uygulanacak."
 [[ "$DISK_SPACE_LOW" -eq 0 ]] ||
     echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sistemi %${DISK_USAGE_THRESHOLD_PCT} üzerinde dolu; yeni indirme/çıkarma işlemleri başarısız olabilir. Otomatik onarım yok, elle yer açılması gerekiyor." >&2
+[[ "$INODE_SPACE_LOW" -eq 0 ]] ||
+    echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sisteminin inode'larının %${DISK_USAGE_THRESHOLD_PCT}'ından fazlası kullanılmış; bayt olarak yer kalsa bile yeni dosya oluşturma ENOSPC verebilir. Çare çok sayıda küçük dosya silmektir, büyük dosya silmek inode açmaz. Otomatik onarım yok." >&2
 [[ "$TAILSCALE_OFFLINE" -eq 0 ]] ||
     echo "HATA: Tailscale daemon aktif fakat Tailnet online değil." >&2
 [[ "$TAILSCALE_PREFS_DRIFTED" -eq 0 ]] ||
@@ -4046,6 +4080,7 @@ fi
 if ! forwarding_ok ||
    ! forwarding_config_ok ||
    ! disk_space_ok "$DOWNLOADS_PATH" ||
+   ! inode_space_ok "$DOWNLOADS_PATH" ||
    ! tailscale_online ||
    ! tailscale_prefs_ok ||
    ! tailscale_netfilter_ok ||

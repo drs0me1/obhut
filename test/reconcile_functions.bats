@@ -37,6 +37,7 @@ setup() {
         extract_function RECONCILE_SCRIPT owned_file_ok
         extract_function RECONCILE_SCRIPT restart_budget_available
         extract_function RECONCILE_SCRIPT disk_space_ok
+        extract_function RECONCILE_SCRIPT inode_space_ok
         extract_function RECONCILE_SCRIPT all_critical_state_healthy
     } >"$FUNCS_FILE"
 
@@ -47,6 +48,7 @@ setup() {
     grep -q '^owned_file_ok() {' "$FUNCS_FILE"
     grep -q '^restart_budget_available() {' "$FUNCS_FILE"
     grep -q '^disk_space_ok() {' "$FUNCS_FILE"
+    grep -q '^inode_space_ok() {' "$FUNCS_FILE"
     grep -q '^all_critical_state_healthy() {' "$FUNCS_FILE"
 
     # shellcheck disable=SC1090
@@ -284,6 +286,66 @@ stub_df() {
     [ "$status" -ne 0 ]
 }
 
+# --- inode_space_ok ---
+#
+# A filesystem can be empty in bytes and full in inodes: ext4 fixes its
+# inode table at mkfs time, so a tree of many small files can exhaust it
+# while df -h still reports free space. Same stub technique as above, with
+# `df --output=ipcent`.
+
+@test "inode_space_ok: accepts usage below the threshold" {
+    stub_df "3%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run inode_space_ok /downloads
+    [ "$status" -eq 0 ]
+}
+
+@test "inode_space_ok: rejects usage above the threshold" {
+    stub_df "97%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run inode_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
+@test "inode_space_ok: treats the threshold itself as not ok" {
+    # Mirrors disk_space_ok: the comparison is strict (<).
+    stub_df "90%"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run inode_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
+@test "inode_space_ok: treats a dash as healthy, not as unreadable" {
+    # Filesystems that allocate inodes dynamically report "-" in this
+    # column. Measured on the Debian target 2026-08-01 against a btrfs loop
+    # device: IUse% is "-", and the digit filter leaves an empty string —
+    # which under the byte side's fail-closed rule would raise a permanent
+    # false alarm on every cycle. "-" means "no table to exhaust", so it
+    # must pass. This is the case the function exists to get right.
+    stub_df "-"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run inode_space_ok /downloads
+    [ "$status" -eq 0 ]
+}
+
+@test "inode_space_ok: fails closed when df output is unparseable" {
+    # Genuinely unreadable output is different from "-" and keeps the byte
+    # side's behaviour: report rather than assume healthy.
+    mkdir -p "$FIXTURE_DIR/bin"
+    printf '#!/usr/bin/env bash\nprintf "no percentage here\\n"\n' \
+        >"$FIXTURE_DIR/bin/df"
+    chmod +x "$FIXTURE_DIR/bin/df"
+    DF_BIN="$FIXTURE_DIR/bin/df"
+    DISK_USAGE_THRESHOLD_PCT=90
+
+    run inode_space_ok /downloads
+    [ "$status" -ne 0 ]
+}
+
 # --- all_critical_state_healthy ---
 #
 # Pure: twenty flag variables, one test expression, no external calls. The
@@ -296,6 +358,7 @@ stub_df() {
 
 CRITICAL_FLAGS=(
     ADDRESS_CHANGED WG_ENDPOINT_DRIFTED FORWARDING_DRIFTED DISK_SPACE_LOW
+    INODE_SPACE_LOW
     TAILSCALE_OFFLINE TAILSCALE_PREFS_DRIFTED TAILSCALE_NETFILTER_DRIFTED
     FIREWALL_DRIFTED DOCKER_NETFILTER_DRIFTED FW_INACTIVE COMPOSE_INACTIVE
     COMPOSE_RUNTIME_DRIFTED CONFIG_DRIFTED CANONICAL_CONFIG_INVALID
