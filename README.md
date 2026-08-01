@@ -194,22 +194,30 @@ exactly one.
 
 ## Deploying to a host
 
-`versiyon/` holds a single exported copy of `install.sh` plus `deploy.sh`,
-which copies it to a host, verifies the transfer by SHA256, and optionally
-starts the install inside `tmux`:
+`versiyon/` holds one directory per exported revision, each
+self-contained: the frozen export, a `deploy.sh` that copies and verifies
+it, and a README. See [`versiyon/README.md`](versiyon/README.md) for the
+index.
 
 ```sh
-./versiyon/deploy.sh nrm           # copy + verify
-./versiyon/deploy.sh nrm --run     # copy + verify + run in tmux
+cd versiyon/V2-2
+./deploy.sh nrm           # copy + verify
+./deploy.sh nrm --run     # copy + verify + start the install
 ```
+
+| Directory | Version | Web file manager | Status |
+|---|---|---|---|
+| `V2-2/` | `2026.08.01-V2-2` | `sigoden/dufs:v0.46.0` | Current |
+| `V1-20/` | `2026.07.31-V1-20` | `filebrowser/filebrowser:v2` | Rollback, expires 2026-09-01 |
 
 The expected hash is **computed from the local export at run time, not
 hardcoded** — a stored constant would be a second copy needing manual
 update on every export swap, and this repository has already been bitten
-by exactly that class of drift more than once (the repair cooldown, the
-architecture stage table, the "fixed image versions" wording). The script
-also refuses to run unless `versiyon/` contains exactly one export, so a
-stale copy left behind cannot be deployed by accident.
+by exactly that class of drift four times (the repair cooldown,
+`STACK_SCHEMA`, the architecture stage table, the "fixed image versions"
+wording). The script also refuses to run unless its own directory contains
+exactly one export, so a stale copy left behind cannot be deployed by
+accident.
 
 `--run` executes the installer directly over SSH. It deliberately does not
 wrap it in `tmux` (operator decision, 2026-07-31): the install can equally
