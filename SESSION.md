@@ -6,30 +6,37 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**None open. `v1rc` is tagged, exported and live-validated; the working
-tree is clean.** This session ran three arcs: post-R1.0 remediation
-(→ `v1b`), a consistency-and-coverage pass (→ `v1rc`), and live
-validation of both on a reimaged host.
+**None open. `V2-2` is tagged (`V2-2`, `R2.1`), exported and
+live-validated; the working tree is clean.** Repo, export, host and
+`state.env` all report the same `install.sh` SHA256.
 
-`v1rc` adds no functionality. Every change either removes an internal
-inconsistency, adds test coverage, or closes a tracked finding by
-decision. **M7 is the only finding still open, and nothing about it is
-actionable** while the repository stays local — see Remaining Work.
+The `V2-1`/`V2-2` arc replaced **filebrowser with dufs**. filebrowser's
+upstream is archived on 2026-09-01 with three permanently unpatched
+advisories. The `v2` tag itself was never deprecated — that was the
+reported symptom, and checking the registry disproved it: `v2`, `latest`
+and `v2.63.23` all resolved to the digest already running. The tag was
+current; the project was ending. Measured exposure was low (signup off,
+shell/exec off, json auth, loopback binding), so this was a scheduled
+replacement, not an incident. Full reasoning in **DD-26**.
 
-Two things from this session are worth carrying forward more than the
-change list itself:
+Three things worth carrying forward more than the change list:
 
-- **A repository fix is not a deployed fix.** The server had been
-  lagging the repo by several fixes — **H7** and **M1** only reached it
-  in this session's re-run, so Portainer had still been rejecting writes
-  via `portainer.ayc` in real use days after **H7** was marked resolved
-  here. **M10** now reports `compose.yaml` drift, but nothing reports
-  "the installed `install.sh` is older than the repository's".
-- **Measure before asserting.** Three of this session's findings came
-  from measuring rather than recalling: the 17 hand-written `65113`
-  sites, the 12-per-boot `world-inaccessible` warnings, and the fact
-  that `wait_for_chain` never actually waits. The last one is recorded
-  as defensive consistency rather than a proven fix, deliberately.
+- **Check the premise before acting on it.** The migration was right,
+  but not for the reason it was requested. Two minutes with the registry
+  separated "the tag is dead" from "the project is dying" — different
+  problems with different fixes.
+- **Duplicated constants keep finding new victims.** `V2-1` failed its
+  own Stage 7 because `STACK_SCHEMA` is written by `install.sh` and read
+  back by an independent literal in the embedded reconcile script; the
+  writer moved to 11 and the reader stayed at 10. This is the second
+  constant to hit the trap `MASTER_RESTART_COOLDOWN_SECONDS` hit, and it
+  got the same remedy — declared once, asserted in Stage 7. Assume there
+  is a third.
+- **Stale strings still only surface by reading output.** Two more this
+  arc: Stage 4's "Altı container" (five since `V1-3`) and a one-column
+  misalignment in the Stage 0 summary. That is now the fourth
+  documentation-accuracy defect found this way and the first that a tool
+  could plausibly have caught. The blind spot is unchanged.
 
 ## Completed Work
 
@@ -282,77 +289,94 @@ resolved, plus one unnumbered cleanup and two partial items:
 ## Remaining Work
 
 - **M7 — the only open finding, and parked.** Tier 1 complete; Tier 2 at
-  57 cases across five files with no identified gaps left. All that
-  remains is CI, and the user decided (2026-07-28) that **the repository
-  stays local with no git remote**, so a runner has nowhere to build
-  from. Do not re-propose CI at each review; a remote is the only thing
-  that would unpark it. Tier 3 automation would additionally need a
-  non-interactive invocation mode, separately judged not worth changing
-  the deliberate `/dev/tty` prompt design for.
-- **Deploy lag has no check.** See Current Task. Open question, not a
-  decision: does it deserve its own mechanism (e.g. recording
-  `INSTALLER_VERSION` in `state.env` so one command can compare host
-  against repo), or just the habit of re-running after every merged fix?
-  The user declined the `state.env` approach on 2026-07-29 on the grounds
-  that a clean reinstall settles it — that reasoning holds while the
-  server is a test target and should be revisited if it becomes
-  long-lived.
+  74 cases across six files, passing with zero skips on the Debian
+  target. All that remains is CI, and the user decided (2026-07-28) that
+  **the repository stays local with no git remote**, so a runner has
+  nowhere to build from. Do not re-propose CI at each review; a remote is
+  the only thing that would unpark it. Tier 3 automation would
+  additionally need a non-interactive invocation mode, separately judged
+  not worth changing the deliberate `/dev/tty` prompt design for.
+- **L9 — dufs has no floating tag.** Upstream publishes exact versions
+  and `latest`, nothing in between, so `install.sh` pins `v0.46.0`
+  exactly (DD-26). dufs is therefore the one container that will *not*
+  pick up upstream fixes on a re-run. Nothing detects a stale pin;
+  check the releases page periodically and bump `DUFS_IMAGE` by hand.
+- **L11 — dufs's built-in UI is plainer than filebrowser's.** Operator
+  feedback, recorded so the trade-off isn't forgotten: the swap was
+  driven by archival and unpatched advisories, not by the interface, and
+  the interface is the one axis where it went backwards. `--assets` can
+  replace the UI wholesale and two third-party themes are alive, but
+  bundling unreviewed HTML/JS on the same origin as an authenticated
+  read-write file manager is a security decision, not a theme choice.
+- **A second tier of stub-able reconcile functions** (`record_container_restart`,
+  `gro_flags_ok`, `forwarding_config_ok`, `port_binding_exists`,
+  `docker_network_tuple`) — worth unit-testing, not urgent.
 - **Deliberately outside M10's scope:** the firewall helper, the reconcile
   script itself and the core systemd units are still not in the canonical
   bundle. Reasoning is in **M10**'s entry — chiefly that reconcile
   validates the firewall by invoking the very helper it would be
-  checking. Revisit only if the `compose.yaml` reports ever fire for a
-  reason other than a deliberate live edit.
+  checking.
 - **Two won't-do closures that would reopen together:** **M3**
   (installation profiles) and **L7** (ports hardcoded in the firewall
   heredoc). Both were closed because this installer targets a
   single-purpose, single-operator host built from scratch every time.
   Both reopen if it is ever reused across hosts or by another author.
-- **One idea never proposed to the user:** a single `scripts/check-all.sh`
-  running the four verification commands in one go — the local substitute
-  for the CI that will not exist.
+- **Never verified, and the only unknown about the system's actual
+  purpose:** Infuse as a real WebDAV client. `Range`/seek behaviour
+  against the host `rclone` service has never been exercised by the
+  application it exists for. dufs serves ranges correctly (206 measured
+  at two offsets), but Infuse points at rclone, not dufs.
+- **Operator actions that a reimage wipes**, so they belong on a
+  post-install checklist rather than in the script: a root password plus
+  provider-console access, and a second SSH key held off the MacBook.
+  Recommended, still not done.
 
 ## Recommended Next Step
 
 1. **Nothing is blocked or half-finished.** Repository, server and the
-   exported artifact all agree. All 57 tests pass; `bash -n`,
-   `shellcheck` and `scripts/lint-embedded-scripts.sh` are clean.
-2. **This session's documentation pass was left uncommitted by explicit
-   instruction.** Review and commit it, or ask whether it is still
-   wanted, before starting anything else.
-3. If more work is wanted, the Remaining Work list is the menu — none of
-   it is urgent, and three of the five items are deliberately parked or
-   closed rather than pending.
-4. Whatever is chosen, keep the standing per-change rule: analyze and
-   flag risk first, apply only after explicit approval, verify with
-   `bash -n`/`shellcheck`/`bats test/` (and
+   exported artifact all agree on `b3b16139…`. 74/74 bats; `bash -n`,
+   `shellcheck` and `scripts/lint-embedded-scripts.sh` clean.
+2. If more work is wanted, the Remaining Work list is the menu — none of
+   it is urgent, and most of it is deliberately parked or closed rather
+   than pending.
+3. Whatever is chosen, keep the standing per-change rule: smallest
+   change, preserve idempotency, bump `MASTER_SETUP_VERSION`'s suffix,
+   verify with `bash -n`/`shellcheck`/`bats test/` (and
    `scripts/lint-embedded-scripts.sh` for heredoc changes), show the
    diff, then update `TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then
    commit.
 
 ## Notes
 
-- **`install.sh` execution policy (revised 2026-07-28):** the original
-  blanket "never execute `install.sh`" rule has been superseded by real
-  practice — see the Tier 3 write-up above and in `docs/testing.md`. The
-  actual working rule now is: this assistant may run `install.sh` (or any
-  other mutating command against a real host) only with the user's
-  explicit, specific approval for that exact action in that turn, never
-  by inferring consent from an earlier, different approval, and never by
-  choosing configuration values on the user's behalf — those are always
-  relayed to and answered by the user directly. Static analysis
-  (`bash -n`, `shellcheck`, `bats test/`) remains the default mode for
-  everything else.
-- All conversation with the user happens in Turkish; all code, comments,
-  commit messages, and documentation stay in English (per `CLAUDE.md`).
+- **`install.sh` execution policy (revised 2026-07-31 — this supersedes
+  both earlier versions).** The `nrm` host is a disposable test target
+  under standing authorization: running `install.sh`, `sudo`, mutating
+  `systemctl` verbs, `docker` lifecycle, firewall changes, state wipes
+  and reboots need **no per-turn approval there**, and every install
+  prompt is answered locally (defaults, `E` for confirmations,
+  `12345test` for the file-access password) rather than relayed. The one
+  prompt still relayed is the Tailscale login URL. That authorization is
+  scoped to `nrm` and does not travel — the local Mac, other hosts, the
+  Tailscale account itself, and anything that publishes repository
+  content still need explicit per-turn approval. Report what was
+  actually run; the point is removing approval latency, not visibility.
+  Full text in `CLAUDE.md` → Execution Rules.
+- **Language (revised 2026-07-29 — the earlier "all code in English" rule
+  was reversed).** Conversation with the user is Turkish; `install.sh` is
+  Turkish throughout, comments and printed output alike, including its
+  generated helper scripts and systemd unit descriptions. Markdown docs,
+  commit messages, `test/*.bats` and `scripts/*.sh` stay English. The
+  principle is that each artifact is internally consistent — match the
+  language already in a file rather than the language of the
+  conversation.
 - **Commit policy (changed 2026-07-28):** the user reversed the earlier
   "don't commit each time" preference — commit after every completed unit
   of work now, without asking first. (Recorded in this assistant's
   cross-session memory as well, not just here.)
-- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H6, M1-M7,
-  L1-L5 — note **H5**/**H6** are new, post-audit) before starting any
+- Reference `SECURITY_REVIEW.md` for finding IDs before starting any
   remediation, so status stays consistent across `TODO.md`,
-  `CHANGELOG.md`, and this file.
+  `CHANGELOG.md`, and this file. The Low series now runs to **L11**;
+  L9 and L11 are the only ones open.
 - **Cross-session memory:** one memory file exists for this project,
   `project_intended_architecture.md` (2026-07-27), recording the user's
   own narrated target architecture as checked against a full read of

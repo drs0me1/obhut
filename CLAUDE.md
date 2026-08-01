@@ -182,14 +182,23 @@ even when working in this repository only.
   non-interactive or unattended invocation path today.
 - Debian 13 (trixie) only; the script hard-fails on any other OS/version.
 - The firewall, Compose, and reconcile logic assume the exact fixed
-  six-service bundle described in `README.md`. Do not assume partial or
-  configurable service sets exist yet — see `docs/profiles.md` for the
-  current state of that idea.
+  service set described in `README.md`: **five containers** (Portainer,
+  dufs, qBittorrent, Unpackerr, wg-easy) plus WebDAV as a **host** systemd
+  unit rather than a container (since `V1-3` — see DD-20). Older notes
+  calling this a "six-service bundle" describe the pre-`V1-3` shape, when
+  SFTPGo was the sixth container. Do not assume partial or configurable
+  service sets exist yet — see `docs/profiles.md` for the current state of
+  that idea.
 - Several embedded heredoc scripts (the firewall helper, the reconcile
   helper, the recovery helper) are **not** covered by `shellcheck
   install.sh` / `bash -n install.sh` because they are heredoc string
-  literals. Treat them with the same scrutiny as the outer script when
-  reviewing or editing.
+  literals. `scripts/lint-embedded-scripts.sh` extracts and lints all
+  seven of them separately; each must stay self-contained to remain
+  lintable, which is why constants like the repair cooldown and the
+  `state.env` schema number are deliberately duplicated between
+  `install.sh` and the generated scripts (Stage 7 asserts they agree —
+  see DD-25 and the `V2-1` schema drift). Treat them with the same
+  scrutiny as the outer script when reviewing or editing.
 
 ## Common Tasks
 

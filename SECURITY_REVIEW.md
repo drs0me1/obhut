@@ -723,10 +723,17 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   restating them, and were mutation-verified on a scratch copy. Hash
   verification and ownership checking are stubbed as out of scope, so all
   8 run with no skips on any POSIX host.
-- **Remaining, and parked (2026-07-28):** only CI wiring. Tier 1 is
-  complete and Tier 2 now has 57 cases across five files with no
-  identified gaps left — `check_ipv4_policy`/`check_ipv6_policy`, the
-  last named candidates, are covered by `test/policy_functions.bats`.
+- **Remaining, and parked (2026-07-28; counts refreshed 2026-08-01):**
+  only CI wiring. Tier 1 is complete and Tier 2 now has **74 cases across
+  six files** — `check_ipv4_policy`/`check_ipv6_policy`, the last named
+  candidates from the original gap list, are covered by
+  `test/policy_functions.bats`, and `retry_network`,
+  `restart_budget_available`, `disk_space_ok` and
+  `all_critical_state_healthy` were added since. A second tier of
+  stub-able functions remains (`record_container_restart`,
+  `gro_flags_ok`, `forwarding_config_ok`, `port_binding_exists`,
+  `docker_network_tuple`) — worth doing, not urgent, and not a blocker
+  for this finding.
   **The user decided on 2026-07-28 that this repository stays local**,
   with no git remote. A CI runner needs somewhere to build from, so CI is
   not "not scheduled yet" — it is structurally out of scope until that

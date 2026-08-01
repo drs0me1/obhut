@@ -18,23 +18,24 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 656–813 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 814–932 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 933–1282 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1036–1111`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1283–2003 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1392–1936`) and its systemd unit |
-| 4 | 2004–4183 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2358–2399`) and `master-network-reconcile` (`2439–3905`) helper scripts, `master-docker-netfilter-recovery` (`3909–3965`), `master-webdav-serve` (`4057–4125`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4184–4286 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4287–4602 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4410–4442`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4603–5305 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 667–842 | Interactive prompts: downloads path, optional local DNS domain, file-access credential (one user/password covering both the host WebDAV service and `dufs`); confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 843–964 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 965–1314 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1071–1146`), interactive login (including automatic recovery from a node deleted in the panel, `V1-19`), exit-node + stateful filtering + netfilter configuration |
+| 3 | 1315–2035 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1427–1971`) and its systemd unit |
+| 4 | 2036–4288 | Data directories, `state.env`, the two credential files (`webdav.htpasswd` bcrypt + `dufs.auth` sha-512 crypt) and the regenerated `dufs.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2460–2501`) and `master-network-reconcile` (`2541–4013`) helper scripts, `master-docker-netfilter-recovery` (`4017–4073`), `master-webdav-serve` (`4165–4233`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4289–4391 | Image pull, systemd dependency graph verification, firewall + Compose stack startup, recording of the resolved image digests into `state.env` (DD-23) |
+| 6 | 4392–4707 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4518–4550`), then the single atomic publication of the canonical bundle (see DD-14) |
+| 7 | 4708–5459 | Full runtime verification (systemd properties, firewall rule content, container/service health, recorded-vs-running digests, the dufs anonymous-401 assertion, cooldown and schema constant agreement, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5305 lines — `V1-20`, 2026-07-31. They
-drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
+(Line numbers as of `install.sh` 5459 lines — `V2-2`, 2026-08-01. They
+drift with every change; regenerate with `grep -n '^# AŞAMA [0-7] '`
 rather than trusting them after a batch of edits. **This has now drifted
-twice**: 18 lines across stages 5–7 before `V1-11` caught it, and again in
-`V1-15`, where a block added above stage 1 shifted stages 0–4 by 14 lines
-while only the tail of the table was refreshed. Regenerating the *whole*
-table is the only reliable move; patching the rows you think changed is
-what caused both.)
+three times**: 18 lines across stages 5–7 before `V1-11` caught it; again
+in `V1-15`, where a block added above stage 1 shifted stages 0–4 by 14
+lines while only the tail of the table was refreshed; and again in
+`V2-1`/`V2-2`, where every row moved. Regenerating the *whole* table is
+the only reliable move; patching the rows you think changed is what
+caused all three.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -88,7 +89,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1392-1936`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1427-1971`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -160,7 +161,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2439-3905`, 1466
+`master-network-reconcile` (generated at `install.sh:2541-4013`, 1471
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
