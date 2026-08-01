@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-3"
+MASTER_SETUP_VERSION="2026.08.01-Q1-4"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2159,6 +2159,21 @@ cat >"$QUANTUM_CONFIG_TMP" <<'QUANTUM_YAML'
 server:
   port: 80
   baseURL: "/"
+  # cacheDir varsayılanı çalışma dizinine göreli "tmp", yani container'ın
+  # YAZILABİLİR KATMANI. Quantum oraya arama indeksini, thumbnail'leri,
+  # diskcache'i ve üretilmiş PWA ikonlarını yazıyor — 2026-08-01'de ölçüldü:
+  # varsayılan hâlde yazılabilir katmanda 18 girdi oluşuyor.
+  #
+  # Bunu data volume'unun içine almak iki şeyi birden çözüyor:
+  #   1. read_only: true mümkün hâle geliyor (bkz. compose.yaml).
+  #   2. Thumbnail'ler ve indeks container yeniden yaratıldığında
+  #      kaybolmuyor; eskiden yazılabilir katmanda oldukları için gidiyordu.
+  #
+  # tmpfs alternatifi denendi ve ELENDİ: Quantum cacheDir için en az 20 GB
+  # boş alan öneriyor (256 MB'lık tmpfs ile "cacheDir only has 0.25 GB of
+  # free space" uyarısı alındı) ve thumbnail üretimi gerçek bir medya
+  # kütüphanesinde bunu RAM'de tutulamaz hâle getirir.
+  cacheDir: "/home/filebrowser/data/cache"
   sources:
     - path: "/srv"
 auth:
@@ -2255,6 +2270,18 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # read_only: true — ilk değerlendirmede "Quantum durum tuttuğu için
+    # imkânsız" diye ELENMİŞTİ; bu bir çıkarımdı ve ölçüldüğünde yanlış
+    # çıktı (2026-08-01). Yazdığı tek yer cacheDir'di ve o config'ten
+    # yönlendirilebiliyor. Yukarıdaki config.yaml onu data volume'una
+    # aldıktan sonra kökün yazılabilir olmasına hiç gerek kalmıyor:
+    # ölçüldü, yazılabilir katmandaki değişiklik 18'den 1'e düştü (kalan
+    # tek girdi salt okunur bind mount'un kendisi) ve giriş/listeleme/
+    # medyaya yazma değişmeden çalıştı.
+    #
+    # Böylece V2-2'nin (dufs) sağladığı sertleştirme bu hatta da geri
+    # kazanıldı; tmpfs gerekmiyor.
+    read_only: true
     environment:
       # İmajın gömülü varsayılanı /home/filebrowser/data/config.yaml, yani
       # named volume'un İÇİ. Config'i oraya koymak, salt okunur bind mount'u
@@ -2272,12 +2299,6 @@ services:
       # dizinde tutar. Orijinal filebrowser'ın iki volume'unun (database +
       # config) yerini alıyor.
       #
-      # NOT: read_only: true burada UYGULANAMAZ — dufs durumsuzdu, Quantum
-      # değil. Bu, V2-2'nin (dufs) kazandığı sertleştirmenin geri verilmesi
-      # demek ve deneyin bilinen bedeli. cap_drop/no-new-privileges duruyor;
-      # imaj zaten root olmayan 'filebrowser' kullanıcısıyla çalışıyor, bu
-      # yüzden buraya user: satırı da konmadı (imajın kendi UID'si dizinin
-      # sahibi olmalı).
       - filebrowser_data:/home/filebrowser/data
 
   qbittorrent:

@@ -1049,16 +1049,36 @@ the experiment can be abandoned by deleting a branch.
 - The interface is the reason the branch exists; that judgement is the
   operator's and is not argued here.
 
-**What it costs, and this is the honest part.** Quantum is **stateful**.
-The image's own environment declares
-`FILEBROWSER_DATABASE=/home/filebrowser/data/database.db`, so it needs a
-writable data directory for its database, index and cache. `read_only:
-true` is therefore impossible, and a named volume returns. Both were
-things dufs removed, and statelessness was a substantive part of DD-26's
-argument — not a side benefit. `cap_drop: [ALL]` and
+**What it costs.** Quantum is **stateful**: the image declares
+`FILEBROWSER_DATABASE=/home/filebrowser/data/database.db`, so a named
+volume returns where dufs needed none. `cap_drop: [ALL]` and
 `no-new-privileges` are kept; the image already runs as a non-root
-`filebrowser` user, which is why no `user:` line is set here (the image's
-own UID must own the data directory).
+`filebrowser` user, which is why no `user:` line is set (the image's own
+UID must own the data directory).
+
+**`read_only: true` was first written off here as impossible, and that was
+wrong.** The claim was an inference from "Quantum is stateful", never a
+measurement — the same shortcut this project avoided for unpackerr (tried,
+it worked, kept) and qBittorrent (tried, it broke `PUID`/`PGID`, removed).
+Measured on 2026-08-01: the only thing Quantum writes outside its volume is
+its cache directory, and `server.cacheDir` is configurable. Pointing it at
+`/home/filebrowser/data/cache` puts the cache inside the volume that already
+exists, and the root filesystem can then be read-only with **no tmpfs at
+all**. Changes in the container's writable layer went from **18 to 1** — the
+one remaining entry being the read-only bind mount itself — while login,
+listing and writes to the media tree were unaffected.
+
+A tmpfs was tried first and rejected on evidence: Quantum recommends at
+least 20 GB of free space for the cache and warned with a 256 MB tmpfs
+(`cacheDir only has 0.25 GB of free space`). Thumbnail generation over a
+real media library is not something to hold in RAM. Putting the cache on
+disk also fixed a smaller thing nobody had noticed — thumbnails and the
+search index used to live in the container's writable layer and were
+therefore discarded every time the container was recreated; they now
+survive, including across a reboot (verified).
+
+So the hardening dufs gave up nothing for is recovered on this line too.
+The one thing that genuinely does not carry over is statelessness itself.
 
 **The initial admin account is left to the container — revised 2026-08-01
 after reading upstream's source.** The installer briefly did bootstrap it,
