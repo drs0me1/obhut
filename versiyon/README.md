@@ -1,16 +1,26 @@
 # Exported installer revisions — `quantum` branch
 
-One directory per exported revision. Each is self-contained: the frozen
-export, a `deploy.sh` that copies and verifies it, a double-clickable
-`deploy.command`, and (where present) a README.
+One directory per exported revision. **Every directory contains four files,
+without exception** (standing rule, 2026-08-01):
+
+| File | Why |
+|---|---|
+| `install-<TAG>.sh` | the frozen export, byte-identical to its tag |
+| `deploy.sh` | asks for a host, copies, verifies the SHA256, can start the install |
+| `deploy.command` | the same thing, double-clickable from Finder |
+| `README.md` | **operator-facing**: version identity, then a plain-language description of what gets installed, what to do first, and what to watch out for |
+
+The README is deliberately non-technical — these folders get carried to
+other machines on their own, and whoever opens one is installing, not
+developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-4/`](Q1-4/) | `2026.08.01-Q1-4` | `Q1`, `Q1-4` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`Q1-8/`](Q1-8/) | `2026.08.01-Q1-8` | `Q1-8` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
-cd versiyon/Q1-4
+cd versiyon/Q1-8
 ./deploy.sh nrm --run
 ```
 
@@ -24,9 +34,24 @@ From Finder, double-click `deploy.command` instead.
 Every export is byte-identical to the tag it is named after:
 
 ```sh
-git show Q1-4:install.sh | sha256sum
-sha256sum Q1-4/install-Q1-4.sh
+git show Q1-8:install.sh | sha256sum
+sha256sum Q1-8/install-Q1-8.sh
 ```
+
+## Retired directories
+
+Only the current revision and the branch point are kept as directories; the
+export a new one replaces is removed rather than accumulated, so there is
+never a question of which folder to hand someone. `Q1-1` was retired when
+`Q1-4` was exported, and `Q1-4` when `Q1-8` was. Nothing is lost — the tag
+still holds the exact file:
+
+```sh
+git show Q1-4:install.sh > install-Q1-4.sh
+```
+
+The `Q1` tag is a line marker rather than a revision and still points at
+`Q1-4`; moving it needs a tag deletion, which is not done unasked.
 
 ## Why the deploy scripts are duplicated
 
@@ -53,9 +78,11 @@ Any change to one copy must be applied to the others in the same commit.
 mkdir versiyon/<TAG>
 git show <TAG>:install.sh > versiyon/<TAG>/install-<TAG>.sh
 chmod +x versiyon/<TAG>/install-<TAG>.sh
-cp versiyon/Q1-4/deploy.sh versiyon/<TAG>/deploy.sh
-cp versiyon/Q1-4/deploy.command versiyon/<TAG>/deploy.command
+cp versiyon/Q1-8/deploy.sh versiyon/<TAG>/deploy.sh
+cp versiyon/Q1-8/deploy.command versiyon/<TAG>/deploy.command
 ```
+
+Then write the `README.md` — it is not optional, see the table at the top.
 
 Keep **exactly one** `install-*.sh` per directory — `deploy.sh` refuses to
 run otherwise, on purpose: a second file makes it silently ambiguous which
