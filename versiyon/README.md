@@ -16,7 +16,7 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-8/`](Q1-8/) | `2026.08.01-Q1-8` | `Q1-8` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`Q1-8/`](Q1-8/) | `2026.08.01-Q1-8` | `Q1`, `Q1-8` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
@@ -50,8 +50,10 @@ still holds the exact file:
 git show Q1-4:install.sh > install-Q1-4.sh
 ```
 
-The `Q1` tag is a line marker rather than a revision and still points at
-`Q1-4`; moving it needs a tag deletion, which is not done unasked.
+The `Q1` tag is a line marker rather than a revision: it follows the head of
+this line and was moved from `Q1-4` to `Q1-8` on 2026-08-01. Moving it means
+deleting and recreating it, so it is only done when asked. `Q1-4` and every
+other revision tag stay where they are — those are fixed identities.
 
 ## Why the deploy scripts are duplicated
 

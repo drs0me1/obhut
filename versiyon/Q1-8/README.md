@@ -8,7 +8,7 @@ afterwards except the passwords listed under **Do these first**.
 | | |
 |---|---|
 | Version | `2026.08.01-Q1-8` |
-| Tag | `Q1-8` |
+| Tags | `Q1-8`, and `Q1` (marks the head of this line) |
 | SHA256 | `0a6ff0a8a5f12404aba03337c48729bd0497b20bdac62679909459841158417e` |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
