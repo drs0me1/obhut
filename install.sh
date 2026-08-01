@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-8"
+MASTER_SETUP_VERSION="2026.08.02-Q1-9"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2599,6 +2599,7 @@ ETHTOOL_BIN="$(command -v ethtool || true)"
 ENV_FILE="/root/docker/.env"
 COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
+QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
 CANONICAL_DIR="/usr/local/share/master-stack"
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
@@ -2668,13 +2669,14 @@ canonical_bundle_ok() {
     owned_file_ok "$CANONICAL_DIR" 0 0 755 &&
         owned_file_ok "$CANONICAL_DIR/SHA256SUMS" 0 0 644 &&
         owned_file_ok "$CANONICAL_DIR/state.env" 0 0 600 &&
-        owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 ||
+        owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 &&
+        owned_file_ok "$CANONICAL_DIR/filebrowser.yaml" 0 0 644 ||
         return 1
 
     manifest_entries="$(
         "$AWK_BIN" 'NF == 2 {print $2}' "$CANONICAL_DIR/SHA256SUMS"
     )"
-    expected_entries=$'state.env\ncompose.yaml\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
+    expected_entries=$'state.env\ncompose.yaml\nfilebrowser.yaml\ndnsmasq-local-services.conf\ndnsmasq-99-tailscale-order.conf\nCaddyfile\ncaddy-99-tailnet-bind.conf\ncaddy-tailnet-env\ntailscaled-99-caddy-tailnet.conf'
     [[ "$manifest_entries" == "$expected_entries" ]] || return 1
 
     owned_file_ok "$CANONICAL_DIR/dnsmasq-local-services.conf" 0 0 644 &&
@@ -3428,6 +3430,18 @@ compose_file_ok() {
         owned_file_ok "$COMPOSE_FILE" 0 0 600
 }
 
+# Quantum politika dosyası: dnsmasq/Caddy dosyalarıyla aynı muamele, çünkü
+# aynı sınıftan — kurulumun ürettiği, sır içermeyen, sapması güvenlik
+# davranışını değiştiren bir politika dosyası. compose.yaml'ın rapor-only
+# istisnası buraya UYMUYOR: orada geri yükleme `docker compose up` olmadan
+# etkisiz kalıyordu, burada dosyayı geri yazmak container'ın bir sonraki
+# açılışında yürürlüğe giren politikayı doğrudan düzeltir.
+quantum_config_ok() {
+    "$CMP_BIN" -s \
+        "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE" &&
+        owned_file_ok "$QUANTUM_CONFIG_FILE" 0 0 644
+}
+
 dns_config_files_ok() {
     "$CMP_BIN" -s \
         "$CANONICAL_DIR/dnsmasq-local-services.conf" \
@@ -3465,7 +3479,8 @@ caddy_config_files_ok() {
 }
 
 config_files_ok() {
-    state_file_ok && dns_config_files_ok && caddy_config_files_ok
+    state_file_ok && quantum_config_ok &&
+        dns_config_files_ok && caddy_config_files_ok
 }
 
 canonical_runtime_configs_valid() {
@@ -3603,13 +3618,20 @@ if ! check_compose_runtime; then
 fi
 
 STATE_CONFIG_DRIFTED=0
+QUANTUM_CONFIG_DRIFTED=0
 DNS_CONFIG_DRIFTED=0
 CADDY_CONFIG_DRIFTED=0
 CONFIG_DRIFTED=0
 state_file_ok || STATE_CONFIG_DRIFTED=1
+quantum_config_ok || QUANTUM_CONFIG_DRIFTED=1
 dns_config_files_ok || DNS_CONFIG_DRIFTED=1
 caddy_config_files_ok || CADDY_CONFIG_DRIFTED=1
+# Ortak CONFIG_DRIFTED'a katılıyor, kendi bayrağıyla değil:
+# all_critical_state_healthy() zaten bunu okuyor, yani kapıya yeni bir
+# giriş eklemeye gerek yok. Ayrı anahtar --check çıktısında duruyor ki
+# hangi dosyanın saptığı görünsün.
 if [[ "$STATE_CONFIG_DRIFTED" -eq 1 ||
+      "$QUANTUM_CONFIG_DRIFTED" -eq 1 ||
       "$DNS_CONFIG_DRIFTED" -eq 1 ||
       "$CADDY_CONFIG_DRIFTED" -eq 1 ]]; then
     CONFIG_DRIFTED=1
@@ -3733,7 +3755,7 @@ if [[ "$MODE" == "--check" ]]; then
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
-        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
+        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
         "webdav_unit=$WEBDAV_UNIT_INACTIVE webdav_runtime=$WEBDAV_RUNTIME_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
@@ -3808,8 +3830,12 @@ fi
     echo "master-compose.service aktif değil; stack başlatılacak."
 [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 0 ]] ||
     echo "Container sağlık veya port binding sapması tespit edildi."
-[[ "$CONFIG_DRIFTED" -eq 0 ]] ||
-    echo "Yönetilen Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."
+[[ "$STATE_CONFIG_DRIFTED" -eq 0 &&
+   "$DNS_CONFIG_DRIFTED" -eq 0 &&
+   "$CADDY_CONFIG_DRIFTED" -eq 0 ]] ||
+    echo "Yönetilen state/Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."
+[[ "$QUANTUM_CONFIG_DRIFTED" -eq 0 ]] ||
+    echo "filebrowser politika dosyası ($QUANTUM_CONFIG_FILE) sapmış; canonical kopya geri yüklenip container yenilenecek."
 [[ "$CANONICAL_CONFIG_INVALID" -eq 0 ]] ||
     echo "HATA: Canonical DNS/Caddy yapılandırması geçersiz; çalışan daemon'lar korunacak." >&2
 [[ "$WEBDAV_UNIT_INACTIVE" -eq 0 && "$WEBDAV_RUNTIME_DRIFTED" -eq 0 ]] ||
@@ -4000,6 +4026,71 @@ if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
         RECOVERY_FAILED=1
     else
         "$SYSTEMCTL_BIN" daemon-reload
+    fi
+fi
+
+# Politika dosyası geri yüklenir ve container yenilenir.
+#
+# CANONICAL_CONFIG_INVALID kapısı burada BİLİNÇLİ olarak yok: o kapı
+# dnsmasq/Caddy içindir, çünkü geçersiz bir config'i geri yüklemek çalışan
+# daemon'u öldürürdü. Buradaki kaynak kurulumun kendi ürettiği ve manifest
+# hash'iyle doğrulanmış kopya — canonical_bundle_ok bu noktadan çok önce
+# zaten geçmiş durumda.
+if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
+    if ! "$INSTALL_BIN" -m 0644 -o root -g root \
+            "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE"; then
+        echo "HATA: Canonical filebrowser politika dosyası geri yüklenemedi." >&2
+        RECOVERY_FAILED=1
+    elif restart_budget_available filebrowser; then
+        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
+        # açılışta okuduğu için sapmış politika çoktan yüklenmiş olabilir ve
+        # bunu dışarıdan ayırt etmenin bir yolu yok. Garanti edilmek istenen
+        # şey "yürürlükteki politika canonical kopyayla aynı"; onu veren tek
+        # işlem restart. Bütçe container restart'larıyla ortak, yani sürekli
+        # yeniden yazılan bir dosya her periyotta restart döngüsü üretmez.
+        record_container_restart filebrowser
+        if "$DOCKER_BIN" restart filebrowser >/dev/null 2>&1; then
+            # Restart'tan hemen sonraki postcondition'a düşmemek için
+            # beklenir. Aksi hâlde BAŞARILI bir onarım aşağıdaki
+            # check_compose_runtime'da düşer ve reconcile düzelttiği şey
+            # için rc=1 raporlar — V1-11'in sınıfı.
+            #
+            # Beklenen iki sinyal, check_compose_runtime'ın filebrowser'a
+            # uyguladığı iki sinyalin AYNISI olmak zorunda; yalnız HTTP'yi
+            # beklemek yetmiyor. 2026-08-02'de ölçüldü: Quantum imajı kendi
+            # HEALTHCHECK'ini taşıyor (start_period 10s) ve restart sonrası
+            # HTTP t+2s'te 200 dönerken sağlık t+5s'te healthy oluyor —
+            # yalnız HTTP bekleyen ilk sürüm tam o aralıkta çıkıp
+            # postcondition'ı "starting" hâlinde yakalıyordu.
+            #
+            # 60 saniye, imajın 30 saniyelik healthcheck aralığının bir
+            # turunu kaçırma ihtimaline pay bırakır.
+            QUANTUM_CONFIG_REPAIRED=0
+            for _ in $(seq 1 60); do
+                quantum_health="$(
+                    "$DOCKER_BIN" inspect -f \
+                        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                        filebrowser 2>/dev/null || true
+                )"
+                if [[ "$quantum_health" == "healthy" ||
+                      "$quantum_health" == "none" ]] &&
+                   http_endpoint_responds http://127.0.0.1:7113/; then
+                    QUANTUM_CONFIG_REPAIRED=1
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "$QUANTUM_CONFIG_REPAIRED" -ne 1 ]]; then
+                echo "HATA: filebrowser politika yenilemesinden sonra yanıt vermedi." >&2
+                RECOVERY_FAILED=1
+            fi
+        else
+            echo "HATA: filebrowser politika değişikliği için yeniden başlatılamadı." >&2
+            RECOVERY_FAILED=1
+        fi
+    else
+        echo "HATA: filebrowser politika dosyası geri yüklendi fakat container restart'ı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; yürürlükteki politika hâlâ sapmış olabilir." >&2
+        RECOVERY_FAILED=1
     fi
 fi
 
@@ -4793,6 +4884,17 @@ install -m 0600 -o root -g root \
 install -m 0600 -o root -g root \
     /root/docker/compose.yaml \
     /usr/local/share/master-stack/compose.yaml
+# Quantum politika dosyası bundle'ın dokuzuncu girdisi (Q1-9). Bir önceki
+# hatta gerek yoktu: orijinal filebrowser ayarlarını filebrowser_config
+# volume'unda tutuyordu, host'ta sapacak bir dosya yoktu. Quantum politikayı
+# host dosyasına taşıyınca dosya bundle'a katılmadan kaldı ve 2026-08-01'de
+# ölçüldü: signup'ı açmak reconcile'ın hiçbir sinyalini kıpırdatmıyor
+# (config=0, rc=0), değişiklik bir sonraki container restart'ında sessizce
+# yürürlüğe giriyordu. signup kapalılığı rastgele bir tercih değil —
+# orijinal filebrowser'ın en ağır açığı (GHSA-6759) tam olarak oydu.
+install -m 0644 -o root -g root \
+    "$QUANTUM_CONFIG_FILE" \
+    /usr/local/share/master-stack/filebrowser.yaml
 CANONICAL_MANIFEST_TMP="$(
     mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
 )"
@@ -4801,6 +4903,7 @@ CANONICAL_MANIFEST_TMP="$(
     sha256sum -- \
         state.env \
         compose.yaml \
+        filebrowser.yaml \
         dnsmasq-local-services.conf \
         dnsmasq-99-tailscale-order.conf \
         Caddyfile \

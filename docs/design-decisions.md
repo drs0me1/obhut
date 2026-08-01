@@ -1382,3 +1382,57 @@ Reported, never repaired — the same contract as the byte check, for the same
 reason. Wired through detection, `all_critical_state_healthy`, `--check`,
 `--status` (a new `inode` column), and the post-repair postcondition. Five
 bats cases added, including the btrfs `-` case; suite 74 → 79.
+
+### DD-32: The Quantum policy file joins the canonical bundle (2026-08-02)
+
+**Decision.** `/etc/master-stack/filebrowser.yaml` becomes the ninth entry
+in the canonical bundle, verified and restored on every reconcile cycle like
+the dnsmasq and Caddy files — and the restore is followed by a container
+restart.
+
+**Why it was missing.** It is new to this line. `V1-20`'s filebrowser kept
+its settings in the `filebrowser_config` volume, so there was no host file to
+drift; DD-27 moved policy to a host file and never added it to the bundle.
+Nothing flagged the omission because nothing checks bundle membership against
+"files install.sh generates".
+
+**What that cost, measured on 2026-08-01.** Flipping `signup: false` to
+`true` moved none of reconcile's signals — `config=0`, `state_config=0`,
+`compose_file=0`, `compose_runtime=0`, `rc=0`. Restarting the container then
+took the change live: `/api/auth/signup` went from `405` (route absent) to
+`400` (route present, payload rejected). So the drift was invisible *and*
+self-activating, since reconcile itself restarts containers routinely.
+`signup` is not an arbitrary example — self-signup was the mechanism of the
+original filebrowser's worst unpatched vulnerability (GHSA-6759, critical),
+which is why the generated policy disables it.
+
+**Why restore, not report.** `compose.yaml`'s report-only treatment (M10)
+does not transfer: it is report-only because restoring it does nothing
+without `docker compose up`, and because it is where an operator legitimately
+experiments. Neither holds here. Rewriting this file directly fixes the
+policy the container will load, and the file is generated wholesale on every
+install run, so there is no operator edit to preserve.
+
+**Why a restart follows the restore.** Quantum reads its config only at
+startup, and there is no way from outside to tell whether the drifted file
+was already loaded. The property worth guaranteeing is "the policy in force
+equals the canonical copy", and only a restart delivers it. It shares the
+15-minute per-container budget with every other filebrowser restart, so a
+file that keeps being rewritten does not produce a restart loop — it produces
+one restart, then a cooldown message.
+
+**One defect found by testing this, worth recording because it recurs.** The
+first version waited only for HTTP before returning, and reported `rc 1`
+after a repair that had actually succeeded — the `V1-11` class again.
+Measured cause: the Quantum image ships its own `HEALTHCHECK` (`start_period
+10s`), and after a restart HTTP answers at t+2s while health reaches
+`healthy` at t+5s; the wait exited in that gap and the postcondition caught
+`starting`. The wait now checks both signals — the same two
+`check_compose_runtime` applies to filebrowser.
+
+**Unplanned benefit.** DD-29 described a deleted policy file as the one state
+a re-run could not repair, because Docker recreates the missing bind-mount
+source as a *directory*. Reconcile now restores the file within twenty
+minutes, long before a container recreate could reach that state. Verified:
+file deleted, one reconcile run, file back at `0644 root:root`, container
+healthy, `rc 0`.

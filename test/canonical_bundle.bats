@@ -129,19 +129,25 @@ teardown() {
     [ "$status" -eq 0 ]
 }
 
-@test "canonical_bundle_ok: Stage 6 publishes exactly the eight expected entries" {
+@test "canonical_bundle_ok: Stage 6 publishes exactly the nine expected entries" {
     # Pins the manifest's shape as well as its content. If someone adds a
-    # ninth managed file to Stage 6 without extending canonical_bundle_ok's
+    # tenth managed file to Stage 6 without extending canonical_bundle_ok's
     # expected list (or vice versa), the acceptance test above would still
     # pass on the derived list while the real function drifted; this one
     # catches the count changing at all.
+    #
+    # Went 8 -> 9 in Q1-9, when the FileBrowser Quantum policy file joined
+    # the bundle. It had been the one generated policy file outside it, and
+    # a measured drift (signup: false -> true) moved none of reconcile's
+    # signals.
     local files=()
     while IFS= read -r line; do files+=("$line"); done \
         < <(stage6_manifest_files)
 
-    [ "${#files[@]}" -eq 8 ]
+    [ "${#files[@]}" -eq 9 ]
     [ "${files[0]}" = "state.env" ]
     [ "${files[1]}" = "compose.yaml" ]
+    [ "${files[2]}" = "filebrowser.yaml" ]
 }
 
 @test "canonical_bundle_ok: rejects the pre-M10 list that omits compose.yaml" {
