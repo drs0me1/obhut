@@ -1004,3 +1004,99 @@ reordering is not proposed a second time on the same reasoning.
   `install.sh : 900 / reconcile : 900 / recovery : 800`. This is the same
   discipline applied to `all_critical_state_healthy`'s coverage guard the
   same day — a guard nobody has seen fail is not yet known to work.
+
+## DD-26 — reserved
+
+**Not used on this branch.** `DD-26` belongs to the dufs migration on
+`master` (`V2-1`/`V2-2`). This branch forks from `V1-20`, which predates
+it, so the number is left empty rather than reused — two different DD-26s
+across two branches would collide the moment they are compared or merged.
+
+### DD-27: FileBrowser Quantum replaces filebrowser, and its admin password is deliberately not set (2026-08-01)
+
+**Decision.** On the `quantum` branch (forked from `V1-20`), swap
+`filebrowser/filebrowser:v2` for `ghcr.io/gtsteffaniak/filebrowser:stable`
+— FileBrowser Quantum, the actively maintained fork — keeping the
+container name, the host port, and every piece of surrounding plumbing
+unchanged. Do **not** bootstrap its admin password from the installer.
+
+**Why this branch exists at all.** `master` already answered "what
+replaces filebrowser" with dufs (DD-26), driven by filebrowser's
+2026-09-01 archival and its three permanently unpatched advisories. That
+answer holds on its own terms, but it cost interface quality — recorded as
+**L11**, the one axis where the swap went backwards. Quantum is the other
+candidate from that same evaluation. This branch tests it against the
+`V1-20` line rather than against `master`, because `V1-20` is what is
+installed on the host today and because leaving `master` untouched means
+the experiment can be abandoned by deleting a branch.
+
+**What Quantum is better at.**
+
+- **Tag hygiene, and it is the best in the stack.** Upstream publishes
+  both a moving `stable` tag and exact pins (`1.5.0-stable`). Original
+  filebrowser offered only major-wide `v2`; dufs offers no float at all,
+  which is precisely what **L9** records as an open cost. `stable` is
+  therefore chosen here, and it satisfies DD-23's rule ("take the finest
+  float the upstream actually publishes") for the first time in this slot.
+  The risk is named rather than hidden: `2.0.0-preview-*` tags already
+  exist, so `stable` will one day cross a major boundary silently.
+- **Shell commands are removed from the codebase entirely**, per
+  upstream's own feature list. That is filebrowser's unpatched
+  `GHSA-8c9q-7855-wfxq` (command-allowlist bypass via shell
+  metacharacters) eliminated by deletion rather than by configuration —
+  strictly stronger than the `Exec Enabled: false` that made it
+  unreachable on the old build.
+- The interface is the reason the branch exists; that judgement is the
+  operator's and is not argued here.
+
+**What it costs, and this is the honest part.** Quantum is **stateful**.
+The image's own environment declares
+`FILEBROWSER_DATABASE=/home/filebrowser/data/database.db`, so it needs a
+writable data directory for its database, index and cache. `read_only:
+true` is therefore impossible, and a named volume returns. Both were
+things dufs removed, and statelessness was a substantive part of DD-26's
+argument — not a side benefit. `cap_drop: [ALL]` and
+`no-new-privileges` are kept; the image already runs as a non-root
+`filebrowser` user, which is why no `user:` line is set here (the image's
+own UID must own the data directory).
+
+**The config file carries no secret, and that is the deliberate part.**
+Quantum's `auth.adminPassword` *can* be set from `config.yaml`, which
+would let the installer hand it the Stage 0 credential and avoid any
+default-credential window. It is not done, for two reasons:
+
+1. **It only accepts plaintext.** This installer writes secrets to disk as
+   hashes and nothing else — bcrypt in `webdav.htpasswd`, sha-512 crypt in
+   dufs's `dufs.auth`. A plaintext password in a policy file breaks
+   **C2**'s "the script carries no secrets" principle, which no
+   convenience gain justifies.
+2. **The file would have to be readable by the container's user**, whose
+   numeric UID comes from the image and is not known at Stage 4. Guessing
+   it, or widening the mode to compensate, would mean a world-readable
+   plaintext password.
+
+With no secret in it, `/etc/master-stack/filebrowser.yaml` is plain
+`0644 root:root` and is regenerated on every run — the same
+policy-vs-credential split dufs uses, minus the credential half.
+
+**The consequence, stated plainly: Quantum ships a working default
+login (`admin`/`admin`).** This is *worse* than Portainer and wg-easy,
+which ship with no account at all and are claimed on first visit. Those
+two have a race; this has an open door until the operator closes it. The
+install summary therefore promotes it to the first post-install action,
+above every other manual step, and says why the script does not set it.
+
+**Unverified, and to be measured when this reaches a host** — it has
+deliberately not been deployed yet:
+
+- whether `adminPassword` is applied only at first initialisation or
+  re-asserted on every start (which decides whether the plaintext route
+  could ever be made safe by clearing the value afterwards);
+- whether Quantum honours `FILEBROWSER_*` environment overrides for
+  config keys, which would move the credential into `compose.yaml`
+  (`0600 root:root`, part of the canonical bundle) instead of a
+  world-readable file;
+- the container user's numeric UID, and whether the named volume comes up
+  owned correctly on a fresh install;
+- whether the SQLite indexer's first pass over a large media tree is
+  expensive enough to matter on this host.

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.07.31-V1-20"
+MASTER_SETUP_VERSION="2026.08.01-Q1-1"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -624,8 +624,12 @@ MASTER_RESTART_COOLDOWN_SECONDS=900
 # Float seviyeleri kasten eşit değil, çünkü upstream'lerin sunduğu etiketler
 # eşit değil (2026-07-31'de registry'lerden sorgulandı):
 #   wg-easy 15.3, unpackerr 0.15 -> yalnız yama.
-#   filebrowser v2 -> majör içi her şey; v2.63 diye bir etiket yayınlanmıyor,
-#     daha ince bir seçenek yok.
+#   filebrowser (Quantum) stable -> stable hattı içinde yama ve minör.
+#     Bu, yığındaki EN İYİ etiket durumu: upstream hem hareketli bir
+#     `stable` hem tam sürüm pinleri (1.5.0-stable) yayınlıyor. Orijinal
+#     filebrowser'da yalnız majör-içi `v2` vardı, dufs'ta hiç float yoktu.
+#     Bilinen risk: 2.0.0-preview-* yayınlanmış durumda; `stable` yeni
+#     majörü ilan ettiğinde bu etiket habersiz oraya taşınır.
 #   portainer lts -> LTS hattı içinde; Portainer yeni bir LTS ilan ettiğinde
 #     majör atlar. Benimsendiği anda 2.39.5 ile aynı digest'e işaret ediyordu.
 #   qbittorrent latest -> upstream stable, libtorrent majörü dahil. Benimsendiği
@@ -639,7 +643,7 @@ MASTER_RESTART_COOLDOWN_SECONDS=900
 # Bozulan bir yükseltmeden dönüş yolu, sağlayıcı seviyesinde (netcup) alınan
 # VPS snapshot'ıdır — bilinçli olarak betiğin sorumluluğunda değildir.
 PORTAINER_IMAGE="portainer/portainer-ce:lts"
-FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"
+FILEBROWSER_IMAGE="ghcr.io/gtsteffaniak/filebrowser:stable"
 QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:latest"
 WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15.3"
 UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0.15"
@@ -747,6 +751,16 @@ echo
 # parolanın hash'idir). Mevcut htpasswd varsa idempotency gereği korunur ve
 # soru hiç sorulmaz; sıfırlamak için dosyayı silip betiği yeniden çalıştırın.
 WEBDAV_HTPASSWD_FILE="/etc/master-stack/webdav.htpasswd"
+
+# FileBrowser Quantum politika dosyası. İçinde SIR YOK — yalnız hangi dizinin
+# sunulacağı, port ve signup kapalı. Bu bilinçli: Quantum'un adminPassword
+# anahtarı config'ten ayarlanabiliyor ama düz metin olarak yazılırdı ve C2'nin
+# "betik sır taşımaz" ilkesini kırardı (htpasswd bcrypt, dufs.auth sha-512
+# taşıyor — ikisi de hash). Bu yüzden ilk admin hesabı, tıpkı Portainer ve
+# wg-easy gibi, operatörün web arayüzünde yapacağı bir adım olarak bırakıldı
+# (bkz. DD-7). Bedeli aşağıda açıkça yazılı ve bu deneyin en dikkat edilecek
+# noktası: Quantum admin/admin ile AÇIK gelir.
+QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
 WEBDAV_SETUP_CREDENTIALS=0
 WEBDAV_USER=""
 WEBDAV_PASSWORD=""
@@ -2116,6 +2130,36 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
     mv -f "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_HTPASSWD_FILE"
 fi
 
+# Quantum politika dosyası her çalıştırmada yeniden üretilir (kimlik
+# dosyalarının AKSİNE): içinde yalnız politika var ve politikanın betiğin
+# yeni sürümüyle güncellenmesi gerekir. Sır içermediği için 0644 root:root
+# yeterli — container kendi (root olmayan) kullanıcısıyla okuyabilmeli ve o
+# kullanıcının UID'si imajdan geliyor, burada bilinmiyor.
+#
+# signup: false kasıtlı. Orijinal filebrowser'ın en ağır yamasız açığı
+# (GHSA-6759, critical) tam olarak self-signup kullanıcısının sunucu kökünü
+# scope almasıydı; Quantum farklı bir kod tabanı olsa da aynı özelliği açık
+# bırakmak için sebep yok.
+QUANTUM_CONFIG_TMP="$(mktemp /etc/master-stack/.filebrowser.yaml.XXXXXX)"
+cat >"$QUANTUM_CONFIG_TMP" <<'QUANTUM_YAML'
+server:
+  port: 80
+  baseURL: "/"
+  sources:
+    - path: "/srv"
+auth:
+  methods:
+    password:
+      enabled: true
+      minLength: 8
+      signup: false
+    passkey:
+      enabled: false
+QUANTUM_YAML
+chown root:root "$QUANTUM_CONFIG_TMP"
+chmod 0644 "$QUANTUM_CONFIG_TMP"
+mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
+
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
 # Canonical bundle tek bir atomik küme hâlinde — state.env, compose.yaml ve
 # altı dnsmasq/Caddy dosyası — Aşama 6'nın sonunda yayınlanır. Nedeni:
@@ -2177,19 +2221,50 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/portainer/data:/data
 
+  # FileBrowser Quantum (gtsteffaniak/filebrowser) — orijinal filebrowser'ın
+  # aktif çatalı. Container adı ve host portu BİLEREK değiştirilmedi:
+  # reconcile'ın beklenen container listesi, port_binding_exists kontrolü,
+  # HTTP probe'u, Caddy route'u, firewall port listesi ve digest döngüsü
+  # hepsi bu ada bağlı. Deneyin kendisini izole tutmak için diff'i tek
+  # servise sınırlıyoruz; ad değişimi ~8 yerde dalgalanır ve asıl değişikliği
+  # gürültüye boğar.
+  #
+  # Konteyner içi port da 80 (Quantum'un varsayılanı, orijinaliyle aynı),
+  # bu yüzden 7113 eşlemesi ve reconcile'ın 80/tcp beklentisi olduğu gibi
+  # geçerli kalıyor.
   filebrowser:
     image: ${FILEBROWSER_IMAGE}
     container_name: filebrowser
-    user: "1000:1000"
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      # İmajın gömülü varsayılanı /home/filebrowser/data/config.yaml, yani
+      # named volume'un İÇİ. Config'i oraya koymak, salt okunur bind mount'u
+      # yazılabilir bir volume'un altına iç içe geçirmek demekti. Bunun
+      # yerine config'i volume dışına alıp yolu env ile gösteriyoruz —
+      # veritabanı volume'da, politika host dosyasında, ikisi karışmıyor.
+      FILEBROWSER_CONFIG: /config.yaml
     ports:
       - "127.0.0.1:7113:80/tcp"
     volumes:
-      - ${DOWNLOADS_PATH}/media:/srv/media
-      # Uygulama durumu host bind mount'u değil, Docker'ın yönettiği volume'lardır.
-      - filebrowser_database:/database
-      - filebrowser_config:/config
+      # Quantum'un source yolu /srv (config.yaml'da da öyle tanımlı).
+      - ${DOWNLOADS_PATH}/media:/srv
+      - ${QUANTUM_CONFIG_FILE}:/config.yaml:ro
+      # Tek volume: Quantum veritabanını, indeksini ve önbelleğini bu tek
+      # dizinde tutar. Orijinal filebrowser'ın iki volume'unun (database +
+      # config) yerini alıyor.
+      #
+      # NOT: read_only: true burada UYGULANAMAZ — dufs durumsuzdu, Quantum
+      # değil. Bu, V2-2'nin (dufs) kazandığı sertleştirmenin geri verilmesi
+      # demek ve deneyin bilinen bedeli. cap_drop/no-new-privileges duruyor;
+      # imaj zaten root olmayan 'filebrowser' kullanıcısıyla çalışıyor, bu
+      # yüzden buraya user: satırı da konmadı (imajın kendi UID'si dizinin
+      # sahibi olmalı).
+      - filebrowser_data:/home/filebrowser/data
 
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
@@ -2338,10 +2413,8 @@ networks:
         - subnet: fdcc:ad94:bacf:61a3::/64
 
 volumes:
-  filebrowser_database:
-    name: filebrowser_database
-  filebrowser_config:
-    name: filebrowser_config
+  filebrowser_data:
+    name: filebrowser_data
 YAML_EOF
 
 chown root:root /root/docker/compose.yaml
@@ -4240,7 +4313,7 @@ progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
 systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
 
-# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:v2 …)
+# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:stable …)
 # "şu anda tam olarak ne çalışıyor" bilgisini compose.yaml'dan siler: dosya
 # değişmeden altındaki imaj değişebilir. Çözülen digest'ler bu yüzden burada
 # state.env'e yazılır — Aşama 5'ten sonra, çünkü imajlar ancak bu noktada
@@ -5212,6 +5285,17 @@ echo "erişip kurulumu tamamlamasına açık kalır."
 echo "  Portainer: https://127.0.0.1:9443 veya http://portainer.${LOCAL_DOMAIN}"
 echo "  wg-easy  : http://127.0.0.1:51821 veya http://wg.${LOCAL_DOMAIN}"
 echo
+echo "!! EN ÖNCELİKLİ ADIM: filebrowser (Quantum) admin parolası."
+echo "Portainer ve wg-easy hesapsız gelir; Quantum ondan FARKLI ve daha"
+echo "risklidir: ÇALIŞAN bir varsayılan kimlikle açılır."
+echo "  Kullanıcı: admin   Parola: admin"
+echo "İlk iş olarak http://file.${LOCAL_DOMAIN} adresine girip parolayı"
+echo "değiştirin. Değiştirene kadar tailnet'teki her cihaz medya ağacına"
+echo "tam yetkiyle erişebilir."
+echo "Betik bu parolayı bilerek ayarlamaz: Quantum'un adminPassword anahtarı"
+echo "yalnız düz metin kabul ediyor ve bu kurulum sırları diske yalnız hash"
+echo "olarak yazar (WebDAV bcrypt). Bkz. DD-27."
+echo
 echo "ELLE AYAR: qBittorrent soket alma buffer'ı."
 echo "Bu betik qBittorrent'in yapılandırmasını yönetmez, dolayısıyla taze bir"
 echo "kurulumda bu ayar sistem varsayılanına (208 KB) döner. 2026-07-29'da"
@@ -5238,8 +5322,10 @@ echo "  Tam URL       : http://${TS_IP}:${WEBDAV_PORT}"
 echo "  Kimlik dosyası: /etc/master-stack/webdav.htpasswd (bcrypt)"
 echo "  Sıfırlama     : dosyayı silip install.sh'i yeniden çalıştırın"
 echo
-echo "Filebrowser yalnız şu dizini görür:"
-echo "  ${DOWNLOADS_PATH}/media -> /srv/media"
+echo "filebrowser (Quantum) yalnız şu dizini görür:"
+echo "  ${DOWNLOADS_PATH}/media -> /srv"
+echo "  Politika dosyası: ${QUANTUM_CONFIG_FILE} (sır içermez)"
+echo "  Durum/veritabanı : filebrowser_data volume'u"
 echo
 echo "Unpackerr:"
 echo "  İzlenen medya ağacı : ${DOWNLOADS_PATH}/media (tüm alt klasörler)"
