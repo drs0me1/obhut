@@ -2124,7 +2124,9 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
     WEBDAV_HTPASSWD_TMP="$(mktemp /etc/master-stack/.webdav.htpasswd.XXXXXX)"
     printf '%s' "$WEBDAV_PASSWORD" |
         htpasswd -i -B "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_USER"
-    unset WEBDAV_PASSWORD
+    # unset burada DEĞİL: aynı parola Aşama 5'te Quantum'un admin hesabını
+    # kurmak için bir kez daha gerekiyor ve orada siliniyor. Düz metnin
+    # bellekteki ömrü bir aşama uzuyor; diske yine hiç değmiyor.
     chown root:root "$WEBDAV_HTPASSWD_TMP"
     chmod 0600 "$WEBDAV_HTPASSWD_TMP"
     mv -f "$WEBDAV_HTPASSWD_TMP" "$WEBDAV_HTPASSWD_FILE"
@@ -2140,6 +2142,14 @@ fi
 # (GHSA-6759, critical) tam olarak self-signup kullanıcısının sunucu kökünü
 # scope almasıydı; Quantum farklı bir kod tabanı olsa da aynı özelliği açık
 # bırakmak için sebep yok.
+#
+# minLength: 8 fail-closed seçim. Canlı ölçüm (2026-08-01): bu değer
+# Quantum'un KENDİ bootstrap yolunu FATAL'a düşürüyor ("password must be at
+# least 8 characters"), çünkü varsayılanı admin/admin 5 karakter. Aşama 5
+# admin hesabını zaten kurduğu için sunucu o yola hiç girmez; girdiyse bu
+# Aşama 5'in çalışmadığı anlamına gelir ve o durumda gürültülü ölmesi,
+# sessizce admin/admin ile açılmasına yeğdir. Değeri 5'e düşürmek ikinci
+# davranışı seçmek olurdu.
 QUANTUM_CONFIG_TMP="$(mktemp /etc/master-stack/.filebrowser.yaml.XXXXXX)"
 cat >"$QUANTUM_CONFIG_TMP" <<'QUANTUM_YAML'
 server:
@@ -4263,6 +4273,38 @@ progress_stage_note 20 "Container image'ları indiriliyor"
 retry_network "Container image indirme" \
     "$NET_RETRY_BULK_FIRST" "$NET_RETRY_BULK_NEXT" -- \
     docker compose --env-file /root/docker/.env pull
+# FileBrowser Quantum admin hesabı — imaj çekildikten SONRA, stack ayağa
+# kalkmadan ÖNCE. Sıralama zorunlu: CLI veritabanını kilitliyor, yani
+# container çalışırken çalıştırılamaz ("the database is locked").
+#
+# Tek çağrı iki işi birden yapıyor ve bu canlıda ölçüldü (2026-08-01):
+# boş bir volume'de Quantum'un DB init'i kendi varsayılan admin/admin
+# hesabını yaratıyor — ve bunu yaparken config'deki minLength kontrolünü
+# ATLIYOR (o kontrol yalnız sunucunun kendi bootstrap yolunda uygulanıyor).
+# `set -u admin,<parola>` mevcut hesabı bulursa günceller, bulamazsa
+# yaratır; her iki durumda da varsayılan parola ezilir ve admin/admin
+# kapanır. Doğrulandı: sonrasında admin/admin 401, admin/<parola> 200.
+#
+# Parola argüman olarak geçiyor, yani o an host'un ps çıktısında görünür.
+# Diske yazılmıyor ve bu host tek operatörlü/root-only; config'e düz metin
+# yazmaya (C2 ihlali, kalıcı) tercih edilen bedel bu.
+if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
+    progress_stage_note 40 "Dosya yöneticisi admin hesabı kuruluyor"
+    # Container çalışıyorsa SQLite dosyasını kilitler ve CLI "the database is
+    # locked" ile ölür. Taze kurulumda container henüz yok, bu yüzden ilk
+    # sürüm çalıştı ve YENİDEN ÇALIŞTIRMA yolunda düştü — idempotency
+    # ihlali, 2026-08-01'de canlıda yakalandı (rc=1, aşama=5).
+    # Burada durdurmak güvenli: birkaç satır aşağıda master-compose zaten
+    # yeniden başlatılıyor ve stack'i geri getiriyor.
+    docker stop filebrowser >/dev/null 2>&1 || true
+    docker run --rm \
+        -v filebrowser_data:/home/filebrowser/data \
+        -v "${QUANTUM_CONFIG_FILE}:/config.yaml:ro" \
+        -e FILEBROWSER_CONFIG=/config.yaml \
+        "$FILEBROWSER_IMAGE" set -u "admin,${WEBDAV_PASSWORD}" -a
+fi
+unset WEBDAV_PASSWORD
+
 progress_stage_note 60 "Systemd bağımlılık grafiği doğrulanıyor"
 systemctl daemon-reload
 systemd-analyze verify \
@@ -5014,6 +5056,26 @@ if ss -lnt "( sport = :${WEBDAV_PORT} )" |
     echo "HATA: Host WebDAV dinleyicisi public/wildcard adrese açılmış." >&2
     exit 1
 fi
+
+# Quantum'un varsayılan admin/admin kimliği gerçekten kapandı mı?
+# Bunu varsaymak yerine doğruluyoruz — V2-2'nin dufs anonim-401 assertion'ı
+# ile aynı gerekçe. Buradaki risk somut: 2026-08-01'de canlıda görüldü ki
+# DB init varsayılan hesabı minLength kontrolünü atlayarak yaratıyor, yani
+# yalnız config'e güvenmek yeterli değil. Sağlık kontrolü, reconcile probe'u
+# ve --check bu durumu YAKALAYAMAZ; hepsi servisi "ayakta" görür.
+QUANTUM_DEFAULT_CODE="$(
+    curl --noproxy '*' -sS --connect-timeout 2 --max-time 6 \
+        -o /dev/null -w '%{http_code}' \
+        -X POST -H 'X-Password: admin' \
+        'http://127.0.0.1:7113/api/auth/login?username=admin' 2>/dev/null || true
+)"
+if [[ "$QUANTUM_DEFAULT_CODE" != "401" ]]; then
+    echo "HATA: filebrowser (Quantum) varsayılan admin/admin kimliği hâlâ geçerli" >&2
+    echo "      (beklenen 401, alınan '${QUANTUM_DEFAULT_CODE:-yanıt yok}')." >&2
+    echo "NEDEN: Aşama 5'teki admin parolası kurulumu çalışmamış olabilir." >&2
+    exit 1
+fi
+unset QUANTUM_DEFAULT_CODE
 
 for port_spec in "tcp:${QBIT_PUBLIC_PORT}" "udp:${QBIT_PUBLIC_PORT}" "udp:${WG_PUBLIC_PORT}"; do
     protocol="${port_spec%%:*}"

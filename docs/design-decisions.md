@@ -1086,17 +1086,66 @@ two have a race; this has an open door until the operator closes it. The
 install summary therefore promotes it to the first post-install action,
 above every other manual step, and says why the script does not set it.
 
-**Unverified, and to be measured when this reaches a host** — it has
-deliberately not been deployed yet:
+**Measured on a live host (2026-08-01), and the design changed as a
+result.** Everything below replaces the "unverified" list this entry
+originally carried.
 
-- whether `adminPassword` is applied only at first initialisation or
-  re-asserted on every start (which decides whether the plaintext route
-  could ever be made safe by clearing the value afterwards);
-- whether Quantum honours `FILEBROWSER_*` environment overrides for
-  config keys, which would move the credential into `compose.yaml`
-  (`0600 root:root`, part of the canonical bundle) instead of a
-  world-readable file;
-- the container user's numeric UID, and whether the named volume comes up
-  owned correctly on a fresh install;
-- whether the SQLite indexer's first pass over a large media tree is
-  expensive enough to matter on this host.
+`FILEBROWSER_CONFIG` **is** honoured, so the policy file lives outside the
+volume as intended (`Using Config file: /config.yaml` in the startup log,
+sources resolved to `srv: /srv`). The container user is `uid=1000(filebrowser)
+gid=1000` — the same 1000:1000 as the media tree's ownership model — and a
+fresh named volume comes up correctly owned. `stable` resolved to
+`v1.5.0-stable`.
+
+**The default credential is real, and `minLength` does not stop it.** The
+config sets `minLength: 8`, and on the very first start that made Quantum's
+own bootstrap die with `[FATAL] store.Users.Save: password must be at least
+8 characters long` — `admin`/`admin` is 5 characters. The container
+restarted into a state with *no* user at all: healthy to Docker, 200 to the
+reconcile probe, `--check` clean, and impossible to log into. Worse, the
+first reading of that result — "so `minLength` blocks the default" — was
+wrong. Creating a user through the CLI against an empty volume produced
+**two** admins, `admin` and the requested one: the database-initialisation
+path creates the default account and **bypasses the `minLength` check that
+only the server's own bootstrap path enforces**.
+
+So the installer now closes it explicitly rather than relying on
+configuration. After the image pull and before the stack starts, Stage 5
+runs `filebrowser set -u admin,<Stage-0 password> -a`. One call covers both
+states: it creates the account if absent and overwrites the auto-created
+default if present. Verified — afterwards `admin`/`admin` returns 401,
+`admin`/<password> returns 200, and exactly one user exists.
+
+Three consequences worth stating:
+
+- **`minLength: 8` is kept deliberately, as a fail-closed backstop.** If
+  Stage 5's bootstrap ever fails to run, the server's own path hits the
+  FATAL and the container dies loudly instead of quietly coming up on
+  `admin`/`admin`. Lowering it to upstream's 5 would choose the silent
+  option.
+- **The password is passed as a CLI argument**, so it is briefly visible in
+  the host's process list. It is never written to disk. That is the cost
+  accepted in exchange for not putting plaintext in a config file, which
+  would be permanent and would break **C2**.
+- **Stage 7 asserts the property rather than assuming it**: a `POST` to
+  `/api/auth/login?username=admin` with `X-Password: admin` must return
+  401, or the install stops. This mirrors `V2-2`'s dufs anonymous-401
+  assertion, and for the same reason — the health check, the reconcile
+  probe and `--check` all report a service with a live default credential
+  as perfectly healthy. Proven, not assumed: the admin password was set
+  back to `admin` deliberately and the install stopped with
+  `rc=1, aşama=7`.
+
+**One idempotency bug was introduced and fixed in the same session.** The
+first version of the Stage 5 bootstrap ran fine on a fresh host and failed
+on a re-run: the running container holds the SQLite file, so the CLI died
+with `the database is locked` and took the install with it
+(`rc=1, aşama=5`). Stage 5 now stops the container first, which is safe
+because `master-compose` is restarted a few lines later anyway. Both paths
+were then re-tested end to end — re-run against a live stack, and a fresh
+install with the volume deleted — each completing with `admin`/`admin`
+closed, zero FATALs, zero restarts and `--check` at `rc 0`.
+
+**Still unmeasured:** whether the SQLite indexer's first pass over a large
+media tree costs anything noticeable. The test host's tree is nearly empty,
+so this proves nothing about a real library.
