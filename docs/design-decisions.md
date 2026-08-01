@@ -1060,31 +1060,63 @@ argument — not a side benefit. `cap_drop: [ALL]` and
 `filebrowser` user, which is why no `user:` line is set here (the image's
 own UID must own the data directory).
 
-**The config file carries no secret, and that is the deliberate part.**
-Quantum's `auth.adminPassword` *can* be set from `config.yaml`, which
-would let the installer hand it the Stage 0 credential and avoid any
-default-credential window. It is not done, for two reasons:
+**The initial admin account is left to the container — revised 2026-08-01
+after reading upstream's source.** The installer briefly did bootstrap it,
+and that was the wrong call. What upstream actually does:
 
-1. **It only accepts plaintext.** This installer writes secrets to disk as
-   hashes and nothing else — bcrypt in `webdav.htpasswd`, sha-512 crypt in
-   dufs's `dufs.auth`. A plaintext password in a policy file breaks
-   **C2**'s "the script carries no secrets" principle, which no
-   convenience gain justifies.
-2. **The file would have to be readable by the container's user**, whose
-   numeric UID comes from the image and is not known at Stage 4. Guessing
-   it, or widening the mode to compensate, would mean a world-readable
-   plaintext password.
+```go
+if !exists {                       // only when the database is absent
+    settings.Env.IsFirstLoad = true
+    quickSetup(store)
+}
 
-With no secret in it, `/etc/master-stack/filebrowser.yaml` is plain
-`0644 root:root` and is regenerated on every run — the same
-policy-vs-credential split dufs uses, minus the credential half.
+func quickSetup(store *bolt.BoltStore) {
+    if settings.Config.Auth.AdminPassword == "" {
+        settings.Config.Auth.AdminPassword = "admin"   // hardcoded fallback
+    }
+    user.ShowFirstLogin = settings.Env.IsFirstLoad && user.Permissions.Admin
+```
 
-**The consequence, stated plainly: Quantum ships a working default
-login (`admin`/`admin`).** This is *worse* than Portainer and wg-easy,
-which ship with no account at all and are claimed on first visit. Those
-two have a race; this has an open door until the operator closes it. The
-install summary therefore promotes it to the first post-install action,
-above every other manual step, and says why the script does not set it.
+So `admin`/`admin` is a real default rather than a documentation example; it
+is created **once**, only when the database does not exist; it is never
+re-asserted on later starts; and the UI raises a first-login notice
+(`ShowFirstLogin`) without forcing a change. Two supported ways to set it
+exist — a `FILEBROWSER_ADMIN_PASSWORD` environment variable read in
+`loadEnvConfig()`, and the `filebrowser set -u user,pass -a` CLI.
+
+Neither is used, and the reason is not only the secret-at-rest question:
+
+- The env var would put a plaintext password in `compose.yaml`. That file is
+  `0600 root:root` and inside the canonical bundle, so it is better than a
+  world-readable file — but it is still plaintext at rest, visible via
+  `docker inspect` and in the container's own `/proc/1/environ`.
+- The CLI needs the container stopped, because the running process holds the
+  SQLite file. The first implementation of that shipped an **idempotency
+  bug**: it worked on a fresh host and died on a re-run with `the database is
+  locked` (`rc=1, aşama=5`).
+- **The decisive reason is behavioural.** The CLI approach ran whenever Stage
+  0 re-collected credentials, which means a re-run would have silently reset
+  a password the operator had already changed in the UI. Leaving the account
+  to the container gets that right for free: upstream's `if !exists` guard
+  makes the credential the operator's from first login onward. Verified —
+  after changing the password to something else, a full re-run of the
+  installer left it untouched (`401` on `admin`/`admin`, `200` on the new
+  password).
+
+**`minLength` is therefore fixed at upstream's 5 and cannot be raised.**
+`admin` is exactly five characters, so `minLength: 8` makes `quickSetup()`
+die with `[FATAL] store.Users.Save: password must be at least 8 characters
+long` — and the container then comes up with *no user at all*: healthy to
+Docker, 200 to the reconcile probe, clean under `--check`, and impossible to
+log into. That was measured, not theorised. The two numbers are tuned to
+each other upstream.
+
+**The consequence is stated plainly in the install summary and is the
+operator's to close:** unlike Portainer and wg-easy, which ship with no
+account, Quantum ships a working `admin`/`admin` login. Until it is changed,
+any device on the tailnet has full access to the media tree. The summary
+promotes changing it to the first post-install action and says the container
+owns the account, so the change can only be made through the web UI.
 
 **Measured on a live host (2026-08-01), and the design changed as a
 result.** Everything below replaces the "unverified" list this entry

@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-01 — `Q1-3`: the admin account goes back to the container
+
+The installer no longer bootstraps FileBrowser Quantum's admin user. Reading
+upstream's source settled it: `quickSetup()` runs only `if !exists` (no
+database), creates `admin`/`admin` from a hardcoded fallback, never
+re-asserts it on later starts, and sets `ShowFirstLogin` so the UI prompts
+without forcing a change. That is a deliberate upstream design, not an
+oversight, and overriding it bought less than it cost.
+
+Removed: the Stage 5 `docker stop` + `docker run … set -u` block (~20 lines)
+and the Stage 7 `admin/admin` assertion. `WEBDAV_PASSWORD` goes back to
+being cleared in Stage 4.
+
+**`minLength` had to drop from 8 to 5, and this is not optional.** `admin` is
+exactly five characters, so 8 makes `quickSetup()` die with
+`[FATAL] store.Users.Save: password must be at least 8 characters long` and
+the container comes up with no user at all — healthy to Docker, 200 to the
+reconcile probe, clean under `--check`, and impossible to log into. Upstream's
+two numbers are tuned to each other.
+
+**The change also fixed a latent behavioural bug.** The removed code ran
+whenever Stage 0 re-collected credentials, so a re-run would have silently
+reset a password the operator had already changed in the UI. Verified after
+the change: password changed to something else, full installer re-run, and
+the new password still works while `admin`/`admin` stays refused.
+
+Also considered and rejected: `FILEBROWSER_ADMIN_PASSWORD`, which upstream
+does support. It would have put a plaintext secret in `compose.yaml` —
+`0600 root:root`, but still readable via `docker inspect` and the
+container's `/proc/1/environ`.
+
+Verified live on a reimaged volume: zero FATALs, zero restarts,
+`admin`/`admin` 200 as intended, one user with `showFirstLogin: true`,
+`--check` `rc 0`, zero failed units, and a re-run against the live stack
+completing cleanly. Full reasoning in **DD-27**.
+
+
 ### 2026-08-01 — `Q1-2`: WebDAV directory cache lowered to one minute
 
 `rclone serve webdav` was running on its 5-minute `--dir-cache-time`
