@@ -1250,3 +1250,50 @@ cache with a `PROPFIND`, then create the file, then poll — the file appeared
 after **33 seconds**, consistent with a one-minute entry that was already
 partway through its life. Byte-range requests were re-verified at three
 offsets afterwards and still return 206 with correct content.
+
+### DD-29: The policy file's target is normalised before writing, container included (2026-08-01)
+
+**Decision.** Before writing `/etc/master-stack/filebrowser.yaml`, delete it
+if it is a *directory*, and remove the `filebrowser` container as well.
+
+**The failure it prevents was the only one a re-run could not fix.** This
+project's standing answer to a broken host is "run `install.sh` again" —
+every other repair path relies on that. One state broke it:
+
+1. The policy file is missing for any reason.
+2. Compose starts and cannot find the bind-mount source, so **Docker creates
+   a directory** at that path — its documented behaviour for a missing
+   source.
+3. Quantum reads the directory as its config and fails validation with
+   `Settings.Server.Sources ... required`. The container serves nothing.
+4. The operator re-runs the installer. `mv -f file dir/` **does not fail** —
+   it silently moves the file *into* the directory. The bind mount is still a
+   directory, the service is still broken, and the only visible change is one
+   more file accumulating inside.
+
+Reconcile does detect the outage (`compose_runtime=1`, `rc=1`, HTTP probe
+failing), so it is not silent — but it cannot repair it, and neither could
+the installer.
+
+**The first fix was insufficient, and testing is what showed it.**
+Normalising the host path alone left the install failing at stage 5. Once a
+container has been created with a *directory* mounted at `/config.yaml`, that
+mount type is recorded in the container and `runc` rejects the corrected
+file with `not a directory: Are you trying to mount a directory onto a file
+(or vice-versa)?` — a restart loop rather than a recovery. The container has
+to be removed so compose recreates it with a clean mount spec. No data is at
+risk: everything persistent lives in the `filebrowser_data` volume, which
+outlives the container.
+
+Verified end to end: the broken state was reproduced deliberately
+(directory at the config path, container running but serving nothing,
+`--check` `rc 1`), then a single installer run restored `-rw-r--r--` at the
+path, a healthy container with `RestartCount 0`, HTTP 200, a working admin
+login, and `--check` `rc 0`.
+
+**Scope.** `${QUANTUM_CONFIG_FILE}` is the only single-*file* bind mount in
+the stack, so it is the only place this applies. Every other bind mount is a
+directory, where Docker creating one is correct, and `webdav.htpasswd`
+reaches its service through systemd `LoadCredential` rather than a mount —
+if that file goes missing the unit fails loudly, which is the behaviour we
+want.

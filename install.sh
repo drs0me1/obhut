@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-4"
+MASTER_SETUP_VERSION="2026.08.01-Q1-6"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2187,6 +2187,35 @@ auth:
 QUANTUM_YAML
 chown root:root "$QUANTUM_CONFIG_TMP"
 chmod 0644 "$QUANTUM_CONFIG_TMP"
+# Hedef DİZİN olabilir ve bu, yeniden çalıştırmanın kendini onaramadığı tek
+# durumdu (2026-08-01'de ölçüldü). Zincir şöyle işliyor: politika dosyası
+# herhangi bir sebeple silinirse, compose bir sonraki sefer onu bind mount
+# kaynağı olarak bulamaz ve Docker eksik kaynağı DİZİN olarak yaratır.
+# Quantum o dizini config sanıp "Sources required" ile validation hatası
+# verir ve servis vermez — reconcile bunu compose_runtime=1 ile yakalar,
+# yani sessiz değildir. Ama onarılamaz: `mv -f dosya dizin/` HATA VERMEZ,
+# dosyayı sessizce dizinin içine koyar. Yani betiği yeniden çalıştırmak
+# bozukluğu düzeltmez, sadece dizinin içine bir dosya daha biriktirir.
+#
+# Bu, "çare yeniden çalıştırmaktır" ilkesinin kırıldığı tek noktaydı.
+# Yazmadan önce hedefi normalize etmek yeterli.
+if [[ -d "$QUANTUM_CONFIG_FILE" ]]; then
+    echo "NOT: ${QUANTUM_CONFIG_FILE} dizin olarak bulundu (Docker'ın eksik" >&2
+    echo "bind mount kaynağı için yarattığı dizin); temizlenip dosya olarak" >&2
+    echo "yeniden yazılıyor." >&2
+    rm -rf "$QUANTUM_CONFIG_FILE"
+    # Host dosyasını düzeltmek YETMİYOR: container bir kez dizin mount'uyla
+    # yaratıldıysa mount spec'i onda saklı kalır ve kaynak dosyaya dönünce
+    # runc "not a directory: Are you trying to mount a directory onto a
+    # file" ile reddeder — container restart döngüsüne girer. İlk guard
+    # sürümü tam bu yüzden yetersiz kaldı ve kurulum aşama 5'te düştü
+    # (2026-08-01, ölçüldü). Container'ı kaldırmak gerekiyor ki compose
+    # onu temiz mount spec'iyle yeniden yaratsın.
+    #
+    # Veri kaybı yok: kalıcı her şey filebrowser_data volume'unda ve
+    # volume container'la birlikte silinmiyor.
+    docker rm -f filebrowser >/dev/null 2>&1 || true
+fi
 mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
