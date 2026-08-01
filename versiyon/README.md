@@ -14,6 +14,11 @@ cd versiyon/V2-2
 ./deploy.sh nrm --run
 ```
 
+From Finder, double-click `deploy.command` in either directory instead —
+macOS runs `.command` files in Terminal, and it prompts for the host and
+whether to start the install. It is a thin wrapper around `deploy.sh`,
+which stays the canonical interface.
+
 Every export is byte-identical to the tag it is named after:
 
 ```sh
@@ -37,9 +42,11 @@ being caught:
 
 ```sh
 diff versiyon/V1-20/deploy.sh versiyon/V2-2/deploy.sh
+diff versiyon/V1-20/deploy.command versiyon/V2-2/deploy.command
 ```
 
-Any change to one must be applied to the other in the same commit.
+The same applies to `deploy.command`. Any change to one copy must be
+applied to the other in the same commit.
 
 ## Adding a new export
 
@@ -48,6 +55,7 @@ mkdir versiyon/<TAG>
 git show <TAG>:install.sh > versiyon/<TAG>/install-<TAG>.sh
 chmod +x versiyon/<TAG>/install-<TAG>.sh
 cp versiyon/V2-2/deploy.sh versiyon/<TAG>/deploy.sh
+cp versiyon/V2-2/deploy.command versiyon/<TAG>/deploy.command
 ```
 
 Then write the directory's README and add a row to the table above. Keep

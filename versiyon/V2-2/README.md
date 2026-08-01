@@ -36,6 +36,23 @@ session alone.** Restarting the installer generates a new nodekey and
 invalidates the pending auth path — the failure reads `410 auth path not
 found`. A slow login is waited out, not retried.
 
+## Double-clicking from Finder
+
+`deploy.command` is the same flow with a Finder-friendly entry point —
+macOS runs a `.command` file in Terminal on double-click, where a `.sh`
+just opens in an editor. It asks for the host and whether to start the
+install, then calls `deploy.sh`; it carries no logic of its own.
+
+It exists because a double-click supplies none of the three things the
+script needs: the working directory (Terminal starts in `$HOME`), the
+arguments, and a window that stays open long enough to read an error.
+
+`deploy.sh` remains the canonical interface — use it from a terminal and
+in scripts. If the repository ever arrives via a browser download or
+AirDrop, macOS quarantines it and Gatekeeper will block the double-click;
+clear it with `xattr -d com.apple.quarantine deploy.command`. A checkout
+made locally is not quarantined.
+
 ## What changed from `V1-20`
 
 filebrowser was replaced by dufs. Its upstream archives on **2026-09-01**,
