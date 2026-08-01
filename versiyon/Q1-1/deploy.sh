@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# install.sh'in bu dizindeki export'unu bir hedef host'a kopyalar, aktarımı
-# SHA256 ile doğrular ve isteğe bağlı olarak kurulumu tmux içinde başlatır.
+# Bu dizindeki install.sh export'unu bir hedef host'a kopyalar, aktarımı
+# SHA256 ile doğrular ve isteğe bağlı olarak kurulumu başlatır.
 #
 # Hash BİLEREK sabit kodlanmadı: yerel dosyadan hesaplanıp uzaktakiyle
 # karşılaştırılıyor. Sabit bir değer, export her takas edildiğinde elle
 # güncellenmesi gereken ikinci bir kopya olurdu — bu depoda tam olarak o
-# sınıftan (cooldown sabiti, mimari tablosu, "sabit image" ibaresi) birden
-# fazla sapma yaşandı. Burada hesaplanan hash sapamaz.
+# sınıftan (cooldown sabiti, STACK_SCHEMA, mimari tablosu, "sabit image"
+# ibaresi) dört ayrı sapma yaşandı. Burada hesaplanan hash sapamaz.
 #
 # tmux kullanılmıyor (operatör kararı, 2026-07-31): kurulum sağlayıcı
 # konsolundan da çalıştırılabildiği için SSH kopmasına karşı sarmalayıcıya
 # gerek görülmedi. Bilinen bedeli: SSH üzerinden çalıştırılırken bağlantı
 # Aşama 1'den sonra koparsa kurulum yarıda kalır. Çareyi betiğin kendisi
 # sağlıyor — yeniden çalıştırmak idempotenttir.
+#
+# BU DOSYA versiyon/V1-20/deploy.sh İLE BİREBİR AYNIDIR ve öyle kalmalı.
+# Her sürüm klasörü kendi kendine yeterli olsun diye kopyalandı (klasörü
+# tek başına başka bir makineye taşımak çalışır olmalı). Sapmayı tek
+# komutla yakala:
+#   diff versiyon/V1-20/deploy.sh versiyon/V2-2/deploy.sh
 #
 # Kullanım:
 #   ./deploy.sh [host]           kopyala + doğrula
@@ -27,13 +33,24 @@ SSH_OPTS=(-o ClearAllForwardings=yes)
 # ClearAllForwardings: ~/.ssh/config'teki nrm girdisi beş LocalForward ve
 # ExitOnForwardFailure yes taşıyor; portlar doluysa bağlantı hiç kurulmaz.
 
+# Guard, sürüm klasörlerine geçtikten sonra da korundu (2026-08-01). Artık
+# her klasörde doğal olarak tek export var, ama guard'ın asıl işi kalabalık
+# bir dizini reddetmek değil: yanlışlıkla ikinci bir dosya bırakılırsa
+# hangisinin kurulacağı sessizce belirsizleşir. Sessiz belirsizlik, bu
+# depoda tekrar tekrar sorun çıkaran sınıfın ta kendisi.
 shopt -s nullglob
-EXPORTS=("$SCRIPT_DIR"/install-V1-*.sh)
+EXPORTS=("$SCRIPT_DIR"/install-V*-*.sh)
 shopt -u nullglob
 
 if [[ "${#EXPORTS[@]}" -ne 1 ]]; then
     echo "HATA: ${SCRIPT_DIR} içinde tam olarak bir export bekleniyordu, ${#EXPORTS[@]} bulundu." >&2
-    printf '  %s\n' "${EXPORTS[@]}" >&2
+    # Sayı kontrolü şart: bash 3.2'de (bu iş istasyonunun /bin/bash'i) boş bir
+    # dizinin "${arr[@]}" açılımı `set -u` altında "unbound variable" ile
+    # patlar, yani sıfır-export dalı amaçlanan exit 1 yerine farklı bir hatayla
+    # çıkardı. Guard'ı iki yönde de test ederken yakalandı (2026-08-01).
+    if [[ "${#EXPORTS[@]}" -gt 0 ]]; then
+        printf '  %s\n' "${EXPORTS[@]}" >&2
+    fi
     exit 1
 fi
 
