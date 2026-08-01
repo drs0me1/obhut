@@ -39,7 +39,7 @@ trap 'pause_and_exit $?' ERR
 # Burada yalnız başlıkta göstermek için okunuyor; sayı kontrolünü ve asıl
 # reddi deploy.sh yapıyor, iki yerde tekrar etmeye gerek yok.
 shopt -s nullglob
-EXPORTS=(install-V*-*.sh)
+EXPORTS=(install-*.sh)
 shopt -u nullglob
 
 EXPORT_NAME=""

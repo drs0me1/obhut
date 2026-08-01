@@ -39,7 +39,11 @@ SSH_OPTS=(-o ClearAllForwardings=yes)
 # hangisinin kurulacağı sessizce belirsizleşir. Sessiz belirsizlik, bu
 # depoda tekrar tekrar sorun çıkaran sınıfın ta kendisi.
 shopt -s nullglob
-EXPORTS=("$SCRIPT_DIR"/install-V*-*.sh)
+# Desen sürümden bağımsız: dizin-başına-sürüm şeması zaten tek dosyayı
+# garanti ediyor, o yüzden ada V/Q/R öneki dayatmaya gerek yok. Önceki hâli
+# install-V*-*.sh idi ve quantum dalındaki install-Q1-1.sh ile hiç
+# eşleşmiyordu — guard doğru davranıp "0 bulundu" ile reddetti (2026-08-01).
+EXPORTS=("$SCRIPT_DIR"/install-*.sh)
 shopt -u nullglob
 
 if [[ "${#EXPORTS[@]}" -ne 1 ]]; then
