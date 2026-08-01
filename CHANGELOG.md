@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-01 — `Q1-2`: WebDAV directory cache lowered to one minute
+
+`rclone serve webdav` was running on its 5-minute `--dir-cache-time`
+default. That put five minutes between qBittorrent/unpackerr writing a file
+and Infuse being able to see it — the exact producer/consumer path this
+installer exists for.
+
+Measured: a file created in the media tree was visible to FileBrowser
+Quantum immediately (its SQLite index monitors in real time) and still
+returned 404 over WebDAV at t+10s. After the change, with a properly warmed
+cache, it appeared after 33 seconds.
+
+`--poll-interval` was considered and deliberately not used: it applies
+"only on supported remotes", and `rclone backend features` reports
+`ChangeNotify: false` for a local directory. Directory cache lifetime is the
+only effective lever on this backend. Full reasoning in **DD-28**.
+
+The first verification of this change was invalid and is worth recording:
+it appeared to show instant visibility, but the install had just restarted
+`master-webdav`, so the cache was cold and the first request read from disk.
+A cold cache proves nothing about cache expiry.
+
+
 `MASTER_SETUP_VERSION` is `2026.07.31-V1-20`; `install.sh` is 5305 lines.
 
 `V1-19` finishes what `V1-18` started. `V1-18` learned to *diagnose* a node

@@ -1149,3 +1149,52 @@ closed, zero FATALs, zero restarts and `--check` at `rc 0`.
 **Still unmeasured:** whether the SQLite indexer's first pass over a large
 media tree costs anything noticeable. The test host's tree is nearly empty,
 so this proves nothing about a real library.
+
+### DD-28: The WebDAV directory cache is one minute, and `--poll-interval` is deliberately absent (2026-08-01)
+
+**Decision.** Pass `--dir-cache-time 1m` to `rclone serve webdav`, overriding
+rclone's 5-minute default. Do not pass `--poll-interval`.
+
+**Why it matters here specifically.** This installer exists to serve a media
+tree to Infuse over WebDAV while qBittorrent and unpackerr write into that
+same tree. The two halves are therefore in a producer/consumer relationship,
+and rclone's default put five minutes between them.
+
+Measured on 2026-08-01, with a file created in the media tree:
+
+| | t+0s | t+5s | t+10s |
+|---|---|---|---|
+| FileBrowser Quantum | visible | visible | visible |
+| WebDAV (rclone) | **404** | **404** | **404** |
+
+Quantum sees it immediately because it runs its own SQLite index with
+real-time monitoring; rclone was still serving a cached listing. So a
+finished download or a freshly extracted archive could be invisible in
+Infuse for up to five minutes, with nothing wrong and nothing to see in any
+log.
+
+**Why not `--poll-interval`.** It looks like the more precise instrument —
+poll for changes rather than blanket-expire the cache — and it is a no-op
+here. rclone's own help says "only on supported remotes", and
+`rclone backend features` on the media directory reports
+`ChangeNotify: false` (measured the same day). The local backend has no
+change-notification mechanism, so the poll interval never fires. Directory
+cache lifetime is the only effective lever on this backend.
+
+**Why one minute.** The value trades freshness against re-reading the tree:
+
+| Value | Worst-case delay | Judgement |
+|---|---|---|
+| `5m` (rclone default) | 5 min | The problem above |
+| **`1m`** | 1 min | **Chosen** — short enough that "the download finished but it isn't there" never becomes a question |
+| `30s` | 30 s | Twice the re-listing cost for a difference the user cannot perceive |
+| `0` | none | Disk read on every request; deletes the reason the cache exists, and would degrade browsing a large library |
+
+**Verified, and the first measurement was wrong.** The initial check appeared
+to show instant visibility — but the install had just restarted
+`master-webdav`, so the cache was *cold* and the first `PROPFIND` read from
+disk. That measured nothing about the cache. Re-run correctly — warm the
+cache with a `PROPFIND`, then create the file, then poll — the file appeared
+after **33 seconds**, consistent with a one-minute entry that was already
+partway through its life. Byte-range requests were re-verified at three
+offsets afterwards and still return 206 with correct content.

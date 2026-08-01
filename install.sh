@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.01-Q1-1"
+MASTER_SETUP_VERSION="2026.08.01-Q1-2"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -4200,10 +4200,27 @@ echo "WebDAV dinleniyor: ${TS_IPV4}:${WEBDAV_PORT} -> ${MEDIA_DIR} (salt okunur)
 # bir yapılandırma arar; ProtectSystem=strict + ProtectHome=yes altında bu
 # yol yoktur ve davranış rclone sürümüne göre değişir. /dev/null,
 # PrivateDevices=yes'in sağladığı minimal /dev içinde her zaman vardır.
+# --dir-cache-time: rclone'un varsayılanı 5 dakika ve bu, bu kurulumun
+# asıl iş akışında somut bir gecikme üretiyordu — 2026-08-01'de ölçüldü:
+# medya ağacına yeni bir dosya düştükten sonra Quantum onu ANINDA
+# gösterirken (kendi SQLite indeksi gerçek zamanlı izliyor) WebDAV t+10s'te
+# hâlâ 404 dönüyordu. Yani qBittorrent bir indirmeyi bitirdiğinde veya
+# unpackerr bir arşivi açtığında dosya Infuse'da beş dakikaya kadar
+# görünmüyordu.
+#
+# --poll-interval BURADA İŞE YARAMAZ ve bilerek verilmedi: rclone'un kendi
+# yardımı "only on supported remotes" diyor ve `rclone backend features`
+# yerel dizin için ChangeNotify=False raporluyor (aynı gün ölçüldü). Yerel
+# dosya sisteminde tek etkili kaldıraç dizin önbelleği süresidir.
+#
+# 1 dakika, "indirme bitti ama görünmüyor" hissini vermeyecek kadar kısa,
+# önbelleği anlamsız kılacak kadar da kısa değil. 0 (her istekte disk
+# okuması) büyük bir kütüphanede gezinmeyi yavaşlatırdı.
 exec "$RCLONE_BIN" serve webdav "$MEDIA_DIR" \
     --config /dev/null \
     --addr "${TS_IPV4}:${WEBDAV_PORT}" \
     --htpasswd "$CREDENTIALS_DIRECTORY/htpasswd" \
+    --dir-cache-time 1m \
     --read-only
 WEBDAV_SERVE_SCRIPT
 chmod 0755 /usr/local/sbin/master-webdav-serve
