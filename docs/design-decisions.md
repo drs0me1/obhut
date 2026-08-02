@@ -2008,3 +2008,46 @@ now-regular host path. An identical policy on a healthy container is left
 untouched. This is not a general “force recreate on every update” policy: the
 extra downtime is scoped to the one service whose startup-only host policy
 changed or whose runtime has already failed.
+
+### DD-41: Reconcile repairs bounded local state, but exposes core failures (2026-08-02)
+
+The reconcile timer is a post-install safety net, not a second installer or
+an autonomous control plane. Q1-20 makes that boundary explicit by separating
+two outcomes that previously shared one success-returning helper. A lock
+collision or an already-active OnFailure job is transient overlap: normal
+timer mode exits zero and lets the existing execution finish. Docker or
+tailscaled remaining inactive, or required WAN/Tailscale addresses remaining
+absent after a 30-second grace period, is an unhealthy server: reconcile exits
+non-zero so systemd and the journal retain a real failure signal.
+
+It deliberately does not restart, logout or authenticate tailscaled, and does
+not restart Docker in that precondition path. Restarting either core daemon
+propagates through the accepted `PartOf=` graph and can interrupt every
+dependent service; a Tailscale login also requires a human browser decision.
+Instead, failure reports the daemon state plus Tailscale's backend, self-online,
+health and key-expiry fields. The core daemon's own restart policy, an explicit
+installer rerun, or the operator remains responsible for the broader action.
+
+Compose recovery follows the same bounded-local-state rule. An existing
+regular `root:root 0600` file with different content may be an intentional
+operator edit and remains report-only. A genuinely absent file is not an edit:
+reconcile restores it atomically from the checksum-verified canonical
+generation without restarting healthy containers. Metadata drift is repaired;
+a directory, symlink or other unsafe target is refused rather than removed.
+The service's `ConditionPathExists` gate was removed because it prevented the
+very recovery process that could reconstruct the file from running.
+
+Observation must also be read-only in practice, not only by name. The
+FileBrowser default-password check is a real login POST and consumes a
+source-IP rate limit, so `--check` and `--status` no longer issue it. Normal
+reconcile may probe only a running container and only once per 24 hours, with
+an atomic root-only `/run` stamp recorded before the request. This preserves
+the useful reminder without turning a 20-minute health timer into a login
+storm.
+
+Finally, the host WebDAV unit independently declares
+`RequiresMountsFor=$DOWNLOADS_PATH/media`. Compose's mount dependency cannot
+protect a separate host service; without its own ordering rclone could serve
+the empty directory hidden underneath a late or failed mount while every HTTP
+probe still looked healthy. This dependency fails or delays WebDAV instead of
+presenting the wrong tree as a healthy service.

@@ -33,7 +33,12 @@ tests both classifier outcomes plus producer failure (DD-39). M13 found
 that FileBrowser's startup-only policy could lose its repair signal during
 cooldown and that a Docker-created directory bind source could not be
 normalized by the timer; Q1-19 makes file replacement, restart/recreate and
-the retry signal one bounded operation (DD-40).
+the retry signal one bounded operation (DD-40). The same ordered review then
+added **H10**, **H11**, **M14** and **M15**: persistent core/address failure
+was being returned as success, a missing `compose.yaml` disabled the timer's
+service before it could diagnose the loss, the advertised read-only modes sent
+a real FileBrowser login request every run, and host WebDAV did not wait for a
+separate media mount. Q1-20 resolves all four together (DD-41).
 
 ## Critical
 
@@ -45,9 +50,11 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **M7** (partially done; inventory corrected 2026-07-31) — Tier 1
-      (static analysis, see **H4**) done. Tier 2 covers, across six files
-      and **74 cases**: `state_value`/`owned_file_ok`/`restart_budget_available`/
+- [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-20`) —
+      Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **162
+      cases across twelve files**; 150 execute and 12 self-skip on this
+      macOS workstation. The first 74-case milestone covered:
+      `state_value`/`owned_file_ok`/`restart_budget_available`/
       `disk_space_ok`/`all_critical_state_healthy`
       (`test/reconcile_functions.bats`); `route_value`, `chain_rules_exact`,
       `jump_is_first_and_single`, `forward_prefix_is_exact`,
@@ -146,7 +153,15 @@ _All High findings resolved — see Completed below._
       ordering, the full installer's policy-change recreation coupling and
       recreation of an unhealthy legacy container with a stale mount spec.
 
-      Of the 42 functions in the reconcile heredoc, the ones still
+      **Added 2026-08-02: `test/reconcile_control_flow.bats` (15 cases,
+      147 → 162).** Covers transient-vs-persistent exit codes, the complete
+      WAN/Tailscale address requirement, Compose regular/missing/directory/
+      symlink/metadata states, canonical restoration without Compose apply,
+      daily FileBrowser audit throttling, and structural assertions that a
+      missing Compose file cannot suppress reconcile and WebDAV waits for the
+      media mount.
+
+      Of the 51 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
       `tailscale_online`, `check_compose_runtime` and their neighbours all
@@ -175,6 +190,31 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **H11 — a missing Compose file no longer disables reconcile
+      (2026-08-02, `Q1-20`, DD-41).** Removed the service-level
+      `ConditionPathExists` that skipped the entire timer pass. Missing files
+      are restored from the verified canonical generation without applying
+      Compose; modified content stays report-only, metadata is repaired, and
+      structural targets fail closed.
+
+- [x] **H10 — persistent core/address failure is no longer returned as
+      success (2026-08-02, `Q1-20`, DD-41).** Lock/job overlap still defers
+      cleanly, but inactive Docker/Tailscale or addresses absent after a
+      bounded 30-second grace now exit non-zero with Tailscale backend, online,
+      health and key-expiry diagnostics. No automatic login/logout or
+      synchronous core-daemon restart was added.
+
+- [x] **M15 — host WebDAV waits for the media filesystem
+      (2026-08-02, `Q1-20`, DD-41).** `master-webdav.service` now carries
+      `RequiresMountsFor=$DOWNLOADS_PATH/media`, closing the boot race for the
+      already-supported `/mnt` and `/media` external-disk paths.
+
+- [x] **M14 — `--check` and `--status` are read-only again
+      (2026-08-02, `Q1-20`, DD-41).** The real FileBrowser login POST is
+      limited to a running container in normal reconcile mode and a root-only
+      daily stamp, reducing the scheduled rate from 72 requests/day to one
+      while preserving detection if the data volume is recreated.
 
 - [x] **M13 — FileBrowser policy repair preserves its restart signal and
       recreates structural mounts (2026-08-02, `Q1-19`, DD-40).** The old

@@ -2,10 +2,10 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (147
-> unit cases across eleven files; 134 execute and 12 self-skip on the macOS
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (162
+> unit cases across twelve files; 150 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
-> Q1-19's eleven new cases have not yet been run on the Debian target); Tier 3 had seven real, manual
+> Q1-19/Q1-20's 26 new cases have not yet been run on the Debian target); Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
@@ -35,10 +35,11 @@ alone.
 
 - `bash -n install.sh` and `shellcheck install.sh` — usable today, and
   should be run before proposing any change to `install.sh`.
-- **Gap closed:** `scripts/lint-embedded-scripts.sh` now extracts all six
+- **Gap closed:** `scripts/lint-embedded-scripts.sh` now extracts all seven
   embedded heredoc scripts (`tailscale-udp-gro`, `docker-tailscale-fw`,
   `master-compose-ipv4`, `master-network-reconcile`,
-  `master-docker-netfilter-recovery`, `caddy-tailnet-env`) into temp files
+  `master-docker-netfilter-recovery`, `master-webdav-serve`,
+  `caddy-tailnet-env`) into temp files
   via `sed` line-range matching on their known start/end markers, then
   runs `bash -n` + `shellcheck` on each independently (`SC2016` excluded —
   a documented false-positive class for the intentional single-quoted
@@ -48,7 +49,7 @@ alone.
   argument); it requires no root privileges and makes no real system
   changes — it never executes `install.sh` or any extracted script, only
   `bash -n`/`shellcheck` them. First real run: `master-docker-netfilter-recovery`
-  was clean; the other five had only the expected, now-excluded `SC2016`
+  was clean; the other scripts had only the expected, now-excluded `SC2016`
   notices.
 - **CI: parked, not pending (2026-07-28).** The user decided this
   repository stays local, with no git remote, so there is nowhere for a
@@ -295,7 +296,15 @@ alone.
   of an unhealthy legacy FileBrowser mount. No real Docker, systemd or managed
   host path is touched; command stand-ins and temporary paths exercise the
   extracted helper bodies.
-- **Remaining in Tier 2:** nothing specific identified. Of the 42
+- **Also implemented:** `test/reconcile_control_flow.bats` covers Q1-20's
+  reconcile/dependency boundary. Fifteen cases verify transient overlap
+  versus persistent-failure exit codes, address requirements, modified versus
+  missing/unsafe/metadata-drifted Compose states, byte-identical safe restore,
+  the daily atomic FileBrowser audit stamp and its reconcile-only/running
+  container gates, removal of the Compose unit condition, and WebDAV's
+  independent `RequiresMountsFor` dependency. All run without real Docker,
+  systemd, network access or managed host paths.
+- **Remaining in Tier 2:** nothing specific identified. Of the 51
   functions in the reconcile heredoc the uncovered remainder is
   integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
   `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,

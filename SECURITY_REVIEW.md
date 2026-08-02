@@ -48,21 +48,26 @@ first deferred and then closed as won't-do (see their entries). **M3**
 was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
 **M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
 `v1.1-1` login-placement experiment; the reorder fixed it as a side
-effect, the revert of that experiment reintroduced it, and it was then
-fixed on its own in `V1-1`. **H8**, **H9**, **M12** and **M13** were discovered and resolved
+    effect, the revert of that experiment reintroduced it, and it was then
+    fixed on its own in `V1-1`. **H8**, **H9**, **M12** and **M13** were discovered and resolved
 during the 2026-08-02 R2.4 line-by-line review: canonical publication had
 only atomically renamed its manifest, and Stage 6 rollback restored
 DNS/Caddy service state without restoring the files those services load;
 the deleted-node Tailscale journal classifier also inverted some true
 matches under pipefail; FileBrowser policy repair could lose the need-to-
-restart signal or copy into a Docker-created directory without fixing its
-mount. **M7** remains the only open finding in the project.
+    restart signal or copy into a Docker-created directory without fixing its
+    mount. The follow-up reconcile/dependency review found and resolved
+    **H10**, **H11**, **M14** and **M15** in `Q1-20`: persistent core/address
+    failure was reported as success, a missing Compose file suppressed the
+    timer service, read-only modes sent a real login request, and host WebDAV
+    lacked the media-mount ordering already used by Docker/Compose. **M7**
+    remains the only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 9 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, 2026-08-02 — post-audit) |
-| Medium   | 1 (**M7**) | 12 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, **M13**, 2026-08-02) |
+| High     | 0 | 11 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, **H10**, **H11**, 2026-08-02 — post-audit) |
+| Medium   | 1 (**M7**) | 14 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, **M13**, **M14**, **M15**, 2026-08-02) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -74,7 +79,8 @@ was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th/21st, separately-tracked findings, as
 are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
-**H8** (28th), **H9** (29th), **M12** (30th), and **M13** (31st).
+**H8** (28th), **H9** (29th), **M12** (30th), **M13** (31st), **H10**
+(32nd), **H11** (33rd), **M14** (34th), and **M15** (35th).
 
 ## Critical issues
 
@@ -510,6 +516,65 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
 - **Change risk:** Medium — EXIT cleanup now mutates files, bounded to six
   fixed paths and exercised without touching a live host.
 
+### H10 — Reconcile reported persistent core/address failure as success — ✅ RESOLVED (2026-08-02, `Q1-20`)
+
+- **Location (historical):** `master-network-reconcile`'s shared
+  `defer_or_fail()` helper and its Docker/tailscaled/address preconditions.
+- **Description:** the helper returned zero in the normal timer mode for
+  every deferred condition. That was correct for a lock collision or an
+  already-active OnFailure job, but the same path was also used when Docker
+  or tailscaled remained inactive and when WAN/Tailscale addresses were
+  absent. The latter could therefore make systemd record a successful
+  reconcile without repairing anything.
+- **Impact:** the timer and journal could hide a persistent outage. In the
+  Tailscale case the daemon could appear present but offline in the admin
+  console, while dependent Compose/firewall work never became eligible and
+  the reconcile unit still exited successfully.
+- **Resolution:** Q1-20 split true overlap deferral from unhealthy-state
+  failure. Only lock/job collisions remain zero in normal mode; inactive
+  core daemons and unavailable addresses now exit non-zero. Address reads
+  receive one bounded 30-second grace period for ordinary daemon startup,
+  then print structured Tailscale diagnostics (`BackendState`, self online
+  state, health messages and key expiry) before failing. Reconcile still
+  does not restart/logout/authenticate tailscaled or restart Docker: those
+  actions carry the `PartOf=` blast radius and remain owned by their daemon
+  policies or an explicit installer/operator run.
+- **Verification:** `test/reconcile_control_flow.bats` covers the two exit
+  classes, the address requirement and source-level coupling. The complete
+  local wrapper is clean; live Debian failure injection is not claimed yet.
+- **Change risk:** Low — no new recovery mutation was introduced; persistent
+  failure is now observable instead of being acknowledged as success.
+
+### H11 — Missing Compose configuration disabled the repair unit — ✅ RESOLVED (2026-08-02, `Q1-20`)
+
+- **Location (historical):** `master-network-reconcile.service`'s
+  `ConditionPathExists=/root/docker/compose.yaml` and reconcile's
+  report-only Compose integrity check.
+- **Description:** systemd skipped the reconcile service completely when
+  `compose.yaml` was absent, so the component responsible for detecting the
+  missing file could never run. The canonical bundle already contained a
+  trusted copy, but reconcile deliberately treated all Compose drift as
+  report-only and made no distinction between an operator edit and absence.
+- **Impact:** an accidental deletion or interrupted filesystem operation
+  could permanently suppress both repair and diagnostics until the full
+  installer was run manually.
+- **Resolution:** the unit condition was removed. Reconcile now distinguishes
+  content drift from structural failure: an existing regular root-owned
+  `0600` file whose content was edited stays report-only; an absent file is
+  restored atomically from the verified canonical generation without
+  restarting healthy containers; owner/mode drift is repaired; and a
+  symlink, directory or other unsafe target fails closed for operator
+  inspection. The later runtime path can start Compose normally if it was
+  already down.
+- **Verification:** seven dedicated cases cover modified, missing,
+  directory, symlink, metadata-drift and canonical states plus byte-identical
+  safe restoration; a source assertion prevents the unit condition from
+  returning. Full local checks are clean; live Debian fault injection is not
+  claimed yet.
+- **Change risk:** Medium — reconcile can now recreate one deleted
+  configuration file, but only from a checksum-verified root-only source and
+  only when the target is truly absent.
+
 ## Medium
 
 ### M12 — Tailscale journal classifier inverted true matches under `pipefail` — ✅ RESOLVED (2026-08-02, `Q1-18`)
@@ -579,6 +644,46 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
 - **Change risk:** Medium — policy drift now may recreate one container, but
   only after an existing 15-minute budget gate; the persistent named volume
   and all other containers are left intact.
+
+### M14 — Read-only reconcile modes sent real FileBrowser login requests — ✅ RESOLVED (2026-08-02, `Q1-20`)
+
+- **Location (historical):** `report_default_filebrowser_password()` in all
+  three reconcile modes.
+- **Description:** `--check` and `--status` were documented as read-only but
+  POSTed `admin`/`admin` to the real login endpoint. The normal 20-minute
+  timer did the same on every cycle, up to 72 failed logins per day after the
+  password had been changed.
+- **Impact:** observation changed application security state by consuming a
+  source-IP rate-limit budget. Repeated operator checks could trigger 429s
+  and temporarily block even a correct login, making diagnosis misleading.
+- **Resolution:** only the normal reconcile mode may probe, only while the
+  FileBrowser container is running, and at most once per 24 hours. A
+  root-only atomic stamp under reconcile's volatile `/run` state records the
+  attempt before the POST, so failures and concurrent triggers cannot create
+  a request storm. `--check` and `--status` now perform no login mutation.
+- **Verification:** five cases cover due/recent/corrupt stamps, atomic stamp
+  publication and the mode/interval/runtime gates. Full local checks are
+  clean; the live endpoint is not exercised by these unit tests.
+- **Change risk:** Low — the warning may be delayed by at most one day, while
+  the service and HTTP health checks still run every cycle.
+
+### M15 — Host WebDAV had no explicit storage-mount dependency — ✅ RESOLVED (2026-08-02, `Q1-20`)
+
+- **Location (historical):** generated `master-webdav.service`.
+- **Description:** Compose already declared
+  `RequiresMountsFor=$DOWNLOADS_PATH $DOWNLOADS_PATH/media`, but the host
+  `rclone serve webdav` unit could start before the filesystem backing its
+  served media directory was mounted.
+- **Impact:** after a boot or transient mount failure, WebDAV could bind to
+  the empty underlying directory. Reconcile would see a live authenticated
+  endpoint and could not distinguish it from the intended mounted tree.
+- **Resolution:** the generated WebDAV unit now independently declares
+  `RequiresMountsFor=$DOWNLOADS_PATH/media`. Stage 7 asserts that exact
+  dependency so later template drift fails the installer.
+- **Verification:** a source-level regression case verifies both the unit
+  directive and Stage 7 assertion; all static, embedded and Bats checks pass.
+- **Change risk:** Low — startup is delayed or failed when required storage
+  is unavailable instead of serving the wrong directory.
 
 ### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
 - **Location:** `install.sh:1781-1841` (`compose.yaml` →
@@ -1347,6 +1452,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (requested reconcile/dependency remediation) + Codex (`Q1-20`) | Reconcile result semantics, address/Tailscale diagnostics, Compose recovery, FileBrowser audit side effects and WebDAV mount ordering | **H10, H11, M14 and M15 found and resolved.** Persistent core/address failure now exits non-zero after a bounded 30-second address grace and prints Tailscale state without restarting or reauthenticating core daemons; only overlap conditions defer successfully. A missing Compose file no longer prevents the unit from starting and is restored only from the verified canonical generation, while operator content edits stay report-only and unsafe path types fail closed. FileBrowser's default-password POST is normal-mode-only and daily instead of being issued by read-only modes every 20 minutes. WebDAV now requires its served media mount. Fifteen focused cases bring the suite from 147 to 162; `scripts/check-all.sh` is fully clean. Live Debian verification is not claimed yet. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-19`) | FileBrowser policy lifecycle across reconcile and installer re-runs | **M13 found and resolved.** Reconcile copied policy before its cooldown gate, so disk state could become canonical while the running startup-only policy stayed old and no later cycle retried; a Docker-created directory also accepted the copy without changing path type or the stored container mount. Q1-19 stages atomically, keeps a `/run` pending signal until health + HTTP pass, and recreates only FileBrowser for structural or unhealthy legacy mounts while preserving its named volume. Installer re-runs now recreate it when generated policy content/metadata changes. Eleven cases bring bats 136 → 147; full local verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-18`) | Stage 2 deleted-node Tailscale journal classifier | **M12 found and resolved.** `journalctl | grep -q` under pipefail turned an early true match into rc 141 when enough output followed it, bypassing automatic logout/re-login and producing a generic fatal error. Normal fixed-string grep now consumes the whole stream without hiding real journalctl failure. Old/new pipelines reproduced at rc 141/0; three tests bring bats 133 → 136. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-17`) | Stage 6 DNS/Caddy EXIT rollback | **H9 found and resolved.** Existing rollback restored active/enabled/masked state but not the six overwritten files, so a failed update could restart old services with partial new configuration while the old canonical generation remained current. Q1-17 snapshots content and absence before mutation, restores files before daemon reload/restart, and commits at the canonical `current` swap. Seven new regression cases bring bats from 126 to 133, including the signal window after pointer replacement and snapshot retention on restore failure; local full verification clean, live Debian fault injection not yet claimed. |

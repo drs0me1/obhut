@@ -22,12 +22,12 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 1 | 993–1111 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
 | 2 | 1112–1637 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1215–1290`), bounded interactive login (DD-37), reliable deleted-node journal classification (DD-39/M12), exit-node + stateful filtering + netfilter configuration |
 | 3 | 1638–2358 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1747–2291`) and its systemd unit |
-| 4 | 2359–5018 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2869–2910`) and `master-network-reconcile` (`2950–4723`) helper scripts, `master-docker-netfilter-recovery` (`4727–4783`), `master-webdav-serve` (`4875–4960`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 5019–5148 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
-| 6 | 5149–5530 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `5269–5301`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
-| 7 | 5531–6253 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 4 | 2359–5180 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` (`2950–4885`) helpers, `master-docker-netfilter-recovery` (`4889–4945`), `master-webdav-serve` (`5036–5121`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 5181–5310 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
+| 6 | 5311–5692 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `5431–5463`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
+| 7 | 5693–6425 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 6253 lines — `Q1-19`, 2026-08-02.
+(Line numbers as of `install.sh` 6425 lines — `Q1-20`, 2026-08-02.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted six times**: 18 lines across
@@ -46,7 +46,9 @@ path together. Q1-17 added rollback helpers before every stage and the
 transaction boundary inside Stage 6. Q1-18 inserted the tested journal
 classifier inside Stage 2. Q1-19 changed Stage 4's FileBrowser policy
 lifecycle and Stage 5's update path; the complete table was regenerated
-again after all four revisions.)
+again after all four revisions. Q1-20 then changed reconcile control flow,
+Compose recovery and audit throttling in Stage 4, plus WebDAV dependency
+verification in Stages 4/7; the table was regenerated whole once more.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -81,6 +83,7 @@ master-network-reconcile.service ──After──────────> dock
                                   ──(may start)────> master-docker-netfilter-recovery.service
 
 master-webdav.service      ──Wants/After/PartOf──> tailscaled.service
+                           ──RequiresMountsFor────> $DOWNLOADS_PATH/media
                            ──OnFailure──────────────> master-network-reconcile.service
 
 dnsmasq.service / caddy.service ──Wants/After──> tailscaled.service
@@ -151,10 +154,14 @@ sees. See DD-20.
 See `README.md` → **Docker Services** for the full table of images, ports,
 and volumes. All five containers (Portainer, Filebrowser, qBittorrent,
 Unpackerr, wg-easy) are defined in one generated
-`/root/docker/compose.yaml` with pinned image tags. WebDAV is the sixth
+`/root/docker/compose.yaml` with upstream channel tags whose resolved
+digests are recorded in `state.env`. WebDAV is the sixth
 service but is **not** a container: since `V1-3` it is `master-webdav.service`,
 a hardened host unit running `rclone serve webdav` read-only against
-`$DOWNLOADS_PATH/media`, bound to the Tailscale IPv4 only (DD-20).
+`$DOWNLOADS_PATH/media`, bound to the Tailscale IPv4 only (DD-20). Since
+`Q1-20` the host unit carries its own `RequiresMountsFor` dependency on that
+media path, so a late or failed storage mount cannot expose the empty
+underlying directory as a healthy WebDAV tree (DD-41/M15).
 
 `qbittorrent` and `unpackerr` (2026-07-28, **M1**) run with `cap_drop:
 [ALL]` and `security_opt: no-new-privileges`. `unpackerr` (already
@@ -172,7 +179,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2576-4236`, 1659
+`master-network-reconcile` (generated at `install.sh:2950-4885`, 1934
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -219,6 +226,22 @@ single execution path. Both checks sit outside
 UDP GRO is a throughput optimization rather than a connectivity
 precondition — see DD-11.
 
+Q1-20 separates transient overlap from a persistently unhealthy host.
+A lock collision or an already-active OnFailure job is deferred with a
+successful timer result; inactive Docker/tailscaled or missing WAN/Tailscale
+addresses now fail non-zero. Address reads get a bounded 30-second startup
+grace. On failure the helper prints Docker/tailscaled state and Tailscale's
+backend, self-online, health and key-expiry fields, but does not restart or
+reauthenticate core daemons from inside the reconcile unit (DD-41/H10).
+
+Compose integrity is intentionally asymmetric. Content changes to an existing
+safe file remain report-only as an operator-owned edit. A missing file is
+restored atomically from the verified canonical generation, owner/mode drift
+is repaired, and a directory, symlink or other unsafe target fails closed.
+The reconcile unit no longer has `ConditionPathExists=compose.yaml`, because
+that condition prevented the only bounded repair path from running
+(DD-41/H11).
+
 Two checks are specific to the `quantum` line and were added after the
 `Q1-8` review.
 
@@ -231,8 +254,12 @@ already loaded" from "not yet loaded". Before this, editing the file moved
 no signal at all — measured `config=0`, `rc=0` — and the change went live
 on the next restart, which reconcile itself performs as routine repair.
 
-**The default filebrowser password** is probed once per cycle by
-`report_default_filebrowser_password()` (DD-30, revised by DD-33). It is
+**The default filebrowser password** is probed at most once per 24 hours by
+`report_default_filebrowser_password()` (DD-30, revised by DD-33 and DD-41).
+Only normal reconcile mode may issue the real login POST, and only while the
+container is running; `--check` and `--status` remain side-effect-free. An
+atomic root-only `/run` stamp is recorded before the request to bound retries.
+It is
 reported, never counted: `admin`/`admin` on a fresh install is the
 expected state, and failing on it would train people to ignore the exit
 code. What makes it worth a check is that the state can *return* after
@@ -367,10 +394,12 @@ Two consequences worth stating plainly:
   `install.sh` rewrites the file unconditionally — the asymmetry is
   intentional and easy to be surprised by. A lasting change belongs in
   `install.sh`.
-- **A re-run upgrades nothing by itself.** Image tags are pinned to exact
-  versions in the generated `compose.yaml`, so `docker compose pull`
-  fetches what is already present. Upgrades happen only when the pins in
-  `install.sh` change.
+- **A re-run is the explicit container-upgrade path.** The generated
+  `compose.yaml` uses upstream channel tags. `docker compose pull` may resolve
+  a newer digest and `up -d` then recreates only the affected containers;
+  reconcile itself never pulls images. Upstream aliases can cross release
+  lines, so a provider-level snapshot before a planned rerun is the rollback
+  boundary for database migrations (DD-23).
 
 ### State and configuration files
 

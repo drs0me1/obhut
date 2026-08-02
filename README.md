@@ -1,31 +1,22 @@
 # Debian Server Installer
 
-**Version: V1-20** (2026-07-31) — see [`CHANGELOG.md`](CHANGELOG.md) for
-the full release history. The script reports itself as
-`2026.07.31-V1-20` in its banner, log header and final summary; note this
-is distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk
-format and is currently `10`. The latest tags are `V1-14` and the `R2.0` release marker. Earlier history: `V1-2` added version/hash
-self-reporting on the host plus `master-network-reconcile --status`, and
-`V1-3` replaced the `sftpgo` container with `master-webdav.service`, a
-hardened host `rclone serve webdav` unit — which also removed the last
-Tailnet → Docker firewall exception (DD-20) — and `V1-4`/`V1-5` reworked the WebDAV
-block in the final install summary. `V1-6` through `V1-8` were driven by
-live installs (four bugs no static check caught), `V1-9`/`V1-10` moved the
-reconcile timer to 20 minutes (DD-21), and `V1-11` stopped reconcile from
-reporting failure after a successful repair on a host whose wg-easy web
-setup is still pending. `V1-12`/`V1-13` moved the container images from
-exact pins to floating tags, with the digest each tag resolved to recorded
-in `state.env` (DD-23). `V1-14` put every network-dependent step behind a
-bounded retry with a mandatory timeout (DD-24), and `V1-15` made the
-duplicated repair-cooldown constant a Stage 7 assertion (DD-25). All of
-these are live-verified (2026-07-31).
+**Current revision: Q1-20** (2026-08-02). The script reports
+`2026.08.02-Q1-20` in its banner, log header and final summary; this is
+distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
+and remains `10`. The latest live-verified release is `R2.4` / `Q1-15`.
+Q1-16 through Q1-20 add atomic canonical publication, transactional
+DNS/Caddy file rollback, reliable deleted-node classification, retryable
+FileBrowser policy activation, and stricter reconcile/dependency semantics.
+Those later revisions have complete local static/unit verification; they are
+not described as live-verified until a new release is closed out. See
+[`CHANGELOG.md`](CHANGELOG.md) for the complete history.
 
 ## Project Overview
 
 `install.sh` is a single, self-contained Bash script that turns a fresh
 **Debian 13 (trixie)** host into a hardened **Tailscale exit-node** running a
 fixed **Docker Compose** service bundle (VPN, file management, torrent
-client, and optional Tailnet-only reverse proxy/DNS).
+client, and Tailnet-only reverse proxy/DNS).
 
 The script is designed to be run as root, interactively, on a dedicated
 server. It is **idempotent by design**: it can be re-run safely against an
@@ -33,7 +24,7 @@ already-provisioned host to reconcile drift, pick up new image versions, or
 recover from a partially failed prior run. Beyond the initial install, it
 also writes a **20-minute self-healing reconcile timer** that continuously
 verifies and repairs network addressing, firewall state, container health,
-and (optionally) DNS/Caddy configuration for the lifetime of the server.
+and DNS/Caddy configuration for the lifetime of the server.
 
 The script has seven sequential installation stages (0–7), root-only
 structured logging with a live progress bar, layered rollback/cleanup traps,
@@ -54,13 +45,13 @@ and an extensive runtime verification pass at the end of the install.
   `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
   default, with narrow, explicit allow rules for the public services.
 - **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr
-  and wg-easy, deployed with floating image tags that move at the patch
-  level and whose resolved digests are recorded in `state.env` (DD-23), plus a hardened host
+  and wg-easy, deployed with upstream channel tags whose resolved digests
+  are recorded in `state.env` (DD-23), plus a hardened host
   `rclone` WebDAV unit (`master-webdav.service`) serving the media tree
   read-only to the Tailnet.
-- **Optional Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to
-  `tailscale0` only) and Caddy (bound to the current Tailscale IPv4) can be
-  provisioned for friendly `*.<domain>` names to each service.
+- **Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to `tailscale0`
+  only) and Caddy (bound to the current Tailscale IPv4) provide friendly
+  `*.<domain>` names for each service.
 - **Self-healing reconcile timer**: a `master-network-reconcile.timer`
   (every 20 minutes) re-verifies and repairs WAN/Tailscale addressing,
   firewall rule sets, Tailscale preferences, container health/port
@@ -86,13 +77,13 @@ The script runs as seven stages, gated by `progress_stage_begin`/
 
 | Stage | Purpose |
 |-------|---------|
-| 0 | Interactive prompts (downloads path, optional local DNS domain, WebDAV username/password), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
+| 0 | Interactive prompts (downloads path, local DNS domain, WebDAV username/password), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
 | 1 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages |
 | 2 | UDP-socket-buffer sysctl, Tailscale install, interactive browser login, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
 | 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
 | 4 | Data directories, `compose.yaml` + `.env` generation, WebDAV `htpasswd`, `master-compose-ipv4` / `master-network-reconcile` / `master-webdav-serve` helper scripts, systemd units for Compose, WebDAV and reconcile |
 | 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | Optional Tailnet-only `dnsmasq` + Caddy provisioning |
+| 6 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning and atomic canonical-bundle publication |
 | 7 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
 Custom systemd units created by the script:
@@ -108,7 +99,7 @@ Custom systemd units created by the script:
 - `master-docker-netfilter-recovery.service` — last-resort Docker daemon
   restart to recover Docker-owned DNAT/FORWARD rules
 - `caddy.service.d` / `dnsmasq.service.d` / `tailscaled.service.d`
-  drop-ins — ordering and `PartOf`/`OnFailure` wiring for the optional
+  drop-ins — ordering and `PartOf`/`OnFailure` wiring for the
   DNS/Caddy stack
 
 See [`docs/architecture.md`](docs/architecture.md) for a deeper breakdown
@@ -119,7 +110,7 @@ the canonical-bundle checksum model for reconcile).
 ## Installation Flow
 
 1. **Stage 0** collects all interactive input up front (downloads path,
-   optional local DNS domain, and — unless a credential file already
+   local DNS domain, and — unless a credential file already
    exists — the WebDAV username/password) and prints a summary before
    asking for final confirmation. All subsequent stages run non-interactively.
 2. Once confirmed, logging switches to `/var/log/master-setup/master-setup-<timestamp>-<pid>.log`;
@@ -135,7 +126,7 @@ the canonical-bundle checksum model for reconcile).
    Compose stack. wg-easy comes up unconfigured on a fresh install — its
    admin account is created manually via its web UI afterward, the same
    as Portainer's.
-6. Stage 6 optionally provisions `dnsmasq` + Caddy for Tailnet-only service
+6. Stage 6 provisions `dnsmasq` + Caddy for Tailnet-only service
    names, using a fail-closed pattern (services are `mask`ed until their
    generated configuration is validated).
 7. Stage 7 re-derives all addresses (they may have changed during a long
@@ -227,15 +218,16 @@ slow login is to wait, not to retry.
 
 All services are defined in a single generated `/root/docker/compose.yaml`
 with shared JSON-file logging (10m × 3 files). Image tags float so that
-patch and security updates arrive on a re-run while majors do not; the
-digest each tag resolved to is written into `state.env` and asserted by
-Stage 7, so "what is actually running" stays answerable (DD-23). The float
-levels differ because the upstreams' published tags differ.
+upstream updates arrive only on an explicit installer re-run; reconcile
+never pulls. Some aliases (`latest`, `stable`, `lts`) may cross release
+lines, so a provider-level snapshot is the rollback boundary. The digest
+each tag resolved to is written into `state.env` and asserted by Stage 7,
+so "what is actually running" stays answerable (DD-23).
 
 | Service | Image (tag) | Exposure | Purpose |
 |---------|-----------------|----------|---------|
-| `portainer` | `portainer/portainer-ce:lts` | `127.0.0.1:9443` (+ optional Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
-| `filebrowser` | `filebrowser/filebrowser:v2` | `127.0.0.1:7113` (+ optional Tailnet via Caddy) | Web file browser over the downloads/media tree |
+| `portainer` | `portainer/portainer-ce:lts` | `127.0.0.1:9443` (+ Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
+| `filebrowser` | `ghcr.io/gtsteffaniak/filebrowser:stable` | `127.0.0.1:7113` (+ Tailnet via Caddy) | FileBrowser Quantum over the downloads/media tree |
 | `qbittorrent` | `lscr.io/linuxserver/qbittorrent:latest` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
 | `unpackerr` | `ghcr.io/unpackerr/unpackerr:0.15` | none (no published ports) | Watches the media tree and extracts nested archives |
 | `wg-easy` | `ghcr.io/wg-easy/wg-easy:15.3` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
@@ -267,8 +259,11 @@ Notes:
   was tested and found to break that entrypoint's `PUID`/`PGID` handling,
   so it's deliberately not applied there (see **M1** in
   `SECURITY_REVIEW.md`).
-- `filebrowser` uses Docker-managed named volumes (`filebrowser_database`,
-  `filebrowser_config`) rather than host bind mounts for its own state.
+- `filebrowser` keeps its database, index and cache in the Docker-managed
+  `filebrowser_data` volume. Its security policy is a separate read-only host
+  bind mount. On the very first start Quantum warns that the database file
+  does not exist and then creates it at the configured volume path; that
+  one-time message is expected. Later starts say `Using existing database`.
 - The downloads/media tree is bind-mounted read-write into `qbittorrent`
   and `unpackerr`; the host WebDAV unit reads it directly, read-only.
 - Only `wg-easy` currently defines a Compose healthcheck; the reconcile
@@ -430,8 +425,8 @@ and the five from the post-R1.0 whole-file review (**M8**, **M9**,
   chasing the workload rather than bounding it — an accepted deviation
   documented under **M1** in `SECURITY_REVIEW.md`.
 - **M7**'s testing strategy: Tier 1 (static analysis of all seven embedded
-  heredoc scripts) is done; Tier 2 has **147** `bats-core` unit tests
-  across eleven files, with every stub-able reconcile function now covered
+  heredoc scripts) is done; Tier 2 has **162** `bats-core` unit tests
+  across twelve files, with every stub-able reconcile function now covered
   and a guard that fails when a file `install.sh` generates is left out of
   the canonical bundle; `scripts/check-all.sh` runs all four verification
   steps in one command. Tier 3 has succeeded

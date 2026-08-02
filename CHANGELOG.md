@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — reconcile no longer hides persistent failures or mutates read-only checks (`Q1-20`, DD-41, H10/H11/M14/M15)
+
+The timer previously used one `defer_or_fail()` path for both genuine
+transaction overlap and persistent unavailability. In normal reconcile mode
+that helper always returned success, so an inactive Docker/Tailscale daemon or
+a missing WAN/Tailscale address could remain unhealthy forever while systemd
+recorded every pass as successful. Q1-20 separates transient deferral from
+hard failure, allows a bounded 30-second address grace period, and reports
+Tailscale `BackendState`, `Self.Online`, health and key expiry without trying
+an unsafe automatic logout/login or synchronous core-daemon restart.
+
+`ConditionPathExists=/root/docker/compose.yaml` also made the timer skip the
+entire check when the file it needed to diagnose was missing. The condition is
+gone. A missing regular target is restored byte-identically from the verified
+canonical generation without applying Compose or restarting containers;
+modified content remains report-only, metadata is repaired independently, and
+directories/symlinks fail closed.
+
+The FileBrowser default-password probe is a real POST login, so `--check` and
+`--status` were not actually read-only and the 20-minute timer shared 72 daily
+requests with the operator's source-IP rate-limit bucket. The probe now runs
+only in normal reconcile mode, only while FileBrowser is running, and at most
+once per day using an atomic root-only `/run` stamp. Finally,
+`master-webdav.service` now carries
+`RequiresMountsFor=$DOWNLOADS_PATH/media`, matching the storage ordering that
+already protected Docker/Compose when the media tree is a separate mount.
+
+Fifteen new regression cases cover exit-code classification, address
+readiness, Compose path/content states and restoration, audit throttling and
+the two unit-file invariants. The Bats suite grows 147 → 162; the full local
+verification wrapper is clean with 12 expected macOS-only skips.
+
 ### 2026-08-02 — FileBrowser policy repair survives directory mounts and cooldowns (`Q1-19`, DD-40, M13)
 
 The reconcile path copied canonical `filebrowser.yaml` directly to its live

@@ -6,27 +6,42 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**None open. `Q1-15` is tagged, exported as `R2.4` and live-verified; the
-working tree is clean.**
+**`Q1-20` is locally implemented and verified. The requested `R2.5` release
+export is still open because project policy requires live verification before
+creating its `Q1-20`/`R2.5` tags. The current live/exported release remains
+`R2.4` (`Q1-15`).**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
 question with dufs (`V2-2`/`R2.1`, DD-26) — the two lines are alternatives,
 not a sequence.
 
-Current state, all measured on the test host 2026-08-02 before tagging:
+Current local candidate:
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-15` (5893 lines) |
-| SHA256 | `7e2be32d0ff4db59da4ea02badf7088f524900258c2ad877f2bbab3a53a0c5f1` |
-| Export | `versiyon/R2.4/`, byte-identical to the `Q1-15` and `R2.4` tags |
-| Live | from-scratch install **and** an idempotent re-run; `--check rc=0`, every drift flag 0, no failed units, five containers up |
-| Tests | 120 cases across eight `.bats` files; `./scripts/check-all.sh` clean |
+| Version | `2026.08.02-Q1-20` (6425 lines) |
+| Export | Not yet exported; `versiyon/R2.4/` remains the last tagged/live release |
+| Live | Q1-16 through Q1-20 not yet exercised on Debian; do not inherit R2.4's live claim |
+| Tests | 162 cases across twelve `.bats` files (150 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
-The one warning on the host is wg-easy's incomplete first-run setup, which
-is expected — nobody has created its admin account.
+Q1-20 is the reconcile/dependency remediation requested after the R2.4
+line-by-line review:
+
+- Persistent Docker/tailscaled/address failure now exits non-zero after a
+  bounded address grace and prints Tailscale backend/online/health/key-expiry
+  diagnostics. Lock/job overlap alone remains a successful deferral. Reconcile
+  still does not restart/logout/authenticate core daemons.
+- A missing `compose.yaml` no longer suppresses the reconcile unit. Absence is
+  restored atomically from the verified canonical generation; content edits
+  stay report-only, metadata is repaired, unsafe path types fail closed.
+- FileBrowser's default-password login POST is normal-mode-only and limited to
+  once per 24 hours by an atomic root-only `/run` stamp. `--check`/`--status`
+  are now truly read-only.
+- `master-webdav.service` independently requires `$DOWNLOADS_PATH/media`.
+- Fifteen focused cases live in `test/reconcile_control_flow.bats`; decisions
+  and findings are DD-41, H10/H11 and M14/M15.
 
 Three things from the recent sessions are worth carrying forward more than
 the change list:
@@ -52,8 +67,13 @@ the change list:
   killing a login about to succeed — was worse than the bug being fixed.
   All three were caught by running the function against real data, none by
   reading it. Watch for `journalctl | grep -q` under `pipefail`
-  specifically; SIGPIPE turns a found match into a failed pipeline, and
-  the same pattern still exists elsewhere in `install.sh`.
+  specifically; SIGPIPE turns a found match into a failed pipeline. The one
+  remaining useful journal classifier was corrected in Q1-18 by consuming
+  the complete producer stream.
+- **Reconcile is not a second installer.** It may restore bounded local state
+  from a verified source, but it must expose core daemon/authentication
+  failures rather than taking broad `PartOf=` actions or inventing a browser
+  decision. DD-41 records this boundary.
 
 ## Completed Work
 
