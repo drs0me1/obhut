@@ -6,8 +6,8 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**None open. `Q1-13` is tagged, exported and live-verified; the working
-tree is clean.**
+**None open. `Q1-15` is tagged, exported as `R2.4` and live-verified; the
+working tree is clean.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -18,10 +18,10 @@ Current state, all measured on the test host 2026-08-02 before tagging:
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-13` (5726 lines) |
-| SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
-| Export | `versiyon/Q1-13/`, byte-identical to the tag |
-| Live | `--check rc=0`, every drift flag 0, no failed units, five containers up |
+| Version | `2026.08.02-Q1-15` (5893 lines) |
+| SHA256 | `7e2be32d0ff4db59da4ea02badf7088f524900258c2ad877f2bbab3a53a0c5f1` |
+| Export | `versiyon/R2.4/`, byte-identical to the `Q1-15` and `R2.4` tags |
+| Live | from-scratch install **and** an idempotent re-run; `--check rc=0`, every drift flag 0, no failed units, five containers up |
 | Tests | 120 cases across eight `.bats` files; `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
@@ -46,6 +46,14 @@ the change list:
   has now drifted three times. Regenerate the whole table from
   `grep -n 'progress_stage_begin [0-7] '`; never patch the rows that look
   wrong.
+- **A clever detector that can misfire is worse than a dumb timeout.**
+  DD-37 is the case: three attempts to diagnose the Tailscale login wedge
+  from `journalctl` were each wrong, and the false-positive direction —
+  killing a login about to succeed — was worse than the bug being fixed.
+  All three were caught by running the function against real data, none by
+  reading it. Watch for `journalctl | grep -q` under `pipefail`
+  specifically; SIGPIPE turns a found match into a failed pipeline, and
+  the same pattern still exists elsewhere in `install.sh`.
 
 ## Completed Work
 
@@ -346,9 +354,11 @@ resolved, plus one unnumbered cleanup and two partial items:
 2. The user has said the next move is **a change opening a higher
    version** — so the next session most likely starts by bumping
    `MASTER_SETUP_VERSION` past `Q1-13` for whatever that change is.
-3. Two small carried decisions, both needing the user's word because they
-   involve deleting a tag or adding one: the `Q1` line marker still points
-   at `Q1-11`, one revision behind the head, and `Q1-13` has no `R` tag.
+3. One carried decision needing the user's word because it deletes a tag:
+   the `Q1` line marker still points at the `R2.3` close-out commit,
+   behind the head. Also note `Q1-14` is tagged but must never be
+   deployed — it carries the unsafe wedge detector that `Q1-15` removed,
+   and it has no export directory for that reason.
 4. Whatever is chosen, keep the standing per-change rule: analyze and flag
    risk first, apply only what was asked, bump the version suffix in the
    same edit, verify with `./scripts/check-all.sh`, show the diff, then

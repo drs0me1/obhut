@@ -16,11 +16,11 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`R2.3/`](R2.3/) | `2026.08.02-Q1-13` | `R2.3`, `Q1-13` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`R2.4/`](R2.4/) | `2026.08.02-Q1-15` | `R2.4`, `Q1-15` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
-cd versiyon/R2.3
+cd versiyon/R2.4
 ./deploy.sh nrm --run
 ```
 
@@ -39,25 +39,27 @@ branch:
 |---|---|---|
 | `R2.2` | `Q1-11` | tests, tooling and documentation tightened after the revision shipped |
 | `R2.3` | `Q1-13` | the revision closed out: live-verified before tagging, exported, documentation resynced |
+| `R2.4` | `Q1-15` | the Tailscale login can no longer hang forever (DD-37); verified by a from-scratch install |
 
 **The directory is named after the release, not the revision** (operator
 decision, 2026-08-02). `R2.3/` therefore replaced `Q1-13/` rather than
-joining it. This is the one thing not to get wrong: two directories holding
-a byte-identical installer is exactly the ambiguity the retirement rule
-below exists to prevent, so a release directory *supersedes* the revision
-directory it was cut from — it never sits beside it. `R2.2` predates this
+joining it, and `R2.4/` in turn replaced `R2.3/`. This is the one thing
+not to get wrong: two directories holding a byte-identical installer is
+exactly the ambiguity the retirement rule below exists to prevent, so a
+release directory *supersedes* the one before it — it never sits beside it.
+`R2.2` predates this
 and never had a directory at all.
 
 A release directory carries the revision's version string, because that is
-what the script prints: `versiyon/R2.3/install-R2.3.sh` reports
-`2026.08.02-Q1-13`. Its `README.md` says so up front, so nobody reads it as
+what the script prints: `versiyon/R2.4/install-R2.4.sh` reports
+`2026.08.02-Q1-15`. Its `README.md` says so up front, so nobody reads it as
 a mismatch.
 
 Every export is byte-identical to the tag it is named after:
 
 ```sh
-git show R2.3:install.sh | sha256sum
-sha256sum R2.3/install-R2.3.sh
+git show R2.4:install.sh | sha256sum
+sha256sum R2.4/install-R2.4.sh
 ```
 
 ## Retired directories
@@ -66,7 +68,8 @@ Only the current revision and the branch point are kept as directories; the
 export a new one replaces is removed rather than accumulated, so there is
 never a question of which folder to hand someone. `Q1-1` was retired when
 `Q1-4` was exported, `Q1-4` when `Q1-8` was, `Q1-8` when `Q1-11` was,
-`Q1-11` when `Q1-13` was, and `Q1-13` when `R2.3` was cut from it.
+`Q1-11` when `Q1-13` was, `Q1-13` when `R2.3` was cut from it, and `R2.3`
+when `R2.4` superseded it.
 Nothing is lost — the tag still holds the exact file:
 
 ```sh
@@ -78,10 +81,13 @@ this line. `Q1-4` → `Q1-8` on 2026-08-01, `Q1-8` → `Q1-11` on 2026-08-02,
 `Q1-11` → the `R2.3` close-out later the same day. Moving it means deleting
 and recreating it, so it is only done when asked.
 
-It points at the **branch head**, not at the revision tag — since `R2.3` the
-head carries the export directory and the resynced documentation as well as
-the installer, and `git show Q1:install.sh` returns the same script either
-way. `Q1-4`, `Q1-8`, `Q1-11`, `Q1-13` and every other revision tag stay
+It points at the **branch head**, not at the revision tag — since `R2.3`
+the head carries the export directory and the resynced documentation as
+well as the installer, and `git show Q1:install.sh` returns the same
+script either way. It is behind again as of `R2.4`; moving it is a
+separate, explicit request.
+
+`Q1-4`, `Q1-8`, `Q1-11`, `Q1-13`, `Q1-15` and every other revision tag stay
 where they are — those are fixed identities, as are the `R*` tags. `Q1` is
 the only tag in this repository that moves.
 
@@ -98,8 +104,8 @@ table and the "fixed image" strings. The mitigation is that the copies are
 *identical* rather than merely similar, so drift is one command away:
 
 ```sh
-diff versiyon/V1-20/deploy.sh versiyon/R2.3/deploy.sh
-diff versiyon/V1-20/deploy.command versiyon/R2.3/deploy.command
+diff versiyon/V1-20/deploy.sh versiyon/R2.4/deploy.sh
+diff versiyon/V1-20/deploy.command versiyon/R2.4/deploy.command
 ```
 
 Any change to one copy must be applied to the others in the same commit.
@@ -110,8 +116,8 @@ Any change to one copy must be applied to the others in the same commit.
 mkdir versiyon/<TAG>
 git show <TAG>:install.sh > versiyon/<TAG>/install-<TAG>.sh
 chmod +x versiyon/<TAG>/install-<TAG>.sh
-cp versiyon/R2.3/deploy.sh versiyon/<TAG>/deploy.sh
-cp versiyon/R2.3/deploy.command versiyon/<TAG>/deploy.command
+cp versiyon/R2.4/deploy.sh versiyon/<TAG>/deploy.sh
+cp versiyon/R2.4/deploy.command versiyon/<TAG>/deploy.command
 ```
 
 Then write the `README.md` — it is not optional, see the table at the top.

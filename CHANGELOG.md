@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `Q1-15` closed out: tagged, exported as `R2.4`
+
+Tagged `Q1-15` after the live verification described in the previous
+entry, and `R2.4` on the close-out commit. Exported to `versiyon/R2.4/`
+with the full four files, byte-identical to both tags and to `HEAD`
+(`7e2be32d…`), and functionally tested with a real copy-and-verify to the
+test host. `versiyon/R2.3/` retired into it, per the rule that a release
+directory supersedes the one before it rather than sitting beside it.
+
+**`Q1-14` is tagged but must not be deployed.** It shipped the same
+bounded-login feature with the journal-parsing wedge detector that
+`Q1-15` removes; the detector can kill a login that is about to succeed.
+The `Q1-15` tag message says so, and there is no export for `Q1-14`.
+
+`docs/architecture.md`'s stage table regenerated whole — `Q1-14`/`Q1-15`
+added 167 lines inside stage 2 and moved every boundary from stage 3 on
+(5726 → 5893 lines). That is the same shape that produced the `V1-15`
+drift, which is why the note under the table now records it.
+
+The `Q1` line marker was **not** moved; it still points at the `R2.3`
+close-out commit. Moving it means deleting a tag, which is only done on
+an explicit request.
+
 ### 2026-08-02 — the interactive Tailscale login can no longer hang forever (`Q1-14`/`Q1-15`, DD-37)
 
 Found by a real install wedging at the login step. `tailscale up` was run

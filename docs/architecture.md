@@ -20,14 +20,14 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 |-------|-----------------|---------|
 | 0 | 656–833 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
 | 1 | 834–952 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 953–1302 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1056–1131`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1303–2023 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1412–1956`) and its systemd unit |
-| 4 | 2024–4572 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2536–2577`) and `master-network-reconcile` (`2617–4277`) helper scripts, `master-docker-netfilter-recovery` (`4281–4337`), `master-webdav-serve` (`4429–4514`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4573–4675 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4676–5003 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4799–4831`), then the single atomic publication of the canonical bundle — nine entries since `Q1-9` (see DD-14, DD-32) |
-| 7 | 5004–5726 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 2 | 953–1469 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1056–1131`), the bounded interactive login (`tailscale_interactive_login`, DD-37), exit-node + stateful filtering + netfilter configuration |
+| 3 | 1470–2190 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1579–2123`) and its systemd unit |
+| 4 | 2191–4739 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2703–2744`) and `master-network-reconcile` (`2784–4444`) helper scripts, `master-docker-netfilter-recovery` (`4448–4504`), `master-webdav-serve` (`4596–4681`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4740–4842 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4843–5170 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4966–4998`), then the single atomic publication of the canonical bundle — nine entries since `Q1-9` (see DD-14, DD-32) |
+| 7 | 5171–5893 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5726 lines — `Q1-13`, 2026-08-02.
+(Line numbers as of `install.sh` 5893 lines — `Q1-15`, 2026-08-02.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted three times**: 18 lines across
@@ -38,9 +38,9 @@ table still described `V1-20` at 5305 lines while the file had grown to
 5678 — stage 4 alone was understated by 348 lines and every embedded-script
 reference in it was wrong. Regenerating the *whole* table is the only
 reliable move; patching the rows you think changed is what caused all
-three. The `Q1-13` refresh above was a whole-table regeneration, not a
-patch: `Q1-12`/`Q1-13` added 48 lines inside stage 4, which moved every
-boundary from stage 5 onward.)
+three. `Q1-14`/`Q1-15` added 167 lines inside stage 2 and moved every
+boundary from stage 3 onward, which is exactly the shape that produced the
+`V1-15` drift — this table was regenerated whole rather than patched.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the

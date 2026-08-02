@@ -1,4 +1,4 @@
-# `R2.3` — Debian 13 media server, one script
+# `R2.4` — Debian 13 media server, one script
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,16 +7,16 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Release | `R2.3` — the current full release of this branch |
-| Version the script reports | `2026.08.02-Q1-13` |
-| SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
-| Tags | `R2.3`, `Q1-13` — both name this exact file; `Q1` also points here, as the marker that follows this branch's head |
+| Release | `R2.4` — the current full release of this branch |
+| Version the script reports | `2026.08.02-Q1-15` |
+| SHA256 | `7e2be32d0ff4db59da4ea02badf7088f524900258c2ad877f2bbab3a53a0c5f1` |
+| Tags | `R2.4`, `Q1-15` — both name this exact file |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
-**Why two names for one file.** `R2.3` is the release; `Q1-13` is the
+**Why two names for one file.** `R2.4` is the release; `Q1-15` is the
 revision of the installer inside it. They are byte-for-byte the same
-script, so the install will print `2026.08.02-Q1-13` rather than `R2.3`.
+script, so the install will print `2026.08.02-Q1-15` rather than `R2.4`.
 That is expected, not a mismatch — the version string identifies the
 script, and this is the release that ships it.
 
@@ -110,32 +110,40 @@ minutes in its own logs until you change it.
 
 ## What this release was checked against
 
-Before `R2.3` was tagged, this exact script was run against a real Debian 13
-server that was already installed, to confirm a re-run is safe and that the
-changes below actually took effect. All seven stages finished in 28 seconds;
-the server's own self-check reported no problems, no failed services, and
-all five containers running. The one warning it raised was that the VPN
-server's first-time setup had never been completed on that machine — which
-is true and is item 2 under **Do these first**.
+This exact script was installed onto a **freshly reimaged Debian 13
+server** before `R2.4` was tagged — a real first-time install, browser
+login included, not a repeat run on an already-working machine. It then
+had a second, repeat run to confirm re-running is safe. Both finished all
+seven stages; the server's own self-check reported no problems, no failed
+services and all five containers running. The two warnings it raised were
+that the VPN server's and the file manager's first-time setup had not been
+done yet — both true, and both are the **Do these first** items above.
 
-## What changed since `Q1-11`
+## What changed since `R2.3`
 
-Both changes are about the server staying tidy on its own over months, not
-about anything you interact with:
+One fix, and it is the reason this release exists.
 
-- **The extraction tool's log file no longer grows forever.** It kept a
-  second copy of its log inside your media folder with no size limit — about
-  145 MB a year, quietly, on a machine meant to run unattended. It is now
-  capped and rotated, the same way the container logs already were.
-- **That tool also stopped writing two status lines a minute** when there is
-  nothing to do. Real activity — an archive being found, extracted and
-  finished — is still logged in full; only the idle pulse is gone, so the
-  log is readable when you actually need it.
-- **The file manager's database location is now written down explicitly**
-  rather than inherited from the container image. Nothing moves; this only
-  removes a way a future image update could break the server silently.
+**The install could get stuck forever at the Tailscale login step.** It
+happened on a real install. The sequence that causes it is easy to fall
+into: the login link appears, you take a moment, you restart the installer
+thinking something went wrong — and that quietly kills the link the server
+is still waiting for. From then on the server waits for a link that no
+longer exists, *and keeps showing it to you as though it were live*. You
+log in, nothing happens, and there is no error anywhere. The only way out
+was to know the exact command to restart the Tailscale service by hand.
+
+Now the installer gives up waiting after five minutes, resets the service
+itself, and prints a **new** link — up to three times — telling you plainly
+that the old link is dead and that opening an old browser tab will kill the
+new one too. If all three fail it prints the manual recovery steps rather
+than sitting there silently.
+
+The advice that used to be only in this README is now enforced by the
+script: open the link when it appears, and do not restart the installer
+while it is waiting.
 
 Earlier in this line: the file manager was replaced with FileBrowser
-Quantum, its security settings became self-repairing, the network drive
-notices finished downloads within a minute instead of five, and the disk
-check watches for running out of file slots as well as space.
+Quantum, its security settings became self-repairing, the extraction
+tool's log file stopped growing without limit, the network drive notices
+finished downloads within a minute instead of five, and the disk check
+watches for running out of file slots as well as space.
