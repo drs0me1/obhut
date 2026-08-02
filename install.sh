@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-15"
+MASTER_SETUP_VERSION="2026.08.02-Q1-16"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -56,6 +56,8 @@ DNSMASQ_INITIAL_UNIT_FILE_STATE="not-found"
 CADDY_WAS_ACTIVE=0
 CADDY_INITIAL_LOAD_STATE="not-found"
 CADDY_INITIAL_UNIT_FILE_STATE="not-found"
+CANONICAL_STAGE_DIR=""
+CANONICAL_LINK_TMP=""
 
 progress_render() {
     local percent="$1" label="$2" state="${3:-RUN}" suffix="${4:-}"
@@ -404,6 +406,7 @@ restore_dns_stack_on_failure() {
 
 cleanup_master_setup() {
     local rc=$? restore_rc=0 dns_restore_rc=0 error_tail=""
+    local canonical_active_target=""
     trap - ERR EXIT INT TERM
     set +e
 
@@ -415,6 +418,30 @@ cleanup_master_setup() {
     restore_stopped_timers_on_exit "$rc" || restore_rc=$?
     if [[ "$restore_rc" -ne 0 && "$rc" -eq 0 ]]; then
         rc="$restore_rc"
+    fi
+
+    # Yayın tamamlanmadan kalan generation/link geçicilerini kaldır. Pointer
+    # takası başarıp hemen ardından sinyal alınmışsa aktif generation'a asla
+    # dokunma; readlink karşılaştırması o dar aralığı da güvenli kılar.
+    if [[ -n "$CANONICAL_LINK_TMP" ]]; then
+        case "$CANONICAL_LINK_TMP" in
+            /usr/local/share/master-stack/.generation.*.link)
+                rm -f -- "$CANONICAL_LINK_TMP"
+                ;;
+        esac
+    fi
+    if [[ -n "$CANONICAL_STAGE_DIR" ]]; then
+        canonical_active_target="$(
+            readlink -f -- /usr/local/share/master-stack/current \
+                2>/dev/null || true
+        )"
+        if [[ "$canonical_active_target" != "$CANONICAL_STAGE_DIR" ]]; then
+            case "$CANONICAL_STAGE_DIR" in
+                /usr/local/share/master-stack/.generation.*)
+                    rm -rf -- "$CANONICAL_STAGE_DIR"
+                    ;;
+            esac
+        fi
     fi
 
     if [[ "$MASTER_LOGGING_ACTIVE" -eq 1 ]]; then
@@ -2386,15 +2413,17 @@ fi
 mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
-# Canonical bundle tek bir atomik küme hâlinde — state.env, compose.yaml ve
-# altı dnsmasq/Caddy dosyası — Aşama 6'nın sonunda yayınlanır. Nedeni:
-# reconcile'ın canonical_bundle_ok()'u manifest'i sekiz girdinin tamamına
+# Canonical bundle tek bir atomik generation hâlinde — state.env,
+# compose.yaml, filebrowser.yaml ve altı dnsmasq/Caddy dosyası — Aşama
+# 6'nın sonunda yayınlanır. Nedeni:
+# reconcile'ın canonical_bundle_ok()'u manifest'i dokuz girdinin tamamına
 # karşı doğrular, dolayısıyla state.env'i burada yayınlamak Aşama 4-6
 # boyunca eksik bir bundle bırakır ve yarıda kesilen bir çalıştırma
 # reconcile'ı bundle'ı hiç doğrulayamaz hâlde bırakırdı. Ertelemek ise şu
 # anlama gelir: yarıda kalan bir yeniden çalıştırma, önceki çalıştırmanın
-# eksiksiz ve kendi içinde tutarlı bundle'ını yerinde bırakır ve reconcile
-# son bilinen iyi yapılandırmayı uygulamaya devam eder.
+# eksiksiz ve kendi içinde tutarlı generation'ını `current` işaretçisinin
+# arkasında bırakır ve reconcile son bilinen iyi yapılandırmayı uygulamaya
+# devam eder.
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
@@ -2799,6 +2828,7 @@ CURL_BIN="$(command -v curl)"
 INSTALL_BIN="$(command -v install)"
 CMP_BIN="$(command -v cmp)"
 SHA256SUM_BIN="$(command -v sha256sum)"
+READLINK_BIN="$(command -v readlink)"
 SS_BIN="$(command -v ss)"
 STAT_BIN="$(command -v stat)"
 DF_BIN="$(command -v df)"
@@ -2808,7 +2838,19 @@ ENV_FILE="/root/docker/.env"
 COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
 QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
-CANONICAL_DIR="/usr/local/share/master-stack"
+CANONICAL_ROOT="/usr/local/share/master-stack"
+# Q1-16 öncesi kurulumlar bundle dosyalarını doğrudan kök dizinde tutar.
+# Yeni reconcile Aşama 4'te yazıldığı, `current` ise Aşama 6'nın sonunda
+# yayınlandığı için yarıda kesilen ilk yükseltmede eski bundle'a dönmek
+# zorundadır. Başarılı ilk Q1-16 çalışmasından sonra `current` kullanılır.
+select_canonical_dir() {
+    CANONICAL_DIR="$CANONICAL_ROOT/current"
+    if [[ ! -L "$CANONICAL_DIR" &&
+          -r "$CANONICAL_ROOT/SHA256SUMS" ]]; then
+        CANONICAL_DIR="$CANONICAL_ROOT"
+    fi
+}
+select_canonical_dir
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
@@ -2870,11 +2912,26 @@ owned_file_ok() {
 # yani "DNS kapalı" diye ikinci bir bundle şekli yok (şema 9).
 canonical_bundle_ok() {
     local manifest_entries="" expected_entries=""
+    local canonical_target="$CANONICAL_DIR" canonical_root_target=""
+
+    if [[ "$CANONICAL_DIR" != "$CANONICAL_ROOT" ]]; then
+        [[ -L "$CANONICAL_DIR" ]] || return 1
+        canonical_root_target="$(
+            "$READLINK_BIN" -f -- "$CANONICAL_ROOT" 2>/dev/null || true
+        )"
+        canonical_target="$(
+            "$READLINK_BIN" -f -- "$CANONICAL_DIR" 2>/dev/null || true
+        )"
+        [[ -n "$canonical_root_target" &&
+           "$canonical_target" == "$canonical_root_target"/.generation.* &&
+           -d "$canonical_target" ]] || return 1
+    fi
+
     [[ -r "$CANONICAL_DIR/SHA256SUMS" ]] &&
         (cd "$CANONICAL_DIR" &&
             "$SHA256SUM_BIN" -c --status SHA256SUMS) ||
         return 1
-    owned_file_ok "$CANONICAL_DIR" 0 0 755 &&
+    owned_file_ok "$canonical_target" 0 0 755 &&
         owned_file_ok "$CANONICAL_DIR/SHA256SUMS" 0 0 644 &&
         owned_file_ok "$CANONICAL_DIR/state.env" 0 0 600 &&
         owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 &&
@@ -4915,13 +4972,6 @@ EOF
 chown root:root /etc/dnsmasq.d/local-services.conf
 chmod 0644 /etc/dnsmasq.d/local-services.conf
 dnsmasq --test
-install -d -m 0755 -o root -g root /usr/local/share/master-stack
-install -m 0644 -o root -g root \
-    /etc/dnsmasq.d/local-services.conf \
-    /usr/local/share/master-stack/dnsmasq-local-services.conf
-install -m 0644 -o root -g root \
-    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
-    /usr/local/share/master-stack/dnsmasq-99-tailscale-order.conf
 systemctl daemon-reload
 systemctl unmask dnsmasq.service
 systemctl enable dnsmasq
@@ -5084,18 +5134,6 @@ chmod 0644 /etc/caddy/Caddyfile
 
 # Servisi açmadan önce mevcut Tailscale IPv4 ile Caddyfile'ı doğrula.
 TS_IPV4="$TS_IP" caddy validate --config /etc/caddy/Caddyfile
-install -m 0644 -o root -g root \
-    /etc/caddy/Caddyfile \
-    /usr/local/share/master-stack/Caddyfile
-install -m 0644 -o root -g root \
-    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
-    /usr/local/share/master-stack/caddy-99-tailnet-bind.conf
-install -m 0755 -o root -g root \
-    /usr/local/sbin/caddy-tailnet-env \
-    /usr/local/share/master-stack/caddy-tailnet-env
-install -m 0644 -o root -g root \
-    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
-    /usr/local/share/master-stack/tailscaled-99-caddy-tailnet.conf
 
 progress_stage_note 85 "Caddy Tailnet binding'i başlatılıp doğrulanıyor"
 systemctl daemon-reload
@@ -5111,17 +5149,37 @@ caddy validate \
 DNS_STACK_STATE_CAPTURED=0
 echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
 
-# Canonical bundle yanlış/yarım bir kopyadan çalışan daemon'ları yeniden
-# başlatmamak için kendi manifestiyle doğrulanır. Manifest atomik yenilenir.
+# Canonical bundle önce benzersiz bir generation dizininde eksiksiz kurulur
+# ve kendi manifestiyle doğrulanır. Yalnız bundan sonra `current` symlink'i
+# tek rename ile değiştirilir. Böylece dosyalardan herhangi birinin kopyası
+# veya manifest üretimi yarıda kalırsa reconcile önceki generation'ı görür;
+# eski/yeni dosyalardan oluşan karma bir bundle hiçbir zaman yayınlanmaz.
+CANONICAL_ROOT="/usr/local/share/master-stack"
+CANONICAL_CURRENT_TARGET="$(
+    readlink -f -- "$CANONICAL_ROOT/current" 2>/dev/null || true
+)"
+# Önceki başarısız denemelerden kalmış generation'ları temizle; aktif
+# generation'ı koru. Yeni yayın tamamlandığında dizinde en fazla aktif ve
+# bir önceki generation kalır, dolayısıyla düzenli rerun sınırsız büyümez.
+for canonical_old_generation in "$CANONICAL_ROOT"/.generation.*; do
+    [[ -d "$canonical_old_generation" ]] || continue
+    [[ "$canonical_old_generation" == "$CANONICAL_CURRENT_TARGET" ]] ||
+        rm -rf -- "$canonical_old_generation"
+done
+CANONICAL_STAGE_DIR="$(
+    mktemp -d "$CANONICAL_ROOT/.generation.XXXXXX"
+)"
+chown root:root "$CANONICAL_STAGE_DIR"
+chmod 0755 "$CANONICAL_STAGE_DIR"
+
 # state.env'in canonical kopyası Aşama 4'te değil burada yayınlanır (bkz.
-# oradaki açıklama), böylece state.env ve manifest tek atomik küme hâlinde
-# ve her zaman birbiriyle tutarlı yayınlanır.
+# oradaki açıklama); diğer sekiz dosyayla aynı generation'a girer.
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
-    /usr/local/share/master-stack/state.env
+    "$CANONICAL_STAGE_DIR/state.env"
 install -m 0600 -o root -g root \
     /root/docker/compose.yaml \
-    /usr/local/share/master-stack/compose.yaml
+    "$CANONICAL_STAGE_DIR/compose.yaml"
 # Quantum politika dosyası bundle'ın dokuzuncu girdisi (Q1-9). Bir önceki
 # hatta gerek yoktu: orijinal filebrowser ayarlarını filebrowser_config
 # volume'unda tutuyordu, host'ta sapacak bir dosya yoktu. Quantum politikayı
@@ -5132,12 +5190,29 @@ install -m 0600 -o root -g root \
 # orijinal filebrowser'ın en ağır açığı (GHSA-6759) tam olarak oydu.
 install -m 0644 -o root -g root \
     "$QUANTUM_CONFIG_FILE" \
-    /usr/local/share/master-stack/filebrowser.yaml
-CANONICAL_MANIFEST_TMP="$(
-    mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
-)"
+    "$CANONICAL_STAGE_DIR/filebrowser.yaml"
+install -m 0644 -o root -g root \
+    /etc/dnsmasq.d/local-services.conf \
+    "$CANONICAL_STAGE_DIR/dnsmasq-local-services.conf"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
+    "$CANONICAL_STAGE_DIR/dnsmasq-99-tailscale-order.conf"
+install -m 0644 -o root -g root \
+    /etc/caddy/Caddyfile \
+    "$CANONICAL_STAGE_DIR/Caddyfile"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
+    "$CANONICAL_STAGE_DIR/caddy-99-tailnet-bind.conf"
+install -m 0755 -o root -g root \
+    /usr/local/sbin/caddy-tailnet-env \
+    "$CANONICAL_STAGE_DIR/caddy-tailnet-env"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
+    "$CANONICAL_STAGE_DIR/tailscaled-99-caddy-tailnet.conf"
+
+CANONICAL_MANIFEST_TMP="$CANONICAL_STAGE_DIR/.SHA256SUMS.tmp"
 (
-    cd /usr/local/share/master-stack
+    cd "$CANONICAL_STAGE_DIR"
     sha256sum -- \
         state.env \
         compose.yaml \
@@ -5151,8 +5226,33 @@ CANONICAL_MANIFEST_TMP="$(
 ) >"$CANONICAL_MANIFEST_TMP"
 chown root:root "$CANONICAL_MANIFEST_TMP"
 chmod 0644 "$CANONICAL_MANIFEST_TMP"
-mv -f "$CANONICAL_MANIFEST_TMP" \
-    /usr/local/share/master-stack/SHA256SUMS
+mv -f "$CANONICAL_MANIFEST_TMP" "$CANONICAL_STAGE_DIR/SHA256SUMS"
+(
+    cd "$CANONICAL_STAGE_DIR"
+    sha256sum -c --status SHA256SUMS
+)
+
+CANONICAL_LINK_TMP="${CANONICAL_STAGE_DIR}.link"
+ln -s "$(basename "$CANONICAL_STAGE_DIR")" "$CANONICAL_LINK_TMP"
+mv -Tf "$CANONICAL_LINK_TMP" "$CANONICAL_ROOT/current"
+CANONICAL_LINK_TMP=""
+CANONICAL_STAGE_DIR=""
+
+# Q1-16 öncesi düz-dizin bundle yalnız ilk yükseltmenin Aşama 4-6 kesinti
+# penceresi için fallback'tir. `current` başarıyla yayınlandıktan sonra onu
+# silmek, daha sonraki bir pointer kaybının sessizce eski veriye düşmesini
+# önler. Aktif generation bu dosyalardan bağımsızdır.
+rm -f -- \
+    "$CANONICAL_ROOT/SHA256SUMS" \
+    "$CANONICAL_ROOT/state.env" \
+    "$CANONICAL_ROOT/compose.yaml" \
+    "$CANONICAL_ROOT/filebrowser.yaml" \
+    "$CANONICAL_ROOT/dnsmasq-local-services.conf" \
+    "$CANONICAL_ROOT/dnsmasq-99-tailscale-order.conf" \
+    "$CANONICAL_ROOT/Caddyfile" \
+    "$CANONICAL_ROOT/caddy-99-tailnet-bind.conf" \
+    "$CANONICAL_ROOT/caddy-tailnet-env" \
+    "$CANONICAL_ROOT/tailscaled-99-caddy-tailnet.conf"
 
 # İlk kurulumun servis değişiklikleri bittikten sonra periyodik adres kontrolünü
 # aç; böylece timer kurulum sürerken Compose/Caddy ile yarışmaz.

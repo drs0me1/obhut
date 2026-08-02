@@ -26,11 +26,11 @@
 # test below), because a host still carrying a pre-V1-8 bundle must be
 # caught rather than silently accepted.
 #
-# Scope: the manifest entry-list logic only. Hash verification is
-# sha256sum's job and is stubbed out; ownership/mode checking is
-# owned_file_ok's job and is covered by reconcile_functions.bats. Both
-# are overridden here so these tests run on any POSIX host, with no GNU
-# coreutils, no root, no systemd and no Docker.
+# Scope: manifest entry-list logic plus generation-pointer selection. Hash
+# verification is sha256sum's job and is stubbed out; ownership/mode
+# checking is owned_file_ok's job and is covered by
+# reconcile_functions.bats. Both are overridden here so these tests run
+# without root, systemd or Docker.
 
 INSTALL_SH="${BATS_TEST_DIRNAME}/../install.sh"
 
@@ -88,12 +88,14 @@ write_stage6_manifest() {
 setup() {
     FIXTURE_DIR="$(mktemp -d)"
     FUNCS_FILE="$FIXTURE_DIR/funcs.sh"
-    extract_function RECONCILE_SCRIPT canonical_bundle_ok >"$FUNCS_FILE"
+    extract_function RECONCILE_SCRIPT select_canonical_dir >"$FUNCS_FILE"
+    extract_function RECONCILE_SCRIPT canonical_bundle_ok >>"$FUNCS_FILE"
 
     # Fail loudly if the function is renamed or its source moves in a way
     # this extraction can no longer find, rather than silently testing an
     # empty no-op.
     grep -q '^canonical_bundle_ok() {' "$FUNCS_FILE"
+    grep -q '^select_canonical_dir() {' "$FUNCS_FILE"
 
     # shellcheck disable=SC1090
     source "$FUNCS_FILE"
@@ -104,6 +106,8 @@ setup() {
 
     AWK_BIN="$(command -v awk)"
     CANONICAL_DIR="$FIXTURE_DIR/canonical"
+    CANONICAL_ROOT="$CANONICAL_DIR"
+    READLINK_BIN="$(command -v readlink)"
     mkdir -p "$CANONICAL_DIR"
     printf 'STACK_SCHEMA=10\n' >"$CANONICAL_DIR/state.env"
 
@@ -205,4 +209,65 @@ teardown() {
 
     run canonical_bundle_ok
     [ "$status" -ne 0 ]
+}
+
+@test "canonical_bundle_ok: accepts current pointing to a complete generation" {
+    CANONICAL_ROOT="$FIXTURE_DIR/canonical-root"
+    local generation="$CANONICAL_ROOT/.generation.good"
+    mkdir -p "$generation"
+    CANONICAL_DIR="$CANONICAL_ROOT/current"
+    ln -s .generation.good "$CANONICAL_DIR"
+    printf 'STACK_SCHEMA=10\n' >"$generation/state.env"
+    write_stage6_manifest
+
+    run canonical_bundle_ok
+    [ "$status" -eq 0 ]
+}
+
+@test "canonical_bundle_ok: ignores an incomplete unpublished generation" {
+    CANONICAL_ROOT="$FIXTURE_DIR/canonical-root"
+    local generation="$CANONICAL_ROOT/.generation.good"
+    mkdir -p "$generation" "$CANONICAL_ROOT/.generation.incomplete"
+    CANONICAL_DIR="$CANONICAL_ROOT/current"
+    ln -s .generation.good "$CANONICAL_DIR"
+    printf 'STACK_SCHEMA=10\n' >"$generation/state.env"
+    write_stage6_manifest
+    printf 'partial\n' >"$CANONICAL_ROOT/.generation.incomplete/state.env"
+
+    run canonical_bundle_ok
+    [ "$status" -eq 0 ]
+}
+
+@test "canonical_bundle_ok: rejects current pointing outside the canonical root" {
+    CANONICAL_ROOT="$FIXTURE_DIR/canonical-root"
+    local outside="$FIXTURE_DIR/outside-generation"
+    mkdir -p "$CANONICAL_ROOT" "$outside"
+    CANONICAL_DIR="$CANONICAL_ROOT/current"
+    ln -s "$outside" "$CANONICAL_DIR"
+    printf 'STACK_SCHEMA=10\n' >"$outside/state.env"
+    write_stage6_manifest
+
+    run canonical_bundle_ok
+    [ "$status" -ne 0 ]
+}
+
+@test "select_canonical_dir: uses the legacy bundle during the first interrupted upgrade" {
+    CANONICAL_ROOT="$FIXTURE_DIR/legacy-root"
+    mkdir -p "$CANONICAL_ROOT"
+    printf 'legacy manifest\n' >"$CANONICAL_ROOT/SHA256SUMS"
+
+    select_canonical_dir
+
+    [ "$CANONICAL_DIR" = "$CANONICAL_ROOT" ]
+}
+
+@test "select_canonical_dir: prefers current after generation publication" {
+    CANONICAL_ROOT="$FIXTURE_DIR/generation-root"
+    mkdir -p "$CANONICAL_ROOT/.generation.good"
+    printf 'legacy manifest\n' >"$CANONICAL_ROOT/SHA256SUMS"
+    ln -s .generation.good "$CANONICAL_ROOT/current"
+
+    select_canonical_dir
+
+    [ "$CANONICAL_DIR" = "$CANONICAL_ROOT/current" ]
 }

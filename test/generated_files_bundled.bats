@@ -39,9 +39,6 @@ INSTALL_SH="${BATS_TEST_DIRNAME}/../install.sh"
 # $( ), and every apostrophe below would become an unterminated quote.
 excluded_paths() {
     cat <<'EXCLUDED_LIST' |
-# The manifest cannot contain its own hash.
-/usr/local/share/master-stack/SHA256SUMS
-
 # Secret, or host-measured: a canonical copy would either duplicate a
 # secret or pin a value that is legitimately different on every host.
 # webdav.htpasswd is a bcrypt hash of the operator's password (C2, DD-29);
@@ -180,7 +177,7 @@ bundled_sources() {
             if ((getline dst) <= 0) next
             gsub(/^[ \t]+|[ \t]*\\$|"/, "", src)
             gsub(/^[ \t]+|"/, "", dst)
-            if (dst ~ /^\/usr\/local\/share\/master-stack\//) print src
+            if (dst ~ /^\$CANONICAL_STAGE_DIR\//) print src
         }
     ' "$OUTER" | while IFS= read -r p; do
         [ -n "$p" ] && resolve_path_var "$p"
@@ -194,7 +191,7 @@ bundled_names() {
             if ((getline src) <= 0) next
             if ((getline dst) <= 0) next
             gsub(/^[ \t]+|"/, "", dst)
-            if (sub(/^\/usr\/local\/share\/master-stack\//, "", dst)) print dst
+            if (sub(/^\$CANONICAL_STAGE_DIR\//, "", dst)) print dst
         }
     ' "$OUTER"
 }
@@ -302,4 +299,33 @@ teardown() {
             "$foreign" >&2
     fi
     [ -z "$foreign" ]
+}
+
+@test "canonical publication verifies a generation before swapping current" {
+    local stage_line="" verify_line="" swap_line=""
+
+    stage_line="$(
+        grep -n -m1 'mktemp -d "\$CANONICAL_ROOT/.generation.XXXXXX"' \
+            "$OUTER" | cut -d: -f1
+    )"
+    verify_line="$(
+        grep -n -m1 'sha256sum -c --status SHA256SUMS' "$OUTER" |
+            cut -d: -f1
+    )"
+    swap_line="$(
+        grep -n -m1 'mv -Tf "\$CANONICAL_LINK_TMP" "\$CANONICAL_ROOT/current"' \
+            "$OUTER" | cut -d: -f1
+    )"
+
+    [ -n "$stage_line" ]
+    [ -n "$verify_line" ]
+    [ -n "$swap_line" ]
+    [ "$stage_line" -lt "$verify_line" ]
+    [ "$verify_line" -lt "$swap_line" ]
+
+    # The EXIT cleanup allowlist must describe the same unique link name
+    # Stage 6 creates; a drift here leaves dangling publication links after
+    # a failed swap.
+    grep -Fq 'CANONICAL_LINK_TMP="${CANONICAL_STAGE_DIR}.link"' "$OUTER"
+    grep -Fq '/usr/local/share/master-stack/.generation.*.link)' "$OUTER"
 }

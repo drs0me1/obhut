@@ -545,14 +545,16 @@ playback remain untested.
   all — the latter needs a forked/customized image and hasn't been
   attempted.
 
-### DD-14: The canonical bundle is published once, atomically, at the end of Stage 6 (2026-07-28)
+### DD-14: The canonical bundle is published through a verified generation pointer (2026-07-28; corrected 2026-08-02)
 
 - **Decision:** Stage 4 writes `/etc/master-stack/state.env` but does not
-  publish a canonical copy or a `SHA256SUMS` manifest. The entire
-  canonical bundle — `state.env`, `compose.yaml` and the six
-  dnsmasq/Caddy files — is published as one atomic set at the end of
-  Stage 6.
-- **Context:** `SECURITY_REVIEW.md` finding **M8**.
+  publish a canonical copy or a `SHA256SUMS` manifest. At the end of
+  Stage 6, all nine bundle files and the manifest are written into a new
+  `.generation.*` directory and verified there. Only then is the
+  `/usr/local/share/master-stack/current` symlink replaced with one
+  same-filesystem `rename(2)` operation. Reconcile reads through that
+  pointer.
+- **Context:** `SECURITY_REVIEW.md` findings **M8** and **H8**.
 - **Rationale:** `canonical_bundle_ok()` validates the manifest's entry
   list, and a partial bundle fails that check. Publishing `state.env` in
   Stage 4 alongside a state.env-only manifest left the bundle incomplete
@@ -563,15 +565,27 @@ playback remain untested.
   `state.env`. `V1-8` removed that key — local DNS is no longer optional —
   so the manifest now has a single fixed shape. The decision stands
   unchanged; only its justification simplified.)*
+- **Correction recorded by H8:** the first M8 remediation moved the nine
+  individual copies to the end of Stage 6 and atomically renamed only the
+  manifest. That narrowed the interruption window but did **not** make the
+  bundle atomic: a failed fourth or fifth copy left a mix of old and new
+  files behind the old manifest, which then failed its hashes. The word
+  "atomic" applies only after Q1-16's generation-pointer design.
 - **Alternatives rejected:** deleting Stage 4's manifest write alone (a
   fresh install then has no manifest, and a re-run's stale manifest no
   longer matches the newly written `state.env` — both still fail
-  validation); writing the full seven-entry manifest in Stage 4
-  (impossible on a fresh install, where those files don't exist yet).
+  validation); writing the full manifest in Stage 4 (impossible on a fresh
+  install, where those files don't exist yet); treating an atomic manifest
+  rename as an atomic multi-file publication (the H8 defect).
 - **Consequence worth knowing:** during Stages 4-6 of a re-run,
   `state_value()` still reads the *previous* run's canonical values. That
   is deliberate — for a half-applied re-run, the last known-good
-  configuration is the right thing to enforce.
+  configuration is the right thing to enforce. On the first upgrade from
+  Q1-15/R2.4, the new reconcile script temporarily accepts the legacy flat
+  bundle until Stage 6 publishes `current`; after that publication the
+  legacy files are removed so a later missing pointer fails closed rather
+  than silently reverting to stale data. Publication retains at most the
+  active and immediately previous generations across regular re-runs.
 
 ### DD-15: Docker's chain layout is assumed, and Docker itself is deliberately not pinned (2026-07-28)
 

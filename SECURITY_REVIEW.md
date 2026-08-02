@@ -49,13 +49,15 @@ was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
 **M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
 `v1.1-1` login-placement experiment; the reorder fixed it as a side
 effect, the revert of that experiment reintroduced it, and it was then
-fixed on its own in `V1-1`. **M7** remains the only open finding in the
-project.
+fixed on its own in `V1-1`. **H8** was discovered and resolved during the
+2026-08-02 R2.4 line-by-line review: the canonical publication described
+as atomic had only ever atomically renamed its manifest. **M7** remains
+the only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 7 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, 2026-07-28; **H5**, **H6**, **H7**, 2026-07-28 — post-audit) |
+| High     | 0 | 8 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, 2026-08-02 — post-audit) |
 | Medium   | 1 (**M7**) | 10 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
@@ -67,7 +69,8 @@ functional behavior.
 was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th/21st, separately-tracked findings, as
-are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
+are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
+and **H8** (28th).
 
 ## Critical issues
 
@@ -423,6 +426,47 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   `bats test/`, plus live confirmation against the pinned image version
   specifically (not just the library's current docs/source).
 
+### H8 — Canonical bundle publication was not atomic — ✅ RESOLVED (2026-08-02, `Q1-16`)
+
+- **Location (historical):** `install.sh` Stage 6, the nine direct
+  `/usr/local/share/master-stack/*` copies followed by the temporary
+  `SHA256SUMS` rename; `canonical_bundle_ok()` in
+  `master-network-reconcile`.
+- **Description:** DD-14 and the Stage 4/6 comments promised one atomic
+  bundle, but the code copied each data file directly over the live copy.
+  Only the manifest was written to a temporary name and renamed. Atomicity
+  of the last file does not extend to the files it hashes.
+- **Impact:** If a re-run stopped after any canonical copy but before the
+  new manifest rename, the old manifest described a mixture of old and
+  new files. The EXIT trap re-enabled the reconcile timer, but every cycle
+  then failed at `canonical_bundle_ok()` before any detection or repair.
+  This is the same operational failure class M8 claimed to eliminate, and
+  matters on a continuously running server because a failed update could
+  disable self-healing indefinitely.
+- **Resolution:** Stage 6 now creates a unique root-owned `.generation.*`
+  directory, installs all nine files there, creates and verifies its
+  manifest, then atomically replaces the relative `current` symlink. A
+  partial generation is never visible and the EXIT trap removes it. The
+  target is required to resolve to a generation inside the canonical root;
+  outside-root pointers fail closed. Old generations are pruned so normal
+  re-runs retain at most the active and immediately previous copies.
+- **Upgrade compatibility:** Q1-16's reconcile helper accepts the R2.4
+  flat bundle only while no `current` symlink exists. This covers an
+  interruption after the helper is installed in Stage 4 but before the
+  first generation is published in Stage 6. The legacy files are deleted
+  after that first successful pointer swap, so later pointer loss cannot
+  silently fall back to stale state.
+- **Verification:** `test/canonical_bundle.bats` covers a valid generation,
+  an incomplete unpublished generation, an outside-root pointer, and both
+  legacy-transition branches. `test/generated_files_bundled.bats` proves
+  all published sources still match the manifest and that verification
+  precedes the pointer swap. Full local verification is recorded in the
+  review-history row; live Debian verification remains for the release
+  close-out, not claimed here.
+- **Change risk:** Medium — this changes the on-disk canonical layout, but
+  not the live service configuration paths. The compatibility branch and
+  fail-closed target check specifically bound the migration risk.
+
 ## Medium
 
 ### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
@@ -767,18 +811,23 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th).
   manifest doğrulaması başarısız") also reads like corruption or
   tampering rather than "the installer was interrupted". Fresh installs
   are unaffected: the timer isn't enabled until the end of Stage 6.
-- **Resolution:** The canonical bundle is now published as a single
-  atomic set at the end of Stage 6 — Stage 4 writes
+- **Resolution at the time, corrected by H8:** Stage 4 writes
   `/etc/master-stack/state.env` but no longer publishes a canonical copy
-  or a manifest. Two considered-and-rejected alternatives: simply
+  or a manifest; publication moved to the end of Stage 6. That removed
+  M8's long, deterministic Stage 4-6 inconsistency window, but calling the
+  replacement a "single atomic set" was inaccurate: its data-file copies
+  were still sequential and only the manifest rename was atomic. H8's
+  Q1-16 generation-pointer design supplies the actual atomicity. Two
+  considered-and-rejected alternatives for M8 were simply
   deleting Stage 4's manifest write (a fresh install would then have no
   manifest, and a re-run's stale manifest would not match the newly
   written `state.env` — both still fail), and writing the full
   seven-entry manifest in Stage 4 (impossible on a fresh install, where
   the dnsmasq/Caddy files don't exist yet).
-- **Side benefit:** a re-run that fails mid-way now leaves the *previous*
-  run's complete, self-consistent bundle in place, so reconcile keeps
-  enforcing the last known-good configuration instead of going silent.
+- **Side benefit, true only after H8/Q1-16:** a re-run that fails mid-way
+  now leaves the *previous* run's complete, self-consistent generation in
+  place, so reconcile keeps enforcing the last known-good configuration
+  instead of going silent.
   `state_value()` preferring the canonical copy means it reads those
   older values during the window, which is the correct behavior for a
   half-applied re-run.
@@ -1180,13 +1229,14 @@ Sixteen numbered remediations applied so far (**C2**, **M6**, **M5**,
 **H1**, **H2**, **H3**, **M4**, **L1**, **L2**, **L4**, **L5**, **M2**,
 **L3**, **C1**, **H4**, **M1**) plus three post-audit findings from live
 testing and real usage (**H5**, **H6**, **H7**) and one unnumbered cleanup
-(legacy reboot-timer removal); only **M3**/**M7** remain open as of this
-review.
+(legacy reboot-timer removal). **M3** was later closed as won't-do; **M7**
+remains the only open finding.
 
 ## Review History
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (requested an ordered R2.4 line-by-line review) + Codex (`Q1-16`) | Stage 6 canonical publication and DD-14's atomicity claim | **H8 found and resolved.** The nine canonical files were copied directly into the live directory and only `SHA256SUMS` was atomically renamed, so an interrupted re-run could leave mixed generations that permanently failed reconcile's first gate. Q1-16 stages and verifies all nine files plus the manifest in `.generation.*`, then atomically swaps the relative `current` symlink. The new reconcile accepts the legacy R2.4 flat layout only during the first Stage 4→6 transition and rejects pointers resolving outside the canonical root. Six new regression cases bring the bats suite from 120 to 126; targeted tests, `bash -n`, outer and embedded `shellcheck` are clean. Live Debian verification is deliberately not claimed yet. |
 | 2026-07-27 | Claude Code (static audit) | Full `install.sh` (4552 lines) | 18 findings (2 Critical, 4 High, 7 Medium, 5 Low), no changes applied |
 | 2026-07-27 | Claude Code (remediation) | Stage 0 + Stage 2 (`TS_AUTHKEY` flow) | **C2** resolved: auth-key input removed entirely; `bash -n` + `shellcheck` clean |
 | 2026-07-27 | Claude Code (remediation) | Stages 0/4/5/7 + EXIT trap (wg-easy unattended bootstrap) | **M6** resolved: entire bootstrap subsystem removed (248 lines); wg-easy admin setup now fully manual; `bash -n` + `shellcheck` clean |

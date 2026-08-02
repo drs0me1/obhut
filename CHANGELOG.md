@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — canonical bundle publication is actually atomic (`Q1-16`, DD-14, H8)
+
+The Stage 6 code claimed to publish the canonical bundle atomically, but
+only the final `SHA256SUMS` rename was atomic; the nine files it described
+were copied one by one into the live directory. An interruption between
+copies therefore left old and new files mixed behind the old manifest,
+causing every later reconcile cycle to stop at its first integrity gate.
+
+Q1-16 builds all nine files plus the manifest in a unique
+`.generation.*` directory, verifies the completed generation, and only
+then atomically replaces `/usr/local/share/master-stack/current` with a
+relative symlink to it. An unpublished partial generation is invisible to
+reconcile and the EXIT trap removes it. Regular re-runs retain at most the
+active and previous generations.
+
+The first upgrade from R2.4 has an explicit compatibility path: the new
+reconcile helper accepts the old flat bundle until Stage 6 publishes the
+first `current` pointer. After publication those legacy files are removed,
+so a later missing or externally-directed pointer fails closed. Six
+regression cases cover generation selection, an incomplete unpublished
+generation, an outside-root target, the legacy transition, publish order,
+and the existing manifest/source coupling.
+
 ### 2026-08-02 — `Q1-15` closed out: tagged, exported as `R2.4`
 
 Tagged `Q1-15` after the live verification described in the previous
@@ -1429,10 +1452,11 @@ tag `v1b`).
   which every 5-minute cycle hard-exited before reaching any repair
   logic — no self-healing at all on a half-configured host, reported
   with a message that reads like corruption rather than "interrupted
-  install". The canonical bundle is now published as one atomic set at
-  the end of Stage 6. Side benefit: a failed re-run leaves the previous
-  run's complete bundle in place, so reconcile keeps enforcing the last
-  known-good configuration.
+  install". The 2026-07-28 change moved publication to the end of Stage 6
+  and described it as one atomic set. **H8 later corrected that claim:**
+  only its manifest rename was atomic. Q1-16's verified generation pointer
+  is the implementation that actually makes a failed re-run leave the
+  previous complete bundle in place.
 - **The stack-level repair path had no restart cooldown** (**L6**).
   Per-container restarts were budget-gated to once per 15 minutes, but
   `systemctl stop master-compose` + `systemctl restart

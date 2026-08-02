@@ -19,6 +19,11 @@ retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
 `CLAUDE.md`).
 
+The 2026-08-02 R2.4 line-by-line review added **H8**: the canonical bundle
+was described as atomic although only its manifest rename was atomic. It
+is resolved in Q1-16 with verified generation directories and an atomic
+`current` pointer (DD-14).
+
 ## Critical
 
 _All Critical findings resolved — see Completed below._
@@ -39,7 +44,7 @@ _All High findings resolved — see Completed below._
       (`test/firewall_functions.bats`, 20 cases, via a fake iptables/`ip`
       stand-in); `check_ipv4_policy`/`check_ipv6_policy`
       (`test/policy_functions.bats`, 17 cases); `canonical_bundle_ok`
-      (`test/canonical_bundle.bats`, 7 cases, lists derived from
+      (`test/canonical_bundle.bats`, 12 cases, lists derived from
       `install.sh`'s own Stage 6 source); `add_default_netdev`
       (`test/gro_functions.bats`, 5 cases); and `retry_network`'s four
       control-flow paths plus argument pass-through
@@ -105,6 +110,12 @@ _All High findings resolved — see Completed below._
       is caught by the embedded lint alone, with `bash -n install.sh`,
       `shellcheck install.sh` and all 120 bats cases passing on it.
 
+      **Added 2026-08-02: Q1-16 canonical publication regression coverage
+      (6 cases, 120 → 126).** Five cases cover the new generation pointer,
+      an unpublished partial generation, an outside-root target, and both
+      sides of the R2.4 legacy transition. A sixth structural case proves
+      Stage 6 verifies the generation before swapping `current`.
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
@@ -112,7 +123,7 @@ _All High findings resolved — see Completed below._
       need real network, systemd or Docker. A second tier of parse-only
       functions (`record_container_restart`, `gro_flags_ok`,
       `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)
-      is stub-able but has milder failure modes; worth doing, not urgent.
+      was covered by `test/reconcile_probes.bats` above.
       The other three embedded scripts (`master-compose-ipv4`,
       `master-docker-netfilter-recovery`, `caddy-tailnet-env`) remain
       surveyed and rejected — each is a wait loop plus real side effects.
@@ -616,17 +627,19 @@ _All Low findings resolved or closed — see Completed below._
       source: an empty `TRUSTED_ORIGINS` (the local-DNS-disabled path,
       still never exercised live) is guarded before the validation loop,
       so **H7**'s startup crash cannot recur there.
-- [x] **M8 (2026-07-28).** Canonical bundle publication moved out of
-      Stage 4 into the single atomic block at the end of Stage 6, so the
+- [x] **M8 (2026-07-28; atomicity claim corrected by H8/Q1-16).** Canonical
+      bundle publication moved out of Stage 4 to the end of Stage 6, so the
       manifest and the `LOCAL_DNS_ENABLED` value it is validated against
       always become visible together. Previously Stage 4 truncated the
       manifest to one entry while publishing a possibly
       `LOCAL_DNS_ENABLED=1` `state.env`, leaving the bundle
       self-inconsistent for all of Stages 4-6; a re-run that failed in
       that window left reconcile hard-exiting at `canonical_bundle_ok()`
-      every 5 minutes with no self-healing at all. Side benefit: a failed
-      re-run now keeps the previous run's complete bundle, so reconcile
-      goes on enforcing the last known-good configuration.
+      every 5 minutes with no self-healing at all. The old entry called
+      that end block atomic, although its nine copies were sequential and
+      only the manifest rename was atomic. H8/Q1-16's verified generation
+      pointer is what now guarantees that a failed re-run keeps the
+      previous complete bundle.
 - [x] **M9 (2026-07-28, accepted risk + diagnostics).** Pinning
       `docker-ce` was considered and rejected (it would freeze CVE fixes
       on a host publishing ports to the public IPv4). Instead
