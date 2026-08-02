@@ -667,6 +667,28 @@ _All Low findings resolved or closed — see Completed below._
       `sha256sum` and `owned_file_ok` are stubbed as out of scope, so all
       8 run with no skips on any POSIX host. 40 cases total across
       `test/`. `install.sh` untouched.
+- [x] **Replace FileBrowser Quantum — closed as won't do (2026-08-02,
+      DD-36).** Three alternatives investigated in one day, none adopted.
+      **Filestash** (proposed as v3) fails structurally: its `config.json`
+      is runtime state rewritten by `Initialise()` on first start, so it
+      cannot be a read-only bind mount or a canonical bundle entry —
+      reconcile would revert admin changes every twenty minutes, and
+      adopting it would have deleted the policy-file mechanism this branch
+      is built around. It also publishes only `latest`. **A native
+      non-Docker file manager with RAR extraction** has no good candidate:
+      Quantum does not extract in place, copyparty creates archives but
+      does not extract, and elFinder — the one that does — has that exact
+      code path as its CVE history, which is the class this project
+      deleted filebrowser's shell-command feature to escape. RAR was never
+      a file-manager problem here anyway: unpackerr already extracts
+      recursively across the whole media tree. **Nextcloud** fits on the
+      hardware (measured: 7.8 GB host, 863 MB used, five containers
+      ~130 MB) but reads its file list from `oc_filecache` rather than the
+      disk, so qBittorrent's and unpackerr's writes stay invisible until
+      `occ files:scan`, and it cannot skip major versions — which would
+      leave reconcile restarting a container it cannot repair. Each has a
+      written reopen condition in DD-36; the Nextcloud one is "only if
+      groupware features are wanted, and then alongside, never instead".
 - [x] **Fold the Quantum policy file into `compose.yaml` — closed as
       won't do (2026-08-02, DD-35).** Requested by the operator: one
       configuration surface instead of two. Blocked by a hard conflict,

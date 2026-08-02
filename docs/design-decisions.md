@@ -1663,3 +1663,142 @@ other mechanism substitutes for it.
 for inline configs on read-only services, or Quantum gaining environment
 variables for `sources`, `cacheDir` and `signup`. Neither is true as of
 Compose v5.3.1 and filebrowser Quantum v1.5.0-stable.
+
+### DD-36: Three file-manager alternatives investigated, FileBrowser Quantum kept (2026-08-02)
+
+Three separate investigations in one day, each ending in no change. Recorded
+together because they share a conclusion and because none of them left a
+trace in the code — without this entry the same searches get run again.
+
+#### Filestash, proposed as the v3 file manager
+
+Named "Filetash" in the request; the software is
+[Filestash](https://www.filestash.app) (`machines/filestash`). Rejected on
+one structural fact, found in upstream's source rather than its docs.
+
+**Its `config.json` is runtime state, not policy.** `Save()` is called from
+`Set()` (admin console writes), from `Default()`, and from `Initialise()` —
+so the file is rewritten on the very first start, before anyone touches
+anything. That single fact removes the architecture this branch spent most
+of its effort on: the file cannot be a read-only bind mount, and it cannot
+join the canonical bundle, because reconcile would revert every admin change
+within twenty minutes. Going ahead would have deleted the policy-file
+mechanism entirely — bundle nine entries → eight, the `quantum_config` drift
+flag, the restore-plus-restart repair path, DD-29's directory guard, and
+`report_default_filebrowser_password` with DD-30/DD-33 behind it.
+
+Also weighed, none of them decisive on their own:
+
+- **Tag hygiene is a regression.** Only `latest` is maintained (last push
+  2026-07-31). No semver tags; commit-hash tags stop in 2023. DD-23 says to
+  take the finest float upstream publishes — here the finest available is
+  the coarsest there is, worse than every other service in the bundle.
+- **The admin window is silent.** Whoever reaches `/admin/setup` first
+  becomes the administrator. Quantum at least ships a *known* default that
+  the installer and reconcile can both warn about.
+- Upstream's own warning that the Local backend "exposes the container
+  filesystem to the admin", which makes `read_only` matter more, not less.
+- AGPLv3, where the current and previous file managers were not.
+- Port 8334, non-root `filestash` user, `debian:stable-slim` carrying ffmpeg
+  and ImageMagick.
+
+**One thing was deliberately left unverified rather than assumed.** A
+secondary source claims an `ADMIN_CONSOLE` environment variable presets the
+admin bcrypt hash, which would close the setup window entirely. The primary
+source does not list it and two source lookups failed. No design was built
+on it. If Filestash is ever revisited, confirm it against the image first.
+
+Blast radius, for whoever picks this up: `filebrowser` appears 56 times in
+`install.sh` across roughly eighteen clusters, and `STACK_SCHEMA` would have
+to bump because `IMAGE_DIGEST_FILEBROWSER` is a `state.env` key.
+
+#### A native, non-Docker file manager that extracts RAR
+
+Asked for next. The requirement barely has answers, and the one product that
+satisfies it literally is the one to avoid.
+
+- **FileBrowser Quantum** does not extract in place — it only zips a
+  selection for download. Still an open upstream request
+  ([discussion #1633](https://github.com/gtsteffaniak/filebrowser/discussions/1633)).
+- **[copyparty](https://github.com/9001/copyparty)** creates archives but
+  does not extract them. Otherwise the strongest candidate: one Python file,
+  no dependencies, an upstream systemd unit, a plain config file that *would*
+  satisfy the canonical-bundle test Filestash failed, upload hooks, and
+  native WebDAV — which could absorb the separate rclone WebDAV service.
+- **elFinder** does extract RAR, and that exact code path is its CVE history:
+  [CVE-2019-9194](https://vuldb.com/vuln/131229) is command injection through
+  crafted archive requests with filenames passed to an external utility
+  unsanitised, alongside
+  [CVE-2021-32682](https://www.sonarsource.com/blog/elfinder-case-study-of-web-file-manager-vulnerabilities/)
+  (multiple RCEs at minimal configuration) and CVE-2022-26960. This project
+  deleted filebrowser's shell-command feature specifically to be rid of this
+  class; taking elFinder would walk it back in through the same door.
+- **Webmin** extracts, and is a root-level system administration panel —
+  far too much surface for a service published on the tailnet.
+
+**The reframe is the useful part: RAR extraction is already solved here.**
+unpackerr watches the entire media tree recursively every ten seconds and
+extracts rar/zip/7z/iso with `move_back`, verified working this same day. Any
+file manager that can *write* into the tree therefore already gives
+browser-triggered extraction — drop the archive in, it is unpacked within
+seconds. The wanted capability was never in the file manager.
+
+Separately, leaving Docker is not free: `cap_drop: ALL`, `read_only: true`,
+`mem_limit` and `no-new-privileges` all go, and an equivalent has to be
+rebuilt with systemd (`DynamicUser`, `ProtectSystem=strict`,
+`ReadWritePaths`, `MemoryMax`, `CapabilityBoundingSet`). That rebuild, not
+the file-manager swap, is the actual work of such a migration.
+
+#### Nextcloud as a Docker service
+
+**Capacity is not the objection, and it was measured before saying so.** The
+host is 4 vCPU / 7.8 GB RAM / 251 GB, using 863 MB, and the five containers
+total roughly 130 MB. Nextcloud with MariaDB and Redis fits comfortably. The
+first instinct — "too heavy" — would have been wrong.
+
+Two things block it, both structural:
+
+1. **Nextcloud reads its file list from `oc_filecache`, not from the disk.**
+   Anything written outside it is invisible until `occ files:scan`. In this
+   stack *two* services write into the media tree — qBittorrent and unpackerr
+   — so every finished download and every extracted archive would be missing
+   until the next scan, which upstream recommends running about every fifteen
+   minutes and warns is "time- and resource-consuming if the whole storage is
+   periodically scanned". Quantum reads the disk directly and simply does not
+   have this problem.
+2. **Major versions cannot be skipped** — "updates between multiple major
+   versions and downgrades are unsupported". Bump the pin two majors and the
+   container fails unrecoverably; reconcile would then restart it repeatedly
+   inside its budget, the self-healing loop grinding against a state it
+   cannot repair. No service currently in the bundle has this failure class.
+
+The rest is cost rather than blockage: five containers become eight;
+`read_only` is impossible for Nextcloud, which writes to `/var/www/html`
+continuously; a database introduces a backup concern this stack has never
+had, since losing MariaDB loses every user, share and piece of file
+metadata; `cron.php` every five minutes joins `files:scan`; and Caddy needs
+`OVERWRITEHOST`/`OVERWRITEPROTOCOL`/`TRUSTED_PROXIES` plus `.well-known`
+redirects. The All-in-One image is structurally incompatible — it takes the
+Docker socket and manages its own containers, which is the fixed-bundle
+model inverted. And it does not solve RAR either.
+
+**Verdict: the wrong tool for replacing the file manager, and the right tool
+for something not being asked for.** The valid reasons to want Nextcloud are
+groupware — multi-user sharing with public links, calendar and contacts,
+phone photo backup, a desktop sync client, in-browser office editing. If any
+of those are ever wanted, the shape is *alongside* rather than *instead*:
+its own storage and subdomain, the media tree attached read-only through
+`files_external`, Quantum still owning the tree. Operator's decision
+(2026-08-02): excessive for a single-operator media box.
+
+#### What would reopen each
+
+- **Filestash** — if it starts publishing versioned tags *and* gains a way
+  to hold policy separately from mutable state. One without the other is not
+  enough; the config-as-state problem is the blocking one.
+- **A native file manager** — if the systemd hardening equivalent is
+  actually written and confinement equal to `read_only: true` is
+  demonstrated, not assumed. copyparty is the candidate to start from, and
+  absorbing the WebDAV service is the thing that would justify the move.
+- **Nextcloud** — if groupware features are genuinely wanted. Then alongside,
+  never instead.

@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — three file-manager alternatives investigated, none adopted (DD-36)
+
+No code change. Filestash (proposed as v3), a native non-Docker file manager
+with RAR extraction, and Nextcloud in Docker were each researched and each
+declined. Written up together in DD-36 because none of them left a trace in
+the code, so without the entry the same searches get repeated.
+
+The three findings worth keeping:
+
+- **Filestash's `config.json` is runtime state, not policy** — `Save()` runs
+  from `Initialise()`, so it is rewritten on first start. It therefore cannot
+  be a read-only bind mount or a canonical bundle entry; reconcile would
+  revert admin changes every twenty minutes. Adopting it would have deleted
+  the policy-file mechanism this branch is built around. It also publishes
+  only `latest`, which is the coarsest float in the bundle.
+- **RAR extraction was never a file-manager problem here.** unpackerr already
+  watches the whole media tree recursively and extracts rar/zip/7z/iso, so
+  any file manager that can write into the tree already gives
+  browser-triggered extraction. The one product that extracts RAR itself,
+  elFinder, has that exact code path as its CVE history — which is the class
+  this project deleted filebrowser's shell-command feature to escape.
+- **Nextcloud's blocker is not weight.** Measured first: the host has 7.8 GB
+  with 863 MB in use and the five containers total ~130 MB, so it would fit.
+  It fails on reading its file list from `oc_filecache` rather than the disk
+  — invisible to qBittorrent's and unpackerr's writes until `occ files:scan`
+  — and on being unable to skip major versions, which would leave reconcile
+  restarting a container it cannot repair.
+
 ### 2026-08-02 — `Q1-13` closed out: live-verified, tagged, exported
 
 Verified on the test host *before* tagging, per the convention that tags
