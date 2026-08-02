@@ -207,12 +207,19 @@ even when working in this repository only.
 
 - There is no CI pipeline yet, and only partial unit-test coverage
   (tracked in `docs/testing.md` / `TODO.md`): `scripts/lint-embedded-scripts.sh`
-  statically lints all six embedded heredoc scripts, and `test/*.bats`
+  statically lints all seven embedded heredoc scripts, and `test/*.bats`
   (run via `bats test/`) unit-tests a growing subset of their pure-logic
-  functions. The baseline checks before proposing any `install.sh` change
-  remain `bash -n install.sh` and `shellcheck install.sh`; also run
-  `./scripts/lint-embedded-scripts.sh` and `bats test/` when the change
-  touches an embedded heredoc script or a function they cover.
+  functions.
+- **`./scripts/check-all.sh` runs all four verification steps in one
+  command** — `bash -n install.sh`, `shellcheck install.sh`, the embedded
+  lint and `bats test/` — and is the normal way to run them. It does not
+  stop at the first failure, and a check whose tool is missing is reported
+  as *doğrulanamadı* with a non-zero exit rather than passing silently.
+  The individual commands still work and are the right thing when
+  iterating on one of them. The baseline before proposing any `install.sh`
+  change remains `bash -n` and `shellcheck`; run the embedded lint and
+  `bats test/` too when the change touches an embedded heredoc script or a
+  function they cover — or just run the wrapper.
 - Do not claim a change "works" without either static verification or the
   user's own confirmation from a real test run — this assistant must never
   execute the script itself (see **Execution Rules**).

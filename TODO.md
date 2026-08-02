@@ -96,6 +96,15 @@ _All High findings resolved — see Completed below._
       mutation changed nothing and that fact is recorded in the test
       (the sysctl regex anchor is redundant with the equality check).
 
+      **Added 2026-08-02: `scripts/check-all.sh`.** Runs all four
+      verification steps in one command — the local substitute for the CI
+      this finding is parked on. Does not stop at the first failure, and
+      reports a missing tool as `DOĞRULANAMADI` with a non-zero exit
+      rather than as a pass. All four failure paths exercised; the
+      instructive one is that a syntax error inside the reconcile heredoc
+      is caught by the embedded lint alone, with `bash -n install.sh`,
+      `shellcheck install.sh` and all 120 bats cases passing on it.
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,

@@ -292,6 +292,33 @@ alone.
   `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,
   `check_compose_runtime` and their neighbours all need real network,
   systemd or Docker). Further additions would be opportunistic.
+- **Also implemented (2026-08-02): `scripts/check-all.sh`**, one command
+  for all four verification steps — `bash -n install.sh`, `shellcheck
+  install.sh`, the embedded-heredoc lint and `bats test/`. This is the
+  local substitute for the CI that will not exist while the repository
+  has no remote (**M7**), and it exists because running four commands by
+  hand is four round trips and an easy place to skip the slow one.
+  - **It does not stop at the first failure.** The point of one command is
+    one complete picture; an early exit puts the operator straight back to
+    running them individually to find out what else is broken.
+  - **A missing tool is reported as `DOĞRULANAMADI` and exits non-zero**,
+    never as a pass. Same reasoning as DD-33's `429` branch: a
+    verification that fails open is worse than one that does not exist,
+    because a green run is what gets trusted. This was not hypothetical —
+    the first run on the Debian target found `shellcheck` absent and
+    correctly refused to call the run clean.
+  - It reports the bats **skip** count, so a green run on the workstation
+    does not read as full coverage: 12 cases self-skip there for non-GNU
+    `stat`, bash 3.2 and a missing GNU `timeout`, and all 120 run for real
+    on the target.
+  - **All four failure paths were exercised, not just the happy one.** A
+    broken `install.sh` (checks 1 and 2 both fail, both reported, no early
+    exit); a syntax error inside the reconcile heredoc (**only** check 3
+    catches it — `bash -n install.sh`, `shellcheck install.sh` and the
+    bats suite all pass, which is the whole reason **H4**'s lint exists);
+    a deliberately broken assertion (check 4 names the failing case); and
+    a stripped `PATH` (three steps `DOĞRULANAMADI`, exit 1). Verified from
+    a different working directory and on both platforms.
 - Longer-term, a small sourceable library file (extracted once, not
   per-test) would remove the need to re-extract function bodies via
   `sed`/`awk` in every test file — a meaningful, low-risk first step

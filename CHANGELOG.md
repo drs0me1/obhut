@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `scripts/check-all.sh`: the four checks in one command
+
+`bash -n install.sh`, `shellcheck install.sh`,
+`scripts/lint-embedded-scripts.sh` and `bats test/` in a single run — the
+local substitute for the CI that will not exist while the repository has
+no remote.
+
+It does not stop at the first failure, because one command is only worth
+having if it gives the complete picture. A check whose tool is missing is
+reported as **doğrulanamadı** and exits non-zero rather than passing
+silently — the same reasoning as the `429` branch in `Q1-10`. The first
+run on the Debian target proved the point by finding `shellcheck` absent
+and refusing to call the run clean. It also reports the bats skip count,
+so a green run on the workstation does not read as full coverage.
+
+All four failure paths were exercised. The most useful one: a syntax
+error planted inside the reconcile heredoc is caught by check 3 alone —
+`bash -n install.sh`, `shellcheck install.sh` and the whole bats suite
+pass on it, which is exactly why the embedded lint exists.
+
 ### 2026-08-02 — unit tests for the last five uncovered reconcile helpers
 
 `port_binding_exists`, `docker_network_tuple`, `record_container_restart`,
