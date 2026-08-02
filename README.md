@@ -429,9 +429,12 @@ and the five from the post-R1.0 whole-file review (**M8**, **M9**,
   `qbittorrent`'s were removed after real usage showed each raise was
   chasing the workload rather than bounding it — an accepted deviation
   documented under **M1** in `SECURITY_REVIEW.md`.
-- **M7**'s testing strategy: Tier 1 (static analysis of all six embedded
-  heredoc scripts) is done; Tier 2 has **57** `bats-core` unit tests
-  across five files with no identified gaps left; Tier 3 has succeeded
+- **M7**'s testing strategy: Tier 1 (static analysis of all seven embedded
+  heredoc scripts) is done; Tier 2 has **120** `bats-core` unit tests
+  across eight files, with every stub-able reconcile function now covered
+  and a guard that fails when a file `install.sh` generates is left out of
+  the canonical bundle; `scripts/check-all.sh` runs all four verification
+  steps in one command. Tier 3 has succeeded
   end-to-end on seven separate live installs, plus a full operational
   validation round (deliberate drift injection into the reconcile loop,
   resource-limit enforcement, real WireGuard/Tailscale-exit-node
@@ -456,7 +459,8 @@ and the five from the post-R1.0 whole-file review (**M8**, **M9**,
 - Installation profiles (**M3**) and the hardcoded firewall ports
   (**L7**) were **closed as won't-do** on 2026-07-28: this installer
   targets a single-purpose, single-operator host built from scratch every
-  time, with all six services in use, so neither problem can arise.
+  time, with every service in the bundle in use, so neither problem can
+  arise.
   [`docs/profiles.md`](docs/profiles.md) is kept as a design note in case
   that ever changes.
 - Consider making the `PartOf` service-coupling behavior configurable,

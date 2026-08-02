@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — documentation resynced against the script
+
+`docs/architecture.md`'s stage table still described `V1-20` at 5305
+lines; `install.sh` is 5678. Stage 4 alone was understated by 348 lines
+and every embedded-script line reference inside it was wrong, including
+reconcile itself — listed as `2439-3905, 1466 lines` where it is
+`2576-4236, 1659`. The whole table was regenerated the way the note under
+it says to, rather than patching the rows that looked wrong; that habit is
+what caused all three drifts now on record.
+
+Also corrected: `README.md` claimed seven embedded scripts were six and
+that Tier 2 had 57 tests across five files (it has 120 across eight), and
+the canonical bundle was still described as state/dnsmasq/Caddy.
+
+Two `quantum`-line reconcile behaviours were documented for the first
+time — the Quantum policy file joining the bundle with a restart-backed
+restore, and the once-per-cycle default-password probe with its `429`
+branch. Both were only in the design decisions until now.
+
 ### 2026-08-02 — `scripts/check-all.sh`: the four checks in one command
 
 `bash -n install.sh`, `shellcheck install.sh`,

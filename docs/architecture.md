@@ -18,23 +18,27 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 656–813 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 814–932 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 933–1282 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1036–1111`), interactive login, exit-node + stateful filtering + netfilter configuration |
-| 3 | 1283–2003 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1392–1936`) and its systemd unit |
-| 4 | 2004–4183 | Data directories, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2358–2399`) and `master-network-reconcile` (`2439–3905`) helper scripts, `master-docker-netfilter-recovery` (`3909–3965`), `master-webdav-serve` (`4057–4125`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4184–4286 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4287–4602 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4410–4442`), then the single atomic publication of the canonical bundle (see DD-14) |
-| 7 | 4603–5305 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 656–833 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 834–952 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 953–1302 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1056–1131`), interactive login, exit-node + stateful filtering + netfilter configuration |
+| 3 | 1303–2023 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1412–1956`) and its systemd unit |
+| 4 | 2024–4531 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2495–2536`) and `master-network-reconcile` (`2576–4236`) helper scripts, `master-docker-netfilter-recovery` (`4240–4296`), `master-webdav-serve` (`4388–4473`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4532–4634 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4635–4962 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4758–4790`), then the single atomic publication of the canonical bundle — nine entries since `Q1-9` (see DD-14, DD-32) |
+| 7 | 4963–5678 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5305 lines — `V1-20`, 2026-07-31. They
-drift with every change; regenerate with `grep -n 'progress_stage_begin [0-7] '`
-rather than trusting them after a batch of edits. **This has now drifted
-twice**: 18 lines across stages 5–7 before `V1-11` caught it, and again in
-`V1-15`, where a block added above stage 1 shifted stages 0–4 by 14 lines
-while only the tail of the table was refreshed. Regenerating the *whole*
-table is the only reliable move; patching the rows you think changed is
-what caused both.)
+(Line numbers as of `install.sh` 5678 lines — `Q1-11`/`R2.2`, 2026-08-02.
+They drift with every change; regenerate with
+`grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
+batch of edits. **This has now drifted three times**: 18 lines across
+stages 5–7 before `V1-11` caught it; again in `V1-15`, where a block added
+above stage 1 shifted stages 0–4 by 14 lines while only the tail of the
+table was refreshed; and again across the whole `quantum` line, where the
+table still described `V1-20` at 5305 lines while the file had grown to
+5678 — stage 4 alone was understated by 348 lines and every embedded-script
+reference in it was wrong. Regenerating the *whole* table is the only
+reliable move; patching the rows you think changed is what caused all
+three.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -160,7 +164,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2439-3905`, 1466
+`master-network-reconcile` (generated at `install.sh:2576-4236`, 1659
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -179,8 +183,9 @@ on the target at 1% bytes / 100% inodes, where the byte check reports
 healthy while every new file gets `ENOSPC`), Tailscale preferences and netfilter backbone, the dedicated
 firewall chains (via `docker-tailscale-fw --check`), Docker's own
 DNAT/FORWARD rules, Compose container health and port bindings, the
-canonical config-file bundle (state/dnsmasq/Caddy), **the host WebDAV
-service** (added `V1-3`, unconditional — unlike Caddy/dnsmasq it does not
+canonical config-file bundle (state, `compose.yaml`, the FileBrowser
+Quantum policy file, dnsmasq and Caddy — nine entries since `Q1-9`), **the
+host WebDAV service** (added `V1-3`, unconditional — unlike Caddy/dnsmasq it does not
 depend on the local-DNS option), and — if local DNS is enabled — live DNS
 and Caddy HTTP responses. WebDAV is checked on two independent signals,
 the same shape as UDP GRO's: whether `master-webdav.service` is active,
@@ -205,6 +210,31 @@ single execution path. Both checks sit outside
 `all_critical_state_healthy()` and do not affect the exit code, because
 UDP GRO is a throughput optimization rather than a connectivity
 precondition — see DD-11.
+
+Two checks are specific to the `quantum` line and were added after the
+`Q1-8` review.
+
+**The FileBrowser Quantum policy file** (`/etc/master-stack/filebrowser.yaml`)
+is the ninth bundle entry (`Q1-9`, DD-32). Unlike `compose.yaml`'s
+report-only treatment it is *restored* from the canonical copy and
+followed by a budgeted container restart, because Quantum reads its config
+only at startup and nothing from outside distinguishes "drifted file
+already loaded" from "not yet loaded". Before this, editing the file moved
+no signal at all — measured `config=0`, `rc=0` — and the change went live
+on the next restart, which reconcile itself performs as routine repair.
+
+**The default filebrowser password** is probed once per cycle by
+`report_default_filebrowser_password()` (DD-30, revised by DD-33). It is
+reported, never counted: `admin`/`admin` on a fresh install is the
+expected state, and failing on it would train people to ignore the exit
+code. What makes it worth a check is that the state can *return* after
+install — deleting the volume makes Quantum re-run `quickSetup()` — and no
+other signal notices. The probe lives outside `check_compose_runtime`
+because that function is called up to four times per cycle, and the login
+endpoint is rate-limited **per source IP, not per credential** (6 failures
+→ `429`, after which the correct password also returns `429`). A `429` is
+reported as *could not be determined*, explicitly not as "the password was
+changed".
 
 A wg-easy container still sitting on its `/setup` screen is reported
 (`UYARI`) but is deliberately *not* a failure: it sets `WG_SETUP_PENDING`,
