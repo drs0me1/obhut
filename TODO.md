@@ -83,6 +83,19 @@ _All High findings resolved — see Completed below._
       units) showed them redundant, and the allowlist records the
       measurement.
 
+      **Added 2026-08-02: `test/reconcile_probes.bats` (36 cases,
+      84 → 120).** Closes the second tier listed below as "stub-able but
+      with milder failure modes, worth doing, not urgent":
+      `port_binding_exists`, `docker_network_tuple`,
+      `record_container_restart`, `forwarding_config_ok`, `gro_flags_ok`.
+      Four of the five parse external output, where a wrong answer is
+      indistinguishable from a right one on a healthy host.
+      `record_container_restart` is tested against
+      `restart_budget_available` so the stamp filename/format coupling
+      that DD-21's cooldown rests on is pinned. Mutation-verified; one
+      mutation changed nothing and that fact is recorded in the test
+      (the sysctl regex anchor is redundant with the equality check).
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,

@@ -2,8 +2,8 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (84
-> unit cases across seven files, all passing with zero skips on the Debian
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (120
+> unit cases across eight files, all passing with zero skips on the Debian
 > target — several self-skip on the macOS workstation for non-GNU `stat`,
 > bash 3.2 and a missing GNU `timeout`); Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
@@ -245,11 +245,53 @@ alone.
     the measurement. This is the suite's second effect and arguably the
     more useful one: an entry cannot be written without deciding, and a
     decision that has to be written down tends to get checked.
-- **Remaining in Tier 2:** the second tier of stub-able reconcile
-  functions (`record_container_restart`, `gro_flags_ok`,
-  `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)
-  has no coverage at all. Milder failure modes than the covered set;
-  worth doing, not urgent.
+- **Also implemented (2026-08-02):** `test/reconcile_probes.bats` closes
+  the second tier this document had listed as "stub-able but with milder
+  failure modes" — `port_binding_exists`, `docker_network_tuple`,
+  `record_container_restart`, `forwarding_config_ok` and `gro_flags_ok`.
+  36 cases, no skips.
+  - **Why they were worth doing despite the mild failure modes:** four of
+    the five reach the outside world through a *parsing* step, and the
+    healthy path looks identical whether the parse is right or wrong, so a
+    live smoke test cannot distinguish them. `grep -Fx` versus `grep -F`
+    decides whether a substring can satisfy a port check; `head -n 1`
+    decides which network a multi-homed container reports; an awk program
+    decides what counts as a configured sysctl.
+  - `record_container_restart` is tested **against**
+    `restart_budget_available` rather than alone. Nothing else pins that
+    the writer and the reader agree on the stamp's filename and format,
+    and DD-21's cooldown — the only thing between a repeatedly-failing
+    repair and a restart loop — depends on exactly that. Renaming the
+    stamp in a scratch copy breaks three cases, the coupling one included.
+  - `forwarding_config_ok` hardcodes its path, so `AWK_BIN` is replaced
+    with a wrapper that redirects the file operand to a fixture and runs
+    the **real awk program**, which is the logic under test. `gro_flags_ok`
+    and the two Docker helpers use stub binaries.
+  - **A stub-fidelity bug was found and fixed while writing these**, and
+    it is the kind that makes a suite worse than useless. The first stub
+    printed error text to stdout; the real `docker` and `ethtool` print
+    diagnostics to stderr, which every call site discards with
+    `2>/dev/null`. The failure-path cases were being fed text the real
+    program never sends. There are now two stub helpers separated by
+    stream.
+  - **Mutation-verified on scratch copies.** `grep -Fx`→`grep -F`,
+    dropping `head -n 1`, `mv -f`→`cp`, renaming the stamp file, deleting
+    the `[fixed]` branch and deleting the whitespace `gsub` each break
+    exactly the intended case(s) and nothing else.
+  - **One mutation changed nothing, and that is recorded in the test.**
+    Removing the start-of-line anchor from `forwarding_config_ok`'s regex
+    left all 36 cases passing. The unanchored pattern does match
+    `#net.ipv4.ip_forward=1`, but `gsub` strips whitespace and not the
+    `#`, so the line reaches the comparison with its prefix intact and the
+    string equality rejects it. The anchor is redundant with the equality
+    check rather than load-bearing — the opposite of what the code's shape
+    suggests, which is why it is written down next to the case.
+- **Remaining in Tier 2:** nothing specific identified. Of the 35
+  functions in the reconcile heredoc the uncovered remainder is
+  integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
+  `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,
+  `check_compose_runtime` and their neighbours all need real network,
+  systemd or Docker). Further additions would be opportunistic.
 - Longer-term, a small sourceable library file (extracted once, not
   per-test) would remove the need to re-extract function bodies via
   `sed`/`awk` in every test file — a meaningful, low-risk first step

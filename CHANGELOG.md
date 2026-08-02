@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — unit tests for the last five uncovered reconcile helpers
+
+`port_binding_exists`, `docker_network_tuple`, `record_container_restart`,
+`forwarding_config_ok` and `gro_flags_ok` had no coverage at all. Four of
+the five reach the outside world through a parsing step, and a parse that
+is subtly wrong looks exactly like one that is right when the system is
+healthy — `grep -Fx` versus `grep -F` decides whether a substring can
+satisfy a port check, `head -n 1` decides which network a multi-homed
+container reports, an awk program decides what counts as a configured
+sysctl. None of that is visible to a live smoke test.
+
+`record_container_restart` is tested against `restart_budget_available`
+rather than alone, because nothing else pins that the writer and the
+reader agree on the stamp's filename and format — and the restart
+cooldown (DD-21) is the only thing between a repeatedly-failing repair and
+a restart loop.
+
+36 cases, mutation-verified. One mutation changed nothing and is recorded
+in the test: the start-of-line anchor in the sysctl regex turns out to be
+redundant with the string equality that follows it, not load-bearing as
+its shape suggests. A stub-fidelity bug was also found and fixed — the
+first stubs printed errors to stdout where the real `docker` and `ethtool`
+use stderr, which every call site discards.
+
+84 → 120 cases, no skips on the Debian target. No change to `install.sh`.
+
 ### 2026-08-02 — a test for the gap that hid the Quantum policy file
 
 `Q1-9` fixed one file being outside the canonical bundle. It did not fix
