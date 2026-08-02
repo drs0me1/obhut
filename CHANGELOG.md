@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — FileBrowser policy repair survives directory mounts and cooldowns (`Q1-19`, DD-40, M13)
+
+The reconcile path copied canonical `filebrowser.yaml` directly to its live
+path before checking the restart budget. Two real recovery states broke that
+order. If Docker had recreated a missing bind source as a directory, GNU
+`install` successfully copied the file *inside* the directory and reported
+success; restarting the existing container retained its directory mount. If
+the path was a normal drifted file but the restart cooldown was active, the
+disk copy became canonical while Quantum kept the old startup-only policy in
+memory. The next cycle saw no file drift and never retried the restart.
+
+Q1-19 checks the budget before mutation and keeps a root-only pending marker
+until both container health and HTTP respond. Canonical content is staged in
+the target filesystem and atomically renamed. A directory, symlink or other
+non-regular bind source causes only the `filebrowser` container to be removed
+and `master-compose.service` to recreate it; the `filebrowser_data` named
+volume is never removed, so the database, users and index survive. Runtime
+targets are then remeasured before generic container recovery, avoiding a
+second restart and the cooldown collision.
+
+The full installer update path now also compares generated policy content and
+metadata. A change removes/recreates only FileBrowser after image pull and
+unit verification; an identical healthy container is left untouched. Generic
+runtime recovery also recreates an unhealthy FileBrowser, covering the legacy
+state where an earlier swallowed removal failure left a stale directory mount
+behind a now-regular host path. This closes the separate case where a
+successful `install.sh` re-run could publish a new policy file without proving
+the already-running container had loaded it.
+Eleven regression cases cover normal files, Docker-created directories, absent
+containers, daemon/removal failures, action selection, repair ordering and
+the installer/runtime recreation couplings. The Bats suite grows 136 → 147.
+
 ### 2026-08-02 — deleted Tailscale nodes are classified reliably (`Q1-18`, DD-39, M12)
 
 When a stored Tailscale profile stayed offline for 60 seconds, Stage 2

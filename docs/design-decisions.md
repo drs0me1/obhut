@@ -1968,3 +1968,43 @@ fix is to preserve the classifier and make its transport correct. The old
 and new forms were run against one producer with an early match plus 6,000
 tail lines: rc 141 versus rc 0. Dedicated tests also cover no match and a
 producer that genuinely fails after emitting a matching line.
+
+### DD-40: FileBrowser policy replacement and activation are one retryable operation (2026-08-02)
+
+Quantum reads `filebrowser.yaml` only at process startup. Therefore “the
+live file equals the canonical file” is necessary but not sufficient: the
+running process must also have restarted after that equality was established.
+The earlier reconcile order violated this invariant by copying first and
+checking the 15-minute restart cooldown second. If the cooldown refused the
+restart, the next cycle saw equal files and lost the only evidence that the
+process still held the old policy.
+
+Q1-19 checks the budget before mutation and creates a root-only pending marker
+under `/run/master-network-reconcile` before publishing the staged file. The
+marker is part of `quantum_config_ok()` and is removed only after Docker health
+and the direct HTTP probe both pass. Thus a failed restart, slow healthcheck or
+Compose failure remains visible on the next run even though the on-disk file
+is already correct. `/run` is intentionally volatile: a reboot clears the
+marker, but that same reboot necessarily starts the container against the
+current host path, satisfying the activation half of the invariant.
+
+The second state is structural. Docker Compose can create a missing bind-mount
+source as a directory. Copying a file to that path succeeds by placing the file
+inside it, and restarting the already-created container preserves the wrong
+mount contract. For a directory, symlink or other non-regular source, repair
+therefore stages the canonical file first, verifies Docker is reachable,
+removes only the `filebrowser` container, replaces the host path atomically,
+and runs `master-compose.service` to recreate the container. It never removes
+the `filebrowser_data` named volume, which is where the database, users, index
+and cache live.
+
+The full installer follows the same activation rule. Stage 4 compares both
+content and metadata before replacing the generated policy; Stage 5 removes
+only FileBrowser when a change was recorded, after image pull and unit
+verification, and the normal Compose start recreates it. An unhealthy
+FileBrowser is handled the same way, which repairs the legacy state where an
+earlier swallowed removal failure left a stale directory mount behind a
+now-regular host path. An identical policy on a healthy container is left
+untouched. This is not a general “force recreate on every update” policy: the
+extra downtime is scoped to the one service whose startup-only host policy
+changed or whose runtime has already failed.

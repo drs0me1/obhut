@@ -2,10 +2,10 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (120
-> unit cases across eight files, all passing with zero skips on the Debian
-> target — several self-skip on the macOS workstation for non-GNU `stat`,
-> bash 3.2 and a missing GNU `timeout`); Tier 3 had seven real, manual
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (147
+> unit cases across eleven files; 134 execute and 12 self-skip on the macOS
+> workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
+> Q1-19's eleven new cases have not yet been run on the Debian target); Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
@@ -286,7 +286,16 @@ alone.
     string equality rejects it. The anchor is redundant with the equality
     check rather than load-bearing — the opposite of what the code's shape
     suggests, which is why it is written down next to the case.
-- **Remaining in Tier 2:** nothing specific identified. Of the 35
+- **Also implemented:** `test/quantum_config_repair.bats` covers the three
+  helpers behind Q1-19's FileBrowser policy transaction plus its ordering
+  couplings. Eleven cases exercise regular-file replacement, Docker-created
+  directory normalization, present/absent containers, daemon/removal
+  failures, direct restart versus Compose recreation, pending-marker order,
+  the full installer's recreate-on-policy-change path, and generic recreation
+  of an unhealthy legacy FileBrowser mount. No real Docker, systemd or managed
+  host path is touched; command stand-ins and temporary paths exercise the
+  extracted helper bodies.
+- **Remaining in Tier 2:** nothing specific identified. Of the 42
   functions in the reconcile heredoc the uncovered remainder is
   integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
   `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,
@@ -309,8 +318,8 @@ alone.
     correctly refused to call the run clean.
   - It reports the bats **skip** count, so a green run on the workstation
     does not read as full coverage: 12 cases self-skip there for non-GNU
-    `stat`, bash 3.2 and a missing GNU `timeout`, and all 120 run for real
-    on the target.
+    `stat`, bash 3.2 and a missing GNU `timeout`, and all 120 cases present
+    when this runner was introduced ran for real on the target.
   - **All four failure paths were exercised, not just the happy one.** A
     broken `install.sh` (checks 1 and 2 both fail, both reported, no early
     exit); a syntax error inside the reconcile heredoc (**only** check 3

@@ -430,8 +430,8 @@ and the five from the post-R1.0 whole-file review (**M8**, **M9**,
   chasing the workload rather than bounding it — an accepted deviation
   documented under **M1** in `SECURITY_REVIEW.md`.
 - **M7**'s testing strategy: Tier 1 (static analysis of all seven embedded
-  heredoc scripts) is done; Tier 2 has **136** `bats-core` unit tests
-  across ten files, with every stub-able reconcile function now covered
+  heredoc scripts) is done; Tier 2 has **147** `bats-core` unit tests
+  across eleven files, with every stub-able reconcile function now covered
   and a guard that fails when a file `install.sh` generates is left out of
   the canonical bundle; `scripts/check-all.sh` runs all four verification
   steps in one command. Tier 3 has succeeded

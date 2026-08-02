@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-18"
+MASTER_SETUP_VERSION="2026.08.02-Q1-19"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2522,36 +2522,32 @@ auth:
 QUANTUM_YAML
 chown root:root "$QUANTUM_CONFIG_TMP"
 chmod 0644 "$QUANTUM_CONFIG_TMP"
-# Hedef DİZİN olabilir ve bu, yeniden çalıştırmanın kendini onaramadığı tek
-# durumdu (2026-08-01'de ölçüldü). Zincir şöyle işliyor: politika dosyası
-# herhangi bir sebeple silinirse, compose bir sonraki sefer onu bind mount
-# kaynağı olarak bulamaz ve Docker eksik kaynağı DİZİN olarak yaratır.
-# Quantum o dizini config sanıp "Sources required" ile validation hatası
-# verir ve servis vermez — reconcile bunu compose_runtime=1 ile yakalar,
-# yani sessiz değildir. Ama onarılamaz: `mv -f dosya dizin/` HATA VERMEZ,
-# dosyayı sessizce dizinin içine koyar. Yani betiği yeniden çalıştırmak
-# bozukluğu düzeltmez, sadece dizinin içine bir dosya daha biriktirir.
-#
-# Bu, "çare yeniden çalıştırmaktır" ilkesinin kırıldığı tek noktaydı.
-# Yazmadan önce hedefi normalize etmek yeterli.
-if [[ -d "$QUANTUM_CONFIG_FILE" ]]; then
-    echo "NOT: ${QUANTUM_CONFIG_FILE} dizin olarak bulundu (Docker'ın eksik" >&2
-    echo "bind mount kaynağı için yarattığı dizin); temizlenip dosya olarak" >&2
-    echo "yeniden yazılıyor." >&2
-    rm -rf "$QUANTUM_CONFIG_FILE"
-    # Host dosyasını düzeltmek YETMİYOR: container bir kez dizin mount'uyla
-    # yaratıldıysa mount spec'i onda saklı kalır ve kaynak dosyaya dönünce
-    # runc "not a directory: Are you trying to mount a directory onto a
-    # file" ile reddeder — container restart döngüsüne girer. İlk guard
-    # sürümü tam bu yüzden yetersiz kaldı ve kurulum aşama 5'te düştü
-    # (2026-08-01, ölçüldü). Container'ı kaldırmak gerekiyor ki compose
-    # onu temiz mount spec'iyle yeniden yaratsın.
-    #
-    # Veri kaybı yok: kalıcı her şey filebrowser_data volume'unda ve
-    # volume container'la birlikte silinmiyor.
-    docker rm -f filebrowser >/dev/null 2>&1 || true
+# Değişiklik sinyali Aşama 5'e taşınır. Yalnız dosyayı atomik olarak
+# değiştirmek çalışan container'ın config'i yeniden okumasını sağlamaz;
+# Quantum config'i sadece açılışta okur. Dahası hedef daha önce Docker'ın
+# yarattığı bir DİZİN ise container'ın saklı mount spec'i de yeniden
+# yaratılmadan düzelmez. Bu iki durum aynı güvenli sonuca bağlanır:
+# image pull ve unit doğrulaması bittikten sonra yalnız filebrowser
+# container'ı kaldırılır, Compose onu named volume'u koruyarak yeniden
+# yaratır.
+QUANTUM_CONFIG_RECREATE_REQUIRED=0
+if [[ -f "$QUANTUM_CONFIG_FILE" &&
+      ! -L "$QUANTUM_CONFIG_FILE" ]] &&
+   cmp -s "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE" &&
+   [[ "$(stat -c '%u:%g:%a' "$QUANTUM_CONFIG_FILE" 2>/dev/null || true)" == "0:0:644" ]]; then
+    # Aynı politika ve metadata için inode'u gereksiz yere değiştirme.
+    rm -f "$QUANTUM_CONFIG_TMP"
+else
+    QUANTUM_CONFIG_RECREATE_REQUIRED=1
+    if [[ -L "$QUANTUM_CONFIG_FILE" ||
+          ( -e "$QUANTUM_CONFIG_FILE" &&
+            ! -f "$QUANTUM_CONFIG_FILE" ) ]]; then
+        echo "NOT: ${QUANTUM_CONFIG_FILE} normal dosya değil; temizlenip" >&2
+        echo "dosya olarak yeniden yazılacak." >&2
+        rm -rf -- "$QUANTUM_CONFIG_FILE"
+    fi
+    mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 fi
-mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
 # Canonical bundle tek bir atomik generation hâlinde — state.env,
@@ -2995,6 +2991,7 @@ select_canonical_dir
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
+QUANTUM_RESTART_PENDING_FILE="$RESTART_STATE_DIR/filebrowser-config.pending"
 # İndirme dosya sisteminin uyarı eşiği. Hem tespit hem de onarım sonrası
 # postcondition aynı değeri kullanır; daha önce ikisine de elle yazılıyordu.
 DISK_USAGE_THRESHOLD_PCT=90
@@ -3869,7 +3866,66 @@ compose_file_ok() {
 quantum_config_ok() {
     "$CMP_BIN" -s \
         "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE" &&
-        owned_file_ok "$QUANTUM_CONFIG_FILE" 0 0 644
+        owned_file_ok "$QUANTUM_CONFIG_FILE" 0 0 644 &&
+        [[ ! -e "$QUANTUM_RESTART_PENDING_FILE" ]]
+}
+
+# Quantum politika dosyasını önce aynı dosya sistemindeki bir staging
+# dosyasına doğrulanmış metadata ile hazırlar, sonra tek rename ile yayınlar.
+# Hedef normal dosya değilse yalnız host yolunu düzeltmek yetmez: Docker
+# container'ı ilk yaratıldığı bind-mount tipini taşır. Container bu yüzden
+# kaldırılır ve çağıran taraf master-compose.service ile yeniden yaratır.
+# Named volume silinmediğinden database, kullanıcılar ve indeks korunur.
+remove_quantum_container_if_present() {
+    if "$DOCKER_BIN" container inspect filebrowser >/dev/null 2>&1; then
+        "$DOCKER_BIN" rm -f filebrowser >/dev/null 2>&1
+    else
+        # Inspect hatasının gerçekten "container yok" olduğunu doğrula;
+        # daemon arızasını yokluk sanıp başarı dönme.
+        "$DOCKER_BIN" info >/dev/null 2>&1
+    fi
+}
+
+restore_quantum_config() {
+    local target_parent="" tmp=""
+    QUANTUM_CONTAINER_RECREATE_REQUIRED=0
+    target_parent="${QUANTUM_CONFIG_FILE%/*}"
+    tmp="$(mktemp "$target_parent/.filebrowser-reconcile.XXXXXX")" ||
+        return 1
+
+    if ! "$INSTALL_BIN" -m 0644 -o root -g root \
+            "$CANONICAL_DIR/filebrowser.yaml" "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    if [[ -L "$QUANTUM_CONFIG_FILE" ||
+          ( -e "$QUANTUM_CONFIG_FILE" &&
+            ! -f "$QUANTUM_CONFIG_FILE" ) ]]; then
+        if ! remove_quantum_container_if_present; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        if ! rm -rf -- "$QUANTUM_CONFIG_FILE"; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        QUANTUM_CONTAINER_RECREATE_REQUIRED=1
+    fi
+
+    if ! mv -f -- "$tmp" "$QUANTUM_CONFIG_FILE"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+}
+
+restart_quantum_after_config_restore() {
+    if [[ "$QUANTUM_CONTAINER_RECREATE_REQUIRED" -eq 1 ]] ||
+       ! "$DOCKER_BIN" container inspect filebrowser >/dev/null 2>&1; then
+        "$SYSTEMCTL_BIN" restart master-compose.service
+    else
+        "$DOCKER_BIN" restart filebrowser >/dev/null 2>&1
+    fi
 }
 
 dns_config_files_ok() {
@@ -4283,6 +4339,7 @@ fi
 
 RECOVERY_FAILED=0
 CORE_RECOVERY_SCHEDULED=0
+FILEBROWSER_RUNTIME_RECREATE_REQUIRED=0
 declare -a ELIGIBLE_RESTART_TARGETS=()
 
 if [[ "$TAILSCALE_OFFLINE" -eq 1 ]]; then
@@ -4380,6 +4437,78 @@ if [[ "$STACK_RESTART_REQUIRED" -eq 1 ]]; then
     fi
 fi
 
+# Politika dosyası geri yüklenir ve container yenilenir. Bu blok genel
+# container onarımından ÖNCE çalışır: hedef Docker tarafından dizin olarak
+# yaratılmışsa genel `docker restart filebrowser` hem sorunu çözemez hem de
+# 15 dakikalık bütçeyi tüketerek doğru yeniden-yaratma yolunu kilitlerdi.
+#
+# Bütçe dosyaya dokunmadan önce denetlenir. Eski sıra önce dosyayı canonical
+# içeriğe çeviriyor, sonra cooldown nedeniyle restart edemiyordu; bir sonraki
+# tur artık dosya sapması görmediği için Quantum eski politikayı süresiz
+# çalıştırabiliyordu. Pending işareti de restart başladıktan sonraki her hata
+# için aynı sinyali korur; /run reboot'ta temizlenir, reboot zaten container'ı
+# yeni config ile başlatır.
+if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
+    if ! restart_budget_available filebrowser; then
+        echo "HATA: filebrowser politika onarımı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; dosya ve yürürlükteki politika birlikte korunup sonraki tura bırakıldı." >&2
+        RECOVERY_FAILED=1
+    elif ! "$INSTALL_BIN" -d -m 0700 -o root -g root \
+            "$RESTART_STATE_DIR" ||
+         ! (umask 077; : >"$QUANTUM_RESTART_PENDING_FILE"); then
+        echo "HATA: filebrowser politika onarımı pending işareti yazılamadı." >&2
+        RECOVERY_FAILED=1
+    elif ! restore_quantum_config; then
+        echo "HATA: Canonical filebrowser politika dosyası güvenli biçimde geri yüklenemedi." >&2
+        RECOVERY_FAILED=1
+    else
+        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
+        # açılışta okur. Normal dosya sapmasında restart, dizin/symlink gibi
+        # yapısal sapmada veya eksik container'da Compose ile recreate.
+        record_container_restart filebrowser
+        if restart_quantum_after_config_restore; then
+            QUANTUM_CONFIG_REPAIRED=0
+            for _ in $(seq 1 60); do
+                quantum_health="$(
+                    "$DOCKER_BIN" inspect -f \
+                        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                        filebrowser 2>/dev/null || true
+                )"
+                if [[ "$quantum_health" == "healthy" ||
+                      "$quantum_health" == "none" ]] &&
+                   http_endpoint_responds http://127.0.0.1:7113/; then
+                    QUANTUM_CONFIG_REPAIRED=1
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "$QUANTUM_CONFIG_REPAIRED" -ne 1 ]]; then
+                echo "HATA: filebrowser politika yenilemesinden sonra yanıt vermedi." >&2
+                RECOVERY_FAILED=1
+            elif ! rm -f -- "$QUANTUM_RESTART_PENDING_FILE"; then
+                echo "HATA: filebrowser politika onarımı pending işareti temizlenemedi." >&2
+                RECOVERY_FAILED=1
+            else
+                # İlk tespitte filebrowser başka runtime sapmalarıyla da
+                # işaretlenmiş olabilir. Başarılı restart/recreate sonrası
+                # hedef listesini yenile; aksi hâlde aşağıdaki genel blok
+                # aynı container'ı ikinci kez restart etmeye çalışır.
+                QUANTUM_CONFIG_DRIFTED=0
+                COMPOSE_RUNTIME_DRIFTED=0
+                check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
+                COMPOSE_STATE="$(
+                    "$SYSTEMCTL_BIN" is-active master-compose.service \
+                        2>/dev/null || true
+                )"
+                COMPOSE_INACTIVE=0
+                [[ "$COMPOSE_STATE" == "active" ]] || COMPOSE_INACTIVE=1
+            fi
+        else
+            echo "HATA: filebrowser politika değişikliği için yeniden başlatılamadı/yaratılamadı." >&2
+            RECOVERY_FAILED=1
+        fi
+    fi
+fi
+
 if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
     for restart_target in "${COMPOSE_RESTART_TARGETS[@]:-}"; do
         if [[ "$restart_target" == "wg-easy" &&
@@ -4388,7 +4517,16 @@ if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
             continue
         fi
         if restart_budget_available "$restart_target"; then
-            ELIGIBLE_RESTART_TARGETS+=("$restart_target")
+            if [[ "$restart_target" == "filebrowser" ]]; then
+                # Eski Q1-18 ve öncesinden, host yolu artık normal dosya
+                # olsa bile container'ın saklı mount spec'i dizin kalmış
+                # olabilir (`docker rm ... || true` hatayı yutuyordu).
+                # Restart bunu düzeltemez; named volume'u koruyan recreate
+                # hem bu geçiş durumunu hem sıradan runtime arızasını çözer.
+                FILEBROWSER_RUNTIME_RECREATE_REQUIRED=1
+            else
+                ELIGIBLE_RESTART_TARGETS+=("$restart_target")
+            fi
         else
             echo "HATA: $restart_target otomatik restart bütçesinde; $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown dolmadan yeniden başlatılmadı." >&2
             RECOVERY_FAILED=1
@@ -4408,6 +4546,14 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
             done
         else
             echo "HATA: Hedef container restart işlemi başarısız." >&2
+            RECOVERY_FAILED=1
+        fi
+    fi
+    if [[ "$FILEBROWSER_RUNTIME_RECREATE_REQUIRED" -eq 1 ]]; then
+        if remove_quantum_container_if_present; then
+            record_container_restart filebrowser
+        else
+            echo "HATA: Sağlıksız filebrowser container'ı yeniden yaratılmak üzere kaldırılamadı." >&2
             RECOVERY_FAILED=1
         fi
     fi
@@ -4462,71 +4608,6 @@ if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
         RECOVERY_FAILED=1
     else
         "$SYSTEMCTL_BIN" daemon-reload
-    fi
-fi
-
-# Politika dosyası geri yüklenir ve container yenilenir.
-#
-# CANONICAL_CONFIG_INVALID kapısı burada BİLİNÇLİ olarak yok: o kapı
-# dnsmasq/Caddy içindir, çünkü geçersiz bir config'i geri yüklemek çalışan
-# daemon'u öldürürdü. Buradaki kaynak kurulumun kendi ürettiği ve manifest
-# hash'iyle doğrulanmış kopya — canonical_bundle_ok bu noktadan çok önce
-# zaten geçmiş durumda.
-if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
-    if ! "$INSTALL_BIN" -m 0644 -o root -g root \
-            "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE"; then
-        echo "HATA: Canonical filebrowser politika dosyası geri yüklenemedi." >&2
-        RECOVERY_FAILED=1
-    elif restart_budget_available filebrowser; then
-        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
-        # açılışta okuduğu için sapmış politika çoktan yüklenmiş olabilir ve
-        # bunu dışarıdan ayırt etmenin bir yolu yok. Garanti edilmek istenen
-        # şey "yürürlükteki politika canonical kopyayla aynı"; onu veren tek
-        # işlem restart. Bütçe container restart'larıyla ortak, yani sürekli
-        # yeniden yazılan bir dosya her periyotta restart döngüsü üretmez.
-        record_container_restart filebrowser
-        if "$DOCKER_BIN" restart filebrowser >/dev/null 2>&1; then
-            # Restart'tan hemen sonraki postcondition'a düşmemek için
-            # beklenir. Aksi hâlde BAŞARILI bir onarım aşağıdaki
-            # check_compose_runtime'da düşer ve reconcile düzelttiği şey
-            # için rc=1 raporlar — V1-11'in sınıfı.
-            #
-            # Beklenen iki sinyal, check_compose_runtime'ın filebrowser'a
-            # uyguladığı iki sinyalin AYNISI olmak zorunda; yalnız HTTP'yi
-            # beklemek yetmiyor. 2026-08-02'de ölçüldü: Quantum imajı kendi
-            # HEALTHCHECK'ini taşıyor (start_period 10s) ve restart sonrası
-            # HTTP t+2s'te 200 dönerken sağlık t+5s'te healthy oluyor —
-            # yalnız HTTP bekleyen ilk sürüm tam o aralıkta çıkıp
-            # postcondition'ı "starting" hâlinde yakalıyordu.
-            #
-            # 60 saniye, imajın 30 saniyelik healthcheck aralığının bir
-            # turunu kaçırma ihtimaline pay bırakır.
-            QUANTUM_CONFIG_REPAIRED=0
-            for _ in $(seq 1 60); do
-                quantum_health="$(
-                    "$DOCKER_BIN" inspect -f \
-                        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-                        filebrowser 2>/dev/null || true
-                )"
-                if [[ "$quantum_health" == "healthy" ||
-                      "$quantum_health" == "none" ]] &&
-                   http_endpoint_responds http://127.0.0.1:7113/; then
-                    QUANTUM_CONFIG_REPAIRED=1
-                    break
-                fi
-                sleep 1
-            done
-            if [[ "$QUANTUM_CONFIG_REPAIRED" -ne 1 ]]; then
-                echo "HATA: filebrowser politika yenilemesinden sonra yanıt vermedi." >&2
-                RECOVERY_FAILED=1
-            fi
-        else
-            echo "HATA: filebrowser politika değişikliği için yeniden başlatılamadı." >&2
-            RECOVERY_FAILED=1
-        fi
-    else
-        echo "HATA: filebrowser politika dosyası geri yüklendi fakat container restart'ı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; yürürlükteki politika hâlâ sapmış olabilir." >&2
-        RECOVERY_FAILED=1
     fi
 fi
 
@@ -4960,6 +5041,33 @@ systemctl enable master-compose.service
 systemctl enable master-webdav.service
 
 progress_stage_note 75 "Firewall uygulanıp Compose stack başlatılıyor"
+# Politika içeriği/metadata değiştiyse veya hedef normal dosya değilse
+# mevcut filebrowser container'ı eski bind mount'u taşımaya devam edemez.
+# Pull ve unit doğrulaması bu noktada tamamlandı; yalnız container silinir,
+# named volume DEĞİL. Önceki sürümün yuttuğu bir `docker rm` hatasından
+# kalan, host yolu doğru olsa da eski dizin mount'u taşıyan container da
+# running/health sinyaliyle bu yola girer. Aşağıdaki Compose start aynı
+# isimle ve yeni dosya mount'uyla yeniden yaratır. Taze kurulumda container
+# zaten yoktur.
+if docker container inspect filebrowser >/dev/null 2>&1; then
+    QUANTUM_EXISTING_RUNNING="$(
+        docker inspect -f '{{.State.Running}}' filebrowser 2>/dev/null || true
+    )"
+    QUANTUM_EXISTING_HEALTH="$(
+        docker inspect -f \
+            '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            filebrowser 2>/dev/null || true
+    )"
+    if [[ "$QUANTUM_EXISTING_RUNNING" != "true" ||
+          ( "$QUANTUM_EXISTING_HEALTH" != "healthy" &&
+            "$QUANTUM_EXISTING_HEALTH" != "none" ) ]]; then
+        QUANTUM_CONFIG_RECREATE_REQUIRED=1
+    fi
+    if [[ "$QUANTUM_CONFIG_RECREATE_REQUIRED" -eq 1 ]]; then
+        systemctl stop master-compose.service
+        docker rm -f filebrowser >/dev/null
+    fi
+fi
 # Re-run: daemon.json değiştiyse Docker restart'ı buraya, tüm helper/unit ve
 # compose dosyaları yazılıp daemon-reload yapıldıktan sonraya ertelendi.
 # Böylece PartOf/Wants ile tetiklenen fw ve compose unit'leri eski değil,

@@ -19,7 +19,8 @@ retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
 `CLAUDE.md`).
 
-The 2026-08-02 R2.4 line-by-line review added **H8**, **H9** and **M12**. H8 found
+The 2026-08-02 R2.4 line-by-line review added **H8**, **H9**, **M12** and
+**M13**. H8 found
 that the canonical bundle was described as atomic although only its
 manifest rename was atomic; Q1-16 resolves it with verified generation
 directories and an atomic `current` pointer (DD-14). H9 found that Stage
@@ -28,7 +29,11 @@ services load; Q1-17 snapshots and restores all six managed paths until
 the canonical pointer commit (DD-38). M12 found a second live
 `journalctl | grep -q` pipeline with the same pipefail/SIGPIPE result
 inversion already documented by DD-37; Q1-18 consumes the full stream and
-tests both classifier outcomes plus producer failure (DD-39).
+tests both classifier outcomes plus producer failure (DD-39). M13 found
+that FileBrowser's startup-only policy could lose its repair signal during
+cooldown and that a Docker-created directory bind source could not be
+normalized by the timer; Q1-19 makes file replacement, restart/recreate and
+the retry signal one bounded operation (DD-40).
 
 ## Critical
 
@@ -134,7 +139,14 @@ _All High findings resolved — see Completed below._
       rc 141 and pins that an early `node not found` match stays true, no
       match stays false, and a genuine journalctl failure is not hidden.
 
-      Of the 35 functions in the reconcile heredoc, the ones still
+      **Added 2026-08-02: `test/quantum_config_repair.bats` (11 cases,
+      136 → 147).** Covers regular policy replacement, Docker-created
+      directory sources, an already-absent container, daemon/removal
+      failures, restart versus Compose recreate selection, cooldown/pending
+      ordering, the full installer's policy-change recreation coupling and
+      recreation of an unhealthy legacy container with a stale mount spec.
+
+      Of the 42 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
       `tailscale_online`, `check_compose_runtime` and their neighbours all
@@ -163,6 +175,16 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **M13 — FileBrowser policy repair preserves its restart signal and
+      recreates structural mounts (2026-08-02, `Q1-19`, DD-40).** The old
+      reconcile copied into a directory without replacing it and restored a
+      regular file before checking cooldown, allowing the disk/runtime drift
+      signal to disappear. Repair is now staged atomically, budgeted before
+      mutation and held by a `/run` pending marker until health + HTTP pass.
+      Non-regular sources recreate only FileBrowser through Compose; the
+      named data volume is preserved. Full installer re-runs also recreate
+      FileBrowser when generated policy content or metadata changes.
 
 - [x] **M12 — Tailscale node-not-found journal classifier no longer
       inverts matches under pipefail (2026-08-02, `Q1-18`, DD-39).** The

@@ -49,18 +49,20 @@ was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
 **M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
 `v1.1-1` login-placement experiment; the reorder fixed it as a side
 effect, the revert of that experiment reintroduced it, and it was then
-fixed on its own in `V1-1`. **H8**, **H9** and **M12** were discovered and resolved
+fixed on its own in `V1-1`. **H8**, **H9**, **M12** and **M13** were discovered and resolved
 during the 2026-08-02 R2.4 line-by-line review: canonical publication had
 only atomically renamed its manifest, and Stage 6 rollback restored
 DNS/Caddy service state without restoring the files those services load;
 the deleted-node Tailscale journal classifier also inverted some true
-matches under pipefail. **M7** remains the only open finding in the project.
+matches under pipefail; FileBrowser policy repair could lose the need-to-
+restart signal or copy into a Docker-created directory without fixing its
+mount. **M7** remains the only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 9 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, 2026-08-02 — post-audit) |
-| Medium   | 1 (**M7**) | 11 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, 2026-08-02) |
+| Medium   | 1 (**M7**) | 12 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, **M13**, 2026-08-02) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -72,7 +74,7 @@ was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th/21st, separately-tracked findings, as
 are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
-**H8** (28th), **H9** (29th), and **M12** (30th).
+**H8** (28th), **H9** (29th), **M12** (30th), and **M13** (31st).
 
 ## Critical issues
 
@@ -532,6 +534,51 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
   cover that large stream, no match, and a producer failure after a match.
 - **Change risk:** Low — one existing branch predicate keeps the same
   matching text and time window; only pipeline consumption changes.
+
+### M13 — FileBrowser policy repair could lose its retry signal or preserve a directory mount — ✅ RESOLVED (2026-08-02, `Q1-19`)
+
+- **Location (historical):** `master-network-reconcile`'s
+  `QUANTUM_CONFIG_DRIFTED` repair block; Stage 4's `filebrowser.yaml`
+  publication and Stage 5 Compose startup.
+- **Description:** Reconcile ran GNU `install canonical live` before checking
+  the restart budget. When `live` was a directory created by Docker for a
+  missing bind source, `install` returned success after placing the file
+  inside that directory; `docker restart` retained the invalid mount shape.
+  With an ordinary drifted file and an active cooldown, the copy succeeded
+  but the required restart did not. The following cycle compared two equal
+  files and forgot that Quantum still had the old startup-only policy loaded.
+  Independently, a full installer re-run atomically replaced the generated
+  policy but did not force the existing container to reload it when Compose
+  otherwise saw no service-definition change.
+- **Impact:** Availability in the directory case: FileBrowser could remain
+  down while repeated reconcile cycles reported unsuccessful recovery.
+  Security-policy integrity in the cooldown/update cases: disk state matched
+  the canonical bundle while the process could continue enforcing an older
+  `signup`/source policy until an unrelated restart. User data was not itself
+  corrupt, because the SQLite database and index live in the separate
+  `filebrowser_data` named volume.
+- **Resolution:** The budget is checked before any file mutation. A root-only
+  pending marker under `/run` remains part of `quantum_config_ok` until both
+  container health and HTTP pass, so every failed post-copy action stays
+  retryable. Replacement is staged beside the target and atomically renamed.
+  Directories, symlinks and other non-regular sources remove only the
+  FileBrowser container and use `master-compose.service` to recreate its bind
+  mount; the named volume is never removed. Successful recovery remeasures
+  the full Compose runtime before generic restart selection. Generic runtime
+  recovery also recreates an unhealthy FileBrowser, healing the legacy state
+  where an earlier swallowed removal failure left a stale directory mount
+  behind a now-regular host path. The installer similarly recreates
+  FileBrowser when generated policy content/metadata changed or the existing
+  container is unhealthy, after pull and unit verification.
+- **Verification:** Eleven Bats cases cover regular and directory targets,
+  container present/absent states, Docker daemon/removal failures, direct
+  restart versus Compose recreate, operation ordering and the
+  installer/runtime recreation couplings. Suite total 136 → 147. Static and
+  embedded-script checks are
+  clean; live Debian fault injection is not claimed yet.
+- **Change risk:** Medium — policy drift now may recreate one container, but
+  only after an existing 15-minute budget gate; the persistent named volume
+  and all other containers are left intact.
 
 ### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
 - **Location:** `install.sh:1781-1841` (`compose.yaml` →
@@ -1300,6 +1347,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-19`) | FileBrowser policy lifecycle across reconcile and installer re-runs | **M13 found and resolved.** Reconcile copied policy before its cooldown gate, so disk state could become canonical while the running startup-only policy stayed old and no later cycle retried; a Docker-created directory also accepted the copy without changing path type or the stored container mount. Q1-19 stages atomically, keeps a `/run` pending signal until health + HTTP pass, and recreates only FileBrowser for structural or unhealthy legacy mounts while preserving its named volume. Installer re-runs now recreate it when generated policy content/metadata changes. Eleven cases bring bats 136 → 147; full local verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-18`) | Stage 2 deleted-node Tailscale journal classifier | **M12 found and resolved.** `journalctl | grep -q` under pipefail turned an early true match into rc 141 when enough output followed it, bypassing automatic logout/re-login and producing a generic fatal error. Normal fixed-string grep now consumes the whole stream without hiding real journalctl failure. Old/new pipelines reproduced at rc 141/0; three tests bring bats 133 → 136. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-17`) | Stage 6 DNS/Caddy EXIT rollback | **H9 found and resolved.** Existing rollback restored active/enabled/masked state but not the six overwritten files, so a failed update could restart old services with partial new configuration while the old canonical generation remained current. Q1-17 snapshots content and absence before mutation, restores files before daemon reload/restart, and commits at the canonical `current` swap. Seven new regression cases bring bats from 126 to 133, including the signal window after pointer replacement and snapshot retention on restore failure; local full verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (requested an ordered R2.4 line-by-line review) + Codex (`Q1-16`) | Stage 6 canonical publication and DD-14's atomicity claim | **H8 found and resolved.** The nine canonical files were copied directly into the live directory and only `SHA256SUMS` was atomically renamed, so an interrupted re-run could leave mixed generations that permanently failed reconcile's first gate. Q1-16 stages and verifies all nine files plus the manifest in `.generation.*`, then atomically swaps the relative `current` symlink. The new reconcile accepts the legacy R2.4 flat layout only during the first Stage 4→6 transition and rejects pointers resolving outside the canonical root. Six new regression cases bring the bats suite from 120 to 126; targeted tests, `bash -n`, outer and embedded `shellcheck` are clean. Live Debian verification is deliberately not claimed yet. |
