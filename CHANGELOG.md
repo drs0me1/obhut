@@ -24,12 +24,21 @@ Exported as `versiyon/Q1-13/`, byte-identical to the tag and to `HEAD`.
 The `Q1` line marker was **not** moved — it still points at `Q1-11`, and
 moving it means deleting a tag, which is only done when asked.
 
-Tagged `R2.3` on the operator's instruction. It marks the same installer
-as `Q1-13`, so it gets **no directory of its own** — that is the same rule
-that kept `R2.2` out of `versiyon/`, and both READMEs now say so with a
-table pointing each release tag at the revision directory that holds it.
-What `R2.3` records is the close-out: live verification before tagging,
-the export, and the documentation resync.
+Tagged `R2.3` on the operator's instruction. What it records is the
+close-out: live verification before tagging, the export, and the
+documentation resync — the installer is byte-identical to `Q1-13`.
+
+**Export directories are now named after the release, not the revision**
+(operator decision, same day, overriding the earlier reading that a
+release point gets no directory at all). `versiyon/R2.3/` was created with
+the full four files and `versiyon/Q1-13/` retired into it rather than kept
+alongside — two directories holding a byte-identical installer is the one
+ambiguity the retirement rule exists to prevent, so a release directory
+supersedes the revision directory it was cut from. `versiyon/README.md`
+now states that rule, and states that a release directory carries the
+revision's version string: `install-R2.3.sh` prints `2026.08.02-Q1-13`,
+which its own README explains up front so it does not read as a mismatch.
+`R2.2` predates this and keeps no directory.
 
 Documentation resynced in the same pass: `docs/architecture.md`'s stage
 table regenerated whole (`Q1-12`/`Q1-13` added 48 lines inside stage 4,

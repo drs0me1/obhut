@@ -16,11 +16,11 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-13/`](Q1-13/) | `2026.08.02-Q1-13` | `Q1-13`, `R2.3` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`R2.3/`](R2.3/) | `2026.08.02-Q1-13` | `R2.3`, `Q1-13` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
-cd versiyon/Q1-13
+cd versiyon/R2.3
 ./deploy.sh nrm --run
 ```
 
@@ -32,22 +32,32 @@ From Finder, double-click `deploy.command` instead.
 > lines are alternatives, not a sequence.
 
 `R*` tags mark repository state you might want to return to; `V*`/`Q*` tags
-identify a revision of the installer itself. **A release point never gets a
-directory of its own** — a second copy of an identical installer is exactly
-what the retirement rule below exists to prevent. Two exist on this branch:
+identify a revision of the installer itself. Two `R` tags exist on this
+branch:
 
 | Tag | Same installer as | What it records |
 |---|---|---|
 | `R2.2` | `Q1-11` | tests, tooling and documentation tightened after the revision shipped |
 | `R2.3` | `Q1-13` | the revision closed out: live-verified before tagging, exported, documentation resynced |
 
-So `versiyon/Q1-13/` is where you go for `R2.3`; there is no `R2.3/`.
+**The directory is named after the release, not the revision** (operator
+decision, 2026-08-02). `R2.3/` therefore replaced `Q1-13/` rather than
+joining it. This is the one thing not to get wrong: two directories holding
+a byte-identical installer is exactly the ambiguity the retirement rule
+below exists to prevent, so a release directory *supersedes* the revision
+directory it was cut from — it never sits beside it. `R2.2` predates this
+and never had a directory at all.
+
+A release directory carries the revision's version string, because that is
+what the script prints: `versiyon/R2.3/install-R2.3.sh` reports
+`2026.08.02-Q1-13`. Its `README.md` says so up front, so nobody reads it as
+a mismatch.
 
 Every export is byte-identical to the tag it is named after:
 
 ```sh
-git show Q1-13:install.sh | sha256sum
-sha256sum Q1-13/install-Q1-13.sh
+git show R2.3:install.sh | sha256sum
+sha256sum R2.3/install-R2.3.sh
 ```
 
 ## Retired directories
@@ -55,8 +65,8 @@ sha256sum Q1-13/install-Q1-13.sh
 Only the current revision and the branch point are kept as directories; the
 export a new one replaces is removed rather than accumulated, so there is
 never a question of which folder to hand someone. `Q1-1` was retired when
-`Q1-4` was exported, `Q1-4` when `Q1-8` was, `Q1-8` when `Q1-11` was, and
-`Q1-11` when `Q1-13` was.
+`Q1-4` was exported, `Q1-4` when `Q1-8` was, `Q1-8` when `Q1-11` was,
+`Q1-11` when `Q1-13` was, and `Q1-13` when `R2.3` was cut from it.
 Nothing is lost — the tag still holds the exact file:
 
 ```sh
@@ -66,9 +76,9 @@ git show Q1-8:install.sh > install-Q1-8.sh
 The `Q1` tag is a line marker rather than a revision: it follows the head of
 this line: `Q1-4` → `Q1-8` on 2026-08-01, `Q1-8` → `Q1-11` on 2026-08-02.
 Moving it means deleting and recreating it, so it is only done when asked —
-**as of `Q1-13` it still points at `Q1-11`**, one revision behind the head.
+**as of `R2.3` it still points at `Q1-11`**, two revisions behind the head.
 `Q1-4`, `Q1-8`, `Q1-11`, `Q1-13` and every other revision tag stay where
-they are — those are fixed identities.
+they are — those are fixed identities, as are the `R*` tags.
 
 ## Why the deploy scripts are duplicated
 
@@ -83,8 +93,8 @@ table and the "fixed image" strings. The mitigation is that the copies are
 *identical* rather than merely similar, so drift is one command away:
 
 ```sh
-diff versiyon/V1-20/deploy.sh versiyon/Q1-13/deploy.sh
-diff versiyon/V1-20/deploy.command versiyon/Q1-13/deploy.command
+diff versiyon/V1-20/deploy.sh versiyon/R2.3/deploy.sh
+diff versiyon/V1-20/deploy.command versiyon/R2.3/deploy.command
 ```
 
 Any change to one copy must be applied to the others in the same commit.
@@ -95,8 +105,8 @@ Any change to one copy must be applied to the others in the same commit.
 mkdir versiyon/<TAG>
 git show <TAG>:install.sh > versiyon/<TAG>/install-<TAG>.sh
 chmod +x versiyon/<TAG>/install-<TAG>.sh
-cp versiyon/Q1-13/deploy.sh versiyon/<TAG>/deploy.sh
-cp versiyon/Q1-13/deploy.command versiyon/<TAG>/deploy.command
+cp versiyon/R2.3/deploy.sh versiyon/<TAG>/deploy.sh
+cp versiyon/R2.3/deploy.command versiyon/<TAG>/deploy.command
 ```
 
 Then write the `README.md` — it is not optional, see the table at the top.

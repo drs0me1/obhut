@@ -18,7 +18,7 @@
 #
 # BU DOSYA versiyon/V1-20/deploy.command İLE BİREBİR AYNIDIR ve öyle
 # kalmalı (bkz. deploy.sh'teki aynı not):
-#   diff versiyon/V1-20/deploy.command versiyon/Q1-13/deploy.command
+#   diff versiyon/V1-20/deploy.command versiyon/R2.3/deploy.command
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"

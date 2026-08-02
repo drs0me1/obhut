@@ -1,4 +1,4 @@
-# `Q1-13` — Debian 13 media server, one script
+# `R2.3` — Debian 13 media server, one script
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,11 +7,18 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-13` |
-| Tags | `Q1-13`, `R2.3` (the `Q1` line marker still points at `Q1-11`; moving it means deleting and recreating it, so it is only done when asked) |
+| Release | `R2.3` — the current full release of this branch |
+| Version the script reports | `2026.08.02-Q1-13` |
 | SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
+| Tags | `R2.3`, `Q1-13` — both name this exact file |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
+
+**Why two names for one file.** `R2.3` is the release; `Q1-13` is the
+revision of the installer inside it. They are byte-for-byte the same
+script, so the install will print `2026.08.02-Q1-13` rather than `R2.3`.
+That is expected, not a mismatch — the version string identifies the
+script, and this is the release that ships it.
 
 ## Installing
 
@@ -101,6 +108,16 @@ minutes in its own logs until you change it.
   does not exist yet, and the next line says it is being created. It does
   not appear again.
 
+## What this release was checked against
+
+Before `R2.3` was tagged, this exact script was run against a real Debian 13
+server that was already installed, to confirm a re-run is safe and that the
+changes below actually took effect. All seven stages finished in 28 seconds;
+the server's own self-check reported no problems, no failed services, and
+all five containers running. The one warning it raised was that the VPN
+server's first-time setup had never been completed on that machine — which
+is true and is item 2 under **Do these first**.
+
 ## What changed since `Q1-11`
 
 Both changes are about the server staying tidy on its own over months, not
@@ -122,12 +139,3 @@ Earlier in this line: the file manager was replaced with FileBrowser
 Quantum, its security settings became self-repairing, the network drive
 notices finished downloads within a minute instead of five, and the disk
 check watches for running out of file slots as well as space.
-
-## A note on `R2.3`
-
-`R2.3` marks the same installer as `Q1-13` — the file in this folder is
-byte-for-byte what `Q1-13` shipped. What it records is that the revision
-was closed out afterwards, not that the installer changed: it was verified
-against a real server before tagging, this folder was created, and the
-project's own documentation was resynced against the script. Nothing you
-install or operate is different from `Q1-13`.
