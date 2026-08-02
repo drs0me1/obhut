@@ -1523,3 +1523,63 @@ the throttled case (the `429` message, `rc 0`), and the regression case
 the direct run and `--check`). Then confirmed end-to-end through systemd:
 `Result=success`, `ExecMainStatus=0`, the warning once in the journal, zero
 failed units.
+
+### DD-34: Unpackerr's file log is given a rotation cap, and the queue heartbeat is slowed to 30m (2026-08-02)
+
+Raised by the operator noticing a long, repetitive tail in `docker logs
+unpackerr` and attributing it to the 10-second folder scan. The scan was
+the wrong suspect — it is completely silent (`[Folder] Polling @ 10s:
+/downloads` and nothing after it). The lines come from `log_queues`,
+whose default is `1m1s`: two lines a minute (`Queue: 0 waiting…` and
+`Totals: …`) whether or not anything is happening. Measured on the live
+host: 62 lines in 20 minutes, exactly 2/min.
+
+**The Docker side was never the problem.** `json-file` with `max-size:
+10m`, `max-file: 3` caps that stream at 30 MB, and at the measured
+~226 B/min a file fills in about a month, so roughly a quarter of a year
+of history is retained. The cost is legibility, not disk: while idle, the
+log is 100% heartbeat.
+
+**The real defect was the second log, the one written into the media
+tree.** `UN_LOG_FILE` points at `/downloads/.unpackerr/unpackerr.log`, and
+the container reported it as `(10 @ 0Mb, mode: 600)` — ten files retained,
+rotation threshold zero. Upstream's example config documents
+`log_file_mb`'s default as 10 MB, but that default only applies down the
+TOML path; this stack configures unpackerr purely through environment
+variables (`Using env variables only. Config file not found.`), and on
+that path the value arrives as `0`, which upstream defines as "no
+size-based rotation". So "keep 10 files" never engaged and one file grew
+without bound: ~280 B/min measured, ~400 KB/day, ~145 MB/year — inside the
+tree filebrowser serves, Infuse indexes and `disk_space_ok` watches.
+`UN_LOG_FILE_MB: "10"` and `UN_LOG_FILES: "3"` bring it to the same 30 MB
+ceiling the Docker side already had; the container now reports
+`(3 @ 10Mb)`.
+
+**`UN_LOG_QUEUES: "0"` is the intuitive fix and it is wrong.** Upstream
+does not document what `0` does here, so it was measured rather than
+assumed, in throwaway containers:
+
+| `UN_LOG_QUEUES` | reported at startup | `Queue:` lines in 75s |
+|---|---|---|
+| unset | `1m1s` | 1 |
+| `0` | **`15s`** | **5** |
+| `30m` | `30m` | 0 |
+
+Zero does not disable the heartbeat, it clamps it to a 15-second floor —
+four times noisier than leaving it alone. `30m` is used instead.
+
+**Nothing real is lost by slowing it.** Verified end to end rather than
+inferred: with `log_queues` at `30m`, dropping an archive into a watched
+folder still logged `Tracking New Item`, `Queued`, `Extraction Started`
+and `Extraction Finished` with the file count and byte total. Only the
+idle pulse goes away.
+
+**Only `UN_LOG_FILE_MB` joins the Stage 7 environment assertion.** That
+list exists for settings whose drift is *silent*. `UN_LOG_QUEUES` drifting
+makes the log noisy, which is visible by definition. `UN_LOG_FILES`
+drifting raises the ceiling from 30 MB to 100 MB — still bounded.
+`UN_LOG_FILE_MB` drifting to `0` removes the ceiling altogether and puts
+an unbounded file back inside the media tree with nothing to announce it.
+The assertion was checked against a container configured both ways: it
+passes on the configured one and fails on an unconfigured one, so it
+discriminates rather than merely passing.

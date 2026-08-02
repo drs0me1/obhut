@@ -135,8 +135,24 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Unpackerr file log capped, queue heartbeat slowed (2026-08-02,
+      `Q1-13`, unnumbered, DD-34).** Raised by the operator seeing a long
+      repetitive tail in `docker logs unpackerr`. Two separate things: the
+      visible noise (`log_queues`, 2 lines/min, Docker side already capped
+      at 30 MB — legibility, not risk) and an actual unbounded file. The
+      latter is `/downloads/.unpackerr/unpackerr.log`, reported by the
+      container as `(10 @ 0Mb)`: upstream's documented 10 MB default only
+      applies via the TOML path, and this stack configures unpackerr by
+      environment variable alone, so rotation was off. ~145 MB/year inside
+      the media tree. Now `UN_LOG_FILE_MB: "10"` + `UN_LOG_FILES: "3"`
+      (30 MB, matching the Docker cap) and `UN_LOG_QUEUES: "30m"` —
+      explicitly **not** `0`, which measurement showed clamps to a 15s
+      floor and is four times noisier. `UN_LOG_FILE_MB` added to Stage 7's
+      environment assertion; the other two deliberately left out, being
+      the two whose drift is visible or still bounded.
+
 - [x] **`FILEBROWSER_DATABASE` pinned in `compose.yaml` (2026-08-02,
-      `Q1-12`, unnumbered, DD-30).** Raised by the user asking what the
+      `Q1-12`, unnumbered, DD-27).** Raised by the user asking what the
       `database file could not be found` warning on filebrowser's first
       login screen actually meant. Answer: nothing was broken — the
       warning fires because the file does not exist yet on a first

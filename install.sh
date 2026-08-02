@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-12"
+MASTER_SETUP_VERSION="2026.08.02-Q1-13"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2417,6 +2417,33 @@ services:
     environment:
       TZ: "${TIMEZONE}"
       UN_LOG_FILE: "/downloads/.unpackerr/unpackerr.log"
+      # Bu üçü OLMADAN dosya logu HİÇ DÖNMÜYOR. Upstream log_file_mb'nin
+      # varsayılanını 10 MB diye belgeliyor, ama o varsayılan yalnız TOML
+      # config dosyası yolundan uygulanıyor; biz unpackerr'ı sırf ortam
+      # değişkenleriyle kuruyoruz ("Using env variables only. Config file
+      # not found.") ve container o hâlde açılışta şunu raporluyor:
+      #   => Log File: /downloads/.unpackerr/unpackerr.log (10 @ 0Mb …)
+      # 0 MB = boyut bazlı rotasyon kapalı, yani "10 dosya sakla" hiç
+      # devreye girmiyor ve tek dosya sonsuza kadar büyüyor. 2026-08-02'de
+      # ölçüldü: boştaki hâlinde ~280 B/dk, yılda ~145 MB — üstelik
+      # filebrowser'ın sunduğu, Infuse'un indekslediği ve disk_space_ok'ın
+      # izlediği medya ağacının İÇİNDE. 10 MB × 3 dosya, docker tarafındaki
+      # json-file tavanının (max-size 10m, max-file 3) aynısı.
+      UN_LOG_FILE_MB: "10"
+      UN_LOG_FILES: "3"
+      # Boştayken dakikada iki satır ("Queue: 0 waiting…" + "Totals: …")
+      # basan nabız; varsayılanı 1m1s. 10 saniyelik klasör taramasıyla
+      # İLGİSİ YOK — o tarama sessiz, tek satır bile yazmıyor.
+      #
+      # 0 DEĞİL. Sezgisel olan değer burada ters çalışıyor: ölçüldü
+      # (2026-08-02), UN_LOG_QUEUES=0 nabzı kapatmıyor, 15 saniyelik tabana
+      # düşürüyor — 75 saniyede 1 satır yerine 5 satır, yani dört kat daha
+      # gürültülü. Upstream dokümanı bu değerin ne yaptığını yazmıyor.
+      #
+      # Gerçek olaylar kaybolmuyor; uçtan uca doğrulandı: 30m ile bir arşiv
+      # bırakıldığında Tracking New Item / Queued / Extraction Started /
+      # Extraction Finished satırlarının hepsi olduğu gibi geliyor.
+      UN_LOG_QUEUES: "30m"
       UN_FOLDERS_INTERVAL: "10s"
       # media ağacının tamamını ve tüm alt klasörlerini izle.
       UN_FOLDER_0_PATH: "/downloads"
@@ -5185,7 +5212,14 @@ for expected_env in \
     "UN_FOLDER_0_DELETE_AFTER=0" \
     "UN_FOLDER_0_DISABLE_RECURSION=false" \
     "UN_FOLDER_0_DELETE_ORIGINAL=false" \
-    "UN_FOLDER_0_MOVE_BACK=true"; do
+    "UN_FOLDER_0_MOVE_BACK=true" \
+    "UN_LOG_FILE_MB=10"; do
+    # UN_LOG_FILE_MB listede, UN_LOG_QUEUES ve UN_LOG_FILES değil — bu
+    # kasıtlı. Liste "sapması sessiz sonuç doğuran ayarlar" listesi.
+    # UN_LOG_QUEUES saparsa log gürültülenir, görülür. UN_LOG_FILES saparsa
+    # tavan 30 MB'dan 100 MB'a çıkar, hâlâ sınırlı. UN_LOG_FILE_MB saparsa
+    # tavan diye bir şey KALMAZ (0 = rotasyon kapalı) ve medya ağacının
+    # içinde sınırsız büyüyen bir dosya oluşur — sessiz olan tek sapma bu.
     if ! grep -Fxq "$expected_env" <<<"$UNPACKERR_ENV"; then
         echo "HATA: Unpackerr ayarı uygulanmamış: $expected_env" >&2
         exit 1

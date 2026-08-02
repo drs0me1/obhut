@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — unpackerr's file log now rotates; queue heartbeat slowed (`Q1-13`)
+
+Raised by the operator seeing a long repetitive tail in `docker logs
+unpackerr`. The 10-second folder scan they suspected is silent; the lines
+come from `log_queues` (default `1m1s`, two lines a minute, idle or not).
+The Docker stream was already capped at 30 MB by the `json-file` options,
+so that part was noise rather than risk.
+
+The part that was a real defect is the *second* log: `UN_LOG_FILE` writes
+into `/downloads/.unpackerr/unpackerr.log` and the container reported it
+as `(10 @ 0Mb)` — rotation disabled. Upstream documents a 10 MB default,
+but that only applies via the TOML config path; configured purely through
+environment variables, as here, the value arrives as `0`. Measured at
+~280 B/min, ~145 MB/year, growing forever inside the tree filebrowser
+serves and Infuse indexes. Now `UN_LOG_FILE_MB: "10"` + `UN_LOG_FILES:
+"3"`, the same 30 MB ceiling the Docker side already had; the container
+reports `(3 @ 10Mb)`.
+
+`UN_LOG_QUEUES: "30m"` for the heartbeat. Not `0` — measured, `0` does not
+disable it but clamps it to a 15-second floor, four times noisier than the
+default. Extraction events are unaffected, verified end to end:
+`Tracking New Item` → `Queued` → `Extraction Started` → `Extraction
+Finished` all still logged.
+
+Stage 7's unpackerr environment assertion gains `UN_LOG_FILE_MB` only.
+That list is for settings whose drift is silent, and this is the only one
+of the three that qualifies — the other two degrade to "noisy" and "still
+bounded". Checked against containers configured both ways, so it
+discriminates.
+
 ### 2026-08-02 — `FILEBROWSER_DATABASE` pinned in `compose.yaml` (`Q1-12`)
 
 The database path was inherited silently from the image's own `ENV`
