@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — a slow-to-come-online node no longer discards a successful login (`Q1-22`, DD-42)
+
+`Q1-21` gave the node 15 seconds after `tailscale up` exits zero to reach
+the fully verified LocalAPI state, and on expiry restarted the daemon and
+asked the operator to authorize again. But exit code zero means the login
+*succeeded* — so that path threw away a good authorization, which is
+exactly the false-positive class DD-37 exists to prevent.
+
+It was also the stricter of two gates for the same condition: the very
+next block in Stage 2 already waits 180 seconds for `tailscale ip -4` plus
+`tailscale_is_online`, and only the 15-second one had a destructive
+remedy. A node that will not come online after an accepted login has a
+connectivity problem, not an authentication one; a fresh browser link
+cannot fix that, while the 180-second wait either resolves it or fails
+with a clear error.
+
+The grace window is now a fast path rather than a ceiling: it returns as
+soon as the node is verified, and on expiry prints an explicit hand-off
+note and returns success. The `incomplete` outcome is gone.
+
+Covered by a fourteenth case in `test/tailscale_login.bats` (175 → 176),
+mutation-verified against the `Q1-21` behaviour.
+
 ### 2026-08-02 — Q1-21 exported as an untagged R2.6 manual-test candidate
 
 At the operator's explicit request, Q1-21 was exported before its exact

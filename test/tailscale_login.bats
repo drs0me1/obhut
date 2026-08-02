@@ -312,3 +312,42 @@ source_interactive_login_fixture() {
     [ "$(<"$STATE_CALLS_FILE")" -ge 3 ]
     [[ "$output" != *"kalıcı 410"* ]]
 }
+
+@test "a successful login survives a node that is slow to come online" {
+    # Q1-22. `tailscale up` exits 0 -- the operator completed the browser
+    # step -- but the node has not reached the fully verified state before
+    # the post-success grace expires. Q1-21 treated that as "incomplete",
+    # restarted the daemon and demanded a second browser authorization,
+    # discarding a login that had in fact succeeded. The wait for the node
+    # to come online belongs to the 180s check further down Stage 2, not
+    # here, so the grace window may only return early -- never restart.
+    source_interactive_login_fixture
+    LOGIN_SCENARIO=slow
+    TAILSCALE_LOGIN_POST_SUCCESS_GRACE=1
+
+    tailscale() {
+        local attempts=0
+        [ "$1" = up ]
+        if [ -f "$UP_ATTEMPTS_FILE" ]; then
+            read -r attempts <"$UP_ATTEMPTS_FILE"
+        fi
+        attempts=$((attempts + 1))
+        printf '%s\n' "$attempts" >"$UP_ATTEMPTS_FILE"
+        printf 'To authenticate, visit: https://login.tailscale.com/a/slow-%s\n' \
+            "$attempts"
+        return 0
+    }
+    # Never reaches the verified state within the window.
+    tailscale_login_state() { printf 'pending\n'; }
+    tailscale_login_complete() { return 1; }
+
+    run tailscale_interactive_login
+
+    [ "$status" -eq 0 ]
+    # No daemon restart, and no second authorization demanded.
+    [ ! -f "$RESTARTS_FILE" ]
+    read -r attempts <"$UP_ATTEMPTS_FILE"
+    [ "$attempts" -eq 1 ]
+    # The hand-off to the downstream wait is announced, not silent.
+    [[ "$output" == *"NOT:"* ]]
+}

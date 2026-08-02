@@ -51,8 +51,8 @@ _All High findings resolved — see Completed below._
 ## Medium
 
 - [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-21`) —
-      Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **175
-      cases across thirteen files**; 163 execute and 12 self-skip on this
+      Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **176
+      cases across thirteen files**; 164 execute and 12 self-skip on this
       macOS workstation. The first 74-case milestone covered:
       `state_value`/`owned_file_ok`/`restart_budget_available`/
       `disk_space_ok`/`all_critical_state_healthy`
@@ -162,7 +162,7 @@ _All High findings resolved — see Completed below._
       media mount.
 
       **Added 2026-08-02: `test/tailscale_login.bats` (13 cases,
-      162 → 175).** Covers Q1-21's structured interactive-login state,
+      162 → 176).** Covers Q1-21's structured interactive-login state,
       complete ID/IP postcondition, malformed/failed LocalAPI reads, the
       successful transient-410 case, three consecutive dead samples causing
       one early retry, and a single dead sample resetting before success.
@@ -196,6 +196,24 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **A slow-to-come-online node discarded a successful Tailscale login
+      (2026-08-02, `Q1-22`, unnumbered, DD-42).** Found while reviewing
+      `Q1-21`, not in use. After `tailscale up` exits zero the node was
+      given 15 seconds to reach the verified LocalAPI state, and on expiry
+      the daemon was restarted and a second browser authorization
+      demanded — for a login that had already succeeded. DD-37's
+      false-positive class through a different door, and the stricter of
+      two gates for one condition: the next block in Stage 2 already waits
+      180 seconds for `tailscale ip -4` plus `tailscale_is_online`, and
+      only the 15-second gate had a destructive remedy. A node that will
+      not come online after an accepted login has a connectivity problem,
+      which a fresh link cannot fix. The window is now a fast path: it
+      returns early when verified, and on expiry prints a hand-off note
+      and returns success. `outcome="incomplete"` removed. Fourteenth case
+      in `test/tailscale_login.bats`, mutation-verified against the
+      `Q1-21` behaviour.
+
 
 - [x] **M16 — persistent interactive-login 410 now retries early
       (2026-08-02, `Q1-21`, DD-42).** A clean install produced two separate

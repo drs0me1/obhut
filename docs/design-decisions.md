@@ -2127,6 +2127,29 @@ non-empty node ID and at least one Tailscale IP. Failure of that postcondition
 uses the same bounded retry instead of allowing the later Stage 2 probe to be
 the first place the inconsistency appears.
 
+> **Amended by `Q1-22` (2026-08-02).** The postcondition stays; its *remedy*
+> does not. Sending a failed 15-second grace into the bounded retry restarts
+> the daemon and demands a second browser authorization — for a login that
+> already succeeded, since `tailscale up` returned zero. That is DD-37's
+> false-positive class arriving through a different door, and this time the
+> door was narrower than the one already behind it: the very next block in
+> Stage 2 waits **180 seconds** for the same condition (`tailscale ip -4` plus
+> `tailscale_is_online`). Two gates for one condition, and the strict one held
+> the destructive remedy.
+>
+> The goal above — surface the inconsistency here rather than letting a later
+> probe be the first to mention it — was right, and is kept: the grace window
+> now prints an explicit note when it expires. What changed is that it returns
+> **success** and lets the 180-second check adjudicate. The reasoning is that
+> a node which will not come online after an accepted login has a connectivity
+> problem, not an authentication one; a fresh browser link cannot fix it,
+> while the 180-second wait either resolves it or fails with a clear error.
+> The 15 seconds is now a fast path, not a ceiling.
+>
+> Covered by a fourteenth Bats case, mutation-verified: it fails against the
+> `Q1-21` behaviour (`status` non-zero, daemon restarted, a second `tailscale
+> up` demanded) and passes against `Q1-22`.
+
 Thirteen Bats cases cover the live JSON signature, incomplete and malformed
 states, command failure, a completed node carrying a transient 410 line, the
 three-sample early restart and a one-sample 410 followed by success with no

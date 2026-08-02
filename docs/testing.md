@@ -2,8 +2,8 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (175
-> unit cases across thirteen files; 163 execute and 12 self-skip on the macOS
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (176
+> unit cases across thirteen files; 164 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
 > Q1-19/Q1-20's 26 new unit cases and Q1-21's 13 login cases have not been
 > run under Bats on the Debian target; Q1-20's production paths and Q1-21's
