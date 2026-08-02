@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `FILEBROWSER_DATABASE` pinned in `compose.yaml` (`Q1-12`)
+
+The database path was inherited silently from the image's own `ENV`
+(`/home/filebrowser/data/database.db`). It happened to be correct, but
+`read_only: true` makes it a hard dependency on the `filebrowser_data`
+volume mount: if upstream ever moves the default outside that directory,
+Quantum tries to open its database on a read-only root and the container
+dies at startup. The value is now written explicitly next to the volume
+line it must agree with, so the two change together.
+
+This does **not** silence the first-boot warning that prompted the
+change. Measured on the live host on 2026-08-02: `[WARN] database file
+could not be found. If this is unexpected, please set the
+FILEBROWSER_DATABASE environment variable to the correct path` is emitted
+*while the variable is already set to the correct path*, one second before
+`Creating new database`. The warning distinguishes "file missing" from
+"path wrong" not at all; on a first install the file is simply not there
+yet. Restart and `--force-recreate` both log `Using existing database`
+with no warning, and the operator's changed admin password survives both
+(default `admin`/`admin` → `401`).
+
 ### 2026-08-02 — documentation resynced against the script
 
 `docs/architecture.md`'s stage table still described `V1-20` at 5305

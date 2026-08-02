@@ -135,6 +135,22 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **`FILEBROWSER_DATABASE` pinned in `compose.yaml` (2026-08-02,
+      `Q1-12`, unnumbered, DD-30).** Raised by the user asking what the
+      `database file could not be found` warning on filebrowser's first
+      login screen actually meant. Answer: nothing was broken — the
+      warning fires because the file does not exist yet on a first
+      install, *with the variable already set correctly*, and never again
+      afterwards (restart and `--force-recreate` both log `Using existing
+      database`; the changed admin password survives both). But answering
+      it surfaced that the path was inherited silently from the image's
+      own `ENV`, and `read_only: true` makes that path a hard constraint:
+      it must land inside the `filebrowser_data` mount or Quantum cannot
+      start. The value is now written explicitly beside the volume line it
+      has to agree with. Small hardening against an upstream default
+      moving, not a fix — the failure mode it guards is a boot loop
+      reconcile would catch, not silent data loss.
+
 - [x] **L8 — bounded retry + mandatory timeout for network steps
       (2026-07-31, `V1-14`, DD-24).** Observed when Docker Hub's anonymous
       token endpoint returned **502 Bad Gateway** mid-`docker compose pull`

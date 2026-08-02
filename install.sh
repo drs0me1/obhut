@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-11"
+MASTER_SETUP_VERSION="2026.08.02-Q1-12"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2318,6 +2318,20 @@ services:
       # yerine config'i volume dışına alıp yolu env ile gösteriyoruz —
       # veritabanı volume'da, politika host dosyasında, ikisi karışmıyor.
       FILEBROWSER_CONFIG: /config.yaml
+      # Bu değer imajın kendi ENV'inden zaten aynen geliyor; burada
+      # BİLEREK tekrar ediliyor. Sebep read_only: true — yol, volume
+      # mount'uyla eşleşmek ZORUNDA. Upstream varsayılanı bir gün volume
+      # dışına taşırsa Quantum yazılamayan köke veritabanı açmaya çalışır
+      # ve container açılışta ölür; pinlemek o kararı imajdan alıp buraya,
+      # bağlı olduğu volume satırının yanına taşıyor.
+      #
+      # İlk açılıştaki "[WARN] database file could not be found ... please
+      # set the FILEBROWSER_DATABASE environment variable" satırını
+      # SUSTURMAZ. O uyarı yolun yanlış olduğunu değil, dosyanın henüz
+      # yaratılmadığını bildiriyor: 2026-08-02'de ölçüldü, değişken doğru
+      # değerle setliyken de basılıyor ve hemen ardından "Creating new
+      # database" geliyor. Sonraki her açılışta "Using existing database".
+      FILEBROWSER_DATABASE: /home/filebrowser/data/database.db
     ports:
       - "127.0.0.1:7113:80/tcp"
     volumes:

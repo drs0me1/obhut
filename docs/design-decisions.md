@@ -1051,7 +1051,34 @@ the experiment can be abandoned by deleting a branch.
 
 **What it costs.** Quantum is **stateful**: the image declares
 `FILEBROWSER_DATABASE=/home/filebrowser/data/database.db`, so a named
-volume returns where dufs needed none. `cap_drop: [ALL]` and
+volume returns where dufs needed none. Since `Q1-12` the compose file
+repeats that value instead of inheriting it. Nothing was wrong with the
+inherited one — the point is that `read_only: true` turns it into a
+constraint rather than a preference: the path has to land inside the
+`filebrowser_data` mount, because a Quantum that opens its database
+anywhere else opens it on a read-only root and dies at startup. Two lines
+that must agree now sit next to each other in the same file, rather than
+one of them living in an image the project does not control. The failure
+this guards against is loud (a boot-loop `reconcile` catches), not silent,
+which is why it is a small hardening and not a fix.
+
+**The first-boot warning is upstream noise, and pinning does not remove
+it.** A first install logs `[WARN] database file could not be found. If
+this is unexpected, please set the FILEBROWSER_DATABASE environment
+variable to the correct path` one second before `Creating new database`.
+Measured on the live host on 2026-08-02: the variable *was* already set to
+exactly the path Quantum then created. The message does not distinguish
+"the file is missing" from "the path is wrong" — on a first install only
+the former is true. It is emitted before the `Using Config file` banner,
+i.e. during store initialisation, when the environment variable is the
+only knob the program has read yet; that is why the advice names it.
+Restart and `docker compose up -d --force-recreate` both log `Using
+existing database` with no warning at all, and the operator's changed
+admin password survives both (`admin`/`admin` → `401`, and no `Resetting
+admin user to default username and password.` line). There is no config
+key for the database path — the image's sample `config.yaml` has none —
+so the environment variable is the only surface, and it is already right.
+`cap_drop: [ALL]` and
 `no-new-privileges` are kept; the image already runs as a non-root
 `filebrowser` user, which is why no `user:` line is set (the image's own
 UID must own the data directory).
