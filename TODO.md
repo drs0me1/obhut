@@ -135,6 +135,24 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Interactive Tailscale login could hang forever (2026-08-02,
+      `Q1-14`/`Q1-15`, unnumbered, DD-37).** Found in real use, not by
+      review: a from-scratch install wedged at the login step and the
+      script had no defence at all — `tailscale up` bare, waiting
+      indefinitely. The daemon takes `410: auth path not found` when a
+      pending auth path is superseded (restarting the installer, or
+      opening an older link), then retries the *same dead path* forever
+      with `regen=false`, while `tailscale status` keeps printing it as
+      though live. `tailscale logout` does not clear it; only restarting
+      `tailscaled` does. Now wrapped in `tailscale_interactive_login()`:
+      300s per attempt, three attempts, daemon restart and a fresh link
+      between them, manual recipe at the end. Deliberately does **not**
+      diagnose the wedge from the journal — three attempts to do so were
+      all wrong (a 410 also occurs on success; `grep -q` under `pipefail`
+      inverted its own result via SIGPIPE; an unbounded window credited a
+      later login's success to an earlier wedge), and a false positive
+      kills a login that is about to succeed.
+
 - [x] **Unpackerr file log capped, queue heartbeat slowed (2026-08-02,
       `Q1-13`, unnumbered, DD-34).** Raised by the operator seeing a long
       repetitive tail in `docker logs unpackerr`. Two separate things: the

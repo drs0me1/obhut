@@ -1802,3 +1802,80 @@ its own storage and subdomain, the media tree attached read-only through
   absorbing the WebDAV service is the thing that would justify the move.
 - **Nextcloud** — if groupware features are genuinely wanted. Then alongside,
   never instead.
+
+### DD-37: The interactive Tailscale login recovers by timeout, not by diagnosing the failure (2026-08-02)
+
+The installer used to run a bare `tailscale up` and wait forever. On
+2026-08-02 a real install wedged there and nothing in the script noticed.
+
+**The failure.** The daemon generates a nodekey, gets an auth path
+(`/a/<id>`) bound to it from the control plane, and long-polls that path.
+A *new* registration for the same node — which is exactly what restarting
+the installer causes — or completing an *older* link in the browser
+invalidates the pending path, and the poll returns `410: auth path not
+found`. What makes it unrecoverable is the next line:
+
+```
+control: doLogin(regen=false, hasUrl=true)
+```
+
+`regen=false`: the daemon retries the **same dead path** forever instead of
+generating a new key. So one 410 wedges the login permanently, `tailscale
+up` blocks indefinitely, and — the part that misleads the operator —
+`tailscale status` keeps printing the dead link as though it were live.
+The reported symptom was "I logged in but it is still waiting."
+
+Measured on the host: two separate links, each dead ~13 seconds after being
+issued, four 410 events, the install stuck until it was killed by hand.
+`tailscale logout` did **not** clear it — the daemon still returned the same
+dead URL afterwards. Only `systemctl restart tailscaled` cleared it, which
+is why recovery is built on the restart.
+
+**The fix deliberately does not diagnose anything.** Three earlier versions
+tried to detect the wedge from `journalctl`, and all three were wrong in
+different ways. Each was caught by running the function against the real
+journal, not by reading it:
+
+1. *"A 410 appeared, therefore wedged."* Wrong — a 410 is part of the
+   **successful** flow too. When the operator completes the browser step
+   the control plane retires the auth path, the in-flight poll takes a 410,
+   and the daemon immediately re-registers and gets `machineAuthorized=true`.
+   All within the same second, measured at 18:12:49.
+2. *"A 410 with no recovery after it."* The check was
+   `journalctl … | grep -q`, and under `pipefail` `grep -q` exits on first
+   match, `journalctl` takes SIGPIPE, and 141 becomes the pipeline's status
+   — so a **found** match reported failure. Intermittent, because it
+   depended on whether journalctl had finished writing.
+3. *"No recovery after the last 410", with no upper bound.* A later,
+   unrelated login's success counted as recovery for an earlier wedge.
+
+The direction of the false positive is what settled it: wrongly declaring a
+wedge kills a login that is one second from succeeding, restarts the daemon
+and forces the operator to authenticate again — the fix would manufacture
+the very failure it exists to repair. Three wrong iterations were treated as
+evidence that the diagnosis itself is fragile, not that the third attempt
+needed a fourth.
+
+**What replaced it is dumber and therefore safer.** If the login has not
+completed within `TAILSCALE_LOGIN_TIMEOUT` (300s), for *any* reason, the
+daemon is restarted and a fresh link is printed, up to
+`TAILSCALE_LOGIN_ATTEMPTS` (3). This covers the wedge and every other stall
+class, and its worst failure mode is "the operator was handed a new link".
+The retry banner says the previous link is dead and that opening an old tab
+will kill the new one, since that is what produces the 410 in the first
+place. After three attempts it prints the manual recipe, including the
+non-obvious part: **`logout` is not enough, restart the daemon.**
+
+**Verified before shipping.** The retry machinery was exercised against
+stub `tailscale`/`systemctl` binaries: a login that never completes
+produced two links, two `systemctl restart tailscaled` calls, the
+"previous link is void" banner between them, and the manual recipe at the
+end. The success path was tested the same way — it returns as soon as
+`tailscale up` exits, with **no** restart, and streams the URL to both the
+terminal and the log. The live success path itself was exercised on a real
+from-scratch install the same day.
+
+If a faster recovery is ever wanted, the place to look is the live
+`login-state` health warning in `tailscale status --json`, not the journal.
+That was not done here because it would have meant guessing at the field's
+shape in the wedged state without a wedged daemon to observe.

@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — the interactive Tailscale login can no longer hang forever (`Q1-14`/`Q1-15`, DD-37)
+
+Found by a real install wedging at the login step. `tailscale up` was run
+bare and waited indefinitely; when the daemon got `410: auth path not
+found` it retried the **same dead auth path** forever
+(`doLogin(regen=false, hasUrl=true)`) and `tailscale status` kept printing
+that dead link as though it were live. The operator's experience was "I
+logged in and it is still waiting", with nothing in the script noticing.
+Measured: two links, each dead ~13s after issue, four 410 events, and
+`tailscale logout` did not clear it — only restarting `tailscaled` did.
+
+The login now runs under `tailscale_interactive_login()`: output streams
+to the terminal and the log as before, but if the login has not completed
+within 300s the daemon is restarted and a fresh link is printed, up to
+three attempts, after which the manual recipe is shown — including the
+non-obvious part that `logout` is not enough.
+
+**It deliberately does not try to detect the wedge.** Three versions that
+parsed `journalctl` for the 410 were written and all three were wrong, each
+caught by running the function against real journal data: a 410 also occurs
+during a *successful* login; `journalctl | grep -q` under `pipefail`
+reported found matches as failures via SIGPIPE; and an unbounded window let
+a later login's success count as recovery for an earlier wedge. A false
+positive there kills a login that is about to succeed, so the diagnosis was
+dropped in favour of a plain timeout. Full reasoning in DD-37.
+
+Verified with stub `tailscale`/`systemctl` binaries (never-completing login
+→ two links, two restarts, correct banners and final recipe; successful
+login → returns immediately, no restart) and live on a from-scratch install
+plus an idempotent re-run: `STACK_VERSION=2026.08.02-Q1-15`, `--check
+rc=0`, five containers, zero failed units.
+
 ### 2026-08-02 — three file-manager alternatives investigated, none adopted (DD-36)
 
 No code change. Filestash (proposed as v3), a native non-Docker file manager

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-13"
+MASTER_SETUP_VERSION="2026.08.02-Q1-15"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1190,6 +1190,168 @@ tailscale_is_online() {
     [[ -n "$self_line" && "$self_line" != *offline* ]]
 }
 
+# --- Etkileşimli Tailscale girişi --------------------------------------
+#
+# Çıplak `tailscale up` bu adım için YETMİYOR; 2026-08-02'de canlıda tam
+# olarak bu yüzden kilitlendi. Mekanizma şöyle: daemon bir nodekey üretir,
+# kontrol düzleminden ona bağlı bir auth path (/a/<id>) alır ve o yolu
+# uzun-yoklamaya başlar. Aynı düğüm için YENİ bir kayıt isteği (kurulumu
+# yeniden başlatmak) ya da tarayıcıda ESKİ bir linki tamamlamak, bekleyen
+# yolu kontrol düzleminde geçersiz kılar; yoklama `410: auth path not
+# found` alır.
+#
+# Asıl tuzak bundan sonrası. Daemon 410'dan sonra
+#     control: doLogin(regen=false, hasUrl=true)
+# ile AYNI ölü yolu yeniden denemeye başlar — yeni anahtar ÜRETMEZ. Yani
+# tek bir 410 girişi kalıcı olarak kilitler: `tailscale up` süresiz
+# bloklar, `tailscale status` ölü linki canlıymış gibi yazdırmaya devam
+# eder, ve operatörün gördüğü şey "giriş yaptım ama ilerlemiyor" olur.
+# Ölçüldü: iki ayrı bağlantı, ikisi de 13 saniyede öldü, kurulum sonsuza
+# kadar bekledi.
+
+tailscale_daemon_ready() {
+    local _
+    for _ in $(seq 1 30); do
+        # Düz `tailscale status` logged-out durumda rc=1 döndüğü için
+        # hazırlık ölçüsü olamaz; `--json` LocalAPI'ye konuşur ve
+        # logged-out iken de rc=0 verir (2026-08-02'de hedefte ölçüldü).
+        if tailscale status --json >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# Kilitlenmeyi log'dan TEŞHİS ETMEYE ÇALIŞMIYORUZ, ve bu bilinçli bir
+# geri adım. İlk üç deneme `journalctl`'de `410: auth path not found`
+# aramaya dayanıyordu; üçü de farklı biçimde yanlıştı ve hepsini gerçek
+# journal verisine koşan test yakaladı:
+#
+#   1. "410 gördüm → kilitli" — YANLIŞ. 410 başarılı girişin de normal
+#      parçası: operatör tarayıcıda onaylayınca kontrol düzlemi auth
+#      path'i emekliye ayırıyor, uçuştaki yoklama 410 alıyor, daemon
+#      hemen yeniden kaydolup `machineAuthorized=true` alıyor. Ölçüldü,
+#      hepsi aynı saniyede (2026-08-02 18:12:49).
+#   2. "410 sonrası toparlanma yok → kilitli" — `journalctl | grep -q`
+#      pipefail altında SIGPIPE yüzünden eşleşmeyi başarısız gösteriyordu,
+#      üstelik aralıklı olarak.
+#   3. Pencerenin üst sınırı yoktu; sonraki alakasız bir girişin başarısı
+#      önceki kilidin toparlanması sayılıyordu.
+#
+# Yanlış-pozitifin yönü tehlikeli: başarmakta olan bir girişi öldürüp
+# daemon'ı yeniden başlatmak, düzeltmenin düzelttiğini iddia ettiği
+# arızayı üretir. Üç yanlış tur, teşhisin kendisinin kırılgan olduğunun
+# kanıtı sayıldı.
+#
+# Yerine konan şey daha aptal ve bu yüzden daha güvenli: giriş verilen
+# süre içinde tamamlanmazsa — SEBEBİ NE OLURSA OLSUN — daemon
+# sıfırlanır ve taze bir bağlantı basılır. Kilitlenmeyi de, başka her
+# takılma sınıfını da kapsar, ve yanlış tetiklendiğinde en kötü sonucu
+# "operatöre yeni bir bağlantı verildi" olur.
+#
+# Kurtarmanın restart üzerine kurulu olması ölçüme dayanıyor:
+# `tailscale logout` yetmiyor, daemon ölü auth URL'ini bellekte tutup
+# `doLogin(regen=false, hasUrl=true)` ile onu yeniden denemeye devam
+# ediyor. Temizleyen tek şey tailscaled'i yeniden başlatmak.
+#
+# İleride daha hızlı bir kurtarma istenirse doğru yol journal değil,
+# `tailscale status --json`'daki canlı `login-state` sağlık uyarısıdır —
+# ama onun kilitli hâldeki şeklini gözlemeden yazmak yine tahmin olur.
+TAILSCALE_LOGIN_ATTEMPTS=3
+# Deneme başına süre. Bu adım insan hızında: operatörün bağlantıyı görüp
+# tarayıcıda açması gerekiyor. Cömert ama sonsuz değil — bugünkü arıza
+# tam olarak "sonsuz" yüzünden fark edilmedi.
+TAILSCALE_LOGIN_TIMEOUT=300
+
+tailscale_interactive_login() {
+    local attempt out_file up_pid streamed total elapsed outcome
+
+    out_file="$(mktemp)"
+
+    for ((attempt = 1; attempt <= TAILSCALE_LOGIN_ATTEMPTS; attempt++)); do
+        : >"$out_file"
+        streamed=0
+
+        if [[ "$attempt" -gt 1 ]]; then
+            printf '\n' >&5
+            printf 'ÖNCEKİ BAĞLANTI ARTIK GEÇERSİZ — onu açmayın.\n' >&5
+            printf 'Tarayıcıdaki eski Tailscale sekmelerini kapatın; birini\n' >&5
+            printf 'açmak yeni bağlantıyı da geçersiz kılar.\n' >&5
+            printf 'Yeni bağlantı (%s/%s):\n' \
+                "$attempt" "$TAILSCALE_LOGIN_ATTEMPTS" >&5
+        fi
+
+        tailscale up >"$out_file" 2>&1 &
+        up_pid=$!
+
+        elapsed=0
+        outcome=""
+        while :; do
+            # `tailscale up`un yazdıklarını gerçek zamanlı aktar; auth
+            # linki burada geliyor ve operatör onu beklemeden görmeli.
+            total="$(wc -l <"$out_file")"
+            if [[ "$total" -gt "$streamed" ]]; then
+                sed -n "$((streamed + 1)),${total}p" "$out_file" |
+                    tee -a "$MASTER_LOG_FILE" >&5
+                streamed="$total"
+            fi
+
+            if ! kill -0 "$up_pid" 2>/dev/null; then
+                outcome=0
+                wait "$up_pid" || outcome=$?
+                break
+            fi
+            if [[ "$elapsed" -ge "$TAILSCALE_LOGIN_TIMEOUT" ]]; then
+                outcome="timeout"
+                break
+            fi
+
+            sleep 2
+            elapsed=$((elapsed + 2))
+        done
+
+        total="$(wc -l <"$out_file")"
+        if [[ "$total" -gt "$streamed" ]]; then
+            sed -n "$((streamed + 1)),${total}p" "$out_file" |
+                tee -a "$MASTER_LOG_FILE" >&5
+        fi
+
+        if [[ "$outcome" == "0" ]]; then
+            rm -f "$out_file"
+            return 0
+        fi
+
+        kill "$up_pid" 2>/dev/null || true
+        wait "$up_pid" 2>/dev/null || true
+
+        case "$outcome" in
+            timeout)
+                echo "Tailscale girişi ${TAILSCALE_LOGIN_TIMEOUT} saniyede tamamlanmadı." >&2
+                echo "Bağlantı kilitlenmiş olabilir; daemon sıfırlanıp yenisi açılıyor." >&2
+                ;;
+            *)
+                echo "tailscale up rc=${outcome} ile döndü; daemon sıfırlanıyor." >&2
+                ;;
+        esac
+
+        systemctl restart tailscaled
+        if ! tailscale_daemon_ready; then
+            echo "HATA: tailscaled yeniden başlatıldıktan sonra yanıt vermedi." >&2
+            rm -f "$out_file"
+            return 1
+        fi
+    done
+
+    rm -f "$out_file"
+    echo "HATA: Tailscale girişi ${TAILSCALE_LOGIN_ATTEMPTS} denemede tamamlanamadı." >&2
+    echo "Elle kurtarma — logout YETMEZ, daemon ölü bağlantıyı bellekte tutar:" >&2
+    echo "  systemctl restart tailscaled && tailscale up" >&2
+    echo "Bağlantı geldiğinde HEMEN açın ve eski sekmeleri kapatın." >&2
+    echo "Ayrıntı: journalctl -u tailscaled -n 50" >&2
+    return 1
+}
+
 # Giriş gerekip gerekmediği tek bir bayrakla taşınıyor, çünkü iki ayrı yol
 # aynı yere çıkıyor: hiç profil yok, ya da profil var ama karşılığı silinmiş.
 # İkincisinde yerel profil değersizdir; bayrak sayesinde ikisi de aşağıdaki
@@ -1263,7 +1425,12 @@ if [[ "$TAILSCALE_NEEDS_LOGIN" -eq 1 ]]; then
     printf 'Tailscale girişi gerekiyor; aşağıdaki bağlantıyı tarayıcıda açın:\n' >&5
     printf '[%s] Etkileşimli Tailscale girişi başladı.\n' \
         "$(date --iso-8601=seconds)" >>"$MASTER_LOG_FILE"
-    tailscale up 2>&1 | tee -a "$MASTER_LOG_FILE" >&5
+    printf 'Bağlantı geldiği anda açın. Kurulumu YENİDEN BAŞLATMAYIN:\n' >&5
+    printf 'yeniden başlatmak yeni bir kayıt açar ve bekleyen bağlantıyı\n' >&5
+    printf 'öldürür (410). Takılırsa betik kendisi kurtarıp yenisini basar.\n' >&5
+    if ! tailscale_interactive_login; then
+        exit 1
+    fi
     progress_stage_resume
 fi
 
