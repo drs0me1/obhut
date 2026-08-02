@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — failed DNS/Caddy updates restore their files (`Q1-17`, DD-38, H9)
+
+Stage 6 already captured whether dnsmasq and Caddy were active, enabled or
+masked, but its EXIT rollback restored only that service-state vector. It
+did not restore the six configuration/helper files overwritten before a
+later failure. A previously-active service could therefore be restarted
+with partial new configuration, or fail to start, while the old canonical
+generation remained current.
+
+Q1-17 snapshots those six managed paths under a root-only `/run` directory
+before package/config mutation. On failure it stops any currently-loaded
+daemons, restores both prior files and prior absence, reloads systemd, and
+restarts only the services that were active at entry. The Q1-16 canonical
+`current` swap is the transaction commit point: once it succeeds, live and
+canonical configuration both represent the new run and rollback is
+disabled.
+
+The scope deliberately excludes package uninstall/downgrade and repository
+files. Leaving an installed package behind is safe and idempotently handled
+by the next run; attempting to reverse apt state would add a much larger and
+less reliable transaction. Seven regression cases cover content/absence,
+symlinks, unsafe paths, service restart order, commit-point ordering, and
+the signal window immediately after the pointer swap; a failed restore is
+also required to retain its recovery snapshot for manual intervention.
+
 ### 2026-08-02 — canonical bundle publication is actually atomic (`Q1-16`, DD-14, H8)
 
 The Stage 6 code claimed to publish the canonical bundle atomically, but

@@ -1893,3 +1893,46 @@ If a faster recovery is ever wanted, the place to look is the live
 `login-state` health warning in `tailscale status --json`, not the journal.
 That was not done here because it would have meant guessing at the field's
 shape in the wedged state without a wedged daemon to observe.
+
+### DD-38: DNS/Caddy file rollback commits with the canonical pointer (2026-08-02)
+
+Stage 6 has a real transaction boundary, not merely a sequence of service
+commands. Before it installs packages or writes configuration, Q1-17
+snapshots these six managed paths into a root-only directory under `/run`:
+
+- the dnsmasq zone file and dnsmasq systemd drop-in;
+- the Caddyfile, Caddy systemd drop-in and `caddy-tailnet-env` helper;
+- the tailscaled drop-in that pulls Caddy back after a tailscaled restart.
+
+The snapshot records absence by the absence of a backup entry. That detail
+is load-bearing on a fresh install: rollback must remove files introduced by
+the failed attempt, not preserve a partial first configuration. Existing
+files, directories or symbolic links are copied with metadata. Every managed
+path must be absolute and must not be `/`; the restore loop refuses anything
+outside that narrow shape before using recursive removal.
+
+On failure, currently-loaded dnsmasq/Caddy units are stopped, the six paths
+are restored (or removed if previously absent), systemd is reloaded, and the
+entry-time active/enabled/masked vector is restored. An entry-time active
+service is `restart`ed rather than merely `start`ed, so even a failed initial
+stop cannot leave it running with the new in-memory configuration. The
+snapshot is deleted only after every file restores successfully; otherwise
+its path is printed and the root-only recovery copy remains available for
+manual intervention.
+
+The commit point is Q1-16's atomic canonical `current` swap. Before it, the
+old canonical generation is authoritative and a failure restores the old
+live files to match. After it, the new generation and new live files are a
+consistent pair, so rollback is disabled before any later housekeeping.
+This avoids the opposite mixed state: old live files under a new canonical
+generation. Because pointer replacement and the shell flag update are two
+commands, EXIT also resolves `current` directly: if it already names the
+staging generation, the transaction is committed even if INT/TERM arrived
+in the few instructions before the flag changed.
+
+Package and apt-repository changes are deliberately outside this rollback.
+Uninstalling or downgrading a package during EXIT cleanup is a much broader,
+network- and maintainer-script-dependent operation. A newly installed but
+disabled/masked daemon is safe, takes little space, and is reused
+idempotently on the next run; reversing it adds risk without improving the
+continuously-running service state this transaction protects.

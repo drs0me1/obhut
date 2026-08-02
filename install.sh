@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-16"
+MASTER_SETUP_VERSION="2026.08.02-Q1-17"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -56,6 +56,16 @@ DNSMASQ_INITIAL_UNIT_FILE_STATE="not-found"
 CADDY_WAS_ACTIVE=0
 CADDY_INITIAL_LOAD_STATE="not-found"
 CADDY_INITIAL_UNIT_FILE_STATE="not-found"
+DNS_STACK_ROLLBACK_BASE="/run"
+DNS_STACK_ROLLBACK_DIR=""
+DNS_STACK_MANAGED_FILES=(
+    /etc/dnsmasq.d/local-services.conf
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
+    /etc/caddy/Caddyfile
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
+    /usr/local/sbin/caddy-tailnet-env
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
+)
 CANONICAL_STAGE_DIR=""
 CANONICAL_LINK_TMP=""
 
@@ -350,11 +360,132 @@ restore_stopped_timers_on_exit() {
     return "$restore_rc"
 }
 
+dns_stack_managed_path_ok() {
+    local path="$1"
+    [[ "$path" == /* && "$path" != "/" ]]
+}
+
+dns_stack_rollback_dir_ok() {
+    local path="$1"
+    [[ -n "$path" &&
+       "$path" == "$DNS_STACK_ROLLBACK_BASE"/master-dns-stack-rollback.* ]]
+}
+
+capture_dns_stack_files() {
+    local managed_path="" backup_path=""
+
+    DNS_STACK_ROLLBACK_DIR="$(
+        mktemp -d \
+            "$DNS_STACK_ROLLBACK_BASE/master-dns-stack-rollback.XXXXXX"
+    )"
+    chmod 0700 "$DNS_STACK_ROLLBACK_DIR"
+
+    for managed_path in "${DNS_STACK_MANAGED_FILES[@]}"; do
+        if ! dns_stack_managed_path_ok "$managed_path"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+            DNS_STACK_ROLLBACK_DIR=""
+            return 1
+        fi
+        backup_path="$DNS_STACK_ROLLBACK_DIR/files$managed_path"
+        if ! install -d -m 0700 "$(dirname "$backup_path")"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+            DNS_STACK_ROLLBACK_DIR=""
+            return 1
+        fi
+        if [[ -e "$managed_path" || -L "$managed_path" ]]; then
+            if ! cp -a -- "$managed_path" "$backup_path"; then
+                rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+                DNS_STACK_ROLLBACK_DIR=""
+                return 1
+            fi
+        fi
+    done
+}
+
+restore_dns_stack_files() {
+    local managed_path="" backup_path="" restore_rc=0
+
+    dns_stack_rollback_dir_ok "$DNS_STACK_ROLLBACK_DIR" &&
+        [[ -d "$DNS_STACK_ROLLBACK_DIR" ]] || return 1
+
+    for managed_path in "${DNS_STACK_MANAGED_FILES[@]}"; do
+        if ! dns_stack_managed_path_ok "$managed_path"; then
+            restore_rc=1
+            continue
+        fi
+        backup_path="$DNS_STACK_ROLLBACK_DIR/files$managed_path"
+        if [[ -e "$backup_path" || -L "$backup_path" ]]; then
+            rm -rf -- "$managed_path" || restore_rc=1
+            install -d -m 0755 "$(dirname "$managed_path")" || {
+                restore_rc=1
+                continue
+            }
+            cp -a -- "$backup_path" "$managed_path" || restore_rc=1
+        else
+            # Snapshot anında bulunmayan yönetilen dosya ilk kurulumda bu
+            # deneme tarafından yaratılmıştır; rollback onu bırakmamalı.
+            rm -rf -- "$managed_path" || restore_rc=1
+        fi
+    done
+
+    if [[ "$restore_rc" -eq 0 ]]; then
+        rm -rf -- "$DNS_STACK_ROLLBACK_DIR" || restore_rc=1
+        [[ "$restore_rc" -ne 0 ]] || DNS_STACK_ROLLBACK_DIR=""
+    fi
+    return "$restore_rc"
+}
+
+canonical_stage_is_current() {
+    local canonical_root="${CANONICAL_ROOT:-/usr/local/share/master-stack}"
+    local active_target="" stage_target=""
+    [[ -n "${CANONICAL_STAGE_DIR:-}" ]] || return 1
+    active_target="$(
+        readlink -f -- "$canonical_root/current" 2>/dev/null || true
+    )"
+    stage_target="$(
+        readlink -f -- "$CANONICAL_STAGE_DIR" 2>/dev/null || true
+    )"
+    [[ -n "$stage_target" && "$active_target" == "$stage_target" ]]
+}
+
 restore_dns_stack_on_failure() {
     local exit_rc="${1:-0}" restore_rc=0 daemon="" was_active=0
-    local load_state="" unit_file_state=""
+    local load_state="" unit_file_state="" current_load_state=""
     [[ "$exit_rc" -ne 0 &&
        "${DNS_STACK_STATE_CAPTURED:-0}" -eq 1 ]] || return 0
+
+    # `mv current` ile aşağıdaki commit bayrağı iki ayrı shell komutudur.
+    # Tam aralarında gelen INT/TERM'de pointer gerçekte commit edilmiştir;
+    # eski canlı dosyaları geri almak yeni canonical ile karışık durum
+    # yaratırdı. Pointer'ın kendisi bu dar pencerenin kalıcı commit kaydıdır.
+    if canonical_stage_is_current; then
+        if dns_stack_rollback_dir_ok "$DNS_STACK_ROLLBACK_DIR"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR" || restore_rc=1
+        fi
+        DNS_STACK_ROLLBACK_DIR=""
+        DNS_STACK_STATE_CAPTURED=0
+        return "$restore_rc"
+    fi
+
+    # Yeni config ile çalışan daemon bırakma. Dosyalar geri alındıktan sonra
+    # başlangıçta aktif olanlar restart edilir; restart, ilk stop başarısız
+    # olmuş olsa bile eski içeriğin yeniden yüklenmesini garanti eder.
+    for daemon in dnsmasq caddy; do
+        current_load_state="$(
+            systemctl show "$daemon.service" -p LoadState --value \
+                2>/dev/null || true
+        )"
+        if [[ "$current_load_state" != "not-found" ]]; then
+            systemctl stop "$daemon.service" \
+                >/dev/null 2>&1 || restore_rc=1
+        fi
+    done
+    if ! restore_dns_stack_files; then
+        echo "HATA: DNS/Caddy dosya rollback'i tamamlanamadı; kurtarma" >&2
+        echo "kopyası korundu: $DNS_STACK_ROLLBACK_DIR" >&2
+        restore_rc=1
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || restore_rc=1
 
     for daemon in dnsmasq caddy; do
         case "$daemon" in
@@ -395,7 +526,8 @@ restore_dns_stack_on_failure() {
         fi
         if [[ "$was_active" -eq 1 ]]; then
             systemctl reset-failed "$daemon.service" >/dev/null 2>&1 || true
-            systemctl start "$daemon.service" >/dev/null 2>&1 || restore_rc=1
+            systemctl restart "$daemon.service" \
+                >/dev/null 2>&1 || restore_rc=1
         else
             systemctl stop "$daemon.service" >/dev/null 2>&1 || true
         fi
@@ -4900,7 +5032,10 @@ progress_stage_done
 progress_stage_begin 6 "Opsiyonel Tailnet DNS ve Caddy hazırlanıyor"
 progress_stage_note 10 ".$LOCAL_DOMAIN için dnsmasq kuruluyor"
 
-DNS_STACK_STATE_CAPTURED=1
+# Service state kadar içerik de transaction'ın parçasıdır. Snapshot paket
+# kurulumu ve ilk `cat >` işleminden önce alınır; böylece fresh install'da
+# "önceden yoktu" bilgisi de korunur.
+capture_dns_stack_files
 DNSMASQ_INITIAL_LOAD_STATE="$(
     systemctl show dnsmasq.service -p LoadState --value 2>/dev/null || true
 )"
@@ -4921,6 +5056,7 @@ CADDY_INITIAL_LOAD_STATE="${CADDY_INITIAL_LOAD_STATE:-not-found}"
 CADDY_INITIAL_UNIT_FILE_STATE="${CADDY_INITIAL_UNIT_FILE_STATE:-not-found}"
 systemctl is-active --quiet caddy.service 2>/dev/null &&
     CADDY_WAS_ACTIVE=1
+DNS_STACK_STATE_CAPTURED=1
 
 # Paket postinst aşamasında varsayılan wildcard listener açılmasını engelle.
 # Kalıcı maske, kurulum bu blokta yarıda kalırsa reboot sonrasında da
@@ -5146,7 +5282,6 @@ caddy validate \
     --envfile /run/caddy-tailnet/tailscale.env \
     --config /etc/caddy/Caddyfile
 
-DNS_STACK_STATE_CAPTURED=0
 echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
 
 # Canonical bundle önce benzersiz bir generation dizininde eksiksiz kurulur
@@ -5235,8 +5370,16 @@ mv -f "$CANONICAL_MANIFEST_TMP" "$CANONICAL_STAGE_DIR/SHA256SUMS"
 CANONICAL_LINK_TMP="${CANONICAL_STAGE_DIR}.link"
 ln -s "$(basename "$CANONICAL_STAGE_DIR")" "$CANONICAL_LINK_TMP"
 mv -Tf "$CANONICAL_LINK_TMP" "$CANONICAL_ROOT/current"
+
+# Pointer swap bu transaction'ın commit noktasıdır: buradan sonra yeni canlı
+# config ile yeni canonical generation aynı sürümü temsil eder. EXIT cleanup
+# artık eski dosyaları geri almamalı. Snapshot sır içermez ve /run altındadır;
+# silme hatası kurulumun geri kalanını durdurur ama committed config'i bozmaz.
+DNS_STACK_STATE_CAPTURED=0
 CANONICAL_LINK_TMP=""
 CANONICAL_STAGE_DIR=""
+rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+DNS_STACK_ROLLBACK_DIR=""
 
 # Q1-16 öncesi düz-dizin bundle yalnız ilk yükseltmenin Aşama 4-6 kesinti
 # penceresi için fallback'tir. `current` başarıyla yayınlandıktan sonra onu

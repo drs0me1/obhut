@@ -19,10 +19,13 @@ retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
 `CLAUDE.md`).
 
-The 2026-08-02 R2.4 line-by-line review added **H8**: the canonical bundle
-was described as atomic although only its manifest rename was atomic. It
-is resolved in Q1-16 with verified generation directories and an atomic
-`current` pointer (DD-14).
+The 2026-08-02 R2.4 line-by-line review added **H8** and **H9**. H8 found
+that the canonical bundle was described as atomic although only its
+manifest rename was atomic; Q1-16 resolves it with verified generation
+directories and an atomic `current` pointer (DD-14). H9 found that Stage
+6's rollback restored DNS/Caddy service state but not the files those
+services load; Q1-17 snapshots and restores all six managed paths until
+the canonical pointer commit (DD-38).
 
 ## Critical
 
@@ -116,6 +119,13 @@ _All High findings resolved — see Completed below._
       sides of the R2.4 legacy transition. A sixth structural case proves
       Stage 6 verifies the generation before swapping `current`.
 
+      **Added 2026-08-02: `test/dns_stack_rollback.bats` (7 cases,
+      126 → 133).** Covers restoration of prior content and prior absence,
+      symlink preservation, managed-path safety, restore-before-restart
+      ordering, the canonical pointer as the transaction commit point, and
+      the signal window between pointer swap and flag update. A failed
+      restore must retain its root-only recovery snapshot.
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
@@ -145,6 +155,18 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **H9 — DNS/Caddy rollback now restores managed files (2026-08-02,
+      `Q1-17`, DD-38).** Stage 6 captured active/enabled/masked state but
+      overwrote six config/helper files without snapshotting them. A later
+      failure could restart an old active service against partial new
+      content while the old canonical bundle remained current. The six
+      paths are now captured under root-only `/run` storage before any
+      mutation; failure restores both content and non-existence before
+      `daemon-reload` and service restart. The atomic canonical `current`
+      swap is the commit point. Package/repository rollback is deliberately
+      excluded as broader, less reliable and unnecessary for an idempotent
+      rerun.
 
 - [x] **Interactive Tailscale login could hang forever (2026-08-02,
       `Q1-14`/`Q1-15`, unnumbered, DD-37).** Found in real use, not by

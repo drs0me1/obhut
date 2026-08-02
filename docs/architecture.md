@@ -18,19 +18,19 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 
 | Stage | Lines (approx.) | Purpose |
 |-------|-----------------|---------|
-| 0 | 687–860 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
-| 1 | 861–979 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 980–1496 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1083–1158`), the bounded interactive login (`tailscale_interactive_login`, DD-37), exit-node + stateful filtering + netfilter configuration |
-| 3 | 1497–2217 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1606–2150`) and its systemd unit |
-| 4 | 2218–4796 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2732–2773`) and `master-network-reconcile` (`2813–4501`) helper scripts, `master-docker-netfilter-recovery` (`4505–4561`), `master-webdav-serve` (`4653–4738`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4797–4899 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4900–5270 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `5016–5048`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (see DD-14, DD-32, H8) |
-| 7 | 5271–5993 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 0 | 819–992 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
+| 1 | 993–1111 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
+| 2 | 1112–1628 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1215–1290`), the bounded interactive login (`tailscale_interactive_login`, DD-37), exit-node + stateful filtering + netfilter configuration |
+| 3 | 1629–2349 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1738–2282`) and its systemd unit |
+| 4 | 2350–4928 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2864–2905`) and `master-network-reconcile` (`2945–4633`) helper scripts, `master-docker-netfilter-recovery` (`4637–4693`), `master-webdav-serve` (`4785–4870`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4929–5031 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 5032–5413 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `5152–5184`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
+| 7 | 5414–6136 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5993 lines — `Q1-16`, 2026-08-02.
+(Line numbers as of `install.sh` 6136 lines — `Q1-17`, 2026-08-02.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
-batch of edits. **This has now drifted four times**: 18 lines across
+batch of edits. **This has now drifted five times**: 18 lines across
 stages 5–7 before `V1-11` caught it; again in `V1-15`, where a block added
 above stage 1 shifted stages 0–4 by 14 lines while only the tail of the
 table was refreshed; and again across the whole `quantum` line, where the
@@ -42,7 +42,9 @@ three. `Q1-14`/`Q1-15` added 167 lines inside stage 2 and moved every
 boundary from stage 3 onward, which is exactly the shape that produced the
 `V1-15` drift — this table was regenerated whole rather than patched.
 Q1-16 then changed Stage 4's reconcile helper and Stage 6's publication
-path together; the complete table was regenerated again.)
+path together. Q1-17 added rollback helpers before every stage and the
+transaction boundary inside Stage 6; the complete table was regenerated
+again after both revisions.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -79,8 +81,8 @@ master-network-reconcile.service ──After──────────> dock
 master-webdav.service      ──Wants/After/PartOf──> tailscaled.service
                            ──OnFailure──────────────> master-network-reconcile.service
 
-dnsmasq.service / caddy.service (optional) ──Wants/After──> tailscaled.service
-                                            ──OnFailure───> master-network-reconcile.service
+dnsmasq.service / caddy.service ──Wants/After──> tailscaled.service
+                                 ──OnFailure───> master-network-reconcile.service
 caddy.service ──PartOf──> tailscaled.service
 ```
 
@@ -348,6 +350,13 @@ configuration and the canonical bundle. What it preserves: the media
 tree, `/data/*` (wg-easy keys and peers, Portainer's database,
 qBittorrent's session), `webdav.htpasswd`, the Tailscale node identity
 and login, and gid-1000 group membership.
+
+Stage 6 is transactional across the six dnsmasq/Caddy managed paths. Their
+pre-run content or absence is snapshotted under `/run`; a failure restores
+it before restoring the two daemons' entry-time systemd state. The atomic
+canonical `current` swap is the commit point, because that is when the new
+live files and new integrity source first become one consistent pair
+(DD-38/H9). Package installation itself is intentionally not rolled back.
 
 Two consequences worth stating plainly:
 

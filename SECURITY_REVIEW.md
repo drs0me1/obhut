@@ -49,15 +49,16 @@ was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
 **M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
 `v1.1-1` login-placement experiment; the reorder fixed it as a side
 effect, the revert of that experiment reintroduced it, and it was then
-fixed on its own in `V1-1`. **H8** was discovered and resolved during the
-2026-08-02 R2.4 line-by-line review: the canonical publication described
-as atomic had only ever atomically renamed its manifest. **M7** remains
-the only open finding in the project.
+fixed on its own in `V1-1`. **H8** and **H9** were discovered and resolved
+during the 2026-08-02 R2.4 line-by-line review: canonical publication had
+only atomically renamed its manifest, and Stage 6 rollback restored
+DNS/Caddy service state without restoring the files those services load.
+**M7** remains the only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
-| High     | 0 | 8 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, 2026-08-02 — post-audit) |
+| High     | 0 | 9 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, 2026-08-02 — post-audit) |
 | Medium   | 1 (**M7**) | 10 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
@@ -70,7 +71,7 @@ was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th/21st, separately-tracked findings, as
 are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
-and **H8** (28th).
+**H8** (28th), and **H9** (29th).
 
 ## Critical issues
 
@@ -466,6 +467,45 @@ and **H8** (28th).
 - **Change risk:** Medium — this changes the on-disk canonical layout, but
   not the live service configuration paths. The compatibility branch and
   fail-closed target check specifically bound the migration risk.
+
+### H9 — DNS/Caddy rollback restored service state but not configuration — ✅ RESOLVED (2026-08-02, `Q1-17`)
+
+- **Location (historical):** `restore_dns_stack_on_failure()` and Stage 6's
+  writes to the two dnsmasq and four Caddy/tailscaled managed paths.
+- **Description:** Stage 6 captured whether dnsmasq and Caddy were loaded,
+  enabled, masked and active. Its EXIT path reconstructed that vector, but
+  never saved or restored the files overwritten between capture and a
+  later failure.
+- **Impact:** On a re-run, a failure after one or more writes could restart
+  a previously-active daemon with a partial mix of new files while Q1-16's
+  old canonical generation correctly remained current. The service could
+  fail to start, or run a configuration that immediately disagreed with
+  the integrity source used by reconcile. On a first install, files newly
+  introduced by the failed attempt were likewise left behind. This is an
+  availability and recovery-integrity defect on the continuously-running
+  server, not a hypothetical package-manager edge case.
+- **Resolution:** Before any Stage 6 mutation, Q1-17 copies all six managed
+  paths with metadata into a `0700` snapshot under `/run`; a missing backup
+  means the path was originally absent. Failure stops any currently-loaded
+  daemons, restores old files/removes newly-created ones, reloads systemd,
+  then restores enabled/masked state and `restart`s entry-time active
+  services. Managed paths must be absolute and cannot be `/`.
+- **Commit point:** the atomic canonical `current` swap. Before the swap,
+  failure restores old live files to match the old canonical generation.
+  Immediately after it, rollback is disabled so a later housekeeping error
+  cannot create old live files under a new canonical generation.
+- **Deliberate boundary:** packages and apt repository files are not
+  uninstalled or downgraded. A package left installed but disabled/masked
+  is safe and reusable by the next idempotent run; apt rollback would be a
+  broader, network-dependent operation with worse failure modes.
+- **Verification:** seven cases in `test/dns_stack_rollback.bats` cover
+  previous content/absence, symlinks, unsafe managed paths, file restore
+  before `daemon-reload`/restart, commit ordering, and the signal window
+  after pointer replacement. A failed restore must keep its recovery
+  snapshot. Full local checks are clean; live Debian fault injection is
+  not claimed yet.
+- **Change risk:** Medium — EXIT cleanup now mutates files, bounded to six
+  fixed paths and exercised without touching a live host.
 
 ## Medium
 
@@ -1236,6 +1276,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-17`) | Stage 6 DNS/Caddy EXIT rollback | **H9 found and resolved.** Existing rollback restored active/enabled/masked state but not the six overwritten files, so a failed update could restart old services with partial new configuration while the old canonical generation remained current. Q1-17 snapshots content and absence before mutation, restores files before daemon reload/restart, and commits at the canonical `current` swap. Seven new regression cases bring bats from 126 to 133, including the signal window after pointer replacement and snapshot retention on restore failure; local full verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (requested an ordered R2.4 line-by-line review) + Codex (`Q1-16`) | Stage 6 canonical publication and DD-14's atomicity claim | **H8 found and resolved.** The nine canonical files were copied directly into the live directory and only `SHA256SUMS` was atomically renamed, so an interrupted re-run could leave mixed generations that permanently failed reconcile's first gate. Q1-16 stages and verifies all nine files plus the manifest in `.generation.*`, then atomically swaps the relative `current` symlink. The new reconcile accepts the legacy R2.4 flat layout only during the first Stage 4→6 transition and rejects pointers resolving outside the canonical root. Six new regression cases bring the bats suite from 120 to 126; targeted tests, `bash -n`, outer and embedded `shellcheck` are clean. Live Debian verification is deliberately not claimed yet. |
 | 2026-07-27 | Claude Code (static audit) | Full `install.sh` (4552 lines) | 18 findings (2 Critical, 4 High, 7 Medium, 5 Low), no changes applied |
 | 2026-07-27 | Claude Code (remediation) | Stage 0 + Stage 2 (`TS_AUTHKEY` flow) | **C2** resolved: auth-key input removed entirely; `bash -n` + `shellcheck` clean |
