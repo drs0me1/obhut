@@ -4,8 +4,10 @@
 `2026.08.02-Q1-20` in its banner, log header and final summary; this is
 distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
 and remains `10`. This revision was live-verified on Debian 13 through an
-R2.4 → R2.5 upgrade, a second idempotent rerun, and controlled reconcile
-fault injection before release.
+R2.4 → R2.5 upgrade, controlled reconcile fault injection, a later
+from-scratch install after the host was reimaged, and unchanged idempotent
+reruns. The fresh run included the real browser-login path and completed
+without losing the Tailscale hand-off.
 Q1-16 through Q1-20 add atomic canonical publication, transactional
 DNS/Caddy file rollback, reliable deleted-node classification, retryable
 FileBrowser policy activation, and stricter reconcile/dependency semantics.

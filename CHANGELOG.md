@@ -33,6 +33,19 @@ the close-out commit as `R2.5`. The exported installer is byte-identical to
 both repository states and has SHA256
 `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9`.
 
+The same exported file was subsequently tested from scratch after the host
+was reset to a clean Debian 13 image. Its live Tailscale browser link completed
+in the original installer process, the node came online as an exit-node, and
+all seven stages passed with only the expected unfinished-wg-easy warning. An
+independent sweep found no failed units, all five containers running,
+`master-network-reconcile --check` at rc 0, FileBrowser/Caddy at HTTP 200 and
+WebDAV at 401 without credentials / 200 with them. FileBrowser's one-time
+missing-database message was followed by `Creating new database` at the
+persistent volume path; a controlled restart then logged `Using existing
+database`. An immediate unchanged installer rerun preserved the Tailscale
+identity, WebDAV credentials and every container `StartedAt` value and again
+completed 7/7 without another browser login.
+
 ### 2026-08-02 — reconcile no longer hides persistent failures or mutates read-only checks (`Q1-20`, DD-41, H10/H11/M14/M15)
 
 The timer previously used one `defer_or_fail()` path for both genuine

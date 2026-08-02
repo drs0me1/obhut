@@ -196,7 +196,11 @@ _All Low findings resolved or closed — see Completed below._
       five container start times. Fault injection covered FileBrowser audit
       side effects, all four Compose target classes and an active-but-offline
       Tailscale node. Final state: same node/IP, all drift flags zero, no
-      failed units; exported as `versiyon/R2.5/`.
+      failed units; exported as `versiyon/R2.5/`. After the host was reset,
+      that exact export also completed a clean-image first install through the
+      real browser-login path and another unchanged rerun. The fresh run
+      created FileBrowser's persistent database once; restart and rerun reused
+      it, and the rerun preserved all five container start times.
 
 - [x] **H11 — a missing Compose file no longer disables reconcile
       (2026-08-02, `Q1-20`, DD-41).** Removed the service-level

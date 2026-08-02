@@ -616,6 +616,19 @@ alone.
     `RequiresMountsFor=/downloads/media` and both Stage 7 runs accepted it.
     The host uses its root filesystem for that path, so a separate-mount
     outage was not fabricated merely to test systemd's native behaviour.
+  - **Post-release clean-image verification:** after the host was reset, the
+    exact R2.5 export completed all seven stages from scratch. The live
+    Tailscale browser authorization returned `Success` to the original
+    installer process; the resulting `nrm-1` node was online at
+    `100.95.10.49` and offered exit-node service. Independent checks found
+    five running containers, zero failed units and reconcile rc 0. DNS resolved
+    `file.ayc`/`webdav.ayc`; Caddy/FileBrowser returned 200 and WebDAV returned
+    401 unauthenticated / 200 authenticated. The first Quantum start logged the
+    expected missing file immediately followed by `Creating new database` at
+    `/home/filebrowser/data/database.db`; a controlled restart logged `Using
+    existing database`. A full unchanged rerun preserved the WebDAV credential,
+    avoided a second Tailscale authorization and left all five pre-run
+    `StartedAt` values unchanged.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

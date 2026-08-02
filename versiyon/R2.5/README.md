@@ -128,9 +128,17 @@ systemd result and explicit health diagnostics. Bringing the same node back
 up and running recovery restored the same Tailscale IP, firewall and Docker
 netfilter state, ending again at a clean check.
 
-This was an upgrade/rerun verification, not a newly reimaged first install.
-The first-install path, including browser login recovery, was already
-live-verified by `R2.4`; Q1-20 does not change that installer login path.
+After release close-out, the same exported file was also run on the host after
+a clean Debian 13 reimage. The real Tailscale browser link returned success to
+the original waiting process, all seven stages completed, the node was
+`Running/Online` and offering exit-node service, and the only install warning
+was the expected unfinished wg-easy web setup. FileBrowser created
+`/home/filebrowser/data/database.db` once on the persistent volume; a
+controlled restart logged `Using existing database`. FileBrowser/Caddy
+returned 200, WebDAV returned 401 without credentials and 200 with them, and
+there were no failed units. An immediate unchanged full rerun needed neither a
+new Tailscale login nor a WebDAV password, retained every container start time,
+and again completed 7/7.
 
 ## What changed since `R2.4`
 

@@ -249,6 +249,13 @@ offline Tailscale daemon failed after exactly 30 seconds with structured
 diagnostics. Returning the same node/IP and running the existing recovery
 ended with every drift flag zero and no failed units.
 
+The exact export was later run from scratch after a clean Debian 13 reimage.
+The interactive browser authorization completed in the original installer
+process, the resulting node was online and offering exit-node service, and an
+immediate unchanged rerun retained the identity and every container start
+time. This exercises the first-install control-plane path as well as the
+upgrade path above.
+
 Two checks are specific to the `quantum` line and were added after the
 `Q1-8` review.
 

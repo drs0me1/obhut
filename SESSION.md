@@ -21,7 +21,7 @@ Current release:
 | Version | `2026.08.02-Q1-20` (6425 lines) |
 | SHA256 | `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9` |
 | Export | `versiyon/R2.5/`, byte-identical to the `Q1-20` and `R2.5` repository states |
-| Live | R2.4 upgrade + unchanged rerun, both 7/7; targeted Q1-20 fault injection; final `--check rc=0`, no failed units, five containers up |
+| Live | R2.4 upgrade + fault injection; later clean-image first install with real browser login + unchanged rerun, all 7/7; final `--check rc=0`, no failed units, five containers up |
 | Tests | 162 cases across twelve `.bats` files (150 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
@@ -56,6 +56,16 @@ Release verification details worth retaining:
   test stamps were removed and final recovery succeeded.
 - The second full Q1-20 run preserved every container `StartedAt`. Quantum
   logged `Using existing database`, not the one-time missing-database warning.
+- After the host was subsequently reset, the exact exported R2.5 installer
+  also completed a genuinely fresh 7/7 run. Its Tailscale browser link
+  returned success to the same waiting process, and the resulting node was
+  `Running/Online` at `100.95.10.49` and advertising exit-node capability.
+  FileBrowser created its database once at
+  `/home/filebrowser/data/database.db`; a deliberate restart used that same
+  database. Caddy/FileBrowser returned 200, WebDAV returned 401 unauthenticated
+  and 200 with the configured credential, and a subsequent unchanged full run
+  kept all five pre-run `StartedAt` values unchanged without asking for a new
+  Tailscale login or WebDAV password.
 
 Three things from the recent sessions are worth carrying forward more than
 the change list:
