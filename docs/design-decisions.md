@@ -1936,3 +1936,35 @@ network- and maintainer-script-dependent operation. A newly installed but
 disabled/masked daemon is safe, takes little space, and is reused
 idempotently on the next run; reversing it adds risk without improving the
 continuously-running service state this transaction protects.
+
+### DD-39: Journal classifiers consume their complete producer stream (2026-08-02)
+
+Stage 2 distinguishes a deleted Tailscale node from a general connectivity
+failure by looking for `node not found` in tailscaled's journal since the
+current install began. The distinction is useful and evidence-based: the
+deleted-node branch can safely discard the worthless local profile and open
+a new interactive login; the generic branch must stop and ask the operator
+to diagnose network/control-plane reachability.
+
+The classifier originally used `journalctl | grep -q` while the whole
+installer runs with `set -o pipefail`. That combination is not a reliable
+boolean query. `grep -q` exits as soon as it sees a match; if journalctl
+still has more than a pipe buffer to write, it receives SIGPIPE and exits
+141. Pipefail then makes the **matched** pipeline false. Whether the bug
+appears depends on how much unrelated journal data follows the match, which
+is why it presents as intermittent.
+
+Q1-18 keeps the pipeline and its failure semantics but replaces quiet grep
+with `grep -F ... >/dev/null`. The output stays silent, grep reads to EOF,
+and journalctl completes normally. A real journalctl failure still makes the
+pipeline fail; capturing output with `|| true` would have fixed SIGPIPE by
+hiding that separate error and was therefore rejected.
+
+This is the same shell failure mode encountered while developing DD-37's
+abandoned 410 classifier, but the conclusion differs. DD-37 removed journal
+diagnosis because 410 itself was ambiguous even with a correct pipeline.
+Here `node not found` identifies a distinct recoverable state, so the right
+fix is to preserve the classifier and make its transport correct. The old
+and new forms were run against one producer with an early match plus 6,000
+tail lines: rc 141 versus rc 0. Dedicated tests also cover no match and a
+producer that genuinely fails after emitting a matching line.

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-17"
+MASTER_SETUP_VERSION="2026.08.02-Q1-18"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1511,6 +1511,18 @@ tailscale_interactive_login() {
     return 1
 }
 
+tailscale_journal_has_node_not_found() {
+    # `grep -q` burada kullanılamaz: eşleşmeden sonra erken çıkar, büyük bir
+    # journal akışında journalctl SIGPIPE/141 alır ve pipefail bulunan
+    # eşleşmeyi başarısızlığa çevirir. Normal grep çıktısını /dev/null'a
+    # yönlendirerek akışın tamamını tüketir; gerçek journalctl hatası ise
+    # pipefail sayesinde yine başarısız kalır.
+    journalctl -u tailscaled \
+        --since "${MASTER_SETUP_STARTED_AT:--5min}" \
+        --no-pager 2>/dev/null |
+        grep -F "node not found" >/dev/null
+}
+
 # Giriş gerekip gerekmediği tek bir bayrakla taşınıyor, çünkü iki ayrı yol
 # aynı yere çıkıyor: hiç profil yok, ya da profil var ama karşılığı silinmiş.
 # İkincisinde yerel profil değersizdir; bayrak sayesinde ikisi de aşağıdaki
@@ -1544,10 +1556,7 @@ else
         # kullanılıyor: çözülmüş eski bir node-not-found arızasından kalan
         # kayıt, dakikalar sonra oluşan başka bir arızaya yanlış teşhis
         # koymasın.
-        if journalctl -u tailscaled \
-                --since "${MASTER_SETUP_STARTED_AT:--5min}" \
-                --no-pager 2>/dev/null |
-                grep -q "node not found"; then
+        if tailscale_journal_has_node_not_found; then
             echo "UYARI: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
             echo "Düğüm Tailscale panelinden silinmiş; yerel profil geçerli görünse de" >&2

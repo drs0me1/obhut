@@ -19,13 +19,16 @@ retagged; **H7** is simply the first fix that postdates it (v1b work).
 Do not start work on any item without explicit user approval (per
 `CLAUDE.md`).
 
-The 2026-08-02 R2.4 line-by-line review added **H8** and **H9**. H8 found
+The 2026-08-02 R2.4 line-by-line review added **H8**, **H9** and **M12**. H8 found
 that the canonical bundle was described as atomic although only its
 manifest rename was atomic; Q1-16 resolves it with verified generation
 directories and an atomic `current` pointer (DD-14). H9 found that Stage
 6's rollback restored DNS/Caddy service state but not the files those
 services load; Q1-17 snapshots and restores all six managed paths until
-the canonical pointer commit (DD-38).
+the canonical pointer commit (DD-38). M12 found a second live
+`journalctl | grep -q` pipeline with the same pipefail/SIGPIPE result
+inversion already documented by DD-37; Q1-18 consumes the full stream and
+tests both classifier outcomes plus producer failure (DD-39).
 
 ## Critical
 
@@ -126,6 +129,11 @@ _All High findings resolved — see Completed below._
       the signal window between pointer swap and flag update. A failed
       restore must retain its root-only recovery snapshot.
 
+      **Added 2026-08-02: `test/tailscale_journal.bats` (3 cases,
+      133 → 136).** Reproduces the old large-stream `grep -q` pipeline at
+      rc 141 and pins that an early `node not found` match stays true, no
+      match stays false, and a genuine journalctl failure is not hidden.
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
@@ -155,6 +163,14 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **M12 — Tailscale node-not-found journal classifier no longer
+      inverts matches under pipefail (2026-08-02, `Q1-18`, DD-39).** The
+      remaining `journalctl | grep -q` could give journalctl SIGPIPE after
+      an early match, making pipefail return 141 and sending a deleted node
+      down the generic fatal branch instead of automatic logout/re-login.
+      Normal fixed-string grep now consumes the full journal stream while
+      `/dev/null` suppresses output; real producer failures remain visible.
 
 - [x] **H9 — DNS/Caddy rollback now restores managed files (2026-08-02,
       `Q1-17`, DD-38).** Stage 6 captured active/enabled/masked state but

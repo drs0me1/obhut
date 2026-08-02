@@ -49,17 +49,18 @@ was likewise closed as won't-do on 2026-07-28. A twenty-seventh finding,
 **M11**, was discovered on 2026-07-29 while reordering Stage 1/2 for the
 `v1.1-1` login-placement experiment; the reorder fixed it as a side
 effect, the revert of that experiment reintroduced it, and it was then
-fixed on its own in `V1-1`. **H8** and **H9** were discovered and resolved
+fixed on its own in `V1-1`. **H8**, **H9** and **M12** were discovered and resolved
 during the 2026-08-02 R2.4 line-by-line review: canonical publication had
 only atomically renamed its manifest, and Stage 6 rollback restored
-DNS/Caddy service state without restoring the files those services load.
-**M7** remains the only open finding in the project.
+DNS/Caddy service state without restoring the files those services load;
+the deleted-node Tailscale journal classifier also inverted some true
+matches under pipefail. **M7** remains the only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 9 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, 2026-08-02 — post-audit) |
-| Medium   | 1 (**M7**) | 10 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29) |
+| Medium   | 1 (**M7**) | 11 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, 2026-08-02) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -71,7 +72,7 @@ was previously deferred to the live SSH test (see its entry below).
 **H5**/**H6**/**H7** are not counted in the "18 findings total" above since they postdate that
 audit; they're genuine 19th/20th/21st, separately-tracked findings, as
 are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
-**H8** (28th), and **H9** (29th).
+**H8** (28th), **H9** (29th), and **M12** (30th).
 
 ## Critical issues
 
@@ -508,6 +509,29 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
   fixed paths and exercised without touching a live host.
 
 ## Medium
+
+### M12 — Tailscale journal classifier inverted true matches under `pipefail` — ✅ RESOLVED (2026-08-02, `Q1-18`)
+
+- **Location (historical):** Stage 2's stored-profile timeout branch,
+  `journalctl -u tailscaled ... | grep -q "node not found"`.
+- **Description:** `grep -q` exits on its first match. If journalctl still
+  has buffered output, it receives SIGPIPE and exits 141; global pipefail
+  then makes the whole pipeline false even though the match was found.
+- **Impact:** A node deleted from the Tailscale admin console could be
+  correctly reported as `404 node not found` yet intermittently miss the
+  automatic `tailscale logout` and fresh-login recovery path. Installation
+  stopped with the generic network/control-plane diagnostic instead. This
+  does not expose the host, but it directly worsens recovery from the real
+  Tailscale offline/login scenario that motivated the review.
+- **Resolution:** The classifier is a named helper using
+  `grep -F "node not found" >/dev/null`. It remains silent but consumes the
+  entire journal stream, preventing SIGPIPE. Pipefail is retained, so a
+  genuine journalctl error still makes the classification fail closed.
+- **Verification:** the old pipeline returns 141 and the new pipeline 0
+  against the same early-match/6,000-tail-line producer. Three Bats cases
+  cover that large stream, no match, and a producer failure after a match.
+- **Change risk:** Low — one existing branch predicate keeps the same
+  matching text and time window; only pipeline consumption changes.
 
 ### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
 - **Location:** `install.sh:1781-1841` (`compose.yaml` →
@@ -1276,6 +1300,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-18`) | Stage 2 deleted-node Tailscale journal classifier | **M12 found and resolved.** `journalctl | grep -q` under pipefail turned an early true match into rc 141 when enough output followed it, bypassing automatic logout/re-login and producing a generic fatal error. Normal fixed-string grep now consumes the whole stream without hiding real journalctl failure. Old/new pipelines reproduced at rc 141/0; three tests bring bats 133 → 136. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-17`) | Stage 6 DNS/Caddy EXIT rollback | **H9 found and resolved.** Existing rollback restored active/enabled/masked state but not the six overwritten files, so a failed update could restart old services with partial new configuration while the old canonical generation remained current. Q1-17 snapshots content and absence before mutation, restores files before daemon reload/restart, and commits at the canonical `current` swap. Seven new regression cases bring bats from 126 to 133, including the signal window after pointer replacement and snapshot retention on restore failure; local full verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (requested an ordered R2.4 line-by-line review) + Codex (`Q1-16`) | Stage 6 canonical publication and DD-14's atomicity claim | **H8 found and resolved.** The nine canonical files were copied directly into the live directory and only `SHA256SUMS` was atomically renamed, so an interrupted re-run could leave mixed generations that permanently failed reconcile's first gate. Q1-16 stages and verifies all nine files plus the manifest in `.generation.*`, then atomically swaps the relative `current` symlink. The new reconcile accepts the legacy R2.4 flat layout only during the first Stage 4→6 transition and rejects pointers resolving outside the canonical root. Six new regression cases bring the bats suite from 120 to 126; targeted tests, `bash -n`, outer and embedded `shellcheck` are clean. Live Debian verification is deliberately not claimed yet. |
 | 2026-07-27 | Claude Code (static audit) | Full `install.sh` (4552 lines) | 18 findings (2 Critical, 4 High, 7 Medium, 5 Low), no changes applied |

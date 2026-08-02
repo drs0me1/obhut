@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — deleted Tailscale nodes are classified reliably (`Q1-18`, DD-39, M12)
+
+When a stored Tailscale profile stayed offline for 60 seconds, Stage 2
+searched the current run's journal for `node not found`. The check used
+`journalctl | grep -q` under global `pipefail`. With enough journal output
+after an early match, grep exited immediately, journalctl received SIGPIPE,
+and pipeline status became 141: a found match was intermittently reported
+as absent. The installer then stopped with a generic control-plane error
+instead of clearing the worthless local profile and opening a fresh login.
+
+Q1-18 moves the classifier into a tested helper and uses normal fixed-string
+grep with output redirected to `/dev/null`. Grep consumes the whole stream,
+so an early match remains true; `pipefail` still preserves a genuine
+journalctl failure. The old form was reproduced at rc 141 and the new form
+at rc 0 against the same stream. Three regression cases cover a match ahead
+of more than a pipe buffer of output, no match, and producer failure.
+
 ### 2026-08-02 — failed DNS/Caddy updates restore their files (`Q1-17`, DD-38, H9)
 
 Stage 6 already captured whether dnsmasq and Caddy were active, enabled or
