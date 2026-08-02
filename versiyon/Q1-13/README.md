@@ -1,4 +1,4 @@
-# `Q1-11` — Debian 13 media server, one script
+# `Q1-13` — Debian 13 media server, one script
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,9 +7,9 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-11` |
-| Tags | `Q1-11`, `R2.2`, and `Q1` (marks the head of this line) |
-| SHA256 | `b3f32a7b821ed69d7288b2e3b0424823245e47f23b6b7cb25c0e3239c3d029c7` |
+| Version | `2026.08.02-Q1-13` |
+| Tags | `Q1-13` (the `Q1` line marker still points at `Q1-11`; moving it means deleting and recreating it, so it is only done when asked) |
+| SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
@@ -96,33 +96,29 @@ minutes in its own logs until you change it.
   minutes.** That is the file manager protecting itself, not a fault, and it
   clears on its own. It applies to everyone at once, because every browser
   reaches it through the same internal address.
+- **The file manager warns once, on its very first start, that it could not
+  find its database.** That is normal: on a brand-new install the database
+  does not exist yet, and the next line says it is being created. It does
+  not appear again.
 
-## What changed since `Q1-8`
+## What changed since `Q1-11`
 
-All three are about the self-repair loop being honest and thorough:
+Both changes are about the server staying tidy on its own over months, not
+about anything you interact with:
 
-- **The file manager's security settings are now protected.** The file that
-  holds them — including the switch that stops strangers signing themselves
-  up — is now checked every 20 minutes and put back if anything changes it.
-  Previously it could be edited and nothing would notice.
-- **The default-password reminder no longer gets in its own way.** It used
-  to try the login several times per check, which could trip the file
-  manager's own lockout and then read that lockout as "all fine". It now
-  tries once, and if it is locked out it says so instead of staying quiet.
-- **A miscount in the install output was fixed** — it said six containers
-  where five are installed.
+- **The extraction tool's log file no longer grows forever.** It kept a
+  second copy of its log inside your media folder with no size limit — about
+  145 MB a year, quietly, on a machine meant to run unattended. It is now
+  capped and rotated, the same way the container logs already were.
+- **That tool also stopped writing two status lines a minute** when there is
+  nothing to do. Real activity — an archive being found, extracted and
+  finished — is still logged in full; only the idle pulse is gone, so the
+  log is readable when you actually need it.
+- **The file manager's database location is now written down explicitly**
+  rather than inherited from the container image. Nothing moves; this only
+  removes a way a future image update could break the server silently.
 
 Earlier in this line: the file manager was replaced with FileBrowser
-Quantum, the network drive now notices finished downloads within a minute
-instead of five, and the disk check learned to watch for running out of
-file slots as well as space.
-
-## A note on `R2.2`
-
-`R2.2` marks the same installer as `Q1-11` — the file in this folder is
-byte-for-byte what `Q1-11` shipped. What it records is that the checks
-around the installer were tightened afterwards, not that the installer
-changed: there is now an automatic guard against a managed file being left
-out of the self-repair loop, unit coverage grew from 79 to 120 cases, and
-a single command runs every verification the project has. Nothing you
-install or operate is different.
+Quantum, its security settings became self-repairing, the network drive
+notices finished downloads within a minute instead of five, and the disk
+check watches for running out of file slots as well as space.

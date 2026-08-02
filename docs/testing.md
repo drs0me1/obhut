@@ -529,6 +529,43 @@ alone.
     not a demonstrated bug fix.
   - **Netfilter reconstruction** was analysed in detail and written up as
     `docs/design-decisions.md` DD-16 and DD-17.
+- **This log has a gap, and the gap is stated rather than papered over.**
+  Tier 3 runs continued throughout the `quantum` line (`Q1-1` through
+  `Q1-11`) and were recorded in `CHANGELOG.md` and the relevant `DD-`
+  entries as they happened, but were never added here. Only the run below
+  was written up in this section. Treat `CHANGELOG.md` as the complete
+  record of live runs for that stretch.
+- **`Q1-13` pre-tag verification run (2026-08-02) — re-run against the
+  existing host.** Run before tagging, per the convention that tags follow
+  live verification. Same tmux-relay methodology; all Stage 0 answers given
+  locally under the standing test-host authorization (defaults for the
+  downloads path and the local domain, `E` to confirm; the existing WebDAV
+  htpasswd was detected and preserved, so no password was needed). No
+  Tailscale login prompt — the host was already connected. The whole
+  idempotent re-run took **28 seconds**, all seven stages.
+  - **What it was actually verifying:** `Q1-12`'s pinned
+    `FILEBROWSER_DATABASE` and `Q1-13`'s unpackerr log settings had only
+    ever been checked in isolation — throwaway containers and
+    `docker compose config` on a copy. Stage 7's new `UN_LOG_FILE_MB=10`
+    assertion had never executed inside a real install.
+  - **Result:** `STACK_VERSION=2026.08.02-Q1-13` with `STACK_SHA256`
+    matching the repository file exactly; `--check rc=0` with every drift
+    flag `0`; no failed units; all five containers up, `filebrowser` and
+    `wg-easy` reporting healthy; canonical bundle nine entries with
+    `sha256sum -c` fully OK. Stage 7's unpackerr assertion passed with the
+    new entry in it. The containers themselves confirmed the settings:
+    unpackerr reported `Log File: … (3 @ 10Mb)` and `Activity / Queues:
+    false / 30m` where the previous revision reported `(10 @ 0Mb)` and
+    `1m1s`, and filebrowser carried both `FILEBROWSER_CONFIG` and
+    `FILEBROWSER_DATABASE`.
+  - **The single warning** was `wg-easy ilk kurulumu tamamlanmamış`,
+    pre-existing on this host and expected — nobody has created wg-easy's
+    admin account.
+  - **One methodology note worth keeping:** the `tmux` session disappears
+    when the script finishes, and `tmux capture-pane` then reports `no
+    server running`, which reads exactly like a crash. It is not one —
+    check `/var/log/master-setup/*.log` for the completion line before
+    concluding anything.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

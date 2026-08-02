@@ -6,32 +6,53 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**None open. `v1rc` is tagged, exported and live-validated; the working
-tree is clean.** This session ran three arcs: post-R1.0 remediation
-(→ `v1b`), a consistency-and-coverage pass (→ `v1rc`), and live
-validation of both on a reimaged host.
+**None open. `Q1-13` is tagged, exported and live-verified; the working
+tree is clean.**
 
-`v1rc` adds no functionality. Every change either removes an internal
-inconsistency, adds test coverage, or closes a tracked finding by
-decision. **M7 is the only finding still open, and nothing about it is
-actionable** while the repository stays local — see Remaining Work.
+Branch is `quantum`, which forked from `V1-20` and swaps only the web file
+manager for FileBrowser Quantum (DD-27). `master` answered the same
+question with dufs (`V2-2`/`R2.1`, DD-26) — the two lines are alternatives,
+not a sequence.
 
-Two things from this session are worth carrying forward more than the
-change list itself:
+Current state, all measured on the test host 2026-08-02 before tagging:
 
-- **A repository fix is not a deployed fix.** The server had been
-  lagging the repo by several fixes — **H7** and **M1** only reached it
-  in this session's re-run, so Portainer had still been rejecting writes
-  via `portainer.ayc` in real use days after **H7** was marked resolved
-  here. **M10** now reports `compose.yaml` drift, but nothing reports
-  "the installed `install.sh` is older than the repository's".
-- **Measure before asserting.** Three of this session's findings came
-  from measuring rather than recalling: the 17 hand-written `65113`
-  sites, the 12-per-boot `world-inaccessible` warnings, and the fact
-  that `wait_for_chain` never actually waits. The last one is recorded
-  as defensive consistency rather than a proven fix, deliberately.
+| | |
+|---|---|
+| Version | `2026.08.02-Q1-13` (5726 lines) |
+| SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
+| Export | `versiyon/Q1-13/`, byte-identical to the tag |
+| Live | `--check rc=0`, every drift flag 0, no failed units, five containers up |
+| Tests | 120 cases across eight `.bats` files; `./scripts/check-all.sh` clean |
+| Bundle | nine canonical entries, `sha256sum -c` all OK |
+
+The one warning on the host is wg-easy's incomplete first-run setup, which
+is expected — nobody has created its admin account.
+
+Three things from the recent sessions are worth carrying forward more than
+the change list:
+
+- **A repository fix is not a deployed fix.** The server once lagged the
+  repo by several fixes; **H7** stayed broken in real use for days after
+  being marked resolved here. `MASTER_SETUP_VERSION`'s revision suffix and
+  `STACK_VERSION`/`STACK_SHA256` in `state.env` now make a host
+  self-identifying, so the comparison is one command.
+- **Measure before asserting, and re-measure your own claims.** Several
+  findings this line came only from measurement, and two *corrections*
+  did too: the unbundled systemd drop-ins were framed as a gap until a
+  deliberate delete-and-reboot showed the firewall still applied, and
+  `UN_LOG_QUEUES=0` was almost recommended before a throwaway container
+  showed it makes the log four times noisier.
+- **Docs drift silently and the stage table is the worst offender.** It
+  has now drifted three times. Regenerate the whole table from
+  `grep -n 'progress_stage_begin [0-7] '`; never patch the rows that look
+  wrong.
 
 ## Completed Work
+
+> **This section is the `v1rc`-era record (2026-07-27/29) and is kept as
+> history.** Everything from `V1-20` onward — the whole `quantum` line
+> including `Q1-13` — is recorded in `CHANGELOG.md` and
+> `docs/design-decisions.md` instead, which are the current sources.
 
 All fifteen originally-numbered remediations from the 2026-07-27 audit are
 resolved, plus one unnumbered cleanup and two partial items:
@@ -281,85 +302,95 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Remaining Work
 
-- **M7 — the only open finding, and parked.** Tier 1 complete; Tier 2 at
-  57 cases across five files with no identified gaps left. All that
-  remains is CI, and the user decided (2026-07-28) that **the repository
-  stays local with no git remote**, so a runner has nowhere to build
-  from. Do not re-propose CI at each review; a remote is the only thing
-  that would unpark it. Tier 3 automation would additionally need a
+- **M7 — the only open finding, and parked.** Tier 1 complete; Tier 2 is
+  now 120 cases across eight files with no identified gaps left, and
+  `./scripts/check-all.sh` runs every verification in one command. All
+  that remains is CI, and the user decided (2026-07-28) that **the
+  repository stays local with no git remote**, so a runner has nowhere to
+  build from. Do not re-propose CI at each review; a remote is the only
+  thing that would unpark it. Tier 3 automation would additionally need a
   non-interactive invocation mode, separately judged not worth changing
   the deliberate `/dev/tty` prompt design for.
-- **Deploy lag has no check.** See Current Task. Open question, not a
-  decision: does it deserve its own mechanism (e.g. recording
-  `INSTALLER_VERSION` in `state.env` so one command can compare host
-  against repo), or just the habit of re-running after every merged fix?
-  The user declined the `state.env` approach on 2026-07-29 on the grounds
-  that a clean reinstall settles it — that reasoning holds while the
-  server is a test target and should be revisited if it becomes
-  long-lived.
+- **Deploy lag has no dedicated check.** Open question, not a decision:
+  the user declined recording it in `state.env` on 2026-07-29 on the
+  grounds that a clean reinstall settles it. That reasoning holds while
+  the server is a test target and should be revisited if it becomes
+  long-lived. Note `STACK_VERSION`/`STACK_SHA256` do let one command
+  compare host against repo today.
 - **Deliberately outside M10's scope:** the firewall helper, the reconcile
   script itself and the core systemd units are still not in the canonical
   bundle. Reasoning is in **M10**'s entry — chiefly that reconcile
   validates the firewall by invoking the very helper it would be
-  checking. Revisit only if the `compose.yaml` reports ever fire for a
-  reason other than a deliberate live edit.
+  checking. Two systemd drop-ins are also deliberately excluded, and that
+  exclusion was *measured* rather than assumed (2026-08-02): both were
+  deleted, Docker restarted and the host rebooted, and the firewall still
+  applied with `--check rc=0` and zero failed units.
 - **Two won't-do closures that would reopen together:** **M3**
   (installation profiles) and **L7** (ports hardcoded in the firewall
   heredoc). Both were closed because this installer targets a
   single-purpose, single-operator host built from scratch every time.
   Both reopen if it is ever reused across hosts or by another author.
-- **One idea never proposed to the user:** a single `scripts/check-all.sh`
-  running the four verification commands in one go — the local substitute
-  for the CI that will not exist.
+- **Folding the Quantum policy file into `compose.yaml` — closed, DD-35.**
+  Blocked by a hard conflict: Compose refuses inline `configs: content:`
+  on a `read_only: true` service, and Quantum has no environment variable
+  for `sources`/`cacheDir`/`signup`. Reopens only if either side moves.
+- **Never measured:** the SQLite indexer's cost on a real-size media tree.
+  The test host's tree is small.
+- **Outside the repository:** the root password + provider console, and a
+  second SSH key from the MacBook.
 
 ## Recommended Next Step
 
 1. **Nothing is blocked or half-finished.** Repository, server and the
-   exported artifact all agree. All 57 tests pass; `bash -n`,
-   `shellcheck` and `scripts/lint-embedded-scripts.sh` are clean.
-2. **This session's documentation pass was left uncommitted by explicit
-   instruction.** Review and commit it, or ask whether it is still
-   wanted, before starting anything else.
-3. If more work is wanted, the Remaining Work list is the menu — none of
-   it is urgent, and three of the five items are deliberately parked or
-   closed rather than pending.
-4. Whatever is chosen, keep the standing per-change rule: analyze and
-   flag risk first, apply only after explicit approval, verify with
-   `bash -n`/`shellcheck`/`bats test/` (and
-   `scripts/lint-embedded-scripts.sh` for heredoc changes), show the
-   diff, then update `TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md`, then
-   commit.
+   exported artifact all agree at `Q1-13`.
+2. The user has said the next move is **a change opening a higher
+   version** — so the next session most likely starts by bumping
+   `MASTER_SETUP_VERSION` past `Q1-13` for whatever that change is.
+3. Two small carried decisions, both needing the user's word because they
+   involve deleting a tag or adding one: the `Q1` line marker still points
+   at `Q1-11`, one revision behind the head, and `Q1-13` has no `R` tag.
+4. Whatever is chosen, keep the standing per-change rule: analyze and flag
+   risk first, apply only what was asked, bump the version suffix in the
+   same edit, verify with `./scripts/check-all.sh`, show the diff, then
+   update `TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md` (and
+   `docs/design-decisions.md` when the *reasoning* is the durable part),
+   then commit.
 
 ## Notes
 
-- **`install.sh` execution policy (revised 2026-07-28):** the original
-  blanket "never execute `install.sh`" rule has been superseded by real
-  practice — see the Tier 3 write-up above and in `docs/testing.md`. The
-  actual working rule now is: this assistant may run `install.sh` (or any
-  other mutating command against a real host) only with the user's
-  explicit, specific approval for that exact action in that turn, never
-  by inferring consent from an earlier, different approval, and never by
-  choosing configuration values on the user's behalf — those are always
-  relayed to and answered by the user directly. Static analysis
-  (`bash -n`, `shellcheck`, `bats test/`) remains the default mode for
-  everything else.
-- All conversation with the user happens in Turkish; all code, comments,
-  commit messages, and documentation stay in English (per `CLAUDE.md`).
-- **Commit policy (changed 2026-07-28):** the user reversed the earlier
-  "don't commit each time" preference — commit after every completed unit
-  of work now, without asking first. (Recorded in this assistant's
-  cross-session memory as well, not just here.)
-- Reference `SECURITY_REVIEW.md` for finding IDs (C1/C2, H1-H6, M1-M7,
-  L1-L5 — note **H5**/**H6** are new, post-audit) before starting any
+- **`install.sh` execution policy — superseded again (2026-07-31).** The
+  earlier rule here ("only with explicit per-turn approval, and never
+  choose configuration values on the user's behalf") no longer describes
+  practice. The user granted **standing authorization over the `nrm` test
+  host**: it is disposable, its data is worthless, and mutating commands
+  there — including running `install.sh`, `sudo`, `systemctl`, Docker
+  lifecycle, firewall changes and reboots — need no per-turn approval.
+  Every install prompt is answered locally (defaults, `E`, `12345test`)
+  and the answers reported. **The Tailscale login URL is the one prompt
+  that must still be relayed.** That authorization does not travel: the
+  local Mac outside this working tree, `git push`/history rewrite/tag
+  deletion, other hosts, the Tailscale account itself, and anything that
+  transmits repository content all still need explicit approval. See
+  `CLAUDE.md` **Execution Rules**, which is authoritative.
+- All conversation with the user happens in Turkish. `install.sh` is
+  Turkish throughout (comments and output); markdown docs and commit
+  messages stay English; `test/*.bats` and `scripts/*.sh` stay English.
+  Each artifact is internally consistent — match the file, not the
+  conversation. See `CLAUDE.md` **Language Rules**.
+- **Commit policy (changed 2026-07-28):** commit after every completed
+  unit of work, without asking first.
+- Reference `SECURITY_REVIEW.md` for finding IDs before starting any
   remediation, so status stays consistent across `TODO.md`,
   `CHANGELOG.md`, and this file.
-- **Cross-session memory:** one memory file exists for this project,
-  `project_intended_architecture.md` (2026-07-27), recording the user's
-  own narrated target architecture as checked against a full read of
-  `install.sh`. An earlier version of this file claimed that file did not
-  exist and named two others (`debian-server-installer-language-pref`,
-  `debian-server-installer-commit-policy`) as the real ones; that
-  correction was itself wrong — re-verified 2026-07-28, the architecture
-  memory is present and those two are not. Note it predates the R1.0 and
-  post-R1.0 work, so for anything current rely on this repo's own docs
-  (`docs/architecture.md`, `docs/design-decisions.md`) instead.
+- **Cross-session memory — the older note here was wrong and is
+  corrected.** There is no `project_intended_architecture.md`. Six files
+  exist as of 2026-08-02: language preference, commit policy, version
+  suffix, the SSH/tmux relay, test-host authorization, and the export
+  folder rule. They record *working conventions*, not architecture — for
+  anything about the system itself rely on this repo's own docs
+  (`docs/architecture.md`, `docs/design-decisions.md`).
+- **Where things are recorded, so the right file gets updated:**
+  `CHANGELOG.md` for what changed, `docs/design-decisions.md` for *why*
+  (including options investigated and rejected — DD-35 is the model),
+  `TODO.md` for status, `SECURITY_REVIEW.md` for the finding ledger and
+  its Review History table, `versiyon/README.md` for export/tag rules.

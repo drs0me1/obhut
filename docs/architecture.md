@@ -22,12 +22,12 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 1 | 834–952 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
 | 2 | 953–1302 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1056–1131`), interactive login, exit-node + stateful filtering + netfilter configuration |
 | 3 | 1303–2023 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1412–1956`) and its systemd unit |
-| 4 | 2024–4531 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2495–2536`) and `master-network-reconcile` (`2576–4236`) helper scripts, `master-docker-netfilter-recovery` (`4240–4296`), `master-webdav-serve` (`4388–4473`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4532–4634 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | 4635–4962 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4758–4790`), then the single atomic publication of the canonical bundle — nine entries since `Q1-9` (see DD-14, DD-32) |
-| 7 | 4963–5678 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 4 | 2024–4572 | Data directories, `filebrowser.yaml` policy file, `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2536–2577`) and `master-network-reconcile` (`2617–4277`) helper scripts, `master-docker-netfilter-recovery` (`4281–4337`), `master-webdav-serve` (`4429–4514`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4573–4675 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
+| 6 | 4676–5003 | Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) (`caddy-tailnet-env` helper at `4799–4831`), then the single atomic publication of the canonical bundle — nine entries since `Q1-9` (see DD-14, DD-32) |
+| 7 | 5004–5726 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5678 lines — `Q1-11`/`R2.2`, 2026-08-02.
+(Line numbers as of `install.sh` 5726 lines — `Q1-13`, 2026-08-02.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted three times**: 18 lines across
@@ -38,7 +38,9 @@ table still described `V1-20` at 5305 lines while the file had grown to
 5678 — stage 4 alone was understated by 348 lines and every embedded-script
 reference in it was wrong. Regenerating the *whole* table is the only
 reliable move; patching the rows you think changed is what caused all
-three.)
+three. The `Q1-13` refresh above was a whole-table regeneration, not a
+patch: `Q1-12`/`Q1-13` added 48 lines inside stage 4, which moved every
+boundary from stage 5 onward.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the

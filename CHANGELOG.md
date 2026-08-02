@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `Q1-13` closed out: live-verified, tagged, exported
+
+Verified on the test host *before* tagging, per the convention that tags
+follow live verification. The idempotent re-run finished all seven stages
+in 28 seconds: `STACK_VERSION=2026.08.02-Q1-13`, `STACK_SHA256` matching
+the repository file exactly, `--check rc=0` with every drift flag `0`, no
+failed units, five containers up, canonical bundle nine entries with
+`sha256sum -c` clean. Stage 7's unpackerr assertion passed with the new
+`UN_LOG_FILE_MB=10` entry — its first execution inside a real install.
+The containers confirmed both revisions' changes directly: unpackerr now
+reports `(3 @ 10Mb)` and `30m` where it reported `(10 @ 0Mb)` and `1m1s`,
+and filebrowser carries the pinned `FILEBROWSER_DATABASE`.
+
+Exported as `versiyon/Q1-13/`, byte-identical to the tag and to `HEAD`.
+`versiyon/Q1-11/` retired per the standing one-current-directory rule.
+The `Q1` line marker was **not** moved — it still points at `Q1-11`, and
+moving it means deleting a tag, which is only done when asked. No `R` tag
+was created either.
+
+Documentation resynced in the same pass: `docs/architecture.md`'s stage
+table regenerated whole (`Q1-12`/`Q1-13` added 48 lines inside stage 4,
+moving every boundary from stage 5 on; 5678 → 5726 lines);
+`docs/testing.md` gained the run write-up **and** an explicit note that
+its Tier 3 log skipped the `Q1-1`…`Q1-11` runs, so the gap is stated
+rather than left to look like completeness; `SESSION.md`'s live sections
+rewritten, having still described the `v1rc` era — 57 tests, an execution
+policy superseded by the standing test-host authorization, and a memory
+inventory that no longer matched what exists.
+
 ### 2026-08-02 — folding the Quantum policy into `compose.yaml`: investigated, rejected (DD-35)
 
 No code change. The operator asked to move
