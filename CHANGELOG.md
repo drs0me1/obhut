@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `Q1-11`: the Stage 4 progress note said six containers
+
+There are five. The generated `compose.yaml` defines `portainer`,
+`filebrowser`, `qbittorrent`, `unpackerr` and `wg-easy` — the sixth `wg:` in
+that file is the network. The count was right before a service was dropped,
+was corrected on `master`, and never made it across to `quantum`.
+Reconcile's `expected_containers` list has said five all along.
+
 ### 2026-08-02 — `Q1-10`: the default-password probe stops fighting the rate limiter
 
 Two defects in the DD-30 check, both found by re-reading `Q1-8` end to end

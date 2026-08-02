@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-10"
+MASTER_SETUP_VERSION="2026.08.02-Q1-11"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -2483,7 +2483,7 @@ YAML_EOF
 
 chown root:root /root/docker/compose.yaml
 chmod 0600 /root/docker/compose.yaml
-progress_stage_note 45 "Altı container için Compose tanımı yazıldı"
+progress_stage_note 45 "Beş container için Compose tanımı yazıldı"
 
 cat >/root/docker/.env <<EOF
 PUBLIC_IPV4=$PUBLIC_IPV4
