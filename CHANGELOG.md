@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — persistent Tailscale auth-path death is recovered immediately (`Q1-21`, DD-42, M16)
+
+A clean-image install reproduced the operator's original complaint twice in
+one run without restarting the installer. Two distinct nodekeys and browser
+links were authorized; each created an offline admin-console entry, while the
+daemon remained `BackendState=NeedsLogin`, `Self.Online=false`, with an empty
+node ID/IP and the LocalAPI health message `register request: http 410: auth
+path not found`. The failures arrived 27 and 42 seconds after their links were
+issued. Terminating only the second wedged `tailscale up` child exercised the
+existing retry path immediately; its daemon restart produced a third link,
+which registered successfully as `Running/Online`, and the exact R2.5 install
+then completed 7/7 with five containers, reconcile rc 0 and no failed units.
+
+Q1-15's five-minute timeout remains the fallback for slow operators,
+unreachable control planes and every unknown stall. Q1-21 adds a structured
+LocalAPI classifier instead of returning to journal parsing. Early recovery
+requires three consecutive two-second samples that simultaneously show
+`NeedsLogin`, offline, an empty node ID and the exact 410 health substring; any
+different sample resets the counter. A successful `tailscale up` must now also
+produce `Running`, online, a non-empty node ID and at least one Tailscale IP
+within a 15-second grace period before the login function returns success.
+
+Thirteen new cases pin the observed JSON shape, incomplete/unknown states, the
+successful transient-410 case, the three-sample restart and the one-sample
+reset. The suite grows 162 → 175 across thirteen files; `scripts/check-all.sh`
+is clean with 12 expected macOS skips. The installer reports
+`2026.08.02-Q1-21` and SHA256
+`10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8`.
+The failure signature and the equivalent early child-termination/restart path
+were measured live; the exact Q1-21 automatic branch has not yet been run
+through a fresh browser authorization, so no release tag/export is claimed.
+
 ### 2026-08-02 — correction: `server.database` does exist (DD-27)
 
 Documentation only, no code change. DD-27 claimed there is no config key

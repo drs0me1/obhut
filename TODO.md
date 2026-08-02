@@ -50,9 +50,9 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-20`) —
-      Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **162
-      cases across twelve files**; 150 execute and 12 self-skip on this
+- [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-21`) —
+      Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **175
+      cases across thirteen files**; 163 execute and 12 self-skip on this
       macOS workstation. The first 74-case milestone covered:
       `state_value`/`owned_file_ok`/`restart_budget_available`/
       `disk_space_ok`/`all_critical_state_healthy`
@@ -161,6 +161,12 @@ _All High findings resolved — see Completed below._
       missing Compose file cannot suppress reconcile and WebDAV waits for the
       media mount.
 
+      **Added 2026-08-02: `test/tailscale_login.bats` (13 cases,
+      162 → 175).** Covers Q1-21's structured interactive-login state,
+      complete ID/IP postcondition, malformed/failed LocalAPI reads, the
+      successful transient-410 case, three consecutive dead samples causing
+      one early retry, and a single dead sample resetting before success.
+
       Of the 51 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
@@ -190,6 +196,17 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **M16 — persistent interactive-login 410 now retries early
+      (2026-08-02, `Q1-21`, DD-42).** A clean install produced two separate
+      browser links and nodekeys that each became offline console records
+      while LocalAPI remained `NeedsLogin`/offline/empty-ID with the exact 410
+      health line. Q1-21 requires that structured signature for three
+      consecutive two-second samples, otherwise retaining the five-minute
+      fallback. Successful exit now also requires `Running`, online, node ID
+      and IP. Thirteen tests cover the classifier and retry/reset paths; the
+      full local wrapper is clean. Exact automatic live verification remains
+      pending, so Q1-21 is not tagged/exported yet.
 
 - [x] **Q1-20/R2.5 live close-out (2026-08-02).** Exact-script R2.4
       upgrade and unchanged rerun both completed 7/7; the second preserved all
@@ -274,6 +291,10 @@ _All Low findings resolved or closed — see Completed below._
       inverted its own result via SIGPIPE; an unbounded window credited a
       later login's success to an earlier wedge), and a false positive
       kills a login that is about to succeed.
+      **Amended by Q1-21/M16:** after two later independent failures exposed
+      the exact persistent LocalAPI shape, that measured state can now bypass
+      the timeout after three consecutive samples. Unknown and merely slow
+      states still receive all 300 seconds; journal parsing remains rejected.
 
 - [x] **Unpackerr file log capped, queue heartbeat slowed (2026-08-02,
       `Q1-13`, unnumbered, DD-34).** Raised by the operator seeing a long

@@ -1,14 +1,22 @@
 # Debian Server Installer
 
-**Current release: R2.5 / Q1-20** (2026-08-02). The script reports
-`2026.08.02-Q1-20` in its banner, log header and final summary; this is
+**Current exported release: R2.5 / Q1-20; current installer revision:
+Q1-21** (2026-08-02). The working-tree script reports
+`2026.08.02-Q1-21` in its banner, log header and final summary; this is
 distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
-and remains `10`. This revision was live-verified on Debian 13 through an
+and remains `10`. R2.5 was live-verified on Debian 13 through an
 R2.4 → R2.5 upgrade, controlled reconcile fault injection, a later
 from-scratch install after the host was reimaged, and unchanged idempotent
 reruns. The fresh run included the real browser-login path and completed
 without losing the Tailscale hand-off.
-Q1-16 through Q1-20 add atomic canonical publication, transactional
+Q1-21 follows a later live reproduction in which two distinct browser-login
+links created offline console entries and left LocalAPI at the same persistent
+410 signature before a third daemon-reset attempt succeeded. It recognizes
+that structured state after three consecutive samples instead of waiting the
+full five-minute fallback, while retaining the fallback for every unknown
+stall. Q1-21 is locally verified and intentionally remains untagged/unexported
+until its exact automatic recovery path is exercised live.
+Q1-16 through Q1-21 add atomic canonical publication, transactional
 DNS/Caddy file rollback, reliable deleted-node classification, retryable
 FileBrowser policy activation, and stricter reconcile/dependency semantics.
 See [`CHANGELOG.md`](CHANGELOG.md) for the complete history.
@@ -210,11 +218,14 @@ be started from the provider console, so the extra dependency was not worth
 it. The accepted cost is that an SSH drop after Stage 1 leaves the install
 incomplete — the remedy is built in, since re-running is idempotent.
 
-It does warn about the Tailscale login. A pending registration dies with
-`410 auth path not found` if the installer is restarted, because a restart
-generates a new nodekey and invalidates the previous auth path. Three
-attempts were spent on this before the cause was identified; the fix for a
-slow login is to wait, not to retry.
+It does warn about the Tailscale login. A pending registration can die with
+`410 auth path not found`; restarting the installer is one way to invalidate
+the previous nodekey/path, but the same persistent failure has also been
+measured twice without an installer restart. Q1-21 distinguishes the live
+LocalAPI failure signature from a merely slow login: three consecutive
+`NeedsLogin`/offline/empty-ID/410 samples trigger a daemon reset and fresh
+link, while every other pending state retains the full five-minute human
+window.
 
 ## Docker Services
 
@@ -427,8 +438,8 @@ and the five from the post-R1.0 whole-file review (**M8**, **M9**,
   chasing the workload rather than bounding it — an accepted deviation
   documented under **M1** in `SECURITY_REVIEW.md`.
 - **M7**'s testing strategy: Tier 1 (static analysis of all seven embedded
-  heredoc scripts) is done; Tier 2 has **162** `bats-core` unit tests
-  across twelve files, with every stub-able reconcile function now covered
+  heredoc scripts) is done; Tier 2 has **175** `bats-core` unit tests
+  across thirteen files, with every stub-able reconcile function now covered
   and a guard that fails when a file `install.sh` generates is left out of
   the canonical bundle; `scripts/check-all.sh` runs all four verification
   steps in one command. Tier 3 has succeeded

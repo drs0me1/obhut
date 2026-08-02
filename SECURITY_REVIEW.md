@@ -60,14 +60,17 @@ matches under pipefail; FileBrowser policy repair could lose the need-to-
     **H10**, **H11**, **M14** and **M15** in `Q1-20`: persistent core/address
     failure was reported as success, a missing Compose file suppressed the
     timer service, read-only modes sent a real login request, and host WebDAV
-    lacked the media-mount ordering already used by Docker/Compose. **M7**
-    remains the only open finding in the project.
+    lacked the media-mount ordering already used by Docker/Compose. A later
+    clean-image install reproduced persistent interactive-login 410s twice;
+    **M16** was resolved in `Q1-21` with a persistent structured-LocalAPI
+    classifier while retaining the unknown-state timeout. **M7** remains the
+    only open finding in the project.
 
 | Severity | Open | Resolved |
 |----------|------|----------|
 | Critical | 0 | 2 (**C2**, 2026-07-27; **C1**, 2026-07-28) |
 | High     | 0 | 11 (**H1**, **H2**, **H3**, 2026-07-27; **H4**, **H5**, **H6**, **H7**, 2026-07-28; **H8**, **H9**, **H10**, **H11**, 2026-08-02 — post-audit) |
-| Medium   | 1 (**M7**) | 14 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, **M13**, **M14**, **M15**, 2026-08-02) |
+| Medium   | 1 (**M7**) | 15 (**M6**, **M5**, **M4**, 2026-07-27; **M2**, **M1**, **M8**, **M9**, **M10**, **M3**, 2026-07-28; **M11**, 2026-07-29; **M12**, **M13**, **M14**, **M15**, **M16**, 2026-08-02) |
 | Low      | 0 | 7 (**L1**, **L2**, **L4**, **L5**, 2026-07-27; **L3**, **L6**, **L7**, 2026-07-28) |
 
 Note: **H2**, **H3**, **C1** and **M9** were resolved by explicit user
@@ -693,6 +696,41 @@ are **M8**-**M10**/**L6**-**L7** (22nd through 26th), **M11** (27th),
   fabricated solely to test systemd's own mount-unit semantics.
 - **Change risk:** Low — startup is delayed or failed when required storage
   is unavailable instead of serving the wrong directory.
+
+### M16 — Persistent Tailscale auth-path death waited the full human timeout — ✅ RESOLVED (2026-08-02, `Q1-21`)
+
+- **Location:** Stage 2's `tailscale_interactive_login()` state machine.
+- **Description:** Q1-15 bounded a permanently wedged `tailscale up` at 300
+  seconds per attempt but deliberately did not diagnose 410s from journald,
+  because a 410 also appears transiently during successful authorization.
+  A later clean-image install supplied the missing evidence: two distinct
+  nodekeys, with no installer restart, each settled into the same persistent
+  LocalAPI state after browser approval — `NeedsLogin`, offline, empty node
+  ID/IP and a health entry containing `http 410: auth path not found`.
+- **Impact:** Each known-dead link still consumed the full five-minute human
+  window, making a bounded installer look stopped and potentially taking 15
+  minutes before final failure. The browser-side record appeared in the admin
+  console but remained offline because the daemon never acquired a usable
+  machine identity.
+- **Resolution:** `tailscale_login_state()` classifies structured LocalAPI
+  JSON, never the journal. The retry loop requires three consecutive
+  two-second dead samples and resets on every other state; only then does it
+  terminate the waiting child and use the existing daemon-restart/fresh-link
+  path. The 300-second fallback remains for operator delay and unknown stalls.
+  Exit code zero is accepted only after a 15-second grace produces `Running`,
+  online, a non-empty node ID and at least one Tailscale IP.
+- **Verification:** the live R2.5 run measured dead states 27 and 42 seconds
+  after two independent links; manually terminating only the second wedged
+  child exercised the same restart path immediately, and the third link
+  registered `Running/Online` before the install completed 7/7. Thirteen new
+  Bats cases cover JSON classification, transient 410, consecutive-sample
+  recovery and sample reset. Full local verification is clean at 175 cases
+  with 12 expected macOS skips. The exact automated Q1-21 branch has not yet
+  been exercised by a fresh browser authorization, so no live claim or tag is
+  made for that revision.
+- **Change risk:** Medium — an exact persistent signature now restarts
+  tailscaled earlier; the consecutive-sample gate, empty identity requirement
+  and unchanged fallback constrain false positives.
 
 ### M1 — No per-container resource limits or hardening — ✅ RESOLVED (2026-07-28, Tier 2 confirmed via live testing)
 - **Location:** `install.sh:1781-1841` (`compose.yaml` →
@@ -1461,6 +1499,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-02 | User (reported repeated offline nodes during a clean install) + Codex (`Q1-21`, DD-42) | Stage 2 interactive Tailscale login recovery | **M16 found and resolved locally.** Two distinct live browser links entered the same persistent `NeedsLogin`/offline/empty-ID/410 LocalAPI state after 27 and 42 seconds; a manually accelerated use of the existing daemon-restart path produced a third link that registered `Running/Online`, after which R2.5 completed 7/7 with reconcile rc 0 and no failed units. Q1-21 classifies only that structured state after three consecutive samples, retains the 300-second fallback, and adds a full ID/IP post-success gate. Thirteen new cases bring the suite 162 → 175; the full local wrapper is clean. Exact Q1-21 fresh-login execution remains pending, so it is neither tagged nor exported. |
 | 2026-08-02 | User (requested reconcile/dependency remediation and live release test) + Codex (`Q1-20` / `R2.5`) | Reconcile result semantics, address/Tailscale diagnostics, Compose recovery, FileBrowser audit side effects and WebDAV mount ordering | **H10, H11, M14 and M15 found, resolved and live-verified.** Fifteen cases brought the suite 147 → 162 and the local wrapper was clean. The exact script then completed an R2.4 upgrade and unchanged rerun, both 7/7. Live fault injection proved read-only modes send no login POST, the daily gate sends one across immediate normal runs, missing/edited/metadata/unsafe Compose states take their intended paths without container restarts, and an active-but-offline Tailscale daemon fails after exactly 30 seconds with structured diagnostics. The same node/IP plus existing firewall/core recovery returned every drift flag to zero; the final rerun preserved all five container start times, with no failed units. WebDAV's mount directive was installed and Stage 7-verified; the host has no separate media mount, so no artificial mount outage was claimed. A later clean-image run of the same R2.5 export completed the real Tailscale browser flow and all seven stages, created and then reused Quantum's persistent database, and was followed by another unchanged 7/7 rerun with the identity, WebDAV credential and all five container start times preserved. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-19`) | FileBrowser policy lifecycle across reconcile and installer re-runs | **M13 found and resolved.** Reconcile copied policy before its cooldown gate, so disk state could become canonical while the running startup-only policy stayed old and no later cycle retried; a Docker-created directory also accepted the copy without changing path type or the stored container mount. Q1-19 stages atomically, keeps a `/run` pending signal until health + HTTP pass, and recreates only FileBrowser for structural or unhealthy legacy mounts while preserving its named volume. Installer re-runs now recreate it when generated policy content/metadata changes. Eleven cases bring bats 136 → 147; full local verification clean, live Debian fault injection not yet claimed. |
 | 2026-08-02 | User (ordered R2.4 review) + Codex (`Q1-18`) | Stage 2 deleted-node Tailscale journal classifier | **M12 found and resolved.** `journalctl | grep -q` under pipefail turned an early true match into rc 141 when enough output followed it, bypassing automatic logout/re-login and producing a generic fatal error. Normal fixed-string grep now consumes the whole stream without hiding real journalctl failure. Old/new pipelines reproduced at rc 141/0; three tests bring bats 133 → 136. |

@@ -26,6 +26,13 @@ cd versiyon/R2.5
 
 From Finder, double-click `deploy.command` instead.
 
+The working tree is currently `Q1-21`, which adds early recovery for a
+measured persistent Tailscale browser-login 410. It is deliberately absent
+from this table and from a new release directory until that exact automatic
+branch completes a fresh live authorization. `R2.5` remains the only current
+export; this avoids creating an unverified `R2.6` that would violate the
+tag/export identity rule below.
+
 > **This is not `master`.** `master` answered the filebrowser question with
 > dufs (`V2-2` / `R2.1`, DD-26). This branch forked from `V1-20` and swaps
 > only the web file manager for FileBrowser Quantum — see **DD-27**. The two

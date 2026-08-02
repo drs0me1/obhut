@@ -1916,10 +1916,10 @@ end. The success path was tested the same way — it returns as soon as
 terminal and the log. The live success path itself was exercised on a real
 from-scratch install the same day.
 
-If a faster recovery is ever wanted, the place to look is the live
-`login-state` health warning in `tailscale status --json`, not the journal.
-That was not done here because it would have meant guessing at the field's
-shape in the wedged state without a wedged daemon to observe.
+> **Amended by DD-42 / Q1-21.** The live `login-state` shape was later
+> observed twice with two distinct nodekeys, so early recovery no longer
+> requires guessing. The timeout remains the unknown-state fallback; only the
+> measured, persistent LocalAPI signature can bypass it.
 
 ### DD-38: DNS/Caddy file rollback commits with the canonical pointer (2026-08-02)
 
@@ -2090,3 +2090,47 @@ logs also proved `--check`/`--status` issued no login POST and two immediate
 normal runs issued one total. WebDAV's dependency passed both full Stage 7
 runs; the host does not use a separate media mount, so no artificial mount
 failure was claimed.
+
+### DD-42: Persistent Tailscale 410 is classified from LocalAPI, never the journal (2026-08-02)
+
+DD-37 deliberately rejected three journal-based attempts to identify a dead
+interactive-login auth path. The rejection remains correct: a 410 also occurs
+inside a successful authorization, journal producer/consumer timing caused a
+separate SIGPIPE inversion, and an unbounded window let an unrelated later
+success satisfy an earlier failure. A false positive restarts a daemon whose
+login may be one second from succeeding.
+
+Q1-21 changes the evidence, not that safety rule. A later clean-image R2.5 run
+produced two independent failures without an installer restart. The first
+nodekey received its link and entered the dead state 27 seconds later; the
+second did so after 42 seconds. In both cases `tailscale status --json` exposed
+the same simultaneous state: `BackendState=NeedsLogin`, `Self.Online=false`,
+empty `Self.ID`, no Tailscale IP and a `Health` entry containing `http 410:
+auth path not found`. The admin console showed an offline record because the
+browser side had created/authorized one, but the daemon had never received a
+usable machine identity. Restarting only tailscaled and issuing a third link
+then produced a non-empty node ID/IP and `Running/Online`; the install finished
+7/7.
+
+That structured state is now a named classifier. One sample is still not a
+decision: the main loop requires three consecutive samples, two seconds apart,
+and resets the count on `pending`, `unknown` or successful state. Thus the
+known successful transient 410 cannot survive the persistence gate. A
+confirmed dead path terminates only the waiting `tailscale up` child and uses
+DD-37's existing daemon restart/fresh-link path immediately. The 300-second
+timeout remains unchanged for every state that does not match exactly, so
+operator thinking time and unknown control-plane delays are not shortened.
+
+Success is also stronger. Exit code zero from `tailscale up` is followed by a
+15-second LocalAPI grace and is accepted only with `Running`, online, a
+non-empty node ID and at least one Tailscale IP. Failure of that postcondition
+uses the same bounded retry instead of allowing the later Stage 2 probe to be
+the first place the inconsistency appears.
+
+Thirteen Bats cases cover the live JSON signature, incomplete and malformed
+states, command failure, a completed node carrying a transient 410 line, the
+three-sample early restart and a one-sample 410 followed by success with no
+restart. The full local wrapper is clean. The real input signature and the
+equivalent manual child-termination/restart path are live measurements; the
+exact automatic Q1-21 branch remains deliberately unclaimed until a later
+fresh authorization run exercises it.

@@ -20,14 +20,14 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 |-------|-----------------|---------|
 | 0 | 819–992 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
 | 1 | 993–1111 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 1112–1637 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1215–1290`), bounded interactive login (DD-37), reliable deleted-node journal classification (DD-39/M12), exit-node + stateful filtering + netfilter configuration |
-| 3 | 1638–2358 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1747–2291`) and its systemd unit |
-| 4 | 2359–5180 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` and `master-network-reconcile` (`2950–4885`) helpers, `master-docker-netfilter-recovery` (`4889–4945`), `master-webdav-serve` (`5036–5121`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 5181–5310 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
-| 6 | 5311–5692 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `5431–5463`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
-| 7 | 5693–6425 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 2 | 1112–1718 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `1215–1290`), bounded interactive login with persistent-410 early recovery (`tailscale_login_state` at `1431–1468`, DD-37/DD-42), reliable deleted-node journal classification (DD-39/M12), exit-node + stateful filtering + netfilter configuration |
+| 3 | 1719–2439 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1828–2372`) and its systemd unit |
+| 4 | 2440–5261 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2950–2991`) and `master-network-reconcile` (`3031–4966`) helpers, `master-docker-netfilter-recovery` (`4970–5026`), `master-webdav-serve` (`5117–5202`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 5262–5391 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
+| 6 | 5392–5773 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `5512–5544`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
+| 7 | 5774–6506 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 6425 lines — `Q1-20`, 2026-08-02.
+(Line numbers as of `install.sh` 6506 lines — `Q1-21`, 2026-08-02.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted six times**: 18 lines across
@@ -48,7 +48,9 @@ classifier inside Stage 2. Q1-19 changed Stage 4's FileBrowser policy
 lifecycle and Stage 5's update path; the complete table was regenerated
 again after all four revisions. Q1-20 then changed reconcile control flow,
 Compose recovery and audit throttling in Stage 4, plus WebDAV dependency
-verification in Stages 4/7; the table was regenerated whole once more.)
+verification in Stages 4/7. Q1-21 then added the structured login classifier
+and post-success gate inside Stage 2; the table was regenerated whole once
+more.)
 
 Stage 0 is the only interactive stage; once the user confirms, output is
 redirected to a root-only log file (`/var/log/master-setup/`) and the
@@ -103,7 +105,7 @@ them from inside its own `OnFailure`-triggered execution.
 
 ### Firewall model
 
-The `docker-tailscale-fw` helper (generated at `install.sh:1392-1936`,
+The `docker-tailscale-fw` helper (generated at `install.sh:1828-2372`,
 deployed to `/usr/local/sbin/docker-tailscale-fw`) builds two dedicated
 chains:
 
@@ -179,7 +181,7 @@ instead of `1000:1000`), so it's deliberately not applied there. See
 
 ### Reconcile and self-healing
 
-`master-network-reconcile` (generated at `install.sh:2950-4885`, 1934
+`master-network-reconcile` (generated at `install.sh:3031-4966`, 1934
 lines) accepts three modes: the default `reconcile` (detect + repair),
 `--check` (read-only drift report, used by Stage 7 and by `--status`),
 and `--status` (added `V1-2`): a lock-free, read-only one-screen summary
@@ -321,7 +323,7 @@ the final install summary so operators aren't surprised by it.
 ### Network-dependent steps: bounded retry, mandatory timeout
 
 Every step that talks to the network goes through `retry_network`
-(`install.sh:244`): three attempts, an explicit per-attempt `timeout`, and
+(`install.sh:256`): three attempts, an explicit per-attempt `timeout`, and
 a 5s/15s backoff. Applied at five call sites — `apt-get update` (four
 occurrences), the Tailscale keyring and repo list, the Docker GPG key, the
 Caddy GPG key and repo list, and `docker compose pull`.

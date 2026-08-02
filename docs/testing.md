@@ -2,11 +2,13 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (162
-> unit cases across twelve files; 150 execute and 12 self-skip on the macOS
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (175
+> unit cases across thirteen files; 163 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
-> Q1-19/Q1-20's 26 new unit cases have not been run under Bats on the Debian
-> target, but Q1-20's exact production paths were live fault-injected there);
+> Q1-19/Q1-20's 26 new unit cases and Q1-21's 13 login cases have not been
+> run under Bats on the Debian target; Q1-20's production paths and Q1-21's
+> real failure input/equivalent manual retry were exercised there, but the
+> exact automatic Q1-21 branch remains pending);
 > Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
@@ -306,6 +308,14 @@ alone.
   container gates, removal of the Compose unit condition, and WebDAV's
   independent `RequiresMountsFor` dependency. All run without real Docker,
   systemd, network access or managed host paths.
+- **Also implemented:** `test/tailscale_login.bats` covers Q1-21's Stage 2
+  LocalAPI classifier and retry boundary. Thirteen cases pin the complete
+  `Running`/online/ID/IP postcondition, the exact live
+  `NeedsLogin`/offline/empty-ID/410 signature, missing/malformed/failed
+  LocalAPI reads, a completed node that still carries a transient 410 line,
+  three consecutive dead samples causing one early daemon restart, and a
+  single dead sample resetting before a successful login with no restart.
+  Command and service stand-ins are used; no real Tailscale state is changed.
 - **Remaining in Tier 2:** nothing specific identified. Of the 51
   functions in the reconcile heredoc the uncovered remainder is
   integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
@@ -629,6 +639,20 @@ alone.
     existing database`. A full unchanged rerun preserved the WebDAV credential,
     avoided a second Tailscale authorization and left all five pre-run
     `StartedAt` values unchanged.
+- **`Q1-21` failure capture and equivalent recovery (2026-08-02).** A later
+  clean-image R2.5 install reproduced the browser-login failure twice without
+  restarting the installer. The first and second independently generated
+  nodekeys/links entered `NeedsLogin`, offline, empty-ID/no-IP state with the
+  exact LocalAPI 410 health line after 27 and 42 seconds; each appeared as an
+  offline admin-console row because browser authorization alone had not given
+  the daemon a usable identity. The first followed Q1-20's normal 300-second
+  fallback. On the second, terminating only the wedged `tailscale up` child
+  caused the unchanged installer to run its existing daemon-restart path
+  immediately. The third link reached `Running`, online, a non-empty ID and
+  `100.88.12.107`; R2.5 then completed 7/7, with five containers, reconcile rc
+  0 and zero failed units. This is live evidence for Q1-21's input predicate
+  and recovery action, not a claim that the exact new three-sample automatic
+  branch ran live. That claim remains pending before tag/export.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

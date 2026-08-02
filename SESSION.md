@@ -6,8 +6,10 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**None open. `Q1-20` is live-verified and exported as `R2.5`; the working
-tree should be clean after the close-out commit.**
+**`Q1-21` implements persistent Tailscale 410 early recovery and is locally
+verified. It must not be tagged/exported as R2.6 until the exact automatic
+branch has completed a fresh browser authorization. `R2.5` remains the latest
+live-verified export.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -18,14 +20,27 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-20` (6425 lines) |
-| SHA256 | `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9` |
-| Export | `versiyon/R2.5/`, byte-identical to the `Q1-20` and `R2.5` repository states |
-| Live | R2.4 upgrade + fault injection; later clean-image first install with real browser login + unchanged rerun, all 7/7; final `--check rc=0`, no failed units, five containers up |
-| Tests | 162 cases across twelve `.bats` files (150 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
+| Version | `2026.08.02-Q1-21` (6506 lines) |
+| SHA256 | `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8` |
+| Export | Q1-21 not exported/tagged; `versiyon/R2.5/` remains the latest frozen live release |
+| Live | Q1-21 input signature measured twice on clean R2.5 and equivalent early child/restart recovery succeeded; exact automatic Q1-21 branch still pending |
+| Tests | 175 cases across thirteen `.bats` files (163 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
-Q1-20 is the reconcile/dependency remediation requested after the R2.4
+Q1-21 is the Stage 2 follow-up to the repeated offline-node login failure:
+
+- Two independent R2.5 links/nodekeys entered `NeedsLogin`, offline, empty-ID
+  state with the exact 410 health line after 27/42 seconds. The admin-console
+  rows existed but were offline because the daemon never received an identity.
+- `tailscale_login_state()` reads LocalAPI JSON. Three consecutive dead
+  samples trigger DD-37's existing daemon restart/new-link path immediately;
+  any other sample resets the counter and every unknown stall keeps the
+  300-second fallback.
+- A zero exit from `tailscale up` now gets 15 seconds to prove `Running`,
+  online, node ID and IP. Thirteen cases cover classification, persistence and
+  the successful transient-410 path. No journal classifier was reintroduced.
+
+Q1-20 remains the reconcile/dependency remediation requested after the R2.4
 line-by-line review:
 
 - Persistent Docker/tailscaled/address failure now exits non-zero after a
@@ -91,7 +106,10 @@ the change list:
   killing a login about to succeed — was worse than the bug being fixed.
   All three were caught by running the function against real data, none by
   reading it. Watch for `journalctl | grep -q` under `pipefail`
-  specifically; SIGPIPE turns a found match into a failed pipeline. The one
+  specifically; SIGPIPE turns a found match into a failed pipeline. DD-42
+  does not reverse that decision: only after the structured LocalAPI shape
+  was measured twice did Q1-21 add a three-sample gate, with unknown state
+  still falling back to the dumb timeout. The one
   remaining useful journal classifier was corrected in Q1-18 by consuming
   the complete producer stream.
 - **Reconcile is not a second installer.** It may restore bounded local state
