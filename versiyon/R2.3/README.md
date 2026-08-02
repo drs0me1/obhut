@@ -10,7 +10,7 @@ afterwards except the passwords listed under **Do these first**.
 | Release | `R2.3` — the current full release of this branch |
 | Version the script reports | `2026.08.02-Q1-13` |
 | SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
-| Tags | `R2.3`, `Q1-13` — both name this exact file |
+| Tags | `R2.3`, `Q1-13` — both name this exact file; `Q1` also points here, as the marker that follows this branch's head |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 

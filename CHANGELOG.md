@@ -21,8 +21,14 @@ and filebrowser carries the pinned `FILEBROWSER_DATABASE`.
 
 Exported as `versiyon/Q1-13/`, byte-identical to the tag and to `HEAD`.
 `versiyon/Q1-11/` retired per the standing one-current-directory rule.
-The `Q1` line marker was **not** moved — it still points at `Q1-11`, and
-moving it means deleting a tag, which is only done when asked.
+
+The `Q1` line marker was moved on the operator's instruction, from
+`Q1-11`'s commit to the branch head — it had fallen two revisions behind.
+It now points at the head rather than at a revision tag, because since
+`R2.3` the head carries the export directory and the resynced docs as
+well as the installer, and `git show Q1:install.sh` returns the same
+script either way. `Q1` remains the only tag in this repository that
+moves; every `V*`/`Q*`/`R*` tag is a fixed identity.
 
 Tagged `R2.3` on the operator's instruction. What it records is the
 close-out: live verification before tagging, the export, and the

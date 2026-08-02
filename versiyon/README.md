@@ -74,11 +74,16 @@ git show Q1-8:install.sh > install-Q1-8.sh
 ```
 
 The `Q1` tag is a line marker rather than a revision: it follows the head of
-this line: `Q1-4` → `Q1-8` on 2026-08-01, `Q1-8` → `Q1-11` on 2026-08-02.
-Moving it means deleting and recreating it, so it is only done when asked —
-**as of `R2.3` it still points at `Q1-11`**, two revisions behind the head.
-`Q1-4`, `Q1-8`, `Q1-11`, `Q1-13` and every other revision tag stay where
-they are — those are fixed identities, as are the `R*` tags.
+this line. `Q1-4` → `Q1-8` on 2026-08-01, `Q1-8` → `Q1-11` on 2026-08-02,
+`Q1-11` → the `R2.3` close-out later the same day. Moving it means deleting
+and recreating it, so it is only done when asked.
+
+It points at the **branch head**, not at the revision tag — since `R2.3` the
+head carries the export directory and the resynced documentation as well as
+the installer, and `git show Q1:install.sh` returns the same script either
+way. `Q1-4`, `Q1-8`, `Q1-11`, `Q1-13` and every other revision tag stay
+where they are — those are fixed identities, as are the `R*` tags. `Q1` is
+the only tag in this repository that moves.
 
 ## Why the deploy scripts are duplicated
 
