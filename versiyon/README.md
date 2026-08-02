@@ -16,7 +16,7 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`R2.6/`](R2.6/) | `2026.08.02-Q1-21` | none yet; source `a10a300` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current manual-test export; live result pending** |
+| [`R2.6/`](R2.6/) | `2026.08.02-Q1-22` | `R2.6`, `Q1-22` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current; tagged for manual testing, live result pending** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
@@ -26,11 +26,13 @@ cd versiyon/R2.6
 
 From Finder, double-click `deploy.command` instead.
 
-`R2.6` was exported before live verification at the operator's explicit
-request so the exact Q1-21 automatic path can be tested manually. It is
-byte-identical to source commit `a10a300`, but it is not described as a
-live-verified release and has no `Q1-21` or `R2.6` tag yet. The last
-live-verified tagged release remains `R2.5` / `Q1-20`.
+`R2.6` was exported **and tagged before any live verification**, at the
+operator's explicit request, so it can be carried to a machine and installed by
+hand. This inverts the branch's normal order — every other release was tagged
+only after a real install — so the tag carries no live-success claim, and both
+its own `README.md` and the `R2.6` tag message say so. The last release that
+*was* live-verified remains `R2.5` / `Q1-20`, reachable through its tag; it no
+longer has a directory.
 
 > **This is not `master`.** `master` answered the filebrowser question with
 > dufs (`V2-2` / `R2.1`, DD-26). This branch forked from `V1-20` and swaps
@@ -60,15 +62,14 @@ and never had a directory at all.
 
 A release directory carries the revision's version string, because that is
 what the script prints: `versiyon/R2.6/install-R2.6.sh` reports
-`2026.08.02-Q1-21`. Its `README.md` says so up front, so nobody reads it as
+`2026.08.02-Q1-22`. Its `README.md` says so up front, so nobody reads it as
 a mismatch.
 
-Every tagged export is byte-identical to the tag it is named after. The
-explicit pre-verification R2.6 exception is instead pinned to its source
-commit until the manual test decides whether tags may be created:
+Every export is byte-identical to the tag it is named after — including
+`R2.6`, whose exception is the *timing* of its tag, not its integrity:
 
 ```sh
-git show a10a300:install.sh | sha256sum
+git show R2.6:install.sh | sha256sum
 sha256sum R2.6/install-R2.6.sh
 ```
 

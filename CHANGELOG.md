@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `R2.6` refreshed to `Q1-22` and tagged before live verification
+
+At the operator's explicit request, `Q1-22` and `R2.6` are tagged **before**
+any live install, so the file can be carried to a machine and tested by
+hand. This inverts the branch's normal order — every other release was
+tagged only after a real run — so neither tag carries a live-success claim,
+and the tag messages, `versiyon/R2.6/README.md` and `versiyon/README.md` all
+say so plainly.
+
+`versiyon/R2.6/install-R2.6.sh` refreshed from the `Q1-21` candidate to
+`Q1-22`; the export is byte-identical to both tags and to `HEAD`. With the
+tags now created, that directory's verification recipe returns to the normal
+`git show R2.6:install.sh` form rather than being pinned to a source commit.
+`R2.5` / `Q1-20` remains the last release that was actually live-verified and
+is reachable through its tag.
+
+What *has* been done for `R2.6`: full static verification clean, and every
+behaviour changed since `R2.5` carries a unit test that was checked to fail
+against the old behaviour. What has not: running it on a server.
+
 ### 2026-08-02 — a slow-to-come-online node no longer discards a successful login (`Q1-22`, DD-42)
 
 `Q1-21` gave the node 15 seconds after `tailscale up` exits zero to reach

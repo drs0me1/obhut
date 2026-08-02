@@ -7,20 +7,23 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Export | `R2.6` — manual-test candidate; not yet live-verified |
-| Version the script reports | `2026.08.02-Q1-21` |
-| SHA256 | `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8` |
-| Source commit | `a10a300` — carries this exact installer |
-| Tags | None yet; `Q1-21` / `R2.6` wait for the operator's live result |
+| Release | `R2.6` — tagged for manual testing; **not yet live-verified** |
+| Version the script reports | `2026.08.02-Q1-22` |
+| SHA256 | `32b0f085c9515f25f70988bc2171da30d1e659ed243931866d42c23caa62df2e` |
+| Tags | `R2.6`, `Q1-22` — both name this exact file |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
-**Why two names for one file.** `R2.6` names this export folder; `Q1-21` is
-the revision of the installer inside it. The install therefore prints
-`2026.08.02-Q1-21`, not `R2.6`. This candidate was exported before live
-verification at the operator's explicit request so it can be tested manually.
-It is byte-identical to `install.sh` in source commit `a10a300`, but no tag or
-live-success claim is attached yet.
+**Why two names for one file.** `R2.6` is the release; `Q1-22` is the
+revision of the installer inside it. They are byte-for-byte the same script,
+so the install prints `2026.08.02-Q1-22`, not `R2.6`.
+
+**Read this before trusting the tag.** Every other release on this branch was
+tagged only after it had been installed on a real server. This one was tagged
+first, at the operator's explicit request, so it can be carried to a machine
+and tested by hand. **No successful install has been observed for it.** The
+static checks are clean and every changed path has unit coverage, but that is
+not the same claim. Treat it as a candidate until you have run it yourself.
 
 ## Installing
 
@@ -115,21 +118,16 @@ commands never send a login request.
 
 ## What this export was checked against
 
-This exact R2.6 file has deliberately **not** been run on the Debian target
-yet; that is the manual test this folder was created for. Local verification
-is clean: Bash syntax, ShellCheck and all embedded-script lint checks passed;
-the Bats inventory contains 175 cases, of which 163 executed successfully and
-12 were expected macOS skips whose GNU/Bash requirements are present on
-Debian 13.
+**Not a live install.** What has been done: the project's full static
+verification is clean (syntax, shellcheck, the seven embedded helper scripts,
+and 176 unit tests), and each behaviour changed since `R2.5` has a unit test
+that was checked to actually fail against the old behaviour — so the tests are
+not decoration. What has **not** been done is running this file on a server.
 
-The input and recovery design are not hypothetical. The preceding R2.5 script
-reproduced two separate browser-authorized links that remained
-`NeedsLogin`/offline with an empty node identity and the exact 410 LocalAPI
-health message. Manually accelerating its existing child-stop, daemon-restart
-and fresh-link path produced a third link that registered `Running/Online`,
-after which the install completed 7/7. R2.6 automates only that measured path,
-behind three consecutive structured samples, and retains the original
-five-minute fallback for every unknown or merely slow state.
+The two changes below were the reason `R2.5` needed a successor, and the first
+of them was itself measured on a real host before being written; only the
+automatic recovery branch and the `Q1-22` correction remain unobserved in a
+real run.
 
 ## What changed since `R2.5`
 
@@ -137,12 +135,18 @@ five-minute fallback for every unknown or merely slow state.
   `tailscale status --json`. Three consecutive matches trigger an early
   tailscaled restart and a fresh browser link; any different sample resets
   the counter.
-- A successful `tailscale up` exit is no longer enough on its own. The node
-  must become `Running`, online, carry a non-empty node ID and have at least
-  one Tailscale IP within a 15-second grace period.
-- Thirteen regression cases cover the exact observed failure, unknown and
-  incomplete states, transient 410 success, persistent recovery and sample
-  reset.
+- After a successful login the installer checks, for up to 15 seconds, that
+  the node really is `Running`, online, has a node ID and has an address. If
+  it is, the install moves on immediately instead of waiting.
+- **If that 15 seconds is not enough, nothing is thrown away.** An earlier
+  draft of this release restarted the connection and asked you to authorize
+  in the browser a second time — even though your first authorization had
+  succeeded. It now says so and hands the waiting to the 180-second check
+  that follows, which is where a genuinely unreachable node is reported. You
+  will only ever be asked to authorize again if the link itself is dead.
+- Fourteen regression cases cover the exact observed failure, unknown and
+  incomplete states, transient 410 success, persistent recovery, sample reset
+  and the slow-but-successful login above.
 
 The FileBrowser new-database message remains normal only on the very first
 start: the configured database path is inside the persistent

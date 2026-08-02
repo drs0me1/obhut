@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-21"
+MASTER_SETUP_VERSION="2026.08.02-Q1-22"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1543,6 +1543,27 @@ tailscale_interactive_login() {
         fi
 
         if [[ "$outcome" == "0" ]]; then
+            # `tailscale up` sıfırla döndü: giriş BAŞARILI, operatör
+            # tarayıcıdaki adımı tamamladı. Buradaki kısa bekleme yalnız bir
+            # HIZLI YOL — düğüm zaten online olduysa hemen dönmek için.
+            #
+            # Süre dolarsa yine BAŞARI dönülür. Q1-21'de burası
+            # `outcome="incomplete"` yapıp daemon'ı yeniden başlatıyordu ve
+            # bu, DD-37'nin engellemek için yazıldığı yanlış-pozitifti:
+            # başarılı bir girişi çöpe atıp operatörü yeni bir tarayıcı
+            # doğrulamasına zorluyordu. İki sebeple yanlıştı:
+            #
+            #   1. Hemen aşağıdaki blok AYNI koşulu (`tailscale ip -4` +
+            #      `tailscale_is_online`) zaten 180 saniye boyunca bekliyor.
+            #      Aynı şey için 15 ve 180 saniyelik iki kapı vardı ve yıkıcı
+            #      çareye sahip olan sıkı olanıydı.
+            #   2. `tailscale up` başarılıyken düğümün online olamaması bir
+            #      kimlik doğrulama sorunu değil, bağlantı sorunudur. Yeni
+            #      bir tarayıcı girişi onu düzeltmez; 180 saniyelik bekleme
+            #      ise başarısızlığı açık bir hatayla raporlar.
+            #
+            # Yani karar aşağıya devredilir. 15 saniye burada bir tavan
+            # değil, sadece "erken dönebilir miyiz" penceresidir.
             post_success_started=$SECONDS
             while [[ "$((SECONDS - post_success_started))" -lt "$TAILSCALE_LOGIN_POST_SUCCESS_GRACE" ]]; do
                 if tailscale_login_complete; then
@@ -1551,7 +1572,11 @@ tailscale_interactive_login() {
                 fi
                 sleep 1
             done
-            outcome="incomplete"
+            echo "NOT: Giriş başarılı; düğüm ${TAILSCALE_LOGIN_POST_SUCCESS_GRACE} saniyede online kimlik/IP" >&2
+            echo "doğrulamasını geçmedi. Yeniden giriş İSTENMİYOR; online olma beklemesi" >&2
+            echo "aşağıdaki 180 saniyelik kontrole bırakıldı." >&2
+            rm -f "$out_file"
+            return 0
         fi
 
         kill "$up_pid" 2>/dev/null || true
@@ -1565,10 +1590,6 @@ tailscale_interactive_login() {
             timeout)
                 echo "Tailscale girişi ${TAILSCALE_LOGIN_TIMEOUT} saniyede tamamlanmadı." >&2
                 echo "Bağlantı kilitlenmiş olabilir; daemon sıfırlanıp yenisi açılıyor." >&2
-                ;;
-            incomplete)
-                echo "tailscale up tamamlandı ancak node online kimlik/IP doğrulamasını geçemedi." >&2
-                echo "Daemon sıfırlanıp yeni kayıt bağlantısı açılıyor." >&2
                 ;;
             *)
                 echo "tailscale up rc=${outcome} ile döndü; daemon sıfırlanıyor." >&2
