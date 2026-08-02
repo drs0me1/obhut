@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — a test for the gap that hid the Quantum policy file
+
+`Q1-9` fixed one file being outside the canonical bundle. It did not fix
+the reason nothing noticed: **nothing anywhere compares the files
+`install.sh` generates against the files the bundle covers.**
+`test/canonical_bundle.bats` checks that Stage 6's manifest and
+reconcile's expected list agree with each other, and two lists agreeing
+says nothing about what is missing from both.
+
+`test/generated_files_bundled.bats` supplies the third side. It derives
+the generated set from install.sh's own write operations — with every
+heredoc body stripped first, so the helper scripts' `install` calls don't
+count as install.sh's — and requires every one of them to be either
+published into the bundle or listed on an allowlist with a written reason.
+
+Of the 32 generated files, 9 are bundled and 23 are excluded for four
+stated reasons. Writing the allowlist surfaced one inconsistency: two
+generated systemd drop-ins are neither bundled nor checked by reconcile,
+while three of the other five are bundled. They are on the list as a
+known exclusion with that noted, not as a settled decision.
+
+Mutation-verified on scratch copies, all five assertions independently.
+The load-bearing one reverts `Q1-9` itself — the suite fails on the real
+historical defect. 79 → 84 cases, no skips on the Debian target. No
+change to `install.sh`.
+
 ### 2026-08-02 — `Q1-11`: the Stage 4 progress note said six containers
 
 There are five. The generated `compose.yaml` defines `portainer`,

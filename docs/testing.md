@@ -2,8 +2,8 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-07-31): Tier 1 implemented; Tier 2 partial (74
-> unit cases across six files, all passing with zero skips on the Debian
+> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (84
+> unit cases across seven files, all passing with zero skips on the Debian
 > target — several self-skip on the macOS workstation for non-GNU `stat`,
 > bash 3.2 and a missing GNU `timeout`); Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
@@ -190,8 +190,57 @@ alone.
     a recording fake founders on its staging-chain activation loops;
     that coupling stays Tier 3's job, and the live install does exercise
     it end to end.
-- **Remaining in Tier 2:** nothing specific identified. The surveyed
-  gaps are closed; further additions would be opportunistic.
+- **Also implemented:** `test/generated_files_bundled.bats` covers
+  something none of the others do — not a function, but a **coupling
+  between install.sh and itself**: every file it generates must either be
+  published into the canonical bundle or appear on an explicit allowlist
+  with a written reason. 5 cases, no skips.
+  - **Written because the Q1-9 defect had no possible test.**
+    `/etc/master-stack/filebrowser.yaml` carries the file manager's entire
+    security policy, was generated on every install run, and was in none
+    of reconcile's checks for the whole life of the `quantum` line.
+    `canonical_bundle.bats` could not have caught it: it checks that
+    Stage 6's manifest and `canonical_bundle_ok`'s expected list agree
+    with **each other**, and two lists agreeing says nothing about what is
+    missing from both. This suite supplies the third side of the triangle
+    — install.sh's own write operations.
+  - Both sides are derived from source, on the same principle as
+    `canonical_bundle.bats`. The generated set comes from `cat >` targets
+    plus the destination of the atomic `mktemp`/`mv -f` pattern, read from
+    a copy of install.sh with **every heredoc body stripped** — without
+    that, the `install -m` calls inside the reconcile heredoc (which run
+    on the target, not during install) would be counted as install.sh's
+    own. `$VAR` destinations are resolved through install.sh's literal
+    assignments, so `QUANTUM_CONFIG_FILE` reads as the path it holds.
+  - **The allowlist is as much the deliverable as the assertion.** Of the
+    32 generated files, 9 are bundled and 23 are excluded — for four
+    distinct and separately stated reasons: the manifest cannot hash
+    itself; secrets and host-measured values have no canonical content
+    (`webdav.htpasswd`, `/root/docker/.env`, and `daemon.json`, which
+    install.sh merges rather than generates); the helper scripts reconcile
+    runs and the units that invoke them are checked by running them
+    (**M10**'s recorded reasoning); and boot-time configuration is checked
+    by its effect, which is stronger than a hash. Writing them down turned
+    twenty-odd silent omissions into twenty-odd recorded decisions, and
+    surfaced one inconsistency in the process — see below.
+  - **Mutation-verified, all five assertions independently**, on scratch
+    copies: adding a new uncovered generated file, reverting Q1-9 itself
+    (removing both the `filebrowser.yaml` publish and its manifest entry),
+    dropping an entry from `sha256sum` only, deleting a file that is on
+    the allowlist, and publishing a file install.sh does not generate.
+    Each mutation trips exactly one test and no others. The Q1-9 revert is
+    the load-bearing one: the suite fails on the real historical defect.
+  - **What it surfaced.** Two generated systemd drop-ins —
+    `docker.service.d/99-tailscale-forward.conf` and
+    `tailscaled.service.d/98-master-stack.conf` — are neither bundled nor
+    covered by reconcile, while three of the other five generated drop-ins
+    are bundled. They sit on the allowlist as a *known* exclusion with
+    that inconsistency stated, not as a settled decision.
+- **Remaining in Tier 2:** the second tier of stub-able reconcile
+  functions (`record_container_restart`, `gro_flags_ok`,
+  `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)
+  has no coverage at all. Milder failure modes than the covered set;
+  worth doing, not urgent.
 - Longer-term, a small sourceable library file (extracted once, not
   per-test) would remove the need to re-extract function bodies via
   `sed`/`awk` in every test file — a meaningful, low-risk first step

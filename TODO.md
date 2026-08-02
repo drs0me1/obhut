@@ -67,6 +67,20 @@ _All High findings resolved — see Completed below._
       `docs/architecture.md`'s 18-line stage-table drift and its stale
       `OPTIONS` description of the WebDAV probe.
 
+      **Added 2026-08-02: `test/generated_files_bundled.bats` (5 cases,
+      79 → 84).** Not a function test — it pins a coupling between
+      install.sh and itself: every file it generates must be either
+      published into the canonical bundle or on an explicit allowlist with
+      a written reason. Written because the `Q1-9` defect (the Quantum
+      policy file outside drift detection) was structurally uncatchable by
+      the existing suites, which compare the manifest and reconcile's
+      expected list against each other and are therefore silent about what
+      is missing from both. Mutation-verified on all five assertions,
+      including a full revert of `Q1-9`. It surfaced two generated systemd
+      drop-ins that are neither bundled nor checked by reconcile while
+      three of their five siblings are — recorded on the allowlist as an
+      open question.
+
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
