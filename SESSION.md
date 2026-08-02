@@ -6,23 +6,22 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`Q1-20` is locally implemented and verified. The requested `R2.5` release
-export is still open because project policy requires live verification before
-creating its `Q1-20`/`R2.5` tags. The current live/exported release remains
-`R2.4` (`Q1-15`).**
+**None open. `Q1-20` is live-verified and exported as `R2.5`; the working
+tree should be clean after the close-out commit.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
 question with dufs (`V2-2`/`R2.1`, DD-26) — the two lines are alternatives,
 not a sequence.
 
-Current local candidate:
+Current release:
 
 | | |
 |---|---|
 | Version | `2026.08.02-Q1-20` (6425 lines) |
-| Export | Not yet exported; `versiyon/R2.4/` remains the last tagged/live release |
-| Live | Q1-16 through Q1-20 not yet exercised on Debian; do not inherit R2.4's live claim |
+| SHA256 | `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9` |
+| Export | `versiyon/R2.5/`, byte-identical to the `Q1-20` and `R2.5` repository states |
+| Live | R2.4 upgrade + unchanged rerun, both 7/7; targeted Q1-20 fault injection; final `--check rc=0`, no failed units, five containers up |
 | Tests | 162 cases across twelve `.bats` files (150 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
@@ -42,6 +41,21 @@ line-by-line review:
 - `master-webdav.service` independently requires `$DOWNLOADS_PATH/media`.
 - Fifteen focused cases live in `test/reconcile_control_flow.bats`; decisions
   and findings are DD-41, H10/H11 and M14/M15.
+
+Release verification details worth retaining:
+
+- `--check` + `--status` caused zero FileBrowser login POSTs; two immediate
+  normal reconciles caused one total and one daily stamp.
+- Missing/edited/metadata/symlink Compose states all took the intended live
+  path. The missing file was restored through systemd without restarting any
+  container; the symlink failed closed.
+- `tailscale down` left tailscaled active but the node `Stopped/false`; the
+  real unit waited 30 seconds and failed with structured diagnostics. The same
+  node/IP plus existing firewall/core recovery returned every drift flag to
+  zero. A deliberately repeated event inside cooldown failed loudly; volatile
+  test stamps were removed and final recovery succeeded.
+- The second full Q1-20 run preserved every container `StartedAt`. Quantum
+  logged `Using existing database`, not the one-time missing-database warning.
 
 Three things from the recent sessions are worth carrying forward more than
 the change list:

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-15"
+MASTER_SETUP_VERSION="2026.08.02-Q1-20"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -56,6 +56,18 @@ DNSMASQ_INITIAL_UNIT_FILE_STATE="not-found"
 CADDY_WAS_ACTIVE=0
 CADDY_INITIAL_LOAD_STATE="not-found"
 CADDY_INITIAL_UNIT_FILE_STATE="not-found"
+DNS_STACK_ROLLBACK_BASE="/run"
+DNS_STACK_ROLLBACK_DIR=""
+DNS_STACK_MANAGED_FILES=(
+    /etc/dnsmasq.d/local-services.conf
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf
+    /etc/caddy/Caddyfile
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
+    /usr/local/sbin/caddy-tailnet-env
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf
+)
+CANONICAL_STAGE_DIR=""
+CANONICAL_LINK_TMP=""
 
 progress_render() {
     local percent="$1" label="$2" state="${3:-RUN}" suffix="${4:-}"
@@ -348,11 +360,132 @@ restore_stopped_timers_on_exit() {
     return "$restore_rc"
 }
 
+dns_stack_managed_path_ok() {
+    local path="$1"
+    [[ "$path" == /* && "$path" != "/" ]]
+}
+
+dns_stack_rollback_dir_ok() {
+    local path="$1"
+    [[ -n "$path" &&
+       "$path" == "$DNS_STACK_ROLLBACK_BASE"/master-dns-stack-rollback.* ]]
+}
+
+capture_dns_stack_files() {
+    local managed_path="" backup_path=""
+
+    DNS_STACK_ROLLBACK_DIR="$(
+        mktemp -d \
+            "$DNS_STACK_ROLLBACK_BASE/master-dns-stack-rollback.XXXXXX"
+    )"
+    chmod 0700 "$DNS_STACK_ROLLBACK_DIR"
+
+    for managed_path in "${DNS_STACK_MANAGED_FILES[@]}"; do
+        if ! dns_stack_managed_path_ok "$managed_path"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+            DNS_STACK_ROLLBACK_DIR=""
+            return 1
+        fi
+        backup_path="$DNS_STACK_ROLLBACK_DIR/files$managed_path"
+        if ! install -d -m 0700 "$(dirname "$backup_path")"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+            DNS_STACK_ROLLBACK_DIR=""
+            return 1
+        fi
+        if [[ -e "$managed_path" || -L "$managed_path" ]]; then
+            if ! cp -a -- "$managed_path" "$backup_path"; then
+                rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+                DNS_STACK_ROLLBACK_DIR=""
+                return 1
+            fi
+        fi
+    done
+}
+
+restore_dns_stack_files() {
+    local managed_path="" backup_path="" restore_rc=0
+
+    dns_stack_rollback_dir_ok "$DNS_STACK_ROLLBACK_DIR" &&
+        [[ -d "$DNS_STACK_ROLLBACK_DIR" ]] || return 1
+
+    for managed_path in "${DNS_STACK_MANAGED_FILES[@]}"; do
+        if ! dns_stack_managed_path_ok "$managed_path"; then
+            restore_rc=1
+            continue
+        fi
+        backup_path="$DNS_STACK_ROLLBACK_DIR/files$managed_path"
+        if [[ -e "$backup_path" || -L "$backup_path" ]]; then
+            rm -rf -- "$managed_path" || restore_rc=1
+            install -d -m 0755 "$(dirname "$managed_path")" || {
+                restore_rc=1
+                continue
+            }
+            cp -a -- "$backup_path" "$managed_path" || restore_rc=1
+        else
+            # Snapshot anında bulunmayan yönetilen dosya ilk kurulumda bu
+            # deneme tarafından yaratılmıştır; rollback onu bırakmamalı.
+            rm -rf -- "$managed_path" || restore_rc=1
+        fi
+    done
+
+    if [[ "$restore_rc" -eq 0 ]]; then
+        rm -rf -- "$DNS_STACK_ROLLBACK_DIR" || restore_rc=1
+        [[ "$restore_rc" -ne 0 ]] || DNS_STACK_ROLLBACK_DIR=""
+    fi
+    return "$restore_rc"
+}
+
+canonical_stage_is_current() {
+    local canonical_root="${CANONICAL_ROOT:-/usr/local/share/master-stack}"
+    local active_target="" stage_target=""
+    [[ -n "${CANONICAL_STAGE_DIR:-}" ]] || return 1
+    active_target="$(
+        readlink -f -- "$canonical_root/current" 2>/dev/null || true
+    )"
+    stage_target="$(
+        readlink -f -- "$CANONICAL_STAGE_DIR" 2>/dev/null || true
+    )"
+    [[ -n "$stage_target" && "$active_target" == "$stage_target" ]]
+}
+
 restore_dns_stack_on_failure() {
     local exit_rc="${1:-0}" restore_rc=0 daemon="" was_active=0
-    local load_state="" unit_file_state=""
+    local load_state="" unit_file_state="" current_load_state=""
     [[ "$exit_rc" -ne 0 &&
        "${DNS_STACK_STATE_CAPTURED:-0}" -eq 1 ]] || return 0
+
+    # `mv current` ile aşağıdaki commit bayrağı iki ayrı shell komutudur.
+    # Tam aralarında gelen INT/TERM'de pointer gerçekte commit edilmiştir;
+    # eski canlı dosyaları geri almak yeni canonical ile karışık durum
+    # yaratırdı. Pointer'ın kendisi bu dar pencerenin kalıcı commit kaydıdır.
+    if canonical_stage_is_current; then
+        if dns_stack_rollback_dir_ok "$DNS_STACK_ROLLBACK_DIR"; then
+            rm -rf -- "$DNS_STACK_ROLLBACK_DIR" || restore_rc=1
+        fi
+        DNS_STACK_ROLLBACK_DIR=""
+        DNS_STACK_STATE_CAPTURED=0
+        return "$restore_rc"
+    fi
+
+    # Yeni config ile çalışan daemon bırakma. Dosyalar geri alındıktan sonra
+    # başlangıçta aktif olanlar restart edilir; restart, ilk stop başarısız
+    # olmuş olsa bile eski içeriğin yeniden yüklenmesini garanti eder.
+    for daemon in dnsmasq caddy; do
+        current_load_state="$(
+            systemctl show "$daemon.service" -p LoadState --value \
+                2>/dev/null || true
+        )"
+        if [[ "$current_load_state" != "not-found" ]]; then
+            systemctl stop "$daemon.service" \
+                >/dev/null 2>&1 || restore_rc=1
+        fi
+    done
+    if ! restore_dns_stack_files; then
+        echo "HATA: DNS/Caddy dosya rollback'i tamamlanamadı; kurtarma" >&2
+        echo "kopyası korundu: $DNS_STACK_ROLLBACK_DIR" >&2
+        restore_rc=1
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || restore_rc=1
 
     for daemon in dnsmasq caddy; do
         case "$daemon" in
@@ -393,7 +526,8 @@ restore_dns_stack_on_failure() {
         fi
         if [[ "$was_active" -eq 1 ]]; then
             systemctl reset-failed "$daemon.service" >/dev/null 2>&1 || true
-            systemctl start "$daemon.service" >/dev/null 2>&1 || restore_rc=1
+            systemctl restart "$daemon.service" \
+                >/dev/null 2>&1 || restore_rc=1
         else
             systemctl stop "$daemon.service" >/dev/null 2>&1 || true
         fi
@@ -404,6 +538,7 @@ restore_dns_stack_on_failure() {
 
 cleanup_master_setup() {
     local rc=$? restore_rc=0 dns_restore_rc=0 error_tail=""
+    local canonical_active_target=""
     trap - ERR EXIT INT TERM
     set +e
 
@@ -415,6 +550,30 @@ cleanup_master_setup() {
     restore_stopped_timers_on_exit "$rc" || restore_rc=$?
     if [[ "$restore_rc" -ne 0 && "$rc" -eq 0 ]]; then
         rc="$restore_rc"
+    fi
+
+    # Yayın tamamlanmadan kalan generation/link geçicilerini kaldır. Pointer
+    # takası başarıp hemen ardından sinyal alınmışsa aktif generation'a asla
+    # dokunma; readlink karşılaştırması o dar aralığı da güvenli kılar.
+    if [[ -n "$CANONICAL_LINK_TMP" ]]; then
+        case "$CANONICAL_LINK_TMP" in
+            /usr/local/share/master-stack/.generation.*.link)
+                rm -f -- "$CANONICAL_LINK_TMP"
+                ;;
+        esac
+    fi
+    if [[ -n "$CANONICAL_STAGE_DIR" ]]; then
+        canonical_active_target="$(
+            readlink -f -- /usr/local/share/master-stack/current \
+                2>/dev/null || true
+        )"
+        if [[ "$canonical_active_target" != "$CANONICAL_STAGE_DIR" ]]; then
+            case "$CANONICAL_STAGE_DIR" in
+                /usr/local/share/master-stack/.generation.*)
+                    rm -rf -- "$CANONICAL_STAGE_DIR"
+                    ;;
+            esac
+        fi
     fi
 
     if [[ "$MASTER_LOGGING_ACTIVE" -eq 1 ]]; then
@@ -1352,6 +1511,18 @@ tailscale_interactive_login() {
     return 1
 }
 
+tailscale_journal_has_node_not_found() {
+    # `grep -q` burada kullanılamaz: eşleşmeden sonra erken çıkar, büyük bir
+    # journal akışında journalctl SIGPIPE/141 alır ve pipefail bulunan
+    # eşleşmeyi başarısızlığa çevirir. Normal grep çıktısını /dev/null'a
+    # yönlendirerek akışın tamamını tüketir; gerçek journalctl hatası ise
+    # pipefail sayesinde yine başarısız kalır.
+    journalctl -u tailscaled \
+        --since "${MASTER_SETUP_STARTED_AT:--5min}" \
+        --no-pager 2>/dev/null |
+        grep -F "node not found" >/dev/null
+}
+
 # Giriş gerekip gerekmediği tek bir bayrakla taşınıyor, çünkü iki ayrı yol
 # aynı yere çıkıyor: hiç profil yok, ya da profil var ama karşılığı silinmiş.
 # İkincisinde yerel profil değersizdir; bayrak sayesinde ikisi de aşağıdaki
@@ -1385,10 +1556,7 @@ else
         # kullanılıyor: çözülmüş eski bir node-not-found arızasından kalan
         # kayıt, dakikalar sonra oluşan başka bir arızaya yanlış teşhis
         # koymasın.
-        if journalctl -u tailscaled \
-                --since "${MASTER_SETUP_STARTED_AT:--5min}" \
-                --no-pager 2>/dev/null |
-                grep -q "node not found"; then
+        if tailscale_journal_has_node_not_found; then
             echo "UYARI: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
             echo "Düğüm Tailscale panelinden silinmiş; yerel profil geçerli görünse de" >&2
@@ -2354,47 +2522,45 @@ auth:
 QUANTUM_YAML
 chown root:root "$QUANTUM_CONFIG_TMP"
 chmod 0644 "$QUANTUM_CONFIG_TMP"
-# Hedef DİZİN olabilir ve bu, yeniden çalıştırmanın kendini onaramadığı tek
-# durumdu (2026-08-01'de ölçüldü). Zincir şöyle işliyor: politika dosyası
-# herhangi bir sebeple silinirse, compose bir sonraki sefer onu bind mount
-# kaynağı olarak bulamaz ve Docker eksik kaynağı DİZİN olarak yaratır.
-# Quantum o dizini config sanıp "Sources required" ile validation hatası
-# verir ve servis vermez — reconcile bunu compose_runtime=1 ile yakalar,
-# yani sessiz değildir. Ama onarılamaz: `mv -f dosya dizin/` HATA VERMEZ,
-# dosyayı sessizce dizinin içine koyar. Yani betiği yeniden çalıştırmak
-# bozukluğu düzeltmez, sadece dizinin içine bir dosya daha biriktirir.
-#
-# Bu, "çare yeniden çalıştırmaktır" ilkesinin kırıldığı tek noktaydı.
-# Yazmadan önce hedefi normalize etmek yeterli.
-if [[ -d "$QUANTUM_CONFIG_FILE" ]]; then
-    echo "NOT: ${QUANTUM_CONFIG_FILE} dizin olarak bulundu (Docker'ın eksik" >&2
-    echo "bind mount kaynağı için yarattığı dizin); temizlenip dosya olarak" >&2
-    echo "yeniden yazılıyor." >&2
-    rm -rf "$QUANTUM_CONFIG_FILE"
-    # Host dosyasını düzeltmek YETMİYOR: container bir kez dizin mount'uyla
-    # yaratıldıysa mount spec'i onda saklı kalır ve kaynak dosyaya dönünce
-    # runc "not a directory: Are you trying to mount a directory onto a
-    # file" ile reddeder — container restart döngüsüne girer. İlk guard
-    # sürümü tam bu yüzden yetersiz kaldı ve kurulum aşama 5'te düştü
-    # (2026-08-01, ölçüldü). Container'ı kaldırmak gerekiyor ki compose
-    # onu temiz mount spec'iyle yeniden yaratsın.
-    #
-    # Veri kaybı yok: kalıcı her şey filebrowser_data volume'unda ve
-    # volume container'la birlikte silinmiyor.
-    docker rm -f filebrowser >/dev/null 2>&1 || true
+# Değişiklik sinyali Aşama 5'e taşınır. Yalnız dosyayı atomik olarak
+# değiştirmek çalışan container'ın config'i yeniden okumasını sağlamaz;
+# Quantum config'i sadece açılışta okur. Dahası hedef daha önce Docker'ın
+# yarattığı bir DİZİN ise container'ın saklı mount spec'i de yeniden
+# yaratılmadan düzelmez. Bu iki durum aynı güvenli sonuca bağlanır:
+# image pull ve unit doğrulaması bittikten sonra yalnız filebrowser
+# container'ı kaldırılır, Compose onu named volume'u koruyarak yeniden
+# yaratır.
+QUANTUM_CONFIG_RECREATE_REQUIRED=0
+if [[ -f "$QUANTUM_CONFIG_FILE" &&
+      ! -L "$QUANTUM_CONFIG_FILE" ]] &&
+   cmp -s "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE" &&
+   [[ "$(stat -c '%u:%g:%a' "$QUANTUM_CONFIG_FILE" 2>/dev/null || true)" == "0:0:644" ]]; then
+    # Aynı politika ve metadata için inode'u gereksiz yere değiştirme.
+    rm -f "$QUANTUM_CONFIG_TMP"
+else
+    QUANTUM_CONFIG_RECREATE_REQUIRED=1
+    if [[ -L "$QUANTUM_CONFIG_FILE" ||
+          ( -e "$QUANTUM_CONFIG_FILE" &&
+            ! -f "$QUANTUM_CONFIG_FILE" ) ]]; then
+        echo "NOT: ${QUANTUM_CONFIG_FILE} normal dosya değil; temizlenip" >&2
+        echo "dosya olarak yeniden yazılacak." >&2
+        rm -rf -- "$QUANTUM_CONFIG_FILE"
+    fi
+    mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 fi
-mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 
 # state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
-# Canonical bundle tek bir atomik küme hâlinde — state.env, compose.yaml ve
-# altı dnsmasq/Caddy dosyası — Aşama 6'nın sonunda yayınlanır. Nedeni:
-# reconcile'ın canonical_bundle_ok()'u manifest'i sekiz girdinin tamamına
+# Canonical bundle tek bir atomik generation hâlinde — state.env,
+# compose.yaml, filebrowser.yaml ve altı dnsmasq/Caddy dosyası — Aşama
+# 6'nın sonunda yayınlanır. Nedeni:
+# reconcile'ın canonical_bundle_ok()'u manifest'i dokuz girdinin tamamına
 # karşı doğrular, dolayısıyla state.env'i burada yayınlamak Aşama 4-6
 # boyunca eksik bir bundle bırakır ve yarıda kesilen bir çalıştırma
 # reconcile'ı bundle'ı hiç doğrulayamaz hâlde bırakırdı. Ertelemek ise şu
 # anlama gelir: yarıda kalan bir yeniden çalıştırma, önceki çalıştırmanın
-# eksiksiz ve kendi içinde tutarlı bundle'ını yerinde bırakır ve reconcile
-# son bilinen iyi yapılandırmayı uygulamaya devam eder.
+# eksiksiz ve kendi içinde tutarlı generation'ını `current` işaretçisinin
+# arkasında bırakır ve reconcile son bilinen iyi yapılandırmayı uygulamaya
+# devam eder.
 
 # Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
 # yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
@@ -2755,7 +2921,7 @@ PartOf=docker.service tailscaled.service
 OnFailure=master-network-reconcile.service
 # Compose oneshot kendi içinde WAN/Tailscale ve container sağlık beklemelerini
 # tamamlar. Otomatik restart döngüsü yoktur; ilk hata reconcile'ı bir kez
-# tetikler, kalıcı hata sonraki beş dakikalık timer'a bırakılır. Geniş sınır
+# tetikler, kalıcı hata sonraki yirmi dakikalık timer'a bırakılır. Geniş sınır
 # yalnız dışarıdan gelen gerçek start fırtınasını keser.
 StartLimitIntervalSec=60
 StartLimitBurst=10
@@ -2799,6 +2965,7 @@ CURL_BIN="$(command -v curl)"
 INSTALL_BIN="$(command -v install)"
 CMP_BIN="$(command -v cmp)"
 SHA256SUM_BIN="$(command -v sha256sum)"
+READLINK_BIN="$(command -v readlink)"
 SS_BIN="$(command -v ss)"
 STAT_BIN="$(command -v stat)"
 DF_BIN="$(command -v df)"
@@ -2808,10 +2975,24 @@ ENV_FILE="/root/docker/.env"
 COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
 QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
-CANONICAL_DIR="/usr/local/share/master-stack"
+CANONICAL_ROOT="/usr/local/share/master-stack"
+# Q1-16 öncesi kurulumlar bundle dosyalarını doğrudan kök dizinde tutar.
+# Yeni reconcile Aşama 4'te yazıldığı, `current` ise Aşama 6'nın sonunda
+# yayınlandığı için yarıda kesilen ilk yükseltmede eski bundle'a dönmek
+# zorundadır. Başarılı ilk Q1-16 çalışmasından sonra `current` kullanılır.
+select_canonical_dir() {
+    CANONICAL_DIR="$CANONICAL_ROOT/current"
+    if [[ ! -L "$CANONICAL_DIR" &&
+          -r "$CANONICAL_ROOT/SHA256SUMS" ]]; then
+        CANONICAL_DIR="$CANONICAL_ROOT"
+    fi
+}
+select_canonical_dir
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
+QUANTUM_RESTART_PENDING_FILE="$RESTART_STATE_DIR/filebrowser-config.pending"
+FILEBROWSER_AUDIT_STAMP="$RESTART_STATE_DIR/filebrowser-password-audit.last"
 # İndirme dosya sisteminin uyarı eşiği. Hem tespit hem de onarım sonrası
 # postcondition aynı değeri kullanır; daha önce ikisine de elle yazılıyordu.
 DISK_USAGE_THRESHOLD_PCT=90
@@ -2820,6 +3001,13 @@ DISK_USAGE_THRESHOLD_PCT=90
 # olduğu için aynı değeri kendi COOLDOWN_SECONDS'ında tutar; biri
 # değişirse diğeri de değişmeli.
 RESTART_COOLDOWN_SECONDS=900
+# Varsayılan parola denetimi gerçek bir giriş isteğidir. Salt-okunur modları
+# yan etkisiz tutmak ve operatörle paylaşılan rate-limit kovasını doldurmamak
+# için yalnız normal reconcile'da, günde en çok bir kez çalışır.
+FILEBROWSER_AUDIT_INTERVAL_SECONDS=86400
+# Daemon active olduktan hemen sonra adresin birkaç saniye gecikmesi normaldir;
+# bunu kalıcı sağlıksızlıktan ayıran kısa, bounded pencere.
+ADDRESS_READY_WAIT_SECONDS=30
 MODE="${1:-reconcile}"
 
 case "$MODE" in
@@ -2847,7 +3035,7 @@ state_value() {
     printf '%s\n' "${value:-$default_value}"
 }
 
-defer_or_fail() {
+defer_transient() {
     local check_rc="$1"
     shift
     if [[ "$MODE" == "--check" ]]; then
@@ -2856,6 +3044,41 @@ defer_or_fail() {
     fi
     echo "$*"
     exit 0
+}
+
+fail_unhealthy() {
+    echo "HATA: $*" >&2
+    exit 1
+}
+
+report_tailscale_diagnostics() {
+    local status_json="" backend="bilinmiyor" online="bilinmiyor"
+    local health="okunamadı" key_expiry="bilinmiyor"
+
+    status_json="$("$TAILSCALE_BIN" status --json 2>/dev/null || true)"
+    if "$JQ_BIN" -e 'type == "object"' >/dev/null 2>&1 <<<"$status_json"; then
+        backend="$(
+            "$JQ_BIN" -r '.BackendState // "bilinmiyor"' \
+                <<<"$status_json" || printf 'bilinmiyor\n'
+        )"
+        online="$(
+            "$JQ_BIN" -r \
+                'if .Self.Online == true then "true" elif .Self.Online == false then "false" else "bilinmiyor" end' \
+                <<<"$status_json" || printf 'bilinmiyor\n'
+        )"
+        health="$(
+            "$JQ_BIN" -r \
+                '(.Health // []) | if type != "array" then tostring elif length == 0 then "yok" else map(tostring) | join(" | ") end' \
+                <<<"$status_json" || printf 'okunamadı\n'
+        )"
+        key_expiry="$(
+            "$JQ_BIN" -r '.Self.KeyExpiry // "bilinmiyor"' \
+                <<<"$status_json" || printf 'bilinmiyor\n'
+        )"
+    fi
+
+    echo "Tailscale teşhisi: BackendState=$backend Self.Online=$online KeyExpiry=$key_expiry" >&2
+    echo "Tailscale health: $health" >&2
 }
 
 owned_file_ok() {
@@ -2870,11 +3093,26 @@ owned_file_ok() {
 # yani "DNS kapalı" diye ikinci bir bundle şekli yok (şema 9).
 canonical_bundle_ok() {
     local manifest_entries="" expected_entries=""
+    local canonical_target="$CANONICAL_DIR" canonical_root_target=""
+
+    if [[ "$CANONICAL_DIR" != "$CANONICAL_ROOT" ]]; then
+        [[ -L "$CANONICAL_DIR" ]] || return 1
+        canonical_root_target="$(
+            "$READLINK_BIN" -f -- "$CANONICAL_ROOT" 2>/dev/null || true
+        )"
+        canonical_target="$(
+            "$READLINK_BIN" -f -- "$CANONICAL_DIR" 2>/dev/null || true
+        )"
+        [[ -n "$canonical_root_target" &&
+           "$canonical_target" == "$canonical_root_target"/.generation.* &&
+           -d "$canonical_target" ]] || return 1
+    fi
+
     [[ -r "$CANONICAL_DIR/SHA256SUMS" ]] &&
         (cd "$CANONICAL_DIR" &&
             "$SHA256SUM_BIN" -c --status SHA256SUMS) ||
         return 1
-    owned_file_ok "$CANONICAL_DIR" 0 0 755 &&
+    owned_file_ok "$canonical_target" 0 0 755 &&
         owned_file_ok "$CANONICAL_DIR/SHA256SUMS" 0 0 644 &&
         owned_file_ok "$CANONICAL_DIR/state.env" 0 0 600 &&
         owned_file_ok "$CANONICAL_DIR/compose.yaml" 0 0 600 &&
@@ -3008,7 +3246,7 @@ fi
 if [[ "${MASTER_STACK_LOCK_HELD:-0}" != "1" ]]; then
     exec 8>/run/lock/master-stack.lock
     if ! "$FLOCK_BIN" -n 8; then
-        defer_or_fail 75 \
+        defer_transient 75 \
             "Başka bir stack transaction'ı aktif; reconcile kontrolü ertelendi."
     fi
 fi
@@ -3064,7 +3302,7 @@ for managed_unit in \
           "$MANAGED_ACTIVE_STATE" == "deactivating" ||
           "$MANAGED_ACTIVE_STATE" == "reloading" ||
           "$MANAGED_ACTIVE_STATE" == "refreshing" ]]; then
-        defer_or_fail 75 \
+        defer_transient 75 \
             "$managed_unit geçiş/job durumunda; reconcile sonraki periyoda ertelendi."
     fi
 done
@@ -3073,36 +3311,55 @@ done
 # kendi After= grafiğinin içinden senkron core-daemon restart'ı yapmaz.
 if ! "$SYSTEMCTL_BIN" is-active --quiet docker.service ||
    ! "$SYSTEMCTL_BIN" is-active --quiet tailscaled.service; then
-    defer_or_fail 1 \
-        "Docker veya tailscaled aktif değil; sağlık doğrulanamadı."
+    echo "Docker durumu: $("$SYSTEMCTL_BIN" is-active docker.service 2>/dev/null || true)" >&2
+    echo "tailscaled durumu: $("$SYSTEMCTL_BIN" is-active tailscaled.service 2>/dev/null || true)" >&2
+    report_tailscale_diagnostics
+    fail_unhealthy \
+        "Docker veya tailscaled aktif değil; sonraki timer'a kadar sağlıksız durum gizlenmeyecek."
 fi
 
-ROUTE_LINE="$("$IP_BIN" -4 -o route get 1.1.1.1 2>/dev/null || true)"
-CURRENT_WAN4_IF="$(
-    "$AWK_BIN" \
-        '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}' \
-        <<<"$ROUTE_LINE"
-)"
-CURRENT_PUBLIC_IPV4="$(
-    "$AWK_BIN" \
-        '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' \
-        <<<"$ROUTE_LINE"
-)"
-CURRENT_TAILSCALE_IPV4="$(
-    "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
-        "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
-)"
-CURRENT_TAILSCALE_IPV6="$(
-    "$IP_BIN" -6 -o addr show dev tailscale0 scope global 2>/dev/null |
-        "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
-)"
+read_current_addresses() {
+    ROUTE_LINE="$("$IP_BIN" -4 -o route get 1.1.1.1 2>/dev/null || true)"
+    CURRENT_WAN4_IF="$(
+        "$AWK_BIN" \
+            '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}' \
+            <<<"$ROUTE_LINE"
+    )"
+    CURRENT_PUBLIC_IPV4="$(
+        "$AWK_BIN" \
+            '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' \
+            <<<"$ROUTE_LINE"
+    )"
+    CURRENT_TAILSCALE_IPV4="$(
+        "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
+            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
+    )"
+    CURRENT_TAILSCALE_IPV6="$(
+        "$IP_BIN" -6 -o addr show dev tailscale0 scope global 2>/dev/null |
+            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
+    )"
+}
+
+current_addresses_ready() {
+    [[ -n "$CURRENT_WAN4_IF" &&
+       "$CURRENT_PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ &&
+       "$CURRENT_TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+read_current_addresses
 
 # Geçici ağ yokluğunda çalışan stack'i bozma.
-if [[ -z "$CURRENT_WAN4_IF" ||
-      ! "$CURRENT_PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ||
-      ! "$CURRENT_TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    defer_or_fail 1 \
-        "Ağ adresleri henüz hazır değil; çalışan servisler değiştirilmedi."
+if ! current_addresses_ready; then
+    for _ in $(seq 1 "$((ADDRESS_READY_WAIT_SECONDS / 2))"); do
+        sleep 2
+        read_current_addresses
+        current_addresses_ready && break
+    done
+fi
+if ! current_addresses_ready; then
+    report_tailscale_diagnostics
+    fail_unhealthy \
+        "WAN veya Tailscale adresi ${ADDRESS_READY_WAIT_SECONDS} saniyede hazır olmadı; çalışan servisler değiştirilmedi."
 fi
 
 ENV_PUBLIC_IPV4=""
@@ -3459,9 +3716,8 @@ webdav_direct_ok() {
 # yerden çağrılıyor (tespit, tekrar denemesi, onarım sonrası, nihai
 # postcondition), yani SAPMALI bir tur dört giriş denemesi üretiyordu — ve
 # aşağıdaki 429 açıklamasındaki kova altı denemelik. Dört, operatöre iki hak
-# bırakıyordu; tek deneme/tur ise 20 dakikalık timer aralığı kovanın 3-8
-# dakikalık penceresinden uzun olduğu için birikemez. Yani reconcile artık
-# kendi başına sınırı tetikleyemez.
+# bırakıyordu. Q1-20'de bunun da salt-okunur --check/--status sözleşmesini
+# bozduğu görüldü; çağrı yalnız normal reconcile'da ve günde en çok bir kez.
 report_default_filebrowser_password() {
     local code=""
     [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
@@ -3491,9 +3747,33 @@ report_default_filebrowser_password() {
             # diyordu. Açığa düşen bir güvenlik kontrolü, olmayan bir
             # kontrolden daha kötüdür; bilinmiyorsa bilinmiyor denir.
             echo "UYARI: filebrowser varsayılan parola kontrolü yapılamadı; giriş uç noktası hız sınırında (429)." >&2
-            echo "Bu 'parola varsayılan değil' anlamına GELMEZ; sonraki turda yeniden denenecek." >&2
+            echo "Bu 'parola varsayılan değil' anlamına GELMEZ; sonraki günlük denetimde yeniden bakılacak." >&2
             ;;
     esac
+}
+
+filebrowser_audit_due() {
+    local now="" last=0
+    now="$(date +%s)"
+    if [[ -r "$FILEBROWSER_AUDIT_STAMP" ]]; then
+        read -r last <"$FILEBROWSER_AUDIT_STAMP" || last=0
+    fi
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    (( now - last >= FILEBROWSER_AUDIT_INTERVAL_SECONDS ))
+}
+
+record_filebrowser_audit() {
+    local stamp_tmp=""
+    "$INSTALL_BIN" -d -m 0700 -o root -g root "$RESTART_STATE_DIR" ||
+        return 1
+    stamp_tmp="$(mktemp "$RESTART_STATE_DIR/.filebrowser-audit.XXXXXX")" ||
+        return 1
+    if ! printf '%s\n' "$(date +%s)" >"$stamp_tmp" ||
+       ! chmod 0600 "$stamp_tmp" ||
+       ! mv -f "$stamp_tmp" "$FILEBROWSER_AUDIT_STAMP"; then
+        rm -f -- "$stamp_tmp"
+        return 1
+    fi
 }
 
 declare -a COMPOSE_RESTART_TARGETS=()
@@ -3649,17 +3929,38 @@ state_file_ok() {
         owned_file_ok "$STATE_FILE" 0 0 600
 }
 
-# Bilinçli olarak config_files_ok()/CONFIG_DRIFTED'a bağlanmadı:
-# dnsmasq/Caddy dosyalarının aksine compose.yaml sapması hiçbir zaman
-# otomatik geri yüklenmez. Geri yüklemek `docker compose up -d` olmadan
-# etkisizdir, sapma tekrarlarsa periyodik bir yeniden yaratma döngüsü
-# riski taşır, ve operatörün bilinçli bir değişikliğini sessizce geri
-# alır. Bu kontrol, bu stack'te gerçekten yaşanan tek durumu görünür
-# kılmak için var — canlıda denenip henüz install.sh'e işlenmemiş bir
-# değişiklik — yani yalnız raporlar, başka bir şey yapmaz.
-compose_file_ok() {
-    "$CMP_BIN" -s "$CANONICAL_DIR/compose.yaml" "$COMPOSE_FILE" &&
+# Normal bir compose.yaml'ın içerik sapması bilinçli operatör deneyi olabilir;
+# bu yüzden yalnız raporlanır ve otomatik uygulanmaz. Dosyanın tamamen kaybı
+# farklıdır: gelecekteki Docker/Tailscale restart'ında stack'in geri gelmesini
+# engeller ve canonical kopyadan geri yüklenmesi container'ları değiştirmez.
+# Symlink/dizin gibi yapısal hedeflerde otomatik üzerine yazmak güvenli
+# değildir; reconcile fail-closed durur. Metadata içerikten bağımsız onarılır.
+compose_file_structurally_ok() {
+    [[ -f "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]] &&
         owned_file_ok "$COMPOSE_FILE" 0 0 600
+}
+
+compose_file_ok() {
+    compose_file_structurally_ok &&
+        "$CMP_BIN" -s "$CANONICAL_DIR/compose.yaml" "$COMPOSE_FILE"
+}
+
+restore_missing_compose_file() {
+    local target_parent="" tmp=""
+    [[ ! -e "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]] || return 1
+    target_parent="${COMPOSE_FILE%/*}"
+    "$INSTALL_BIN" -d -m 0700 -o root -g root "$target_parent" ||
+        return 1
+    tmp="$(mktemp "$target_parent/.compose-reconcile.XXXXXX")" ||
+        return 1
+    if ! "$INSTALL_BIN" -m 0600 -o root -g root \
+            "$CANONICAL_DIR/compose.yaml" "$tmp" ||
+       [[ -e "$COMPOSE_FILE" || -L "$COMPOSE_FILE" ]] ||
+       ! mv -f -- "$tmp" "$COMPOSE_FILE" ||
+       ! compose_file_ok; then
+        rm -f -- "$tmp"
+        return 1
+    fi
 }
 
 # Quantum politika dosyası: dnsmasq/Caddy dosyalarıyla aynı muamele, çünkü
@@ -3671,7 +3972,66 @@ compose_file_ok() {
 quantum_config_ok() {
     "$CMP_BIN" -s \
         "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE" &&
-        owned_file_ok "$QUANTUM_CONFIG_FILE" 0 0 644
+        owned_file_ok "$QUANTUM_CONFIG_FILE" 0 0 644 &&
+        [[ ! -e "$QUANTUM_RESTART_PENDING_FILE" ]]
+}
+
+# Quantum politika dosyasını önce aynı dosya sistemindeki bir staging
+# dosyasına doğrulanmış metadata ile hazırlar, sonra tek rename ile yayınlar.
+# Hedef normal dosya değilse yalnız host yolunu düzeltmek yetmez: Docker
+# container'ı ilk yaratıldığı bind-mount tipini taşır. Container bu yüzden
+# kaldırılır ve çağıran taraf master-compose.service ile yeniden yaratır.
+# Named volume silinmediğinden database, kullanıcılar ve indeks korunur.
+remove_quantum_container_if_present() {
+    if "$DOCKER_BIN" container inspect filebrowser >/dev/null 2>&1; then
+        "$DOCKER_BIN" rm -f filebrowser >/dev/null 2>&1
+    else
+        # Inspect hatasının gerçekten "container yok" olduğunu doğrula;
+        # daemon arızasını yokluk sanıp başarı dönme.
+        "$DOCKER_BIN" info >/dev/null 2>&1
+    fi
+}
+
+restore_quantum_config() {
+    local target_parent="" tmp=""
+    QUANTUM_CONTAINER_RECREATE_REQUIRED=0
+    target_parent="${QUANTUM_CONFIG_FILE%/*}"
+    tmp="$(mktemp "$target_parent/.filebrowser-reconcile.XXXXXX")" ||
+        return 1
+
+    if ! "$INSTALL_BIN" -m 0644 -o root -g root \
+            "$CANONICAL_DIR/filebrowser.yaml" "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    if [[ -L "$QUANTUM_CONFIG_FILE" ||
+          ( -e "$QUANTUM_CONFIG_FILE" &&
+            ! -f "$QUANTUM_CONFIG_FILE" ) ]]; then
+        if ! remove_quantum_container_if_present; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        if ! rm -rf -- "$QUANTUM_CONFIG_FILE"; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        QUANTUM_CONTAINER_RECREATE_REQUIRED=1
+    fi
+
+    if ! mv -f -- "$tmp" "$QUANTUM_CONFIG_FILE"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+}
+
+restart_quantum_after_config_restore() {
+    if [[ "$QUANTUM_CONTAINER_RECREATE_REQUIRED" -eq 1 ]] ||
+       ! "$DOCKER_BIN" container inspect filebrowser >/dev/null 2>&1; then
+        "$SYSTEMCTL_BIN" restart master-compose.service
+    else
+        "$DOCKER_BIN" restart filebrowser >/dev/null 2>&1
+    fi
 }
 
 dns_config_files_ok() {
@@ -3849,11 +4209,20 @@ if ! check_compose_runtime; then
     check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
 fi
 
-# Tur başına tam olarak bir giriş denemesi. Ölçülen sayılar bunu gerektiriyor:
-# kova 6 deneme, pencere 3-8 dakika, timer aralığı 20 dakika. Tek deneme ile
-# reconcile kendi başına sınırı ASLA tetikleyemez; dörtle tetikleyebiliyordu
-# ve operatöre yalnız iki hak bırakıyordu.
-report_default_filebrowser_password
+# Gerçek POST login denemesi salt-okunur --check/--status modlarında ASLA
+# çalışmaz. Normal reconcile'da da 20 dakikada bir değil, günde en çok bir
+# kez: rate-limit kaynak IP başına ve Caddy üzerinden gelen operatörle ortak.
+# Damga denemeden önce yazılır; OnFailure fırtınası aynı gün yeni istek üretmez.
+if [[ "$MODE" == "reconcile" ]] &&
+   filebrowser_audit_due &&
+   [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
+          2>/dev/null || true)" == "true" ]]; then
+    if record_filebrowser_audit; then
+        report_default_filebrowser_password
+    else
+        echo "UYARI: filebrowser parola audit damgası yazılamadı; rate-limit'i korumak için giriş denemesi yapılmadı." >&2
+    fi
+fi
 
 STATE_CONFIG_DRIFTED=0
 QUANTUM_CONFIG_DRIFTED=0
@@ -3884,10 +4253,27 @@ canonical_runtime_configs_valid || CANONICAL_CONFIG_INVALID=1
 # şey raporlamazdı. check_compose_runtime()'daki wg-easy kurulum-bekliyor
 # mesajı da aynı nedenle orada duruyor.
 COMPOSE_FILE_DRIFTED=0
-if ! compose_file_ok; then
-    COMPOSE_FILE_DRIFTED=1
+COMPOSE_FILE_MISSING=0
+COMPOSE_FILE_UNSAFE=0
+COMPOSE_FILE_METADATA_DRIFTED=0
+if [[ ! -e "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]]; then
+    COMPOSE_FILE_MISSING=1
+    echo "UYARI: /root/docker/compose.yaml eksik; canonical kopya geri yüklenecek." >&2
+elif [[ ! -f "$COMPOSE_FILE" || -L "$COMPOSE_FILE" ]]; then
+    COMPOSE_FILE_UNSAFE=1
+    echo "HATA: /root/docker/compose.yaml normal dosya değil; otomatik üzerine yazılmayacak." >&2
+else
+    "$CMP_BIN" -s "$CANONICAL_DIR/compose.yaml" "$COMPOSE_FILE" ||
+        COMPOSE_FILE_DRIFTED=1
+    owned_file_ok "$COMPOSE_FILE" 0 0 600 ||
+        COMPOSE_FILE_METADATA_DRIFTED=1
+fi
+if [[ "$COMPOSE_FILE_DRIFTED" -eq 1 ]]; then
     echo "UYARI: /root/docker/compose.yaml kurulumun canonical kopyasından farklı." >&2
     echo "Otomatik geri yükleme yapılmaz. Kalıcı olması gereken bir değişiklikse install.sh'e işleyin." >&2
+fi
+if [[ "$COMPOSE_FILE_METADATA_DRIFTED" -eq 1 ]]; then
+    echo "UYARI: /root/docker/compose.yaml sahiplik/modu sapmış; içerik değiştirilmeden düzeltilecek." >&2
 fi
 
 # Host WebDAV (rclone) DNS opsiyonundan bağımsız, koşulsuz kuruludur.
@@ -3976,6 +4362,9 @@ all_critical_state_healthy() {
        "$FW_INACTIVE" -eq 0 &&
        "$COMPOSE_INACTIVE" -eq 0 &&
        "$COMPOSE_RUNTIME_DRIFTED" -eq 0 &&
+       "$COMPOSE_FILE_MISSING" -eq 0 &&
+       "$COMPOSE_FILE_UNSAFE" -eq 0 &&
+       "$COMPOSE_FILE_METADATA_DRIFTED" -eq 0 &&
        "$CONFIG_DRIFTED" -eq 0 &&
        "$CANONICAL_CONFIG_INVALID" -eq 0 &&
        "$WEBDAV_UNIT_INACTIVE" -eq 0 &&
@@ -3993,7 +4382,7 @@ if [[ "$MODE" == "--check" ]]; then
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
-        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED" \
+        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED compose_missing=$COMPOSE_FILE_MISSING compose_unsafe=$COMPOSE_FILE_UNSAFE compose_metadata=$COMPOSE_FILE_METADATA_DRIFTED" \
         "webdav_unit=$WEBDAV_UNIT_INACTIVE webdav_runtime=$WEBDAV_RUNTIME_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
@@ -4054,6 +4443,9 @@ fi
     echo "HATA: $DOWNLOADS_PATH bulunduğu dosya sisteminin inode'larının %${DISK_USAGE_THRESHOLD_PCT}'ından fazlası kullanılmış; bayt olarak yer kalsa bile yeni dosya oluşturma ENOSPC verebilir. Çare çok sayıda küçük dosya silmektir, büyük dosya silmek inode açmaz. Otomatik onarım yok." >&2
 [[ "$TAILSCALE_OFFLINE" -eq 0 ]] ||
     echo "HATA: Tailscale daemon aktif fakat Tailnet online değil." >&2
+if [[ "$TAILSCALE_OFFLINE" -eq 1 ]]; then
+    report_tailscale_diagnostics
+fi
 [[ "$TAILSCALE_PREFS_DRIFTED" -eq 0 ]] ||
     echo "Tailscale exit-node tercihleri sapmış; yeniden uygulanacak."
 [[ "$TAILSCALE_NETFILTER_DRIFTED" -eq 0 ]] ||
@@ -4085,7 +4477,31 @@ fi
 
 RECOVERY_FAILED=0
 CORE_RECOVERY_SCHEDULED=0
+FILEBROWSER_RUNTIME_RECREATE_REQUIRED=0
 declare -a ELIGIBLE_RESTART_TARGETS=()
+
+if [[ "$COMPOSE_FILE_MISSING" -eq 1 ]]; then
+    if restore_missing_compose_file; then
+        COMPOSE_FILE_MISSING=0
+        echo "Eksik compose.yaml canonical kopyadan geri yüklendi; çalışan container'lar değiştirilmedi."
+    else
+        echo "HATA: Eksik compose.yaml canonical kopyadan geri yüklenemedi." >&2
+        RECOVERY_FAILED=1
+    fi
+fi
+if [[ "$COMPOSE_FILE_METADATA_DRIFTED" -eq 1 ]]; then
+    if chown root:root "$COMPOSE_FILE" &&
+       chmod 0600 "$COMPOSE_FILE" &&
+       compose_file_structurally_ok; then
+        COMPOSE_FILE_METADATA_DRIFTED=0
+    else
+        echo "HATA: compose.yaml sahiplik/modu düzeltilemedi." >&2
+        RECOVERY_FAILED=1
+    fi
+fi
+if [[ "$COMPOSE_FILE_UNSAFE" -eq 1 ]]; then
+    RECOVERY_FAILED=1
+fi
 
 if [[ "$TAILSCALE_OFFLINE" -eq 1 ]]; then
     # Kimlik süresi/control-plane erişimi otomatik ve güvenli biçimde üretilemez.
@@ -4182,6 +4598,78 @@ if [[ "$STACK_RESTART_REQUIRED" -eq 1 ]]; then
     fi
 fi
 
+# Politika dosyası geri yüklenir ve container yenilenir. Bu blok genel
+# container onarımından ÖNCE çalışır: hedef Docker tarafından dizin olarak
+# yaratılmışsa genel `docker restart filebrowser` hem sorunu çözemez hem de
+# 15 dakikalık bütçeyi tüketerek doğru yeniden-yaratma yolunu kilitlerdi.
+#
+# Bütçe dosyaya dokunmadan önce denetlenir. Eski sıra önce dosyayı canonical
+# içeriğe çeviriyor, sonra cooldown nedeniyle restart edemiyordu; bir sonraki
+# tur artık dosya sapması görmediği için Quantum eski politikayı süresiz
+# çalıştırabiliyordu. Pending işareti de restart başladıktan sonraki her hata
+# için aynı sinyali korur; /run reboot'ta temizlenir, reboot zaten container'ı
+# yeni config ile başlatır.
+if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
+    if ! restart_budget_available filebrowser; then
+        echo "HATA: filebrowser politika onarımı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; dosya ve yürürlükteki politika birlikte korunup sonraki tura bırakıldı." >&2
+        RECOVERY_FAILED=1
+    elif ! "$INSTALL_BIN" -d -m 0700 -o root -g root \
+            "$RESTART_STATE_DIR" ||
+         ! (umask 077; : >"$QUANTUM_RESTART_PENDING_FILE"); then
+        echo "HATA: filebrowser politika onarımı pending işareti yazılamadı." >&2
+        RECOVERY_FAILED=1
+    elif ! restore_quantum_config; then
+        echo "HATA: Canonical filebrowser politika dosyası güvenli biçimde geri yüklenemedi." >&2
+        RECOVERY_FAILED=1
+    else
+        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
+        # açılışta okur. Normal dosya sapmasında restart, dizin/symlink gibi
+        # yapısal sapmada veya eksik container'da Compose ile recreate.
+        record_container_restart filebrowser
+        if restart_quantum_after_config_restore; then
+            QUANTUM_CONFIG_REPAIRED=0
+            for _ in $(seq 1 60); do
+                quantum_health="$(
+                    "$DOCKER_BIN" inspect -f \
+                        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                        filebrowser 2>/dev/null || true
+                )"
+                if [[ "$quantum_health" == "healthy" ||
+                      "$quantum_health" == "none" ]] &&
+                   http_endpoint_responds http://127.0.0.1:7113/; then
+                    QUANTUM_CONFIG_REPAIRED=1
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "$QUANTUM_CONFIG_REPAIRED" -ne 1 ]]; then
+                echo "HATA: filebrowser politika yenilemesinden sonra yanıt vermedi." >&2
+                RECOVERY_FAILED=1
+            elif ! rm -f -- "$QUANTUM_RESTART_PENDING_FILE"; then
+                echo "HATA: filebrowser politika onarımı pending işareti temizlenemedi." >&2
+                RECOVERY_FAILED=1
+            else
+                # İlk tespitte filebrowser başka runtime sapmalarıyla da
+                # işaretlenmiş olabilir. Başarılı restart/recreate sonrası
+                # hedef listesini yenile; aksi hâlde aşağıdaki genel blok
+                # aynı container'ı ikinci kez restart etmeye çalışır.
+                QUANTUM_CONFIG_DRIFTED=0
+                COMPOSE_RUNTIME_DRIFTED=0
+                check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
+                COMPOSE_STATE="$(
+                    "$SYSTEMCTL_BIN" is-active master-compose.service \
+                        2>/dev/null || true
+                )"
+                COMPOSE_INACTIVE=0
+                [[ "$COMPOSE_STATE" == "active" ]] || COMPOSE_INACTIVE=1
+            fi
+        else
+            echo "HATA: filebrowser politika değişikliği için yeniden başlatılamadı/yaratılamadı." >&2
+            RECOVERY_FAILED=1
+        fi
+    fi
+fi
+
 if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
     for restart_target in "${COMPOSE_RESTART_TARGETS[@]:-}"; do
         if [[ "$restart_target" == "wg-easy" &&
@@ -4190,7 +4678,16 @@ if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
             continue
         fi
         if restart_budget_available "$restart_target"; then
-            ELIGIBLE_RESTART_TARGETS+=("$restart_target")
+            if [[ "$restart_target" == "filebrowser" ]]; then
+                # Eski Q1-18 ve öncesinden, host yolu artık normal dosya
+                # olsa bile container'ın saklı mount spec'i dizin kalmış
+                # olabilir (`docker rm ... || true` hatayı yutuyordu).
+                # Restart bunu düzeltemez; named volume'u koruyan recreate
+                # hem bu geçiş durumunu hem sıradan runtime arızasını çözer.
+                FILEBROWSER_RUNTIME_RECREATE_REQUIRED=1
+            else
+                ELIGIBLE_RESTART_TARGETS+=("$restart_target")
+            fi
         else
             echo "HATA: $restart_target otomatik restart bütçesinde; $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown dolmadan yeniden başlatılmadı." >&2
             RECOVERY_FAILED=1
@@ -4210,6 +4707,14 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
             done
         else
             echo "HATA: Hedef container restart işlemi başarısız." >&2
+            RECOVERY_FAILED=1
+        fi
+    fi
+    if [[ "$FILEBROWSER_RUNTIME_RECREATE_REQUIRED" -eq 1 ]]; then
+        if remove_quantum_container_if_present; then
+            record_container_restart filebrowser
+        else
+            echo "HATA: Sağlıksız filebrowser container'ı yeniden yaratılmak üzere kaldırılamadı." >&2
             RECOVERY_FAILED=1
         fi
     fi
@@ -4264,71 +4769,6 @@ if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
         RECOVERY_FAILED=1
     else
         "$SYSTEMCTL_BIN" daemon-reload
-    fi
-fi
-
-# Politika dosyası geri yüklenir ve container yenilenir.
-#
-# CANONICAL_CONFIG_INVALID kapısı burada BİLİNÇLİ olarak yok: o kapı
-# dnsmasq/Caddy içindir, çünkü geçersiz bir config'i geri yüklemek çalışan
-# daemon'u öldürürdü. Buradaki kaynak kurulumun kendi ürettiği ve manifest
-# hash'iyle doğrulanmış kopya — canonical_bundle_ok bu noktadan çok önce
-# zaten geçmiş durumda.
-if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
-    if ! "$INSTALL_BIN" -m 0644 -o root -g root \
-            "$CANONICAL_DIR/filebrowser.yaml" "$QUANTUM_CONFIG_FILE"; then
-        echo "HATA: Canonical filebrowser politika dosyası geri yüklenemedi." >&2
-        RECOVERY_FAILED=1
-    elif restart_budget_available filebrowser; then
-        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
-        # açılışta okuduğu için sapmış politika çoktan yüklenmiş olabilir ve
-        # bunu dışarıdan ayırt etmenin bir yolu yok. Garanti edilmek istenen
-        # şey "yürürlükteki politika canonical kopyayla aynı"; onu veren tek
-        # işlem restart. Bütçe container restart'larıyla ortak, yani sürekli
-        # yeniden yazılan bir dosya her periyotta restart döngüsü üretmez.
-        record_container_restart filebrowser
-        if "$DOCKER_BIN" restart filebrowser >/dev/null 2>&1; then
-            # Restart'tan hemen sonraki postcondition'a düşmemek için
-            # beklenir. Aksi hâlde BAŞARILI bir onarım aşağıdaki
-            # check_compose_runtime'da düşer ve reconcile düzelttiği şey
-            # için rc=1 raporlar — V1-11'in sınıfı.
-            #
-            # Beklenen iki sinyal, check_compose_runtime'ın filebrowser'a
-            # uyguladığı iki sinyalin AYNISI olmak zorunda; yalnız HTTP'yi
-            # beklemek yetmiyor. 2026-08-02'de ölçüldü: Quantum imajı kendi
-            # HEALTHCHECK'ini taşıyor (start_period 10s) ve restart sonrası
-            # HTTP t+2s'te 200 dönerken sağlık t+5s'te healthy oluyor —
-            # yalnız HTTP bekleyen ilk sürüm tam o aralıkta çıkıp
-            # postcondition'ı "starting" hâlinde yakalıyordu.
-            #
-            # 60 saniye, imajın 30 saniyelik healthcheck aralığının bir
-            # turunu kaçırma ihtimaline pay bırakır.
-            QUANTUM_CONFIG_REPAIRED=0
-            for _ in $(seq 1 60); do
-                quantum_health="$(
-                    "$DOCKER_BIN" inspect -f \
-                        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-                        filebrowser 2>/dev/null || true
-                )"
-                if [[ "$quantum_health" == "healthy" ||
-                      "$quantum_health" == "none" ]] &&
-                   http_endpoint_responds http://127.0.0.1:7113/; then
-                    QUANTUM_CONFIG_REPAIRED=1
-                    break
-                fi
-                sleep 1
-            done
-            if [[ "$QUANTUM_CONFIG_REPAIRED" -ne 1 ]]; then
-                echo "HATA: filebrowser politika yenilemesinden sonra yanıt vermedi." >&2
-                RECOVERY_FAILED=1
-            fi
-        else
-            echo "HATA: filebrowser politika değişikliği için yeniden başlatılamadı." >&2
-            RECOVERY_FAILED=1
-        fi
-    else
-        echo "HATA: filebrowser politika dosyası geri yüklendi fakat container restart'ı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; yürürlükteki politika hâlâ sapmış olabilir." >&2
-        RECOVERY_FAILED=1
     fi
 fi
 
@@ -4424,6 +4864,7 @@ if ! forwarding_ok ||
    ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" ||
    ! canonical_bundle_ok ||
    ! canonical_runtime_configs_valid ||
+   ! compose_file_structurally_ok ||
    ! config_files_ok ||
    ! dns_runtime_ok ||
    ! caddy_runtime_ok; then
@@ -4529,7 +4970,6 @@ Description=Reconcile Docker, Tailnet bindings and managed firewall policy
 # onları After= listesine almak self-order beklemesi oluşturabilir. Yalnız ana
 # daemon'ların sırası korunur; helper yalnız ikisi de aktifse işlem yapar.
 After=network-online.target docker.service tailscaled.service
-ConditionPathExists=/root/docker/compose.yaml
 
 [Service]
 Type=oneshot
@@ -4695,6 +5135,7 @@ After=network-online.target tailscaled.service
 # drop-in'indeki Wants ile güncel Tailscale IPv4'ü alarak geri başlar.
 PartOf=tailscaled.service
 OnFailure=master-network-reconcile.service
+RequiresMountsFor=${DOWNLOADS_PATH}/media
 # ExecStartPre Tailscale IPv4 için en çok 300 saniye bekleyebilir; iki uzun
 # denemeden sonra pencere kapanır, sonraki reconcile periyodu yeniden dener.
 StartLimitIntervalSec=900
@@ -4762,6 +5203,33 @@ systemctl enable master-compose.service
 systemctl enable master-webdav.service
 
 progress_stage_note 75 "Firewall uygulanıp Compose stack başlatılıyor"
+# Politika içeriği/metadata değiştiyse veya hedef normal dosya değilse
+# mevcut filebrowser container'ı eski bind mount'u taşımaya devam edemez.
+# Pull ve unit doğrulaması bu noktada tamamlandı; yalnız container silinir,
+# named volume DEĞİL. Önceki sürümün yuttuğu bir `docker rm` hatasından
+# kalan, host yolu doğru olsa da eski dizin mount'u taşıyan container da
+# running/health sinyaliyle bu yola girer. Aşağıdaki Compose start aynı
+# isimle ve yeni dosya mount'uyla yeniden yaratır. Taze kurulumda container
+# zaten yoktur.
+if docker container inspect filebrowser >/dev/null 2>&1; then
+    QUANTUM_EXISTING_RUNNING="$(
+        docker inspect -f '{{.State.Running}}' filebrowser 2>/dev/null || true
+    )"
+    QUANTUM_EXISTING_HEALTH="$(
+        docker inspect -f \
+            '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            filebrowser 2>/dev/null || true
+    )"
+    if [[ "$QUANTUM_EXISTING_RUNNING" != "true" ||
+          ( "$QUANTUM_EXISTING_HEALTH" != "healthy" &&
+            "$QUANTUM_EXISTING_HEALTH" != "none" ) ]]; then
+        QUANTUM_CONFIG_RECREATE_REQUIRED=1
+    fi
+    if [[ "$QUANTUM_CONFIG_RECREATE_REQUIRED" -eq 1 ]]; then
+        systemctl stop master-compose.service
+        docker rm -f filebrowser >/dev/null
+    fi
+fi
 # Re-run: daemon.json değiştiyse Docker restart'ı buraya, tüm helper/unit ve
 # compose dosyaları yazılıp daemon-reload yapıldıktan sonraya ertelendi.
 # Böylece PartOf/Wants ile tetiklenen fw ve compose unit'leri eski değil,
@@ -4843,7 +5311,10 @@ progress_stage_done
 progress_stage_begin 6 "Opsiyonel Tailnet DNS ve Caddy hazırlanıyor"
 progress_stage_note 10 ".$LOCAL_DOMAIN için dnsmasq kuruluyor"
 
-DNS_STACK_STATE_CAPTURED=1
+# Service state kadar içerik de transaction'ın parçasıdır. Snapshot paket
+# kurulumu ve ilk `cat >` işleminden önce alınır; böylece fresh install'da
+# "önceden yoktu" bilgisi de korunur.
+capture_dns_stack_files
 DNSMASQ_INITIAL_LOAD_STATE="$(
     systemctl show dnsmasq.service -p LoadState --value 2>/dev/null || true
 )"
@@ -4864,6 +5335,7 @@ CADDY_INITIAL_LOAD_STATE="${CADDY_INITIAL_LOAD_STATE:-not-found}"
 CADDY_INITIAL_UNIT_FILE_STATE="${CADDY_INITIAL_UNIT_FILE_STATE:-not-found}"
 systemctl is-active --quiet caddy.service 2>/dev/null &&
     CADDY_WAS_ACTIVE=1
+DNS_STACK_STATE_CAPTURED=1
 
 # Paket postinst aşamasında varsayılan wildcard listener açılmasını engelle.
 # Kalıcı maske, kurulum bu blokta yarıda kalırsa reboot sonrasında da
@@ -4915,13 +5387,6 @@ EOF
 chown root:root /etc/dnsmasq.d/local-services.conf
 chmod 0644 /etc/dnsmasq.d/local-services.conf
 dnsmasq --test
-install -d -m 0755 -o root -g root /usr/local/share/master-stack
-install -m 0644 -o root -g root \
-    /etc/dnsmasq.d/local-services.conf \
-    /usr/local/share/master-stack/dnsmasq-local-services.conf
-install -m 0644 -o root -g root \
-    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
-    /usr/local/share/master-stack/dnsmasq-99-tailscale-order.conf
 systemctl daemon-reload
 systemctl unmask dnsmasq.service
 systemctl enable dnsmasq
@@ -5084,18 +5549,6 @@ chmod 0644 /etc/caddy/Caddyfile
 
 # Servisi açmadan önce mevcut Tailscale IPv4 ile Caddyfile'ı doğrula.
 TS_IPV4="$TS_IP" caddy validate --config /etc/caddy/Caddyfile
-install -m 0644 -o root -g root \
-    /etc/caddy/Caddyfile \
-    /usr/local/share/master-stack/Caddyfile
-install -m 0644 -o root -g root \
-    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
-    /usr/local/share/master-stack/caddy-99-tailnet-bind.conf
-install -m 0755 -o root -g root \
-    /usr/local/sbin/caddy-tailnet-env \
-    /usr/local/share/master-stack/caddy-tailnet-env
-install -m 0644 -o root -g root \
-    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
-    /usr/local/share/master-stack/tailscaled-99-caddy-tailnet.conf
 
 progress_stage_note 85 "Caddy Tailnet binding'i başlatılıp doğrulanıyor"
 systemctl daemon-reload
@@ -5108,20 +5561,39 @@ caddy validate \
     --envfile /run/caddy-tailnet/tailscale.env \
     --config /etc/caddy/Caddyfile
 
-DNS_STACK_STATE_CAPTURED=0
 echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
 
-# Canonical bundle yanlış/yarım bir kopyadan çalışan daemon'ları yeniden
-# başlatmamak için kendi manifestiyle doğrulanır. Manifest atomik yenilenir.
+# Canonical bundle önce benzersiz bir generation dizininde eksiksiz kurulur
+# ve kendi manifestiyle doğrulanır. Yalnız bundan sonra `current` symlink'i
+# tek rename ile değiştirilir. Böylece dosyalardan herhangi birinin kopyası
+# veya manifest üretimi yarıda kalırsa reconcile önceki generation'ı görür;
+# eski/yeni dosyalardan oluşan karma bir bundle hiçbir zaman yayınlanmaz.
+CANONICAL_ROOT="/usr/local/share/master-stack"
+CANONICAL_CURRENT_TARGET="$(
+    readlink -f -- "$CANONICAL_ROOT/current" 2>/dev/null || true
+)"
+# Önceki başarısız denemelerden kalmış generation'ları temizle; aktif
+# generation'ı koru. Yeni yayın tamamlandığında dizinde en fazla aktif ve
+# bir önceki generation kalır, dolayısıyla düzenli rerun sınırsız büyümez.
+for canonical_old_generation in "$CANONICAL_ROOT"/.generation.*; do
+    [[ -d "$canonical_old_generation" ]] || continue
+    [[ "$canonical_old_generation" == "$CANONICAL_CURRENT_TARGET" ]] ||
+        rm -rf -- "$canonical_old_generation"
+done
+CANONICAL_STAGE_DIR="$(
+    mktemp -d "$CANONICAL_ROOT/.generation.XXXXXX"
+)"
+chown root:root "$CANONICAL_STAGE_DIR"
+chmod 0755 "$CANONICAL_STAGE_DIR"
+
 # state.env'in canonical kopyası Aşama 4'te değil burada yayınlanır (bkz.
-# oradaki açıklama), böylece state.env ve manifest tek atomik küme hâlinde
-# ve her zaman birbiriyle tutarlı yayınlanır.
+# oradaki açıklama); diğer sekiz dosyayla aynı generation'a girer.
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
-    /usr/local/share/master-stack/state.env
+    "$CANONICAL_STAGE_DIR/state.env"
 install -m 0600 -o root -g root \
     /root/docker/compose.yaml \
-    /usr/local/share/master-stack/compose.yaml
+    "$CANONICAL_STAGE_DIR/compose.yaml"
 # Quantum politika dosyası bundle'ın dokuzuncu girdisi (Q1-9). Bir önceki
 # hatta gerek yoktu: orijinal filebrowser ayarlarını filebrowser_config
 # volume'unda tutuyordu, host'ta sapacak bir dosya yoktu. Quantum politikayı
@@ -5132,12 +5604,29 @@ install -m 0600 -o root -g root \
 # orijinal filebrowser'ın en ağır açığı (GHSA-6759) tam olarak oydu.
 install -m 0644 -o root -g root \
     "$QUANTUM_CONFIG_FILE" \
-    /usr/local/share/master-stack/filebrowser.yaml
-CANONICAL_MANIFEST_TMP="$(
-    mktemp /usr/local/share/master-stack/.SHA256SUMS.XXXXXX
-)"
+    "$CANONICAL_STAGE_DIR/filebrowser.yaml"
+install -m 0644 -o root -g root \
+    /etc/dnsmasq.d/local-services.conf \
+    "$CANONICAL_STAGE_DIR/dnsmasq-local-services.conf"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf \
+    "$CANONICAL_STAGE_DIR/dnsmasq-99-tailscale-order.conf"
+install -m 0644 -o root -g root \
+    /etc/caddy/Caddyfile \
+    "$CANONICAL_STAGE_DIR/Caddyfile"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf \
+    "$CANONICAL_STAGE_DIR/caddy-99-tailnet-bind.conf"
+install -m 0755 -o root -g root \
+    /usr/local/sbin/caddy-tailnet-env \
+    "$CANONICAL_STAGE_DIR/caddy-tailnet-env"
+install -m 0644 -o root -g root \
+    /etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf \
+    "$CANONICAL_STAGE_DIR/tailscaled-99-caddy-tailnet.conf"
+
+CANONICAL_MANIFEST_TMP="$CANONICAL_STAGE_DIR/.SHA256SUMS.tmp"
 (
-    cd /usr/local/share/master-stack
+    cd "$CANONICAL_STAGE_DIR"
     sha256sum -- \
         state.env \
         compose.yaml \
@@ -5151,8 +5640,41 @@ CANONICAL_MANIFEST_TMP="$(
 ) >"$CANONICAL_MANIFEST_TMP"
 chown root:root "$CANONICAL_MANIFEST_TMP"
 chmod 0644 "$CANONICAL_MANIFEST_TMP"
-mv -f "$CANONICAL_MANIFEST_TMP" \
-    /usr/local/share/master-stack/SHA256SUMS
+mv -f "$CANONICAL_MANIFEST_TMP" "$CANONICAL_STAGE_DIR/SHA256SUMS"
+(
+    cd "$CANONICAL_STAGE_DIR"
+    sha256sum -c --status SHA256SUMS
+)
+
+CANONICAL_LINK_TMP="${CANONICAL_STAGE_DIR}.link"
+ln -s "$(basename "$CANONICAL_STAGE_DIR")" "$CANONICAL_LINK_TMP"
+mv -Tf "$CANONICAL_LINK_TMP" "$CANONICAL_ROOT/current"
+
+# Pointer swap bu transaction'ın commit noktasıdır: buradan sonra yeni canlı
+# config ile yeni canonical generation aynı sürümü temsil eder. EXIT cleanup
+# artık eski dosyaları geri almamalı. Snapshot sır içermez ve /run altındadır;
+# silme hatası kurulumun geri kalanını durdurur ama committed config'i bozmaz.
+DNS_STACK_STATE_CAPTURED=0
+CANONICAL_LINK_TMP=""
+CANONICAL_STAGE_DIR=""
+rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
+DNS_STACK_ROLLBACK_DIR=""
+
+# Q1-16 öncesi düz-dizin bundle yalnız ilk yükseltmenin Aşama 4-6 kesinti
+# penceresi için fallback'tir. `current` başarıyla yayınlandıktan sonra onu
+# silmek, daha sonraki bir pointer kaybının sessizce eski veriye düşmesini
+# önler. Aktif generation bu dosyalardan bağımsızdır.
+rm -f -- \
+    "$CANONICAL_ROOT/SHA256SUMS" \
+    "$CANONICAL_ROOT/state.env" \
+    "$CANONICAL_ROOT/compose.yaml" \
+    "$CANONICAL_ROOT/filebrowser.yaml" \
+    "$CANONICAL_ROOT/dnsmasq-local-services.conf" \
+    "$CANONICAL_ROOT/dnsmasq-99-tailscale-order.conf" \
+    "$CANONICAL_ROOT/Caddyfile" \
+    "$CANONICAL_ROOT/caddy-99-tailnet-bind.conf" \
+    "$CANONICAL_ROOT/caddy-tailnet-env" \
+    "$CANONICAL_ROOT/tailscaled-99-caddy-tailnet.conf"
 
 # İlk kurulumun servis değişiklikleri bittikten sonra periyodik adres kontrolünü
 # aç; böylece timer kurulum sürerken Compose/Caddy ile yarışmaz.
@@ -5261,6 +5783,11 @@ assert_unit_property_contains master-webdav.service After \
     tailscaled.service
 assert_unit_property_contains master-webdav.service OnFailure \
     master-network-reconcile.service
+if ! grep -Fxq "RequiresMountsFor=$DOWNLOADS_PATH/media" \
+        /etc/systemd/system/master-webdav.service; then
+    echo "HATA: master-webdav medya mount bağımlılığı eksik." >&2
+    exit 1
+fi
 
 assert_unit_property_contains docker-tailscale-fw.service Requires \
     docker.service tailscaled.service
@@ -5288,6 +5815,11 @@ assert_unit_property_excludes master-network-reconcile.service Requires \
     docker.service tailscaled.service
 assert_unit_property_excludes master-network-reconcile.service Requisite \
     docker.service tailscaled.service
+if grep -q '^ConditionPathExists=' \
+        /etc/systemd/system/master-network-reconcile.service; then
+    echo "HATA: Reconcile eksik compose.yaml durumunda koşulsuz çalışabilmeli." >&2
+    exit 1
+fi
 assert_unit_property_contains master-docker-netfilter-recovery.service After \
     tailscaled.service master-network-reconcile.service
 assert_unit_property_excludes master-docker-netfilter-recovery.service Requires \

@@ -1,4 +1,4 @@
-# `R2.4` — Debian 13 media server, one script
+# `R2.5` — Debian 13 media server, one script
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,16 +7,16 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Release | `R2.4` — the current full release of this branch |
-| Version the script reports | `2026.08.02-Q1-15` |
-| SHA256 | `7e2be32d0ff4db59da4ea02badf7088f524900258c2ad877f2bbab3a53a0c5f1` |
-| Tags | `R2.4`, `Q1-15` — both name this exact file |
+| Release | `R2.5` — the current full release of this branch |
+| Version the script reports | `2026.08.02-Q1-20` |
+| SHA256 | `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9` |
+| Tags | `R2.5`, `Q1-20` — both carry this exact installer |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
-**Why two names for one file.** `R2.4` is the release; `Q1-15` is the
+**Why two names for one file.** `R2.5` is the release; `Q1-20` is the
 revision of the installer inside it. They are byte-for-byte the same
-script, so the install will print `2026.08.02-Q1-15` rather than `R2.4`.
+script, so the install will print `2026.08.02-Q1-20` rather than `R2.5`.
 That is expected, not a mismatch — the version string identifies the
 script, and this is the release that ships it.
 
@@ -77,8 +77,9 @@ visit. Portainer in particular closes its setup window after a few minutes
 and then needs a container restart before it will let you in — so visit it
 early.
 
-The server will keep reminding you about the file manager password every 20
-minutes in its own logs until you change it.
+The server checks for the default file-manager password at most once per day
+and writes a reminder to its own logs until you change it. Read-only status
+commands never send a login request.
 
 ## Worth knowing
 
@@ -110,40 +111,52 @@ minutes in its own logs until you change it.
 
 ## What this release was checked against
 
-This exact script was installed onto a **freshly reimaged Debian 13
-server** before `R2.4` was tagged — a real first-time install, browser
-login included, not a repeat run on an already-working machine. It then
-had a second, repeat run to confirm re-running is safe. Both finished all
-seven stages; the server's own self-check reported no problems, no failed
-services and all five containers running. The two warnings it raised were
-that the VPN server's and the file manager's first-time setup had not been
-done yet — both true, and both are the **Do these first** items above.
+This exact script upgraded a healthy `R2.4` Debian 13 host and was then run a
+second time unchanged. Both runs completed all seven stages. The second run
+left all five container `StartedAt` values unchanged. Final state: Tailscale
+`Running/Online`, no failed systemd units, all five containers up, and every
+reconcile drift flag zero.
 
-## What changed since `R2.3`
+The release-specific recovery paths were also exercised deliberately. A
+missing Compose file was restored from the verified canonical copy without
+restarting containers; a manual content edit was preserved; bad metadata was
+repaired; and a symlink failed closed. `--check` plus `--status` generated
+zero FileBrowser login requests, while two normal reconcile runs generated
+one request total and one daily stamp. Taking Tailscale down while leaving its
+daemon active produced `Stopped/Offline`, a 30-second bounded wait, a non-zero
+systemd result and explicit health diagnostics. Bringing the same node back
+up and running recovery restored the same Tailscale IP, firewall and Docker
+netfilter state, ending again at a clean check.
 
-One fix, and it is the reason this release exists.
+This was an upgrade/rerun verification, not a newly reimaged first install.
+The first-install path, including browser login recovery, was already
+live-verified by `R2.4`; Q1-20 does not change that installer login path.
 
-**The install could get stuck forever at the Tailscale login step.** It
-happened on a real install. The sequence that causes it is easy to fall
-into: the login link appears, you take a moment, you restart the installer
-thinking something went wrong — and that quietly kills the link the server
-is still waiting for. From then on the server waits for a link that no
-longer exists, *and keeps showing it to you as though it were live*. You
-log in, nothing happens, and there is no error anywhere. The only way out
-was to know the exact command to restart the Tailscale service by hand.
+## What changed since `R2.4`
 
-Now the installer gives up waiting after five minutes, resets the service
-itself, and prints a **new** link — up to three times — telling you plainly
-that the old link is dead and that opening an old browser tab will kill the
-new one too. If all three fail it prints the manual recovery steps rather
-than sitting there silently.
+This release contains the five post-R2.4 review revisions, Q1-16 through
+Q1-20:
 
-The advice that used to be only in this README is now enforced by the
-script: open the link when it appears, and do not restart the installer
-while it is waiting.
+- The canonical recovery bundle is now published as one verified atomic
+  generation. A failed rerun cannot leave a mixture of old and new files.
+- DNS/Caddy updates snapshot and restore their six managed paths until that
+  canonical generation is committed.
+- Deleted Tailscale nodes are classified without the intermittent
+  `journalctl | grep -q`/pipefail inversion.
+- FileBrowser policy replacement remains retryable across cooldowns and
+  repairs Docker-created directory mounts without removing its data volume.
+- Reconcile now reports persistent core/address failure as failure, while
+  true lock/job overlap still defers cleanly. It prints Tailscale backend,
+  online, health and key-expiry diagnostics without attempting an automatic
+  browser login or broad core-daemon restart.
+- A deleted `compose.yaml` is restored safely; operator content edits remain
+  report-only and unsafe path types are never overwritten automatically.
+- FileBrowser's default-password audit is normal-mode-only and daily, so
+  `--check` and `--status` no longer consume the login rate limit.
+- Host WebDAV now waits for the filesystem that contains the media tree.
 
-Earlier in this line: the file manager was replaced with FileBrowser
-Quantum, its security settings became self-repairing, the extraction
-tool's log file stopped growing without limit, the network drive notices
-finished downloads within a minute instead of five, and the disk check
-watches for running out of file slots as well as space.
+The FileBrowser message about a newly created database is still normal on the
+very first start: the configured database path is inside the persistent
+`filebrowser_data` volume, but the file does not exist until Quantum creates
+it. Live restarts during this release test logged `Using existing database`
+and did not show the warning again.

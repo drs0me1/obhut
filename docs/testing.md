@@ -5,7 +5,9 @@
 > **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (162
 > unit cases across twelve files; 150 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
-> Q1-19/Q1-20's 26 new cases have not yet been run on the Debian target); Tier 3 had seven real, manual
+> Q1-19/Q1-20's 26 new unit cases have not been run under Bats on the Debian
+> target, but Q1-20's exact production paths were live fault-injected there);
+> Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
 > (**H1** regression, **H5**, **H6**) and the fourth added **M1**'s
@@ -584,6 +586,36 @@ alone.
     server running`, which reads exactly like a crash. It is not one —
     check `/var/log/master-setup/*.log` for the completion line before
     concluding anything.
+- **`Q1-20` / `R2.5` release verification (2026-08-02) — upgrade, unchanged
+  rerun and targeted fault injection.** The exact file later exported as
+  R2.5 was transferred with matching SHA256, run once over the healthy R2.4
+  host and then run again unchanged. Existing Tailscale identity and WebDAV
+  credentials were preserved, so no browser/password prompt was required.
+  Both runs completed all seven stages; the second left all five container
+  start timestamps byte-identical. Final version/hash matched the local file,
+  every drift flag was zero, all managed units were active and no unit failed.
+  - `--check` plus `--status` produced zero FileBrowser login POSTs in the
+    real container log. The first normal reconcile produced one POST and an
+    audit stamp; an immediate second produced no additional POST.
+  - Removing `compose.yaml` and starting the actual systemd reconcile unit
+    restored canonical bytes with `root:root 0600` and no container restart.
+    A content edit survived, `0644` metadata was repaired back to `0600`
+    without changing content, and a symlink was preserved with rc 1.
+  - `tailscale down` reproduced the operator's active-daemon/offline-node
+    state: `tailscaled=active`, backend `Stopped`, self online false. The real
+    unit waited exactly 30 seconds, then exited 1 and journaled backend,
+    online and health details. `tailscale up` reused the same node/IP; normal
+    firewall and Docker-netfilter recovery returned the host to all-zero.
+  - Repeating that destructive event inside the 15-minute restart budget
+    deliberately left reconcile/core recovery failed instead of flapping.
+    The two volatile test-created stamps were removed, units reset, and the
+    normal recovery succeeded. This was test cleanup, not a code workaround:
+    the production timer interval is 20 minutes, longer than the budget.
+  - FileBrowser restarts logged `Using existing database`; the first-start
+    missing-database warning did not recur. WebDAV's installed unit contained
+    `RequiresMountsFor=/downloads/media` and both Stage 7 runs accepted it.
+    The host uses its root filesystem for that path, so a separate-mount
+    outage was not fabricated merely to test systemd's native behaviour.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs

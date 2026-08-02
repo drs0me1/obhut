@@ -1543,6 +1543,13 @@ the direct run and `--check`). Then confirmed end-to-end through systemd:
 `Result=success`, `ExecMainStatus=0`, the warning once in the journal, zero
 failed units.
 
+> **Amended by DD-41 / Q1-20.** Once per 20-minute cycle was bounded, but
+> still made the documented read-only modes send a real login request and
+> spent up to 72 attempts per day after the password changed. The probe is now
+> normal-reconcile-only and at most daily; `--check`/`--status` never call it.
+> Live R2.5 logs measured zero POSTs for both read-only modes and one total
+> across two immediate normal runs.
+
 ### DD-34: Unpackerr's file log is given a rotation cap, and the queue heartbeat is slowed to 30m (2026-08-02)
 
 Raised by the operator noticing a long, repetitive tail in `docker logs
@@ -2051,3 +2058,15 @@ protect a separate host service; without its own ordering rclone could serve
 the empty directory hidden underneath a late or failed mount while every HTTP
 probe still looked healthy. This dependency fails or delays WebDAV instead of
 presenting the wrong tree as a healthy service.
+
+**Live confirmation before R2.5.** On Debian, an active tailscaled daemon was
+taken offline with `tailscale down`. Reconcile observed `Stopped/false`, waited
+exactly 30 seconds, exited 1 and journaled the backend and health messages; it
+did not restart or reauthenticate the daemon. Bringing the same node/IP online
+and allowing the existing firewall/core recovery returned every drift flag to
+zero. Missing, edited, metadata-drifted and symlink Compose targets each took
+the branch described above without changing container start times. Container
+logs also proved `--check`/`--status` issued no login POST and two immediate
+normal runs issued one total. WebDAV's dependency passed both full Stage 7
+runs; the host does not use a separate media mount, so no artificial mount
+failure was claimed.

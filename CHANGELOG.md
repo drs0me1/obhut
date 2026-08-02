@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `Q1-20` closed out and exported as `R2.5`
+
+Live-verified the exact Q1-20 installer on the disposable Debian 13 host,
+first as an R2.4 → Q1-20 upgrade and then as an unchanged idempotent rerun.
+Both completed all seven stages; the second preserved all five container
+`StartedAt` values. Final state was Tailscale `Running/Online`, no failed
+units, five running containers and every reconcile drift flag zero.
+
+The Q1-20 paths were then fault-injected. `--check` and `--status` produced
+zero FileBrowser login POSTs; two immediate normal reconciles produced one
+POST total and one daily stamp. Missing Compose was restored as `root:root
+0600` through the real systemd unit without container restarts; edited content
+survived, metadata was repaired independently, and a symlink returned rc 1
+without being replaced. With tailscaled still active, `tailscale down`
+produced `BackendState=Stopped`, `Self.Online=false`, a measured 30-second
+wait, `ExecMainStatus=1` and explicit health diagnostics. Returning the same
+node online and running the existing firewall/core recovery restored the same
+Tailscale IP and a clean check. Repeating that destructive event inside the
+15-minute restart budget intentionally failed loudly; the volatile test stamps
+were removed and the normal recovery then completed successfully.
+
+Tagged the live-verified installer revision as `Q1-20`, replaced the retired
+`versiyon/R2.4/` directory with `versiyon/R2.5/`, and recorded the release on
+the close-out commit as `R2.5`. The exported installer is byte-identical to
+both repository states and has SHA256
+`1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9`.
+
 ### 2026-08-02 — reconcile no longer hides persistent failures or mutates read-only checks (`Q1-20`, DD-41, H10/H11/M14/M15)
 
 The timer previously used one `defer_or_fail()` path for both genuine

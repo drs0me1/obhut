@@ -242,6 +242,13 @@ The reconcile unit no longer has `ConditionPathExists=compose.yaml`, because
 that condition prevented the only bounded repair path from running
 (DD-41/H11).
 
+These Q1-20 boundaries were live-verified before R2.5: an R2.4 upgrade and
+unchanged rerun both completed 7/7; missing/edited/metadata/symlink Compose
+states behaved as described without container restarts; and an active but
+offline Tailscale daemon failed after exactly 30 seconds with structured
+diagnostics. Returning the same node/IP and running the existing recovery
+ended with every drift flag zero and no failed units.
+
 Two checks are specific to the `quantum` line and were added after the
 `Q1-8` review.
 

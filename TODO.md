@@ -191,6 +191,13 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Q1-20/R2.5 live close-out (2026-08-02).** Exact-script R2.4
+      upgrade and unchanged rerun both completed 7/7; the second preserved all
+      five container start times. Fault injection covered FileBrowser audit
+      side effects, all four Compose target classes and an active-but-offline
+      Tailscale node. Final state: same node/IP, all drift flags zero, no
+      failed units; exported as `versiyon/R2.5/`.
+
 - [x] **H11 — a missing Compose file no longer disables reconcile
       (2026-08-02, `Q1-20`, DD-41).** Removed the service-level
       `ConditionPathExists` that skipped the entire timer pass. Missing files

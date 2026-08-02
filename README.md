@@ -1,15 +1,15 @@
 # Debian Server Installer
 
-**Current revision: Q1-20** (2026-08-02). The script reports
+**Current release: R2.5 / Q1-20** (2026-08-02). The script reports
 `2026.08.02-Q1-20` in its banner, log header and final summary; this is
 distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
-and remains `10`. The latest live-verified release is `R2.4` / `Q1-15`.
+and remains `10`. This revision was live-verified on Debian 13 through an
+R2.4 → R2.5 upgrade, a second idempotent rerun, and controlled reconcile
+fault injection before release.
 Q1-16 through Q1-20 add atomic canonical publication, transactional
 DNS/Caddy file rollback, reliable deleted-node classification, retryable
 FileBrowser policy activation, and stricter reconcile/dependency semantics.
-Those later revisions have complete local static/unit verification; they are
-not described as live-verified until a new release is closed out. See
-[`CHANGELOG.md`](CHANGELOG.md) for the complete history.
+See [`CHANGELOG.md`](CHANGELOG.md) for the complete history.
 
 ## Project Overview
 
@@ -185,22 +185,22 @@ exactly one.
 
 ## Deploying to a host
 
-`versiyon/` holds a single exported copy of `install.sh` plus `deploy.sh`,
-which copies it to a host, verifies the transfer by SHA256, and optionally
-starts the install inside `tmux`:
+`versiyon/R2.5/` holds the current exported `install.sh` plus the deployment
+helpers. `deploy.sh` copies it to a host, verifies the transfer by SHA256, and
+can start the install over interactive SSH:
 
 ```sh
-./versiyon/deploy.sh nrm           # copy + verify
-./versiyon/deploy.sh nrm --run     # copy + verify + run in tmux
+./versiyon/R2.5/deploy.sh nrm       # copy + verify
+./versiyon/R2.5/deploy.sh nrm --run # copy + verify + start
 ```
 
 The expected hash is **computed from the local export at run time, not
 hardcoded** — a stored constant would be a second copy needing manual
 update on every export swap, and this repository has already been bitten
 by exactly that class of drift more than once (the repair cooldown, the
-architecture stage table, the "fixed image versions" wording). The script
-also refuses to run unless `versiyon/` contains exactly one export, so a
-stale copy left behind cannot be deployed by accident.
+architecture stage table, the "fixed image versions" wording). Each release
+directory's script also refuses to run unless that directory contains exactly
+one export, so a stale second file cannot be deployed by accident.
 
 `--run` executes the installer directly over SSH. It deliberately does not
 wrap it in `tmux` (operator decision, 2026-07-31): the install can equally
