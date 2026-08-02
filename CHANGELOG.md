@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — `Q1-10`: the default-password probe stops fighting the rate limiter
+
+Two defects in the DD-30 check, both found by re-reading `Q1-8` end to end
+and then measuring the endpoint it talks to.
+
+**It failed open on `429`.** Quantum's `POST /api/auth/login` is rate
+limited, and the bucket is keyed on **source IP, not on the credential**:
+measured on the target, 6 failures produce `429`, after which the *correct*
+password also returns `429`. The check only warned on `200`, so a throttled
+response fell through the same silent path as a plain `401` — the check
+reported "nothing to see" at exactly the moment someone was hammering the
+login screen. `429` now gets its own message that says the check could not
+be performed and that this is not evidence the password was changed.
+
+**It ran up to four times per cycle.** The probe lived inside
+`check_compose_runtime`, which a single cycle calls up to four times
+(detection, retry, post-repair, final postcondition). Against a 6-attempt
+bucket that left the operator two tries before reconcile's own traffic
+locked the login screen — and reconcile could trip the limit unaided. The
+probe's source is `172.18.0.1`, the docker bridge gateway, which is also
+where every Caddy-proxied browser login arrives from, so the bucket is
+shared with the operator. It is now `report_default_filebrowser_password()`,
+called once from the main flow. One attempt per 20-minute cycle cannot
+accumulate: the timer interval is longer than the longest measured window
+(3–8 minutes of silence).
+
+Verified live on all four paths — clean, drifted, throttled, and the
+regression case with the volume deleted — then end to end through systemd:
+`Result=success`, the warning once in the journal, zero failed units. Full
+reasoning in **DD-33**, which amends DD-30's cost claim.
+
 ### 2026-08-01 — `Q1-3`: the admin account goes back to the container
 
 The installer no longer bootstraps FileBrowser Quantum's admin user. Reading

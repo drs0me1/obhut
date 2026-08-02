@@ -1336,6 +1336,13 @@ relying on it would produce false negatives for exactly the operator who
 dismissed the notice and moved on. The cost of the real check is one log line
 per cycle — 72 a day against a `json-file` driver capped at 10 MB × 3.
 
+> **Amended by DD-33 (2026-08-02).** "One log line per cycle" was true of
+> the *output* but not of the *requests*: living inside
+> `check_compose_runtime` meant up to four login attempts on a drifted
+> cycle, and the endpoint turned out to be rate-limited per source IP.
+> DD-33 moves the probe out into its own function called once per cycle,
+> and gives `429` its own message.
+
 Verified in both directions: with the default password the warning appears in
 `--check`, in `--status`, and in the timer-driven run's journal, with `rc 0`
 and `compose_runtime=0` throughout; after changing the password it goes
@@ -1436,3 +1443,56 @@ source as a *directory*. Reconcile now restores the file within twenty
 minutes, long before a container recreate could reach that state. Verified:
 file deleted, one reconcile run, file back at `0644 root:root`, container
 healthy, `rc 0`.
+
+### DD-33: The default-password probe runs once per cycle, and `429` is reported as unknown (2026-08-02)
+
+**Decision.** The DD-30 check moves out of `check_compose_runtime` into
+`report_default_filebrowser_password()`, called exactly once from the main
+flow, and grows a `429` branch that says the check could not be performed.
+
+**Why once.** `check_compose_runtime` is called up to four times in a single
+cycle — initial detection, the one-second retry, again after a repair, and
+once more as the final postcondition. The probe rode along with all four, so
+a *drifted* cycle sent four login attempts where a clean one sent one. That
+went unnoticed until the endpoint was measured.
+
+**What the measurement found (2026-08-02).** Quantum's
+`POST /api/auth/login` is rate-limited, and the bucket is keyed on **source
+IP, not on the credential**: after 6 failures the endpoint returns `429`, and
+from then on the *correct* password also returns `429`. The window is between
+3 and 8 minutes of silence. The probe's source is `172.18.0.1`, the Docker
+bridge gateway — the same address every Caddy-proxied browser login arrives
+from, so reconcile and the operator share one bucket.
+
+Those numbers decide the design. A bucket of 6 against four attempts per
+cycle leaves an operator two tries before reconcile's own traffic locks the
+login screen — and reconcile can trip the limit unaided. At one attempt per
+cycle it cannot: the 20-minute timer interval is longer than the longest
+measured window, so attempts never accumulate.
+
+**Why `429` gets its own message.** Without the branch it fell through to the
+same silent path as `401`, which means the check reported "nothing to see"
+at precisely the moment someone was hammering the login screen — the one
+moment it should be loudest. A security check that fails open is worse than
+one that does not exist, because it is trusted. The message states plainly
+that this is **not** evidence the password was changed, and that the next
+cycle will retry.
+
+**Why not fail the run instead.** Same reason as DD-30: a temporary,
+self-clearing condition that the operator cannot act on must not produce
+`rc 1`. It is reported, not counted.
+
+**Why a separate function rather than a guard variable.** An "already
+probed this cycle" flag would have to survive across four call sites and be
+reset per-cycle — state to get wrong for no benefit. The probe has nothing to do
+with the container-runtime checks it was living among; a named function
+called once from the main flow says what it does and cannot be called four
+times by accident.
+
+All four paths verified live on `nrm`: the clean case (`rc 0`, one attempt,
+down from four on a drifted cycle), the drifted cycle (still one attempt),
+the throttled case (the `429` message, `rc 0`), and the regression case
+(volume deleted → default account back → the warning fires, `rc 0` in both
+the direct run and `--check`). Then confirmed end-to-end through systemd:
+`Result=success`, `ExecMainStatus=0`, the warning once in the journal, zero
+failed units.

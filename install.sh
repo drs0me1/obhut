@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-9"
+MASTER_SETUP_VERSION="2026.08.02-Q1-10"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -3227,6 +3227,67 @@ webdav_direct_ok() {
     [[ "$code" == "401" ]]
 }
 
+# filebrowser (Quantum) hâlâ varsayılan admin/admin ile mi girilebiliyor?
+#
+# Kurulum bu hesabı bilerek kurmuyor; container kendi quickSetup()'ında
+# yaratıyor ve parolayı operatör arayüzden değiştiriyor (bkz. DD-27). Yani
+# taze bir kurulumda admin/admin BEKLENEN durumdur ve bu bir hata değil,
+# hatırlatmadır: runtime_ok'a dokunmaz, çıkış kodunu değiştirmez.
+# wg-easy'nin WG_SETUP_PENDING'i ile aynı şablon. Tek fark: orada bayrak bir
+# restart'ı baskılamak için okunuyor, burada baskılanacak bir şey yok —
+# varsayılan parola yeniden başlatmayla düzelmez.
+#
+# Neden gerekli: kurulumdan SONRA geri gelebilen bir durum. Volume silinir
+# veya container sıfırdan yaratılırsa Quantum varsayılan hesabı yeniden kurar
+# ve mevcut sinyallerin hiçbiri bunu görmez — Docker healthy der, HTTP probe
+# 200 alır, --check temiz çıkar.
+#
+# Neden giriş denemesi: daha az müdahaleci bir yol arandı ve yok.
+# Kullanıcı nesnesindeki showFirstLogin, "ilk giriş uyarısı gösterildi mi"yi
+# izliyor, "parola değişti mi"yi değil; uyarıyı kapatıp parolayı bırakan bir
+# operatörde yanlış negatif verirdi (2026-08-01'de ölçüldü).
+#
+# check_compose_runtime'ın İÇİNDE DEĞİL (Q1-10). O fonksiyon bir turda dört
+# yerden çağrılıyor (tespit, tekrar denemesi, onarım sonrası, nihai
+# postcondition), yani SAPMALI bir tur dört giriş denemesi üretiyordu — ve
+# aşağıdaki 429 açıklamasındaki kova altı denemelik. Dört, operatöre iki hak
+# bırakıyordu; tek deneme/tur ise 20 dakikalık timer aralığı kovanın 3-8
+# dakikalık penceresinden uzun olduğu için birikemez. Yani reconcile artık
+# kendi başına sınırı tetikleyemez.
+report_default_filebrowser_password() {
+    local code=""
+    [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
+          2>/dev/null || true)" == "true" ]] || return 0
+    code="$(
+        "$CURL_BIN" --noproxy '*' -sS --connect-timeout 2 --max-time 6 \
+            -o /dev/null -w '%{http_code}' \
+            -X POST -H 'X-Password: admin' \
+            'http://127.0.0.1:7113/api/auth/login?username=admin' \
+            2>/dev/null || true
+    )"
+    case "$code" in
+        200)
+            echo "UYARI: filebrowser admin parolası hâlâ varsayılan (admin/admin)." >&2
+            echo "http://file.${LOCAL_DOMAIN} adresinden değiştirin." >&2
+            ;;
+        429)
+            # Quantum'un giriş uç noktası hız sınırlı ve sınır KAYNAK IP
+            # başına, kimlik başına değil (2026-08-02'de ölçüldü: 6
+            # başarısızlıktan sonra 429, ve ardından DOĞRU parola da 429).
+            # Kaynak, Docker köprü ağ geçidi 172.18.0.1 — Caddy üzerinden
+            # gelen her gerçek tarayıcı girişiyle AYNI adres, yani kova
+            # operatörle paylaşılıyor.
+            #
+            # Bu dal olmadan 429, 401 ile aynı sessiz yola düşüyordu: yani
+            # kontrol, tam da biri giriş ekranını zorlamışken "sorun yok"
+            # diyordu. Açığa düşen bir güvenlik kontrolü, olmayan bir
+            # kontrolden daha kötüdür; bilinmiyorsa bilinmiyor denir.
+            echo "UYARI: filebrowser varsayılan parola kontrolü yapılamadı; giriş uç noktası hız sınırında (429)." >&2
+            echo "Bu 'parola varsayılan değil' anlamına GELMEZ; sonraki turda yeniden denenecek." >&2
+            ;;
+    esac
+}
+
 declare -a COMPOSE_RESTART_TARGETS=()
 add_compose_restart_target() {
     local target="$1" existing=""
@@ -3259,7 +3320,7 @@ record_container_restart() {
 
 check_compose_runtime() {
     local container="" running="" health="" wg_running=""
-    local wg_port="" setup_location="" quantum_default_code=""
+    local wg_port="" setup_location=""
     local runtime_ok=0
     local -a expected_containers=(
         filebrowser portainer qbittorrent unpackerr wg-easy
@@ -3316,43 +3377,6 @@ check_compose_runtime() {
         runtime_ok=1
     fi
 
-    # filebrowser (Quantum) hâlâ varsayılan admin/admin ile mi girilebiliyor?
-    #
-    # Kurulum bu hesabı bilerek kurmuyor; container kendi quickSetup()'ında
-    # yaratıyor ve parolayı operatör arayüzden değiştiriyor (bkz. DD-27).
-    # Yani taze bir kurulumda admin/admin BEKLENEN durumdur ve bu kontrol
-    # bir hata değil, hatırlatmadır: runtime_ok'a dokunmaz, çıkış kodunu
-    # değiştirmez. wg-easy'nin WG_SETUP_PENDING'i ile aynı şablon ve aynı
-    # gerekçe — "henüz yapılmamış bir operatör adımı"nı raporlamak, onu
-    # arıza saymadan. Tek fark: wg-easy'de bayrak bir restart'ı baskılamak
-    # için okunuyor, burada baskılanacak bir şey yok — varsayılan parola
-    # yeniden başlatmayla düzelmez. O yüzden bayrak yok, yalnız uyarı var
-    # (shellcheck SC2034 ile de tutarlı: okunmayan bir bayrak tutulmuyor).
-    #
-    # Neden gerekli: bu, kurulumdan SONRA geri gelebilen bir durum. Volume
-    # silinir veya container sıfırdan yaratılırsa Quantum varsayılan hesabı
-    # yeniden kurar ve mevcut sinyallerin HİÇBİRİ bunu görmez — Docker
-    # healthy der, yukarıdaki probe 200 alır, --check temiz çıkar.
-    #
-    # Neden giriş denemesi: daha az müdahaleci bir yol arandı ve yok.
-    # Kullanıcı nesnesindeki showFirstLogin, "ilk giriş uyarısı gösterildi
-    # mi"yi izliyor, "parola değişti mi"yi değil; uyarıyı kapatıp parolayı
-    # bırakan bir operatörde yanlış negatif verirdi (2026-08-01'de ölçüldü).
-    # Bedeli 20 dakikada bir tek log satırı.
-    if [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
-             2>/dev/null || true)" == "true" ]]; then
-        quantum_default_code="$(
-            "$CURL_BIN" --noproxy '*' -sS --connect-timeout 2 --max-time 6 \
-                -o /dev/null -w '%{http_code}' \
-                -X POST -H 'X-Password: admin' \
-                'http://127.0.0.1:7113/api/auth/login?username=admin' \
-                2>/dev/null || true
-        )"
-        if [[ "$quantum_default_code" == "200" ]]; then
-            echo "UYARI: filebrowser admin parolası hâlâ varsayılan (admin/admin)." >&2
-            echo "http://file.${LOCAL_DOMAIN} adresinden değiştirin." >&2
-        fi
-    fi
     if ! http_endpoint_responds http://127.0.0.1:13087/; then
         add_compose_restart_target qbittorrent
         runtime_ok=1
@@ -3616,6 +3640,12 @@ if ! check_compose_runtime; then
     sleep 1
     check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
 fi
+
+# Tur başına tam olarak bir giriş denemesi. Ölçülen sayılar bunu gerektiriyor:
+# kova 6 deneme, pencere 3-8 dakika, timer aralığı 20 dakika. Tek deneme ile
+# reconcile kendi başına sınırı ASLA tetikleyemez; dörtle tetikleyebiliyordu
+# ve operatöre yalnız iki hak bırakıyordu.
+report_default_filebrowser_password
 
 STATE_CONFIG_DRIFTED=0
 QUANTUM_CONFIG_DRIFTED=0
