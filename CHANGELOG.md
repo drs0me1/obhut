@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — correction: `server.database` does exist (DD-27)
+
+Documentation only, no code change. DD-27 claimed there is no config key
+for FileBrowser Quantum's database path, "so the environment variable is
+the only surface". Wrong: `server.database` is the documented key, and a
+newer upstream wording of the first-boot warning names it directly. The
+claim came from checking the image's *sample* `config.yaml`, finding no
+such key, and generalising to the schema — an inference written up as a
+measurement.
+
+The design is unaffected: `FILEBROWSER_DATABASE` is honoured and points at
+the right path, so `Q1-12`'s pin still does what it says, and both
+surfaces are equally protected as canonical bundle entries. The one rough
+edge now recorded is that the policy file does not set `server.database`,
+so an operator following the warning's advice opens `filebrowser.yaml` and
+finds nothing.
+
 ### 2026-08-02 — `Q1-20` closed out and exported as `R2.5`
 
 Live-verified the exact Q1-20 installer on the disposable Debian 13 host,

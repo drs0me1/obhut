@@ -1089,9 +1089,29 @@ only knob the program has read yet; that is why the advice names it.
 Restart and `docker compose up -d --force-recreate` both log `Using
 existing database` with no warning at all, and the operator's changed
 admin password survives both (`admin`/`admin` → `401`, and no `Resetting
-admin user to default username and password.` line). There is no config
-key for the database path — the image's sample `config.yaml` has none —
-so the environment variable is the only surface, and it is already right.
+admin user to default username and password.` line).
+
+> **Correction (2026-08-02, same day).** This entry originally claimed
+> there is no config key for the database path, "so the environment
+> variable is the only surface". That was wrong. `server.database` exists
+> and is the documented way to set the path in `config.yaml`; a newer
+> upstream wording of the same first-boot warning names it directly ("please
+> double check your configuration file for `server.database` path"). The
+> error came from checking the image's *sample* `config.yaml`, finding no
+> such key, and generalising from that to the schema — an inference
+> presented as a measurement, which is the exact failure this file exists to
+> stop.
+>
+> Nothing about the design changes. `FILEBROWSER_DATABASE` is honoured and
+> points at the right path, measured on the live host; `Q1-12`'s pin is
+> effective. Both surfaces are equally protected, since `compose.yaml` and
+> `filebrowser.yaml` are both canonical bundle entries. The policy file
+> deliberately does **not** set `server.database`, which leaves one rough
+> edge worth knowing: an operator who follows the warning's advice will open
+> `filebrowser.yaml` and find nothing there. Setting it in the policy file
+> would be the tidier home for it, and is unclaimed work rather than a
+> defect.
+
 `cap_drop: [ALL]` and
 `no-new-privileges` are kept; the image already runs as a non-root
 `filebrowser` user, which is why no `user:` line is set (the image's own
