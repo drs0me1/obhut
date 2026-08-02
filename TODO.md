@@ -78,8 +78,10 @@ _All High findings resolved — see Completed below._
       is missing from both. Mutation-verified on all five assertions,
       including a full revert of `Q1-9`. It surfaced two generated systemd
       drop-ins that are neither bundled nor checked by reconcile while
-      three of their five siblings are — recorded on the allowlist as an
-      open question.
+      three of their five siblings are; measuring that (both deleted, host
+      restarted then rebooted — policy applied, `--check` rc 0, zero failed
+      units) showed them redundant, and the allowlist records the
+      measurement.
 
       Of the 35 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,

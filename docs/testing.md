@@ -230,12 +230,21 @@ alone.
     the allowlist, and publishing a file install.sh does not generate.
     Each mutation trips exactly one test and no others. The Q1-9 revert is
     the load-bearing one: the suite fails on the real historical defect.
-  - **What it surfaced.** Two generated systemd drop-ins —
+  - **What it surfaced, and how the allowlist is meant to be used.** Two
+    generated systemd drop-ins —
     `docker.service.d/99-tailscale-forward.conf` and
     `tailscaled.service.d/98-master-stack.conf` — are neither bundled nor
-    covered by reconcile, while three of the other five generated drop-ins
-    are bundled. They sit on the allowlist as a *known* exclusion with
-    that inconsistency stated, not as a settled decision.
+    named anywhere in reconcile, while three of the other five generated
+    drop-ins are bundled. Writing a reason for that forced the question to
+    be measured instead of assumed: both files were deleted on the target,
+    Docker restarted, and the host rebooted with them still absent —
+    firewall policy still applied, both units active, all five containers
+    up, `--check` rc 0, zero failed units. They are redundant because the
+    units they name are enabled (`WantedBy=multi-user.target`) and carry
+    their own `Requires=`/`After=`/`PartOf=`. The allowlist entry records
+    the measurement. This is the suite's second effect and arguably the
+    more useful one: an entry cannot be written without deciding, and a
+    decision that has to be written down tends to get checked.
 - **Remaining in Tier 2:** the second tier of stub-able reconcile
   functions (`record_container_restart`, `gro_flags_ok`,
   `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)

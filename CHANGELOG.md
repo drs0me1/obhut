@@ -22,10 +22,15 @@ count as install.sh's — and requires every one of them to be either
 published into the bundle or listed on an allowlist with a written reason.
 
 Of the 32 generated files, 9 are bundled and 23 are excluded for four
-stated reasons. Writing the allowlist surfaced one inconsistency: two
-generated systemd drop-ins are neither bundled nor checked by reconcile,
-while three of the other five are bundled. They are on the list as a
-known exclusion with that noted, not as a settled decision.
+stated reasons. Writing the allowlist surfaced what looked like an
+inconsistency — two generated systemd drop-ins are neither bundled nor
+named in reconcile, while three of the other five are bundled — and
+measuring it closed it. Both were deleted on the test host, Docker was
+restarted and the host rebooted with them absent: firewall policy still
+applied, all containers up, reconcile clean, zero failed units. The units
+they point at are enabled and carry their own ordering, so the drop-ins
+are redundant except for a `RequiresMountsFor` that is inert unless the
+download path is a separate mount.
 
 Mutation-verified on scratch copies, all five assertions independently.
 The load-bearing one reverts `Q1-9` itself — the suite fails on the real

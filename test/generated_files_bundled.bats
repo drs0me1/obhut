@@ -84,14 +84,23 @@ excluded_paths() {
 /etc/modules-load.d/wg-easy.conf
 /etc/apt/sources.list.d/docker.sources
 
-# Ordering/activation drop-ins verified once by Stage 7's dependency-graph
-# assertions and never re-verified afterwards. Reconcile notices their loss
-# only indirectly and slowly: losing the docker.service drop-in means
-# Docker starts without pulling docker-tailscale-fw, which surfaces up to
-# twenty minutes later as firewall *policy* drift rather than as a missing
-# file. Listed here as a known exclusion rather than an oversight — three
-# of the five generated drop-ins are bundled, so the class is not
-# consistently excluded and this is a live question, not a settled one.
+# Ordering/activation drop-ins that turn out to be redundant, measured
+# 2026-08-02 rather than argued. Both were deleted from the target and the
+# host was restarted and then rebooted: firewall policy still applied
+# (docker-tailscale-fw --check rc 0), both units active, all five
+# containers up, reconcile clean, zero failed units. The reason is in the
+# units themselves, not in these files — docker-tailscale-fw.service and
+# master-compose.service are enabled with WantedBy=multi-user.target, so
+# boot pulls them regardless, and the firewall unit carries its own
+# Requires=/After= on docker.service and tailscaled.service plus
+# PartOf=docker.service, which is what makes it follow a Docker restart.
+#
+# The only thing the docker.service drop-in adds that nothing else does is
+# RequiresMountsFor=$DOWNLOADS_PATH, and that is inert unless the download
+# path is a separate mount (it is not on the test host). Bundling them
+# would guard that one case; it is not guarding an exposure, because the
+# web interfaces publish on 127.0.0.1 and reach the tailnet only through
+# Caddy. Excluded on the evidence, not by omission.
 /etc/systemd/system/docker.service.d/99-tailscale-forward.conf
 /etc/systemd/system/tailscaled.service.d/98-master-stack.conf
 EXCLUDED_LIST
