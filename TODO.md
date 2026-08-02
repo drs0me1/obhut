@@ -667,6 +667,23 @@ _All Low findings resolved or closed — see Completed below._
       `sha256sum` and `owned_file_ok` are stubbed as out of scope, so all
       8 run with no skips on any POSIX host. 40 cases total across
       `test/`. `install.sh` untouched.
+- [x] **Fold the Quantum policy file into `compose.yaml` — closed as
+      won't do (2026-08-02, DD-35).** Requested by the operator: one
+      configuration surface instead of two. Blocked by a hard conflict,
+      measured rather than assumed. Environment variables cannot express
+      the policy (every `FILEBROWSER_*` string in the v1.5.0 binary is a
+      secret or a path; none reaches `sources`, `cacheDir`, `signup` or
+      `minLength`). Compose *can* inline it via `configs: content:` — that
+      was verified working against the real image — but refuses to on a
+      `read_only: true` service: `` `file` is the sole supported option ``,
+      a service-level check that a writable target path does not get
+      around. So the policy lives in `compose.yaml` **or** the container's
+      root filesystem stays frozen, never both. Dropping `read_only` costs
+      nothing functionally (`docker diff` measured zero writes without it),
+      but that is the wrong measurement — it is a containment control, and
+      the operator chose to keep it. Reopens if Compose supports inline
+      configs on read-only services, or if Quantum gains environment
+      variables for those three settings.
 - [x] **M3 — closed as won't do (2026-07-28).** The finding's premise, that
       an operator is forced to accept exposure they don't need, does not
       hold here: all six services are in active use, the host is

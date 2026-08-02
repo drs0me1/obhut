@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — folding the Quantum policy into `compose.yaml`: investigated, rejected (DD-35)
+
+No code change. The operator asked to move
+`/etc/master-stack/filebrowser.yaml` into `compose.yaml`, where the other
+four containers are already configured in full. It cannot be done while
+`read_only: true` stands: environment variables do not reach `sources`,
+`cacheDir` or `signup`, and Compose refuses inline `configs: content:` on
+a read-only service (`` `file` is the sole supported option ``) regardless
+of where the target path points. Dropping `read_only` measures as free —
+zero writes to the writable layer without it — which is exactly the
+misleading measurement, since it is a containment control rather than a
+functional one. Kept. Written up in DD-35 with the numbers, the gains that
+were given up (bundle 9→8 entries, the policy drift/repair path, DD-29's
+guard), and the conditions that would reopen it, so the three experiments
+are not run a second time.
+
 ### 2026-08-02 — unpackerr's file log now rotates; queue heartbeat slowed (`Q1-13`)
 
 Raised by the operator seeing a long repetitive tail in `docker logs

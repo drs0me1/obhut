@@ -1107,6 +1107,11 @@ survive, including across a reboot (verified).
 So the hardening dufs gave up nothing for is recovered on this line too.
 The one thing that genuinely does not carry over is statelessness itself.
 
+> **`read_only: true` later turned out to have a second price — see DD-35
+> (2026-08-02).** It is what makes the policy file impossible to fold into
+> `compose.yaml`: Compose refuses inline `configs.content` on a read-only
+> service. The operator was shown the trade and chose to keep `read_only`.
+
 **The initial admin account is left to the container — revised 2026-08-01
 after reading upstream's source.** The installer briefly did bootstrap it,
 and that was the wrong call. What upstream actually does:
@@ -1583,3 +1588,78 @@ an unbounded file back inside the media tree with nothing to announce it.
 The assertion was checked against a container configured both ways: it
 passes on the configured one and fails on an unconfigured one, so it
 discriminates rather than merely passing.
+
+### DD-35: The Quantum policy file stays a separate host file, because `read_only: true` forbids the alternative (2026-08-02)
+
+The operator asked to fold `/etc/master-stack/filebrowser.yaml` into
+`compose.yaml` — the file the other four containers are already fully
+configured from — on the reasonable grounds that a stack with one
+configuration surface is easier to reason about than a stack with two.
+Investigated, measured, and **not done**. Recorded here so the same three
+experiments are not repeated.
+
+**Environment variables cannot express this policy.** Every
+`FILEBROWSER_*` string in the `stable` (v1.5.0) binary is either a secret
+or a path: `CONFIG`, `DATABASE`, `FFMPEG_PATH`, `ADMIN_PASSWORD`,
+`JWT_TOKEN_SECRET`, `OIDC_*`, `LDAP_USER_PASSWORD`, `TOTP_SECRET`,
+`RECAPTCHA_SECRET`, `ONLYOFFICE_SECRET`, `GENERATE_CONFIG`,
+`DISABLE_AUTOMATIC_BACKUP`. There is no variable for `server.sources`,
+`server.cacheDir`, `auth.methods.password.signup` or `minLength` — that
+is, for every setting this stack actually depends on. A YAML file has to
+exist.
+
+**Compose can inline it, and that part works.** A `configs:` block with
+inline `content:` was tried against the real image: Quantum came up with
+`Using Config file: /home/filebrowser/data/config.yaml`, `Sources: [srv:
+/srv]`, and served `200`. Compose is v5.3.1 here, far past the v2.23 that
+introduced inline content.
+
+**But not on a read-only service.** With `read_only: true` the same file
+is refused before the container is created:
+
+```
+cannot create config "quantum_policy" in read-only service fbprobe:
+`file` is the sole supported option
+```
+
+Inline content is materialised *inside* the container at startup, which a
+frozen root filesystem forbids; `file:` — a host file that already exists,
+i.e. exactly today's bind mount — is all that remains. Pointing the target
+at a path inside the writable volume (`/home/filebrowser/data/config.yaml`)
+was tried and refused identically: the check is service-level, not
+path-level. So the two goals are mutually exclusive, with no third form
+available.
+
+**What dropping `read_only` would have cost, measured rather than
+asserted.** Nothing functional: `docker diff` against a container running
+the same image *without* `read_only` showed **zero** writes to the
+writable layer, because DD-27 already moved `cacheDir` into the volume.
+That measurement is also the trap — `read_only` is a containment control,
+not a functionality one. What it buys is that a compromised Quantum cannot
+drop a binary in `/tmp`, edit `/etc`, or alter the application's own files;
+it is confined to the two mounts it legitimately needs (`/srv` and
+`/home/filebrowser/data`, both still writable, since mounts are exempt).
+`docker diff` cannot see the absence of an attack, so a zero there argues
+for nothing.
+
+**What the move would have gained, so the rejected side is not
+strawmanned.** The canonical bundle would drop from nine entries to eight;
+the policy file's separate drift comparison and its restore-plus-restart
+repair path (with the restart-budget and cooldown handling around it)
+would disappear, since `compose.yaml` is already covered by both; and
+DD-29's guard — the one for Docker creating a *directory* where a missing
+bind-mount source should be — would become unnecessary, because that
+failure mode cannot occur when the content is inline. This was a real
+simplification, not a cosmetic one.
+
+**Decision (operator, 2026-08-02): keep `read_only: true`.** The thing
+being simplified away is a file the operator never touches — the installer
+generates it, the bundle hashes it, reconcile repairs it. The thing given
+up would have been a containment control on the one service that is
+reachable across the tailnet and serves the entire media tree, and no
+other mechanism substitutes for it.
+
+**Reopen if either side of the conflict moves:** Compose gaining support
+for inline configs on read-only services, or Quantum gaining environment
+variables for `sources`, `cacheDir` and `signup`. Neither is true as of
+Compose v5.3.1 and filebrowser Quantum v1.5.0-stable.
