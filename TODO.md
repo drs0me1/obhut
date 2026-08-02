@@ -206,7 +206,8 @@ _All Low findings resolved or closed — see Completed below._
       fallback. Successful exit now also requires `Running`, online, node ID
       and IP. Thirteen tests cover the classifier and retry/reset paths; the
       full local wrapper is clean. Exact automatic live verification remains
-      pending, so Q1-21 is not tagged/exported yet.
+      pending. The operator explicitly requested an untagged R2.6 export for
+      that manual test; release tags remain pending.
 
 - [x] **Q1-20/R2.5 live close-out (2026-08-02).** Exact-script R2.4
       upgrade and unchanged rerun both completed 7/7; the second preserved all

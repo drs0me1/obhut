@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-02 — Q1-21 exported as an untagged R2.6 manual-test candidate
+
+At the operator's explicit request, Q1-21 was exported before its exact
+automatic browser-login recovery branch was exercised on the Debian target.
+`versiyon/R2.6/install-R2.6.sh` is byte-identical to `install.sh` from source
+commit `a10a300` and reports `2026.08.02-Q1-21`; the previous R2.5 directory
+was retired under the single-current-export rule. The self-contained deploy
+wrappers and operator README travel with the candidate.
+
+This changes packaging status, not verification status. R2.6 is labelled as
+a manual-test export throughout, while R2.5/Q1-20 remains the latest
+live-verified tagged release. No `R2.6` or `Q1-21` tag was created. A later
+successful manual run may close out and tag this exact installer; a failure
+must produce a new installer revision rather than rewriting this candidate's
+recorded identity.
+
 ### 2026-08-02 — persistent Tailscale auth-path death is recovered immediately (`Q1-21`, DD-42, M16)
 
 A clean-image install reproduced the operator's original complaint twice in
@@ -36,7 +52,8 @@ is clean with 12 expected macOS skips. The installer reports
 `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8`.
 The failure signature and the equivalent early child-termination/restart path
 were measured live; the exact Q1-21 automatic branch has not yet been run
-through a fresh browser authorization, so no release tag/export is claimed.
+through a fresh browser authorization, so no live-success or release-tag claim
+is made. It was subsequently exported untagged for the operator's manual test.
 
 ### 2026-08-02 — correction: `server.database` does exist (DD-27)
 

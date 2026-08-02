@@ -18,7 +18,7 @@
 # Her sürüm klasörü kendi kendine yeterli olsun diye kopyalandı (klasörü
 # tek başına başka bir makineye taşımak çalışır olmalı). Sapmayı tek
 # komutla yakala:
-#   diff versiyon/V1-20/deploy.sh versiyon/R2.5/deploy.sh
+#   diff versiyon/V1-20/deploy.sh versiyon/R2.6/deploy.sh
 #
 # Kullanım:
 #   ./deploy.sh [host]           kopyala + doğrula

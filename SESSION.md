@@ -7,9 +7,9 @@ can pick up without re-deriving context.
 ## Current Task
 
 **`Q1-21` implements persistent Tailscale 410 early recovery and is locally
-verified. It must not be tagged/exported as R2.6 until the exact automatic
-branch has completed a fresh browser authorization. `R2.5` remains the latest
-live-verified export.**
+verified. At the operator's explicit request it is exported, without prior
+live verification, as the untagged `R2.6` manual-test candidate. `R2.5`
+remains the latest live-verified tagged release.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -22,7 +22,7 @@ Current release:
 |---|---|
 | Version | `2026.08.02-Q1-21` (6506 lines) |
 | SHA256 | `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8` |
-| Export | Q1-21 not exported/tagged; `versiyon/R2.5/` remains the latest frozen live release |
+| Export | `versiyon/R2.6/`, byte-identical to source commit `a10a300`; manual-test candidate, no `Q1-21`/`R2.6` tags yet |
 | Live | Q1-21 input signature measured twice on clean R2.5 and equivalent early child/restart recovery succeeded; exact automatic Q1-21 branch still pending |
 | Tests | 175 cases across thirteen `.bats` files (163 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |

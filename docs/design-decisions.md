@@ -2133,4 +2133,6 @@ three-sample early restart and a one-sample 410 followed by success with no
 restart. The full local wrapper is clean. The real input signature and the
 equivalent manual child-termination/restart path are live measurements; the
 exact automatic Q1-21 branch remains deliberately unclaimed until a later
-fresh authorization run exercises it.
+fresh authorization run exercises it. At the operator's explicit request the
+same installer was exported untagged as an R2.6 manual-test candidate; that
+packaging action does not change the pending live-verification claim.

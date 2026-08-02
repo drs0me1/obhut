@@ -1,4 +1,4 @@
-# `R2.5` — Debian 13 media server, one script
+# `R2.6` — Debian 13 media server, manual-test export
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,18 +7,20 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Release | `R2.5` — the current full release of this branch |
-| Version the script reports | `2026.08.02-Q1-20` |
-| SHA256 | `1762703ecc28e765e454ae32d05a08d3e82a1962734656384a0da12b3a416bb9` |
-| Tags | `R2.5`, `Q1-20` — both carry this exact installer |
+| Export | `R2.6` — manual-test candidate; not yet live-verified |
+| Version the script reports | `2026.08.02-Q1-21` |
+| SHA256 | `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8` |
+| Source commit | `a10a300` — carries this exact installer |
+| Tags | None yet; `Q1-21` / `R2.6` wait for the operator's live result |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
-**Why two names for one file.** `R2.5` is the release; `Q1-20` is the
-revision of the installer inside it. They are byte-for-byte the same
-script, so the install will print `2026.08.02-Q1-20` rather than `R2.5`.
-That is expected, not a mismatch — the version string identifies the
-script, and this is the release that ships it.
+**Why two names for one file.** `R2.6` names this export folder; `Q1-21` is
+the revision of the installer inside it. The install therefore prints
+`2026.08.02-Q1-21`, not `R2.6`. This candidate was exported before live
+verification at the operator's explicit request so it can be tested manually.
+It is byte-identical to `install.sh` in source commit `a10a300`, but no tag or
+live-success claim is attached yet.
 
 ## Installing
 
@@ -85,8 +87,10 @@ commands never send a login request.
 
 - **Open the Tailscale login link the moment it appears.** Partway through,
   the installer prints a link you need to open in a browser to authorise the
-  server. Don't restart the installer while it's waiting — that invalidates
-  the link and you'll see `410 auth path not found`.
+  server. If the measured persistent 410/offline state survives three
+  consecutive checks, this revision restarts tailscaled and prints a fresh
+  link instead of waiting the full five minutes. Use only the newest link;
+  do not restart the installer while it is waiting.
 - **Re-running is safe.** The script is designed to be run again on a server
   it already installed: it repairs drift, picks up newer container versions,
   and finishes an install that was interrupted. It will not wipe your data.
@@ -109,62 +113,38 @@ commands never send a login request.
   does not exist yet, and the next line says it is being created. It does
   not appear again.
 
-## What this release was checked against
+## What this export was checked against
 
-This exact script upgraded a healthy `R2.4` Debian 13 host and was then run a
-second time unchanged. Both runs completed all seven stages. The second run
-left all five container `StartedAt` values unchanged. Final state: Tailscale
-`Running/Online`, no failed systemd units, all five containers up, and every
-reconcile drift flag zero.
+This exact R2.6 file has deliberately **not** been run on the Debian target
+yet; that is the manual test this folder was created for. Local verification
+is clean: Bash syntax, ShellCheck and all embedded-script lint checks passed;
+the Bats inventory contains 175 cases, of which 163 executed successfully and
+12 were expected macOS skips whose GNU/Bash requirements are present on
+Debian 13.
 
-The release-specific recovery paths were also exercised deliberately. A
-missing Compose file was restored from the verified canonical copy without
-restarting containers; a manual content edit was preserved; bad metadata was
-repaired; and a symlink failed closed. `--check` plus `--status` generated
-zero FileBrowser login requests, while two normal reconcile runs generated
-one request total and one daily stamp. Taking Tailscale down while leaving its
-daemon active produced `Stopped/Offline`, a 30-second bounded wait, a non-zero
-systemd result and explicit health diagnostics. Bringing the same node back
-up and running recovery restored the same Tailscale IP, firewall and Docker
-netfilter state, ending again at a clean check.
+The input and recovery design are not hypothetical. The preceding R2.5 script
+reproduced two separate browser-authorized links that remained
+`NeedsLogin`/offline with an empty node identity and the exact 410 LocalAPI
+health message. Manually accelerating its existing child-stop, daemon-restart
+and fresh-link path produced a third link that registered `Running/Online`,
+after which the install completed 7/7. R2.6 automates only that measured path,
+behind three consecutive structured samples, and retains the original
+five-minute fallback for every unknown or merely slow state.
 
-After release close-out, the same exported file was also run on the host after
-a clean Debian 13 reimage. The real Tailscale browser link returned success to
-the original waiting process, all seven stages completed, the node was
-`Running/Online` and offering exit-node service, and the only install warning
-was the expected unfinished wg-easy web setup. FileBrowser created
-`/home/filebrowser/data/database.db` once on the persistent volume; a
-controlled restart logged `Using existing database`. FileBrowser/Caddy
-returned 200, WebDAV returned 401 without credentials and 200 with them, and
-there were no failed units. An immediate unchanged full rerun needed neither a
-new Tailscale login nor a WebDAV password, retained every container start time,
-and again completed 7/7.
+## What changed since `R2.5`
 
-## What changed since `R2.4`
+- Persistent `NeedsLogin`/offline/empty-ID/410 state is sampled from
+  `tailscale status --json`. Three consecutive matches trigger an early
+  tailscaled restart and a fresh browser link; any different sample resets
+  the counter.
+- A successful `tailscale up` exit is no longer enough on its own. The node
+  must become `Running`, online, carry a non-empty node ID and have at least
+  one Tailscale IP within a 15-second grace period.
+- Thirteen regression cases cover the exact observed failure, unknown and
+  incomplete states, transient 410 success, persistent recovery and sample
+  reset.
 
-This release contains the five post-R2.4 review revisions, Q1-16 through
-Q1-20:
-
-- The canonical recovery bundle is now published as one verified atomic
-  generation. A failed rerun cannot leave a mixture of old and new files.
-- DNS/Caddy updates snapshot and restore their six managed paths until that
-  canonical generation is committed.
-- Deleted Tailscale nodes are classified without the intermittent
-  `journalctl | grep -q`/pipefail inversion.
-- FileBrowser policy replacement remains retryable across cooldowns and
-  repairs Docker-created directory mounts without removing its data volume.
-- Reconcile now reports persistent core/address failure as failure, while
-  true lock/job overlap still defers cleanly. It prints Tailscale backend,
-  online, health and key-expiry diagnostics without attempting an automatic
-  browser login or broad core-daemon restart.
-- A deleted `compose.yaml` is restored safely; operator content edits remain
-  report-only and unsafe path types are never overwritten automatically.
-- FileBrowser's default-password audit is normal-mode-only and daily, so
-  `--check` and `--status` no longer consume the login rate limit.
-- Host WebDAV now waits for the filesystem that contains the media tree.
-
-The FileBrowser message about a newly created database is still normal on the
-very first start: the configured database path is inside the persistent
-`filebrowser_data` volume, but the file does not exist until Quantum creates
-it. Live restarts during this release test logged `Using existing database`
-and did not show the warning again.
+The FileBrowser new-database message remains normal only on the very first
+start: the configured database path is inside the persistent
+`filebrowser_data` volume, and the file does not exist until Quantum creates
+it. A later start should report that it is using the existing database.

@@ -1,7 +1,7 @@
 # Debian Server Installer
 
-**Current exported release: R2.5 / Q1-20; current installer revision:
-Q1-21** (2026-08-02). The working-tree script reports
+**Current manual-test export: R2.6 / Q1-21; latest live-verified release:
+R2.5 / Q1-20** (2026-08-02). The working-tree script reports
 `2026.08.02-Q1-21` in its banner, log header and final summary; this is
 distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
 and remains `10`. R2.5 was live-verified on Debian 13 through an
@@ -14,8 +14,9 @@ links created offline console entries and left LocalAPI at the same persistent
 410 signature before a third daemon-reset attempt succeeded. It recognizes
 that structured state after three consecutive samples instead of waiting the
 full five-minute fallback, while retaining the fallback for every unknown
-stall. Q1-21 is locally verified and intentionally remains untagged/unexported
-until its exact automatic recovery path is exercised live.
+stall. Q1-21 is locally verified and, at the operator's explicit request,
+exported as the untagged R2.6 manual-test candidate before its exact automatic
+recovery path is exercised live. No live-success claim is attached to R2.6.
 Q1-16 through Q1-21 add atomic canonical publication, transactional
 DNS/Caddy file rollback, reliable deleted-node classification, retryable
 FileBrowser policy activation, and stricter reconcile/dependency semantics.
@@ -195,13 +196,14 @@ exactly one.
 
 ## Deploying to a host
 
-`versiyon/R2.5/` holds the current exported `install.sh` plus the deployment
+`versiyon/R2.6/` holds the current manual-test export plus the deployment
 helpers. `deploy.sh` copies it to a host, verifies the transfer by SHA256, and
-can start the install over interactive SSH:
+can start the install over interactive SSH. R2.6 is not yet a live-verified
+tagged release; R2.5 remains that baseline.
 
 ```sh
-./versiyon/R2.5/deploy.sh nrm       # copy + verify
-./versiyon/R2.5/deploy.sh nrm --run # copy + verify + start
+./versiyon/R2.6/deploy.sh nrm       # copy + verify
+./versiyon/R2.6/deploy.sh nrm --run # copy + verify + start
 ```
 
 The expected hash is **computed from the local export at run time, not

@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-20"
+MASTER_SETUP_VERSION="2026.08.02-Q1-21"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1382,10 +1382,9 @@ tailscale_daemon_ready() {
     return 1
 }
 
-# Kilitlenmeyi log'dan TEŞHİS ETMEYE ÇALIŞMIYORUZ, ve bu bilinçli bir
-# geri adım. İlk üç deneme `journalctl`'de `410: auth path not found`
-# aramaya dayanıyordu; üçü de farklı biçimde yanlıştı ve hepsini gerçek
-# journal verisine koşan test yakaladı:
+# Kilitlenmeyi journal'dan teşhis etmiyoruz. İlk üç deneme `journalctl`'de
+# `410: auth path not found` aramaya dayanıyordu; üçü de farklı biçimde
+# yanlıştı ve hepsini gerçek journal verisine koşan test yakaladı:
 #
 #   1. "410 gördüm → kilitli" — YANLIŞ. 410 başarılı girişin de normal
 #      parçası: operatör tarayıcıda onaylayınca kontrol düzlemi auth
@@ -1398,39 +1397,92 @@ tailscale_daemon_ready() {
 #   3. Pencerenin üst sınırı yoktu; sonraki alakasız bir girişin başarısı
 #      önceki kilidin toparlanması sayılıyordu.
 #
-# Yanlış-pozitifin yönü tehlikeli: başarmakta olan bir girişi öldürüp
-# daemon'ı yeniden başlatmak, düzeltmenin düzelttiğini iddia ettiği
-# arızayı üretir. Üç yanlış tur, teşhisin kendisinin kırılgan olduğunun
-# kanıtı sayıldı.
+# Yanlış-pozitifin yönü tehlikeli: başarmakta olan bir girişi öldürüp daemon'ı
+# yeniden başlatmak, düzeltmenin düzelttiğini iddia ettiği arızayı üretir.
+# Journal bu yüzden hâlâ bu kararın girdisi değildir.
 #
-# Yerine konan şey daha aptal ve bu yüzden daha güvenli: giriş verilen
-# süre içinde tamamlanmazsa — SEBEBİ NE OLURSA OLSUN — daemon
-# sıfırlanır ve taze bir bağlantı basılır. Kilitlenmeyi de, başka her
-# takılma sınıfını da kapsar, ve yanlış tetiklendiğinde en kötü sonucu
-# "operatöre yeni bir bağlantı verildi" olur.
+# Q1-21'de güvenli bir erken teşhis mümkün oldu, çünkü aynı arıza iki ayrı
+# nodekey ile canlıda yeniden üretildi ve LocalAPI'nin yapılandırılmış imzası
+# ölçüldü: BackendState=NeedsLogin, Self.Online=false, boş Self.ID ve Health
+# içinde `http 410: auth path not found`. Başarılı akıştaki 410 bir saniyeden
+# kısa sürerken arızalı imza kalıcıdır. Tek örnek yine karar değildir; üç
+# ardışık iki-saniyelik örnek gerekir. Bir örnek kaybolursa sayaç sıfırlanır.
+# Böylece başarmakta olan giriş korunur, kalıcı ölü yol ise genel 300 saniyelik
+# zaman aşımını beklemeden temizlenir.
+#
+# Yapılandırılmış imza görülmezse eski güvenli sınır aynen kalır: giriş verilen
+# süre içinde tamamlanmazsa — sebebi ne olursa olsun — daemon sıfırlanır ve
+# taze bir bağlantı basılır. Bu, bilinmeyen diğer takılma sınıflarını kapsar.
 #
 # Kurtarmanın restart üzerine kurulu olması ölçüme dayanıyor:
 # `tailscale logout` yetmiyor, daemon ölü auth URL'ini bellekte tutup
 # `doLogin(regen=false, hasUrl=true)` ile onu yeniden denemeye devam
 # ediyor. Temizleyen tek şey tailscaled'i yeniden başlatmak.
 #
-# İleride daha hızlı bir kurtarma istenirse doğru yol journal değil,
-# `tailscale status --json`'daki canlı `login-state` sağlık uyarısıdır —
-# ama onun kilitli hâldeki şeklini gözlemeden yazmak yine tahmin olur.
 TAILSCALE_LOGIN_ATTEMPTS=3
+TAILSCALE_AUTH_PATH_DEAD_SAMPLES=3
+TAILSCALE_LOGIN_STATUS_TIMEOUT=3
+TAILSCALE_LOGIN_POST_SUCCESS_GRACE=15
 # Deneme başına süre. Bu adım insan hızında: operatörün bağlantıyı görüp
 # tarayıcıda açması gerekiyor. Cömert ama sonsuz değil — bugünkü arıza
 # tam olarak "sonsuz" yüzünden fark edilmedi.
 TAILSCALE_LOGIN_TIMEOUT=300
 
+tailscale_login_state() {
+    local status_json="" state=""
+
+    if ! status_json="$(
+        timeout "$TAILSCALE_LOGIN_STATUS_TIMEOUT" \
+            tailscale status --json 2>/dev/null
+    )"; then
+        printf 'unknown\n'
+        return 0
+    fi
+
+    state="$(
+        jq -r '
+            if (
+                .BackendState == "Running" and
+                .Self.Online == true and
+                ((.Self.ID // "") | length) > 0 and
+                ((.Self.TailscaleIPs // []) | length) > 0
+            ) then
+                "complete"
+            elif (
+                .BackendState == "NeedsLogin" and
+                .Self.Online != true and
+                (.Self.ID // "") == "" and
+                any(.Health[]?; contains("http 410: auth path not found"))
+            ) then
+                "auth_path_dead"
+            else
+                "pending"
+            end
+        ' <<<"$status_json" 2>/dev/null
+    )" || state="unknown"
+
+    case "$state" in
+        complete | auth_path_dead | pending) printf '%s\n' "$state" ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+tailscale_login_complete() {
+    [[ "$(tailscale_login_state)" == "complete" ]]
+}
+
 tailscale_interactive_login() {
     local attempt out_file up_pid streamed total elapsed outcome
+    local login_state auth_path_dead_samples attempt_started
+    local post_success_started
 
     out_file="$(mktemp)"
 
     for ((attempt = 1; attempt <= TAILSCALE_LOGIN_ATTEMPTS; attempt++)); do
         : >"$out_file"
         streamed=0
+        auth_path_dead_samples=0
+        attempt_started=$SECONDS
 
         if [[ "$attempt" -gt 1 ]]; then
             printf '\n' >&5
@@ -1461,13 +1513,27 @@ tailscale_interactive_login() {
                 wait "$up_pid" || outcome=$?
                 break
             fi
+
+            login_state="$(tailscale_login_state)"
+            if [[ "$login_state" == "auth_path_dead" ]]; then
+                auth_path_dead_samples=$((auth_path_dead_samples + 1))
+                if [[ "$auth_path_dead_samples" -ge "$TAILSCALE_AUTH_PATH_DEAD_SAMPLES" ]]; then
+                    outcome="auth_path_dead"
+                    break
+                fi
+            else
+                # Başarılı akışta görülebilen geçici 410 dahil, kesintisiz
+                # olmayan hiçbir örnek daemon restart'ına yol açmaz.
+                auth_path_dead_samples=0
+            fi
+
+            elapsed=$((SECONDS - attempt_started))
             if [[ "$elapsed" -ge "$TAILSCALE_LOGIN_TIMEOUT" ]]; then
                 outcome="timeout"
                 break
             fi
 
             sleep 2
-            elapsed=$((elapsed + 2))
         done
 
         total="$(wc -l <"$out_file")"
@@ -1477,17 +1543,32 @@ tailscale_interactive_login() {
         fi
 
         if [[ "$outcome" == "0" ]]; then
-            rm -f "$out_file"
-            return 0
+            post_success_started=$SECONDS
+            while [[ "$((SECONDS - post_success_started))" -lt "$TAILSCALE_LOGIN_POST_SUCCESS_GRACE" ]]; do
+                if tailscale_login_complete; then
+                    rm -f "$out_file"
+                    return 0
+                fi
+                sleep 1
+            done
+            outcome="incomplete"
         fi
 
         kill "$up_pid" 2>/dev/null || true
         wait "$up_pid" 2>/dev/null || true
 
         case "$outcome" in
+            auth_path_dead)
+                echo "Tailscale auth yolu kalıcı 410 durumunda; 300 saniye beklenmeyecek." >&2
+                echo "Daemon sıfırlanıp yeni kayıt bağlantısı açılıyor." >&2
+                ;;
             timeout)
                 echo "Tailscale girişi ${TAILSCALE_LOGIN_TIMEOUT} saniyede tamamlanmadı." >&2
                 echo "Bağlantı kilitlenmiş olabilir; daemon sıfırlanıp yenisi açılıyor." >&2
+                ;;
+            incomplete)
+                echo "tailscale up tamamlandı ancak node online kimlik/IP doğrulamasını geçemedi." >&2
+                echo "Daemon sıfırlanıp yeni kayıt bağlantısı açılıyor." >&2
                 ;;
             *)
                 echo "tailscale up rc=${outcome} ile döndü; daemon sıfırlanıyor." >&2

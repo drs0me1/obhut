@@ -652,7 +652,8 @@ alone.
   `100.88.12.107`; R2.5 then completed 7/7, with five containers, reconcile rc
   0 and zero failed units. This is live evidence for Q1-21's input predicate
   and recovery action, not a claim that the exact new three-sample automatic
-  branch ran live. That claim remains pending before tag/export.
+  branch ran live. That claim remains pending before release tags; the
+  operator explicitly requested an untagged R2.6 export to run this test.
 - **Longer-term proposed approach** (still not built): a CI job (e.g.
   GitHub Actions with nested virtualization, or a local Vagrant/qemu
   Debian 13 box) that provisions a fresh disposable instance, runs
