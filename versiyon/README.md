@@ -16,7 +16,7 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-13/`](Q1-13/) | `2026.08.02-Q1-13` | `Q1-13` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`Q1-13/`](Q1-13/) | `2026.08.02-Q1-13` | `Q1-13`, `R2.3` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
@@ -31,12 +31,17 @@ From Finder, double-click `deploy.command` instead.
 > only the web file manager for FileBrowser Quantum — see **DD-27**. The two
 > lines are alternatives, not a sequence.
 
-`R2.2` is a **release point rather than a revision** and points at the same
-installer `Q1-11` shipped, which is why it never had a directory of its own:
-a second copy of an identical installer is exactly what the retirement rule
-below exists to prevent. `R*` tags mark repository state you might want to
-return to; `V*`/`Q*` tags identify a revision of the installer itself. There
-is no `R` tag on `Q1-13` yet — none was asked for.
+`R*` tags mark repository state you might want to return to; `V*`/`Q*` tags
+identify a revision of the installer itself. **A release point never gets a
+directory of its own** — a second copy of an identical installer is exactly
+what the retirement rule below exists to prevent. Two exist on this branch:
+
+| Tag | Same installer as | What it records |
+|---|---|---|
+| `R2.2` | `Q1-11` | tests, tooling and documentation tightened after the revision shipped |
+| `R2.3` | `Q1-13` | the revision closed out: live-verified before tagging, exported, documentation resynced |
+
+So `versiyon/Q1-13/` is where you go for `R2.3`; there is no `R2.3/`.
 
 Every export is byte-identical to the tag it is named after:
 

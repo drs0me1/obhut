@@ -22,8 +22,14 @@ and filebrowser carries the pinned `FILEBROWSER_DATABASE`.
 Exported as `versiyon/Q1-13/`, byte-identical to the tag and to `HEAD`.
 `versiyon/Q1-11/` retired per the standing one-current-directory rule.
 The `Q1` line marker was **not** moved — it still points at `Q1-11`, and
-moving it means deleting a tag, which is only done when asked. No `R` tag
-was created either.
+moving it means deleting a tag, which is only done when asked.
+
+Tagged `R2.3` on the operator's instruction. It marks the same installer
+as `Q1-13`, so it gets **no directory of its own** — that is the same rule
+that kept `R2.2` out of `versiyon/`, and both READMEs now say so with a
+table pointing each release tag at the revision directory that holds it.
+What `R2.3` records is the close-out: live verification before tagging,
+the export, and the documentation resync.
 
 Documentation resynced in the same pass: `docs/architecture.md`'s stage
 table regenerated whole (`Q1-12`/`Q1-13` added 48 lines inside stage 4,

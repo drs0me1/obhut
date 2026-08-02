@@ -8,7 +8,7 @@ afterwards except the passwords listed under **Do these first**.
 | | |
 |---|---|
 | Version | `2026.08.02-Q1-13` |
-| Tags | `Q1-13` (the `Q1` line marker still points at `Q1-11`; moving it means deleting and recreating it, so it is only done when asked) |
+| Tags | `Q1-13`, `R2.3` (the `Q1` line marker still points at `Q1-11`; moving it means deleting and recreating it, so it is only done when asked) |
 | SHA256 | `f483546a47040886104de5a0b1f2db33df3aae2a89fbc9d30904be0373fba322` |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
@@ -122,3 +122,12 @@ Earlier in this line: the file manager was replaced with FileBrowser
 Quantum, its security settings became self-repairing, the network drive
 notices finished downloads within a minute instead of five, and the disk
 check watches for running out of file slots as well as space.
+
+## A note on `R2.3`
+
+`R2.3` marks the same installer as `Q1-13` — the file in this folder is
+byte-for-byte what `Q1-13` shipped. What it records is that the revision
+was closed out afterwards, not that the installer changed: it was verified
+against a real server before tagging, this folder was created, and the
+project's own documentation was resynced against the script. Nothing you
+install or operate is different from `Q1-13`.
