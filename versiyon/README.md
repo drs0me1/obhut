@@ -16,7 +16,7 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-11/`](Q1-11/) | `2026.08.02-Q1-11` | `Q1`, `Q1-11` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`Q1-11/`](Q1-11/) | `2026.08.02-Q1-11` | `Q1`, `Q1-11`, `R2.2` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
@@ -30,6 +30,14 @@ From Finder, double-click `deploy.command` instead.
 > dufs (`V2-2` / `R2.1`, DD-26). This branch forked from `V1-20` and swaps
 > only the web file manager for FileBrowser Quantum — see **DD-27**. The two
 > lines are alternatives, not a sequence.
+
+`R2.2` is a **release point rather than a revision**, and points at the
+same installer as `Q1-11`. The six commits between them changed tests,
+tooling and documentation only — `install.sh` is the same file — so there
+is no `R2.2/` directory: a second copy of an identical installer is
+exactly what the retirement rule below exists to prevent. `R*` tags mark
+repository state you might want to return to; `V*`/`Q*` tags identify a
+revision of the installer itself.
 
 Every export is byte-identical to the tag it is named after:
 

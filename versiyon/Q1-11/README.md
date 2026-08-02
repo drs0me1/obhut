@@ -8,7 +8,7 @@ afterwards except the passwords listed under **Do these first**.
 | | |
 |---|---|
 | Version | `2026.08.02-Q1-11` |
-| Tags | `Q1-11`, and `Q1` (marks the head of this line) |
+| Tags | `Q1-11`, `R2.2`, and `Q1` (marks the head of this line) |
 | SHA256 | `b3f32a7b821ed69d7288b2e3b0424823245e47f23b6b7cb25c0e3239c3d029c7` |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
@@ -116,3 +116,13 @@ Earlier in this line: the file manager was replaced with FileBrowser
 Quantum, the network drive now notices finished downloads within a minute
 instead of five, and the disk check learned to watch for running out of
 file slots as well as space.
+
+## A note on `R2.2`
+
+`R2.2` marks the same installer as `Q1-11` — the file in this folder is
+byte-for-byte what `Q1-11` shipped. What it records is that the checks
+around the installer were tightened afterwards, not that the installer
+changed: there is now an automatic guard against a managed file being left
+out of the self-repair loop, unit coverage grew from 79 to 120 cases, and
+a single command runs every verification the project has. Nothing you
+install or operate is different.
