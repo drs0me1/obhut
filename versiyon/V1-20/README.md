@@ -46,8 +46,8 @@ From a terminal, the same thing:
   VLC, Finder and Windows Explorer can all open it directly, including
   jumping to the middle of a video without downloading it first.
 - **Friendly addresses** instead of IP numbers and port numbers:
-  `file.ayc`, `qbit.ayc`, `wg.ayc`, `portainer.ayc` (the `ayc` part is
-  yours to choose during install).
+  `file.ayc`, `qbit.ayc`, `wg.ayc`, `portainer.ayc`, `webdav.ayc` (the
+  `ayc` part is yours to choose during install).
 - **A firewall that is closed by default**, opening only what these
   services actually need.
 - **Self-repair.** Every 20 minutes the server checks its own network
