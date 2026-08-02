@@ -16,11 +16,11 @@ developing. Internals belong in [`../docs/`](../docs/), not here.
 
 | Directory | Version | Tags | Web file manager | Status |
 |---|---|---|---|---|
-| [`Q1-8/`](Q1-8/) | `2026.08.01-Q1-8` | `Q1`, `Q1-8` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
+| [`Q1-11/`](Q1-11/) | `2026.08.02-Q1-11` | `Q1-11` | `ghcr.io/gtsteffaniak/filebrowser:stable` | **Current on this branch** |
 | [`V1-20/`](V1-20/) | `2026.07.31-V1-20` | `V1-20`, `R2.0` | `filebrowser/filebrowser:v2` | Branch point, expires 2026-09-01 |
 
 ```sh
-cd versiyon/Q1-8
+cd versiyon/Q1-11
 ./deploy.sh nrm --run
 ```
 
@@ -34,8 +34,8 @@ From Finder, double-click `deploy.command` instead.
 Every export is byte-identical to the tag it is named after:
 
 ```sh
-git show Q1-8:install.sh | sha256sum
-sha256sum Q1-8/install-Q1-8.sh
+git show Q1-11:install.sh | sha256sum
+sha256sum Q1-11/install-Q1-11.sh
 ```
 
 ## Retired directories
@@ -43,16 +43,17 @@ sha256sum Q1-8/install-Q1-8.sh
 Only the current revision and the branch point are kept as directories; the
 export a new one replaces is removed rather than accumulated, so there is
 never a question of which folder to hand someone. `Q1-1` was retired when
-`Q1-4` was exported, and `Q1-4` when `Q1-8` was. Nothing is lost — the tag
-still holds the exact file:
+`Q1-4` was exported, `Q1-4` when `Q1-8` was, and `Q1-8` when `Q1-11` was.
+Nothing is lost — the tag still holds the exact file:
 
 ```sh
-git show Q1-4:install.sh > install-Q1-4.sh
+git show Q1-8:install.sh > install-Q1-8.sh
 ```
 
 The `Q1` tag is a line marker rather than a revision: it follows the head of
 this line and was moved from `Q1-4` to `Q1-8` on 2026-08-01. Moving it means
-deleting and recreating it, so it is only done when asked. `Q1-4` and every
+deleting and recreating it, so it is only done when asked — **it still points
+at `Q1-8`, one revision behind this directory.** `Q1-4`, `Q1-8` and every
 other revision tag stay where they are — those are fixed identities.
 
 ## Why the deploy scripts are duplicated
@@ -68,8 +69,8 @@ table and the "fixed image" strings. The mitigation is that the copies are
 *identical* rather than merely similar, so drift is one command away:
 
 ```sh
-diff versiyon/V1-20/deploy.sh versiyon/Q1-4/deploy.sh
-diff versiyon/V1-20/deploy.command versiyon/Q1-4/deploy.command
+diff versiyon/V1-20/deploy.sh versiyon/Q1-11/deploy.sh
+diff versiyon/V1-20/deploy.command versiyon/Q1-11/deploy.command
 ```
 
 Any change to one copy must be applied to the others in the same commit.
@@ -80,8 +81,8 @@ Any change to one copy must be applied to the others in the same commit.
 mkdir versiyon/<TAG>
 git show <TAG>:install.sh > versiyon/<TAG>/install-<TAG>.sh
 chmod +x versiyon/<TAG>/install-<TAG>.sh
-cp versiyon/Q1-8/deploy.sh versiyon/<TAG>/deploy.sh
-cp versiyon/Q1-8/deploy.command versiyon/<TAG>/deploy.command
+cp versiyon/Q1-11/deploy.sh versiyon/<TAG>/deploy.sh
+cp versiyon/Q1-11/deploy.command versiyon/<TAG>/deploy.command
 ```
 
 Then write the `README.md` — it is not optional, see the table at the top.

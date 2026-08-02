@@ -1,6 +1,6 @@
 # `V1-20` — the fallback revision
 
-Same server as `Q1-8`, with the **original filebrowser** as its web file
+Same server as `Q1-11`, with the **original filebrowser** as its web file
 manager. This is the point both current lines branched from, kept so there
 is something known-good to fall back to.
 
@@ -12,7 +12,7 @@ is something known-good to fall back to.
 | Web file manager | filebrowser (original) |
 | Branch | branch point for `master` and `quantum` |
 
-> **Install `Q1-8` instead unless you specifically need this one.** The
+> **Install `Q1-11` instead unless you specifically need this one.** The
 > file manager here is on a container image its authors have stopped
 > updating, and it is expected to stop working after **2026-09-01**.
 > Everything else is a few revisions behind as well.
@@ -55,7 +55,7 @@ From a terminal, the same thing:
 
 ## Do these first, right after installing
 
-**Create your accounts.** Unlike `Q1-8`, the file manager here has no
+**Create your accounts.** Unlike `Q1-11`, the file manager here has no
 default login — `file.<domain>`, `wg.<domain>` and `portainer.<domain>` all
 ask you to create an account on first visit. Do it promptly: Portainer
 closes its setup window after a few minutes and then needs a container
@@ -92,5 +92,5 @@ in the server is the same in all three:
 | | Web file manager | Where |
 |---|---|---|
 | `V1-20` | filebrowser (original), deprecated | this folder |
-| `Q1-8` | FileBrowser Quantum — full-featured, ships with `admin`/`admin` | [`../Q1-8/`](../Q1-8/) |
+| `Q1-11` | FileBrowser Quantum — full-featured, ships with `admin`/`admin` | [`../Q1-11/`](../Q1-11/) |
 | `V2-2` | dufs — plainer interface, no accounts, no database | `master` branch |

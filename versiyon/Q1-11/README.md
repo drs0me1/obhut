@@ -1,4 +1,4 @@
-# `Q1-8` — Debian 13 media server, one script
+# `Q1-11` — Debian 13 media server, one script
 
 This folder installs a complete, self-contained media and file server onto a
 **fresh Debian 13 (trixie)** machine. Everything below is set up by a single
@@ -7,9 +7,9 @@ afterwards except the passwords listed under **Do these first**.
 
 | | |
 |---|---|
-| Version | `2026.08.01-Q1-8` |
-| Tags | `Q1-8`, and `Q1` (marks the head of this line) |
-| SHA256 | `0a6ff0a8a5f12404aba03337c48729bd0497b20bdac62679909459841158417e` |
+| Version | `2026.08.02-Q1-11` |
+| Tags | `Q1-11` |
+| SHA256 | `b3f32a7b821ed69d7288b2e3b0424823245e47f23b6b7cb25c0e3239c3d029c7` |
 | Web file manager | FileBrowser Quantum |
 | Branch | `quantum` |
 
@@ -50,9 +50,9 @@ minutes.
 - **A firewall that is closed by default**, opening only what these
   services actually need.
 - **Self-repair.** Every 20 minutes the server checks its own network
-  settings, firewall, containers and disk, and quietly fixes what it can.
-  What it cannot fix safely — a full disk, for instance — it reports
-  instead of guessing.
+  settings, firewall, containers, security settings and disk, and quietly
+  fixes what it can. What it cannot fix safely — a full disk, for instance
+  — it reports instead of guessing.
 
 ## Do these first, right after installing
 
@@ -92,19 +92,27 @@ minutes in its own logs until you change it.
   connected on the device you're using.
 - **Your downloads and media survive reinstalls.** They live outside the
   containers.
+- **Too many wrong logins lock the file manager's login page for a few
+  minutes.** That is the file manager protecting itself, not a fault, and it
+  clears on its own. It applies to everyone at once, because every browser
+  reaches it through the same internal address.
 
-## What changed in this revision
+## What changed since `Q1-8`
 
-Two additions to the self-repair loop, both about noticing problems that
-were previously invisible:
+All three are about the self-repair loop being honest and thorough:
 
-- It now warns while the file manager still has its default password, so a
-  forgotten `admin` / `admin` can't sit there unnoticed — including after a
-  container rebuild silently restores it.
-- It now watches the download disk for running out of **file slots**, not
-  just space. A disk can be nearly empty and still refuse to create new
-  files, which used to be reported as perfectly healthy.
+- **The file manager's security settings are now protected.** The file that
+  holds them — including the switch that stops strangers signing themselves
+  up — is now checked every 20 minutes and put back if anything changes it.
+  Previously it could be edited and nothing would notice.
+- **The default-password reminder no longer gets in its own way.** It used
+  to try the login several times per check, which could trip the file
+  manager's own lockout and then read that lockout as "all fine". It now
+  tries once, and if it is locked out it says so instead of staying quiet.
+- **A miscount in the install output was fixed** — it said six containers
+  where five are installed.
 
 Earlier in this line: the file manager was replaced with FileBrowser
-Quantum, and the network drive now notices finished downloads within a
-minute instead of five.
+Quantum, the network drive now notices finished downloads within a minute
+instead of five, and the disk check learned to watch for running out of
+file slots as well as space.
