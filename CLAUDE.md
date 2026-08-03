@@ -160,19 +160,24 @@ even when working in this repository only.
   should be clean under `shellcheck`; do not add `# shellcheck disable`
   directives without a one-line justification comment, matching the
   existing style in the file.
-- **Keep `install.sh` comments short; put the reasoning in the docs.**
-  A comment block states what the code does, in one to six lines, and
-  names a constraint only where the choice would otherwise look wrong.
-  The measurement narratives, superseded attempts and dated evidence
-  belong in `docs/design-decisions.md`, `SECURITY_REVIEW.md`'s Review
-  History and `CHANGELOG.md`; a comment that needs them points at them
-  (`bkz. DD-42`, `M11`, `H4`) instead of repeating them. Established
-  2026-08-03 in `Q1-24` after the file had reached 1179 comment lines —
-  Stage 2's login section alone carried 37 consecutive comment lines
-  before its first statement. Do not re-inflate them: when a change
-  needs a long explanation, write it as a `DD-` entry and reference it.
-  The `#!` shebangs, `# shellcheck` directives and `# AŞAMA N — …`
-  banners are exempt and must survive any such cleanup. See **DD-44**.
+- **Do not add comments to `install.sh`.** As of 2026-08-03 (`Q1-24` then
+  `Q1-25`) the script carries no explanatory comments at all: 1179 comment
+  lines went to nine, and those nine are load-bearing rather than
+  editorial — eight `#!` shebangs for the heredoc-generated helper
+  scripts, and one `# shellcheck disable=SC1091` without which
+  `shellcheck install.sh` fails. The operator reads this script through
+  its documentation and its printed output, never in an editor, so an
+  inline comment is read by nobody and decays silently because nothing
+  verifies it. **Every explanation goes in a `DD-` entry in
+  `docs/design-decisions.md`**, with the finding in `SECURITY_REVIEW.md`
+  and the user-visible change in `CHANGELOG.md`. If a block seems to need
+  a comment to be understandable, that is a signal to name the function
+  better or write the `DD-` entry, not to add the comment. Stage
+  boundaries are found with `grep -n 'progress_stage_begin [0-7] '`; the
+  `AŞAMA` banners were removed because each merely duplicated the
+  `progress_stage_begin` line printed to the operator directly below it.
+  This applies to `install.sh` only — `test/*.bats`, `scripts/*.sh` and
+  the Markdown docs keep their normal commenting. See **DD-44**.
 
 ## Key Files
 

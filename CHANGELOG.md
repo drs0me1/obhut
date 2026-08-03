@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-03 — `install.sh` now carries no explanatory comments (`Q1-25`)
+
+`Q1-24` had cut the commentary to one-to-six-line "what this does" blocks. The
+operator's follow-up removed even those, on the grounds that comments are never
+printed during an install and the script is not read in an editor: a comment
+nobody reads is not neutral, it stands between the reader and the code and
+decays silently because nothing verifies it.
+
+508 further comment lines removed; 5868 → 5356 lines. Nine `#` lines survive
+and both classes are load-bearing rather than editorial: eight `#!` shebangs,
+which set the interpreter for the heredoc-generated helper scripts, and one
+`# shellcheck disable=SC1091`, without which `shellcheck install.sh` — check 2
+of `./scripts/check-all.sh` — fails. The eight `# AŞAMA N — …` banners were
+**not** kept: each is immediately followed by a `progress_stage_begin N "…"`
+call that prints the same information to the screen, so the banner duplicated a
+line the code already emits. Stage boundaries are found with `grep -n
+'progress_stage_begin [0-7] '`.
+
+**No behaviour changed, and one new risk class was checked for.** Removal is a
+blanket rule this time, so a `#` line that was *content* rather than a comment
+would be destroyed silently. The only place in this file where that could
+happen is a YAML block scalar (`key: |`) inside the `filebrowser.yaml` or
+`compose.yaml` heredocs — there are none; the pattern does not occur anywhere
+in the file. Every other generated format treats a leading `#` as a comment
+(dnsmasq, systemd units, Caddyfile, `sysctl.d`, `modules-load.d`). The proof
+that nothing else moved is a diff of both revisions with all whole-line
+comments and blank lines stripped: **4790 lines, byte-identical**. Four
+blank-line runs created by the removal were collapsed to one.
+
+`./scripts/check-all.sh` clean at 176 cases. `docs/architecture.md`'s stage
+table regenerated. `CLAUDE.md` and DD-44 now say plainly that explanations go
+into a `DD-` entry, not into the script.
+
+Re-running this revision on a host installed from an earlier one rewrites the
+generated config files without their comments — `filebrowser.yaml`,
+`compose.yaml`, the dnsmasq conf, the Caddyfile, the systemd units. That is
+ordinary content change and the script handles it: the policy file's change
+triggers a FileBrowser recreate that preserves the named volume, and a new
+canonical generation is published. Expect one extra container recreate and a
+dnsmasq/Caddy restart on the first run after upgrading.
+
 ### 2026-08-03 — `install.sh` comments cut from 1179 lines to 517 (`Q1-24`)
 
 Comment blocks now state what the code does in one to six short lines and name

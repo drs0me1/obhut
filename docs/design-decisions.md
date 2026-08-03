@@ -2232,3 +2232,43 @@ packaging action does not change the pending live-verification claim.
   The proof that no behaviour changed is a diff of both revisions with all
   whole-line comments stripped: 5351 lines, byte-identical.
   `./scripts/check-all.sh` clean at 176 cases.
+
+> **Amended 2026-08-03 (`Q1-25`).** The decision above kept a one-to-six-line
+> "what this does" comment on each block. The operator's follow-up removed even
+> those: *"yorum satırlarını eğer yükleme esnasında ekrana yazılmıyorsa direkt
+> kaldırabiliriz. koda çıplak bakmayacağımız için görmemiz mümkün değil
+> aslında."* `install.sh` now carries **no explanatory comments at all** —
+> 508 further lines removed, 5868 → 5356, leaving nine `#` lines: eight `#!`
+> shebangs and one `# shellcheck disable=SC1091`.
+>
+> Both survivors are load-bearing rather than editorial. The shebangs set the
+> interpreter for the seven heredoc-generated helper scripts. The `SC1091`
+> directive suppresses a real warning on `source /etc/os-release`; deleting it
+> breaks `shellcheck install.sh`, which is check 2 of `./scripts/check-all.sh`.
+> The eight `# AŞAMA N — …` banners did **not** survive: each is immediately
+> followed by a `progress_stage_begin N "…"` call that prints the same
+> information to the operator's screen, so the banner duplicated a line the
+> code already emits. Stage boundaries remain locatable by `grep -n
+> 'progress_stage_begin [0-7] '`, which is what `docs/architecture.md` already
+> told readers to use.
+>
+> The premise is the operator's own working method rather than a general claim
+> about comments: this script is read through its documentation and its printed
+> output, not opened in an editor. A comment nobody reads is not neutral — it
+> is 22% of the file standing between the reader and the code, and it decays
+> silently because nothing verifies it. The rationale is unaffected; it was
+> already relocated by `Q1-24` and is still here, in `SECURITY_REVIEW.md`'s
+> Review History and in `CHANGELOG.md`.
+>
+> **Verified the same way, and one class was checked that `Q1-24` did not
+> need.** Removal is a blanket rule this time, so a `#` line that was *content*
+> rather than a comment would be silently destroyed — a YAML block scalar
+> (`key: |`) is the one place in this file where that could happen, since
+> `filebrowser.yaml` and `compose.yaml` are both generated from heredocs.
+> There are none: the pattern `:\s*[|>]` does not occur anywhere in the
+> pre-removal file. Every other generated format treats a leading `#` as a
+> comment (dnsmasq, systemd units, Caddyfile, `sysctl.d`, `modules-load.d`).
+> The proof that nothing else moved is a diff of both revisions with all
+> whole-line comments and blank lines stripped: **4790 lines, byte-identical**.
+> Four blank-line runs created by the removal were collapsed to one.
+> `./scripts/check-all.sh` clean at 176 cases.

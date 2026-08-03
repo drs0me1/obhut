@@ -197,6 +197,22 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **All explanatory comments removed from `install.sh` (2026-08-03,
+      `Q1-25`, unnumbered, DD-44 amendment).** Operator follow-up to
+      `Q1-24`: comments are never printed during an install and the script
+      is not read in an editor, so they are read by nobody and decay
+      silently. 508 further lines removed, 5868 → 5356. Nine `#` lines
+      survive, both classes load-bearing: eight `#!` shebangs and one
+      `# shellcheck disable=SC1091` without which `shellcheck install.sh`
+      fails. The `AŞAMA` banners went too — each duplicated the
+      `progress_stage_begin` line printed directly below it. Checked for
+      the one class a blanket rule could destroy silently, a YAML block
+      scalar where `#` would be content: none exist in the file. Verified
+      by diffing both revisions with comments and blank lines stripped —
+      4790 lines, byte-identical. `docs/architecture.md` regenerated;
+      `CLAUDE.md` now says explanations go into a `DD-` entry.
+      `./scripts/check-all.sh` clean at 176 cases.
+
 - [x] **`install.sh` comment volume cut by 56% (2026-08-03, `Q1-24`,
       unnumbered, DD-44).** Operator request after reading the raw file:
       1179 comment lines across 229 blocks became 517. Blocks now say what
