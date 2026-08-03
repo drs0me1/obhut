@@ -291,9 +291,20 @@ Notes:
 ## Networking
 
 - **Exit-node**: Tailscale is configured with `--advertise-exit-node
-  --stateful-filtering=true --netfilter-mode=on --snat-subnet-routes=true`.
+  --ssh=true --stateful-filtering=true --netfilter-mode=on
+  --snat-subnet-routes=true`. The interactive login itself runs `tailscale
+  up --advertise-exit-node --ssh`, so a fresh node asks for both in one
+  step; the `tailscale set` above is the idempotent path that also runs on
+  re-installs, and `tailscale_prefs_ok()` treats a lost `--ssh` as drift.
   The WAN interface and public IPv4 are auto-detected from the default
   route (`ip route get 1.1.1.1`).
+- **Tailscale SSH**: the node answers SSH on its own Tailscale address,
+  authenticated by the **tailnet's ACL `ssh` block** rather than by the
+  host's `authorized_keys`. It is reachable only from the tailnet and adds
+  nothing to the internet-facing surface, but it does move the "who gets a
+  root shell" decision into your tailnet policy — narrow that policy if a
+  new tailnet's default (members into their own devices, as root, with a
+  periodic browser check) is wider than you want. See **DD-43**.
 - **Dedicated firewall chains**: the `docker-tailscale-fw` helper builds
   two custom chains — `MASTER-DOCKER` (filter/`DOCKER-USER`) and
   `MASTER-TS-FORWARD` (mangle/`FORWARD`) — using a randomized staging-chain

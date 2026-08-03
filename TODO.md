@@ -197,6 +197,25 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Tailscale SSH enabled alongside the exit-node role (2026-08-03,
+      `Q1-23`, unnumbered, DD-43).** Operator request, not a finding. The
+      interactive login now runs `tailscale up --advertise-exit-node
+      --ssh` instead of a bare `tailscale up`, so a fresh node asks for
+      both in one step. `tailscale set` keeps `--advertise-exit-node` and
+      gains `--ssh=true` — it is the unconditional path, since `tailscale
+      up` runs only when a login is actually needed and never on an
+      ordinary re-run. Naming the flags on `up` also avoids Tailscale's
+      refusal to silently revert non-default preferences on a re-login
+      where the profile already advertises an exit node.
+      `tailscale_prefs_ok()` requires `.RunSSH == true`, so the reconcile
+      timer repairs a lost `--ssh` as drift. Security trade-off stated
+      rather than assumed: SSH is answered by tailscaled on the node's
+      Tailscale address, governed by the tailnet's ACL `ssh` block instead
+      of the host's `authorized_keys` — tailnet-only, no change to the
+      internet-facing surface, but tailnet policy now decides who gets a
+      root shell. `./scripts/check-all.sh` clean at 176 cases. Not
+      live-verified.
+
 - [x] **A slow-to-come-online node discarded a successful Tailscale login
       (2026-08-02, `Q1-22`, unnumbered, DD-42).** Found while reviewing
       `Q1-21`, not in use. After `tailscale up` exits zero the node was

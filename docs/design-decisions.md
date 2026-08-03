@@ -2159,3 +2159,39 @@ exact automatic Q1-21 branch remains deliberately unclaimed until a later
 fresh authorization run exercises it. At the operator's explicit request the
 same installer was exported untagged as an R2.6 manual-test candidate; that
 packaging action does not change the pending live-verification claim.
+
+### DD-43: Exit-node and Tailscale SSH are requested by `tailscale up`, then held by `tailscale set` (2026-08-03)
+
+- **Decision:** the interactive login runs `tailscale up --advertise-exit-node
+  --ssh` instead of a bare `tailscale up`, and the `tailscale set` call that
+  follows gains `--ssh=true` alongside the flags it already carried. Tailscale
+  SSH is now part of the node's steady state: `tailscale_prefs_ok()` requires
+  `.RunSSH == true`, so the reconcile timer treats a lost `--ssh` as drift and
+  repairs it with the same `tailscale set` invocation it already used for
+  exit-node/netfilter drift.
+- **Why both places, not one.** `tailscale up` runs **only** when
+  `TAILSCALE_NEEDS_LOGIN` is 1 — a fresh node, an expired key, or a node
+  deleted from the tailnet. On the ordinary re-run against an already-joined
+  host it never executes. So it cannot be the only place these preferences are
+  set without making them silently optional on every re-install. `tailscale
+  set` runs unconditionally and is the idempotent path; `tailscale up` now
+  merely asks for the same end state one step earlier.
+- **A second reason to name the flags on `up`.** `tailscale up` refuses to
+  silently revert non-default preferences: when the current profile has flags
+  set that the command line does not mention, it errors and asks the operator
+  to re-run mentioning them. On the re-login paths above the profile can
+  already carry `--advertise-exit-node`, which a bare `tailscale up` would be
+  proposing to drop. Naming the flags removes that failure mode rather than
+  adding one.
+- **The security trade-off, stated rather than assumed.** `--ssh` makes
+  tailscaled answer SSH on the node's Tailscale address itself, authenticated
+  by the tailnet's ACL `ssh` block rather than by the host's `authorized_keys`.
+  It is reachable only from the tailnet — the same trust boundary that already
+  governs every web interface in the bundle — and adds nothing to the
+  internet-facing surface, which stays behind the fail-closed firewall. What it
+  does change is that tailnet ACL policy, not the host's SSH configuration,
+  becomes the thing that decides who gets a root shell. A new tailnet's default
+  policy permits `autogroup:member` → `autogroup:self` as root with `check`
+  (periodic browser re-authorization). An operator who does not want that must
+  narrow the tailnet's `ssh` block; the installer deliberately does not edit
+  account-level ACLs.

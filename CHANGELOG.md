@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-03 — Tailscale SSH enabled alongside exit-node advertisement (`Q1-23`)
+
+The interactive login now runs `tailscale up --advertise-exit-node --ssh`
+instead of a bare `tailscale up`, so a fresh node asks for both the exit-node
+role and Tailscale SSH in the same step rather than waiting for the
+`tailscale set` that follows.
+
+`tailscale set` keeps carrying `--advertise-exit-node` and gains `--ssh=true`.
+It is not redundant: `tailscale up` runs only when a login is actually needed,
+so on an ordinary re-run against an already-joined host it never executes.
+`tailscale set` is the unconditional, idempotent path. Naming the flags on
+`up` also avoids Tailscale's refusal to silently revert non-default
+preferences on a re-login where the profile already advertises an exit node.
+
+Tailscale SSH is now part of the node's steady state rather than a one-time
+setting: `tailscale_prefs_ok()` requires `.RunSSH == true`, so the 20-minute
+reconcile timer sees a lost `--ssh` as drift and repairs it with the same
+`tailscale set` it already used for exit-node/netfilter drift.
+
+**Security note.** `--ssh` makes tailscaled answer SSH on the node's Tailscale
+address, authenticated by the tailnet's ACL `ssh` block instead of the host's
+`authorized_keys`. It is reachable only from the tailnet — the same boundary
+that already governs every web interface here — and adds nothing to the
+internet-facing surface. What changes is that tailnet ACL policy, not host SSH
+configuration, decides who gets a root shell; a new tailnet's default policy
+allows members into their own devices as root with a periodic browser check.
+Narrow the tailnet `ssh` block if that is wider than you want. The installer
+does not edit account-level ACLs. See DD-43.
+
+Not live-verified.
+
 ### 2026-08-02 — `R2.6` refreshed to `Q1-22` and tagged before live verification
 
 At the operator's explicit request, `Q1-22` and `R2.6` are tagged **before**

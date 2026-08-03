@@ -5,7 +5,7 @@ umask 077
 # Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
 # o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
 # değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.02-Q1-22"
+MASTER_SETUP_VERSION="2026.08.03-Q1-23"
 # Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
 # sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
 # kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
@@ -1493,7 +1493,7 @@ tailscale_interactive_login() {
                 "$attempt" "$TAILSCALE_LOGIN_ATTEMPTS" >&5
         fi
 
-        tailscale up >"$out_file" 2>&1 &
+        tailscale up --advertise-exit-node --ssh >"$out_file" 2>&1 &
         up_pid=$!
 
         elapsed=0
@@ -1721,10 +1721,11 @@ fi
 
 tailscale set \
     --advertise-exit-node \
+    --ssh=true \
     --stateful-filtering=true \
     --netfilter-mode=on \
     --snat-subnet-routes=true
-progress_stage_note 90 "Exit-node ve stateful filtering doğrulanıyor"
+progress_stage_note 90 "Exit-node, Tailscale SSH ve stateful filtering doğrulanıyor"
 
 TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
 if [[ ! "$TS_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -3569,6 +3570,7 @@ tailscale_prefs_ok() {
     prefs_json="$("$TAILSCALE_BIN" debug prefs 2>/dev/null || true)"
     "$JQ_BIN" -e '
         .WantRunning == true and
+        .RunSSH == true and
         .NoSNAT == false and
         .NoStatefulFiltering == false and
         .NetfilterMode == 2 and
@@ -4641,6 +4643,7 @@ if [[ "$TAILSCALE_PREFS_DRIFTED" -eq 1 ||
       "$TAILSCALE_NETFILTER_DRIFTED" -eq 1 ]]; then
     if ! "$TAILSCALE_BIN" set \
             --advertise-exit-node \
+            --ssh=true \
             --stateful-filtering=true \
             --netfilter-mode=on \
             --snat-subnet-routes=true; then
