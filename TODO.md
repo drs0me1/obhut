@@ -197,6 +197,23 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Firewall helper's contradictory ip6tables contract removed
+      (2026-08-03, `Q1-26`, audit item A1, DD-45).** Four branches promised
+      graceful degradation without ip6tables while `check_policy` made the
+      run exit 1 regardless; one of them (`apply_ipv6`'s DOCKER-USER
+      warning) was provably unreachable, since `ensure_forward_prefix`
+      checks the same chain earlier and kills the helper under `set -e`.
+      Now a single top-level guard fails before the lock and before any
+      chain is touched. Requiring rather than skipping is the
+      security-consistent choice: Stage 2 enables IPv6 forwarding, so
+      continuing without the v6 guard chains would leave forwarding on
+      with no Tailnet isolation. `check_ipv6_policy`'s own guard is kept —
+      it is M5's remediation and has a Bats case. Verified by extracting
+      the helper and running it with no `ip6tables` on PATH: rc 1 in both
+      modes with zero `iptables` invocations, against a previous revision
+      that installs the full IPv4 policy first in `apply` mode.
+      `./scripts/check-all.sh` clean at 176 cases. Not live-verified.
+
 - [x] **All explanatory comments removed from `install.sh` (2026-08-03,
       `Q1-25`, unnumbered, DD-44 amendment).** Operator follow-up to
       `Q1-24`: comments are never printed during an install and the script

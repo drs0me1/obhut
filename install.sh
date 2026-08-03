@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.03-Q1-25"
+MASTER_SETUP_VERSION="2026.08.03-Q1-26"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -1493,6 +1493,12 @@ case "$MODE" in
         ;;
 esac
 
+if [[ -z "$IP6TABLES_BIN" ]]; then
+    echo "HATA: ip6tables bulunamadı; IPv6 Tailnet izolasyon politikası uygulanamaz." >&2
+    echo "IPv6 forwarding açık olduğu için politikasız devam etmek güvenli değil." >&2
+    exit 1
+fi
+
 exec 9>/run/lock/docker-tailscale-fw.lock
 if ! "$FLOCK_BIN" -w 30 9; then
     echo "HATA: Firewall uygulama kilidi 30 saniyede alınamadı." >&2
@@ -1612,7 +1618,6 @@ activate_staging_chain() {
 
 ensure_forward_prefix() {
     local bin="$1" target="" last_rule=""
-    [[ -n "$bin" ]] || return 0
 
     for target in DOCKER-USER DOCKER-FORWARD ts-forward; do
         if ! wait_for_chain "$bin" "$target"; then
@@ -1686,7 +1691,6 @@ activate_ts_guard_staging_chain() {
 
 apply_tailnet_guard() {
     local bin="$1" wan_if="$2" family="$3" staging_chain=""
-    [[ -n "$bin" ]] || return 0
 
     staging_chain="$(create_ts_guard_staging_chain "$bin")"
     "$bin" -w 5 -t mangle -A "$staging_chain" \
@@ -1750,12 +1754,10 @@ apply_ipv4() {
 
 apply_ipv6() {
     local bin="$1" staging_chain=""
-    [[ -n "$bin" ]] || return 0
-
-    if ! wait_for_docker_user "$bin"; then
-        echo "UYARI: IPv6 DOCKER-USER zinciri bulunamadı; IPv6 politikası atlandı." >&2
-        return 0
-    fi
+    wait_for_docker_user "$bin" || {
+        echo "HATA: IPv6 DOCKER-USER zinciri bulunamadı." >&2
+        return 1
+    }
 
     staging_chain="$(create_staging_chain "$bin")"
     "$bin" -w 5 -A "$staging_chain" \

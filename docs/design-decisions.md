@@ -2272,3 +2272,50 @@ packaging action does not change the pending live-verification claim.
 > whole-line comments and blank lines stripped: **4790 lines, byte-identical**.
 > Four blank-line runs created by the removal were collapsed to one.
 > `./scripts/check-all.sh` clean at 176 cases.
+
+### DD-45: The firewall helper requires ip6tables instead of degrading toward it (2026-08-03)
+
+- **Decision:** `docker-tailscale-fw` hard-fails at the top when
+  `command -v ip6tables` finds nothing, before it takes its lock and before it
+  touches a single chain. The three `[[ -n "$bin" ]] || return 0` early
+  returns in `ensure_forward_prefix`, `apply_tailnet_guard` and `apply_ipv6`
+  are gone, and `apply_ipv6`'s "DOCKER-USER missing → warn and skip" branch is
+  now the same hard failure `apply_ipv4` already used.
+- **Why:** the helper claimed two contradictory contracts. Four branches
+  promised graceful degradation when IPv6 tooling was unavailable, and then
+  `check_policy` — `check_ipv4_policy && check_ipv6_policy`, with
+  `check_ipv6_policy` returning 1 outright on a missing binary — made the run
+  exit 1 anyway. The graceful path could not lead anywhere except the same
+  failure, so it bought nothing and cost a reader the time to work that out.
+- **Why *require* rather than *skip*.** Stage 2 writes
+  `net.ipv6.conf.all.forwarding = 1`. Without ip6tables there is no
+  `MASTER-DOCKER`/`MASTER-TS-FORWARD` on the v6 side, so continuing would mean
+  IPv6 forwarding enabled with no Tailnet isolation guard behind it — the
+  exposure the helper exists to prevent. Failing closed is the only answer
+  consistent with the rest of the file. In practice nothing changes: the
+  `iptables` Debian package installed in Stage 1 provides `ip6tables`.
+- **One branch was provably dead, not merely redundant.** `apply_ipv6`'s
+  DOCKER-USER warning could never fire: `ensure_forward_prefix
+  "$IP6TABLES_BIN"` runs first and returns 1 — under `set -e`, killing the
+  helper — if that same chain is absent.
+- **`check_ipv6_policy`'s own `[[ -z "$IP6TABLES_BIN" ]]` guard is deliberately
+  kept.** It is **M5**'s remediation ("this must not be masked behind the
+  generic policy-drift error") and it has a Bats case that calls the extracted
+  function directly. The top-level guard makes it unreachable in production,
+  but removing it would delete a security finding's test to save four lines,
+  and the suite's function-extraction technique cannot test a top-level guard
+  in its place. It stands as an independently verified precondition on the
+  function rather than as dead code.
+- **Measured, not assumed.** The embedded helper was extracted and run against
+  a PATH containing stub `ip`/`iptables`/`flock` and **no** `ip6tables`. New
+  behaviour: rc 1 in both `apply` and `--check`, the specific message, and
+  **zero `iptables` invocations** — proven by an invocation log the stub wrote.
+  Old behaviour under the same conditions: `--check` reached rc 1 only after
+  address resolution and an `iptables` call, printing the specific message
+  *and* the generic "politika sapmış" line; `apply` installs the full IPv4
+  policy first, because the apply order is `ensure_forward_prefix →
+  apply_tailnet_guard → apply_ipv4 → apply_ipv6 → check_policy`. The old
+  `apply` run could not be driven to completion — the crude `iptables` stub
+  answers every `-C` probe with success, which makes `remove_legacy_wide_rules`
+  loop forever; that is the stub's defect, not the helper's.
+  `./scripts/check-all.sh` clean at 176 cases, M5's case among them.

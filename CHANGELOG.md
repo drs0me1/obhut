@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-03 — The firewall helper requires ip6tables instead of degrading toward it (`Q1-26`)
+
+First item from the stage-by-stage audit. `docker-tailscale-fw` carried two
+contradictory contracts: four branches promised to degrade gracefully when IPv6
+tooling was unavailable, and `check_policy` then made the run `exit 1` anyway,
+because `check_ipv6_policy` returns 1 outright on a missing binary. The
+graceful path could not lead anywhere except that same failure.
+
+It now fails at the top — before the lock, before any chain is touched — with a
+message naming the reason. The early returns in `ensure_forward_prefix`,
+`apply_tailnet_guard` and `apply_ipv6` are gone, and `apply_ipv6`'s
+"DOCKER-USER missing → warn and skip" branch became the hard failure
+`apply_ipv4` already used. That branch was **provably dead**: the same chain is
+checked earlier by `ensure_forward_prefix`, which kills the helper under
+`set -e` before `apply_ipv6` runs.
+
+Requiring rather than skipping is the security-consistent choice. Stage 2 sets
+`net.ipv6.conf.all.forwarding = 1`, so continuing without ip6tables would leave
+IPv6 forwarding enabled with no Tailnet isolation guard behind it. In practice
+nothing changes — the `iptables` package installed in Stage 1 provides
+`ip6tables`.
+
+`check_ipv6_policy`'s own missing-binary guard is deliberately kept: it is
+**M5**'s remediation and has a Bats case. Removing it would delete a security
+finding's test to save four lines.
+
+Measured rather than asserted: the helper was extracted and run with a PATH
+containing stub `ip`/`iptables`/`flock` and no `ip6tables`. It now exits 1 in
+both modes with **zero `iptables` invocations**, proven by the stub's call log;
+the previous revision reached the same exit code only after address resolution
+and an `iptables` call in `--check`, and in `apply` installs the entire IPv4
+policy first. `./scripts/check-all.sh` clean at 176 cases.
+
+Not live-verified — this path is only reachable when ip6tables is absent, which
+the package set makes impossible on the test host.
+
 ### 2026-08-03 — `install.sh` now carries no explanatory comments (`Q1-25`)
 
 `Q1-24` had cut the commentary to one-to-six-line "what this does" blocks. The
