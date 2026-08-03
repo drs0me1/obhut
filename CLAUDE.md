@@ -160,6 +160,19 @@ even when working in this repository only.
   should be clean under `shellcheck`; do not add `# shellcheck disable`
   directives without a one-line justification comment, matching the
   existing style in the file.
+- **Keep `install.sh` comments short; put the reasoning in the docs.**
+  A comment block states what the code does, in one to six lines, and
+  names a constraint only where the choice would otherwise look wrong.
+  The measurement narratives, superseded attempts and dated evidence
+  belong in `docs/design-decisions.md`, `SECURITY_REVIEW.md`'s Review
+  History and `CHANGELOG.md`; a comment that needs them points at them
+  (`bkz. DD-42`, `M11`, `H4`) instead of repeating them. Established
+  2026-08-03 in `Q1-24` after the file had reached 1179 comment lines —
+  Stage 2's login section alone carried 37 consecutive comment lines
+  before its first statement. Do not re-inflate them: when a change
+  needs a long explanation, write it as a `DD-` entry and reference it.
+  The `#!` shebangs, `# shellcheck` directives and `# AŞAMA N — …`
+  banners are exempt and must survive any such cleanup. See **DD-44**.
 
 ## Key Files
 

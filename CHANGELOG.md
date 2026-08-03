@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-03 — `install.sh` comments cut from 1179 lines to 517 (`Q1-24`)
+
+Comment blocks now state what the code does in one to six short lines and name
+a constraint only where the choice would otherwise look wrong. The measurement
+narratives, the superseded attempts and the dated evidence stay in
+`docs/design-decisions.md`, `SECURITY_REVIEW.md`'s Review History and this
+file; a comment that needs the full story points at it (`bkz. DD-42`, `M11`,
+`H4`) rather than repeating it.
+
+229 blocks were rewritten. The file went from 6527 to 5868 lines. Stage 2's
+login section alone had carried 37 consecutive comment lines before its first
+statement, the float-image-tag block 28, and several blocks recounted three
+superseded designs before describing the current one.
+
+**No behaviour changed and this is not an assertion.** The transformation was
+applied through an explicit line-range map rather than a pattern rule, so
+nothing outside the 229 listed ranges could be reached, and the script refuses
+to run if any targeted line is not a comment, is a shebang, or is a
+`shellcheck` directive. The proof is a diff of both revisions with every
+whole-line comment stripped: 5351 lines, byte-identical. The eight `#!`
+shebangs, the single `# shellcheck disable=SC1091` and the eight
+`# AŞAMA N — …` banners are untouched.
+
+`./scripts/check-all.sh` clean at 176 cases. `docs/architecture.md`'s stage
+table was regenerated against the new line numbers. The convention is recorded
+in `CLAUDE.md` and DD-44 so the blocks do not grow back.
+
 ### 2026-08-03 — Tailscale SSH enabled alongside exit-node advertisement (`Q1-23`)
 
 The interactive login now runs `tailscale up --advertise-exit-node --ssh`

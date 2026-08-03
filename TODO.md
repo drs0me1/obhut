@@ -197,6 +197,22 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **`install.sh` comment volume cut by 56% (2026-08-03, `Q1-24`,
+      unnumbered, DD-44).** Operator request after reading the raw file:
+      1179 comment lines across 229 blocks became 517. Blocks now say what
+      the code does; the archaeology stays in `docs/design-decisions.md`,
+      `SECURITY_REVIEW.md` and `CHANGELOG.md`, reachable through short
+      pointers. 6527 → 5868 lines. Applied through an explicit line-range
+      map, not a pattern rule, with pre-write assertions that every
+      targeted line is a comment and is neither a shebang nor a
+      `shellcheck` directive; shebangs, the `SC1091` directive and the
+      eight `AŞAMA` banners untouched. Verified by diffing both revisions
+      with all whole-line comments stripped — 5351 lines, byte-identical —
+      so "no behaviour changed" is measured rather than asserted.
+      `docs/architecture.md`'s stage table regenerated. Convention written
+      into `CLAUDE.md` so the blocks do not grow back.
+      `./scripts/check-all.sh` clean at 176 cases.
+
 - [x] **Tailscale SSH enabled alongside the exit-node role (2026-08-03,
       `Q1-23`, unnumbered, DD-43).** Operator request, not a finding. The
       interactive login now runs `tailscale up --advertise-exit-node

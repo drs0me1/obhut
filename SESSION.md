@@ -20,11 +20,11 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.02-Q1-21` (6506 lines) |
-| SHA256 | `10b746f891f908f98efd92204a8c238c9e46eb500745c9daf68462d9ae3ccaf8` |
-| Export | `versiyon/R2.6/`, byte-identical to source commit `a10a300`; manual-test candidate, no `Q1-21`/`R2.6` tags yet |
+| Version | `2026.08.03-Q1-24` (5868 lines) |
+| SHA256 | `d2d407e36a3a7ed79b29825accc2756628f3bc228f78d138e5626705ffb91d39` |
+| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH) and `Q1-24` (comment reduction) are not exported yet |
 | Live | Q1-21 input signature measured twice on clean R2.5 and equivalent early child/restart recovery succeeded; exact automatic Q1-21 branch still pending |
-| Tests | 175 cases across thirteen `.bats` files (163 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
+| Tests | 176 cases across thirteen `.bats` files (164 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
 Q1-21 is the Stage 2 follow-up to the repeated offline-node login failure:

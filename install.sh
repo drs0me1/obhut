@@ -2,16 +2,10 @@
 set -Eeuo pipefail
 umask 077
 
-# Bu kurulum betiğinin sürüm kimliği. Aşağıdaki STACK_SCHEMA'dan farklıdır:
-# o, state.env'in disk üzerindeki formatını sürümler ve yalnız format
-# değişirse değişir.
-MASTER_SETUP_VERSION="2026.08.03-Q1-23"
-# Betiğin kendi SHA256'sı sürümle birlikte state.env'e yazılır; böylece
-# sunucu hangi revizyondan kurulduğunu depoyla karşılaştırılabilir biçimde
-# kendisi raporlar (sunucunun depodan sessizce geride kalmasına yol açan
-# 2026-07-28 boşluğunun sunucu tarafı yarısı). stdin/boru üzerinden
-# çalıştırmada okunabilir bir dosya yolu olmayabilir; o durumda değer
-# "bilinmiyor" kalır, kurulum durmaz.
+# Betiğin sürüm kimliği (STACK_SCHEMA'dan farklı: o, state.env formatını sürümler).
+MASTER_SETUP_VERSION="2026.08.03-Q1-24"
+# Betiğin SHA256'sı state.env'e yazılır; sunucu hangi revizyondan kurulduğunu
+# kendisi raporlar. Yol okunamıyorsa değer "bilinmiyor" kalır.
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -21,10 +15,7 @@ MASTER_LOCK_FILE="/run/lock/master-stack.lock"
 MASTER_LOCK_WAIT_SECONDS=5
 APT_LOCK_TIMEOUT=300
 
-# Aşama 0 kullanıcı girdileri normal konsolda kalır. Onaydan sonra Stage 1-7
-# ayrıntıları root-only loga yönlendirilir; TTY'de yalnız gerçek kilometre
-# taşlarına dayanan ilerleme çubuğu görünür. Kurulum komutları foreground ve
-# sıralı kalır; progress için ayrı bir worker/process oluşturulmaz.
+# Aşama 1-7 ayrıntısı root-only loga gider; TTY'de yalnız ilerleme çubuğu görünür.
 MASTER_LOG_DIR="/var/log/master-setup"
 MASTER_LOG_FILE=""
 MASTER_LOGGING_ACTIVE=0
@@ -40,7 +31,7 @@ MASTER_ERROR_LINE=""
 MASTER_SIGNAL=""
 MASTER_SERVICE_JOURNAL_APPENDED=0
 
-# EXIT cleanup, Stage 1'in erken satırlarında da güvenle çalışabilsin.
+# EXIT cleanup Aşama 1'in erken satırlarında da çalışabilsin.
 TIMER_WINDOW_PREPARED=0
 RECONCILE_TIMER_WAS_ACTIVE=0
 RECONCILE_TIMER_WAS_ENABLED=0
@@ -130,8 +121,7 @@ progress_setup_logging() {
     MASTER_LOG_FILE="${MASTER_LOG_DIR}/master-setup-${timestamp}-$$.log"
     install -m 0600 -o root -g root /dev/null "$MASTER_LOG_FILE"
 
-    # 3/4 ilk konsol akışlarını, 5 doğrudan kontrol TTY'sini saklar.
-    # Ana stack kilidi fd9 olduğundan bu descriptor'lar onunla çakışmaz.
+    # fd3/fd4 ilk konsol akışları, fd5 kontrol TTY'si. Stack kilidi fd9.
     exec 3>&1 4>&2 5>/dev/tty
     MASTER_CONSOLE_STREAM_FDS_OPEN=1
     MASTER_PROGRESS_TTY_FD_OPEN=1
@@ -224,29 +214,9 @@ progress_close_tty() {
     fi
 }
 
-# Ağ bağımlı adımlar için sınırlı retry + zorunlu timeout (L8).
-#
-# Buradaki asıl amaç retry değil TIMEOUT. Betik systemd-inhibit
-# --mode=block altında çalışıyor ve reconcile ile paylaşılan flock'u tutuyor;
-# dolayısıyla asılı kalan tek bir indirme hem shutdown'ı hem de 20 dakikalık
-# reconcile timer'ını süresiz olarak rehin alır. Bugünkü davranış "sonsuz
-# bekle"; aşağıdaki her şey o sonsuzluğu sınırlamak içindir. 2026-07-31'de
-# yaşanan Docker Hub 502'si ise gürültülü ve güvenli düştü — retry onu
-# kurtarır, ama tehlikeli olan senaryo o değildi.
-#
-# Hata sınıflandırması bilinçli olarak YOK. Kalıcı hatalar (manifest unknown,
-# unauthorized, disk dolu) saniyeler içinde döner, dolayısıyla körlemesine üç
-# deneme onlara yalnız ~20 saniye backoff'a mal olur ve ardından net hatayla
-# durulur. Gerçek süreyi sadece geçici hatalar ve asılmalar harcar, ki hedef
-# zaten onlar. stderr metnini eşleştirmek locale'e ve upstream mesaj
-# formatına bağımlı olurdu; kazancı yok.
-#
-# Süreler 2026-07-31'de bu host'ta ÖLÇÜLEN taban değerlere göre seçildi:
-# soğuk `docker compose pull` 10.9s (885 MB, üç registry), sıcak pull 3.2s,
-# apt-get update 0.9s, keyring curl'leri 36-127 ms. Bulk sınırı ölçülenin
-# ~27 katı; yani hattın bu host'tan 27 kat yavaş olması hâlinde meşru bir
-# indirme kesilir — o durumda bile operatör bütçeyi adıyla söyleyen bir
-# zaman aşımı mesajı alır, sessiz bir asılma değil.
+# Ağ adımları için sınırlı retry + zorunlu TIMEOUT (L8). Asıl amaç timeout:
+# asılı bir indirme, paylaşılan flock üzerinden hem shutdown'ı hem 20 dakikalık
+# reconcile timer'ını süresiz rehin alır. Hata sınıflandırması bilinçli olarak yok.
 NET_RETRY_ATTEMPTS=3
 NET_RETRY_BULK_FIRST=300
 NET_RETRY_BULK_NEXT=180
@@ -261,15 +231,12 @@ retry_network() {
     local attempt=1 rc=0 limit="$first_timeout" backoff=5
     while :; do
         rc=0
-        # --kill-after: TERM'i yok sayan bir alt sürecin timeout'u da
-        # anlamsızlaştırmasını engeller.
+        # --kill-after: TERM'i yok sayan alt süreç timeout'u atlatmasın.
         timeout --signal=TERM --kill-after=30s "$limit" "$@" || rc=$?
         [[ "$rc" -eq 0 ]] && return 0
 
         if [[ "$attempt" -ge "$NET_RETRY_ATTEMPTS" ]]; then
-            # 124 = timeout'un kendi zaman aşımı kodu, 137 = KILL sonrası.
-            # "Cevap vermedi" ile "hata döndürdü" operatör için farklı
-            # şeylerdir; ayrımı mesajda koru.
+            # 124 = timeout, 137 = KILL sonrası. "Cevap vermedi" ile "hata döndü" ayrı.
             if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
                 echo "HATA: ${label}: son deneme ${limit} saniyede tamamlanmadı (zaman aşımı)." >&2
             else
@@ -279,8 +246,7 @@ retry_network() {
         fi
 
         echo "UYARI: ${label}: ${attempt}. deneme başarısız (çıkış kodu ${rc}); ${backoff}s sonra yeniden denenecek." >&2
-        # İlerleme çubuğu donmuş görünmesin: operatör donmuş bir çubuğa
-        # bakarsa kurulumu elle keser, ki kaçınmak istediğimiz tam olarak bu.
+        # İlerleme çubuğu donmuş görünmesin.
         progress_stage_note "$MASTER_CURRENT_PERCENT" \
             "${MASTER_CURRENT_STAGE_LABEL} (yeniden deneniyor: $((attempt + 1))/${NET_RETRY_ATTEMPTS})"
         sleep "$backoff"
@@ -336,8 +302,7 @@ restore_stopped_timers_on_exit() {
         "${APT_DAILY_UPGRADE_TIMER_WAS_ACTIVE:-0}" \
         "${APT_DAILY_UPGRADE_TIMER_REENABLED:-0}" || restore_rc=1
     if [[ "$exit_rc" -ne 0 ]]; then
-        # Taze/başarısız kurulum eksik bir stack üzerinde yeni bir mutasyon
-        # timer'ı bırakamaz. Başlangıçtaki active/enabled vektörünü aynen kur.
+        # Başlangıçtaki timer active/enabled vektörünü aynen geri kur.
         if [[ "${RECONCILE_TIMER_WAS_ACTIVE:-0}" -eq 1 ]]; then
             systemctl start master-network-reconcile.timer || restore_rc=1
         else
@@ -422,8 +387,7 @@ restore_dns_stack_files() {
             }
             cp -a -- "$backup_path" "$managed_path" || restore_rc=1
         else
-            # Snapshot anında bulunmayan yönetilen dosya ilk kurulumda bu
-            # deneme tarafından yaratılmıştır; rollback onu bırakmamalı.
+            # Snapshot'ta olmayan dosya bu çalıştırmada yaratıldı; rollback onu bırakmasın.
             rm -rf -- "$managed_path" || restore_rc=1
         fi
     done
@@ -454,10 +418,7 @@ restore_dns_stack_on_failure() {
     [[ "$exit_rc" -ne 0 &&
        "${DNS_STACK_STATE_CAPTURED:-0}" -eq 1 ]] || return 0
 
-    # `mv current` ile aşağıdaki commit bayrağı iki ayrı shell komutudur.
-    # Tam aralarında gelen INT/TERM'de pointer gerçekte commit edilmiştir;
-    # eski canlı dosyaları geri almak yeni canonical ile karışık durum
-    # yaratırdı. Pointer'ın kendisi bu dar pencerenin kalıcı commit kaydıdır.
+    # Pointer commit edildiyse eski dosyaları geri alma.
     if canonical_stage_is_current; then
         if dns_stack_rollback_dir_ok "$DNS_STACK_ROLLBACK_DIR"; then
             rm -rf -- "$DNS_STACK_ROLLBACK_DIR" || restore_rc=1
@@ -467,9 +428,7 @@ restore_dns_stack_on_failure() {
         return "$restore_rc"
     fi
 
-    # Yeni config ile çalışan daemon bırakma. Dosyalar geri alındıktan sonra
-    # başlangıçta aktif olanlar restart edilir; restart, ilk stop başarısız
-    # olmuş olsa bile eski içeriğin yeniden yüklenmesini garanti eder.
+    # Yeni config ile çalışan daemon bırakma; dosyalar geri alındıktan sonra restart.
     for daemon in dnsmasq caddy; do
         current_load_state="$(
             systemctl show "$daemon.service" -p LoadState --value \
@@ -552,9 +511,7 @@ cleanup_master_setup() {
         rc="$restore_rc"
     fi
 
-    # Yayın tamamlanmadan kalan generation/link geçicilerini kaldır. Pointer
-    # takası başarıp hemen ardından sinyal alınmışsa aktif generation'a asla
-    # dokunma; readlink karşılaştırması o dar aralığı da güvenli kılar.
+    # Yarım kalan generation/link geçicilerini temizle; aktif generation'a dokunma.
     if [[ -n "$CANONICAL_LINK_TMP" ]]; then
         case "$CANONICAL_LINK_TMP" in
             /usr/local/share/master-stack/.generation.*.link)
@@ -578,8 +535,7 @@ cleanup_master_setup() {
 
     if [[ "$MASTER_LOGGING_ACTIVE" -eq 1 ]]; then
         if [[ "$rc" -ne 0 ]]; then
-            # Journald eki asıl komut hatasını logun sonundan uzaklaştırmadan
-            # önce kullanıcıya gösterilecek küçük hata penceresini sakla.
+            # Journald eki hatayı logun sonundan uzaklaştırmadan önce hata penceresini sakla.
             error_tail="$(tail -c 8192 "$MASTER_LOG_FILE" 2>/dev/null || true)"
             append_master_service_journal
             printf '\nHATA: Kurulum başarısız; rc=%s, aşama=%s, satır=%s\n' \
@@ -666,12 +622,8 @@ wg_ui_probe() {
     [[ "$curl_rc" -eq 0 && "$WG_UI_HTTP_CODE" =~ ^[23][0-9][0-9]$ ]]
 }
 
-# systemd unit dosyaları ve drop-in'leri sır içermez; içerikleri yol ve
-# systemd direktifidir. Betiğin başındaki umask 077 yüzünden `cat >` ile
-# yazıldıklarında 0600 oluşuyorlardı ve systemd her daemon-reload'da
-# "marked world-inaccessible ... has no effect" uyarısı basıyordu (tek bir
-# boot'ta 12 satır). Aşama 6'nın drop-in'leri zaten açıkça 0644'e
-# çekiliyordu; bu yardımcı aynı muameleyi tek yerden, hepsine uygular.
+# Unit dosyaları sır içermez. umask 077 nedeniyle 0600 oluşuyor ve systemd her
+# daemon-reload'da uyarı basıyordu; hepsi tek yerden 0644'e çekilir.
 set_unit_file_mode() {
     local unit_path=""
     for unit_path in "$@"; do
@@ -695,7 +647,7 @@ if [[ ! -r /etc/os-release ]]; then
     exit 1
 fi
 
-# İşletim sistemi doğrulaması herhangi bir paket değişikliğinden önce yapılır.
+# İşletim sistemi doğrulaması paket değişikliğinden önce.
 # shellcheck disable=SC1091
 source /etc/os-release
 
@@ -710,9 +662,7 @@ if [[ "${VERSION_CODENAME:-}" != "trixie" || "${VERSION_ID:-}" != 13* ]]; then
     exit 1
 fi
 
-# Kurulum boyunca systemd-logind shutdown inhibitörü kullan. Bu kalıcı bir
-# servis veya zamanlayıcı değildir; yalnız manuel/harici normal reboot isteğinin
-# apt/Compose/firewall transaction'ını ortadan kesmesini engeller.
+# Kurulum boyunca shutdown inhibitörü; kalıcı servis veya timer değil.
 if [[ "${MASTER_SETUP_INHIBITED:-0}" != "1" ]]; then
     if ! command -v systemd-inhibit >/dev/null 2>&1 ||
        [[ ! -d /run/systemd/system ]]; then
@@ -734,9 +684,7 @@ if [[ "${MASTER_SETUP_INHIBITED:-0}" != "1" ]]; then
         env MASTER_SETUP_INHIBITED=1 bash "$MASTER_SETUP_SELF" "$@"
 fi
 
-# master-maintenance ve network reconcile ile aynı kilit kullanılır. İki
-# master.sh, bakım apply/recover veya adres uzlaştırması aynı Compose/systemd
-# dosyalarını eşzamanlı değiştiremez.
+# reconcile ve bakım ile ortak kilit: eşzamanlı Compose/systemd değişikliği olmasın.
 if ! command -v flock >/dev/null 2>&1; then
     echo "HATA: flock bulunamadı (util-linux kurulmalıdır)." >&2
     exit 1
@@ -755,52 +703,17 @@ export DEBIAN_FRONTEND=noninteractive
 TIMEZONE="Europe/Berlin"
 WG_PUBLIC_PORT="65171"
 QBIT_PUBLIC_PORT="65173"
-# WebDAV portu (host rclone servisi, Tailscale IPv4). WG/qBittorrent
-# portlarıyla aynı kategoride; daha önce yalnız elle yazılıyordu ve
-# dosyada onlarca yerde tekrar ediyordu.
+# WebDAV portu (host rclone servisi, Tailscale IPv4).
 WEBDAV_PORT="65113"
 
-# Onarım cooldown politikasının tek beyan yeri. İki gömülü script bu değeri
-# kendi sabitlerinde tekrar eder (reconcile'da RESTART_COOLDOWN_SECONDS,
-# core-recovery'de COOLDOWN_SECONDS) ve bu tekrar bilinçlidir: her gömülü
-# script bağımsız olarak lint'lenebilmek için kendi kendine yeterli olmak
-# zorunda (bkz. H4 ve scripts/lint-embedded-scripts.sh). Ortak bir değişkene
-# bağlamak o statik analizi bozardı.
-#
-# Tekrarın gerçek riski sessiz ayrışmaydı — özellikle DD-21 timer aralığını
-# tam da bu sabitle hizalamak için değiştirdiği hâlde sabitin kendisi üç ayrı
-# yerde yazılıydı. Aşama 7 artık üçünün de eşit olduğunu doğruluyor, yani
-# biri değişip diğeri unutulursa kurulum durur.
+# Onarım cooldown politikasının tek beyan yeri. İki gömülü script aynı değeri
+# kendi sabitinde tekrar eder (bağımsız lint için zorunlu, bkz. H4); Aşama 7
+# üçünün eşit olduğunu doğrular.
 MASTER_RESTART_COOLDOWN_SECONDS=900
 
-# Hareketli (float) etiketler — 2026-07-31'de tam sürüm pin'lerinin yerini
-# aldı. Gerekçe: tam sürüm pin'i, tekrar çalıştırmayı deterministik yapıyordu
-# ama güvenlik/hata düzeltmelerini de kilitliyordu. Debian deposundan gelen
-# host paketleri (çekirdek, dnsmasq, systemd) trixie stable oldukları için
-# zaten "yama gelir, majör gelmez" davranışını veriyor; float etiketler aynı
-# kuralı konteynerlere taşıyor, böylece tüm stack tek kurala uyar.
-#
-# Float seviyeleri kasten eşit değil, çünkü upstream'lerin sunduğu etiketler
-# eşit değil (2026-07-31'de registry'lerden sorgulandı):
-#   wg-easy 15.3, unpackerr 0.15 -> yalnız yama.
-#   filebrowser (Quantum) stable -> stable hattı içinde yama ve minör.
-#     Bu, yığındaki EN İYİ etiket durumu: upstream hem hareketli bir
-#     `stable` hem tam sürüm pinleri (1.5.0-stable) yayınlıyor. Orijinal
-#     filebrowser'da yalnız majör-içi `v2` vardı, dufs'ta hiç float yoktu.
-#     Bilinen risk: 2.0.0-preview-* yayınlanmış durumda; `stable` yeni
-#     majörü ilan ettiğinde bu etiket habersiz oraya taşınır.
-#   portainer lts -> LTS hattı içinde; Portainer yeni bir LTS ilan ettiğinde
-#     majör atlar. Benimsendiği anda 2.39.5 ile aynı digest'e işaret ediyordu.
-#   qbittorrent latest -> upstream stable, libtorrent majörü dahil. Benimsendiği
-#     anda 5.2.3_v2.0.13-ls469 ile aynı digest'e işaret ediyordu. linuxserver
-#     float etiketi yayınlamadığı için tek seçenek buydu.
-#
-# Hareketli etiketlerin bedeli "çalışan sürümün kaydı yok" olurdu; bu yüzden
-# çözülen digest'ler Aşama 5'ten sonra state.env'e yazılır (bkz. DD-23).
-# Yükseltme ileriye doğru güvenli (konteynerler veri dosyalarını okuyup devam
-# eder) fakat geri dönüş değil: Portainer'ın DB migrasyonu tek yönlüdür.
-# Bozulan bir yükseltmeden dönüş yolu, sağlayıcı seviyesinde (netcup) alınan
-# VPS snapshot'ıdır — bilinçli olarak betiğin sorumluluğunda değildir.
+# Hareketli (float) imaj etiketleri: yama ve minör güncellemeler gelir, majör
+# gelmez. Çözülen digest'ler Aşama 5'ten sonra state.env'e yazılır (DD-23);
+# bozulan bir yükseltmeden dönüş yolu sağlayıcı seviyesindeki VPS snapshot'ıdır.
 PORTAINER_IMAGE="portainer/portainer-ce:lts"
 FILEBROWSER_IMAGE="ghcr.io/gtsteffaniak/filebrowser:stable"
 QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:latest"
@@ -841,9 +754,7 @@ case "$DOWNLOADS_PATH" in
 esac
 echo
 
-# Mevcut yönetilen DNS/Caddy kurulumu bir kez tespit edilir; hem aşağıdaki
-# varsayılanı hem de "sessizce kaldırma yok" kontrolünü aynı koşul besler,
-# böylece ikisi birbirinden ayrı düşemez.
+# Mevcut yönetilen DNS/Caddy kurulumu bir kez tespit edilir.
 EXISTING_MANAGED_DNS=0
 if [[ -e /etc/dnsmasq.d/local-services.conf ||
       -e /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf ||
@@ -851,12 +762,7 @@ if [[ -e /etc/dnsmasq.d/local-services.conf ||
     EXISTING_MANAGED_DNS=1
 fi
 
-# Mevcut kurulumun alan adı, alan adı sorusunun varsayılanı olur. Sabit 'ayc'
-# varsayılanı, farklı bir alan adı kullanan bir kurulumda Enter'a basıldığında
-# domain'i sessizce değiştirirdi: Stage 6 hem local-services.conf'u hem
-# Caddyfile'ı '>' ile sıfırdan yazar, yani eski adlar iki kayıt olarak kalmaz,
-# silinir. Bu değer aşağıdaki alan adı doğrulamasından geçer, dolayısıyla
-# bozuk bir state.env yakalanır.
+# Mevcut kurulumun alan adı, alan adı sorusunun varsayılanı olur.
 EXISTING_LOCAL_DOMAIN=""
 if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -r /etc/master-stack/state.env ]]; then
     EXISTING_LOCAL_DOMAIN="$(
@@ -866,12 +772,8 @@ if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -r /etc/master-stack/state.env ]]; then
 fi
 DEFAULT_LOCAL_DOMAIN="${EXISTING_LOCAL_DOMAIN:-ayc}"
 
-# Tailnet DNS + Caddy artık opsiyonel değil, yığının sabit parçası (V1-8).
-# "Kurulsun mu?" sorusu kaldırıldı; sorulan tek şey alan adı. Enter her iki
-# durumda da "hiçbir şeyi değiştirme" demektir: taze kurulumda varsayılan
-# 'ayc', mevcut kurulumda o an kullanılan alan adı. Farklı bir ad yazmak
-# eski adları siler ve yenilerini kurar — Aşama 6 hem local-services.conf'u
-# hem Caddyfile'ı '>' ile sıfırdan yazdığı için eski kayıtlar birikmez.
+# DNS + Caddy yığının sabit parçası; sorulan tek şey alan adı. Enter =
+# değiştirme. Farklı bir ad yazmak eski kayıtları siler.
 if [[ "$EXISTING_MANAGED_DNS" -eq 1 && -n "$EXISTING_LOCAL_DOMAIN" ]]; then
     echo "Mevcut yönetilen DNS/Caddy kurulumu tespit edildi (.$EXISTING_LOCAL_DOMAIN)."
     echo "Enter mevcut alan adını korur; farklı bir ad yazarsanız eski adlar"
@@ -883,8 +785,7 @@ fi
 read -rp "Yerel alan adı uzantısı [$DEFAULT_LOCAL_DOMAIN]: " LOCAL_DOMAIN_INPUT </dev/tty
 LOCAL_DOMAIN="${LOCAL_DOMAIN_INPUT:-$DEFAULT_LOCAL_DOMAIN}"
 
-# Doğrulama tek yerde: elle girilmiş de olsa state.env'den okunmuş da olsa,
-# kullanılacak her alan adı buradan geçer.
+# Doğrulama tek yerde: kullanılacak her alan adı buradan geçer.
 LOCAL_DOMAIN="$(printf '%s' "$LOCAL_DOMAIN" | tr '[:upper:]' '[:lower:]')"
 
 if [[ ${#LOCAL_DOMAIN} -gt 253 ||
@@ -903,28 +804,12 @@ for label in "${DOMAIN_LABELS[@]}"; do
 done
 echo
 
-# WebDAV (Apple TV/Infuse) kimlik bilgisi. Parola hiçbir aşamada düz metin
-# olarak diske yazılmaz; Aşama 4 yalnız bcrypt hash'ini
-# /etc/master-stack/webdav.htpasswd'ye yazar (bkz. C2'deki "betik sır
-# taşımaz" ilkesi — burada taşınan tek şey kullanıcının kendi belirlediği
-# parolanın hash'idir). Mevcut htpasswd varsa idempotency gereği korunur ve
-# soru hiç sorulmaz; sıfırlamak için dosyayı silip betiği yeniden çalıştırın.
+# WebDAV kimliği. Düz metin parola diske hiç yazılmaz; yalnız bcrypt hash.
+# Mevcut htpasswd varsa korunur ve soru sorulmaz.
 WEBDAV_HTPASSWD_FILE="/etc/master-stack/webdav.htpasswd"
 
-# FileBrowser Quantum politika dosyası. İçinde SIR YOK — yalnız hangi dizinin
-# sunulacağı, port ve signup kapalı.
-#
-# İlk admin hesabı BİLEREK container'a bırakıldı (operatör kararı,
-# 2026-08-01). Quantum kendi quickSetup()'ında admin/admin hesabını yalnız
-# veritabanı yokken bir kez yaratır (`if !exists`), her açılışta ezmez, ve
-# arayüzde ShowFirstLogin uyarısı gösterir — ama parolayı zorla
-# değiştirtmez. Bu, Portainer ve wg-easy'den farklı (onlar hesapsız gelir)
-# ama upstream'in tasarımı bu.
-#
-# Betiğin parolayı kurma seçeneği vardı ve kullanılmadı: FILEBROWSER_ADMIN_PASSWORD
-# ortam değişkeni compose.yaml'a düz metin sır yazmayı, `filebrowser set -u`
-# CLI'si ise container'ı durdurup DB kilidini beklemeyi gerektiriyordu —
-# ikincisi bir idempotency kusuru da üretmişti (bkz. DD-27).
+# FileBrowser Quantum politika dosyası: sunulan dizin, port, signup kapalı.
+# Sır içermez. İlk admin hesabı bilerek container'a bırakıldı (DD-27).
 QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
 WEBDAV_SETUP_CREDENTIALS=0
 WEBDAV_USER=""
@@ -960,13 +845,8 @@ else
 fi
 echo
 
-# Bu blok yalnız BU ÇALIŞTIRMADA KULLANICININ BELİRLEDİĞİ değerleri gösterir;
-# amacı "sistemi değiştirmeden önce seçimlerini onayla"dır, kurulacak yapının
-# envanteri değil. Sabit portlar, tespit edilen public IPv4, işletim sistemi
-# ve wg-easy admin adımı buradan kaldırıldı (2026-07-31): hiçbiri kullanıcı
-# girdisi değil ve hepsi kurulum sonu özetinde — orada üstelik daha
-# ayrıntılı — zaten yazılı. İşletim sistemi ise ayrıca gereksizdi, çünkü
-# Debian 13 olmayan bir hostta OS guard bu noktaya gelmeden çıkıyor.
+# Yalnız bu çalıştırmada kullanıcının belirlediği değerler; kurulacak yapının
+# envanteri değil.
 echo "--- Özet ---"
 echo "İndirme dizini     : $DOWNLOADS_PATH"
 echo "Zaman dilimi       : $TIMEZONE"
@@ -992,8 +872,7 @@ progress_setup_logging
 # ==================================================
 progress_stage_begin 1 "Temel Debian sistemi hazırlanıyor"
 
-# Inhibitor alınmadan hemen önce başlamış bir reboot transaction'ı varsa yeni
-# mutasyona geçme. Inhibitor sonraki normal reboot isteklerini bloke eder.
+# Devam eden bir reboot transaction'ı varsa yeni mutasyona başlama.
 if systemctl list-jobs --no-legend 2>/dev/null |
     awk '$2 ~ /^(reboot|shutdown|poweroff|halt)\.target$/ {found=1}
          END {exit(found ? 0 : 1)}'; then
@@ -1001,8 +880,7 @@ if systemctl list-jobs --no-legend 2>/dev/null |
     exit 1
 fi
 
-# Timer durumunu değiştirmeden önce mevcut aktiflik vektörünü kaydet. İlk
-# kurulumda master unit'lerinin henüz bulunmaması normaldir.
+# Timer durumunu değiştirmeden önce mevcut aktiflik vektörünü kaydet.
 RECONCILE_TIMER_WAS_ACTIVE=0
 RECONCILE_TIMER_WAS_ENABLED=0
 APT_DAILY_TIMER_WAS_ACTIVE=0
@@ -1038,9 +916,7 @@ stop_timer_if_loaded master-network-reconcile.timer
 stop_timer_if_loaded apt-daily.timer
 stop_timer_if_loaded apt-daily-upgrade.timer
 
-# Timer durduktan önce başlamış reconcile oneshot'ı da tamamlanmış systemd
-# job'ları bırakmadan durdurulur. Helper ortak kilidi kullandığı için bu sırada
-# yeni Compose/firewall mutasyonu başlatamaz.
+# Timer durmadan önce başlamış reconcile oneshot'ının bitmesini bekle.
 if [[ "$(systemctl show master-network-reconcile.service \
         -p LoadState --value 2>/dev/null || true)" != "not-found" ]]; then
     systemctl stop master-network-reconcile.service
@@ -1050,8 +926,7 @@ if [[ "$(systemctl show master-network-reconcile.service \
     fi
 fi
 
-# Debian apt servisleri zorla öldürülmez; timer'ları kapalıyken varsa mevcut
-# transaction'ın temiz bitmesi en fazla 300 saniye beklenir.
+# apt servisleri zorla öldürülmez; mevcut transaction'ın temiz bitmesi beklenir.
 APT_BACKGROUND_WAIT_SECONDS=300
 APT_BACKGROUND_WAITED=0
 while systemctl is-active --quiet apt-daily.service 2>/dev/null ||
@@ -1064,8 +939,7 @@ while systemctl is-active --quiet apt-daily.service 2>/dev/null ||
     APT_BACKGROUND_WAITED=$((APT_BACKGROUND_WAITED + 2))
 done
 
-# Timer stop ile kontrol arasındaki dar yarışta reboot job'ı oluştuysa apt veya
-# servis değişikliğine başlamadan vazgeç.
+# Timer stop ile kontrol arasında reboot job'ı oluştuysa vazgeç.
 if systemctl list-jobs --no-legend 2>/dev/null |
     awk '$2 ~ /^(reboot|shutdown|poweroff|halt)\.target$/ {found=1}
          END {exit(found ? 0 : 1)}'; then
@@ -1075,29 +949,23 @@ fi
 
 progress_stage_note 20 "Paket yöneticisi ve timer penceresi hazırlanıyor"
 
-# Paket işlemleri ve takip eden tüm servis logları en baştan Berlin yerel
-# saatini kullansın.
+# Paket ve servis logları en baştan yerel saati kullansın.
 timedatectl set-timezone "$TIMEZONE"
 
-# DPkg::Lock::Timeout: apt-daily/apt-daily-upgrade yukarıda durdurulsa da,
-# ileride benzer bir arka plan sürecinin kilit tutma ihtimaline karşı her
-# apt-get çağrısı kilidi hemen vermek yerine sınırlı süre bekler.
+# DPkg::Lock::Timeout: kilidi tutan bir arka plan sürecine karşı sınırlı bekleme.
 progress_stage_note 30 "Debian paket listeleri indiriliyor"
 retry_network "apt-get update" \
     "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
     apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 45 "Debian sistem güncellemeleri uygulanıyor"
-# Bakım paketlerinin conffile prompt'u noninteractive modda kurulumu
-# durdurmasın; mevcut yönetilmeyen conffile'ları koru, paketin öntanımlı
-# güncel sürümünü yalnız hiç yerel değişiklik yoksa uygula.
+# Conffile prompt'u noninteractive modda kurulumu durdurmasın; yerel değişiklik
+# yapılmış conffile'lar korunur.
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     full-upgrade -y
 progress_stage_note 80 "Temel ağ ve sistem araçları kuruluyor"
-# rclone: host WebDAV servisi (master-webdav.service, Aşama 4/5).
-# apache2-utils: yalnız 'htpasswd' aracı için — WebDAV kimlik dosyasının
-# bcrypt hash'ini üretir; Apache'nin kendisi kurulmaz.
+# rclone: host WebDAV servisi. apache2-utils: yalnız htpasswd aracı için.
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
     iptables coreutils util-linux diffutils jq rclone apache2-utils
@@ -1142,46 +1010,22 @@ retry_network "apt-get update" \
     apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update
 progress_stage_note 22 "UDP soket buffer tabanı ayarlanıyor"
 
-# Bu blok, Tailscale paketi kurulmadan ÖNCE çalışmak zorunda. Debian'ın
-# tailscale.postinst'i 'deb-systemd-invoke restart tailscaled.service'
-# çalıştırır, yani daemon 'apt-get install' içinde ayağa kalkar; scriptin
-# aşağıdaki 'systemctl enable --now tailscaled' satırı yalnız enable'ı
-# garantiler, başlatma işini yapmaz. wireguard-go ise büyük UDP buffer'ını
-# soketi açarken BİR KEZ ister ve talep o anki tavana göre kırpılır. Tavan
-# soket açıldıktan sonra yükseltilirse ayar ilk reboot'a kadar etkisiz kalır.
-# Sağlayıcı imajı rmem_max'ı zaten yüksek set eden makinelerde bu fark
-# görünmez; taban Debian varsayılanındayken ~70x'lik bir kayıptır.
-# Bkz. SECURITY_REVIEW.md M11.
-#
-# Forwarding sysctl'i kasten burada değil, aşağıda kalır: ip_forward dinamik
-# okunur ve yalnız 'tailscale set --advertise-exit-node' öncesinde gerekli,
-# ayrıca IPv6 forwarding'i erkene almak paket indirmesinden önce yönlendirme
-# durumunu değiştirmiş olurdu.
+# Bu blok Tailscale paketi kurulmadan ÖNCE çalışmak zorunda: daemon apt-get
+# içinde ayağa kalkıyor ve wireguard-go UDP buffer'ını soketi açarken BİR KEZ
+# istiyor, sonradan yükseltilen tavan ilk reboot'a kadar etkisiz kalıyor.
+# Bkz. SECURITY_REVIEW.md M11. Forwarding sysctl'i kasten aşağıda kalır.
 
-# Tailscale userspace WireGuard (wireguard-go) kendi UDP soketi için büyük bir
-# alma/gönderme buffer'ı talep eder; bu talep net.core.{r,w}mem_max ile
-# kırpılır. Debian varsayılanı 208 KB'dır ve tailscaled'in istediği ~14 MB'ın
-# çok altındadır, yani taban garanti edilmezse exit-node throughput'u sessizce
-# düşer. Ölçümde bu değerin yalnız sağlayıcı imajının kendi sysctl.d
-# dosyasından geldiği görüldü; kurulum ona bağımlı kalmamalı.
-#
-# Yalnız *tavan* yükseltilir. rmem_max hiçbir bellek tahsis etmez; sadece bir
-# uygulamanın setsockopt(SO_RCVBUF) ile isteyebileceği üst sınırdır. Bu yüzden
-# yükseltmek hiçbir şeyi yavaşlatamaz — cgroup mem_limit'in tam tersi yönde
-# çalışır. rmem_default'a kasten dokunulmaz: o, boyut belirtmeyen her sokete
-# uygulanır ve genel bellek kullanımını artırırdı.
-#
-# Kernel WireGuard (wg-easy) bu değerlerden etkilenmez: encap_rcv callback'i
-# paketi soket alma kuyruğuna hiç girmeden tüketir. Ayar Tailscale içindir.
-# Bkz. docs/design-decisions.md DD-18.
+# Tailscale userspace WireGuard'ın UDP buffer talebi net.core.{r,w}mem_max ile
+# kırpılır; Debian varsayılanı istenenin çok altında ve exit-node throughput'u
+# sessizce düşer. Yalnız TAVAN yükseltilir — bellek tahsis edilmez, rmem_default
+# kasten değişmez. Kernel WireGuard (wg-easy) bundan etkilenmez. Bkz. DD-18.
 NET_BUF_FLOOR_BYTES=16777216
 CURRENT_RMEM_MAX="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
 CURRENT_WMEM_MAX="$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)"
 [[ "$CURRENT_RMEM_MAX" =~ ^[0-9]+$ ]] || CURRENT_RMEM_MAX=0
 [[ "$CURRENT_WMEM_MAX" =~ ^[0-9]+$ ]] || CURRENT_WMEM_MAX=0
 
-# Mevcut değer tabandan büyükse asla düşürülmez (bazı sağlayıcı imajları
-# 64 MB set ediyor). max() alındığı için yeniden çalıştırma da idempotenttir.
+# Mevcut değer tabandan büyükse düşürülmez; max() alındığı için idempotent.
 TARGET_RMEM_MAX="$NET_BUF_FLOOR_BYTES"
 TARGET_WMEM_MAX="$NET_BUF_FLOOR_BYTES"
 if (( CURRENT_RMEM_MAX > TARGET_RMEM_MAX )); then
@@ -1283,9 +1127,8 @@ for netdev in "${NETDEVS[@]}"; do
     fi
 done
 
-# Özellik hiç desteklenmiyorsa başarıyla çık; desteklendiği halde geçici
-# uygulama hatası olduysa reconcile'ın sonraki periyotta yeniden denemesi için
-# başarısızlık döndür.
+# Özellik desteklenmiyorsa başarıyla çık; geçici uygulama hatasında reconcile'ın
+# yeniden denemesi için başarısızlık döndür.
 exit "$APPLY_FAILED"
 GRO_SCRIPT
 chmod 0755 /usr/local/sbin/tailscale-udp-gro
@@ -1295,12 +1138,8 @@ cat >/etc/systemd/system/tailscale-udp-gro.service <<'SYSTEMD'
 Description=Tailscale UDP GRO forwarding optimization
 Wants=network-online.target
 After=network-online.target
-# Bu oneshot kendi restart döngüsünü kurmaz (Restart=no). Başarısızlık yalnız
-# düşük öncelikli performans kaybıdır; master-network-reconcile unit'in
-# ActiveState'ini yirmi dakikada bir denetler ve 15 dakikalık cooldown ile
-# yeniden başlatır — bkz. docs/design-decisions.md DD-11. Geniş sınır yalnız
-# dışarıdan gelen gerçek start fırtınasını keser; normal boot/yönetim
-# çağrılarını sınırlamaz.
+# Bu oneshot kendi restart döngüsünü kurmaz. Arıza yalnız performans kaybıdır;
+# reconcile unit'i yirmi dakikada bir denetleyip yeniden başlatır (DD-11).
 StartLimitIntervalSec=60
 StartLimitBurst=10
 
@@ -1321,8 +1160,7 @@ systemctl enable tailscale-udp-gro.service
 if ! systemctl start tailscale-udp-gro.service; then
     echo "UYARI: UDP GRO optimizasyonu ilk denemede uygulanamadı; reconcile yeniden deneyecek." >&2
     echo "Tailscale kurulumu bu performans optimizasyonu nedeniyle durdurulmadı." >&2
-    # Opsiyonel performans ayarı ana sistemi degraded göstermesin; timer
-    # inactive unit'i görüp sonraki periyotta yeniden başlatır.
+    # Opsiyonel performans ayarı ana sistemi degraded göstermesin.
     systemctl reset-failed tailscale-udp-gro.service >/dev/null 2>&1 || true
 fi
 
@@ -1351,29 +1189,16 @@ tailscale_is_online() {
 
 # --- Etkileşimli Tailscale girişi --------------------------------------
 #
-# Çıplak `tailscale up` bu adım için YETMİYOR; 2026-08-02'de canlıda tam
-# olarak bu yüzden kilitlendi. Mekanizma şöyle: daemon bir nodekey üretir,
-# kontrol düzleminden ona bağlı bir auth path (/a/<id>) alır ve o yolu
-# uzun-yoklamaya başlar. Aynı düğüm için YENİ bir kayıt isteği (kurulumu
-# yeniden başlatmak) ya da tarayıcıda ESKİ bir linki tamamlamak, bekleyen
-# yolu kontrol düzleminde geçersiz kılar; yoklama `410: auth path not
-# found` alır.
-#
-# Asıl tuzak bundan sonrası. Daemon 410'dan sonra
-#     control: doLogin(regen=false, hasUrl=true)
-# ile AYNI ölü yolu yeniden denemeye başlar — yeni anahtar ÜRETMEZ. Yani
-# tek bir 410 girişi kalıcı olarak kilitler: `tailscale up` süresiz
-# bloklar, `tailscale status` ölü linki canlıymış gibi yazdırmaya devam
-# eder, ve operatörün gördüğü şey "giriş yaptım ama ilerlemiyor" olur.
-# Ölçüldü: iki ayrı bağlantı, ikisi de 13 saniyede öldü, kurulum sonsuza
-# kadar bekledi.
+# Tek bir 410 (auth path not found) girişi KALICI olarak kilitler: daemon aynı
+# ölü auth path'i yeni anahtar üretmeden sonsuza dek yeniden dener, `tailscale up`
+# süresiz bloklar ve `tailscale status` ölü linki canlıymış gibi yazmaya devam
+# eder. Aşağıdaki her şey bu sonsuzluğu sınırlamak içindir.
 
 tailscale_daemon_ready() {
     local _
     for _ in $(seq 1 30); do
-        # Düz `tailscale status` logged-out durumda rc=1 döndüğü için
-        # hazırlık ölçüsü olamaz; `--json` LocalAPI'ye konuşur ve
-        # logged-out iken de rc=0 verir (2026-08-02'de hedefte ölçüldü).
+        # Düz `tailscale status` logged-out iken rc=1 döner, hazırlık ölçüsü olamaz;
+        # `--json` LocalAPI'ye konuşur ve logged-out iken de rc=0 verir.
         if tailscale status --json >/dev/null 2>&1; then
             return 0
         fi
@@ -1382,50 +1207,18 @@ tailscale_daemon_ready() {
     return 1
 }
 
-# Kilitlenmeyi journal'dan teşhis etmiyoruz. İlk üç deneme `journalctl`'de
-# `410: auth path not found` aramaya dayanıyordu; üçü de farklı biçimde
-# yanlıştı ve hepsini gerçek journal verisine koşan test yakaladı:
-#
-#   1. "410 gördüm → kilitli" — YANLIŞ. 410 başarılı girişin de normal
-#      parçası: operatör tarayıcıda onaylayınca kontrol düzlemi auth
-#      path'i emekliye ayırıyor, uçuştaki yoklama 410 alıyor, daemon
-#      hemen yeniden kaydolup `machineAuthorized=true` alıyor. Ölçüldü,
-#      hepsi aynı saniyede (2026-08-02 18:12:49).
-#   2. "410 sonrası toparlanma yok → kilitli" — `journalctl | grep -q`
-#      pipefail altında SIGPIPE yüzünden eşleşmeyi başarısız gösteriyordu,
-#      üstelik aralıklı olarak.
-#   3. Pencerenin üst sınırı yoktu; sonraki alakasız bir girişin başarısı
-#      önceki kilidin toparlanması sayılıyordu.
-#
-# Yanlış-pozitifin yönü tehlikeli: başarmakta olan bir girişi öldürüp daemon'ı
-# yeniden başlatmak, düzeltmenin düzelttiğini iddia ettiği arızayı üretir.
-# Journal bu yüzden hâlâ bu kararın girdisi değildir.
-#
-# Q1-21'de güvenli bir erken teşhis mümkün oldu, çünkü aynı arıza iki ayrı
-# nodekey ile canlıda yeniden üretildi ve LocalAPI'nin yapılandırılmış imzası
-# ölçüldü: BackendState=NeedsLogin, Self.Online=false, boş Self.ID ve Health
-# içinde `http 410: auth path not found`. Başarılı akıştaki 410 bir saniyeden
-# kısa sürerken arızalı imza kalıcıdır. Tek örnek yine karar değildir; üç
-# ardışık iki-saniyelik örnek gerekir. Bir örnek kaybolursa sayaç sıfırlanır.
-# Böylece başarmakta olan giriş korunur, kalıcı ölü yol ise genel 300 saniyelik
-# zaman aşımını beklemeden temizlenir.
-#
-# Yapılandırılmış imza görülmezse eski güvenli sınır aynen kalır: giriş verilen
-# süre içinde tamamlanmazsa — sebebi ne olursa olsun — daemon sıfırlanır ve
-# taze bir bağlantı basılır. Bu, bilinmeyen diğer takılma sınıflarını kapsar.
-#
-# Kurtarmanın restart üzerine kurulu olması ölçüme dayanıyor:
-# `tailscale logout` yetmiyor, daemon ölü auth URL'ini bellekte tutup
-# `doLogin(regen=false, hasUrl=true)` ile onu yeniden denemeye devam
-# ediyor. Temizleyen tek şey tailscaled'i yeniden başlatmak.
-#
+# Kilitlenme journal'dan teşhis EDİLMEZ: 410 başarılı girişin de normal parçası
+# ve yanlış pozitif, başarmakta olan bir girişi öldürür (DD-37). Teşhis
+# LocalAPI'nin yapılandırılmış imzasındandır — NeedsLogin + offline + boş Self.ID
+# + Health'te 410 — ve üç ardışık iki-saniyelik örnek gerekir; biri kaybolursa
+# sayaç sıfırlanır (DD-42). İmza görülmezse eski güvenli sınır kalır: süre
+# dolduğunda daemon sıfırlanıp taze bağlantı basılır. Kurtarma restart üzerine
+# kuruludur; `tailscale logout` ölü URL'i temizlemiyor.
 TAILSCALE_LOGIN_ATTEMPTS=3
 TAILSCALE_AUTH_PATH_DEAD_SAMPLES=3
 TAILSCALE_LOGIN_STATUS_TIMEOUT=3
 TAILSCALE_LOGIN_POST_SUCCESS_GRACE=15
-# Deneme başına süre. Bu adım insan hızında: operatörün bağlantıyı görüp
-# tarayıcıda açması gerekiyor. Cömert ama sonsuz değil — bugünkü arıza
-# tam olarak "sonsuz" yüzünden fark edilmedi.
+# Deneme başına süre. Adım insan hızındadır: cömert ama sonsuz değil.
 TAILSCALE_LOGIN_TIMEOUT=300
 
 tailscale_login_state() {
@@ -1499,8 +1292,7 @@ tailscale_interactive_login() {
         elapsed=0
         outcome=""
         while :; do
-            # `tailscale up`un yazdıklarını gerçek zamanlı aktar; auth
-            # linki burada geliyor ve operatör onu beklemeden görmeli.
+            # `tailscale up` çıktısını gerçek zamanlı aktar; auth linki burada geliyor.
             total="$(wc -l <"$out_file")"
             if [[ "$total" -gt "$streamed" ]]; then
                 sed -n "$((streamed + 1)),${total}p" "$out_file" |
@@ -1522,8 +1314,7 @@ tailscale_interactive_login() {
                     break
                 fi
             else
-                # Başarılı akışta görülebilen geçici 410 dahil, kesintisiz
-                # olmayan hiçbir örnek daemon restart'ına yol açmaz.
+                # Kesintisiz olmayan hiçbir örnek daemon restart'ına yol açmaz.
                 auth_path_dead_samples=0
             fi
 
@@ -1543,27 +1334,10 @@ tailscale_interactive_login() {
         fi
 
         if [[ "$outcome" == "0" ]]; then
-            # `tailscale up` sıfırla döndü: giriş BAŞARILI, operatör
-            # tarayıcıdaki adımı tamamladı. Buradaki kısa bekleme yalnız bir
-            # HIZLI YOL — düğüm zaten online olduysa hemen dönmek için.
-            #
-            # Süre dolarsa yine BAŞARI dönülür. Q1-21'de burası
-            # `outcome="incomplete"` yapıp daemon'ı yeniden başlatıyordu ve
-            # bu, DD-37'nin engellemek için yazıldığı yanlış-pozitifti:
-            # başarılı bir girişi çöpe atıp operatörü yeni bir tarayıcı
-            # doğrulamasına zorluyordu. İki sebeple yanlıştı:
-            #
-            #   1. Hemen aşağıdaki blok AYNI koşulu (`tailscale ip -4` +
-            #      `tailscale_is_online`) zaten 180 saniye boyunca bekliyor.
-            #      Aynı şey için 15 ve 180 saniyelik iki kapı vardı ve yıkıcı
-            #      çareye sahip olan sıkı olanıydı.
-            #   2. `tailscale up` başarılıyken düğümün online olamaması bir
-            #      kimlik doğrulama sorunu değil, bağlantı sorunudur. Yeni
-            #      bir tarayıcı girişi onu düzeltmez; 180 saniyelik bekleme
-            #      ise başarısızlığı açık bir hatayla raporlar.
-            #
-            # Yani karar aşağıya devredilir. 15 saniye burada bir tavan
-            # değil, sadece "erken dönebilir miyiz" penceresidir.
+            # `tailscale up` sıfırla döndü: giriş BAŞARILI. Buradaki kısa bekleme yalnız bir
+            # HIZLI YOL; süre dolarsa yine başarı dönülür. Aynı koşulu hemen aşağıdaki blok
+            # zaten 180 saniye bekliyor ve `up` başarılıyken online olamamak kimlik değil
+            # bağlantı sorunudur — yeni bir tarayıcı girişi onu düzeltmez (DD-42).
             post_success_started=$SECONDS
             while [[ "$((SECONDS - post_success_started))" -lt "$TAILSCALE_LOGIN_POST_SUCCESS_GRACE" ]]; do
                 if tailscale_login_complete; then
@@ -1614,21 +1388,16 @@ tailscale_interactive_login() {
 }
 
 tailscale_journal_has_node_not_found() {
-    # `grep -q` burada kullanılamaz: eşleşmeden sonra erken çıkar, büyük bir
-    # journal akışında journalctl SIGPIPE/141 alır ve pipefail bulunan
-    # eşleşmeyi başarısızlığa çevirir. Normal grep çıktısını /dev/null'a
-    # yönlendirerek akışın tamamını tüketir; gerçek journalctl hatası ise
-    # pipefail sayesinde yine başarısız kalır.
+    # `grep -q` kullanılamaz: erken çıkışta journalctl SIGPIPE alır ve pipefail
+    # bulunan eşleşmeyi başarısızlığa çevirir (DD-39). Akışın tamamı tüketilir.
     journalctl -u tailscaled \
         --since "${MASTER_SETUP_STARTED_AT:--5min}" \
         --no-pager 2>/dev/null |
         grep -F "node not found" >/dev/null
 }
 
-# Giriş gerekip gerekmediği tek bir bayrakla taşınıyor, çünkü iki ayrı yol
-# aynı yere çıkıyor: hiç profil yok, ya da profil var ama karşılığı silinmiş.
-# İkincisinde yerel profil değersizdir; bayrak sayesinde ikisi de aşağıdaki
-# tek etkileşimli giriş bloğuna düşer.
+# Giriş gereği tek bayrakla taşınır: ya hiç profil yok, ya profil var ama
+# karşılığı silinmiş — ikisi de aynı etkileşimli giriş bloğuna düşer.
 TAILSCALE_NEEDS_LOGIN=0
 
 if ! tailscale ip -4 >/dev/null 2>&1; then
@@ -1640,39 +1409,21 @@ else
         sleep 1
     done
     if ! tailscale_is_online; then
-        # Seviye, hangi dala gidileceği belli olmadan yazılmıyor: 404 dalı
-        # kurtarılabilir ve kurulum başarıyla devam eder, dolayısıyla orada
-        # HATA demek yanlış olur — başarılı bir kurulumun logunda HATA satırı
-        # bırakırdı. V1-11 tam olarak bu sınıftandı: kurtarılabilir bir
-        # durumun başarısızlık olarak raporlanması.
-        # Üç ayrı arıza aynı zaman aşımını üretir ve çözümleri farklıdır:
-        # ağ/control-plane erişilemez, node key süresi dolmuş, ya da düğüm
-        # Tailscale panelinden SİLİNMİŞ. Sonuncusu yerelde tamamen normal
-        # görünür — profil kayıtlı, key süresi geçerli, tailscaled active —
-        # ve yalnız journald'deki "node not found" ile ayırt edilir. Bu
-        # 2026-07-31'de gerçekten yaşandı: kurulum doğru biçimde durdu ama
-        # mesaj, gereken tek işlemin `tailscale logout` + yeniden giriş
-        # olduğunu söylemiyordu. Ayrımı burada yap; operatör journald
-        # okumak zorunda kalmasın.
-        # Pencere olarak sabit bir süre değil, BU çalıştırmanın başlangıcı
-        # kullanılıyor: çözülmüş eski bir node-not-found arızasından kalan
-        # kayıt, dakikalar sonra oluşan başka bir arızaya yanlış teşhis
-        # koymasın.
+        # Aynı zaman aşımını üç ayrı arıza üretir ve çözümleri farklıdır. Düğümün
+        # Tailscale panelinden silinmiş olması yerelde tamamen normal görünür ve yalnız
+        # journald'deki "node not found" ile ayırt edilir. 404 dalı kurtarılabilir
+        # olduğu için orada HATA denmez. Pencere olarak bu çalıştırmanın başlangıcı
+        # kullanılır; eski bir kayıt yeni bir arızaya teşhis koymasın.
         if tailscale_journal_has_node_not_found; then
             echo "UYARI: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
             echo "Düğüm Tailscale panelinden silinmiş; yerel profil geçerli görünse de" >&2
             echo "sunucu tarafında karşılığı yok." >&2
-            # Buraya gelindiğinde teşhis kesin: profil yerelde duruyor ama
-            # sunucu tarafında yok, yani değersiz. Operatöre "tailscale
-            # logout çalıştırıp betiği yeniden başlat" demek gereksiz bir
-            # manuel adımdı — betik zaten bilmesi gereken her şeyi biliyor.
-            # Profili temizleyip aşağıdaki etkileşimli giriş bloğuna düş.
+            # Profil yerelde duruyor ama sunucu tarafında yok, yani değersiz. Temizleyip
+            # aşağıdaki etkileşimli giriş bloğuna düş.
             echo "Yerel profil temizlenip yeni kayıt açılıyor..." >&2
             if ! timeout 60 tailscale logout; then
-                # Otomatik kurtarmanın tek adımı başarısızsa sessizce devam
-                # etme: `tailscale up` eski profille yeni kayıt açmayabilir
-                # ve operatör nedenini anlamadığı bir duruma düşer.
+                # Otomatik kurtarmanın tek adımı başarısızsa sessizce devam etme.
                 echo "HATA: Yerel Tailscale profili temizlenemedi." >&2
                 echo "Elle deneyin: tailscale logout && bash $0" >&2
                 exit 1
@@ -1758,16 +1509,10 @@ EOF
 
 progress_stage_note 15 "Docker daemon yapılandırması hazırlanıyor"
 
-# Container DNS'ini host resolv.conf'undan bağımsızlaştır. MagicDNS/accept-dns
-# host resolv.conf'unu 100.100.100.100'e çevirirse, legacy default bridge'e
-# elle eklenen bir container bu adresi aynen kopyalar ve sorgusu FORWARD
-# yolundaki mangle DROP'a takılırdı. Sabit public çözücüler bunu engeller;
-# host tarafındaki tailscaled/dnsmasq/Caddy çözümlemesi bu ayardan etkilenmez.
-# Yalnız "dns" anahtarı yönetilir: data-root/live-restore gibi sonradan
-# eklenmiş daemon ayarları jq birleştirmesiyle olduğu gibi korunur.
-# Sonuç: host ve container'lar kasıtlı olarak iki farklı DNS çözümleme yolu
-# izler — host tailscaled/MagicDNS'i kullanmaya devam edebilir, container'lar
-# ise her zaman yukarıdaki sabit genel çözücüleri kullanır.
+# Container DNS'ini host resolv.conf'undan bağımsızlaştır: MagicDNS adresini
+# kopyalayan bir container'ın sorgusu FORWARD yolundaki mangle DROP'a takılırdı.
+# Yalnız "dns" anahtarı yönetilir; diğer daemon ayarları jq ile korunur. Host ve
+# container'lar bilinçli olarak iki farklı çözümleme yolu izler.
 DOCKER_WAS_ACTIVE=0
 if systemctl is-active --quiet docker.service 2>/dev/null; then
     DOCKER_WAS_ACTIVE=1
@@ -1797,10 +1542,8 @@ else
     DOCKER_DAEMON_JSON_CHANGED=1
 fi
 
-# İçerik zaten güncelse bile, dosya çalışan daemon'un son başlangıcından SONRA
-# değiştiyse restart hâlâ gerekir: önceki bir çalıştırma dosyayı yazıp stage 5'e
-# ulaşmadan kesilmiş olabilir. Yalnız içerik diff'ine güvenmek bu durumda
-# restart'ı sonsuza dek atlar ve daemon eski ayarla çalışmaya devam eder.
+# İçerik güncel olsa da dosya daemon'un son başlangıcından SONRA değiştiyse
+# restart yine gerekir: önceki bir çalıştırma yarıda kesilmiş olabilir.
 if [[ "$DOCKER_WAS_ACTIVE" -eq 1 && "$DOCKER_DAEMON_JSON_CHANGED" -eq 0 ]]; then
     DAEMON_JSON_MTIME_EPOCH="$(stat -c %Y /etc/docker/daemon.json 2>/dev/null || echo 0)"
     DOCKER_ACTIVE_SINCE_EPOCH="$(
@@ -1870,8 +1613,8 @@ case "$MODE" in
         ;;
 esac
 
-# Systemd normalde çağrıları serileştirir; manuel/paralel çağrılarda staging
-# zincirlerinin birbirini temizlememesi için ayrıca süreç kilidi kullan.
+# Manuel/paralel çağrılarda staging zincirleri birbirini temizlemesin diye
+# ayrıca süreç kilidi kullanılır.
 exec 9>/run/lock/docker-tailscale-fw.lock
 if ! "$FLOCK_BIN" -w 30 9; then
     echo "HATA: Firewall uygulama kilidi 30 saniyede alınamadı." >&2
@@ -1885,10 +1628,9 @@ route_value() {
         '{for (i=1; i<=NF; i++) if ($i==key) {print $(i+1); exit}}'
 }
 
-# Boot'ta tailscaled "started" olsa da tailscale0'ın IPv4 alması birkaç saniye
-# sürebilir. Burada anında başarısız olmak, Requires zinciri üzerinden
-# master-compose'un açılış job'ını iptal ettirir; bu yüzden kardeş betikler
-# (master-compose-ipv4, caddy-tailnet-env) gibi adresler hazır olana dek bekle.
+# Boot'ta tailscale0'ın IPv4 alması birkaç saniye sürebilir. Anında başarısız
+# olmak Requires zinciri üzerinden master-compose'un açılış job'ını iptal
+# ettirir; kardeş betikler gibi adres hazır olana dek bekle.
 WAN4_IF=""
 PUBLIC_IPV4=""
 TAILSCALE_IPV4=""
@@ -1920,9 +1662,7 @@ fi
 # IPv6 WAN opsiyoneldir; yokluğu beklemeyi gerektirmez.
 WAN6_IF="$(route_value -6 2001:4860:4860::8888 dev || true)"
 
-# Docker ve Tailscale'in oluşturduğu zincirler boot'ta hemen hazır olmaz.
-# Bu bekleme tek bir yerde tanımlıdır; hem DOCKER-USER hem de FORWARD
-# prefix'indeki diğer zincirler aynı sabrı kullanır.
+# Docker ve Tailscale zincirleri boot'ta hemen hazır olmaz; bekleme tek yerde.
 wait_for_chain() {
     local bin="$1" chain="$2"
     for _ in $(seq 1 30); do
@@ -1967,14 +1707,12 @@ create_staging_chain() {
 activate_staging_chain() {
     local bin="$1" staging_chain="$2" stale_chain=""
 
-    # Yeni zincir tamamen dolduktan sonra ilk sıraya alınır. Bu noktaya kadar
-    # varsa eski MASTER-DOCKER kesintisiz çalışmaya devam eder.
+    # Yeni zincir tamamen dolduktan sonra ilk sıraya alınır; o ana kadar varsa
+    # eski zincir kesintisiz çalışmaya devam eder.
     "$bin" -w 5 -I DOCKER-USER 1 -j "$staging_chain"
     remove_legacy_wide_rules "$bin"
 
-    # Bu dedicated sunucuda DOCKER-USER bütünüyle master policy'ye aittir.
-    # Yeni staging jump ilk sırada kalırken sonraki bütün kullanıcı kurallarını
-    # sil; izin verilen akışı sonradan eklenmiş bir DROP ile bozmayı önle.
+    # DOCKER-USER bütünüyle master policy'ye aittir; sonradan eklenmiş kuralları sil.
     while [[ "$(
         "$bin" -w 5 -S DOCKER-USER 2>/dev/null |
             "$AWK_BIN" '$1 == "-A" {count++} END {print count+0}'
@@ -2008,18 +1746,9 @@ ensure_forward_prefix() {
     local bin="$1" target="" last_rule=""
     [[ -n "$bin" ]] || return 0
 
-    # Bu üç zinciri bu betik değil, Docker ve Tailscale oluşturur; adları
-    # ve düzenleri o projelerin iç detayıdır, kararlı bir arayüz değil.
-    # Eksik olanı açıkça adlandır: buradaki sessiz bir hata set -e ile
-    # helper'ın tamamını sonlandırır ve en olası neden (Docker'ın FORWARD
-    # zincirlerini yeniden adlandırması/yapılandırması) aksi halde
-    # görünmez kalır.
-    #
-    # Bekleme, apply_ipv4/apply_ipv6'nın kullandığı sabrin aynısıdır.
-    # Daha önce burada beklemesiz tek bir -L kontrolü vardı; bu fonksiyon
-    # o ikisinden ÖNCE çalıştığı için boot'ta sabırsız kontrol sabırlı
-    # olanların önüne geçiyor ve zincirler birkaç saniye gecikirse helper
-    # daha beklemeye başlamadan ölüyordu.
+    # Bu üç zinciri Docker ve Tailscale oluşturur; adları kararlı bir arayüz değil.
+    # Eksik olanı açıkça adlandır — sessiz bir hata set -e ile helper'ın tamamını
+    # sonlandırır. Bekleme apply_ipv4/apply_ipv6 ile aynı sabrı kullanır.
     for target in DOCKER-USER DOCKER-FORWARD ts-forward; do
         if ! wait_for_chain "$bin" "$target"; then
             echo "HATA: Beklenen firewall zinciri bulunamadı: $target ($bin)." >&2
@@ -2028,9 +1757,8 @@ ensure_forward_prefix() {
         fi
     done
 
-    # Önce yeni doğru prefix'i ekle, sonra aşağıdaki eski kopyaları satır
-    # numarasıyla temizle. Böylece DOCKER-USER hiçbir anda ilk savunma
-    # noktasını kaybetmez.
+    # Önce doğru prefix eklenir, sonra eski kopyalar silinir; DOCKER-USER hiçbir an
+    # ilk savunma noktasını kaybetmez.
     "$bin" -w 5 -I FORWARD 1 -j ts-forward
     "$bin" -w 5 -I FORWARD 1 -j DOCKER-FORWARD
     "$bin" -w 5 -I FORWARD 1 -j DOCKER-USER
@@ -2067,8 +1795,8 @@ create_ts_guard_staging_chain() {
 activate_ts_guard_staging_chain() {
     local bin="$1" staging_chain="$2" stale_chain=""
 
-    # mangle/FORWARD, filter/FORWARD'dan önce çalışır. Böylece Docker ve
-    # Tailscale'ın filter jump'larını hangi sırada eklediğinden etkilenmez.
+    # mangle/FORWARD, filter/FORWARD'dan önce çalışır; filter jump sırasından
+    # etkilenmez.
     "$bin" -w 5 -t mangle -I FORWARD 1 -j "$staging_chain"
 
     while "$bin" -w 5 -t mangle -C FORWARD -j "$TS_GUARD_CHAIN" 2>/dev/null; do
@@ -2103,9 +1831,8 @@ apply_tailnet_guard() {
     "$bin" -w 5 -t mangle -A "$staging_chain" \
         -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-    # Exit node yalnız tespit edilen WAN arayüzüne forward eder. Tailscale'ın
-    # kullandığı markı burada da uygula; filter/FORWARD sırasındaki bir sapma
-    # ts-forward'u atlatsa bile ts-postrouting MASQUERADE çalışmaya devam eder.
+    # Exit node yalnız tespit edilen WAN arayüzüne forward eder. Tailscale markı
+    # burada da uygulanır ki ts-postrouting MASQUERADE çalışmaya devam etsin.
     if [[ -n "$wan_if" ]]; then
         "$bin" -w 5 -t mangle -A "$staging_chain" \
             -i "$TS_IF" -o "$wan_if" \
@@ -2114,11 +1841,8 @@ apply_tailnet_guard() {
             -i "$TS_IF" -o "$wan_if" -j ACCEPT
     fi
 
-    # WebDAV host servisi (master-webdav) Caddy/dnsmasq gibi host INPUT
-    # yolundadır ve bu kurallardan etkilenmez; eski sftpgo container'ının
-    # gerektirdiği dar --ctorigdst 65113 istisnası V1-3'te kaldırıldı
-    # (DD-20). Tailnet -> Docker/LAN ve Docker/LAN/WAN -> Tailnet yeni
-    # akışları artık istisnasız kapalı.
+    # Tailnet -> Docker/LAN ve Docker/LAN/WAN -> Tailnet yeni akışları istisnasız
+    # kapalı (DD-20). Host WebDAV INPUT yolundadır ve bundan etkilenmez.
     "$bin" -w 5 -t mangle -A "$staging_chain" -i "$TS_IF" -j DROP
     "$bin" -w 5 -t mangle -A "$staging_chain" -o "$TS_IF" -j DROP
     "$bin" -w 5 -t mangle -A "$staging_chain" -j RETURN
@@ -2138,9 +1862,8 @@ apply_ipv4() {
     "$bin" -w 5 -A "$staging_chain" \
         -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 
-    # Exit node: mangle guard paketi Tailscale markıyla işaretledi. Buradaki
-    # terminal ACCEPT, sonradan bozulmuş bir Docker FORWARD alt zincirinin
-    # exit-node akışını kesmesini önler; ts-postrouting mark üzerinden NAT yapar.
+    # Terminal ACCEPT: bozulmuş bir Docker FORWARD alt zinciri exit-node akışını
+    # kesmesin.
     "$bin" -w 5 -A "$staging_chain" \
         -i "$TS_IF" -o "$WAN4_IF" -j ACCEPT
 
@@ -2166,8 +1889,8 @@ apply_ipv4() {
         --ctorigdst "$PUBLIC_IPV4" --ctorigdstport 65171 \
         -j RETURN
 
-    # Açık izinlere ve ESTABLISHED,RELATED kuralına uymayan tüm diğer WAN
-    # forward trafiğini (INVALID/UNTRACKED dahil) fail-closed düşür.
+    # Açık izinlere ve ESTABLISHED,RELATED'e uymayan tüm WAN forward trafiğini
+    # (INVALID/UNTRACKED dahil) fail-closed düşür.
     "$bin" -w 5 -A "$staging_chain" -i "$WAN4_IF" -j DROP
 
     "$bin" -w 5 -A "$staging_chain" -j RETURN
@@ -2178,12 +1901,8 @@ apply_ipv6() {
     local bin="$1" staging_chain=""
     [[ -n "$bin" ]] || return 0
 
-    # Not: ensure_forward_prefix bu noktadan önce zaten aynı zinciri
-    # bekleyip bulamazsa helper'ı sonlandırdığı için buraya normalde
-    # ulaşılmaz. Kasıtlı bir artık güvenlik ağı olarak duruyor: IPv4
-    # zorunlu (apply_ipv4 hata verir), IPv6 ise en iyi çaba sayılır, ve
-    # zincir bu iki adım arasında kaybolursa IPv6 politikası sessizce
-    # atlanır, kurulum durmaz.
+    # Artık güvenlik ağı: IPv4 zorunlu, IPv6 en iyi çabadır. Zincir iki adım
+    # arasında kaybolursa IPv6 politikası atlanır, kurulum durmaz.
     if ! wait_for_docker_user "$bin"; then
         echo "UYARI: IPv6 DOCKER-USER zinciri bulunamadı; IPv6 politikası atlandı." >&2
         return 0
@@ -2402,10 +2121,8 @@ Wants=network-online.target
 After=network-online.target tailscaled.service docker.service
 PartOf=docker.service tailscaled.service
 OnFailure=master-network-reconcile.service
-# Firewall helper tek seferlik ve kendi içinde tüm hazır-olma beklemelerini
-# yapar. Otomatik restart döngüsü yoktur; ilk hata reconcile'ı bir kez
-# tetikler, kalıcı hata sonraki yirmi dakikalık timer'a bırakılır. Geniş sınır
-# yalnız dışarıdan gelen gerçek start fırtınasını keser.
+# Firewall helper tek seferliktir ve hazır-olma beklemelerini kendi yapar.
+# Otomatik restart döngüsü yok; kalıcı hata yirmi dakikalık timer'a bırakılır.
 StartLimitIntervalSec=60
 StartLimitBurst=10
 
@@ -2414,8 +2131,7 @@ Type=oneshot
 ExecStart=/usr/local/sbin/docker-tailscale-fw
 RemainAfterExit=yes
 Restart=no
-# Helper'ın 30 sn süreç kilidi + 300 sn adres bekleme + xtables/DOCKER-USER
-# beklemelerini kendi hata mesajlarıyla tamamlayabilmesi için güvenlik payı.
+# Helper'ın kendi beklemelerini hata mesajlarıyla tamamlayabilmesi için pay.
 TimeoutStartSec=600s
 
 [Install]
@@ -2423,9 +2139,8 @@ WantedBy=multi-user.target
 FW_SYSTEMD
 set_unit_file_mode /etc/systemd/system/docker-tailscale-fw.service
 
-# Docker her başlatıldığında ayrı firewall unit'ini de çeker. Politika yalnız
-# bu unit tarafından uygulanır; aynı helper Docker ExecStartPost'tan ikinci kez
-# çağrılmaz. Geçici ağ/route hatasını reconcile sonraki periyotta yeniden dener.
+# Docker her başlatıldığında firewall unit'ini de çeker; politika yalnız o unit
+# tarafından uygulanır, helper ikinci kez çağrılmaz.
 install -d -m 0755 /etc/systemd/system/docker.service.d
 cat >/etc/systemd/system/docker.service.d/99-tailscale-forward.conf <<DROPIN
 [Unit]
@@ -2435,9 +2150,8 @@ RequiresMountsFor=$DOWNLOADS_PATH
 DROPIN
 set_unit_file_mode /etc/systemd/system/docker.service.d/99-tailscale-forward.conf
 
-# Ayrı bir stop/start tailscaled akışında PartOf ile duran firewall ve Compose
-# unit'leri timer'ı beklemeden doğrudan geri çekilsin. Mutual Wants/Requires
-# aktivasyon bağıdır; aşağıdaki Before ile ordering tek yönde kalır.
+# Ayrı bir tailscaled stop/start akışında PartOf ile duran unit'ler timer'ı
+# beklemeden geri çekilsin.
 install -d -m 0755 /etc/systemd/system/tailscaled.service.d
 cat >/etc/systemd/system/tailscaled.service.d/98-master-stack.conf <<'TS_STACK_DROPIN'
 [Unit]
@@ -2447,9 +2161,8 @@ TS_STACK_DROPIN
 set_unit_file_mode /etc/systemd/system/tailscaled.service.d/98-master-stack.conf
 
 systemctl daemon-reload
-# İlk aktivasyonu bütün helper/unit dosyaları ve OnFailure hedefi yazıldıktan
-# sonraki Aşama 5'e ertele. Fresh kurulumda firewall yine container'lardan önce
-# uygulanır; aynı kurulum içinde gereksiz ikinci başlangıç sayılmaz.
+# İlk aktivasyon, tüm helper/unit dosyaları yazıldıktan sonraki Aşama 5'e
+# ertelenir; firewall yine container'lardan önce uygulanır.
 systemctl enable docker-tailscale-fw.service
 
 progress_stage_note 95 "Docker ve firewall unit tanımları doğrulanıyor"
@@ -2465,17 +2178,10 @@ install -d -m 0700 -o root -g root /data/portainer/data
 install -d -m 0750 -o 1000 -g 1000 /data/qbittorrent/appdata
 install -d -m 0700 -o root -g root /data/wg-easy/config
 
-# wg-easy container'ının kendi SYS_MODULE capability'sine ihtiyaç duymaması
-# için gereken çekirdek modüllerini burada, host'ta, bağımsız birer hazırlık
-# adımı olarak yüklemeyi dene. wireguard, WireGuard arayüzü için gerekli.
-# ip6_tables/ip6table_nat ise wg-quick'in PostUp/PostDown kurallarının
-# çağırdığı legacy ip6tables ikilisi için gerekli: host'un kendi ip6tables'ı
-# nftables backend'i üzerinden çalıştığından (nf_tables/nft_compat), bu
-# legacy modülleri host'ta başka hiçbir şey otomatik yüklemez — IPv6 WAN'ın
-# var olup olmaması bunu değiştirmez. Tailscale'in kendi tun/userspace
-# yoluyla ilişkisizdir; yalnız wg-easy'nin ihtiyacı için var. Bir modül
-# zaten çekirdeğe gömülüyse ya da yüklüyse bu adım no-op'tur; başarısız
-# olursa yalnız uyarı verir, kurulumu durdurmaz.
+# wg-easy container'ı kendi SYS_MODULE capability'sini istemesin diye çekirdek
+# modüllerini host'ta yükle. ip6_tables/ip6table_nat, wg-quick'in çağırdığı
+# legacy ip6tables için gerekir ve host'ta başka hiçbir şey onları yüklemez.
+# Başarısızlık yalnız uyarıdır, kurulumu durdurmaz.
 for wg_module in wireguard ip6_tables ip6table_nat; do
     if ! modprobe "$wg_module" 2>/tmp/modprobe-wg.err; then
         echo "UYARI: 'modprobe $wg_module' başarısız oldu:" >&2
@@ -2484,9 +2190,7 @@ for wg_module in wireguard ip6_tables ip6table_nat; do
     rm -f /tmp/modprobe-wg.err
 done
 
-# Yalnız bu boot oturumu değil, her reboot'ta wg-easy başlamadan önce
-# modüller otomatik yüklensin diye systemd-modules-load.service'e kalıcı
-# olarak kaydet.
+# Her reboot'ta wg-easy başlamadan önce modüller otomatik yüklensin.
 cat >/etc/modules-load.d/wg-easy.conf <<'MODULES_EOF'
 wireguard
 ip6_tables
@@ -2512,13 +2216,9 @@ install -d -m 0700 -o root -g root /root/docker
 install -d -m 0700 -o root -g root /etc/master-stack
 install -d -m 0755 -o root -g root /usr/local/share/master-stack
 
-# Host WebDAV servisi (rclone) medya ağacını uid 1000'in konteyner içi
-# rolünün host karşılığı olarak okur: ağaç 0750 1000:1000 olduğundan,
-# servise gid 1000'e üyelik verilir — DynamicUser'ın rastgele uid'i ağacı
-# okuyamazdı, dosya izinlerini genişletmek (M2'nin kaldırdığı türden bir
-# recursive chown/chmod) ise seçenek değil. gid 1000'in bir grup kaydı
-# yoksa (taze imajda normal kullanıcı yaratılmamışsa olağan) kayıt burada
-# açılır; varsa mevcut adı kullanılır.
+# Host WebDAV servisi medya ağacını (0750 1000:1000) gid 1000 üyeliğiyle okur;
+# DynamicUser'ın rastgele uid'i okuyamazdı ve izinleri genişletmek seçenek değil.
+# gid 1000'in grup kaydı yoksa burada açılır.
 MEDIA_GROUP="$(getent group 1000 | cut -d: -f1 || true)"
 if [[ -z "$MEDIA_GROUP" ]]; then
     groupadd -g 1000 mediadata
@@ -2531,20 +2231,13 @@ fi
 # usermod -aG idempotenttir; yeniden çalıştırmada üyelik korunur.
 usermod -aG "$MEDIA_GROUP" master-webdav
 
-# wg-easy admin/peer kurulumu artık elle yapılıyor (unattended bootstrap yok);
-# script'in mevcut peer config'lerine hangi endpoint'in gömülü olduğuna dair
-# doğrulanmış bir kaydı yok. state.env her çalıştırmada güncel public IPv4'ü
-# yazar; reconcile timer'ı iki çalışma arasındaki sapmayı yine de yakalar,
-# ancak iki install.sh çalıştırması arasında değişen bir public IP artık
-# ayrıca işaretlenmez. Public IP değiştiğinde istemci config'lerini elle
-# kontrol edin.
+# wg-easy peer kurulumu elle yapılır. state.env her çalıştırmada güncel public
+# IPv4'ü yazar; public IP değişirse istemci config'lerini elle kontrol edin.
 WG_ENDPOINT_HOST_FOR_STATE="$PUBLIC_IPV4"
 
-# STACK_VERSION/STACK_SHA256 bilgilendirme amaçlıdır: reconcile bunları
-# yalnız --status çıktısında gösterir, hiçbir tüketici varlığını zorunlu
-# tutmaz. Şema yalnız format anlayışı değiştiğinde yükselir; 10'a çıkmasının
-# nedeni IMAGE_DIGEST_* anahtarlarıdır (bkz. DD-23), onlar burada değil
-# Aşama 5'ten sonra eklenir çünkü imajlar o noktada çekilmiş olur.
+# STACK_VERSION/STACK_SHA256 bilgilendirmedir; hiçbir tüketici zorunlu tutmaz.
+# Şema yalnız format anlayışı değişince yükselir. IMAGE_DIGEST_* anahtarları
+# burada değil, imajlar çekildikten sonra Aşama 5'te eklenir (DD-23).
 cat >/etc/master-stack/state.env <<EOF
 STACK_SCHEMA=10
 STACK_VERSION=$MASTER_SETUP_VERSION
@@ -2559,11 +2252,9 @@ EOF
 chown root:root /etc/master-stack/state.env
 chmod 0600 /etc/master-stack/state.env
 
-# WebDAV htpasswd yalnız Aşama 0'da yeni kimlik bilgisi alındıysa yazılır;
-# aksi hâlde mevcut dosya olduğu gibi korunur. Düz metin parola diske hiç
-# değmez: bcrypt hash doğrudan htpasswd -i -B ile üretilir ve değişken bu
-# noktada silinir. Dosyayı servis LoadCredential ile okur (bkz. unit);
-# bu yüzden root:root 0600 yeterlidir, servis kullanıcısına izin gerekmez.
+# htpasswd yalnız Aşama 0'da yeni kimlik alındıysa yazılır; aksi hâlde mevcut
+# dosya korunur. Düz metin parola diske hiç değmez. Dosyayı servis
+# LoadCredential ile okuduğu için root:root 0600 yeterlidir.
 if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
     WEBDAV_HTPASSWD_TMP="$(mktemp /etc/master-stack/.webdav.htpasswd.XXXXXX)"
     printf '%s' "$WEBDAV_PASSWORD" |
@@ -2575,42 +2266,21 @@ if [[ "$WEBDAV_SETUP_CREDENTIALS" -eq 1 ]]; then
 fi
 
 # Quantum politika dosyası her çalıştırmada yeniden üretilir (kimlik
-# dosyalarının AKSİNE): içinde yalnız politika var ve politikanın betiğin
-# yeni sürümüyle güncellenmesi gerekir. Sır içermediği için 0644 root:root
-# yeterli — container kendi (root olmayan) kullanıcısıyla okuyabilmeli ve o
-# kullanıcının UID'si imajdan geliyor, burada bilinmiyor.
+# dosyalarının aksine); sır içermediği için 0644 root:root yeterli.
 #
-# signup: false kasıtlı. Orijinal filebrowser'ın en ağır yamasız açığı
-# (GHSA-6759, critical) tam olarak self-signup kullanıcısının sunucu kökünü
-# scope almasıydı; Quantum farklı bir kod tabanı olsa da aynı özelliği açık
-# bırakmak için sebep yok.
-#
-# minLength: 5 — upstream'in varsayılanı ve pratikte DEĞİŞTİRİLEMEZ.
-# Quantum'un ilk açılışta yarattığı admin hesabının parolası "admin", yani
-# tam 5 karakter; bu değer 8 yapılırsa Quantum'un kendi quickSetup()'ı
-# "[FATAL] store.Users.Save: password must be at least 8 characters long"
-# ile ölür ve container HİÇ KULLANICI OLUŞTURMADAN açılır — admin/admin ile
-# bile girilemez. 2026-08-01'de canlıda tam olarak bu yaşandı. İki sayı
-# birbirine göre ayarlanmış; 5 upstream'in kendi değeri.
+# signup: false kasıtlı — orijinal filebrowser'ın en ağır açığı (GHSA-6759)
+# tam olarak self-signup'tı. minLength: 5 upstream'in değeridir ve pratikte
+# DEĞİŞTİRİLEMEZ: 8 yapılırsa Quantum'un quickSetup()'ı fatal hatayla ölür ve
+# container hiç kullanıcı oluşturmadan açılır.
 QUANTUM_CONFIG_TMP="$(mktemp /etc/master-stack/.filebrowser.yaml.XXXXXX)"
 cat >"$QUANTUM_CONFIG_TMP" <<'QUANTUM_YAML'
 server:
   port: 80
   baseURL: "/"
-  # cacheDir varsayılanı çalışma dizinine göreli "tmp", yani container'ın
-  # YAZILABİLİR KATMANI. Quantum oraya arama indeksini, thumbnail'leri,
-  # diskcache'i ve üretilmiş PWA ikonlarını yazıyor — 2026-08-01'de ölçüldü:
-  # varsayılan hâlde yazılabilir katmanda 18 girdi oluşuyor.
-  #
-  # Bunu data volume'unun içine almak iki şeyi birden çözüyor:
-  #   1. read_only: true mümkün hâle geliyor (bkz. compose.yaml).
-  #   2. Thumbnail'ler ve indeks container yeniden yaratıldığında
-  #      kaybolmuyor; eskiden yazılabilir katmanda oldukları için gidiyordu.
-  #
-  # tmpfs alternatifi denendi ve ELENDİ: Quantum cacheDir için en az 20 GB
-  # boş alan öneriyor (256 MB'lık tmpfs ile "cacheDir only has 0.25 GB of
-  # free space" uyarısı alındı) ve thumbnail üretimi gerçek bir medya
-  # kütüphanesinde bunu RAM'de tutulamaz hâle getirir.
+  # cacheDir varsayılanı container'ın YAZILABİLİR KATMANI'dır. Volume içine almak
+  # iki şeyi birden çözüyor: read_only: true mümkün oluyor, ve thumbnail'ler ile
+  # indeks container yeniden yaratıldığında kaybolmuyor. tmpfs elendi — Quantum
+  # en az 20 GB boş alan öneriyor.
   cacheDir: "/home/filebrowser/data/cache"
   sources:
     - path: "/srv"
@@ -2625,14 +2295,9 @@ auth:
 QUANTUM_YAML
 chown root:root "$QUANTUM_CONFIG_TMP"
 chmod 0644 "$QUANTUM_CONFIG_TMP"
-# Değişiklik sinyali Aşama 5'e taşınır. Yalnız dosyayı atomik olarak
-# değiştirmek çalışan container'ın config'i yeniden okumasını sağlamaz;
-# Quantum config'i sadece açılışta okur. Dahası hedef daha önce Docker'ın
-# yarattığı bir DİZİN ise container'ın saklı mount spec'i de yeniden
-# yaratılmadan düzelmez. Bu iki durum aynı güvenli sonuca bağlanır:
-# image pull ve unit doğrulaması bittikten sonra yalnız filebrowser
-# container'ı kaldırılır, Compose onu named volume'u koruyarak yeniden
-# yaratır.
+# Değişiklik sinyali Aşama 5'e taşınır: Quantum config'i yalnız açılışta okur,
+# ve hedef daha önce Docker'ın yarattığı bir dizinse saklı mount spec'i
+# yeniden yaratılmadan düzelmez. İkisi de aynı güvenli sonuca bağlanır.
 QUANTUM_CONFIG_RECREATE_REQUIRED=0
 if [[ -f "$QUANTUM_CONFIG_FILE" &&
       ! -L "$QUANTUM_CONFIG_FILE" ]] &&
@@ -2652,44 +2317,23 @@ else
     mv -f "$QUANTUM_CONFIG_TMP" "$QUANTUM_CONFIG_FILE"
 fi
 
-# state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor.
-# Canonical bundle tek bir atomik generation hâlinde — state.env,
-# compose.yaml, filebrowser.yaml ve altı dnsmasq/Caddy dosyası — Aşama
-# 6'nın sonunda yayınlanır. Nedeni:
-# reconcile'ın canonical_bundle_ok()'u manifest'i dokuz girdinin tamamına
-# karşı doğrular, dolayısıyla state.env'i burada yayınlamak Aşama 4-6
-# boyunca eksik bir bundle bırakır ve yarıda kesilen bir çalıştırma
-# reconcile'ı bundle'ı hiç doğrulayamaz hâlde bırakırdı. Ertelemek ise şu
-# anlama gelir: yarıda kalan bir yeniden çalıştırma, önceki çalıştırmanın
-# eksiksiz ve kendi içinde tutarlı generation'ını `current` işaretçisinin
-# arkasında bırakır ve reconcile son bilinen iyi yapılandırmayı uygulamaya
-# devam eder.
+# state.env'in canonical kopyası burada bilinçli olarak yayınlanmıyor: dokuz
+# girdilik bundle tek bir atomik generation hâlinde Aşama 6'nın sonunda
+# yayınlanır (DD-14). Burada yayınlamak Aşama 4-6 boyunca eksik bir bundle
+# bırakır ve yarıda kesilen bir çalıştırma reconcile'ı doğrulayamaz hâle sokardı.
 
-# Var olan medya dosyalarının Filebrowser/qBittorrent tarafından yönetilebilmesi için
-# yalnız medya ağacının sahipliği değiştirilir. /data bütünü, /etc ve /root değiştirilmez.
-# Idempotency: her rerun'da tüm ağacı koşulsuz chown etmek yerine, yalnız
-# sahipliği zaten 1000:1000 olmayan girdiler değiştirilir. Büyük medya
-# kütüphanelerinde ağacın büyük kısmı zaten doğru sahipken gereksiz disk
-# yazımını önler; yeni eklenmiş veya farklı sahiplikte kalan dosyalar yine
-# düzeltilir.
+# Yalnız medya ağacının sahipliği değiştirilir; /data bütünü, /etc ve /root
+# değişmez. Idempotency: koşulsuz chown yerine yalnız 1000:1000 olmayan
+# girdiler düzeltilir.
 find "$DOWNLOADS_PATH/media" \
     \( ! -uid 1000 -o ! -gid 1000 \) \
     -exec chown 1000:1000 {} +
 progress_stage_note 15 "Veri ve medya dizinleri hazırlandı"
 
-# Portainer 2.39.5'in kendi CSRF koruması (gorilla/csrf), Origin başlığı Host ile
-# eşleşmeyen istekleri reddeder. Caddy, portainer.$LOCAL_DOMAIN üzerinden proxy'lerken
-# Portainer'a her zaman Host: 127.0.0.1:9443 gönderir, ama tarayıcının Origin'i
-# http://portainer.$LOCAL_DOMAIN olur — bu eşleşmezlik olmadan her yazma isteği
-# (container durdurma, image silme vb.) "origin invalid" ile reddedilir. Yalnız
-# yerel DNS açıksa gerekli; kapalıyken Portainer'a zaten yalnız 127.0.0.1:9443
-# üzerinden (Caddy'siz) erişiliyor, orada Origin/Host doğal olarak eşleşir.
-# ÖNEMLİ: gorilla/csrf'in TrustedOrigins'i şema İÇERMEYEN çıplak host adı bekler
-# (validate.IsTrustedOrigin, 2.39.5 etiketinde: "://" varsa reddeder) — bu,
-# Portainer'ın daha yeni sürümlerinde (Go'nun native http.CrossOriginProtection'ına
-# geçiş) kullanılan "scheme://host" formatının TERSİ. "http://..." ile denenip
-# canlıda doğrulanmış: değer geçersiz sayılır ve container fatal hata ile
-# restart döngüsüne girer (2.39.5'e pin'liyken şema OLMADAN kullanın).
+# Portainer'ın CSRF koruması, Origin başlığı Host ile eşleşmeyen istekleri
+# reddeder; Caddy proxy'lerken bu eşleşmezlik kaçınılmazdır ve her yazma isteği
+# reddedilirdi. ÖNEMLİ: 2.39.5'te TrustedOrigins şema İÇERMEYEN çıplak host adı
+# bekler — "http://" ile verilirse container fatal hatayla restart döngüsüne girer.
 PORTAINER_TRUSTED_ORIGINS="portainer.${LOCAL_DOMAIN}"
 
 cat >/root/docker/compose.yaml <<YAML_EOF
@@ -2706,8 +2350,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     environment:
-      # Caddy'nin portainer.$LOCAL_DOMAIN üzerinden proxy'lediği istekler için
-      # CSRF Origin kontrolünü geçmesi gerekli (bkz. Stage 4'teki açıklama).
+      # Caddy üzerinden gelen isteklerin CSRF Origin kontrolünü geçmesi için
+      # (bkz. Aşama 4'teki açıklama).
       TRUSTED_ORIGINS: "${PORTAINER_TRUSTED_ORIGINS}"
     ports:
       - "127.0.0.1:9443:9443/tcp"
@@ -2715,17 +2359,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/portainer/data:/data
 
-  # FileBrowser Quantum (gtsteffaniak/filebrowser) — orijinal filebrowser'ın
-  # aktif çatalı. Container adı ve host portu BİLEREK değiştirilmedi:
-  # reconcile'ın beklenen container listesi, port_binding_exists kontrolü,
-  # HTTP probe'u, Caddy route'u, firewall port listesi ve digest döngüsü
-  # hepsi bu ada bağlı. Deneyin kendisini izole tutmak için diff'i tek
-  # servise sınırlıyoruz; ad değişimi ~8 yerde dalgalanır ve asıl değişikliği
-  # gürültüye boğar.
-  #
-  # Konteyner içi port da 80 (Quantum'un varsayılanı, orijinaliyle aynı),
-  # bu yüzden 7113 eşlemesi ve reconcile'ın 80/tcp beklentisi olduğu gibi
-  # geçerli kalıyor.
+  # FileBrowser Quantum (gtsteffaniak/filebrowser). Container adı ve host portu
+  # BİLEREK değiştirilmedi: reconcile'ın container listesi, port kontrolü, HTTP
+  # probe'u, Caddy route'u ve firewall port listesi hepsi bu ada bağlı. Konteyner
+  # içi port da 80, yani 7113 eşlemesi olduğu gibi geçerli kalıyor.
   filebrowser:
     image: ${FILEBROWSER_IMAGE}
     container_name: filebrowser
@@ -2735,38 +2372,19 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # read_only: true — ilk değerlendirmede "Quantum durum tuttuğu için
-    # imkânsız" diye ELENMİŞTİ; bu bir çıkarımdı ve ölçüldüğünde yanlış
-    # çıktı (2026-08-01). Yazdığı tek yer cacheDir'di ve o config'ten
-    # yönlendirilebiliyor. Yukarıdaki config.yaml onu data volume'una
-    # aldıktan sonra kökün yazılabilir olmasına hiç gerek kalmıyor:
-    # ölçüldü, yazılabilir katmandaki değişiklik 18'den 1'e düştü (kalan
-    # tek girdi salt okunur bind mount'un kendisi) ve giriş/listeleme/
-    # medyaya yazma değişmeden çalıştı.
-    #
-    # Böylece V2-2'nin (dufs) sağladığı sertleştirme bu hatta da geri
-    # kazanıldı; tmpfs gerekmiyor.
+    # read_only: true — cacheDir config'ten data volume'una alındıktan sonra kökün
+    # yazılabilir olmasına gerek kalmıyor. Ölçüldü: yazılabilir katmandaki değişiklik
+    # 18 girdiden 1'e düştü, giriş/listeleme/medyaya yazma değişmeden çalıştı.
     read_only: true
     environment:
-      # İmajın gömülü varsayılanı /home/filebrowser/data/config.yaml, yani
-      # named volume'un İÇİ. Config'i oraya koymak, salt okunur bind mount'u
-      # yazılabilir bir volume'un altına iç içe geçirmek demekti. Bunun
-      # yerine config'i volume dışına alıp yolu env ile gösteriyoruz —
-      # veritabanı volume'da, politika host dosyasında, ikisi karışmıyor.
+      # İmajın gömülü varsayılanı named volume'un içi; config'i oraya koymak salt
+      # okunur bind mount'u yazılabilir bir volume altına gömmek olurdu. Yol env ile
+      # gösterilir: veritabanı volume'da, politika host dosyasında.
       FILEBROWSER_CONFIG: /config.yaml
-      # Bu değer imajın kendi ENV'inden zaten aynen geliyor; burada
-      # BİLEREK tekrar ediliyor. Sebep read_only: true — yol, volume
-      # mount'uyla eşleşmek ZORUNDA. Upstream varsayılanı bir gün volume
-      # dışına taşırsa Quantum yazılamayan köke veritabanı açmaya çalışır
-      # ve container açılışta ölür; pinlemek o kararı imajdan alıp buraya,
-      # bağlı olduğu volume satırının yanına taşıyor.
-      #
-      # İlk açılıştaki "[WARN] database file could not be found ... please
-      # set the FILEBROWSER_DATABASE environment variable" satırını
-      # SUSTURMAZ. O uyarı yolun yanlış olduğunu değil, dosyanın henüz
-      # yaratılmadığını bildiriyor: 2026-08-02'de ölçüldü, değişken doğru
-      # değerle setliyken de basılıyor ve hemen ardından "Creating new
-      # database" geliyor. Sonraki her açılışta "Using existing database".
+      # İmajın kendi ENV'inden geliyor, burada BİLEREK tekrar ediliyor: read_only: true
+      # nedeniyle yol volume mount'uyla eşleşmek ZORUNDA. İlk açılıştaki "database file
+      # could not be found" uyarısını susturmaz — o uyarı yolun yanlış olduğunu değil,
+      # dosyanın henüz yaratılmadığını bildirir; sonraki açılışlarda gelmez.
       FILEBROWSER_DATABASE: /home/filebrowser/data/database.db
     ports:
       - "127.0.0.1:7113:80/tcp"
@@ -2774,10 +2392,7 @@ services:
       # Quantum'un source yolu /srv (config.yaml'da da öyle tanımlı).
       - ${DOWNLOADS_PATH}/media:/srv
       - ${QUANTUM_CONFIG_FILE}:/config.yaml:ro
-      # Tek volume: Quantum veritabanını, indeksini ve önbelleğini bu tek
-      # dizinde tutar. Orijinal filebrowser'ın iki volume'unun (database +
-      # config) yerini alıyor.
-      #
+      # Tek volume: Quantum veritabanını, indeksini ve önbelleğini burada tutar.
       - filebrowser_data:/home/filebrowser/data
 
   qbittorrent:
@@ -2787,15 +2402,9 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
-    # linuxserver.io imajının s6-overlay init'i, yetkisiz uygulama
-    # kullanıcısına düşmeden önce PUID/PGID sahipliğini düzeltmek için
-    # root çalışır; bu, bunu yapabilmesi için gereken en küçük yetenek
-    # kümesidir (deneysel olarak doğrulandı — DAC_OVERRIDE/FOWNER olmadan
-    # sıfırdan bir config dizini oluşturamıyor). read_only burada
-    # kullanılmıyor: denendi ve PUID/PGID mekanizmasını bozduğu görüldü
-    # (dosyalar 1000:1000 yerine imajın gömülü varsayılan UID/GID'siyle
-    # sahipleniyor), bu da ortak medya ağacı sahiplik modeliyle çakışırdı
-    # (bkz. M2).
+    # linuxserver.io imajının init'i PUID/PGID sahipliğini düzeltmek için root
+    # çalışır; bu, onu yapabilmesi için gereken en küçük yetenek kümesidir.
+    # read_only denendi ve PUID/PGID mekanizmasını bozduğu görüldü (bkz. M2).
     cap_drop:
       - ALL
     cap_add:
@@ -2804,20 +2413,10 @@ services:
       - SETGID
       - DAC_OVERRIDE
       - FOWNER
-    # Burada bilinçli olarak mem_limit/cpus yok. M1 başlangıçta 2g/2.0
-    # koymuştu; canlı testte (2026-07-28) kısıtlayanın CPU değil bellek
-    # tavanı olduğu görüldü: qBittorrent'in disk önbelleğini boğup
-    # throughput'u ~170MB/s'e düşürüyordu (limitsizken 218-278MB/s).
-    # Önce 4g'ye, sürdürülen yükte sonra 6g/3.0'a çıkarmak yalnızca iş
-    # yükünün peşinden koşmak oldu; host'un 4 CPU / ~8GB kapasitesinde
-    # tavan artık hiçbir şeyi kısıtlamıyordu. Gerçek kullanıma yetişmek
-    # için sürekli yükseltilen bir tavan koruma değil, throughput riskidir
-    # — bu yüzden ikisi de kaldırıldı. Bu container'ı asıl sınırlayan
-    # sertleştirme (no-new-privileges, cap_drop: [ALL] + minimal cap_add)
-    # etkilenmedi; unpackerr kendi tavanlarını koruyor, orada hiç
-    # kısıtlayıcı olmadılar. Ödünü: kaçak bir qbittorrent artık kendi
-    # cgroup'u yerine host'un genel OOM killer'ı tarafından sınırlanır.
-    # Bkz. SECURITY_REVIEW.md M1.
+    # Burada bilinçli olarak mem_limit/cpus yok. Canlı testte kısıtlayanın CPU değil
+    # bellek tavanı olduğu görüldü: qBittorrent'in disk önbelleğini boğup throughput'u
+    # düşürüyordu, ve iş yükünün peşinden koşan bir tavan koruma değil risktir.
+    # Sertleştirme (no-new-privileges, cap_drop) etkilenmedi. Bkz. SECURITY_REVIEW.md M1.
     environment:
       PUID: "1000"
       PGID: "1000"
@@ -2841,10 +2440,8 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
-    # Zaten root olmayan, sabit UID/GID ile ve kendine ait bir init adımı
-    # olmadan çalışıyor; sıfır yetenek ve salt okunur kök dosya sistemiyle
-    # temiz başlayıp çalıştığı deneysel olarak doğrulandı (tek yazdığı yer
-    # zaten bağlı bir volume olan /downloads).
+    # Zaten root olmayan, sabit UID/GID ile ve kendi init adımı olmadan çalışıyor;
+    # sıfır yetenek ve salt okunur kökle çalıştığı deneysel olarak doğrulandı.
     cap_drop:
       - ALL
     read_only: true
@@ -2853,32 +2450,15 @@ services:
     environment:
       TZ: "${TIMEZONE}"
       UN_LOG_FILE: "/downloads/.unpackerr/unpackerr.log"
-      # Bu üçü OLMADAN dosya logu HİÇ DÖNMÜYOR. Upstream log_file_mb'nin
-      # varsayılanını 10 MB diye belgeliyor, ama o varsayılan yalnız TOML
-      # config dosyası yolundan uygulanıyor; biz unpackerr'ı sırf ortam
-      # değişkenleriyle kuruyoruz ("Using env variables only. Config file
-      # not found.") ve container o hâlde açılışta şunu raporluyor:
-      #   => Log File: /downloads/.unpackerr/unpackerr.log (10 @ 0Mb …)
-      # 0 MB = boyut bazlı rotasyon kapalı, yani "10 dosya sakla" hiç
-      # devreye girmiyor ve tek dosya sonsuza kadar büyüyor. 2026-08-02'de
-      # ölçüldü: boştaki hâlinde ~280 B/dk, yılda ~145 MB — üstelik
-      # filebrowser'ın sunduğu, Infuse'un indekslediği ve disk_space_ok'ın
-      # izlediği medya ağacının İÇİNDE. 10 MB × 3 dosya, docker tarafındaki
-      # json-file tavanının (max-size 10m, max-file 3) aynısı.
+      # Bu üçü OLMADAN dosya logu HİÇ dönmüyor: upstream'in 10 MB varsayılanı yalnız
+      # TOML config yolundan uygulanıyor, ortam değişkeniyle kurulunca rotasyon kapalı
+      # kalıyor ve tek dosya medya ağacının içinde sonsuza kadar büyüyor. 10 MB x 3,
+      # docker tarafındaki json-file tavanının aynısı.
       UN_LOG_FILE_MB: "10"
       UN_LOG_FILES: "3"
-      # Boştayken dakikada iki satır ("Queue: 0 waiting…" + "Totals: …")
-      # basan nabız; varsayılanı 1m1s. 10 saniyelik klasör taramasıyla
-      # İLGİSİ YOK — o tarama sessiz, tek satır bile yazmıyor.
-      #
-      # 0 DEĞİL. Sezgisel olan değer burada ters çalışıyor: ölçüldü
-      # (2026-08-02), UN_LOG_QUEUES=0 nabzı kapatmıyor, 15 saniyelik tabana
-      # düşürüyor — 75 saniyede 1 satır yerine 5 satır, yani dört kat daha
-      # gürültülü. Upstream dokümanı bu değerin ne yaptığını yazmıyor.
-      #
-      # Gerçek olaylar kaybolmuyor; uçtan uca doğrulandı: 30m ile bir arşiv
-      # bırakıldığında Tracking New Item / Queued / Extraction Started /
-      # Extraction Finished satırlarının hepsi olduğu gibi geliyor.
+      # Boştayken dakikada iki satır basan nabız. 0 DEĞİL: ölçüldü, UN_LOG_QUEUES=0
+      # nabzı kapatmıyor, 15 saniyelik tabana düşürüyor — dört kat daha gürültülü.
+      # Gerçek çıkarma olayları bu değerden etkilenmiyor.
       UN_LOG_QUEUES: "30m"
       UN_FOLDERS_INTERVAL: "10s"
       # media ağacının tamamını ve tüm alt klasörlerini izle.
@@ -2901,14 +2481,9 @@ services:
     container_name: wg-easy
     restart: unless-stopped
     logging: *default-logging
-    # İmajın resmî sağlık komutunu ve normal 60 saniyelik aralığını koru.
-    # Yalnız başlangıç döneminde 5 saniyelik aralık kullanılır; ilk başarılı
-    # kontrol container'ı healthy yapar, sonrasında sürekli ek yük oluşmaz.
-    # Yalnızca arayüzün var/ayakta olduğunu kontrol eder — belirli bir porta
-    # sabitlenmez, çünkü wg-easy v15+ dinleme portunu artık ortam
-    # değişkeniyle değil, yalnızca web arayüzündeki kurulum sihirbazıyla
-    # (elle) ayarlıyor; sabit port kontrolü, taze bir kurulumda bu elle
-    # ayarlama yapılana kadar healthcheck'in hiç geçememesine yol açardı.
+    # İmajın resmî sağlık komutu ve 60 saniyelik aralığı korunur; yalnız başlangıç
+    # döneminde 5 saniye. Belirli bir porta sabitlenmez: wg-easy v15+ dinleme portunu
+    # yalnız web sihirbazından ayarlıyor, sabit port kontrolü hiç geçemezdi.
     healthcheck:
       test:
         - CMD-SHELL
@@ -2919,10 +2494,8 @@ services:
       start_period: 60s
       start_interval: 5s
     environment:
-      # wg-easy admin arayüzünün secure-cookie zorunluluğunu kapatır; bu
-      # yalnızca Caddy'nin arayüzü tailnet üzerinden düz HTTP ile
-      # reverse-proxy yapması nedeniyle gerekli (bkz. Caddyfile, Stage 6).
-      # Bu ayar Tailnet-only + Caddy-loopback mimarisine bağımlıdır.
+      # wg-easy'nin secure-cookie zorunluluğunu kapatır; yalnızca Caddy arayüzü tailnet
+      # üzerinden düz HTTP ile proxy'lediği için gerekli (bkz. Caddyfile, Aşama 6).
       INSECURE: "true"
     ports:
       - "\${PUBLIC_IPV4}:${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT}/udp"
@@ -3022,10 +2595,8 @@ Wants=network-online.target
 After=network-online.target tailscaled.service docker.service docker-tailscale-fw.service
 PartOf=docker.service tailscaled.service
 OnFailure=master-network-reconcile.service
-# Compose oneshot kendi içinde WAN/Tailscale ve container sağlık beklemelerini
-# tamamlar. Otomatik restart döngüsü yoktur; ilk hata reconcile'ı bir kez
-# tetikler, kalıcı hata sonraki yirmi dakikalık timer'a bırakılır. Geniş sınır
-# yalnız dışarıdan gelen gerçek start fırtınasını keser.
+# Compose oneshot beklemelerini kendi yapar. Otomatik restart döngüsü yok; kalıcı
+# hata yirmi dakikalık timer'a bırakılır.
 StartLimitIntervalSec=60
 StartLimitBurst=10
 RequiresMountsFor=$DOWNLOADS_PATH
@@ -3044,12 +2615,9 @@ WantedBy=multi-user.target
 COMPOSE_SYSTEMD
 set_unit_file_mode /etc/systemd/system/master-compose.service
 
-# WAN veya Tailscale IPv4, daemon yeniden başlamadan değişirse Docker publish
-# adreslerini, dar firewall kuralını ve yönetilen Tailnet servislerini uzlaştır.
-# Boot'taki bağımlılık iptali gibi nedenlerle ölü kalmış firewall/Compose'u ve
-# opsiyonel GRO ayarını da ayağa kaldırır. Normal durumda kısa ortak kilit
-# altında adresleri, ana firewall kurallarını, gerçek ethtool değerlerini ve
-# unit durumunu yalnız okur; servisleri yeniden başlatmaz.
+# WAN veya Tailscale IPv4 değişirse publish adreslerini, dar firewall kuralını ve
+# yönetilen Tailnet servislerini uzlaştırır; ölü kalmış unit'leri de ayağa
+# kaldırır. Normal durumda yalnız okur, servis yeniden başlatmaz.
 cat >/usr/local/sbin/master-network-reconcile <<'RECONCILE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -3079,10 +2647,8 @@ COMPOSE_FILE="/root/docker/compose.yaml"
 STATE_FILE="/etc/master-stack/state.env"
 QUANTUM_CONFIG_FILE="/etc/master-stack/filebrowser.yaml"
 CANONICAL_ROOT="/usr/local/share/master-stack"
-# Q1-16 öncesi kurulumlar bundle dosyalarını doğrudan kök dizinde tutar.
-# Yeni reconcile Aşama 4'te yazıldığı, `current` ise Aşama 6'nın sonunda
-# yayınlandığı için yarıda kesilen ilk yükseltmede eski bundle'a dönmek
-# zorundadır. Başarılı ilk Q1-16 çalışmasından sonra `current` kullanılır.
+# Q1-16 öncesi kurulumlar bundle'ı doğrudan kök dizinde tutar; yarıda kesilen
+# ilk yükseltme için fallback. Başarılı yayından sonra `current` kullanılır.
 select_canonical_dir() {
     CANONICAL_DIR="$CANONICAL_ROOT/current"
     if [[ ! -L "$CANONICAL_DIR" &&
@@ -3096,20 +2662,16 @@ CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
 QUANTUM_RESTART_PENDING_FILE="$RESTART_STATE_DIR/filebrowser-config.pending"
 FILEBROWSER_AUDIT_STAMP="$RESTART_STATE_DIR/filebrowser-password-audit.last"
-# İndirme dosya sisteminin uyarı eşiği. Hem tespit hem de onarım sonrası
-# postcondition aynı değeri kullanır; daha önce ikisine de elle yazılıyordu.
+# İndirme dosya sisteminin uyarı eşiği; tespit ve postcondition aynı değeri kullanır.
 DISK_USAGE_THRESHOLD_PCT=90
-# "Aynı çareyi bundan sık tekrarlama" politikası: container ve stack
-# yenilemeleri için. master-docker-netfilter-recovery kendi ayrı script'i
-# olduğu için aynı değeri kendi COOLDOWN_SECONDS'ında tutar; biri
-# değişirse diğeri de değişmeli.
+# Onarım cooldown'ı. core-recovery aynı değeri kendi COOLDOWN_SECONDS'ında tutar;
+# biri değişirse diğeri de değişmeli.
 RESTART_COOLDOWN_SECONDS=900
-# Varsayılan parola denetimi gerçek bir giriş isteğidir. Salt-okunur modları
-# yan etkisiz tutmak ve operatörle paylaşılan rate-limit kovasını doldurmamak
-# için yalnız normal reconcile'da, günde en çok bir kez çalışır.
+# Varsayılan parola denetimi gerçek bir giriş isteğidir. Salt-okunur modları yan
+# etkisiz tutmak için yalnız normal reconcile'da, günde en çok bir kez.
 FILEBROWSER_AUDIT_INTERVAL_SECONDS=86400
-# Daemon active olduktan hemen sonra adresin birkaç saniye gecikmesi normaldir;
-# bunu kalıcı sağlıksızlıktan ayıran kısa, bounded pencere.
+# Daemon active olduktan sonra adresin birkaç saniye gecikmesi normaldir; bunu
+# kalıcı sağlıksızlıktan ayıran kısa pencere.
 ADDRESS_READY_WAIT_SECONDS=30
 MODE="${1:-reconcile}"
 
@@ -3192,8 +2754,8 @@ owned_file_ok() {
        "$actual" == "$expected_uid:$expected_gid:$expected_mode" ]]
 }
 
-# Manifest tek şekillidir: DNS/Caddy V1-8'den beri yığının sabit parçası,
-# yani "DNS kapalı" diye ikinci bir bundle şekli yok (şema 9).
+# Manifest tek şekillidir: DNS/Caddy yığının sabit parçası, yani ikinci bir
+# bundle şekli yok (şema 9).
 canonical_bundle_ok() {
     local manifest_entries="" expected_entries=""
     local canonical_target="$CANONICAL_DIR" canonical_root_target=""
@@ -3236,13 +2798,9 @@ canonical_bundle_ok() {
         owned_file_ok "$CANONICAL_DIR/tailscaled-99-caddy-tailnet.conf" 0 0 644
 }
 
-# --status: kilit almayan, salt-okunur tek ekran durum özeti. Ayrıntılı
-# sağlık denetimini alt süreçteki --check yapar ve kilidi de o alır; bu
-# modun çıkış kodu o denetimin sonucudur (0 = temiz, 75 = kilit dolu).
-# state.env okunamıyorsa alanlar "bilinmiyor" kalır — özet, sistem
-# bozukken de çalışabilmek zorunda olduğu için burada canonical bundle
-# doğrulaması dahil hiçbir ön koşul zorlanmaz; bozuksa bunu --check
-# çıktısı zaten raporlar.
+# --status: kilit almayan, salt-okunur özet. Ayrıntılı denetimi alt süreçteki
+# --check yapar ve çıkış kodu onundur (0 = temiz, 75 = kilit dolu). Bozuk
+# sistemde de çalışabilmek zorunda olduğu için hiçbir ön koşul zorlanmaz.
 if [[ "$MODE" == "--status" ]]; then
     status_check_rc=0
     status_check_output="$("$0" --check 2>&1)" || status_check_rc=$?
@@ -3261,12 +2819,9 @@ if [[ "$MODE" == "--status" ]]; then
                 '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' \
                 "$status_container" 2>/dev/null || echo "yok"
         )"
-        # Image etiketleri hareketli; çalışan digest'in kısa hâli, "hangi
-        # sürüm ayakta" sorusunun tek doğrudan cevabı. state.env'deki kayıtla
-        # ayrışırsa işaretlenir: bu, kurulum sonrasında image'ın elle
-        # değiştirildiği (veya kaydın bayatladığı) anlamına gelir.
-        # RepoDigests image nesnesindedir, container'da yoktur; önce image
-        # ID okunur (bkz. Aşama 5'teki resolved_image_digest ve DD-23).
+        # Çalışan digest, "hangi sürüm ayakta" sorusunun tek doğrudan cevabı; state.env
+        # kaydıyla ayrışırsa işaretlenir. RepoDigests image nesnesindedir, container'da
+        # yoktur — önce image ID okunur (DD-23).
         status_image_id="$(
             "$DOCKER_BIN" inspect -f '{{.Image}}' \
                 "$status_container" 2>/dev/null || true
@@ -3343,9 +2898,8 @@ if [[ "$MODE" == "--status" ]]; then
     exit "$status_check_rc"
 fi
 
-# Sağlıklı kontrol yaklaşık yarım saniye sürer. Snapshot ve olası onarım aynı
-# master.sh/master-maintenance kilidi altında kalır. Kilit doluysa bu periyot
-# hata sayılmaz; sonraki yirmi dakikalık çağrı yeniden dener.
+# Snapshot ve olası onarım ortak kilit altında kalır. Kilit doluysa bu periyot
+# hata sayılmaz; sonraki çağrı yeniden dener.
 if [[ "${MASTER_STACK_LOCK_HELD:-0}" != "1" ]]; then
     exec 8>/run/lock/master-stack.lock
     if ! "$FLOCK_BIN" -n 8; then
@@ -3410,8 +2964,8 @@ for managed_unit in \
     fi
 done
 
-# Ana daemon'lar kendi bounded restart politikalarıyla ayağa kalkar. Reconcile,
-# kendi After= grafiğinin içinden senkron core-daemon restart'ı yapmaz.
+# Ana daemon'lar kendi bounded restart politikalarıyla kalkar; reconcile kendi
+# After= grafiğinin içinden senkron core-daemon restart'ı yapmaz.
 if ! "$SYSTEMCTL_BIN" is-active --quiet docker.service ||
    ! "$SYSTEMCTL_BIN" is-active --quiet tailscaled.service; then
     echo "Docker durumu: $("$SYSTEMCTL_BIN" is-active docker.service 2>/dev/null || true)" >&2
@@ -3497,10 +3051,8 @@ if [[ "$WG_ENDPOINT_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ &&
     WG_ENDPOINT_DRIFTED=1
 fi
 
-# İndirilenler/medya ağacının bulunduğu dosya sistemi ağırlıklı olarak
-# sürekli indirme/arşiv çıkarma trafiği görür; reconcile bunu otomatik
-# onaramaz (kullanıcı verisini silmek güvenli bir onarım değildir), yalnız
-# operatörü erken uyarır.
+# İndirme/medya ağacı sürekli trafik görür. Reconcile bunu otomatik onaramaz
+# (kullanıcı verisini silmek güvenli bir onarım değildir), yalnız erken uyarır.
 disk_space_ok() {
     local path="$1" threshold="${2:-$DISK_USAGE_THRESHOLD_PCT}" usage_pct=""
     usage_pct="$(
@@ -3511,20 +3063,10 @@ disk_space_ok() {
     (( usage_pct < threshold ))
 }
 
-# Aynı dosya sistemi bayt olarak boşken inode olarak dolabilir. ext4 inode
-# tablosunu mkfs anında sabitler; çok sayıda küçük dosyadan oluşan bir
-# torrent ağacı bunu bitirdiğinde `df -h` hâlâ yüzlerce GB boş gösterirken
-# her yeni dosya ENOSPC alır. Bayt kontrolü bu durumu yapı gereği göremez,
-# bu yüzden ayrı ölçülür. Eşik ortak: ikisi de aynı "dosya sistemi doluyor"
-# politikasının parçası, tek bir yerden ayarlanır.
-#
-# btrfs gibi inode'u dinamik ayıran dosya sistemlerinde df bu sütuna "-"
-# basar (2026-08-01'de nrm üzerinde btrfs loop cihazıyla ölçüldü: IUse% "-",
-# rakam süzgecinden geçince boş string; aynı komut ext4'te "1%" veriyor).
-# Bu "okunamadı" değil "tükenecek bir tablo yok" demek — bayt tarafının
-# fail-closed davranışı burada her döngüde kalıcı yanlış alarm üretirdi,
-# o yüzden "-" açıkça sağlıklı sayılır. Gerçekten okunamayan çıktı (boş
-# veya rakamsız) bayt tarafındaki gibi kapalı düşer.
+# Aynı dosya sistemi bayt olarak boşken inode olarak dolabilir ve bayt kontrolü
+# bunu yapı gereği göremez, bu yüzden ayrı ölçülür. btrfs gibi inode'u dinamik
+# ayıranlarda df bu sütuna "-" basar; bu "okunamadı" değil "tükenecek tablo yok"
+# demektir ve sağlıklı sayılır. Gerçekten okunamayan çıktı fail-closed düşer.
 inode_space_ok() {
     local path="$1" threshold="${2:-$DISK_USAGE_THRESHOLD_PCT}" raw="" usage_pct=""
     raw="$(
@@ -3778,12 +3320,9 @@ http_endpoint_responds() {
        "$code" =~ ^[1-4][0-9][0-9]$ ]]
 }
 
-# Probe OPTIONS değil PROPFIND kullanır. rclone, WebDAV keşif preflight'ı
-# olan OPTIONS'ı bilerek kimlik doğrulamadan muaf tutar ve 200 döner —
-# 2026-07-30 canlı testinde ölçüldü; eski sftpgo burada 401 dönüyordu ve
-# probe ona göre yazılmıştı. Depth: 0'lık bir PROPFIND ise korumalı yoldur:
-# 401 hem servise ulaşıldığını hem de htpasswd'nin gerçekten uygulandığını
-# kanıtlar, yani OPTIONS'tan daha güçlü bir sinyaldir.
+# Probe OPTIONS değil PROPFIND kullanır: rclone OPTIONS'ı bilerek kimlik
+# doğrulamadan muaf tutup 200 döner. PROPFIND'in 401'i hem servise ulaşıldığını
+# hem htpasswd'nin gerçekten uygulandığını kanıtlar.
 webdav_direct_ok() {
     local host="$1" code=""
     code="$(
@@ -3796,32 +3335,17 @@ webdav_direct_ok() {
     [[ "$code" == "401" ]]
 }
 
-# filebrowser (Quantum) hâlâ varsayılan admin/admin ile mi girilebiliyor?
+# filebrowser hâlâ varsayılan admin/admin ile mi giriliyor? Hesabı kurulum değil
+# container yaratıyor (DD-27), yani taze kurulumda BEKLENEN durumdur: yalnız
+# hatırlatmadır, çıkış kodunu değiştirmez.
 #
-# Kurulum bu hesabı bilerek kurmuyor; container kendi quickSetup()'ında
-# yaratıyor ve parolayı operatör arayüzden değiştiriyor (bkz. DD-27). Yani
-# taze bir kurulumda admin/admin BEKLENEN durumdur ve bu bir hata değil,
-# hatırlatmadır: runtime_ok'a dokunmaz, çıkış kodunu değiştirmez.
-# wg-easy'nin WG_SETUP_PENDING'i ile aynı şablon. Tek fark: orada bayrak bir
-# restart'ı baskılamak için okunuyor, burada baskılanacak bir şey yok —
-# varsayılan parola yeniden başlatmayla düzelmez.
+# Gerekli, çünkü kurulumdan sonra geri gelebilir — volume silinir veya container
+# sıfırdan yaratılırsa hesap yeniden kurulur ve başka hiçbir sinyal bunu görmez.
+# Giriş denemesi gerekiyor çünkü showFirstLogin "parola değişti mi"yi değil
+# "uyarı gösterildi mi"yi izliyor ve yanlış negatif veriyor.
 #
-# Neden gerekli: kurulumdan SONRA geri gelebilen bir durum. Volume silinir
-# veya container sıfırdan yaratılırsa Quantum varsayılan hesabı yeniden kurar
-# ve mevcut sinyallerin hiçbiri bunu görmez — Docker healthy der, HTTP probe
-# 200 alır, --check temiz çıkar.
-#
-# Neden giriş denemesi: daha az müdahaleci bir yol arandı ve yok.
-# Kullanıcı nesnesindeki showFirstLogin, "ilk giriş uyarısı gösterildi mi"yi
-# izliyor, "parola değişti mi"yi değil; uyarıyı kapatıp parolayı bırakan bir
-# operatörde yanlış negatif verirdi (2026-08-01'de ölçüldü).
-#
-# check_compose_runtime'ın İÇİNDE DEĞİL (Q1-10). O fonksiyon bir turda dört
-# yerden çağrılıyor (tespit, tekrar denemesi, onarım sonrası, nihai
-# postcondition), yani SAPMALI bir tur dört giriş denemesi üretiyordu — ve
-# aşağıdaki 429 açıklamasındaki kova altı denemelik. Dört, operatöre iki hak
-# bırakıyordu. Q1-20'de bunun da salt-okunur --check/--status sözleşmesini
-# bozduğu görüldü; çağrı yalnız normal reconcile'da ve günde en çok bir kez.
+# check_compose_runtime'ın İÇİNDE DEĞİL: orası bir turda dört kez çağrılıyor ve
+# salt-okunur --check/--status sözleşmesini bozardı (Q1-10, Q1-20).
 report_default_filebrowser_password() {
     local code=""
     [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
@@ -3839,17 +3363,10 @@ report_default_filebrowser_password() {
             echo "http://file.${LOCAL_DOMAIN} adresinden değiştirin." >&2
             ;;
         429)
-            # Quantum'un giriş uç noktası hız sınırlı ve sınır KAYNAK IP
-            # başına, kimlik başına değil (2026-08-02'de ölçüldü: 6
-            # başarısızlıktan sonra 429, ve ardından DOĞRU parola da 429).
-            # Kaynak, Docker köprü ağ geçidi 172.18.0.1 — Caddy üzerinden
-            # gelen her gerçek tarayıcı girişiyle AYNI adres, yani kova
-            # operatörle paylaşılıyor.
-            #
-            # Bu dal olmadan 429, 401 ile aynı sessiz yola düşüyordu: yani
-            # kontrol, tam da biri giriş ekranını zorlamışken "sorun yok"
-            # diyordu. Açığa düşen bir güvenlik kontrolü, olmayan bir
-            # kontrolden daha kötüdür; bilinmiyorsa bilinmiyor denir.
+            # Quantum'un giriş uç noktası hız sınırlı ve sınır KAYNAK IP başına: kaynak,
+            # Caddy üzerinden gelen her gerçek tarayıcı girişiyle aynı adres, yani kova
+            # operatörle paylaşılıyor. Bu dal olmadan 429, 401 ile aynı sessiz yola düşüp
+            # tam da biri girişi zorlarken "sorun yok" derdi.
             echo "UYARI: filebrowser varsayılan parola kontrolü yapılamadı; giriş uç noktası hız sınırında (429)." >&2
             echo "Bu 'parola varsayılan değil' anlamına GELMEZ; sonraki günlük denetimde yeniden bakılacak." >&2
             ;;
@@ -3999,20 +3516,10 @@ check_compose_runtime() {
                 }' || true
         )"
         if [[ "$setup_location" == /setup/* ]]; then
-            # Taze bir kurulumda wg-easy'nin hâlâ /setup ekranında olması
-            # beklenen bir durumdur (bkz. M6) — bu yüzden runtime_ok'u
-            # etkilemez ve WG_CONFIGURATION_INVALID'i de kurmaz. Kendi
-            # bayrağı var: WG_SETUP_PENDING yalnız raporlanır ve wg-easy'nin
-            # otomatik restart'ını baskılar (kurulum ekranındayken yeniden
-            # başlatmak bir şey düzeltmez), fakat RECOVERY_FAILED üretmez.
-            #
-            # 2026-07-31 canlı testi ayrımın neden gerektiğini gösterdi:
-            # tek bayrakken, sağlıklı bir host all_critical_state_healthy()
-            # erken çıkışıyla exit 0 veriyordu, ama reconcile bir şeyi
-            # gerçekten onardığı anda o kapıyı geçip aşağıdaki
-            # RECOVERY_FAILED kontrolüne düşüyor ve onarım başarılı olduğu
-            # hâlde exit 1 raporluyordu. Yani sinyal tam da en çok
-            # gerektiği anda yalan söylüyordu.
+            # Taze bir kurulumda wg-easy'nin /setup ekranında olması beklenen durumdur (M6):
+            # kendi bayrağı yalnız raporlanır ve otomatik restart'ı baskılar, RECOVERY_FAILED
+            # üretmez. Tek bayrakken bir şeyi gerçekten onaran sağlıklı bir tur exit 1
+            # raporluyordu — sinyal en çok gerektiği anda yalan söylüyordu.
             echo "UYARI: wg-easy ilk kurulumu tamamlanmamış." >&2
             WG_SETUP_PENDING=1
         elif [[ "$wg_port" != "$WG_PUBLIC_PORT" ]]; then
@@ -4033,12 +3540,9 @@ state_file_ok() {
         owned_file_ok "$STATE_FILE" 0 0 600
 }
 
-# Normal bir compose.yaml'ın içerik sapması bilinçli operatör deneyi olabilir;
-# bu yüzden yalnız raporlanır ve otomatik uygulanmaz. Dosyanın tamamen kaybı
-# farklıdır: gelecekteki Docker/Tailscale restart'ında stack'in geri gelmesini
-# engeller ve canonical kopyadan geri yüklenmesi container'ları değiştirmez.
-# Symlink/dizin gibi yapısal hedeflerde otomatik üzerine yazmak güvenli
-# değildir; reconcile fail-closed durur. Metadata içerikten bağımsız onarılır.
+# compose.yaml'ın içerik sapması bilinçli operatör deneyi olabilir; yalnız
+# raporlanır. Dosyanın tamamen kaybı farklıdır ve canonical kopyadan geri
+# yüklenir. Symlink/dizin gibi yapısal hedeflerde fail-closed durulur.
 compose_file_structurally_ok() {
     [[ -f "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]] &&
         owned_file_ok "$COMPOSE_FILE" 0 0 600
@@ -4067,11 +3571,8 @@ restore_missing_compose_file() {
     fi
 }
 
-# Quantum politika dosyası: dnsmasq/Caddy dosyalarıyla aynı muamele, çünkü
-# aynı sınıftan — kurulumun ürettiği, sır içermeyen, sapması güvenlik
-# davranışını değiştiren bir politika dosyası. compose.yaml'ın rapor-only
-# istisnası buraya UYMUYOR: orada geri yükleme `docker compose up` olmadan
-# etkisiz kalıyordu, burada dosyayı geri yazmak container'ın bir sonraki
+# Quantum politika dosyası dnsmasq/Caddy dosyalarıyla aynı sınıftan. compose.yaml'ın
+# rapor-only istisnası buraya UYMUYOR: dosyayı geri yazmak container'ın bir sonraki
 # açılışında yürürlüğe giren politikayı doğrudan düzeltir.
 quantum_config_ok() {
     "$CMP_BIN" -s \
@@ -4080,18 +3581,15 @@ quantum_config_ok() {
         [[ ! -e "$QUANTUM_RESTART_PENDING_FILE" ]]
 }
 
-# Quantum politika dosyasını önce aynı dosya sistemindeki bir staging
-# dosyasına doğrulanmış metadata ile hazırlar, sonra tek rename ile yayınlar.
-# Hedef normal dosya değilse yalnız host yolunu düzeltmek yetmez: Docker
-# container'ı ilk yaratıldığı bind-mount tipini taşır. Container bu yüzden
-# kaldırılır ve çağıran taraf master-compose.service ile yeniden yaratır.
-# Named volume silinmediğinden database, kullanıcılar ve indeks korunur.
+# Politika dosyası aynı dosya sisteminde staging üzerinden hazırlanıp tek rename
+# ile yayınlanır. Hedef normal dosya değilse container ilk yaratıldığı mount
+# tipini taşıdığı için kaldırılır; named volume silinmediğinden veri korunur.
 remove_quantum_container_if_present() {
     if "$DOCKER_BIN" container inspect filebrowser >/dev/null 2>&1; then
         "$DOCKER_BIN" rm -f filebrowser >/dev/null 2>&1
     else
-        # Inspect hatasının gerçekten "container yok" olduğunu doğrula;
-        # daemon arızasını yokluk sanıp başarı dönme.
+        # Inspect hatasının gerçekten "container yok" olduğunu doğrula; daemon arızasını
+        # yokluk sanıp başarı dönme.
         "$DOCKER_BIN" info >/dev/null 2>&1
     fi
 }
@@ -4313,10 +3811,8 @@ if ! check_compose_runtime; then
     check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
 fi
 
-# Gerçek POST login denemesi salt-okunur --check/--status modlarında ASLA
-# çalışmaz. Normal reconcile'da da 20 dakikada bir değil, günde en çok bir
-# kez: rate-limit kaynak IP başına ve Caddy üzerinden gelen operatörle ortak.
-# Damga denemeden önce yazılır; OnFailure fırtınası aynı gün yeni istek üretmez.
+# Gerçek POST login denemesi salt-okunur modlarda ASLA çalışmaz; normal
+# reconcile'da da günde en çok bir kez. Damga denemeden önce yazılır.
 if [[ "$MODE" == "reconcile" ]] &&
    filebrowser_audit_due &&
    [[ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' filebrowser \
@@ -4337,10 +3833,8 @@ state_file_ok || STATE_CONFIG_DRIFTED=1
 quantum_config_ok || QUANTUM_CONFIG_DRIFTED=1
 dns_config_files_ok || DNS_CONFIG_DRIFTED=1
 caddy_config_files_ok || CADDY_CONFIG_DRIFTED=1
-# Ortak CONFIG_DRIFTED'a katılıyor, kendi bayrağıyla değil:
-# all_critical_state_healthy() zaten bunu okuyor, yani kapıya yeni bir
-# giriş eklemeye gerek yok. Ayrı anahtar --check çıktısında duruyor ki
-# hangi dosyanın saptığı görünsün.
+# Ortak CONFIG_DRIFTED'a katılır, kendi bayrağıyla değil; ayrı anahtar yalnız
+# --check çıktısında hangi dosyanın saptığını gösterir.
 if [[ "$STATE_CONFIG_DRIFTED" -eq 1 ||
       "$QUANTUM_CONFIG_DRIFTED" -eq 1 ||
       "$DNS_CONFIG_DRIFTED" -eq 1 ||
@@ -4350,12 +3844,9 @@ fi
 CANONICAL_CONFIG_INVALID=0
 canonical_runtime_configs_valid || CANONICAL_CONFIG_INVALID=1
 
-# Aşağıdaki sapma-mesajı bloğunda değil, burada — tespit anında —
-# raporlanıyor: o blok all_critical_state_healthy()'nin erken çıkışının
-# altında kalıyor ve bu koşul bilinçli olarak o toplamın parçası değil,
-# dolayısıyla tek sapması compose.yaml olan bir host aksi hâlde hiçbir
-# şey raporlamazdı. check_compose_runtime()'daki wg-easy kurulum-bekliyor
-# mesajı da aynı nedenle orada duruyor.
+# Sapma-mesajı bloğunda değil, tespit anında raporlanır: o blok
+# all_critical_state_healthy()'nin erken çıkışının altında kalıyor ve bu koşul
+# bilinçli olarak o toplamın parçası değil.
 COMPOSE_FILE_DRIFTED=0
 COMPOSE_FILE_MISSING=0
 COMPOSE_FILE_UNSAFE=0
@@ -4380,10 +3871,8 @@ if [[ "$COMPOSE_FILE_METADATA_DRIFTED" -eq 1 ]]; then
     echo "UYARI: /root/docker/compose.yaml sahiplik/modu sapmış; içerik değiştirilmeden düzeltilecek." >&2
 fi
 
-# Host WebDAV (rclone) DNS opsiyonundan bağımsız, koşulsuz kuruludur.
-# İki bağımsız sinyal: unit aktifliği ve Tailscale IPv4 üzerinden gerçek
-# 401 cevabı (unit aktif görünürken yanlış IP'ye bağlanmış olabilir —
-# adres değişimi tam da bunu üretir).
+# Host WebDAV koşulsuz kuruludur. İki bağımsız sinyal: unit aktifliği ve Tailscale
+# IPv4 üzerinden gerçek 401 cevabı — unit aktif görünürken yanlış IP'ye bağlı olabilir.
 WEBDAV_UNIT_INACTIVE=0
 WEBDAV_RUNTIME_DRIFTED=0
 "$SYSTEMCTL_BIN" is-active --quiet master-webdav.service ||
@@ -4410,26 +3899,14 @@ if ! caddy_runtime_ok; then
     caddy_runtime_ok || CADDY_RUNTIME_DRIFTED=1
 fi
 
-# UDP GRO iki ayrı şekilde kaybolabilir ve ikisi de burada denetlenir:
-#
-#   1) Unit başarısız olur (Restart=no olduğu için kendi kendine dönmez).
-#   2) ethtool bayrakları unit çökmeden silinir — NIC sürücü reload'u, canlı
-#      göç. Bu durumda unit RemainAfterExit=yes sayesinde hâlâ "active"
-#      görünür, yani (1)'i denetlemek bunu yakalamaz.
-#
-# 2026-07-29 canlı testi bu ayrımı ölçtü: `systemctl stop` sonrası bayraklar
-# `on` kalmıştı, yani unit denetimi tek başına throughput'un gerçekten
-# korunduğunu göstermiyor. Onarım her iki durumda da unit'i yeniden
-# başlatmaktır; helper idempotenttir ve bayraklar doğruysa erken çıkar.
-#
-# Saf throughput ayarı olduğu için all_critical_state_healthy() içine
-# alınmaz: bir GRO arızası bağlantıyı etkilemez, dolayısıyla reconcile'ın
-# exit kodunu veya --check sonucunu bozmamalıdır.
+# UDP GRO iki ayrı şekilde kaybolabilir ve ikisi de denetlenir: unit başarısız
+# olur, ya da unit RemainAfterExit sayesinde "active" görünürken ethtool
+# bayrakları silinir. Onarım her iki durumda unit'i yeniden başlatmaktır.
+# Saf throughput ayarı olduğu için all_critical_state_healthy() içine alınmaz.
 gro_flags_ok() {
     local features=""
-    # Denetleyemediğimiz durumlar drift sayılmaz: ethtool yok, WAN arayüzü
-    # henüz tespit edilmedi, sürücü bu özellikleri hiç bildirmiyor veya
-    # [fixed] olarak sabitlemiş. Helper de aynı durumlarda başarıyla çıkar.
+    # Denetleyemediğimiz durumlar drift sayılmaz: ethtool yok, WAN arayüzü bilinmiyor,
+    # sürücü bu özellikleri bildirmiyor veya [fixed] olarak sabitlemiş.
     [[ -n "$ETHTOOL_BIN" && -n "$CURRENT_WAN4_IF" ]] || return 0
     features="$("$ETHTOOL_BIN" -k "$CURRENT_WAN4_IF" 2>/dev/null || true)"
     grep -q '^rx-udp-gro-forwarding:' <<<"$features" || return 0
@@ -4497,16 +3974,10 @@ if [[ "$MODE" == "--check" ]]; then
     exit 1
 fi
 
-# GRO onarımı bilinçli olarak all_critical_state_healthy() kapısının önünde
-# durur: sistemin geri kalanı sağlıklıyken de çalışması gerekir, çünkü aşağıdaki
-# erken exit 0 aksi hâlde bu bloğa hiç ulaşılmamasına yol açardı. Buna karşılık
-# başarısızlığı reconcile'ın exit kodunu değiştirmez — GRO throughput ayarıdır,
-# bağlantı koşulu değil.
-#
-# restart_budget_available/record_container_restart yardımcıları adlarına
-# rağmen jeneriktir: damga dosyasının adı dışında container'a özgü hiçbir iş
-# yapmazlar, bu yüzden unit için de kullanılıyorlar. Damga start denemesinden
-# *önce* yazılır; böylece kalıcı bir arıza her periyotta yeniden denenmez.
+# GRO onarımı all_critical_state_healthy() kapısının ÖNÜNDE durur; aksi hâlde
+# aşağıdaki erken exit 0 buraya hiç ulaşmazdı. Buna karşılık başarısızlığı
+# reconcile'ın exit kodunu değiştirmez. restart_budget_available/
+# record_container_restart adlarına rağmen jeneriktir ve unit için de kullanılır.
 if [[ "$GRO_SERVICE_INACTIVE" -eq 1 || "$GRO_FLAGS_DRIFTED" -eq 1 ]]; then
     if [[ "$GRO_SERVICE_INACTIVE" -eq 1 ]]; then
         GRO_REASON="unit aktif değil"
@@ -4517,9 +3988,8 @@ if [[ "$GRO_SERVICE_INACTIVE" -eq 1 || "$GRO_FLAGS_DRIFTED" -eq 1 ]]; then
         echo "tailscale-udp-gro: $GRO_REASON; yeniden uygulanıyor."
         record_container_restart tailscale-udp-gro
         "$SYSTEMCTL_BIN" reset-failed tailscale-udp-gro.service >/dev/null 2>&1 || true
-        # Bayrak sapmasında unit "active" olduğu için start no-op olurdu;
-        # restart helper'ı gerçekten yeniden çalıştırır ve tek yürütme yolu
-        # systemd olarak kalır (unit durumu gerçeği yansıtmayı sürdürür).
+        # Bayrak sapmasında unit "active" olduğu için start no-op olurdu; restart
+        # helper'ı gerçekten yeniden çalıştırır ve tek yürütme yolu systemd kalır.
         if "$SYSTEMCTL_BIN" restart tailscale-udp-gro.service; then
             GRO_SERVICE_INACTIVE=0
             gro_flags_ok && GRO_FLAGS_DRIFTED=0
@@ -4609,8 +4079,7 @@ fi
 
 if [[ "$TAILSCALE_OFFLINE" -eq 1 ]]; then
     # Kimlik süresi/control-plane erişimi otomatik ve güvenli biçimde üretilemez.
-    # Core daemonı bu After= transaction'ı içinden restart ederek self-order
-    # yaratma; servis kendi Restart politikası ve sonraki timer ile yeniden bakar.
+    # Core daemon'ı bu After= transaction'ı içinden restart edip self-order yaratma.
     RECOVERY_FAILED=1
 fi
 if [[ "$WG_ENDPOINT_DRIFTED" -eq 1 ||
@@ -4671,15 +4140,9 @@ if [[ "$ADDRESS_CHANGED" -eq 1 ||
       "$TAILSCALE_NETFILTER_DRIFTED" -eq 1 ||
       "$FIREWALL_DRIFTED" -eq 1 ||
       "$FW_INACTIVE" -eq 1 ]]; then
-    # Container restart'larının zaten kullandığı 15 dakikalık bütçenin
-    # aynısı: bu turda onarılamayan bir sapma (örneğin sürekli başarısız
-    # olan bir firewall kontrolü) her turda firewall'u yeniden uygulayıp
-    # `docker compose up --wait` çalıştırmak yerine 15 dakikada bir
-    # yeniden denenir. Timer aralığı (20 dk) bu bütçeden büyük olduğu için
-    # pratikte her zamanlanmış koşu eyleme geçebilir; bütçe asıl olarak
-    # olay-tetiklemeli (OnFailure) çağrıları sınırlar. Adres değişimi muaftır: bir başarılı
-    # turdan sonra kendiliğinden temizlenir ve ertelemek yayınlanan
-    # binding'leri 15 dakikaya kadar eski bir IP'de bırakırdı.
+    # Container restart'larıyla aynı 15 dakikalık bütçe: bu turda onarılamayan bir
+    # sapma her turda firewall'u yeniden uygulayıp `compose up --wait` çalıştırmasın.
+    # Adres değişimi muaftır — ertelemek yayınlanan binding'leri eski bir IP'de bırakırdı.
     if [[ "$ADDRESS_CHANGED" -eq 1 ]] ||
        restart_budget_available master-compose; then
         STACK_RESTART_REQUIRED=1
@@ -4703,17 +4166,10 @@ if [[ "$STACK_RESTART_REQUIRED" -eq 1 ]]; then
     fi
 fi
 
-# Politika dosyası geri yüklenir ve container yenilenir. Bu blok genel
-# container onarımından ÖNCE çalışır: hedef Docker tarafından dizin olarak
-# yaratılmışsa genel `docker restart filebrowser` hem sorunu çözemez hem de
-# 15 dakikalık bütçeyi tüketerek doğru yeniden-yaratma yolunu kilitlerdi.
-#
-# Bütçe dosyaya dokunmadan önce denetlenir. Eski sıra önce dosyayı canonical
-# içeriğe çeviriyor, sonra cooldown nedeniyle restart edemiyordu; bir sonraki
-# tur artık dosya sapması görmediği için Quantum eski politikayı süresiz
-# çalıştırabiliyordu. Pending işareti de restart başladıktan sonraki her hata
-# için aynı sinyali korur; /run reboot'ta temizlenir, reboot zaten container'ı
-# yeni config ile başlatır.
+# Politika dosyası geri yüklenir ve container yenilenir. Bu blok genel container
+# onarımından ÖNCE çalışır: hedef Docker tarafından dizin olarak yaratılmışsa
+# genel bir restart hem çözemez hem 15 dakikalık bütçeyi tüketirdi. Bütçe bu
+# yüzden dosyaya dokunmadan önce denetlenir.
 if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
     if ! restart_budget_available filebrowser; then
         echo "HATA: filebrowser politika onarımı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; dosya ve yürürlükteki politika birlikte korunup sonraki tura bırakıldı." >&2
@@ -4727,9 +4183,8 @@ if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
         echo "HATA: Canonical filebrowser politika dosyası güvenli biçimde geri yüklenemedi." >&2
         RECOVERY_FAILED=1
     else
-        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız
-        # açılışta okur. Normal dosya sapmasında restart, dizin/symlink gibi
-        # yapısal sapmada veya eksik container'da Compose ile recreate.
+        # Dosyayı düzeltmek tek başına yetmiyor: Quantum config'i yalnız açılışta okur.
+        # Yapısal sapmada veya eksik container'da Compose ile recreate.
         record_container_restart filebrowser
         if restart_quantum_after_config_restore; then
             QUANTUM_CONFIG_REPAIRED=0
@@ -4754,10 +4209,8 @@ if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
                 echo "HATA: filebrowser politika onarımı pending işareti temizlenemedi." >&2
                 RECOVERY_FAILED=1
             else
-                # İlk tespitte filebrowser başka runtime sapmalarıyla da
-                # işaretlenmiş olabilir. Başarılı restart/recreate sonrası
-                # hedef listesini yenile; aksi hâlde aşağıdaki genel blok
-                # aynı container'ı ikinci kez restart etmeye çalışır.
+                # Başarılı restart/recreate sonrası hedef listesini yenile; aksi hâlde aşağıdaki
+                # genel blok aynı container'ı ikinci kez restart etmeye çalışır.
                 QUANTUM_CONFIG_DRIFTED=0
                 COMPOSE_RUNTIME_DRIFTED=0
                 check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
@@ -4784,11 +4237,8 @@ if [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 1 ]]; then
         fi
         if restart_budget_available "$restart_target"; then
             if [[ "$restart_target" == "filebrowser" ]]; then
-                # Eski Q1-18 ve öncesinden, host yolu artık normal dosya
-                # olsa bile container'ın saklı mount spec'i dizin kalmış
-                # olabilir (`docker rm ... || true` hatayı yutuyordu).
-                # Restart bunu düzeltemez; named volume'u koruyan recreate
-                # hem bu geçiş durumunu hem sıradan runtime arızasını çözer.
+                # Eski sürümlerden kalma container'ın saklı mount spec'i hâlâ dizin olabilir.
+                # Restart bunu düzeltemez; named volume'u koruyan recreate çözer.
                 FILEBROWSER_RUNTIME_RECREATE_REQUIRED=1
             else
                 ELIGIBLE_RESTART_TARGETS+=("$restart_target")
@@ -4877,12 +4327,9 @@ if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
     fi
 fi
 
-# Host WebDAV onarımı Caddy/dnsmasq kalıbını izler: reset-failed + restart
-# + işlevsel postcondition. Tailscale adresi değiştiyse unit aktif görünse
-# bile eski IP'ye bağlı kalmıştır; restart, ExecStartPre'nin güncel IPv4'ü
-# yazmasını sağlar. rclone Type=simple olduğundan restart soketin dinlemeye
-# geçmesini beklemez; postcondition bu yüzden kısa bir tekrar penceresi
-# kullanır.
+# Host WebDAV onarımı Caddy/dnsmasq kalıbını izler: reset-failed + restart +
+# işlevsel postcondition. rclone Type=simple olduğundan restart soketin dinlemeye
+# geçmesini beklemez; postcondition kısa bir tekrar penceresi kullanır.
 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$WEBDAV_UNIT_INACTIVE" -eq 1 ||
       "$WEBDAV_RUNTIME_DRIFTED" -eq 1 ]]; then
@@ -4939,9 +4386,9 @@ if [[ "$DOCKER_NETFILTER_DRIFTED" -eq 1 ]] &&
 fi
 
 if [[ "$DOCKER_NETFILTER_DRIFTED" -eq 1 ]]; then
-    # Docker'ın sahibi olduğu DNAT/FORWARD zincirleri MASTER helper tarafından
-    # elle yazılmaz. Ayrı unit bu reconcile transaction'ı bittikten sonra
-    # Docker'ı yeniden başlatır; --no-block self-order beklemesini önler.
+    # Docker'ın sahibi olduğu DNAT/FORWARD zincirleri elle yazılmaz. Ayrı unit bu
+    # transaction bittikten sonra Docker'ı yeniden başlatır; --no-block self-order
+    # beklemesini önler.
     if "$SYSTEMCTL_BIN" start --no-block "$CORE_RECOVERY_UNIT"; then
         CORE_RECOVERY_SCHEDULED=1
     else
@@ -4999,16 +4446,10 @@ umask 077
 LOCK_FILE="/run/lock/master-stack.lock"
 STATE_DIR="/run/master-network-reconcile"
 STAMP_FILE="$STATE_DIR/docker-core.last-restart"
-# master-network-reconcile aynı politikayı kendi RESTART_COOLDOWN_SECONDS
-# sabitinde tutar. Değeri paylaşamazlar ve bu bilinçli: her gömülü script
-# kendi kendine yeterli olmak zorunda, çünkü scripts/lint-embedded-scripts.sh
-# her birini tek başına çıkarıp bağımsız olarak bash -n + shellcheck'ten
-# geçiriyor (H4). Ortak bir değişkene bağlamak o statik analizi bozardı.
-#
-# Sessiz ayrışma riski bunun yerine Aşama 7'de kapatıldı: kurulum, üretilen
-# iki dosyadaki değerin birbiriyle ve install.sh'in kendi
-# MASTER_RESTART_COOLDOWN_SECONDS sabitiyle aynı olduğunu doğruluyor. Yani
-# biri değişip diğeri unutulursa kurulum durur; sessizce sapmaz.
+# reconcile aynı politikayı kendi RESTART_COOLDOWN_SECONDS sabitinde tutar.
+# Değeri paylaşamazlar ve bu bilinçli: her gömülü script bağımsız lint'lenebilmek
+# için kendi kendine yeterli olmak zorunda (H4). Sessiz ayrışma riski Aşama 7'de
+# üç değerin eşitliği doğrulanarak kapatıldı.
 COOLDOWN_SECONDS=900
 
 exec 8>"$LOCK_FILE"
@@ -5069,19 +4510,16 @@ set_unit_file_mode /etc/systemd/system/master-docker-netfilter-recovery.service
 cat >/etc/systemd/system/master-network-reconcile.service <<'RECONCILE_SYSTEMD'
 [Unit]
 Description=Reconcile Docker, Tailnet bindings and managed firewall policy
-# Boot takvim sınırına denk gelse bile timer, devam eden ana
-# firewall/Compose job'larını helper'ın geçiş/job kontrolü bölmez.
-# Reconcile bu iki unit'i kendi ExecStart'ı içinden senkron başlatabildiği için
-# onları After= listesine almak self-order beklemesi oluşturabilir. Yalnız ana
-# daemon'ların sırası korunur; helper yalnız ikisi de aktifse işlem yapar.
+# Reconcile bu iki unit'i kendi ExecStart'ından başlatabildiği için onları After=
+# listesine almak self-order beklemesi oluştururdu. Yalnız ana daemon'ların sırası
+# korunur.
 After=network-online.target docker.service tailscaled.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/master-network-reconcile
-# Firewall (600 sn), Compose (330 sn), Caddy (330 sn), dnsmasq ve opsiyonel
-# GRO'nun aynı nadir kurtarma patikasındaki teorik ardışık üst sınırına pay
-# bırakır. Sağlıklı kontrol bu sunucuda yalnız milisaniyeler sürer.
+# Nadir kurtarma patikasındaki teorik ardışık üst sınıra pay bırakır. Sağlıklı
+# kontrol bu sunucuda yalnız milisaniyeler sürer.
 TimeoutStartSec=1800s
 RECONCILE_SYSTEMD
 set_unit_file_mode /etc/systemd/system/master-network-reconcile.service
@@ -5091,26 +4529,12 @@ cat >/etc/systemd/system/master-network-reconcile.timer <<'RECONCILE_TIMER'
 Description=Periodically check WAN, Tailnet bindings and managed services
 
 [Timer]
-# Tek duvar-saati tetikleyicisi eski service timestamp'lerinden etkilenmez ve
-# enable --now ile ayrıca manuel start arasında çift çağrı üretmez.
-#
-# Aralık V1-9'da 5 dakikadan 20'ye çıkarıldı; gerekçe maliyet değil,
-# RESTART_COOLDOWN_SECONDS=900 ile hizalanmaktır. Onarım bütçesi 15 dakika
-# olduğu için 5 dakikalık kontrol kalıcı bir arızada her üç koşudan ikisini
-# "tespit et ama cooldown nedeniyle eyleme geçme" durumuna sokuyordu; o
-# koşular RECOVERY_FAILED=1 ile exit 1 verip başarısız unit ve log gürültüsü
-# üretiyordu. 20 > 15 olduğundan artık her zamanlanmış koşu gerçekten
-# onarabilir ve cooldown yalnız olay-tetiklemeli yollar için emniyet supabı
-# olarak kalır.
-#
-# 20 bilerek seçildi: 60'ı tam böler, yani :00/:20/:40. 18 veya 24 gibi
-# bölmeyen değerler saat başında kısa bir aralık bırakır (18 -> :00 :18 :36
-# :54, ardından yalnız 6 dakika).
-#
-# Bedeli: olay tetikleyicisi olmayan sapmaların (adres değişimi, elle config
-# düzenlemesi, GRO bayrağı kaybı, dolan disk) kurtarma gecikmesi 20 dakikaya
-# çıkar. Çökme yolları etkilenmez — beş OnFailure kancası ve PartOf/Wants
-# zincirleri reconcile'ı timer'dan bağımsız, anında çağırır.
+# Tek duvar-saati tetikleyicisi eski service timestamp'lerinden etkilenmez.
+# Aralık RESTART_COOLDOWN_SECONDS=900 ile hizalıdır: 20 > 15 olduğu için her
+# zamanlanmış koşu gerçekten onarabilir ve cooldown yalnız olay-tetiklemeli
+# yollar için emniyet supabı kalır. 20, saati tam böler (:00/:20/:40).
+# Bedeli: olay tetikleyicisi olmayan sapmalarda kurtarma gecikmesi 20 dakikaya
+# çıkar; çökme yolları OnFailure ile timer'dan bağımsız, anında çağrılır.
 OnCalendar=*-*-* *:00/20:00
 AccuracySec=10s
 RandomizedDelaySec=0
@@ -5123,21 +4547,15 @@ RECONCILE_TIMER
 set_unit_file_mode /etc/systemd/system/master-network-reconcile.timer
 
 # ---- Host WebDAV (rclone) — sftpgo container'ının yerini alır (DD-20) ----
-# Medya ağacını Apple TV/Infuse'a doğrudan Tailscale IPv4 üzerinden sunar.
-# Trafik artık FORWARD/DNAT değil, Caddy/dnsmasq gibi host INPUT yolundan
-# akar; guard zincirindeki tek Tailnet->Docker istisnası bu sayede kalktı.
-# Trixie'nin rclone'u (1.60) tek --addr kabul eder; bu yüzden yalnız
-# Tailscale IPv4'e bağlanılır ve Caddy'nin webdav vhost'u loopback yerine
-# {$TS_IPV4}'e proxy'ler. 0.0.0.0'a bağlanmak public IPv4'e açılmak
-# demek olurdu; spesifik bind, firewall kuralından daha güvenli ilkeldir.
+# Medya ağacını Apple TV/Infuse'a doğrudan Tailscale IPv4 üzerinden sunar; trafik
+# FORWARD/DNAT değil, host INPUT yolundan akar. Trixie'nin rclone'u tek --addr
+# kabul ettiği için yalnız Tailscale IPv4'e bağlanılır; 0.0.0.0 public IPv4'e
+# açılmak olurdu.
 
-# Adresi bulup rclone'u exec eden tek helper. Caddy'nin ExecStartPre +
-# env-file kalıbı burada BİLİNÇLİ olarak kullanılmıyor: systemd
-# EnvironmentFile'ı unit başlarken, ExecStartPre çalışmadan ÖNCE okur, yani
-# ilk başlangıçta dosya henüz yokken $TS_IPV4 boş kalır ve '--addr :65113'
-# wildcard bind'a — public IPv4'e açılmaya — dönüşürdü. Caddy bundan
-# --envfile bayrağıyla kaçınır; rclone'da böyle bir bayrak yok. Adresi
-# ExecStart'ın kendi içinde çözmek bu sınıfı tümden ortadan kaldırır.
+# Adresi bulup rclone'u exec eden tek helper. Caddy'nin ExecStartPre + env-file
+# kalıbı burada BİLİNÇLİ kullanılmıyor: systemd EnvironmentFile'ı ExecStartPre'den
+# ÖNCE okur, yani ilk başlangıçta boş $TS_IPV4 wildcard bind'a — public IPv4'e
+# açılmaya — dönüşürdü. Adresi ExecStart içinde çözmek bu sınıfı ortadan kaldırır.
 cat >/usr/local/sbin/master-webdav-serve <<'WEBDAV_SERVE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -5152,19 +4570,14 @@ WAIT_SECONDS=300
 : "${WEBDAV_PORT:?WEBDAV_PORT tanımlı değil}"
 : "${CREDENTIALS_DIRECTORY:?systemd LoadCredential dizini yok}"
 
-# 'ip' hatası yutulmaz. Adresin henüz oluşmamış olması normaldir ve
-# beklenir; 'ip'in çalışamaması ise yapılandırma hatasıdır (örneğin unit'te
-# AF_NETLINK kapalıysa 'Cannot open netlink socket'). İkisi ayrılmazsa
-# ikincisi de 300 saniyelik bir bekleyiş gibi görünür ve unit bu süre
-# boyunca 'active (running)' raporlar — 2026-07-30'da tam olarak bu oldu,
-# hata ancak Aşama 7'de fark edildi. Bu yüzden ilk denemede stderr
-# yakalanıp bir kez raporlanır.
+# 'ip' hatası yutulmaz. Adresin henüz oluşmaması normaldir; 'ip'in çalışamaması
+# ise yapılandırma hatasıdır (ör. unit'te AF_NETLINK kapalı). Ayrılmazsa ikincisi
+# de 300 saniyelik bir bekleyiş gibi görünür ve unit o süre boyunca 'active' der.
 TS_IPV4=""
 IP_PROBE_REPORTED=0
 for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
-    # stderr, geçici dosya değil değişken üzerinden toplanır: bu döngü 300
-    # kez dönebilir ve ProtectSystem=strict altında yazılabilir bir yol
-    # garanti değildir (mktemp burada 'Read-only file system' ile patlıyor).
+    # stderr geçici dosya değil değişken üzerinden toplanır: döngü 300 kez dönebilir
+    # ve ProtectSystem=strict altında yazılabilir bir yol garanti değildir.
     IP_RC=0
     IP_OUTPUT="$(
         "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>&1
@@ -5196,27 +4609,13 @@ if [[ -z "$TS_IPV4" ]]; then
 fi
 
 echo "WebDAV dinleniyor: ${TS_IPV4}:${WEBDAV_PORT} -> ${MEDIA_DIR} (salt okunur)"
-# --config /dev/null: bu servis hiçbir rclone remote'u kullanmaz, yalnız
-# yerel bir dizini sunar. Açıkça verilmezse rclone $HOME/.config altında
-# bir yapılandırma arar; ProtectSystem=strict + ProtectHome=yes altında bu
-# yol yoktur ve davranış rclone sürümüne göre değişir. /dev/null,
-# PrivateDevices=yes'in sağladığı minimal /dev içinde her zaman vardır.
-# --dir-cache-time: rclone'un varsayılanı 5 dakika ve bu, bu kurulumun
-# asıl iş akışında somut bir gecikme üretiyordu — 2026-08-01'de ölçüldü:
-# medya ağacına yeni bir dosya düştükten sonra Quantum onu ANINDA
-# gösterirken (kendi SQLite indeksi gerçek zamanlı izliyor) WebDAV t+10s'te
-# hâlâ 404 dönüyordu. Yani qBittorrent bir indirmeyi bitirdiğinde veya
-# unpackerr bir arşivi açtığında dosya Infuse'da beş dakikaya kadar
-# görünmüyordu.
+# --config /dev/null: bu servis hiçbir rclone remote'u kullanmaz ve
+# ProtectHome=yes altında $HOME/.config yolu yoktur.
 #
-# --poll-interval BURADA İŞE YARAMAZ ve bilerek verilmedi: rclone'un kendi
-# yardımı "only on supported remotes" diyor ve `rclone backend features`
-# yerel dizin için ChangeNotify=False raporluyor (aynı gün ölçüldü). Yerel
-# dosya sisteminde tek etkili kaldıraç dizin önbelleği süresidir.
-#
-# 1 dakika, "indirme bitti ama görünmüyor" hissini vermeyecek kadar kısa,
-# önbelleği anlamsız kılacak kadar da kısa değil. 0 (her istekte disk
-# okuması) büyük bir kütüphanede gezinmeyi yavaşlatırdı.
+# --dir-cache-time: rclone'un 5 dakikalık varsayılanı somut bir gecikme
+# üretiyordu — biten bir indirme Quantum'da anında görünürken WebDAV'da dakikalarca
+# görünmüyordu. --poll-interval yerel dizinde işe YARAMAZ (ChangeNotify=False),
+# bu yüzden tek etkili kaldıraç dizin önbelleği süresidir.
 exec "$RCLONE_BIN" serve webdav "$MEDIA_DIR" \
     --config /dev/null \
     --addr "${TS_IPV4}:${WEBDAV_PORT}" \
@@ -5226,23 +4625,20 @@ exec "$RCLONE_BIN" serve webdav "$MEDIA_DIR" \
 WEBDAV_SERVE_SCRIPT
 chmod 0755 /usr/local/sbin/master-webdav-serve
 
-# Parola dosyası LoadCredential ile içeri alınır: dosya root:root 0600
-# kalır, servis kullanıcısının kendisine okuma izni gerekmez ve rclone
-# hash'leri $CREDENTIALS_DIRECTORY (%d) altından okur. Servis, medya
-# ağacının 0750 1000:1000 iznine gid 1000 üyeliğiyle erişen kalıcı
-# 'master-webdav' sistem kullanıcısı olarak koşar (yukarıda oluşturuldu).
+# Parola dosyası LoadCredential ile içeri alınır: dosya root:root 0600 kalır ve
+# servis kullanıcısına okuma izni gerekmez. Servis, medya ağacına gid 1000
+# üyeliğiyle erişen kalıcı 'master-webdav' sistem kullanıcısı olarak koşar.
 cat >/etc/systemd/system/master-webdav.service <<WEBDAV_SYSTEMD
 [Unit]
 Description=Salt okunur Tailnet WebDAV servisi (rclone, medya ağacı)
 Wants=tailscaled.service
 After=network-online.target tailscaled.service
-# Tailscaled restart'ında birlikte durur; tailscaled'in 98-master-stack
-# drop-in'indeki Wants ile güncel Tailscale IPv4'ü alarak geri başlar.
+# tailscaled restart'ında birlikte durur ve güncel Tailscale IPv4'ü alarak geri başlar.
 PartOf=tailscaled.service
 OnFailure=master-network-reconcile.service
 RequiresMountsFor=${DOWNLOADS_PATH}/media
 # ExecStartPre Tailscale IPv4 için en çok 300 saniye bekleyebilir; iki uzun
-# denemeden sonra pencere kapanır, sonraki reconcile periyodu yeniden dener.
+# denemeden sonra pencere kapanır ve sonraki reconcile periyodu yeniden dener.
 StartLimitIntervalSec=900
 StartLimitBurst=2
 
@@ -5262,11 +4658,8 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-# AF_NETLINK şart: ExecStart'ın ilk işi 'ip addr show' ile tailscale0
-# adresini bulmak ve iproute2 çekirdekle netlink soketi üzerinden konuşur.
-# Yalnız AF_INET/AF_INET6 verildiğinde 'Cannot open netlink socket' alınır
-# (2026-07-30 canlı testinde ölçüldü). rclone'un kendisi için AF_INET ve
-# AF_INET6 yeterlidir.
+# AF_NETLINK şart: ExecStart'ın ilk işi 'ip addr show' ile tailscale0 adresini
+# bulmak ve iproute2 çekirdekle netlink soketi üzerinden konuşur.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 
 [Install]
@@ -5308,14 +4701,10 @@ systemctl enable master-compose.service
 systemctl enable master-webdav.service
 
 progress_stage_note 75 "Firewall uygulanıp Compose stack başlatılıyor"
-# Politika içeriği/metadata değiştiyse veya hedef normal dosya değilse
-# mevcut filebrowser container'ı eski bind mount'u taşımaya devam edemez.
-# Pull ve unit doğrulaması bu noktada tamamlandı; yalnız container silinir,
-# named volume DEĞİL. Önceki sürümün yuttuğu bir `docker rm` hatasından
-# kalan, host yolu doğru olsa da eski dizin mount'u taşıyan container da
-# running/health sinyaliyle bu yola girer. Aşağıdaki Compose start aynı
-# isimle ve yeni dosya mount'uyla yeniden yaratır. Taze kurulumda container
-# zaten yoktur.
+# Politika içeriği/metadata değiştiyse veya hedef normal dosya değilse mevcut
+# container eski bind mount'u taşımaya devam edemez. Yalnız container silinir,
+# named volume DEĞİL; aşağıdaki Compose start aynı isimle yeniden yaratır.
+# Taze kurulumda container zaten yoktur.
 if docker container inspect filebrowser >/dev/null 2>&1; then
     QUANTUM_EXISTING_RUNNING="$(
         docker inspect -f '{{.State.Running}}' filebrowser 2>/dev/null || true
@@ -5335,55 +4724,39 @@ if docker container inspect filebrowser >/dev/null 2>&1; then
         docker rm -f filebrowser >/dev/null
     fi
 fi
-# Re-run: daemon.json değiştiyse Docker restart'ı buraya, tüm helper/unit ve
-# compose dosyaları yazılıp daemon-reload yapıldıktan sonraya ertelendi.
-# Böylece PartOf/Wants ile tetiklenen fw ve compose unit'leri eski değil,
-# bu çalıştırmanın güncel tanımlarıyla başlar.
+# Re-run: daemon.json değiştiyse Docker restart'ı, tüm helper/unit ve compose
+# dosyaları yazılıp daemon-reload yapıldıktan sonraya ertelendi; böylece PartOf/
+# Wants ile tetiklenen unit'ler bu çalıştırmanın güncel tanımlarıyla başlar.
 if [[ "$DOCKER_WAS_ACTIVE" -eq 1 && "$DOCKER_DAEMON_JSON_CHANGED" -eq 1 ]]; then
     systemctl restart docker
-    # Docker Wants grafiği firewall ve Compose'u güncel unit'lerle çeker.
-    # İşlem tamamlandıktan sonra yalnız aktif olduklarını garanti et; ikinci
-    # bir restart transaction'ı üretme.
+    # Docker'ın Wants grafiği firewall ve Compose'u güncel unit'lerle çeker; yalnız
+    # aktif olduklarını garanti et, ikinci bir restart transaction'ı üretme.
     systemctl start docker-tailscale-fw.service
     systemctl start master-compose.service
 else
-    # Docker restart gerekmiyorsa Compose unit'ini bilinçli durdur. Container
-    # süreçleri ExecStop olmadığı için çalışmaya devam eder; firewall tek kez
-    # yenilendikten sonra güncel Compose dosyası tek bir start ile uzlaştırılır.
+    # Docker restart gerekmiyorsa Compose unit'i bilinçli durdurulur. Container
+    # süreçleri çalışmaya devam eder; güncel dosya tek bir start ile uzlaştırılır.
     systemctl stop master-compose.service
     systemctl restart docker-tailscale-fw.service
     systemctl start master-compose.service
 fi
 echo "Container'lar başlatıldı."
 
-# Yeniden çalıştırmada unit tanımı/htpasswd değişmiş olabilir; restart her
-# iki durumda da güncel tanımla tek başlangıç üretir (fresh kurulumda start
-# ile eşdeğer). Docker'dan bağımsızdır; tailscaled Aşama 2'den beri ayakta.
+# Yeniden çalıştırmada unit tanımı veya htpasswd değişmiş olabilir; restart her
+# iki durumda güncel tanımla tek başlangıç üretir.
 progress_stage_note 90 "Host WebDAV servisi başlatılıyor"
-# reset-failed önce gelmeli. Başarısız bir önceki kurulumdan kalan unit
-# StartLimitBurst'ü tüketmiş olabilir; o durumda systemd restart'ı "Start
-# request repeated too quickly" ile reddeder ve kurulum burada ölür —
-# 2026-07-30'da tam olarak bu yaşandı. reset-failed idempotenttir ve
-# sağlıklı bir unit'te no-op'tur. Reconcile'ın onarım yolu da aynı sırayı
-# kullanır.
+# reset-failed ÖNCE gelmeli: başarısız bir önceki kurulumdan kalan unit
+# StartLimitBurst'ü tüketmiş olabilir ve systemd restart'ı reddeder. İdempotenttir
+# ve sağlıklı bir unit'te no-op'tur.
 systemctl reset-failed master-webdav.service >/dev/null 2>&1 || true
 systemctl restart master-webdav.service
 
-# Hareketli etiketler (portainer:lts, qbittorrent:latest, filebrowser:stable …)
-# "şu anda tam olarak ne çalışıyor" bilgisini compose.yaml'dan siler: dosya
-# değişmeden altındaki imaj değişebilir. Çözülen digest'ler bu yüzden burada
-# state.env'e yazılır — Aşama 5'ten sonra, çünkü imajlar ancak bu noktada
-# çekilmiş ve container'lar ayağa kalkmış olur; Aşama 6'nın canonical
-# yayınından önce, çünkü state.env'in canonical kopyası orada üretilir
-# (DD-14). Bir yükseltme bir şeyi bozarsa geri dönülecek sürümün kaydı
-# budur (DD-23).
-# RepoDigests container nesnesinde DEĞİL, image nesnesinde bulunur —
-# `docker inspect <container>` bu alanı hiç taşımaz ve template
-# "map has no entry" ile patlar. V1-12'nin ilk denemesi tam olarak buna
-# takıldı: beş digest de "bilinmiyor" yazıldı ve Aşama 7 kurulumu rc=1 ile
-# durdurdu. Bu yüzden önce container'ın image ID'si okunur, digest o ID'den
-# alınır. Boş kalırsa (yalnız yerel build'lerde olur) anahtar yine yazılır
-# ki eksiklik Aşama 7'de sessizce geçmesin.
+# Hareketli etiketler "şu anda ne çalışıyor" bilgisini compose.yaml'dan siler.
+# Çözülen digest'ler bu yüzden burada state.env'e yazılır: Aşama 5'ten sonra,
+# çünkü imajlar ancak burada çekilmiştir; Aşama 6'nın canonical yayınından önce,
+# çünkü state.env'in canonical kopyası orada üretilir (DD-14, DD-23).
+# RepoDigests container nesnesinde DEĞİL image nesnesindedir — önce container'ın
+# image ID'si okunur, digest o ID'den alınır.
 resolved_image_digest() {
     local container="$1" image_id="" digest=""
     image_id="$(docker inspect -f '{{.Image}}' "$container" 2>/dev/null || true)"
@@ -5416,8 +4789,8 @@ progress_stage_done
 progress_stage_begin 6 "Opsiyonel Tailnet DNS ve Caddy hazırlanıyor"
 progress_stage_note 10 ".$LOCAL_DOMAIN için dnsmasq kuruluyor"
 
-# Service state kadar içerik de transaction'ın parçasıdır. Snapshot paket
-# kurulumu ve ilk `cat >` işleminden önce alınır; böylece fresh install'da
+# Servis durumu kadar içerik de transaction'ın parçasıdır. Snapshot paket
+# kurulumundan ve ilk `cat >` işleminden önce alınır; fresh install'da
 # "önceden yoktu" bilgisi de korunur.
 capture_dns_stack_files
 DNSMASQ_INITIAL_LOAD_STATE="$(
@@ -5442,9 +4815,8 @@ systemctl is-active --quiet caddy.service 2>/dev/null &&
     CADDY_WAS_ACTIVE=1
 DNS_STACK_STATE_CAPTURED=1
 
-# Paket postinst aşamasında varsayılan wildcard listener açılmasını engelle.
-# Kalıcı maske, kurulum bu blokta yarıda kalırsa reboot sonrasında da
-# fail-closed kalır; yalnız güvenli özel yapılandırma doğrulanınca kaldırılır.
+# Paket postinst'inde varsayılan wildcard listener açılmasını engelle. Kalıcı
+# maske, kurulum yarıda kalırsa reboot sonrasında da fail-closed kalır.
 systemctl stop dnsmasq.service 2>/dev/null || true
 systemctl mask dnsmasq.service >/dev/null
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y dnsmasq dnsutils
@@ -5455,8 +4827,8 @@ cat >/etc/systemd/system/dnsmasq.service.d/99-tailscale-order.conf <<'DNSMASQ_DR
 Wants=tailscaled.service
 After=tailscaled.service
 OnFailure=master-network-reconcile.service
-# Gerçek daemon çökmesinde hızlı kurtar; yalnız bir dakikalık gerçek restart
-# fırtınasını beş denemeden sonra durdur. Reconcile daha sonra tekrar dener.
+# Gerçek daemon çökmesinde hızlı kurtar; bir dakikalık gerçek restart fırtınasını
+# beş denemeden sonra durdur.
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -5502,9 +4874,7 @@ progress_stage_note 45 "Caddy paket deposu hazırlanıyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y \
     debian-keyring debian-archive-keyring apt-transport-https
 
-# Ağ indirmesi yerel gpg işleminden ayrıldı: retry yalnız ağ adımını
-# kapsamalı. `gpg --dearmor` başarısızlığı bir ağ sorunu değildir ve
-# yeniden denenmesi anlamsızdır (bozuk girdi üç kez de bozuktur).
+# Ağ indirmesi yerel gpg işleminden ayrıldı: retry yalnız ağ adımını kapsamalı.
 CADDY_GPG_TMP="$(mktemp)"
 retry_network "Caddy GPG anahtarı indirme" \
     "$NET_RETRY_SMALL_FIRST" "$NET_RETRY_SMALL_NEXT" -- \
@@ -5524,7 +4894,7 @@ chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 chmod 0644 /etc/apt/sources.list.d/caddy-stable.list
 
 # dnsmasq ile aynı fail-closed model: doğrulanmış Tailnet-only Caddyfile ve
-# systemd drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
+# drop-in hazır olmadan paket varsayılan servisi reboot'ta açılmaz.
 systemctl stop caddy.service 2>/dev/null || true
 systemctl mask caddy.service >/dev/null
 retry_network "apt-get update" \
@@ -5575,9 +4945,8 @@ Wants=tailscaled.service docker.service
 After=tailscaled.service docker.service
 PartOf=tailscaled.service
 OnFailure=master-network-reconcile.service
-# ExecStartPre Tailscale IPv4 için en çok 300 saniye bekleyebilir. İki uzun
-# denemeyi kapsayan 15 dakikalık pencere, adres hiç oluşmazsa üçüncü denemeyi
-# keser; sonraki reconcile periyodu daha sonra yeniden deneyebilir.
+# ExecStartPre Tailscale IPv4 için en çok 300 saniye bekleyebilir; 15 dakikalık
+# pencere adres hiç oluşmazsa üçüncü denemeyi keser.
 StartLimitIntervalSec=900
 StartLimitBurst=2
 
@@ -5600,8 +4969,8 @@ CADDY_DROPIN
 set_unit_file_mode \
     /etc/systemd/system/caddy.service.d/99-tailnet-bind.conf
 
-# PartOf stop/restart'i Caddy'ye taşır; bu ters Wants ilişkisi de ayrı bir
-# "stop tailscaled" + "start tailscaled" akışında Caddy'yi geri başlatır.
+# PartOf stop/restart'i Caddy'ye taşır; bu ters Wants ilişkisi ayrı bir tailscaled
+# stop/start akışında Caddy'yi geri başlatır.
 install -d -m 0755 /etc/systemd/system/tailscaled.service.d
 cat >/etc/systemd/system/tailscaled.service.d/99-caddy-tailnet.conf <<'TS_CADDY_DROPIN'
 [Unit]
@@ -5613,8 +4982,8 @@ set_unit_file_mode \
 
 cat >/etc/caddy/Caddyfile <<EOF
 {
-	# Her başlangıçta /run/caddy-tailnet/tailscale.env içinden alınır.
-	# Caddy public IPv4/IPv6 wildcard adreslerinde dinlemez.
+	# Adres her başlangıçta /run/caddy-tailnet/tailscale.env'den alınır; Caddy public
+	# IPv4/IPv6 wildcard adreslerinde dinlemez.
 	default_bind {\$TS_IPV4}
 }
 
@@ -5639,8 +5008,8 @@ http://wg.${LOCAL_DOMAIN} {
 }
 
 http://webdav.${LOCAL_DOMAIN} {
-	# Host rclone servisi trixie rclone'unun tek --addr sınırı nedeniyle
-	# yalnız Tailscale IPv4'te dinler; loopback hedefi yoktur.
+	# Host rclone servisi trixie rclone'unun tek --addr sınırı nedeniyle yalnız
+	# Tailscale IPv4'te dinler; loopback hedefi yoktur.
 	reverse_proxy {\$TS_IPV4}:${WEBDAV_PORT}
 }
 
@@ -5668,18 +5037,16 @@ caddy validate \
 
 echo "Tailnet DNS ve Caddy kurulumu tamamlandı."
 
-# Canonical bundle önce benzersiz bir generation dizininde eksiksiz kurulur
-# ve kendi manifestiyle doğrulanır. Yalnız bundan sonra `current` symlink'i
-# tek rename ile değiştirilir. Böylece dosyalardan herhangi birinin kopyası
-# veya manifest üretimi yarıda kalırsa reconcile önceki generation'ı görür;
-# eski/yeni dosyalardan oluşan karma bir bundle hiçbir zaman yayınlanmaz.
+# Canonical bundle önce benzersiz bir generation dizininde eksiksiz kurulur ve
+# kendi manifestiyle doğrulanır; `current` symlink'i yalnız bundan sonra tek
+# rename ile değişir. Eski/yeni dosyalardan oluşan karma bir bundle hiçbir zaman
+# yayınlanmaz.
 CANONICAL_ROOT="/usr/local/share/master-stack"
 CANONICAL_CURRENT_TARGET="$(
     readlink -f -- "$CANONICAL_ROOT/current" 2>/dev/null || true
 )"
-# Önceki başarısız denemelerden kalmış generation'ları temizle; aktif
-# generation'ı koru. Yeni yayın tamamlandığında dizinde en fazla aktif ve
-# bir önceki generation kalır, dolayısıyla düzenli rerun sınırsız büyümez.
+# Önceki başarısız denemelerden kalan generation'ları temizle, aktifi koru;
+# böylece düzenli rerun dizini sınırsız büyütmez.
 for canonical_old_generation in "$CANONICAL_ROOT"/.generation.*; do
     [[ -d "$canonical_old_generation" ]] || continue
     [[ "$canonical_old_generation" == "$CANONICAL_CURRENT_TARGET" ]] ||
@@ -5691,22 +5058,18 @@ CANONICAL_STAGE_DIR="$(
 chown root:root "$CANONICAL_STAGE_DIR"
 chmod 0755 "$CANONICAL_STAGE_DIR"
 
-# state.env'in canonical kopyası Aşama 4'te değil burada yayınlanır (bkz.
-# oradaki açıklama); diğer sekiz dosyayla aynı generation'a girer.
+# state.env'in canonical kopyası Aşama 4'te değil burada, diğer sekiz dosyayla
+# aynı generation içinde yayınlanır.
 install -m 0600 -o root -g root \
     /etc/master-stack/state.env \
     "$CANONICAL_STAGE_DIR/state.env"
 install -m 0600 -o root -g root \
     /root/docker/compose.yaml \
     "$CANONICAL_STAGE_DIR/compose.yaml"
-# Quantum politika dosyası bundle'ın dokuzuncu girdisi (Q1-9). Bir önceki
-# hatta gerek yoktu: orijinal filebrowser ayarlarını filebrowser_config
-# volume'unda tutuyordu, host'ta sapacak bir dosya yoktu. Quantum politikayı
-# host dosyasına taşıyınca dosya bundle'a katılmadan kaldı ve 2026-08-01'de
-# ölçüldü: signup'ı açmak reconcile'ın hiçbir sinyalini kıpırdatmıyor
-# (config=0, rc=0), değişiklik bir sonraki container restart'ında sessizce
-# yürürlüğe giriyordu. signup kapalılığı rastgele bir tercih değil —
-# orijinal filebrowser'ın en ağır açığı (GHSA-6759) tam olarak oydu.
+# Quantum politika dosyası bundle'ın dokuzuncu girdisidir (Q1-9). Bundle dışında
+# kaldığı sürece signup'ı açmak reconcile'ın hiçbir sinyalini kıpırdatmıyordu.
+# signup kapalılığı rastgele bir tercih değil — orijinal filebrowser'ın en ağır
+# açığı (GHSA-6759) tam olarak oydu.
 install -m 0644 -o root -g root \
     "$QUANTUM_CONFIG_FILE" \
     "$CANONICAL_STAGE_DIR/filebrowser.yaml"
@@ -5755,20 +5118,17 @@ CANONICAL_LINK_TMP="${CANONICAL_STAGE_DIR}.link"
 ln -s "$(basename "$CANONICAL_STAGE_DIR")" "$CANONICAL_LINK_TMP"
 mv -Tf "$CANONICAL_LINK_TMP" "$CANONICAL_ROOT/current"
 
-# Pointer swap bu transaction'ın commit noktasıdır: buradan sonra yeni canlı
-# config ile yeni canonical generation aynı sürümü temsil eder. EXIT cleanup
-# artık eski dosyaları geri almamalı. Snapshot sır içermez ve /run altındadır;
-# silme hatası kurulumun geri kalanını durdurur ama committed config'i bozmaz.
+# Pointer swap bu transaction'ın commit noktasıdır: EXIT cleanup artık eski
+# dosyaları geri almamalı. Snapshot sır içermez ve /run altındadır.
 DNS_STACK_STATE_CAPTURED=0
 CANONICAL_LINK_TMP=""
 CANONICAL_STAGE_DIR=""
 rm -rf -- "$DNS_STACK_ROLLBACK_DIR"
 DNS_STACK_ROLLBACK_DIR=""
 
-# Q1-16 öncesi düz-dizin bundle yalnız ilk yükseltmenin Aşama 4-6 kesinti
-# penceresi için fallback'tir. `current` başarıyla yayınlandıktan sonra onu
-# silmek, daha sonraki bir pointer kaybının sessizce eski veriye düşmesini
-# önler. Aktif generation bu dosyalardan bağımsızdır.
+# Q1-16 öncesi düz-dizin bundle yalnız ilk yükseltmenin kesinti penceresi için
+# fallback'ti; `current` yayınlandıktan sonra silinir ki daha sonraki bir pointer
+# kaybı sessizce eski veriye düşmesin.
 rm -f -- \
     "$CANONICAL_ROOT/SHA256SUMS" \
     "$CANONICAL_ROOT/state.env" \
@@ -5781,8 +5141,8 @@ rm -f -- \
     "$CANONICAL_ROOT/caddy-tailnet-env" \
     "$CANONICAL_ROOT/tailscaled-99-caddy-tailnet.conf"
 
-# İlk kurulumun servis değişiklikleri bittikten sonra periyodik adres kontrolünü
-# aç; böylece timer kurulum sürerken Compose/Caddy ile yarışmaz.
+# Periyodik adres kontrolünü servis değişiklikleri bittikten sonra aç; timer
+# kurulum sürerken Compose/Caddy ile yarışmasın.
 progress_stage_note 95 "Yirmi dakikalık reconcile timer etkinleştiriliyor"
 systemctl enable --now master-network-reconcile.timer
 if ! systemctl is-active --quiet master-network-reconcile.timer; then
@@ -5799,8 +5159,7 @@ progress_stage_begin 7 "Çalışan sistem ve bağlantılar doğrulanıyor"
 
 cd /root/docker
 
-# Uzun kurulum sırasında adres değişmiş olabileceği için özet ve testlerde
-# başlangıçta yakalanan değerleri kullanma; çalışan stack'in güncel adreslerini
+# Uzun kurulum sırasında adres değişmiş olabilir; özet ve testler için adresleri
 # yeniden tespit edip Compose .env ile aynı olduklarını doğrula.
 detect_ipv4_route
 TS_IP="$(
@@ -5829,9 +5188,8 @@ for unit in tailscaled.service docker.service docker-tailscale-fw.service master
     fi
 done
 
-# Unit dosyalarının yalnız sözdizimini değil, systemd manager'ın gerçekten
-# yüklediği bağımlılık örgüsünü de sorgula. Paket güncellemesi, eksik drop-in
-# veya daemon-reload problemi bu noktada kurulumu başarılı gösteremez.
+# Yalnız sözdizimini değil, systemd manager'ın gerçekten yüklediği bağımlılık
+# örgüsünü de sorgula.
 assert_unit_property_contains() {
     local unit_name="$1" property_name="$2" actual_value="" required_unit=""
     shift 2
@@ -5933,9 +5291,8 @@ assert_unit_property_equals master-docker-netfilter-recovery.service Restart no
 assert_unit_property_equals \
     master-docker-netfilter-recovery.service TimeoutStartUSec 30min
 
-# Tek seferlik helper'ların kendi restart/rate-limit döngüsünü kurmadığını
-# etkin manager ayarlarından doğrula. Kurtarma yalnız olay bağımlılıkları ve
-# master-network-reconcile tarafından yapılır.
+# Tek seferlik helper'ların kendi restart/rate-limit döngüsünü kurmadığını etkin
+# manager ayarlarından doğrula.
 for reconciled_oneshot in \
     tailscale-udp-gro.service \
     docker-tailscale-fw.service \
@@ -6018,12 +5375,9 @@ for expected_env in \
     "UN_FOLDER_0_DELETE_ORIGINAL=false" \
     "UN_FOLDER_0_MOVE_BACK=true" \
     "UN_LOG_FILE_MB=10"; do
-    # UN_LOG_FILE_MB listede, UN_LOG_QUEUES ve UN_LOG_FILES değil — bu
-    # kasıtlı. Liste "sapması sessiz sonuç doğuran ayarlar" listesi.
-    # UN_LOG_QUEUES saparsa log gürültülenir, görülür. UN_LOG_FILES saparsa
-    # tavan 30 MB'dan 100 MB'a çıkar, hâlâ sınırlı. UN_LOG_FILE_MB saparsa
-    # tavan diye bir şey KALMAZ (0 = rotasyon kapalı) ve medya ağacının
-    # içinde sınırsız büyüyen bir dosya oluşur — sessiz olan tek sapma bu.
+    # Liste "sapması sessiz sonuç doğuran ayarlar" listesidir. UN_LOG_QUEUES saparsa
+    # log gürültülenir ve görülür; UN_LOG_FILES saparsa tavan yükselir ama sınırlı
+    # kalır; UN_LOG_FILE_MB saparsa tavan diye bir şey KALMAZ.
     if ! grep -Fxq "$expected_env" <<<"$UNPACKERR_ENV"; then
         echo "HATA: Unpackerr ayarı uygulanmamış: $expected_env" >&2
         exit 1
@@ -6083,11 +5437,8 @@ assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/tcp" "${PUBLIC_IPV4}:${QB
 assert_docker_binding qbittorrent "${QBIT_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${QBIT_PUBLIC_PORT}"
 assert_docker_binding wg-easy "${WG_PUBLIC_PORT}/udp" "${PUBLIC_IPV4}:${WG_PUBLIC_PORT}"
 
-# Image etiketleri hareketli olduğu için "ne çalışıyor" sorusunun tek yazılı
-# cevabı state.env'deki digest kaydı. Kaydın var olduğunu doğrulamak yetmez —
-# gerçekten çalışan image ile aynı olduğunu da doğrula, aksi hâlde kayıt
-# sessizce yalan söyleyebilir (Aşama 5'te bir inspect başarısız olsa "bilinmiyor"
-# yazılırdı ve kimse fark etmezdi).
+# Kaydın var olduğunu doğrulamak yetmez; gerçekten çalışan image ile aynı
+# olduğunu da doğrula, aksi hâlde kayıt sessizce yalan söyleyebilir.
 for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
     DIGEST_KEY="IMAGE_DIGEST_$(printf '%s' "$digest_service" | tr 'a-z-' 'A-Z_')"
     RECORDED_DIGEST="$(
@@ -6109,12 +5460,8 @@ for digest_service in portainer filebrowser qbittorrent unpackerr wg-easy; do
 done
 unset digest_service DIGEST_KEY RECORDED_DIGEST RUNNING_DIGEST
 
-# Onarım cooldown'ı iki gömülü script'te ayrı ayrı yazılı olmak zorunda
-# (her biri bağımsız lint'lenebilir olmalı, bkz. H4). Bu, tek gerçek riski
-# bırakıyor: birini değiştirip diğerini unutmak. DD-21 timer aralığını tam
-# da bu sabitle hizalamak için değiştirdiğinden, sessiz bir ayrışma
-# doğrudan o kararı geçersiz kılardı. Üçünün de aynı olduğunu burada
-# doğrula — sapma sessiz kalmasın, kurulum dursun.
+# Cooldown iki gömülü script'te ayrı ayrı yazılı olmak zorunda (H4) ve tek gerçek
+# risk birini değiştirip diğerini unutmak. Üçünün de aynı olduğunu burada doğrula.
 RECONCILE_COOLDOWN="$(
     awk -F= '$1 == "RESTART_COOLDOWN_SECONDS" {print $2; exit}' \
         /usr/local/sbin/master-network-reconcile
@@ -6140,10 +5487,9 @@ if [[ "$RECONCILE_COOLDOWN" != "$MASTER_RESTART_COOLDOWN_SECONDS" ||
 fi
 unset RECONCILE_COOLDOWN RECOVERY_COOLDOWN
 
-# WebDAV artık host servisi: Docker publish kaydı ve mangle guard
-# istisnası yok. Dinleyicinin doğru (ve yalnız doğru) adreste olduğunu
-# host soket tablosundan doğrula — Tailscale IPv4'te var, public IPv4'te
-# yok. 401 içerik testi aşağıda ayrıca yapılır.
+# WebDAV artık host servisi: Docker publish kaydı ve mangle istisnası yok.
+# Dinleyicinin Tailscale IPv4'te olduğunu ve public IPv4'te OLMADIĞINI host soket
+# tablosundan doğrula.
 if ! ss -lnt "( sport = :${WEBDAV_PORT} )" | grep -q "${TS_IP}:${WEBDAV_PORT}"; then
     echo "HATA: Host WebDAV dinleyicisi ${TS_IP}:${WEBDAV_PORT} adresinde bulunamadı." >&2
     exit 1
@@ -6238,11 +5584,9 @@ fi
 /usr/local/sbin/docker-tailscale-fw --check
 progress_stage_note 75 "IPv4/IPv6 firewall omurgası doğrulandı"
 
-# Host WebDAV'ın (rclone) doğrudan güncel Tailscale IPv4'te dinlediğini
-# kimlik bilgisi kullanmadan doğrula. Korumalı bir metot (PROPFIND)
-# kullanılır: 401 hem servise ulaşıldığını hem de htpasswd'nin gerçekten
-# uygulandığını gösterir. OPTIONS bu iş için uygun değildir — rclone onu
-# kimlik doğrulamadan muaf tutar ve 200 döner (2026-07-30 canlı ölçümü).
+# Host WebDAV'ın güncel Tailscale IPv4'te dinlediğini kimlik kullanmadan doğrula.
+# PROPFIND'in 401'i hem erişimi hem htpasswd'nin uygulandığını gösterir; OPTIONS
+# uygun değil — rclone onu kimlik doğrulamadan muaf tutup 200 döner.
 direct_webdav_code=""
 for _ in $(seq 1 20); do
     direct_webdav_code="$(
@@ -6304,17 +5648,14 @@ if [[ -n "$FAILED_UNITS" ]]; then
     printf '%s\n' "$FAILED_UNITS" >&2
 fi
 
-# wg-easy admin/peer kurulumu artık elle yapılıyor (unattended bootstrap
-# yok); durumu aşağıdaki özet için kaydediyoruz ama kurulumu bu yüzden
-# durdurmuyoruz. Taze bir kurulumda wg-easy'nin hâlâ /setup ekranında olması
-# beklenen bir durumdur.
+# wg-easy peer kurulumu elle yapılır; durum yalnız özet için kaydedilir, kurulum
+# bu yüzden durdurulmaz.
 WG_INTERNAL_PORT="$(docker exec wg-easy wg show wg0 listen-port 2>/dev/null || true)"
 wg_ui_probe || true
 WG_SETUP_LOCATION="$WG_UI_LOCATION"
 
-# Başlangıçta bilinçli inactive bırakılmış apt timer'larını açma; yalnız
-# kurulum öncesinde aktif olanları geri getir. Bu adım ve systemd journal
-# denetimi başarı çubuğu %100 olmadan önce tamamlanır.
+# Başlangıçta bilinçli inactive bırakılmış apt timer'larını açma; yalnız kurulum
+# öncesinde aktif olanları geri getir.
 progress_stage_note 95 "Timer'lar geri yüklenip systemd kayıtları denetleniyor"
 systemctl stop apt-daily.timer apt-daily-upgrade.timer \
     >/dev/null 2>&1 || true
@@ -6328,8 +5669,7 @@ fi
 APT_DAILY_UPGRADE_TIMER_REENABLED=1
 
 # Yalnız bu kurulum sırasında oluşan custom unit loglarında ordering/dependency
-# problemi varsa başarılı sonuç verme. Normal servis shutdown mesajları bu
-# dar desenlerin dışında kalır.
+# problemi varsa başarılı sonuç verme.
 CUSTOM_GRAPH_ERRORS="$(
     journalctl --since "$MASTER_SETUP_STARTED_AT" --no-pager -o cat \
         -u docker.service \
@@ -6353,8 +5693,7 @@ echo "Custom systemd grafiği doğrulandı; ordering/dependency çakışması yo
 append_master_service_journal
 progress_stage_note 99 "Tüm çalışma ve bağlantı testleri tamamlandı"
 
-# Konsoldaki ayrıntılı sonucun temel değişkenleri, çıktı geri çevrilmeden önce
-# root-only logda da kalsın. Gizli TS auth key hiçbir aşamada yazılmaz.
+# Konsoldaki ayrıntılı sonucun temel değişkenleri root-only logda da kalsın.
 {
     echo
     echo "--- Başarılı kurulum özeti ---"
@@ -6444,9 +5783,8 @@ echo "  Tools > Options > Advanced > Socket receive buffer size"
 echo "  Önerilen: 16777216 (16 MiB). Çekirdek isteği net.core.rmem_max ile"
 echo "  kırpar; bu kurulum o tavanı en az 16 MiB olacak şekilde garanti eder."
 echo
-# Kullanıcı adı htpasswd'den okunur: Aşama 0'da kimlik bilgisi yeniden
-# sorulmadıysa (mevcut dosya korunduysa) $WEBDAV_USER boştur, ama dosyanın
-# ilk alanı her iki durumda da doğru adı verir.
+# Kullanıcı adı htpasswd'den okunur: kimlik yeniden sorulmadıysa $WEBDAV_USER
+# boştur ama dosyanın ilk alanı doğru adı verir.
 WEBDAV_SUMMARY_USER="$(
     awk -F: 'NF >= 2 {print $1; exit}' "$WEBDAV_HTPASSWD_FILE" 2>/dev/null || true
 )"

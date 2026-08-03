@@ -2195,3 +2195,40 @@ packaging action does not change the pending live-verification claim.
   (periodic browser re-authorization). An operator who does not want that must
   narrow the tailnet's `ssh` block; the installer deliberately does not edit
   account-level ACLs.
+
+### DD-44: `install.sh` comments say what a block does; the rationale lives here (2026-08-03)
+
+- **Decision:** comment blocks in `install.sh` are one to six short lines
+  stating what the code does and, where a choice is non-obvious, naming the
+  constraint in a clause — not reconstructing how it was found. The
+  measurement narratives, the wrong first attempts and the dated evidence stay
+  in this file, in `SECURITY_REVIEW.md`'s Review History and in `CHANGELOG.md`.
+  A comment that needs the full story points at it (`bkz. DD-42`, `M11`, `H4`)
+  rather than repeating it. Applied wholesale in `Q1-24`: 1179 comment lines
+  became 517 across 229 blocks, with no change to any non-comment line.
+- **Why:** the file had reached the point where reading the code meant reading
+  around the commentary. Stage 2's login section carried 37 consecutive comment
+  lines before its first statement; the image-tag block ran 28; several blocks
+  recounted three superseded designs before describing the current one. That
+  material is genuinely valuable — it is why `UN_LOG_QUEUES=0` was not used and
+  why the journal is not consulted for the 410 wedge — but it is reference
+  material, consulted when changing a decision, not when reading the code that
+  implements it. Keeping it inline taxed every read to serve the rare one.
+- **Why the rationale is not simply deleted.** Every long block removed here
+  already had a durable home. `DD-37`/`DD-42` hold the login archaeology,
+  `DD-18`/`M11` the socket-buffer ordering, `DD-23` the float-tag digests,
+  `M1` the absent `mem_limit`, `DD-27` the FileBrowser admin account, `DD-40`
+  the policy-file activation. The reduction moved the reader one hop away from
+  the story, it did not end it — and the surviving one-liners keep the pointer
+  so the hop is findable.
+- **What was deliberately not touched:** the eight `#!` shebangs, the single
+  `# shellcheck disable=SC1091` directive, and the eight `# AŞAMA N — …`
+  banners. The first two are load-bearing, and the banners are the file's
+  only structural navigation.
+- **How it was verified.** The transformation was applied by an explicit
+  line-range map rather than a pattern rule, so nothing outside the 229 listed
+  ranges could be reached; the script asserts every targeted line is a comment,
+  is not a shebang and is not a `shellcheck` directive before writing anything.
+  The proof that no behaviour changed is a diff of both revisions with all
+  whole-line comments stripped: 5351 lines, byte-identical.
+  `./scripts/check-all.sh` clean at 176 cases.
