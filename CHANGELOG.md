@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — `cleanup_master_setup` asks the shared predicate instead of re-deriving it (`Q1-28`)
+
+Third item from the stage-by-stage audit, and the label in that audit was
+wrong: there is no dead branch here. What there was is one question asked
+twice, two different ways, inside one function.
+
+`restore_dns_stack_on_failure` — called at the top of `cleanup_master_setup` —
+used `canonical_stage_is_current`, which normalises **both** sides with
+`readlink -f`. The staged-generation block a hundred lines later resolved only
+the `current` symlink and compared it against the unresolved `mktemp` string,
+with the root path hardcoded rather than taken from `$CANONICAL_ROOT`. Let any
+component above the canonical root be a symlink and the two halves of one
+cleanup answer differently: the DNS rollback snapshot is discarded as "already
+published" while the directory `current` points at is `rm -rf`'d as "not
+published", leaving a pointer to nothing and a `canonical_bundle_ok` that
+fails on every later reconcile.
+
+The block now calls the predicate. Five lines and a local variable go; the
+`.generation.*` allowlist around `rm -rf` stays. The equality branch stays too
+— a signal between the `mv -Tf` swap and the `CANONICAL_STAGE_DIR` reset
+reaches it, which `test/dns_stack_rollback.bats` already pins on purpose.
+
+`test/canonical_stage_cleanup.bats` lifts the block out of the un-sourceable
+cleanup function and runs it twice: verbatim for the allowlist case, and with
+the allowlist re-rooted at the fixture so the deleting branch is observable at
+all. Four mutations run, each caught by a specific case.
+`./scripts/check-all.sh` clean at 194 cases.
+
 ### 2026-08-04 — A failed canonical bundle verification degrades reconcile instead of aborting it (`Q1-27`)
 
 Second item from the stage-by-stage audit. `canonical_bundle_ok` was

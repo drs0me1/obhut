@@ -197,6 +197,26 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **`cleanup_master_setup` re-implemented `canonical_stage_is_current`
+      inline (2026-08-04, `Q1-28`, audit item A3, DD-47).** The audit called
+      this a dead promotion branch; it is not. The branch is reachable
+      through the signal window between the `mv -Tf` pointer swap and the
+      `CANONICAL_STAGE_DIR` reset, which `dns_stack_rollback.bats` pins
+      deliberately. The real finding is that one question was asked twice,
+      two ways, inside one function: `restore_dns_stack_on_failure` used the
+      predicate (both sides normalised with `readlink -f`) while the
+      staged-generation block resolved only `current` and compared it
+      against the raw `mktemp` string, with the root path hardcoded. A
+      symlink anywhere above the canonical root makes the two halves of one
+      cleanup disagree — rollback snapshot discarded as published, live
+      generation `rm -rf`'d as unpublished, `current` left dangling and
+      canonical restore dead for good. The block now calls the predicate;
+      the `.generation.*` allowlist stays. `test/canonical_stage_cleanup.bats`
+      runs the lifted block in two forms (verbatim for the allowlist, and
+      re-rooted at the fixture so the deleting branch is observable at all);
+      four mutations run, four caught by specific cases.
+      `./scripts/check-all.sh` clean at 194 cases. Not live-verified.
+
 - [x] **Canonical bundle failure degrades reconcile instead of aborting it
       (2026-08-04, `Q1-27`, audit item A2, DD-46).** `canonical_bundle_ok`
       was reconcile's first gate and exited 1 before any detection or

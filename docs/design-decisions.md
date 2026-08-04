@@ -2377,3 +2377,49 @@ packaging action does not change the pending live-verification claim.
   `exit 1`, dropping the flag from `all_critical_state_healthy`, and
   over-gating the bundle-independent forwarding repair.
   `./scripts/check-all.sh` clean at 183 cases.
+
+### DD-47: `cleanup_master_setup` asks `canonical_stage_is_current` instead of re-deriving it (2026-08-04)
+
+- **Decision:** the staged-generation cleanup in `cleanup_master_setup` now
+  calls `canonical_stage_is_current` rather than resolving
+  `/usr/local/share/master-stack/current` itself and comparing the result
+  against the raw `$CANONICAL_STAGE_DIR` string. The local
+  `canonical_active_target` and its `readlink` are gone; the
+  `.generation.*` `case` allowlist around `rm -rf` stays untouched.
+- **Why:** one question was asked twice, two different ways, inside one
+  function. `restore_dns_stack_on_failure` — called at the top of the same
+  cleanup — used the predicate, which normalises **both** sides with
+  `readlink -f`. The staged-directory block a hundred lines later resolved
+  only the `current` symlink and compared it against the unresolved `mktemp`
+  output, and hardcoded the root path instead of using `$CANONICAL_ROOT`.
+- **The failure mode is self-destructive, not merely untidy.** Let any path
+  component above the canonical root be a symlink and the two halves of one
+  cleanup run answer differently: the DNS rollback snapshot is discarded as
+  "already published" while the directory `current` points at is `rm -rf`'d
+  as "not published". What remains is a `current` symlink to nothing, so
+  `canonical_bundle_ok` fails on every subsequent reconcile. Since Q1-27 that
+  no longer stops all repair (DD-46), but canonical restore is dead for good
+  and no automatic path recreates the generation.
+- **The equality branch is not dead and was not removed.** A signal arriving
+  between the `mv -Tf` pointer swap and the `CANONICAL_STAGE_DIR=""` reset
+  lands in `cleanup_master_setup` with the variable still set and `current`
+  already pointing at the staged directory; keeping it is correct, and
+  `test/dns_stack_rollback.bats` pins that ordering deliberately ("a
+  committed current pointer closes the signal window before the flag
+  update"). What Q1-28 removes is the second implementation of the
+  predicate, not the branch it guards.
+- **`[[ -n "$CANONICAL_STAGE_DIR" ]]` is kept** even though
+  `canonical_stage_is_current` already returns 1 on an empty value. It makes
+  "nothing was staged, so there is nothing to clean" explicit instead of
+  leaving the `rm -rf` to be stopped by the `case` allowlist alone.
+- **Verified by mutation.** `test/canonical_stage_cleanup.bats` lifts the
+  block out of `cleanup_master_setup` (which cannot be sourced — it resets
+  traps and exits) and runs it, in two forms: verbatim, for the allowlist
+  case, and with the allowlist re-rooted at the fixture, without which the
+  hardcoded `/usr/local` prefix would make every fixture path survive and
+  the behavioural cases would pass vacuously. Four mutations were applied to
+  install.sh and each was caught by a specific case: restoring the old inline
+  comparison, dropping the allowlist, inverting the predicate, and removing
+  the stage-side `readlink -f` inside the predicate — the last of which also
+  fails an existing `dns_stack_rollback.bats` case, which is the point.
+  `./scripts/check-all.sh` clean at 194 cases.

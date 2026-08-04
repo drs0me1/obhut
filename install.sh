@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-27"
+MASTER_SETUP_VERSION="2026.08.04-Q1-28"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -481,7 +481,6 @@ restore_dns_stack_on_failure() {
 
 cleanup_master_setup() {
     local rc=$? restore_rc=0 dns_restore_rc=0 error_tail=""
-    local canonical_active_target=""
     trap - ERR EXIT INT TERM
     set +e
 
@@ -502,18 +501,12 @@ cleanup_master_setup() {
                 ;;
         esac
     fi
-    if [[ -n "$CANONICAL_STAGE_DIR" ]]; then
-        canonical_active_target="$(
-            readlink -f -- /usr/local/share/master-stack/current \
-                2>/dev/null || true
-        )"
-        if [[ "$canonical_active_target" != "$CANONICAL_STAGE_DIR" ]]; then
-            case "$CANONICAL_STAGE_DIR" in
-                /usr/local/share/master-stack/.generation.*)
-                    rm -rf -- "$CANONICAL_STAGE_DIR"
-                    ;;
-            esac
-        fi
+    if [[ -n "$CANONICAL_STAGE_DIR" ]] && ! canonical_stage_is_current; then
+        case "$CANONICAL_STAGE_DIR" in
+            /usr/local/share/master-stack/.generation.*)
+                rm -rf -- "$CANONICAL_STAGE_DIR"
+                ;;
+        esac
     fi
 
     if [[ "$MASTER_LOGGING_ACTIVE" -eq 1 ]]; then
