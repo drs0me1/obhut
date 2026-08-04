@@ -218,6 +218,21 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **One definition of "online" in the installer (2026-08-04, `Q1-32`,
+      audit item B1, DD-50).** `tailscale_is_online()` parsed
+      `tailscale status --self` text for the substring `offline` — the only
+      one of three online predicates reading human-readable output, and the
+      only one with no tests. It also returned true for
+      `BackendState=Starting`, so Stage 2's final gate could pass on a node
+      that was not Running. Deleted; its three call sites use
+      `tailscale_login_complete()`. Both Stage 2 waits became deadline-bounded
+      because the JSON probe is wrapped in `timeout 3`, which would have made
+      an iteration-bounded loop run 450 seconds while printing "180 saniye".
+      Two corrections to the audit note recorded in DD-50: it does not take
+      three definitions to one (reconcile's stays, in a separate script), and
+      it missed the loop-duration consequence. Five mutations run and caught.
+      Live-verified on `nrm`. `./scripts/check-all.sh` clean at 224 cases.
+
 - [x] **A1–A5 live-verified on the test host; two defects found and fixed
       (2026-08-04, `Q1-31`, DD-46/DD-49 amendments).** Upgraded `nrm` from
       `Q1-22` in place. **Defect 1:** `Q1-30`'s restart exemption called

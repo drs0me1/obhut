@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — One definition of "online", and waits that count time (`Q1-32`)
+
+First item from the audit's B list. `tailscale_is_online()` decided from
+human-readable output — `tailscale status --self | head -n 1`, true when the
+line was non-empty and lacked the substring `offline` — standing next to two
+JSON-based siblings, and it was the only one of the three with no tests.
+
+It was not merely fragile. With `BackendState=Starting` the self line prints
+and contains no "offline", so Stage 2's final 180-second gate could pass on a
+node that was not Running. Its three call sites now use
+`tailscale_login_complete()`, which requires `BackendState == "Running"`,
+`Self.Online == true`, a non-empty `Self.ID` and non-empty `TailscaleIPs` —
+and which already has fifteen test cases.
+
+Both Stage 2 waits changed with it. `tailscale_login_complete` wraps
+`tailscale status --json` in `timeout 3`, so against a wedged daemon
+`for _ in $(seq 1 90); do …; sleep 2; done` would run 450 seconds while
+printing "180 saniye içinde". Both now compute a deadline from `SECONDS`, the
+idiom `tailscale_interactive_login` already uses, so the printed durations
+hold whatever a probe costs.
+
+Two corrections to the audit note: this does not take three definitions to
+one — reconcile's `tailscale_online()` is in a separately generated script and
+stays, so two JSON-based definitions remain in two programs and the
+text-parsing one is gone. And the note missed the loop-duration consequence
+entirely. Reconcile's predicate is deliberately left looser: it answers "is
+this established node still online", not "did registration complete".
+
+Five mutations run and caught, including one that keeps the deadline's shape
+but moves it 30 seconds later — that one fails the wall-clock case after ~33
+seconds, which is what shows the timing assertion measures the bound rather
+than passing vacuously. Live-verified on `nrm`: the already-connected branch
+ran, Stage 2 passed, `--check` rc=0. `./scripts/check-all.sh` clean at 224
+cases.
+
 ### 2026-08-04 — Live verification of A1–A5 on the test host, and two defects it found (`Q1-31`)
 
 `Q1-26`…`Q1-30` were upgraded onto the `nrm` test host (`Q1-22` → `Q1-31`,

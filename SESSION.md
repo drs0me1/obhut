@@ -20,10 +20,10 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.04-Q1-31` (5417 lines) |
-| SHA256 | `797350198550fe36f2f409768f602b178f226f24ed232cfcad53196b933a59c5` |
-| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-31` (audit items A1-A5 plus their live-test fixes) are not exported yet |
-| Live | **`Q1-31` installed and verified on `nrm` 2026-08-04** (upgraded in place from `Q1-22`; all 7 stages, `--check` rc=0). A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
+| Version | `2026.08.04-Q1-32` (5414 lines) |
+| SHA256 | `0a1778b8c1ff87a8d700da6ec138518daa128edc70148c97297f589ec9f4bba9` |
+| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-32` (audit items A1-A5 and B1, plus their live-test fixes) are not exported yet |
+| Live | **`Q1-32` installed and verified on `nrm` 2026-08-04** (upgraded in place from `Q1-22`; all 7 stages, `--check` rc=0). A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
 | Tests | 176 cases across thirteen `.bats` files (164 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-31"
+MASTER_SETUP_VERSION="2026.08.04-Q1-32"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -1099,12 +1099,6 @@ if [[ "$TAILSCALED_READY" -ne 1 ]]; then
     exit 1
 fi
 
-tailscale_is_online() {
-    local self_line=""
-    self_line="$(tailscale status --self 2>/dev/null | head -n 1 || true)"
-    [[ -n "$self_line" && "$self_line" != *offline* ]]
-}
-
 tailscale_daemon_ready() {
     local _
     for _ in $(seq 1 30); do
@@ -1295,11 +1289,12 @@ if ! tailscale ip -4 >/dev/null 2>&1; then
     TAILSCALE_NEEDS_LOGIN=1
 else
     echo "Kayıtlı Tailscale bağlantısının online olması bekleniyor..."
-    for _ in $(seq 1 60); do
-        tailscale_is_online && break
+    TAILSCALE_ONLINE_DEADLINE=$((SECONDS + 60))
+    while ! tailscale_login_complete; do
+        (( SECONDS < TAILSCALE_ONLINE_DEADLINE )) || break
         sleep 1
     done
-    if ! tailscale_is_online; then
+    if ! tailscale_login_complete; then
         if tailscale_journal_has_node_not_found; then
             echo "UYARI: Kayıtlı Tailscale profili 60 saniyede online olmadı." >&2
             echo "NEDEN: Kontrol düzlemi bu düğümü tanımıyor (404 node not found)." >&2
@@ -1340,11 +1335,13 @@ fi
 
 progress_stage_note 70 "Tailscale IPv4 ve online durumu doğrulanıyor"
 TAILSCALE_CONNECTED=0
-for _ in $(seq 1 90); do
-    if tailscale ip -4 >/dev/null 2>&1 && tailscale_is_online; then
+TAILSCALE_CONNECT_DEADLINE=$((SECONDS + 180))
+while true; do
+    if tailscale ip -4 >/dev/null 2>&1 && tailscale_login_complete; then
         TAILSCALE_CONNECTED=1
         break
     fi
+    (( SECONDS < TAILSCALE_CONNECT_DEADLINE )) || break
     sleep 2
 done
 

@@ -2607,3 +2607,58 @@ packaging action does not change the pending live-verification claim.
 - **Live-verified 2026-08-04** except the systemd job-merging claim, which is
   reasoning about documented behaviour rather than a measurement; confirming
   it needs a deliberately crash-looping daemon.
+
+### DD-50: The installer has one definition of "online", and its waits count time rather than iterations (2026-08-04)
+
+- **Decision:** `tailscale_is_online()` is deleted. Its three call sites in
+  Stage 2 now call `tailscale_login_complete()`, which is JSON-backed. Both
+  Stage 2 waits are bounded by a wall-clock deadline instead of an iteration
+  count.
+- **Why the old predicate had to go.** It decided from human-readable output:
+  `tailscale status --self | head -n 1`, true when the line was non-empty and
+  did not contain the substring `offline`. That is a locale- and
+  format-dependent parse standing next to two JSON-based siblings, and it was
+  the only one of the three with no test coverage at all.
+- **It was not merely fragile — it could say yes when the answer was no.**
+  With `BackendState=Starting` the self line prints and contains no "offline",
+  so Stage 2's final 180-second gate could pass on a node that was not
+  Running. `tailscale_login_complete` requires `BackendState == "Running"`,
+  `Self.Online == true`, a non-empty `Self.ID` and non-empty
+  `Self.TailscaleIPs`; the `Self.ID` clause is also the signal the surrounding
+  code was already trying to infer from the journal for a node deleted in the
+  admin panel.
+- **Why the loops changed too.** `tailscale_login_complete` wraps
+  `tailscale status --json` in `timeout $TAILSCALE_LOGIN_STATUS_TIMEOUT` (3
+  seconds). Against a wedged daemon each probe costs seconds rather than
+  milliseconds, so `for _ in $(seq 1 90); do …; sleep 2; done` would run for up
+  to 450 seconds while its own error message says "180 saniye içinde". Both
+  waits now compute a deadline from `SECONDS` — the idiom
+  `tailscale_interactive_login` already uses — so the printed durations stay
+  true whatever a probe costs. This also removes a smaller pre-existing
+  inaccuracy: the old loops were never exactly 60 or 180 seconds either, since
+  each probe's own runtime was unaccounted for.
+- **Precondition checked, not assumed:** `jq` is in Stage 1's package list, so
+  it is present at the first call site, which runs before the interactive
+  login.
+- **Two things the original audit note got wrong, corrected here.** It claimed
+  the change takes three definitions to one; it does not. Reconcile's
+  `tailscale_online()` lives in a separately generated script that cannot call
+  an installer function, so **two** JSON-based definitions remain in two
+  programs, and what is removed is the text-parsing one. The note also missed
+  the loop-duration consequence entirely.
+- **Reconcile's predicate is deliberately left looser** (`BackendState` and
+  `Self.Online` only). It answers a different question — "is this established
+  node still online", asked every twenty minutes — rather than "did
+  registration complete". Tightening a steady-state health predicate is a
+  separate behaviour change with its own blast radius and its own tests.
+- **`tailscale status --self` still runs once**, purely to print which node was
+  found. That is output, not a decision, and `test/tailscale_online_gate.bats`
+  pins that exactly one use survives.
+- **Verified by mutation, including the timing claim.** Five mutations were
+  applied to install.sh and each was caught: restoring the text predicate and
+  using it at the gate, reverting either wait to an iteration-bounded loop, and
+  removing the `break` so the success path waits out the deadline. A fifth —
+  moving the deadline 30 seconds later while keeping its shape — made the
+  wall-clock case fail after ~33 seconds, which is what shows that assertion
+  measures the bound rather than passing vacuously. `./scripts/check-all.sh`
+  clean at 224 cases.
