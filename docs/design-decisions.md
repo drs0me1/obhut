@@ -2837,3 +2837,52 @@ packaging action does not change the pending live-verification claim.
   selection rather than passing vacuously. The suite stubs `chown` on `PATH`
   and records its arguments, so the cases need no root and change no real
   ownership. `./scripts/check-all.sh` clean at 242 cases.
+
+### DD-54: Readability is not trust — reconcile stops reading configuration from a bundle it rejected (2026-08-05)
+
+- **Decision:** `state_value` consults `$CANONICAL_DIR/state.env` only when
+  `CANONICAL_STATE_TRUSTED` is set, which happens exactly where
+  `canonical_bundle_ok` returns true. Otherwise it reads `$STATE_FILE`, the
+  live configuration the running system was actually built with.
+- **The contradiction, measured in a single run.** With `STACK_VERSION` edited
+  in the canonical copy so `sha256sum -c` fails, one `--status` printed
+  `canonical_bundle=1` and "bundle doğrulaması başarısız; canonical kopyadan
+  geri yükleme yapılmayacak" *and* `Kurulum sürümü :
+  TAMPERED-NOT-A-REAL-VERSION` — read from the file it had just declared
+  untrustworthy, while the intact `/etc/master-stack/state.env` sat unread.
+  Side by side afterwards on the same tampered bundle: `Q1-34` prints the
+  tampered string, `Q1-36` prints the real `2026.08.04-Q1-34`.
+- **`STACK_VERSION` was only the visible symptom.** The same call supplies
+  `QBIT_PUBLIC_PORT`, `WG_PUBLIC_PORT`, `WEBDAV_PORT`, `LOCAL_DOMAIN`,
+  `WG_ENDPOINT_HOST` and `DOWNLOADS_PATH`. Those feed the DNAT rule checks,
+  the container port-binding checks, the DNS and Caddy probes and the disk
+  thresholds — so a bad bundle could have redirected what reconcile *repairs
+  toward*, not merely what it reports.
+- **This is the missing half of DD-46.** That decision stopped a failed bundle
+  check from aborting the run, so bundle-*independent* drift still gets
+  repaired. It did not notice that the repairs were still taking their
+  parameters from the distrusted file. The two together now say the same
+  thing: a bundle that fails verification is not read for any purpose.
+- **Why the live file is the right fallback rather than the built-in
+  defaults.** `$STATE_FILE` is what the installer wrote and what the running
+  units were configured from. Falling back to `state_value`'s defaults would
+  invent a configuration the host never had. The existing `STACK_SCHEMA != 10`
+  guard still fails the run closed if the live file is missing or malformed.
+- **Both entry paths had to be fixed, and only one was obvious.** The main
+  path decides at the existing gate. `--status` calls `state_value` roughly a
+  hundred lines *earlier* than that gate, which is exactly where the
+  contradiction was measured, so it now evaluates `canonical_bundle_ok` before
+  printing anything. That is a second `sha256sum -c` over nine small files per
+  `--status`; measured as immaterial next to the `--check` subprocess that
+  mode already spawns.
+- **One older test was rewritten rather than worked around.** DD-46's
+  "the bundle gate sets a flag instead of exiting" pinned the literal string
+  `if ! canonical_bundle_ok; then`, which the new success arm no longer uses.
+  It now asserts the behaviour — the gate calls the predicate, sets the flag,
+  never exits, still explains itself, and raises the trust flag — instead of
+  the syntax. Its `! grep` line was also converted to an explicit status
+  capture, since a non-final `!` asserts nothing.
+- **Verified by mutation.** Three, each caught by the case that claims it:
+  restoring the readability-only condition, defaulting the flag to trusted,
+  and deleting the `--status` branch's decision. `./scripts/check-all.sh`
+  clean at 245 cases.

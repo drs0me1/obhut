@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-05 — reconcile stops reading config from a bundle it rejected (`Q1-36`)
+
+Stage 4 pass item D2, and the missing half of DD-46.
+
+`state_value` preferred `$CANONICAL_DIR/state.env` whenever that file was
+merely *readable*, and never consulted `CANONICAL_BUNDLE_INVALID`. Measured on
+the test host: with `STACK_VERSION` edited in the canonical copy so
+`sha256sum -c` fails, a single `--status` run printed both `canonical_bundle=1`
+with "canonical kopyadan geri yükleme yapılmayacak" and `Kurulum sürümü :
+TAMPERED-NOT-A-REAL-VERSION`, read from that same rejected file, while the
+intact `/etc/master-stack/state.env` sat unread.
+
+`STACK_VERSION` was only the visible symptom. The same call supplies
+`QBIT_PUBLIC_PORT`, `WG_PUBLIC_PORT`, `WEBDAV_PORT`, `LOCAL_DOMAIN`,
+`WG_ENDPOINT_HOST` and `DOWNLOADS_PATH`, which drive the DNAT checks, the
+port-binding checks, the DNS/Caddy probes and the disk thresholds — so a bad
+bundle could steer what reconcile repairs toward, not just what it prints.
+
+The canonical copy is now read only once `canonical_bundle_ok` has returned
+true. Both entry paths needed it: the main path decides at the existing gate,
+and `--status` — which calls `state_value` about a hundred lines before that
+gate, and is where the contradiction was measured — now decides first.
+Verified side by side against the same tampered bundle: `Q1-34` prints the
+tampered string, `Q1-36` prints the real value and says which file it fell
+back to.
+
+DD-46's gate test pinned the literal `if ! canonical_bundle_ok; then`, which
+the new success arm does not use; it was rewritten to assert the behaviour
+rather than the syntax, and its own non-final `! grep` converted to an
+explicit status capture. Four cases added, three mutations run and caught.
+`./scripts/check-all.sh` clean at 245 cases. See DD-54.
+
 ### 2026-08-04 — the media-tree chown stops dereferencing (`Q1-35`)
 
 Stage 4 pass item D3, and the most serious thing the pass found.

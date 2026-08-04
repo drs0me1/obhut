@@ -50,28 +50,6 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **D2 — reconcile reads its configuration from the canonical bundle
-      it has just declared invalid (Stage 4 pass, derived and measured
-      2026-08-04).** `state_value` (`install.sh:2414`) prefers
-      `$CANONICAL_DIR/state.env` whenever that file is merely *readable*,
-      and never consults `CANONICAL_BUNDLE_INVALID`. **Measured on the test
-      host:** with `STACK_VERSION` edited in the canonical copy so
-      `sha256sum -c` fails, one `--status` run printed both
-      `canonical_bundle=1` with "bundle doğrulaması başarısız; canonical
-      kopyadan geri yükleme yapılmayacak" *and*
-      `Kurulum sürümü : TAMPERED-NOT-A-REAL-VERSION`, while the intact live
-      `/etc/master-stack/state.env` still held the correct value. The bundle
-      was restored and re-verifies. `STACK_VERSION` is only the visible
-      symptom; the same call supplies `QBIT_PUBLIC_PORT`, `WG_PUBLIC_PORT`,
-      `WEBDAV_PORT`, `LOCAL_DOMAIN`, `WG_ENDPOINT_HOST` and
-      `DOWNLOADS_PATH`, which drive the DNAT checks, the port-binding
-      checks, the DNS/Caddy probes and the disk thresholds. This is in
-      tension with **DD-46**, which degraded rather than aborted on a failed
-      bundle specifically so that bundle-*independent* drift still gets
-      repaired — the repairs still take their parameters from the distrusted
-      file. Note also the ordering: in `--status` mode `state_value` is
-      called at line 2529, before `canonical_bundle_ok` has run at all.
-
 - [ ] 🟡 **D1 — `master-compose` waits on, and restarts for, a Tailscale
       IPv4 no container reads (Stage 4 pass, derived and measured
       2026-08-04).** The direct sibling of **C1**/`Q1-34`, from the same
@@ -298,6 +276,26 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **Reconcile stops reading configuration from a bundle it rejected
+      (2026-08-05, `Q1-36`, Stage 4 pass item D2, DD-54).** `state_value`
+      preferred the canonical `state.env` on mere readability and never
+      consulted `CANONICAL_BUNDLE_INVALID`. Measured: one `--status` run
+      printed `canonical_bundle=1` and "canonical kopyadan geri yükleme
+      yapılmayacak" alongside `Kurulum sürümü :
+      TAMPERED-NOT-A-REAL-VERSION` read from that same file, while the
+      intact live copy sat unread. `STACK_VERSION` was the visible symptom
+      only — the same call supplies the ports, domain and paths that drive
+      the DNAT checks, port-binding checks, DNS/Caddy probes and disk
+      thresholds. Now gated on `CANONICAL_STATE_TRUSTED`, raised only where
+      `canonical_bundle_ok` returns true, in both the main path and
+      `--status` (which reads state about a hundred lines before the main
+      gate). Verified side by side on the same tampered bundle: `Q1-34`
+      prints the tampered string, `Q1-36` the real value plus the fallback
+      reason. DD-46's gate test was rewritten to assert behaviour rather
+      than the literal `if ! canonical_bundle_ok; then`. Four cases added,
+      three mutations run and caught. `./scripts/check-all.sh` clean at 245
+      cases.
 
 - [x] **The media-tree chown stops dereferencing (2026-08-04, `Q1-35`,
       Stage 4 pass item D3, DD-53).** `find` defaults to `-P` and reports

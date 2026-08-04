@@ -106,9 +106,10 @@ teardown() {
     [ "$output" = "example" ]
 }
 
-@test "state_value: prefers the canonical copy over STATE_FILE when present" {
+@test "state_value: prefers the canonical copy once the bundle has verified" {
     STATE_FILE="$FIXTURE_DIR/state.env"
     CANONICAL_DIR="$FIXTURE_DIR/canonical"
+    CANONICAL_STATE_TRUSTED=1
     mkdir -p "$CANONICAL_DIR"
     printf 'QBIT_PUBLIC_PORT=65173\n' >"$STATE_FILE"
     printf 'QBIT_PUBLIC_PORT=99999\n' >"$CANONICAL_DIR/state.env"
@@ -116,6 +117,54 @@ teardown() {
     run state_value QBIT_PUBLIC_PORT 0
     [ "$status" -eq 0 ]
     [ "$output" = "99999" ]
+}
+
+@test "state_value: ignores a readable canonical copy the bundle did not verify" {
+    # DD-54. Readability is not trust: a canonical state.env that failed
+    # sha256sum -c must not supply the ports, domain and paths every repair
+    # decision is keyed on. The live STATE_FILE is what the running system
+    # was actually configured with, so it is the fallback.
+    STATE_FILE="$FIXTURE_DIR/state.env"
+    CANONICAL_DIR="$FIXTURE_DIR/canonical"
+    CANONICAL_STATE_TRUSTED=0
+    mkdir -p "$CANONICAL_DIR"
+    printf 'QBIT_PUBLIC_PORT=65173\n' >"$STATE_FILE"
+    printf 'QBIT_PUBLIC_PORT=99999\n' >"$CANONICAL_DIR/state.env"
+
+    run state_value QBIT_PUBLIC_PORT 0
+    [ "$status" -eq 0 ]
+    [ "$output" = "65173" ]
+}
+
+@test "state_value: an untrusted bundle still falls through to the default" {
+    STATE_FILE="$FIXTURE_DIR/state.env"
+    CANONICAL_DIR="$FIXTURE_DIR/canonical"
+    CANONICAL_STATE_TRUSTED=0
+    mkdir -p "$CANONICAL_DIR"
+    printf 'STACK_SCHEMA=10\n' >"$STATE_FILE"
+    printf 'LOCAL_DOMAIN=tampered\n' >"$CANONICAL_DIR/state.env"
+
+    run state_value LOCAL_DOMAIN "example"
+    [ "$status" -eq 0 ]
+    [ "$output" = "example" ]
+}
+
+# --- where the trust flag is set (structural: top-level code) ---
+
+@test "reconcile: both entry paths decide trust before reading state" {
+    body="$(sed -n "/<<'RECONCILE_SCRIPT'\$/,/^RECONCILE_SCRIPT\$/p" "$INSTALL_SH")"
+
+    # Declared once, defaulting to untrusted.
+    [ "$(grep -c '^CANONICAL_STATE_TRUSTED=0$' <<<"$body")" -eq 1 ]
+    # Raised in exactly two places: the --status branch and the main path.
+    [ "$(grep -c '^        CANONICAL_STATE_TRUSTED=1$' <<<"$body")" -eq 1 ]
+    [ "$(grep -c '^    CANONICAL_STATE_TRUSTED=1$' <<<"$body")" -eq 1 ]
+    # --status must decide before it prints anything read via state_value.
+    status_line="$(grep -n '^if \[\[ "\$MODE" == "--status" \]\]; then$' <<<"$body" | cut -d: -f1)"
+    trust_line="$(grep -n '^    if canonical_bundle_ok; then$' <<<"$body" | cut -d: -f1)"
+    first_read="$(grep -n 'state_value DOWNLOADS_PATH' <<<"$body" | head -n 1 | cut -d: -f1)"
+    [ "$trust_line" -gt "$status_line" ]
+    [ "$trust_line" -lt "$first_read" ]
 }
 
 @test "state_value: falls back to the default when no state file is readable" {

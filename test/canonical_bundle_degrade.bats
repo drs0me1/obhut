@@ -83,12 +83,19 @@ block_body() {
     )"
 
     [ -n "$gate" ]
-    grep -Fq 'if ! canonical_bundle_ok; then' <<<"$gate"
+    grep -Fq 'canonical_bundle_ok' <<<"$gate"
     grep -Fq 'CANONICAL_BUNDLE_INVALID=1' <<<"$gate"
-    # The whole point of A2: no unconditional abort here any more.
-    ! grep -Eq '^ *exit ' <<<"$gate"
+    # The whole point of A2: no unconditional abort here any more. Asserted
+    # before the `!`-free checks below, and not as a bare `! grep`, which
+    # bash exempts from set -e unless it ends the test (see TODO.md, Low).
+    rc=0
+    grep -Eq '^ *exit ' <<<"$gate" || rc=$?
+    [ "$rc" -ne 0 ]
     # And the operator still learns why repairs were withheld.
     grep -Fq 'HATA:' <<<"$gate"
+    # DD-54: the same gate is what decides whether the canonical state.env
+    # may be read at all, so the success arm has to raise the trust flag.
+    grep -Fq 'CANONICAL_STATE_TRUSTED=1' <<<"$gate"
 }
 
 @test "every canonical-restore block is gated on the bundle flag" {

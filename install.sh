@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-35"
+MASTER_SETUP_VERSION="2026.08.04-Q1-36"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -2400,6 +2400,7 @@ DISK_USAGE_THRESHOLD_PCT=90
 RESTART_COOLDOWN_SECONDS=900
 FILEBROWSER_AUDIT_INTERVAL_SECONDS=86400
 ADDRESS_READY_WAIT_SECONDS=30
+CANONICAL_STATE_TRUSTED=0
 MODE="${1:-reconcile}"
 
 case "$MODE" in
@@ -2414,7 +2415,8 @@ esac
 state_value() {
     local key="$1" default_value="$2" value=""
     local state_source="$STATE_FILE"
-    if [[ -r "$CANONICAL_DIR/state.env" ]]; then
+    if [[ "$CANONICAL_STATE_TRUSTED" -eq 1 &&
+          -r "$CANONICAL_DIR/state.env" ]]; then
         state_source="$CANONICAL_DIR/state.env"
     fi
     if [[ -r "$state_source" ]]; then
@@ -2524,6 +2526,9 @@ canonical_bundle_ok() {
 }
 
 if [[ "$MODE" == "--status" ]]; then
+    if canonical_bundle_ok; then
+        CANONICAL_STATE_TRUSTED=1
+    fi
     status_check_rc=0
     status_check_output="$("$0" --check 2>&1)" || status_check_rc=$?
     status_downloads_path="$(state_value DOWNLOADS_PATH /downloads)"
@@ -2626,9 +2631,12 @@ if [[ "${MASTER_STACK_LOCK_HELD:-0}" != "1" ]]; then
 fi
 
 CANONICAL_BUNDLE_INVALID=0
-if ! canonical_bundle_ok; then
+if canonical_bundle_ok; then
+    CANONICAL_STATE_TRUSTED=1
+else
     CANONICAL_BUNDLE_INVALID=1
     echo "HATA: Canonical master-stack bundle doğrulaması başarısız; canonical kopyadan geri yükleme yapılmayacak, çalışan servisler korunacak." >&2
+    echo "Yapılandırma değerleri canonical kopya yerine $STATE_FILE üzerinden okunacak." >&2
 fi
 
 STACK_SCHEMA="$(state_value STACK_SCHEMA 0)"
