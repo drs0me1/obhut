@@ -184,7 +184,7 @@ teardown() {
 
 @test "repair ordering preserves drift until a restart is allowed and completed" {
     local quantum_line budget_line restore_line generic_line pending_line clear_line
-    quantum_line="$(grep -n '^if \[\[ "\$QUANTUM_CONFIG_DRIFTED" -eq 1 \]\]; then$' "$INSTALL_SH" | cut -d: -f1)"
+    quantum_line="$(grep -n '^if \[\[ "\$QUANTUM_CONFIG_DRIFTED" -eq 1 &&$' "$INSTALL_SH" | cut -d: -f1)"
     budget_line="$(grep -n 'if ! restart_budget_available filebrowser; then' "$INSTALL_SH" | cut -d: -f1)"
     restore_line="$(grep -n 'elif ! restore_quantum_config; then' "$INSTALL_SH" | cut -d: -f1)"
     generic_line="$(grep -n '^if \[\[ "\$COMPOSE_RUNTIME_DRIFTED" -eq 1 \]\]; then$' "$INSTALL_SH" | cut -d: -f1)"

@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — A failed canonical bundle verification degrades reconcile instead of aborting it (`Q1-27`)
+
+Second item from the stage-by-stage audit. `canonical_bundle_ok` was
+reconcile's first gate and it exited 1 on failure, before any detection or
+repair ran. One wrong mode bit on one of the nine canonical entries therefore
+disabled address re-binding, IP-forwarding repair, Tailscale prefs/netfilter
+repair, firewall renewal, container restarts, WebDAV restart and disk
+reporting — none of which read the bundle — and the timer went on failing
+every 20 minutes with a single line of output. A host that changed public IP
+in that state would never pick it up.
+
+The result is now a flag, `CANONICAL_BUNDLE_INVALID`. Reconcile reports the
+reason, withholds only the seven bundle-dependent blocks (compose.yaml
+restore, filebrowser policy restore, `state.env`/dnsmasq/Caddy restores, and
+the dnsmasq/Caddy restarts that follow them), runs everything else, and still
+exits 1. This is not a new design: `CANONICAL_CONFIG_INVALID` already answers
+the same question for unparseable canonical configs, and Q1-27 applies that
+pattern to the broader case. Wherever the narrower flag gates, the new one
+gates too.
+
+Degrading is not passing. The flag joins `all_critical_state_healthy`, forces
+`RECOVERY_FAILED=1`, and appears in `--check` output as `canonical_bundle=`;
+the end-of-run postcondition sweep still calls `canonical_bundle_ok` directly.
+The `STACK_SCHEMA` gate right after is deliberately left as a hard exit —
+every later check consumes those values — which is why the bundle diagnosis is
+printed at flag time rather than in the later drift report.
+
+`test/canonical_bundle_degrade.bats` derives the invariant from install.sh's
+own text instead of restating it: it splits reconcile's recovery half into
+top-level `if` blocks and requires every block that consumes the canonical
+bundle to be gated, so a new ungated restore site fails the suite on its own.
+Four mutations were run and all four were caught.
+`./scripts/check-all.sh` clean at 183 cases.
+
 ### 2026-08-03 — The firewall helper requires ip6tables instead of degrading toward it (`Q1-26`)
 
 First item from the stage-by-stage audit. `docker-tailscale-fw` carried two

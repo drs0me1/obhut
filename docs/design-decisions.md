@@ -2319,3 +2319,61 @@ packaging action does not change the pending live-verification claim.
   answers every `-C` probe with success, which makes `remove_legacy_wide_rules`
   loop forever; that is the stub's defect, not the helper's.
   `./scripts/check-all.sh` clean at 176 cases, M5's case among them.
+
+### DD-46: A failed canonical bundle verification degrades reconcile instead of aborting it (2026-08-04)
+
+- **Decision:** `canonical_bundle_ok`'s result is now a flag,
+  `CANONICAL_BUNDLE_INVALID`, not an immediate `exit 1`. When it is set,
+  reconcile reports the reason, skips **only** the blocks that read the
+  canonical bundle, runs every other check and repair as usual, and still
+  exits 1 at the end.
+- **What is withheld:** the compose.yaml restore, the filebrowser policy
+  restore and its container recreate, the `state.env`/dnsmasq/Caddy restores,
+  and the dnsmasq/Caddy restarts that only make sense after those restores.
+- **What now keeps working:** address re-binding into `/root/docker/.env`,
+  IP-forwarding sysctl repair, `tailscale set` prefs/netfilter repair, the
+  MASTER firewall renewal and `docker-tailscale-fw` restart, the Docker
+  netfilter core-recovery hand-off, the UDP GRO repair, container restarts,
+  the master-compose lifecycle, host WebDAV restart, and all disk/inode
+  reporting. None of them reads the bundle.
+- **Why:** the old gate was the widest blast radius in the script. Any one of
+  the nine canonical entries carrying a wrong mode bit — or `SHA256SUMS`
+  disagreeing on one byte — disabled the entire self-healing loop, including
+  every repair that has nothing to do with the bundle, and produced one line
+  of output every 20 minutes forever. A public-IP change on such a host would
+  never be picked up; the firewall would never be renewed. The failure the
+  gate protects against is "the reference copy is untrustworthy", which is a
+  reason to refuse to *copy from* it, not a reason to stop looking at
+  anything.
+- **Why this shape and not a new one:** the script already answers this exact
+  question in `CANONICAL_CONFIG_INVALID` — set a flag when the canonical
+  runtime configs do not parse, report it, gate the dependent restore and
+  restart blocks, force `RECOVERY_FAILED=1`. Q1-27 applies that established
+  pattern to the second, broader case rather than inventing a third
+  behaviour. Wherever `CANONICAL_CONFIG_INVALID` gates,
+  `CANONICAL_BUNDLE_INVALID` gates too: an unverifiable bundle subsumes an
+  unparseable config.
+- **Degrading is not passing.** The flag is a member of
+  `all_critical_state_healthy`, so `--check` cannot return 0 while it is set;
+  it forces `RECOVERY_FAILED=1` alongside `CANONICAL_CONFIG_INVALID`; and the
+  end-of-run postcondition sweep still calls `canonical_bundle_ok` directly,
+  so a bundle broken *during* the run fails it even if the flag was clear at
+  start. `--check` now emits `canonical_bundle=` so the reason is visible in
+  `master-network --status` rather than only in the journal.
+- **One hard exit is deliberately left in place.** The `STACK_SCHEMA` /
+  port-shape gate immediately after still exits 1, because every later check
+  consumes those values and there is no honest default to substitute. If the
+  bundle is invalid *because* `state.env` is unreadable, reconcile stops
+  there — but it prints the bundle diagnosis first, which is why the message
+  is emitted at flag time rather than in the later drift report.
+- **Verified by mutation.** `test/canonical_bundle_degrade.bats` derives the
+  invariant from install.sh's own text rather than restating the current
+  lines: it splits reconcile's recovery half into top-level `if` blocks and
+  asserts that every block whose body touches `$CANONICAL_DIR/` or calls
+  `restore_missing_compose_file`/`restore_quantum_config` is gated on the
+  flag, so a *new* ungated restore site fails the suite without anyone
+  remembering to extend it. Four mutations were run against install.sh and
+  each was caught: ungating the `state.env` restore, restoring the old
+  `exit 1`, dropping the flag from `all_critical_state_healthy`, and
+  over-gating the bundle-independent forwarding repair.
+  `./scripts/check-all.sh` clean at 183 cases.

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.03-Q1-26"
+MASTER_SETUP_VERSION="2026.08.04-Q1-27"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -2633,9 +2633,10 @@ if [[ "${MASTER_STACK_LOCK_HELD:-0}" != "1" ]]; then
     fi
 fi
 
+CANONICAL_BUNDLE_INVALID=0
 if ! canonical_bundle_ok; then
-    echo "HATA: Canonical master-stack bundle manifest doğrulaması başarısız." >&2
-    exit 1
+    CANONICAL_BUNDLE_INVALID=1
+    echo "HATA: Canonical master-stack bundle doğrulaması başarısız; canonical kopyadan geri yükleme yapılmayacak, çalışan servisler korunacak." >&2
 fi
 
 STACK_SCHEMA="$(state_value STACK_SCHEMA 0)"
@@ -3612,6 +3613,7 @@ all_critical_state_healthy() {
        "$COMPOSE_FILE_UNSAFE" -eq 0 &&
        "$COMPOSE_FILE_METADATA_DRIFTED" -eq 0 &&
        "$CONFIG_DRIFTED" -eq 0 &&
+       "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
        "$CANONICAL_CONFIG_INVALID" -eq 0 &&
        "$WEBDAV_UNIT_INACTIVE" -eq 0 &&
        "$WEBDAV_RUNTIME_DRIFTED" -eq 0 &&
@@ -3628,7 +3630,7 @@ if [[ "$MODE" == "--check" ]]; then
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
         "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
-        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED compose_missing=$COMPOSE_FILE_MISSING compose_unsafe=$COMPOSE_FILE_UNSAFE compose_metadata=$COMPOSE_FILE_METADATA_DRIFTED" \
+        "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_bundle=$CANONICAL_BUNDLE_INVALID canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED compose_missing=$COMPOSE_FILE_MISSING compose_unsafe=$COMPOSE_FILE_UNSAFE compose_metadata=$COMPOSE_FILE_METADATA_DRIFTED" \
         "webdav_unit=$WEBDAV_UNIT_INACTIVE webdav_runtime=$WEBDAV_RUNTIME_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
         "dnsmasq_unit=$DNSMASQ_INACTIVE dnsmasq_runtime=$DNSMASQ_RUNTIME_DRIFTED" \
@@ -3713,7 +3715,8 @@ CORE_RECOVERY_SCHEDULED=0
 FILEBROWSER_RUNTIME_RECREATE_REQUIRED=0
 declare -a ELIGIBLE_RESTART_TARGETS=()
 
-if [[ "$COMPOSE_FILE_MISSING" -eq 1 ]]; then
+if [[ "$COMPOSE_FILE_MISSING" -eq 1 &&
+      "$CANONICAL_BUNDLE_INVALID" -eq 0 ]]; then
     if restore_missing_compose_file; then
         COMPOSE_FILE_MISSING=0
         echo "Eksik compose.yaml canonical kopyadan geri yüklendi; çalışan container'lar değiştirilmedi."
@@ -3740,6 +3743,7 @@ if [[ "$TAILSCALE_OFFLINE" -eq 1 ]]; then
     RECOVERY_FAILED=1
 fi
 if [[ "$WG_ENDPOINT_DRIFTED" -eq 1 ||
+      "$CANONICAL_BUNDLE_INVALID" -eq 1 ||
       "$CANONICAL_CONFIG_INVALID" -eq 1 ]]; then
     RECOVERY_FAILED=1
 fi
@@ -3820,7 +3824,8 @@ if [[ "$STACK_RESTART_REQUIRED" -eq 1 ]]; then
     fi
 fi
 
-if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
+if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 &&
+      "$CANONICAL_BUNDLE_INVALID" -eq 0 ]]; then
     if ! restart_budget_available filebrowser; then
         echo "HATA: filebrowser politika onarımı $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; dosya ve yürürlükteki politika birlikte korunup sonraki tura bırakıldı." >&2
         RECOVERY_FAILED=1
@@ -3927,6 +3932,7 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
 fi
 
 if [[ "$STATE_CONFIG_DRIFTED" -eq 1 &&
+      "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     if ! "$INSTALL_BIN" -d -m 0700 -o root -g root /etc/master-stack ||
        ! "$INSTALL_BIN" -m 0600 -o root -g root \
@@ -3937,6 +3943,7 @@ if [[ "$STATE_CONFIG_DRIFTED" -eq 1 &&
 fi
 
 if [[ "$DNS_CONFIG_DRIFTED" -eq 1 &&
+      "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     if ! "$INSTALL_BIN" -m 0644 -o root -g root \
             "$CANONICAL_DIR/dnsmasq-local-services.conf" \
@@ -3952,6 +3959,7 @@ if [[ "$DNS_CONFIG_DRIFTED" -eq 1 &&
 fi
 
 if [[ "$CADDY_CONFIG_DRIFTED" -eq 1 &&
+      "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     if ! "$INSTALL_BIN" -m 0644 -o root -g root \
             "$CANONICAL_DIR/Caddyfile" /etc/caddy/Caddyfile ||
@@ -3998,7 +4006,8 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$DNS_CONFIG_DRIFTED" -eq 1 ||
       "$DNSMASQ_INACTIVE" -eq 1 ||
       "$DNSMASQ_RUNTIME_DRIFTED" -eq 1 ]] &&
-   [[ "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
+   [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
+      "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     "$SYSTEMCTL_BIN" reset-failed dnsmasq.service >/dev/null 2>&1 || true
     if ! "$SYSTEMCTL_BIN" restart dnsmasq.service ||
        ! dns_runtime_ok; then
@@ -4011,7 +4020,8 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$CADDY_CONFIG_DRIFTED" -eq 1 ||
       "$CADDY_INACTIVE" -eq 1 ||
       "$CADDY_RUNTIME_DRIFTED" -eq 1 ]] &&
-   [[ "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
+   [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
+      "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
     "$SYSTEMCTL_BIN" reset-failed caddy.service >/dev/null 2>&1 || true
     if ! "$SYSTEMCTL_BIN" restart caddy.service ||
        ! caddy_runtime_ok; then

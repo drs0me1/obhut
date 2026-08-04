@@ -197,6 +197,28 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Canonical bundle failure degrades reconcile instead of aborting it
+      (2026-08-04, `Q1-27`, audit item A2, DD-46).** `canonical_bundle_ok`
+      was reconcile's first gate and exited 1 before any detection or
+      repair ran, so one wrong mode bit on one of the nine canonical
+      entries disabled address re-binding, forwarding repair, Tailscale
+      prefs/netfilter repair, firewall renewal, container restarts and
+      disk reporting — none of which read the bundle — and the timer
+      failed every 20 minutes with one line of output. The result is now
+      `CANONICAL_BUNDLE_INVALID`: report, withhold only the seven
+      bundle-dependent blocks, run everything else, still exit 1. Not a
+      new design — `CANONICAL_CONFIG_INVALID` already answers the same
+      question for unparseable canonical configs, and wherever it gates,
+      the new flag gates too. Degrading is not passing: the flag joins
+      `all_critical_state_healthy`, forces `RECOVERY_FAILED=1`, appears in
+      `--check` as `canonical_bundle=`, and the postcondition sweep still
+      calls `canonical_bundle_ok` directly. The `STACK_SCHEMA` gate stays
+      a hard exit deliberately. `test/canonical_bundle_degrade.bats`
+      derives the invariant from install.sh's own text — every top-level
+      recovery block consuming the bundle must be gated — so a new ungated
+      restore site fails on its own; four mutations run, four caught.
+      `./scripts/check-all.sh` clean at 183 cases. Not live-verified.
+
 - [x] **Firewall helper's contradictory ip6tables contract removed
       (2026-08-03, `Q1-26`, audit item A1, DD-45).** Four branches promised
       graceful degradation without ip6tables while `check_policy` made the
