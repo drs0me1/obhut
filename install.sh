@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-29"
+MASTER_SETUP_VERSION="2026.08.04-Q1-30"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -3979,23 +3979,30 @@ fi
 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$WEBDAV_UNIT_INACTIVE" -eq 1 ||
       "$WEBDAV_RUNTIME_DRIFTED" -eq 1 ]]; then
-    "$SYSTEMCTL_BIN" reset-failed master-webdav.service >/dev/null 2>&1 || true
-    if ! "$SYSTEMCTL_BIN" restart master-webdav.service; then
-        echo "HATA: master-webdav.service yeniden başlatılamadı." >&2
-        RECOVERY_FAILED=1
-    else
-        WEBDAV_REPAIRED=0
-        for _ in $(seq 1 10); do
-            if webdav_direct_ok "$CURRENT_TAILSCALE_IPV4"; then
-                WEBDAV_REPAIRED=1
-                break
-            fi
-            sleep 1
-        done
-        if [[ "$WEBDAV_REPAIRED" -ne 1 ]]; then
-            echo "HATA: Host WebDAV işlevsel postcondition başarısız." >&2
+    if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ]] ||
+       restart_budget_available master-webdav; then
+        record_container_restart master-webdav
+        "$SYSTEMCTL_BIN" reset-failed master-webdav.service >/dev/null 2>&1 || true
+        if ! "$SYSTEMCTL_BIN" restart master-webdav.service; then
+            echo "HATA: master-webdav.service yeniden başlatılamadı." >&2
             RECOVERY_FAILED=1
+        else
+            WEBDAV_REPAIRED=0
+            for _ in $(seq 1 10); do
+                if webdav_direct_ok "$CURRENT_TAILSCALE_IPV4"; then
+                    WEBDAV_REPAIRED=1
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "$WEBDAV_REPAIRED" -ne 1 ]]; then
+                echo "HATA: Host WebDAV işlevsel postcondition başarısız." >&2
+                RECOVERY_FAILED=1
+            fi
         fi
+    else
+        echo "HATA: master-webdav yeniden başlatması $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; tekrarlanmadı." >&2
+        RECOVERY_FAILED=1
     fi
 fi
 
@@ -4005,10 +4012,18 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$DNSMASQ_RUNTIME_DRIFTED" -eq 1 ]] &&
    [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
-    "$SYSTEMCTL_BIN" reset-failed dnsmasq.service >/dev/null 2>&1 || true
-    if ! "$SYSTEMCTL_BIN" restart dnsmasq.service ||
-       ! dns_runtime_ok; then
-        echo "HATA: dnsmasq işlevsel postcondition başarısız." >&2
+    if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
+          "$DNS_CONFIG_DRIFTED" -eq 1 ]] ||
+       restart_budget_available dnsmasq; then
+        record_container_restart dnsmasq
+        "$SYSTEMCTL_BIN" reset-failed dnsmasq.service >/dev/null 2>&1 || true
+        if ! "$SYSTEMCTL_BIN" restart dnsmasq.service ||
+           ! dns_runtime_ok; then
+            echo "HATA: dnsmasq işlevsel postcondition başarısız." >&2
+            RECOVERY_FAILED=1
+        fi
+    else
+        echo "HATA: dnsmasq yeniden başlatması $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; tekrarlanmadı." >&2
         RECOVERY_FAILED=1
     fi
 fi
@@ -4019,10 +4034,18 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$CADDY_RUNTIME_DRIFTED" -eq 1 ]] &&
    [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
-    "$SYSTEMCTL_BIN" reset-failed caddy.service >/dev/null 2>&1 || true
-    if ! "$SYSTEMCTL_BIN" restart caddy.service ||
-       ! caddy_runtime_ok; then
-        echo "HATA: Caddy işlevsel postcondition başarısız." >&2
+    if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
+          "$CADDY_CONFIG_DRIFTED" -eq 1 ]] ||
+       restart_budget_available caddy; then
+        record_container_restart caddy
+        "$SYSTEMCTL_BIN" reset-failed caddy.service >/dev/null 2>&1 || true
+        if ! "$SYSTEMCTL_BIN" restart caddy.service ||
+           ! caddy_runtime_ok; then
+            echo "HATA: Caddy işlevsel postcondition başarısız." >&2
+            RECOVERY_FAILED=1
+        fi
+    else
+        echo "HATA: Caddy yeniden başlatması $((RESTART_COOLDOWN_SECONDS / 60)) dakikalık cooldown içinde; tekrarlanmadı." >&2
         RECOVERY_FAILED=1
     fi
 fi

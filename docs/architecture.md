@@ -22,12 +22,12 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 | 1 | 819–912 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
 | 2 | 913–1371 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `982–1054`), bounded interactive login requesting `--advertise-exit-node --ssh` with persistent-410 early recovery (`tailscale_login_state` at `1125–1162`, DD-37/DD-42/DD-43), reliable deleted-node journal classification (DD-39/M12), exit-node + Tailscale SSH + stateful filtering + netfilter configuration |
 | 3 | 1372–2005 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1466–1956`, ip6tables required up front — DD-45/M5) and its systemd unit |
-| 4 | 2006–4273 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2288–2329`) and `master-network-reconcile` (`2359–4080`) helpers, `master-docker-netfilter-recovery` (`4084–4130`), `master-webdav-serve` (`4177–4231`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4274–4358 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
-| 6 | 4359–4683 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `4463–4495`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
-| 7 | 4684–5365 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 4 | 2006–4296 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2288–2329`) and `master-network-reconcile` (`2359–4103`) helpers, `master-docker-netfilter-recovery` (`4107–4153`), `master-webdav-serve` (`4200–4254`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4297–4381 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
+| 6 | 4382–4706 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `4486–4518`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
+| 7 | 4707–5388 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5365 lines — `Q1-29`, 2026-08-04.
+(Line numbers as of `install.sh` 5388 lines — `Q1-30`, 2026-08-04.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted six times**: 18 lines across
@@ -102,6 +102,44 @@ Key design point: `master-network-reconcile.service` deliberately does
 **not** sit in the `After=` chain of `docker-tailscale-fw.service` or
 `master-compose.service`, to avoid a self-ordering wait when it restarts
 them from inside its own `OnFailure`-triggered execution.
+
+#### The `OnFailure` arc, and what closes it
+
+The five `OnFailure=` edges above all point at reconcile, and reconcile
+restarts all five units. Every edge therefore runs in both directions, and
+the loop is closed by three separate mechanisms — worth stating in one place
+because no single one of them is sufficient (DD-49):
+
+1. **A synchronous failure cannot spin.** When reconcile's own `systemctl
+   restart X` fails, X enters `failed` and raises an `OnFailure` start job
+   for reconcile *while reconcile is still active*. systemd merges it into
+   the running job, so no second run follows.
+2. **The arc terminates at reconcile.** `master-network-reconcile.service`
+   carries neither `OnFailure=` nor `Restart=`, so a failed reconcile
+   triggers nothing and does not retry itself.
+3. **The repair cooldown brakes the asynchronous case**, which is the one
+   that can actually loop: a daemon that starts cleanly, lets reconcile exit,
+   then dies seconds later trips `Restart=on-failure`, hits its start limit,
+   fails, and fires `OnFailure` with reconcile inactive — invoking reconcile
+   immediately rather than on the twenty-minute timer. Every restart of an
+   arc unit goes through `restart_budget_available` (15 minutes per target,
+   stamped under `/run/master-network-reconcile/`), so that path costs one
+   restart per quarter hour rather than one per event.
+
+`systemctl reset-failed`, which the daemon restart paths call first, clears
+systemd's own `StartLimitBurst` counter — that is why the cooldown rather
+than the start limit is the load-bearing brake. `reset-failed` is kept
+because a unit parked in "start request repeated too quickly" could otherwise
+never be recovered; it is simply unreachable until the budget allows.
+
+Two restarts are deliberately outside the cooldown. `systemctl start
+master-compose.service` when `COMPOSE_INACTIVE` is set — the whole stack is
+down there, and each attempt is already bounded by `--wait-timeout 180`
+under `TimeoutStartSec=330`. And `docker-tailscale-fw.service`, which runs
+only under `STACK_RESTART_REQUIRED`, a flag an earlier block sets behind the
+budget. A Tailscale address change and a canonical config restore also
+bypass the cooldown, because neither is a failure signal and both leave the
+daemon wrong until it restarts.
 
 ### Firewall model
 

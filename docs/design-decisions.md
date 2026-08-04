@@ -2500,3 +2500,78 @@ packaging action does not change the pending live-verification claim.
   amendments. The old function name is kept verbatim in `CHANGELOG.md`,
   `SECURITY_REVIEW.md` and completed `TODO.md` items, which record what was
   true at the time.
+
+### DD-49: Every unit on the `OnFailure` arc is restarted behind the repair cooldown (2026-08-04)
+
+- **The arc.** Five units declare `OnFailure=master-network-reconcile.service`
+  — `docker-tailscale-fw`, `master-compose`, `master-webdav`, and the `dnsmasq`
+  and `caddy` drop-ins — and reconcile restarts all five. Every edge runs in
+  both directions.
+- **Why the synchronous case does not spin.** When reconcile's own
+  `systemctl restart X` fails, X enters `failed` and raises an `OnFailure`
+  start job for reconcile *while reconcile is still active*; systemd merges it
+  into the running job, so no second run happens. `master-network-reconcile`
+  itself carries neither `OnFailure=` nor `Restart=`, so the arc terminates
+  there rather than re-entering.
+- **The asynchronous case is the real one.** A daemon that starts cleanly
+  (`systemctl restart` returns 0), lets reconcile finish and exit, then dies
+  seconds later trips `Restart=on-failure`, hits its start limit, fails, and
+  fires `OnFailure` with reconcile inactive. That runs reconcile *immediately*
+  rather than on the twenty-minute timer, and the run's first act is to
+  restart the same daemon again.
+- **Decision:** the `master-webdav`, `dnsmasq` and `caddy` restart paths now
+  go through `restart_budget_available` / `record_container_restart`, matching
+  the four paths that already did (`tailscale-udp-gro`, `master-compose`,
+  the filebrowser policy repair, the generic container targets). A deferred
+  restart reports `cooldown içinde; tekrarlanmadı` and sets
+  `RECOVERY_FAILED=1`, exactly as the existing paths do.
+- **Why those three specifically:** they were the only restart sites in
+  reconcile with no budget call, and they are also the three arc units with
+  `Restart=on-failure` plus a `StartLimit`. Worse, each called
+  `systemctl reset-failed` first — which clears systemd's start-limit counter,
+  the *other* brake. So the arc's three most restart-prone units had both
+  brakes removed, one by omission and one deliberately.
+- **`reset-failed` stays.** Without it a unit parked in "start request
+  repeated too quickly" can never be recovered by reconcile at all. It is now
+  simply unreachable until the budget allows a restart.
+- **This is DD-21's own stated purpose, applied where it was missing.** DD-21
+  calls the cooldown "a brake on the event-driven (`OnFailure`) paths, which
+  can fire at any moment", and `docs/testing.md` calls it "the only thing
+  between a repeatedly-failing repair and a restart loop". Both were written
+  while three of the five arc units bypassed it.
+- **What bypasses the budget, and why.** `TAILSCALE_ADDRESS_CHANGED` — all
+  three daemons bind that address, so deferring the rebind would leave them
+  listening on an address that no longer exists; this is the same exemption
+  `master-compose` already had for `ADDRESS_CHANGED`. And
+  `DNS_CONFIG_DRIFTED` / `CADDY_CONFIG_DRIFTED` — restoring a canonical config
+  and then not restarting the daemon would leave it serving the old one.
+  Neither is a failure signal. `*_INACTIVE` and `*_RUNTIME_DRIFTED` are, and
+  they are gated.
+- **One site is deliberately left ungated:** `systemctl start
+  master-compose.service`, which is also reached via `COMPOSE_INACTIVE`. There
+  the whole stack is down, and a fifteen-minute wait costs far more than a
+  slow retry. That loop is bounded by construction anyway — each attempt runs
+  `docker compose up -d --wait --wait-timeout 180` under
+  `TimeoutStartSec=330`. The `docker-tailscale-fw` restart is also not gated
+  in its own block, because it only runs under `STACK_RESTART_REQUIRED`, which
+  an earlier block sets behind `restart_budget_available master-compose`.
+  Both exemptions are named in `test/onfailure_arc.bats` with their reasons,
+  so adding a third is a conscious act rather than an omission.
+- **What changes on a live host.** A caddy (or dnsmasq, or WebDAV) that is
+  down is now restarted at most once per fifteen minutes instead of once per
+  reconcile run. Scheduled runs are unaffected: DD-21 set the interval to
+  twenty minutes precisely so it exceeds the cooldown. Only the event-driven
+  storm is braked.
+- **Verified by mutation.** `test/onfailure_arc.bats` derives the arc's unit
+  set from install.sh's own `OnFailure=` lines and walks every top-level
+  if-block of the reconcile script, so a *new* unit wired onto the arc and
+  restarted unbraked fails the suite without anyone extending it. Seven
+  mutations were applied and each was caught: removing caddy's gate, letting
+  `CADDY_INACTIVE` bypass it, removing the address-change exemption, renaming
+  the restart stamp so writer and reader disagree, dropping the deferral's
+  `RECOVERY_FAILED`, giving `master-network-reconcile.service` a `Restart=`,
+  and adding a sixth unit to the arc with an ungated restart.
+  `./scripts/check-all.sh` clean at 215 cases.
+- **Not live-verified.** The systemd job-merging claim above is reasoning
+  about documented behaviour, not a measurement; confirming it needs a real
+  host with a deliberately crash-looping daemon.

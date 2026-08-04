@@ -20,9 +20,9 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.04-Q1-29` (5365 lines) |
-| SHA256 | `9bde14e7425389723991c488c4b70c5680600bd3bc6cee28e8bcb4cbf63948a0` |
-| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-29` (audit items A1-A4) are not exported yet |
+| Version | `2026.08.04-Q1-30` (5388 lines) |
+| SHA256 | `9539b886e0c020b45264607b6852d2f64fc9f9f95fd1a2befb9a0b942a7222e1` |
+| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-30` (audit items A1-A5) are not exported yet |
 | Live | Q1-21 input signature measured twice on clean R2.5 and equivalent early child/restart recovery succeeded; exact automatic Q1-21 branch still pending |
 | Tests | 176 cases across thirteen `.bats` files (164 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |

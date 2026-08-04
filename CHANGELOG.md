@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — Every unit on the `OnFailure` arc is restarted behind the repair cooldown (`Q1-30`)
+
+Fifth item from the stage-by-stage audit. The original note was "document the
+circular arc"; measuring it turned up more than documentation.
+
+Five units declare `OnFailure=master-network-reconcile.service` and reconcile
+restarts all five, so every edge runs both ways. The synchronous case cannot
+spin — the `OnFailure` job is raised while reconcile is still active and
+systemd merges it into the running job — and the arc terminates at reconcile,
+which carries neither `OnFailure=` nor `Restart=`. The asynchronous case is
+the real one: a daemon that starts cleanly, lets reconcile exit, then dies
+seconds later trips `Restart=on-failure`, hits its start limit, fails, and
+fires `OnFailure` with reconcile inactive — invoking reconcile immediately
+instead of on the twenty-minute timer.
+
+`master-webdav`, `dnsmasq` and `caddy` were the only restart paths in
+reconcile with no `restart_budget_available` gate, and they are also the three
+arc units with `Restart=on-failure` plus a `StartLimit`. Each called
+`systemctl reset-failed` first, which clears systemd's start-limit counter —
+so the arc's three most restart-prone units had both brakes removed, one by
+omission and one deliberately. DD-21 already defines the cooldown as "a brake
+on the event-driven (`OnFailure`) paths" and `docs/testing.md` already calls
+it "the only thing between a repeatedly-failing repair and a restart loop";
+both were written while three of five arc units bypassed it.
+
+All three now go through the budget, reporting `cooldown içinde;
+tekrarlanmadı` and setting `RECOVERY_FAILED=1` when deferred, exactly like the
+four paths that already did. `reset-failed` stays — without it a unit parked
+in "start request repeated too quickly" could never be recovered — but is
+unreachable until the budget allows. A Tailscale address change and a
+canonical config restore bypass the cooldown, matching the exemption
+`master-compose` already had for `ADDRESS_CHANGED`; `*_INACTIVE` and
+`*_RUNTIME_DRIFTED` do not. `systemctl start master-compose.service` is left
+ungated on purpose and the reason is written down.
+
+On a live host a downed caddy is now restarted at most once per fifteen
+minutes rather than once per reconcile run. Scheduled runs are unaffected —
+DD-21 set the interval to twenty minutes precisely so it exceeds the cooldown.
+
+`test/onfailure_arc.bats` derives the arc's unit set from install.sh's own
+`OnFailure=` lines and walks every top-level if-block of the reconcile script,
+so a new unit wired onto the arc and restarted unbraked fails the suite on its
+own. Seven mutations run, seven caught. The systemd job-merging claim is
+reasoning about documented behaviour, not a measurement.
+`./scripts/check-all.sh` clean at 215 cases.
+
 ### 2026-08-04 — `probe_compose_runtime` measures; the caller reports (`Q1-29`)
 
 Fourth item from the stage-by-stage audit. `check_compose_runtime` was a

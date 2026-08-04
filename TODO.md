@@ -197,6 +197,26 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Every unit on the `OnFailure` arc restarted behind the repair
+      cooldown (2026-08-04, `Q1-30`, audit item A5, DD-49).** Five units
+      point `OnFailure=` at reconcile and reconcile restarts all five. The
+      synchronous case cannot spin (systemd merges the job into the running
+      one) and the arc terminates at reconcile (no `OnFailure=`, no
+      `Restart=`); the asynchronous case can — a daemon that starts cleanly,
+      lets reconcile exit, then dies trips `Restart=on-failure`, hits its
+      start limit and fires `OnFailure` with reconcile inactive, running it
+      immediately instead of on the timer. `master-webdav`, `dnsmasq` and
+      `caddy` were the only restart paths with no `restart_budget_available`
+      gate *and* the three arc units with `Restart=on-failure` + a
+      `StartLimit` — and each called `reset-failed` first, clearing systemd's
+      counter, so both brakes were gone. All three now go through the budget;
+      address changes and canonical config restores bypass it, `*_INACTIVE`
+      and `*_RUNTIME_DRIFTED` do not; `systemctl start master-compose.service`
+      is a documented exception. `test/onfailure_arc.bats` derives the arc
+      from install.sh's own `OnFailure=` lines, seven mutations run and
+      caught. `./scripts/check-all.sh` clean at 215 cases. Not live-verified —
+      the job-merging claim needs a crash-looping daemon on a real host.
+
 - [x] **`probe_compose_runtime` split from its reporting (2026-08-04,
       `Q1-29`, audit item A4, DD-48).** `check_compose_runtime` was a
       predicate, a mutator of four globals and a reporter, called five times
