@@ -6,11 +6,21 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**The stage-by-stage audit's remediation series is complete through `B2`
-and live-verified on the test host. `Q1-26`…`Q1-33` carry audit items
-A1–A5, B1 and B2; `Q1-31` is the fix for two defects the live run found
-that review had not. `R2.5` remains the latest live-verified *tagged*
-release — nothing since `Q1-22` has been exported.**
+**The stage-by-stage audit's remediation series is complete through `B2`,
+and a fresh Stage 3 pass added `C1` (`Q1-34`) — all live-verified on the
+test host. `Q1-26`…`Q1-33` carry audit items A1–A5, B1 and B2; `Q1-31` is
+the fix for two defects the live run found that review had not. `R2.5`
+remains the latest live-verified *tagged* release — nothing since `Q1-22`
+has been exported.**
+
+**The old B3–B8 list is gone and is not recoverable.** Its text lived only
+in the session context that produced it; nothing in the repository ever
+recorded it. That is why `Q1-34` is labelled `C1` — a fresh pass over
+Stage 3 derived against the current code. Given that every B item
+re-derived from the note contained errors (B1 two, B2 three) and that B2's
+stated trigger was simply wrong, losing the note costs less than it looks.
+**Record future audit items in `TODO.md` as they are derived**, not only
+when they are fixed.
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -21,11 +31,11 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.04-Q1-33` (5415 lines) |
-| SHA256 | `2d4d784995316679e768fd5a292592842b8437bfd1debfb06ad289c374df78d2` |
-| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-33` (audit items A1-A5, B1 and B2, plus their live-test fixes) are not exported yet |
-| Live | **`Q1-33` installed and verified on `nrm` 2026-08-04** (reinstall over `Q1-32`, all 7 stages, `--check` rc=0, no failed units). B2 was verified in its own failure shape: `caddy` and `master-webdav` were stopped *before* the run, and the journal shows no job against `tailscaled` and no start of either unit until their own stages — Stage 5 for WebDAV, Stage 6 for Caddy. Earlier the same day: A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
-| Tests | 232 cases across nineteen `.bats` files (220 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
+| Version | `2026.08.04-Q1-34` (5416 lines) |
+| SHA256 | `26dbf2852e0f0b9efeb90bd2a528c1c071d59c34b4ede7484b8bf185e816141c` |
+| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-33` (audit items A1-A5, B1 and B2, plus their live-test fixes) and `Q1-34` (Stage 3 item C1) are not exported yet |
+| Live | **`Q1-34` installed and verified on `nrm` 2026-08-04** (in-place upgrade over `Q1-33`, all 7/7 stages began and completed in `/var/log/master-setup/`, `state.env` at `STACK_VERSION=2026.08.04-Q1-34` with a matching SHA, deployed helper byte-identical to the repository's `bfe12ac7…`, `--check` rc=0, five services active, zero failed units). The behaviour change was measured, not assumed: `--check` against an unresolvable WAN returns in **0.015 s** (it was **305.9 s** on `Q1-33`), `apply` with the deadline set to 5 s takes **5.064 s** and its message names the real bound rather than a hardcoded 300, and `MASTER-DOCKER` still carries its 8 rules because the gate exits before touching iptables. The `ts-forward`-versus-address ordering was measured across a real reboot: chain and `FORWARD` jump at +1.16 s, `tailscale0` IPv4 at +1.37 s. Earlier: **`Q1-33` verified on `nrm` 2026-08-04** (reinstall over `Q1-32`, all 7 stages, `--check` rc=0, no failed units). B2 was verified in its own failure shape: `caddy` and `master-webdav` were stopped *before* the run, and the journal shows no job against `tailscaled` and no start of either unit until their own stages — Stage 5 for WebDAV, Stage 6 for Caddy. Earlier the same day: A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
+| Tests | 239 cases across nineteen `.bats` files (227 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
 ### The audit remediation series (`Q1-26`…`Q1-33`)
@@ -45,6 +55,7 @@ specific test case catches it.
 | `Q1-31` | — | two defects found by live-verifying the above (DD-46/DD-49 amendments) |
 | `Q1-32` | B1 | one definition of "online" in the installer; waits count time, not iterations (DD-50) |
 | `Q1-33` | B2 | Stage 2 bounces the tailscaled daemon without bouncing the stack (DD-51) |
+| `Q1-34` | C1 | `--check` stops paying a 300-second readiness wait for a value dead since `V1-3` (DD-52) |
 
 **What the live run taught, and why it mattered.** `Q1-30` stamped the
 restart cooldown on its own exemption path, so a legitimate Caddyfile
@@ -54,11 +65,24 @@ before the change. Reading had not found it; injecting the fault did. The
 second defect was a report line promising a restore it then correctly
 withheld. Both are fixed in `Q1-31`.
 
-**Remaining audit items, not started:** B3–B8. Every B item re-derived so
-far has contained errors — B1 two, B2 three — so treat the list as a
-pointer to a place worth looking, never as a finding. B2's real trigger
-turned out to be a line the note never mentioned, and its proposed fix
-would not have worked.
+**The B3–B8 list no longer exists** — see the note under Current Task. The
+work continues as a fresh, per-stage pass instead, labelled `C`. `C1`
+(Stage 3, `Q1-34`) is done. Two further Stage 3 observations were derived
+in the same pass and deliberately **not** acted on, recorded here so they
+are not lost:
+
+- **C2 — the helper's other wait still counts iterations.** `wait_for_chain`
+  is `for _ in $(seq 1 30)` with a `sleep 1` and an `iptables -L` per turn.
+  Unlike the address gate its message promises no duration, so it is a
+  smaller instance of the same class; `Q1-34` left it alone to keep the
+  change to one item.
+- **C3 — nine inverted assertions in the test suite cannot fail**, now in
+  `TODO.md` under Low. Found by mutation during `Q1-34`, and the more
+  useful of the two: bash exempts an `!`-inverted command from `set -e`, so
+  a non-final `! cmd` asserts nothing. Two of `Q1-34`'s own new cases had
+  the defect before it was caught.
+
+Stages 4–7 have not been passed over yet.
 
 Q1-21 is the Stage 2 follow-up to the repeated offline-node login failure:
 
@@ -445,18 +469,18 @@ resolved, plus one unnumbered cleanup and two partial items:
 ## Recommended Next Step
 
 1. **Nothing is blocked or half-finished.** Repository and server agree at
-   `Q1-33`; the working tree is clean and `./scripts/check-all.sh` passes
+   `Q1-34`; the working tree is clean and `./scripts/check-all.sh` passes
    all four checks. The exported artifact does *not* agree — see 3.
-2. **`B3` is next in the audit series.** **Re-derive every remaining B item
-   against the current code before proposing it, and prefer measuring on
-   `nrm` to reasoning about systemd.** The B list was written at `Q1-25` and
-   its accuracy is now measured rather than assumed: B1 contained two errors,
-   B2 three. B2's stated trigger (the login-retry `restart tailscaled`) was
-   not the one that fires on every run, its stated unit set was missing
-   `caddy`, and its proposed fix would not have worked at all. Both were
-   found by running the command on the test host and watching what systemd
-   actually did — reading the unit files had produced a plausible and wrong
-   answer twice.
+2. **The `C` pass continues at Stage 4.** Stage 3 produced `C1` (fixed),
+   `C2` and `C3` (recorded, see above). **Derive each item against the
+   current code and prefer measuring on `nrm` to reasoning about systemd**
+   — that habit is what produced every real result here. `Q1-34` is the
+   clearest case yet: the finding was a five-minute stall nobody had
+   noticed, its cause was visible only in `git log -S`, and the risk of
+   removing it was settled by a 200 ms probe across a real reboot rather
+   than by an argument about unit ordering. **Write each item into
+   `TODO.md` when it is derived**, not when it is fixed — that is how B3–B8
+   were lost.
 3. **The export directory is nine revisions behind.** `versiyon/R2.6/` is
    `Q1-22`. Everything from `Q1-23` (Tailscale SSH) onward is unexported,
    including the whole audit series. Per the standing export rule every
