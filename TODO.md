@@ -193,9 +193,45 @@ _All High findings resolved — see Completed below._
 
 ## Low
 
+- [ ] **Compose can leave a container under its temporary replace name, and
+      reconcile cannot repair that (found 2026-08-04 during the `Q1-31`
+      upgrade).** Recreating `qbittorrent` left it running as
+      `<id>_qbittorrent` with `com.docker.compose.replace: qbittorrent`,
+      healthy and with its ports published, but never renamed back. Stage 7
+      correctly failed on the missing port publication, and reconcile
+      correctly could not fix it — its repair model is `docker restart
+      <name>`, which has nothing to act on. Repair was manual: stop
+      `master-compose`, `docker rm -f` the stray container, start it again.
+      Worth deciding whether Stage 5 or reconcile should detect a container
+      carrying the `com.docker.compose.replace` label and remove it.
+
+- [ ] **`master-compose`'s address-change exemption still consumes its restart
+      budget (found 2026-08-04).** Identical to the defect fixed for
+      `master-webdav`/`dnsmasq`/`caddy` in `Q1-31`: `if [[ "$ADDRESS_CHANGED"
+      -eq 1 ]] || restart_budget_available master-compose` is followed
+      unconditionally by `record_container_restart master-compose`, so an
+      address change spends the stack's fifteen-minute budget and a genuine
+      stack failure right after is deferred. Pre-existing and out of A5's
+      scope, so it was recorded rather than changed unasked.
+
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **A1–A5 live-verified on the test host; two defects found and fixed
+      (2026-08-04, `Q1-31`, DD-46/DD-49 amendments).** Upgraded `nrm` from
+      `Q1-22` in place. **Defect 1:** `Q1-30`'s restart exemption called
+      `record_container_restart`, so a Caddyfile restore spent the cooldown
+      and a real caddy failure minutes later was refused for fifteen minutes
+      — worse availability than before the change. Fixed with an explicit
+      `*_RESTART_EXEMPT` flag; stamps only on the budget path. **Defect 2:**
+      the drift report said "canonical kopya geri yüklenecek" while correctly
+      withholding the restore; the message is now conditional. Confirmed on
+      the host: A2 degrades and repairs bundle-independent drift, A3's cleanup
+      kept the published generation after a Stage 7 failure, A4 prints the
+      wg diagnostic exactly once, A5 brakes on the second failure-driven
+      restart with per-unit scoping. A1 is unreachable on this host by
+      construction. `./scripts/check-all.sh` clean at 217 cases.
 
 - [x] **Every unit on the `OnFailure` arc restarted behind the repair
       cooldown (2026-08-04, `Q1-30`, audit item A5, DD-49).** Five units

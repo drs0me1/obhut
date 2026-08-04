@@ -155,6 +155,20 @@ block_body() {
     grep -Fq '! canonical_bundle_ok ||' "$RECONCILE"
 }
 
+@test "the drift report does not promise a restore it will not perform" {
+    # Seen on the test host: with the bundle invalid, reconcile printed
+    # "canonical kopya geri yüklenecek" and then correctly withheld the
+    # restore. The gating was right; the sentence was not.
+    local script="" flat=""
+    script="$(
+        sed -n "/<<'RECONCILE_SCRIPT'\$/,/^RECONCILE_SCRIPT\$/p" "$INSTALL_SH"
+    )"
+    flat="$(tr -s ' \n' ' ' <<<"$script")"
+    grep -Fq 'if [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 && "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then echo "Yönetilen state/Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."' <<<"$flat"
+    grep -Fq 'if [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 ]]; then echo "filebrowser politika dosyası' <<<"$flat"
+    grep -Fq 'canonical kopya doğrulanamadığı için geri yükleme yapılmayacak.' <<<"$flat"
+}
+
 @test "--check reports the bundle flag" {
     grep -Fq 'canonical_bundle=$CANONICAL_BUNDLE_INVALID' "$RECONCILE"
 }

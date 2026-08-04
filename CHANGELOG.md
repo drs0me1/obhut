@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — Live verification of A1–A5 on the test host, and two defects it found (`Q1-31`)
+
+`Q1-26`…`Q1-30` were upgraded onto the `nrm` test host (`Q1-22` → `Q1-31`,
+in place, so the Tailscale login was skipped and the generation N→N+1 path
+was exercised). Two defects surfaced that review had not.
+
+**The restart exemption consumed the budget it was meant to bypass.** `Q1-30`
+called `record_container_restart` on the exempt path too, so a legitimate
+Caddyfile restore stamped the cooldown and a genuine caddy failure three
+minutes later was refused for fifteen minutes — caddy sat `inactive` while
+reconcile reported `cooldown içinde`, strictly worse than before `Q1-30`.
+Each block now sets an explicit `*_RESTART_EXEMPT` flag and stamps only when
+the budget path was actually taken. The brake still engages one restart
+later, which is the intended semantics.
+
+**The drift report promised a restore it would not perform.** With the bundle
+invalid, reconcile printed "canonical kopya geri yüklenecek" and then
+correctly withheld the restore — the sentence predates `Q1-27` and was
+written when a restore always followed. The state/DNS/Caddy and filebrowser
+policy lines are now conditional and say the restore will not happen.
+
+**What the host confirmed.** A2: a broken canonical file mode reported the
+bundle failure, repaired `net.ipv4.ip_forward` 0 → 1, left the drifted
+Caddyfile alone, kept caddy running, exited 1 with `canonical_bundle=1`;
+restoring the mode restored the file and exited 0. A3: the installer failed
+at Stage 7 on the first attempt and `cleanup_master_setup` correctly kept the
+published generation `current` pointed at. A4: the wg-easy port diagnostic
+appeared **exactly once** in a reconcile run (four copies before), and
+`wg_setup=`/`wg_config=` appear in `--check` and `--status`. A5: an exempt
+restart leaves no stamp, the next failure is repaired, the one after that is
+braked, and dnsmasq was repaired in the same run — per-unit scoping holds.
+Incidentally `Q1-23`'s `tailscale_prefs` stayed 0, so `--ssh=true` took.
+
+**A1 is not verifiable on this host by construction** — Stage 1's `iptables`
+package always provides `ip6tables`, so the guard cannot fire. Stated rather
+than glossed.
+
+Unrelated to A1–A5, the upgrade surfaced a Docker Compose behaviour worth
+recording: recreating `qbittorrent` left it running under the temporary name
+`<id>_qbittorrent` with the `com.docker.compose.replace` label, never renamed
+back. Stage 7 correctly failed, and reconcile correctly could not repair it —
+it restarts by name. Logged in `TODO.md`.
+
+`./scripts/check-all.sh` clean at 217 cases.
+
 ### 2026-08-04 — Every unit on the `OnFailure` arc is restarted behind the repair cooldown (`Q1-30`)
 
 Fifth item from the stage-by-stage audit. The original note was "document the

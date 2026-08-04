@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-30"
+MASTER_SETUP_VERSION="2026.08.04-Q1-31"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -3692,12 +3692,23 @@ fi
     echo "master-compose.service aktif değil; stack başlatılacak."
 [[ "$COMPOSE_RUNTIME_DRIFTED" -eq 0 ]] ||
     echo "Container sağlık veya port binding sapması tespit edildi."
-[[ "$STATE_CONFIG_DRIFTED" -eq 0 &&
-   "$DNS_CONFIG_DRIFTED" -eq 0 &&
-   "$CADDY_CONFIG_DRIFTED" -eq 0 ]] ||
-    echo "Yönetilen state/Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."
-[[ "$QUANTUM_CONFIG_DRIFTED" -eq 0 ]] ||
-    echo "filebrowser politika dosyası ($QUANTUM_CONFIG_FILE) sapmış; canonical kopya geri yüklenip container yenilenecek."
+if [[ "$STATE_CONFIG_DRIFTED" -eq 1 ||
+      "$DNS_CONFIG_DRIFTED" -eq 1 ||
+      "$CADDY_CONFIG_DRIFTED" -eq 1 ]]; then
+    if [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
+          "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
+        echo "Yönetilen state/Caddy/dnsmasq dosyası sapmış; canonical kopya geri yüklenecek."
+    else
+        echo "HATA: Yönetilen state/Caddy/dnsmasq dosyası sapmış; canonical kopya doğrulanamadığı için geri yükleme yapılmayacak." >&2
+    fi
+fi
+if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 ]]; then
+    if [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 ]]; then
+        echo "filebrowser politika dosyası ($QUANTUM_CONFIG_FILE) sapmış; canonical kopya geri yüklenip container yenilenecek."
+    else
+        echo "HATA: filebrowser politika dosyası ($QUANTUM_CONFIG_FILE) sapmış; canonical kopya doğrulanamadığı için geri yükleme yapılmayacak." >&2
+    fi
+fi
 [[ "$CANONICAL_CONFIG_INVALID" -eq 0 ]] ||
     echo "HATA: Canonical DNS/Caddy yapılandırması geçersiz; çalışan daemon'lar korunacak." >&2
 [[ "$WEBDAV_UNIT_INACTIVE" -eq 0 && "$WEBDAV_RUNTIME_DRIFTED" -eq 0 ]] ||
@@ -3979,9 +3990,15 @@ fi
 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$WEBDAV_UNIT_INACTIVE" -eq 1 ||
       "$WEBDAV_RUNTIME_DRIFTED" -eq 1 ]]; then
-    if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ]] ||
+    WEBDAV_RESTART_EXEMPT=0
+    if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ]]; then
+        WEBDAV_RESTART_EXEMPT=1
+    fi
+    if [[ "$WEBDAV_RESTART_EXEMPT" -eq 1 ]] ||
        restart_budget_available master-webdav; then
-        record_container_restart master-webdav
+        if [[ "$WEBDAV_RESTART_EXEMPT" -eq 0 ]]; then
+            record_container_restart master-webdav
+        fi
         "$SYSTEMCTL_BIN" reset-failed master-webdav.service >/dev/null 2>&1 || true
         if ! "$SYSTEMCTL_BIN" restart master-webdav.service; then
             echo "HATA: master-webdav.service yeniden başlatılamadı." >&2
@@ -4012,10 +4029,16 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$DNSMASQ_RUNTIME_DRIFTED" -eq 1 ]] &&
    [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
+    DNSMASQ_RESTART_EXEMPT=0
     if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
-          "$DNS_CONFIG_DRIFTED" -eq 1 ]] ||
+          "$DNS_CONFIG_DRIFTED" -eq 1 ]]; then
+        DNSMASQ_RESTART_EXEMPT=1
+    fi
+    if [[ "$DNSMASQ_RESTART_EXEMPT" -eq 1 ]] ||
        restart_budget_available dnsmasq; then
-        record_container_restart dnsmasq
+        if [[ "$DNSMASQ_RESTART_EXEMPT" -eq 0 ]]; then
+            record_container_restart dnsmasq
+        fi
         "$SYSTEMCTL_BIN" reset-failed dnsmasq.service >/dev/null 2>&1 || true
         if ! "$SYSTEMCTL_BIN" restart dnsmasq.service ||
            ! dns_runtime_ok; then
@@ -4034,10 +4057,16 @@ if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
       "$CADDY_RUNTIME_DRIFTED" -eq 1 ]] &&
    [[ "$CANONICAL_BUNDLE_INVALID" -eq 0 &&
       "$CANONICAL_CONFIG_INVALID" -eq 0 ]]; then
+    CADDY_RESTART_EXEMPT=0
     if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ||
-          "$CADDY_CONFIG_DRIFTED" -eq 1 ]] ||
+          "$CADDY_CONFIG_DRIFTED" -eq 1 ]]; then
+        CADDY_RESTART_EXEMPT=1
+    fi
+    if [[ "$CADDY_RESTART_EXEMPT" -eq 1 ]] ||
        restart_budget_available caddy; then
-        record_container_restart caddy
+        if [[ "$CADDY_RESTART_EXEMPT" -eq 0 ]]; then
+            record_container_restart caddy
+        fi
         "$SYSTEMCTL_BIN" reset-failed caddy.service >/dev/null 2>&1 || true
         if ! "$SYSTEMCTL_BIN" restart caddy.service ||
            ! caddy_runtime_ok; then

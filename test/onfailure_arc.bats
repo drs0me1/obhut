@@ -195,6 +195,25 @@ block_condition() {
     [ "$mismatched" -eq 0 ]
 }
 
+@test "an exempt restart does not consume the cooldown" {
+    # Found on the test host, not by review: stamping on the exempt path made
+    # a legitimate config restore disarm the failure repair for fifteen
+    # minutes. Caddy was restored, restarted, then genuinely died — and
+    # reconcile refused to bring it back because the restore had spent the
+    # budget. The exemption must bypass the brake, not consume it.
+    local flat=""
+    flat="$(tr -s ' \n' ' ' <"$RECOVERY")"
+    local prefix target
+    while read -r prefix target; do
+        grep -Fq "if [[ \"\$${prefix}_RESTART_EXEMPT\" -eq 0 ]]; then record_container_restart $target" \
+            <<<"$flat"
+    done <<'PAIRS'
+WEBDAV master-webdav
+DNSMASQ dnsmasq
+CADDY caddy
+PAIRS
+}
+
 @test "an address change bypasses the cooldown on all three daemons" {
     # A Tailscale address change is not a failure signal — every one of these
     # binds that address, so the rebind must not be deferred. Same exemption
@@ -205,9 +224,13 @@ block_condition() {
     # would pass on any single line of it.
     local flat=""
     flat="$(tr -s ' \n' ' ' <"$RECOVERY")"
-    grep -Fq 'if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ]] || restart_budget_available master-webdav; then' <<<"$flat"
-    grep -Fq 'if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 || "$DNS_CONFIG_DRIFTED" -eq 1 ]] || restart_budget_available dnsmasq; then' <<<"$flat"
-    grep -Fq 'if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 || "$CADDY_CONFIG_DRIFTED" -eq 1 ]] || restart_budget_available caddy; then' <<<"$flat"
+    grep -Fq 'WEBDAV_RESTART_EXEMPT=0 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 ]]; then WEBDAV_RESTART_EXEMPT=1' <<<"$flat"
+    grep -Fq 'DNSMASQ_RESTART_EXEMPT=0 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 || "$DNS_CONFIG_DRIFTED" -eq 1 ]]; then DNSMASQ_RESTART_EXEMPT=1' <<<"$flat"
+    grep -Fq 'CADDY_RESTART_EXEMPT=0 if [[ "$TAILSCALE_ADDRESS_CHANGED" -eq 1 || "$CADDY_CONFIG_DRIFTED" -eq 1 ]]; then CADDY_RESTART_EXEMPT=1' <<<"$flat"
+    local target
+    for target in master-webdav dnsmasq caddy; do
+        grep -Fq "restart_budget_available $target; then" <<<"$flat"
+    done
 }
 
 @test "an inactive or misbehaving daemon does not bypass the cooldown" {
@@ -216,11 +239,12 @@ block_condition() {
     # address rebind and the config-restore follow-up are exempt.
     local flat=""
     flat="$(tr -s ' \n' ' ' <"$RECOVERY")"
-    local flag
+    local flag prefix
     for flag in WEBDAV_UNIT_INACTIVE WEBDAV_RUNTIME_DRIFTED \
                 DNSMASQ_INACTIVE DNSMASQ_RUNTIME_DRIFTED \
                 CADDY_INACTIVE CADDY_RUNTIME_DRIFTED; do
-        if grep -Fq "\"\$$flag\" -eq 1 ]] || restart_budget_available" \
+        prefix="${flag%%_*}"
+        if grep -Fq "\"\$$flag\" -eq 1 ]]; then ${prefix}_RESTART_EXEMPT=1" \
                 <<<"$flat"; then
             printf '%s bypasses the cooldown\n' "$flag" >&2
             return 1

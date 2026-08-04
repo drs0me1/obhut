@@ -2383,6 +2383,20 @@ packaging action does not change the pending live-verification claim.
   bundle is invalid *because* `state.env` is unreadable, reconcile stops
   there — but it prints the bundle diagnosis first, which is why the message
   is emitted at flag time rather than in the later drift report.
+- **Amended 2026-08-04 (`Q1-31`) — the drift report was promising a restore
+  it would not perform.** Live testing showed reconcile printing "canonical
+  kopya geri yüklenecek" and then correctly withholding the restore, because
+  that sentence predates this decision and was written when a restore always
+  followed. The state/DNS/Caddy and filebrowser policy report lines are now
+  conditional: with the bundle or the runtime configs unverifiable they say
+  the restore will *not* happen, and go to stderr. The gating itself was
+  right the whole time; only the sentence was wrong.
+- **Live-verified 2026-08-04.** With one canonical file's mode broken,
+  reconcile reported the bundle failure, repaired `net.ipv4.ip_forward`
+  0 → 1 (a bundle-independent repair `Q1-22` would never have reached), left
+  the drifted `/etc/caddy/Caddyfile` untouched, kept caddy running and exited
+  1 with `canonical_bundle=1` in `--check`. Restoring the mode made the next
+  run restore the file and exit 0.
 - **Verified by mutation.** `test/canonical_bundle_degrade.bats` derives the
   invariant from install.sh's own text rather than restating the current
   lines: it splits reconcile's recovery half into top-level `if` blocks and
@@ -2572,6 +2586,24 @@ packaging action does not change the pending live-verification claim.
   `RECOVERY_FAILED`, giving `master-network-reconcile.service` a `Restart=`,
   and adding a sixth unit to the arc with an ungated restart.
   `./scripts/check-all.sh` clean at 215 cases.
-- **Not live-verified.** The systemd job-merging claim above is reasoning
-  about documented behaviour, not a measurement; confirming it needs a real
-  host with a deliberately crash-looping daemon.
+- **Amended 2026-08-04 (`Q1-31`) — the exemption must bypass the brake, not
+  consume it.** The first live run found a defect in this decision as
+  originally shipped: `record_container_restart` was called on the exempt
+  path too, so a legitimate Caddyfile restore stamped the budget and then a
+  genuine caddy failure three minutes later was refused for fifteen minutes.
+  Caddy sat `inactive` while reconcile reported `cooldown içinde` — strictly
+  worse availability than before `Q1-30`. Each block now sets an explicit
+  `*_RESTART_EXEMPT` flag and stamps only when the budget path was actually
+  taken. The brake still engages, one restart later: a failure-driven restart
+  always consults and stamps, so the second one in fifteen minutes is
+  refused. Verified on the host in both directions — exempt restart leaves no
+  stamp and the following failure is repaired; the failure after that is
+  braked, with dnsmasq repaired in the same run to confirm per-unit scoping.
+- **`master-compose` has the same property and was left alone.** Its
+  `ADDRESS_CHANGED` bypass still calls `record_container_restart`, so an
+  address change spends the stack's budget. That is pre-existing behaviour
+  outside this decision's scope; it is recorded in `TODO.md` rather than
+  changed unasked.
+- **Live-verified 2026-08-04** except the systemd job-merging claim, which is
+  reasoning about documented behaviour rather than a measurement; confirming
+  it needs a deliberately crash-looping daemon.
