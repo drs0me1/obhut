@@ -6,10 +6,11 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`Q1-21` implements persistent Tailscale 410 early recovery and is locally
-verified. At the operator's explicit request it is exported, without prior
-live verification, as the untagged `R2.6` manual-test candidate. `R2.5`
-remains the latest live-verified tagged release.**
+**The stage-by-stage audit's remediation series is complete through `B1`
+and live-verified on the test host. `Q1-26`…`Q1-32` carry audit items
+A1–A5 and B1; `Q1-31` is the fix for two defects the live run found that
+review had not. `R2.5` remains the latest live-verified *tagged* release —
+nothing since `Q1-22` has been exported.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -24,8 +25,37 @@ Current release:
 | SHA256 | `0a1778b8c1ff87a8d700da6ec138518daa128edc70148c97297f589ec9f4bba9` |
 | Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-32` (audit items A1-A5 and B1, plus their live-test fixes) are not exported yet |
 | Live | **`Q1-32` installed and verified on `nrm` 2026-08-04** (upgraded in place from `Q1-22`; all 7 stages, `--check` rc=0). A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
-| Tests | 176 cases across thirteen `.bats` files (164 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
+| Tests | 224 cases across eighteen `.bats` files (212 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
+
+### The audit remediation series (`Q1-26`…`Q1-32`)
+
+Seven revisions answering the stage-by-stage audit. Each is one item, each
+has a `DD-` entry, and each was mutation-verified before commit — every
+change had deliberate mutations applied to `install.sh` to confirm a
+specific test case catches it.
+
+| rev | item | change |
+|---|---|---|
+| `Q1-26` | A1 | firewall helper requires `ip6tables` instead of degrading toward a failure it could not avoid (DD-45) |
+| `Q1-27` | A2 | a failed canonical bundle check degrades reconcile instead of aborting it (DD-46) |
+| `Q1-28` | A3 | `cleanup_master_setup` calls `canonical_stage_is_current` instead of re-deriving it differently (DD-47) |
+| `Q1-29` | A4 | `probe_compose_runtime` measures, the caller reports (DD-48) |
+| `Q1-30` | A5 | every unit on the `OnFailure` arc is restarted behind the repair cooldown (DD-49) |
+| `Q1-31` | — | two defects found by live-verifying the above (DD-46/DD-49 amendments) |
+| `Q1-32` | B1 | one definition of "online" in the installer; waits count time, not iterations (DD-50) |
+
+**What the live run taught, and why it mattered.** `Q1-30` stamped the
+restart cooldown on its own exemption path, so a legitimate Caddyfile
+restore disarmed the failure repair for fifteen minutes — caddy sat
+`inactive` while reconcile reported `cooldown içinde`, strictly worse than
+before the change. Reading had not found it; injecting the fault did. The
+second defect was a report line promising a restore it then correctly
+withheld. Both are fixed in `Q1-31`.
+
+**Remaining audit items, not started:** B2–B8. B2 (Stage 2's `systemctl
+restart tailscaled` pulling Stage 3/4 units via `PartOf`) is the next one
+in order.
 
 Q1-21 is the Stage 2 follow-up to the repeated offline-node login failure:
 
@@ -373,7 +403,7 @@ resolved, plus one unnumbered cleanup and two partial items:
 ## Remaining Work
 
 - **M7 — the only open finding, and parked.** Tier 1 complete; Tier 2 is
-  now 120 cases across eight files with no identified gaps left, and
+  now 224 cases across eighteen files with no identified gaps left, and
   `./scripts/check-all.sh` runs every verification in one command. All
   that remains is CI, and the user decided (2026-07-28) that **the
   repository stays local with no git remote**, so a runner has nowhere to
@@ -411,22 +441,46 @@ resolved, plus one unnumbered cleanup and two partial items:
 
 ## Recommended Next Step
 
-1. **Nothing is blocked or half-finished.** Repository, server and the
-   exported artifact all agree at `Q1-13`.
-2. The user has said the next move is **a change opening a higher
-   version** — so the next session most likely starts by bumping
-   `MASTER_SETUP_VERSION` past `Q1-13` for whatever that change is.
-3. One carried decision needing the user's word because it deletes a tag:
-   the `Q1` line marker still points at the `R2.3` close-out commit,
-   behind the head. Also note `Q1-14` is tagged but must never be
-   deployed — it carries the unsafe wedge detector that `Q1-15` removed,
-   and it has no export directory for that reason.
-4. Whatever is chosen, keep the standing per-change rule: analyze and flag
+1. **Nothing is blocked or half-finished.** Repository and server agree at
+   `Q1-32`; the working tree is clean and `./scripts/check-all.sh` passes
+   all four checks. The exported artifact does *not* agree — see 3.
+2. **`B2` is next in the audit series.** Stage 2's `systemctl restart
+   tailscaled` (inside the login retry loop) pulls Stage 3/4 units on a
+   *reinstall*, because `tailscaled.service.d/98-master-stack.conf` already
+   carries `Wants=docker-tailscale-fw.service master-compose.service
+   master-webdav.service` and `master-compose` is `PartOf=tailscaled`. That
+   can start a 330-second `docker compose up --wait` against the *old*
+   `compose.yaml` while Stage 4 is rewriting it. No deadlock and no data
+   loss — Stage 5 reconciles anyway — but it is a narrow, invisible race.
+   The audit's proposal was `systemctl stop master-compose.service` before
+   the restart, as the more readable of the two options. **Re-derive it
+   against the current code before proposing**; the B-list was written at
+   `Q1-25` and B1 turned out to have two errors in it.
+3. **The export directory is eight revisions behind.** `versiyon/R2.6/` is
+   `Q1-22`. Everything from `Q1-23` (Tailscale SSH) onward is unexported,
+   including the whole audit series. Per the standing export rule every
+   `versiyon/` folder ships a one-click deploy script and an operator
+   README, so this is a deliberate piece of work, not a copy.
+4. **One carried decision needing the user's word because it deletes a
+   tag:** the bare `Q1` line marker still points at `7f70bfd`, many
+   revisions behind. Moving it requires tag deletion. Also note `Q1-14` is
+   tagged but must never be deployed — it carries the unsafe wedge
+   detector that `Q1-15` removed, and it has no export directory for that
+   reason.
+5. **Two findings recorded but not acted on** (both in `TODO.md` under
+   Low): Docker Compose can leave a container under its temporary
+   `<id>_<name>` replace name, which reconcile cannot repair because it
+   restarts by name; and `master-compose`'s address-change exemption still
+   consumes its restart budget, the same defect fixed for the three
+   daemons in `Q1-31`.
+6. Whatever is chosen, keep the standing per-change rule: analyze and flag
    risk first, apply only what was asked, bump the version suffix in the
    same edit, verify with `./scripts/check-all.sh`, show the diff, then
    update `TODO.md`/`SECURITY_REVIEW.md`/`CHANGELOG.md` (and
    `docs/design-decisions.md` when the *reasoning* is the durable part),
-   then commit.
+   then commit. The audit series added one habit worth keeping:
+   **mutation-verify every new test** — apply the defect the test claims
+   to catch and confirm it actually fails.
 
 ## Notes
 

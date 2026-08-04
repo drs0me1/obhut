@@ -2,13 +2,14 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-02): Tier 1 implemented; Tier 2 partial (176
-> unit cases across thirteen files; 164 execute and 12 self-skip on the macOS
-> workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`;
-> Q1-19/Q1-20's 26 new unit cases and Q1-21's 13 login cases have not been
-> run under Bats on the Debian target; Q1-20's production paths and Q1-21's
-> real failure input/equivalent manual retry were exercised there, but the
-> exact automatic Q1-21 branch remains pending);
+> **Status (updated 2026-08-04): Tier 1 implemented; Tier 2 partial (224
+> unit cases across eighteen files; 212 execute and 12 self-skip on the macOS
+> workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`; the
+> Bats suite has still never been run on the Debian target, so every case is
+> workstation-verified only. Q1-20's production paths, Q1-21's real failure
+> input/equivalent manual retry, and the `Q1-26`…`Q1-32` audit series' live
+> behaviour were exercised there; the exact automatic Q1-21 branch remains
+> pending);
 > Tier 3 had seven real, manual
 > install runs at the time of the 2026-07-28 count, and many more since. Four were against a
 > freshly reimaged host: three of those found and fixed real bugs
@@ -316,12 +317,59 @@ alone.
   three consecutive dead samples causing one early daemon restart, and a
   single dead sample resetting before a successful login with no restart.
   Command and service stand-ins are used; no real Tailscale state is changed.
+- **Also implemented (2026-08-04): five files from the audit remediation
+  series (`Q1-26`…`Q1-32`).** All five share a technique worth naming: they
+  **derive the invariant from `install.sh`'s own text** rather than restating
+  the current lines, so a future change that violates the rule fails them
+  without anyone remembering to extend the file.
+  - `test/canonical_bundle_degrade.bats` (A2/DD-46) splits reconcile's
+    recovery half into top-level `if` blocks and requires every block whose
+    body touches `$CANONICAL_DIR/` or calls a canonical restore helper to be
+    gated on `CANONICAL_BUNDLE_INVALID` — so a *new* ungated restore site
+    fails on its own. Also pins that the report does not promise a restore it
+    will withhold, and that bundle-independent repairs stay outside the gate.
+  - `test/canonical_stage_cleanup.bats` (A3/DD-47) lifts the staged-generation
+    block out of `cleanup_master_setup`, which cannot be sourced because it
+    resets traps and exits. It runs the block in **two** forms: verbatim, for
+    the `.generation.*` allowlist case, and with the allowlist re-rooted at
+    the fixture — without the second the hardcoded `/usr/local` prefix would
+    make every fixture path survive and the deleting branch would never fire,
+    so the behavioural cases would pass vacuously.
+  - `test/compose_runtime_probe.bats` (A4/DD-48) is the first coverage
+    `probe_compose_runtime` has ever had; its component probes were covered,
+    the 110-line composite was not. Pins that the four globals are recomputed
+    on every call, that the probe prints nothing, and DD-12/H6's rule that a
+    pending wg-easy setup must not fail it — the regression that broke every
+    fresh install at Stage 7.
+  - `test/onfailure_arc.bats` (A5/DD-49) reads the arc's unit set out of
+    install.sh's own `OnFailure=` lines and walks every top-level if-block, so
+    wiring a sixth unit onto the arc and restarting it unbraked fails the
+    suite. Exemptions are listed with their reasons, making a third one a
+    conscious act.
+  - `test/tailscale_online_gate.bats` (B1/DD-50) mixes structural and
+    **timed** cases: it lifts each Stage 2 wait, rewrites only its deadline
+    constant, and measures wall-clock time with a deliberately slow probe.
+    That is what pins the bound the iteration-bounded loops could not hold.
+
+- **A habit the series added: mutation-verify every new test.** Before
+  committing, apply the defect the test claims to catch and confirm a
+  *specific* case fails. It repeatedly found tests that passed for the wrong
+  reason — an extraction anchor that broke and turned the whole file red
+  instead of one case; a `grep -F` pattern containing a newline, which greps
+  treat as alternatives rather than a multi-line match, so a negative
+  assertion passed on any single line; and a timing assertion that had to be
+  shown to bite by moving the deadline thirty seconds later. Recorded here
+  because none of those are visible from reading the test.
+
 - **Remaining in Tier 2:** nothing specific identified. Of the 51
   functions in the reconcile heredoc the uncovered remainder is
   integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
-  `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,
-  `probe_compose_runtime` and their neighbours all need real network,
-  systemd or Docker). Further additions would be opportunistic.
+  `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online` and their
+  neighbours all need real network, systemd or Docker). Further additions
+  would be opportunistic. `probe_compose_runtime` was on this list until
+  `Q1-29`; it came off it by stubbing the component probes and testing the
+  composite's own contract, which is the pattern to reuse for the others if
+  they are ever worth covering.
 - **Also implemented (2026-08-02): `scripts/check-all.sh`**, one command
   for all four verification steps — `bash -n install.sh`, `shellcheck
   install.sh`, the embedded-heredoc lint and `bats test/`. This is the
