@@ -2796,3 +2796,44 @@ packaging action does not change the pending live-verification claim.
   recorded in `TODO.md` as their own item — not all are dead, since several are
   followed by a stronger sibling, but none of them currently prove that.
   `./scripts/check-all.sh` clean at 239 cases.
+
+### DD-53: The media-tree ownership repair never dereferences (2026-08-04)
+
+- **Decision:** Stage 4's `find "$DOWNLOADS_PATH/media" \( ! -uid 1000 -o
+  ! -gid 1000 \) -exec chown …` now runs `chown -h`.
+- **The defect.** `find` defaults to `-P`: it does not follow symlinks, it
+  *reports* them. `chown` without `-h` dereferences whatever path it is
+  handed. A symlink inside the media tree owned by anything other than
+  `1000:1000` therefore satisfied the predicate and redirected the ownership
+  change onto its target, anywhere on the host.
+- **Measured before the fix, on the test host.** A root-owned
+  `tree/innocent.mkv -> /tmp/d3/SENTINEL` left the symlink at `0:0` and moved
+  the sentinel from `0:0` to `1000:1000`. After the fix the same fixture
+  leaves the sentinel at `0:0`, moves the symlink itself to `1000:1000`, and
+  still repairs a genuine `0:0` regular file — so the repair's actual job is
+  intact.
+- **Reachability was measured, not assumed.** The tree is bind-mounted into
+  `qbittorrent` as `/downloads`; `docker exec qbittorrent id` reports
+  `uid=0(root)` because the compose service sets no `user:`; and a symlink
+  planted from inside the container appears on the host as `lrwxrwxrwx 1 0 0`,
+  which is exactly the ownership the predicate selects. `1000` is the uid
+  qbittorrent's own process runs under, so the target becomes a host file the
+  container can then read or write. The trigger is an installer re-run, which
+  this project does routinely.
+- **Why `-h` rather than `! -type l`.** Skipping symlinks would leave a
+  root-owned symlink in a tree that is otherwise uniformly `1000:1000`, and
+  would leave the next reader to rediscover why. `-h` repairs the link's own
+  ownership, which is what the loop was always trying to express, and removes
+  the dereference as a class rather than excluding one case of it. On a
+  non-symlink `-h` is a no-op, so the regular-file path is unchanged.
+- **Deliberately out of scope:** `-xdev`. A separate filesystem mounted inside
+  the media tree would still be walked. That is surprising but is not the
+  same failure — it cannot be aimed at a chosen file — and bounding the walk
+  is its own decision with its own blast radius.
+- **Verified by mutation.** Three mutations, each caught by the case that
+  claims it: dropping `-h`, moving `-h` after the owner spec where it no
+  longer guards the first operand, and adding `! -type l` to the predicate —
+  the last one confirms the "find selects the symlink" case measures
+  selection rather than passing vacuously. The suite stubs `chown` on `PATH`
+  and records its arguments, so the cases need no root and change no real
+  ownership. `./scripts/check-all.sh` clean at 242 cases.

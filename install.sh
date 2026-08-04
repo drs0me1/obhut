@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-34"
+MASTER_SETUP_VERSION="2026.08.04-Q1-35"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -2114,7 +2114,7 @@ fi
 
 find "$DOWNLOADS_PATH/media" \
     \( ! -uid 1000 -o ! -gid 1000 \) \
-    -exec chown 1000:1000 {} +
+    -exec chown -h 1000:1000 {} +
 progress_stage_note 15 "Veri ve medya dizinleri hazırlandı"
 
 PORTAINER_TRUSTED_ORIGINS="portainer.${LOCAL_DOMAIN}"

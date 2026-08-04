@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — the media-tree chown stops dereferencing (`Q1-35`)
+
+Stage 4 pass item D3, and the most serious thing the pass found.
+
+Stage 4 repairs ownership across the media tree with `find
+"$DOWNLOADS_PATH/media" \( ! -uid 1000 -o ! -gid 1000 \) -exec chown
+1000:1000 {} +`. `find` defaults to `-P` and so does not follow symlinks — it
+reports them — and `chown` without `-h` dereferences the path it is given. A
+symlink in the tree owned by anything other than `1000:1000` therefore matched
+the predicate and aimed the ownership change at its target, anywhere on the
+host.
+
+Measured on the test host before the fix: a root-owned
+`tree/innocent.mkv -> /tmp/d3/SENTINEL` stayed at `0:0` while the sentinel
+moved from `0:0` to `1000:1000`. Reachability was measured too — the tree is
+bind-mounted into `qbittorrent` as `/downloads`, `docker exec qbittorrent id`
+returns `uid=0(root)`, and a symlink planted from inside the container shows
+up on the host as `lrwxrwxrwx 1 0 0`, exactly the ownership the predicate
+selects. Since `1000` is the uid qbittorrent's own process runs under, the
+target becomes a file the container can read or write. It fires on the next
+installer run.
+
+The fix is `chown -h`. After it, the same fixture leaves the sentinel at
+`0:0`, moves the symlink itself to `1000:1000`, and still repairs a genuine
+`0:0` regular file. `-xdev` was considered and deliberately left out; see
+DD-53.
+
+Three cases added in a new `test/media_tree_chown.bats`, which runs the
+command extracted from `install.sh` against a fixture tree with a stub `chown`
+on `PATH` — no root, no real ownership touched. Three mutations run and each
+caught. `./scripts/check-all.sh` clean at 242 cases.
+
 ### 2026-08-04 — `--check` stops waiting for a value no rule uses (`Q1-34`)
 
 First item of a fresh stage-by-stage pass over Stage 3, derived against the

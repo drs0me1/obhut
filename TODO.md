@@ -46,28 +46,7 @@ _All Critical findings resolved — see Completed below._
 
 ## High
 
-- [ ] 🔴 **D3 — the media-tree `chown` follows symlinks, so a compromised
-      container can pick which host file the next install run gives away
-      (Stage 4 pass, derived and measured 2026-08-04).** `install.sh:2115`
-      runs `find "$DOWNLOADS_PATH/media" \( ! -uid 1000 -o ! -gid 1000 \)
-      -exec chown 1000:1000 {} +`. `find` defaults to `-P` and so does not
-      follow symlinks — it *reports* them — and `chown` without `-h`
-      dereferences the path it is handed. A symlink in the tree owned by
-      anything other than `1000:1000` therefore matches the predicate and
-      redirects the `chown` onto its target. **Measured on the test host:** a
-      root-owned symlink at `tree/innocent.mkv -> /tmp/d3/SENTINEL` left the
-      symlink at `0:0` and moved the sentinel from `0:0` to `1000:1000`.
-      **Reachability measured too:** the media tree is bind-mounted into
-      `qbittorrent` as `/downloads`, `docker exec qbittorrent id` reports
-      `uid=0(root)`, and a symlink planted from inside the container appears
-      on the host as `lrwxrwxrwx 1 0 0` — exactly the ownership the predicate
-      selects. Since `1000:1000` is the uid/gid qbittorrent's own process
-      runs under, the payoff is a host file the container can then read or
-      write. It needs an installer re-run to fire, which this project does
-      routinely. Both probes were cleaned up. Candidate fixes to weigh:
-      `-xdev` plus `-type f -o -type d` on the `find`, `chown -h`, or
-      `chown --no-dereference` — but decide deliberately, because `-h` on a
-      symlink silently does nothing useful and may just hide the problem.
+_All High findings resolved — see Completed below._
 
 ## Medium
 
@@ -319,6 +298,23 @@ _All Critical findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **The media-tree chown stops dereferencing (2026-08-04, `Q1-35`,
+      Stage 4 pass item D3, DD-53).** `find` defaults to `-P` and reports
+      symlinks rather than following them, and `chown` without `-h`
+      dereferences the path it is handed, so a symlink in the media tree
+      owned by anything but `1000:1000` matched the predicate and aimed the
+      ownership change at its target anywhere on the host. Measured before
+      the fix: a root-owned symlink stayed `0:0` while a sentinel outside the
+      tree moved to `1000:1000`. Reachability measured too — `docker exec
+      qbittorrent id` is `uid=0(root)`, the tree is its `/downloads`, and a
+      symlink planted from inside appears on the host as `0:0`; `1000` is the
+      uid that container's process runs under. Fixed with `chown -h`, which
+      leaves the sentinel alone, repairs the link itself and still repairs
+      ordinary files. `-xdev` deliberately out of scope. Three cases in a new
+      `test/media_tree_chown.bats` (stub `chown` on `PATH`, no root needed),
+      three mutations run and caught. `./scripts/check-all.sh` clean at 242
+      cases.
 
 - [x] **`--check` no longer waits for a value no rule uses (2026-08-04,
       `Q1-34`, Stage 3 pass item C1, DD-52).** `docker-tailscale-fw` resolved
