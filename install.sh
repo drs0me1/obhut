@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.05-Q1-37"
+MASTER_SETUP_VERSION="2026.08.05-Q1-38"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -2297,9 +2297,11 @@ AWK_BIN="$(command -v awk)"
 STACK_DIR="/root/docker"
 ENV_FILE="$STACK_DIR/.env"
 
-COMPOSE_ADDRESS_WAIT_SECONDS=120
-COMPOSE_ADDRESS_DEADLINE=$((SECONDS + COMPOSE_ADDRESS_WAIT_SECONDS))
-while :; do
+WAN4_IF=""
+PUBLIC_IPV4=""
+TAILSCALE_IPV4=""
+
+read_addresses() {
     ROUTE_LINE="$($IP_BIN -4 -o route get 1.1.1.1 2>/dev/null || true)"
     WAN4_IF="$($AWK_BIN '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$ROUTE_LINE")"
     PUBLIC_IPV4="$($AWK_BIN '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' <<<"$ROUTE_LINE")"
@@ -2307,30 +2309,52 @@ while :; do
         "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>/dev/null |
             "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
     )"
+}
 
-    if [[ -n "$WAN4_IF" &&
-          "$PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ &&
-          "$TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] &&
-       "$IP_BIN" -4 -o addr show dev "$WAN4_IF" |
-           "$AWK_BIN" '{print $4}' | cut -d/ -f1 | grep -Fx "$PUBLIC_IPV4" >/dev/null; then
-        TMP_FILE="$(mktemp "$STACK_DIR/.env.XXXXXX")"
-        {
-            printf 'PUBLIC_IPV4=%s\n' "$PUBLIC_IPV4"
-            printf 'TAILSCALE_IPV4=%s\n' "$TAILSCALE_IPV4"
-        } >"$TMP_FILE"
-        chmod 0600 "$TMP_FILE"
-        mv -f "$TMP_FILE" "$ENV_FILE"
-        echo "Compose public IPv4 güncellendi: $WAN4_IF ($PUBLIC_IPV4)"
-        echo "Compose Tailscale IPv4 güncellendi: $TAILSCALE_IPV4"
-        exit 0
+wan_address_ready() {
+    [[ -n "$WAN4_IF" &&
+       "$PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] &&
+        "$IP_BIN" -4 -o addr show dev "$WAN4_IF" |
+            "$AWK_BIN" '{print $4}' | cut -d/ -f1 |
+            grep -Fx "$PUBLIC_IPV4" >/dev/null
+}
+
+tailscale_address_ready() {
+    [[ "$TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+COMPOSE_ADDRESS_WAIT_SECONDS=120
+COMPOSE_ADDRESS_DEADLINE=$((SECONDS + COMPOSE_ADDRESS_WAIT_SECONDS))
+while :; do
+    read_addresses
+    if wan_address_ready && tailscale_address_ready; then
+        break
     fi
-
     [[ "$SECONDS" -lt "$COMPOSE_ADDRESS_DEADLINE" ]] || break
     sleep 1
 done
 
-echo "HATA: Compose için WAN ve Tailscale IPv4 ${COMPOSE_ADDRESS_WAIT_SECONDS} saniyede hazır olmadı." >&2
-exit 1
+if ! wan_address_ready; then
+    echo "HATA: Compose için WAN IPv4 ${COMPOSE_ADDRESS_WAIT_SECONDS} saniyede hazır olmadı." >&2
+    exit 1
+fi
+
+if ! tailscale_address_ready; then
+    TAILSCALE_IPV4=""
+    echo "UYARI: Tailscale IPv4 ${COMPOSE_ADDRESS_WAIT_SECONDS} saniyede hazır olmadı." >&2
+    echo "Hiçbir container bu adrese bağlanmadığı için stack yine de başlatılıyor; adres kaydı reconcile tarafından tazelenecek." >&2
+fi
+
+TMP_FILE="$(mktemp "$STACK_DIR/.env.XXXXXX")"
+{
+    printf 'PUBLIC_IPV4=%s\n' "$PUBLIC_IPV4"
+    printf 'TAILSCALE_IPV4=%s\n' "$TAILSCALE_IPV4"
+} >"$TMP_FILE"
+chmod 0600 "$TMP_FILE"
+mv -f "$TMP_FILE" "$ENV_FILE"
+echo "Compose public IPv4 güncellendi: $WAN4_IF ($PUBLIC_IPV4)"
+echo "Compose Tailscale IPv4 kaydı: ${TAILSCALE_IPV4:-yok}"
+exit 0
 IP_REFRESH_SCRIPT
 chmod 0755 /usr/local/sbin/master-compose-ipv4
 progress_stage_note 60 "Dinamik IPv4 ve Tailscale binding helper'ı yazıldı"
@@ -2398,6 +2422,7 @@ select_canonical_dir() {
 }
 select_canonical_dir
 FW_HELPER="/usr/local/sbin/docker-tailscale-fw"
+COMPOSE_IPV4_HELPER="/usr/local/sbin/master-compose-ipv4"
 CORE_RECOVERY_UNIT="master-docker-netfilter-recovery.service"
 RESTART_STATE_DIR="/run/master-network-reconcile"
 QUANTUM_RESTART_PENDING_FILE="$RESTART_STATE_DIR/filebrowser-config.pending"
@@ -3241,6 +3266,12 @@ state_file_ok() {
         owned_file_ok "$STATE_FILE" 0 0 600
 }
 
+compose_env_addresses_current() {
+    [[ -r "$ENV_FILE" ]] &&
+        grep -Fxq "PUBLIC_IPV4=$CURRENT_PUBLIC_IPV4" "$ENV_FILE" &&
+        grep -Fxq "TAILSCALE_IPV4=$CURRENT_TAILSCALE_IPV4" "$ENV_FILE"
+}
+
 compose_file_structurally_ok() {
     [[ -f "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]] &&
         owned_file_ok "$COMPOSE_FILE" 0 0 600
@@ -3818,12 +3849,12 @@ if [[ "$TAILSCALE_PREFS_DRIFTED" -eq 1 ||
 fi
 
 STACK_RESTART_REQUIRED=0
-if [[ "$ADDRESS_CHANGED" -eq 1 ||
+if [[ "$PUBLIC_ADDRESS_CHANGED" -eq 1 ||
       "$TAILSCALE_PREFS_DRIFTED" -eq 1 ||
       "$TAILSCALE_NETFILTER_DRIFTED" -eq 1 ||
       "$FIREWALL_DRIFTED" -eq 1 ||
       "$FW_INACTIVE" -eq 1 ]]; then
-    if [[ "$ADDRESS_CHANGED" -eq 1 ]] ||
+    if [[ "$PUBLIC_ADDRESS_CHANGED" -eq 1 ]] ||
        restart_budget_available master-compose; then
         STACK_RESTART_REQUIRED=1
         record_container_restart master-compose
@@ -3949,6 +3980,15 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
         RECOVERY_FAILED=1
     elif ! probe_compose_runtime; then
         echo "HATA: Container/port postcondition başarısız." >&2
+        RECOVERY_FAILED=1
+    fi
+fi
+
+if ! compose_env_addresses_current; then
+    if "$COMPOSE_IPV4_HELPER" >/dev/null; then
+        echo "Compose adres kaydı ($ENV_FILE) güncel adreslerle tazelendi."
+    else
+        echo "HATA: Compose adres kaydı ($ENV_FILE) tazelenemedi." >&2
         RECOVERY_FAILED=1
     fi
 fi
@@ -4118,9 +4158,7 @@ if ! forwarding_ok ||
    ! "$FW_HELPER" --check >/dev/null 2>&1 ||
    { [[ "$CORE_RECOVERY_SCHEDULED" -eq 0 ]] &&
      ! docker_host_netfilter_ok; } ||
-   [[ ! -r "$ENV_FILE" ]] ||
-   ! grep -Fxq "PUBLIC_IPV4=$CURRENT_PUBLIC_IPV4" "$ENV_FILE" ||
-   ! grep -Fxq "TAILSCALE_IPV4=$CURRENT_TAILSCALE_IPV4" "$ENV_FILE" ||
+   ! compose_env_addresses_current ||
    ! probe_compose_runtime ||
    ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" ||
    ! canonical_bundle_ok ||

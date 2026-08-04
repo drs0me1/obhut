@@ -50,30 +50,6 @@ _All High findings resolved — see Completed below._
 
 ## Medium
 
-- [ ] 🟡 **D1 — `master-compose` waits on, and restarts for, a Tailscale
-      IPv4 no container reads (Stage 4 pass, derived and measured
-      2026-08-04).** The direct sibling of **C1**/`Q1-34`, from the same
-      commit: `V1-3` (`9b8d754`) deleted the WebDAV container's
-      `"${TAILSCALE_IPV4}:${WEBDAV_PORT}:…"` port binding — the only place
-      compose ever used it. What was left behind: `master-compose-ipv4`, the
-      `ExecStartPre` of `master-compose.service`, still blocks up to 120
-      seconds requiring the address to match an IPv4 regex and `exit 1`s
-      otherwise, so the whole stack fails to start without it; and reconcile
-      still feeds `TAILSCALE_ADDRESS_CHANGED` into `ADDRESS_CHANGED`
-      (line 2759), which drives `STACK_RESTART_REQUIRED` (line 3806) and
-      stops/starts all five containers. **Measured on the test host:**
-      `.env` carries `TAILSCALE_IPV4=100.121.18.22`; `compose.yaml`
-      references it zero times; the address appears zero times in the
-      fully rendered `docker compose config`; every container port binds
-      `127.0.0.1` or the public IPv4; and the only listeners on the
-      Tailscale address are host services — dnsmasq :53, Caddy :80, rclone
-      WebDAV :65113, tailscaled :53071. The services that genuinely need
-      the address are already repaired independently of the stack restart,
-      via `TAILSCALE_ADDRESS_CHANGED` at lines 3989 (webdav), 4025
-      (dnsmasq) and 4053 (caddy). Whether `.env` should keep the variable
-      at all is the open question — Stage 7 (line 4750) and reconcile's
-      postcondition (line 4108) both assert on it.
-
 - [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-21`) —
       Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **176
       cases across thirteen files**; 164 execute and 12 self-skip on this
@@ -274,6 +250,23 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **The Compose stack stops depending on the Tailscale address
+      (2026-08-05, `Q1-38`, Stage 4 pass item D1, DD-56).** DD-52's sibling
+      from the same commit: `V1-3` deleted compose's only use of
+      `TAILSCALE_IPV4`, leaving a 120-second hard gate in front of the whole
+      stack and a five-container restart on every change. Measured: zero
+      occurrences of the address in the rendered `docker compose config`,
+      every container port on `127.0.0.1` or the public IPv4, and only host
+      services listening on it. The helper now records the address when
+      present and starts the stack regardless; `PUBLIC_IPV4` stays a hard
+      precondition because it is in three port bindings. Reconcile keys the
+      stack restart on `PUBLIC_ADDRESS_CHANGED` and refreshes a stale `.env`
+      by running the helper directly — necessary, because removing the
+      restart removed the only writer of the file the flag is computed
+      against, which would have latched it at 1 forever. Refresh and
+      postcondition share one predicate. Eight cases added, five mutations
+      run and caught. `./scripts/check-all.sh` clean at 258 cases.
 
 - [x] **Every wait that promises a duration now measures one (2026-08-05,
       `Q1-37`, Stage 4 pass item D4, DD-55).** Four sites counted iterations

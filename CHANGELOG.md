@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-05 — the Compose stack stops depending on the Tailscale address (`Q1-38`)
+
+Stage 4 pass item D1, and DD-52's sibling from the same commit.
+
+`V1-3` (`9b8d754`) deleted `"${TAILSCALE_IPV4}:${WEBDAV_PORT}:…"` when the
+sftpgo container became the host rclone service — the only place compose ever
+used that address. Two consumers were left pointing at it: `master-compose-ipv4`
+blocked up to 120 seconds requiring it and `exit 1`ed otherwise, so the whole
+stack failed to start without Tailscale; and reconcile routed
+`TAILSCALE_ADDRESS_CHANGED` into `ADDRESS_CHANGED`, which stopped and started
+all five containers.
+
+Measured on the test host: `.env` carried the address, `compose.yaml`
+referenced it zero times, it occurred zero times in the fully rendered `docker
+compose config`, every container port bound `127.0.0.1` or the public IPv4, and
+the only listeners on it were host services — dnsmasq :53, Caddy :80, rclone
+WebDAV :65113, tailscaled :53071.
+
+The helper now records the Tailscale address when it arrives and starts the
+stack anyway when it does not. `PUBLIC_IPV4` remains a hard precondition, with
+its wait unchanged, because it *is* interpolated into three container port
+bindings.
+
+The subtle half is the refresh. Removing the stack restart removes the only
+thing that used to rewrite `.env`, and `.env` is what
+`TAILSCALE_ADDRESS_CHANGED` is computed against — left alone, the flag would
+latch at 1 and restart dnsmasq, Caddy and WebDAV every twenty minutes forever.
+Reconcile now refreshes the record itself by running the same helper, which
+only rewrites `.env` atomically and touches no container. Both the refresh and
+the final postcondition ask one shared predicate,
+`compose_env_addresses_current`, so the condition that triggers the repair and
+the condition that accepts it cannot disagree.
+
+The three services that genuinely need the address still repair directly on
+`TAILSCALE_ADDRESS_CHANGED`, and a case pins all three arms — deleting the
+signal along with the restart is the obvious way to get this wrong. Eight
+cases added, five mutations run and each caught. `./scripts/check-all.sh`
+clean at 258 cases. See DD-56.
+
 ### 2026-08-05 — every wait that promises a duration now measures one (`Q1-37`)
 
 Stage 4 pass item D4, finishing what DD-50 and DD-52 started.

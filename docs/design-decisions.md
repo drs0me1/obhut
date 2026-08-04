@@ -2929,3 +2929,53 @@ packaging action does not change the pending live-verification claim.
 - **Verified by mutation.** Four, one per site, each caught by the case that
   claims it; the whole-file invariant independently caught two of them.
   `./scripts/check-all.sh` clean at 250 cases.
+
+### DD-56: The Compose stack does not depend on the Tailscale address (2026-08-05)
+
+- **Decision:** `master-compose-ipv4` no longer treats the Tailscale IPv4 as a
+  precondition for starting the stack — it waits for it, records it when it
+  arrives, and starts anyway when it does not. `STACK_RESTART_REQUIRED` is
+  keyed on `PUBLIC_ADDRESS_CHANGED` rather than the union `ADDRESS_CHANGED`.
+  A stale address record is refreshed by running the helper directly, without
+  touching any container.
+- **The same origin as DD-52.** `V1-3` (`9b8d754`) replaced the sftpgo
+  container with the host rclone WebDAV service and deleted
+  `"${TAILSCALE_IPV4}:${WEBDAV_PORT}:…"`, the only place compose ever used the
+  address. Two consumers were left behind pointing at it: a 120-second hard
+  gate in front of the whole stack, and a five-container restart on every
+  change.
+- **Measured on the test host before the change.** `.env` carried
+  `TAILSCALE_IPV4=100.121.18.22`; `compose.yaml` referenced it zero times; the
+  address occurred **zero times in the fully rendered `docker compose
+  config`**; every container port bound `127.0.0.1` or the public IPv4; and
+  the only listeners on the Tailscale address were host services — dnsmasq
+  :53, Caddy :80, rclone WebDAV :65113 and tailscaled :53071.
+- **`PUBLIC_IPV4` stays a hard precondition** and its wait is unchanged,
+  because it *is* interpolated into three container port bindings. The
+  asymmetry is the point: one address is in the compose file, the other is
+  not.
+- **The refresh is the part that is easy to get wrong.** Removing the stack
+  restart removes the only thing that used to rewrite `.env`, and `.env` is
+  what `TAILSCALE_ADDRESS_CHANGED` is computed against. Left there, the flag
+  would latch at 1 and restart dnsmasq, Caddy and WebDAV every twenty minutes
+  forever. So reconcile now refreshes the record itself whenever it is stale,
+  through the same `master-compose-ipv4` helper, which only rewrites `.env`
+  atomically and never touches a container.
+- **The predicate is shared rather than duplicated.**
+  `compose_env_addresses_current` is what both the refresh and the final
+  postcondition ask, so the condition that triggers the repair and the
+  condition that accepts it cannot disagree. It is also the reason the refresh
+  is correct regardless of which earlier block ran: it asks whether the record
+  is stale *now*, not whether some particular repair happened.
+- **The three genuine consumers are untouched.** `master-webdav`, `dnsmasq`
+  and `caddy` still repair directly on `TAILSCALE_ADDRESS_CHANGED`; a test
+  pins that all three arms survive, because the obvious way to get this wrong
+  is to delete the signal along with the restart.
+- **Verified by mutation.** Five, each caught by the case that claims it:
+  restoring the Tailscale hard gate, dropping the WAN hard failure, routing
+  the union flag back into the stack restart, deleting the refresh, and
+  removing one of the three host-service repair arms. `master-compose-ipv4`
+  is extracted and run for real against stub `ip` output, with `STACK_DIR`
+  redirected out of `/root` and the budget shortened — both substitutions
+  asserted after the fact so the case cannot silently test the wrong script.
+  `./scripts/check-all.sh` clean at 258 cases.
