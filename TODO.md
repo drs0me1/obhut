@@ -46,9 +46,76 @@ _All Critical findings resolved — see Completed below._
 
 ## High
 
-_All High findings resolved — see Completed below._
+- [ ] 🔴 **D3 — the media-tree `chown` follows symlinks, so a compromised
+      container can pick which host file the next install run gives away
+      (Stage 4 pass, derived and measured 2026-08-04).** `install.sh:2115`
+      runs `find "$DOWNLOADS_PATH/media" \( ! -uid 1000 -o ! -gid 1000 \)
+      -exec chown 1000:1000 {} +`. `find` defaults to `-P` and so does not
+      follow symlinks — it *reports* them — and `chown` without `-h`
+      dereferences the path it is handed. A symlink in the tree owned by
+      anything other than `1000:1000` therefore matches the predicate and
+      redirects the `chown` onto its target. **Measured on the test host:** a
+      root-owned symlink at `tree/innocent.mkv -> /tmp/d3/SENTINEL` left the
+      symlink at `0:0` and moved the sentinel from `0:0` to `1000:1000`.
+      **Reachability measured too:** the media tree is bind-mounted into
+      `qbittorrent` as `/downloads`, `docker exec qbittorrent id` reports
+      `uid=0(root)`, and a symlink planted from inside the container appears
+      on the host as `lrwxrwxrwx 1 0 0` — exactly the ownership the predicate
+      selects. Since `1000:1000` is the uid/gid qbittorrent's own process
+      runs under, the payoff is a host file the container can then read or
+      write. It needs an installer re-run to fire, which this project does
+      routinely. Both probes were cleaned up. Candidate fixes to weigh:
+      `-xdev` plus `-type f -o -type d` on the `find`, `chown -h`, or
+      `chown --no-dereference` — but decide deliberately, because `-h` on a
+      symlink silently does nothing useful and may just hide the problem.
 
 ## Medium
+
+- [ ] 🟡 **D2 — reconcile reads its configuration from the canonical bundle
+      it has just declared invalid (Stage 4 pass, derived and measured
+      2026-08-04).** `state_value` (`install.sh:2414`) prefers
+      `$CANONICAL_DIR/state.env` whenever that file is merely *readable*,
+      and never consults `CANONICAL_BUNDLE_INVALID`. **Measured on the test
+      host:** with `STACK_VERSION` edited in the canonical copy so
+      `sha256sum -c` fails, one `--status` run printed both
+      `canonical_bundle=1` with "bundle doğrulaması başarısız; canonical
+      kopyadan geri yükleme yapılmayacak" *and*
+      `Kurulum sürümü : TAMPERED-NOT-A-REAL-VERSION`, while the intact live
+      `/etc/master-stack/state.env` still held the correct value. The bundle
+      was restored and re-verifies. `STACK_VERSION` is only the visible
+      symptom; the same call supplies `QBIT_PUBLIC_PORT`, `WG_PUBLIC_PORT`,
+      `WEBDAV_PORT`, `LOCAL_DOMAIN`, `WG_ENDPOINT_HOST` and
+      `DOWNLOADS_PATH`, which drive the DNAT checks, the port-binding
+      checks, the DNS/Caddy probes and the disk thresholds. This is in
+      tension with **DD-46**, which degraded rather than aborted on a failed
+      bundle specifically so that bundle-*independent* drift still gets
+      repaired — the repairs still take their parameters from the distrusted
+      file. Note also the ordering: in `--status` mode `state_value` is
+      called at line 2529, before `canonical_bundle_ok` has run at all.
+
+- [ ] 🟡 **D1 — `master-compose` waits on, and restarts for, a Tailscale
+      IPv4 no container reads (Stage 4 pass, derived and measured
+      2026-08-04).** The direct sibling of **C1**/`Q1-34`, from the same
+      commit: `V1-3` (`9b8d754`) deleted the WebDAV container's
+      `"${TAILSCALE_IPV4}:${WEBDAV_PORT}:…"` port binding — the only place
+      compose ever used it. What was left behind: `master-compose-ipv4`, the
+      `ExecStartPre` of `master-compose.service`, still blocks up to 120
+      seconds requiring the address to match an IPv4 regex and `exit 1`s
+      otherwise, so the whole stack fails to start without it; and reconcile
+      still feeds `TAILSCALE_ADDRESS_CHANGED` into `ADDRESS_CHANGED`
+      (line 2759), which drives `STACK_RESTART_REQUIRED` (line 3806) and
+      stops/starts all five containers. **Measured on the test host:**
+      `.env` carries `TAILSCALE_IPV4=100.121.18.22`; `compose.yaml`
+      references it zero times; the address appears zero times in the
+      fully rendered `docker compose config`; every container port binds
+      `127.0.0.1` or the public IPv4; and the only listeners on the
+      Tailscale address are host services — dnsmasq :53, Caddy :80, rclone
+      WebDAV :65113, tailscaled :53071. The services that genuinely need
+      the address are already repaired independently of the stack restart,
+      via `TAILSCALE_ADDRESS_CHANGED` at lines 3989 (webdav), 4025
+      (dnsmasq) and 4053 (caddy). Whether `.env` should keep the variable
+      at all is the open question — Stage 7 (line 4750) and reconcile's
+      postcondition (line 4108) both assert on it.
 
 - [ ] 🟡 **M7** (partially done; inventory refreshed through `Q1-21`) —
       Tier 1 (static analysis, see **H4**) done. Tier 2 now contains **176
@@ -213,6 +280,27 @@ _All High findings resolved — see Completed below._
       address change spends the stack's fifteen-minute budget and a genuine
       stack failure right after is deferred. Pre-existing and out of A5's
       scope, so it was recorded rather than changed unasked.
+
+- [ ] **D4 — three more waits count iterations while their messages promise
+      seconds (Stage 4 pass, derived 2026-08-04).** The same class DD-50
+      fixed in Stage 2 and DD-52 in the firewall helper, still present in
+      `master-compose-ipv4` (`for _ in $(seq 1 120)` + `sleep 1`, message
+      "120 saniyede"), reconcile's address-ready wait (`seq 1
+      $((ADDRESS_READY_WAIT_SECONDS / 2))` + `sleep 2`, message "30
+      saniye") and `master-webdav-serve` (`for ((attempt = 1; attempt <=
+      300; …))` + `sleep 1`, message "300 saniyede"). Each probe here is
+      cheap, so the drift is small — the firewall helper's measured
+      overshoot was 5.9 s on 300 — which is why this is Low and not part of
+      `Q1-34`. Worth doing in one sweep rather than three commits.
+
+- [ ] **D5 — `probe_compose_runtime` mutates globals from inside the final
+      postcondition chain (Stage 4 pass, derived 2026-08-04).** Line 4109
+      calls it inside the `if ! … || … ; then` chain, and it resets
+      `COMPOSE_RESTART_TARGETS`, `WG_SETUP_PENDING`,
+      `WG_CONFIGURATION_INVALID` and `WG_OBSERVED_PORT`. Nothing reads them
+      after that point, so this is latent rather than live — but it is the
+      pattern **DD-48** deliberately moved away from ("the probe measures,
+      the caller reports"), and it will bite whoever adds a line below it.
 
 - [ ] **Nine inverted assertions in the test suite cannot fail (found
       2026-08-04 while mutation-verifying `Q1-34`).** Bash exempts a command
