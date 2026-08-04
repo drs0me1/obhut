@@ -2886,3 +2886,46 @@ packaging action does not change the pending live-verification claim.
   restoring the readability-only condition, defaulting the flag to trusted,
   and deleting the `--status` branch's decision. `./scripts/check-all.sh`
   clean at 245 cases.
+
+### DD-55: Every wait that promises a duration now measures one (2026-08-05)
+
+- **Decision:** the four remaining waits whose error message names a number of
+  seconds compute a deadline from `SECONDS` instead of counting iterations:
+  Stage 2's tailscaled-socket wait, `master-compose-ipv4`,
+  `master-network-reconcile`'s address-ready retry, and
+  `master-webdav-serve`. This finishes what DD-50 started in Stage 2 and
+  DD-52 continued in the firewall helper.
+- **The rule, stated precisely.** Not "no `seq` loops" — the invariant is that
+  *a loop must not count turns while its message promises seconds*. Several
+  `for _ in $(seq 1 N)` loops in this file are correctly iteration-bounded and
+  were deliberately left alone: `create_staging_chain` and
+  `create_ts_guard_staging_chain` retry on a random-name collision and take no
+  `sleep` at all, so turns are the right unit; and the postcondition retries
+  after a repair (`tailscale_prefs_ok`, filebrowser health, WebDAV, Stage 7's
+  probe) make no duration claim to be wrong about. A survey of all nine
+  remaining sites found exactly one that qualified — the socket wait — which
+  is why this revision fixes four sites rather than three.
+- **Measured, on the two sites that are whole embedded scripts.** Both were
+  extracted and run for real against a stub `ip` costing three seconds per
+  probe, with their budget rewritten to three seconds. Each exits 1 in three
+  to seven seconds and names the bound it honoured; an iteration-bounded loop
+  under the same stub takes roughly four times as long, which is the
+  separation the assertions measure. Lower bounds are asserted too, so a loop
+  that never waited would fail rather than pass.
+- **The messages now interpolate the bound** rather than repeating a literal,
+  so the number printed and the number honoured cannot drift apart again —
+  which is how all four got out of step in the first place.
+- **One related loop was found and deliberately not changed.**
+  `tailscale_daemon_ready` counts thirty turns around `tailscale status
+  --json` with no `timeout` wrapper, so an unresponsive daemon makes each
+  probe arbitrarily expensive. Its caller's message claims no duration, so it
+  is not this defect; but it is the unbounded-probe half of DD-50's argument
+  and is recorded in `TODO.md` rather than fixed here.
+- **Two older tests pinned the shapes being replaced** and were updated to
+  assert the new one: `reconcile_control_flow.bats`'s address-readiness case
+  pinned `ADDRESS_READY_WAIT_SECONDS / 2`, and the new suite's whole-file
+  backstop replaced an early draft that banned `seq` outright — which would
+  have condemned the four legitimate loops above.
+- **Verified by mutation.** Four, one per site, each caught by the case that
+  claims it; the whole-file invariant independently caught two of them.
+  `./scripts/check-all.sh` clean at 250 cases.

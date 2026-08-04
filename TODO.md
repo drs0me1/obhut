@@ -238,17 +238,15 @@ _All High findings resolved — see Completed below._
       stack failure right after is deferred. Pre-existing and out of A5's
       scope, so it was recorded rather than changed unasked.
 
-- [ ] **D4 — three more waits count iterations while their messages promise
-      seconds (Stage 4 pass, derived 2026-08-04).** The same class DD-50
-      fixed in Stage 2 and DD-52 in the firewall helper, still present in
-      `master-compose-ipv4` (`for _ in $(seq 1 120)` + `sleep 1`, message
-      "120 saniyede"), reconcile's address-ready wait (`seq 1
-      $((ADDRESS_READY_WAIT_SECONDS / 2))` + `sleep 2`, message "30
-      saniye") and `master-webdav-serve` (`for ((attempt = 1; attempt <=
-      300; …))` + `sleep 1`, message "300 saniyede"). Each probe here is
-      cheap, so the drift is small — the firewall helper's measured
-      overshoot was 5.9 s on 300 — which is why this is Low and not part of
-      `Q1-34`. Worth doing in one sweep rather than three commits.
+- [ ] **`tailscale_daemon_ready` counts turns around an untimed probe
+      (found 2026-08-05 during `Q1-37`'s survey).** Thirty iterations of
+      `tailscale status --json` with a `sleep 1` and no `timeout` wrapper, so
+      against a wedged daemon each probe costs an arbitrary amount and the
+      loop's real duration is unbounded. Not DD-55's defect — its caller's
+      message ("yanıt vermedi") claims no duration to be wrong about — but it
+      is the unbounded-probe half of DD-50's argument, and DD-50 solved the
+      same problem elsewhere with `TAILSCALE_LOGIN_STATUS_TIMEOUT`. Left
+      alone to keep `Q1-37` to one item.
 
 - [ ] **D5 — `probe_compose_runtime` mutates globals from inside the final
       postcondition chain (Stage 4 pass, derived 2026-08-04).** Line 4109
@@ -276,6 +274,23 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **Every wait that promises a duration now measures one (2026-08-05,
+      `Q1-37`, Stage 4 pass item D4, DD-55).** Four sites counted iterations
+      while their message named seconds: Stage 2's tailscaled-socket wait,
+      `master-compose-ipv4`, reconcile's address-ready retry and
+      `master-webdav-serve`. All four now build a deadline from `SECONDS` and
+      interpolate the bound into the message so the two cannot drift apart
+      again. The rule is not "no `seq`" — a survey of all nine remaining
+      sites found four that are correctly iteration-bounded (the two
+      staging-chain name retries take no `sleep`; the post-repair retries
+      claim no duration) and one more that qualified, which is why this
+      fixed four sites rather than the three originally listed. The two
+      embedded scripts were extracted and run against a stub `ip` costing
+      three seconds a probe: each exits within its three-second budget where
+      a counter would take four times as long. Five cases added including a
+      whole-file invariant, four mutations run and each caught.
+      `./scripts/check-all.sh` clean at 250 cases.
 
 - [x] **Reconcile stops reading configuration from a bundle it rejected
       (2026-08-05, `Q1-36`, Stage 4 pass item D2, DD-54).** `state_value`

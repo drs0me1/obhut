@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-05 — every wait that promises a duration now measures one (`Q1-37`)
+
+Stage 4 pass item D4, finishing what DD-50 and DD-52 started.
+
+Four waits counted iterations while their error message named a number of
+seconds: Stage 2's tailscaled-socket wait, `master-compose-ipv4`, reconcile's
+address-ready retry and `master-webdav-serve`. Each now computes a deadline
+from `SECONDS`, and each message interpolates the bound instead of repeating a
+literal, so the number printed and the number honoured cannot drift apart
+again.
+
+The invariant is not "no `seq` loops" — it is that a loop must not count turns
+while its message promises seconds. A survey of all nine remaining `for _ in
+$(seq 1 N)` sites found exactly one more that qualified (the socket wait),
+which is why this is four sites and not the three the pass originally listed.
+The others are correctly iteration-bounded and were left alone:
+`create_staging_chain` and `create_ts_guard_staging_chain` retry a random-name
+collision with no `sleep` at all, and the post-repair retries claim no
+duration. A whole-file test now states the rule that way rather than banning
+`seq`.
+
+The two sites that are whole embedded scripts were extracted and run for real
+against a stub `ip` costing three seconds per probe with their budget cut to
+three seconds: each exits 1 within three to seven seconds and names the bound
+it honoured, where an iteration-bounded loop takes about four times as long.
+
+`tailscale_daemon_ready` was found in the same survey and deliberately left:
+it counts thirty turns around an untimed `tailscale status --json`, so its
+probes are unbounded, but its caller claims no duration — recorded in
+`TODO.md` instead. Five cases added, four mutations run and each caught.
+`./scripts/check-all.sh` clean at 250 cases. See DD-55.
+
 ### 2026-08-05 — reconcile stops reading config from a bundle it rejected (`Q1-36`)
 
 Stage 4 pass item D2, and the missing half of DD-46.

@@ -113,7 +113,10 @@ teardown() {
     address_block="$(
         sed -n '/^read_current_addresses$/,/^ENV_PUBLIC_IPV4=/p' "$INSTALL_SH"
     )"
-    grep -Fq 'ADDRESS_READY_WAIT_SECONDS / 2' <<<"$address_block"
+    # DD-55: the retry is bounded by a wall-clock deadline built from
+    # ADDRESS_READY_WAIT_SECONDS, not by half that many iterations.
+    grep -Fq 'ADDRESS_READY_DEADLINE=$((SECONDS + ADDRESS_READY_WAIT_SECONDS))' \
+        <<<"$address_block"
     grep -Fq 'report_tailscale_diagnostics' <<<"$address_block"
     grep -Fq 'fail_unhealthy' <<<"$address_block"
 }

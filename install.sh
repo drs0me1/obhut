@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-36"
+MASTER_SETUP_VERSION="2026.08.05-Q1-37"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -1087,16 +1087,19 @@ progress_stage_note 55 "tailscaled ve Tailnet bağlantısı bekleniyor"
 SOCKET_PATH="/run/tailscale/tailscaled.sock"
 echo "tailscaled soketi bekleniyor..."
 TAILSCALED_READY=0
-for _ in $(seq 1 30); do
+TAILSCALED_SOCKET_WAIT_SECONDS=30
+TAILSCALED_SOCKET_DEADLINE=$((SECONDS + TAILSCALED_SOCKET_WAIT_SECONDS))
+while :; do
     if [[ -S "$SOCKET_PATH" ]]; then
         TAILSCALED_READY=1
         break
     fi
+    [[ "$SECONDS" -lt "$TAILSCALED_SOCKET_DEADLINE" ]] || break
     sleep 1
 done
 
 if [[ "$TAILSCALED_READY" -ne 1 ]]; then
-    echo "HATA: tailscaled soketi 30 saniyede oluşmadı: $SOCKET_PATH" >&2
+    echo "HATA: tailscaled soketi ${TAILSCALED_SOCKET_WAIT_SECONDS} saniyede oluşmadı: $SOCKET_PATH" >&2
     exit 1
 fi
 
@@ -2294,7 +2297,9 @@ AWK_BIN="$(command -v awk)"
 STACK_DIR="/root/docker"
 ENV_FILE="$STACK_DIR/.env"
 
-for _ in $(seq 1 120); do
+COMPOSE_ADDRESS_WAIT_SECONDS=120
+COMPOSE_ADDRESS_DEADLINE=$((SECONDS + COMPOSE_ADDRESS_WAIT_SECONDS))
+while :; do
     ROUTE_LINE="$($IP_BIN -4 -o route get 1.1.1.1 2>/dev/null || true)"
     WAN4_IF="$($AWK_BIN '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$ROUTE_LINE")"
     PUBLIC_IPV4="$($AWK_BIN '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' <<<"$ROUTE_LINE")"
@@ -2320,10 +2325,11 @@ for _ in $(seq 1 120); do
         exit 0
     fi
 
+    [[ "$SECONDS" -lt "$COMPOSE_ADDRESS_DEADLINE" ]] || break
     sleep 1
 done
 
-echo "HATA: Compose için WAN ve Tailscale IPv4 120 saniyede hazır olmadı." >&2
+echo "HATA: Compose için WAN ve Tailscale IPv4 ${COMPOSE_ADDRESS_WAIT_SECONDS} saniyede hazır olmadı." >&2
 exit 1
 IP_REFRESH_SCRIPT
 chmod 0755 /usr/local/sbin/master-compose-ipv4
@@ -2729,7 +2735,8 @@ current_addresses_ready() {
 read_current_addresses
 
 if ! current_addresses_ready; then
-    for _ in $(seq 1 "$((ADDRESS_READY_WAIT_SECONDS / 2))"); do
+    ADDRESS_READY_DEADLINE=$((SECONDS + ADDRESS_READY_WAIT_SECONDS))
+    while [[ "$SECONDS" -lt "$ADDRESS_READY_DEADLINE" ]]; do
         sleep 2
         read_current_addresses
         current_addresses_ready && break
@@ -4249,7 +4256,8 @@ WAIT_SECONDS=300
 
 TS_IPV4=""
 IP_PROBE_REPORTED=0
-for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
+WAIT_DEADLINE=$((SECONDS + WAIT_SECONDS))
+while :; do
     IP_RC=0
     IP_OUTPUT="$(
         "$IP_BIN" -4 -o addr show dev tailscale0 scope global 2>&1
@@ -4268,6 +4276,7 @@ for ((attempt = 1; attempt <= WAIT_SECONDS; attempt++)); do
         [[ "$TS_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && break
         TS_IPV4=""
     fi
+    [[ "$SECONDS" -lt "$WAIT_DEADLINE" ]] || break
     sleep 1
 done
 
