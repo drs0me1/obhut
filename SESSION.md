@@ -6,11 +6,11 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**The stage-by-stage audit's remediation series is complete through `B1`
-and live-verified on the test host. `Q1-26`…`Q1-32` carry audit items
-A1–A5 and B1; `Q1-31` is the fix for two defects the live run found that
-review had not. `R2.5` remains the latest live-verified *tagged* release —
-nothing since `Q1-22` has been exported.**
+**The stage-by-stage audit's remediation series is complete through `B2`
+and live-verified on the test host. `Q1-26`…`Q1-33` carry audit items
+A1–A5, B1 and B2; `Q1-31` is the fix for two defects the live run found
+that review had not. `R2.5` remains the latest live-verified *tagged*
+release — nothing since `Q1-22` has been exported.**
 
 Branch is `quantum`, which forked from `V1-20` and swaps only the web file
 manager for FileBrowser Quantum (DD-27). `master` answered the same
@@ -21,16 +21,16 @@ Current release:
 
 | | |
 |---|---|
-| Version | `2026.08.04-Q1-32` (5414 lines) |
-| SHA256 | `0a1778b8c1ff87a8d700da6ec138518daa128edc70148c97297f589ec9f4bba9` |
-| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-32` (audit items A1-A5 and B1, plus their live-test fixes) are not exported yet |
-| Live | **`Q1-32` installed and verified on `nrm` 2026-08-04** (upgraded in place from `Q1-22`; all 7 stages, `--check` rc=0). A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
-| Tests | 224 cases across eighteen `.bats` files (212 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
+| Version | `2026.08.04-Q1-33` (5415 lines) |
+| SHA256 | `2d4d784995316679e768fd5a292592842b8437bfd1debfb06ad289c374df78d2` |
+| Export | `versiyon/R2.6/` is `Q1-22`, tagged `R2.6`/`Q1-22` but **not live-verified**; `Q1-23` (Tailscale SSH), `Q1-24`/`Q1-25` (comment removal), `Q1-26`-`Q1-33` (audit items A1-A5, B1 and B2, plus their live-test fixes) are not exported yet |
+| Live | **`Q1-33` installed and verified on `nrm` 2026-08-04** (reinstall over `Q1-32`, all 7 stages, `--check` rc=0, no failed units). B2 was verified in its own failure shape: `caddy` and `master-webdav` were stopped *before* the run, and the journal shows no job against `tailscaled` and no start of either unit until their own stages — Stage 5 for WebDAV, Stage 6 for Caddy. Earlier the same day: A2 degrades and still repairs bundle-independent drift; A3's cleanup kept the published generation after a Stage 7 failure; A4 prints the wg diagnostic exactly once and exposes `wg_setup=`/`wg_config=`; A5 brakes the second failure-driven restart, per-unit. Two defects found live and fixed in `Q1-31`. A1 unreachable on this host by construction. Q1-21's exact automatic branch still pending |
+| Tests | 232 cases across nineteen `.bats` files (220 executed, 12 expected macOS skips); `./scripts/check-all.sh` clean |
 | Bundle | nine canonical entries, `sha256sum -c` all OK |
 
-### The audit remediation series (`Q1-26`…`Q1-32`)
+### The audit remediation series (`Q1-26`…`Q1-33`)
 
-Seven revisions answering the stage-by-stage audit. Each is one item, each
+Eight revisions answering the stage-by-stage audit. Each is one item, each
 has a `DD-` entry, and each was mutation-verified before commit — every
 change had deliberate mutations applied to `install.sh` to confirm a
 specific test case catches it.
@@ -44,6 +44,7 @@ specific test case catches it.
 | `Q1-30` | A5 | every unit on the `OnFailure` arc is restarted behind the repair cooldown (DD-49) |
 | `Q1-31` | — | two defects found by live-verifying the above (DD-46/DD-49 amendments) |
 | `Q1-32` | B1 | one definition of "online" in the installer; waits count time, not iterations (DD-50) |
+| `Q1-33` | B2 | Stage 2 bounces the tailscaled daemon without bouncing the stack (DD-51) |
 
 **What the live run taught, and why it mattered.** `Q1-30` stamped the
 restart cooldown on its own exemption path, so a legitimate Caddyfile
@@ -53,9 +54,11 @@ before the change. Reading had not found it; injecting the fault did. The
 second defect was a report line promising a restore it then correctly
 withheld. Both are fixed in `Q1-31`.
 
-**Remaining audit items, not started:** B2–B8. B2 (Stage 2's `systemctl
-restart tailscaled` pulling Stage 3/4 units via `PartOf`) is the next one
-in order.
+**Remaining audit items, not started:** B3–B8. Every B item re-derived so
+far has contained errors — B1 two, B2 three — so treat the list as a
+pointer to a place worth looking, never as a finding. B2's real trigger
+turned out to be a line the note never mentioned, and its proposed fix
+would not have worked.
 
 Q1-21 is the Stage 2 follow-up to the repeated offline-node login failure:
 
@@ -442,21 +445,19 @@ resolved, plus one unnumbered cleanup and two partial items:
 ## Recommended Next Step
 
 1. **Nothing is blocked or half-finished.** Repository and server agree at
-   `Q1-32`; the working tree is clean and `./scripts/check-all.sh` passes
+   `Q1-33`; the working tree is clean and `./scripts/check-all.sh` passes
    all four checks. The exported artifact does *not* agree — see 3.
-2. **`B2` is next in the audit series.** Stage 2's `systemctl restart
-   tailscaled` (inside the login retry loop) pulls Stage 3/4 units on a
-   *reinstall*, because `tailscaled.service.d/98-master-stack.conf` already
-   carries `Wants=docker-tailscale-fw.service master-compose.service
-   master-webdav.service` and `master-compose` is `PartOf=tailscaled`. That
-   can start a 330-second `docker compose up --wait` against the *old*
-   `compose.yaml` while Stage 4 is rewriting it. No deadlock and no data
-   loss — Stage 5 reconciles anyway — but it is a narrow, invisible race.
-   The audit's proposal was `systemctl stop master-compose.service` before
-   the restart, as the more readable of the two options. **Re-derive it
-   against the current code before proposing**; the B-list was written at
-   `Q1-25` and B1 turned out to have two errors in it.
-3. **The export directory is eight revisions behind.** `versiyon/R2.6/` is
+2. **`B3` is next in the audit series.** **Re-derive every remaining B item
+   against the current code before proposing it, and prefer measuring on
+   `nrm` to reasoning about systemd.** The B list was written at `Q1-25` and
+   its accuracy is now measured rather than assumed: B1 contained two errors,
+   B2 three. B2's stated trigger (the login-retry `restart tailscaled`) was
+   not the one that fires on every run, its stated unit set was missing
+   `caddy`, and its proposed fix would not have worked at all. Both were
+   found by running the command on the test host and watching what systemd
+   actually did — reading the unit files had produced a plausible and wrong
+   answer twice.
+3. **The export directory is nine revisions behind.** `versiyon/R2.6/` is
    `Q1-22`. Everything from `Q1-23` (Tailscale SSH) onward is unexported,
    including the whole audit series. Per the standing export rule every
    `versiyon/` folder ships a one-click deploy script and an operator

@@ -2,12 +2,12 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-04): Tier 1 implemented; Tier 2 partial (224
-> unit cases across eighteen files; 212 execute and 12 self-skip on the macOS
+> **Status (updated 2026-08-04): Tier 1 implemented; Tier 2 partial (232
+> unit cases across nineteen files; 220 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`; the
 > Bats suite has still never been run on the Debian target, so every case is
 > workstation-verified only. Q1-20's production paths, Q1-21's real failure
-> input/equivalent manual retry, and the `Q1-26`…`Q1-32` audit series' live
+> input/equivalent manual retry, and the `Q1-26`…`Q1-33` audit series' live
 > behaviour were exercised there; the exact automatic Q1-21 branch remains
 > pending);
 > Tier 3 had seven real, manual
@@ -317,8 +317,8 @@ alone.
   three consecutive dead samples causing one early daemon restart, and a
   single dead sample resetting before a successful login with no restart.
   Command and service stand-ins are used; no real Tailscale state is changed.
-- **Also implemented (2026-08-04): five files from the audit remediation
-  series (`Q1-26`…`Q1-32`).** All five share a technique worth naming: they
+- **Also implemented (2026-08-04): six files from the audit remediation
+  series (`Q1-26`…`Q1-33`).** All six share a technique worth naming: they
   **derive the invariant from `install.sh`'s own text** rather than restating
   the current lines, so a future change that violates the rule fails them
   without anyone remembering to extend the file.
@@ -350,6 +350,19 @@ alone.
     **timed** cases: it lifts each Stage 2 wait, rewrites only its deadline
     constant, and measures wall-clock time with a deliberately slow probe.
     That is what pins the bound the iteration-bounded loops could not hold.
+  - `test/tailscaled_job_isolation.bats` (B2/DD-51) reads the coupling it
+    exists for out of install.sh itself — the units named by `Wants=` inside
+    the `tailscaled.service.d` drop-ins, and the count of `PartOf=` lines
+    pointing back — and fails if that coupling disappears, which would mean
+    the guards had become redundant rather than wrong. It then requires
+    Stage 2 to enable `tailscaled` without `--now` and to start it only
+    behind `is-active`, and requires every *executable* `systemctl restart`
+    naming `tailscaled` to carry `--job-mode=ignore-dependencies`. The
+    executable/echo distinction is the interesting part: the operator
+    recovery hint prints the same command for a human to run with the
+    installer stopped, where pulling the stack up is the point, so the rule
+    matches only lines whose first word is `systemctl` and a separate case
+    pins the hint's survival.
 
 - **A habit the series added: mutation-verify every new test.** Before
   committing, apply the defect the test claims to catch and confirm a
@@ -357,9 +370,22 @@ alone.
   reason — an extraction anchor that broke and turned the whole file red
   instead of one case; a `grep -F` pattern containing a newline, which greps
   treat as alternatives rather than a multi-line match, so a negative
-  assertion passed on any single line; and a timing assertion that had to be
+  assertion passed on any single line; a `grep` pattern beginning with `--`,
+  which grep parses as an option and which failed the case for a reason
+  unrelated to the claim; and a timing assertion that had to be
   shown to bite by moving the deadline thirty seconds later. Recorded here
   because none of those are visible from reading the test.
+
+- **The corollary the B2 work added: a mutation that passes may be telling
+  you the mutation is not a defect.** `Q1-33`'s test initially pinned the
+  order of `systemctl restart --job-mode=ignore-dependencies tailscaled`,
+  claiming the flag had to precede the unit name. Moving it after the unit
+  name was then measured on the test host: `systemctl` permutes its
+  arguments and the job is isolated either way. The right response was to
+  weaken the assertion to what is actually true — the flag reaches
+  `systemctl` in one invocation — not to keep a passing test that asserted
+  something false. A mutation is a probe of the *claim* as much as of the
+  test.
 
 - **Remaining in Tier 2:** nothing specific identified. Of the 51
   functions in the reconcile heredoc the uncovered remainder is

@@ -20,14 +20,14 @@ with `ERR`/`EXIT`/`INT`/`TERM` traps for cleanup:
 |-------|-----------------|---------|
 | 0 | 694–818 | Interactive prompts: downloads path, optional local DNS domain; confirmation summary. Tailscale login is always interactive (browser) unless the host is already connected; wg-easy admin setup is not prompted for here — it's done manually via the web UI after install |
 | 1 | 819–912 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages (in that order, so the base packages arrive already current and are not upgraded twice) |
-| 2 | 913–1368 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `982–1054`), bounded interactive login requesting `--advertise-exit-node --ssh` with persistent-410 early recovery (`tailscale_login_state` at `1119–1156`, DD-37/DD-42/DD-43), reliable deleted-node journal classification (DD-39/M12), exit-node + Tailscale SSH + stateful filtering + netfilter configuration |
-| 3 | 1369–2002 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1466–1956`, ip6tables required up front — DD-45/M5) and its systemd unit |
-| 4 | 2003–4322 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2285–2326`) and `master-network-reconcile` (`2356–4129`) helpers, `master-docker-netfilter-recovery` (`4133–4179`), `master-webdav-serve` (`4226–4280`), systemd units for Compose, WebDAV and reconcile |
-| 5 | 4323–4407 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
-| 6 | 4408–4732 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `4512–4544`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
-| 7 | 4733–5414 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
+| 2 | 913–1369 | UDP-socket-buffer sysctl (written **before** the Tailscale package install — see M11/DD-19), Tailscale install, forwarding sysctl, UDP GRO tuning (`tailscale-udp-gro` helper at `983–1055`), bounded interactive login requesting `--advertise-exit-node --ssh` with persistent-410 early recovery (`tailscale_login_state` at `1120–1157`, DD-37/DD-42/DD-43), reliable deleted-node journal classification (DD-39/M12), exit-node + Tailscale SSH + stateful filtering + netfilter configuration |
+| 3 | 1370–2003 | Docker install, `daemon.json` DNS override, generation of the `docker-tailscale-fw` firewall helper (`1464–1954`, ip6tables required up front — DD-45/M5) and its systemd unit |
+| 4 | 2004–4323 | Data directories, startup-only `filebrowser.yaml` policy with restart/recreate activation tracking (DD-40/M13), `compose.yaml` + `.env` generation, `master-compose-ipv4` (`2286–2327`) and `master-network-reconcile` (`2357–4130`) helpers, `master-docker-netfilter-recovery` (`4134–4180`), `master-webdav-serve` (`4227–4281`), systemd units for Compose, WebDAV and reconcile |
+| 5 | 4324–4408 | Image pull, systemd dependency graph verification, changed/unhealthy FileBrowser recreation, firewall + Compose stack startup |
+| 6 | 4409–4733 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning (unconditional since `V1-8`) with six-path file rollback (`DD-38`, `H9`; `caddy-tailnet-env` at `4513–4545`), then verified generation construction and atomic `current` pointer publication for the nine-entry canonical bundle (DD-14, DD-32, H8) |
+| 7 | 4734–5415 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
 
-(Line numbers as of `install.sh` 5414 lines — `Q1-32`, 2026-08-04.
+(Line numbers as of `install.sh` 5415 lines — `Q1-33`, 2026-08-04.
 They drift with every change; regenerate with
 `grep -n 'progress_stage_begin [0-7] '` rather than trusting them after a
 batch of edits. **This has now drifted six times**: 18 lines across
@@ -97,6 +97,19 @@ caddy.service ──PartOf──> tailscaled.service
 (restarting `docker`/`tailscaled` cascades into the firewall, Compose
 stack, and Caddy) is a deliberate choice to enforce strict ordering — not
 an oversight. It's now called out explicitly in the final install summary.
+
+**The installer opts out of that cascade for its own jobs (`Q1-33`,
+DD-51).** The coupling runs both ways: two `tailscaled.service.d` drop-ins
+(`98-master-stack.conf`, `99-caddy-tailnet.conf`) declare `Wants=` on the
+same four units, so a *start* job for `tailscaled` pulls them and a
+*restart* job propagates through `PartOf=` to them. That is correct at
+runtime and wrong during Stage 2 of a **reinstall**, where both drop-ins
+already exist on disk while the configs they refer to have not been
+rewritten yet. Stage 2 therefore starts `tailscaled` only when it is not
+already running, and uses
+`systemctl restart --job-mode=ignore-dependencies` for the login retry
+loop's daemon reset — the daemon gets bounced, the stack does not. Nothing
+about the runtime graph changes; only the jobs the installer enqueues.
 
 Key design point: `master-network-reconcile.service` deliberately does
 **not** sit in the `After=` chain of `docker-tailscale-fw.service` or

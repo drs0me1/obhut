@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-32"
+MASTER_SETUP_VERSION="2026.08.04-Q1-33"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -968,7 +968,8 @@ sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf
 
 progress_stage_note 25 "Tailscale paketi kuruluyor"
 apt-get -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install -y tailscale
-systemctl enable --now tailscaled
+systemctl enable tailscaled
+systemctl is-active --quiet tailscaled || systemctl start tailscaled
 progress_stage_note 40 "IP forwarding ve UDP GRO hazırlanıyor"
 
 cat >/etc/sysctl.d/99-tailscale.conf <<'SYSCTL'
@@ -1259,7 +1260,7 @@ tailscale_interactive_login() {
                 ;;
         esac
 
-        systemctl restart tailscaled
+        systemctl restart --job-mode=ignore-dependencies tailscaled
         if ! tailscale_daemon_ready; then
             echo "HATA: tailscaled yeniden başlatıldıktan sonra yanıt vermedi." >&2
             rm -f "$out_file"

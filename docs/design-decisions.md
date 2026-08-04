@@ -2662,3 +2662,73 @@ packaging action does not change the pending live-verification claim.
   wall-clock case fail after ~33 seconds, which is what shows that assertion
   measures the bound rather than passing vacuously. `./scripts/check-all.sh`
   clean at 224 cases.
+
+### DD-51: Stage 2 bounces the tailscaled daemon without bouncing the stack (2026-08-04)
+
+- **Decision:** Stage 2 no longer enqueues dependency-carrying jobs against
+  `tailscaled`. `systemctl enable --now tailscaled` became
+  `systemctl enable tailscaled` followed by
+  `systemctl is-active --quiet tailscaled || systemctl start tailscaled`, and
+  the login retry loop's daemon reset became
+  `systemctl restart --job-mode=ignore-dependencies tailscaled`.
+- **What couples them.** Two drop-ins written later in the same run make
+  `tailscaled` the runtime anchor of the whole stack:
+  `tailscaled.service.d/98-master-stack.conf` declares
+  `Wants=docker-tailscale-fw.service master-compose.service
+  master-webdav.service` and `99-caddy-tailnet.conf` adds `Wants=caddy.service`;
+  the same four units declare `PartOf=tailscaled.service` back. On a **fresh**
+  install neither half exists yet when Stage 2 runs, so this is invisible. On a
+  **reinstall** both already exist on disk, and every job Stage 2 enqueues
+  against `tailscaled` reaches all four.
+- **Two different mechanisms, which is why one fix would not have done.** A
+  *start* job pulls the `Wants=` set; a *restart* job propagates through
+  `PartOf=`, and that clause lives on the four stack units, not on `tailscaled`.
+  Deleting the drop-in would therefore have silenced the first and left the
+  second untouched. `--job-mode=ignore-dependencies` suppresses both, which is
+  why the restart path needs nothing else.
+- **Measured, not reasoned.** On the test host, with the reconcile timer stopped
+  and reconcile confirmed inactive so it could not be the cause:
+  `systemctl enable --now tailscaled` against an *already active* `tailscaled`
+  started `caddy` and `master-webdav` from inactive. The same command returned in
+  0 seconds while `master-compose` was still `activating`, so the pulled jobs are
+  **not** waited on. And `systemctl restart --job-mode=ignore-dependencies
+  tailscaled` restarted the daemon while leaving `caddy`/`master-webdav`
+  inactive and `master-compose`'s `ExecMainStartTimestampMonotonic` unchanged.
+- **Why non-blocking is the bad news, not the good news.** The pulled units run
+  *concurrently* with the rest of the installer. `master-compose`'s `ExecStart`
+  (`docker compose up -d --remove-orphans --wait`) and its `ExecStartPre`
+  (`master-compose-ipv4`, which rewrites `/root/docker/.env`) take no lock —
+  unlike reconcile, which takes `master-stack.lock` with `flock -n` and defers
+  with exit 75, and unlike `docker-tailscale-fw`, which has its own separate
+  lock. So the installer's own `flock` on `/run/lock/master-stack.lock` does not
+  exclude them. A background `docker compose up` against the *previous* version's
+  `compose.yaml` therefore overlaps Stage 4 rewriting that file and Stage 5
+  running its own compose commands on the same project — the same class as the
+  `<id>_<name>` replace-name orphan recorded in `TODO.md`.
+- **The case that actually bites is the repair reinstall.** When all four units
+  are active, `enable --now` is a no-op for them; that is why every upgrade on
+  the test host looked clean. The units are inactive precisely when someone
+  reruns the installer *because* something is broken.
+- **What the original audit note got wrong.** It named the login retry loop's
+  `systemctl restart tailscaled` as the trigger and proposed
+  `systemctl stop master-compose.service` before it. Three errors: that line runs
+  only when a reinstall *also* needs a fresh login, while the unconditional
+  trigger is the `enable --now` that runs on every single invocation; the
+  affected set is four units including `caddy`, which is Stage 6, not "Stage 3/4
+  units"; and stopping `master-compose` would not have helped, because the
+  restart's `Wants=` pull starts it straight back and the other three units are
+  not covered at all.
+- **The operator recovery hint is deliberately left alone.** The message that
+  prints `systemctl restart tailscaled && tailscale up` is advice for a human
+  running it with the installer stopped, where pulling the stack back up is the
+  entire point. `test/tailscaled_job_isolation.bats` distinguishes the two by
+  requiring the guard only on lines whose first word is `systemctl`.
+- **Verified by mutation.** Five mutations, each caught by a specific set of
+  cases: restoring `enable --now` (cases 2, 3, 6, 7), dropping the job-mode flag
+  (4, 8), splitting the restart into a `stop`/`start` pair (4, 8), and removing
+  the drop-in's `Wants=` line (1, the case that asserts the coupling still
+  exists). A sixth — moving the flag *after* the unit name — was measured on the
+  test host and turns out **not** to be a defect: `systemctl` permutes its
+  arguments and the job is isolated either way, so the test pins the flag
+  reaching `systemctl` in one invocation rather than pinning argument order.
+  `./scripts/check-all.sh` clean at 232 cases.

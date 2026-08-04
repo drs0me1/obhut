@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — Stage 2 bounces the daemon, not the stack (`Q1-33`)
+
+Second item from the audit's B list. On a **reinstall**, every systemd job
+Stage 2 enqueued against `tailscaled` reached the whole service stack, because
+two drop-ins written later in the same run make `tailscaled` its runtime
+anchor: `98-master-stack.conf` and `99-caddy-tailnet.conf` declare `Wants=` on
+`docker-tailscale-fw`, `master-compose`, `master-webdav` and `caddy`, and those
+four declare `PartOf=tailscaled.service` back. On a fresh install neither half
+exists yet, which is why this was invisible.
+
+Measured on the test host with the reconcile timer stopped and reconcile
+confirmed inactive: `systemctl enable --now tailscaled` against an *already
+active* `tailscaled` started `caddy` and `master-webdav` from inactive — and
+returned in 0 seconds while `master-compose` was still `activating`. The pulled
+jobs are not waited on, which is the bad news rather than the good: they run
+concurrently with the rest of the installer. `master-compose` takes no lock —
+neither its `ExecStart` (`docker compose up`) nor its `ExecStartPre`, which
+rewrites `/root/docker/.env` — so the installer's own `master-stack.lock` does
+not exclude it. A background compose run against the *previous* version's
+`compose.yaml` overlaps Stage 4 rewriting that file and Stage 5 running its own
+compose commands on the same project.
+
+The case that bites is the repair reinstall: when all four units are active
+`enable --now` is a no-op, which is why every upgrade on the test host looked
+clean. They are inactive precisely when someone reruns the installer because
+something is broken.
+
+Two mechanisms, so two changes. A start job pulls `Wants=`; a restart job
+propagates through `PartOf=`, and that clause lives on the four stack units,
+not on `tailscaled` — deleting the drop-in would have silenced the first and
+left the second. Stage 2 now enables `tailscaled` and starts it only when it is
+not already running, and the login retry loop's daemon reset carries
+`--job-mode=ignore-dependencies`, which suppresses both. Verified live: the
+isolated restart bounced the daemon while `caddy`/`master-webdav` stayed
+inactive and `master-compose`'s start timestamp did not move.
+
+Three corrections to the audit note: it named the login-retry restart as the
+trigger, but that runs only when a reinstall also needs a fresh login, while
+the `enable --now` runs every single invocation; the affected set is four units
+including `caddy`, which is Stage 6; and its proposed
+`systemctl stop master-compose.service` would not have helped, since the
+`Wants=` pull starts it straight back and the other three are uncovered.
+
+The operator recovery hint still prints the plain `systemctl restart
+tailscaled` — that is advice for a human running it with the installer
+stopped, where pulling the stack up is the point. Five mutations run and
+caught; a sixth (flag after the unit name) was measured on the host and turns
+out not to be a defect, so the test pins the flag reaching `systemctl` in one
+invocation rather than pinning argument order.
+`./scripts/check-all.sh` clean at 232 cases.
+
 ### 2026-08-04 — One definition of "online", and waits that count time (`Q1-32`)
 
 First item from the audit's B list. `tailscale_is_online()` decided from

@@ -218,6 +218,22 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **Stage 2 bounces the daemon, not the stack (2026-08-04, `Q1-33`,
+      audit item B2, DD-51).** On a reinstall the tailscaled drop-ins
+      (`Wants=` on four stack units) and those units' `PartOf=tailscaled`
+      already exist while Stage 2 runs, so `systemctl enable --now tailscaled`
+      started whichever of them was inactive — measured on the test host with
+      reconcile stopped — and returned in 0s while `master-compose` was still
+      activating. Since `master-compose` takes no lock, a background
+      `docker compose up` against the previous version's config raced Stages
+      4-5 rewriting exactly those files. Two mechanisms needed two fixes: the
+      start is now conditional on `is-active`, and the login-retry restart
+      carries `--job-mode=ignore-dependencies`, which suppresses both the
+      `Wants=` pull and the `PartOf=` propagation. Three corrections to the
+      audit note recorded in DD-51 (wrong trigger, wrong unit set, ineffective
+      proposal). Five mutations run and caught; a sixth was measured not to be
+      a defect. `./scripts/check-all.sh` clean at 232 cases.
+
 - [x] **One definition of "online" in the installer (2026-08-04, `Q1-32`,
       audit item B1, DD-50).** `tailscale_is_online()` parsed
       `tailscale status --self` text for the substring `offline` — the only
