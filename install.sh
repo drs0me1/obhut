@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-33"
+MASTER_SETUP_VERSION="2026.08.04-Q1-34"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -1505,29 +1505,30 @@ route_value() {
 
 WAN4_IF=""
 PUBLIC_IPV4=""
-TAILSCALE_IPV4=""
-for _ in $(seq 1 300); do
+WAN_ADDRESS_WAIT_SECONDS=300
+
+resolve_wan_ipv4() {
     WAN4_IF="$(route_value -4 1.1.1.1 dev || true)"
     PUBLIC_IPV4="$(route_value -4 1.1.1.1 src || true)"
-    TAILSCALE_IPV4="$(
-        "$IP_BIN" -4 -o addr show dev "$TS_IF" scope global 2>/dev/null |
-            "$AWK_BIN" 'NR == 1 {sub(/\/.*/, "", $4); print $4}' || true
-    )"
+    [[ -n "$WAN4_IF" && -n "$PUBLIC_IPV4" ]]
+}
 
-    if [[ -n "$WAN4_IF" && -n "$PUBLIC_IPV4" &&
-          "$TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        break
+wait_for_wan_ipv4() {
+    local deadline=$((SECONDS + WAN_ADDRESS_WAIT_SECONDS))
+    while :; do
+        resolve_wan_ipv4 && return 0
+        [[ "$SECONDS" -lt "$deadline" ]] || return 1
+        sleep 1
+    done
+}
+
+if [[ "$MODE" == "--check" ]]; then
+    if ! resolve_wan_ipv4; then
+        echo "HATA: IPv4 default route veya kaynak adres yok; firewall politikası doğrulanamıyor." >&2
+        exit 1
     fi
-    sleep 1
-done
-
-if [[ -z "$WAN4_IF" || -z "$PUBLIC_IPV4" ]]; then
-    echo "HATA: IPv4 default route veya kaynak adres 300 saniyede hazır olmadı." >&2
-    exit 1
-fi
-
-if [[ ! "$TAILSCALE_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    echo "HATA: Firewall için Tailscale IPv4 300 saniyede hazır olmadı." >&2
+elif ! wait_for_wan_ipv4; then
+    echo "HATA: IPv4 default route veya kaynak adres ${WAN_ADDRESS_WAIT_SECONDS} saniyede hazır olmadı." >&2
     exit 1
 fi
 

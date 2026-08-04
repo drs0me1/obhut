@@ -214,9 +214,43 @@ _All High findings resolved — see Completed below._
       stack failure right after is deferred. Pre-existing and out of A5's
       scope, so it was recorded rather than changed unasked.
 
+- [ ] **Nine inverted assertions in the test suite cannot fail (found
+      2026-08-04 while mutation-verifying `Q1-34`).** Bash exempts a command
+      whose status is inverted with `!` from `set -e`, so a bare `! cmd`
+      asserts nothing unless it is a test's last line. Two cases written that
+      way in `Q1-34` survived a mutation that made them false, and were
+      rewritten to capture the status; the same non-final shape appears nine
+      more times across `canonical_bundle_degrade`, `canonical_stage_cleanup`,
+      `onfailure_arc`, `reconcile_control_flow`, `tailscale_online_gate` and
+      `tailscaled_job_isolation`. Not all are necessarily dead — several are
+      followed by a stronger sibling assertion that would catch the same
+      mutation — but none of them currently demonstrate that, and the only way
+      to know is to mutate each. Recorded rather than fixed in `Q1-34`, which
+      would have meant touching seven unrelated test files.
+
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **`--check` no longer waits for a value no rule uses (2026-08-04,
+      `Q1-34`, Stage 3 pass item C1, DD-52).** `docker-tailscale-fw` resolved
+      `TAILSCALE_IPV4` behind a 300-second gate, but `V1-3` (`9b8d754`) had
+      deleted both of its uses — the `--ctorigdst` WebDAV allow and its
+      `check_ipv4_policy` counterpart — when the sftpgo container became the
+      host rclone service, leaving only the gate. Measured against the
+      deployed helper: healthy `--check` 0.162 s, addressless `tailscale0`
+      305.9 s, with the error naming the Tailscale branch so `check_policy`
+      was never reached. Reconcile's unconditional first `--check` treats that
+      exit exactly like real drift, then stops the stack and restarts the
+      firewall unit, which pays the gate again — about fifteen of the timer's
+      twenty minutes on an addressless node. `TAILSCALE_IPV4` removed;
+      resolution split into `resolve_wan_ipv4` and a `SECONDS`-deadline
+      `wait_for_wan_ipv4`; `apply` still waits because `PUBLIC_IPV4` is in
+      three rules, `--check` resolves once. The apply-side risk was measured
+      across a real reboot: `ts-forward` and the `FORWARD` jump were in place
+      at +1.16 s with no `tailscale0` IPv4 until +1.37 s, so the gate never
+      guarded `ensure_forward_prefix`'s precondition. Seven cases added, five
+      mutations run and caught. `./scripts/check-all.sh` clean at 239 cases.
 
 - [x] **Stage 2 bounces the daemon, not the stack (2026-08-04, `Q1-33`,
       audit item B2, DD-51).** On a reinstall the tailscaled drop-ins

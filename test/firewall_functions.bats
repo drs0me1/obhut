@@ -35,6 +35,8 @@ setup() {
     FUNCS_FILE="$FIXTURE_DIR/funcs.sh"
     {
         extract_function FW_SCRIPT route_value
+        extract_function FW_SCRIPT resolve_wan_ipv4
+        extract_function FW_SCRIPT wait_for_wan_ipv4
         extract_function FW_SCRIPT chain_rules_exact
         extract_function FW_SCRIPT jump_is_first_and_single
         extract_function FW_SCRIPT forward_prefix_is_exact
@@ -46,6 +48,8 @@ setup() {
     # way this extraction can no longer find, rather than silently testing
     # empty no-op functions.
     grep -q '^route_value() {' "$FUNCS_FILE"
+    grep -q '^resolve_wan_ipv4() {' "$FUNCS_FILE"
+    grep -q '^wait_for_wan_ipv4() {' "$FUNCS_FILE"
     grep -q '^chain_rules_exact() {' "$FUNCS_FILE"
     grep -q '^jump_is_first_and_single() {' "$FUNCS_FILE"
     grep -q '^forward_prefix_is_exact() {' "$FUNCS_FILE"
@@ -80,9 +84,14 @@ setup() {
 
     # Stand-in for `ip` (used by route_value): prints canned `ip route get`
     # output regardless of args, set per test via FAKE_ROUTE_OUTPUT.
+    # FAKE_IP_DELAY makes each simulated `ip` call cost real wall-clock
+    # time, which is what lets the wait_for_wan_ipv4 deadline tests tell a
+    # time-bounded loop apart from an iteration-bounded one.
     FAKE_ROUTE_OUTPUT=""
+    FAKE_IP_DELAY=0
     IP_BIN="fake_ip"
     fake_ip() {
+        [ "$FAKE_IP_DELAY" = "0" ] || sleep "$FAKE_IP_DELAY"
         printf '%s' "$FAKE_ROUTE_OUTPUT"
     }
 }
@@ -130,6 +139,97 @@ teardown() {
     run route_value -6 2001:4860:4860::8888 dev
     [ "$status" -eq 0 ]
     [ "$output" = "" ]
+}
+
+# --- resolve_wan_ipv4 / wait_for_wan_ipv4 ---
+# The helper's WAN IPv4 readiness gate. `apply` waits for the addresses
+# because PUBLIC_IPV4 is interpolated into three MASTER-DOCKER rules;
+# `--check` resolves them once and reports drift immediately rather than
+# sleeping (see docs/design-decisions.md DD-52). resolve_wan_ipv4 is called
+# directly rather than through `run`, because `run`'s subshell would discard
+# the WAN4_IF/PUBLIC_IPV4 assignments the function exists to make.
+
+@test "resolve_wan_ipv4: true, and sets both values, from a complete route" {
+    FAKE_ROUTE_OUTPUT='1.1.1.1 via 10.0.2.2 dev eth0 src 10.0.2.15 uid 0'
+    WAN4_IF=""
+    PUBLIC_IPV4=""
+
+    resolve_wan_ipv4
+    [ "$WAN4_IF" = "eth0" ]
+    [ "$PUBLIC_IPV4" = "10.0.2.15" ]
+}
+
+@test "resolve_wan_ipv4: false when there is no route at all" {
+    FAKE_ROUTE_OUTPUT=''
+    WAN4_IF=""
+    PUBLIC_IPV4=""
+
+    # Not `! resolve_wan_ipv4`: bash exempts an `!`-inverted command from
+    # `set -e`, so that form only fails a test when it is the last line.
+    # Capturing the status keeps the assertion live and keeps the function's
+    # WAN4_IF/PUBLIC_IPV4 side effects, which `run`'s subshell would discard.
+    rc=0
+    resolve_wan_ipv4 || rc=$?
+    [ "$rc" -ne 0 ]
+    [ "$WAN4_IF" = "" ]
+    [ "$PUBLIC_IPV4" = "" ]
+}
+
+@test "resolve_wan_ipv4: false when the route has an interface but no source" {
+    FAKE_ROUTE_OUTPUT='1.1.1.1 via 10.0.2.2 dev eth0 uid 0'
+    WAN4_IF=""
+    PUBLIC_IPV4=""
+
+    rc=0
+    resolve_wan_ipv4 || rc=$?
+    [ "$rc" -ne 0 ]
+    [ "$WAN4_IF" = "eth0" ]
+    [ "$PUBLIC_IPV4" = "" ]
+}
+
+@test "wait_for_wan_ipv4: returns at once when the addresses are present" {
+    FAKE_ROUTE_OUTPUT='1.1.1.1 via 10.0.2.2 dev eth0 src 10.0.2.15 uid 0'
+    WAN_ADDRESS_WAIT_SECONDS=30
+    SECONDS=0
+
+    wait_for_wan_ipv4
+    [ "$SECONDS" -lt 2 ]
+}
+
+@test "wait_for_wan_ipv4: gives up on wall-clock time, not on iteration count" {
+    # Each simulated `ip` call costs a second and resolve_wan_ipv4 makes two
+    # of them, so an iteration-bounded loop would run far past the deadline
+    # it prints. The lower bound is asserted too: without it the case would
+    # also pass against a loop that never waited at all.
+    FAKE_ROUTE_OUTPUT=''
+    FAKE_IP_DELAY=1
+    WAN_ADDRESS_WAIT_SECONDS=3
+    SECONDS=0
+
+    rc=0
+    wait_for_wan_ipv4 || rc=$?
+    [ "$rc" -ne 0 ]
+    [ "$SECONDS" -ge 3 ]
+    [ "$SECONDS" -le 8 ]
+}
+
+# --- the removed Tailscale IPv4 gate (DD-52) ---
+# Structural, because the gate is top-level code in the heredoc rather than
+# a function the extraction technique above can reach.
+
+@test "docker-tailscale-fw: no longer resolves a Tailscale IPv4 it never uses" {
+    run bash -c "sed -n \"/<<'FW_SCRIPT'\\\$/,/^FW_SCRIPT\\\$/p\" '$INSTALL_SH' |
+        grep -c 'TAILSCALE_IPV4' || true"
+    [ "$output" = "0" ]
+}
+
+@test "docker-tailscale-fw: --check never reaches the waiting path" {
+    body="$(sed -n "/<<'FW_SCRIPT'\$/,/^FW_SCRIPT\$/p" "$INSTALL_SH")"
+
+    # Exactly two mentions: the definition and the single non---check call.
+    [ "$(grep -c 'wait_for_wan_ipv4' <<<"$body")" -eq 2 ]
+    [ "$(grep -c '^elif ! wait_for_wan_ipv4; then$' <<<"$body")" -eq 1 ]
+    [ "$(grep -c '^if \[\[ "\$MODE" == "--check" \]\]; then$' <<<"$body")" -eq 2 ]
 }
 
 # --- chain_rules_exact ---

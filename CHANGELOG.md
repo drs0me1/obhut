@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — `--check` stops waiting for a value no rule uses (`Q1-34`)
+
+First item of a fresh stage-by-stage pass over Stage 3, derived against the
+current code rather than from the old B list.
+
+`docker-tailscale-fw` opened with a 300-second gate that resolved three values:
+`WAN4_IF`, `PUBLIC_IPV4` and `TAILSCALE_IPV4`. The third has been dead since
+`V1-3` (`9b8d754`), which replaced the sftpgo container with the host rclone
+WebDAV service and deleted both of its uses — the `--ctorigdst
+"$TAILSCALE_IPV4" --ctorigdstport 65113` allow in `MASTER-TS-FORWARD` and the
+matching entry in `check_ipv4_policy`'s expected set. The gate that produced it
+was left in place. In the helper's 489 lines the name occurred four times, all
+four inside that gate.
+
+Measured on the test host against the deployed helper, byte-identical to the
+repository's: a healthy `--check` returns in 0.162 s; with no IPv4 on
+`tailscale0` it returns in 305.9 s and the error names the Tailscale branch, so
+`check_policy` was never reached.
+
+Reconcile calls `--check` three times a turn, and at the unconditional first
+call a non-zero exit is indistinguishable from real policy drift — the wait
+changes nothing except when the answer arrives. It then sets
+`STACK_RESTART_REQUIRED`, spending `master-compose`'s restart budget, stopping
+the stack, restarting `docker-tailscale-fw.service` (whose `apply` pays the
+same gate again) and re-checking. On an addressless node that is roughly
+fifteen of the timer's twenty minutes, plus a stack bounce.
+
+`TAILSCALE_IPV4` is removed. The remaining resolution splits into
+`resolve_wan_ipv4` (one attempt) and `wait_for_wan_ipv4` (a `SECONDS`-based
+deadline, so the printed 300 seconds is the real bound — the 305.9 s
+measurement was the old loop counting iterations, DD-50's finding in the other
+program). `apply` waits, because `PUBLIC_IPV4` is interpolated into three
+`MASTER-DOCKER` rules; `--check` resolves once and reports immediately.
+
+The apply-side risk was measured rather than argued. A 200 ms probe across a
+real reboot showed `ts-forward` present in both families with the `FORWARD`
+jump installed at +1.16 s, while `tailscale0` had no IPv4 until +1.37 s. The
+chain `ensure_forward_prefix` waits for is ready before the address, so the
+removed gate was never what protected it.
+
+Seven cases added. Five mutations run and caught; the fifth also exposed that
+two of the new cases, written as `! resolve_wan_ipv4`, could not fail — bash
+exempts `!`-inverted commands from `set -e` unless they end the test. Those now
+capture the status. `./scripts/check-all.sh` clean at 239 cases. See DD-52.
+
 ### 2026-08-04 — Stage 2 bounces the daemon, not the stack (`Q1-33`)
 
 Second item from the audit's B list. On a **reinstall**, every systemd job

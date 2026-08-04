@@ -2732,3 +2732,67 @@ packaging action does not change the pending live-verification claim.
   arguments and the job is isolated either way, so the test pins the flag
   reaching `systemctl` in one invocation rather than pinning argument order.
   `./scripts/check-all.sh` clean at 232 cases.
+
+### DD-52: `--check` does not pay a readiness wait for a value no rule uses (2026-08-04)
+
+- **Decision:** `TAILSCALE_IPV4` is deleted from `docker-tailscale-fw`. The WAN
+  IPv4 resolution it shared is split into `resolve_wan_ipv4` (one attempt) and
+  `wait_for_wan_ipv4` (a wall-clock deadline). `apply` waits; `--check`
+  resolves once and exits 1 immediately when the addresses are absent.
+- **The value was dead, and its origin is in the history rather than in a
+  design.** `V1-3` (`9b8d754`, 2026-07-30) replaced the sftpgo container with
+  the host rclone WebDAV service and deleted the only two places
+  `$TAILSCALE_IPV4` was used inside the helper — the
+  `--ctorigdst "$TAILSCALE_IPV4" --ctorigdstport 65113` allow in
+  `MASTER-TS-FORWARD` and its matching string in `check_ipv4_policy`'s expected
+  set. The 300-second gate that resolved the value stayed behind. Across the
+  helper's 489 lines the name appeared four times, all four inside that gate.
+- **Measured before the change, on the test host, against the deployed helper**
+  (byte-identical to the repository's, `8ae63f6c…`): a healthy `--check`
+  returns in **0.162 s**; with no IPv4 on `tailscale0` it returns in
+  **305.9 s** with `HATA: Firewall için Tailscale IPv4 300 saniyede hazır
+  olmadı.` The message identifies the branch, which is how we know
+  `check_policy` was never reached.
+- **What those five minutes cost reconcile.** Reconcile calls `--check` at
+  three sites. The first (`FIREWALL_DRIFTED`) is unconditional, and a non-zero
+  exit there is indistinguishable from real policy drift, so the wait cannot
+  change the outcome — it only delays it. `FIREWALL_DRIFTED=1` then sets
+  `STACK_RESTART_REQUIRED=1`, which consumes `master-compose`'s restart budget,
+  stops the stack, restarts `docker-tailscale-fw.service` (whose `apply` pays
+  the same gate again under `TimeoutStartSec=600s`) and re-runs `--check`. On a
+  host whose node has gone addressless one reconcile turn spends roughly
+  fifteen of the timer's twenty minutes and bounces the Compose stack — driven
+  entirely by a value no rule references. The third call site is spared only
+  incidentally: `! tailscale_online` precedes it in the same `||` chain.
+- **The apply-side risk was measured, not reasoned about.** Removing the gate
+  shortens `apply`'s settling window, so the question is whether it was
+  guarding `ensure_forward_prefix`'s real precondition — the `ts-forward`
+  chain. A probe sampling every 200 ms across a real reboot of the test host
+  answered it: at **+1.16 s** `ts-forward` existed in both families and the
+  `FORWARD` jump was installed while `tailscale0` still had **no** IPv4, which
+  arrived at **+1.37 s**. The chain is ready *before* the address, so the
+  address gate never was what protected it; `ensure_forward_prefix`'s own
+  30-second `wait_for_chain` is the guard, and it is unchanged.
+  `docker-tailscale-fw.service` ran at +4.6 s and finished in 0.77 s.
+- **Why the deadline shape changed too.** The old loop was `for _ in $(seq 1
+  300)` with `sleep 1` and three `ip` invocations per turn, so it counted
+  iterations while its message promised seconds — DD-50's finding, in the other
+  program. The 305.9 s measurement is that drift. `wait_for_wan_ipv4` computes
+  a deadline from `SECONDS`, so the printed 300 seconds is the real bound
+  whatever a probe costs.
+- **`apply` still waits, deliberately.** `PUBLIC_IPV4` is interpolated into
+  three `MASTER-DOCKER` rules, so it is load-bearing there and a boot-time
+  absence is worth waiting out. In `--check` the same absence means only "this
+  cannot be verified right now", which is already what the caller does with it.
+- **Verified by mutation, and one mutation corrected the tests rather than the
+  code.** Five mutations were applied and each was caught: reintroducing the
+  `TAILSCALE_IPV4` resolution, routing `--check` through `wait_for_wan_ipv4`,
+  reverting the deadline to an iteration count, sleeping before the first
+  attempt, and making `resolve_wan_ipv4` always succeed. The last one initially
+  escaped two cases written as `! resolve_wan_ipv4`: bash exempts an
+  `!`-inverted command from `set -e`, so that form asserts nothing unless it is
+  a test's final line. Those cases now capture the status explicitly. Nine
+  other non-final `!` assertions exist across seven `.bats` files and are
+  recorded in `TODO.md` as their own item — not all are dead, since several are
+  followed by a stronger sibling, but none of them currently prove that.
+  `./scripts/check-all.sh` clean at 239 cases.
