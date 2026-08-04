@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.04-Q1-28"
+MASTER_SETUP_VERSION="2026.08.04-Q1-29"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -3118,7 +3118,7 @@ record_container_restart() {
     mv -f "$tmp" "$RESTART_STATE_DIR/$target.last-restart"
 }
 
-check_compose_runtime() {
+probe_compose_runtime() {
     local container="" running="" health="" wg_running=""
     local wg_port="" setup_location=""
     local runtime_ok=0
@@ -3129,6 +3129,7 @@ check_compose_runtime() {
     COMPOSE_RESTART_TARGETS=()
     WG_CONFIGURATION_INVALID=0
     WG_SETUP_PENDING=0
+    WG_OBSERVED_PORT=""
     for container in "${expected_containers[@]}"; do
         running="$(
             "$DOCKER_BIN" inspect -f '{{.State.Running}}' \
@@ -3207,10 +3208,9 @@ check_compose_runtime() {
                 }' || true
         )"
         if [[ "$setup_location" == /setup/* ]]; then
-            echo "UYARI: wg-easy ilk kurulumu tamamlanmamış." >&2
             WG_SETUP_PENDING=1
         elif [[ "$wg_port" != "$WG_PUBLIC_PORT" ]]; then
-            echo "HATA: wg-easy iç portu ${wg_port:-yok}; beklenen $WG_PUBLIC_PORT." >&2
+            WG_OBSERVED_PORT="$wg_port"
             WG_CONFIGURATION_INVALID=1
             runtime_ok=1
         elif ! wg_container_netfilter_ok; then
@@ -3480,10 +3480,14 @@ DOCKER_NETFILTER_DRIFTED=0
 docker_host_netfilter_ok || DOCKER_NETFILTER_DRIFTED=1
 
 COMPOSE_RUNTIME_DRIFTED=0
-if ! check_compose_runtime; then
+if ! probe_compose_runtime; then
     sleep 1
-    check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
+    probe_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
 fi
+[[ "$WG_SETUP_PENDING" -eq 0 ]] ||
+    echo "UYARI: wg-easy ilk kurulumu tamamlanmamış; yönetici hesabı web arayüzünden oluşturulana kadar VPN kullanılamaz." >&2
+[[ "$WG_CONFIGURATION_INVALID" -eq 0 ]] ||
+    echo "HATA: wg-easy iç portu ${WG_OBSERVED_PORT:-yok}; beklenen $WG_PUBLIC_PORT." >&2
 
 if [[ "$MODE" == "reconcile" ]] &&
    filebrowser_audit_due &&
@@ -3622,7 +3626,7 @@ if [[ "$MODE" == "--check" ]]; then
         "wg_endpoint=$WG_ENDPOINT_DRIFTED" \
         "tailscale_offline=$TAILSCALE_OFFLINE tailscale_prefs=$TAILSCALE_PREFS_DRIFTED tailscale_netfilter=$TAILSCALE_NETFILTER_DRIFTED" \
         "firewall=$FIREWALL_DRIFTED docker_netfilter=$DOCKER_NETFILTER_DRIFTED firewall_unit=$FW_INACTIVE" \
-        "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED" \
+        "compose_unit=$COMPOSE_INACTIVE compose_runtime=$COMPOSE_RUNTIME_DRIFTED wg_setup=$WG_SETUP_PENDING wg_config=$WG_CONFIGURATION_INVALID" \
         "config=$CONFIG_DRIFTED state_config=$STATE_CONFIG_DRIFTED quantum_config=$QUANTUM_CONFIG_DRIFTED dns_config=$DNS_CONFIG_DRIFTED caddy_config=$CADDY_CONFIG_DRIFTED canonical_bundle=$CANONICAL_BUNDLE_INVALID canonical_invalid=$CANONICAL_CONFIG_INVALID compose_file=$COMPOSE_FILE_DRIFTED compose_missing=$COMPOSE_FILE_MISSING compose_unsafe=$COMPOSE_FILE_UNSAFE compose_metadata=$COMPOSE_FILE_METADATA_DRIFTED" \
         "webdav_unit=$WEBDAV_UNIT_INACTIVE webdav_runtime=$WEBDAV_RUNTIME_DRIFTED" \
         "caddy_unit=$CADDY_INACTIVE caddy_runtime=$CADDY_RUNTIME_DRIFTED" \
@@ -3857,7 +3861,7 @@ if [[ "$QUANTUM_CONFIG_DRIFTED" -eq 1 &&
             else
                 QUANTUM_CONFIG_DRIFTED=0
                 COMPOSE_RUNTIME_DRIFTED=0
-                check_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
+                probe_compose_runtime || COMPOSE_RUNTIME_DRIFTED=1
                 COMPOSE_STATE="$(
                     "$SYSTEMCTL_BIN" is-active master-compose.service \
                         2>/dev/null || true
@@ -3918,7 +3922,7 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
     if ! "$SYSTEMCTL_BIN" start master-compose.service; then
         echo "HATA: Compose stack uzlaştırılamadı." >&2
         RECOVERY_FAILED=1
-    elif ! check_compose_runtime; then
+    elif ! probe_compose_runtime; then
         echo "HATA: Container/port postcondition başarısız." >&2
         RECOVERY_FAILED=1
     fi
@@ -4051,7 +4055,7 @@ if ! forwarding_ok ||
    [[ ! -r "$ENV_FILE" ]] ||
    ! grep -Fxq "PUBLIC_IPV4=$CURRENT_PUBLIC_IPV4" "$ENV_FILE" ||
    ! grep -Fxq "TAILSCALE_IPV4=$CURRENT_TAILSCALE_IPV4" "$ENV_FILE" ||
-   ! check_compose_runtime ||
+   ! probe_compose_runtime ||
    ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" ||
    ! canonical_bundle_ok ||
    ! canonical_runtime_configs_valid ||

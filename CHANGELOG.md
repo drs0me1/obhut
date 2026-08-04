@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-04 — `probe_compose_runtime` measures; the caller reports (`Q1-29`)
+
+Fourth item from the stage-by-stage audit. `check_compose_runtime` was a
+predicate, a mutator of four globals, and a reporter — and a reconcile cycle
+calls it **five** times: initial detection, the one-second retry, again after
+the filebrowser policy repair, as the post-start postcondition, and in the
+final sweep. Three of those are pure predicate positions, so each silently
+recomputed `COMPOSE_RESTART_TARGETS`, `WG_CONFIGURATION_INVALID` and
+`WG_SETUP_PENDING` where the caller wanted only a boolean.
+
+This is DD-33 finished rather than a new idea: that decision moved the
+filebrowser password probe out of this same function for this same reason,
+and left the two `echo` lines behind. A host with a wg-easy port mismatch
+therefore printed the same error four times per cycle, plus the caller's own
+line, every twenty minutes, for a condition the script explicitly refuses to
+auto-repair. `master-network --status` captures `--check` with `2>&1`, so
+those prose lines landed inside the machine-readable `key=value` block.
+
+The function is renamed `probe_compose_runtime`, stops printing, and hands
+the observed WireGuard port back in `WG_OBSERVED_PORT`. The detection site
+reports both wg-easy conditions once per cycle — there, not in the drift
+report, because a pending wg-easy setup deliberately is not drift (DD-12/H6)
+and such a host exits before the drift report is reached. `--check` gains
+`wg_setup=` and `wg_config=` so `--status` shows them as data.
+
+No live bug was found: every reset was traced against every reader and none
+changes a decision today. The five calls are not reduced (three are
+postconditions that must re-measure) and the retry asymmetry is left alone —
+`master-compose.service` is `Type=oneshot` with `--wait`, so the
+postcondition already runs after Docker settled health.
+
+The function had no tests at all; its components did.
+`test/compose_runtime_probe.bats` now pins the contract, including DD-12/H6's
+rule that a pending setup must not fail the probe. Seven mutations run, seven
+caught. DD-12 and DD-33 carry dated corrections — DD-12's claim that
+`RECOVERY_FAILED` surfaces a pending setup every cycle stopped being true
+when `WG_SETUP_PENDING` was split out, and DD-33 says four call sites where
+there are now five. `./scripts/check-all.sh` clean at 206 cases.
+
 ### 2026-08-04 — `cleanup_master_setup` asks the shared predicate instead of re-deriving it (`Q1-28`)
 
 Third item from the stage-by-stage audit, and the label in that audit was

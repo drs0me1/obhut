@@ -296,9 +296,9 @@ comments plus structural inference from the 2026-07-27 audit
 
 ### DD-12: wg-easy's pending first-run setup must never gate Stage 7 or `--check` (2026-07-28)
 
-- **Decision:** `check_compose_runtime()`'s `/setup`-redirect branch (the
-  case where wg-easy's admin account hasn't been created yet) sets
-  `WG_CONFIGURATION_INVALID=1` but deliberately **not** `runtime_ok=1` —
+- **Decision:** `probe_compose_runtime()`'s `/setup`-redirect branch (the
+  case where wg-easy's admin account hasn't been created yet) sets a flag
+  but deliberately **not** `runtime_ok=1` —
   so it doesn't count toward `COMPOSE_RUNTIME_DRIFTED` or
   `all_critical_state_healthy()`. The other two branches in the same
   `if`/`elif` chain (WireGuard port mismatch after setup, netfilter
@@ -318,9 +318,24 @@ comments plus structural inference from the 2026-07-27 audit
   own early-exit), not operator visibility.
 - **Trade-off:** None identified — this is a strict correction of an
   oversight in how **M6** interacted with a check written before it.
-  Anyone extending `check_compose_runtime()` with a new "expected,
+  Anyone extending `probe_compose_runtime()` with a new "expected,
   non-actionable" state should follow the same pattern: track it via a
   separate flag consumed by `RECOVERY_FAILED`, not `runtime_ok`.
+
+> **Corrected 2026-08-04 (`Q1-29`).** Two details above went stale and were
+> wrong as written. (1) The flag: a later revision split the pending-setup
+> case into its own `WG_SETUP_PENDING`, so the `/setup` branch has not set
+> `WG_CONFIGURATION_INVALID` for some time. (2) The consequence: because
+> `RECOVERY_FAILED` is keyed on `WG_CONFIGURATION_INVALID` alone, the claim
+> that "the periodic reconcile timer's own, separate `RECOVERY_FAILED`
+> reporting still surfaces it to operators via journald on every cycle" had
+> stopped being true. After the split the *only* remaining signal for a
+> pending setup was a stderr line emitted from inside the probe itself.
+> `Q1-29` restores the visibility this decision assumed, deliberately and in
+> one place: the detection site reports it once per cycle, and `--check`
+> carries `wg_setup=` so `master-network --status` shows it as data. The
+> substance is unchanged — a pending setup is still not drift and still must
+> not fail `--check` or Stage 7. See DD-48.
 
 ### DD-13: Reconcile's disk-space check reports but never auto-repairs (2026-07-28)
 
@@ -1404,7 +1419,7 @@ per cycle — 72 a day against a `json-file` driver capped at 10 MB × 3.
 
 > **Amended by DD-33 (2026-08-02).** "One log line per cycle" was true of
 > the *output* but not of the *requests*: living inside
-> `check_compose_runtime` meant up to four login attempts on a drifted
+> `probe_compose_runtime` meant up to four login attempts on a drifted
 > cycle, and the endpoint turned out to be rate-limited per source IP.
 > DD-33 moves the probe out into its own function called once per cycle,
 > and gives `429` its own message.
@@ -1501,7 +1516,7 @@ Measured cause: the Quantum image ships its own `HEALTHCHECK` (`start_period
 10s`), and after a restart HTTP answers at t+2s while health reaches
 `healthy` at t+5s; the wait exited in that gap and the postcondition caught
 `starting`. The wait now checks both signals — the same two
-`check_compose_runtime` applies to filebrowser.
+`probe_compose_runtime` applies to filebrowser.
 
 **Unplanned benefit.** DD-29 described a deleted policy file as the one state
 a re-run could not repair, because Docker recreates the missing bind-mount
@@ -1512,13 +1527,15 @@ healthy, `rc 0`.
 
 ### DD-33: The default-password probe runs once per cycle, and `429` is reported as unknown (2026-08-02)
 
-**Decision.** The DD-30 check moves out of `check_compose_runtime` into
+**Decision.** The DD-30 check moves out of `probe_compose_runtime` into
 `report_default_filebrowser_password()`, called exactly once from the main
 flow, and grows a `429` branch that says the check could not be performed.
 
-**Why once.** `check_compose_runtime` is called up to four times in a single
+**Why once.** `probe_compose_runtime` is called up to four times in a single
 cycle — initial detection, the one-second retry, again after a repair, and
-once more as the final postcondition. The probe rode along with all four, so
+once more as the final postcondition. *(Corrected 2026-08-04: five, not
+four — the filebrowser policy repair added a fifth call site. The reasoning
+is unaffected, the multiplier is simply larger than stated. See DD-48.)* The probe rode along with all four, so
 a *drifted* cycle sent four login attempts where a clean one sent one. That
 went unnoticed until the endpoint was measured.
 
@@ -2423,3 +2440,63 @@ packaging action does not change the pending live-verification claim.
   the stage-side `readlink -f` inside the predicate — the last of which also
   fails an existing `dns_stack_rollback.bats` case, which is the point.
   `./scripts/check-all.sh` clean at 194 cases.
+
+### DD-48: `probe_compose_runtime` measures; the caller reports (2026-08-04)
+
+- **Decision:** `check_compose_runtime` is renamed `probe_compose_runtime`,
+  its two `echo ... >&2` lines are removed, the observed WireGuard port is
+  handed back in a new `WG_OBSERVED_PORT` global, the detection site reports
+  both wg-easy conditions once per cycle, and `--check` gains
+  `wg_setup=`/`wg_config=`.
+- **Why:** the function is a predicate, a mutator of four globals, and — until
+  now — a reporter, and it is called **five** times in a reconcile cycle:
+  initial detection, the one-second retry, again after the filebrowser policy
+  repair, as the post-start postcondition, and in the final sweep. Three of
+  those five are pure predicate positions (`if ! …`, `elif ! …`, `! … ||`
+  inside a compound condition), so each silently recomputed
+  `COMPOSE_RESTART_TARGETS`, `WG_CONFIGURATION_INVALID` and
+  `WG_SETUP_PENDING` where the caller wanted only a boolean.
+- **This is DD-33 finished, not a new idea.** DD-33 moved the filebrowser
+  password probe out of this same function for this same reason — "the probe
+  rode along with all four" calls. The two stderr lines were left behind and
+  kept the multiplier: a host with a wg-easy port mismatch printed the same
+  error four times per cycle, plus the caller's own line, every twenty
+  minutes, for a condition the script explicitly refuses to auto-repair.
+- **`--status` was the visible damage.** It captures `--check` with `2>&1`
+  (`status_check_output="$("$0" --check 2>&1)"`), so those prose lines landed
+  inside the machine-readable `key=value` block, one or two copies deep.
+  They are now data in that block instead.
+- **Where the report goes matters.** It sits at the detection site rather
+  than in the drift report, because `WG_SETUP_PENDING` deliberately does not
+  set `runtime_ok` (DD-12/H6) — a host whose only issue is a pending wg-easy
+  setup passes `all_critical_state_healthy` and exits before the drift report
+  is ever reached. Reporting there would have silently deleted the signal.
+- **No live bug was found.** Every reset was traced against every reader:
+  none of them changes a decision today, because `RECOVERY_FAILED` latches
+  one-way and the final sweep re-measures. The finding is that correctness
+  rests on "nothing reads these after the reset", which nothing enforces.
+- **Two things deliberately left alone.** The five calls are not reduced —
+  three of them are postconditions whose whole purpose is to re-measure after
+  a mutation, and caching would defeat them. And the retry asymmetry (the
+  detector retries after `sleep 1`, the postcondition does not) is correct,
+  not an oversight: `master-compose.service` is `Type=oneshot` with
+  `docker compose up -d --wait --wait-timeout 180`, so `systemctl start`
+  returns only after Docker has settled health, while the detector runs cold.
+- **The function had no tests at all.** Its component probes are covered in
+  `test/reconcile_probes.bats`; the 110-line composite that resets four
+  globals from five call sites was not. `test/compose_runtime_probe.bats`
+  now pins the contract with stubbed component probes, including DD-12/H6's
+  rule that a pending setup must not fail the probe — a regression there
+  breaks every fresh install at Stage 7, which is how H6 was found. Seven
+  mutations were applied to install.sh and each was caught by a specific
+  case: printing from inside the probe, making `/setup` count as drift,
+  dropping the reset block, queueing a restart for a port mismatch, treating
+  `starting` health as healthy, removing the caller's report, and dropping
+  the new `--check` keys. `./scripts/check-all.sh` clean at 206 cases.
+- **Corrections made along the way:** DD-12 claimed the `/setup` branch sets
+  `WG_CONFIGURATION_INVALID` and that `RECOVERY_FAILED` therefore surfaces it
+  every cycle; both stopped being true when `WG_SETUP_PENDING` was split out.
+  DD-33 says four call sites; there are five. Both entries carry dated
+  amendments. The old function name is kept verbatim in `CHANGELOG.md`,
+  `SECURITY_REVIEW.md` and completed `TODO.md` items, which record what was
+  true at the time.

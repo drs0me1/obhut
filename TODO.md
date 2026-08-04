@@ -170,7 +170,7 @@ _All High findings resolved — see Completed below._
       Of the 51 functions in the reconcile heredoc, the ones still
       uncovered are genuinely integration-shaped — `http_endpoint_responds`,
       `webdav_direct_ok`, `caddy_runtime_ok`, `dns_listeners_ok`,
-      `tailscale_online`, `check_compose_runtime` and their neighbours all
+      `tailscale_online`, `probe_compose_runtime` and their neighbours all
       need real network, systemd or Docker. A second tier of parse-only
       functions (`record_container_restart`, `gro_flags_ok`,
       `forwarding_config_ok`, `port_binding_exists`, `docker_network_tuple`)
@@ -196,6 +196,27 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **`probe_compose_runtime` split from its reporting (2026-08-04,
+      `Q1-29`, audit item A4, DD-48).** `check_compose_runtime` was a
+      predicate, a mutator of four globals and a reporter, called five times
+      per reconcile cycle — three of them in pure predicate positions that
+      silently recomputed `COMPOSE_RESTART_TARGETS`,
+      `WG_CONFIGURATION_INVALID` and `WG_SETUP_PENDING`. DD-33 already moved
+      the filebrowser password probe out of this function for this reason and
+      left the two `echo` lines behind, so a wg-easy port mismatch printed
+      four identical errors per cycle for a condition with no auto-repair,
+      and `--status` showed them as prose inside its `key=value` block
+      (it captures `--check` with `2>&1`). Renamed, silenced, port handed
+      back in `WG_OBSERVED_PORT`; the detection site reports once — there,
+      not in the drift report, because a pending wg-easy setup is not drift
+      (DD-12/H6) and such a host exits earlier. `--check` gained `wg_setup=`
+      and `wg_config=`. No live bug: every reset was traced against every
+      reader. The five calls and the retry asymmetry are deliberately left
+      alone. The function had zero tests; `test/compose_runtime_probe.bats`
+      now pins the contract, seven mutations run and caught. DD-12 and DD-33
+      corrected. `./scripts/check-all.sh` clean at 206 cases. Not
+      live-verified.
 
 - [x] **`cleanup_master_setup` re-implemented `canonical_stage_is_current`
       inline (2026-08-04, `Q1-28`, audit item A3, DD-47).** The audit called

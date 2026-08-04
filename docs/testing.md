@@ -320,7 +320,7 @@ alone.
   functions in the reconcile heredoc the uncovered remainder is
   integration-shaped (`http_endpoint_responds`, `webdav_direct_ok`,
   `caddy_runtime_ok`, `dns_listeners_ok`, `tailscale_online`,
-  `check_compose_runtime` and their neighbours all need real network,
+  `probe_compose_runtime` and their neighbours all need real network,
   systemd or Docker). Further additions would be opportunistic.
 - **Also implemented (2026-08-02): `scripts/check-all.sh`**, one command
   for all four verification steps — `bash -n install.sh`, `shellcheck
@@ -407,7 +407,7 @@ alone.
   postcondition call. Found and fixed a third bug, **H6**: the same
   "wg-easy setup pending" condition **H5** already accounts for was also
   independently tripping Stage 7's final health gate, via
-  `check_compose_runtime()` counting it as `compose_runtime` drift. An
+  `probe_compose_runtime()` counting it as `compose_runtime` drift. An
   attempt to verify the fix by patching the already-deployed reconcile
   script directly on the server (skipping a third reimage) was blocked
   by the auto-mode classifier as an unreviewed live edit — a reasonable
@@ -447,7 +447,7 @@ alone.
     establishment and/or the time spent creating the user in SFTPGo's
     admin UI), not a server or `install.sh` issue.
   - **Reconcile coverage check:** confirmed all 6 services already have
-    a health check in `check_compose_runtime()` (`port_binding_exists`/
+    a health check in `probe_compose_runtime()` (`port_binding_exists`/
     `http_endpoint_responds` for Portainer included) — no monitoring gap
     found, nothing needed adding.
   - **WireGuard tunnel, real client:** a real macOS WireGuard client
@@ -688,7 +688,7 @@ narrative above); unchecked items still describe intent only.
       `TODO.md` instead, which is cheaper and does not need a host.
 - [x] Fresh install, verify wg-easy comes up unconfigured (`/setup`) and
       the final summary instructs manual completion — confirmed via
-      `check_compose_runtime()`'s "wg-easy ilk kurulumu tamamlanmamış"
+      `probe_compose_runtime()`'s "wg-easy ilk kurulumu tamamlanmamış"
       diagnostic appearing (and correctly not blocking Stage 7, per
       **H6**) on every fresh install before manual setup was done
 - [x] Re-run after simulating firewall drift (manually removing a rule) —
