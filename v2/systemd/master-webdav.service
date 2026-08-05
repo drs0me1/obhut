@@ -1,0 +1,32 @@
+[Unit]
+Description=Master stack WebDAV (tailnet, salt okunur)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+RequiresMountsFor=/downloads
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=master-webdav
+Group=master-webdav
+EnvironmentFile=/etc/master-stack/webdav.env
+LoadCredential=htpasswd:/etc/master-stack/webdav.htpasswd
+ExecStart=/usr/local/sbin/master-webdav
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=150s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ReadWritePaths=/downloads
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

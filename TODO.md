@@ -224,15 +224,6 @@ _All High findings resolved — see Completed below._
       same problem elsewhere with `TAILSCALE_LOGIN_STATUS_TIMEOUT`. Left
       alone to keep `Q1-37` to one item.
 
-- [ ] **D5 — `probe_compose_runtime` mutates globals from inside the final
-      postcondition chain (Stage 4 pass, derived 2026-08-04).** Line 4109
-      calls it inside the `if ! … || … ; then` chain, and it resets
-      `COMPOSE_RESTART_TARGETS`, `WG_SETUP_PENDING`,
-      `WG_CONFIGURATION_INVALID` and `WG_OBSERVED_PORT`. Nothing reads them
-      after that point, so this is latent rather than live — but it is the
-      pattern **DD-48** deliberately moved away from ("the probe measures,
-      the caller reports"), and it will bite whoever adds a line below it.
-
 - [ ] **Nine inverted assertions in the test suite cannot fail (found
       2026-08-04 while mutation-verifying `Q1-34`).** Bash exempts a command
       whose status is inverted with `!` from `set -e`, so a bare `! cmd`
@@ -250,6 +241,25 @@ _All High findings resolved — see Completed below._
 _All Low findings resolved or closed — see Completed below._
 
 ## Completed
+
+- [x] **A probe in a predicate position puts back what it measured
+      (2026-08-05, `Q1-39`, Stage 4 pass item D5, DD-57).** The last of the
+      five, and the only one that changes no behaviour today.
+      `probe_compose_runtime` resets four globals on every call —
+      `COMPOSE_RESTART_TARGETS`, the list the repair loop restarts, plus the
+      three `WG_*` values the operator report and `--status` are built from.
+      Three call sites measure and consume them; two only asked a yes/no
+      question in a postcondition chain and replaced the measurement the cycle
+      had already acted on with a measurement of the world after the repair.
+      Latent because nothing reads them afterwards — verified by ordering, not
+      assumed — and fixed because the next line added below the postcondition
+      would inherit the wrong data silently. Those two positions now call
+      `compose_runtime_still_ok`, which saves, probes, restores and returns the
+      probe's verdict. Six cases: one derives the measure-versus-check rule
+      from the script's own call sites, one pins the ordering that keeps the
+      wrapper's reads safe under `set -u`. Seven mutations, each caught — one
+      only after the case that missed it was rewritten so the two measurements
+      disagree. **Stage 4's pass (D1–D5) is now complete.**
 
 - [x] **The Compose stack stops depending on the Tailscale address
       (2026-08-05, `Q1-38`, Stage 4 pass item D1, DD-56).** DD-52's sibling

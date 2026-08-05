@@ -1,0 +1,29 @@
+{
+	default_bind {$TAILSCALE_IPV4}
+	http_port __CADDY_HTTP_PORT__
+	auto_https off
+}
+
+http://health.__LOCAL_DOMAIN__ {
+	respond "ok" 200
+}
+
+http://portainer.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__PORTAINER_UI_PORT__
+}
+
+http://wg.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__WG_UI_PORT__
+}
+
+http://qbit.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__QBIT_UI_PORT__
+}
+
+http://file.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
+}
+
+http://webdav.__LOCAL_DOMAIN__ {
+	reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__
+}

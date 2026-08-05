@@ -1,0 +1,81 @@
+# Master stack Compose — değerler defaults.env / .env üzerinden gelir.
+# __AD__ kurulumda bir kez doldurulur; ${AD} Compose .env'den genişler.
+
+services:
+  portainer:
+    image: __PORTAINER_IMAGE__
+    container_name: portainer
+    restart: unless-stopped
+    command: ["--http-enabled"]
+    ports:
+      - "127.0.0.1:__PORTAINER_UI_PORT__:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+  filebrowser:
+    image: __FILEBROWSER_IMAGE__
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:__FILEBROWSER_UI_PORT__:80"
+    volumes:
+      - __DOWNLOADS_PATH__:/data
+      - __QUANTUM_CONFIG_FILE__:/config/config.yaml:ro
+    environment:
+      TZ: __TIMEZONE__
+
+  qbittorrent:
+    image: __QBITTORRENT_IMAGE__
+    container_name: qbittorrent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:__QBIT_UI_PORT__:__QBIT_UI_PORT__"
+      - "${WAN_IPV4}:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
+    environment:
+      TZ: __TIMEZONE__
+      PUID: "0"
+      PGID: "0"
+      WEBUI_PORT: "__QBIT_UI_PORT__"
+    volumes:
+      - qbit_config:/config
+      - __DOWNLOADS_PATH__:/downloads
+
+  unpackerr:
+    image: __UNPACKERR_IMAGE__
+    container_name: unpackerr
+    restart: unless-stopped
+    environment:
+      TZ: __TIMEZONE__
+      UN_QBITTORRENT_0_URL: "http://127.0.0.1:__QBIT_UI_PORT__"
+      UN_QBITTORRENT_0_USER: "admin"
+      UN_QBITTORRENT_0_PASS: "adminadmin"
+    network_mode: host
+    volumes:
+      - __DOWNLOADS_PATH__:/downloads
+
+  wg-easy:
+    image: __WG_EASY_IMAGE__
+    container_name: wg-easy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:__WG_UI_PORT__:51821/tcp"
+      - "${WAN_IPV4}:__WG_PUBLIC_PORT__:51820/udp"
+    environment:
+      TZ: __TIMEZONE__
+      PORT: "51821"
+      WG_PORT: "51820"
+      WG_HOST: "${WG_ENDPOINT_HOST}"
+    volumes:
+      - wg_easy_data:/etc/wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+      net.ipv4.ip_forward: "1"
+
+volumes:
+  portainer_data:
+  qbit_config:
+  wg_easy_data:

@@ -1,0 +1,244 @@
+---
+description: Master Stack v2 refactor kuralları (Debian 13 sunucu kurulum sistemi)
+globs: v2/**
+alwaysApply: false
+---
+
+# Master Stack Refactor Kuralları
+
+*Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz.*
+
+Bu proje Debian 13 üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
+
+Ana hedef, mevcut `install.sh` dosyasının davranışını anlamak ve yalnızca gerekli işlevleri koruyarak daha sade, okunabilir ve güvenli bir mimariye dönüştürmektir.
+
+## Temel çalışma ilkeleri
+
+- Mevcut dosyayı tamamen okumadan kod değiştirme.
+- İlk aşamada yalnız analiz, bağımlılık haritası ve refaktör planı üret.
+- Tek seferde tüm sistemi yeniden yazma.
+- Her değişikliği küçük, doğrulanabilir ve geri alınabilir aşamalara böl.
+- Kullanıcının açıkça belirttiği gereksinimleri değiştirme.
+- Mevcut işlevlerden birini kaldırmadan önce:
+  - ne yaptığını,
+  - hangi arızayı önlediğini,
+  - yeni yapıda karşılığının ne olduğunu açıkla.
+- Gereksiz soyutlama oluşturma.
+- Tek kullanımlık üç satırlık işlemler için fonksiyon üretme.
+- Bir sabiti birden fazla dosyada tekrar etme.
+- Portlar, alan adı, yollar ve IP bilgileri için tek doğruluk kaynağı kullan.
+- Ana kurulum betiğini mümkün olduğunca orkestrasyon seviyesinde tut.
+- Uzun Bash içeriklerini heredoc içinde gömmek yerine ayrı dosyalarda tut.
+- Kullanıcı istemedikçe Ansible, Python, Go veya başka bir altyapıya geçme.
+- Bash kullanılacaksa:
+  - `#!/usr/bin/env bash`
+  - `set -Eeuo pipefail`
+  - güvenli quoting
+  - `mktemp`
+  - atomik dosya değişimi
+  - açık hata mesajları kullanılmalı.
+- Sabit `/tmp/dosya` adları kullanma.
+- Mevcut kullanıcı dosyalarını habersizce silme veya üzerine yazma.
+- Docker tarafından oluşturulan iptables zincirlerini silme ya da yeniden oluşturma.
+- Yalnızca bu projeye ait özel zincirleri ve jump kurallarını yönet.
+- Her aşama sonunda şu kontrolleri çalıştır:
+  - `bash -n`
+  - `shellcheck`
+  - `docker compose config`
+  - `caddy validate`
+  - `dnsmasq --test`
+  - `systemd-analyze verify`
+- Kod değiştirdikten sonra:
+  - değişen dosyaları,
+  - kaldırılan davranışları,
+  - korunan davranışları,
+  - riskleri,
+  - test komutlarını raporla.
+
+## Kesin sistem gereksinimleri
+
+### Debian
+
+- Hedef sistem Debian 13 Trixie.
+- Sistem paket listesi güncellenecek.
+- Sistem güncellenecek.
+- Yalnızca gerçekten kullanılan paketler kurulacak.
+- Docker, Tailscale, Caddy ve dnsmasq resmî paket kaynakları veya Debian deposu üzerinden kurulacak.
+- Kurulum root olarak çalışacak.
+- Kurulum tekrar çalıştırılabilir olmalı.
+
+### Tailscale
+
+- Tailscale kurulacak ve etkinleştirilecek.
+- Sunucu exit node olarak ilan edilecek.
+- Tailscale SSH etkinleştirilecek.
+- IPv4 forwarding açılacak.
+- IPv6 forwarding açılacak.
+- Resmî Tailscale Linux exit-node performans önerileri uygulanacak.
+- Varsayılan internet arabiriminde:
+  - `rx-udp-gro-forwarding on`
+  - `rx-gro-list off` uygulanacak.
+- Tailscale IPv4 değeri `TS_IPV4` değişkenine alınacak.
+- Tailscale IPv6 değeri `TS_IPV6` değişkenine alınacak.
+- Değerler `/etc/master-stack/state.env` içinde güvenli biçimde saklanacak.
+- Gerekli olduğu için public IPv4 de `PUBLIC_IPV4` olarak tespit edilip saklanacak.
+- Tailscale bağlantısı hazır olmadan sonraki ağ yapılandırmasına geçilmeyecek.
+
+### Dizinler
+
+- Aşağıdaki dizinler oluşturulacak:
+  - `/downloads`
+  - `/downloads/media`
+- Mevcut veri ağacının tamamında koşulsuz recursive `chown` çalıştırılmayacak.
+- Yalnız oluşturulan dizinlerin gerekli sahiplik ve izinleri ayarlanacak.
+
+### Docker
+
+- Docker Engine, Docker Compose plugin ve gerekli bileşenler resmî Docker Debian deposundan kurulacak.
+- Compose projesi `/root/docker` altında tutulacak.
+- Compose içerisinde şu servisler yer alacak:
+  - Portainer
+  - wg-easy
+  - qBittorrent
+  - Filebrowser Quantum
+  - Unpackerr
+
+### Port yayın politikası
+
+- Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
+- Örnek:
+  - Portainer: `127.0.0.1:9443`
+  - wg-easy web arayüzü: `127.0.0.1:51821`
+  - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
+  - Filebrowser Quantum: `127.0.0.1:<web-port>`
+- Public olarak yalnız şu iki UDP portu yayınlanacak:
+  - wg-easy WireGuard UDP portu
+  - qBittorrent UDP portu
+- qBittorrent için yalnız UDP yayınlama kararı kullanıcı gereksinimidir. Bunu sessizce TCP+UDP olarak değiştirme. Teknik bir sakınca görürsen kodu değiştirmeden raporla.
+- Unpackerr web arayüzü gerektirmiyorsa port yayınlama.
+- Container isimleri, host portları, container portları ve volume yolları tek bir yapılandırma kaynağından yönetilmeli.
+
+### dnsmasq
+
+- Doğru yazım dnsmasq olmalıdır.
+- Kurulumun başında kullanıcıdan yerel alan adı istenecek.
+- Örnek:
+  - `ayc`
+  - `home.arpa`
+  - `murat.internal`
+- Alan adı güvenli biçimde doğrulanacak.
+- dnsmasq yalnız DNS hizmeti verecek; DHCP hizmeti vermeyecek.
+- dnsmasq:
+  - loopback,
+  - Tailscale IPv4,
+  - gerekiyorsa Tailscale arabirimi
+
+  üzerinde kontrollü biçimde dinleyecek.
+- Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
+  - `portainer.${LOCAL_DOMAIN}`
+  - `wg.${LOCAL_DOMAIN}`
+  - `qbit.${LOCAL_DOMAIN}`
+  - `file.${LOCAL_DOMAIN}`
+- Gerekli görülürse ek servis isimleri aynı açık listeye eklenebilir.
+- Wildcard davranışı varsayılan olmasın. Yalnız tanımlı servis isimleri çözülsün.
+
+### Tailscale Admin DNS
+
+- Betik Tailscale yönetim panelini otomatik değiştirmeyecek.
+- Kurulum sonunda kullanıcıya açıkça şu manuel işlem gösterilecek:
+  1. Tailscale Admin Console aç.
+  2. DNS bölümüne gir.
+  3. Custom nameserver ekle.
+  4. Nameserver IP olarak `TS_IPV4` değerini gir.
+  5. “Restrict to domain” seçeneğini etkinleştir.
+  6. Kullanıcının seçtiği `LOCAL_DOMAIN` değerini gir.
+  7. Kaydet.
+
+### Caddy
+
+- Caddy host üzerinde systemd servisi olarak çalışacak.
+- Caddy yalnız `TS_IPV4` adresinde dinleyecek.
+- İlk sürüm HTTP-only olacak.
+- Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
+- Örnek:
+  - `http://portainer.${LOCAL_DOMAIN}`
+  - `http://wg.${LOCAL_DOMAIN}`
+  - `http://qbit.${LOCAL_DOMAIN}`
+  - `http://file.${LOCAL_DOMAIN}`
+- Her site yalnız kendi loopback upstream’ine proxy yapacak.
+- Örnek:
+  - `portainer.${LOCAL_DOMAIN}` → `127.0.0.1:9443`
+- Portainer upstream HTTPS kullanıyorsa Caddy transport yapılandırması açıkça ele alınmalı. Alternatif olarak Portainer’ın loopback HTTP portu kullanılabilir. Seçilen yaklaşım tek ve tutarlı olmalı.
+
+### Firewall
+
+- Temel politika:
+  - established ve related trafik kabul edilecek,
+  - loopback kabul edilecek,
+  - `tailscale0` üzerinden gelen trafik kabul edilecek,
+  - public WAN üzerinden yalnız:
+    - wg-easy UDP portu,
+    - qBittorrent UDP portu kabul edilecek,
+  - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
+- Docker-published portlar için kurallar `DOCKER-USER` zincirinde uygulanacak.
+- Docker’ın oluşturduğu şu zincirler silinmeyecek veya flush edilmeyecek:
+  - `DOCKER`
+  - `DOCKER-USER`
+  - `DOCKER-FORWARD`
+  - diğer Docker zincirleri
+- Proje yalnız kendi zincirini oluşturabilir. Örnek:
+  - `MASTER-DOCKER-FILTER`
+- `DOCKER-USER` içinde bu zincire tek bir idempotent jump bulunmalı.
+- Firewall kuralları reboot sonrasında yeniden kurulmalı.
+- Bunu sağlamak için Docker ve Tailscale sonrasında çalışan küçük bir systemd oneshot servisi kullanılmalı.
+- Servis her çalıştığında mevcut kuralları çoğaltmadan aynı sonucu üretmeli.
+
+### IP değişikliği
+
+- Tailscale IP değişirse bütün stack yeniden başlatılmamalı.
+- Küçük bir `refresh-tailnet-config.sh` betiği:
+  - Güncel `TS_IPV4` ve `TS_IPV6` değerlerini okur.
+  - Önceki değerlerle karşılaştırır.
+  - Değişiklik yoksa hiçbir işlem yapmadan çıkar.
+  - Değişiklik varsa:
+    - `/etc/master-stack/state.env` dosyasını atomik günceller,
+    - dnsmasq dosyasını yeniden üretir,
+    - Caddyfile’ı yeniden üretir,
+    - yapılandırmaları doğrular,
+    - yalnız dnsmasq ve Caddy’yi reload/restart eder.
+  - Docker container’larını gereksiz yere yeniden başlatmaz.
+- Bu helper küçük ve anlaşılır kalmalı. Büyük bir genel amaçlı reconcile motoruna dönüşmemeli.
+
+## İstenen mimari sonuç
+
+Tercih edilen yapı:
+
+- kısa bir `install.sh`
+- bir Compose template’i
+- bir dnsmasq template’i
+- bir Caddyfile template’i
+- bir Tailscale optimizasyon helper’ı
+- bir Tailnet IP refresh helper’ı
+- bir firewall helper’ı
+- en fazla birkaç küçük systemd unit
+
+Şunları ancak gerçek ve belgelenmiş bir ihtiyaç varsa koru:
+
+- canonical generation dizinleri
+- SHA manifest kopyaları
+- büyük reconcile motoru
+- restart cooldown veritabanı
+- çok katmanlı otomatik recovery
+- aynı kontrolün birden fazla yerde tekrar edilmesi
+- yüzlerce global boolean durum değişkeni
+
+Ana hedef en az satır sayısı değildir.
+
+Ana hedef:
+
+- tek doğruluk kaynağı,
+- açık veri akışı,
+- kolay denetlenebilirlik,
+- idempotent kurulum,
+- küçük arıza alanı,
+- davranışı anlaşılır güvenlik olmalıdır.

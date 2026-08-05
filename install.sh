@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-MASTER_SETUP_VERSION="2026.08.05-Q1-38"
+MASTER_SETUP_VERSION="2026.08.05-Q1-39"
 MASTER_SETUP_SHA256="$(
     sha256sum -- "${BASH_SOURCE[0]}" 2>/dev/null | awk '{print $1}' || true
 )"
@@ -3261,6 +3261,30 @@ probe_compose_runtime() {
     [[ "$runtime_ok" -eq 0 ]]
 }
 
+compose_runtime_still_ok() {
+    local saved_setup="$WG_SETUP_PENDING"
+    local saved_invalid="$WG_CONFIGURATION_INVALID"
+    local saved_port="$WG_OBSERVED_PORT"
+    local saved_count="${#COMPOSE_RESTART_TARGETS[@]}"
+    local -a saved_targets=()
+    local rc=0
+
+    if (( saved_count > 0 )); then
+        saved_targets=("${COMPOSE_RESTART_TARGETS[@]}")
+    fi
+
+    probe_compose_runtime || rc=$?
+
+    COMPOSE_RESTART_TARGETS=()
+    if (( saved_count > 0 )); then
+        COMPOSE_RESTART_TARGETS=("${saved_targets[@]}")
+    fi
+    WG_SETUP_PENDING="$saved_setup"
+    WG_CONFIGURATION_INVALID="$saved_invalid"
+    WG_OBSERVED_PORT="$saved_port"
+    return "$rc"
+}
+
 state_file_ok() {
     "$CMP_BIN" -s "$CANONICAL_DIR/state.env" "$STATE_FILE" &&
         owned_file_ok "$STATE_FILE" 0 0 600
@@ -3978,7 +4002,7 @@ if [[ "$COMPOSE_INACTIVE" -eq 1 ||
     if ! "$SYSTEMCTL_BIN" start master-compose.service; then
         echo "HATA: Compose stack uzlaştırılamadı." >&2
         RECOVERY_FAILED=1
-    elif ! probe_compose_runtime; then
+    elif ! compose_runtime_still_ok; then
         echo "HATA: Container/port postcondition başarısız." >&2
         RECOVERY_FAILED=1
     fi
@@ -4159,7 +4183,7 @@ if ! forwarding_ok ||
    { [[ "$CORE_RECOVERY_SCHEDULED" -eq 0 ]] &&
      ! docker_host_netfilter_ok; } ||
    ! compose_env_addresses_current ||
-   ! probe_compose_runtime ||
+   ! compose_runtime_still_ok ||
    ! webdav_direct_ok "$CURRENT_TAILSCALE_IPV4" ||
    ! canonical_bundle_ok ||
    ! canonical_runtime_configs_valid ||

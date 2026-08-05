@@ -164,6 +164,9 @@ comments plus structural inference from the 2026-07-27 audit
   (unit tests for a growing subset of pure-logic functions) now mitigate
   this without abandoning the single-file model — see `docs/testing.md`
   for what's covered and what remains open.
+- **Superseded for v2 by DD-58 (2026-08-05).** This entry still describes
+  `install.sh`, which is frozen and keeps the single-file model. v2
+  abandons it.
 
 ### DD-10: `wg-easy`'s WireGuard kernel module is loaded independently of Tailscale (2026-07-27)
 
@@ -2979,3 +2982,212 @@ packaging action does not change the pending live-verification claim.
   redirected out of `/root` and the budget shortened — both substitutions
   asserted after the fact so the case cannot silently test the wrong script.
   `./scripts/check-all.sh` clean at 258 cases.
+
+### DD-57: A probe in a predicate position puts back what it measured (2026-08-05)
+
+- **Decision:** the two postcondition positions that ask "is the Compose
+  runtime still healthy?" call `compose_runtime_still_ok`, a wrapper that saves
+  the four globals `probe_compose_runtime` resets, runs the probe, restores
+  them and returns the probe's verdict. The three positions that *measure*
+  still call the probe directly, because they consume what it publishes.
+- **Why it is not simply a probe with no side effects.** DD-48 already moved
+  the printing out of this function; the four globals could not follow, because
+  they are the function's actual output. `COMPOSE_RESTART_TARGETS` is the list
+  the repair loop restarts, and `WG_SETUP_PENDING` /
+  `WG_CONFIGURATION_INVALID` / `WG_OBSERVED_PORT` are what the operator report
+  and `--status`'s key=value line are built from. A predicate that computes
+  them is fine. A predicate that *replaces* them behind the caller's back is
+  not, and both shapes were the same call.
+- **Latent, not live, and recorded that way.** Nothing reads the four globals
+  after either postcondition — the report at the detection site, the wg-easy
+  diagnostics and the restart loop all run earlier in the linear script. This
+  was measured by ordering, not assumed: the last reader is the eligible-target
+  loop, and both wrapper sites are below it. So this changes no behaviour
+  today. It is fixed because the failure it sets up is invisible: a later line
+  added below the postcondition reads a measurement of the world *after* the
+  repair, silently, with nothing in the code to suggest that is what happened.
+- **What makes the wrapper's reads safe.** Nothing declares those three `WG_*`
+  globals at top level — the probe is their only writer. Under the reconcile
+  script's `set -Eeuo pipefail` a wrapper call with no prior probe would abort
+  the cycle on an unbound variable rather than measure anything. That is
+  currently impossible because the detection call is unconditional, at top
+  level, and above both wrapper sites; a case pins exactly that ordering rather
+  than trusting it. Adding `:-` defaults was considered and rejected: it would
+  turn "this ran too early" from a loud abort into a silent zero.
+- **The restart-target restore is guarded on count.** `saved_targets=(
+  "${COMPOSE_RESTART_TARGETS[@]}" )` on an empty array is an unbound expansion
+  under `set -u` on the target's bash, so both the save and the restore sit
+  behind `(( saved_count > 0 ))`, with an unconditional `COMPOSE_RESTART_TARGETS=()`
+  ahead of the restore so the probe's own findings cannot leak into a caller
+  that had queued nothing.
+- **Verified by mutation.** Seven, each caught by a case that names it:
+  dropping each of the three `WG_*` restores individually, dropping the array
+  clear that precedes the restore, returning `0` instead of the probe's status,
+  putting the probe back in a postcondition position, and using the wrapper at
+  the detection site so nothing publishes the globals first. The sixth of these
+  is the one that matters most — it is the regression this whole item exists to
+  prevent, and the derived case catches it by reading the reconcile script's
+  own call sites rather than restating them.
+- **One mutation initially survived and the test was wrong, not the code.**
+  Dropping the `WG_SETUP_PENDING` restore changed nothing, because the case
+  left the fixture identical between the two measurements — so the value the
+  wrapper restored and the value its probe recomputed were the same number. The
+  case now completes the wg-easy setup wizard *between* the measurement and the
+  postcondition, which is the realistic shape and the only one where a missing
+  restore is observable. Same lesson as `Q1-33`, from the other direction: a
+  surviving mutation is either a missing test or a defect that is not one, and
+  the way to tell is to make the two measurements disagree.
+
+---
+
+## v2 design decisions
+
+The entries below describe **v2**, the multi-file successor developed under
+`v2/` (see `docs/v2-contract.md` and `docs/v2-architecture.md`). They do not
+apply to `install.sh` or to `legacy/install.sh`, which is frozen for
+reference. They are numbered in the same sequence deliberately: a decision
+that supersedes an earlier one should be findable next to it, not in a
+separate document with its own numbering.
+
+### DD-58: v2 abandons the single-file model — supersedes DD-9 (2026-08-05)
+
+- **Decision:** v2 is a repository tree — one orchestrating `install.sh`,
+  two libraries, four templates, four helper scripts and three systemd
+  units — rather than a single script that carries its helpers as heredocs.
+  DD-9 is superseded for v2. `install.sh` itself keeps the single-file
+  model unchanged; it is frozen, and DD-9 remains the accurate record of
+  what it is.
+- **Rationale:** DD-9's trade-off line predicted this. The embedded scripts
+  are invisible to `shellcheck install.sh` and `bash -n install.sh`, which
+  is why `scripts/lint-embedded-scripts.sh` had to be written to lint
+  string literals. At 5495 lines the mitigation stopped scaling: the file
+  had 1179 comment lines removed in `Q1-24`/`Q1-25` partly because nobody
+  read it in an editor, and three real bugs (**H1**'s regression, **H5**,
+  **H6**) were reachable only through live execution because static review
+  could not see into the heredocs. A file per responsibility gets all seven
+  helpers under the normal linter with no custom tooling.
+- **Replacement delivery model:** `git clone` (or a release tarball of the
+  same tree), then `v2/install.sh`. The curl-pipeable single artefact is
+  the thing being given up, and that is the real cost of this decision —
+  provisioning now needs the repository present on the host.
+- **Trade-off accepted:** more files to keep in sync, and a class of bug
+  that could not previously exist (a helper referring to a constant the
+  installer never rendered). `config/defaults.env` as the single source of
+  truth and the hard-error-on-unsubstituted-token rule in the renderer
+  exist to bound that class.
+
+### DD-59: The firewall owns two chains, named once (2026-08-05)
+
+- **Decision:** `MASTER-INPUT` holds the host INPUT policy; `MASTER-DOCKER`
+  holds the container policy reached through a single jump from
+  `DOCKER-USER`. `MASTER-DOCKER-FILTER` is not used. The same two logical
+  names are used for IPv4 and IPv6 — the tables are separate, so there is
+  no collision — and both are declared in `v2/config/defaults.env` and
+  nowhere else. A chain name appearing as a literal in a second file is a
+  defect.
+- **Rationale:** Two sources proposed names (`MASTER-DOCKER` in
+  conversation, `MASTER-DOCKER-FILTER` in `v2/.cursor/rules/`), both as
+  examples. The value is cosmetic but it is a single-source-of-truth value:
+  the failure it prevents is a helper that creates one chain while the
+  verification step looks for another, which fails open — an absent chain
+  filters nothing.
+- **A third chain was dropped.** `defaults.env` also carried
+  `MASTER-TS-FORWARD`, inherited from v1's mangle-table chain. No clause of
+  the v2 contract requires it and it was not part of the decided set, so it
+  was removed rather than kept in case it turns out to be needed. If the
+  firewall phase finds a genuine need for a `FORWARD`- or mangle-table
+  chain, that is a new decision with an explicit name.
+- **`MASTER-INPUT` is new in v2.** v1 filtered container traffic through
+  `DOCKER-USER` but never wrote a host INPUT policy at all, so services
+  listening on the host — WebDAV among them — were protected only by what
+  they chose to bind to.
+
+### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
+
+- **Decision:** dnsmasq listens on `lo` and `tailscale0` with
+  `bind-dynamic`. Not on WAN interfaces, not on ordinary LAN interfaces,
+  never on an unbounded `0.0.0.0`, and it serves no DHCP. Records are
+  interface-based (`interface-name=…,tailscale0`); the current Tailscale
+  IPv4 is never written into the configuration.
+- **Rationale for loopback:** the host must be able to resolve its own
+  service names, and the installation must be able to verify DNS without
+  borrowing a tailnet device to ask from. v1 bound `tailscale0` only, with
+  `except-interface=lo`, which made the cheapest possible verification —
+  `dig @127.0.0.1` — impossible.
+- **Why the address stays out of the file:** `interface-name` resolves to
+  whatever address the named interface currently holds, so destroying and
+  recreating `tailscale0` requires no file to be regenerated. This is what
+  lets **DD-61** leave dnsmasq alone entirely.
+- **What a loopback query returns is an expectation, not a measurement.**
+  Reading dnsmasq's documentation, `interface-name=NAME,tailscale0` should
+  answer with the `tailscale0` address regardless of which interface the
+  query arrived on — but this has not been observed on a real host, and the
+  whole loopback-testability argument rests on it. It is therefore recorded
+  as an acceptance test for the DNS phase, to be run on a clean Debian 13
+  target: `dig +short NAME @127.0.0.1` must return the same address as
+  `dig +short NAME @${TS_IPV4}`, and that address must be `${TS_IPV4}`. If
+  the measurement disagrees — if a loopback query answers `127.0.0.1` or
+  `NXDOMAIN` — the loopback listener stops being a test path and this
+  decision needs revisiting, not a workaround.
+- **Open implementation question, not a decision:** whether
+  `systemd-resolved`'s stub listener already holds `127.0.0.1:53` on the
+  target host. That is answered by looking at the host during the DNS
+  phase.
+
+### DD-61: `refresh-tailnet-config` restarts two units and does nothing else (2026-08-05)
+
+- **Decision:** the helper reads the current Tailscale IPv4 and IPv6,
+  compares them with `/etc/master-stack/state.env`, exits successfully
+  without touching any service if they match, and otherwise updates
+  `state.env` atomically and restarts exactly two units: Caddy and
+  `master-webdav`. Explicitly excluded: regenerating the dnsmasq
+  configuration, restarting dnsmasq, restarting the Compose stack or any
+  container, re-applying the firewall, cooldown stamps, drift flags,
+  container recovery, and health repair of any kind.
+- **Rationale:** this is the scope boundary that keeps v2 from regrowing
+  `master-network-reconcile`, whose 1821 lines were one third of v1 and
+  produced 25 drift flags, a stamp-based cooldown ledger and an image
+  digest recovery path — none of which any requirement asked for. The rule
+  that makes the small version sufficient is architectural rather than
+  disciplinary: only two consumers bind the Tailscale address, because
+  dnsmasq and the firewall are written against the *interface name*
+  (**DD-60**) and no container touches the address at all.
+- **Consequence for Caddy:** there is no rendered Caddy environment file.
+  The drop-in reads `state.env` directly as its `EnvironmentFile=`, so the
+  address exists in one place on disk and the helper has one file to
+  update. The cost is that `state.env` must satisfy both `source` in bash
+  and systemd's `EnvironmentFile=` parser: plain `KEY=value`, no quoting,
+  no spaces around `=`, no expansion.
+- **Consequence for a public IPv4 change:** it cannot be solved inside this
+  helper without breaking the decision, because it would mean recreating
+  containers. That remains an open question with a documented interim
+  answer (re-run the installer).
+
+### DD-62: Portainer is proxied over plain loopback HTTP (2026-08-05)
+
+- **Decision:** Caddy's upstream for `portainer.${LOCAL_DOMAIN}` is
+  `127.0.0.1:9000`, plain HTTP. Compose publishes `127.0.0.1:9000:9000` and
+  nothing else — 9443 is not published anywhere, and 9000 is never exposed
+  on the tailnet or the WAN. `tls_insecure_skip_verify` is not used
+  anywhere in the Caddyfile. Operator access is only
+  `http://portainer.${LOCAL_DOMAIN}`.
+- **Rationale:** v1 proxied to `https://127.0.0.1:9443` and had to skip
+  upstream certificate verification, because Portainer's certificate is
+  self-signed. A TLS connection with verification disabled, over loopback,
+  to a process on the same host provides no security property that plain
+  HTTP over loopback does not — it only adds a directive whose presence
+  makes the configuration harder to audit, and one that would be a genuine
+  finding if it ever escaped to a non-loopback upstream.
+- **Implementation obligation this creates:** Portainer must actually be
+  listening on HTTP. Recent Portainer CE images serve only HTTPS on 9443
+  unless the HTTP listener is turned on, so the Compose service definition
+  must pass **`--http-enabled`** to the container. Without it the container
+  starts, the port publication succeeds, and the Caddy site returns a
+  connection error — a failure that looks like a proxy problem while being
+  a container-argument problem. The obligation is named here because it
+  belongs to a file that does not exist yet: the Compose phase owns it, not
+  the Caddy phase.
+- **The publication set is exactly one line:** `127.0.0.1:9000:9000`. 9443
+  is not published anywhere, and neither port is published on the tailnet
+  or the WAN. Reaching Portainer from another device goes through Caddy at
+  `http://portainer.${LOCAL_DOMAIN}` or not at all.

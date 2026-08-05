@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-05 — a probe in a predicate position puts back what it measured (`Q1-39`)
+
+Stage 4 pass item D5, the last of the five, and the one that changes no
+behaviour today.
+
+`probe_compose_runtime` resets four globals on every call:
+`COMPOSE_RESTART_TARGETS`, which is the list the repair loop restarts, plus
+`WG_SETUP_PENDING`, `WG_CONFIGURATION_INVALID` and `WG_OBSERVED_PORT`, which
+are what the operator report and `--status`'s key=value line are built from.
+Three of its call sites measure and consume those values. Two only ask a
+yes/no question in a postcondition chain — and silently replaced the
+measurement the cycle had already acted on with a measurement of the world
+*after* the repair.
+
+Nothing reads them after either postcondition, so this was latent rather than
+live, and the ordering was checked rather than assumed: the last reader is the
+eligible-target loop and both sites are below it. It is fixed because the
+failure it sets up is invisible — the next line added under the postcondition
+inherits the wrong data with nothing in the code to suggest it.
+
+The two postcondition positions now call `compose_runtime_still_ok`, which
+saves the four globals, runs the probe, restores them and returns the probe's
+verdict. The three measurement positions are unchanged.
+
+Six cases added. One derives the rule from the reconcile script's own call
+sites, so a future predicate-position call fails the suite instead of quietly
+clearing four globals; another pins the ordering that makes the wrapper's
+reads safe under `set -u`, since nothing declares those globals at top level.
+Seven mutations run and each caught — one only after the case that missed it
+was rewritten to make the two measurements disagree.
+`./scripts/check-all.sh` clean at 264 cases. See DD-57.
+
 ### 2026-08-05 — the Compose stack stops depending on the Tailscale address (`Q1-38`)
 
 Stage 4 pass item D1, and DD-52's sibling from the same commit.

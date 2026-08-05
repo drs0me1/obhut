@@ -2,8 +2,8 @@
 
 ## Planned testing strategy
 
-> **Status (updated 2026-08-04): Tier 1 implemented; Tier 2 partial (232
-> unit cases across nineteen files; 220 execute and 12 self-skip on the macOS
+> **Status (updated 2026-08-05): Tier 1 implemented; Tier 2 partial (264
+> unit cases across twenty-two files; 252 execute and 12 self-skip on the macOS
 > workstation for non-GNU `stat`, bash 3.2 and a missing GNU `timeout`; the
 > Bats suite has still never been run on the Debian target, so every case is
 > workstation-verified only. Q1-20's production paths, Q1-21's real failure
@@ -340,7 +340,15 @@ alone.
     the 110-line composite was not. Pins that the four globals are recomputed
     on every call, that the probe prints nothing, and DD-12/H6's rule that a
     pending wg-easy setup must not fail it — the regression that broke every
-    fresh install at Stage 7.
+    fresh install at Stage 7. Six more cases (D5/DD-57) cover
+    `compose_runtime_still_ok`, the wrapper the two postcondition positions
+    call so that asking the question does not overwrite the answer the cycle
+    already acted on. Two of them are derived rather than restated: one reads
+    the reconcile script's own `probe_compose_runtime` call sites and fails on
+    any new one in a pure predicate position, and one asserts that the
+    unconditional detection call precedes both wrapper sites — the ordering
+    that keeps the wrapper's reads from aborting under `set -u`, since nothing
+    declares those globals at top level.
   - `test/onfailure_arc.bats` (A5/DD-49) reads the arc's unit set out of
     install.sh's own `OnFailure=` lines and walks every top-level if-block, so
     wiring a sixth unit onto the arc and restarting it unbraked fails the
@@ -386,6 +394,18 @@ alone.
   `systemctl` in one invocation — not to keep a passing test that asserted
   something false. A mutation is a probe of the *claim* as much as of the
   test.
+
+- **The other half, from D5 (`Q1-39`): a mutation can survive because the
+  fixture makes the defect unobservable.** Deleting the `WG_SETUP_PENDING`
+  restore from `compose_runtime_still_ok` changed nothing, because the case
+  left the container fixture identical either side of the call — so the value
+  the wrapper restored and the value its own probe recomputed were the same
+  number, and a missing restore looked exactly like a working one. The fix was
+  to make the two measurements disagree (the wg-easy setup wizard completes
+  between them), which is also the realistic shape. When a save/restore or
+  cache mutation survives, suspect the fixture before concluding the code is
+  fine: any test where the two sides agree by construction can only ever
+  demonstrate that the code compiles.
 
 - **Remaining in Tier 2:** nothing specific identified. Of the 51
   functions in the reconcile heredoc the uncovered remainder is

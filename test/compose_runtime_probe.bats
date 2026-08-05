@@ -28,16 +28,22 @@ extract_function() {
         '
 }
 
+reconcile_script() {
+    sed -n "/<<'RECONCILE_SCRIPT'\$/,/^RECONCILE_SCRIPT\$/p" "$INSTALL_SH"
+}
+
 setup() {
     FIXTURE_DIR="$(mktemp -d)"
     FUNCS_FILE="$FIXTURE_DIR/funcs.sh"
     {
         extract_function add_compose_restart_target
         extract_function probe_compose_runtime
+        extract_function compose_runtime_still_ok
     } >"$FUNCS_FILE"
 
     grep -q '^probe_compose_runtime() {' "$FUNCS_FILE"
     grep -q '^add_compose_restart_target() {' "$FUNCS_FILE"
+    grep -q '^compose_runtime_still_ok() {' "$FUNCS_FILE"
 
     declare -a COMPOSE_RESTART_TARGETS=()
     # shellcheck disable=SC1090
@@ -266,4 +272,134 @@ set_setup_location() {
     # as prose captured through 2>&1.
     grep -Fq 'wg_setup=$WG_SETUP_PENDING wg_config=$WG_CONFIGURATION_INVALID' \
         <<<"$script"
+}
+
+# --- D5: the postcondition wrapper (Q1-39, DD-57) ------------------------
+#
+# The probe publishes four globals as a side effect of answering yes/no. That
+# is right where the cycle measures, and wrong where it merely checks: the two
+# postcondition positions used to overwrite the very measurements the report
+# and the repair loop had already acted on. compose_runtime_still_ok asks the
+# same question and puts everything back.
+
+@test "the wrapper restores every global the probe resets" {
+    # A measured, drifted state, published the way the detection site does.
+    printf 'false\n' >"$STATE_DIR/running/portainer"
+    printf '1234\n' >"$STATE_DIR/wgport"
+    probe_compose_runtime || true
+    [ "${#COMPOSE_RESTART_TARGETS[@]}" -eq 1 ]
+    [ "$WG_CONFIGURATION_INVALID" -eq 1 ]
+    [ "$WG_OBSERVED_PORT" = "1234" ]
+
+    # The repair lands, and the postcondition re-asks against a healthy stack.
+    printf 'true\n' >"$STATE_DIR/running/portainer"
+    printf '%s\n' "$WG_PUBLIC_PORT" >"$STATE_DIR/wgport"
+
+    compose_runtime_still_ok
+
+    printf '%s\n' "${COMPOSE_RESTART_TARGETS[@]}" | grep -Fxq portainer
+    [ "${#COMPOSE_RESTART_TARGETS[@]}" -eq 1 ]
+    [ "$WG_CONFIGURATION_INVALID" -eq 1 ]
+    [ "$WG_OBSERVED_PORT" = "1234" ]
+    [ "$WG_SETUP_PENDING" -eq 0 ]
+}
+
+@test "the wrapper does not leak the probe's findings into a clean state" {
+    # The other direction, and the one the (( saved_count > 0 )) guard exists
+    # for: nothing was queued before the call, so nothing may be queued after
+    # it either — including what this call itself found.
+    probe_compose_runtime
+    [ "${#COMPOSE_RESTART_TARGETS[@]}" -eq 0 ]
+
+    printf 'false\n' >"$STATE_DIR/running/qbittorrent"
+    printf '1234\n' >"$STATE_DIR/wgport"
+
+    run compose_runtime_still_ok
+    [ "$status" -ne 0 ]
+
+    compose_runtime_still_ok || true
+    [ "${#COMPOSE_RESTART_TARGETS[@]}" -eq 0 ]
+    [ "$WG_CONFIGURATION_INVALID" -eq 0 ]
+    [ "$WG_SETUP_PENDING" -eq 0 ]
+    [ -z "$WG_OBSERVED_PORT" ]
+}
+
+@test "the wrapper returns the probe's verdict, not the restore's" {
+    probe_compose_runtime
+
+    run compose_runtime_still_ok
+    [ "$status" -eq 0 ]
+
+    printf 'false\n' >"$STATE_DIR/running/filebrowser"
+    run compose_runtime_still_ok
+    [ "$status" -ne 0 ]
+}
+
+@test "a pending wg-easy setup survives the postcondition unchanged" {
+    # DD-12/H6 again, one layer out. On a fresh install WG_SETUP_PENDING=1 is
+    # the expected state and the caller warns about it; a postcondition that
+    # silently cleared the flag would take that warning away on exactly the
+    # run that needs it.
+    set_setup_location /setup/
+    printf '1234\n' >"$STATE_DIR/wgport"
+    probe_compose_runtime
+    [ "$WG_SETUP_PENDING" -eq 1 ]
+
+    # The admin finishes the wizard during the repair window, so the
+    # postcondition's own measurement disagrees with the reported one. The
+    # reported one is what the cycle already acted on, and it must win.
+    set_setup_location ""
+    printf '%s\n' "$WG_PUBLIC_PORT" >"$STATE_DIR/wgport"
+
+    run compose_runtime_still_ok
+    [ "$status" -eq 0 ]
+
+    compose_runtime_still_ok
+    [ "$WG_SETUP_PENDING" -eq 1 ]
+}
+
+@test "only measurement positions call the probe directly" {
+    # Derived from the script rather than restated: any new call in a pure
+    # predicate position fails here instead of quietly clearing four globals.
+    # The three permitted shapes are the detection, its one retry, and the
+    # re-measure after a Quantum config repair — each consumes what it moved.
+    local script offenders
+    script="$(reconcile_script)"
+    offenders="$(
+        grep -n 'probe_compose_runtime' <<<"$script" |
+            grep -Fv 'probe_compose_runtime() {' |
+            grep -Fv '|| COMPOSE_RUNTIME_DRIFTED=1' |
+            grep -Fv 'if ! probe_compose_runtime; then' |
+            grep -Fv 'probe_compose_runtime || rc=$?' || true
+    )"
+    [ -z "$offenders" ]
+
+    # And the exemptions are not vacuous: the wrapper's own call is there, and
+    # both postcondition positions go through it.
+    grep -Fq 'probe_compose_runtime || rc=$?' <<<"$script"
+    [ "$(grep -Fc 'compose_runtime_still_ok' <<<"$script")" -eq 3 ]
+}
+
+@test "the globals the wrapper reads are initialized before it can run" {
+    # The wrapper reads four globals that nothing declares at top level — the
+    # probe is their only writer. Under the script's `set -u` an early caller
+    # would abort the cycle instead of measuring, so what makes the reads safe
+    # is that the unconditional detection call precedes both call sites.
+    local script first_probe first_wrapper
+    script="$(reconcile_script)"
+
+    # Top level, so it cannot be skipped by a mode or a branch.
+    first_probe="$(
+        grep -n '^if ! probe_compose_runtime; then' <<<"$script" |
+            head -1 | cut -d: -f1
+    )"
+    first_wrapper="$(
+        grep -n 'compose_runtime_still_ok' <<<"$script" |
+            grep -Fv 'compose_runtime_still_ok() {' |
+            head -1 | cut -d: -f1
+    )"
+
+    [ -n "$first_probe" ]
+    [ -n "$first_wrapper" ]
+    [ "$first_probe" -lt "$first_wrapper" ]
 }
