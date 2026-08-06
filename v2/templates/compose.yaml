@@ -17,13 +17,25 @@ services:
     image: __FILEBROWSER_IMAGE__
     container_name: filebrowser
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    environment:
+      TZ: __TIMEZONE__
+      FILEBROWSER_CONFIG: /config.yaml
+      FILEBROWSER_DATABASE: /home/filebrowser/data/database.db
     ports:
       - "127.0.0.1:__FILEBROWSER_UI_PORT__:80"
     volumes:
+      # Panel kökü = host /downloads (tümü)
       - __DOWNLOADS_PATH__:/data
-      - __QUANTUM_CONFIG_FILE__:/config/config.yaml:ro
-    environment:
-      TZ: __TIMEZONE__
+      - __QUANTUM_CONFIG_FILE__:/config.yaml:ro
+      - filebrowser_data:/home/filebrowser/data
+    tmpfs:
+      - /tmp
+      - /home/filebrowser/tmp
 
   qbittorrent:
     image: __QBITTORRENT_IMAGE__
@@ -44,15 +56,35 @@ services:
   unpackerr:
     image: __UNPACKERR_IMAGE__
     container_name: unpackerr
+    user: "1000:1000"
     restart: unless-stopped
+    # qBittorrent API yok: parola/port gerekmez. Yalnız /downloads ağacını
+    # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
     environment:
       TZ: __TIMEZONE__
-      UN_QBITTORRENT_0_URL: "http://127.0.0.1:__QBIT_UI_PORT__"
-      UN_QBITTORRENT_0_USER: "admin"
-      UN_QBITTORRENT_0_PASS: "adminadmin"
-    network_mode: host
+      UN_LOG_FILE: "/downloads/.unpackerr/unpackerr.log"
+      UN_LOG_FILE_MB: "10"
+      UN_LOG_FILES: "3"
+      UN_LOG_QUEUES: "30m"
+      UN_FOLDERS_INTERVAL: "10s"
+      UN_FOLDER_0_PATH: "/downloads"
+      UN_FOLDER_0_EXTRACT_PATH: ""
+      UN_FOLDER_0_DELETE_AFTER: "0"
+      UN_FOLDER_0_DISABLE_RECURSION: "false"
+      UN_FOLDER_0_DELETE_FILES: "false"
+      UN_FOLDER_0_DELETE_ORIGINAL: "false"
+      UN_FOLDER_0_MOVE_BACK: "true"
+      UN_FOLDER_0_EXTRACT_ISOS: "false"
     volumes:
       - __DOWNLOADS_PATH__:/downloads
+    tmpfs:
+      - /tmp
+    stop_grace_period: 30s
 
   wg-easy:
     image: __WG_EASY_IMAGE__
@@ -77,5 +109,6 @@ services:
 
 volumes:
   portainer_data:
+  filebrowser_data:
   qbit_config:
   wg_easy_data:

@@ -147,6 +147,19 @@ EOF
     grep -q '127.0.0.1:__PORTAINER_UI_PORT__:9000' "$V2_ROOT/templates/compose.yaml"
 }
 
+@test "unpackerr watches folders, not the qBittorrent API" {
+    grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "filebrowser serves full downloads at /data" {
+    grep -q '__DOWNLOADS_PATH__:/data' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'FILEBROWSER_CONFIG: /config.yaml' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__QUANTUM_CONFIG_FILE__:/config.yaml:ro' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'filebrowser_data:/home/filebrowser/data' "$V2_ROOT/templates/compose.yaml"
+}
+
 @test "dnsmasq binds lo and tailscale only" {
     grep -q 'interface=lo' "$V2_ROOT/templates/dnsmasq.conf"
     grep -q 'interface=__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"

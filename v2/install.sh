@@ -321,6 +321,12 @@ stage_3() {
             chmod 0755 "$d"
         fi
     done
+    # Unpackerr log dizini (UID 1000 yazabilsin)
+    if [[ ! -e "$DOWNLOADS_PATH/.unpackerr" ]]; then
+        mkdir -p "$DOWNLOADS_PATH/.unpackerr"
+        chown 1000:1000 "$DOWNLOADS_PATH/.unpackerr"
+        chmod 0755 "$DOWNLOADS_PATH/.unpackerr"
+    fi
     log INFO "Mevcut medya ağacında recursive chown YOK"
 }
 
@@ -360,13 +366,23 @@ WAN_IPV4=$WAN_IPV4
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 EOF
 
-    # Minimal FileBrowser Quantum config (operatör ilk girişte hesabı kurar)
+    # FileBrowser Quantum: panel kökü container /data = host DOWNLOADS_PATH
     if [[ ! -f "$QUANTUM_CONFIG_FILE" ]]; then
-        atomic_write "$QUANTUM_CONFIG_FILE" 0644 <<EOF
+        atomic_write "$QUANTUM_CONFIG_FILE" 0644 <<'EOF'
 server:
   port: 80
+  baseURL: "/"
+  cacheDir: "/home/filebrowser/data/cache"
   sources:
-    - path: /data
+    - path: "/data"
+auth:
+  methods:
+    password:
+      enabled: true
+      minLength: 5
+      signup: false
+    passkey:
+      enabled: false
 EOF
     fi
 
