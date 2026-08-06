@@ -8,6 +8,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 V2_LOG_FILE="${V2_LOG_FILE:-}"
+V2_LAST_ATOMIC_CHANGED="${V2_LAST_ATOMIC_CHANGED:-0}"
 
 log() {
     local level="$1"
@@ -88,6 +89,7 @@ retry() {
 }
 
 # atomic_write DEST MODE < stdin
+# Sets V2_LAST_ATOMIC_CHANGED to 1 if the file was replaced, 0 if content matched.
 atomic_write() {
     local dest="${1:?}" mode="${2:-0644}"
     [[ "$dest" == /* && "$dest" != / ]] || die "atomic_write: mutlak hedef gerekli"
@@ -103,9 +105,11 @@ atomic_write() {
     if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
         rm -f "$tmp"
         chmod "$mode" "$dest" 2>/dev/null || true
+        V2_LAST_ATOMIC_CHANGED=0
         return 0
     fi
     mv -f "$tmp" "$dest"
+    V2_LAST_ATOMIC_CHANGED=1
 }
 
 # render_template SRC DEST MODE KEY=VALUE...
@@ -125,5 +129,10 @@ render_template() {
     if [[ "$content" =~ __[A-Z][A-Z0-9_]*__ ]]; then
         die "şablonda doldurulmamış yer tutucu kaldı: $src"
     fi
-    printf '%s' "$content" | atomic_write "$dest" "$mode"
+    local awtmp
+    awtmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f -- '$awtmp'" RETURN
+    printf '%s' "$content" >"$awtmp"
+    atomic_write "$dest" "$mode" <"$awtmp"
 }

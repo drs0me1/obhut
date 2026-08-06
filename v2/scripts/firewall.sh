@@ -26,48 +26,96 @@ esac
 [[ -r "$STATE_FILE" ]] || die "state.env yok: $STATE_FILE"
 # shellcheck source=/dev/null
 source "$STATE_FILE"
-
-: "${WAN_INTERFACE:?}"
-: "${WAN_IPV4:=}"
-: "${TAILSCALE_IF:=tailscale0}"
-: "${CHAIN_INPUT:=MASTER-INPUT}"
-: "${CHAIN_DOCKER:=MASTER-DOCKER}"
-: "${WG_PUBLIC_PORT:=65171}"
-: "${QBIT_PUBLIC_PORT:=65173}"
-: "${SSH_PUBLIC_PORT:=22}"
-
-if [[ -n "$DEFAULTS_FILE" && -r "$DEFAULTS_FILE" ]]; then
+if [[ -n "${DEFAULTS_FILE:-}" && -r "$DEFAULTS_FILE" ]]; then
     # shellcheck source=/dev/null
     source "$DEFAULTS_FILE"
 fi
 
-ensure_jump() {
-    local bin="$1" parent="$2" chain="$3"
-    if ! "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null; then
-        "$bin" -w 5 -I "$parent" 1 -j "$chain"
-    fi
+: "${WAN_INTERFACE:?}"
+: "${WAN_IPV4:=}"
+: "${TAILSCALE_IF:?}"
+: "${CHAIN_INPUT:?}"
+: "${CHAIN_DOCKER:?}"
+: "${CHAIN_STAGING_PREFIX:?}"
+: "${WG_PUBLIC_PORT:?}"
+: "${QBIT_PUBLIC_PORT:?}"
+: "${SSH_PUBLIC_PORT:?}"
+
+input_line() {
+    local bin="$1" target="$2"
+    "$bin" -w 5 -L INPUT -n --line-numbers |
+        awk -v t="$target" '$2 == t { print $1; exit }'
 }
 
-# Tailscale'in ts-input jump'ı MASTER-INPUT'tan önce olmalı; aksi halde
-# WAN DROP, UDP 41641 / NDP sonrası TS kurallarını gölgeler.
+insert_pos_after_ts_input() {
+    local bin="$1" ts_pos=""
+    if "$bin" -w 5 -C INPUT -j ts-input 2>/dev/null; then
+        ts_pos="$(input_line "$bin" ts-input)"
+        if [[ -n "$ts_pos" ]]; then
+            printf '%s\n' "$((ts_pos + 1))"
+            return 0
+        fi
+    fi
+    printf '1\n'
+}
+
+ensure_jump() {
+    local bin="$1" parent="$2" chain="$3" pos=1
+    if "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null; then
+        return 0
+    fi
+    if [[ "$parent" == "INPUT" ]]; then
+        pos="$(insert_pos_after_ts_input "$bin")"
+    fi
+    "$bin" -w 5 -I "$parent" "$pos" -j "$chain"
+}
+
 ensure_ts_input_precedence() {
-    local bin="$1" pos=""
+    local bin="$1" ts_pos="" master_before="" master_after="" _
     if ! "$bin" -w 5 -L ts-input -n >/dev/null 2>&1; then
         return 0
     fi
     if ! "$bin" -w 5 -C INPUT -j ts-input 2>/dev/null; then
         "$bin" -w 5 -I INPUT 1 -j ts-input
     fi
-    while "$bin" -w 5 -C INPUT -j "$CHAIN_INPUT" 2>/dev/null; do
-        "$bin" -w 5 -D INPUT -j "$CHAIN_INPUT"
+
+    for _ in $(seq 1 20); do
+        ts_pos="$(input_line "$bin" ts-input)"
+        [[ -n "$ts_pos" ]] || return 0
+
+        master_before="$("$bin" -w 5 -L INPUT -n --line-numbers |
+            awk -v c="$CHAIN_INPUT" -v ts="$ts_pos" \
+                '$2 == c && $1+0 < ts+0 { print $1; exit }')"
+        master_after="$("$bin" -w 5 -L INPUT -n --line-numbers |
+            awk -v c="$CHAIN_INPUT" -v ts="$ts_pos" \
+                '$2 == c && $1+0 > ts+0 { print $1; exit }')"
+
+        if [[ -z "$master_before" ]]; then
+            if [[ -z "$master_after" ]] &&
+                ! "$bin" -w 5 -C INPUT -j "$CHAIN_INPUT" 2>/dev/null; then
+                "$bin" -w 5 -I INPUT "$((ts_pos + 1))" -j "$CHAIN_INPUT"
+            fi
+            while true; do
+                ts_pos="$(input_line "$bin" ts-input)"
+                master_after="$("$bin" -w 5 -L INPUT -n --line-numbers |
+                    awk -v c="$CHAIN_INPUT" -v ts="$ts_pos" \
+                        '$2 == c && $1+0 > ts+0 { n++; if (n==2) { print $1; exit } }')"
+                [[ -n "$master_after" ]] || break
+                "$bin" -w 5 -D INPUT "$master_after"
+            done
+            return 0
+        fi
+
+        if [[ -z "$master_after" ]]; then
+            "$bin" -w 5 -I INPUT "$((ts_pos + 1))" -j "$CHAIN_INPUT"
+        fi
+        master_before="$("$bin" -w 5 -L INPUT -n --line-numbers |
+            awk -v c="$CHAIN_INPUT" -v ts="$ts_pos" \
+                '$2 == c && $1+0 < ts+0 { print $1; exit }')"
+        [[ -n "$master_before" ]] || continue
+        "$bin" -w 5 -D INPUT "$master_before"
     done
-    pos="$("$bin" -w 5 -L INPUT -n --line-numbers |
-        awk '$2 == "ts-input" { print $1; exit }')"
-    if [[ -n "$pos" ]]; then
-        "$bin" -w 5 -I INPUT "$((pos + 1))" -j "$CHAIN_INPUT"
-    else
-        "$bin" -w 5 -I INPUT 1 -j "$CHAIN_INPUT"
-    fi
+    die "$bin: ts-input / $CHAIN_INPUT sırası düzeltilemedi"
 }
 
 create_staging() {
@@ -85,8 +133,12 @@ create_staging() {
 activate_named() {
     # Staging önce parent'a bağlanır; sonra eski final kaldırılır ve rename yapılır.
     # DOCKER-USER / INPUT içindeki diğer (üçüncü taraf) kurallar silinmez.
-    local bin="$1" parent="$2" staging="$3" final="$4"
-    "$bin" -w 5 -I "$parent" 1 -j "$staging"
+    # INPUT'ta staging, varsa ts-input'un hemen arkasına girer (gölgelememek için).
+    local bin="$1" parent="$2" staging="$3" final="$4" pos=1
+    if [[ "$parent" == "INPUT" ]]; then
+        pos="$(insert_pos_after_ts_input "$bin")"
+    fi
+    "$bin" -w 5 -I "$parent" "$pos" -j "$staging"
     while "$bin" -w 5 -C "$parent" -j "$final" 2>/dev/null; do
         "$bin" -w 5 -D "$parent" -j "$final"
     done
@@ -96,7 +148,6 @@ activate_named() {
     fi
     "$bin" -w 5 -E "$staging" "$final"
     ensure_jump "$bin" "$parent" "$final"
-    # rename sonrası staging adına kalan jump'ı temizle (olmamalı, yine de)
     while "$bin" -w 5 -C "$parent" -j "$staging" 2>/dev/null; do
         "$bin" -w 5 -D "$parent" -j "$staging"
     done
@@ -104,7 +155,7 @@ activate_named() {
 
 apply_input4() {
     local bin=iptables staging
-    staging="$(create_staging "$bin" MASTER-NEXT-IN-)"
+    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN-")"
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
@@ -121,7 +172,7 @@ apply_docker4() {
     local bin=iptables staging
     "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1 ||
         die "DOCKER-USER yok; Docker çalışıyor mu?"
-    staging="$(create_staging "$bin" MASTER-NEXT-DK-)"
+    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
     # WAN IP adresi gömülmez; arayüz + orijinal hedef port yeterli.
@@ -139,7 +190,7 @@ apply_docker4() {
 apply_input6() {
     local bin=ip6tables staging
     command -v "$bin" >/dev/null || die "ip6tables gerekli"
-    staging="$(create_staging "$bin" MASTER-NEXT-IN6-)"
+    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN6-")"
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
@@ -164,7 +215,7 @@ apply_docker6() {
     local bin=ip6tables staging
     "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1 ||
         die "ip6tables DOCKER-USER yok"
-    staging="$(create_staging "$bin" MASTER-NEXT-DK6-)"
+    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
     "$bin" -w 5 -A "$staging" -j DROP

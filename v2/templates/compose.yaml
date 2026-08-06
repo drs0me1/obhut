@@ -16,6 +16,7 @@ services:
   filebrowser:
     image: __FILEBROWSER_IMAGE__
     container_name: filebrowser
+    user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -128,8 +129,8 @@ services:
       net.ipv6.conf.default.forwarding: "1"
     networks:
       wg:
-        ipv4_address: 10.42.42.42
-        ipv6_address: fdcc:ad94:bacf:61a3::2a
+        ipv4_address: __WG_BRIDGE_IPV4__
+        ipv6_address: __WG_BRIDGE_IPV6__
 
 networks:
   wg:
@@ -139,8 +140,8 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 10.42.42.0/24
-        - subnet: fdcc:ad94:bacf:61a3::/64
+        - subnet: __WG_BRIDGE_SUBNET__
+        - subnet: __WG_BRIDGE_SUBNET6__
 
 volumes:
   portainer_data:

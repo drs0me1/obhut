@@ -3116,12 +3116,16 @@ separate document with its own numbering.
   `DOCKER-USER` but never wrote a host INPUT policy at all, so services
   listening on the host — WebDAV among them — were protected only by what
   they chose to bind to.
-- **v2-3 (2026-08-06): `ts-input` must precede `MASTER-INPUT`.** Every
-  `apply` inserts `MASTER-INPUT` at INPUT position 1, which previously
-  shadowed Tailscale's `ts-input` (UDP 41641 and CGNAT spoof guards).
-  `ensure_ts_input_precedence` now places `ts-input` first and
-  `MASTER-INPUT` immediately after; `--check` asserts the order when the
-  Tailscale chain exists.
+- **v2-3 (2026-08-06): `ts-input` must precede `MASTER-INPUT`.** Our
+  INPUT jump must not shadow Tailscale's `ts-input` (UDP 41641 / spoof
+  guards). `--check` asserts the order when the Tailscale chain exists.
+- **v2-16 (2026-08-07): reorder without a gap.** The first
+  `ensure_ts_input_precedence` deleted every `MASTER-INPUT` jump and then
+  re-inserted it after `ts-input`, leaving INPUT briefly without our
+  policy (default ACCEPT risk). Apply now inserts INPUT jumps after
+  `ts-input` when present (`activate_named` / `ensure_jump`), and
+  precedence repair uses insert-before-delete so a `MASTER-INPUT` jump
+  always remains while wrong earlier jumps are removed.
 - **v2-3: IPv6 INPUT must allow NDP/ICMPv6.** A terminal DROP of all NEW
   IPv6 (the first `apply_input6` shape) broke neighbor discovery for the
   provider's link-local default (`fe80::1` → `FAILED`), so IPv6 egress and
@@ -3238,21 +3242,99 @@ separate document with its own numbering.
 - **Trade-off:** One extra always-on process. Accepted for sub-second to
   few-second recovery versus a multi-minute edge outage.
 
-### DD-65: Edge apt install uses `policy-rc.d`, not unit mask (2026-08-06)
+### DD-70: Portable export verifies SHA-256 and extracts atomically (2026-08-07)
 
-- **Decision:** While installing `dnsmasq` / `caddy`, write
-  `/usr/sbin/policy-rc.d` that exits `101`, then remove it before
-  configuring and starting the units. Do not `systemctl mask` those units
-  for the apt window.
-- **Context:** Masking before `apt-get install` correctly prevented a
-  premature start, but `deb-systemd-helper` / `systemctl preset` logged
-  `Failed to preset unit: Unit … is masked` — looked like a failure even
-  though the install succeeded.
-- **Rationale:** `policy-rc.d` is the Debian-supported way to suppress
-  invoke-rc.d starts during package setup without leaving the unit in a
-  masked state that breaks preset. Leftover masks from older runs are still
-  cleared with `unmask` before enable.
-- **Trade-off:** None material; same “configure then start” ordering.
+- **Decision:** `export-v2.sh` records the runtime tarball SHA-256 in the
+  `.command` (`PORTABLE_ARCHIVE_SHA256`) and a `.sha256` sidecar. The
+  launcher checks the hash after decode and again on the host before
+  extract. Remote install unpacks into a temp directory, then `mv`s
+  `v2/` into place (no `rm -rf` of the live tree until the new tree is
+  ready to move).
+- **Context:** A truncated scp/tar could leave the host without a usable
+  `v2/` tree mid-sync.
+- **Rationale:** Hash catches corruption; staging extract avoids a window
+  with no installer on disk.
+- **Trade-off:** Slightly more remote disk during sync.
+
+### DD-69: Downloads tree is recursively `1000:1000` for stack R/W (2026-08-07)
+
+- **Decision:** Stage 3 always `chown -R ${DOWNLOADS_UID}:${DOWNLOADS_GID}`
+  on `${DOWNLOADS_PATH}` (default `1000:1000`), with `0775` dirs and `0664`
+  files. FileBrowser Compose service runs as the same uid:gid. qBittorrent
+  (`PUID`/`PGID`) and Unpackerr (`user:`) already matched.
+- **Context:** Creating only new dirs as `1000:1000` left existing trees
+  unreadable/unwritable to the stack; the operator asked for a permanent
+  shared R/W setup rather than a warning-only path.
+- **Rationale:** One host identity shared by the three writers avoids ACL
+  sprawl; WebDAV stays a separate read-only host user.
+- **Trade-off:** Re-runs rewrite ownership/mode on the whole tree (can be
+  slow on huge libraries; overrides prior custom ownership).
+
+### DD-68: Stage 7 covers the cheap contract §14 checks (2026-08-07)
+
+- **Decision:** End-of-install verification includes DNS against
+  `127.0.0.1` and `${TAILSCALE_IPV4}`, an out-of-domain `REFUSED`, Caddy
+  health, WebDAV unauthenticated `401` (direct + `webdav.` host),
+  unauthenticated write rejected (`401`/`403`/`405`), public peer
+  publishes for wg/qBit, and non-peer UI publishes only on `127.0.0.1`.
+- **Context:** Stage 7 previously only checked loopback DNS, health, and
+  WebDAV 401 — below contract §14’s success bar.
+- **Rationale:** These checks are fast, deterministic, and catch the
+  common “install said OK but ports/DNS wrong” failures without needing
+  stored WebDAV passwords (authenticated PROPFIND/write remain manual /
+  live Tier-3).
+- **Trade-off:** Authenticated WebDAV list/write and full Caddy site
+  non-5xx for every UI are still not asserted here.
+
+### DD-67: Re-runs skip full-upgrade and unchanged edge/compose restarts (2026-08-07)
+
+- **Decision:** `apt full-upgrade` runs on first install (no `state.env`),
+  when `V2_FULL_UPGRADE=1`, or when the operator answers yes to a prompt
+  (default **no** on re-run). `apt-get update` and package `install -y`
+  still run. dnsmasq/Caddy are restarted only if their rendered files or
+  drop-ins changed, or the unit is inactive; Compose `up -d` runs only if
+  `compose.yaml`/`.env` changed or fewer than five containers are running.
+  Edge `mask`+apt runs only when `dnsmasq`/`caddy` packages are missing.
+- **Context:** Every re-run previously paid for a full upgrade and bounced
+  the edge and Compose stack even when nothing changed.
+- **Rationale:** Matches contract §11 (“no unconditionally expensive
+  step”) while keeping first-install freshness and an explicit upgrade
+  path.
+- **Trade-off:** Operators who want updates on every re-run must answer
+  yes or set `V2_FULL_UPGRADE=1`.
+
+### DD-66: Runtime firewall values come from state, not script fallbacks (2026-08-07)
+
+- **Decision:** `master-firewall` requires `CHAIN_*`, `CHAIN_STAGING_PREFIX`,
+  and public ports from `state.env` (`${VAR:?}`). Staging chain names are
+  `${CHAIN_STAGING_PREFIX}` + `IN-` / `DK-` / `IN6-` / `DK6-`. DNS
+  verification loops `SERVICE_NAMES`; wg bridge IPs/subnets live in
+  `defaults.env` and are rendered into Compose.
+- **Context:** Fallbacks in `firewall.sh` could silently keep an old port
+  after the operator changed `defaults.env` / config. `SERVICE_NAMES` and
+  bridge literals were declared but not wired.
+- **Rationale:** Missing state must fail closed at apply time; a re-run of
+  the installer rewrites a complete `state.env`.
+- **Trade-off:** Hosts with a pre-v2-17 `state.env` need one installer
+  re-run (or a manual state edit) before `master-firewall apply` succeeds.
+
+### DD-65: Edge apt install keeps units masked; quiet the preset noise (revised 2026-08-07)
+
+- **Decision:** Stage 6 **masks** `dnsmasq.service` and `caddy.service`
+  before `apt-get install`, writes config/drop-ins, then `unmask` +
+  `enable` + `restart`. Apt stdout/stderr is filtered only for the known
+  `Failed to preset … is masked` / `deb-systemd-helper` / “static unit,
+  not starting” lines (full apt text still appends to the install log).
+  `policy-rc.d` is **not** used for this window.
+- **Context:** An earlier revision replaced mask with `policy-rc.d` to
+  silence apt. That removed the contract’s abort guarantee (§12): a failed
+  stage 6 must leave the optional edge units **off** (masked), not merely
+  “did not start during postinst”.
+- **Rationale:** Mask is the fail-closed primitive the contract already
+  documents. Log filtering restores operator clarity without weakening
+  abort safety.
+- **Trade-off:** Filter patterns are string-matched; a future apt wording
+  change could let noise through again — not a safety regression.
 
 ### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
 

@@ -6,21 +6,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — Doc sync, export sha256, install `acl` (`v2-21`)
+
+Aligns v2 contract/architecture naming and stage table with the live
+installer (`TAILSCALE_IPV4`, current stage ownership). Portable export
+embeds/verifies archive SHA-256 and extracts on the host via a staging
+directory before replacing `v2/`. Stage 1 installs the `acl` package for
+`setfacl`. Version `2026.08.06-v2-21`.
+
+### 2026-08-07 — Downloads tree owned 1000:1000 for stack R/W (`v2-20`)
+
+Every run sets `${DOWNLOADS_PATH}` recursively to `DOWNLOADS_UID:GID`
+(default 1000:1000), dirs `0775` / files `0664`. FileBrowser runs as the
+same uid:gid. qBittorrent/Unpackerr already used 1000:1000. Version
+`2026.08.06-v2-20`.
+
+### 2026-08-07 — Broader stage-7 success checks (`v2-19`)
+
+Stage 7 now verifies DNS via both loopback and Tailscale IPv4, out-of-domain
+`REFUSED`, WebDAV 401 through Caddy, unauthenticated write rejected, public
+wg/qBit publishes, and loopback-only UI publishes. Version
+`2026.08.06-v2-19`.
+
+### 2026-08-07 — Cheaper re-runs: gated upgrade and skip unchanged restarts (`v2-18`)
+
+Re-runs prompt before `apt full-upgrade` (default no; first install and
+`V2_FULL_UPGRADE=1` still upgrade). dnsmasq/Caddy restart and
+`docker compose up` run only when their files changed or the service is
+down. Edge packages are masked/installed only when missing. Version
+`2026.08.06-v2-18`.
+
+### 2026-08-07 — Tighten SSOT for firewall, services, wg bridge (`v2-17`)
+
+Firewall no longer falls back to hardcoded ports/chain names; it requires
+them from `state.env` (including `CHAIN_STAGING_PREFIX`). Stage 7 DNS checks
+iterate `SERVICE_NAMES`. wg-easy bridge addresses move into `defaults.env`
+and Compose tokens. Version `2026.08.06-v2-17`.
+
+### 2026-08-07 — Reorder ts-input without INPUT gap (`v2-16`)
+
+`master-firewall` inserts `MASTER-INPUT` after Tailscale's `ts-input` when
+that jump exists, and `ensure_ts_input_precedence` fixes a wrong order by
+adding the correct jump before deleting an earlier one (no
+delete-all-then-reinsert window). Version `2026.08.06-v2-16`.
+
+### 2026-08-07 — Restore edge fail-closed mask (`v2-15`)
+
+Stage 6 again masks `dnsmasq`/`caddy` across apt + configure so an abort
+leaves them off (contract §12). Known apt “preset … masked” lines are
+filtered from the console; the full apt transcript still goes to the
+install log. Drops the short-lived `policy-rc.d` approach (DD-65 revised).
+Version `2026.08.06-v2-15`.
+
+### 2026-08-06 — Versioned export apps under `v2/app/`
+
+Each `export-v2` run writes `v2/app/<V2_VERSION>.command` and refreshes
+`v2/app/latest.command` (optional Desktop copy with `--desktop`). The old
+`v2/dist/` single-name artifact is replaced by this versioned `app/` tree.
+
 ### 2026-08-06 — Quiet dnsmasq/Caddy apt install (`v2-14`)
 
-Stage 6 uses `/usr/sbin/policy-rc.d` (exit 101) instead of `systemctl mask`
-around the dnsmasq/Caddy package installs so apt postinst no longer prints
-`Failed to preset unit … is masked`. Services still stay down until config
-and drop-ins are written, then `enable` + `restart`. Version
-`2026.08.06-v2-14`.
+Stage 6 briefly used `policy-rc.d` instead of mask (superseded by `v2-15`).
+
 
 ### 2026-08-06 — Portable single-file macOS export
 
-`v2/dev/export-v2.sh` (`.command` wrapper) embeds the v2 runtime into
-`Master-Stack-v2-Install.command` (`dist/` + optional Desktop). That single
-file is the only install launcher — separate upload/sync helpers removed.
-Asks for SSH host, uploads, starts interactive install; no local repo at
-click time.
+`v2/dev/export-v2.sh` embeds the v2 runtime into a portable `.command`.
+That single file is the only install launcher — separate upload/sync helpers
+removed. Asks for SSH host, uploads, starts interactive install; no local
+repo at click time.
 
 ### 2026-08-06 — Export-ready v2 + edge systemd ordering (`v2-13`)
 

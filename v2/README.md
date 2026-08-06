@@ -7,30 +7,28 @@ reconcile engine.
 Authoritative behaviour: [`docs/v2-contract.md`](../docs/v2-contract.md).
 Layout and data flow: [`docs/v2-architecture.md`](../docs/v2-architecture.md).
 
-## Export → single portable app (macOS)
-
-There is no separate upload/copy helper. Export builds one self-contained
-`.command` that embeds the v2 runtime. Copy that file anywhere (Desktop,
-another Mac); no git checkout is required at click time.
+## Export → versioned portable app (macOS)
 
 ```bash
 v2/dev/export-v2.sh --desktop
 # or double-click: v2/dev/export-v2.command
 ```
 
-| Output | Role |
+Every export writes:
+
+| Path | Role |
 |---|---|
-| `dist/Master-Stack-v2-Install.command` | Portable installer (also copied to Desktop with `--desktop`) |
+| `app/<V2_VERSION>.command` | Versioned self-contained installer (kept) |
+| `app/<V2_VERSION>.command.sha256` | SHA-256 of the embedded runtime archive |
+| `app/latest.command` | Copy of the most recent export |
+| `~/Desktop/<V2_VERSION>.command` | Optional Desktop copy (`--desktop`) |
 
-Double-click the exported file → SSH host name (default `nrm`) → upload
-embedded archive → interactive `install.sh`. Enter accepts defaults; only
-the Tailscale login URL needs the browser. Override host with
-`DEPLOY_HOST=…`.
+The `.command` embeds the v2 runtime. Copy it anywhere; no git checkout is
+required at click time. Double-click → SSH host → upload → interactive
+`install.sh`.
 
-Requires SSH key auth to the target. First macOS open may need right-click
-→ Open if Gatekeeper quarantines the file.
-
-Rebuild the export after any change under `v2/` that should ship.
+Rebuild after any `v2/` change that should ship. Prior versioned files under
+`app/` are left in place.
 
 ## Runtime tree (what lands on the server)
 
@@ -44,7 +42,7 @@ v2/
 └── systemd/
 ```
 
-Not embedded in the export: `.cursor/`, `dev/`, `tests/`, `dist/`.
+Not embedded: `.cursor/`, `dev/`, `tests/`, `app/`.
 
 ## Manual install on the host
 

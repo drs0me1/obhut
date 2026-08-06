@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-14"
+V2_VERSION="2026.08.06-v2-21"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -14,6 +14,8 @@ source "$V2_ROOT/config/defaults.env"
 
 mkdir -p "$LOG_DIR" "$STATE_DIR" "$RUNTIME_DIR"
 V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
+RUN_FULL_UPGRADE=0
+COMPOSE_NEEDS_UP=1
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -58,6 +60,7 @@ SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
+CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
 EOF
 }
 
@@ -291,19 +294,38 @@ stage_0() {
             die "geçersiz WebDAV kullanıcı adı"
         prompt_secret_twice WEBDAV_NEW_PASS "WebDAV parolası"
     fi
+
+    RUN_FULL_UPGRADE=0
+    if [[ "${V2_FULL_UPGRADE:-}" == "1" ]]; then
+        RUN_FULL_UPGRADE=1
+        log INFO "full-upgrade: V2_FULL_UPGRADE=1"
+    elif [[ ! -r "$STATE_FILE" ]]; then
+        RUN_FULL_UPGRADE=1
+        log INFO "full-upgrade: ilk kurulum"
+    else
+        local upgrade_ans="h"
+        prompt upgrade_ans "Debian full-upgrade yapılsın mı? (uzun sürebilir)" "h"
+        if [[ "$upgrade_ans" =~ ^[EeYy]$ ]]; then
+            RUN_FULL_UPGRADE=1
+        else
+            log INFO "full-upgrade atlandı (yeniden kurulum)"
+        fi
+    fi
 }
 
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
     retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
-    retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
-        apt-get -y -o Dpkg::Options::=--force-confdef \
-            -o Dpkg::Options::=--force-confold full-upgrade
+    if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
+        retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
+            apt-get -y -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold full-upgrade
+    fi
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq rclone \
-        apache2-utils dnsutils
+        apache2-utils dnsutils acl
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
     if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then
@@ -390,20 +412,14 @@ stage_3() {
         "$DOWNLOADS_PATH" \
         "$DOWNLOADS_PATH/media" \
         "$DOWNLOADS_PATH/media/movies" \
-        "$DOWNLOADS_PATH/media/series"; do
-        if [[ ! -e "$d" ]]; then
-            mkdir -p "$d"
-            chown 1000:1000 "$d"
-            chmod 0755 "$d"
-        fi
+        "$DOWNLOADS_PATH/media/series" \
+        "$DOWNLOADS_PATH/.unpackerr"; do
+        mkdir -p "$d"
     done
-    # Unpackerr log dizini (UID 1000 yazabilsin)
-    if [[ ! -e "$DOWNLOADS_PATH/.unpackerr" ]]; then
-        mkdir -p "$DOWNLOADS_PATH/.unpackerr"
-        chown 1000:1000 "$DOWNLOADS_PATH/.unpackerr"
-        chmod 0755 "$DOWNLOADS_PATH/.unpackerr"
-    fi
-    log INFO "Mevcut medya ağacında recursive chown YOK"
+    chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$DOWNLOADS_PATH"
+    find "$DOWNLOADS_PATH" -type d -exec chmod 0775 {} +
+    find "$DOWNLOADS_PATH" -type f -exec chmod 0664 {} +
+    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (qBit/FileBrowser/Unpackerr R/W)"
 }
 
 stage_4() {
@@ -422,6 +438,7 @@ EOF
     ensure_wg_kernel_modules
 
     mkdir -p "$COMPOSE_DIR"
+    COMPOSE_NEEDS_UP=0
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         PORTAINER_IMAGE="$PORTAINER_IMAGE" \
         FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
@@ -434,13 +451,21 @@ EOF
         QBIT_PUBLIC_PORT="$QBIT_PUBLIC_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         WG_PUBLIC_PORT="$WG_PUBLIC_PORT" \
+        WG_BRIDGE_SUBNET="$WG_BRIDGE_SUBNET" \
+        WG_BRIDGE_IPV4="$WG_BRIDGE_IPV4" \
+        WG_BRIDGE_SUBNET6="$WG_BRIDGE_SUBNET6" \
+        WG_BRIDGE_IPV6="$WG_BRIDGE_IPV6" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        DOWNLOADS_UID="$DOWNLOADS_UID" \
+        DOWNLOADS_GID="$DOWNLOADS_GID" \
         QUANTUM_CONFIG_FILE="$QUANTUM_CONFIG_FILE" \
         TIMEZONE="$TIMEZONE"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
 
     atomic_write "$COMPOSE_DIR/.env" 0600 <<EOF
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 EOF
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
 
     # FileBrowser Quantum: panel kökü container /data = host DOWNLOADS_PATH
     if [[ ! -f "$QUANTUM_CONFIG_FILE" ]]; then
@@ -494,8 +519,6 @@ TAILSCALE_IF=$TAILSCALE_IF
 EOF
     chown root:root "$WEBDAV_HTPASSWD_FILE"
     chmod 0600 "$WEBDAV_HTPASSWD_FILE"
-    # servis kullanıcısı downloads'u okuyabilsin
-    # Yalnız kurulumun oluşturduğu erişim: recursive chown yok.
     setfacl -m u:master-webdav:rx "$DOWNLOADS_PATH" 2>/dev/null ||
         chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
@@ -506,45 +529,68 @@ EOF
     systemctl enable --now master-webdav.service
 }
 
+apt_get_install_masked_quiet() {
+    local tmp rc=0 line
+    tmp="$(mktemp)"
+    set +e
+    apt-get install -y "$@" >"$tmp" 2>&1
+    rc=$?
+    set -e
+    if [[ -n "${V2_LOG_FILE:-}" ]]; then
+        cat "$tmp" >>"$V2_LOG_FILE" 2>/dev/null || true
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == *"Failed to preset unit: Unit "* && "$line" == *" is masked" ]] ||
+            [[ "$line" == *"deb-systemd-helper: error: systemctl preset failed"* ]] ||
+            [[ "$line" == *".service is a disabled or a static unit"* ]]; then
+            continue
+        fi
+        printf '%s\n' "$line"
+    done <"$tmp"
+    rm -f "$tmp"
+    return "$rc"
+}
+
 stage_6() {
     log INFO "Aşama 6/7 — dnsmasq ve Caddy"
-    systemctl unmask dnsmasq caddy 2>/dev/null || true
-    systemctl stop dnsmasq caddy 2>/dev/null || true
+    local need_pkg=0
+    dpkg-query -W -f='${Status}' dnsmasq 2>/dev/null | grep -q 'install ok installed' || need_pkg=1
+    dpkg-query -W -f='${Status}' caddy 2>/dev/null | grep -q 'install ok installed' || need_pkg=1
 
-    atomic_write /usr/sbin/policy-rc.d 0755 <<'EOF'
-#!/bin/sh
-exit 101
-EOF
-    trap 'rm -f /usr/sbin/policy-rc.d' RETURN EXIT
-
-    retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y dnsmasq debian-keyring
-    if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
-        retry "caddy-gpg" 3 60 -- curl -1sLf \
-            'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-            gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        atomic_write /etc/apt/sources.list.d/caddy-stable.list 0644 <<'EOF'
+    if [[ "$need_pkg" -eq 1 ]]; then
+        systemctl stop dnsmasq caddy 2>/dev/null || true
+        systemctl mask dnsmasq.service caddy.service >/dev/null 2>&1 || true
+        retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- \
+            apt_get_install_masked_quiet dnsmasq debian-keyring
+        if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
+            retry "caddy-gpg" 3 60 -- curl -1sLf \
+                'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
+                gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+            chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+            atomic_write /etc/apt/sources.list.d/caddy-stable.list 0644 <<'EOF'
 deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
 EOF
-        retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+            retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+        fi
+        retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt_get_install_masked_quiet caddy
     fi
-    retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y caddy
-    rm -f /usr/sbin/policy-rc.d
-    trap - RETURN EXIT
 
     mkdir -p /etc/dnsmasq.d
+    local dnsmasq_changed=0 caddy_changed=0
     render_template "$V2_ROOT/templates/dnsmasq.conf" "$DNSMASQ_CONF_FILE" 0644 \
         TAILSCALE_IF="$TAILSCALE_IF" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
 
-    # systemd-resolved 53 çakışmasını azalt
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         mkdir -p /etc/systemd/resolved.conf.d
         atomic_write /etc/systemd/resolved.conf.d/master-stack.conf 0644 <<'EOF'
 [Resolve]
 DNSStubListener=no
 EOF
-        systemctl restart systemd-resolved || true
+        if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+            systemctl restart systemd-resolved || true
+        fi
     fi
 
     render_template "$V2_ROOT/templates/Caddyfile" "$CADDYFILE" 0644 \
@@ -555,6 +601,7 @@ EOF
         QBIT_UI_PORT="$QBIT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         WEBDAV_PORT="$WEBDAV_PORT"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
 
     mkdir -p /etc/systemd/system/dnsmasq.service.d
     atomic_write /etc/systemd/system/dnsmasq.service.d/master-stack.conf 0644 <<'EOF'
@@ -566,6 +613,7 @@ After=tailscaled.service
 Restart=on-failure
 RestartSec=5s
 EOF
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
 
     mkdir -p /etc/systemd/system/caddy.service.d
     atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
@@ -579,35 +627,111 @@ EnvironmentFile=$STATE_FILE
 Restart=on-failure
 RestartSec=5s
 EOF
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
 
     systemctl daemon-reload
     systemctl unmask dnsmasq caddy 2>/dev/null || true
     systemctl enable dnsmasq caddy
-    systemctl restart dnsmasq
-    systemctl restart caddy
+    if [[ "$dnsmasq_changed" -eq 1 ]] || ! systemctl is-active --quiet dnsmasq; then
+        systemctl restart dnsmasq
+    else
+        log INFO "dnsmasq yapılandırması aynı; yeniden başlatılmadı"
+    fi
+    if [[ "$caddy_changed" -eq 1 ]] || ! systemctl is-active --quiet caddy; then
+        systemctl restart caddy
+    else
+        log INFO "Caddy yapılandırması aynı; yeniden başlatılmadı"
+    fi
 }
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    (cd "$COMPOSE_DIR" && docker compose up -d)
+    local need_up="$COMPOSE_NEEDS_UP" running=0
+    local expected=5
+    if [[ "$need_up" -eq 0 ]]; then
+        running="$(
+            (cd "$COMPOSE_DIR" && docker compose ps --status running -q 2>/dev/null || true) |
+                wc -l | tr -d ' '
+        )"
+        [[ "$running" =~ ^[0-9]+$ ]] || running=0
+        if [[ "$running" -lt "$expected" ]]; then
+            need_up=1
+        fi
+    fi
+    if [[ "$need_up" -eq 1 ]]; then
+        (cd "$COMPOSE_DIR" && docker compose up -d)
+    else
+        log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
+    fi
     "$SBIN_DIR/master-firewall" --check
 
-    local name
-    for name in portainer wg qbit file webdav health; do
-        local ans
-        ans="$(dig +short "${name}.${LOCAL_DOMAIN}" @127.0.0.1 | head -n1 || true)"
-        [[ "$ans" == "$TAILSCALE_IPV4" ]] ||
-            die "DNS: ${name}.${LOCAL_DOMAIN} -> '${ans}' (beklenen $TAILSCALE_IPV4)"
+    local name resolver ans dig_out code health line svc
+    # shellcheck disable=SC2086
+    for name in $SERVICE_NAMES; do
+        for resolver in 127.0.0.1 "$TAILSCALE_IPV4"; do
+            ans="$(
+                dig +short +time=2 +tries=1 "${name}.${LOCAL_DOMAIN}" @"$resolver" |
+                    head -n1 || true
+            )"
+            [[ "$ans" == "$TAILSCALE_IPV4" ]] ||
+                die "DNS: ${name}.${LOCAL_DOMAIN} @$resolver -> '${ans}' (beklenen $TAILSCALE_IPV4)"
+        done
     done
 
-    local health
+    dig_out="$(
+        dig +time=2 +tries=1 +noall +comments "not-in-${LOCAL_DOMAIN}.example" \
+            @"$TAILSCALE_IPV4" 2>/dev/null || true
+    )"
+    [[ "$dig_out" == *"status: REFUSED"* ]] ||
+        die "DNS: alan dışı sorgu REFUSED değil (Tailscale DNS)"
+
     health="$(curl -fsS --max-time 5 "http://${TAILSCALE_IPV4}/" -H "Host: health.${LOCAL_DOMAIN}" || true)"
     [[ "$health" == "ok" ]] || die "Caddy health yanıtı beklenen gibi değil"
 
-    local code
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/" || true)"
     [[ "$code" == "401" ]] || die "WebDAV kimlik doğrulamasız yanıt $code (beklenen 401)"
+
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: webdav.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+    [[ "$code" == "401" ]] ||
+        die "WebDAV Caddy üzerinden kimlik doğrulamasız yanıt $code (beklenen 401)"
+
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -X PUT --data 'v2-probe' \
+        "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/.v2-write-probe" || true)"
+    [[ "$code" =~ ^(401|403|405)$ ]] ||
+        die "WebDAV yazma denemesi reddedilmedi (HTTP $code)"
+
+    (cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null |
+        grep -q "${WG_PUBLIC_PORT}/udp" ||
+        die "wg-easy public UDP ${WG_PUBLIC_PORT} publish yok"
+    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
+        grep -q "${QBIT_PUBLIC_PORT}/tcp" ||
+        die "qbittorrent public TCP ${QBIT_PUBLIC_PORT} publish yok"
+    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
+        grep -q "${QBIT_PUBLIC_PORT}/udp" ||
+        die "qbittorrent public UDP ${QBIT_PUBLIC_PORT} publish yok"
+
+    for svc in portainer filebrowser; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" ]] && continue
+            [[ "$line" == *127.0.0.1:* ]] ||
+                die "UI publish yalnız loopback olmalı: $svc ($line)"
+        done < <((cd "$COMPOSE_DIR" && docker port "$svc") 2>/dev/null || true)
+    done
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" == *"${QBIT_PUBLIC_PORT}/"* ]] && continue
+        [[ "$line" == *127.0.0.1:* ]] ||
+            die "qBit UI publish yalnız loopback olmalı ($line)"
+    done < <((cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null || true)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" == *"${WG_PUBLIC_PORT}/"* ]] && continue
+        [[ "$line" == *127.0.0.1:* ]] ||
+            die "wg-easy UI publish yalnız loopback olmalı ($line)"
+    done < <((cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null || true)
 
     log INFO "Temel doğrulamalar geçti"
 }

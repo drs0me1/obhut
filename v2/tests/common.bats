@@ -84,13 +84,21 @@ EOF
 }
 
 @test "atomic_write skips replace when content identical" {
-    printf 'same\n' | atomic_write "$TMP/f" 0644
+    atomic_write "$TMP/f" 0644 <<<"same"
     local before
     before="$(stat -f '%i' "$TMP/f" 2>/dev/null || stat -c '%i' "$TMP/f")"
-    printf 'same\n' | atomic_write "$TMP/f" 0644
+    atomic_write "$TMP/f" 0644 <<<"same"
     local after
     after="$(stat -f '%i' "$TMP/f" 2>/dev/null || stat -c '%i' "$TMP/f")"
     [ "$before" = "$after" ]
+    [ "$V2_LAST_ATOMIC_CHANGED" -eq 0 ]
+}
+
+@test "atomic_write sets changed flag on replace" {
+    atomic_write "$TMP/f" 0644 <<<"a"
+    [ "$V2_LAST_ATOMIC_CHANGED" -eq 1 ]
+    atomic_write "$TMP/f" 0644 <<<"b"
+    [ "$V2_LAST_ATOMIC_CHANGED" -eq 1 ]
 }
 
 @test "render_template replaces tokens" {
@@ -152,9 +160,29 @@ EOF
         "$V2_ROOT/scripts/firewall.sh")" -ge 2 ]]
 }
 
+@test "firewall requires ports and chains from state" {
+    grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'WG_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'QBIT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
+    ! grep -qE 'WG_PUBLIC_PORT:=65171|QBIT_PUBLIC_PORT:=65173|CHAIN_INPUT:=MASTER' \
+        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
+}
+
 @test "qbittorrent runs as uid 1000" {
     grep -q 'PUID: "1000"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'PGID: "1000"' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "downloads tree is chown 1000 for qbit filebrowser unpackerr" {
+    grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
+    grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
+    grep -q 'chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}"' "$V2_ROOT/install.sh"
+    grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
+        "$V2_ROOT/templates/compose.yaml"
+    grep -q 'user: "1000:1000"' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "compose publishes portainer https on 9443" {
@@ -196,12 +224,31 @@ EOF
     grep -q 'wg show | /bin/grep -q interface' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "wg-easy uses fixed bridge network 10.42.42.42" {
-    grep -q 'ipv4_address: 10.42.42.42' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'ipv6_address: fdcc:ad94:bacf:61a3::2a' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'subnet: 10.42.42.0/24' "$V2_ROOT/templates/compose.yaml"
+@test "wg-easy bridge addresses come from defaults.env tokens" {
+    grep -q 'WG_BRIDGE_IPV4=' "$V2_ROOT/config/defaults.env"
+    grep -q 'WG_BRIDGE_SUBNET=' "$V2_ROOT/config/defaults.env"
+    grep -q 'ipv4_address: __WG_BRIDGE_IPV4__' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'ipv6_address: __WG_BRIDGE_IPV6__' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'subnet: __WG_BRIDGE_SUBNET__' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'subnet: __WG_BRIDGE_SUBNET6__' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'WG_BRIDGE_IPV4=' "$V2_ROOT/install.sh"
     grep -q 'name: wg' "$V2_ROOT/templates/compose.yaml"
     grep -q 'enable_ipv6: true' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "SERVICE_NAMES drives DNS check and matches edge templates" {
+    grep -q 'for name in \$SERVICE_NAMES' "$V2_ROOT/install.sh"
+    # shellcheck source=/dev/null
+    source "$V2_ROOT/config/defaults.env"
+    [[ -n "$SERVICE_NAMES" ]]
+    local name
+    for name in $SERVICE_NAMES; do
+        grep -q "interface-name=${name}.__LOCAL_DOMAIN__" \
+            "$V2_ROOT/templates/dnsmasq.conf"
+        grep -q "http://${name}.__LOCAL_DOMAIN__" \
+            "$V2_ROOT/templates/Caddyfile"
+    done
+    ! grep -q 'CONTAINER_NAMES=' "$V2_ROOT/config/defaults.env"
 }
 
 @test "compose public UDP ports are not bound to WAN_IPV4" {
@@ -271,6 +318,14 @@ EOF
     ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
 
+@test "ts-input precedence does not delete-all MASTER-INPUT jumps" {
+    grep -q 'ensure_ts_input_precedence' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'insert_pos_after_ts_input' "$V2_ROOT/scripts/firewall.sh"
+    ! awk '/^ensure_ts_input_precedence\(\)/,/^create_staging\(\)/' \
+        "$V2_ROOT/scripts/firewall.sh" |
+        grep -qE 'while .*-D INPUT -j "\$CHAIN_INPUT"'
+}
+
 @test "master-firewall unit is WantedBy docker.service" {
     grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
@@ -290,11 +345,43 @@ EOF
         grep -q 'PartOf=tailscaled.service'
 }
 
-@test "edge apt install uses policy-rc.d not mask" {
-    grep -q '/usr/sbin/policy-rc.d' "$V2_ROOT/install.sh"
-    grep -q 'exit 101' "$V2_ROOT/install.sh"
-    ! grep -q 'systemctl mask --now dnsmasq' "$V2_ROOT/install.sh"
-    ! grep -q 'systemctl mask --now caddy' "$V2_ROOT/install.sh"
+@test "edge apt install masks units until configured" {
+    grep -q 'systemctl mask dnsmasq.service caddy.service' "$V2_ROOT/install.sh"
+    grep -q 'apt_get_install_masked_quiet' "$V2_ROOT/install.sh"
+    ! grep -q '/usr/sbin/policy-rc.d' "$V2_ROOT/install.sh"
+    awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'systemctl unmask dnsmasq caddy'
+}
+
+@test "re-run gates full-upgrade and skips unchanged edge restart" {
+    grep -q 'RUN_FULL_UPGRADE' "$V2_ROOT/install.sh"
+    grep -q 'V2_FULL_UPGRADE' "$V2_ROOT/install.sh"
+    grep -q 'full-upgrade yapılsın mı' "$V2_ROOT/install.sh"
+    grep -q 'COMPOSE_NEEDS_UP' "$V2_ROOT/install.sh"
+    grep -q 'yapılandırması aynı; yeniden başlatılmadı' "$V2_ROOT/install.sh"
+    grep -q 'Compose dosyası aynı ve konteynerler ayakta' "$V2_ROOT/install.sh"
+    grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
+}
+
+@test "base packages include acl for setfacl" {
+    grep -q 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
+}
+
+@test "export-v2 embeds archive sha256 and stages remote extract" {
+    grep -q 'PORTABLE_ARCHIVE_SHA256' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'sha256sum' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'dsi-v2-extract' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'staging/v2' "$V2_ROOT/dev/export-v2.sh"
+}
+
+@test "stage 7 checks DNS on Tailscale IP and publish surface" {
+    grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
+    grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
+    grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
+    grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
+    grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
+    grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
+    grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
 }
 
 @test "install holds systemd-inhibit" {

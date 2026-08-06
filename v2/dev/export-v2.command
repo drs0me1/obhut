@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Çift tık: v2'yi taşınabilir tek dosya app olarak export et → dist + Masaüstü
+# Çift tık: v2'yi taşınabilir app olarak export et → v2/app/<sürüm>.command + Masaüstü
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "$0")"
 ./export-v2.sh --desktop
 
+V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' ../install.sh)"
+APP_FILE="../app/${V2_VERSION}.command"
+
 cat <<EOF
 
 Export tamam.
 
-  • Repo:     ../dist/Master-Stack-v2-Install.command
-  • Masaüstü: ~/Desktop (veya ~/Masaüstü) / Master-Stack-v2-Install.command
-
-Bu tek dosya tüm v2 runtime'ını içerir; başka Mac'e kopyalanıp çift tıklanır.
-SSH sunucu adını sorar, yükler ve kurulumu başlatır.
+  • App:      $APP_FILE
+  • latest:   ../app/latest.command
+  • Masaüstü: ~/{Desktop|Masaüstü}/${V2_VERSION}.command
 
 EOF
 
 read -r -p "Şimdi kurulumu başlat? [E/h]: " ans || true
 ans="${ans:-E}"
 if [[ "$ans" =~ ^[EeYy]$ ]]; then
-    exec ../dist/Master-Stack-v2-Install.command
+    exec "$APP_FILE"
 fi
 read -r -p "Pencereyi kapatmak için Enter..."

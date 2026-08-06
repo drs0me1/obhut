@@ -105,7 +105,8 @@ v2/
 ├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
 ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
 ├── systemd/                       units (firewall, webdav, GRO, refresh, watch)
-├── dist/                          exported Master-Stack-v2-Install.command (embedded runtime)
+├── app/<V2_VERSION>.command       versioned portable install apps (export output)
+├── app/latest.command             most recent export
 ├── dev/export-v2.sh               build the portable install app (+ .command wrapper)
 └── tests/                         bats suites (not on host)
 ```
@@ -161,7 +162,7 @@ in §10, not resolved silently.
 | `scripts/watch-tailnet-addr` | `ip monitor address` on `tailscale0`; start refresh on change | How refresh updates consumers |
 | `scripts/webdav.sh` → `master-webdav` | Resolve the current Tailscale IPv4 with a bounded wait, then exec the read-only WebDAV server bound to it | Why it is needed, who consumes it |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
-| `dev/export-v2.sh` | Build the self-contained macOS install `.command` | Host runtime |
+| `dev/export-v2.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
 
 ### 3.3 Placeholder convention
@@ -392,14 +393,14 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, Debian 13, lock, inhibit); ask domain, downloads path, WebDAV credentials; render `config.env` | operator input |
-| 1 | System update, package installation, timezone | `apt` |
+| 0 | Gates (root, tty, Debian 13, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
+| 1 | `apt update`; optional `full-upgrade`; base packages (incl. `acl`); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
-| 3 | Address detection → `state.env`; directories; WebDAV credential file | installer |
-| 4 | Docker installation; render `compose.yaml`, `.env`, `filebrowser.yaml`, `webdav.env`; install scripts and units | templates |
-| 5 | Firewall: install and apply `master-firewall`; start `master-webdav` | `scripts/master-firewall` |
-| 6 | dnsmasq and Caddy: install (masked), render configuration, unmask, start | DNS/HTTP |
-| 7 | Start containers; end-to-end verification (contract §14) once | verification |
+| 3 | Address detection → `state.env`; downloads tree `chown` `1000:1000` | installer |
+| 4 | Docker; render `compose.yaml` / `.env` / FileBrowser config; install scripts and units | templates |
+| 5 | `webdav.env`; apply `master-firewall`; enable WebDAV / refresh / watch | firewall + WebDAV |
+| 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
+| 7 | Compose `up` if needed; cheap contract §14 checks | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,
@@ -413,8 +414,8 @@ places.
 
 The lean `v2/` tree is executable: `install.sh` runs the seven stages on a
 Debian 13 host. `v2/dev/export-v2.sh` embeds a runtime-only tarball
-(excluding `.cursor/`, `dev/`, `tests/`, `dist/`) into
-`Master-Stack-v2-Install.command`, which uploads and starts install over
+(excluding `.cursor/`, `dev/`, `tests/`, `app/`) into
+`v2/app/<V2_VERSION>.command`, which uploads and starts install over
 `ssh -t`.
 
 Static checks for this tree:
@@ -491,24 +492,20 @@ decision with a new name, not a constant that survives by inertia.
    document a manual re-run. Note that **DD-61** closes the door on
    solving this inside `refresh-tailnet-config` as currently scoped: doing
    so would mean recreating containers, which that helper must not do.
-2. **Comment policy for v2.** `install.sh` carries no explanatory comments
-   at all (DD-44): the rationale lives in `docs/design-decisions.md`
-   because nobody reads the installer in an editor. v2's files are small,
-   separate and reviewable, so the same reasoning may not apply. The
-   skeleton currently carries scaffold comments; whether the implemented
-   version keeps them needs a decision, and DD-44 needs to say which way.
+2. **Comment policy for v2.** Settled for `install.sh` (DD-44: no
+   editorial comments; rationale in `docs/design-decisions.md`). Helper
+   scripts under `v2/scripts/` may keep short operational comments.
 3. **Whether `master-compose.service` returns in a later phase.** It is out
    of the first release; if a public IPv4 change is to be handled
    automatically, it may need to come back in a much smaller form.
-4. **Whether Debian's stub resolver contends for `127.0.0.1:53`.**
-   **DD-60** settles that dnsmasq *should* bind loopback; it does not
-   settle what happens if `systemd-resolved` already holds that socket on
-   the target. This is an implementation question for the DNS phase — to
-   be answered by looking at the actual host, not by another decision.
+4. **`systemd-resolved` vs dnsmasq on `127.0.0.1:53`.** Stage 6 writes
+   `DNSStubListener=no` when resolved is active; still worth confirming on
+   unusual images.
 5. **What a loopback query actually answers.** `interface-name` is
    expected to return the `tailscale0` address regardless of the arrival
    interface, which is the entire reason the loopback listener is useful
-   for testing. It has not been measured. The DNS phase carries it as an
+   for testing. Measured on the live host in stage 7 (both `@127.0.0.1`
+   and `@TAILSCALE_IPV4`). The DNS phase carries it as an
    acceptance test on a clean Debian 13 target: `dig +short NAME
    @127.0.0.1` and `dig +short NAME @${TAILSCALE_IPV4}` must agree, and must
    both return `${TAILSCALE_IPV4}`.

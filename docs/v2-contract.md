@@ -105,11 +105,10 @@ the ones agreed on 2026-08-05:
 - `/downloads`, `/downloads/media`, `/downloads/media/movies`,
   `/downloads/media/series` and the Unpackerr work directory are created
   when absent (**R8**).
-- **No unconditional recursive `chown` over an existing media tree.**
-  Ownership is set on directories the installer itself creates. An
-  operator-visible warning is printed if existing content is owned such
-  that the containers cannot use it; repairing it is an explicit,
-  separately invoked action, never a side effect of a re-run.
+- **The downloads tree is owned `1000:1000` (defaults: `DOWNLOADS_UID` /
+  `DOWNLOADS_GID`) recursively on every run**, with directories `0775` and
+  files `0664`, so qBittorrent, FileBrowser and Unpackerr share read/write
+  access. WebDAV remains read-only via the host service.
 
 ### 1.5 DNS and Caddy
 
@@ -279,7 +278,7 @@ Apple TV**, reading the media library over the tailnet.
 - Access is **read-only**. Infuse never writes; the service must make a
   write impossible rather than merely discouraged.
 - The installer creates only the directories it needs. It does not run a
-  recursive `chown` over an existing `/downloads` tree (see §1.4).
+  host ownership of `/downloads` (see §1.4); WebDAV itself stays read-only.
 
 This is why WebDAV is a host service and not a container: it must bind to
 the Tailscale address, which lives on the host, and it must survive Docker
@@ -320,7 +319,7 @@ property the implementation must satisfy and a test must assert.
 6. **The password is not written to any environment file** — not
    `webdav.env`, not `config.env`, not `state.env`, not
    `v2/config/defaults.env`. The forbidden keys are named explicitly in
-   `webdav.env.tmpl`: `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`,
+   `defaults.env`: `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`,
    `WEBDAV_USER_PASSWORD`.
 7. **The password does not appear on a command line.** The server is
    pointed at a file path, so `ps` output contains no secret.
