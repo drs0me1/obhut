@@ -28,7 +28,7 @@ esac
 source "$STATE_FILE"
 
 : "${WAN_INTERFACE:?}"
-: "${WAN_IPV4:?}"
+: "${WAN_IPV4:=}"
 : "${TAILSCALE_IF:=tailscale0}"
 : "${CHAIN_INPUT:=MASTER-INPUT}"
 : "${CHAIN_DOCKER:=MASTER-DOCKER}"
@@ -99,12 +99,11 @@ apply_docker4() {
     staging="$(create_staging "$bin" MASTER-NEXT-DK-)"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
+    # WAN IP adresi gömülmez; arayüz + orijinal hedef port yeterli.
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
-        -m conntrack --ctstate NEW \
-        --ctorigdst "$WAN_IPV4" --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
+        -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
-        -m conntrack --ctstate NEW \
-        --ctorigdst "$WAN_IPV4" --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
+        -m conntrack --ctstate NEW --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
@@ -151,4 +150,4 @@ apply_input4
 apply_docker4
 apply_input6
 apply_docker6
-printf 'firewall: politika uygulandı (WAN=%s %s)\n' "$WAN_INTERFACE" "$WAN_IPV4"
+printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

@@ -65,6 +65,7 @@ write_config() {
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
+WEBDAV_PORT=$WEBDAV_PORT
 TIMEZONE=$TIMEZONE
 EOF
 }
@@ -213,12 +214,14 @@ stage_0() {
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
 
     local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT" prev_wg=""
+    local prev_webdav_port="$WEBDAV_PORT"
     if [[ -r "$CONFIG_FILE" ]]; then
         # shellcheck source=/dev/null
         source "$CONFIG_FILE"
         prev_domain="${LOCAL_DOMAIN:-$prev_domain}"
         prev_dl="${DOWNLOADS_PATH:-$prev_dl}"
         prev_wg="${WG_ENDPOINT_HOST:-}"
+        prev_webdav_port="${WEBDAV_PORT:-$prev_webdav_port}"
     fi
 
     prompt LOCAL_DOMAIN "Yerel alan adı" "$prev_domain"
@@ -226,6 +229,17 @@ stage_0() {
         die "geçersiz alan adı: $LOCAL_DOMAIN"
     prompt DOWNLOADS_PATH "Downloads dizini" "$prev_dl"
     [[ "$DOWNLOADS_PATH" == /* ]] || die "downloads yolu mutlak olmalı"
+
+    prompt WEBDAV_PORT "WebDAV portu (yalnız Tailnet)" "$prev_webdav_port"
+    [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
+    [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
+        die "WebDAV portu 1-65535 arasında olmalı"
+    case "$WEBDAV_PORT" in
+        53 | 80 | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
+        "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT")
+            die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
+            ;;
+    esac
 
     detect_wan
     if [[ -n "$prev_wg" ]]; then
@@ -318,6 +332,7 @@ stage_3() {
         "$DOWNLOADS_PATH/media/series"; do
         if [[ ! -e "$d" ]]; then
             mkdir -p "$d"
+            chown 1000:1000 "$d"
             chmod 0755 "$d"
         fi
     done
@@ -362,7 +377,6 @@ EOF
         TIMEZONE="$TIMEZONE"
 
     atomic_write "$COMPOSE_DIR/.env" 0600 <<EOF
-WAN_IPV4=$WAN_IPV4
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 EOF
 
@@ -388,6 +402,8 @@ EOF
 
     install -m 0755 "$V2_ROOT/scripts/firewall.sh" "$SBIN_DIR/master-firewall"
     install -m 0755 "$V2_ROOT/scripts/webdav.sh" "$SBIN_DIR/master-webdav"
+    install -m 0755 "$V2_ROOT/scripts/refresh-tailnet-config" \
+        "$SBIN_DIR/refresh-tailnet-config"
     # Unit içindeki /downloads yolunu operatör seçimine göre yaz
     sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
         "$V2_ROOT/systemd/master-webdav.service" |
@@ -410,6 +426,22 @@ ExecStartPost=$SBIN_DIR/master-firewall --check
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # tailscaled her (yeniden) başladığında TS IP değiştiyse Caddy+WebDAV tazelenir
+    atomic_write /etc/systemd/system/refresh-tailnet-config.service 0644 <<EOF
+[Unit]
+Description=Refresh master-stack Tailscale addresses in state.env
+After=network-online.target tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=oneshot
+Environment=STATE_FILE=$STATE_FILE
+ExecStart=$SBIN_DIR/refresh-tailnet-config
+
+[Install]
+WantedBy=tailscaled.service
+EOF
     systemctl daemon-reload
 }
 
@@ -429,6 +461,7 @@ EOF
         chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
     systemctl enable master-firewall.service
+    systemctl enable refresh-tailnet-config.service
     "$SBIN_DIR/master-firewall" apply
     systemctl enable --now master-webdav.service
 }
@@ -533,6 +566,9 @@ Manuel Tailscale Admin:
 Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
 qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse)
+wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
+  (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez)
+Tailscale IP değişince: refresh-tailnet-config (Caddy + WebDAV + state.env)
 
 EOF
 }
