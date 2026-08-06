@@ -95,8 +95,8 @@ services:
     container_name: wg-easy
     restart: unless-stopped
     # v15: WireGuard dinleme portu env ile set edilmez; ilk web kurulumunda
-    # Host=WG_ENDPOINT_HOST, Port=WG_PUBLIC_PORT (defaults ile ayni) secilir.
-    # Docker map 1:1 — ic ve dis UDP ayni (legacy ile ayni model).
+    # Host=tespit edilen WAN_IPV4, Port=WG_PUBLIC_PORT (aşama 0) seçilir.
+    # Docker map 1:1 — iç ve dış UDP aynı; port değişince şablon yeniden yazılır.
     environment:
       TZ: __TIMEZONE__
       INSECURE: "true"

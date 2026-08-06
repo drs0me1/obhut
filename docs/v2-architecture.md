@@ -71,7 +71,7 @@ later became a permanent drift alarm.
 | | `config.env` | `state.env` |
 |---|---|---|
 | **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
-| **Contains** | Choices: local domain, downloads path, timezone, port numbers, image references, container names | Detected facts: WAN interface, public IPv4, `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version and SHA, recorded image digests |
+| **Contains** | Choices: local domain, downloads path, timezone, `WG_PUBLIC_PORT`, WebDAV port | Detected facts: WAN interface, WAN IPv4, `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version; `WG_ENDPOINT_HOST` is a derived hint equal to current `WAN_IPV4` (not an operator prompt) |
 | **Source** | `v2/config/defaults.env` + operator answers | `v2/lib/network.sh` at run time |
 | **Written by** | The installer, once per run | The installer, and `refresh-tailnet-config` when an address changes |
 | **Lifetime** | Persistent; a re-run offers the previous value as the default | Regenerated freely; nothing in it is a decision |

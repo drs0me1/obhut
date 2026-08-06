@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-3"
+V2_VERSION="2026.08.06-v2-4"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -64,7 +64,7 @@ write_config() {
     atomic_write "$CONFIG_FILE" 0600 <<EOF
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
-WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
+WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 WEBDAV_PORT=$WEBDAV_PORT
 TIMEZONE=$TIMEZONE
 EOF
@@ -240,15 +240,22 @@ stage_0() {
     [[ -t 0 || -r /dev/tty ]] || die "etkileşimli TTY gerekli"
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
 
-    local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT" prev_wg=""
-    local prev_webdav_port="$WEBDAV_PORT"
+    local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT"
+    local prev_webdav_port="$WEBDAV_PORT" prev_wg_port="$WG_PUBLIC_PORT"
+    if [[ -r "$STATE_FILE" ]]; then
+        local state_wg
+        state_wg="$(awk -F= '/^WG_PUBLIC_PORT=/{print $2; exit}' "$STATE_FILE" || true)"
+        [[ "$state_wg" =~ ^[0-9]+$ ]] && prev_wg_port="$state_wg"
+    fi
     if [[ -r "$CONFIG_FILE" ]]; then
         # shellcheck source=/dev/null
         source "$CONFIG_FILE"
         prev_domain="${LOCAL_DOMAIN:-$prev_domain}"
         prev_dl="${DOWNLOADS_PATH:-$prev_dl}"
-        prev_wg="${WG_ENDPOINT_HOST:-}"
         prev_webdav_port="${WEBDAV_PORT:-$prev_webdav_port}"
+        if grep -q '^WG_PUBLIC_PORT=' "$CONFIG_FILE"; then
+            prev_wg_port="${WG_PUBLIC_PORT:-$prev_wg_port}"
+        fi
     fi
 
     prompt LOCAL_DOMAIN "Yerel alan adı" "$prev_domain"
@@ -256,6 +263,20 @@ stage_0() {
         die "geçersiz alan adı: $LOCAL_DOMAIN"
     prompt DOWNLOADS_PATH "Downloads dizini" "$prev_dl"
     [[ "$DOWNLOADS_PATH" == /* ]] || die "downloads yolu mutlak olmalı"
+
+    prompt WG_PUBLIC_PORT "wg-easy public UDP port" "$prev_wg_port"
+    [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "wg-easy UDP portu sayı olmalı"
+    [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
+        die "wg-easy UDP portu 1-65535 arasında olmalı"
+    case "$WG_PUBLIC_PORT" in
+        53 | 80 | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
+        "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port")
+            die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
+            ;;
+    esac
+    if [[ "$WG_PUBLIC_PORT" != "$prev_wg_port" ]]; then
+        log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
+    fi
 
     prompt WEBDAV_PORT "WebDAV portu (yalnız Tailnet)" "$prev_webdav_port"
     [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
@@ -269,11 +290,7 @@ stage_0() {
     esac
 
     detect_wan
-    if [[ -n "$prev_wg" ]]; then
-        prompt WG_ENDPOINT_HOST "wg-easy endpoint (IP veya DNS)" "$prev_wg"
-    else
-        prompt WG_ENDPOINT_HOST "wg-easy endpoint (IP veya DNS)" "$WAN_IPV4"
-    fi
+    WG_ENDPOINT_HOST="$WAN_IPV4"
 
     write_config
 
@@ -582,7 +599,7 @@ WAN:          $WAN_INTERFACE $WAN_IPV4
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
-wg endpoint:  $WG_ENDPOINT_HOST
+wg UDP:       ${WG_PUBLIC_PORT} (endpoint ipucu: $WG_ENDPOINT_HOST)
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
 Log:          $V2_LOG_FILE
@@ -596,7 +613,7 @@ Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
 qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
-  (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez)
+  (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
 Tailscale IP değişince: refresh-tailnet-config (Caddy + WebDAV + state.env)
 
 EOF

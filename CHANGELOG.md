@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — v2 Stage 0 asks for wg public UDP port, not endpoint (`v2-4`)
+
+Stage 0 no longer prompts for a wg-easy DNS/IP endpoint. `WG_ENDPOINT_HOST`
+is set from the detected `WAN_IPV4` for first-run UI hints only.
+`WG_PUBLIC_PORT` is prompted (default/previous from `config.env`), stored in
+`config.env`/`state.env`, and Stage 4 always re-renders Compose so a changed
+UDP port republishes `port:port` and the firewall follows on re-run.
+Version marker `2026.08.06-v2-4`.
+
 ### 2026-08-06 — v2 firewall: `ts-input` before `MASTER-INPUT`, ICMPv6 for NDP (`v2-3`)
 
 `v2/scripts/firewall.sh` now reorders INPUT so Tailscale's `ts-input` jump
