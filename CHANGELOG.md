@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — v2 wg-easy fixed bridge network `10.42.42.42`
+
+Compose places `wg-easy` on a dedicated `wg` bridge (`10.42.42.0/24` +
+ULA `/64`) with static `10.42.42.42` / `fdcc:ad94:bacf:61a3::2a`, matching
+legacy isolation from the default Compose network.
+
+### 2026-08-06 — v2 wg-easy healthcheck uses legacy H5 timing
+
+`v2/templates/compose.yaml` now overrides the image HEALTHCHECK with the
+legacy block: `wg show | grep interface`, `start_period: 60s`,
+`start_interval: 5s` — so Docker does not sit in `starting` for a full
+60s interval after `wg0` is already up.
+
 ### 2026-08-06 — Allow WAN SSH (TCP 22) in MASTER-INPUT (`v2-6`)
 
 `MASTER-INPUT` accepts inbound TCP `${SSH_PUBLIC_PORT}` (default 22) on the

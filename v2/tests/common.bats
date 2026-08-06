@@ -180,6 +180,20 @@ EOF
     ! grep -q 'WG_PORT:' "$V2_ROOT/templates/compose.yaml"
 }
 
+@test "wg-easy healthcheck matches legacy H5 timing" {
+    grep -q 'start_interval: 5s' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'start_period: 60s' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'wg show | /bin/grep -q interface' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "wg-easy uses fixed bridge network 10.42.42.42" {
+    grep -q 'ipv4_address: 10.42.42.42' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'ipv6_address: fdcc:ad94:bacf:61a3::2a' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'subnet: 10.42.42.0/24' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'name: wg' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'enable_ipv6: true' "$V2_ROOT/templates/compose.yaml"
+}
+
 @test "compose public UDP ports are not bound to WAN_IPV4" {
     grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
