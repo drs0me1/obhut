@@ -1,7 +1,8 @@
 # v2 Behaviour Contract
 
-**Status:** design contract, frozen 2026-08-05. No v2 code implements it yet;
-`v2/` currently holds a non-executable skeleton.
+**Status:** behaviour contract (frozen intent 2026-08-05). Implemented by the
+lean tree under `v2/` (`install.sh` and helpers). Where live code and this
+document diverge, prefer the code and update this file.
 
 This document is the authoritative statement of what the v2 installer does
 and — just as importantly — what it deliberately refuses to do. It exists
@@ -538,11 +539,11 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | `on-failure` |
 
 The Caddy drop-in also carries
-`EnvironmentFile=/etc/master-stack/state.env`, which is how `{$TS_IPV4}` in
-the Caddyfile is resolved at daemon start. There is no separately rendered
-environment file (**DD-61**), so `state.env` must be written in a form both
-bash and systemd can parse: plain `KEY=value`, unquoted, no spaces around
-`=`.
+`EnvironmentFile=/etc/master-stack/state.env`, which is how
+`{$TAILSCALE_IPV4}` in the Caddyfile is resolved at daemon start. There is
+no separately rendered environment file (**DD-61**), so `state.env` must be
+written in a form both bash and systemd can parse: plain `KEY=value`,
+unquoted, no spaces around `=`.
 
 Invariants:
 

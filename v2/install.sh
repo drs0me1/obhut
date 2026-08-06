@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-12"
+V2_VERSION="2026.08.06-v2-13"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -549,12 +549,31 @@ EOF
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         WEBDAV_PORT="$WEBDAV_PORT"
 
-    mkdir -p /etc/systemd/system/caddy.service.d
-    atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
+    mkdir -p /etc/systemd/system/dnsmasq.service.d
+    atomic_write /etc/systemd/system/dnsmasq.service.d/master-stack.conf 0644 <<'EOF'
+[Unit]
+Wants=tailscaled.service
+After=tailscaled.service
+
 [Service]
-EnvironmentFile=$STATE_FILE
+Restart=on-failure
+RestartSec=5s
 EOF
 
+    mkdir -p /etc/systemd/system/caddy.service.d
+    atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
+[Unit]
+Wants=tailscaled.service
+After=tailscaled.service
+PartOf=tailscaled.service
+
+[Service]
+EnvironmentFile=$STATE_FILE
+Restart=on-failure
+RestartSec=5s
+EOF
+
+    systemctl daemon-reload
     systemctl unmask dnsmasq caddy
     systemctl enable dnsmasq caddy
     systemctl restart dnsmasq
@@ -627,5 +646,20 @@ main() {
     stage_7
     print_summary
 }
+
+if [[ "${V2_INHIBITED:-0}" != "1" ]]; then
+    if ! command -v systemd-inhibit >/dev/null 2>&1 ||
+       [[ ! -d /run/systemd/system ]]; then
+        die "systemd-inhibit kullanılamıyor; kurulum başlatılmadı"
+    fi
+    self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+    [[ -n "$self" && -f "$self" ]] || die "kurulum betiğinin yolu çözülemedi"
+    exec systemd-inhibit \
+        --what=shutdown:sleep \
+        --who=master-stack-v2 \
+        --why="master-stack v2 kurulum işlemi" \
+        --mode=block \
+        env V2_INHIBITED=1 bash "$self" "$@"
+fi
 
 main "$@"

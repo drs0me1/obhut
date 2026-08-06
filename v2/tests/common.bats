@@ -275,6 +275,29 @@ EOF
     grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'PartOf=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'After=.*tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
+}
+
+@test "edge drop-ins order after tailscaled" {
+    grep -q 'dnsmasq.service.d/master-stack.conf' "$V2_ROOT/install.sh"
+    grep -q 'caddy.service.d/master-stack.conf' "$V2_ROOT/install.sh"
+    awk '/dnsmasq.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
+        grep -q 'After=tailscaled.service'
+    awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
+        grep -q 'After=tailscaled.service'
+    awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
+        grep -q 'PartOf=tailscaled.service'
+}
+
+@test "install holds systemd-inhibit" {
+    grep -q 'systemd-inhibit' "$V2_ROOT/install.sh"
+    grep -q 'V2_INHIBITED' "$V2_ROOT/install.sh"
+}
+
+@test "webdav unit is PartOf tailscaled and read-only downloads" {
+    grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-webdav.service"
+    grep -q 'ReadOnlyPaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
+    ! grep -q 'ReadWritePaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
 }
 

@@ -2,6 +2,7 @@
 Description=Master stack WebDAV (tailnet, salt okunur)
 After=network-online.target tailscaled.service
 Wants=network-online.target
+PartOf=tailscaled.service
 RequiresMountsFor=/downloads
 StartLimitIntervalSec=900
 StartLimitBurst=5
@@ -23,7 +24,7 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-ReadWritePaths=/downloads
+ReadOnlyPaths=/downloads
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 MemoryMax=256M
 TasksMax=64
