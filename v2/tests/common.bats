@@ -378,6 +378,7 @@ EOF
 @test "export-v2 embeds archive sha256 and stages remote extract" {
     grep -q 'PORTABLE_ARCHIVE_SHA256' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'sha256sum' "$V2_ROOT/dev/export-v2.sh"
+    ! grep -qE '\.sha256"|Sidecar' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'dsi-v2-extract' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'staging/v2' "$V2_ROOT/dev/export-v2.sh"
 }

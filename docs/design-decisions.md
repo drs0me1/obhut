@@ -3244,17 +3244,21 @@ separate document with its own numbering.
 
 ### DD-70: Portable export verifies SHA-256 and extracts atomically (2026-08-07)
 
-- **Decision:** `export-v2.sh` records the runtime tarball SHA-256 in the
-  `.command` (`PORTABLE_ARCHIVE_SHA256`) and a `.sha256` sidecar. The
-  launcher checks the hash after decode and again on the host before
-  extract. Remote install unpacks into a temp directory, then `mv`s
-  `v2/` into place (no `rm -rf` of the live tree until the new tree is
-  ready to move).
+- **Decision:** `export-v2.sh` records the runtime tarball SHA-256 only
+  inside the `.command` (`PORTABLE_ARCHIVE_SHA256`). The launcher checks
+  the hash after decode and again on the host before extract. Remote
+  install unpacks into a temp directory, then `mv`s `v2/` into place
+  (no `rm -rf` of the live tree until the new tree is ready to move).
+  No separate `.sha256` sidecar is written.
 - **Context:** A truncated scp/tar could leave the host without a usable
-  `v2/` tree mid-sync.
+  `v2/` tree mid-sync. An external sidecar duplicated the same digest
+  without adding trust (it travels with the same file).
 - **Rationale:** Hash catches corruption; staging extract avoids a window
-  with no installer on disk.
-- **Trade-off:** Slightly more remote disk during sync.
+  with no installer on disk. One deliverable keeps the Desktop/app
+  surface a single double-clickable file.
+- **Trade-off:** Slightly more remote disk during sync. External
+  “checksum without opening the launcher” requires grepping
+  `PORTABLE_ARCHIVE_SHA256` from the `.command` (or re-exporting).
 
 ### DD-69: Downloads tree is recursively `1000:1000` for stack R/W (2026-08-07)
 

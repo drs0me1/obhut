@@ -219,19 +219,15 @@ BODY_END
 chmod 0755 "$OUT_PATH"
 xattr -d com.apple.quarantine "$OUT_PATH" 2>/dev/null || true
 
-printf '%s  %s\n' "$ARCHIVE_SHA256" "$(basename -- "$OUT_PATH")" >"${OUT_PATH}.sha256"
-
 bytes="$(wc -c <"$OUT_PATH" | tr -d ' ')"
 echo "==> Yazıldı: $OUT_PATH ($bytes bayt)"
-echo "==> SHA256:  $ARCHIVE_SHA256"
-echo "==> Sidecar: ${OUT_PATH}.sha256"
+echo "==> SHA256 (gömülü arşiv): $ARCHIVE_SHA256"
 
 latest_link="$APP_DIR/latest.command"
 if [[ "$(cd -- "$(dirname -- "$OUT_PATH")" && pwd)" == "$(cd -- "$APP_DIR" && pwd)" ]]; then
     cp -f "$OUT_PATH" "$latest_link"
     chmod 0755 "$latest_link"
     xattr -d com.apple.quarantine "$latest_link" 2>/dev/null || true
-    cp -f "${OUT_PATH}.sha256" "${latest_link}.sha256"
     echo "==> latest: $latest_link"
 fi
 
@@ -242,7 +238,6 @@ if [[ "$COPY_DESKTOP" -eq 1 ]]; then
         cp -f "$OUT_PATH" "$desk/$OUT_NAME"
         chmod 0755 "$desk/$OUT_NAME"
         xattr -d com.apple.quarantine "$desk/$OUT_NAME" 2>/dev/null || true
-        cp -f "${OUT_PATH}.sha256" "$desk/${OUT_NAME}.sha256"
         echo "==> Masaüstü: $desk/$OUT_NAME"
     else
         echo "UYARI: Masaüstü klasörü bulunamadı; yalnız $OUT_PATH yazıldı" >&2

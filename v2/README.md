@@ -19,13 +19,13 @@ Every export writes:
 | Path | Role |
 |---|---|
 | `app/<V2_VERSION>.command` | Versioned self-contained installer (kept) |
-| `app/<V2_VERSION>.command.sha256` | SHA-256 of the embedded runtime archive |
 | `app/latest.command` | Copy of the most recent export |
 | `~/Desktop/<V2_VERSION>.command` | Optional Desktop copy (`--desktop`) |
 
-The `.command` embeds the v2 runtime. Copy it anywhere; no git checkout is
-required at click time. Double-click → SSH host → upload → interactive
-`install.sh`.
+The `.command` embeds the v2 runtime and the archive SHA-256
+(`PORTABLE_ARCHIVE_SHA256`). Copy it anywhere; no git checkout or sidecar
+file is required at click time. Double-click → SSH host → upload →
+interactive `install.sh`.
 
 Rebuild after any `v2/` change that should ship. Prior versioned files under
 `app/` are left in place.

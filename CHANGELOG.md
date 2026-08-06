@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — Drop portable export `.sha256` sidecar
+
+Archive SHA-256 stays embedded in the `.command` as
+`PORTABLE_ARCHIVE_SHA256` (local + remote verify unchanged). Export no
+longer writes or copies a separate `.sha256` file (DD-70).
+
 ### 2026-08-07 — `retry` can wrap bash functions under `timeout` (`v2-22`)
 
 Stage 6 failed on live install with exit 127 because `timeout` cannot exec
