@@ -532,6 +532,8 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
 | `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` | `no`, oneshot, `RemainAfterExit` |
 | `master-webdav.service` | `tailscaled.service` | none to Docker/Compose | `on-failure`, bounded |
+| `watch-tailnet-addr.service` | `tailscaled.service` | none | `always` (runs `ip monitor address`) |
+| `refresh-tailnet-config.timer` | — | backup poll | starts oneshot every 5 min |
 | `caddy.service` (drop-in) | `tailscaled.service` | `PartOf=tailscaled.service` | `on-failure` |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | `on-failure` |
 

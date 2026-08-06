@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — Tailscale address watch via netlink (`v2-11`)
+
+Adds `watch-tailnet-addr` (`ip monitor address` on `tailscale0`) so a live
+IPv4/IPv6 change starts `refresh-tailnet-config` within seconds instead of
+waiting for the five-minute timer. The timer remains as a safety net.
+Version `2026.08.06-v2-11`.
+
+Note on the earlier live IP-change test: production refresh correctly
+no-oped when addresses matched; the spurious `CHANGE` lines were from the
+temporary test watcher treating journal updates as drift, not from the
+timer restarting Caddy/WebDAV.
+
 ### 2026-08-06 — qBittorrent peer TCP+UDP (`v2-10`)
 
 Restores the legacy peer publish: Compose maps

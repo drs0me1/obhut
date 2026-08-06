@@ -3211,6 +3211,28 @@ separate document with its own numbering.
   `--http-enabled` and no `tls_insecure_skip_verify`. Kept only as history;
   see the revised DD-62 above.
 
+### DD-64: Tailscale address changes are watched via netlink (2026-08-06)
+
+- **Decision:** A long-running `watch-tailnet-addr.service` runs
+  `ip monitor address`, filters events for `tailscale0`, debounces (~2s),
+  and `systemctl start --no-block refresh-tailnet-config.service`. The
+  existing five-minute timer and `WantedBy=tailscaled` path stay as
+  backups.
+- **Context:** Live admin-console IPv4 changes left Caddy/WebDAV on the
+  old bind until the next timer tick (~3–5 minutes). `tailscaled` often
+  does not restart when only the CGNAT address changes, so
+  `WantedBy=tailscaled` alone is insufficient.
+- **Rationale:** The kernel already emits address add/delete netlink
+  events; polling is a laggy approximation of that signal. Reuse the
+  existing refresh script (idempotent no-op when IPs match) so the watcher
+  never duplicates bind logic.
+- **False alarm clarified (same day):** During the IP-change experiment, a
+  temporary host watcher logged `CHANGE` whenever the refresh unit’s
+  journal line moved — including timer no-ops (`değişiklik yok`). That was
+  instrumentation noise, not the timer incorrectly bouncing Caddy/WebDAV.
+- **Trade-off:** One extra always-on process. Accepted for sub-second to
+  few-second recovery versus a multi-minute edge outage.
+
 ### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
 
 - **Decision:** Compose publishes `${QBIT_PUBLIC_PORT}` for **both** TCP and

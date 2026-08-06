@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch Tailscale interface address changes for master-stack
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/master-stack/state.env
+ExecStart=/usr/local/sbin/watch-tailnet-addr
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

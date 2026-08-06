@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# tailscale0 adres değişince refresh-tailnet-config tetikle (netlink/ip monitor).
+# Timer yedek kalır; bu yol IP değişimini saniyeler içinde yakalar.
+set -Eeuo pipefail
+
+TAILSCALE_IF="${TAILSCALE_IF:-tailscale0}"
+DEBOUNCE_SECONDS="${WATCH_TAILNET_DEBOUNCE_SECONDS:-2}"
+REFRESH_UNIT="${REFRESH_UNIT:-refresh-tailnet-config.service}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+command -v ip >/dev/null || die "ip yok"
+command -v systemctl >/dev/null || die "systemctl yok"
+
+while ! ip link show dev "$TAILSCALE_IF" >/dev/null 2>&1; do
+    printf 'watch-tailnet-addr: %s yok; bekleniyor\n' "$TAILSCALE_IF"
+    sleep 2
+done
+
+printf 'watch-tailnet-addr: %s adres olayları dinleniyor\n' "$TAILSCALE_IF"
+
+last_trigger=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *"$TAILSCALE_IF"* ]] || continue
+    [[ "$line" == *inet* ]] || continue
+
+    now="$SECONDS"
+    if (( now - last_trigger < DEBOUNCE_SECONDS )); then
+        continue
+    fi
+    last_trigger=$now
+
+    printf 'watch-tailnet-addr: adres olayı → %s (%s)\n' "$REFRESH_UNIT" "$line"
+    systemctl start --no-block "$REFRESH_UNIT" ||
+        printf 'watch-tailnet-addr: UYARI: %s başlatılamadı\n' "$REFRESH_UNIT" >&2
+done < <(ip monitor address)

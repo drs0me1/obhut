@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-10"
+V2_VERSION="2026.08.06-v2-11"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -441,6 +441,8 @@ EOF
     install -m 0755 "$V2_ROOT/scripts/webdav.sh" "$SBIN_DIR/master-webdav"
     install -m 0755 "$V2_ROOT/scripts/refresh-tailnet-config" \
         "$SBIN_DIR/refresh-tailnet-config"
+    install -m 0755 "$V2_ROOT/scripts/watch-tailnet-addr" \
+        "$SBIN_DIR/watch-tailnet-addr"
     # Unit içindeki /downloads yolunu operatör seçimine göre yaz
     sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
         "$V2_ROOT/systemd/master-webdav.service" |
@@ -452,6 +454,8 @@ EOF
         "$UNIT_DIR/refresh-tailnet-config.service"
     install -m 0644 "$V2_ROOT/systemd/refresh-tailnet-config.timer" \
         "$UNIT_DIR/refresh-tailnet-config.timer"
+    install -m 0644 "$V2_ROOT/systemd/watch-tailnet-addr.service" \
+        "$UNIT_DIR/watch-tailnet-addr.service"
     systemctl daemon-reload
 }
 
@@ -473,6 +477,7 @@ EOF
     systemctl enable --now master-firewall.service
     systemctl enable refresh-tailnet-config.service
     systemctl enable --now refresh-tailnet-config.timer
+    systemctl enable --now watch-tailnet-addr.service
     systemctl enable --now master-webdav.service
 }
 
@@ -580,7 +585,7 @@ qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
-Tailscale IP değişince: refresh-tailnet-config (Caddy + WebDAV + state.env)
+Tailscale IP: watch-tailnet-addr (anlık) + refresh timer (yedek) → Caddy/WebDAV
 
 EOF
 }

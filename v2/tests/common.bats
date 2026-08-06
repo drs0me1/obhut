@@ -230,6 +230,14 @@ EOF
     grep -q 'atlanıyor' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
+@test "watch-tailnet-addr monitors interface and starts refresh" {
+    grep -q 'ip monitor address' "$V2_ROOT/scripts/watch-tailnet-addr"
+    grep -q 'systemctl start --no-block' "$V2_ROOT/scripts/watch-tailnet-addr"
+    grep -q 'WantedBy=multi-user.target' \
+        "$V2_ROOT/systemd/watch-tailnet-addr.service"
+    grep -q 'watch-tailnet-addr.service' "$V2_ROOT/install.sh"
+}
+
 @test "tailscale-udp-gro unit is WantedBy multi-user" {
     grep -q 'WantedBy=multi-user.target' \
         "$V2_ROOT/systemd/tailscale-udp-gro.service"
