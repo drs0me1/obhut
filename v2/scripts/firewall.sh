@@ -47,6 +47,28 @@ ensure_jump() {
     fi
 }
 
+# Tailscale'in ts-input jump'ı MASTER-INPUT'tan önce olmalı; aksi halde
+# WAN DROP, UDP 41641 / NDP sonrası TS kurallarını gölgeler.
+ensure_ts_input_precedence() {
+    local bin="$1" pos=""
+    if ! "$bin" -w 5 -L ts-input -n >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! "$bin" -w 5 -C INPUT -j ts-input 2>/dev/null; then
+        "$bin" -w 5 -I INPUT 1 -j ts-input
+    fi
+    while "$bin" -w 5 -C INPUT -j "$CHAIN_INPUT" 2>/dev/null; do
+        "$bin" -w 5 -D INPUT -j "$CHAIN_INPUT"
+    done
+    pos="$("$bin" -w 5 -L INPUT -n --line-numbers |
+        awk '$2 == "ts-input" { print $1; exit }')"
+    if [[ -n "$pos" ]]; then
+        "$bin" -w 5 -I INPUT "$((pos + 1))" -j "$CHAIN_INPUT"
+    else
+        "$bin" -w 5 -I INPUT 1 -j "$CHAIN_INPUT"
+    fi
+}
+
 create_staging() {
     local bin="$1" prefix="$2" name="" _
     for _ in $(seq 1 20); do
@@ -116,7 +138,19 @@ apply_input6() {
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
-    "$bin" -w 5 -A "$staging" -j DROP
+    # NDP/RA ve PMTU: WAN IPv6 default (fe80::…) komşu çözümü buna bağlı.
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type destination-unreachable -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type time-exceeded -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type parameter-problem -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type echo-request -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type echo-reply -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-solicitation -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
+    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
@@ -137,17 +171,39 @@ check_jump() {
         die "$bin: $parent -> $chain jump yok"
 }
 
+check_ts_input_precedence() {
+    local bin="$1" ts_pos="" master_pos=""
+    if ! "$bin" -w 5 -L ts-input -n >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! "$bin" -w 5 -C INPUT -j ts-input 2>/dev/null; then
+        return 0
+    fi
+    ts_pos="$("$bin" -w 5 -L INPUT -n --line-numbers |
+        awk '$2 == "ts-input" { print $1; exit }')"
+    master_pos="$("$bin" -w 5 -L INPUT -n --line-numbers |
+        awk -v c="$CHAIN_INPUT" '$2 == c { print $1; exit }')"
+    [[ -n "$ts_pos" && -n "$master_pos" ]] ||
+        die "$bin: ts-input / $CHAIN_INPUT satır numarası okunamadı"
+    [[ "$ts_pos" -lt "$master_pos" ]] ||
+        die "$bin: INPUT sırası hatalı (ts-input=$ts_pos, $CHAIN_INPUT=$master_pos)"
+}
+
 if [[ "$MODE" == check ]]; then
     check_jump iptables INPUT "$CHAIN_INPUT"
     check_jump iptables DOCKER-USER "$CHAIN_DOCKER"
     check_jump ip6tables INPUT "$CHAIN_INPUT"
     check_jump ip6tables DOCKER-USER "$CHAIN_DOCKER"
+    check_ts_input_precedence iptables
+    check_ts_input_precedence ip6tables
     printf 'firewall: politika jumplari yerinde\n'
     exit 0
 fi
 
 apply_input4
+ensure_ts_input_precedence iptables
 apply_docker4
 apply_input6
+ensure_ts_input_precedence ip6tables
 apply_docker6
 printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

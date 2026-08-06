@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — v2 firewall: `ts-input` before `MASTER-INPUT`, ICMPv6 for NDP (`v2-3`)
+
+`v2/scripts/firewall.sh` now reorders INPUT so Tailscale's `ts-input` jump
+sits above `MASTER-INPUT` (IPv4 and IPv6) after every apply, and `--check`
+fails if that order regresses. IPv6 `MASTER-INPUT` no longer blanket-DROPs
+before essential ICMPv6 (NDP/RA/PMTU/echo); WAN still drops other NEW
+traffic, matching the IPv4 shape with a final RETURN. Live nrm had
+`fe80::1` stuck `FAILED` and Tailscale `Online=false` because NDP replies
+never reached the stack. Version marker `2026.08.06-v2-3`.
+
+### 2026-08-06 — v2 carries DD-10 host WireGuard/ip6tables preload (`v2-2`)
+
+`v2/install.sh` Stage 4 now runs `ensure_wg_kernel_modules` (best-effort
+`modprobe` of `wireguard` / `ip6_tables` / `ip6table_nat`,
+`/etc/modules-load.d/wg-easy.conf`, functional `wg-easy-probe0` probe) before
+Compose is written. `v2/templates/compose.yaml` drops `SYS_MODULE` from
+wg-easy (`NET_ADMIN` only), matching legacy DD-10 / H1. Live nrm failure mode
+was unhealthy wg-easy after `wg-quick` could not load `ip6_tables` inside the
+container. Version marker `2026.08.06-v2-2`.
+
 ### 2026-08-05 — a probe in a predicate position puts back what it measured (`Q1-39`)
 
 Stage 4 pass item D5, the last of the five, and the one that changes no

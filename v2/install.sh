@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-1"
+V2_VERSION="2026.08.06-v2-3"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -174,6 +174,28 @@ apply_udp_gro() {
         log INFO "UDP GRO uygulandı: $netdev"
     else
         log WARN "UDP GRO uygulanamadı: $netdev"
+    fi
+}
+
+ensure_wg_kernel_modules() {
+    local wg_module
+    for wg_module in wireguard ip6_tables ip6table_nat; do
+        if ! modprobe "$wg_module" 2>/tmp/modprobe-wg.err; then
+            log WARN "modprobe $wg_module başarısız"
+            cat /tmp/modprobe-wg.err >&2 || true
+        fi
+        rm -f /tmp/modprobe-wg.err
+    done
+    atomic_write /etc/modules-load.d/wg-easy.conf 0644 <<'EOF'
+wireguard
+ip6_tables
+ip6table_nat
+EOF
+    if ip link add wg-easy-probe0 type wireguard 2>/dev/null; then
+        ip link del wg-easy-probe0
+        log INFO "WireGuard host çekirdek desteği doğrulandı"
+    else
+        log WARN "Host WireGuard arayüzü oluşturamıyor; wg-easy başlatılamayabilir"
     fi
 }
 
@@ -363,6 +385,7 @@ stage_4() {
 }
 EOF
     systemctl enable --now docker
+    ensure_wg_kernel_modules
 
     mkdir -p "$COMPOSE_DIR"
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \

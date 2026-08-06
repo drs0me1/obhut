@@ -170,6 +170,16 @@ comments plus structural inference from the 2026-07-27 audit
 
 ### DD-10: `wg-easy`'s WireGuard kernel module is loaded independently of Tailscale (2026-07-27)
 
+- **v2 (2026-08-06):** Same policy in `v2/install.sh` (`ensure_wg_kernel_modules`
+  during Stage 4, before Compose is written) and `v2/templates/compose.yaml`
+  (`cap_add: [NET_ADMIN]` only). Host preloads `wireguard`, `ip6_tables`, and
+  `ip6table_nat`, persists them via `/etc/modules-load.d/wg-easy.conf`, and
+  probes with a temporary `wg-easy-probe0` link. Confirmed on a live v2 host:
+  without the host preload, container `wg-quick up` failed on legacy
+  `ip6tables` (`Module ip6_tables not found`) even with `SYS_MODULE`, because
+  `/lib/modules` is not mounted; after host `modprobe`, `wg0` and the
+  healthcheck recovered. `SYS_MODULE` was therefore removed from the v2
+  compose template rather than kept as a false safety net.
 - **Decision:** Instead of granting `wg-easy` the `SYS_MODULE` capability
   (so it could `modprobe wireguard` itself if needed), `install.sh` now
   runs a standalone `modprobe wireguard` on the **host** in Stage 4 (next
@@ -3101,6 +3111,17 @@ separate document with its own numbering.
   `DOCKER-USER` but never wrote a host INPUT policy at all, so services
   listening on the host — WebDAV among them — were protected only by what
   they chose to bind to.
+- **v2-3 (2026-08-06): `ts-input` must precede `MASTER-INPUT`.** Every
+  `apply` inserts `MASTER-INPUT` at INPUT position 1, which previously
+  shadowed Tailscale's `ts-input` (UDP 41641 and CGNAT spoof guards).
+  `ensure_ts_input_precedence` now places `ts-input` first and
+  `MASTER-INPUT` immediately after; `--check` asserts the order when the
+  Tailscale chain exists.
+- **v2-3: IPv6 INPUT must allow NDP/ICMPv6.** A terminal DROP of all NEW
+  IPv6 (the first `apply_input6` shape) broke neighbor discovery for the
+  provider's link-local default (`fe80::1` → `FAILED`), so IPv6 egress and
+  Tailscale control-plane Happy Eyeballs paths hung while IPv4 stayed up.
+  Essential ICMPv6 types are accepted before the WAN DROP.
 
 ### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
 
