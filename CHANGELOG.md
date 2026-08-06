@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — Allow WAN SSH (TCP 22) in MASTER-INPUT (`v2-6`)
+
+`MASTER-INPUT` accepts inbound TCP `${SSH_PUBLIC_PORT}` (default 22) on the
+WAN interface before the terminal DROP, for both IPv4 and IPv6. This is a
+host firewall exception only — not a Compose publication. `SSH_PUBLIC_PORT`
+lives in `defaults.env` / `state.env`. Version marker `2026.08.06-v2-6`.
+
+### 2026-08-06 — Portainer upstream is HTTPS 9443 again (`v2-5`)
+
+Revises DD-62: Compose publishes `127.0.0.1:9443:9443` (no `--http-enabled`),
+and Caddy proxies `https://127.0.0.1:9443` with loopback-only
+`tls_insecure_skip_verify`. Version marker `2026.08.06-v2-5`.
+
 ### 2026-08-06 — v2 Stage 0 asks for wg public UDP port, not endpoint (`v2-4`)
 
 Stage 0 no longer prompts for a wg-easy DNS/IP endpoint. `WG_ENDPOINT_HOST`

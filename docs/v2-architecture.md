@@ -501,7 +501,7 @@ one-line versions:
 | **DD-59** | Chain names | `MASTER-INPUT` and `MASTER-DOCKER`, declared only in `config/defaults.env`. `MASTER-DOCKER-FILTER` is not used. |
 | **DD-60** | Does dnsmasq listen on loopback? | Yes — `lo` and `tailscale0`, `bind-dynamic`, nothing else, no DHCP. |
 | **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy and `master-webdav`. dnsmasq, the firewall and the stack are untouched. |
-| **DD-62** | Portainer's upstream | Plain HTTP `127.0.0.1:9000`. No `9443`, no `tls_insecure_skip_verify`. |
+| **DD-62** | Portainer's upstream | HTTPS `127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`. |
 
 **DD-59 removed a chain that was never decided on.** `defaults.env`
 previously also declared `MASTER-TS-FORWARD`, carried over from v1's

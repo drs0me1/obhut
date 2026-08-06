@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-4"
+V2_VERSION="2026.08.06-v2-6"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -54,6 +54,7 @@ DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
+SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
@@ -269,7 +270,7 @@ stage_0() {
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
         die "wg-easy UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
-        53 | 80 | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
+        53 | 80 | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
         "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port")
             die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
             ;;
@@ -283,8 +284,8 @@ stage_0() {
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
     case "$WEBDAV_PORT" in
-        53 | 80 | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
-        "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT")
+        53 | 80 | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
+        "$PORTAINER_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
     esac

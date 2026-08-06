@@ -54,7 +54,7 @@ the ones agreed on 2026-08-05:
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Create persistent firewall rules that permit Tailscale traffic and open only the two public UDP ports on the WAN |
+| R18 | Create persistent firewall rules that permit Tailscale traffic, the two public UDP ports, and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
 | R19 | Filter Docker ports through `DOCKER-USER` |
 | R20 | Keep the installation re-runnable |
 
@@ -170,20 +170,21 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 
 Three exposure classes, and nothing may straddle them.
 
-### 3.1 Public (WAN IPv4) — exactly two, both UDP
+### 3.1 Public (WAN IPv4) — Compose publications: exactly two, both UDP
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
 | wg-easy (WireGuard) | `${PUBLIC_IPV4}` | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
 | qBittorrent (peer) | `${PUBLIC_IPV4}` | `${QBIT_PUBLIC_PORT}` (65173) | **UDP only** |
 
-**No public TCP publication exists, and no public TCP firewall permission
-exists.** v1 published `65173/tcp` and opened it in `MASTER-DOCKER`; both
-are removed. Consequence to accept knowingly: qBittorrent loses TCP peer
-connectivity and relies on µTP/UDP peers.
+**No public TCP Compose publication exists** (qBittorrent TCP peer remains
+closed). **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
+`${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
+console recovery and public-IP SSH keep working; it is not a Docker
+publish and does not appear in `docker port`.
 
-Neither port is bound to `0.0.0.0`. Both are bound to the detected WAN
-address, so a second interface never inherits the publication.
+Neither UDP port is bound to a WAN IP in Compose (1:1 host publish);
+firewall limits NEW WAN traffic to those UDP ports plus SSH.
 
 ### 3.2 Tailnet (Tailscale IPv4) — reachable only over `tailscale0`
 
@@ -206,7 +207,7 @@ service and is reachable only inside the tailnet.
 
 | Service | Listen address | Port |
 |---|---|---|
-| Portainer | `127.0.0.1` | 9000 (HTTP — **DD-62**) |
+| Portainer | `127.0.0.1` | 9443 (HTTPS — **DD-62**) |
 | FileBrowser Quantum | `127.0.0.1` | 7113 |
 | qBittorrent WebUI | `127.0.0.1` | 13087 |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
@@ -228,7 +229,7 @@ defaults to the value recorded in `state.env` on a re-run.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
-| `portainer.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://portainer.…` | `127.0.0.1:9000` (plain HTTP — **DD-62**) |
+| `portainer.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://portainer.…` | `https://127.0.0.1:9443` (**DD-62**, skip-verify on loopback) |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
 | `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:13087` |
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:7113` |
@@ -253,14 +254,10 @@ Rules:
   as a test path depends on this, and it has not yet been observed.
 - Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
   no certificate machinery — the tailnet is the transport security boundary.
-- **Caddy has no HTTPS upstream and no `tls_insecure_skip_verify`**
-  (**DD-62**). Every upstream is plain HTTP on loopback.
-- **Portainer's HTTP listener is enabled explicitly with `--http-enabled`.**
-  The image serves only HTTPS on 9443 by default, so without that argument
-  the container starts, the publication succeeds and the Caddy site fails
-  with a connection error. The Compose phase owns the flag; the Caddy phase
-  assumes it. The only publication is `127.0.0.1:9000:9000` — 9443 is
-  published nowhere, and 9000 is never published on the tailnet or the WAN.
+- **Portainer is the only HTTPS upstream** (**DD-62**): Caddy proxies
+  `https://127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`.
+  Other upstreams stay plain HTTP on loopback. Compose publishes
+  `127.0.0.1:9443:9443` and does not pass `--http-enabled`.
 - The six names live in one list in the templates; adding a service means
   editing that one list.
 
@@ -476,23 +473,24 @@ Accepted:
 3. **All inbound traffic arriving on `tailscale0`.** This is the single
    permission that makes WebDAV, Caddy and dnsmasq reachable; none of them
    gets an individual rule.
-4. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
-5. New inbound UDP on the WAN interface to `${QBIT_PUBLIC_PORT}`.
+4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
+5. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
+6. New inbound UDP on the WAN interface to `${QBIT_PUBLIC_PORT}`.
 
 Dropped:
 
-6. Every other new inbound connection arriving on the WAN interface.
+7. Every other new inbound connection arriving on the WAN interface.
 
 Rules:
 
 - The policy is applied through a staging chain and swapped in atomically,
   so there is no moment at which SSH is unreachable.
-- Ordering guarantees that rule 2 precedes rule 6.
+- Ordering guarantees that rule 2 precedes rule 7.
 - There is **no** WAN permission for WebDAV, Caddy, dnsmasq, or any
   container web interface.
 - IPv6 `INPUT` follows the same shape and is equally fail-closed. Tailscale
-  IPv6 traffic is permitted; unexpected inbound traffic on the WAN IPv6
-  interface is not.
+  IPv6 traffic is permitted; WAN IPv6 allows NDP/ICMPv6 essentials, host
+  SSH TCP, and drops other NEW WAN traffic.
 
 ---
 
@@ -683,8 +681,8 @@ A v2 run is successful when every one of these holds on the target host.
 ### Firewall
 
 24. `MASTER-INPUT` accepts loopback, `ESTABLISHED,RELATED`, all
-    `tailscale0` inbound, and exactly the two WAN UDP ports; it drops other
-    new WAN inbound.
+    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH), and the
+    two WAN UDP ports; it drops other new WAN inbound.
 25. `DOCKER-USER` contains exactly one jump to `MASTER-DOCKER`, as its
     first rule.
 26. A third-party rule planted in `DOCKER-USER` before the run is still

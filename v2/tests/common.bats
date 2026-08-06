@@ -147,14 +147,21 @@ EOF
     grep -q 'PGID: "1000"' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "compose enables portainer http on 9000" {
-    grep -q -- '--http-enabled' "$V2_ROOT/templates/compose.yaml"
-    grep -q '127.0.0.1:__PORTAINER_UI_PORT__:9000' "$V2_ROOT/templates/compose.yaml"
+@test "compose publishes portainer https on 9443" {
+    ! grep -q -- '--http-enabled' "$V2_ROOT/templates/compose.yaml"
+    grep -q '127.0.0.1:__PORTAINER_UI_PORT__:9443' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "caddy proxies portainer over https with skip-verify" {
+    grep -q 'reverse_proxy https://127.0.0.1:__PORTAINER_UI_PORT__' \
+        "$V2_ROOT/templates/Caddyfile"
+    grep -q 'tls_insecure_skip_verify' "$V2_ROOT/templates/Caddyfile"
 }
 
 @test "unpackerr watches folders, not the qBittorrent API" {
     grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/templates/compose.yaml"
     ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
 }
 
@@ -191,11 +198,6 @@ EOF
     grep -q 'interface=lo' "$V2_ROOT/templates/dnsmasq.conf"
     grep -q 'interface=__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
-}
-
-@test "Caddyfile uses plain HTTP portainer upstream" {
-    grep -q 'reverse_proxy 127.0.0.1:__PORTAINER_UI_PORT__' "$V2_ROOT/templates/Caddyfile"
-    ! grep -qi 'tls_insecure' "$V2_ROOT/templates/Caddyfile"
 }
 
 @test "webdav script uses htpasswd file not password flags" {

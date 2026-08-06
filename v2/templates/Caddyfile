@@ -9,7 +9,11 @@ http://health.__LOCAL_DOMAIN__ {
 }
 
 http://portainer.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__PORTAINER_UI_PORT__
+	reverse_proxy https://127.0.0.1:__PORTAINER_UI_PORT__ {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
 }
 
 http://wg.__LOCAL_DOMAIN__ {

@@ -3184,31 +3184,29 @@ separate document with its own numbering.
   containers. That remains an open question with a documented interim
   answer (re-run the installer).
 
-### DD-62: Portainer is proxied over plain loopback HTTP (2026-08-05)
+### DD-62: Portainer is proxied to loopback HTTPS on 9443 (revised 2026-08-06)
 
-- **Decision:** Caddy's upstream for `portainer.${LOCAL_DOMAIN}` is
-  `127.0.0.1:9000`, plain HTTP. Compose publishes `127.0.0.1:9000:9000` and
-  nothing else — 9443 is not published anywhere, and 9000 is never exposed
-  on the tailnet or the WAN. `tls_insecure_skip_verify` is not used
-  anywhere in the Caddyfile. Operator access is only
-  `http://portainer.${LOCAL_DOMAIN}`.
-- **Rationale:** v1 proxied to `https://127.0.0.1:9443` and had to skip
-  upstream certificate verification, because Portainer's certificate is
-  self-signed. A TLS connection with verification disabled, over loopback,
-  to a process on the same host provides no security property that plain
-  HTTP over loopback does not — it only adds a directive whose presence
-  makes the configuration harder to audit, and one that would be a genuine
-  finding if it ever escaped to a non-loopback upstream.
-- **Implementation obligation this creates:** Portainer must actually be
-  listening on HTTP. Recent Portainer CE images serve only HTTPS on 9443
-  unless the HTTP listener is turned on, so the Compose service definition
-  must pass **`--http-enabled`** to the container. Without it the container
-  starts, the port publication succeeds, and the Caddy site returns a
-  connection error — a failure that looks like a proxy problem while being
-  a container-argument problem. The obligation is named here because it
-  belongs to a file that does not exist yet: the Compose phase owns it, not
-  the Caddy phase.
-- **The publication set is exactly one line:** `127.0.0.1:9000:9000`. 9443
-  is not published anywhere, and neither port is published on the tailnet
-  or the WAN. Reaching Portainer from another device goes through Caddy at
-  `http://portainer.${LOCAL_DOMAIN}` or not at all.
+- **Decision (revised):** Caddy's upstream for `portainer.${LOCAL_DOMAIN}` is
+  `https://127.0.0.1:9443`. Compose publishes `127.0.0.1:9443:9443` only
+  (image default HTTPS listener). `--http-enabled` / port 9000 are not used.
+  Because Portainer's certificate is self-signed, the site block uses
+  `transport http { tls_insecure_skip_verify }` on that **loopback** hop
+  only. Operator access remains `http://portainer.${LOCAL_DOMAIN}` on the
+  Tailscale-bound Caddy front door (`auto_https off`).
+- **Supersedes (2026-08-05):** The earlier choice of plain HTTP `127.0.0.1:9000`
+  avoided skip-verify by forcing `--http-enabled`. The operator preferred
+  Portainer's native HTTPS listener on 9443; the skip-verify trade-off is
+  accepted for same-host loopback and documented here.
+- **Rationale for skip-verify on loopback:** TLS to a self-signed process on
+  the same host does not add a meaningful trust boundary beyond plain HTTP
+  on loopback; skip-verify is the practical way to speak Portainer's
+  default listener without mounting its cert into Caddy. It must never be
+  copied onto a non-loopback upstream.
+- **The publication set is exactly one line:** `127.0.0.1:9443:9443`. Neither
+  9443 nor 9000 is published on the tailnet or the WAN.
+
+### DD-62-archive: Portainer plain loopback HTTP (2026-08-05, superseded)
+
+- **Former decision:** Caddy upstream `127.0.0.1:9000` with Compose
+  `--http-enabled` and no `tls_insecure_skip_verify`. Kept only as history;
+  see the revised DD-62 above.

@@ -34,6 +34,7 @@ source "$STATE_FILE"
 : "${CHAIN_DOCKER:=MASTER-DOCKER}"
 : "${WG_PUBLIC_PORT:=65171}"
 : "${QBIT_PUBLIC_PORT:=65173}"
+: "${SSH_PUBLIC_PORT:=22}"
 
 if [[ -n "$DEFAULTS_FILE" && -r "$DEFAULTS_FILE" ]]; then
     # shellcheck source=/dev/null
@@ -107,6 +108,7 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
@@ -149,6 +151,7 @@ apply_input6() {
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEPT
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
