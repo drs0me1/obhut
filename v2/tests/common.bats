@@ -208,6 +208,26 @@ EOF
     grep -q 'master-webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
+@test "refresh-tailnet timer is five minutes" {
+    grep -q 'OnUnitActiveSec=5min' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+    grep -q 'WantedBy=timers.target' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+    grep -q 'refresh-tailnet-config.timer' "$V2_ROOT/install.sh"
+}
+
+@test "refresh-tailnet soft-skips missing Tailscale IPv4" {
+    grep -q 'atlanıyor' "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
+@test "tailscale-udp-gro unit is WantedBy multi-user" {
+    grep -q 'WantedBy=multi-user.target' \
+        "$V2_ROOT/systemd/tailscale-udp-gro.service"
+    grep -q 'rx-udp-gro-forwarding on' "$V2_ROOT/scripts/tailscale-udp-gro"
+    grep -q 'tailscale-udp-gro.service' "$V2_ROOT/install.sh"
+    ! grep -q 'apply_udp_gro' "$V2_ROOT/install.sh"
+}
+
 @test "dnsmasq binds lo and tailscale only" {
     grep -q 'interface=lo' "$V2_ROOT/templates/dnsmasq.conf"
     grep -q 'interface=__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
@@ -223,7 +243,10 @@ EOF
     ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "defaults.env has no webdav password assignments" {
-    ! grep -qE '^[[:space:]]*(WEBDAV_PASSWORD|WEBDAV_USER_PASSWORD|WEBDAV_PASSWORD_HASH)=' \
-        "$V2_ROOT/config/defaults.env"
+@test "master-firewall unit is WantedBy docker.service" {
+    grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'PartOf=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
 }
+

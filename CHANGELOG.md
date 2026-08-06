@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — Persistent UDP GRO oneshot (`v2-9`)
+
+Installs `tailscale-udp-gro` + `tailscale-udp-gro.service` (`WantedBy=
+multi-user.target`, `RemainAfterExit`) so `rx-udp-gro-forwarding` /
+`rx-gro-list` are reapplied after every boot. Stage 2 enables the unit
+instead of a one-shot inline `ethtool` call. Version `2026.08.06-v2-9`.
+
+### 2026-08-06 — Periodic Tailscale address refresh timer (`v2-8`)
+
+Adds `refresh-tailnet-config.timer` (`OnBootSec=2min`, `OnUnitActiveSec=5min`)
+so Caddy/`state.env` catch Tailscale IP changes without a daemon restart.
+The oneshot still runs on `tailscaled` start; missing `tailscale0` IPv4 is a
+soft skip (exit 0) so the timer does not flap failed. Version `2026.08.06-v2-8`.
+
+### 2026-08-06 — Bind master-firewall to Docker start/stop (`v2-7`)
+
+`master-firewall.service` now `Requires=` / `WantedBy=docker.service` (keeps
+`PartOf=`) so a Docker restart restarts the oneshot and re-applies INPUT +
+DOCKER-USER policy. Stage 5 uses `enable --now` so the unit stays
+`active (exited)` after install. Version marker `2026.08.06-v2-7`.
+
 ### 2026-08-06 — v2 wg-easy fixed bridge network `10.42.42.42`
 
 Compose places `wg-easy` on a dedicated `wg` bridge (`10.42.42.0/24` +

@@ -1,0 +1,17 @@
+[Unit]
+Description=Master stack firewall
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=STATE_FILE=/etc/master-stack/state.env
+ExecStart=/usr/local/sbin/master-firewall apply
+ExecStartPost=/usr/local/sbin/master-firewall --check
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=docker.service

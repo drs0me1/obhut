@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-6"
+V2_VERSION="2026.08.06-v2-9"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -162,20 +162,6 @@ tailscale_login() {
     done
     rm -f "$out"
     die "Tailscale girişi tamamlanamadı"
-}
-
-apply_udp_gro() {
-    local netdev
-    netdev="$(
-        ip -4 -o route get 8.8.8.8 2>/dev/null |
-            awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'
-    )" || true
-    [[ -n "$netdev" ]] || { log WARN "UDP GRO: varsayılan arayüz yok"; return 0; }
-    if ethtool -K "$netdev" rx-udp-gro-forwarding on rx-gro-list off; then
-        log INFO "UDP GRO uygulandı: $netdev"
-    else
-        log WARN "UDP GRO uygulanamadı: $netdev"
-    fi
 }
 
 ensure_wg_kernel_modules() {
@@ -346,7 +332,12 @@ net.core.rmem_max = 7500000
 net.core.wmem_max = 7500000
 EOF
     sysctl --system >/dev/null || true
-    apply_udp_gro
+    install -m 0755 "$V2_ROOT/scripts/tailscale-udp-gro" "$SBIN_DIR/tailscale-udp-gro"
+    install -m 0644 "$V2_ROOT/systemd/tailscale-udp-gro.service" \
+        "$UNIT_DIR/tailscale-udp-gro.service"
+    systemctl daemon-reload
+    systemctl enable --now tailscale-udp-gro.service ||
+        log WARN "tailscale-udp-gro başlatılamadı"
 
     if [[ "$(tailscale_login_state)" != "complete" ]]; then
         tailscale_login
@@ -455,39 +446,12 @@ EOF
         "$V2_ROOT/systemd/master-webdav.service" |
         atomic_write "$UNIT_DIR/master-webdav.service" 0644
 
-    atomic_write /etc/systemd/system/master-firewall.service 0644 <<EOF
-[Unit]
-Description=Master stack firewall
-After=network-online.target docker.service
-Wants=network-online.target
-PartOf=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-Environment=STATE_FILE=$STATE_FILE
-ExecStart=$SBIN_DIR/master-firewall apply
-ExecStartPost=$SBIN_DIR/master-firewall --check
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # tailscaled her (yeniden) başladığında TS IP değiştiyse Caddy+WebDAV tazelenir
-    atomic_write /etc/systemd/system/refresh-tailnet-config.service 0644 <<EOF
-[Unit]
-Description=Refresh master-stack Tailscale addresses in state.env
-After=network-online.target tailscaled.service
-Wants=tailscaled.service
-
-[Service]
-Type=oneshot
-Environment=STATE_FILE=$STATE_FILE
-ExecStart=$SBIN_DIR/refresh-tailnet-config
-
-[Install]
-WantedBy=tailscaled.service
-EOF
+    install -m 0644 "$V2_ROOT/systemd/master-firewall.service" \
+        "$UNIT_DIR/master-firewall.service"
+    install -m 0644 "$V2_ROOT/systemd/refresh-tailnet-config.service" \
+        "$UNIT_DIR/refresh-tailnet-config.service"
+    install -m 0644 "$V2_ROOT/systemd/refresh-tailnet-config.timer" \
+        "$UNIT_DIR/refresh-tailnet-config.timer"
     systemctl daemon-reload
 }
 
@@ -506,9 +470,9 @@ EOF
     setfacl -m u:master-webdav:rx "$DOWNLOADS_PATH" 2>/dev/null ||
         chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
-    systemctl enable master-firewall.service
+    systemctl enable --now master-firewall.service
     systemctl enable refresh-tailnet-config.service
-    "$SBIN_DIR/master-firewall" apply
+    systemctl enable --now refresh-tailnet-config.timer
     systemctl enable --now master-webdav.service
 }
 
