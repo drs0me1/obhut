@@ -706,6 +706,11 @@ playback remain untested.
 - **Decision:** Stage 2 writes `/etc/sysctl.d/99-master-stack-netbuf.conf`
   with `net.core.rmem_max` / `wmem_max` set to
   `max(current_value, 16 MiB)`. `rmem_default` is deliberately left alone.
+- **v2 realignment (2026-08-06, `v2-12`):** Early v2 had hardcoded
+  `7500000` in `99-master-tailscale.conf` after `apt install tailscale`.
+  That under-shot the legacy floor and violated M11 ordering. v2 now
+  matches this decision again via `apply_udp_netbuf_floor` before the
+  Tailscale package install; forwarding stays in a separate conf file.
 - **Why it was needed:** on the live host both values were already 64 MiB
   — but from `/etc/sysctl.d/99-nc-kernel.conf`, a **file shipped by the
   VPS provider's image**, not by this installer. Nothing in `install.sh`

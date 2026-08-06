@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-11"
+V2_VERSION="2026.08.06-v2-12"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -318,20 +318,45 @@ stage_1() {
     fi
 }
 
+apply_udp_netbuf_floor() {
+    # Legacy / DD-18: max(current, 16 MiB); asla düşürme. tailscaled socket
+    # açılmadan önce yazılmalı (paket postinst daemon'ı başlatır).
+    local current_rmem=0 current_wmem=0 target_rmem target_wmem
+    current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
+    current_wmem="$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)"
+    [[ "$current_rmem" =~ ^[0-9]+$ ]] || current_rmem=0
+    [[ "$current_wmem" =~ ^[0-9]+$ ]] || current_wmem=0
+    target_rmem="$NET_BUF_FLOOR_BYTES"
+    target_wmem="$NET_BUF_FLOOR_BYTES"
+    if (( current_rmem > target_rmem )); then
+        target_rmem="$current_rmem"
+    fi
+    if (( current_wmem > target_wmem )); then
+        target_wmem="$current_wmem"
+    fi
+    atomic_write /etc/sysctl.d/99-master-stack-netbuf.conf 0644 <<EOF
+net.core.rmem_max = $target_rmem
+net.core.wmem_max = $target_wmem
+EOF
+    sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf >/dev/null
+    log INFO "UDP netbuf floor: rmem_max=$target_rmem wmem_max=$target_wmem"
+}
+
 stage_2() {
     log INFO "Aşama 2/7 — Tailscale"
     install_tailscale_repo
     retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    # M11/DD-18: buffer tabanı paket kurulumundan önce
+    apply_udp_netbuf_floor
     retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y tailscale
     systemctl enable --now tailscaled
 
-    cat >/etc/sysctl.d/99-master-tailscale.conf <<'EOF'
+    # Forwarding ayrı dosyada; rmem/wmem yalnız netbuf conf'ta (DD-18).
+    atomic_write /etc/sysctl.d/99-master-tailscale.conf 0644 <<'EOF'
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
-net.core.rmem_max = 7500000
-net.core.wmem_max = 7500000
 EOF
-    sysctl --system >/dev/null || true
+    sysctl -p /etc/sysctl.d/99-master-tailscale.conf >/dev/null || true
     install -m 0755 "$V2_ROOT/scripts/tailscale-udp-gro" "$SBIN_DIR/tailscale-udp-gro"
     install -m 0644 "$V2_ROOT/systemd/tailscale-udp-gro.service" \
         "$UNIT_DIR/tailscale-udp-gro.service"

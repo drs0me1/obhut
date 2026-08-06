@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — Align UDP netbuf floor with legacy (`v2-12`)
+
+`apply_udp_netbuf_floor` writes `/etc/sysctl.d/99-master-stack-netbuf.conf`
+with `net.core.rmem_max` / `wmem_max` = `max(current, 16 MiB)` before the
+Tailscale package install (M11/DD-18). Forwarding sysctls stay in
+`99-master-tailscale.conf` without the previous 7.5M buffer values.
+Version `2026.08.06-v2-12`.
+
 ### 2026-08-06 — Tailscale address watch via netlink (`v2-11`)
 
 Adds `watch-tailnet-addr` (`ip monitor address` on `tailscale0`) so a live

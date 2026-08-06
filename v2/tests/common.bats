@@ -230,6 +230,16 @@ EOF
     grep -q 'atlanıyor' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
+@test "udp netbuf floor is 16MiB and applied before tailscale install" {
+    grep -q 'NET_BUF_FLOOR_BYTES=16777216' "$V2_ROOT/config/defaults.env"
+    grep -q '99-master-stack-netbuf.conf' "$V2_ROOT/install.sh"
+    grep -q 'apply_udp_netbuf_floor' "$V2_ROOT/install.sh"
+    # Ordering: floor call appears before apt-get install tailscale
+    awk '/apply_udp_netbuf_floor$/{f=NR} /apt-get install -y tailscale/{t=NR}
+         END { exit !(f && t && f < t) }' "$V2_ROOT/install.sh"
+    ! grep -q 'rmem_max = 7500000' "$V2_ROOT/install.sh"
+}
+
 @test "watch-tailnet-addr monitors interface and starts refresh" {
     grep -q 'ip monitor address' "$V2_ROOT/scripts/watch-tailnet-addr"
     grep -q 'systemctl start --no-block' "$V2_ROOT/scripts/watch-tailnet-addr"
