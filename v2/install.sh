@@ -178,9 +178,14 @@ apply_udp_gro() {
 }
 
 install_tailscale_repo() {
+    local keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
+    local tmp
+    tmp="$(mktemp)"
     retry "tailscale-gpg" 3 60 -- \
-        curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" \
-            -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+        curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" -o "$tmp"
+    # apt/sqv keyring'i _apt kullanıcısı olarak okur; 0600 Permission denied verir.
+    install -m 0644 "$tmp" "$keyring"
+    rm -f "$tmp"
     atomic_write /etc/apt/sources.list.d/tailscale.list 0644 <<'EOF'
 deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main
 EOF
@@ -271,7 +276,7 @@ stage_1() {
             -o Dpkg::Options::=--force-confold full-upgrade
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
-        iptables ip6tables coreutils util-linux diffutils jq rclone \
+        iptables coreutils util-linux diffutils jq rclone \
         apache2-utils dnsutils
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
@@ -477,6 +482,7 @@ stage_6() {
         retry "caddy-gpg" 3 60 -- curl -1sLf \
             'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
             gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         atomic_write /etc/apt/sources.list.d/caddy-stable.list 0644 <<'EOF'
 deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
 EOF

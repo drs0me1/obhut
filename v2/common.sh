@@ -76,7 +76,9 @@ retry() {
     local n=1 status=0
     while [[ "$n" -le "$attempts" ]]; do
         status=0
-        timeout "$budget" "$@" || status=$?
+        # --foreground: tmux/non-TTY altında apt'in SIGTSTP ile T durumunda
+        # kalmasını önler (aksi halde paket kurulumu donar).
+        timeout --foreground "$budget" "$@" || status=$?
         [[ "$status" -eq 0 ]] && return 0
         log WARN "$label: deneme $n/$attempts başarısız (kod $status)"
         n=$((n + 1))
