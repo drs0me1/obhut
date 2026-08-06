@@ -69,17 +69,26 @@ acquire_lock() {
 }
 
 # retry LABEL ATTEMPTS TIMEOUT -- cmd args...
+# Bash fonksiyonları timeout ile doğrudan exec edilemez (kod 127); bu durumda
+# export -f + bash -c ile sarılır.
 retry() {
     local label="$1" attempts="$2" budget="$3"
     shift 3
     [[ "${1:-}" == "--" ]] || die "retry: '--' ayırıcısı gerekli"
     shift
     local n=1 status=0
+    local -a cmd=("$@")
     while [[ "$n" -le "$attempts" ]]; do
         status=0
         # --foreground: tmux/non-TTY altında apt'in SIGTSTP ile T durumunda
         # kalmasını önler (aksi halde paket kurulumu donar).
-        timeout --foreground "$budget" "$@" || status=$?
+        if declare -F -- "${cmd[0]}" >/dev/null 2>&1; then
+            export -f "${cmd[0]}"
+            # shellcheck disable=SC2016 # $0/$@ child bash'te genişlesin; burada değil
+            timeout --foreground "$budget" bash -c '"$0" "$@"' "${cmd[@]}" || status=$?
+        else
+            timeout --foreground "$budget" "${cmd[@]}" || status=$?
+        fi
         [[ "$status" -eq 0 ]] && return 0
         log WARN "$label: deneme $n/$attempts başarısız (kod $status)"
         n=$((n + 1))

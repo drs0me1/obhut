@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — `retry` can wrap bash functions under `timeout` (`v2-22`)
+
+Stage 6 failed on live install with exit 127 because `timeout` cannot exec
+a shell function (`apt_get_install_masked_quiet`). `retry` now detects
+functions and runs them via `export -f` + `bash -c`. Version
+`2026.08.06-v2-22`.
+
 ### 2026-08-07 — Doc sync, export sha256, install `acl` (`v2-21`)
 
 Aligns v2 contract/architecture naming and stage table with the live

@@ -3335,6 +3335,12 @@ separate document with its own numbering.
   abort safety.
 - **Trade-off:** Filter patterns are string-matched; a future apt wording
   change could let noise through again — not a safety regression.
+- **Follow-up (2026-08-07, `v2-22`):** `retry` passes the command to
+  `timeout`, which can only exec PATH binaries. Calling
+  `apt_get_install_masked_quiet` through `retry` therefore failed with
+  127 on the live host. `retry` now detects shell functions
+  (`declare -F`) and wraps them as `export -f` +
+  `timeout … bash -c '"$0" "$@"' fn args…`.
 
 ### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
 

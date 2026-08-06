@@ -145,6 +145,14 @@ EOF
     [ "$status" -ne 0 ]
 }
 
+@test "retry runs bash functions via timeout" {
+    command -v timeout >/dev/null 2>&1 || skip "timeout yok"
+    _v2_retry_fn() { printf '%s\n' "ok:$1"; }
+    run retry etiket 1 5 -- _v2_retry_fn hi
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok:hi"* ]]
+}
+
 @test "compose publishes qbit peer TCP and UDP 1:1" {
     grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"' \
         "$V2_ROOT/templates/compose.yaml"
