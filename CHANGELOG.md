@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-06 — qBittorrent peer TCP+UDP (`v2-10`)
+
+Restores the legacy peer publish: Compose maps
+`${QBIT_PUBLIC_PORT}` for both TCP and UDP (still 1:1, no WAN IP embed),
+and `master-firewall` allows the matching NEW WAN rules in `MASTER-INPUT`
+and `MASTER-DOCKER`. Revises R12 (was UDP-only). Version
+`2026.08.06-v2-10`.
+
 ### 2026-08-06 — Persistent UDP GRO oneshot (`v2-9`)
 
 Installs `tailscale-udp-gro` + `tailscale-udp-gro.service` (`WantedBy=

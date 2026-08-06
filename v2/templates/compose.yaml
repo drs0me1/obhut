@@ -44,6 +44,8 @@ services:
     ports:
       - "127.0.0.1:__QBIT_UI_PORT__:__QBIT_UI_PORT__"
       # WAN IP gömülmez: host tüm arayüzlerde dinler; firewall WAN'ı sınırlar.
+      # Peer: TCP+UDP (legacy ile aynı); yalnız UDP peer keşfini zayıflatıyordu.
+      - "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"
       - "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
     environment:
       TZ: __TIMEZONE__

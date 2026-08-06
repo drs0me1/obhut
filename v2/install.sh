@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-9"
+V2_VERSION="2026.08.06-v2-10"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -565,6 +565,7 @@ Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
 wg UDP:       ${WG_PUBLIC_PORT} (endpoint ipucu: $WG_ENDPOINT_HOST)
+qBit peer:    ${QBIT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
 Log:          $V2_LOG_FILE

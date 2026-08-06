@@ -137,9 +137,19 @@ EOF
     [ "$status" -ne 0 ]
 }
 
-@test "compose template has no public TCP for qbit" {
-    ! grep -E 'QBIT_PUBLIC_PORT.*tcp|65173/tcp' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'QBIT_PUBLIC_PORT.*/udp' "$V2_ROOT/templates/compose.yaml"
+@test "compose publishes qbit peer TCP and UDP 1:1" {
+    grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"' \
+        "$V2_ROOT/templates/compose.yaml"
+    grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
+        "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "firewall allows qbit peer TCP and UDP on WAN" {
+    grep -q 'tcp --dport "$QBIT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'udp --dport "$QBIT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
+    # DOCKER-USER: both protocols for NEW --ctorigdstport
+    [[ "$(grep -c 'ctorigdstport "$QBIT_PUBLIC_PORT"' \
+        "$V2_ROOT/scripts/firewall.sh")" -ge 2 ]]
 }
 
 @test "qbittorrent runs as uid 1000" {

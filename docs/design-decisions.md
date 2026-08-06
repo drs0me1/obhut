@@ -3210,3 +3210,21 @@ separate document with its own numbering.
 - **Former decision:** Caddy upstream `127.0.0.1:9000` with Compose
   `--http-enabled` and no `tls_insecure_skip_verify`. Kept only as history;
   see the revised DD-62 above.
+
+### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
+
+- **Decision:** Compose publishes `${QBIT_PUBLIC_PORT}` for **both** TCP and
+  UDP (1:1 host map, no WAN IP embed). `master-firewall` allows the matching
+  NEW WAN rules in `MASTER-INPUT` and `MASTER-DOCKER`. wg-easy remains
+  UDP-only.
+- **Context:** v2 initially followed an early R12 “qBit UDP only” reading.
+  Live review on the test host showed qBittorrent listening on TCP inside
+  the container while only UDP was published, which matched weaker peer
+  connectivity than legacy (`TCP+UDP` on `${PUBLIC_IPV4}`).
+- **Rationale:** BitTorrent peer traffic is still predominantly TCP; UDP
+  alone (µTP) is insufficient for expected swarm performance. Restoring TCP
+  aligns v2 with legacy behaviour while keeping the v2 “no WAN IP in
+  Compose” publish style.
+- **Trade-off:** One additional public TCP port on the WAN versus the
+  earlier narrower surface. Accepted explicitly by the operator (R12
+  revised).

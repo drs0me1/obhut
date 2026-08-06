@@ -110,6 +110,7 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
@@ -124,6 +125,8 @@ apply_docker4() {
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
     # WAN IP adresi gömülmez; arayüz + orijinal hedef port yeterli.
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp \
+        -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
         -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \

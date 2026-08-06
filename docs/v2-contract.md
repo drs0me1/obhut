@@ -48,7 +48,7 @@ the ones agreed on 2026-08-05:
 | R9 | Install Docker Engine and the Compose plugin |
 | R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, FileBrowser Quantum and Unpackerr |
 | R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly only the wg-easy UDP port and the qBittorrent UDP port |
+| R12 | Publish publicly the wg-easy UDP port and the qBittorrent peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
@@ -161,7 +161,6 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains are re-established by Docker; v2 re-applies only its own chain. |
 | **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
 | **The 25-flag reconcile `--check` surface** | — | Replaced by a small set of checks with one owner each. |
-| **qBittorrent public TCP peer port** | compose line + firewall rule | **R12** says UDP only. See §3. |
 | **Progress bar, ANSI colour, extra file descriptors 3/4/5** | ~210 lines | Plain timestamped stage lines plus a log file. |
 
 ---
@@ -170,21 +169,22 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 
 Three exposure classes, and nothing may straddle them.
 
-### 3.1 Public (WAN IPv4) — Compose publications: exactly two, both UDP
+### 3.1 Public (WAN IPv4) — Compose publications
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| wg-easy (WireGuard) | `${PUBLIC_IPV4}` | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
-| qBittorrent (peer) | `${PUBLIC_IPV4}` | `${QBIT_PUBLIC_PORT}` (65173) | **UDP only** |
+| wg-easy (WireGuard) | host (all IFs; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
+| qBittorrent (peer) | host (all IFs; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (65173) | **TCP + UDP** |
 
-**No public TCP Compose publication exists** (qBittorrent TCP peer remains
-closed). **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
+**Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
 console recovery and public-IP SSH keep working; it is not a Docker
 publish and does not appear in `docker port`.
 
-Neither UDP port is bound to a WAN IP in Compose (1:1 host publish);
-firewall limits NEW WAN traffic to those UDP ports plus SSH.
+Public ports are not bound to a WAN IP in Compose (1:1 host publish);
+firewall limits NEW WAN traffic to wg UDP, qBit TCP+UDP, and SSH.
+(R12 revised 2026-08-06: qBit peer TCP restored to match legacy
+connectivity.)
 
 ### 3.2 Tailnet (Tailscale IPv4) — reachable only over `tailscale0`
 
@@ -475,7 +475,7 @@ Accepted:
    gets an individual rule.
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
-6. New inbound UDP on the WAN interface to `${QBIT_PUBLIC_PORT}`.
+6. New inbound TCP and UDP on the WAN interface to `${QBIT_PUBLIC_PORT}`.
 
 Dropped:
 
@@ -636,10 +636,10 @@ A v2 run is successful when every one of these holds on the target host.
 
 ### Ports
 
-5. `docker port` shows exactly two public publications, both UDP:
-   `${PUBLIC_IPV4}:65171/udp` and `${PUBLIC_IPV4}:65173/udp`.
-6. No published port is bound to `0.0.0.0`, and no public TCP publication
-   exists.
+5. `docker port` shows public publications for wg-easy UDP
+   `${WG_PUBLIC_PORT}` and qBittorrent TCP+UDP `${QBIT_PUBLIC_PORT}`
+   (host 1:1 publish; not necessarily bound to a specific WAN IP).
+6. No container web interface is published on a non-loopback address.
 7. The four container web interfaces listen on `127.0.0.1` only.
 8. Caddy listens on `${TS_IPV4}:80` and on no other address.
 9. dnsmasq answers on `${TS_IPV4}:53` **and** `127.0.0.1:53`, and on no
@@ -681,14 +681,16 @@ A v2 run is successful when every one of these holds on the target host.
 ### Firewall
 
 24. `MASTER-INPUT` accepts loopback, `ESTABLISHED,RELATED`, all
-    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH), and the
-    two WAN UDP ports; it drops other new WAN inbound.
+    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH), WAN
+    UDP `${WG_PUBLIC_PORT}`, and WAN TCP+UDP `${QBIT_PUBLIC_PORT}`; it
+    drops other new WAN inbound.
 25. `DOCKER-USER` contains exactly one jump to `MASTER-DOCKER`, as its
     first rule.
 26. A third-party rule planted in `DOCKER-USER` before the run is still
     present after it.
 27. Docker's own chains are unchanged in name, count and order.
-28. No rule anywhere permits public TCP to `${QBIT_PUBLIC_PORT}`.
+28. `MASTER-DOCKER` permits NEW WAN TCP and UDP to `${QBIT_PUBLIC_PORT}`
+    and NEW WAN UDP to `${WG_PUBLIC_PORT}`.
 29. The active SSH session survives policy application.
 
 ### Lifecycle
@@ -696,7 +698,7 @@ A v2 run is successful when every one of these holds on the target host.
 30. `systemctl restart tailscaled` leaves all five containers running.
 31. `systemctl restart docker` results in a re-applied firewall policy.
 32. After a full reboot: five containers running, all six names resolving,
-    both public UDP ports published, WebDAV answering `401`.
+    public wg UDP + qBit TCP/UDP published, WebDAV answering `401`.
 33. `systemctl --failed` is empty.
 
 ### Idempotency

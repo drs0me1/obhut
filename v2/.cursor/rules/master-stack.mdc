@@ -111,10 +111,10 @@ Ana hedef, mevcut `install.sh` dosyasının davranışını anlamak ve yalnızca
   - wg-easy web arayüzü: `127.0.0.1:51821`
   - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
   - Filebrowser Quantum: `127.0.0.1:<web-port>`
-- Public olarak yalnız şu iki UDP portu yayınlanacak:
-  - wg-easy WireGuard UDP portu
-  - qBittorrent UDP portu
-- qBittorrent için yalnız UDP yayınlama kararı kullanıcı gereksinimidir. Bunu sessizce TCP+UDP olarak değiştirme. Teknik bir sakınca görürsen kodu değiştirmeden raporla.
+- Public olarak yayınlanacak:
+  - wg-easy WireGuard: yalnız UDP
+  - qBittorrent peer: TCP + UDP (aynı `QBIT_PUBLIC_PORT`; 2026-08-06, R12 revize)
+- qBittorrent peer protokolünü sessizce daraltma; değişiklik açık karar ister.
 - Unpackerr web arayüzü gerektirmiyorsa port yayınlama.
 - Container isimleri, host portları, container portları ve volume yolları tek bir yapılandırma kaynağından yönetilmeli.
 
@@ -178,7 +178,7 @@ Ana hedef, mevcut `install.sh` dosyasının davranışını anlamak ve yalnızca
   - `tailscale0` üzerinden gelen trafik kabul edilecek,
   - public WAN üzerinden yalnız:
     - wg-easy UDP portu,
-    - qBittorrent UDP portu kabul edilecek,
+    - qBittorrent TCP+UDP peer portu kabul edilecek,
   - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
 - Docker-published portlar için kurallar `DOCKER-USER` zincirinde uygulanacak.
 - Docker’ın oluşturduğu şu zincirler silinmeyecek veya flush edilmeyecek:
