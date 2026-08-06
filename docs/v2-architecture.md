@@ -105,8 +105,8 @@ v2/
 ├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
 ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
 ├── systemd/                       units (firewall, webdav, GRO, refresh, watch)
-├── dist/                          portable Master-Stack-v2-Install.command (embedded runtime)
-├── dev/                           builders + repo-local .command helpers (not on host)
+├── dist/                          exported Master-Stack-v2-Install.command (embedded runtime)
+├── dev/export-v2.sh               build the portable install app (+ .command wrapper)
 └── tests/                         bats suites (not on host)
 ```
 
@@ -161,7 +161,7 @@ in §10, not resolved silently.
 | `scripts/watch-tailnet-addr` | `ip monitor address` on `tailscale0`; start refresh on change | How refresh updates consumers |
 | `scripts/webdav.sh` → `master-webdav` | Resolve the current Tailscale IPv4 with a bounded wait, then exec the read-only WebDAV server bound to it | Why it is needed, who consumes it |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
-| `dev/*.command` | macOS upload / one-click install helpers | Host runtime |
+| `dev/export-v2.sh` | Build the self-contained macOS install `.command` | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
 
 ### 3.3 Placeholder convention
@@ -412,9 +412,10 @@ places.
 ## 8. Implementation status
 
 The lean `v2/` tree is executable: `install.sh` runs the seven stages on a
-Debian 13 host. macOS helpers under `v2/dev/` upload a runtime-only tarball
-(excluding `.cursor/`, `dev/`, `tests/`) and optionally start the install
-over `ssh -t`.
+Debian 13 host. `v2/dev/export-v2.sh` embeds a runtime-only tarball
+(excluding `.cursor/`, `dev/`, `tests/`, `dist/`) into
+`Master-Stack-v2-Install.command`, which uploads and starts install over
+`ssh -t`.
 
 Static checks for this tree:
 

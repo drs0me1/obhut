@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-13"
+V2_VERSION="2026.08.06-v2-14"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -508,11 +508,16 @@ EOF
 
 stage_6() {
     log INFO "Aşama 6/7 — dnsmasq ve Caddy"
-    systemctl mask --now dnsmasq 2>/dev/null || true
-    systemctl mask --now caddy 2>/dev/null || true
+    systemctl unmask dnsmasq caddy 2>/dev/null || true
+    systemctl stop dnsmasq caddy 2>/dev/null || true
+
+    atomic_write /usr/sbin/policy-rc.d 0755 <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+    trap 'rm -f /usr/sbin/policy-rc.d' RETURN EXIT
 
     retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y dnsmasq debian-keyring
-    # Caddy resmi depo
     if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
         retry "caddy-gpg" 3 60 -- curl -1sLf \
             'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
@@ -524,6 +529,8 @@ EOF
         retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
     fi
     retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y caddy
+    rm -f /usr/sbin/policy-rc.d
+    trap - RETURN EXIT
 
     mkdir -p /etc/dnsmasq.d
     render_template "$V2_ROOT/templates/dnsmasq.conf" "$DNSMASQ_CONF_FILE" 0644 \
@@ -574,7 +581,7 @@ RestartSec=5s
 EOF
 
     systemctl daemon-reload
-    systemctl unmask dnsmasq caddy
+    systemctl unmask dnsmasq caddy 2>/dev/null || true
     systemctl enable dnsmasq caddy
     systemctl restart dnsmasq
     systemctl restart caddy

@@ -7,29 +7,30 @@ reconcile engine.
 Authoritative behaviour: [`docs/v2-contract.md`](../docs/v2-contract.md).
 Layout and data flow: [`docs/v2-architecture.md`](../docs/v2-architecture.md).
 
-## One-click (macOS) — single portable file
+## Export → single portable app (macOS)
 
-The install launcher is a **self-contained** `.command`: it embeds the v2
-runtime tarball. Copy it anywhere (Desktop, USB, another Mac). No git repo
-required on the machine that clicks it.
-
-| File | Role |
-|---|---|
-| [`dist/Master-Stack-v2-Install.command`](dist/Master-Stack-v2-Install.command) | Double-click → ask SSH host → upload → interactive `install.sh` |
-| [`dev/build-portable-installer.command`](dev/build-portable-installer.command) | Rebuild the portable file into `dist/` **and** copy to Desktop |
-
-Rebuild after any `v2/` change:
+There is no separate upload/copy helper. Export builds one self-contained
+`.command` that embeds the v2 runtime. Copy that file anywhere (Desktop,
+another Mac); no git checkout is required at click time.
 
 ```bash
-v2/dev/build-portable-installer.sh --desktop
+v2/dev/export-v2.sh --desktop
+# or double-click: v2/dev/export-v2.command
 ```
 
-Flow: SSH host name (default `nrm`) → copy embedded archive → `ssh -t`
-install. Prompts use Enter for defaults; only the Tailscale login URL needs
-the browser. Override default host with `DEPLOY_HOST=…`.
+| Output | Role |
+|---|---|
+| `dist/Master-Stack-v2-Install.command` | Portable installer (also copied to Desktop with `--desktop`) |
 
-Requires SSH key auth to the target (`BatchMode` for upload). First macOS
-open may need right-click → Open if Gatekeeper quarantines the file.
+Double-click the exported file → SSH host name (default `nrm`) → upload
+embedded archive → interactive `install.sh`. Enter accepts defaults; only
+the Tailscale login URL needs the browser. Override host with
+`DEPLOY_HOST=…`.
+
+Requires SSH key auth to the target. First macOS open may need right-click
+→ Open if Gatekeeper quarantines the file.
+
+Rebuild the export after any change under `v2/` that should ship.
 
 ## Runtime tree (what lands on the server)
 
@@ -43,14 +44,7 @@ v2/
 └── systemd/
 ```
 
-Not shipped in the portable archive: `.cursor/`, `dev/`, `tests/`, `dist/`.
-
-## Repo helpers (optional)
-
-| File | Action |
-|---|---|
-| `dev/install-v2.command` | Rebuild portable from this checkout, then run it |
-| `dev/upload-v2.command` | Upload runtime from this checkout only (no install) |
+Not embedded in the export: `.cursor/`, `dev/`, `tests/`, `dist/`.
 
 ## Manual install on the host
 

@@ -66,7 +66,7 @@ built_at="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 #!/usr/bin/env bash
 # Master Stack v2 — taşınabilir tek dosya kurulum (macOS .command)
 # Repo'ya ihtiyaç duymaz. Masaüstü'ne kopyalayıp çift tıklayın.
-# Yeniden üretmek: v2/dev/build-portable-installer.sh
+# Yeniden üretmek: v2/dev/export-v2.sh
 set -Eeuo pipefail
 
 HEADER_END

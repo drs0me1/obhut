@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Çift tık: tek dosyalı kurulum üreticisi → v2/dist + Masaüstü
+# Çift tık: v2'yi taşınabilir tek dosya app olarak export et → dist + Masaüstü
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "$0")"
-./build-portable-installer.sh --desktop
+./export-v2.sh --desktop
 
 cat <<EOF
 
-Taşınabilir kurulum hazır.
+Export tamam.
 
   • Repo:     ../dist/Master-Stack-v2-Install.command
   • Masaüstü: ~/Desktop (veya ~/Masaüstü) / Master-Stack-v2-Install.command
 
-Bu tek dosyayı istediğin yere kopyalayabilirsin; repo gerekmez.
-Çift tıklayınca SSH sunucu adını sorar, yükler ve kurulumu başlatır.
+Bu tek dosya tüm v2 runtime'ını içerir; başka Mac'e kopyalanıp çift tıklanır.
+SSH sunucu adını sorar, yükler ve kurulumu başlatır.
 
 EOF
 

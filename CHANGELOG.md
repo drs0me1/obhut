@@ -6,21 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### 2026-08-06 — Portable single-file macOS installer
+### 2026-08-06 — Quiet dnsmasq/Caddy apt install (`v2-14`)
 
-`v2/dev/build-portable-installer.sh` embeds the v2 runtime tarball into
-`v2/dist/Master-Stack-v2-Install.command` (optional `--desktop` copy). The
-`.command` runs from any path: asks for SSH host, uploads, starts
-interactive install. No local repo required at click time.
+Stage 6 uses `/usr/sbin/policy-rc.d` (exit 101) instead of `systemctl mask`
+around the dnsmasq/Caddy package installs so apt postinst no longer prints
+`Failed to preset unit … is masked`. Services still stay down until config
+and drop-ins are written, then `enable` + `restart`. Version
+`2026.08.06-v2-14`.
+
+### 2026-08-06 — Portable single-file macOS export
+
+`v2/dev/export-v2.sh` (`.command` wrapper) embeds the v2 runtime into
+`Master-Stack-v2-Install.command` (`dist/` + optional Desktop). That single
+file is the only install launcher — separate upload/sync helpers removed.
+Asks for SSH host, uploads, starts interactive install; no local repo at
+click time.
 
 ### 2026-08-06 — Export-ready v2 + edge systemd ordering (`v2-13`)
 
 Caddy/dnsmasq drop-ins gain `After=`/`Wants=tailscaled` (Caddy also
 `PartOf=tailscaled` + restart); `master-firewall` waits for `tailscaled`;
 WebDAV is `PartOf=tailscaled` with `ReadOnlyPaths=/downloads`; install wraps
-in `systemd-inhibit`. macOS one-click: `v2/dev/install-v2.command` (upload +
-TTY install) and shared `sync-v2.sh` (runtime-only tarball). Docs/README
-aligned to the live tree. Version `2026.08.06-v2-13`.
+in `systemd-inhibit`. Docs/README aligned to the live tree. Version
+`2026.08.06-v2-13`.
 
 ### 2026-08-06 — Align UDP netbuf floor with legacy (`v2-12`)
 

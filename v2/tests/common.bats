@@ -290,6 +290,13 @@ EOF
         grep -q 'PartOf=tailscaled.service'
 }
 
+@test "edge apt install uses policy-rc.d not mask" {
+    grep -q '/usr/sbin/policy-rc.d' "$V2_ROOT/install.sh"
+    grep -q 'exit 101' "$V2_ROOT/install.sh"
+    ! grep -q 'systemctl mask --now dnsmasq' "$V2_ROOT/install.sh"
+    ! grep -q 'systemctl mask --now caddy' "$V2_ROOT/install.sh"
+}
+
 @test "install holds systemd-inhibit" {
     grep -q 'systemd-inhibit' "$V2_ROOT/install.sh"
     grep -q 'V2_INHIBITED' "$V2_ROOT/install.sh"

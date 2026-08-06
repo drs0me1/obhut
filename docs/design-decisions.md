@@ -3238,6 +3238,22 @@ separate document with its own numbering.
 - **Trade-off:** One extra always-on process. Accepted for sub-second to
   few-second recovery versus a multi-minute edge outage.
 
+### DD-65: Edge apt install uses `policy-rc.d`, not unit mask (2026-08-06)
+
+- **Decision:** While installing `dnsmasq` / `caddy`, write
+  `/usr/sbin/policy-rc.d` that exits `101`, then remove it before
+  configuring and starting the units. Do not `systemctl mask` those units
+  for the apt window.
+- **Context:** Masking before `apt-get install` correctly prevented a
+  premature start, but `deb-systemd-helper` / `systemctl preset` logged
+  `Failed to preset unit: Unit … is masked` — looked like a failure even
+  though the install succeeded.
+- **Rationale:** `policy-rc.d` is the Debian-supported way to suppress
+  invoke-rc.d starts during package setup without leaving the unit in a
+  masked state that breaks preset. Leftover masks from older runs are still
+  cleared with `unmask` before enable.
+- **Trade-off:** None material; same “configure then start” ordering.
+
 ### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
 
 - **Decision:** Compose publishes `${QBIT_PUBLIC_PORT}` for **both** TCP and
