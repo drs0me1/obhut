@@ -1,5 +1,6 @@
 # Master stack Compose — değerler defaults.env / .env üzerinden gelir.
-# __AD__ kurulumda bir kez doldurulur; ${AD} Compose .env'den genişler.
+# Kurulumda bir kez doldurulan yer tutucular: CIFT_ALT_CIZGI + AD + CIFT_ALT_CIZGI
+# Runtime: ${AD} Compose .env'den genişler.
 
 services:
   portainer:
@@ -94,8 +95,8 @@ services:
     container_name: wg-easy
     restart: unless-stopped
     # v15: WireGuard dinleme portu env ile set edilmez; ilk web kurulumunda
-    # Host=${WG_ENDPOINT_HOST}, Port=__WG_PUBLIC_PORT__ seçilir.
-    # Docker map 1:1 — iç ve dış UDP aynı (legacy ile aynı model).
+    # Host=WG_ENDPOINT_HOST, Port=WG_PUBLIC_PORT (defaults ile ayni) secilir.
+    # Docker map 1:1 — ic ve dis UDP ayni (legacy ile ayni model).
     environment:
       TZ: __TIMEZONE__
       INSECURE: "true"
