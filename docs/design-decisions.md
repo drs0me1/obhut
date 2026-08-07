@@ -3380,3 +3380,35 @@ separate document with its own numbering.
   NEW WAN peer traffic — so `[::]:65171/65173` was dead surface. Peer
   maps are now explicit `0.0.0.0:port:port/...`. Host/Tailscale IPv6,
   NDP INPUT rules, and the wg-easy IPv6 bridge are unchanged.
+
+### DD-71: IPv6 `MASTER-DOCKER` drops WAN only, like IPv4 (2026-08-07)
+
+- **Decision:** `apply_docker6` ends with `-i $WAN_INTERFACE -j DROP`
+  followed by `-j RETURN`, the same shape as `apply_docker4`, instead of an
+  unconditional `-j DROP`. `--check` gains two IPv6 assertions
+  (`MASTER-INPUT` and `MASTER-DOCKER` each carry the WAN-scoped `DROP`), and
+  a bats test rejects a bare `-A "$staging" -j DROP` in that function.
+- **Context:** The unconditional `DROP` sat in `DOCKER-USER`, which every
+  IPv6 `FORWARD` packet traverses — so it dropped **egress** from the
+  wg-easy bridge as well as WAN ingress. Compose enables IPv6 on that
+  network, wg-easy issues peers an address out of
+  `fdcc:ad94:bacf:61a4::/112`, and Docker installs a matching
+  `POSTROUTING … MASQUERADE`; the project's own rule then cancelled all of
+  it. Measured on the test host: `ping -6` from inside the container lost
+  100% of packets while the host itself reached the same address in 3.8 ms,
+  and the rule's counter incremented by exactly the test packets.
+- **Rationale:** **DD-63**'s v2-27 note justified the rule from its inbound
+  effect ("drops all NEW WAN peer traffic — so `[::]:65171/65173` was dead
+  surface") and explicitly left the wg-easy IPv6 bridge alone. The outbound
+  consequence was not part of that reasoning. A dual-stack peer therefore
+  tried IPv6 first for every AAAA-resolved host and fell back to IPv4 after
+  a timeout — a per-connection latency cost, not merely "no IPv6".
+- **Trade-off:** Container IPv6 egress is now permitted, matching what IPv4
+  has always allowed. No public IPv6 publish exists, so no `ACCEPT` precedes
+  the WAN `DROP`; NEW WAN → container IPv6 stays closed. Verified live:
+  egress 0% loss, `ip6tables -C MASTER-DOCKER -i eth0 -j DROP` still
+  present, IPv4 chain unchanged.
+- **Alternative rejected:** setting `enable_ipv6: false` on the wg network
+  would also remove the fallback delay, but by removing peer IPv6 entirely
+  rather than by fixing an asymmetry the contract (§9, "the same shape")
+  already required.

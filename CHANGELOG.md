@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — v2-28: IPv6 `MASTER-DOCKER` no longer blocks bridge egress
+
+Found during the structural optimisation review
+([`docs/v2-optimization-review.md`](docs/v2-optimization-review.md)) and
+verified on `nrm`.
+
+- **Fixed:** IPv6 `MASTER-DOCKER` ended in an unconditional `-j DROP`, which
+  also blocked **egress** from the wg-easy bridge, not just WAN ingress.
+  wg-easy peers hold a dual-stack address, so every connection to an
+  AAAA-resolved host tried IPv6, got nothing, and fell back to IPv4. The
+  chain now drops WAN-scoped traffic only and ends with `RETURN`, matching
+  the IPv4 chain (**DD-71**).
+- **Added:** `master-firewall --check` asserts the WAN-scoped `DROP` in both
+  IPv6 chains, and `v2/tests/common.bats` rejects a bare
+  `-A "$staging" -j DROP` inside `apply_docker6`. The previous grep-based
+  suite would have passed the broken rule.
+- **Verified live:** container `ping -6` 100% loss → 0% loss (3.98 ms); WAN
+  ingress `DROP` still present; IPv4 chain byte-identical; `--check` passes.
+
 ### 2026-08-07 — Live verification of v2-23…v2-27 on `nrm` (no further tune)
 
 Disposable host `nrm` after sync + idempotent re-run of

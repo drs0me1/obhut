@@ -227,12 +227,16 @@ apply_input6() {
 }
 
 apply_docker6() {
+    # IPv4 ile aynı şekil: yalnız WAN'dan GELEN düşer, köprü çıkışı RETURN ile
+    # DOCKER-FORWARD'a devam eder. Koşulsuz DROP wg-easy peer IPv6 çıkışını da
+    # keserdi. Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
     local bin=ip6tables staging
     wait_for_docker_user "$bin"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
-    "$bin" -w 5 -A "$staging" -j DROP
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
 }
 
@@ -284,6 +288,10 @@ if [[ "$MODE" == check ]]; then
         -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
+    # IPv6 politika içeriği: DROP WAN'a bağlı olmalı. Koşulsuz DROP burada
+    # başarısız olur — köprü çıkışını kesen regresyonu bu kural yakalar.
+    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi

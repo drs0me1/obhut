@@ -335,6 +335,21 @@ EOF
     ! grep -qE -- '--pass |--user ' "$V2_ROOT/scripts/webdav.sh"
 }
 
+@test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
+    # An unconditional DROP here also kills wg-easy peer IPv6 egress.
+    local body
+    body="$(awk '/^apply_docker6\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    [[ -n "$body" ]]
+    ! grep -qE '\-A "\$staging" -j DROP$' <<<"$body"
+    grep -q -- '-i "$WAN_INTERFACE" -j DROP' <<<"$body"
+    grep -qE '\-A "\$staging" -j RETURN$' <<<"$body"
+    # --check must assert the WAN-scoped shape so the regression cannot return.
+    grep -q 'check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP' \
+        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
+        "$V2_ROOT/scripts/firewall.sh"
+}
+
 @test "firewall script does not flush DOCKER-USER" {
     ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
