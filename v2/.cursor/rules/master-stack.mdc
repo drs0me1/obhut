@@ -196,9 +196,8 @@ Ana hedef, mevcut `install.sh` dosyasının davranışını anlamak ve yalnızca
 ### IP değişikliği
 
 - Tailscale IP değişirse bütün stack yeniden başlatılmamalı.
-- `watch-tailnet-addr`: `ip monitor address` ile `tailscale0` adres
-  olaylarını dinler ve `refresh-tailnet-config` tetikler (anlık yol).
-  Beş dakikalık timer yedek kalır.
+- `watch-tailnet-addr` yok; yalnız `refresh-tailnet-config`
+  (`WantedBy=tailscaled` + 5 dk timer).
 - Küçük bir `refresh-tailnet-config` betiği:
   - Güncel `TS_IPV4` ve `TS_IPV6` değerlerini okur.
   - Önceki değerlerle karşılaştırır.

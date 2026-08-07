@@ -157,9 +157,9 @@ in §10, not resolved silently.
 | `templates/Caddyfile` | Six HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `templates/dnsmasq.conf` | Six `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
-| `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; verify its own jumps are in place | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
+| `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
 | `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy and `master-webdav` — nothing else | Container health, file drift, disk space, dnsmasq, the firewall |
-| `scripts/watch-tailnet-addr` | `ip monitor address` on `tailscale0`; start refresh on change | How refresh updates consumers |
+| *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
 | `scripts/webdav.sh` → `master-webdav` | Resolve the current Tailscale IPv4 with a bounded wait, then exec the read-only WebDAV server bound to it | Why it is needed, who consumes it |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
 | `dev/export-v2.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
@@ -192,8 +192,8 @@ error, not a warning.
 | `/root/docker/.env` | installer | `WG_ENDPOINT_HOST` (hint = current WAN IPv4), `0600` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
 | `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
-| `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,watch-tailnet-addr,master-webdav}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,master-webdav,watch-tailnet-addr,refresh-tailnet-config}.service` (+ `.timer`) | installer | `0644` |
+| `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,master-webdav}` | installer | `0755` |
+| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,master-webdav,refresh-tailnet-config}.service` (+ `.timer`) | installer | `0644` |
 | `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
 | `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
 | `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |

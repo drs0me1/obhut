@@ -242,6 +242,13 @@ check_jump() {
         die "$bin: $parent -> $chain jump yok"
 }
 
+check_rule() {
+    local bin="$1"
+    shift
+    "$bin" -w 5 -C "$@" 2>/dev/null ||
+        die "$bin: eksik kural: $*"
+}
+
 check_ts_input_precedence() {
     local bin="$1" ts_pos="" master_pos=""
     if ! "$bin" -w 5 -L ts-input -n >/dev/null 2>&1; then
@@ -261,13 +268,23 @@ check_ts_input_precedence() {
 }
 
 if [[ "$MODE" == check ]]; then
+    # Jump + sıra (IPv4/IPv6)
     check_jump iptables INPUT "$CHAIN_INPUT"
     check_jump iptables DOCKER-USER "$CHAIN_DOCKER"
     check_jump ip6tables INPUT "$CHAIN_INPUT"
     check_jump ip6tables DOCKER-USER "$CHAIN_DOCKER"
     check_ts_input_precedence iptables
     check_ts_input_precedence ip6tables
-    printf 'firewall: politika jumplari yerinde\n'
+    # Kritik IPv4 politika içeriği (eski reconcile yüzeyi değil; dar set)
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
+    printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi
 

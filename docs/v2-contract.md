@@ -173,18 +173,20 @@ Three exposure classes, and nothing may straddle them.
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| wg-easy (WireGuard) | host (all IFs; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
-| qBittorrent (peer) | host (all IFs; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (65173) | **TCP + UDP** |
+| wg-easy (WireGuard) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
+| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (65173) | **TCP + UDP** |
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
 console recovery and public-IP SSH keep working; it is not a Docker
 publish and does not appear in `docker port`.
 
-Public ports are not bound to a WAN IP in Compose (1:1 host publish);
-firewall limits NEW WAN traffic to wg UDP, qBit TCP+UDP, and SSH.
+Public peer ports are IPv4-only host binds (`0.0.0.0:port:port/...`), not
+dual-stack unqualified publishes and not a specific WAN IP. Firewall
+limits NEW WAN traffic to wg UDP, qBit TCP+UDP, and SSH.
 (R12 revised 2026-08-06: qBit peer TCP restored to match legacy
-connectivity.)
+connectivity. 2026-08-07: drop `[::]` peer publish — unused and already
+dropped by IPv6 `MASTER-DOCKER`.)
 
 ### 3.2 Tailnet (Tailscale IPv4) — reachable only over `tailscale0`
 
@@ -533,8 +535,7 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
 | `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
 | `master-webdav.service` | `tailscaled.service` | none to Docker/Compose | `on-failure`, bounded |
-| `watch-tailnet-addr.service` | `tailscaled.service` | none | `always` (runs `ip monitor address`) |
-| `refresh-tailnet-config.timer` | — | backup poll | starts oneshot every 5 min |
+| `refresh-tailnet-config.timer` | — | address poll | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service` | `PartOf=tailscaled.service` | `on-failure` |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | `on-failure` |
 
@@ -642,7 +643,8 @@ A v2 run is successful when every one of these holds on the target host.
 
 5. `docker port` shows public publications for wg-easy UDP
    `${WG_PUBLIC_PORT}` and qBittorrent TCP+UDP `${QBIT_PUBLIC_PORT}`
-   (host 1:1 publish; not necessarily bound to a specific WAN IP).
+   (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN IP; no `[::]` peer
+   publish).
 6. No container web interface is published on a non-loopback address.
 7. The four container web interfaces listen on `127.0.0.1` only.
 8. Caddy listens on `${TS_IPV4}:80` and on no other address.

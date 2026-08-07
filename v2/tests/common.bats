@@ -154,9 +154,9 @@ EOF
 }
 
 @test "compose publishes qbit peer TCP and UDP 1:1" {
-    grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"' \
+    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"' \
         "$V2_ROOT/templates/compose.yaml"
-    grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
+    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
 }
 
@@ -219,7 +219,7 @@ EOF
 }
 
 @test "wg-easy publishes WireGuard UDP 1:1 without remap" {
-    grep -q '"__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"' \
+    grep -q '"0.0.0.0:__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
     ! grep -q 'WAN_IPV4' "$V2_ROOT/templates/compose.yaml"
     ! grep -q ':51820/udp' "$V2_ROOT/templates/compose.yaml"
@@ -260,9 +260,19 @@ EOF
 }
 
 @test "compose public UDP ports are not bound to WAN_IPV4" {
-    grep -q '"__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
+    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
     ! grep -q '\${WAN_IPV4}' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "compose public peer ports are IPv4-only" {
+    grep -q '0.0.0.0:__QBIT_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
+    grep -q '0.0.0.0:__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
+    # Unqualified host:port would also bind [::] on Docker.
+    ! grep -qE '^[[:space:]]*- "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/' \
+        "$V2_ROOT/templates/compose.yaml"
+    ! grep -qE '^[[:space:]]*- "__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/' \
+        "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "refresh-tailnet-config does not touch compose or firewall" {
@@ -295,12 +305,15 @@ EOF
     ! grep -q 'rmem_max = 7500000' "$V2_ROOT/install.sh"
 }
 
-@test "watch-tailnet-addr monitors interface and starts refresh" {
-    grep -q 'ip monitor address' "$V2_ROOT/scripts/watch-tailnet-addr"
-    grep -q 'systemctl start --no-block' "$V2_ROOT/scripts/watch-tailnet-addr"
-    grep -q 'WantedBy=multi-user.target' \
-        "$V2_ROOT/systemd/watch-tailnet-addr.service"
-    grep -q 'watch-tailnet-addr.service' "$V2_ROOT/install.sh"
+@test "watch-tailnet-addr is removed; refresh timer remains" {
+    [ ! -e "$V2_ROOT/scripts/watch-tailnet-addr" ]
+    [ ! -e "$V2_ROOT/systemd/watch-tailnet-addr.service" ]
+    ! grep -q 'enable --now watch-tailnet-addr' "$V2_ROOT/install.sh"
+    grep -q 'disable --now watch-tailnet-addr.service' "$V2_ROOT/install.sh"
+    grep -q 'OnUnitActiveSec=5min' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+    grep -q 'WantedBy=tailscaled.service' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.service"
 }
 
 @test "tailscale-udp-gro unit is WantedBy multi-user" {
@@ -352,6 +365,17 @@ EOF
 @test "firewall waits for DOCKER-USER before apply" {
     grep -q 'wait_for_docker_user' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'DOCKER_USER_WAIT_SECONDS' "$V2_ROOT/scripts/firewall.sh"
+}
+
+@test "firewall --check asserts critical IPv4 ACCEPT/DROP rules" {
+    grep -q 'check_rule()' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'kritik politikalar yerinde' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
+        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP' \
+        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'WG_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    grep -c 'QBIT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
 }
 
 @test "edge drop-ins order after tailscaled" {

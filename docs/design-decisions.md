@@ -3144,6 +3144,10 @@ separate document with its own numbering.
   follows both `docker.service` and `tailscaled.service` stop/restart
   (still `Requires=docker` only — Compose is never coupled). Expected:
   `tailscaled` restart → firewall apply + Caddy/WebDAV; containers stay.
+- **v2-25 (2026-08-07): minimal `--check` content.** Beyond jumps and
+  `ts-input` order, `--check` asserts IPv4 `MASTER-INPUT`/`MASTER-DOCKER`
+  WAN DROP, WAN wg UDP ACCEPT, and WAN qBit TCP+UDP ACCEPT. Not a return
+  to the old multi-flag reconcile surface.
 
 ### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
 
@@ -3233,27 +3237,22 @@ separate document with its own numbering.
   `--http-enabled` and no `tls_insecure_skip_verify`. Kept only as history;
   see the revised DD-62 above.
 
-### DD-64: Tailscale address changes are watched via netlink (2026-08-06)
+### DD-64: Tailscale address refresh without a long-running watcher (revised 2026-08-07)
 
-- **Decision:** A long-running `watch-tailnet-addr.service` runs
-  `ip monitor address`, filters events for `tailscale0`, debounces (~2s),
-  and `systemctl start --no-block refresh-tailnet-config.service`. The
-  existing five-minute timer and `WantedBy=tailscaled` path stay as
-  backups.
-- **Context:** Live admin-console IPv4 changes left Caddy/WebDAV on the
-  old bind until the next timer tick (~3–5 minutes). `tailscaled` often
-  does not restart when only the CGNAT address changes, so
-  `WantedBy=tailscaled` alone is insufficient.
-- **Rationale:** The kernel already emits address add/delete netlink
-  events; polling is a laggy approximation of that signal. Reuse the
-  existing refresh script (idempotent no-op when IPs match) so the watcher
-  never duplicates bind logic.
-- **False alarm clarified (same day):** During the IP-change experiment, a
-  temporary host watcher logged `CHANGE` whenever the refresh unit’s
-  journal line moved — including timer no-ops (`değişiklik yok`). That was
-  instrumentation noise, not the timer incorrectly bouncing Caddy/WebDAV.
-- **Trade-off:** One extra always-on process. Accepted for sub-second to
-  few-second recovery versus a multi-minute edge outage.
+- **Decision (v2-26):** Drop `watch-tailnet-addr`. Address updates go through
+  `refresh-tailnet-config` only: `WantedBy=tailscaled.service` (restart path)
+  plus `refresh-tailnet-config.timer` (`OnBootSec=2min`,
+  `OnUnitActiveSec=5min`). Installer disables/removes any leftover watch
+  unit and sbin helper on re-run.
+- **Context:** The netlink watcher and the five-minute timer both drove the
+  same oneshot. Dual paths added always-on process cost for little gain
+  once Tailscale restart already re-applies firewall and restarts
+  Caddy/WebDAV (`PartOf=tailscaled`).
+- **Rationale:** Prefer one refresh owner. Worst case for a silent CGNAT
+  readdress without `tailscaled` restart is up to one timer interval before
+  Caddy/WebDAV rebind — accepted for a simpler unit graph.
+- **Supersedes:** The 2026-08-06 netlink watcher decision (sub-second IP
+  change recovery via `ip monitor address`).
 
 ### DD-70: Portable export verifies SHA-256 and extracts atomically (2026-08-07)
 
@@ -3376,3 +3375,8 @@ separate document with its own numbering.
 - **Trade-off:** One additional public TCP port on the WAN versus the
   earlier narrower surface. Accepted explicitly by the operator (R12
   revised).
+- **v2-27 (2026-08-07): IPv4-only peer publish.** Unqualified Compose
+  `host:port` maps also bind `[::]`, while IPv6 `MASTER-DOCKER` drops all
+  NEW WAN peer traffic — so `[::]:65171/65173` was dead surface. Peer
+  maps are now explicit `0.0.0.0:port:port/...`. Host/Tailscale IPv6,
+  NDP INPUT rules, and the wg-easy IPv6 bridge are unchanged.

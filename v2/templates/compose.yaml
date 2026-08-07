@@ -44,10 +44,10 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:__QBIT_UI_PORT__:__QBIT_UI_PORT__"
-      # WAN IP gömülmez: host tüm arayüzlerde dinler; firewall WAN'ı sınırlar.
-      # Peer: TCP+UDP (legacy ile aynı); yalnız UDP peer keşfini zayıflatıyordu.
-      - "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"
-      - "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
+      # Peer: IPv4-only 1:1 (0.0.0.0). [::] publish yok — MASTER-DOCKER6 zaten
+      # WAN peer'i DROP ederdi; çift yığın gürültüydü. WAN IP gömülmez.
+      - "0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"
+      - "0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
     environment:
       TZ: __TIMEZONE__
       PUID: "1000"
@@ -115,8 +115,8 @@ services:
       INSECURE: "true"
     ports:
       - "127.0.0.1:__WG_UI_PORT__:__WG_UI_PORT__/tcp"
-      # WAN IP gömülmez: 1:1 port; IP değişince publish yeniden yazılmaz.
-      - "__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"
+      # WireGuard UDP: IPv4-only 1:1. WAN IP gömülmez; IP değişince remap yok.
+      - "0.0.0.0:__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"
     volumes:
       - wg_easy_data:/etc/wireguard
     cap_add:

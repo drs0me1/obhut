@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — IPv4-only public peer Compose binds (`v2-27`)
+
+wg-easy and qBittorrent public ports publish as `0.0.0.0:port:port/...`
+instead of dual-stack unqualified maps (no `[::]` peer listeners). Host
+IPv6 / Tailscale IPv6 / firewall IPv6 INPUT stay. Version
+`2026.08.06-v2-27`.
+
+### 2026-08-07 — Drop `watch-tailnet-addr` (`v2-26`)
+
+Tailscale address updates use only `refresh-tailnet-config`
+(`WantedBy=tailscaled` + 5-minute timer). The long-running netlink watcher
+unit/script is removed; re-runs disable and delete leftovers (DD-64).
+Version `2026.08.06-v2-26`.
+
+### 2026-08-07 — Minimal firewall `--check` content (`v2-25`)
+
+`--check` still verifies jumps and `ts-input` order, and now also asserts
+IPv4 WAN DROP on `MASTER-INPUT`/`MASTER-DOCKER` plus WAN ACCEPT for wg UDP
+and qBit TCP+UDP. Version `2026.08.06-v2-25`.
+
 ### 2026-08-07 — Re-apply firewall on Tailscale restart (`v2-24`)
 
 `master-firewall.service` is also `PartOf=` / `WantedBy=` `tailscaled.service`,
