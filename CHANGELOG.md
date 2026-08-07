@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — v2-29: address-bound units wait, fail visibly, and recover
+
+Second batch from the structural optimisation review
+([`docs/v2-optimization-review.md`](docs/v2-optimization-review.md)).
+
+- **Fixed:** `refresh-tailnet-config` used `systemctl try-restart … || restart`.
+  `try-restart` is a no-op on a failed unit **and returns 0**, so the fallback
+  was unreachable and a failed `caddy`/`master-webdav` was never restarted
+  when the address came back. It now uses `restart` (**DD-72**).
+- **Fixed:** `caddy` had no wait for the `tailscale0` address and no start
+  limit, so it restart-looped every 5 s indefinitely without ever reaching
+  `failed` — the tailnet surface was down while `systemctl --failed` stayed
+  empty. The drop-in now carries `ExecStartPre=wait-tailnet-addr`,
+  `TimeoutStartSec=150s`, `StartLimitIntervalSec=600`, `StartLimitBurst=3`.
+- **Added:** `v2/scripts/wait-tailnet-addr`, and a recovery pass in
+  `refresh-tailnet-config` that restarts an address-bound unit left in
+  `failed` even when the address has not changed. No new service, timer or
+  watcher — the existing five-minute timer becomes the recovery path.
+- **Verified live:** a `master-webdav` failed for 40+ minutes recovered from a
+  single refresh run with no address change; a following `tailscaled` restart
+  left `caddy` at `NRestarts=0` (previously 29), containers untouched,
+  `systemctl --failed` empty, `--check` passing.
+
 ### 2026-08-07 — v2-28: IPv6 `MASTER-DOCKER` no longer blocks bridge egress
 
 Found during the structural optimisation review

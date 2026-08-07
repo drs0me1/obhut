@@ -3412,3 +3412,42 @@ separate document with its own numbering.
   would also remove the fallback delay, but by removing peer IPv6 entirely
   rather than by fixing an asymmetry the contract (§9, "the same shape")
   already required.
+
+### DD-72: Address-bound units wait, fail visibly, and get recovered (2026-08-07)
+
+- **Decision:** Three changes to the Tailscale-address recovery path.
+  1. `refresh-tailnet-config` calls `systemctl restart` instead of
+     `systemctl try-restart … || systemctl restart …`.
+  2. It also calls `recover_failed_bound_units` on the **no-change** path,
+     restarting `caddy` / `master-webdav` if they are in `failed`.
+  3. The `caddy` drop-in gains `ExecStartPre=$SBIN_DIR/wait-tailnet-addr`,
+     `TimeoutStartSec=150s`, `StartLimitIntervalSec=600` and
+     `StartLimitBurst=3`.
+- **Context:** `try-restart` restarts a unit **only if it is already
+  running**. On a failed unit it does nothing *and returns 0*, so the `||`
+  fallback was unreachable. Measured on the test host:
+  `systemctl try-restart master-webdav.service; echo $?` → `0`, unit still
+  `failed`. Separately, `caddy` had no wait for the address: it read
+  `{$TAILSCALE_IPV4}` from `state.env`, failed to bind, and retried every
+  5 s forever. With no `StartLimit*` it never reached `failed`, so
+  `systemctl --failed` stayed empty while the whole tailnet surface was
+  down (`NRestarts` observed climbing past 29).
+- **Rationale:** The two failure shapes were mirror images. WebDAV waited
+  correctly but then exhausted its start limit and stayed `failed` with
+  nothing able to resurrect it; Caddy never failed and so was never
+  visible. The combination — bounded wait, then visible failure, then
+  recovery by the timer that already runs every five minutes — fixes both
+  without adding a watcher, a timer, or a service.
+- **Why the two waits stay separate:** `wait-tailnet-addr` only answers
+  "does an address exist", which is all Caddy needs because it reads the
+  value from `state.env`. `webdav.sh` keeps its own in-process wait because
+  it needs the address *value* to pass to `rclone --addr`. These are
+  different questions, not duplicated code.
+- **Trade-off:** Caddy now takes up to 120 s to fail instead of crash-looping
+  instantly, and `refresh-tailnet-config` does two `systemctl is-failed`
+  checks per five-minute tick. Both are negligible next to a silent outage.
+- **Verified live:** a `master-webdav` that had been `failed` for over forty
+  minutes was recovered by one `refresh-tailnet-config` run with **no**
+  address change. A subsequent `systemctl restart tailscaled` left
+  `caddy` at `NRestarts=0` (previously 29 and climbing), containers
+  untouched, `systemctl --failed` empty.

@@ -278,9 +278,9 @@ EOF
 @test "refresh-tailnet-config does not touch compose or firewall" {
     ! grep -qE 'compose|master-firewall|DOCKER-USER' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
-    grep -q 'try-restart caddy' "$V2_ROOT/scripts/refresh-tailnet-config" ||
-        grep -q 'restart caddy' "$V2_ROOT/scripts/refresh-tailnet-config"
-    grep -q 'master-webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
+    # Scope is exactly the two address-bound units, named in one list.
+    grep -q 'BOUND_UNITS="caddy.service master-webdav.service"' \
+        "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
 @test "refresh-tailnet timer is five minutes" {
@@ -289,6 +289,27 @@ EOF
     grep -q 'WantedBy=timers.target' \
         "$V2_ROOT/systemd/refresh-tailnet-config.timer"
     grep -q 'refresh-tailnet-config.timer' "$V2_ROOT/install.sh"
+}
+
+@test "refresh-tailnet uses restart, never try-restart" {
+    # try-restart is a no-op on a failed unit AND returns 0, so the old
+    # "try-restart || restart" fallback was unreachable and a failed unit was
+    # never resurrected when the address came back.
+    ! grep -q 'try-restart' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'systemctl restart "$unit"' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'recover_failed_bound_units' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'is-failed' "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
+@test "caddy waits for the tailnet address and fails visibly" {
+    [ -x "$V2_ROOT/scripts/wait-tailnet-addr" ]
+    grep -q 'wait-tailnet-addr' "$V2_ROOT/install.sh"
+    local block
+    block="$(awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh")"
+    grep -q 'ExecStartPre=.*wait-tailnet-addr' <<<"$block"
+    grep -q 'StartLimitBurst=' <<<"$block"
+    grep -q 'StartLimitIntervalSec=' <<<"$block"
+    grep -q 'TimeoutStartSec=' <<<"$block"
 }
 
 @test "refresh-tailnet soft-skips missing Tailscale IPv4" {

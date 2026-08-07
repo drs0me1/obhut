@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-28"
+V2_VERSION="2026.08.06-v2-29"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -491,6 +491,8 @@ EOF
     install -m 0755 "$V2_ROOT/scripts/webdav.sh" "$SBIN_DIR/master-webdav"
     install -m 0755 "$V2_ROOT/scripts/refresh-tailnet-config" \
         "$SBIN_DIR/refresh-tailnet-config"
+    install -m 0755 "$V2_ROOT/scripts/wait-tailnet-addr" \
+        "$SBIN_DIR/wait-tailnet-addr"
     # Unit içindeki /downloads yolunu operatör seçimine göre yaz
     sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
         "$V2_ROOT/systemd/master-webdav.service" |
@@ -613,14 +615,22 @@ EOF
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
 
     mkdir -p /etc/systemd/system/caddy.service.d
+    # ExecStartPre: Caddy adresin değerini state.env'den okur ama bind
+    # edebilmek için adresin arayüzde OLMASI gerekir. Beklemeden çöktüğünde
+    # sonsuz ve görünmez bir restart döngüsüne giriyordu. StartLimit, adres
+    # hiç gelmezse unit'i görünür biçimde failed yapar (DD-72).
     atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
 [Unit]
 Wants=tailscaled.service
 After=tailscaled.service
 PartOf=tailscaled.service
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
 EnvironmentFile=$STATE_FILE
+ExecStartPre=$SBIN_DIR/wait-tailnet-addr
+TimeoutStartSec=150s
 Restart=on-failure
 RestartSec=5s
 EOF

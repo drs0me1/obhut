@@ -17,6 +17,36 @@ source "$STATE_FILE"
 
 : "${TAILSCALE_IF:=tailscale0}"
 
+# Adrese bind olan unit'ler. Sıra önemli değil; ikisi de bağımsız.
+BOUND_UNITS="caddy.service master-webdav.service"
+
+restart_bound_units() {
+    # systemctl try-restart, failed/inactive bir unit'te HİÇBİR ŞEY yapmaz ve
+    # 0 döner — bu yüzden eski "try-restart || restart" kalıbındaki fallback
+    # ulaşılamazdı ve failed bir unit adres geri geldiğinde asla toparlanmazdı.
+    # restart her iki durumu da kapsar (DD-72).
+    local unit
+    for unit in $BOUND_UNITS; do
+        systemctl restart "$unit" ||
+            printf 'refresh-tailnet: %s yeniden başlatılamadı\n' "$unit" >&2
+    done
+}
+
+recover_failed_bound_units() {
+    # Adres değişmediği hâlde unit failed kalmış olabilir: adres geç geldiği
+    # için başlangıçta bind edememiş olan Caddy/WebDAV bu durumda kalır ve
+    # kendiliğinden dönmez. Zaten çalışan 5 dk'lık timer kurtarma yolu olur;
+    # yeni bir watcher veya timer eklenmez.
+    local unit
+    for unit in $BOUND_UNITS; do
+        if systemctl is-failed --quiet "$unit"; then
+            printf 'refresh-tailnet: %s failed; yeniden başlatılıyor\n' "$unit"
+            systemctl restart "$unit" ||
+                printf 'refresh-tailnet: %s kurtarılamadı\n' "$unit" >&2
+        fi
+    done
+}
+
 new_v4="$(
     ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
         awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }'
@@ -36,6 +66,7 @@ old_v6="${TAILSCALE_IPV6:-}"
 
 if [[ "$new_v4" == "$old_v4" && "$new_v6" == "$old_v6" ]]; then
     printf 'refresh-tailnet: değişiklik yok (%s)\n' "$new_v4"
+    recover_failed_bound_units
     exit 0
 fi
 
@@ -63,9 +94,6 @@ chmod 0600 "$tmp"
 mv -f "$tmp" "$STATE_FILE"
 trap - EXIT
 
-systemctl try-restart caddy.service 2>/dev/null ||
-    systemctl restart caddy.service
-systemctl try-restart master-webdav.service 2>/dev/null ||
-    systemctl restart master-webdav.service
+restart_bound_units
 
 printf 'refresh-tailnet: state.env güncellendi; Caddy ve WebDAV yeniden başlatıldı\n'

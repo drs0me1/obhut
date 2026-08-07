@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# tailscale0 üzerinde global bir IPv4 belirene kadar bekler.
+#
+# Caddy'nin ExecStartPre'si olarak çalışır. Caddy adresin DEĞERİNİ
+# state.env'den okur; buradan yalnız "adres var mı" bilgisi gerekir. WebDAV
+# aynı beklemeyi kendi içinde yapar çünkü o, adresi rclone --addr'a geçirmek
+# için değerine ihtiyaç duyar — bu yüzden ikisi ayrı kalır (DD-72).
+#
+# Süre dolarsa 1 döner; unit StartLimit ile görünür biçimde failed olur.
+# Sessiz sonsuz restart döngüsü kabul edilebilir bir sonuç değildir.
+set -Eeuo pipefail
+
+TAILSCALE_IF="${TAILSCALE_IF:-tailscale0}"
+WAIT_SECONDS="${TAILNET_ADDR_WAIT_SECONDS:-120}"
+
+deadline=$((SECONDS + WAIT_SECONDS))
+while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
+        grep -q ' inet '; then
+        exit 0
+    fi
+    sleep 2
+done
+
+printf 'HATA: %s IPv4 adresi %ss içinde oluşmadı.\n' \
+    "$TAILSCALE_IF" "$WAIT_SECONDS" >&2
+exit 1
