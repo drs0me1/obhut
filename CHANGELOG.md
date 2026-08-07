@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — Live verification of v2-23…v2-27 on `nrm` (no further tune)
+
+Disposable host `nrm` after sync + idempotent re-run of
+`2026.08.06-v2-27` (tmux; Stage 0 defaults; full-upgrade skipped; existing
+WebDAV htpasswd kept). Results kept; **no timer/firewall/settings change**
+after the run.
+
+- **Install / reboot:** `state.env` `V2_VERSION=2026.08.06-v2-27`; units
+  active (tailscaled, docker, master-firewall, dnsmasq, caddy,
+  master-webdav, refresh timer); `watch-tailnet-addr` absent; peer publish
+  IPv4-only (`0.0.0.0:65171/65173`, no `[::]`); `--check` reports critical
+  policy OK. Reboot smoke fail=0 (firewall, five containers, Caddy/WebDAV,
+  exit advertise `0.0.0.0/0` + `::/0`).
+- **Natural Tailscale IPv4 change:** live `100.122.80.61` → `100.122.80.77`
+  at ~14:53:52; Caddy/WebDAV stayed on old bind until
+  `refresh-tailnet-config.timer` (~14:55:25); state updated; listeners on
+  `.77`; `health` HTTP 200. Lag ~1.5 min inside the 5 min
+  `OnUnitActiveSec` window. Operator accepted keeping the timer as-is
+  (no watcher restore).
+- **Exit node (Mac → nrm):** Mac external IP `203.0.113.10` (= nrm WAN).
+  Path: Mac `utun4` → nrm `tailscale0` → `FORWARD` (`DOCKER-USER` /
+  `MASTER-DOCKER` RETURN on TS → `ts-forward` MARK/ACCEPT) →
+  `ts-postrouting` SNAT → `eth0`. Conntrack showed
+  `100.103.124.125` rewritten to WAN. `MASTER-INPUT` not on this path.
+- **DERP vs direct:** underlay used `Relay fra` while Mac was on
+  `172.20.10.0/28` hotspot / `31.142.x` NAT. **Not** caused by
+  `MASTER-INPUT`: `ts-input` is first and `udp dpt:41641 ACCEPT` counters
+  were live (~1.3 MiB). No firewall change.
+
+Portable export: `v2/app/2026.08.06-v2-27.command` (embedded archive SHA
+only; no `.sha256` sidecar).
+
 ### 2026-08-07 — IPv4-only public peer Compose binds (`v2-27`)
 
 wg-easy and qBittorrent public ports publish as `0.0.0.0:port:port/...`

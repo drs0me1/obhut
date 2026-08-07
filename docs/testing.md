@@ -653,6 +653,12 @@ alone.
     not a demonstrated bug fix.
   - **Netfilter reconstruction** was analysed in detail and written up as
     `docs/design-decisions.md` DD-16 and DD-17.
+- **v2 lean stack on `nrm` (2026-08-07) — `2026.08.06-v2-27`.** Synced
+  runtime, idempotent re-run, reboot smoke, natural Tailscale IPv4 change
+  (timer-only refresh, ~1.5 min lag), Mac exit-node path through
+  `ts-forward` + SNAT, and DERP-underlay check (hotspot NAT; **not**
+  `MASTER-INPUT`). Full write-up under CHANGELOG `[Unreleased]` same day.
+  Operator decision: keep 5 min refresh timer; no further settings change.
 - **This log has a gap, and the gap is stated rather than papered over.**
   Tier 3 runs continued throughout the `quantum` line (`Q1-1` through
   `Q1-11`) and were recorded in `CHANGELOG.md` and the relevant `DD-`
