@@ -291,6 +291,29 @@ EOF
     grep -q 'refresh-tailnet-config.timer' "$V2_ROOT/install.sh"
 }
 
+@test "MASTER-INPUT accepts the Tailscale UDP port on its own" {
+    # Otherwise direct peer connectivity depends entirely on ts-input being
+    # present and ordered first; with ts-input gone the WAN DROP swallows it.
+    grep -q 'TAILSCALE_UDP_PORT="41641"' "$V2_ROOT/config/defaults.env"
+    grep -q 'TAILSCALE_UDP_PORT:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'TAILSCALE_UDP_PORT=\$TAILSCALE_UDP_PORT' "$V2_ROOT/install.sh"
+    local v4 v6
+    v4="$(awk '/^apply_input4\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    v6="$(awk '/^apply_input6\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    grep -q 'TAILSCALE_UDP_PORT" -j ACCEPT' <<<"$v4"
+    grep -q 'TAILSCALE_UDP_PORT" -j ACCEPT' <<<"$v6"
+    grep -q 'check_rule iptables "$CHAIN_INPUT"' "$V2_ROOT/scripts/firewall.sh"
+    # The port must not be selectable as a stack port.
+    grep -q '"\$TAILSCALE_UDP_PORT")' "$V2_ROOT/install.sh"
+}
+
+@test "refresh-tailnet warns when the tailnet is unusable" {
+    grep -q 'warn_if_tailnet_unusable' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'BackendState' "$V2_ROOT/scripts/refresh-tailnet-config"
+    # A warning only; the helper must not try to repair Tailscale itself.
+    ! grep -qE 'tailscale (up|set|login)' "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
 @test "refresh-tailnet uses restart, never try-restart" {
     # try-restart is a no-op on a failed unit AND returns 0, so the old
     # "try-restart || restart" fallback was unreachable and a failed unit was

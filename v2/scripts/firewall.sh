@@ -40,6 +40,7 @@ fi
 : "${WG_PUBLIC_PORT:?}"
 : "${QBIT_PUBLIC_PORT:?}"
 : "${SSH_PUBLIC_PORT:?}"
+: "${TAILSCALE_UDP_PORT:?}"
 
 input_line() {
     local bin="$1" target="$2"
@@ -159,6 +160,10 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
+    # Tailscale'in kendi UDP portu: ts-input da kabul eder ama o zincirin
+    # varlığına/sırasına bağlı kalmamak için burada da açık (DD-73).
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
+        --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
@@ -220,6 +225,8 @@ apply_input6() {
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEPT
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
     "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
+        --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
@@ -290,6 +297,8 @@ if [[ "$MODE" == check ]]; then
         -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     # IPv6 politika içeriği: DROP WAN'a bağlı olmalı. Koşulsuz DROP burada
     # başarısız olur — köprü çıkışını kesen regresyonu bu kural yakalar.
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
     check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     printf 'firewall: kritik politikalar yerinde\n'

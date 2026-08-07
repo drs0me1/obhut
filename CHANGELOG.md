@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — v2-30: MASTER-INPUT no longer depends on ts-input
+
+Final batch from the structural optimisation review
+([`docs/v2-optimization-review.md`](docs/v2-optimization-review.md)).
+
+- **Fixed:** `MASTER-INPUT` had no rule for Tailscale's UDP port and relied
+  entirely on `ts-input` being present and ordered first. During the
+  `tailscaled` restart test, with `ts-input` gone, the WAN `DROP` swallowed
+  inbound 41641 while `tailscaled` was still listening. `TAILSCALE_UDP_PORT`
+  is now declared in `defaults.env`, carried through `state.env`, and
+  accepted on the WAN in both IPv4 and IPv6 chains (**DD-73**).
+- **Added:** `refresh-tailnet-config` warns once per run when the tailnet is
+  unusable (`BackendState` not `Running`, or `Self.Online` false). The node
+  had been deleted from the tailnet for four hours with every unit green and
+  `systemctl --failed` empty. This is a stderr line, not a repair path — a
+  test asserts the helper never calls `tailscale up/set/login`.
+- **Verified live:** both chains carry the rule, `--check` passes, and a
+  `state.env` missing `TAILSCALE_UDP_PORT` fails the firewall script closed.
+
 ### 2026-08-07 — v2-29: address-bound units wait, fail visibly, and recover
 
 Second batch from the structural optimisation review

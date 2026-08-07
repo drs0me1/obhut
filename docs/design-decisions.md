@@ -3451,3 +3451,37 @@ separate document with its own numbering.
   address change. A subsequent `systemctl restart tailscaled` left
   `caddy` at `NRestarts=0` (previously 29 and climbing), containers
   untouched, `systemctl --failed` empty.
+
+### DD-73: `MASTER-INPUT` accepts the Tailscale UDP port itself (2026-08-07)
+
+- **Decision:** `TAILSCALE_UDP_PORT="41641"` is declared once in
+  `defaults.env`, written to `state.env`, required by `firewall.sh`
+  (`: "${TAILSCALE_UDP_PORT:?}"`), and accepted on the WAN interface in both
+  `apply_input4` and `apply_input6`. Stage 0 rejects it as an operator port
+  choice. `--check` asserts the IPv4 rule. `refresh-tailnet-config` also
+  gains a one-line warning when the tailnet is unusable.
+- **Context:** `MASTER-INPUT` carried no rule for Tailscale's own port and
+  worked only because `ts-input` sits ahead of it in `INPUT` and accepts
+  41641 there. Measured during the `tailscaled` restart test: with no
+  netmap, Tailscale removed `ts-input` entirely, and `MASTER-INPUT`'s
+  `-i eth0 -j DROP` counted 52 packets while `tailscaled` was still bound to
+  `0.0.0.0:41641`. Separately, the node was deleted from the tailnet at
+  15:08 and logged `404: node not found` 501 times over four hours while
+  `systemctl --failed` stayed empty and every unit reported green.
+- **Rationale:** Tailscale reinserts `ts-input` at `INPUT` position 1, so
+  the ordering does self-correct and the impact is bounded — a fallback to
+  DERP relay rather than an outage. But the correctness of this project's
+  chain should not depend on a chain owned by another daemon being present
+  and correctly positioned. One additive rule removes the coupling;
+  `ensure_ts_input_precedence` stays, demoted from load-bearing to
+  belt-and-braces.
+- **Trade-off:** One more explicit WAN `ACCEPT`. It duplicates what
+  `ts-input` already permits, which is the point: the two are independent
+  now. If Tailscale is ever started on a non-default port the constant must
+  follow, which is why it lives in `defaults.env` and not in the script.
+- **On the warning:** it is a `printf` to stderr, nothing more. It does not
+  attempt `tailscale up`, does not retry, and does not gate anything — a
+  bats test asserts the helper never calls `tailscale up/set/login`. The
+  four-hour silent outage needed visibility, not a repair engine.
+- **Verified live:** both chains carry the rule, `--check` passes, and a
+  missing `TAILSCALE_UDP_PORT` in `state.env` fails the script closed.

@@ -20,6 +20,24 @@ source "$STATE_FILE"
 # Adrese bind olan unit'ler. Sıra önemli değil; ikisi de bağımsız.
 BOUND_UNITS="caddy.service master-webdav.service"
 
+warn_if_tailnet_unusable() {
+    # Node tailnet'ten silinirse arayüzdeki adres bir süre durur: her unit
+    # yeşil kalır, systemctl --failed boş kalır, ama hiçbir tailnet cihazı
+    # erişemez. Bu durum bir kez 4 saat sessizce sürdü. Tek satırlık uyarı
+    # onu greplenebilir yapar — izleme yığını değil (DD-73).
+    command -v tailscale >/dev/null 2>&1 || return 0
+    local state=""
+    state="$(
+        tailscale status --json 2>/dev/null |
+            jq -r 'if (.BackendState == "Running" and .Self.Online == true)
+                   then "ok" else (.BackendState // "unknown") end' 2>/dev/null
+    )" || state=""
+    if [[ -n "$state" && "$state" != "ok" ]]; then
+        printf 'refresh-tailnet: UYARI tailnet kullanılamıyor (BackendState=%s)\n' \
+            "$state" >&2
+    fi
+}
+
 restart_bound_units() {
     # systemctl try-restart, failed/inactive bir unit'te HİÇBİR ŞEY yapmaz ve
     # 0 döner — bu yüzden eski "try-restart || restart" kalıbındaki fallback
@@ -46,6 +64,8 @@ recover_failed_bound_units() {
         fi
     done
 }
+
+warn_if_tailnet_unusable
 
 new_v4="$(
     ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
