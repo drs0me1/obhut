@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — Re-apply firewall on Tailscale restart (`v2-24`)
+
+`master-firewall.service` is also `PartOf=` / `WantedBy=` `tailscaled.service`,
+so a Tailscale restart re-runs apply/check and restores `ts-input` vs
+`MASTER-INPUT` order. Compose stays uncoupled. Version `2026.08.06-v2-24`.
+
+### 2026-08-07 — Firewall oneshot retry and DOCKER-USER wait (`v2-23`)
+
+`master-firewall.service` uses `Restart=on-failure`, `RestartSec=2s`, and
+`StartLimitBurst=5` / 60s so a one-shot apply miss after Docker start is
+retried. `firewall.sh` waits up to 10s for `DOCKER-USER` before applying
+`MASTER-DOCKER` (DD-59). Version `2026.08.06-v2-23`.
+
 ### 2026-08-07 — Drop portable export `.sha256` sidecar
 
 Archive SHA-256 stays embedded in the `.command` as

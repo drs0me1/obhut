@@ -3131,6 +3131,19 @@ separate document with its own numbering.
   provider's link-local default (`fe80::1` → `FAILED`), so IPv6 egress and
   Tailscale control-plane Happy Eyeballs paths hung while IPv4 stayed up.
   Essential ICMPv6 types are accepted before the WAN DROP.
+- **v2-23 (2026-08-07): oneshot retry + DOCKER-USER wait.** Boot/Docker
+  races where `DOCKER-USER` is briefly missing used to fail the oneshot
+  once with no retry (`Restart=no`). The unit now uses `Restart=on-failure`,
+  `RestartSec=2s`, and `StartLimitBurst=5` / `StartLimitIntervalSec=60`.
+  `firewall.sh` waits up to 10s (`DOCKER_USER_WAIT_SECONDS`) for
+  `DOCKER-USER` on both iptables and ip6tables before applying
+  `MASTER-DOCKER`. No extra timer or recovery script.
+- **v2-24 (2026-08-07): also `PartOf`/`WantedBy` `tailscaled`.** A
+  Tailscale restart recreates `ts-input` but did not re-run firewall apply,
+  so `MASTER-INPUT` ordering was not re-guaranteed. `master-firewall` now
+  follows both `docker.service` and `tailscaled.service` stop/restart
+  (still `Requires=docker` only — Compose is never coupled). Expected:
+  `tailscaled` restart → firewall apply + Caddy/WebDAV; containers stay.
 
 ### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
 

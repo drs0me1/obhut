@@ -168,10 +168,25 @@ apply_input4() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
+wait_for_docker_user() {
+    # Docker active olsa bile DOCKER-USER birkaç saniye gecikebilir.
+    local bin="$1"
+    local wait_s="${DOCKER_USER_WAIT_SECONDS:-10}"
+    local deadline=$((SECONDS + wait_s))
+    while true; do
+        if "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1; then
+            return 0
+        fi
+        if [[ "$SECONDS" -ge "$deadline" ]]; then
+            die "$bin: DOCKER-USER yok; Docker çalışıyor mu? (${wait_s}s beklendi)"
+        fi
+        sleep 1
+    done
+}
+
 apply_docker4() {
     local bin=iptables staging
-    "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1 ||
-        die "DOCKER-USER yok; Docker çalışıyor mu?"
+    wait_for_docker_user "$bin"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
@@ -213,8 +228,7 @@ apply_input6() {
 
 apply_docker6() {
     local bin=ip6tables staging
-    "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1 ||
-        die "ip6tables DOCKER-USER yok"
+    wait_for_docker_user "$bin"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN

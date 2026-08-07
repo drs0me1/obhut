@@ -423,10 +423,11 @@ Tailscale address at all. If the address changes and nothing is running that
 binds it, the helper exits successfully having done nothing.
 
 If `PartOf=tailscaled.service` is used, it must be verified that its only
-effect is on WebDAV (and Caddy) — never on the Compose stack. The
-alternative, and the preferred one, is the refresh helper above: it
-restarts WebDAV **only when the address actually changed**, rather than on
-every `tailscaled` restart.
+effect is on WebDAV, Caddy, and `master-firewall` — never on the Compose
+stack. Address-only refresh still prefers the refresh helper (restart
+WebDAV/Caddy **only when the address actually changed**); firewall apply
+on every `tailscaled` restart is intentional so `ts-input` / `MASTER-INPUT`
+order is re-guaranteed.
 
 ### 7.4 Access path decision
 
@@ -530,7 +531,7 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | Unit | After | Coupling | Restart |
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
-| `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` | `no`, oneshot, `RemainAfterExit` |
+| `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
 | `master-webdav.service` | `tailscaled.service` | none to Docker/Compose | `on-failure`, bounded |
 | `watch-tailnet-addr.service` | `tailscaled.service` | none | `always` (runs `ip monitor address`) |
 | `refresh-tailnet-config.timer` | — | backup poll | starts oneshot every 5 min |
@@ -546,8 +547,9 @@ unquoted, no spaces around `=`.
 
 Invariants:
 
-- **Restarting `tailscaled` re-prepares Caddy and WebDAV, and nothing else.**
-  The Compose stack keeps running.
+- **Restarting `tailscaled` re-prepares Caddy, WebDAV, and re-applies the
+  firewall (`master-firewall` is `PartOf=tailscaled.service`).** The Compose
+  stack keeps running — no container restart from the Tailscale coupling.
 - **Restarting `docker` re-applies the firewall policy.** It does not touch
   Caddy, dnsmasq or WebDAV.
 - No unit carries `OnFailure=` pointing at a repair engine, because there is

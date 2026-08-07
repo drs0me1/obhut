@@ -336,10 +336,22 @@ EOF
 
 @test "master-firewall unit is WantedBy docker.service" {
     grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'WantedBy=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'PartOf=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'After=.*tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'Restart=on-failure' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'RestartSec=2s' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'StartLimitBurst=5' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
+    # Compose must not be PartOf/Requires-coupled to the firewall unit.
+    ! grep -qiE 'compose|master-compose' "$V2_ROOT/systemd/master-firewall.service"
+}
+
+@test "firewall waits for DOCKER-USER before apply" {
+    grep -q 'wait_for_docker_user' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'DOCKER_USER_WAIT_SECONDS' "$V2_ROOT/scripts/firewall.sh"
 }
 
 @test "edge drop-ins order after tailscaled" {
