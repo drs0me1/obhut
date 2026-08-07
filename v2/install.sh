@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-30"
+V2_VERSION="2026.08.06-v2-31"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -219,8 +219,9 @@ EOF
 }
 
 ensure_webdav_user() {
-    if ! id -u master-webdav >/dev/null 2>&1; then
-        useradd --system --home /nonexistent --shell /usr/sbin/nologin master-webdav
+    if ! id -u "$WEBDAV_SERVICE_USER" >/dev/null 2>&1; then
+        useradd --system --home /nonexistent --shell /usr/sbin/nologin \
+            "$WEBDAV_SERVICE_USER"
     fi
 }
 
@@ -260,7 +261,7 @@ stage_0() {
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
         die "wg-easy UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
-        53 | 80 | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
+        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
         "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
         "$TAILSCALE_UDP_PORT")
             die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
@@ -275,7 +276,7 @@ stage_0() {
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
     case "$WEBDAV_PORT" in
-        53 | 80 | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
+        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
         "$PORTAINER_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | \
         "$TAILSCALE_UDP_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
@@ -522,7 +523,7 @@ TAILSCALE_IF=$TAILSCALE_IF
 EOF
     chown root:root "$WEBDAV_HTPASSWD_FILE"
     chmod 0600 "$WEBDAV_HTPASSWD_FILE"
-    setfacl -m u:master-webdav:rx "$DOWNLOADS_PATH" 2>/dev/null ||
+    setfacl -m "u:${WEBDAV_SERVICE_USER}:rx" "$DOWNLOADS_PATH" 2>/dev/null ||
         chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
     systemctl enable --now master-firewall.service
@@ -656,8 +657,10 @@ EOF
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    local need_up="$COMPOSE_NEEDS_UP" running=0
-    local expected=5
+    local need_up="$COMPOSE_NEEDS_UP" running=0 expected
+    expected="$(
+        (cd "$COMPOSE_DIR" && docker compose config --services) | grep -c .
+    )" || die "compose servis sayısı okunamadı"
     if [[ "$need_up" -eq 0 ]]; then
         running="$(
             (cd "$COMPOSE_DIR" && docker compose ps --status running -q 2>/dev/null || true) |

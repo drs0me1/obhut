@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-07 — v2-31: single-source cleanups from the optimisation review
+
+- **Changed:** stage 0's port-collision guards use `$DNS_PORT` and
+  `$CADDY_HTTP_PORT` instead of the literals `53` and `80`; both keys already
+  existed in `defaults.env` and `DNS_PORT` was previously unread.
+- **Changed:** `WEBDAV_SERVICE_USER` is now actually used by
+  `ensure_webdav_user` and the `setfacl` call. A test asserts it matches
+  `User=`/`Group=` in `master-webdav.service`, which is installed verbatim
+  and cannot take a variable.
+- **Changed:** stage 7 derives the expected container count from
+  `docker compose config --services` instead of the literal `5`.
+- **Removed:** `V2_CONFIG_SCHEMA`, `NET_RETRY_ATTEMPTS`,
+  `ADDRESS_WAIT_DEADLINE_SECONDS` and `WEBDAV_READ_ONLY` from `defaults.env`
+  — nothing read them. Read-only is a contract invariant (§6.5) fixed in
+  `rclone --read-only`, not a tunable, so it must not look like a key that
+  can be flipped. A test now fails if any of them return.
+- **Removed:** `Persistent=true` from `refresh-tailnet-config.timer`; it only
+  applies to `OnCalendar=` timers and this one is monotonic.
+- **Decided:** Tailscale stateful filtering stays **on** (**DD-74**). The
+  health warning is expected output here; no container needs the tailnet.
+  The accepted cost is that wg-easy peers cannot reach tailnet devices.
+
 ### 2026-08-07 — v2-30: MASTER-INPUT no longer depends on ts-input
 
 Final batch from the structural optimisation review

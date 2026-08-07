@@ -3485,3 +3485,31 @@ separate document with its own numbering.
   four-hour silent outage needed visibility, not a repair engine.
 - **Verified live:** both chains carry the rule, `--check` passes, and a
   missing `TAILSCALE_UDP_PORT` in `state.env` fails the script closed.
+
+### DD-74: Tailscale stateful filtering stays on, deliberately (2026-08-07)
+
+- **Decision:** `tailscale set … --stateful-filtering=true` is kept.
+  Tailscale's own health warning about it in the presence of Docker is
+  **expected output on this host**, not a defect to chase.
+- **Context:** Tailscale made stateful filtering default-**off** in 1.78
+  because it breaks containers that need to reach tailnet nodes, and the
+  daemon reports:
+  *"Stateful filtering is enabled and Docker was detected; this may prevent
+  Docker containers on this host from resolving DNS and connecting to
+  Tailscale nodes."*
+  The rule it installs is visible in `ts-forward`:
+  `-o tailscale0 -m conntrack ! --ctstate RELATED,ESTABLISHED -j DROP`.
+- **Rationale:** The warning describes a capability this stack does not use.
+  No container needs the tailnet: Docker's resolver is pinned to
+  `1.1.1.1`/`1.0.0.1` in `daemon.json`, and none of the five services talks
+  to a tailnet peer. Turning the filter off to silence a warning would
+  loosen what may leave the host toward the tailnet in exchange for nothing.
+- **The one real consequence, accepted:** wg-easy peers cannot reach tailnet
+  devices — traffic from the wg bridge toward `tailscale0` is dropped by
+  that rule (and by `ts-forward`'s `-s 100.64.0.0/10 -o tailscale0 -j DROP`).
+  Reaching tailnet devices over the WireGuard VPN is not a requirement;
+  tailnet devices are reached with the Tailscale client. Operator decision,
+  2026-08-07.
+- **Revisit if:** wg peers ever need to reach tailnet nodes, or a container
+  is added that must. Then this is the setting to change first, and the
+  contract's §14.2 success criterion must change with it.

@@ -493,6 +493,41 @@ EOF
     grep -q 'V2_INHIBITED' "$V2_ROOT/install.sh"
 }
 
+@test "defaults.env carries no unread keys" {
+    # Every key here must be read by something. A key nothing reads is a
+    # second source of truth waiting to drift.
+    local key
+    for key in V2_CONFIG_SCHEMA NET_RETRY_ATTEMPTS ADDRESS_WAIT_DEADLINE_SECONDS \
+        WEBDAV_READ_ONLY; do
+        ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
+    done
+    # DNS_PORT and CADDY_HTTP_PORT exist and are now actually used.
+    grep -q '"\$DNS_PORT" | "\$CADDY_HTTP_PORT"' "$V2_ROOT/install.sh"
+    ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
+}
+
+@test "webdav service user comes from defaults and matches the unit" {
+    # shellcheck source=/dev/null
+    source "$V2_ROOT/config/defaults.env"
+    [[ -n "$WEBDAV_SERVICE_USER" ]]
+    grep -q "User=${WEBDAV_SERVICE_USER}\$" "$V2_ROOT/systemd/master-webdav.service"
+    grep -q "Group=${WEBDAV_SERVICE_USER}\$" "$V2_ROOT/systemd/master-webdav.service"
+    grep -q 'id -u "$WEBDAV_SERVICE_USER"' "$V2_ROOT/install.sh"
+    grep -q 'u:${WEBDAV_SERVICE_USER}:rx' "$V2_ROOT/install.sh"
+    ! grep -q 'id -u master-webdav' "$V2_ROOT/install.sh"
+}
+
+@test "stage 7 derives the container count from compose" {
+    ! grep -q 'local expected=5' "$V2_ROOT/install.sh"
+    grep -q 'docker compose config --services' "$V2_ROOT/install.sh"
+}
+
+@test "refresh timer has no no-op Persistent key" {
+    # Persistent= only applies to OnCalendar= timers; this one is monotonic.
+    ! grep -q 'Persistent=' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+    grep -q 'OnUnitActiveSec=5min' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+}
+
 @test "webdav unit is PartOf tailscaled and read-only downloads" {
     grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-webdav.service"
     grep -q 'ReadOnlyPaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
