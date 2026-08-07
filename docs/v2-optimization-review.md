@@ -430,6 +430,8 @@ drop-in. No new service, no new timer, no new file.
 
 ## 12. Verdicts
 
+As reviewed, at `2026.08.06-v2-27`:
+
 ```
 FIREWALL:              NEEDS CHANGES   (M1, S1, S2)
 REBOOT PERSISTENCE:    NEEDS CHANGES   (M2, M3)
@@ -438,6 +440,36 @@ WG-EASY + WEBDAV:      NEEDS CHANGES   (M1; WebDAV itself is READY)
 
 OVERALL:               SMALL CHANGES RECOMMENDED
 ```
+
+### 12.1 Status after implementation — `2026.08.06-v2-31`
+
+All MUST FIX and SHOULD FIX items were applied the same day, plus the
+operator decision on S4 and three of the optional cleanups.
+
+| Item | Change | Recorded |
+|---|---|---|
+| M1 | `apply_docker6` scopes its `DROP` to the WAN and ends with `RETURN` | DD-71, v2-28 |
+| S2 | `--check` asserts both IPv6 WAN-scoped `DROP`s | DD-71, v2-28 |
+| M2 | `restart` replaces `try-restart`; failed bound units recovered on the no-change path | DD-72, v2-29 |
+| M3 | `caddy` gains `ExecStartPre=wait-tailnet-addr`, `TimeoutStartSec`, `StartLimit*` | DD-72, v2-29 |
+| S1 | `TAILSCALE_UDP_PORT` accepted in both `MASTER-INPUT` chains | DD-73, v2-30 |
+| S3 | `refresh-tailnet-config` warns when the tailnet is unusable | DD-73, v2-30 |
+| S4 | Stateful filtering **stays on**; the health warning is expected output here | DD-74, v2-31 |
+| O2, O3, O5 | No-op `Persistent=`, four unread keys, and two magic numbers removed | v2-31 |
+| O1, O4 | Not taken — Caddy's admin listener and Tailscale auto-update are left as they are | — |
+
+```
+FIREWALL:              READY
+REBOOT PERSISTENCE:    READY
+TAILSCALE + EXIT NODE: READY
+WG-EASY + WEBDAV:      READY
+
+OVERALL:               SYSTEM READY
+```
+
+Verified by a full `install.sh` run of v2-31 on `nrm` followed by a real
+reboot; the acceptance results are in
+[`testing.md`](testing.md#v2-31-manual-acceptance-2026-08-07).
 
 ---
 
