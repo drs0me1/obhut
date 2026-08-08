@@ -268,10 +268,12 @@ apply_docker6() {
     activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
 }
 
-check_jump() {
-    local bin="$1" parent="$2" chain="$3"
-    "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null ||
-        die "$bin: $parent -> $chain jump yok"
+check_jump_exactly_one() {
+    local bin="$1" parent="$2" chain="$3" n
+    n="$("$bin" -w 5 -L "$parent" -n --line-numbers 2>/dev/null |
+        awk -v c="$chain" '$2 == c { n++ } END { print n+0 }')"
+    [[ "$n" -eq 1 ]] ||
+        die "$bin: $parent -> $chain jump sayısı $n (beklenen 1)"
 }
 
 check_rule() {
@@ -279,6 +281,21 @@ check_rule() {
     shift
     "$bin" -w 5 -C "$@" 2>/dev/null ||
         die "$bin: eksik kural: $*"
+}
+
+check_no_staging_artifacts() {
+    local bin="$1" hit
+    hit="$("$bin" -w 5 -S 2>/dev/null | awk -v p="$CHAIN_STAGING_PREFIX" '
+        $1 == "-N" && index($2, p) == 1 { print $2; exit }
+        $1 == "-A" {
+            for (i = 1; i < NF; i++)
+                if ($i == "-j" && index($(i + 1), p) == 1) {
+                    print $(i + 1)
+                    exit
+                }
+        }
+    ')"
+    [[ -z "$hit" ]] || die "$bin: staging artığı: $hit"
 }
 
 check_ts_input_precedence() {
@@ -299,12 +316,31 @@ check_ts_input_precedence() {
         die "$bin: INPUT sırası hatalı (ts-input=$ts_pos, $CHAIN_INPUT=$master_pos)"
 }
 
+current_wan_interface() {
+    local route
+    route="$(ip -4 -o route get 1.1.1.1)" || die "WAN rotası okunamadı"
+    awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$route"
+}
+
+assert_wan_interface_current() {
+    local live
+    live="$(current_wan_interface)"
+    [[ -n "$live" ]] || die "güncel WAN arayüzü okunamadı"
+    [[ "$live" == "$WAN_INTERFACE" ]] ||
+        die "WAN arayüzü drift: state=$WAN_INTERFACE live=$live (yeniden kur / state güncelle)"
+}
+
 if [[ "$MODE" == check ]]; then
-    check_jump iptables INPUT "$CHAIN_INPUT"
-    check_jump ip6tables INPUT "$CHAIN_INPUT"
+    assert_wan_interface_current
+    check_jump_exactly_one iptables INPUT "$CHAIN_INPUT"
+    check_jump_exactly_one ip6tables INPUT "$CHAIN_INPUT"
+    check_no_staging_artifacts iptables
+    check_no_staging_artifacts ip6tables
     check_ts_input_precedence iptables
     check_ts_input_precedence ip6tables
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
@@ -314,9 +350,17 @@ if [[ "$MODE" == check ]]; then
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
+    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+        -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
+    check_rule ip6tables "$CHAIN_INPUT" \
+        -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
+    check_rule ip6tables "$CHAIN_INPUT" \
+        -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
 
     if docker_user_present iptables; then
-        check_jump iptables DOCKER-USER "$CHAIN_DOCKER"
+        check_jump_exactly_one iptables DOCKER-USER "$CHAIN_DOCKER"
         check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     elif docker_service_active; then
         die "iptables: Docker aktif ama DOCKER-USER yok"
@@ -324,7 +368,7 @@ if [[ "$MODE" == check ]]; then
         printf 'firewall: Docker yok; IPv4 MASTER-DOCKER denetimi atlandı\n'
     fi
     if docker_user_present ip6tables; then
-        check_jump ip6tables DOCKER-USER "$CHAIN_DOCKER"
+        check_jump_exactly_one ip6tables DOCKER-USER "$CHAIN_DOCKER"
         check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     elif docker_service_active; then
         die "ip6tables: Docker aktif ama DOCKER-USER yok"
@@ -335,10 +379,13 @@ if [[ "$MODE" == check ]]; then
     exit 0
 fi
 
+assert_wan_interface_current
 apply_input4
 ensure_ts_input_precedence iptables
 apply_input6
 ensure_ts_input_precedence ip6tables
 apply_docker4
 apply_docker6
+check_no_staging_artifacts iptables
+check_no_staging_artifacts ip6tables
 printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

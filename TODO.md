@@ -242,6 +242,11 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-34: firewall runtime invariants (2026-08-09, DD-75 P1).**
+      WAN if drift fail-closed; jump count == 1; no staging leftovers;
+      SSH + IPv6 TS UDP + NS/NA in `--check`. Static bats + live nrm
+      helper `--check`/drift smoke passed; full installer re-run for
+      version stamp pending.
 - [x] **v2-33: WebDAV unit write no longer pipes into `atomic_write`
       (2026-08-09, DD-75 follow-up).** Live v2-32 re-run left WebDAV PID
       stale after PartOf removal because the pipe subshell dropped

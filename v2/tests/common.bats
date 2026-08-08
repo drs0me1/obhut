@@ -452,6 +452,19 @@ EOF
     grep -c 'QBIT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
 }
 
+@test "firewall --check enforces jump uniqueness staging SSH and WAN drift" {
+    grep -q 'check_jump_exactly_one' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_no_staging_artifacts' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'assert_wan_interface_current' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'WAN arayüzü drift' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'SSH_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'neighbour-solicitation -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'neighbour-advertisement -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    # IPv6 Tailscale UDP must be checked, not only IPv4.
+    grep -c 'TAILSCALE_UDP_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" |
+        grep -q '^[2-9]'
+}
+
 @test "edge drop-ins order after tailscaled without PartOf" {
     grep -q 'dnsmasq.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     grep -q 'caddy.service.d/master-stack.conf' "$V2_ROOT/install.sh"

@@ -6,17 +6,18 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`2026.08.06-v2-33` live on `nrm` (DD-75 + pipe-subshell hotfix).**
-v2-32/33 re-run + Tailscale/Docker smokes passed 2026-08-09.
+**`2026.08.06-v2-34` firewall invariants in repo; helper live-smoked on
+`nrm`. `state.env` still reports v2-33 until full installer re-run.**
 
 Legacy monolith remains under `legacy/install.sh` / root history; active
 work is `v2/`.
 
 | | |
 |---|---|
-| Version (repo + nrm) | `2026.08.06-v2-33` |
-| Export | not yet rebuilt for v2-33 |
-| Next | commit v2-33 → P1 firewall invariants or P2 package |
+| Version (repo) | `2026.08.06-v2-34` |
+| Live helper | `master-firewall` = v2-34 script; `--check` OK |
+| Live state.env | `2026.08.06-v2-33` |
+| Next | commit v2-34 → optional full re-run → P2 |
 
 ### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
 

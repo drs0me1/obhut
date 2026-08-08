@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-34: firewall `--check` invariants
+
+- **Added:** `firewall.sh` fails closed on WAN interface drift (live
+  default-route `dev` ≠ `WAN_INTERFACE` in `state.env`) on both `apply`
+  and `--check`.
+- **Added:** jump count must be exactly one for `INPUT→MASTER-INPUT` and
+  (when Docker is present) `DOCKER-USER→MASTER-DOCKER`; leftover staging
+  chains/jumps matching `CHAIN_STAGING_PREFIX` are rejected.
+- **Added:** `--check` asserts WAN SSH ACCEPT (IPv4+IPv6), IPv6 Tailscale
+  UDP ACCEPT, and neighbour solicitation/advertisement ACCEPT
+  (**DD-75** / P1 invariant slice).
+- **Verified live on `nrm`:** helper deploy + `master-firewall` restart;
+  `--check` clean; jumps == 1; no staging leftovers; deliberate
+  `WAN_INTERFACE` drift fails closed and restores cleanly. Full installer
+  re-run for `V2_VERSION` bump still pending.
+
 ### 2026-08-09 — v2-33: WebDAV unit change flag survives write
 
 - **Fixed:** Stage 4 wrote `master-webdav.service` via `sed | atomic_write`,

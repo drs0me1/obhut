@@ -3151,6 +3151,9 @@ separate document with its own numbering.
   to the old multi-flag reconcile surface.
 - **v2-32 (2026-08-09): host INPUT no longer `Requires=docker`.** See
   **DD-75**.
+- **v2-34 (2026-08-09): stronger invariants.** Exactly one jump, no
+  staging leftovers, WAN if drift fail-closed, SSH + IPv6 TS UDP + NS/NA
+  in `--check` (still not a reconcile surface).
 
 ### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
 
@@ -3554,3 +3557,7 @@ separate document with its own numbering.
   pipe subshell, so `V2_LAST_ATOMIC_CHANGED` is discarded. WebDAV unit
   writes use process substitution (`atomic_write … < <(sed …)`) instead.
   Found on the first live v2-32 re-run: unit on disk updated, PID unchanged.
+- **v2-34 follow-up:** `--check` (and apply) fail closed on WAN if drift;
+  require exactly one final-chain jump; reject staging-prefix leftovers;
+  assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
+  state rewrite on drift — operator re-runs the installer.
