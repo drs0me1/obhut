@@ -1500,6 +1500,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-09 | User (Apple TV MagicDNS gap; approved Caddy alias) + Cursor (`v2-38`, DD-78) | WebDAV without MagicDNS | **Caddyfile aliases `{$TAILSCALE_IPV4}` onto the WebDAV site; Compose stays `127.0.0.1`. Bare TS IP:80 → WebDAV; named `*.domain` sites unchanged. Trade-off: bare IP is WebDAV-only.** |
 | 2026-08-09 | User (asked to purge WebDAV/rclone leftovers) + Cursor (`v2-37`) | Post-DD-77 remnant cleanup | **Docs/contract/architecture/testing + DD-61 narrowed to Caddy-only refresh; host `acl` apt removed (setfacl path gone). Active `v2/` has no `webdav.sh`/unit/`webdav.env`; install keeps one-shot migration delete of host leftovers. bats + `bash -n`/`shellcheck` clean.** |
 | 2026-08-09 | User (approved Compose WebDAV trial) + Cursor (`v2-36`, DD-77) | Move WebDAV from host systemd into Compose loopback | **WebDAV is `rclone/rclone` on `127.0.0.1` only; Caddy proxies hostname; host unit/script/user removed; refresh-tailnet → Caddy only. Live nrm: unit gone, loopback+Caddy 401, TS-direct closed, six containers, `--check` clean.** |
 | 2026-08-09 | User (approved P2 6/7a/9; skip 8) + Cursor (`v2-35`, DD-76) | Compose `.env`, DOWNLOADS_PATH charset, UID/GID SSOT | **Removed unused Compose `.env`/`COMPOSE_NEEDS_UP` coupling; path charset gate; PUID/PGID/unpackerr user tokens from `DOWNLOADS_*`. Chown narrowing and WG Stage 7 checks deferred.** |

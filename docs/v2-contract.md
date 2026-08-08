@@ -413,14 +413,16 @@ re-applied on Tailscale restart; that must never bounce Compose.
 
 | Path | Address | Purpose |
 |---|---|---|
-| Preferred (only Infuse path) | `http://webdav.${LOCAL_DOMAIN}` | Operator configures this in Infuse |
+| Preferred (MagicDNS) | `http://webdav.${LOCAL_DOMAIN}` | Phone Infuse / clients with MagicDNS |
+| Apple TV Infuse (no MagicDNS) | `http://${TS_IPV4}/` (port 80) | Caddy site alias; Host = Tailscale IPv4 (**DD-78**) |
 | Loopback (host-local) | `http://127.0.0.1:${WEBDAV_PORT}` | Installer / debug probes |
 
-Caddy proxies `webdav.${LOCAL_DOMAIN}` to `127.0.0.1:${WEBDAV_PORT}`.
+Caddy proxies both `webdav.${LOCAL_DOMAIN}` and `http://{$TAILSCALE_IPV4}`
+to `127.0.0.1:${WEBDAV_PORT}`. Compose stays loopback-only and never names
+the Tailscale address (**DD-77**).
 
 **Direct `http://${TS_IPV4}:${WEBDAV_PORT}` is not supported** — nothing
-listens there. That removes a second tailnet-reachable socket; Caddy is the
-single Infuse path (**DD-77**).
+listens there. Bare-IP access is only via Caddy on port 80.
 
 No TLS between Caddy and WebDAV: both endpoints are on the same host, and
 the hop is loopback.

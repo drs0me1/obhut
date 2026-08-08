@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-37"
+V2_VERSION="2026.08.06-v2-38"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -725,6 +725,11 @@ stage_7() {
         die "WebDAV Caddy üzerinden kimlik doğrulamasız yanıt $code (beklenen 401)"
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        "http://${TAILSCALE_IPV4}/" || true)"
+    [[ "$code" == "401" ]] ||
+        die "WebDAV TS-IP alias kimlik doğrulamasız yanıt $code (beklenen 401)"
+
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -X PUT --data 'v2-probe' \
         "http://127.0.0.1:${WEBDAV_PORT}/.v2-write-probe" || true)"
     [[ "$code" =~ ^(401|403|405)$ ]] ||
@@ -787,7 +792,7 @@ Manuel Tailscale Admin:
 
 Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
 qBittorrent varsayılan WebUI parolasını değiştir.
-WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse; Compose loopback → Caddy)
+WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
 Tailscale IP: refresh-tailnet-config (WantedBy=tailscaled + 5dk timer) → Caddy

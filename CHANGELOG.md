@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-38: Caddy WebDAV alias for bare Tailscale IPv4
+
+- **Added:** Caddy site
+  `http://webdav.${LOCAL_DOMAIN}, http://{$TAILSCALE_IPV4}` so Apple TV
+  Infuse can use `http://<tailscale-ip>/` on port 80 without MagicDNS
+  (**DD-78**). Compose stays loopback-only.
+- **Added:** Stage 7 probe for the bare-IP alias; summary lists both Infuse
+  URLs.
+
 ### 2026-08-09 — v2-37: purge host WebDAV/rclone leftovers from docs + apt
 
 - **Removed:** host `acl` apt package (only used for the deleted WebDAV

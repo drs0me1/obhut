@@ -394,6 +394,8 @@ EOF
     grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
     grep -q 'reverse_proxy 127.0.0.1:__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
+    grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}' \
+        "$V2_ROOT/templates/Caddyfile"
     ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
         "$V2_ROOT/templates/Caddyfile"
     awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
@@ -542,6 +544,7 @@ EOF
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
     grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
     grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
+    grep -q 'WebDAV TS-IP alias' "$V2_ROOT/install.sh"
     grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
     grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
     grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"

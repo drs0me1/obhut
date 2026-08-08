@@ -451,6 +451,7 @@ one-line versions:
 | **DD-60** | Does dnsmasq listen on loopback? | Yes — `lo` and `tailscale0`, `bind-dynamic`, nothing else, no DHCP. |
 | **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy (WebDAV was dropped from the set by **DD-77**). dnsmasq, the firewall and the stack are untouched. |
 | **DD-77** | Where does WebDAV run? | Compose on `127.0.0.1`, Caddy reverse_proxy; host unit removed. |
+| **DD-78** | Apple TV without MagicDNS? | Caddy aliases `{$TAILSCALE_IPV4}` onto the WebDAV site (port 80). |
 | **DD-62** | Portainer's upstream | HTTPS `127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`. |
 
 **DD-59 removed a chain that was never decided on.** `defaults.env`

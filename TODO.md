@@ -242,6 +242,9 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-38: Caddy WebDAV TS-IP alias for Apple TV Infuse (2026-08-09,
+      DD-78).** MagicDNS-less clients use `http://<ts-ipv4>/` port 80;
+      Compose remains loopback.
 - [x] **v2-37: host WebDAV/rclone remnant purge (2026-08-09).** Dropped
       unused host `acl` apt package; contract/architecture/testing docs and
       DD-61 text aligned with Compose loopback WebDAV (DD-77). Migration
