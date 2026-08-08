@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-34"
+V2_VERSION="2026.08.06-v2-35"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -273,6 +273,11 @@ stage_0() {
         die "geçersiz alan adı: $LOCAL_DOMAIN"
     prompt DOWNLOADS_PATH "Downloads dizini" "$prev_dl"
     [[ "$DOWNLOADS_PATH" == /* ]] || die "downloads yolu mutlak olmalı"
+    [[ "$DOWNLOADS_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
+        die "downloads yolu yalnızca [A-Za-z0-9._/-] içerebilir"
+    [[ "$DOWNLOADS_PATH" != *//* ]] || die "downloads yolu '//' içeremez"
+    [[ "$DOWNLOADS_PATH" =~ (^|/)\.\.(/|$) ]] &&
+        die "downloads yolu '..' içeremez"
 
     prompt WG_PUBLIC_PORT "wg-easy public UDP port" "$prev_wg_port"
     [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "wg-easy UDP portu sayı olmalı"
@@ -484,11 +489,7 @@ EOF
         QUANTUM_CONFIG_FILE="$QUANTUM_CONFIG_FILE" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
-
-    atomic_write "$COMPOSE_DIR/.env" 0600 <<EOF
-WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
-EOF
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
+    rm -f "$COMPOSE_DIR/.env"
 
     # FileBrowser Quantum: panel kökü container /data = host DOWNLOADS_PATH
     if [[ ! -f "$QUANTUM_CONFIG_FILE" ]]; then

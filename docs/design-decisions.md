@@ -3561,3 +3561,17 @@ separate document with its own numbering.
   require exactly one final-chain jump; reject staging-prefix leftovers;
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
+
+### DD-76: Compose does not own the WireGuard endpoint hint (2026-08-09)
+
+- **Decision:** `WG_ENDPOINT_HOST` lives only in `state.env` (and the
+  install summary). `$COMPOSE_DIR/.env` is not written; Stage 4 removes
+  a leftover file. qBittorrent/unpackerr identity tokens are
+  `__DOWNLOADS_UID__` / `__DOWNLOADS_GID__`. `DOWNLOADS_PATH` must match
+  a narrow absolute charset with no `..` or `//`.
+- **Why:** Compose never consumed `.env`; rewriting it on WAN IP change
+  set `COMPOSE_NEEDS_UP` for no container benefit. Literal `1000` in the
+  template duplicated `defaults.env`. Path charset closes obvious
+  injection/traversal shapes without a full path sandbox.
+- **Deferred:** media-tree chown/chmod narrowing; Stage 7 WG listen /
+  CGNAT warnings (operator: container already listens; skip for now).

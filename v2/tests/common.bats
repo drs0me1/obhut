@@ -179,9 +179,13 @@ EOF
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "qbittorrent runs as uid 1000" {
-    grep -q 'PUID: "1000"' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'PGID: "1000"' "$V2_ROOT/templates/compose.yaml"
+@test "qbittorrent and unpackerr use DOWNLOADS_UID/GID tokens" {
+    grep -q 'PUID: "__DOWNLOADS_UID__"' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
+    grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
+        "$V2_ROOT/templates/compose.yaml" | grep -q '^[2-9]'
+    ! grep -qE 'PUID: "1000"|PGID: "1000"|user: "1000:1000"' \
+        "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "downloads tree is chown 1000 for qbit filebrowser unpackerr" {
@@ -190,7 +194,15 @@ EOF
     grep -q 'chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}"' "$V2_ROOT/install.sh"
     grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
         "$V2_ROOT/templates/compose.yaml"
-    grep -q 'user: "1000:1000"' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "downloads path rejects unsafe characters and compose has no .env" {
+    grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
+    grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'rm -f "$COMPOSE_DIR/.env"'
+    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'atomic_write "$COMPOSE_DIR/.env"'
 }
 
 @test "compose publishes portainer https on 9443" {

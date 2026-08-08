@@ -6,18 +6,16 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`2026.08.06-v2-34` firewall invariants in repo; helper live-smoked on
-`nrm`. `state.env` still reports v2-33 until full installer re-run.**
+**`2026.08.06-v2-35` live on `nrm` (DD-76). Re-run verified 2026-08-09.**
 
 Legacy monolith remains under `legacy/install.sh` / root history; active
 work is `v2/`.
 
 | | |
 |---|---|
-| Version (repo) | `2026.08.06-v2-34` |
-| Live helper | `master-firewall` = v2-34 script; `--check` OK |
-| Live state.env | `2026.08.06-v2-33` |
-| Next | commit v2-34 → optional full re-run → P2 |
+| Version (repo + nrm) | `2026.08.06-v2-35` |
+| Deferred P2 | 7b chown narrowing; 8 WG Stage 7 checks |
+| Next | commit v2-35 → export optional |
 
 ### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
 

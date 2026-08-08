@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-35: Compose SSOT cleanups (P2 subset)
+
+- **Removed:** writing `$COMPOSE_DIR/.env` with `WG_ENDPOINT_HOST` (Compose
+  never read it; WAN IP changes could force a needless `compose up`).
+  Stage 4 deletes any leftover `.env`. Endpoint hint stays in `state.env`
+  and the install summary only (**DD-76**).
+- **Added:** `DOWNLOADS_PATH` charset gate — absolute path,
+  `[A-Za-z0-9._/-]` only, no `//`, no `..` segments.
+- **Changed:** qBittorrent `PUID`/`PGID` and unpackerr `user:` use
+  `__DOWNLOADS_UID__` / `__DOWNLOADS_GID__` instead of literal `1000`.
+- **Deferred:** recursive chown/chmod narrowing (7b); WG listen-port /
+  CGNAT checks (8) — not in this revision.
+- **Verified live on `nrm`:** re-run to v2-35 removed leftover
+  `/root/docker/.env`, recreated five containers once for UID token
+  expansion, `--check`/health/WebDAV 401 clean; second unchanged re-run
+  skipped `compose up` (`EXIT:0`).
+
 ### 2026-08-09 — v2-34: firewall `--check` invariants
 
 - **Added:** `firewall.sh` fails closed on WAN interface drift (live

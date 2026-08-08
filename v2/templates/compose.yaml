@@ -1,6 +1,5 @@
-# Master stack Compose — değerler defaults.env / .env üzerinden gelir.
-# Kurulumda bir kez doldurulan yer tutucular: CIFT_ALT_CIZGI + AD + CIFT_ALT_CIZGI
-# Runtime: ${AD} Compose .env'den genişler.
+# Master stack Compose — yer tutucular kurulumda defaults.env / state ile doldurulur.
+# Compose .env kullanılmaz; WAN/endpoint ipucu state.env'dedir, burada değil.
 
 services:
   portainer:
@@ -50,8 +49,8 @@ services:
       - "0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
     environment:
       TZ: __TIMEZONE__
-      PUID: "1000"
-      PGID: "1000"
+      PUID: "__DOWNLOADS_UID__"
+      PGID: "__DOWNLOADS_GID__"
       WEBUI_PORT: "__QBIT_UI_PORT__"
       TORRENTING_PORT: "__QBIT_PUBLIC_PORT__"
     volumes:
@@ -62,7 +61,7 @@ services:
   unpackerr:
     image: __UNPACKERR_IMAGE__
     container_name: unpackerr
-    user: "1000:1000"
+    user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     # qBittorrent API yok: parola/port gerekmez. Yalnız /downloads ağacını
     # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).

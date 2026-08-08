@@ -242,6 +242,9 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-35: P2 subset — drop Compose `.env`, path charset, UID SSOT
+      (2026-08-09, DD-76).** No WG Stage 7 extras; chown narrowing still
+      deferred.
 - [x] **v2-34: firewall runtime invariants (2026-08-09, DD-75 P1).**
       WAN if drift fail-closed; jump count == 1; no staging leftovers;
       SSH + IPv6 TS UDP + NS/NA in `--check`. Static bats + live nrm
