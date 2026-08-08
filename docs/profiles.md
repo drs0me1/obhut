@@ -13,12 +13,11 @@
 > someone other than its author — do not treat anything below as a plan
 > of record.
 >
-> **Also stale as of `V1-3` (2026-07-30):** every table below lists
-> SFTPGo as a container. It is no longer one — WebDAV moved to
-> `master-webdav.service`, a host `rclone` unit (DD-20). The bundle is now
-> five containers plus that unit. The profile tables have not been
-> rewritten because the document is closed; treat their service lists as
-> a 2026-07-28 snapshot.
+> **Also stale:** tables below still reflect 2026-07-28 (SFTPGo as a
+> container). WebDAV later moved to host `master-webdav` (V1-3 / DD-20),
+> then into Compose on loopback (v2-36 / DD-77). The profile tables have
+> not been rewritten because the document is closed; treat their service
+> lists as a snapshot, not current behaviour.
 >
 > **Original status: proposed / not yet implemented.** `install.sh` currently
 > deploys one fixed bundle of six services with no opt-out (finding

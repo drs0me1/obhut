@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-37: purge host WebDAV/rclone leftovers from docs + apt
+
+- **Removed:** host `acl` apt package (only used for the deleted WebDAV
+  `setfacl` path). `apache2-utils` remains for `htpasswd`.
+- **Docs:** `v2-contract.md`, `v2-architecture.md`, `v2/README.md`,
+  `docs/testing.md`, `docs/profiles.md`, and **DD-61** (narrowed by
+  **DD-77**) now describe Compose loopback WebDAV — no host unit,
+  `webdav.env`, or Tailscale-direct WebDAV bind.
+- **Tests:** base-package bats assert no host `rclone` / `acl` install.
+
 ### 2026-08-09 — v2-36: WebDAV moves into Compose (loopback)
 
 - **Changed:** WebDAV is a Compose `rclone/rclone` service publishing only

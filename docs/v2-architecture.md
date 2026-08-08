@@ -1,6 +1,6 @@
 # v2 Architecture
 
-**Status:** architecture for the lean `v2/` tree (updated 2026-08-06).
+**Status:** architecture for the lean `v2/` tree (updated 2026-08-09).
 Read [`v2-contract.md`](v2-contract.md) first — that document says *what* v2
 does; this one says *where each part of it lives* and *how data moves*.
 Operator entry point: [`v2/README.md`](../v2/README.md).
@@ -40,22 +40,22 @@ fact and one owner per decision.
               │   by refresh-tailnet-config) │
               └──────────────┬───────────────┘
                              │
-        ┌────────────┬───────┴────────┬──────────────┬─────────────┐
-        ▼            ▼                ▼              ▼             ▼
-    compose.yaml  dnsmasq conf     Caddyfile     webdav.env    firewall
-     + .env       (lo +          (TAILSCALE_    (port, root)   (in memory)
+        ┌────────────┬───────┴────────┬──────────────┐
+        ▼            ▼                ▼              ▼
+    compose.yaml  dnsmasq conf     Caddyfile     firewall
+                  (lo +          (TAILSCALE_    (in memory)
                    tailscale0)    IPV4:80)
-        │            │                │              │             │
-        ▼            ▼                ▼              ▼             ▼
-   5 containers   dnsmasq         caddy       master-webdav   MASTER-INPUT
-   (restart      .service        .service       .service      MASTER-DOCKER
-    policy)
+        │            │                │              │
+        ▼            ▼                ▼              ▼
+   6 containers   dnsmasq         caddy         MASTER-INPUT
+   (incl. webdav  .service        .service      MASTER-DOCKER
+    on loopback)
 ```
 
-Only two of those five branches read the Tailscale address at all — Caddy
-and WebDAV. dnsmasq and the firewall are written against the *interface
-name*, and no container touches the address. That is what makes an address
-change a two-service event rather than a stack-wide one (§5).
+Only Caddy reads the Tailscale address. dnsmasq and the firewall are
+written against the *interface name*, and WebDAV binds loopback only
+(**DD-77**). That is what makes an address change a Caddy-only restart
+rather than a stack-wide one (§5).
 
 The WebDAV **password** does not appear anywhere in this diagram after the
 first arrow. It is hashed immediately into a separate credential file; see
@@ -77,7 +77,7 @@ later became a permanent drift alarm.
 | **Written by** | The installer, once per run | The installer, and `refresh-tailnet-config` when an address changes |
 | **Lifetime** | Persistent; a re-run offers the previous value as the default | Regenerated freely; nothing in it is a decision |
 | **Hand-editable** | Yes, by an operator who then re-runs the installer | No — it will be overwritten |
-| **Read by** | The installer, template rendering | The installer, `master-firewall`, `master-webdav`, `refresh-tailnet-config` |
+| **Read by** | The installer, template rendering | The installer, `master-firewall`, Caddy (`EnvironmentFile=`), `refresh-tailnet-config` |
 | **Contains secrets** | **No** | **No** |
 
 Practical consequence: changing a port is editing `config.env` and re-running.
@@ -104,7 +104,7 @@ v2/
 ├── config/defaults.env            single source of truth for constants
 ├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
 ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
-├── systemd/                       units (firewall, webdav, GRO, refresh, watch)
+├── systemd/                       units (firewall, GRO, refresh timer)
 ├── app/<V2_VERSION>.command       versioned portable install apps (export output)
 ├── app/latest.command             most recent export
 ├── dev/export-v2.sh               build the portable install app (+ .command wrapper)
@@ -153,14 +153,14 @@ in §10, not resolved silently.
 | `install.sh` | Ask the operator, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
-| `templates/compose.yaml` | The five services, their volumes, their port publications | Where it is written, which addresses are current |
+| `templates/compose.yaml` | The six services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
 | `templates/Caddyfile` | Six HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `templates/dnsmasq.conf` | Six `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
 | `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
-| `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy and `master-webdav` — nothing else | Container health, file drift, disk space, dnsmasq, the firewall |
+| `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
 | *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
-| `scripts/webdav.sh` → `master-webdav` | Resolve the current Tailscale IPv4 with a bounded wait, then exec the read-only WebDAV server bound to it | Why it is needed, who consumes it |
+| *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by Compose `webdav` on loopback (**DD-77**) |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
 | `dev/export-v2.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
@@ -185,15 +185,13 @@ error, not a warning.
 |---|---|---|
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
-| `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600` |
-| `/etc/master-stack/webdav.env` | installer | WebDAV tunables, `0644`, no secrets |
+| `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
 | `/etc/master-stack/filebrowser.yaml` | installer | FileBrowser policy, `0644` |
-| `/root/docker/compose.yaml` | installer | five services, `0600` |
-| `/root/docker/.env` | installer | `WG_ENDPOINT_HOST` (hint = current WAN IPv4), `0600` |
+| `/root/docker/compose.yaml` | installer | six services, `0600` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
 | `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
-| `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,master-webdav}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,master-webdav,refresh-tailnet-config}.service` (+ `.timer`) | installer | `0644` |
+| `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}` | installer | `0755` |
+| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}.service` (+ `.timer`) | installer | `0644` |
 | `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
 | `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
 | `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |
@@ -212,11 +210,9 @@ systemd's `EnvironmentFile=`, which means plain `KEY=value` lines with no
 quoting, no spaces around `=`, and no shell expansion. That constraint is
 the writer's job to enforce, and the test suite asserts it.
 
-**Compose's `.env` carries no Tailscale address.** No container binds one:
-the web UIs bind loopback and the two public UDP ports bind the WAN
-address. Putting `TAILSCALE_IPV4` there would create a reason to recreate
-containers when the address changes, which is exactly the coupling
-decision 19 removes.
+**Compose's `.env` is not written.** No container needs a Compose env file
+for Tailscale or WAN facts (**DD-76**). Web UIs and WebDAV bind loopback;
+the two public peer ports bind the WAN address via Docker publish.
 
 ---
 
@@ -234,34 +230,31 @@ htpasswd -i -B  ──►  /etc/master-stack/webdav.htpasswd   root:root 0600
         ▼                     │
    variable unset             │
                               ▼
-                  systemd LoadCredential=htpasswd:…
+              Compose volume mount (read-only)
+              → /run/secrets/webdav_htpasswd
                               │
                               ▼
-              $CREDENTIALS_DIRECTORY/htpasswd  (read-only,
-              visible only to the unit's process)
-                              │
-                              ▼
-                    master-webdav
+                    rclone serve webdav --htpasswd=…
+                    (Compose service `webdav`, loopback)
 ```
 
 ### 4.1 The decision, stated as properties
 
 Recorded so that a later phase cannot quietly weaken it. The same list, in
-contract form, is `v2-contract.md` §6.2.
+contract form, is `v2-contract.md` §6.2. **DD-77** replaced the former
+systemd `LoadCredential=` path.
 
 1. Credentials live in a **separate, root-owned credential file**:
    `/etc/master-stack/webdav.htpasswd`.
 2. Its mode is **at most `0600`**, owner `root:root`, verified after writing.
-3. `master-webdav.service` obtains it through **systemd `LoadCredential=`**.
-4. `master-webdav` reads it from **`$CREDENTIALS_DIRECTORY`**.
-5. The password is **not in the systemd unit content** — no `Environment=`,
-   no `ExecStart` argument, no drop-in.
-6. The password is **not in any environment file**: not `webdav.env`, not
-   `config.env`, not `state.env`, not `v2/config/defaults.env`.
+3. Compose mounts the file at **`/run/secrets/webdav_htpasswd`** (read-only).
+4. rclone is pointed at that **path** only (`--htpasswd=…`).
+5. The password is **not in Compose YAML or systemd unit content**.
+6. The password is **not in any environment file**: not `config.env`, not
+   `state.env`, not `v2/config/defaults.env`. There is no `webdav.env`.
 7. The password **does not appear on a command line**.
 8. The password is **not written to logs**.
-9. **How rclone receives the credential is verified by a separate security
-   test at implementation time** (§4.3) — not assumed from documentation.
+9. Exposure checks against the running container assert items 7–8 (§4.3).
 
 ### 4.2 Where the username lives, and why
 
@@ -269,54 +262,35 @@ contract form, is `v2-contract.md` §6.2.
 configuration.** It lives inside `webdav.htpasswd`, because the htpasswd
 format is already `user:hash`.
 
-The alternative — `WEBDAV_USER` in `webdav.env` or `config.env` — was
-rejected for a specific reason, not out of caution: the name would then
-exist in two places, and the copy in the environment file could drift from
-the hash it is supposed to accompany. A username that no longer matches its
-hash produces a `401` that looks like a wrong password, which is a
-hard-to-diagnose failure. One file, one pair.
+The alternative — `WEBDAV_USER` in `config.env` — was rejected: the name
+would then exist in two places and could drift from the hash. One file, one
+pair.
 
-Consequence: `WEBDAV_USER` does not appear in any of the four configuration
-files, and `defaults.env` names it in its forbidden-keys list alongside
+Consequence: `WEBDAV_USER` does not appear in configuration files, and
+`defaults.env` names it in its forbidden-keys list alongside
 `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH` and `WEBDAV_USER_PASSWORD`.
 
 ### 4.3 Verified at implementation time, not assumed
 
-The weak point of this design is the last hop: rclone must be able to take
-its credentials from a *file*. If it could only take `--user`/`--pass`, the
-secret would land on the command line and property 7 would be false while
-every document still claimed otherwise.
+rclone must take credentials from a *file*. If it could only take
+`--user`/`--pass`, the secret would land on the command line.
 
-So the implementation phase owes a security test that asserts, against a
-running service: no password or username in `ps -eo args`, none in
-`/proc/<pid>/environ`, none in the unit's journal, and the credential
-reachable only through `$CREDENTIALS_DIRECTORY`. If rclone cannot satisfy
-that, the credential transport changes — the contract does not.
+Stage 7 and the live checklist assert: no password or username in container
+args / environ; host htpasswd remains `0600` `root:root`.
 
-### 4.4 What `webdav.env` is for
+### 4.4 Tunables (no `webdav.env`)
 
-Precisely so that the non-secret tunables — port, served root, read-only
-flag, cache time, log level, realm — can live in a world-readable file
-while the secret stays in the `0600` one.
-
-It also carries `WEBDAV_BIND_ADDRESS`, which is **empty by default**. Empty
-means "resolve the current Tailscale IPv4 at service start"; a value is
-treated as an explicit operator override and still has to pass the
-tailnet-address check, so `0.0.0.0`, a WAN address or a LAN address makes
-the service refuse to start. The key exists for that override and for
-documentation value; the default stays empty because an address frozen at
-install time goes stale silently, and a short bounded wait at start is
-better than that.
-
-Nothing in `webdav.env` is sensitive, and nothing sensitive may be added to
-it.
+Port, image pin, and read-only posture live in `defaults.env` + the Compose
+template. There is no separate `webdav.env`; Stage 4 deletes a leftover file
+from older revisions.
 
 ### 4.5 Re-run behaviour
 
 If the credential file exists and is non-empty, the installer says so and
 does not ask again. Resetting is deleting the file and re-running, and the
 installer's output states that. This is what keeps a second run from
-silently invalidating the Apple TV's stored credentials.
+silently invalidating the Apple TV's stored credentials. Host
+`master-webdav` leftovers are disabled and removed.
 
 ---
 
@@ -329,18 +303,17 @@ according to what it actually binds:
 |---|---|---|
 | dnsmasq | `lo` and `tailscale0` **by name** | Nothing — `interface-name` + `bind-dynamic` follow the interface, and the config is never regenerated |
 | Caddy | `{$TAILSCALE_IPV4}` read from `state.env` | Restarted after `state.env` is updated |
-| WebDAV | `TAILSCALE_IPV4` resolved at start | Restarted |
-| Compose containers | no Tailscale bind; `.env` carries `WG_ENDPOINT_HOST` hint only | Nothing — no container binds a Tailscale address |
+| WebDAV | `127.0.0.1` only | Nothing — loopback publish does not track Tailscale |
+| Compose containers | no Tailscale bind | Nothing — no container binds a Tailscale address |
 | Firewall | `tailscale0` **by name**; WAN peer ports from config/state | Nothing — no Tailscale rule names an address |
 
 `refresh-tailnet-config` owns the Tailscale side of this table, and its
 scope is exactly that: read the current IPv4 and IPv6, compare with
 `state.env`, exit successfully without touching a service if they match,
-and otherwise update `state.env` atomically and restart the two units that
-bind the address. It has no opinion about container health, file contents,
-disk space or image digests, and it holds no cooldown stamps, drift flags
-or recovery logic. **DD-61** states the scope exhaustively, including the
-things it must not grow into.
+and otherwise update `state.env` atomically and restart Caddy. It has no
+opinion about container health, file contents, disk space or image digests,
+and it holds no cooldown stamps, drift flags or recovery logic. **DD-61**
+(narrowed by **DD-77**) states the scope exhaustively.
 
 Two rows above say "nothing" for structural reasons worth naming, because
 they are what keep the helper small. dnsmasq and the firewall are both
@@ -394,13 +367,13 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | Stage | Work | Owns |
 |---|---|---|
 | 0 | Gates (root, tty, Debian 13, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
-| 1 | `apt update`; optional `full-upgrade`; base packages (incl. `acl`); WebDAV htpasswd if new; timezone | `apt` |
+| 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
-| 3 | Address detection → `state.env`; downloads tree `chown` `1000:1000` | installer |
-| 4 | Docker; render `compose.yaml` / `.env` / FileBrowser config; install scripts and units | templates |
-| 5 | `webdav.env`; apply `master-firewall`; enable WebDAV / refresh / watch | firewall + WebDAV |
+| 3 | Address detection → `state.env`; downloads tree `chown` `DOWNLOADS_UID:GID` | installer |
+| 4 | Docker; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 5 | apply `master-firewall`; enable refresh timer | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
-| 7 | Compose `up` if needed; cheap contract §14 checks | verification |
+| 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,
@@ -476,7 +449,8 @@ one-line versions:
 | **DD-58** | Does the single-file model survive into v2? | No. DD-9 is superseded; v2 ships as a repository tree. |
 | **DD-59** | Chain names | `MASTER-INPUT` and `MASTER-DOCKER`, declared only in `config/defaults.env`. `MASTER-DOCKER-FILTER` is not used. |
 | **DD-60** | Does dnsmasq listen on loopback? | Yes — `lo` and `tailscale0`, `bind-dynamic`, nothing else, no DHCP. |
-| **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy and `master-webdav`. dnsmasq, the firewall and the stack are untouched. |
+| **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy (WebDAV was dropped from the set by **DD-77**). dnsmasq, the firewall and the stack are untouched. |
+| **DD-77** | Where does WebDAV run? | Compose on `127.0.0.1`, Caddy reverse_proxy; host unit removed. |
 | **DD-62** | Portainer's upstream | HTTPS `127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`. |
 
 **DD-59 removed a chain that was never decided on.** `defaults.env`

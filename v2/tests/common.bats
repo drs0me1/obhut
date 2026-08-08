@@ -524,7 +524,10 @@ EOF
 }
 
 @test "base packages include htpasswd helpers" {
-    grep -q 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
+    grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
+    ! grep -qE 'apache2-utils dnsutils acl|apt-get install -y.*\bacl\b' \
+        "$V2_ROOT/install.sh"
+    ! grep -qE '\brclone\b' "$V2_ROOT/install.sh"
 }
 
 @test "export-v2 embeds archive sha256 and stages remote extract" {

@@ -242,6 +242,10 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-37: host WebDAV/rclone remnant purge (2026-08-09).** Dropped
+      unused host `acl` apt package; contract/architecture/testing docs and
+      DD-61 text aligned with Compose loopback WebDAV (DD-77). Migration
+      `disable --now master-webdav` kept for re-runs.
 - [x] **v2-36: WebDAV in Compose on loopback (2026-08-09, DD-77).** Host
       unit removed; Caddy → `127.0.0.1:WEBDAV_PORT`; refresh only Caddy.
 - [x] **v2-35: P2 subset — drop Compose `.env`, path charset, UID SSOT

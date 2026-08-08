@@ -866,11 +866,13 @@ Behaviour that a unit test cannot honestly assert — reboot, daemon restart,
 peer reachability, credential exposure — is verified by running this list on
 a real host. It is deliberately short and manual; it is not moving into
 `bats`. Recorded after the `v2-28…v2-31` fixes from
-[`v2-optimization-review.md`](v2-optimization-review.md).
+[`v2-optimization-review.md`](v2-optimization-review.md). Rows 7–9 and
+17–18 below were re-shaped for Compose WebDAV (**DD-77** / v2-36+); the
+v2-31 column remains the historical run unless noted.
 
 Run order matters: a clean install, then the two restarts, then the reboot.
 
-| # | Check | How | v2-31 on `nrm` |
+| # | Check | How | v2-31 on `nrm` / later |
 |---|---|---|---|
 | 1 | Idempotent re-run | second `install.sh` run changes no generated file | PASS — dnsmasq, Caddy and Compose all reported unchanged; no restart, no `up` |
 | 2 | Third-party `DOCKER-USER` rule survives | plant a rule, `systemctl restart docker`, check it | PASS |
@@ -878,9 +880,9 @@ Run order matters: a clean install, then the two restarts, then the reboot.
 | 4 | Compose untouched by Tailscale restart | compare `docker ps -q` hashes across `systemctl restart tailscaled` | PASS — bit-identical |
 | 5 | dnsmasq follows the address | PID unchanged across an address change and a `tailscaled` restart | PASS — PID 1061 throughout |
 | 6 | Caddy does not crash-loop | `NRestarts` after `tailscaled` restart and after reboot | PASS — 0 in both (was 29 before M3) |
-| 7 | A failed bound unit recovers | leave `master-webdav` failed, run `refresh-tailnet-config` with no address change | PASS — recovered (was permanently stuck before M2) |
-| 8 | Boot ordering | `ActiveEnterTimestampMonotonic` per unit | PASS — tailscaled 4.5 s, dnsmasq 6.0 s, webdav 5.8 s, caddy 6.2 s, docker 8.3 s, firewall 8.8 s |
-| 9 | Everything returns after reboot | all units active, `systemctl --failed` empty, 5 containers up | PASS |
+| 7 | Refresh recovers failed Caddy | leave `caddy` failed, run `refresh-tailnet-config` with no address change | PASS on v2-31 as host-WebDAV recovery; post-v2-36: Caddy is the only bound unit |
+| 8 | Boot ordering | `ActiveEnterTimestampMonotonic` per unit | PASS — host `master-webdav` timing was v2-31-era; post-v2-36 WebDAV is a container |
+| 9 | Everything returns after reboot | all units active, `systemctl --failed` empty, six containers up | PASS (v2-36: six containers incl. `webdav`) |
 | 10 | Chain order after reboot | `ts-input` = 1, `MASTER-INPUT` = 2, one `DOCKER-USER` jump, IPv4 and IPv6 | PASS |
 | 11 | Tailscale UDP port accepted independently | `iptables -C MASTER-INPUT … --dport 41641` in both families | PASS |
 | 12 | wg-easy peer IPv6 egress | `docker exec wg-easy ping -6` a public address | PASS — 0% loss (was 100% before M1) |
@@ -888,8 +890,8 @@ Run order matters: a clean install, then the two restarts, then the reboot.
 | 14 | Peer port contract | `docker port` vs `wg show all listen-port` vs firewall | PASS — 65171/udp and 65173 tcp+udp, `0.0.0.0`, UIs loopback-only |
 | 15 | DNS | six names → `${TS_IPV4}`; out-of-domain `REFUSED` | PASS |
 | 16 | Caddy upstreams | each of the four UIs through Caddy | PASS — 200/302/200/200 |
-| 17 | WebDAV auth and read-only | unauthenticated `401` direct and via Caddy; `PUT` refused | PASS |
-| 18 | WebDAV credential not exposed | `ps -eo args`, htpasswd mode/owner | PASS — no secret on the command line; `600 root:root` |
+| 17 | WebDAV auth and read-only | loopback + Caddy `401`; TS-direct closed; `PUT` refused | PASS on v2-36 |
+| 18 | WebDAV credential not exposed | container args path-only; htpasswd `600 root:root` | PASS on v2-36 |
 | 19 | Exit-node prerequisites | forwarding sysctls, GRO on the WAN NIC, `Self.Online`, `ExitNodeOption` | PASS — health list empty |
 
 **Still not covered by any test, manual or automatic:**

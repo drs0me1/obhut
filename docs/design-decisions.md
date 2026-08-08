@@ -3187,24 +3187,27 @@ separate document with its own numbering.
   target host. That is answered by looking at the host during the DNS
   phase.
 
-### DD-61: `refresh-tailnet-config` restarts two units and does nothing else (2026-08-05)
+### DD-61: `refresh-tailnet-config` restarts address-bound units and does nothing else (2026-08-05)
 
+- **Superseded in part by DD-77 (2026-08-09):** host WebDAV no longer
+  binds `${TS_IPV4}`; the live restart set is **Caddy only**.
 - **Decision:** the helper reads the current Tailscale IPv4 and IPv6,
   compares them with `/etc/master-stack/state.env`, exits successfully
   without touching any service if they match, and otherwise updates
-  `state.env` atomically and restarts exactly two units: Caddy and
-  `master-webdav`. Explicitly excluded: regenerating the dnsmasq
-  configuration, restarting dnsmasq, restarting the Compose stack or any
-  container, re-applying the firewall, cooldown stamps, drift flags,
-  container recovery, and health repair of any kind.
+  `state.env` atomically and restarts the units that bind the address
+  (originally Caddy and `master-webdav`; after DD-77, Caddy alone).
+  Explicitly excluded: regenerating the dnsmasq configuration, restarting
+  dnsmasq, restarting the Compose stack or any container, re-applying the
+  firewall, cooldown stamps, drift flags, container recovery, and health
+  repair of any kind.
 - **Rationale:** this is the scope boundary that keeps v2 from regrowing
   `master-network-reconcile`, whose 1821 lines were one third of v1 and
   produced 25 drift flags, a stamp-based cooldown ledger and an image
   digest recovery path — none of which any requirement asked for. The rule
   that makes the small version sufficient is architectural rather than
-  disciplinary: only two consumers bind the Tailscale address, because
+  disciplinary: only address-bound consumers are restarted, because
   dnsmasq and the firewall are written against the *interface name*
-  (**DD-60**) and no container touches the address at all.
+  (**DD-60**) and (after DD-77) WebDAV binds loopback only.
 - **Consequence for Caddy:** there is no rendered Caddy environment file.
   The drop-in reads `state.env` directly as its `EnvironmentFile=`, so the
   address exists in one place on disk and the helper has one file to

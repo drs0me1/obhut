@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-36"
+V2_VERSION="2026.08.06-v2-37"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -344,7 +344,7 @@ stage_1() {
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq \
-        apache2-utils dnsutils acl
+        apache2-utils dnsutils
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
     if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then

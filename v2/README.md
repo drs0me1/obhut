@@ -1,8 +1,8 @@
 # master-stack v2
 
-Lean Debian 13 installer: Tailscale exit node, fixed Compose bundle, host
-dnsmasq + Caddy on the tailnet, WebDAV, and a persistent firewall. No
-reconcile engine.
+Lean Debian 13 installer: Tailscale exit node, fixed Compose bundle
+(including loopback WebDAV), host dnsmasq + Caddy on the tailnet, and a
+persistent firewall. No reconcile engine.
 
 Authoritative behaviour: [`docs/v2-contract.md`](../docs/v2-contract.md).
 Layout and data flow: [`docs/v2-architecture.md`](../docs/v2-architecture.md).
