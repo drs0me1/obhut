@@ -485,6 +485,11 @@ EOF
         grep -q 'systemctl restart master-firewall.service'
     awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'systemctl restart master-webdav.service'
+    # Pipe to atomic_write loses V2_LAST_ATOMIC_CHANGED in a subshell.
+    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -qE '\|[[:space:]]*atomic_write'
+    grep -q 'atomic_write "$UNIT_DIR/master-webdav.service" 0644 < <(' \
+        "$V2_ROOT/install.sh"
 }
 
 @test "base packages include acl for setfacl" {

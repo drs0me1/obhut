@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-32"
+V2_VERSION="2026.08.06-v2-33"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -518,9 +518,10 @@ EOF
         <"$V2_ROOT/scripts/refresh-tailnet-config"
     atomic_write "$SBIN_DIR/wait-tailnet-addr" 0755 \
         <"$V2_ROOT/scripts/wait-tailnet-addr"
-    sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
-        "$V2_ROOT/systemd/master-webdav.service" |
-        atomic_write "$UNIT_DIR/master-webdav.service" 0644
+    atomic_write "$UNIT_DIR/master-webdav.service" 0644 < <(
+        sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
+            "$V2_ROOT/systemd/master-webdav.service"
+    )
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
 
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \

@@ -3550,3 +3550,7 @@ separate document with its own numbering.
 - **Apply order:** host INPUT (IPv4 then IPv6, with `ts-input`
   precedence) first; Docker chains afterward so a missing Docker path
   cannot leave the host without WAN DROP.
+- **v2-33 follow-up:** `sed | atomic_write` runs the function in a Bash
+  pipe subshell, so `V2_LAST_ATOMIC_CHANGED` is discarded. WebDAV unit
+  writes use process substitution (`atomic_write … < <(sed …)`) instead.
+  Found on the first live v2-32 re-run: unit on disk updated, PID unchanged.

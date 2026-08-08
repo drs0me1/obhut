@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-33: WebDAV unit change flag survives write
+
+- **Fixed:** Stage 4 wrote `master-webdav.service` via `sed | atomic_write`,
+  so Bash ran `atomic_write` in a pipe subshell and
+  `V2_LAST_ATOMIC_CHANGED` / `WEBDAV_NEEDS_RESTART` never reached Stage 5.
+  Live nrm re-run of v2-32 installed the PartOf-free unit on disk but left
+  the old WebDAV PID running. Now uses process substitution so the flag
+  stays in the installer shell (**DD-75** follow-up).
+- **Verified live on `nrm`:** forced unit change restarted WebDAV; restore
+  re-run left unchanged units alone; `systemctl restart tailscaled` kept
+  Caddy/WebDAV/dnsmasq PIDs and Tailscale IP, reapplied firewall; Docker
+  restart reused the five container IDs, left Caddy/WebDAV alone,
+  `--check` passed, health 200 / WebDAV 401, zero failed units.
+
 ### 2026-08-09 — v2-32: re-run convergence, firewall/Docker split, PartOf trim
 
 Four small resilience fixes from the post-v2-31 report comparison

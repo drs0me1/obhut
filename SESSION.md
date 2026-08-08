@@ -6,19 +6,17 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`2026.08.06-v2-32` applied locally (DD-75): re-run restart flags,
-firewall/Docker split, drop Caddy/WebDAV `PartOf=tailscaled`, bounded
-`tailscale up` reap. Live host still on v2-31 until re-run/export.**
+**`2026.08.06-v2-33` live on `nrm` (DD-75 + pipe-subshell hotfix).**
+v2-32/33 re-run + Tailscale/Docker smokes passed 2026-08-09.
 
 Legacy monolith remains under `legacy/install.sh` / root history; active
 work is `v2/`.
 
 | | |
 |---|---|
-| Version (repo) | `2026.08.06-v2-32` |
-| Live host | `nrm` — last reported `V2_VERSION=2026.08.06-v2-31` |
-| Export | not yet rebuilt for v2-32 |
-| Next | static check → nrm re-run → Tailscale/Docker restart smoke |
+| Version (repo + nrm) | `2026.08.06-v2-33` |
+| Export | not yet rebuilt for v2-33 |
+| Next | commit v2-33 → P1 firewall invariants or P2 package |
 
 ### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
 

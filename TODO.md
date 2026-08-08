@@ -242,6 +242,11 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-33: WebDAV unit write no longer pipes into `atomic_write`
+      (2026-08-09, DD-75 follow-up).** Live v2-32 re-run left WebDAV PID
+      stale after PartOf removal because the pipe subshell dropped
+      `WEBDAV_NEEDS_RESTART`. Process substitution; forced unit change +
+      Tailscale/Docker restart smokes passed on `nrm`.
 - [x] **v2-32: re-run restart flags, firewall/Docker decoupling, drop
       Caddy/WebDAV `PartOf=tailscaled`, bounded `tailscale up` reap
       (2026-08-09, DD-75).** Live `nrm` tests showed `enable --now` is a
@@ -249,8 +254,7 @@ _All Low findings resolved or closed — see Completed below._
       WebDAV without IP change, and `Requires=docker` plus a hard
       `DOCKER-USER` die tied host INPUT to Docker success. Rejected on
       the same evidence: `accept_ra=2`, `stateful-filtering=false`,
-      start-limit-as-permanent-lock. Static: `bash -n` + `shellcheck` on
-      `v2/install.sh` and `v2/scripts/firewall.sh`. Live re-verify pending.
+      start-limit-as-permanent-lock. Live-verified with v2-33 hotfix.
 
 - [x] **A probe in a predicate position puts back what it measured
       (2026-08-05, `Q1-39`, Stage 4 pass item D5, DD-57).** The last of the
