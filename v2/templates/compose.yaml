@@ -91,6 +91,34 @@ services:
       - /tmp
     stop_grace_period: 30s
 
+  webdav:
+    image: __RCLONE_IMAGE__
+    container_name: webdav
+    restart: unless-stopped
+    # htpasswd host'ta 0600 root:root; konteyner root okur, cap_drop ALL.
+    user: "0:0"
+    command:
+      - serve
+      - webdav
+      - /downloads
+      - --config=/dev/null
+      - --addr=:8080
+      - --htpasswd=/run/secrets/webdav_htpasswd
+      - --dir-cache-time=1m
+      - --read-only
+    ports:
+      - "127.0.0.1:__WEBDAV_PORT__:8080"
+    volumes:
+      - __DOWNLOADS_PATH__:/downloads:ro
+      - __WEBDAV_HTPASSWD_FILE__:/run/secrets/webdav_htpasswd:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   wg-easy:
     image: __WG_EASY_IMAGE__
     container_name: wg-easy

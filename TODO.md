@@ -242,6 +242,8 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-36: WebDAV in Compose on loopback (2026-08-09, DD-77).** Host
+      unit removed; Caddy → `127.0.0.1:WEBDAV_PORT`; refresh only Caddy.
 - [x] **v2-35: P2 subset — drop Compose `.env`, path charset, UID SSOT
       (2026-08-09, DD-76).** No WG Stage 7 extras; chown narrowing still
       deferred.

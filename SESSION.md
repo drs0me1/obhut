@@ -6,16 +6,16 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**`2026.08.06-v2-35` live on `nrm` (DD-76). Re-run verified 2026-08-09.**
+**`2026.08.06-v2-36` live on `nrm` — WebDAV in Compose (DD-77).**
 
 Legacy monolith remains under `legacy/install.sh` / root history; active
 work is `v2/`.
 
 | | |
 |---|---|
-| Version (repo + nrm) | `2026.08.06-v2-35` |
-| Deferred P2 | 7b chown narrowing; 8 WG Stage 7 checks |
-| Next | commit v2-35 → export optional |
+| Version (repo + nrm) | `2026.08.06-v2-36` |
+| WebDAV | Compose loopback → Caddy; host unit gone |
+| Next | commit v2-36 |
 
 ### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
 

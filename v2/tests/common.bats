@@ -288,10 +288,9 @@ EOF
 }
 
 @test "refresh-tailnet-config does not touch compose or firewall" {
-    ! grep -qE 'compose|master-firewall|DOCKER-USER' \
+    ! grep -qE 'compose|master-firewall|DOCKER-USER|master-webdav' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
-    # Scope is exactly the two address-bound units, named in one list.
-    grep -q 'BOUND_UNITS="caddy.service master-webdav.service"' \
+    grep -q 'BOUND_UNITS="caddy.service"' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
@@ -386,9 +385,19 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "webdav script uses htpasswd file not password flags" {
-    grep -q -- '--htpasswd' "$V2_ROOT/scripts/webdav.sh"
-    ! grep -qE -- '--pass |--user ' "$V2_ROOT/scripts/webdav.sh"
+@test "webdav compose service is loopback rclone with htpasswd" {
+    grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
+    grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
+    grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
+    grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
+    grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'reverse_proxy 127.0.0.1:__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
+    ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
+        "$V2_ROOT/templates/Caddyfile"
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'disable --now master-webdav.service'
 }
 
 @test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
@@ -502,22 +511,19 @@ EOF
     grep -q 'full-upgrade yapılsın mı' "$V2_ROOT/install.sh"
     grep -q 'COMPOSE_NEEDS_UP' "$V2_ROOT/install.sh"
     grep -q 'FIREWALL_NEEDS_RESTART' "$V2_ROOT/install.sh"
-    grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
+    ! grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
     grep -q 'yapılandırması aynı; yeniden başlatılmadı' "$V2_ROOT/install.sh"
     grep -q 'Compose dosyası aynı ve konteynerler ayakta' "$V2_ROOT/install.sh"
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
     awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'systemctl restart master-firewall.service'
-    awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'systemctl restart master-webdav.service'
-    # Pipe to atomic_write loses V2_LAST_ATOMIC_CHANGED in a subshell.
+    ! awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'master-webdav'
     ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
         grep -qE '\|[[:space:]]*atomic_write'
-    grep -q 'atomic_write "$UNIT_DIR/master-webdav.service" 0644 < <(' \
-        "$V2_ROOT/install.sh"
 }
 
-@test "base packages include acl for setfacl" {
+@test "base packages include htpasswd helpers" {
     grep -q 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
 }
 
@@ -533,9 +539,11 @@ EOF
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
     grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
     grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
+    grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
     grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
     grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
+    grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
 }
 
@@ -557,17 +565,6 @@ EOF
     ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
 }
 
-@test "webdav service user comes from defaults and matches the unit" {
-    # shellcheck source=/dev/null
-    source "$V2_ROOT/config/defaults.env"
-    [[ -n "$WEBDAV_SERVICE_USER" ]]
-    grep -q "User=${WEBDAV_SERVICE_USER}\$" "$V2_ROOT/systemd/master-webdav.service"
-    grep -q "Group=${WEBDAV_SERVICE_USER}\$" "$V2_ROOT/systemd/master-webdav.service"
-    grep -q 'id -u "$WEBDAV_SERVICE_USER"' "$V2_ROOT/install.sh"
-    grep -q 'u:${WEBDAV_SERVICE_USER}:rx' "$V2_ROOT/install.sh"
-    ! grep -q 'id -u master-webdav' "$V2_ROOT/install.sh"
-}
-
 @test "stage 7 derives the container count from compose" {
     ! grep -q 'local expected=5' "$V2_ROOT/install.sh"
     grep -q 'docker compose config --services' "$V2_ROOT/install.sh"
@@ -579,20 +576,12 @@ EOF
     grep -q 'OnUnitActiveSec=5min' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
 }
 
-@test "webdav unit is read-only downloads without PartOf tailscaled" {
-    ! grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-webdav.service"
-    grep -q 'ReadOnlyPaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
-    ! grep -q 'ReadWritePaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
-}
-
 @test "tailscale_login reaps stuck up child before retry" {
     grep -q 'reap_bg_pid()' "$V2_ROOT/install.sh"
     grep -q 'kill -KILL' "$V2_ROOT/install.sh"
-    awk '/^tailscale_login\(\)/,/^ensure_webdav_user\(\)/' "$V2_ROOT/install.sh" |
+    awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'reap_bg_pid "\$up_pid"'
-    # Old bug: unbounded wait, then kill. Reap must come first on the
-    # timeout path; success-path wait before return is still fine.
-    ! awk '/^tailscale_login\(\)/,/^ensure_webdav_user\(\)/' "$V2_ROOT/install.sh" |
+    ! awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'kill "\$up_pid"'
 }
 

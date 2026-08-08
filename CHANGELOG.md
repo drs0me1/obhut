@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-36: WebDAV moves into Compose (loopback)
+
+- **Changed:** WebDAV is a Compose `rclone/rclone` service publishing only
+  `127.0.0.1:WEBDAV_PORT→8080`, with `/downloads:ro`, `--read-only`, and
+  the existing htpasswd mount. Caddy proxies `webdav.*` to loopback
+  (**DD-77**).
+- **Removed:** host `master-webdav.service`, `webdav.sh`, `webdav.env`,
+  `WEBDAV_SERVICE_USER`, host `rclone` apt package, and refresh-tailnet
+  restart of WebDAV (only Caddy remains address-bound).
+- **Accepted cost:** WebDAV is down when Docker is down — same as the
+  media producers. Infuse path remains `http://webdav.<domain>` via Caddy;
+  direct Tailscale `IP:WEBDAV_PORT` bind is gone.
+- **Verified live on `nrm`:** host unit removed; `webdav` container on
+  `127.0.0.1:65113`; Caddy/loopback `401`; TS-direct closed; health ok;
+  refresh bound units = Caddy only; `--check` clean; six containers up.
+
 ### 2026-08-09 — v2-35: Compose SSOT cleanups (P2 subset)
 
 - **Removed:** writing `$COMPOSE_DIR/.env` with `WG_ENDPOINT_HOST` (Compose

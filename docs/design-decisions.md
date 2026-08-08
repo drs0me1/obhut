@@ -3562,6 +3562,21 @@ separate document with its own numbering.
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
 
+### DD-77: WebDAV runs in Compose on loopback, not as a host unit (2026-08-09)
+
+- **Decision:** Replace host `master-webdav` (systemd + distro rclone +
+  dedicated user) with a Compose service using `rclone/rclone`, published
+  only on `127.0.0.1:WEBDAV_PORT`, reverse-proxied by Caddy. htpasswd
+  stays at `/etc/master-stack/webdav.htpasswd` (0600). Refresh-tailnet
+  restarts only Caddy.
+- **Why:** Tailscale IP changes no longer require a WebDAV rebind; WebDAV
+  updates with the rest of the stack; host ACL/user/rclone package surface
+  shrinks. Double read-only (`:ro` mount + `--read-only`) is preserved.
+- **Trade-off accepted:** Docker down ⇒ WebDAV down. Media producers are
+  already Docker-backed, so the dependency matches the data path.
+- **Not in scope:** exposing WebDAV on the Tailscale IP directly; Infuse
+  uses the Caddy hostname.
+
 ### DD-76: Compose does not own the WireGuard endpoint hint (2026-08-09)
 
 - **Decision:** `WG_ENDPOINT_HOST` lives only in `state.env` (and the

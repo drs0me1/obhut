@@ -29,5 +29,5 @@ http://file.__LOCAL_DOMAIN__ {
 }
 
 http://webdav.__LOCAL_DOMAIN__ {
-	reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__
+	reverse_proxy 127.0.0.1:__WEBDAV_PORT__
 }

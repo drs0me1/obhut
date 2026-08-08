@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tailscale adres değişince state.env güncelle; yalnız Caddy + WebDAV restart.
-# dnsmasq / firewall / Compose'a dokunmaz.
+# Tailscale adres değişince state.env güncelle; yalnız Caddy restart.
+# WebDAV Compose loopback'de; dnsmasq / firewall / Compose'a dokunmaz.
 set -Eeuo pipefail
 umask 077
 
@@ -17,8 +17,7 @@ source "$STATE_FILE"
 
 : "${TAILSCALE_IF:=tailscale0}"
 
-# Adrese bind olan unit'ler. Sıra önemli değil; ikisi de bağımsız.
-BOUND_UNITS="caddy.service master-webdav.service"
+BOUND_UNITS="caddy.service"
 
 warn_if_tailnet_unusable() {
     # Node tailnet'ten silinirse arayüzdeki adres bir süre durur: her unit
@@ -116,4 +115,4 @@ trap - EXIT
 
 restart_bound_units
 
-printf 'refresh-tailnet: state.env güncellendi; Caddy ve WebDAV yeniden başlatıldı\n'
+printf 'refresh-tailnet: state.env güncellendi; Caddy yeniden başlatıldı\n'

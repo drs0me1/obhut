@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-35"
+V2_VERSION="2026.08.06-v2-36"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -17,7 +17,6 @@ V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
-WEBDAV_NEEDS_RESTART=0
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -236,13 +235,6 @@ Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 }
 
-ensure_webdav_user() {
-    if ! id -u "$WEBDAV_SERVICE_USER" >/dev/null 2>&1; then
-        useradd --system --home /nonexistent --shell /usr/sbin/nologin \
-            "$WEBDAV_SERVICE_USER"
-    fi
-}
-
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
@@ -294,7 +286,7 @@ stage_0() {
         log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
     fi
 
-    prompt WEBDAV_PORT "WebDAV portu (yalnız Tailnet)" "$prev_webdav_port"
+    prompt WEBDAV_PORT "WebDAV portu (loopback, Caddy)" "$prev_webdav_port"
     [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
@@ -351,7 +343,7 @@ stage_1() {
     fi
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
-        iptables coreutils util-linux diffutils jq rclone \
+        iptables coreutils util-linux diffutils jq \
         apache2-utils dnsutils acl
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
@@ -473,12 +465,15 @@ EOF
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         WG_EASY_IMAGE="$WG_EASY_IMAGE" \
+        RCLONE_IMAGE="$RCLONE_IMAGE" \
         PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
         QBIT_PUBLIC_PORT="$QBIT_PUBLIC_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         WG_PUBLIC_PORT="$WG_PUBLIC_PORT" \
+        WEBDAV_PORT="$WEBDAV_PORT" \
+        WEBDAV_HTPASSWD_FILE="$WEBDAV_HTPASSWD_FILE" \
         WG_BRIDGE_SUBNET="$WG_BRIDGE_SUBNET" \
         WG_BRIDGE_IPV4="$WG_BRIDGE_IPV4" \
         WG_BRIDGE_SUBNET6="$WG_BRIDGE_SUBNET6" \
@@ -513,17 +508,10 @@ EOF
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
-    atomic_write "$SBIN_DIR/master-webdav" 0755 <"$V2_ROOT/scripts/webdav.sh"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
     atomic_write "$SBIN_DIR/refresh-tailnet-config" 0755 \
         <"$V2_ROOT/scripts/refresh-tailnet-config"
     atomic_write "$SBIN_DIR/wait-tailnet-addr" 0755 \
         <"$V2_ROOT/scripts/wait-tailnet-addr"
-    atomic_write "$UNIT_DIR/master-webdav.service" 0644 < <(
-        sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
-            "$V2_ROOT/systemd/master-webdav.service"
-    )
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
 
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
@@ -533,28 +521,22 @@ EOF
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl disable --now watch-tailnet-addr.service 2>/dev/null || true
+    systemctl disable --now master-webdav.service 2>/dev/null || true
     rm -f "$UNIT_DIR/watch-tailnet-addr.service" "$SBIN_DIR/watch-tailnet-addr"
+    rm -f "$UNIT_DIR/master-webdav.service" "$SBIN_DIR/master-webdav"
+    rm -f "${WEBDAV_ENV_FILE:-/etc/master-stack/webdav.env}"
     systemctl daemon-reload
 }
 
 stage_5() {
-    log INFO "Aşama 5/7 — firewall ve WebDAV"
-    ensure_webdav_user
-    atomic_write "$WEBDAV_ENV_FILE" 0644 <<EOF
-DOWNLOADS_PATH=$DOWNLOADS_PATH
-WEBDAV_PORT=$WEBDAV_PORT
-TAILSCALE_IF=$TAILSCALE_IF
-EOF
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
+    log INFO "Aşama 5/7 — firewall (WebDAV Compose'ta)"
+    [[ -f "$WEBDAV_HTPASSWD_FILE" ]] || die "WebDAV htpasswd yok: $WEBDAV_HTPASSWD_FILE"
     chown root:root "$WEBDAV_HTPASSWD_FILE"
     chmod 0600 "$WEBDAV_HTPASSWD_FILE"
-    setfacl -m "u:${WEBDAV_SERVICE_USER}:rx" "$DOWNLOADS_PATH" 2>/dev/null ||
-        chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
     systemctl enable master-firewall.service
     systemctl enable refresh-tailnet-config.service
     systemctl enable --now refresh-tailnet-config.timer
-    systemctl enable master-webdav.service
 
     if [[ "$FIREWALL_NEEDS_RESTART" -eq 1 ]] ||
         ! systemctl is-active --quiet master-firewall.service; then
@@ -562,13 +544,6 @@ EOF
         systemctl restart master-firewall.service
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
-    fi
-    if [[ "$WEBDAV_NEEDS_RESTART" -eq 1 ]] ||
-        ! systemctl is-active --quiet master-webdav.service; then
-        systemctl reset-failed master-webdav.service 2>/dev/null || true
-        systemctl restart master-webdav.service
-    else
-        log INFO "WebDAV yapılandırması aynı; yeniden başlatılmadı"
     fi
 }
 
@@ -741,8 +716,8 @@ stage_7() {
     [[ "$health" == "ok" ]] || die "Caddy health yanıtı beklenen gibi değil"
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/" || true)"
-    [[ "$code" == "401" ]] || die "WebDAV kimlik doğrulamasız yanıt $code (beklenen 401)"
+        "http://127.0.0.1:${WEBDAV_PORT}/" || true)"
+    [[ "$code" == "401" ]] || die "WebDAV loopback kimlik doğrulamasız yanıt $code (beklenen 401)"
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: webdav.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
@@ -751,7 +726,7 @@ stage_7() {
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -X PUT --data 'v2-probe' \
-        "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/.v2-write-probe" || true)"
+        "http://127.0.0.1:${WEBDAV_PORT}/.v2-write-probe" || true)"
     [[ "$code" =~ ^(401|403|405)$ ]] ||
         die "WebDAV yazma denemesi reddedilmedi (HTTP $code)"
 
@@ -765,13 +740,16 @@ stage_7() {
         grep -q "${QBIT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${QBIT_PUBLIC_PORT} publish yok"
 
-    for svc in portainer filebrowser; do
+    for svc in portainer filebrowser webdav; do
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" ]] && continue
             [[ "$line" == *127.0.0.1:* ]] ||
                 die "UI publish yalnız loopback olmalı: $svc ($line)"
         done < <((cd "$COMPOSE_DIR" && docker port "$svc") 2>/dev/null || true)
     done
+    (cd "$COMPOSE_DIR" && docker port webdav) 2>/dev/null |
+        grep -q "127.0.0.1:${WEBDAV_PORT}" ||
+        die "webdav loopback publish ${WEBDAV_PORT} yok"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         [[ "$line" == *"${QBIT_PUBLIC_PORT}/"* ]] && continue
@@ -809,10 +787,10 @@ Manuel Tailscale Admin:
 
 Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
 qBittorrent varsayılan WebUI parolasını değiştir.
-WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse)
+WebDAV: http://webdav.${LOCAL_DOMAIN} (Infuse; Compose loopback → Caddy)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
-Tailscale IP: refresh-tailnet-config (WantedBy=tailscaled + 5dk timer) → Caddy/WebDAV
+Tailscale IP: refresh-tailnet-config (WantedBy=tailscaled + 5dk timer) → Caddy
 
 EOF
 }
