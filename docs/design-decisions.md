@@ -3142,12 +3142,15 @@ separate document with its own numbering.
   Tailscale restart recreates `ts-input` but did not re-run firewall apply,
   so `MASTER-INPUT` ordering was not re-guaranteed. `master-firewall` now
   follows both `docker.service` and `tailscaled.service` stop/restart
-  (still `Requires=docker` only — Compose is never coupled). Expected:
-  `tailscaled` restart → firewall apply + Caddy/WebDAV; containers stay.
+  (Compose is never coupled). Expected after **DD-75**: `tailscaled`
+  restart → firewall apply only; Caddy/WebDAV stay unless their address
+  binding needs refresh.
 - **v2-25 (2026-08-07): minimal `--check` content.** Beyond jumps and
   `ts-input` order, `--check` asserts IPv4 `MASTER-INPUT`/`MASTER-DOCKER`
   WAN DROP, WAN wg UDP ACCEPT, and WAN qBit TCP+UDP ACCEPT. Not a return
   to the old multi-flag reconcile surface.
+- **v2-32 (2026-08-09): host INPUT no longer `Requires=docker`.** See
+  **DD-75**.
 
 ### DD-60: dnsmasq binds loopback and `tailscale0`, and nothing else (2026-08-05)
 
@@ -3513,3 +3516,37 @@ separate document with its own numbering.
 - **Revisit if:** wg peers ever need to reach tailnet nodes, or a container
   is added that must. Then this is the setting to change first, and the
   contract's §14.2 success criterion must change with it.
+
+### DD-75: Host firewall converges without Docker; address units drop PartOf (2026-08-09)
+
+- **Decision (four changes, one revision):**
+  1. `master-firewall.service` uses `Wants=docker.service`, not
+     `Requires=`. Host INPUT apply/check always run; `MASTER-DOCKER` is
+     applied/checked only when `DOCKER-USER` is present (or Docker is
+     active and the wait for the chain succeeds). Docker inactive → skip
+     Docker stage without failing the unit; Docker active but chain missing
+     after the wait → fail closed.
+  2. Stage 5 restarts `master-firewall` / `master-webdav` when
+     `state.env`, helper scripts, unit files, or `webdav.env` actually
+     changed (`FIREWALL_NEEDS_RESTART` / `WEBDAV_NEEDS_RESTART`), matching
+     the Caddy/dnsmasq pattern. Bare `enable --now` on an already-active
+     unit is not convergence.
+  3. Caddy drop-in and `master-webdav.service` no longer declare
+     `PartOf=tailscaled.service`. Firewall keeps `PartOf` for both
+     `docker` and `tailscaled` so netfilter order is rebuilt on those
+     restarts. Address binding recovery stays on `refresh-tailnet-config`
+     (`WantedBy=tailscaled` + 5-minute timer) and `wait-tailnet-addr`.
+  4. `tailscale_login` reaps a stuck `tailscale up` child with TERM, a
+     bounded wait, then KILL before the next attempt — never an unbounded
+     `wait` on a still-running auth process.
+- **Why:** Live nrm tests (2026-08-09) showed (a) `systemctl start` on
+  active firewall/WebDAV is a no-op so port/state edits never apply on
+  re-run, (b) Tailscale restart bounced Caddy/WebDAV while containers and
+  IPs stayed put, and (c) Docker boot failure would have blocked host
+  INPUT via `Requires=docker` plus a hard `die` when `DOCKER-USER` was
+  absent. Rejected on the same evidence: `accept_ra=2`,
+  `stateful-filtering=false` (DD-74), treating start-limit as a permanent
+  lock, and restoring `watch-tailnet-addr`.
+- **Apply order:** host INPUT (IPv4 then IPv6, with `ts-input`
+  precedence) first; Docker chains afterward so a missing Docker path
+  cannot leave the host without WAN DROP.

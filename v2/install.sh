@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-31"
+V2_VERSION="2026.08.06-v2-32"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -16,6 +16,8 @@ mkdir -p "$LOG_DIR" "$STATE_DIR" "$RUNTIME_DIR"
 V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
+FIREWALL_NEEDS_RESTART=0
+WEBDAV_NEEDS_RESTART=0
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -120,6 +122,23 @@ tailscale_login_state() {
     printf '%s\n' "$state"
 }
 
+reap_bg_pid() {
+    local pid="${1:?}" grace="${2:-10}" waited=0
+    kill -0 "$pid" 2>/dev/null || {
+        wait "$pid" 2>/dev/null || true
+        return 0
+    }
+    kill "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt "$grace" ]]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+}
+
 tailscale_login() {
     local attempt=1 max=3 out up_pid streamed total elapsed state dead_samples=0
     out="$(mktemp)"
@@ -153,13 +172,12 @@ tailscale_login() {
             [[ "$elapsed" -ge 300 ]] && break
             sleep 2
         done
-        wait "$up_pid" 2>/dev/null || true
+        reap_bg_pid "$up_pid" 10
         if [[ "$(tailscale_login_state)" == "complete" ]]; then
             rm -f "$out"
             return 0
         fi
         log WARN "Tailscale giriş başarısız/410; daemon sıfırlanıyor"
-        kill "$up_pid" 2>/dev/null || true
         systemctl restart --job-mode=ignore-dependencies tailscaled
         sleep 2
         attempt=$((attempt + 1))
@@ -410,6 +428,7 @@ stage_3() {
     detect_wan
     detect_tailscale
     write_state
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
 
     local d
     for d in \
@@ -491,23 +510,26 @@ auth:
 EOF
     fi
 
-    install -m 0755 "$V2_ROOT/scripts/firewall.sh" "$SBIN_DIR/master-firewall"
-    install -m 0755 "$V2_ROOT/scripts/webdav.sh" "$SBIN_DIR/master-webdav"
-    install -m 0755 "$V2_ROOT/scripts/refresh-tailnet-config" \
-        "$SBIN_DIR/refresh-tailnet-config"
-    install -m 0755 "$V2_ROOT/scripts/wait-tailnet-addr" \
-        "$SBIN_DIR/wait-tailnet-addr"
-    # Unit içindeki /downloads yolunu operatör seçimine göre yaz
+    atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
+    atomic_write "$SBIN_DIR/master-webdav" 0755 <"$V2_ROOT/scripts/webdav.sh"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
+    atomic_write "$SBIN_DIR/refresh-tailnet-config" 0755 \
+        <"$V2_ROOT/scripts/refresh-tailnet-config"
+    atomic_write "$SBIN_DIR/wait-tailnet-addr" 0755 \
+        <"$V2_ROOT/scripts/wait-tailnet-addr"
     sed -e "s|/downloads|${DOWNLOADS_PATH}|g" \
         "$V2_ROOT/systemd/master-webdav.service" |
         atomic_write "$UNIT_DIR/master-webdav.service" 0644
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
 
-    install -m 0644 "$V2_ROOT/systemd/master-firewall.service" \
-        "$UNIT_DIR/master-firewall.service"
-    install -m 0644 "$V2_ROOT/systemd/refresh-tailnet-config.service" \
-        "$UNIT_DIR/refresh-tailnet-config.service"
-    install -m 0644 "$V2_ROOT/systemd/refresh-tailnet-config.timer" \
-        "$UNIT_DIR/refresh-tailnet-config.timer"
+    atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
+        <"$V2_ROOT/systemd/master-firewall.service"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
+    atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
+        <"$V2_ROOT/systemd/refresh-tailnet-config.service"
+    atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
+        <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl disable --now watch-tailnet-addr.service 2>/dev/null || true
     rm -f "$UNIT_DIR/watch-tailnet-addr.service" "$SBIN_DIR/watch-tailnet-addr"
     systemctl daemon-reload
@@ -521,15 +543,31 @@ DOWNLOADS_PATH=$DOWNLOADS_PATH
 WEBDAV_PORT=$WEBDAV_PORT
 TAILSCALE_IF=$TAILSCALE_IF
 EOF
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && WEBDAV_NEEDS_RESTART=1
     chown root:root "$WEBDAV_HTPASSWD_FILE"
     chmod 0600 "$WEBDAV_HTPASSWD_FILE"
     setfacl -m "u:${WEBDAV_SERVICE_USER}:rx" "$DOWNLOADS_PATH" 2>/dev/null ||
         chmod o+x "$DOWNLOADS_PATH" 2>/dev/null || true
 
-    systemctl enable --now master-firewall.service
+    systemctl enable master-firewall.service
     systemctl enable refresh-tailnet-config.service
     systemctl enable --now refresh-tailnet-config.timer
-    systemctl enable --now master-webdav.service
+    systemctl enable master-webdav.service
+
+    if [[ "$FIREWALL_NEEDS_RESTART" -eq 1 ]] ||
+        ! systemctl is-active --quiet master-firewall.service; then
+        systemctl reset-failed master-firewall.service 2>/dev/null || true
+        systemctl restart master-firewall.service
+    else
+        log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
+    fi
+    if [[ "$WEBDAV_NEEDS_RESTART" -eq 1 ]] ||
+        ! systemctl is-active --quiet master-webdav.service; then
+        systemctl reset-failed master-webdav.service 2>/dev/null || true
+        systemctl restart master-webdav.service
+    else
+        log INFO "WebDAV yapılandırması aynı; yeniden başlatılmadı"
+    fi
 }
 
 apt_get_install_masked_quiet() {
@@ -627,7 +665,6 @@ EOF
 [Unit]
 Wants=tailscaled.service
 After=tailscaled.service
-PartOf=tailscaled.service
 StartLimitIntervalSec=600
 StartLimitBurst=3
 

@@ -2,7 +2,6 @@
 Description=Master stack WebDAV (tailnet, salt okunur)
 After=network-online.target tailscaled.service
 Wants=network-online.target
-PartOf=tailscaled.service
 RequiresMountsFor=/downloads
 StartLimitIntervalSec=900
 StartLimitBurst=5

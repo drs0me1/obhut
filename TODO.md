@@ -242,6 +242,16 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-32: re-run restart flags, firewall/Docker decoupling, drop
+      Caddy/WebDAV `PartOf=tailscaled`, bounded `tailscale up` reap
+      (2026-08-09, DD-75).** Live `nrm` tests showed `enable --now` is a
+      no-op on active firewall/WebDAV, Tailscale restart bounced Caddy/
+      WebDAV without IP change, and `Requires=docker` plus a hard
+      `DOCKER-USER` die tied host INPUT to Docker success. Rejected on
+      the same evidence: `accept_ra=2`, `stateful-filtering=false`,
+      start-limit-as-permanent-lock. Static: `bash -n` + `shellcheck` on
+      `v2/install.sh` and `v2/scripts/firewall.sh`. Live re-verify pending.
+
 - [x] **A probe in a predicate position puts back what it measured
       (2026-08-05, `Q1-39`, Stage 4 pass item D5, DD-57).** The last of the
       five, and the only one that changes no behaviour today.

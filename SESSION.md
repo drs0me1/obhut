@@ -6,19 +6,19 @@ can pick up without re-deriving context.
 
 ## Current Task
 
-**Lean v2 on branch `quantum` is live-verified through `2026.08.06-v2-27`
-on disposable host `nrm` (2026-08-07). No further settings change after
-that verification.**
+**`2026.08.06-v2-32` applied locally (DD-75): re-run restart flags,
+firewall/Docker split, drop Caddy/WebDAV `PartOf=tailscaled`, bounded
+`tailscale up` reap. Live host still on v2-31 until re-run/export.**
 
 Legacy monolith remains under `legacy/install.sh` / root history; active
 work is `v2/`.
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-27` |
-| Export | `v2/app/2026.08.06-v2-27.command` (+ `latest.command`); SHA embedded as `PORTABLE_ARCHIVE_SHA256` only |
-| Live host | `nrm` — `state.env` reports `V2_VERSION=2026.08.06-v2-27` after tmux re-run |
-| Tests | `bats v2/tests/common.bats`; no CI |
+| Version (repo) | `2026.08.06-v2-32` |
+| Live host | `nrm` — last reported `V2_VERSION=2026.08.06-v2-31` |
+| Export | not yet rebuilt for v2-32 |
+| Next | static check → nrm re-run → Tailscale/Docker restart smoke |
 
 ### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
 

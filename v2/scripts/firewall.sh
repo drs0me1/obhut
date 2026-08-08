@@ -173,17 +173,32 @@ apply_input4() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-wait_for_docker_user() {
-    # Docker active olsa bile DOCKER-USER birkaç saniye gecikebilir.
+docker_service_active() {
+    systemctl is-active --quiet docker.service 2>/dev/null
+}
+
+docker_user_present() {
     local bin="$1"
-    local wait_s="${DOCKER_USER_WAIT_SECONDS:-10}"
-    local deadline=$((SECONDS + wait_s))
+    "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1
+}
+
+wait_for_docker_user() {
+    local bin="$1"
+    local wait_s=0 deadline
+    if docker_user_present "$bin"; then
+        return 0
+    fi
+    if ! docker_service_active; then
+        return 1
+    fi
+    wait_s="${DOCKER_USER_WAIT_SECONDS:-10}"
+    deadline=$((SECONDS + wait_s))
     while true; do
-        if "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1; then
+        if docker_user_present "$bin"; then
             return 0
         fi
         if [[ "$SECONDS" -ge "$deadline" ]]; then
-            die "$bin: DOCKER-USER yok; Docker çalışıyor mu? (${wait_s}s beklendi)"
+            die "$bin: DOCKER-USER yok; Docker çalışıyor ama zincir yok (${wait_s}s)"
         fi
         sleep 1
     done
@@ -191,7 +206,10 @@ wait_for_docker_user() {
 
 apply_docker4() {
     local bin=iptables staging
-    wait_for_docker_user "$bin"
+    if ! wait_for_docker_user "$bin"; then
+        printf 'firewall: Docker yok/hazır değil; IPv4 MASTER-DOCKER atlandı\n'
+        return 0
+    fi
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
@@ -238,7 +256,10 @@ apply_docker6() {
     # DOCKER-FORWARD'a devam eder. Koşulsuz DROP wg-easy peer IPv6 çıkışını da
     # keserdi. Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
     local bin=ip6tables staging
-    wait_for_docker_user "$bin"
+    if ! wait_for_docker_user "$bin"; then
+        printf 'firewall: Docker yok/hazır değil; IPv6 MASTER-DOCKER atlandı\n'
+        return 0
+    fi
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
@@ -279,36 +300,45 @@ check_ts_input_precedence() {
 }
 
 if [[ "$MODE" == check ]]; then
-    # Jump + sıra (IPv4/IPv6)
     check_jump iptables INPUT "$CHAIN_INPUT"
-    check_jump iptables DOCKER-USER "$CHAIN_DOCKER"
     check_jump ip6tables INPUT "$CHAIN_INPUT"
-    check_jump ip6tables DOCKER-USER "$CHAIN_DOCKER"
     check_ts_input_precedence iptables
     check_ts_input_precedence ip6tables
-    # Kritik IPv4 politika içeriği (eski reconcile yüzeyi değil; dar set)
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
-    check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
-    # IPv6 politika içeriği: DROP WAN'a bağlı olmalı. Koşulsuz DROP burada
-    # başarısız olur — köprü çıkışını kesen regresyonu bu kural yakalar.
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
-    check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+
+    if docker_user_present iptables; then
+        check_jump iptables DOCKER-USER "$CHAIN_DOCKER"
+        check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+    elif docker_service_active; then
+        die "iptables: Docker aktif ama DOCKER-USER yok"
+    else
+        printf 'firewall: Docker yok; IPv4 MASTER-DOCKER denetimi atlandı\n'
+    fi
+    if docker_user_present ip6tables; then
+        check_jump ip6tables DOCKER-USER "$CHAIN_DOCKER"
+        check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+    elif docker_service_active; then
+        die "ip6tables: Docker aktif ama DOCKER-USER yok"
+    else
+        printf 'firewall: Docker yok; IPv6 MASTER-DOCKER denetimi atlandı\n'
+    fi
     printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi
 
 apply_input4
 ensure_ts_input_precedence iptables
-apply_docker4
 apply_input6
 ensure_ts_input_precedence ip6tables
+apply_docker4
 apply_docker6
 printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

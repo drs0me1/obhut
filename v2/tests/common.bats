@@ -409,7 +409,9 @@ EOF
 @test "master-firewall unit is WantedBy docker.service" {
     grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'WantedBy=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
+    grep -q 'Wants=network-online.target docker.service' \
+        "$V2_ROOT/systemd/master-firewall.service"
+    ! grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'PartOf=docker.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
     grep -q 'After=.*tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
@@ -421,9 +423,22 @@ EOF
     ! grep -qiE 'compose|master-compose' "$V2_ROOT/systemd/master-firewall.service"
 }
 
-@test "firewall waits for DOCKER-USER before apply" {
+@test "firewall waits for DOCKER-USER only when Docker is active" {
     grep -q 'wait_for_docker_user' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'DOCKER_USER_WAIT_SECONDS' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'docker_service_active' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'MASTER-DOCKER atlandı' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'MASTER-DOCKER denetimi atlandı' "$V2_ROOT/scripts/firewall.sh"
+    # Host INPUT must be applied before Docker stages.
+    awk '
+        /^apply_input4$/ { i4=NR }
+        /^apply_input6$/ { i6=NR }
+        /^apply_docker4$/ { d4=NR }
+        /^apply_docker6$/ { d6=NR }
+        END {
+            exit !(i4 && i6 && d4 && d6 && i4 < i6 && i6 < d4 && d4 < d6)
+        }
+    ' "$V2_ROOT/scripts/firewall.sh"
 }
 
 @test "firewall --check asserts critical IPv4 ACCEPT/DROP rules" {
@@ -437,14 +452,14 @@ EOF
     grep -c 'QBIT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
 }
 
-@test "edge drop-ins order after tailscaled" {
+@test "edge drop-ins order after tailscaled without PartOf" {
     grep -q 'dnsmasq.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     grep -q 'caddy.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     awk '/dnsmasq.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -q 'After=tailscaled.service'
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -q 'After=tailscaled.service'
-    awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
+    ! awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -q 'PartOf=tailscaled.service'
 }
 
@@ -461,9 +476,15 @@ EOF
     grep -q 'V2_FULL_UPGRADE' "$V2_ROOT/install.sh"
     grep -q 'full-upgrade yapılsın mı' "$V2_ROOT/install.sh"
     grep -q 'COMPOSE_NEEDS_UP' "$V2_ROOT/install.sh"
+    grep -q 'FIREWALL_NEEDS_RESTART' "$V2_ROOT/install.sh"
+    grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
     grep -q 'yapılandırması aynı; yeniden başlatılmadı' "$V2_ROOT/install.sh"
     grep -q 'Compose dosyası aynı ve konteynerler ayakta' "$V2_ROOT/install.sh"
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
+    awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'systemctl restart master-firewall.service'
+    awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'systemctl restart master-webdav.service'
 }
 
 @test "base packages include acl for setfacl" {
@@ -528,9 +549,20 @@ EOF
     grep -q 'OnUnitActiveSec=5min' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
 }
 
-@test "webdav unit is PartOf tailscaled and read-only downloads" {
-    grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-webdav.service"
+@test "webdav unit is read-only downloads without PartOf tailscaled" {
+    ! grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-webdav.service"
     grep -q 'ReadOnlyPaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
     ! grep -q 'ReadWritePaths=/downloads' "$V2_ROOT/systemd/master-webdav.service"
+}
+
+@test "tailscale_login reaps stuck up child before retry" {
+    grep -q 'reap_bg_pid()' "$V2_ROOT/install.sh"
+    grep -q 'kill -KILL' "$V2_ROOT/install.sh"
+    awk '/^tailscale_login\(\)/,/^ensure_webdav_user\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'reap_bg_pid "\$up_pid"'
+    # Old bug: unbounded wait, then kill. Reap must come first on the
+    # timeout path; success-path wait before return is still fine.
+    ! awk '/^tailscale_login\(\)/,/^ensure_webdav_user\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'kill "\$up_pid"'
 }
 

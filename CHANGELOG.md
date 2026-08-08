@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-32: re-run convergence, firewall/Docker split, PartOf trim
+
+Four small resilience fixes from the post-v2-31 report comparison
+(live-validated on `nrm`; **DD-75**).
+
+- **Fixed:** Stage 5 no longer relies on `enable --now` for already-active
+  `master-firewall` / `master-webdav`. Changed `state.env`, helper scripts,
+  unit files, or `webdav.env` set restart flags (same pattern as
+  Caddy/dnsmasq), so port/config edits actually reach runtime.
+- **Fixed:** Host INPUT policy no longer `Requires=docker.service`.
+  `firewall.sh` applies/checks `MASTER-INPUT` always; `MASTER-DOCKER` is
+  skipped cleanly when Docker is down, and still fail-closed when Docker is
+  up but `DOCKER-USER` never appears. `PartOf`/`WantedBy` docker still
+  re-applies Docker rules when the daemon comes back.
+- **Fixed:** Caddy drop-in and `master-webdav` drop `PartOf=tailscaled`
+  so a Tailscale restart does not bounce address-bound services when the
+  IP is unchanged. Firewall keeps `PartOf=tailscaled`.
+- **Fixed:** `tailscale_login` kills a stuck `tailscale up` child (TERM →
+  bounded wait → KILL) before retrying; timeout/dead-auth no longer hangs
+  on an unbounded `wait`.
+
 ### 2026-08-07 — v2-31: single-source cleanups from the optimisation review
 
 - **Changed:** stage 0's port-collision guards use `$DNS_PORT` and
