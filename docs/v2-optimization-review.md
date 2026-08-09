@@ -56,7 +56,7 @@ Actual listeners (`ss -lntup`):
 | WAN `0.0.0.0` | 41641/udp | tailscaled |
 | WAN `0.0.0.0` | 65171/udp, 65173/tcp+udp | docker-proxy |
 | tailnet | 53, 80, 65113 | dnsmasq, caddy, rclone |
-| loopback | 9443, 61007, 61009, 51821, **2019** | docker-proxy ×4, **caddy admin** |
+| loopback | 9443, 61007, 61006, 51821, **2019** | docker-proxy ×4, **caddy admin** |
 
 `127.0.0.1:2019` is Caddy's admin API. It is not in the contract. It is not
 reachable from containers (a container's loopback is not the host's), so the

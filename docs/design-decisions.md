@@ -3759,3 +3759,20 @@ separate document with its own numbering.
   Caddy could still pass install. Cheap and secrets-free.
 - **Not doing:** asserting exact `200` (wg returns `302`; first-run UIs
   vary) or authenticated probes.
+
+### DD-92: Classic FileBrowser replaces Quantum (2026-08-09)
+
+- **Decision:** Compose `filebrowser` uses `filebrowser/filebrowser`
+  (digest-pinned `v2.63.23`), not FileBrowser Quantum. WebDAV stays
+  separate rclone (**DD-77**). UI remains `file.*` → loopback `61007`.
+- **Why:** Operator preference after side-by-side trials (classic UI).
+  Known shell CVEs are mitigated with `--disable-exec` (and no auth
+  hooks). Tailnet-only + Caddy exposure is accepted; the residual risk is
+  **maintenance-only / planned archive** (no future patches) — recorded
+  consciously, not ignored.
+- **Data:** Host dir `/etc/master-stack/filebrowser-data` (DOWNLOADS_UID)
+  holds the Bolt DB; `/downloads` mounts at `/srv`. Quantum
+  `filebrowser.yaml` and named volume `filebrowser_data` are removed on
+  Stage 4.
+- **Accounts:** Default `admin`/`admin` on first DB bootstrap — end-of-
+  install warning; operator must change.

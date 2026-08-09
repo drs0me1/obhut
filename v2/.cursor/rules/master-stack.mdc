@@ -101,7 +101,7 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - Portainer
   - wg-easy
   - qBittorrent
-  - Filebrowser Quantum
+  - Filebrowser (classic)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
@@ -112,7 +112,7 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - Portainer: `127.0.0.1:9443`
   - wg-easy web arayüzü: `127.0.0.1:51821`
   - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
-  - Filebrowser Quantum: `127.0.0.1:<web-port>`
+  - Filebrowser (classic): `127.0.0.1:61007`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - wg-easy WireGuard: yalnız UDP

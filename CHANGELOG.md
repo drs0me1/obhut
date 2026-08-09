@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-57: qBittorrent WebUI default 61006
+
+- **Changed:** Fresh-install `QBIT_UI_PORT` default `61009` → `61006`
+  (loopback). Caddy `qbit.*` follows the token. Existing hosts pick this up
+  on re-run (port is not stored in `config.env`).
+
+### 2026-08-09 — v2-56: classic FileBrowser (replace Quantum)
+
+- **Changed:** Compose file UI is again `filebrowser/filebrowser` (digest-
+  pinned `v2.63.23`) with `--disable-exec`, host Bolt DB at
+  `/etc/master-stack/filebrowser-data`, root mount `/downloads` → `/srv`
+  (**DD-92**). Quantum image + `filebrowser.yaml` removed.
+- **Kept:** rclone WebDAV on `61003`, UI port `61007`, Caddy `file.*`.
+
+### 2026-08-09 — Restore v2-51 (FileBrowser Quantum + rclone WebDAV)
+
+- **Changed:** Abandoned the copyparty (v2-52/53) and FileGator (v2-54/55)
+  experiments. Working tree restored to the **v2-51** surface: FileBrowser
+  Quantum on loopback `61007`, separate rclone WebDAV on `61003`, qBit UI
+  `61009`.
+
 ### 2026-08-09 — v2-51: memorable FileBrowser / qBit UI defaults
 
 - **Changed:** Fresh-install loopback UI defaults in `defaults.env`:

@@ -184,7 +184,7 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
-| `/etc/master-stack/filebrowser.yaml` | installer | FileBrowser policy, `0644` |
+| `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | six services, `0600` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
 | `/etc/caddy/Caddyfile` | installer | six sites, `0644` |

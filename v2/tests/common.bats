@@ -234,11 +234,18 @@ EOF
     ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "filebrowser serves full downloads at /data" {
-    grep -q '__DOWNLOADS_PATH__:/data' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'FILEBROWSER_CONFIG: /config.yaml' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__QUANTUM_CONFIG_FILE__:/config.yaml:ro' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'filebrowser_data:/home/filebrowser/data' "$V2_ROOT/templates/compose.yaml"
+@test "filebrowser classic serves downloads at /srv with disable-exec" {
+    grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__DOWNLOADS_PATH__:/srv' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
+    grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
+    grep -q 'FILEBROWSER_DATA_DIR="/etc/master-stack/filebrowser-data"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
+    ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
+    ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
+    ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "wg-easy publishes WireGuard UDP 1:1 without remap" {

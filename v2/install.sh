@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-51"
+V2_VERSION="2026.08.06-v2-57"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -429,6 +429,13 @@ ensure_downloads_tree() {
     find "$root" -type f ! -perm 0664 -exec chmod 0664 {} +
 }
 
+# Klasik FileBrowser Bolt DB dizini — named volume www-data/root sorununu önler.
+ensure_filebrowser_data_dir() {
+    mkdir -p "$FILEBROWSER_DATA_DIR"
+    chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$FILEBROWSER_DATA_DIR"
+    chmod 0750 "$FILEBROWSER_DATA_DIR"
+}
+
 stage_3() {
     log INFO "Aşama 3/7 — adresler ve dizinler"
     detect_wan
@@ -488,29 +495,18 @@ EOF
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
-        QUANTUM_CONFIG_FILE="$QUANTUM_CONFIG_FILE" \
+        FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
     rm -f "$COMPOSE_DIR/.env"
 
-    # FileBrowser Quantum: panel kökü container /data = host DOWNLOADS_PATH
-    if [[ ! -f "$QUANTUM_CONFIG_FILE" ]]; then
-        atomic_write "$QUANTUM_CONFIG_FILE" 0644 <<'EOF'
-server:
-  port: 80
-  baseURL: "/"
-  cacheDir: "/home/filebrowser/data/cache"
-  sources:
-    - path: "/data"
-auth:
-  methods:
-    password:
-      enabled: true
-      minLength: 5
-      signup: false
-    passkey:
-      enabled: false
-EOF
+    # Klasik FileBrowser veri dizini; Quantum YAML / named volume kalıntısı temizle.
+    ensure_filebrowser_data_dir
+    rm -f /etc/master-stack/filebrowser.yaml
+    if command -v docker >/dev/null 2>&1; then
+        # Quantum → klasik geçişinde eski volume/container'ı bırakma.
+        docker rm -f filebrowser 2>/dev/null || true
+        docker volume rm docker_filebrowser_data filebrowser_data 2>/dev/null || true
     fi
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
@@ -894,6 +890,7 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
+  FileBrowser varsayılan: admin / admin — hemen değiştir.
 qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
