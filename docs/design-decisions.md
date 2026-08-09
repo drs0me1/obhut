@@ -3800,3 +3800,49 @@ separate document with its own numbering.
   daemon.json clobber, and over-broad downloads/FB cleanup on shared hosts.
 - **Not doing:** disk-persisted iptables, reconcile engine, automatic WAN
   endpoint rewrite, or broadening healthchecks beyond the contract.
+
+### DD-94: The firewall converges; it does not fail with no policy (2026-08-09)
+
+- **Decision (one package, v2-60):**
+  1. **Live WAN interface.** `resolve_wan_interface` reads the current
+     default route on every apply and check. `state.env` `WAN_INTERFACE` is
+     a hint: a mismatch is a warning, not a fatal error, and the live name
+     is used. It is deliberately not written back — the value is consumed by
+     this script alone at runtime.
+  2. **Shape check, not presence check.** `check_chain_shape` replaces
+     `check_wan_drop_after_allows`: exactly one WAN DROP per chain, after
+     every WAN allow, and no unconditional `ACCEPT`/`RETURN` (no `-i`/`-p`/
+     `-m`/`--dport` match) before it. The terminal `-j RETURN` is legal
+     because it sits after the DROP.
+  3. **Orphan staging purge.** An apply removes leftover staging chains that
+     nothing jumps to. A referenced one may be the live policy mid-swap and
+     is left alone.
+  4. **No Docker ordering on the unit.** `After=`, `Wants=` and
+     `WantedBy=docker.service` are removed so host `INPUT` lands as early as
+     possible and cannot be delayed by a slow Docker start. `MASTER-DOCKER`
+     comes from the DD-93 drop-in; `PartOf=docker.service` is kept as a
+     belt-and-braces second trigger. The installer deletes the retired
+     `docker.service.wants/master-firewall.service` symlink.
+  5. **One bounded watchdog.** `refresh-tailnet-config`, which the timer
+     already runs every 5 minutes, restarts `master-firewall` when the unit
+     is `failed` or `--check` fails, after `reset-failed` so an exhausted
+     start limit cannot block recovery. It runs before the Tailscale wait so
+     a dead tailnet does not skip it, and it skips the round while the
+     oneshot is `activating`.
+  6. **Restart pacing** `RestartSec=10s` / `StartLimitIntervalSec=300` /
+     `StartLimitBurst=12`: a transient netfilter or Docker-chain race gets
+     ~2 minutes of retries instead of burning 5 attempts in 10 seconds.
+  7. **Label-only FileBrowser cleanup.** Container and legacy volume removal
+     requires `com.docker.compose.project` to match this project. The
+     v2-59 image-name fallback could still delete a foreign `filebrowser`.
+- **Why:** the v2-58 review's P1 was that the firewall could fail *with the
+  host unprotected*: a renamed NIC or a stale state value aborted the apply
+  while `INPUT`'s default policy stayed `ACCEPT`. Converging on the live
+  interface, checking chain shape instead of rule existence, and giving the
+  unit one bounded recovery path removes that class of outcome without
+  persisting rules to disk.
+- **Not doing:** disk-persisted iptables (DD-66 stands: the unit is the
+  single source of policy), a general reconcile engine (contract §2), a
+  `PartOf=docker.service` removal (the drop-in plus PartOf is cheap; a
+  duplicate apply is idempotent), automatic `WG_ENDPOINT_HOST` rewrite on
+  public-IP change, or watchdog coverage of anything but the firewall unit.

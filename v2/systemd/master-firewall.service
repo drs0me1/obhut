@@ -1,22 +1,23 @@
 [Unit]
 Description=Master stack firewall
-After=network-online.target docker.service tailscaled.service
-Wants=network-online.target docker.service
+# Docker'a ordering/pull bağı yok: host INPUT en erken anda otursun (DD-94).
+# MASTER-DOCKER'ı docker.service.d drop-in'i tetikler; PartOf yedek kalır.
+After=network-online.target tailscaled.service
+Wants=network-online.target
 PartOf=docker.service
 PartOf=tailscaled.service
-StartLimitIntervalSec=60
-StartLimitBurst=5
+StartLimitIntervalSec=300
+StartLimitBurst=12
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 Restart=on-failure
-RestartSec=2s
+RestartSec=10s
 Environment=STATE_FILE=/etc/master-stack/state.env
 ExecStart=/usr/local/sbin/master-firewall apply
 ExecStartPost=/usr/local/sbin/master-firewall --check
 
 [Install]
 WantedBy=multi-user.target
-WantedBy=docker.service
 WantedBy=tailscaled.service

@@ -397,6 +397,10 @@ Tailscale IPv4 change
   → Compose stack  untouched
 ```
 
+The same oneshot also acts as the firewall watchdog (§10), but that path is
+independent of the address change: on an address change the firewall is not
+touched.
+
 **DD-61** originally named Caddy + host WebDAV; **DD-77** narrows the
 restart set to Caddy alone. dnsmasq and the firewall still match the
 interface name rather than an address.
@@ -454,8 +458,14 @@ Dropped:
 Rules:
 
 - The policy is applied through a staging chain and swapped in atomically,
-  so there is no moment at which SSH is unreachable.
+  so there is no moment at which SSH is unreachable. An apply first deletes
+  **unreferenced** leftover staging chains from an interrupted earlier run;
+  a referenced one may be the live policy and is never touched.
 - Ordering guarantees that rule 2 precedes rule 7.
+- The WAN interface is the **live default route at apply time**, not the
+  `WAN_INTERFACE` recorded in `state.env`. A renamed NIC produces a warning
+  and a correct policy; it no longer makes the unit fail with no policy at
+  all (**DD-94**).
 - There is **no** WAN permission for WebDAV, Caddy, dnsmasq, or any
   container web interface.
 - IPv6 `INPUT` follows the same shape and is equally fail-closed. Tailscale
@@ -495,6 +505,11 @@ and IPv6 — separate tables mean no collision — and both are declared in
 - The policy lives only in memory; `master-firewall.service` re-applies it
   after boot and after a Docker restart (`PartOf=docker.service` and
   `docker.service.d` `ExecStartPost=… --no-block restart master-firewall`).
+- `master-firewall --check` verifies **shape, not just presence**: in
+  `MASTER-INPUT` and `MASTER-DOCKER` there must be exactly one WAN DROP, it
+  must follow every WAN allow, and no unconditional `ACCEPT`/`RETURN` may
+  precede it. A permissive rule inserted ahead of the DROP fails the check
+  instead of passing it (**DD-94**).
 
 ---
 
@@ -503,8 +518,8 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | Unit | After | Coupling | Restart |
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
-| `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service`; also restarted from `docker.service.d` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
-| `refresh-tailnet-config.timer` | — | address poll | starts oneshot every 5 min (`OnBootSec=2min`) |
+| `master-firewall.service` | `network-online.target tailscaled.service` (**not** `docker.service`) | `PartOf=docker.service` + `PartOf=tailscaled.service`; also restarted from `docker.service.d` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=10s`, `StartLimitBurst=12` / 300s) |
+| `refresh-tailnet-config.timer` | — | address poll + firewall watchdog | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | package default |
 | Compose `webdav` | Docker / Compose | loopback publish | `unless-stopped` |
@@ -530,6 +545,19 @@ Invariants:
   `systemctl restart master-firewall` on Docker start so an earlier
   INPUT-only apply cannot remain "active" without `MASTER-DOCKER`. It does
   not touch Caddy or dnsmasq.
+- **The firewall unit does not order itself after Docker.** Host `INPUT`
+  must land as early as possible, so `After=`/`Wants=`/`WantedBy=` no longer
+  name `docker.service`; `MASTER-DOCKER` arrives with the drop-in restart
+  once `DOCKER-USER` exists (**DD-94**). `PartOf=docker.service` stays as a
+  second trigger, and the installer removes the retired
+  `docker.service.wants/master-firewall.service` symlink on upgrade.
+- **One bounded watchdog, at the network edge only.**
+  `refresh-tailnet-config` — which already runs every 5 minutes — restarts
+  `master-firewall` when the unit is `failed` or `--check` fails, after a
+  `reset-failed` so an exhausted start limit cannot block the recovery. It
+  skips the round while the oneshot is mid-apply. It inspects the firewall
+  unit and nothing else: no container, file, or image is reconciled
+  (**DD-94**).
 - **No general-purpose repair engine.** The only `OnFailure=` in the stack
   is Caddy → `refresh-tailnet-config` (same oneshot the timer /
   `WantedBy=tailscaled` already use). There is no reconcile loop that

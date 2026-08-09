@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-59"
+V2_VERSION="2026.08.06-v2-60"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -475,26 +475,28 @@ merge_docker_daemon_dns() {
 
 # Yalnız bu stack'in filebrowser container/volume'ünü temizle (DD-93).
 remove_stale_filebrowser() {
-    local name=filebrowser project proj img vol
+    local name=filebrowser project proj vol vproj
     command -v docker >/dev/null 2>&1 || return 0
     project="$(basename "$COMPOSE_DIR")"
+    # Silme kararı yalnız Compose project label'ı: image adı tek başına yetmez.
     if docker inspect "$name" >/dev/null 2>&1; then
         proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
             "$name" 2>/dev/null || true)"
-        img="$(docker inspect -f '{{.Config.Image}}' "$name" 2>/dev/null || true)"
-        if [[ "$proj" == "$project" ]] ||
-            [[ "$img" == "$FILEBROWSER_IMAGE" ]] ||
-            [[ "$img" == filebrowser/filebrowser* ]] ||
-            [[ "$img" == *gtsteffaniak/filebrowser* ]]; then
+        if [[ "$proj" == "$project" ]]; then
             # -v: image VOLUME /config anonim volume'ünü de sil (hijyen).
             docker rm -fv "$name" 2>/dev/null || true
         else
-            log WARN "filebrowser container başka projeye ait; silinmedi (project=${proj:-?})"
+            log WARN "filebrowser container bu projeye ait değil (project=${proj:-yok}); bırakıldı"
         fi
     fi
     for vol in docker_filebrowser_data filebrowser_data; do
-        if docker volume inspect "$vol" >/dev/null 2>&1; then
+        docker volume inspect "$vol" >/dev/null 2>&1 || continue
+        vproj="$(docker volume inspect -f '{{index .Labels "com.docker.compose.project"}}' \
+            "$vol" 2>/dev/null || true)"
+        if [[ "$vproj" == "$project" ]]; then
             docker volume rm "$vol" 2>/dev/null || true
+        else
+            log WARN "legacy volume $vol; sahipliği doğrulanamadı, bırakıldı"
         fi
     done
 }
@@ -574,6 +576,8 @@ stage_4() {
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
+    # v2-59 ve öncesi WantedBy=docker.service kurardı; artık drop-in tetikliyor.
+    rm -f "$UNIT_DIR/docker.service.wants/master-firewall.service"
     mkdir -p "$UNIT_DIR/docker.service.d"
     atomic_write "$UNIT_DIR/docker.service.d/master-stack.conf" 0644 \
         <"$V2_ROOT/systemd/docker.service.d/master-stack.conf"

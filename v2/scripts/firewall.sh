@@ -31,7 +31,8 @@ if [[ -n "${DEFAULTS_FILE:-}" && -r "$DEFAULTS_FILE" ]]; then
     source "$DEFAULTS_FILE"
 fi
 
-: "${WAN_INTERFACE:?}"
+# WAN_INTERFACE state'te yalnız ipucu; belirleyici olan canlı default-route
+# (resolve_wan_interface). Diğer değerler state'ten zorunlu (DD-66).
 : "${TAILSCALE_IF:?}"
 : "${CHAIN_INPUT:?}"
 : "${CHAIN_DOCKER:?}"
@@ -116,6 +117,22 @@ ensure_ts_input_precedence() {
         "$bin" -w 5 -D INPUT "$master_before"
     done
     die "$bin: ts-input / $CHAIN_INPUT sırası düzeltilemedi"
+}
+
+# Ortada kesilen bir apply, referanssız staging zinciri bırakır; temizlenmezse
+# check_no_staging_artifacts politika doğru olsa bile sonsuza kadar fail eder.
+purge_orphan_staging_chains() {
+    local bin="$1" chain rules
+    rules="$("$bin" -w 5 -S 2>/dev/null)" || return 0
+    while read -r chain; do
+        [[ -n "$chain" ]] || continue
+        # Referansı olan zincir aktif politikanın parçası olabilir; dokunma.
+        grep -q -- "-j ${chain}\$" <<<"$rules" && continue
+        "$bin" -w 5 -F "$chain" 2>/dev/null || true
+        "$bin" -w 5 -X "$chain" 2>/dev/null || true
+        printf 'firewall: yetim staging zinciri silindi (%s %s)\n' "$bin" "$chain"
+    done < <(awk -v p="$CHAIN_STAGING_PREFIX" \
+        '$1 == "-N" && index($2, p) == 1 { print $2 }' <<<"$rules")
 }
 
 create_staging() {
@@ -321,42 +338,54 @@ current_wan_interface() {
     awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$route"
 }
 
-assert_wan_interface_current() {
+# NIC yeniden adlandırılırsa state ipucu bayatlar. Eskiden bu ölümcüldü ve host
+# hiç INPUT politikası almıyordu; artık canlı arayüz belirleyici (DD-94).
+# state.env yazılmaz: WAN_INTERFACE'i çalışma zamanında yalnız bu betik tüketir.
+resolve_wan_interface() {
     local live
     live="$(current_wan_interface)"
     [[ -n "$live" ]] || die "güncel WAN arayüzü okunamadı"
-    [[ "$live" == "$WAN_INTERFACE" ]] ||
-        die "WAN arayüzü drift: state=$WAN_INTERFACE live=$live (yeniden kur / state güncelle)"
+    if [[ -n "${WAN_INTERFACE:-}" && "$live" != "$WAN_INTERFACE" ]]; then
+        printf 'firewall: UYARI WAN arayüzü drift: state=%s live=%s (canlı kullanılıyor)\n' \
+            "$WAN_INTERFACE" "$live" >&2
+    fi
+    WAN_INTERFACE="$live"
 }
 
-# WAN DROP must sit after every WAN ACCEPT/RETURN in the chain (not merely exist).
-# Order is taken from `iptables -S` (stable); -L -v column layout varies.
-check_wan_drop_after_allows() {
+# Zincir şekli: tek WAN DROP, WAN izinlerinden sonra ve öncesinde koşulsuz
+# (arayüz/port/proto/conntrack kısıtı olmayan) ACCEPT/RETURN bulunmamalı.
+# Sıra `iptables -S` üzerinden okunur; -L -v sütun düzeni sürüme göre değişir.
+check_chain_shape() {
     local bin="$1" chain="$2" allow_target="$3"
-    local drop_pos=0 allow_max=0 n=0 line
+    local drop_pos=0 drop_count=0 allow_max=0 bypass="" n=0 line body
     while IFS= read -r line; do
-        [[ "$line" == -A* ]] || continue
+        [[ "$line" == "-A $chain "* ]] || continue
         n=$((n + 1))
+        body="${line#-A "$chain" }"
+        # Koşulsuz kural: yalnız -j <target>, hiçbir match seçeneği yok.
+        if [[ "$body" == "-j ACCEPT" || "$body" == "-j RETURN" ]]; then
+            [[ -n "$bypass" ]] || bypass="$n:$body"
+        fi
         case "$line" in
-            *"-i ${WAN_INTERFACE} "* | *"-i ${WAN_INTERFACE}"$'\t'*)
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        case "$line" in
-            *"-j DROP"*)
-                drop_pos=$n
-                ;;
-            *"-j ${allow_target}"*)
-                allow_max=$n
+            *"-i ${WAN_INTERFACE} "*)
+                case "$line" in
+                    *"-j DROP") drop_pos=$n; drop_count=$((drop_count + 1)) ;;
+                    *"-j ${allow_target}") allow_max=$n ;;
+                esac
                 ;;
         esac
     done < <("$bin" -w 5 -S "$chain")
     [[ "$drop_pos" -gt 0 ]] ||
         die "$bin: $chain içinde WAN DROP satırı yok"
+    [[ "$drop_count" -eq 1 ]] ||
+        die "$bin: $chain WAN DROP sayısı $drop_count (beklenen 1)"
     [[ "$drop_pos" -gt "$allow_max" ]] ||
         die "$bin: $chain WAN DROP ($drop_pos) allow ($allow_target max=$allow_max) önünde veya eşit"
+    if [[ -n "$bypass" ]]; then
+        local pos="${bypass%%:*}" rule="${bypass#*:}"
+        [[ "$pos" -gt "$drop_pos" ]] ||
+            die "$bin: $chain WAN DROP öncesi koşulsuz kural ($pos: $rule) — bypass"
+    fi
 }
 
 check_docker_chain() {
@@ -375,11 +404,11 @@ check_docker_chain() {
     fi
     check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     check_rule "$bin" "$CHAIN_DOCKER" -j RETURN
-    check_wan_drop_after_allows "$bin" "$CHAIN_DOCKER" RETURN
+    check_chain_shape "$bin" "$CHAIN_DOCKER" RETURN
 }
 
 if [[ "$MODE" == check ]]; then
-    assert_wan_interface_current
+    resolve_wan_interface
     check_jump_exactly_one iptables INPUT "$CHAIN_INPUT"
     check_jump_exactly_one ip6tables INPUT "$CHAIN_INPUT"
     check_no_staging_artifacts iptables
@@ -397,7 +426,7 @@ if [[ "$MODE" == check ]]; then
         -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
-    check_wan_drop_after_allows iptables "$CHAIN_INPUT" ACCEPT
+    check_chain_shape iptables "$CHAIN_INPUT" ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
@@ -409,7 +438,7 @@ if [[ "$MODE" == check ]]; then
         -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
-    check_wan_drop_after_allows ip6tables "$CHAIN_INPUT" ACCEPT
+    check_chain_shape ip6tables "$CHAIN_INPUT" ACCEPT
 
     if docker_user_present iptables; then
         check_docker_chain iptables
@@ -429,7 +458,9 @@ if [[ "$MODE" == check ]]; then
     exit 0
 fi
 
-assert_wan_interface_current
+resolve_wan_interface
+purge_orphan_staging_chains iptables
+purge_orphan_staging_chains ip6tables
 apply_input4
 ensure_ts_input_precedence iptables
 apply_input6

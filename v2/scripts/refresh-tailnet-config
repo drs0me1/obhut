@@ -18,6 +18,8 @@ source "$STATE_FILE"
 : "${TAILSCALE_IF:=tailscale0}"
 
 BOUND_UNITS="caddy.service"
+FIREWALL_UNIT="master-firewall.service"
+FIREWALL_BIN="${FIREWALL_BIN:-/usr/local/sbin/master-firewall}"
 # WantedBy=tailscaled tetiklemesi süreç start'ı ile gelir; IP henüz yok olabilir.
 # tailscale wait (1.90+) backend + arayüz + IP hazır olana kadar bekler.
 WAIT_TIMEOUT="${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}"
@@ -71,6 +73,29 @@ recover_failed_bound_units() {
     done
 }
 
+recover_firewall_if_broken() {
+    # Ağ kenarı watchdog'u (DD-94): yalnız firewall unit'i ve kendi zincir
+    # invariantları. Container/dosya/image sağlığı kapsam dışı — sözleşme §2'de
+    # reddedilen reconcile motoru değil.
+    local why="" state=""
+    [[ -x "$FIREWALL_BIN" ]] || return 0
+    # tailscaled restart'ı ikisini birlikte tetikler; apply sürerken --check
+    # geçici olarak fail eder. Bu turu atla, timer 5 dk sonra tekrar bakar.
+    state="$(systemctl show -p ActiveState --value "$FIREWALL_UNIT" 2>/dev/null || true)"
+    [[ "$state" == "activating" || "$state" == "deactivating" ]] && return 0
+    if systemctl is-failed --quiet "$FIREWALL_UNIT"; then
+        why="unit failed"
+    elif ! "$FIREWALL_BIN" --check >/dev/null 2>&1; then
+        why="--check başarısız"
+    fi
+    [[ -n "$why" ]] || return 0
+    printf 'refresh-tailnet: firewall bozuk (%s); yeniden uygulanıyor\n' "$why"
+    # start-limit tükenmişse düz restart "repeated too quickly" ile döner.
+    systemctl reset-failed "$FIREWALL_UNIT" 2>/dev/null || true
+    systemctl restart "$FIREWALL_UNIT" ||
+        printf 'refresh-tailnet: firewall yeniden başlatılamadı\n' >&2
+}
+
 wait_for_tailscale_ready() {
     command -v tailscale >/dev/null 2>&1 || return 0
     if ! tailscale wait --help >/dev/null 2>&1; then
@@ -84,6 +109,9 @@ wait_for_tailscale_ready() {
         "$WAIT_TIMEOUT" >&2
     return 1
 }
+
+# Tailscale durumundan bağımsız çalışmalı: tailnet çökse de firewall toparlanır.
+recover_firewall_if_broken
 
 if ! wait_for_tailscale_ready; then
     exit 0

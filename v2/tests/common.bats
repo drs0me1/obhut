@@ -327,11 +327,33 @@ EOF
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "refresh-tailnet-config does not touch compose or firewall" {
-    ! grep -qE 'compose|master-firewall|DOCKER-USER|master-webdav' \
+@test "refresh-tailnet-config touches only Caddy state and the firewall unit" {
+    # Compose, WebDAV and raw netfilter stay out of the timer's scope.
+    ! grep -qE 'compose|DOCKER-USER|master-webdav|iptables' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'BOUND_UNITS="caddy.service"' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
+@test "refresh timer recovers a broken firewall unit" {
+    local body
+    body="$(awk '/^recover_firewall_if_broken\(\)/,/^}$/' \
+        "$V2_ROOT/scripts/refresh-tailnet-config")"
+    [[ -n "$body" ]]
+    grep -q 'is-failed --quiet "\$FIREWALL_UNIT"' <<<"$body"
+    grep -q -- '--check' <<<"$body"
+    # start-limit exhaustion makes a plain restart fail; reset-failed first.
+    grep -q 'reset-failed "\$FIREWALL_UNIT"' <<<"$body"
+    grep -q 'restart "\$FIREWALL_UNIT"' <<<"$body"
+    # Skip while the oneshot is mid-apply (tailscaled restart triggers both).
+    grep -q 'activating' <<<"$body"
+    # Must run regardless of tailnet state: called before the tailscale wait.
+    awk '/^recover_firewall_if_broken$/ { print NR; exit }' \
+        "$V2_ROOT/scripts/refresh-tailnet-config" | grep -qE '[0-9]+'
+    [[ "$(awk '/^recover_firewall_if_broken$/ { print NR; exit }' \
+        "$V2_ROOT/scripts/refresh-tailnet-config")" -lt \
+        "$(awk '/^if ! wait_for_tailscale_ready; then$/ { print NR; exit }' \
+        "$V2_ROOT/scripts/refresh-tailnet-config")" ]]
 }
 
 @test "refresh-tailnet timer is five minutes" {
@@ -590,6 +612,32 @@ EOF
     ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
 
+@test "check_chain_shape rejects a single bypass rule before the WAN DROP" {
+    local body
+    body="$(awk '/^check_chain_shape\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    [[ -n "$body" ]]
+    # Exactly one WAN DROP, allows before it, and no unconditional rule before.
+    grep -q 'WAN DROP sayısı' <<<"$body"
+    grep -q 'bypass' <<<"$body"
+    grep -qF '== "-j ACCEPT"' <<<"$body"
+    grep -qF '== "-j RETURN"' <<<"$body"
+}
+
+@test "apply purges orphan staging chains before building" {
+    local body
+    body="$(awk '/^purge_orphan_staging_chains\(\)/,/^}$/' \
+        "$V2_ROOT/scripts/firewall.sh")"
+    [[ -n "$body" ]]
+    # A referenced chain may be the live policy; only unreferenced ones go.
+    grep -q -- '-j \${chain}' <<<"$body"
+    grep -q -- '-X "\$chain"' <<<"$body"
+    # Must run before the first create_staging call in the apply path.
+    [[ "$(awk '/^purge_orphan_staging_chains iptables$/ { print NR; exit }' \
+        "$V2_ROOT/scripts/firewall.sh")" -lt \
+        "$(awk '/^apply_input4$/ { print NR; exit }' \
+        "$V2_ROOT/scripts/firewall.sh")" ]]
+}
+
 @test "ts-input precedence does not delete-all MASTER-INPUT jumps" {
     grep -q 'ensure_ts_input_precedence' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'insert_pos_after_ts_input' "$V2_ROOT/scripts/firewall.sh"
@@ -598,25 +646,32 @@ EOF
         grep -qE 'while .*-D INPUT -j "\$CHAIN_INPUT"'
 }
 
-@test "master-firewall unit is WantedBy docker.service" {
-    grep -q 'WantedBy=docker.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'WantedBy=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'Wants=network-online.target docker.service' \
-        "$V2_ROOT/systemd/master-firewall.service"
-    ! grep -q 'Requires=docker.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'PartOf=docker.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'PartOf=tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'After=.*tailscaled.service' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'Restart=on-failure' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'RestartSec=2s' "$V2_ROOT/systemd/master-firewall.service"
-    grep -q 'StartLimitBurst=5' "$V2_ROOT/systemd/master-firewall.service"
+@test "master-firewall converges without ordering on docker" {
+    local unit="$V2_ROOT/systemd/master-firewall.service"
+    # Host INPUT must not wait on Docker; the drop-in adds MASTER-DOCKER later.
+    ! grep -q 'After=.*docker.service' "$unit"
+    ! grep -q 'Wants=.*docker.service' "$unit"
+    ! grep -q 'Requires=docker.service' "$unit"
+    ! grep -q 'WantedBy=docker.service' "$unit"
+    grep -q 'Wants=network-online.target' "$unit"
+    # PartOf stays as the belt-and-braces trigger next to the drop-in.
+    grep -q 'PartOf=docker.service' "$unit"
+    grep -q 'PartOf=tailscaled.service' "$unit"
+    grep -q 'WantedBy=tailscaled.service' "$unit"
+    grep -q 'After=.*tailscaled.service' "$unit"
+    grep -q 'Restart=on-failure' "$unit"
+    grep -q 'RestartSec=10s' "$unit"
+    grep -q 'StartLimitIntervalSec=300' "$unit"
+    grep -q 'StartLimitBurst=12' "$unit"
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
     # Compose must not be PartOf/Requires-coupled to the firewall unit.
-    ! grep -qiE 'compose|master-compose' "$V2_ROOT/systemd/master-firewall.service"
+    ! grep -qiE 'compose|master-compose' "$unit"
     # Docker start re-applies firewall even when RemainAfterExit left it active.
     grep -q 'docker.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     grep -q 'ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service' \
         "$V2_ROOT/systemd/docker.service.d/master-stack.conf"
+    # The retired WantedBy symlink must be cleaned on upgrade.
+    grep -q 'docker.service.wants/master-firewall.service' "$V2_ROOT/install.sh"
 }
 
 @test "firewall waits for DOCKER-USER only when Docker is active" {
@@ -643,7 +698,7 @@ EOF
     grep -q 'check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'check_wan_drop_after_allows' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_chain_shape' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"
     grep -q -- '--ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN' \
         "$V2_ROOT/scripts/firewall.sh"
@@ -656,8 +711,11 @@ EOF
 @test "firewall --check enforces jump uniqueness staging SSH and WAN drift" {
     grep -q 'check_jump_exactly_one' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_no_staging_artifacts' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'assert_wan_interface_current' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'resolve_wan_interface' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WAN arayüzü drift' "$V2_ROOT/scripts/firewall.sh"
+    # Drift is a runtime fact, not a fatal state mismatch: live iface wins.
+    ! grep -q 'assert_wan_interface_current' "$V2_ROOT/scripts/firewall.sh"
+    ! grep -q 'WAN_INTERFACE:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'SSH_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-solicitation -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-advertisement -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"

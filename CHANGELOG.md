@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-60: Firewall converges instead of failing closed-open
+
+- **Fixed:** The WAN interface is detected from the live default route at
+  apply/check time. A renamed NIC now warns and still gets a correct policy
+  instead of failing the unit and leaving the host with no `INPUT` policy
+  (**DD-94**). `state.env` `WAN_INTERFACE` is a hint only.
+- **Fixed:** `master-firewall --check` verifies chain *shape*: exactly one
+  WAN DROP, after every WAN allow, with no unconditional `ACCEPT`/`RETURN`
+  ahead of it in `MASTER-INPUT` / `MASTER-DOCKER`.
+- **Fixed:** An apply deletes unreferenced leftover staging chains, so an
+  interrupted earlier run cannot fail `--check` forever.
+- **Added:** `refresh-tailnet-config` (already every 5 min) restarts
+  `master-firewall` when the unit is `failed` or `--check` fails, with
+  `reset-failed` first; skipped while the oneshot is mid-apply. Scope is the
+  firewall unit only — no container or file reconcile.
+- **Changed:** `master-firewall.service` no longer orders itself after
+  Docker (`After=`/`Wants=`/`WantedBy=docker.service` removed; `PartOf=`
+  kept as the second trigger next to the `docker.service.d` drop-in). The
+  installer removes the retired `docker.service.wants` symlink.
+- **Changed:** Restart pacing `RestartSec=10s`,
+  `StartLimitIntervalSec=300`, `StartLimitBurst=12`.
+- **Changed:** FileBrowser container / legacy volume removal now requires a
+  matching `com.docker.compose.project` label; image-name matching is gone.
+
 ### 2026-08-09 — v2-59: Firewall Docker re-apply, safer install paths
 
 - **Fixed:** `docker.service.d` `ExecStartPost` `--no-block` restarts
