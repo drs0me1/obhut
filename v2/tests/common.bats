@@ -221,15 +221,16 @@ EOF
         grep -q 'atomic_write /etc/docker/daemon.json'
 }
 
-@test "downloads path rejects unsafe characters and compose has no .env" {
+@test "downloads path rejects unsafe characters and compose needs no .env" {
     grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
     grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"
     grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
     grep -q 'sistem dizinine izin vermez' "$V2_ROOT/install.sh"
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'rm -f "$COMPOSE_DIR/.env"'
     ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'atomic_write "$COMPOSE_DIR/.env"'
+    # Every value is rendered into the file, so no interpolation is left for
+    # Compose to resolve and a stray .env cannot change the stack.
+    ! grep -q '\${' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "compose publishes portainer https on 9443" {
@@ -263,8 +264,6 @@ EOF
         "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
     grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
-    grep -q 'remove_stale_filebrowser' "$V2_ROOT/install.sh"
-    grep -q 'com.docker.compose.project' "$V2_ROOT/install.sh"
     ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
     ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
@@ -518,8 +517,7 @@ EOF
 @test "watch-tailnet-addr is removed; refresh timer remains" {
     [ ! -e "$V2_ROOT/scripts/watch-tailnet-addr" ]
     [ ! -e "$V2_ROOT/systemd/watch-tailnet-addr.service" ]
-    ! grep -q 'enable --now watch-tailnet-addr' "$V2_ROOT/install.sh"
-    grep -q 'disable --now watch-tailnet-addr.service' "$V2_ROOT/install.sh"
+    ! grep -q 'watch-tailnet-addr' "$V2_ROOT/install.sh"
     grep -q 'OnUnitActiveSec=5min' \
         "$V2_ROOT/systemd/refresh-tailnet-config.timer"
     grep -q 'WantedBy=tailscaled.service' \
@@ -556,11 +554,7 @@ EOF
         "$V2_ROOT/templates/Caddyfile"
     ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
         "$V2_ROOT/templates/Caddyfile"
-    grep -q 'purge_host_webdav_leftovers' "$V2_ROOT/install.sh"
-    grep -q 'disable --now master-webdav.service' "$V2_ROOT/install.sh"
-    grep -q 'apt-get purge -y rclone' "$V2_ROOT/install.sh"
-    grep -q 'userdel "$user"' "$V2_ROOT/install.sh"
-    grep -q 'setfacl -R -x' "$V2_ROOT/install.sh"
+    ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
     ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
     grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
         "$V2_ROOT/templates/compose.yaml"
@@ -697,8 +691,23 @@ EOF
     grep -q 'docker.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     grep -q 'ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service' \
         "$V2_ROOT/systemd/docker.service.d/master-stack.conf"
-    # The retired WantedBy symlink must be cleaned on upgrade.
-    grep -q 'docker.service.wants/master-firewall.service' "$V2_ROOT/install.sh"
+}
+
+@test "install carries no migration cleanup for older revisions" {
+    # Upgrade path is a fresh install, or a re-run that overwrites what the
+    # installer owns. Nothing hunts for leftovers of an older revision, so no
+    # global package, user or container removal lives here (DD-96).
+    local s="$V2_ROOT/install.sh"
+    ! grep -q 'remove_stale_filebrowser' "$s"
+    ! grep -q 'purge_host_webdav_leftovers' "$s"
+    ! grep -qE 'apt-get (purge|autoremove)' "$s"
+    ! grep -qE 'userdel|groupdel|setfacl' "$s"
+    ! grep -qE 'docker (rm|volume rm)' "$s"
+    ! grep -q 'docker.service.wants' "$s"
+    ! grep -q 'filebrowser.yaml' "$s"
+    ! grep -qE 'disable --now' "$s"
+    # Deleting a file the installer does not own is the same overreach.
+    ! grep -q 'rm -f "\$COMPOSE_DIR/.env"' "$s"
 }
 
 @test "firewall waits for DOCKER-USER only when Docker is active" {

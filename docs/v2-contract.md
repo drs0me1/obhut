@@ -156,7 +156,8 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | The end-of-install warning conveys the same information without a recurring authentication attempt. |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
-| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). Re-runs call `purge_host_webdav_leftovers` (**DD-79**): unit/sbin/env, `master-webdav` user/group, downloads ACL, `apt-get purge rclone`. |
+| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). v2 never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
+| **Migration cleanup for older revisions** | `purge_host_webdav_leftovers`, `remove_stale_filebrowser`, retired unit/symlink deletion (~83 lines) | The upgrade path is a fresh install or a re-run that overwrites what the installer owns. A global `apt-get purge`, a `userdel`, or deleting a container the operator may still want is outside the installer's boundary (**DD-96**). |
 | **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains are re-established by Docker; v2 re-applies only its own chain. |
 | **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
 | **The 25-flag reconcile `--check` surface** | — | Replaced by a small set of checks with one owner each. |
@@ -332,8 +333,8 @@ property the implementation must satisfy and a test must assert.
    any of the configuration files either.
 10. **On a re-run, an existing valid credential file is preserved.** The
     operator resets it by deleting the file and re-running, and the
-    installer says so. A host `master-webdav` unit / `webdav.env` left from
-    an older revision is disabled and removed.
+    installer says so. Nothing left by an older revision is hunted down
+    (**DD-96**).
 
 ### 6.3 Where each piece lives
 
@@ -695,8 +696,9 @@ A v2 run is successful when every one of these holds on the target host.
     `state.env`, Compose YAML, or any systemd unit.
 22. Container process args show the htpasswd *path* only — no password and
     no username; container environ shows no password.
-23. No host `master-webdav.service` / `webdav.env` / host `rclone` package
-    remains after install.
+23. The installer never creates a host `master-webdav.service`,
+    `webdav.env`, or a host `rclone` package. It does not remove one left by
+    an older revision either (**DD-96**).
 
 ### Firewall
 

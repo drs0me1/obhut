@@ -3646,6 +3646,10 @@ separate document with its own numbering.
 
 ### DD-79: Host WebDAV leftovers are purged on every Stage 4 (2026-08-09)
 
+> **Superseded by DD-96 (v2-62).** The purge was removed: v2 no longer
+> migrates hosts provisioned by older revisions. Kept as the record of why
+> it existed.
+
 - **Decision:** After Compose WebDAV (**DD-77**), Stage 4 calls
   `purge_host_webdav_leftovers` to remove the host unit/script/`webdav.env`,
   the dedicated `master-webdav` user/group, `u:master-webdav` ACL entries
@@ -3846,6 +3850,38 @@ separate document with its own numbering.
   `PartOf=docker.service` removal (the drop-in plus PartOf is cheap; a
   duplicate apply is idempotent), automatic `WG_ENDPOINT_HOST` rewrite on
   public-IP change, or watchdog coverage of anything but the firewall unit.
+
+### DD-96: The installer owns its own files and nothing else (2026-08-09)
+
+- **Decision:** All migration cleanup is removed (v2-62). The installer no
+  longer deletes `master-webdav.service`, its user, group and downloads ACL,
+  no longer runs `apt-get purge rclone` / `apt-get autoremove`, no longer
+  removes the `filebrowser` container or the legacy `*_filebrowser_data`
+  volumes, and no longer deletes `filebrowser.yaml`, the `watch-tailnet-addr`
+  unit, the retired `docker.service.wants` symlink, or `$COMPOSE_DIR/.env`.
+  The upgrade path is a fresh install, or a re-run that overwrites the files
+  the installer itself renders.
+- **Why:** three reasons converged.
+  1. **Boundary.** A global `apt-get purge`, an `apt-get autoremove` and a
+     `userdel` are host-wide actions taken on the installer's own guess about
+     what an older revision left behind. The v2-58 review flagged exactly
+     this as cleanup exceeding the stack boundary, and narrowing the scope
+     (v2-59, v2-60) treated the symptom, not the cause.
+  2. **Idempotency.** `remove_stale_filebrowser` ran unconditionally, so a
+     re-run recreated the container every time. Measured on `nrm`: all 16
+     managed files byte-identical, Caddy/dnsmasq/Docker untouched, but the
+     FileBrowser container id changed and the service blinked for ~2 s. That
+     is a re-run changing state for no reason (**R20**).
+  3. **Cost.** 83 lines and five bats assertions existed only to migrate
+     hosts provisioned by revisions we no longer run.
+- **Consequence (accepted):** a host installed by an old revision keeps its
+  leftovers. It is not repaired by a re-run; it is reinstalled. Single-host,
+  interactive, destructive-by-design — reinstalling is the cheap path.
+- **Guard:** a bats test fails the suite if `apt-get purge`, `userdel`,
+  `setfacl`, `docker rm`, `docker volume rm` or `disable --now` reappear in
+  `install.sh`, so the pattern cannot creep back one convenience at a time.
+- **Not doing:** an uninstall command. Removing what v2 installed is a
+  separate, explicit operation, not a side effect of installing.
 
 ### DD-95: Counting WAN allows, and adopting referenced staging (2026-08-09)
 

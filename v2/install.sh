@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-61"
+V2_VERSION="2026.08.06-v2-62"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -473,34 +473,6 @@ merge_docker_daemon_dns() {
     atomic_write /etc/docker/daemon.json 0644 <<<"$merged"
 }
 
-# Yalnız bu stack'in filebrowser container/volume'ünü temizle (DD-93).
-remove_stale_filebrowser() {
-    local name=filebrowser project proj vol vproj
-    command -v docker >/dev/null 2>&1 || return 0
-    project="$(basename "$COMPOSE_DIR")"
-    # Silme kararı yalnız Compose project label'ı: image adı tek başına yetmez.
-    if docker inspect "$name" >/dev/null 2>&1; then
-        proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
-            "$name" 2>/dev/null || true)"
-        if [[ "$proj" == "$project" ]]; then
-            # -v: image VOLUME /config anonim volume'ünü de sil (hijyen).
-            docker rm -fv "$name" 2>/dev/null || true
-        else
-            log WARN "filebrowser container bu projeye ait değil (project=${proj:-yok}); bırakıldı"
-        fi
-    fi
-    for vol in docker_filebrowser_data filebrowser_data; do
-        docker volume inspect "$vol" >/dev/null 2>&1 || continue
-        vproj="$(docker volume inspect -f '{{index .Labels "com.docker.compose.project"}}' \
-            "$vol" 2>/dev/null || true)"
-        if [[ "$vproj" == "$project" ]]; then
-            docker volume rm "$vol" 2>/dev/null || true
-        else
-            log WARN "legacy volume $vol; sahipliği doğrulanamadı, bırakıldı"
-        fi
-    done
-}
-
 stage_3() {
     log INFO "Aşama 3/7 — adresler ve dizinler"
     detect_wan
@@ -559,12 +531,8 @@ stage_4() {
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
-    rm -f "$COMPOSE_DIR/.env"
 
-    # Klasik FileBrowser veri dizini; Quantum YAML / named+anon volume kalıntısı temizle.
     ensure_filebrowser_data_dir
-    rm -f /etc/master-stack/filebrowser.yaml
-    remove_stale_filebrowser
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
@@ -576,8 +544,6 @@ stage_4() {
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
-    # v2-59 ve öncesi WantedBy=docker.service kurardı; artık drop-in tetikliyor.
-    rm -f "$UNIT_DIR/docker.service.wants/master-firewall.service"
     mkdir -p "$UNIT_DIR/docker.service.d"
     atomic_write "$UNIT_DIR/docker.service.d/master-stack.conf" 0644 \
         <"$V2_ROOT/systemd/docker.service.d/master-stack.conf"
@@ -586,56 +552,7 @@ stage_4() {
         <"$V2_ROOT/systemd/refresh-tailnet-config.service"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
-    systemctl disable --now watch-tailnet-addr.service 2>/dev/null || true
-    rm -f "$UNIT_DIR/watch-tailnet-addr.service" "$SBIN_DIR/watch-tailnet-addr"
-    purge_host_webdav_leftovers
     systemctl daemon-reload
-}
-
-purge_host_webdav_leftovers() {
-    # Tek-host migrate: eski host rclone / master-webdav kalıntısı (DD-79).
-    # Paylaşımlı host desteklenmez — global apt purge bilinçli.
-    local user="master-webdav"
-
-    systemctl disable --now master-webdav.service 2>/dev/null || true
-    rm -f "$UNIT_DIR/master-webdav.service" "$SBIN_DIR/master-webdav"
-    rm -f "${WEBDAV_ENV_FILE:-/etc/master-stack/webdav.env}"
-
-    if [[ -d "${DOWNLOADS_PATH:-}" ]]; then
-        if ! command -v setfacl >/dev/null 2>&1 &&
-            getent passwd "$user" >/dev/null 2>&1; then
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get install -y acl >/dev/null || true
-        fi
-        if command -v setfacl >/dev/null 2>&1; then
-            setfacl -R -x "u:${user}" "$DOWNLOADS_PATH" 2>/dev/null || true
-            setfacl -R -x "d:u:${user}" "$DOWNLOADS_PATH" 2>/dev/null || true
-        else
-            log WARN "setfacl yok; ${user} ACL kalıntısı temizlenemedi"
-        fi
-    fi
-
-    if getent passwd "$user" >/dev/null 2>&1; then
-        if userdel "$user" 2>/dev/null; then
-            log INFO "host WebDAV kullanıcısı kaldırıldı: ${user}"
-        else
-            log WARN "host WebDAV kullanıcısı silinemedi: ${user}"
-        fi
-    fi
-    if getent group "$user" >/dev/null 2>&1; then
-        groupdel "$user" 2>/dev/null || true
-    fi
-
-    if dpkg-query -W -f='${Status}' rclone 2>/dev/null |
-        grep -q 'install ok installed'; then
-        export DEBIAN_FRONTEND=noninteractive
-        if apt-get purge -y rclone >/dev/null; then
-            log INFO "host rclone paketi kaldırıldı"
-            apt-get autoremove -y >/dev/null || true
-        else
-            log WARN "host rclone paketi kaldırılamadı"
-        fi
-    fi
 }
 
 stage_5() {

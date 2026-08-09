@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-62: No migration cleanup; the installer owns only its own
+
+- **Removed:** `purge_host_webdav_leftovers` — the `master-webdav` unit,
+  user, group and downloads ACL removal, plus `apt-get purge rclone` and
+  `apt-get autoremove`. A global package purge and a `userdel` were never
+  the installer's business (**DD-96**).
+- **Removed:** `remove_stale_filebrowser` — container and legacy volume
+  deletion. This also ends the last idempotency wart: a re-run recreated the
+  FileBrowser container every time (~2 s downtime, new container id) even
+  though all 16 managed files were byte-identical.
+- **Removed:** `filebrowser.yaml` (Quantum era), `watch-tailnet-addr`
+  unit/script disable, the retired `docker.service.wants` symlink, and the
+  `$COMPOSE_DIR/.env` deletion.
+- **Changed:** The upgrade path is a fresh install, or a re-run that
+  overwrites the files the installer owns. Older revisions are not migrated.
+- **Test:** A guard test fails the suite if migration cleanup returns —
+  no `apt-get purge`, `userdel`, `setfacl`, `docker rm`, or `disable --now`.
+
 ### 2026-08-09 — v2-61: Extra WAN passes and referenced staging leftovers
 
 - **Fixed:** `--check` counted only exact `-j ACCEPT`/`-j RETURN` bodies as a
