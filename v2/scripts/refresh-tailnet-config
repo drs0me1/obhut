@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tailscale adres değişince state.env güncelle; yalnız Caddy restart.
-# WebDAV Compose loopback'de; dnsmasq / firewall / Compose'a dokunmaz.
+# WebDAV Compose loopback'de; Infuse Caddy {$TAILSCALE_IPV4}:WEBDAV_PORT (DD-98).
+# dnsmasq / firewall / Compose'a dokunmaz.
 set -Eeuo pipefail
 umask 077
 

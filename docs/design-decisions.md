@@ -3672,19 +3672,32 @@ separate document with its own numbering.
 - **Safety:** Idempotent; Compose image rclone is untouched; `setfacl`
   installed only if the user still exists and the tool is missing.
 
-### DD-78: Caddy WebDAV site aliases the Tailscale IPv4 (2026-08-09)
+### DD-98: Infuse uses Caddy on Tailscale IP:WEBDAV_PORT (2026-08-10)
 
-- **Decision:** The Caddyfile WebDAV site is
+- **Decision:** Caddyfile WebDAV site is
+  `http://webdav.${LOCAL_DOMAIN}, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT}`
+  → `127.0.0.1:{$WEBDAV_PORT}` (both placeholders from `state.env` via
+  Caddy `EnvironmentFile=`). Compose stays loopback-only and never names
+  the Tailscale address. Refresh-tailnet still restarts only Caddy; a
+  re-run that changes `WEBDAV_PORT` sets `WEBDAV_PORT_CHANGED` so Caddy
+  restarts even when the Caddyfile text is unchanged.
+- **Why:** Infuse on Apple TV wants an explicit port (`61003`) without
+  MagicDNS. Binding that port in Caddy (from `state.env`) keeps Compose
+  free of Tailscale IPs while matching Infuse UX. Bare `:80` on the TS IP
+  is no longer WebDAV (avoids Host=IP confusion with other sites).
+- **Rejected (same day):** Compose publish on `${TS_IPV4}:${WEBDAV_PORT}`
+  (brief v2-65) — embeds a moving address into Compose and forces
+  `docker compose up -d webdav` on every Tailscale IP change.
+- **Supersedes:** DD-78’s bare `http://{$TAILSCALE_IPV4}` (port 80) alias.
+
+### DD-78: Caddy WebDAV site aliases the Tailscale IPv4 (2026-08-09) — superseded by DD-98
+
+- **Former decision:** The Caddyfile WebDAV site is
   `http://webdav.${LOCAL_DOMAIN}, http://{$TAILSCALE_IPV4}` → loopback
-  rclone. Compose stays `127.0.0.1` only and never names the Tailscale
-  address.
-- **Why:** Apple TV / tvOS Infuse often cannot use MagicDNS, so
-  `webdav.ayc` fails there while phone Infuse works. Bare
-  `http://${TS_IPV4}/` (port 80) needs no DNS; Caddy already binds and
-  reloads that address via `state.env` + refresh-tailnet (**DD-61**).
-- **Trade-off:** Any tailnet client that opens the bare Tailscale IPv4 on
-  port 80 hits WebDAV (not the other named sites). Acceptable: Infuse is
-  the only bare-IP consumer; other UIs stay on `*.${LOCAL_DOMAIN}`.
+  rclone (port 80). Compose stays `127.0.0.1` only.
+- **Why (then):** Apple TV / tvOS Infuse often cannot use MagicDNS.
+- **Superseded (v2-66 / DD-98):** same Caddy ownership, but the Infuse
+  address is `${TS_IPV4}:${WEBDAV_PORT}` rather than bare `:80`.
 
 ### DD-77: WebDAV runs in Compose on loopback, not as a host unit (2026-08-09)
 
@@ -3698,8 +3711,9 @@ separate document with its own numbering.
   shrinks. Double read-only (`:ro` mount + `--read-only`) is preserved.
 - **Trade-off accepted:** Docker down ⇒ WebDAV down. Media producers are
   already Docker-backed, so the dependency matches the data path.
-- **Follow-up:** Infuse without MagicDNS uses the Caddy TS-IP alias
-  (**DD-78**), not a Compose publish on `${TS_IPV4}`.
+- **Follow-up:** Infuse without MagicDNS uses Caddy on
+  `${TS_IPV4}:${WEBDAV_PORT}` (**DD-98**), not a Compose publish on the
+  Tailscale address.
 
 ### DD-76: Compose does not own the WireGuard endpoint hint (2026-08-09)
 

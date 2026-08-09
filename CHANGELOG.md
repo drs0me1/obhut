@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-10 — v2-67: Caddy WebDAV port from state.env
+
+- **Changed:** Caddyfile Infuse/upstream ports use `{$WEBDAV_PORT}` (from
+  `state.env` / Caddy `EnvironmentFile`), not a baked `__WEBDAV_PORT__`.
+  Re-run port changes restart Caddy via `WEBDAV_PORT_CHANGED`.
+
+### 2026-08-10 — v2-66: Infuse via Caddy on TS IP:WEBDAV_PORT
+
+- **Changed:** Caddy WebDAV site is
+  `http://webdav.*, http://{$TAILSCALE_IPV4}:${WEBDAV_PORT}` → loopback
+  rclone (**DD-98**). Infuse uses port `61003`; Compose stays loopback-only
+  (no Tailscale IP in `compose.yaml`).
+- **Reverted:** v2-65 Compose `${TS_IPV4}:${WEBDAV_PORT}` publish and
+  refresh-time `docker compose up -d webdav`.
+
+### 2026-08-10 — v2-65: Infuse WebDAV on Tailscale IP:port (superseded by v2-66)
+
+- Briefly published WebDAV on `${TAILSCALE_IPV4}:${WEBDAV_PORT}` in Compose
+  and removed the Caddy bare-IP alias. Superseded the same day by **v2-66**
+  (Caddy listens on that port; Compose stays loopback-only).
+
 ## [2026.08.06-v2-64] - 2026-08-10
 
 GA cut of the lean `v2/` installer. `V2_VERSION` is `2026.08.06-v2-64`.

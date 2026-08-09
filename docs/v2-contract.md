@@ -211,8 +211,9 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | wg-easy WebUI | `127.0.0.1` | 51821 |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
-Reached from the tailnet only through Caddy (**R11**, **R16**, **DD-77**).
-WebDAV is not bound on `${TS_IPV4}` and has no WAN publish.
+Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
+`webdav.*:80` and `${TS_IPV4}:${WEBDAV_PORT}`. Compose never names the
+Tailscale address. No WAN / `0.0.0.0` publish.
 
 ### 3.4 Single source of truth
 
@@ -280,8 +281,9 @@ Apple TV**, reading the media library over the tailnet.
   itself stays read-only.
 
 WebDAV is a Compose service (**DD-77**), not a host unit: it publishes only
-on loopback, Caddy is the Infuse path, and Docker down means WebDAV down —
-same dependency as the media producers.
+on loopback; Caddy is the Infuse path on `${TS_IPV4}:${WEBDAV_PORT}`
+(**DD-98**). Docker down means WebDAV down — same dependency as the media
+producers.
 
 ---
 
@@ -342,7 +344,7 @@ property the implementation must satisfy and a test must assert.
 | Item | Location | Mode | Secret |
 |---|---|---|---|
 | Username + password hash | `/etc/master-stack/webdav.htpasswd` | `0600` | **yes** |
-| Port (loopback publish) | `v2/config/defaults.env` → Compose + Caddy | — | no |
+| Port (loopback + Caddy Infuse) | `v2/config/defaults.env` → Compose + Caddy | — | no |
 | Credential file **path** | `v2/config/defaults.env`, Compose volume | — | no |
 | Read-only / image pin | Compose template + `RCLONE_IMAGE` | — | no |
 
@@ -380,14 +382,14 @@ One Compose service: `webdav` (`rclone/rclone` image). No host
 |---|---|---|
 | Publish | `127.0.0.1:${WEBDAV_PORT}:8080` | Tailnet reachability only via Caddy |
 | Docker coupling | same lifecycle as the media stack | Accepted: Docker down ⇒ WebDAV down (**DD-77**) |
-| Tailscale coupling | **none** | WebDAV does not bind `${TS_IPV4}` |
+| Tailscale coupling | **none in Compose** | Caddy binds `${TS_IPV4}` from `state.env` |
 | Restart | Compose `unless-stopped` | No custom cooldown stamp system |
 
 ### 7.3 Reacting to a Tailscale address change
 
 WebDAV does not bind the Tailscale address. When the Tailscale IPv4
 changes, `refresh-tailnet-config` updates `state.env` and restarts **only
-Caddy**:
+Caddy** (both `:80` and `:${WEBDAV_PORT}` Infuse listeners):
 
 ```
 Tailscale IPv4 change
@@ -399,31 +401,27 @@ Tailscale IPv4 change
   → Compose stack  untouched
 ```
 
-The same oneshot also acts as the firewall watchdog (§10), but that path is
-independent of the address change: on an address change the firewall is not
-touched.
+The same oneshot also acts as the firewall watchdog (§10), independent of
+the address change.
 
-**DD-61** originally named Caddy + host WebDAV; **DD-77** narrows the
-restart set to Caddy alone. dnsmasq and the firewall still match the
-interface name rather than an address.
-
-`master-firewall` may still be `PartOf=tailscaled.service` so policy is
-re-applied on Tailscale restart; that must never bounce Compose.
+dnsmasq and the firewall still match the interface name rather than an
+address. `master-firewall` may still be `PartOf=tailscaled.service`; that
+must never bounce Compose.
 
 ### 7.4 Access path decision
 
 | Path | Address | Purpose |
 |---|---|---|
 | Preferred (MagicDNS) | `http://webdav.${LOCAL_DOMAIN}` | Phone Infuse / clients with MagicDNS |
-| Apple TV Infuse (no MagicDNS) | `http://${TS_IPV4}/` (port 80) | Caddy site alias; Host = Tailscale IPv4 (**DD-78**) |
-| Loopback (host-local) | `http://127.0.0.1:${WEBDAV_PORT}` | Installer / debug probes |
+| Apple TV Infuse (no MagicDNS) | `http://${TS_IPV4}:${WEBDAV_PORT}/` | Caddy site on that port → loopback (**DD-98**) |
+| Loopback (host-local) | `http://127.0.0.1:${WEBDAV_PORT}` | Installer / Caddy upstream / debug |
 
-Caddy proxies both `webdav.${LOCAL_DOMAIN}` and `http://{$TAILSCALE_IPV4}`
-to `127.0.0.1:${WEBDAV_PORT}`. Compose stays loopback-only and never names
-the Tailscale address (**DD-77**).
-
-**Direct `http://${TS_IPV4}:${WEBDAV_PORT}` is not supported** — nothing
-listens there. Bare-IP access is only via Caddy on port 80.
+Caddy proxies `webdav.${LOCAL_DOMAIN}` and
+`http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT}` to `127.0.0.1:{$WEBDAV_PORT}`
+(placeholders from `state.env`). Compose stays loopback-only and never
+names the Tailscale address (**DD-77**). Bare `http://${TS_IPV4}/` on
+port 80 is **not** WebDAV. A re-run that changes `WEBDAV_PORT` rewrites
+Compose and restarts Caddy.
 
 No TLS between Caddy and WebDAV: both endpoints are on the same host, and
 the hop is loopback.
@@ -664,8 +662,10 @@ A v2 run is successful when every one of these holds on the target host.
    (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN IP; no `[::]` peer
    publish).
 6. No container web interface is published on a non-loopback address.
-7. The four container web interfaces listen on `127.0.0.1` only.
-8. Caddy listens on `${TS_IPV4}:80` and on no other address.
+7. The five container web interfaces (incl. WebDAV) listen on `127.0.0.1`
+   only.
+8. Caddy listens on `${TS_IPV4}:80` and `${TS_IPV4}:${WEBDAV_PORT}` (Infuse)
+   and on no other address.
 9. dnsmasq answers on `${TS_IPV4}:53` **and** `127.0.0.1:53`, and on no
    other address; it serves no DHCP.
 
@@ -680,15 +680,18 @@ A v2 run is successful when every one of these holds on the target host.
 13. Each of `portainer`, `wg`, `qbit` and `file` returns a non-5xx status
     through Caddy (`Host:` + `${TS_IPV4}`).
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
-    listens on `${TS_IPV4}:${WEBDAV_PORT}`, `0.0.0.0`, WAN, or LAN.
-15. An unauthenticated request to loopback and via Caddy returns `401`.
-16. A `PROPFIND` with valid credentials succeeds through Caddy.
+    listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
+    socket), nor on `0.0.0.0`, WAN, or LAN.
+15. An unauthenticated request to loopback, via Caddy (`webdav.*`), and to
+    `${TS_IPV4}:${WEBDAV_PORT}` returns `401`.
+16. A `PROPFIND` with valid credentials succeeds through Caddy on both
+    Infuse paths.
 17. `/downloads/media`, `…/movies` and `…/series` are listable.
 18. Install-time: running container has Cmd `--read-only`,
     `ReadonlyRootfs=true`, and `/downloads` mount `RW=false` (**DD-81**).
     Authenticated write refusal remains a live/manual check.
 19. Infuse paths: `http://webdav.${LOCAL_DOMAIN}` (MagicDNS) and
-    `http://${TS_IPV4}/` on port 80 (Apple TV / no MagicDNS — **DD-78**).
+    `http://${TS_IPV4}:${WEBDAV_PORT}/` (Apple TV — **DD-98**).
 
 ### WebDAV credential handling (§6.2, §6.4)
 

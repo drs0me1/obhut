@@ -336,6 +336,7 @@ EOF
     # Compose, WebDAV and raw netfilter stay out of the timer's scope.
     ! grep -qE 'compose|DOCKER-USER|master-webdav|iptables' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
+    ! grep -q 'rebind_webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'BOUND_UNITS="caddy.service"' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
 }
@@ -544,20 +545,23 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "webdav compose service is loopback rclone with htpasswd" {
+@test "webdav compose is loopback; Caddy exposes TS IP:WEBDAV_PORT" {
     grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
     grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
     grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
     grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
     grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q '__TAILSCALE_IPV4__:__WEBDAV_PORT__' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'reverse_proxy 127.0.0.1:__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
-    grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}' \
+    grep -q 'reverse_proxy 127.0.0.1:{$WEBDAV_PORT}' "$V2_ROOT/templates/Caddyfile"
+    grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT}' \
         "$V2_ROOT/templates/Caddyfile"
-    ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
+    ! grep -q '__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
+    ! grep -qE 'http://\{\$TAILSCALE_IPV4\}[[:space:],}]' \
         "$V2_ROOT/templates/Caddyfile"
+    grep -q 'WEBDAV_PORT_CHANGED' "$V2_ROOT/install.sh"
     ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
     ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
     grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
@@ -832,8 +836,10 @@ EOF
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
     grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
     grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
-    grep -q 'WebDAV TS-IP alias' "$V2_ROOT/install.sh"
+    grep -q 'WebDAV Caddy TS-IP:' "$V2_ROOT/install.sh"
+    grep -q 'http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
     grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
+    ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
     grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
     grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
     grep -q '/downloads false' "$V2_ROOT/install.sh"

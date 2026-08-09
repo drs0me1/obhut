@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-64"
+V2_VERSION="2026.08.06-v2-67"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -287,7 +287,7 @@ stage_0() {
         log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
     fi
 
-    prompt WEBDAV_PORT "WebDAV portu (loopback, Caddy)" "$prev_webdav_port"
+    prompt WEBDAV_PORT "WebDAV portu (loopback; Infuse = TS IP:bu port)" "$prev_webdav_port"
     [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
@@ -298,6 +298,11 @@ stage_0() {
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
     esac
+    WEBDAV_PORT_CHANGED=0
+    if [[ "$WEBDAV_PORT" != "$prev_webdav_port" ]]; then
+        WEBDAV_PORT_CHANGED=1
+        log INFO "WebDAV portu değişti: $prev_webdav_port → $WEBDAV_PORT (compose + Caddy)"
+    fi
 
     detect_wan
     WG_ENDPOINT_HOST="$WAN_IPV4"
@@ -644,9 +649,10 @@ EOF
         PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
-        WEBDAV_PORT="$WEBDAV_PORT"
+        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
+    # {$WEBDAV_PORT} Caddyfile'da sabit değil; state.env değişince yeniden başlat.
+    [[ "${WEBDAV_PORT_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
 
     mkdir -p /etc/systemd/system/dnsmasq.service.d
     atomic_write /etc/systemd/system/dnsmasq.service.d/master-stack.conf 0644 <<'EOF'
@@ -688,6 +694,14 @@ EOF
         systemctl restart dnsmasq
     else
         log INFO "dnsmasq yapılandırması aynı; yeniden başlatılmadı"
+    fi
+    # Infuse: Caddy ${TS_IPV4}:${WEBDAV_PORT}. Eski Compose TS publish (v2-65)
+    # hâlâ o soketi tutuyorsa Caddy bind edemez — önce webdav'ı yeni
+    # (loopback-only) compose ile yeniden yarat.
+    if docker port webdav 2>/dev/null |
+        grep -q "${TAILSCALE_IPV4}:${WEBDAV_PORT}"; then
+        log INFO "WebDAV Tailscale publish bırakılıyor (Infuse portu Caddy'ye)"
+        (cd "$COMPOSE_DIR" && docker compose up -d webdav)
     fi
     if [[ "$caddy_changed" -eq 1 ]] || ! systemctl is-active --quiet caddy; then
         systemctl restart caddy
@@ -810,9 +824,9 @@ stage_7() {
         die "WebDAV Caddy üzerinden kimlik doğrulamasız yanıt $code (beklenen 401)"
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://${TAILSCALE_IPV4}/" || true)"
+        "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/" || true)"
     [[ "$code" == "401" ]] ||
-        die "WebDAV TS-IP alias kimlik doğrulamasız yanıt $code (beklenen 401)"
+        die "WebDAV Caddy TS-IP:${WEBDAV_PORT} kimlik doğrulamasız yanıt $code (beklenen 401)"
 
     assert_webdav_readonly_runtime
 
@@ -871,10 +885,11 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
+WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
+  Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
-Tailscale IP: refresh-tailnet-config (tailscale wait + WantedBy=tailscaled + 5dk timer) → Caddy
+Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF
 }
