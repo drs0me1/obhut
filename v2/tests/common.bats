@@ -251,12 +251,13 @@ EOF
     ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "filebrowser classic serves downloads at /srv with disable-exec" {
+@test "filebrowser classic serves downloads at /srv with disableExec" {
     grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/srv' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
-    grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
+    grep -q -- '--disableExec' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
     grep -q 'no-new-privileges=true' "$V2_ROOT/templates/compose.yaml"
     ! grep -q 'no-new-privileges:true' "$V2_ROOT/templates/compose.yaml"
     grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
@@ -264,6 +265,11 @@ EOF
         "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
     grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
+    ! grep -q 'FileBrowser varsayılan: admin / admin' "$V2_ROOT/install.sh"
+    ! grep -q 'rastgele admin parolası' "$V2_ROOT/install.sh"
+    ! grep -q 'qBittorrent varsayılan WebUI' "$V2_ROOT/install.sh"
+    ! grep -q 'docker logs filebrowser' "$V2_ROOT/install.sh"
+    ! grep -q 'ilk yönetici hesabını sen kur' "$V2_ROOT/install.sh"
     ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
     ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
@@ -814,7 +820,11 @@ EOF
     grep -q 'dsi-v2-extract' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'staging/v2' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'gzip -n' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'touch -t 197001010000' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'touch -t 200001010000' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'TZ=UTC' "$V2_ROOT/dev/export-v2.sh"
+    grep -q -- '--no-xattrs' "$V2_ROOT/dev/export-v2.sh"
+    grep -q -- '--no-mac-metadata' "$V2_ROOT/dev/export-v2.sh"
+    ! grep -q 'touch -t 197001010000' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'reproducible/${V2_VERSION}' "$V2_ROOT/dev/export-v2.sh"
 }
 

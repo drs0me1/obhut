@@ -23,13 +23,14 @@ services:
     cap_drop:
       - ALL
     read_only: true
-    # --disable-exec: bilinen shell CVE yüzeyini kapatır (GHSA-8c9q… vb.).
+    # --disableExec: bilinen shell CVE yüzeyini kapatır (GHSA-8c9q… vb.).
+    # Eski --disable-exec adı bu imajda deprecated.
     command:
       - --address=0.0.0.0
       - --port=80
       - --root=/srv
       - --database=/database/filebrowser.db
-      - --disable-exec
+      - --disableExec
     environment:
       TZ: __TIMEZONE__
     ports:

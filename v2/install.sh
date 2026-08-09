@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-63"
+V2_VERSION="2026.08.06-v2-64"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -871,9 +871,6 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
-  FileBrowser varsayılan: admin / admin — hemen değiştir.
-qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)

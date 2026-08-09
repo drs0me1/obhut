@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-64: FileBrowser `--disableExec`, quieter summary
+
+- **Fixed:** Compose uses `--disableExec` (the old `--disable-exec` name is
+  deprecated in current classic FileBrowser and only printed a notice).
+- **Changed:** End-of-install summary drops container admin / password
+  reminders (Portainer, wg-easy, FileBrowser, qBittorrent). Operators create
+  those accounts in the UIs; Tailscale admin steps and WebDAV/wg endpoint
+  hints remain.
+- **Fixed:** `export-v2.sh` packs a Debian-quiet tarball: UTC mtime
+  `2000-01-01` (not local 1970 → epoch 0), `--no-xattrs` /
+  `--no-mac-metadata`, ustar + root/0 ownership. Stops GNU tar
+  “implausibly old” and `LIBARCHIVE.xattr.com.apple.provenance` noise.
+
 ### 2026-08-09 — v2-63: Compose images follow upstream stable tracks
 
 - **Changed:** Prefer the vendor's stable track tag over a frozen

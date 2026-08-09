@@ -3280,6 +3280,12 @@ separate document with its own numbering.
 - **Trade-off:** Slightly more remote disk during sync. External
   “checksum without opening the launcher” requires grepping
   `PORTABLE_ARCHIVE_SHA256` from the `.command` (or re-exporting).
+- **Amendment (v2-64):** Deterministic pack uses `TZ=UTC` mtime
+  `2000-01-01` and bsdtar `--no-xattrs --no-mac-metadata` (plus
+  `xattr -cr` on the stage). Local `touch -t 197001010000` in TZ east of
+  UTC lands before Unix epoch (stored as 0 → Debian “implausibly old”);
+  Apple provenance xattrs became `LIBARCHIVE.*` pax keywords GNU tar
+  does not understand. Reproducible hash stays; extract stays quiet.
 
 ### DD-69: Downloads tree is recursively `1000:1000` for stack R/W (2026-08-07)
 
@@ -3775,7 +3781,7 @@ separate document with its own numbering.
   (digest-pinned `v2.63.23`), not FileBrowser Quantum. WebDAV stays
   separate rclone (**DD-77**). UI remains `file.*` → loopback `61007`.
 - **Why:** Operator preference after side-by-side trials (classic UI).
-  Known shell CVEs are mitigated with `--disable-exec` (and no auth
+  Known shell CVEs are mitigated with `--disableExec` (and no auth
   hooks). Tailnet-only + Caddy exposure is accepted; the residual risk is
   **maintenance-only / planned archive** (no future patches) — recorded
   consciously, not ignored.

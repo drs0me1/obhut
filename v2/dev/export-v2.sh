@@ -52,7 +52,10 @@ tgz="$tmpdir/v2.tgz"
 stage="$tmpdir/src"
 mkdir -p "$stage"
 echo "==> Paketleniyor: v2/ runtime (v$V2_VERSION) [deterministik]"
-# Repo'yu kirletmeden sabit mtime + gzip -n → aynı kaynak = aynı ARCHIVE_SHA256.
+# Sabit mtime + gzip -n → aynı kaynak = aynı ARCHIVE_SHA256.
+# TZ=UTC + 2000-01-01: doğu TZ'de 1970-01-01 local Unix epoch öncesi olur
+# (mtime 0 → Debian tar "implausibly old"). --no-xattrs/--no-mac-metadata:
+# Apple provenance pax başlıkları Debian'da LIBARCHIVE uyarısı üretmesin.
 rsync -a \
     --exclude='.cursor/' \
     --exclude='dev/' \
@@ -62,10 +65,17 @@ rsync -a \
     --exclude='._*' \
     --exclude='.DS_Store' \
     "$V2_ROOT/" "$stage/v2/"
-find "$stage" -exec touch -t 197001010000 {} +
+xattr -cr "$stage" 2>/dev/null || true
+TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
 (
     cd -- "$stage" || exit 1
-    COPYFILE_DISABLE=1 tar -cf - v2 | gzip -n >"$tgz"
+    COPYFILE_DISABLE=1 tar \
+        --format=ustar \
+        --no-xattrs \
+        --no-mac-metadata \
+        --uid 0 --gid 0 \
+        --uname root --gname root \
+        -cf - v2 | gzip -n >"$tgz"
 )
 
 ARCHIVE_SHA256="$(file_sha256 "$tgz")"

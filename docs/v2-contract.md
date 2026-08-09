@@ -136,7 +136,8 @@ Preserved in full as a core feature. Contract in §5–§7.
 ### 1.8 Operator guidance
 
 - The manual Tailscale admin steps are printed at the end (**R17**, §13).
-- Portainer, wg-easy and FileBrowser admin-account warnings are printed.
+- No container admin / password reminders are printed; operators create
+  those accounts in each service UI.
 
 ---
 
@@ -153,7 +154,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
 | **Image-digest-based recovery** | digest recording + final cross-check | Digests are still *recorded* for identification; nothing acts on a mismatch. |
 | **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
-| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | The end-of-install warning conveys the same information without a recurring authentication attempt. |
+| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | First-boot credentials live in the container log; v2 does not probe or reprint them. |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
 | **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). v2 never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
