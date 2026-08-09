@@ -13,7 +13,7 @@ verified. Repo is v2-only.
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-49` |
+| Version | `2026.08.06-v2-50` |
 | Branch | `quantum` |
 
 ### Operator preferences (locked)

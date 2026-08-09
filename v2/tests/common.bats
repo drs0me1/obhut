@@ -180,7 +180,7 @@ EOF
     grep -q 'QBIT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
-    ! grep -qE 'WG_PUBLIC_PORT:=65171|QBIT_PUBLIC_PORT:=65173|CHAIN_INPUT:=MASTER' \
+    ! grep -qE 'WG_PUBLIC_PORT:=61001|QBIT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }

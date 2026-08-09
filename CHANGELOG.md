@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-50: memorable high default peer/WebDAV ports
+
+- **Changed:** Fresh-install defaults in `defaults.env`:
+  `WG_PUBLIC_PORT=61001`, `WEBDAV_PORT=61003`, `QBIT_PUBLIC_PORT=61005`.
+  Existing hosts keep `config.env` / `state.env` values on re-run.
+
 ### 2026-08-09 — v2-49: structural doc sync + Stage 7 UI Caddy checks
 
 - **Docs:** `v2-contract`, `v2-architecture`, `master-stack.mdc`, root

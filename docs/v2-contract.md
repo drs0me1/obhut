@@ -171,8 +171,8 @@ Three exposure classes, and nothing may straddle them.
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| wg-easy (WireGuard) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (65171) | **UDP only** |
-| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (65173) | **TCP + UDP** |
+| wg-easy (WireGuard) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (61001) | **UDP only** |
+| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
@@ -206,7 +206,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | FileBrowser Quantum | `127.0.0.1` | 7113 |
 | qBittorrent WebUI | `127.0.0.1` | 13087 |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
-| WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (65113) |
+| WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
 Reached from the tailnet only through Caddy (**R11**, **R16**, **DD-77**).
 WebDAV is not bound on `${TS_IPV4}` and has no WAN publish.
