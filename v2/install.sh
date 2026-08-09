@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-58"
+V2_VERSION="2026.08.06-v2-59"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -270,6 +270,7 @@ stage_0() {
     [[ "$DOWNLOADS_PATH" != *//* ]] || die "downloads yolu '//' içeremez"
     [[ "$DOWNLOADS_PATH" =~ (^|/)\.\.(/|$) ]] &&
         die "downloads yolu '..' içeremez"
+    assert_downloads_path_allowed "$DOWNLOADS_PATH"
 
     prompt WG_PUBLIC_PORT "wg-easy public UDP port" "$prev_wg_port"
     [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "wg-easy UDP portu sayı olmalı"
@@ -429,11 +430,73 @@ ensure_downloads_tree() {
     find "$root" -type f ! -perm 0664 -exec chmod 0664 {} +
 }
 
+# Recursive chown/chmod only under an allowlisted data root (DD-93).
+assert_downloads_path_allowed() {
+    local p="$1"
+    case "$p" in
+        / | /etc | /etc/* | /usr | /usr/* | /bin | /bin/* | /sbin | /sbin/* | \
+        /boot | /boot/* | /dev | /dev/* | /proc | /proc/* | /sys | /sys/* | \
+        /run | /run/* | /root | /root/* | /var | /var/* | /tmp | /tmp/* | \
+        /home | /home/* | /lib | /lib/* | /lib64 | /lib64/* | /opt | /opt/* | \
+        /srv | /media | /media/* | /mnt | /mnt/* )
+            die "downloads yolu sistem dizinine izin vermez: $p"
+            ;;
+    esac
+    case "$p" in
+        /downloads | /downloads/* | /data | /data/* | \
+        /srv/downloads | /srv/downloads/* )
+            return 0
+            ;;
+        *)
+            die "downloads yolu allowlist dışı (/downloads, /data, /srv/downloads): $p"
+            ;;
+    esac
+}
+
 # Klasik FileBrowser Bolt DB + image VOLUME /config — anonim volume oluşmasın.
 ensure_filebrowser_data_dir() {
     mkdir -p "$FILEBROWSER_DATA_DIR/config"
     chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$FILEBROWSER_DATA_DIR"
     chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
+}
+
+# DD-8: yalnız dns anahtarını yaz; diğer daemon.json ayarlarını koru.
+merge_docker_daemon_dns() {
+    local existing='{}' merged
+    command -v jq >/dev/null 2>&1 || die "jq gerekli (daemon.json merge)"
+    if [[ -f /etc/docker/daemon.json ]]; then
+        existing="$(cat /etc/docker/daemon.json)"
+        [[ -n "${existing//[[:space:]]/}" ]] || existing='{}'
+    fi
+    merged="$(jq '.dns = ["1.1.1.1", "1.0.0.1"]' <<<"$existing")" ||
+        die "daemon.json jq merge başarısız (geçersiz JSON?)"
+    atomic_write /etc/docker/daemon.json 0644 <<<"$merged"
+}
+
+# Yalnız bu stack'in filebrowser container/volume'ünü temizle (DD-93).
+remove_stale_filebrowser() {
+    local name=filebrowser project proj img vol
+    command -v docker >/dev/null 2>&1 || return 0
+    project="$(basename "$COMPOSE_DIR")"
+    if docker inspect "$name" >/dev/null 2>&1; then
+        proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
+            "$name" 2>/dev/null || true)"
+        img="$(docker inspect -f '{{.Config.Image}}' "$name" 2>/dev/null || true)"
+        if [[ "$proj" == "$project" ]] ||
+            [[ "$img" == "$FILEBROWSER_IMAGE" ]] ||
+            [[ "$img" == filebrowser/filebrowser* ]] ||
+            [[ "$img" == *gtsteffaniak/filebrowser* ]]; then
+            # -v: image VOLUME /config anonim volume'ünü de sil (hijyen).
+            docker rm -fv "$name" 2>/dev/null || true
+        else
+            log WARN "filebrowser container başka projeye ait; silinmedi (project=${proj:-?})"
+        fi
+    fi
+    for vol in docker_filebrowser_data filebrowser_data; do
+        if docker volume inspect "$vol" >/dev/null 2>&1; then
+            docker volume rm "$vol" 2>/dev/null || true
+        fi
+    done
 }
 
 stage_3() {
@@ -463,11 +526,7 @@ stage_4() {
     retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     mkdir -p /etc/docker
-    atomic_write /etc/docker/daemon.json 0644 <<'EOF'
-{
-  "dns": ["1.1.1.1", "1.0.0.1"]
-}
-EOF
+    merge_docker_daemon_dns
     systemctl enable --now docker
     ensure_wg_kernel_modules
 
@@ -503,11 +562,7 @@ EOF
     # Klasik FileBrowser veri dizini; Quantum YAML / named+anon volume kalıntısı temizle.
     ensure_filebrowser_data_dir
     rm -f /etc/master-stack/filebrowser.yaml
-    if command -v docker >/dev/null 2>&1; then
-        # -v: image VOLUME /config anonim volume'ünü de sil (hijyen).
-        docker rm -fv filebrowser 2>/dev/null || true
-        docker volume rm docker_filebrowser_data filebrowser_data 2>/dev/null || true
-    fi
+    remove_stale_filebrowser
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
@@ -518,6 +573,10 @@ EOF
 
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
+    mkdir -p "$UNIT_DIR/docker.service.d"
+    atomic_write "$UNIT_DIR/docker.service.d/master-stack.conf" 0644 \
+        <"$V2_ROOT/systemd/docker.service.d/master-stack.conf"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
     atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.service"
@@ -530,6 +589,8 @@ EOF
 }
 
 purge_host_webdav_leftovers() {
+    # Tek-host migrate: eski host rclone / master-webdav kalıntısı (DD-79).
+    # Paylaşımlı host desteklenmez — global apt purge bilinçli.
     local user="master-webdav"
 
     systemctl disable --now master-webdav.service 2>/dev/null || true

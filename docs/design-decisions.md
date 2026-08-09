@@ -3777,3 +3777,26 @@ separate document with its own numbering.
   named volume `filebrowser_data` are removed on Stage 4.
 - **Accounts:** Default `admin`/`admin` on first DB bootstrap — end-of-
   install warning; operator must change.
+
+### DD-93: Firewall Docker re-apply + install path hygiene (2026-08-09)
+
+- **Decision (three fixes, one package):**
+  1. Install `docker.service.d/master-stack.conf` with
+     `ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service`.
+     DD-75 still allows INPUT without Docker, but a later `docker start`
+     must not leave published peer ports unprotected when
+     `RemainAfterExit` made `WantedBy` start a no-op. `--no-block` avoids
+     a start-post deadlock (`After=docker` waiting while Docker waits for
+     ExecStartPost).
+  2. `master-firewall --check` requires DOCKER allow rules and asserts
+     WAN DROP sits after WAN ACCEPT/RETURN in INPUT and DOCKER chains.
+  3. Restore DD-8: merge `dns` into `/etc/docker/daemon.json` via `jq`
+     instead of overwriting the file. Restrict `DOWNLOADS_PATH` to
+     `/downloads`, `/data`, `/srv/downloads` (and subpaths) before
+     recursive ownership repair. Scope `filebrowser` container removal to
+     this Compose project / known images.
+- **Why:** GPT live review of v2-58 on `nrm` (2026-08-09): healthy runtime,
+  but fail-open gap after INPUT-only firewall apply, weak `--check`,
+  daemon.json clobber, and over-broad downloads/FB cleanup on shared hosts.
+- **Not doing:** disk-persisted iptables, reconcile engine, automatic WAN
+  endpoint rewrite, or broadening healthchecks beyond the contract.

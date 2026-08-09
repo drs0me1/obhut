@@ -19,7 +19,7 @@ services:
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     security_opt:
-      - no-new-privileges:true
+      - no-new-privileges=true
     cap_drop:
       - ALL
     read_only: true
@@ -71,7 +71,7 @@ services:
     # qBittorrent API yok: parola/port gerekmez. Yalnız /downloads ağacını
     # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
     security_opt:
-      - no-new-privileges:true
+      - no-new-privileges=true
     cap_drop:
       - ALL
     read_only: true
@@ -130,7 +130,7 @@ services:
     tmpfs:
       - /tmp
     security_opt:
-      - no-new-privileges:true
+      - no-new-privileges=true
     cap_drop:
       - ALL
     networks:

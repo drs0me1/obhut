@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-59: Firewall Docker re-apply, safer install paths
+
+- **Fixed:** `docker.service.d` `ExecStartPost` `--no-block` restarts
+  `master-firewall` so an INPUT-only apply (Docker not yet up) cannot leave
+  published peer ports unprotected after a later `docker start` (**DD-93**).
+- **Fixed:** `master-firewall --check` asserts DOCKER allow rules
+  (ESTABLISHED, Tailscale, qBit/wg RETURN) and WAN DROP order in INPUT /
+  DOCKER chains.
+- **Fixed:** `/etc/docker/daemon.json` restores **DD-8** `jq` merge (dns
+  only); other daemon keys are preserved.
+- **Fixed:** `DOWNLOADS_PATH` allowlist (`/downloads`, `/data`,
+  `/srv/downloads`) before recursive ownership repair.
+- **Fixed:** FileBrowser container removal is scoped to this Compose
+  project / known images; legacy volume names only when unused.
+- **Changed:** Compose `no-new-privileges=true` (Docker 29 deprecation).
+
 ### 2026-08-09 — v2-58: FileBrowser /config bind (no anonymous volume)
 
 - **Fixed:** Classic FileBrowser image declares `VOLUME /config`; compose now

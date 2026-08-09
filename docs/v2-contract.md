@@ -125,8 +125,9 @@ the ones agreed on 2026-08-05:
   built in a throwaway chain and swapped in atomically, so there is no
   window in which the host runs with a partial policy.
 - Nothing is persisted to disk. `master-firewall.service` re-applies the
-  policy on boot and whenever Docker restarts, which is also how a changed
-  public IPv4 reaches the rules.
+  policy on boot and whenever Docker restarts (`PartOf=` plus a
+  `docker.service.d` `ExecStartPost` restart so a prior INPUT-only apply
+  cannot leave `RemainAfterExit` stuck without `MASTER-DOCKER`).
 
 ### 1.7 WebDAV
 
@@ -492,7 +493,8 @@ and IPv6 — separate tables mean no collision — and both are declared in
 - The helper refuses to run if `ip6tables` is unavailable while IPv6
   forwarding is enabled, rather than degrading to an IPv4-only policy.
 - The policy lives only in memory; `master-firewall.service` re-applies it
-  after boot and after a Docker restart (`PartOf=docker.service`).
+  after boot and after a Docker restart (`PartOf=docker.service` and
+  `docker.service.d` `ExecStartPost=… --no-block restart master-firewall`).
 
 ---
 
@@ -501,7 +503,7 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | Unit | After | Coupling | Restart |
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
-| `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
+| `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service`; also restarted from `docker.service.d` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
 | `refresh-tailnet-config.timer` | — | address poll | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | package default |
@@ -524,7 +526,10 @@ Invariants:
   (**DD-87**), or when the operator restarts it. WebDAV is a container and
   is not tied to `tailscaled`.
 - **Restarting `docker` re-applies the firewall policy and restarts
-  containers (including WebDAV).** It does not touch Caddy or dnsmasq.
+  containers (including WebDAV).** The `docker.service.d` drop-in forces
+  `systemctl restart master-firewall` on Docker start so an earlier
+  INPUT-only apply cannot remain "active" without `MASTER-DOCKER`. It does
+  not touch Caddy or dnsmasq.
 - **No general-purpose repair engine.** The only `OnFailure=` in the stack
   is Caddy → `refresh-tailnet-config` (same oneshot the timer /
   `WantedBy=tailscaled` already use). There is no reconcile loop that

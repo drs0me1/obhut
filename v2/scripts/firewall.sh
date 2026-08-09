@@ -206,7 +206,7 @@ wait_for_docker_user() {
 apply_docker4() {
     local bin=iptables staging
     if ! wait_for_docker_user "$bin"; then
-        printf 'firewall: Docker yok/hazır değil; IPv4 MASTER-DOCKER atlandı\n'
+        printf 'firewall: UYARI: Docker yok/hazır değil; IPv4 MASTER-DOCKER atlandı (docker start → drop-in restart)\n'
         return 0
     fi
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
@@ -256,7 +256,7 @@ apply_docker6() {
     # keserdi. Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
     local bin=ip6tables staging
     if ! wait_for_docker_user "$bin"; then
-        printf 'firewall: Docker yok/hazır değil; IPv6 MASTER-DOCKER atlandı\n'
+        printf 'firewall: UYARI: Docker yok/hazır değil; IPv6 MASTER-DOCKER atlandı (docker start → drop-in restart)\n'
         return 0
     fi
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
@@ -329,6 +329,55 @@ assert_wan_interface_current() {
         die "WAN arayüzü drift: state=$WAN_INTERFACE live=$live (yeniden kur / state güncelle)"
 }
 
+# WAN DROP must sit after every WAN ACCEPT/RETURN in the chain (not merely exist).
+# Order is taken from `iptables -S` (stable); -L -v column layout varies.
+check_wan_drop_after_allows() {
+    local bin="$1" chain="$2" allow_target="$3"
+    local drop_pos=0 allow_max=0 n=0 line
+    while IFS= read -r line; do
+        [[ "$line" == -A* ]] || continue
+        n=$((n + 1))
+        case "$line" in
+            *"-i ${WAN_INTERFACE} "* | *"-i ${WAN_INTERFACE}"$'\t'*)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        case "$line" in
+            *"-j DROP"*)
+                drop_pos=$n
+                ;;
+            *"-j ${allow_target}"*)
+                allow_max=$n
+                ;;
+        esac
+    done < <("$bin" -w 5 -S "$chain")
+    [[ "$drop_pos" -gt 0 ]] ||
+        die "$bin: $chain içinde WAN DROP satırı yok"
+    [[ "$drop_pos" -gt "$allow_max" ]] ||
+        die "$bin: $chain WAN DROP ($drop_pos) allow ($allow_target max=$allow_max) önünde veya eşit"
+}
+
+check_docker_chain() {
+    local bin="$1"
+    check_jump_exactly_one "$bin" DOCKER-USER "$CHAIN_DOCKER"
+    check_rule "$bin" "$CHAIN_DOCKER" \
+        -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+    check_rule "$bin" "$CHAIN_DOCKER" -i "$TAILSCALE_IF" -j RETURN
+    if [[ "$bin" == iptables ]]; then
+        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p tcp \
+            -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
+        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p udp \
+            -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
+        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p udp \
+            -m conntrack --ctstate NEW --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
+    fi
+    check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+    check_rule "$bin" "$CHAIN_DOCKER" -j RETURN
+    check_wan_drop_after_allows "$bin" "$CHAIN_DOCKER" RETURN
+}
+
 if [[ "$MODE" == check ]]; then
     assert_wan_interface_current
     check_jump_exactly_one iptables INPUT "$CHAIN_INPUT"
@@ -348,6 +397,7 @@ if [[ "$MODE" == check ]]; then
         -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
     check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
+    check_wan_drop_after_allows iptables "$CHAIN_INPUT" ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
     check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
         -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
@@ -359,18 +409,17 @@ if [[ "$MODE" == check ]]; then
         -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
+    check_wan_drop_after_allows ip6tables "$CHAIN_INPUT" ACCEPT
 
     if docker_user_present iptables; then
-        check_jump_exactly_one iptables DOCKER-USER "$CHAIN_DOCKER"
-        check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+        check_docker_chain iptables
     elif docker_service_active; then
         die "iptables: Docker aktif ama DOCKER-USER yok"
     else
         printf 'firewall: Docker yok; IPv4 MASTER-DOCKER denetimi atlandı\n'
     fi
     if docker_user_present ip6tables; then
-        check_jump_exactly_one ip6tables DOCKER-USER "$CHAIN_DOCKER"
-        check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
+        check_docker_chain ip6tables
     elif docker_service_active; then
         die "ip6tables: Docker aktif ama DOCKER-USER yok"
     else

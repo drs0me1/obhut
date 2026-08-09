@@ -198,18 +198,34 @@ EOF
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
+    grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
+    grep -q 'allowlist dışı' "$V2_ROOT/install.sh"
     grep -q 'chown -h' "$V2_ROOT/install.sh"
     grep -q '! -uid' "$V2_ROOT/install.sh"
     grep -q '! -perm 0775' "$V2_ROOT/install.sh"
     grep -q '! -perm 0664' "$V2_ROOT/install.sh"
-    ! grep -q 'chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}"' "$V2_ROOT/install.sh"
+    # Downloads tree itself is selective find+chown, not chown -R on DOWNLOADS_PATH.
+    ! awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'chown -R'
     grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
         "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "docker daemon.json merges dns via jq" {
+    grep -q 'merge_docker_daemon_dns' "$V2_ROOT/install.sh"
+    awk '/^merge_docker_daemon_dns\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'jq'
+    awk '/^merge_docker_daemon_dns\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q '\.dns = \["1.1.1.1", "1.0.0.1"\]'
+    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'atomic_write /etc/docker/daemon.json'
 }
 
 @test "downloads path rejects unsafe characters and compose has no .env" {
     grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
     grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"
+    grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
+    grep -q 'sistem dizinine izin vermez' "$V2_ROOT/install.sh"
     awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'rm -f "$COMPOSE_DIR/.env"'
     ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
@@ -240,11 +256,15 @@ EOF
     grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'no-new-privileges=true' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q 'no-new-privileges:true' "$V2_ROOT/templates/compose.yaml"
     grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
     grep -q 'FILEBROWSER_DATA_DIR="/etc/master-stack/filebrowser-data"' \
         "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
     grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
+    grep -q 'remove_stale_filebrowser' "$V2_ROOT/install.sh"
+    grep -q 'com.docker.compose.project' "$V2_ROOT/install.sh"
     ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
     ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
@@ -559,8 +579,9 @@ EOF
     grep -q -- '-i "$WAN_INTERFACE" -j DROP' <<<"$body"
     grep -qE '\-A "\$staging" -j RETURN$' <<<"$body"
     # --check must assert the WAN-scoped shape so the regression cannot return.
-    grep -q 'check_rule ip6tables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP' \
-        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
+    awk '/^check_docker_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
+        grep -q -- '-i "$WAN_INTERFACE" -j DROP'
     grep -q 'check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
         "$V2_ROOT/scripts/firewall.sh"
 }
@@ -592,6 +613,10 @@ EOF
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
     # Compose must not be PartOf/Requires-coupled to the firewall unit.
     ! grep -qiE 'compose|master-compose' "$V2_ROOT/systemd/master-firewall.service"
+    # Docker start re-applies firewall even when RemainAfterExit left it active.
+    grep -q 'docker.service.d/master-stack.conf' "$V2_ROOT/install.sh"
+    grep -q 'ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service' \
+        "$V2_ROOT/systemd/docker.service.d/master-stack.conf"
 }
 
 @test "firewall waits for DOCKER-USER only when Docker is active" {
@@ -617,7 +642,12 @@ EOF
     grep -q 'kritik politikalar yerinde' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
         "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'check_rule iptables "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP' \
+    grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_wan_drop_after_allows' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"
+    grep -q -- '--ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN' \
+        "$V2_ROOT/scripts/firewall.sh"
+    grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT" -j RETURN' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -c 'QBIT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
