@@ -4,7 +4,8 @@ Lean Bash installer for a fresh **Debian 13 (trixie)** host: Tailscale exit
 node, fixed Docker Compose bundle (including loopback WebDAV), host dnsmasq
 + Caddy on the tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-64` (see `v2/install.sh`).
+**Current version (GA):** `2026.08.06-v2-64` (see `v2/install.sh`;
+git tag `2026.08.06-v2-64`).
 
 Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
 Layout and data flow: [`docs/v2-architecture.md`](docs/v2-architecture.md).  

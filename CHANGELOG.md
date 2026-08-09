@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2026.08.06-v2-64] - 2026-08-10
+
+GA cut of the lean `v2/` installer. `V2_VERSION` is `2026.08.06-v2-64`.
+Portable app: `v2/app/2026.08.06-v2-64.command`. Git tag: `2026.08.06-v2-64`.
+
 ### 2026-08-09 — v2-64: FileBrowser `--disableExec`, quieter summary
 
 - **Fixed:** Compose uses `--disableExec` (the old `--disable-exec` name is
