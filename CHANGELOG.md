@@ -6,18 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### 2026-08-09 — v2-52: copyparty replaces FileBrowser + rclone WebDAV
-
-- **Changed:** Compose drops `filebrowser` and `webdav` (rclone). One
-  `copyparty/min` service serves the file UI and WebDAV on loopback
-  `COPYPARTY_UI_PORT` (61007). Caddy keeps `file.*`, `webdav.*`, and bare
-  Tailscale IPv4 → the same upstream (**DD-89**).
-- **Changed:** Credentials live in `/etc/master-stack/copyparty.conf`
-  (`0640` root:DOWNLOADS_GID). Stage 7 asserts unauthenticated WebDAV via
-  PROPFIND `401`. rclone forced read-only is not retained (UI needs write).
-- **Removed:** `WEBDAV_PORT`, htpasswd, Quantum `filebrowser.yaml`,
-  dedicated `webdav` Docker network, `apache2-utils` base package.
-
 ### 2026-08-09 — v2-51: memorable FileBrowser / qBit UI defaults
 
 - **Changed:** Fresh-install loopback UI defaults in `defaults.env`:

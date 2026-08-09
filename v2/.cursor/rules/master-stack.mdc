@@ -101,8 +101,9 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - Portainer
   - wg-easy
   - qBittorrent
-  - copyparty (UI + WebDAV)
+  - Filebrowser Quantum
   - Unpackerr
+  - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
 ### Port yayın politikası
 
@@ -111,7 +112,8 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - Portainer: `127.0.0.1:9443`
   - wg-easy web arayüzü: `127.0.0.1:51821`
   - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
-  - copyparty (UI + WebDAV): `127.0.0.1:61007`
+  - Filebrowser Quantum: `127.0.0.1:<web-port>`
+  - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - wg-easy WireGuard: yalnız UDP
   - qBittorrent peer: TCP + UDP (aynı `QBIT_PUBLIC_PORT`; 2026-08-06, R12 revize)

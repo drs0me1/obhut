@@ -35,8 +35,7 @@ state. Treat every change as production-infrastructure work.
   only: run the installer, `sudo`, mutating `systemctl`/`docker`, firewall
   changes, wipes, and reboots without per-turn approval. Answer installer
   prompts automatically — defaults, `E` for confirmations, `12345test` for
-  the file-share (copyparty UI+WebDAV) password — and report what was answered.
-  Non-default config
+  the WebDAV password — and report what was answered. Non-default config
   values still need the user.
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
   and wait; it expires if left unused.

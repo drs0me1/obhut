@@ -1,11 +1,10 @@
 # Debian Server Installer (v2)
 
 Lean Bash installer for a fresh **Debian 13 (trixie)** host: Tailscale exit
-node, fixed Docker Compose bundle (copyparty UI+WebDAV on loopback), host
-dnsmasq + Caddy on the tailnet, and a persistent firewall. No reconcile
-engine.
+node, fixed Docker Compose bundle (including loopback WebDAV), host dnsmasq
++ Caddy on the tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-52` (see `v2/install.sh`).
+**Current version:** `2026.08.06-v2-50` (see `v2/install.sh`).
 
 Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
 Layout and data flow: [`docs/v2-architecture.md`](docs/v2-architecture.md).  
@@ -44,10 +43,11 @@ v2/
 | Service | Exposure | Role |
 |---------|----------|------|
 | Portainer | loopback → Caddy | Docker UI |
-| copyparty | loopback → Caddy | media tree UI + WebDAV (Infuse) |
+| FileBrowser | loopback → Caddy | media tree UI |
 | qBittorrent | loopback UI + public peer TCP/UDP | torrents |
 | Unpackerr | none | archive extraction |
 | wg-easy | loopback UI + public WireGuard UDP | VPN |
+| WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; firewall
 (`DOCKER-USER` + custom chains) for Tailscale, the two public peer ports,

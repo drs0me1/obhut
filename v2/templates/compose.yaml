@@ -12,9 +12,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
 
-  copyparty:
-    image: __COPYPARTY_IMAGE__
-    container_name: copyparty
+  filebrowser:
+    image: __FILEBROWSER_IMAGE__
+    container_name: filebrowser
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     security_opt:
@@ -24,27 +24,18 @@ services:
     read_only: true
     environment:
       TZ: __TIMEZONE__
-      PYTHONUNBUFFERED: "1"
-    # UI + WebDAV aynı süreç/port (DD-89). Host publish yalnız loopback;
-    # Caddy file.* / webdav.* / bare TS IP buraya reverse_proxy eder.
+      FILEBROWSER_CONFIG: /config.yaml
+      FILEBROWSER_DATABASE: /home/filebrowser/data/database.db
     ports:
-      - "127.0.0.1:__COPYPARTY_UI_PORT__:3923"
+      - "127.0.0.1:__FILEBROWSER_UI_PORT__:80"
     volumes:
-      - __DOWNLOADS_PATH__:/w
-      - __COPYPARTY_CONFIG_FILE__:/cfg/copyparty.conf:ro
-      - copyparty_data:/cfg/data
+      # Panel kökü = host /downloads (tümü)
+      - __DOWNLOADS_PATH__:/data
+      - __QUANTUM_CONFIG_FILE__:/config.yaml:ro
+      - filebrowser_data:/home/filebrowser/data
     tmpfs:
       - /tmp
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "wget --spider -q 127.0.0.1:3923/?reset=/._"
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-      start_interval: 5s
-    stop_grace_period: 15s
+      - /home/filebrowser/tmp
 
   qbittorrent:
     image: __QBITTORRENT_IMAGE__
@@ -100,6 +91,46 @@ services:
       - /tmp
     stop_grace_period: 30s
 
+  webdav:
+    image: __RCLONE_IMAGE__
+    container_name: webdav
+    restart: unless-stopped
+    # htpasswd host'ta 0600 root:root; konteyner root okur, cap_drop ALL.
+    user: "0:0"
+    command:
+      - serve
+      - webdav
+      - /downloads
+      - --config=/dev/null
+      - --addr=:8080
+      - --htpasswd=/run/secrets/webdav_htpasswd
+      - --dir-cache-time=1m
+      - --read-only
+    # 401 = rclone ayakta + htpasswd zorunlu; kimlik bilgisi gerekmez.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -q -S -O /dev/null http://127.0.0.1:8080/ 2>&1 | grep -q '401'"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 5s
+    ports:
+      - "127.0.0.1:__WEBDAV_PORT__:8080"
+    volumes:
+      - __DOWNLOADS_PATH__:/downloads:ro
+      - __WEBDAV_HTPASSWD_FILE__:/run/secrets/webdav_htpasswd:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - webdav
+
   wg-easy:
     image: __WG_EASY_IMAGE__
     container_name: wg-easy
@@ -150,9 +181,14 @@ networks:
       config:
         - subnet: __WG_BRIDGE_SUBNET__
         - subnet: __WG_BRIDGE_SUBNET6__
+  # Yalnız WebDAV; Caddy host loopback publish ile erişir (wg / docker_default yok).
+  # internal:true host port publish'i düşürür — kullanılmaz (DD-82).
+  webdav:
+    name: webdav
+    driver: bridge
 
 volumes:
   portainer_data:
-  copyparty_data:
+  filebrowser_data:
   qbit_config:
   wg_easy_data:
