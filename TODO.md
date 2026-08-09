@@ -242,6 +242,10 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-40: host WebDAV migration cleanup (2026-08-09, DD-79).** Purge
+      Debian rclone, `master-webdav` user/group, and downloads ACL.
+- [x] **v2-39: WebDAV rclone image → 1.74.4 (2026-08-09).** Replaces
+      stale `1.69.1` pin with current stable tag.
 - [x] **v2-38: Caddy WebDAV TS-IP alias for Apple TV Infuse (2026-08-09,
       DD-78).** MagicDNS-less clients use `http://<ts-ipv4>/` port 80;
       Compose remains loopback.

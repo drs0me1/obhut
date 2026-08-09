@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-40: finish host WebDAV migration cleanup
+
+- **Added:** `purge_host_webdav_leftovers` in Stage 4 — removes host unit /
+  sbin / `webdav.env`, `master-webdav` user/group, `/downloads` ACL entries
+  for that user, and `apt-get purge` of the Debian `rclone` package
+  (**DD-79**). Idempotent; does not touch Compose rclone.
+- **Verified live on `nrm`:** package/user/ACL gone; webdav container still
+  `401` on loopback/Caddy/bare-IP.
+
+### 2026-08-09 — v2-39: bump WebDAV rclone image to 1.74.4
+
+- **Changed:** `RCLONE_IMAGE` from `rclone/rclone:1.69.1` (2025-02) to
+  `rclone/rclone:1.74.4@sha256:c61954aa…` (stable 2026-07-08, digest-pinned).
+  Compose still loopback-only. Live `nrm`: pull + recreate → rclone
+  v1.74.4; loopback/Caddy/bare-IP `401`.
+
 ### 2026-08-09 — v2-38: Caddy WebDAV alias for bare Tailscale IPv4
 
 - **Added:** Caddy site

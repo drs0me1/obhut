@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-38"
+V2_VERSION="2026.08.06-v2-40"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -521,11 +521,53 @@ EOF
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl disable --now watch-tailnet-addr.service 2>/dev/null || true
-    systemctl disable --now master-webdav.service 2>/dev/null || true
     rm -f "$UNIT_DIR/watch-tailnet-addr.service" "$SBIN_DIR/watch-tailnet-addr"
+    purge_host_webdav_leftovers
+    systemctl daemon-reload
+}
+
+purge_host_webdav_leftovers() {
+    local user="master-webdav"
+
+    systemctl disable --now master-webdav.service 2>/dev/null || true
     rm -f "$UNIT_DIR/master-webdav.service" "$SBIN_DIR/master-webdav"
     rm -f "${WEBDAV_ENV_FILE:-/etc/master-stack/webdav.env}"
-    systemctl daemon-reload
+
+    if [[ -d "${DOWNLOADS_PATH:-}" ]]; then
+        if ! command -v setfacl >/dev/null 2>&1 &&
+            getent passwd "$user" >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y acl >/dev/null || true
+        fi
+        if command -v setfacl >/dev/null 2>&1; then
+            setfacl -R -x "u:${user}" "$DOWNLOADS_PATH" 2>/dev/null || true
+            setfacl -R -x "d:u:${user}" "$DOWNLOADS_PATH" 2>/dev/null || true
+        else
+            log WARN "setfacl yok; ${user} ACL kalıntısı temizlenemedi"
+        fi
+    fi
+
+    if getent passwd "$user" >/dev/null 2>&1; then
+        if userdel "$user" 2>/dev/null; then
+            log INFO "host WebDAV kullanıcısı kaldırıldı: ${user}"
+        else
+            log WARN "host WebDAV kullanıcısı silinemedi: ${user}"
+        fi
+    fi
+    if getent group "$user" >/dev/null 2>&1; then
+        groupdel "$user" 2>/dev/null || true
+    fi
+
+    if dpkg-query -W -f='${Status}' rclone 2>/dev/null |
+        grep -q 'install ok installed'; then
+        export DEBIAN_FRONTEND=noninteractive
+        if apt-get purge -y rclone >/dev/null; then
+            log INFO "host rclone paketi kaldırıldı"
+            apt-get autoremove -y >/dev/null || true
+        else
+            log WARN "host rclone paketi kaldırılamadı"
+        fi
+    fi
 }
 
 stage_5() {

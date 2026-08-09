@@ -160,7 +160,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | The end-of-install warning conveys the same information without a recurring authentication attempt. |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
-| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). Re-runs disable and remove leftovers. |
+| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). Re-runs call `purge_host_webdav_leftovers` (**DD-79**): unit/sbin/env, `master-webdav` user/group, downloads ACL, `apt-get purge rclone`. |
 | **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains are re-established by Docker; v2 re-applies only its own chain. |
 | **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
 | **The 25-flag reconcile `--check` surface** | — | Replaced by a small set of checks with one owner each. |

@@ -3565,6 +3565,19 @@ separate document with its own numbering.
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
 
+### DD-79: Host WebDAV leftovers are purged on every Stage 4 (2026-08-09)
+
+- **Decision:** After Compose WebDAV (**DD-77**), Stage 4 calls
+  `purge_host_webdav_leftovers` to remove the host unit/script/`webdav.env`,
+  the dedicated `master-webdav` user/group, `u:master-webdav` ACL entries
+  under `DOWNLOADS_PATH`, and the Debian `rclone` package (`apt-get purge`).
+- **Why:** v2-37 stopped *installing* those artifacts but left them on
+  upgraded hosts; contract and GPT re-audit required a real cleanup. Scoped
+  to the known v1/v2 identity (`master-webdav` + package name `rclone`) —
+  no broad user wipe.
+- **Safety:** Idempotent; Compose image rclone is untouched; `setfacl`
+  installed only if the user still exists and the tool is missing.
+
 ### DD-78: Caddy WebDAV site aliases the Tailscale IPv4 (2026-08-09)
 
 - **Decision:** The Caddyfile WebDAV site is

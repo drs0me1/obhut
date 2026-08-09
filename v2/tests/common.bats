@@ -388,6 +388,9 @@ EOF
 @test "webdav compose service is loopback rclone with htpasswd" {
     grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
     grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_IMAGE="rclone/rclone:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -q 'rclone/rclone:1.74.4@sha256:' "$V2_ROOT/config/defaults.env"
     grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
     grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
@@ -398,8 +401,12 @@ EOF
         "$V2_ROOT/templates/Caddyfile"
     ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
         "$V2_ROOT/templates/Caddyfile"
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'disable --now master-webdav.service'
+    grep -q 'purge_host_webdav_leftovers' "$V2_ROOT/install.sh"
+    grep -q 'disable --now master-webdav.service' "$V2_ROOT/install.sh"
+    grep -q 'apt-get purge -y rclone' "$V2_ROOT/install.sh"
+    grep -q 'userdel "$user"' "$V2_ROOT/install.sh"
+    grep -q 'setfacl -R -x' "$V2_ROOT/install.sh"
+    ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
 }
 
 @test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
@@ -527,9 +534,10 @@ EOF
 
 @test "base packages include htpasswd helpers" {
     grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
-    ! grep -qE 'apache2-utils dnsutils acl|apt-get install -y.*\bacl\b' \
-        "$V2_ROOT/install.sh"
-    ! grep -qE '\brclone\b' "$V2_ROOT/install.sh"
+    ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
+    # acl may be installed only as a migration helper inside the purge path.
+    ! awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh" |
+        grep -qE '\bacl\b'
 }
 
 @test "export-v2 embeds archive sha256 and stages remote extract" {
