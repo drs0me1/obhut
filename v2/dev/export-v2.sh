@@ -49,18 +49,23 @@ cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
 tgz="$tmpdir/v2.tgz"
-echo "==> Paketleniyor: v2/ runtime (v$V2_VERSION)"
+stage="$tmpdir/src"
+mkdir -p "$stage"
+echo "==> Paketleniyor: v2/ runtime (v$V2_VERSION) [deterministik]"
+# Repo'yu kirletmeden sabit mtime + gzip -n → aynı kaynak = aynı ARCHIVE_SHA256.
+rsync -a \
+    --exclude='.cursor/' \
+    --exclude='dev/' \
+    --exclude='tests/' \
+    --exclude='dist/' \
+    --exclude='app/' \
+    --exclude='._*' \
+    --exclude='.DS_Store' \
+    "$V2_ROOT/" "$stage/v2/"
+find "$stage" -exec touch -t 197001010000 {} +
 (
-    cd -- "$REPO_ROOT" || exit 1
-    COPYFILE_DISABLE=1 tar -czf "$tgz" \
-        --exclude='._*' \
-        --exclude='.DS_Store' \
-        --exclude='v2/.cursor' \
-        --exclude='v2/dev' \
-        --exclude='v2/tests' \
-        --exclude='v2/dist' \
-        --exclude='v2/app' \
-        v2
+    cd -- "$stage" || exit 1
+    COPYFILE_DISABLE=1 tar -cf - v2 | gzip -n >"$tgz"
 )
 
 ARCHIVE_SHA256="$(file_sha256 "$tgz")"
@@ -75,7 +80,8 @@ fold -w 76 "$b64" >"$b64.folded"
 mv "$b64.folded" "$b64"
 
 mkdir -p "$(dirname -- "$OUT_PATH")"
-built_at="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+# Duvar saati .command hash'ini kirletmesin; sürüm kimliği yeterli.
+built_at="reproducible/${V2_VERSION}"
 
 {
     cat <<'HEADER_END'

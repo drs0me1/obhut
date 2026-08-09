@@ -128,7 +128,9 @@ render_template() {
     shift 3
     [[ -f "$src" ]] || die "şablon yok: $src"
     local content key value
-    content="$(cat -- "$src")"
+    # $(...) sondaki newline'ları siler; şablonun fmt/EOF newline'ını koru.
+    content="$(cat -- "$src"; printf x)"
+    content="${content%x}"
     for pair in "$@"; do
         key="${pair%%=*}"
         value="${pair#*=}"

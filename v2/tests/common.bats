@@ -113,6 +113,12 @@ EOF
     [ "$status" -ne 0 ]
 }
 
+@test "render_template preserves trailing newline" {
+    printf 'v=__V__\n' >"$TMP/t"
+    render_template "$TMP/t" "$TMP/o" 0644 V=ok
+    [[ "$(tail -c1 "$TMP/o" | wc -l | tr -d ' ')" == "1" ]]
+}
+
 @test "render_template keeps ampersand and slash in values" {
     printf 'v=__V__\n' >"$TMP/t"
     render_template "$TMP/t" "$TMP/o" 0644 'V=/a/b&c'
@@ -191,7 +197,12 @@ EOF
 @test "downloads tree is chown 1000 for qbit filebrowser unpackerr" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
-    grep -q 'chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}"' "$V2_ROOT/install.sh"
+    grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
+    grep -q 'chown -h' "$V2_ROOT/install.sh"
+    grep -q '! -uid' "$V2_ROOT/install.sh"
+    grep -q '! -perm 0775' "$V2_ROOT/install.sh"
+    grep -q '! -perm 0664' "$V2_ROOT/install.sh"
+    ! grep -q 'chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}"' "$V2_ROOT/install.sh"
     grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
         "$V2_ROOT/templates/compose.yaml"
 }
@@ -300,6 +311,10 @@ EOF
     grep -q 'WantedBy=timers.target' \
         "$V2_ROOT/systemd/refresh-tailnet-config.timer"
     grep -q 'refresh-tailnet-config.timer' "$V2_ROOT/install.sh"
+    # Unit= already names the oneshot; Requires= is redundant and couples
+    # timer activation to service start failure modes.
+    ! grep -q 'Requires=refresh-tailnet-config.service' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.timer"
 }
 
 @test "MASTER-INPUT accepts the Tailscale UDP port on its own" {
@@ -538,6 +553,9 @@ EOF
     grep -q 'SSH_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-solicitation -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-advertisement -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'packet-too-big -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    # Helper does not consume WAN_IPV4 (endpoint hint stays in state.env).
+    ! grep -q 'WAN_IPV4' "$V2_ROOT/scripts/firewall.sh"
     # IPv6 Tailscale UDP must be checked, not only IPv4.
     grep -c 'TAILSCALE_UDP_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" |
         grep -q '^[2-9]'
@@ -594,6 +612,9 @@ EOF
     ! grep -qE '\.sha256"|Sidecar' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'dsi-v2-extract' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'staging/v2' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'gzip -n' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'touch -t 197001010000' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'reproducible/${V2_VERSION}' "$V2_ROOT/dev/export-v2.sh"
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {

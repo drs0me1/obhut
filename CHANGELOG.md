@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-45: selective downloads repair + P3 hygiene
+
+- **Changed:** Stage 3 only repairs mismatched UID/GID/mode under
+  downloads (`chown -h`, selective `chmod`) — no full-tree rewrite
+  (**DD-84**).
+- **Changed (P3):** refresh timer drops `Requires=`; wait/refresh comments
+  no longer imply host WebDAV; Caddyfile `caddy fmt`-aligned; firewall
+  drops unused `WAN_IPV4` and checks IPv6 `packet-too-big`; export uses
+  epoch mtimes + `gzip -n` and stable `PORTABLE_BUILT_AT`.
+  `render_template` keeps trailing newlines so `caddy fmt` stays clean.
+- **Skipped:** Stage 7 WG listen/CGNAT checks (manual ops).
+
 ### 2026-08-09 — v2-44: pin all Compose images to tag@digest
 
 - **Changed:** Replace floating `lts` / `stable` / `latest` (and unpinned

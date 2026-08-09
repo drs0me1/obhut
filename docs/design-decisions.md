@@ -3292,8 +3292,9 @@ separate document with its own numbering.
   shared R/W setup rather than a warning-only path.
 - **Rationale:** One host identity shared by the three writers avoids ACL
   sprawl; WebDAV stays a separate read-only host user.
-- **Trade-off:** Re-runs rewrite ownership/mode on the whole tree (can be
-  slow on huge libraries; overrides prior custom ownership).
+- **Trade-off:** Custom ownership/modes under downloads are still
+  normalized toward the stack identity when they diverge. As of **DD-84**,
+  matching entries are left untouched (no full-tree rewrite every re-run).
 
 ### DD-68: Stage 7 covers the cheap contract §14 checks (2026-08-07)
 
@@ -3565,6 +3566,24 @@ separate document with its own numbering.
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
 
+### DD-84: Selective downloads ownership repair + P3 hygiene (2026-08-09)
+
+- **Decision (chown):** Stage 3 `ensure_downloads_tree` only `chown -h` /
+  `chmod`s entries whose UID/GID or mode already diverge from
+  `${DOWNLOADS_UID}:${DOWNLOADS_GID}` / `0775` dirs / `0664` files. No
+  unconditional `chown -R`. Symlink targets are not rewritten (`-h`).
+- **Decision (P3):** Drop timer `Requires=` (Unit= is enough); strip stale
+  host-WebDAV wording from wait/refresh helpers; Caddyfile matches
+  `caddy fmt`; firewall helper drops unused `WAN_IPV4` and `--check`s
+  IPv6 `packet-too-big`; export builds a deterministic tarball (`touch`
+  epoch + `gzip -n`, stable `PORTABLE_BUILT_AT`). `render_template`
+  preserves trailing newlines (so `caddy fmt` stays clean).
+- **Why:** Large media trees made every re-run pay a full rewrite; P3 items
+  were low-risk noise that dirtied exports and docs without changing
+  intent. WG Stage 7 listen/CGNAT checks stay out — operator tracks
+  manually.
+- **Not doing:** automatic image pull; Watchtower; WG endpoint Stage 7.
+
 ### DD-83: Compose images are tag@digest pins, not floating tags (2026-08-09)
 
 - **Decision:** Every Compose image in `defaults.env` is a concrete
@@ -3678,5 +3697,5 @@ separate document with its own numbering.
   set `COMPOSE_NEEDS_UP` for no container benefit. Literal `1000` in the
   template duplicated `defaults.env`. Path charset closes obvious
   injection/traversal shapes without a full path sandbox.
-- **Deferred:** media-tree chown/chmod narrowing; Stage 7 WG listen /
-  CGNAT warnings (operator: container already listens; skip for now).
+- **Follow-up:** media-tree chown/chmod narrowing done in **DD-84**.
+  Stage 7 WG listen / CGNAT warnings remain deferred (operator-tracked).

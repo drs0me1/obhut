@@ -2,9 +2,7 @@
 # tailscale0 üzerinde global bir IPv4 belirene kadar bekler.
 #
 # Caddy'nin ExecStartPre'si olarak çalışır. Caddy adresin DEĞERİNİ
-# state.env'den okur; buradan yalnız "adres var mı" bilgisi gerekir. WebDAV
-# aynı beklemeyi kendi içinde yapar çünkü o, adresi rclone --addr'a geçirmek
-# için değerine ihtiyaç duyar — bu yüzden ikisi ayrı kalır (DD-72).
+# state.env'den okur; buradan yalnız "adres var mı" bilgisi gerekir.
 #
 # Süre dolarsa 1 döner; unit StartLimit ile görünür biçimde failed olur.
 # Sessiz sonsuz restart döngüsü kabul edilebilir bir sonuç değildir.

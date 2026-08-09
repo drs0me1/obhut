@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-44"
+V2_VERSION="2026.08.06-v2-45"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -420,6 +420,15 @@ EOF
     done
 }
 
+ensure_downloads_tree() {
+    local root="$1" uid="$2" gid="$3"
+    [[ -d "$root" ]] || die "downloads dizini yok: $root"
+    find "$root" \( ! -uid "$uid" -o ! -gid "$gid" \) \
+        -exec chown -h "${uid}:${gid}" {} +
+    find "$root" -type d ! -perm 0775 -exec chmod 0775 {} +
+    find "$root" -type f ! -perm 0664 -exec chmod 0664 {} +
+}
+
 stage_3() {
     log INFO "Aşama 3/7 — adresler ve dizinler"
     detect_wan
@@ -436,10 +445,8 @@ stage_3() {
         "$DOWNLOADS_PATH/.unpackerr"; do
         mkdir -p "$d"
     done
-    chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$DOWNLOADS_PATH"
-    find "$DOWNLOADS_PATH" -type d -exec chmod 0775 {} +
-    find "$DOWNLOADS_PATH" -type f -exec chmod 0664 {} +
-    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (qBit/FileBrowser/Unpackerr R/W)"
+    ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
+    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; qBit/FileBrowser/Unpackerr R/W)"
 }
 
 stage_4() {

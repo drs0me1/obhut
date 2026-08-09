@@ -32,7 +32,6 @@ if [[ -n "${DEFAULTS_FILE:-}" && -r "$DEFAULTS_FILE" ]]; then
 fi
 
 : "${WAN_INTERFACE:?}"
-: "${WAN_IPV4:=}"
 : "${TAILSCALE_IF:?}"
 : "${CHAIN_INPUT:?}"
 : "${CHAIN_DOCKER:?}"
@@ -358,6 +357,8 @@ if [[ "$MODE" == check ]]; then
         -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
+    check_rule ip6tables "$CHAIN_INPUT" \
+        -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
 
     if docker_user_present iptables; then
         check_jump_exactly_one iptables DOCKER-USER "$CHAIN_DOCKER"

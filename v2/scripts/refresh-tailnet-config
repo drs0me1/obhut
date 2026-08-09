@@ -54,7 +54,7 @@ restart_bound_units() {
 
 recover_failed_bound_units() {
     # Adres değişmediği hâlde unit failed kalmış olabilir: adres geç geldiği
-    # için başlangıçta bind edememiş olan Caddy/WebDAV bu durumda kalır ve
+    # için başlangıçta bind edememiş olan Caddy bu durumda kalır ve
     # kendiliğinden dönmez. Zaten çalışan 5 dk'lık timer kurtarma yolu olur;
     # yeni bir watcher veya timer eklenmez.
     local unit

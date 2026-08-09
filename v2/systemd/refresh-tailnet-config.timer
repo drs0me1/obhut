@@ -1,6 +1,5 @@
 [Unit]
 Description=Periodic Tailscale address refresh for master-stack
-Requires=refresh-tailnet-config.service
 
 [Timer]
 OnBootSec=2min

@@ -242,6 +242,10 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-45: selective downloads chown/chmod + P3 hygiene (2026-08-09,
+      DD-84).** `ensure_downloads_tree`; timer Requires= removed; Caddy fmt;
+      firewall WAN_IPV4 unused + packet-too-big check; deterministic export.
+      WG Stage 7 checks skipped (manual).
 - [x] **v2-44: digest-pin all Compose images (2026-08-09, DD-83).** Drop
       `lts`/`stable`/`latest`; pin Portainer/FileBrowser/qBit/wg-easy/
       unpackerr/rclone to live nrm tag@sha256. No auto-updater.

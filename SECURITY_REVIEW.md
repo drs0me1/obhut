@@ -1500,6 +1500,7 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-09 | User (apply #7 chown + #10 P3; skip #8 WG Stage 7) + Cursor (`v2-45`, DD-84) | Downloads repair + hygiene | **Selective `chown -h`/chmod on drift only. Timer Requires= gone; Caddy fmt; firewall unused WAN_IPV4 removed + packet-too-big checked; deterministic export. WG listen/CGNAT Stage 7 not added.** |
 | 2026-08-09 | User (pin floating Compose tags to live digests) + Cursor (`v2-44`, DD-83) | Image reproducibility | **All six Compose images are `tag@sha256` from live nrm; `latest`/`stable`/`lts` removed. No Watchtower; updates = explicit pin bump + acceptance.** |
 | 2026-08-09 | User (healthcheck then dedicated net; reject wg attach) + Cursor (`v2-43`, DD-82) | WebDAV health + network isolation | **Compose healthcheck = local unauthenticated 401. Service on named bridge `webdav` only (not `wg` / not project default; not `internal` — that dropped host port publish on Docker 29). Caddy→loopback kept. No memory/pids limits this pass. Stage 7 waits healthy + asserts network membership.** |
 | 2026-08-09 | User (approved P1 #4) + Cursor (`v2-42`, DD-81) | Stage 7 WebDAV read-only proof | **Removed unauthenticated PUT accepting 401. Asserts Cmd `--read-only`, ReadonlyRootfs, `/downloads` RW=false via docker inspect.** |
