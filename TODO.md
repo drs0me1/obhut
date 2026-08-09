@@ -242,6 +242,14 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-43: WebDAV healthcheck + dedicated `webdav` network (2026-08-09,
+      DD-82).** Unauthenticated `401` healthcheck; named bridge `webdav`
+      only (not `wg`, not `internal` — host publish); Caddy loopback kept;
+      no memory limits.
+- [x] **v2-42: Stage 7 WebDAV read-only inspect invariants (2026-08-09,
+      DD-81).** Replaces unauthenticated PUT/`401` false positive.
+- [x] **v2-41: refresh-tailnet `tailscale wait` before IP read (2026-08-09,
+      DD-80).** Closes early WantedBy=tailscaled soft-skip race; timer kept.
 - [x] **v2-40: host WebDAV migration cleanup (2026-08-09, DD-79).** Purge
       Debian rclone, `master-webdav` user/group, and downloads ACL.
 - [x] **v2-39: WebDAV rclone image → 1.74.4 (2026-08-09).** Replaces

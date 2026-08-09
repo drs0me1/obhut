@@ -1500,6 +1500,9 @@ remains the only open finding.
 
 | Date | Reviewer | Scope | Result |
 |------|----------|-------|--------|
+| 2026-08-09 | User (healthcheck then dedicated net; reject wg attach) + Cursor (`v2-43`, DD-82) | WebDAV health + network isolation | **Compose healthcheck = local unauthenticated 401. Service on named bridge `webdav` only (not `wg` / not project default; not `internal` — that dropped host port publish on Docker 29). Caddy→loopback kept. No memory/pids limits this pass. Stage 7 waits healthy + asserts network membership.** |
+| 2026-08-09 | User (approved P1 #4) + Cursor (`v2-42`, DD-81) | Stage 7 WebDAV read-only proof | **Removed unauthenticated PUT accepting 401. Asserts Cmd `--read-only`, ReadonlyRootfs, `/downloads` RW=false via docker inspect.** |
+| 2026-08-09 | User (identified early refresh soft-skip) + Cursor (`v2-41`, DD-80) | refresh-tailnet vs tailscaled race | **`tailscale wait --timeout=120s` before address read; TimeoutStartSec=150s; timer remains fallback. Soft-skip only after wait timeout or missing IP.** |
 | 2026-08-09 | User (approved migration cleanup) + Cursor (`v2-40`, DD-79) | Host WebDAV leftovers | **Stage 4 purges Debian `rclone`, `master-webdav` user/group, and `u:master-webdav` ACL on downloads. Unit/sbin/env already removed. Live nrm cleaned; Compose webdav unaffected.** |
 | 2026-08-09 | User (approved rclone image bump first) + Cursor (`v2-39`) | WebDAV rclone pin | **`RCLONE_IMAGE` → `rclone/rclone:1.74.4` (stable 2026-07-08). Loopback Compose + Caddy model unchanged.** |
 | 2026-08-09 | User (Apple TV MagicDNS gap; approved Caddy alias) + Cursor (`v2-38`, DD-78) | WebDAV without MagicDNS | **Caddyfile aliases `{$TAILSCALE_IPV4}` onto the WebDAV site; Compose stays `127.0.0.1`. Bare TS IP:80 → WebDAV; named `*.domain` sites unchanged. Trade-off: bare IP is WebDAV-only.** |

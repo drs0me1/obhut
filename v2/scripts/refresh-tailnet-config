@@ -18,6 +18,9 @@ source "$STATE_FILE"
 : "${TAILSCALE_IF:=tailscale0}"
 
 BOUND_UNITS="caddy.service"
+# WantedBy=tailscaled tetiklemesi süreç start'ı ile gelir; IP henüz yok olabilir.
+# tailscale wait (1.90+) backend + arayüz + IP hazır olana kadar bekler.
+WAIT_TIMEOUT="${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}"
 
 warn_if_tailnet_unusable() {
     # Node tailnet'ten silinirse arayüzdeki adres bir süre durur: her unit
@@ -63,6 +66,24 @@ recover_failed_bound_units() {
         fi
     done
 }
+
+wait_for_tailscale_ready() {
+    command -v tailscale >/dev/null 2>&1 || return 0
+    if ! tailscale wait --help >/dev/null 2>&1; then
+        printf 'refresh-tailnet: tailscale wait yok; IP yoksa soft-skip\n' >&2
+        return 0
+    fi
+    if tailscale wait --timeout="$WAIT_TIMEOUT"; then
+        return 0
+    fi
+    printf 'refresh-tailnet: tailscale wait zaman aşımı (%s); atlanıyor\n' \
+        "$WAIT_TIMEOUT" >&2
+    return 1
+}
+
+if ! wait_for_tailscale_ready; then
+    exit 0
+fi
 
 warn_if_tailnet_unusable
 

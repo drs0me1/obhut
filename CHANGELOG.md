@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-43: WebDAV healthcheck + dedicated `webdav` network
+
+- **Added:** Compose `webdav` healthcheck — unauthenticated `wget` must see
+  HTTP `401` (auth gate up; no credentials in the probe) (**DD-82**).
+- **Changed:** `webdav` joins only the named bridge `webdav`, not
+  `docker_default` and not `wg`. Not `internal` — that dropped host port
+  publish on live Docker 29. Host Caddy → `127.0.0.1:WEBDAV_PORT`
+  path unchanged (Infuse / MagicDNS). No memory/pids limits.
+- **Added:** Stage 7 `wait_webdav_healthy` + `assert_webdav_network`.
+
+### 2026-08-09 — v2-42: Stage 7 WebDAV read-only via container inspect
+
+- **Fixed:** Stage 7 no longer treats an unauthenticated PUT `401` as proof
+  of read-only. It asserts Compose runtime invariants: Cmd contains
+  `--read-only`, `ReadonlyRootfs=true`, `/downloads` mount `RW=false`
+  (**DD-81**). Auth still checked separately via loopback/Caddy/bare-IP
+  `401`.
+
+### 2026-08-09 — v2-41: refresh-tailnet waits for Tailscale IP
+
+- **Fixed:** `refresh-tailnet-config` now runs `tailscale wait --timeout=120s`
+  before reading `tailscale0` addresses (**DD-80**). `WantedBy=tailscaled`
+  used to fire while BackendState was still `NoState`, soft-skip, and rely
+  only on the 5-minute timer. Unit gains `TimeoutStartSec=150s`. Timer kept
+  as fallback.
+
 ### 2026-08-09 — v2-40: finish host WebDAV migration cleanup
 
 - **Added:** `purge_host_webdav_leftovers` in Stage 4 — removes host unit /

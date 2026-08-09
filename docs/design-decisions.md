@@ -3565,6 +3565,53 @@ separate document with its own numbering.
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
 
+### DD-82: WebDAV healthcheck and isolated `webdav` network (2026-08-09)
+
+- **Decision:** Compose `webdav` gets a Docker healthcheck that treats an
+  unauthenticated local `401` as healthy, and attaches only to a named
+  bridge `webdav` (not `internal`). It does **not** join `wg` or the
+  project default network. Caddy keeps proxying via host loopback publish.
+  No memory or pids limits on this service.
+- **Why:** Health makes Compose/`docker compose ps` report real readiness
+  without embedding credentials. A dedicated network removes lateral
+  reachability from Portainer/qBit/FileBrowser on `docker_default` without
+  opening WireGuard-peer bypass of Caddy/Tailscale (which attaching to
+  `wg` would allow for peers with `AllowedIPs 0.0.0.0/0`).
+- **Not `internal: true`:** On Docker 29 / compose here, a container that
+  only joins an `internal` network drops host port bindings
+  (`NetworkSettings.Ports` empty → loopback `000`). Live nrm failed Stage 7
+  that way; non-internal named bridge restores `127.0.0.1:WEBDAV_PORT`
+  while keeping service isolation from `docker_default`.
+- **Not doing:** publishing WebDAV on `wg`; memory ceilings (deferred /
+  declined for this pass).
+
+### DD-81: Stage 7 proves WebDAV read-only via inspect, not PUT 401 (2026-08-09)
+
+- **Decision:** `assert_webdav_readonly_runtime` checks the running
+  `webdav` container: `Config.Cmd` contains `--read-only`,
+  `HostConfig.ReadonlyRootfs` is true, and the `/downloads` mount has
+  `RW=false`. Unauthenticated HTTP PUT is not used as a read-only proof.
+- **Why:** A credential-less PUT returns `401` even if the serve were
+  writable; that only proved auth. Secrets-free install-time proof belongs
+  on Compose/runtime configuration, not on a confused HTTP status set.
+- **Still separate:** loopback / Caddy / bare-IP unauthenticated `401`
+  checks remain for the auth surface.
+
+### DD-80: `refresh-tailnet-config` waits with `tailscale wait` (2026-08-09)
+
+- **Decision:** Before reading `tailscale0` addresses, the helper runs
+  `tailscale wait --timeout=${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}` when the
+  CLI supports it. On timeout it soft-exits 0 (timer retries). The unit sets
+  `TimeoutStartSec=150s` so systemd does not kill the wait. The 5-minute
+  timer and `WantedBy=tailscaled` both stay.
+- **Why:** `WantedBy=tailscaled` fires when the daemon process starts, not
+  when the interface has an IP. Live logs showed `BackendState=NoState` and
+  immediate “IPv4 yok; atlanıyor”, deferring recovery to the timer.
+  `tailscale wait` (supported on host 1.102.2) is the upstream tool for
+  “backend running + interface + IP”.
+- **Not doing:** removing the timer; infinite wait (`--timeout=0`); coupling
+  Compose/WebDAV to this path.
+
 ### DD-79: Host WebDAV leftovers are purged on every Stage 4 (2026-08-09)
 
 - **Decision:** After Compose WebDAV (**DD-77**), Stage 4 calls

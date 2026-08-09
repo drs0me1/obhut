@@ -643,7 +643,9 @@ A v2 run is successful when every one of these holds on the target host.
 15. An unauthenticated request to loopback and via Caddy returns `401`.
 16. A `PROPFIND` with valid credentials succeeds through Caddy.
 17. `/downloads/media`, `…/movies` and `…/series` are listable.
-18. A write attempt (`PUT`/`MKCOL`/`DELETE`) is refused.
+18. Install-time: running container has Cmd `--read-only`,
+    `ReadonlyRootfs=true`, and `/downloads` mount `RW=false` (**DD-81**).
+    Authenticated write refusal remains a live/manual check.
 19. Infuse path is `http://webdav.${LOCAL_DOMAIN}` only.
 
 ### WebDAV credential handling (§6.2, §6.4)

@@ -350,6 +350,21 @@ EOF
     grep -q 'atlanıyor' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
+@test "refresh-tailnet waits for tailscale IP before reading state" {
+    grep -q 'tailscale wait --timeout=' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'wait_for_tailscale_ready' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'REFRESH_TAILNET_WAIT_TIMEOUT=120s' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.service"
+    grep -q 'TimeoutStartSec=150s' \
+        "$V2_ROOT/systemd/refresh-tailnet-config.service"
+    # Soft-skip after wait failure must not fail the oneshot hard.
+    awk '/^wait_for_tailscale_ready/,/^warn_if_tailnet_unusable/' \
+        "$V2_ROOT/scripts/refresh-tailnet-config" |
+        grep -q 'return 1'
+    grep -q 'if ! wait_for_tailscale_ready; then' \
+        "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
 @test "udp netbuf floor is 16MiB and applied before tailscale install" {
     grep -q 'NET_BUF_FLOOR_BYTES=16777216' "$V2_ROOT/config/defaults.env"
     grep -q '99-master-stack-netbuf.conf' "$V2_ROOT/install.sh"
@@ -407,6 +422,39 @@ EOF
     grep -q 'userdel "$user"' "$V2_ROOT/install.sh"
     grep -q 'setfacl -R -x' "$V2_ROOT/install.sh"
     ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
+    grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
+        "$V2_ROOT/templates/compose.yaml"
+    grep -q "grep -q '401'" "$V2_ROOT/templates/compose.yaml"
+    awk '
+      /^  webdav:/ {in_webdav=1; next}
+      in_webdav && /^  [a-z]/ {in_webdav=0}
+      in_webdav && /healthcheck:/ {found=1}
+      END {exit found ? 0 : 1}
+    ' "$V2_ROOT/templates/compose.yaml"
+    awk '
+      /^  webdav:/ {in_webdav=1; next}
+      in_webdav && /^  [a-z]/ {in_webdav=0}
+      in_webdav && /mem_limit:|memory:|pids_limit:/ {bad=1}
+      END {exit bad ? 1 : 0}
+    ' "$V2_ROOT/templates/compose.yaml"
+    grep -qE '^[[:space:]]*- webdav$' "$V2_ROOT/templates/compose.yaml"
+    awk '
+      /^networks:/ {in_nets=1; next}
+      in_nets && /^[a-z]/ {in_nets=0}
+      in_nets && /^  webdav:/ {found=1}
+      in_nets && found && /name: webdav/ {named=1}
+      in_nets && found && /internal: true/ {bad=1}
+      END {exit (named && !bad) ? 0 : 1}
+    ' "$V2_ROOT/templates/compose.yaml"
+    ! awk '
+      /^  webdav:/ {in_webdav=1; next}
+      in_webdav && /^  [a-z]/ {in_webdav=0}
+      in_webdav && /networks:/ {in_nets=1; next}
+      in_webdav && in_nets && /^[[:space:]]+- wg$/ {bad=1}
+      END {exit bad ? 0 : 1}
+    ' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'wait_webdav_healthy' "$V2_ROOT/install.sh"
+    grep -q 'assert_webdav_network' "$V2_ROOT/install.sh"
 }
 
 @test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
@@ -554,7 +602,12 @@ EOF
     grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
     grep -q 'WebDAV TS-IP alias' "$V2_ROOT/install.sh"
     grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
-    grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
+    grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
+    grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
+    grep -q '/downloads false' "$V2_ROOT/install.sh"
+    ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
+    ! awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh" |
+        grep -qE '401\|403\|405'
     grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"

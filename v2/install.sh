@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-40"
+V2_VERSION="2026.08.06-v2-43"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -711,6 +711,53 @@ EOF
     fi
 }
 
+assert_webdav_readonly_runtime() {
+    local cmd rootfs mounts
+    cmd="$(docker inspect webdav --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
+    [[ "$cmd" == *"--read-only"* ]] ||
+        die "WebDAV komutunda --read-only yok"
+
+    rootfs="$(
+        docker inspect webdav --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true
+    )"
+    [[ "$rootfs" == "true" ]] ||
+        die "WebDAV root filesystem read-only değil (ReadonlyRootfs=$rootfs)"
+
+    mounts="$(
+        docker inspect webdav --format \
+            '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true
+    )"
+    grep -qx '/downloads false' <<<"$mounts" ||
+        die "WebDAV /downloads mount RW=false değil"
+}
+
+assert_webdav_network() {
+    local nets count
+    nets="$(
+        docker inspect webdav --format \
+            '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' \
+            2>/dev/null || true
+    )"
+    grep -qx 'webdav' <<<"$nets" || die "webdav konteyneri webdav ağına bağlı değil"
+    grep -qx 'wg' <<<"$nets" && die "webdav konteyneri wg ağına bağlı olmamalı"
+    count="$(grep -c . <<<"$nets" || true)"
+    [[ "$count" -eq 1 ]] || die "webdav beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
+}
+
+wait_webdav_healthy() {
+    local attempt status
+    for attempt in $(seq 1 36); do
+        status="$(
+            docker inspect webdav --format \
+                '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                2>/dev/null || echo missing
+        )"
+        [[ "$status" == "healthy" ]] && return 0
+        sleep 2
+    done
+    die "webdav healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
+}
+
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
     local need_up="$COMPOSE_NEEDS_UP" running=0 expected
@@ -732,6 +779,8 @@ stage_7() {
     else
         log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
     fi
+    wait_webdav_healthy
+    assert_webdav_network
     "$SBIN_DIR/master-firewall" --check
 
     local name resolver ans dig_out code health line svc
@@ -771,11 +820,7 @@ stage_7() {
     [[ "$code" == "401" ]] ||
         die "WebDAV TS-IP alias kimlik doğrulamasız yanıt $code (beklenen 401)"
 
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -X PUT --data 'v2-probe' \
-        "http://127.0.0.1:${WEBDAV_PORT}/.v2-write-probe" || true)"
-    [[ "$code" =~ ^(401|403|405)$ ]] ||
-        die "WebDAV yazma denemesi reddedilmedi (HTTP $code)"
+    assert_webdav_readonly_runtime
 
     (cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null |
         grep -q "${WG_PUBLIC_PORT}/udp" ||
@@ -837,7 +882,7 @@ qBittorrent varsayılan WebUI parolasını değiştir.
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
-Tailscale IP: refresh-tailnet-config (WantedBy=tailscaled + 5dk timer) → Caddy
+Tailscale IP: refresh-tailnet-config (tailscale wait + WantedBy=tailscaled + 5dk timer) → Caddy
 
 EOF
 }

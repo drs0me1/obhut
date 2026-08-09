@@ -106,6 +106,16 @@ services:
       - --htpasswd=/run/secrets/webdav_htpasswd
       - --dir-cache-time=1m
       - --read-only
+    # 401 = rclone ayakta + htpasswd zorunlu; kimlik bilgisi gerekmez.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -q -S -O /dev/null http://127.0.0.1:8080/ 2>&1 | grep -q '401'"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 5s
     ports:
       - "127.0.0.1:__WEBDAV_PORT__:8080"
     volumes:
@@ -118,6 +128,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - webdav
 
   wg-easy:
     image: __WG_EASY_IMAGE__
@@ -169,6 +181,11 @@ networks:
       config:
         - subnet: __WG_BRIDGE_SUBNET__
         - subnet: __WG_BRIDGE_SUBNET6__
+  # Yalnız WebDAV; Caddy host loopback publish ile erişir (wg / docker_default yok).
+  # internal:true host port publish'i düşürür — kullanılmaz (DD-82).
+  webdav:
+    name: webdav
+    driver: bridge
 
 volumes:
   portainer_data:
