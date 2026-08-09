@@ -40,7 +40,7 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, FileBrowser Quantum, Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, copyparty (UI+WebDAV), Unpackerr |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the wg-easy UDP port and the qBittorrent peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation |
@@ -61,9 +61,9 @@ the ones agreed on 2026-08-05:
 - Debian 13 (trixie) hard gate; the installer refuses any other OS or
   release (**R1**).
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
-  (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
-  as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`
-  package.
+  (**R1**, **R2**). No host `rclone`, `apache2-utils`, or `acl` package
+  (WebDAV auth is copyparty config — **DD-89**; host leftovers still purged
+  via **DD-79**).
 - Timezone set to the configured value.
 - Root-only, interactive, single-host, `flock`-serialised, wrapped in
   `systemd-inhibit` so a shutdown cannot land mid-transaction.
@@ -87,8 +87,8 @@ the ones agreed on 2026-08-05:
 ### 1.3 Docker and containers
 
 - Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
-- One Compose file with exactly six services: `portainer`, `filebrowser`,
-  `qbittorrent`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**).
+- One Compose file with exactly five services: `portainer`, `copyparty`,
+  `qbittorrent`, `unpackerr`, `wg-easy` (**R10**, **DD-89**).
 - Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
 - Containers survive a reboot through the Compose **restart policy**
   (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`
@@ -103,15 +103,15 @@ the ones agreed on 2026-08-05:
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
-  (no full-tree rewrite). qBittorrent, FileBrowser and Unpackerr share
-  read/write that way. WebDAV remains read-only via the Compose service
-  (`:ro` mount + `--read-only`).
+  (no full-tree rewrite). qBittorrent, copyparty and Unpackerr share
+  read/write that way. WebDAV is the same copyparty process (auth required;
+  Infuse is expected to read only — **DD-89**).
 
 ### 1.5 DNS and Caddy
 
 - dnsmasq bound to `tailscale0` only, tracking the interface address with
-  `interface-name` + `bind-dynamic`, resolving the six service names to the
-  current Tailscale IPv4 (**R14**).
+  `interface-name` + `bind-dynamic`, resolving the six DNS service names to the
+  current Tailscale IPv4 (**R14**). (`file` and `webdav` share one upstream.)
 - Caddy listening on the Tailscale IPv4, port 80, HTTP only, reverse-proxying
   to loopback upstreams (**R15**, **R16**).
 - A `health.<domain>` endpoint that answers `ok`, used as the single cheap
@@ -130,12 +130,13 @@ the ones agreed on 2026-08-05:
 
 ### 1.7 WebDAV
 
-Preserved in full as a core feature. Contract in §5–§7.
+Preserved as a core Infuse path. Served by **copyparty** (same container as
+the file UI). Contract in §5–§7 (**DD-89**).
 
 ### 1.8 Operator guidance
 
 - The manual Tailscale admin steps are printed at the end (**R17**, §13).
-- Portainer, wg-easy and FileBrowser admin-account warnings are printed.
+- Portainer and wg-easy admin-account warnings are printed.
 
 ---
 
@@ -155,7 +156,8 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | The end-of-install warning conveys the same information without a recurring authentication attempt. |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
-| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). Re-runs call `purge_host_webdav_leftovers` (**DD-79**): unit/sbin/env, `master-webdav` user/group, downloads ACL, `apt-get purge rclone`. |
+| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | First replaced by Compose rclone (**DD-77**); now by copyparty (**DD-89**). Re-runs still call `purge_host_webdav_leftovers` (**DD-79**). |
+| **Compose `filebrowser` + Compose `webdav` (rclone)** | two containers, Quantum YAML, htpasswd | Replaced by one `copyparty` container (**DD-89**). |
 | **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains are re-established by Docker; v2 re-applies only its own chain. |
 | **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
 | **The 25-flag reconcile `--check` surface** | — | Replaced by a small set of checks with one owner each. |
@@ -203,12 +205,11 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | Portainer | `127.0.0.1` | 9443 (HTTPS — **DD-62**) |
-| FileBrowser Quantum | `127.0.0.1` | 61007 |
+| copyparty (UI + WebDAV) | `127.0.0.1` | 61007 |
 | qBittorrent WebUI | `127.0.0.1` | 61009 |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
-| WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
-Reached from the tailnet only through Caddy (**R11**, **R16**, **DD-77**).
+Reached from the tailnet only through Caddy (**R11**, **R16**, **DD-89**).
 WebDAV is not bound on `${TS_IPV4}` and has no WAN publish.
 
 ### 3.4 Single source of truth
@@ -229,8 +230,8 @@ defaults to the value recorded in `state.env` on a re-run.
 | `portainer.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://portainer.…` | `https://127.0.0.1:9443` (**DD-62**, skip-verify on loopback) |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
 | `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:61009` |
-| `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
-| `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
+| `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` (copyparty) |
+| `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:61007` (same; see §7.4) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
 
 Rules:
@@ -260,129 +261,103 @@ Rules:
 
 ## 5. WebDAV and Infuse: purpose
 
-The WebDAV service exists for exactly one consumer: **the Infuse app on an
+The WebDAV path exists for exactly one consumer: **the Infuse app on an
 Apple TV**, reading the media library over the tailnet.
 
 - Infuse needs plain WebDAV over HTTP with basic authentication. It does not
   need, and must not be given, WAN reachability.
-- The served root is the host directory `/downloads`.
+- The served root is the host directory `/downloads` (container `/w`).
 - Infuse is expected to browse:
   - `/downloads/media`
   - `/downloads/media/movies`
   - `/downloads/media/series`
-- Access is **read-only**. Infuse never writes; the service must make a
-  write impossible rather than merely discouraged.
+- Infuse is expected to **read only**. The authenticated account also has
+  UI write (file manager); protocol-level forced RO from the old rclone
+  service is not retained (**DD-89**).
 - The installer creates only the directories it needs. Host ownership repair
-  of `/downloads` is the selective Stage 3 pass in §1.4 (**DD-84**); WebDAV
-  itself stays read-only.
+  of `/downloads` is the selective Stage 3 pass in §1.4 (**DD-84**).
 
-WebDAV is a Compose service (**DD-77**), not a host unit: it publishes only
-on loopback, Caddy is the Infuse path, and Docker down means WebDAV down —
-same dependency as the media producers.
+WebDAV is provided by the Compose **`copyparty`** service (**DD-89**), not a
+host unit and not a separate rclone container: loopback publish only, Caddy
+is the Infuse path, Docker down means WebDAV down.
 
 ---
 
-## 6. WebDAV authentication and read-only contract
+## 6. Authentication contract (UI + WebDAV)
 
 ### 6.1 Credentials
 
-- The installer asks for a WebDAV **username** and **password** at the start.
+- The installer asks for a **username** and **password** (shared by the
+  file UI and WebDAV) when `/etc/master-stack/copyparty.conf` is missing.
 - The password is read with echo disabled, asked **twice**, and the two
   entries must match.
 - The username is validated against a safe character set:
   lowercase first character, then lowercase letters, digits, dot,
   underscore or hyphen, at most 32 characters.
-- A minimum password length is enforced.
+- A minimum password length is enforced. Passwords may not contain `#` or
+  `:` (copyparty.conf line format).
 
 ### 6.2 Credential storage — recorded decision
 
-This is a binding decision, not a preference. Each numbered item is a
-property the implementation must satisfy and a test must assert.
-
-1. **WebDAV credentials live in a separate, root-owned credential file**,
-   `/etc/master-stack/webdav.htpasswd` (bcrypt hash). Not in a
-   configuration file, not in a unit, not in an environment file.
-2. **Mode is at most `0600`**, owner `root:root`, verified after writing.
-3. **The Compose `webdav` service mounts the file read-only at
-   `/run/secrets/webdav_htpasswd`.** rclone is started with
-   `--htpasswd=/run/secrets/webdav_htpasswd` (path only — no secret on the
-   command line).
-4. **The container may run as root** so it can read a host `0600`
-   htpasswd without widening the file mode. Capability drop (`cap_drop:
-   ALL`) and double read-only (`:ro` volume + `--read-only`) stay in force.
-5. **The password is not present in Compose YAML or systemd unit content**
-   — not as `environment:`, not as a command argument value, not in a
-   drop-in.
-6. **The password is not written to any environment file** — not
-   `config.env`, not `state.env`, not `v2/config/defaults.env`. The
-   forbidden keys are named explicitly in `defaults.env`:
-   `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`, `WEBDAV_USER_PASSWORD`.
-   There is no `webdav.env`.
-7. **The password does not appear on a command line.** The server is
-   pointed at a file path, so `ps` / `docker inspect` args contain no
-   secret.
-8. **The password is not written to logs.** The prompt reads with echo
-   disabled, the hashing tool takes it on stdin, and no log statement
-   echoes the variable.
-9. **The username is managed with the credential, not with the
-   configuration.** The htpasswd format already stores `user:hash`, so
-   recording the name separately would create a second source of truth
-   that can drift from the hash. `WEBDAV_USER` therefore does not exist in
-   any of the configuration files either.
-10. **On a re-run, an existing valid credential file is preserved.** The
-    operator resets it by deleting the file and re-running, and the
-    installer says so. A host `master-webdav` unit / `webdav.env` left from
-    an older revision is disabled and removed.
+1. **Credentials live in** `/etc/master-stack/copyparty.conf` (accounts
+   section). Not in `config.env` / `state.env` / `defaults.env`.
+2. **Mode is `0640`**, owner `root:${DOWNLOADS_GID}`, so the container user
+   (`DOWNLOADS_UID:GID`) can read the mount without world-readable secrets.
+3. **Compose mounts the file read-only** at `/cfg/copyparty.conf`.
+4. **Forbidden keys** in env files include `COPYPARTY_PASSWORD`,
+   `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`, `WEBDAV_USER_PASSWORD`, and
+   username keys in those files.
+5. **On a re-run, an existing config is preserved.** Reset by deleting the
+   file and re-running. Host `master-webdav` leftovers are still purged
+   (**DD-79**). Old `webdav.htpasswd` / `filebrowser.yaml` are removed on
+   Stage 4.
 
 ### 6.3 Where each piece lives
 
 | Item | Location | Mode | Secret |
 |---|---|---|---|
-| Username + password hash | `/etc/master-stack/webdav.htpasswd` | `0600` | **yes** |
-| Port (loopback publish) | `v2/config/defaults.env` → Compose + Caddy | — | no |
-| Credential file **path** | `v2/config/defaults.env`, Compose volume | — | no |
-| Read-only / image pin | Compose template + `RCLONE_IMAGE` | — | no |
+| Username + password | `/etc/master-stack/copyparty.conf` | `0640` | **yes** |
+| Loopback publish port | `COPYPARTY_UI_PORT` in `defaults.env` | — | no |
+| Config file **path** | `defaults.env` → Compose volume | — | no |
+| Image pin | `COPYPARTY_IMAGE` | — | no |
 
-The plaintext password exists only inside the installer process, for as
-long as it takes to hash it.
+### 6.4 Auth surface checks
 
-### 6.4 Credential exposure checks
+Unauthenticated WebDAV **PROPFIND** (not bare GET — the UI login page may
+be 200) must return **401** on:
 
-Against a running `webdav` container:
+- loopback `127.0.0.1:${COPYPARTY_UI_PORT}`
+- Caddy `Host: webdav.${LOCAL_DOMAIN}`
+- bare Tailscale IPv4 (Infuse alias, **DD-78**)
 
-- `docker inspect` / process args contain no password and no username,
-- the container environment contains no password,
-- host `ps` for the container entrypoint shows only the htpasswd *path*,
-- `/etc/master-stack/webdav.htpasswd` remains `root:root` `0600` on the host.
+### 6.5 Read vs write
 
-### 6.5 Read-only enforcement
-
-- rclone runs with an explicit `--read-only` flag.
-- `/downloads` is mounted `:ro`; no other host path is reachable through it.
-- A write attempt must be refused by the service. This is a tested
-  behaviour, not an assumption.
+- The operator account has `rwmda` on `/` for the file UI.
+- Infuse should only read; there is no separate read-only WebDAV principal
+  in v1 of this swap.
 
 ---
 
-## 7. WebDAV Compose lifecycle
+## 7. copyparty Compose lifecycle
 
 ### 7.1 Service
 
-One Compose service: `webdav` (`rclone/rclone` image). No host
-`master-webdav.service`.
+One Compose service: `copyparty` (`copyparty/min` image). Provides HTTP UI
+and WebDAV. No host `master-webdav.service`. No separate `webdav` or
+`filebrowser` container.
 
 ### 7.2 Ordering and coupling
 
 | Property | Value | Reason |
 |---|---|---|
-| Publish | `127.0.0.1:${WEBDAV_PORT}:8080` | Tailnet reachability only via Caddy |
-| Docker coupling | same lifecycle as the media stack | Accepted: Docker down ⇒ WebDAV down (**DD-77**) |
-| Tailscale coupling | **none** | WebDAV does not bind `${TS_IPV4}` |
+| Publish | `127.0.0.1:${COPYPARTY_UI_PORT}:3923` | Tailnet reachability only via Caddy |
+| Docker coupling | same lifecycle as the media stack | Docker down ⇒ UI+WebDAV down |
+| Tailscale coupling | **none** | does not bind `${TS_IPV4}` |
 | Restart | Compose `unless-stopped` | No custom cooldown stamp system |
 
 ### 7.3 Reacting to a Tailscale address change
 
-WebDAV does not bind the Tailscale address. When the Tailscale IPv4
+copyparty does not bind the Tailscale address. When the Tailscale IPv4
 changes, `refresh-tailnet-config` updates `state.env` and restarts **only
 Caddy**:
 
@@ -390,15 +365,14 @@ Caddy**:
 Tailscale IPv4 change
   → state.env updated (atomically)
   → caddy          restarted
-  → WebDAV         untouched (loopback)
+  → copyparty      untouched (loopback)
   → dnsmasq        untouched
   → firewall       untouched
   → Compose stack  untouched
 ```
 
-**DD-61** originally named Caddy + host WebDAV; **DD-77** narrows the
-restart set to Caddy alone. dnsmasq and the firewall still match the
-interface name rather than an address.
+**DD-61** originally named Caddy + host WebDAV; **DD-77**/**DD-89** keep
+the restart set to Caddy alone.
 
 `master-firewall` may still be `PartOf=tailscaled.service` so policy is
 re-applied on Tailscale restart; that must never bounce Compose.
@@ -409,17 +383,18 @@ re-applied on Tailscale restart; that must never bounce Compose.
 |---|---|---|
 | Preferred (MagicDNS) | `http://webdav.${LOCAL_DOMAIN}` | Phone Infuse / clients with MagicDNS |
 | Apple TV Infuse (no MagicDNS) | `http://${TS_IPV4}/` (port 80) | Caddy site alias; Host = Tailscale IPv4 (**DD-78**) |
-| Loopback (host-local) | `http://127.0.0.1:${WEBDAV_PORT}` | Installer / debug probes |
+| File UI | `http://file.${LOCAL_DOMAIN}` | Browser file manager (same upstream) |
+| Loopback (host-local) | `http://127.0.0.1:${COPYPARTY_UI_PORT}` | Installer / debug probes |
 
-Caddy proxies both `webdav.${LOCAL_DOMAIN}` and `http://{$TAILSCALE_IPV4}`
-to `127.0.0.1:${WEBDAV_PORT}`. Compose stays loopback-only and never names
-the Tailscale address (**DD-77**).
+Caddy proxies `file.${LOCAL_DOMAIN}`, `webdav.${LOCAL_DOMAIN}`, and
+`http://{$TAILSCALE_IPV4}` to `127.0.0.1:${COPYPARTY_UI_PORT}`. Compose
+stays loopback-only and never names the Tailscale address (**DD-89**).
 
-**Direct `http://${TS_IPV4}:${WEBDAV_PORT}` is not supported** — nothing
-listens there. Bare-IP access is only via Caddy on port 80.
+**Direct `http://${TS_IPV4}:${COPYPARTY_UI_PORT}` is not supported** —
+nothing listens there. Bare-IP access is only via Caddy on port 80.
 
-No TLS between Caddy and WebDAV: both endpoints are on the same host, and
-the hop is loopback.
+No TLS between Caddy and copyparty: both endpoints are on the same host,
+and the hop is loopback.
 
 ### 7.5 Firewall consequence
 
@@ -636,26 +611,24 @@ A v2 run is successful when every one of these holds on the target host.
     `ok`.
 13. Each of `portainer`, `wg`, `qbit` and `file` returns a non-5xx status
     through Caddy (`Host:` + `${TS_IPV4}`).
-14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
-    listens on `${TS_IPV4}:${WEBDAV_PORT}`, `0.0.0.0`, WAN, or LAN.
-15. An unauthenticated request to loopback and via Caddy returns `401`.
+14. `docker port copyparty` shows only `127.0.0.1:${COPYPARTY_UI_PORT}`;
+    nothing listens on `${TS_IPV4}:${COPYPARTY_UI_PORT}`, `0.0.0.0`, WAN, or
+    LAN.
+15. Unauthenticated WebDAV **PROPFIND** to loopback, via Caddy
+    `Host: webdav.…`, and bare `${TS_IPV4}` returns `401`.
 16. A `PROPFIND` with valid credentials succeeds through Caddy.
 17. `/downloads/media`, `…/movies` and `…/series` are listable.
-18. Install-time: running container has Cmd `--read-only`,
-    `ReadonlyRootfs=true`, and `/downloads` mount `RW=false` (**DD-81**).
-    Authenticated write refusal remains a live/manual check.
-19. Infuse paths: `http://webdav.${LOCAL_DOMAIN}` (MagicDNS) and
+18. Infuse paths: `http://webdav.${LOCAL_DOMAIN}` (MagicDNS) and
     `http://${TS_IPV4}/` on port 80 (Apple TV / no MagicDNS — **DD-78**).
 
-### WebDAV credential handling (§6.2, §6.4)
+### Credential handling (§6.2, §6.4)
 
-20. `/etc/master-stack/webdav.htpasswd` is `root:root` and at most `0600`.
-21. Neither the password nor the username appears in `config.env`,
+19. `/etc/master-stack/copyparty.conf` is `root:${DOWNLOADS_GID}` and
+    mode `0640`.
+20. Neither the password nor the username appears in `config.env`,
     `state.env`, Compose YAML, or any systemd unit.
-22. Container process args show the htpasswd *path* only — no password and
-    no username; container environ shows no password.
-23. No host `master-webdav.service` / `webdav.env` / host `rclone` package
-    remains after install.
+21. No host `master-webdav.service` / `webdav.env` / host `rclone` package
+    remains after install. No Compose `filebrowser` / `webdav` containers.
 
 ### Firewall
 
@@ -674,14 +647,14 @@ A v2 run is successful when every one of these holds on the target host.
 
 ### Lifecycle
 
-30. `systemctl restart tailscaled` leaves all six containers running.
+30. `systemctl restart tailscaled` leaves all five containers running.
 31. `systemctl restart docker` results in a re-applied firewall policy.
-32. After a full reboot: six containers running, all six names resolving,
-    public wg UDP + qBit TCP/UDP published, WebDAV answering `401` via
-    Caddy.
+32. After a full reboot: five containers running, all six names resolving,
+    public wg UDP + qBit TCP/UDP published, WebDAV PROPFIND answering
+    `401` via Caddy.
 33. `systemctl --failed` is empty.
 
 ### Idempotency
 
 34. A second complete run changes no byte of any generated file, starts no
-    container it did not need to, and preserves the WebDAV credential.
+    container it did not need to, and preserves the copyparty config.

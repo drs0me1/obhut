@@ -3759,3 +3759,30 @@ separate document with its own numbering.
   Caddy could still pass install. Cheap and secrets-free.
 - **Not doing:** asserting exact `200` (wg returns `302`; first-run UIs
   vary) or authenticated probes.
+
+### DD-89: copyparty replaces FileBrowser Quantum + rclone WebDAV (2026-08-09)
+
+- **Decision:** One Compose service `copyparty` (`copyparty/min`, digest-
+  pinned) publishes `127.0.0.1:${COPYPARTY_UI_PORT}:3923` and serves both
+  the browser UI and WebDAV. Caddy keeps three entry points — `file.*`,
+  `webdav.*`, bare `${TAILSCALE_IPV4}` — all reverse-proxied to that one
+  loopback port. DNS `SERVICE_NAMES` still lists both `file` and `webdav`.
+- **Credentials:** `/etc/master-stack/copyparty.conf` holds the account
+  (plaintext password in-file for v1 of the swap), mode `0640`, owner
+  `root:${DOWNLOADS_GID}` so the container user can read it. Not in
+  `config.env` / `state.env`. Re-runs preserve the file.
+- **Why:** Quantum UI was too heavy for the operator; classic FileBrowser
+  is archived; DD-36 already flagged copyparty as the strongest merge
+  candidate (config file + optional native WebDAV). Collapsing two
+  containers removes the rclone htpasswd path and the dedicated `webdav`
+  network (**DD-77**/**DD-82** superseded for the runtime shape).
+- **Trade-off:** rclone's forced `--read-only` + `:ro` mount is gone —
+  the same account has `rwmda` for the UI. Infuse is still expected to
+  read only; protocol RO can return later with a second principal if
+  needed. Auth checks use **PROPFIND → 401** because unauthenticated GET
+  may serve the login page.
+- **Migration:** Stage 4 removes old `filebrowser`/`webdav` containers,
+  `filebrowser_data`, `webdav` network, `filebrowser.yaml`, and
+  `webdav.htpasswd`. Host leftover purge (**DD-79**) remains.
+- **Not doing:** absorbing WebDAV into a host unit again; Filestash;
+  password hashing in the conf for this first cut.

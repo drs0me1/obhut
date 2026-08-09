@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-51"
+V2_VERSION="2026.08.06-v2-52"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -39,8 +39,12 @@ prompt_secret_twice() {
     printf '\n' >/dev/tty
     [[ -n "$a" ]] || die "parola boş olamaz"
     [[ "$a" == "$b" ]] || die "parolalar eşleşmiyor"
-    [[ "${#a}" -ge "$WEBDAV_MIN_PASSWORD_LENGTH" ]] ||
-        die "parola en az $WEBDAV_MIN_PASSWORD_LENGTH karakter olmalı"
+    [[ "${#a}" -ge "$COPYPARTY_MIN_PASSWORD_LENGTH" ]] ||
+        die "parola en az $COPYPARTY_MIN_PASSWORD_LENGTH karakter olmalı"
+    # copyparty.conf satır yorumu / ayırıcı; hash kullanılmıyor (v1 sade).
+    [[ "$a" != *$'\n'* && "$a" != *$'\r'* ]] || die "parola satır sonu içeremez"
+    [[ "$a" != *"#"* && "$a" != *":"* ]] ||
+        die "parola '#' veya ':' içeremez (copyparty.conf)"
     printf -v "$var" '%s' "$a"
 }
 
@@ -59,7 +63,6 @@ WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
-WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
@@ -71,7 +74,6 @@ write_config() {
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
-WEBDAV_PORT=$WEBDAV_PORT
 TIMEZONE=$TIMEZONE
 EOF
 }
@@ -243,7 +245,7 @@ stage_0() {
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
 
     local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT"
-    local prev_webdav_port="$WEBDAV_PORT" prev_wg_port="$WG_PUBLIC_PORT"
+    local prev_wg_port="$WG_PUBLIC_PORT"
     if [[ -r "$STATE_FILE" ]]; then
         local state_wg
         state_wg="$(awk -F= '/^WG_PUBLIC_PORT=/{print $2; exit}' "$STATE_FILE" || true)"
@@ -254,7 +256,6 @@ stage_0() {
         source "$CONFIG_FILE"
         prev_domain="${LOCAL_DOMAIN:-$prev_domain}"
         prev_dl="${DOWNLOADS_PATH:-$prev_dl}"
-        prev_webdav_port="${WEBDAV_PORT:-$prev_webdav_port}"
         if grep -q '^WG_PUBLIC_PORT=' "$CONFIG_FILE"; then
             prev_wg_port="${WG_PUBLIC_PORT:-$prev_wg_port}"
         fi
@@ -277,8 +278,7 @@ stage_0() {
         die "wg-easy UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
-        "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
-        "$TAILSCALE_UDP_PORT")
+        "$COPYPARTY_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$TAILSCALE_UDP_PORT")
             die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
             ;;
     esac
@@ -286,32 +286,20 @@ stage_0() {
         log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
     fi
 
-    prompt WEBDAV_PORT "WebDAV portu (loopback, Caddy)" "$prev_webdav_port"
-    [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
-    [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
-        die "WebDAV portu 1-65535 arasında olmalı"
-    case "$WEBDAV_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
-        "$PORTAINER_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | \
-        "$TAILSCALE_UDP_PORT")
-            die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
-            ;;
-    esac
-
     detect_wan
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
     write_config
 
-    WEBDAV_NEW_USER=""
-    WEBDAV_NEW_PASS=""
-    if [[ -f "$WEBDAV_HTPASSWD_FILE" ]]; then
-        log INFO "Mevcut WebDAV kimlik dosyası korunuyor: $WEBDAV_HTPASSWD_FILE"
+    COPYPARTY_NEW_USER=""
+    COPYPARTY_NEW_PASS=""
+    if [[ -f "$COPYPARTY_CONFIG_FILE" ]]; then
+        log INFO "Mevcut copyparty config korunuyor: $COPYPARTY_CONFIG_FILE"
     else
-        prompt WEBDAV_NEW_USER "WebDAV kullanıcı adı"
-        [[ "$WEBDAV_NEW_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]] ||
-            die "geçersiz WebDAV kullanıcı adı"
-        prompt_secret_twice WEBDAV_NEW_PASS "WebDAV parolası"
+        prompt COPYPARTY_NEW_USER "Dosya paylaşımı kullanıcı adı (UI + WebDAV)"
+        [[ "$COPYPARTY_NEW_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]] ||
+            die "geçersiz kullanıcı adı"
+        prompt_secret_twice COPYPARTY_NEW_PASS "Dosya paylaşımı parolası"
     fi
 
     RUN_FULL_UPGRADE=0
@@ -343,20 +331,39 @@ stage_1() {
     fi
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
-        iptables coreutils util-linux diffutils jq \
-        apache2-utils dnsutils
+        iptables coreutils util-linux diffutils jq dnsutils
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
-    if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then
-        local tmp
-        tmp="$(mktemp "$STATE_DIR/.htpasswd-XXXXXX")"
-        printf '%s' "$WEBDAV_NEW_PASS" | htpasswd -i -B "$tmp" "$WEBDAV_NEW_USER"
-        chmod 0600 "$tmp"
-        chown root:root "$tmp"
-        mv -f "$tmp" "$WEBDAV_HTPASSWD_FILE"
-        unset WEBDAV_NEW_PASS
-        WEBDAV_NEW_USER=""
+    if [[ -n "${COPYPARTY_NEW_PASS:-}" ]]; then
+        write_copyparty_config "$COPYPARTY_NEW_USER" "$COPYPARTY_NEW_PASS"
+        unset COPYPARTY_NEW_PASS
+        COPYPARTY_NEW_USER=""
     fi
+}
+
+write_copyparty_config() {
+    local user="$1" pass="$2"
+    atomic_write "$COPYPARTY_CONFIG_FILE" 0600 <<EOF
+# master-stack copyparty — UI + WebDAV (DD-89). Elle düzenlenebilir; yeniden
+# kurulum dosya varken üzerine yazmaz.
+[global]
+  p: 3923
+  e2dsa
+  dav-auth
+  no-robots
+  hist: /cfg/data/hist
+
+[accounts]
+  ${user}: ${pass}
+
+[/]
+  /w
+  accs:
+    rwmda: ${user}
+EOF
+    # Container DOWNLOADS_UID:GID ile çalışır; root-only 0600 okunamaz.
+    chown "root:${DOWNLOADS_GID}" "$COPYPARTY_CONFIG_FILE"
+    chmod 0640 "$COPYPARTY_CONFIG_FILE"
 }
 
 apply_udp_netbuf_floor() {
@@ -446,7 +453,7 @@ stage_3() {
         mkdir -p "$d"
     done
     ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
-    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; qBit/FileBrowser/Unpackerr R/W)"
+    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; qBit/copyparty/Unpackerr R/W)"
 }
 
 stage_4() {
@@ -468,19 +475,16 @@ EOF
     COMPOSE_NEEDS_UP=0
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         PORTAINER_IMAGE="$PORTAINER_IMAGE" \
-        FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
+        COPYPARTY_IMAGE="$COPYPARTY_IMAGE" \
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         WG_EASY_IMAGE="$WG_EASY_IMAGE" \
-        RCLONE_IMAGE="$RCLONE_IMAGE" \
         PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
+        COPYPARTY_UI_PORT="$COPYPARTY_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
         QBIT_PUBLIC_PORT="$QBIT_PUBLIC_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         WG_PUBLIC_PORT="$WG_PUBLIC_PORT" \
-        WEBDAV_PORT="$WEBDAV_PORT" \
-        WEBDAV_HTPASSWD_FILE="$WEBDAV_HTPASSWD_FILE" \
         WG_BRIDGE_SUBNET="$WG_BRIDGE_SUBNET" \
         WG_BRIDGE_IPV4="$WG_BRIDGE_IPV4" \
         WG_BRIDGE_SUBNET6="$WG_BRIDGE_SUBNET6" \
@@ -488,29 +492,20 @@ EOF
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
-        QUANTUM_CONFIG_FILE="$QUANTUM_CONFIG_FILE" \
+        COPYPARTY_CONFIG_FILE="$COPYPARTY_CONFIG_FILE" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
     rm -f "$COMPOSE_DIR/.env"
 
-    # FileBrowser Quantum: panel kökü container /data = host DOWNLOADS_PATH
-    if [[ ! -f "$QUANTUM_CONFIG_FILE" ]]; then
-        atomic_write "$QUANTUM_CONFIG_FILE" 0644 <<'EOF'
-server:
-  port: 80
-  baseURL: "/"
-  cacheDir: "/home/filebrowser/data/cache"
-  sources:
-    - path: "/data"
-auth:
-  methods:
-    password:
-      enabled: true
-      minLength: 5
-      signup: false
-    passkey:
-      enabled: false
-EOF
+    [[ -f "$COPYPARTY_CONFIG_FILE" ]] ||
+        die "copyparty config yok: $COPYPARTY_CONFIG_FILE (aşama 0/1)"
+
+    # Eski FileBrowser Quantum / rclone WebDAV kalıntıları (yeniden kurulum).
+    rm -f /etc/master-stack/filebrowser.yaml /etc/master-stack/webdav.htpasswd
+    if command -v docker >/dev/null 2>&1; then
+        docker rm -f filebrowser webdav 2>/dev/null || true
+        docker volume rm filebrowser_data 2>/dev/null || true
+        docker network rm webdav 2>/dev/null || true
     fi
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
@@ -578,10 +573,10 @@ purge_host_webdav_leftovers() {
 }
 
 stage_5() {
-    log INFO "Aşama 5/7 — firewall (WebDAV Compose'ta)"
-    [[ -f "$WEBDAV_HTPASSWD_FILE" ]] || die "WebDAV htpasswd yok: $WEBDAV_HTPASSWD_FILE"
-    chown root:root "$WEBDAV_HTPASSWD_FILE"
-    chmod 0600 "$WEBDAV_HTPASSWD_FILE"
+    log INFO "Aşama 5/7 — firewall (UI+WebDAV: copyparty)"
+    [[ -f "$COPYPARTY_CONFIG_FILE" ]] || die "copyparty config yok: $COPYPARTY_CONFIG_FILE"
+    chown "root:${DOWNLOADS_GID}" "$COPYPARTY_CONFIG_FILE"
+    chmod 0640 "$COPYPARTY_CONFIG_FILE"
 
     systemctl enable master-firewall.service
     systemctl enable refresh-tailnet-config.service
@@ -666,8 +661,7 @@ EOF
         PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
-        WEBDAV_PORT="$WEBDAV_PORT"
+        COPYPARTY_UI_PORT="$COPYPARTY_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
 
     mkdir -p /etc/systemd/system/dnsmasq.service.d
@@ -718,51 +712,27 @@ EOF
     fi
 }
 
-assert_webdav_readonly_runtime() {
-    local cmd rootfs mounts
-    cmd="$(docker inspect webdav --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
-    [[ "$cmd" == *"--read-only"* ]] ||
-        die "WebDAV komutunda --read-only yok"
-
-    rootfs="$(
-        docker inspect webdav --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true
-    )"
-    [[ "$rootfs" == "true" ]] ||
-        die "WebDAV root filesystem read-only değil (ReadonlyRootfs=$rootfs)"
-
-    mounts="$(
-        docker inspect webdav --format \
-            '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true
-    )"
-    grep -qx '/downloads false' <<<"$mounts" ||
-        die "WebDAV /downloads mount RW=false değil"
-}
-
-assert_webdav_network() {
-    local nets count
-    nets="$(
-        docker inspect webdav --format \
-            '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' \
-            2>/dev/null || true
-    )"
-    grep -qx 'webdav' <<<"$nets" || die "webdav konteyneri webdav ağına bağlı değil"
-    grep -qx 'wg' <<<"$nets" && die "webdav konteyneri wg ağına bağlı olmamalı"
-    count="$(grep -c . <<<"$nets" || true)"
-    [[ "$count" -eq 1 ]] || die "webdav beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
-}
-
-wait_webdav_healthy() {
+wait_copyparty_healthy() {
     local attempt status
     for attempt in $(seq 1 36); do
         status="$(
-            docker inspect webdav --format \
+            docker inspect copyparty --format \
                 '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
                 2>/dev/null || echo missing
         )"
         [[ "$status" == "healthy" ]] && return 0
         sleep 2
     done
-    die "webdav healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
+    die "copyparty healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
+}
+
+# WebDAV kimlik yüzeyi: GET login sayfası 200 olabilir; PROPFIND auth ister.
+assert_webdav_propfind_unauthorized() {
+    local url="$1" label="$2" code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -X PROPFIND -H 'Depth: 0' "$url" || true)"
+    [[ "$code" == "401" ]] ||
+        die "WebDAV ${label}: PROPFIND kimlik doğrulamasız yanıt $code (beklenen 401)"
 }
 
 stage_7() {
@@ -786,8 +756,7 @@ stage_7() {
     else
         log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
     fi
-    wait_webdav_healthy
-    assert_webdav_network
+    wait_copyparty_healthy
     "$SBIN_DIR/master-firewall" --check
 
     local name resolver ans dig_out code health line svc
@@ -822,21 +791,15 @@ stage_7() {
             die "Caddy ${ui_host}.${LOCAL_DOMAIN}: HTTP '${ui_code}' (non-5xx beklenir)"
     done
 
+    assert_webdav_propfind_unauthorized \
+        "http://127.0.0.1:${COPYPARTY_UI_PORT}/" "loopback"
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://127.0.0.1:${WEBDAV_PORT}/" || true)"
-    [[ "$code" == "401" ]] || die "WebDAV loopback kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: webdav.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] ||
-        die "WebDAV Caddy üzerinden kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -X PROPFIND -H 'Depth: 0' -H "Host: webdav.${LOCAL_DOMAIN}" \
         "http://${TAILSCALE_IPV4}/" || true)"
     [[ "$code" == "401" ]] ||
-        die "WebDAV TS-IP alias kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    assert_webdav_readonly_runtime
+        die "WebDAV Caddy Host webdav: PROPFIND yanıt $code (beklenen 401)"
+    assert_webdav_propfind_unauthorized \
+        "http://${TAILSCALE_IPV4}/" "bare TS-IP"
 
     (cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null |
         grep -q "${WG_PUBLIC_PORT}/udp" ||
@@ -848,16 +811,16 @@ stage_7() {
         grep -q "${QBIT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${QBIT_PUBLIC_PORT} publish yok"
 
-    for svc in portainer filebrowser webdav; do
+    for svc in portainer copyparty; do
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" ]] && continue
             [[ "$line" == *127.0.0.1:* ]] ||
                 die "UI publish yalnız loopback olmalı: $svc ($line)"
         done < <((cd "$COMPOSE_DIR" && docker port "$svc") 2>/dev/null || true)
     done
-    (cd "$COMPOSE_DIR" && docker port webdav) 2>/dev/null |
-        grep -q "127.0.0.1:${WEBDAV_PORT}" ||
-        die "webdav loopback publish ${WEBDAV_PORT} yok"
+    (cd "$COMPOSE_DIR" && docker port copyparty) 2>/dev/null |
+        grep -q "127.0.0.1:${COPYPARTY_UI_PORT}" ||
+        die "copyparty loopback publish ${COPYPARTY_UI_PORT} yok"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         [[ "$line" == *"${QBIT_PUBLIC_PORT}/"* ]] && continue
@@ -893,9 +856,10 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Uyarı: Portainer / wg-easy / FileBrowser ilk yönetici hesabını sen kur.
+Uyarı: Portainer / wg-easy ilk yönetici hesabını sen kur.
 qBittorrent varsayılan WebUI parolasını değiştir.
-WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS) veya http://${TAILSCALE_IPV4}/ (Apple TV Infuse; port 80)
+Dosya UI: http://file.${LOCAL_DOMAIN}  (copyparty)
+WebDAV: http://webdav.${LOCAL_DOMAIN} veya http://${TAILSCALE_IPV4}/ (Infuse; port 80; aynı hesap)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
   (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
 Tailscale IP: refresh-tailnet-config (tailscale wait + WantedBy=tailscaled + 5dk timer) → Caddy

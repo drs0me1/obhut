@@ -194,7 +194,7 @@ EOF
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "downloads tree is chown 1000 for qbit filebrowser unpackerr" {
+@test "downloads tree is chown 1000 for qbit copyparty unpackerr" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
@@ -234,11 +234,15 @@ EOF
     ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "filebrowser serves full downloads at /data" {
-    grep -q '__DOWNLOADS_PATH__:/data' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'FILEBROWSER_CONFIG: /config.yaml' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__QUANTUM_CONFIG_FILE__:/config.yaml:ro' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'filebrowser_data:/home/filebrowser/data' "$V2_ROOT/templates/compose.yaml"
+@test "copyparty serves downloads at /w with config mount" {
+    grep -q 'container_name: copyparty' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__DOWNLOADS_PATH__:/w' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__COPYPARTY_CONFIG_FILE__:/cfg/copyparty.conf:ro' \
+        "$V2_ROOT/templates/compose.yaml"
+    grep -q 'copyparty_data:/cfg/data' "$V2_ROOT/templates/compose.yaml"
+    grep -q '127.0.0.1:__COPYPARTY_UI_PORT__:3923' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q 'FILEBROWSER_' "$V2_ROOT/config/defaults.env"
 }
 
 @test "wg-easy publishes WireGuard UDP 1:1 without remap" {
@@ -484,61 +488,41 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "webdav compose service is loopback rclone with htpasswd" {
-    grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_IMAGE="rclone/rclone:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}"' \
+@test "copyparty provides UI and WebDAV on one loopback port" {
+    grep -q 'COPYPARTY_IMAGE=' "$V2_ROOT/config/defaults.env"
+    grep -qE '^COPYPARTY_IMAGE="copyparty/min:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}"' \
         "$V2_ROOT/config/defaults.env"
-    grep -q 'rclone/rclone:1.74.4@sha256:' "$V2_ROOT/config/defaults.env"
-    grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
-    grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
-    grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
-    grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'reverse_proxy 127.0.0.1:__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
+    grep -q '__COPYPARTY_IMAGE__' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'dav-auth' "$V2_ROOT/install.sh"
+    grep -q 'write_copyparty_config' "$V2_ROOT/install.sh"
+    grep -q 'COPYPARTY_CONFIG_FILE=' "$V2_ROOT/config/defaults.env"
+    grep -q 'reverse_proxy 127.0.0.1:__COPYPARTY_UI_PORT__' \
+        "$V2_ROOT/templates/Caddyfile"
+    grep -q 'http://file.__LOCAL_DOMAIN__' "$V2_ROOT/templates/Caddyfile"
     grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}' \
         "$V2_ROOT/templates/Caddyfile"
-    ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:__WEBDAV_PORT__' \
-        "$V2_ROOT/templates/Caddyfile"
+    ! grep -q 'reverse_proxy {$TAILSCALE_IPV4}:' "$V2_ROOT/templates/Caddyfile"
+    ! grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
+    ! grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
+    ! grep -q 'WEBDAV_PORT=' "$V2_ROOT/config/defaults.env"
+    ! grep -q 'name: webdav' "$V2_ROOT/templates/compose.yaml"
     grep -q 'purge_host_webdav_leftovers' "$V2_ROOT/install.sh"
     grep -q 'disable --now master-webdav.service' "$V2_ROOT/install.sh"
     grep -q 'apt-get purge -y rclone' "$V2_ROOT/install.sh"
     grep -q 'userdel "$user"' "$V2_ROOT/install.sh"
     grep -q 'setfacl -R -x' "$V2_ROOT/install.sh"
     ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
-    grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
-        "$V2_ROOT/templates/compose.yaml"
-    grep -q "grep -q '401'" "$V2_ROOT/templates/compose.yaml"
     awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /healthcheck:/ {found=1}
+      /^  copyparty:/ {in_cp=1; next}
+      in_cp && /^  [a-z]/ {in_cp=0}
+      in_cp && /healthcheck:/ {found=1}
       END {exit found ? 0 : 1}
     ' "$V2_ROOT/templates/compose.yaml"
-    awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /mem_limit:|memory:|pids_limit:/ {bad=1}
-      END {exit bad ? 1 : 0}
-    ' "$V2_ROOT/templates/compose.yaml"
-    grep -qE '^[[:space:]]*- webdav$' "$V2_ROOT/templates/compose.yaml"
-    awk '
-      /^networks:/ {in_nets=1; next}
-      in_nets && /^[a-z]/ {in_nets=0}
-      in_nets && /^  webdav:/ {found=1}
-      in_nets && found && /name: webdav/ {named=1}
-      in_nets && found && /internal: true/ {bad=1}
-      END {exit (named && !bad) ? 0 : 1}
-    ' "$V2_ROOT/templates/compose.yaml"
-    ! awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /networks:/ {in_nets=1; next}
-      in_webdav && in_nets && /^[[:space:]]+- wg$/ {bad=1}
-      END {exit bad ? 0 : 1}
-    ' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'wait_webdav_healthy' "$V2_ROOT/install.sh"
-    grep -q 'assert_webdav_network' "$V2_ROOT/install.sh"
+    grep -q 'wait_copyparty_healthy' "$V2_ROOT/install.sh"
+    grep -q 'assert_webdav_propfind_unauthorized' "$V2_ROOT/install.sh"
+    ! grep -q 'wait_webdav_healthy' "$V2_ROOT/install.sh"
+    ! grep -q 'assert_webdav_network' "$V2_ROOT/install.sh"
+    ! grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
 }
 
 @test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
@@ -667,10 +651,9 @@ EOF
         grep -qE '\|[[:space:]]*atomic_write'
 }
 
-@test "base packages include htpasswd helpers" {
-    grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
-    ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
-    # acl may be installed only as a migration helper inside the purge path.
+@test "base packages include dnsutils without htpasswd helpers" {
+    grep -q 'jq dnsutils' "$V2_ROOT/install.sh"
+    ! grep -q 'apache2-utils' "$V2_ROOT/install.sh"
     ! awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh" |
         grep -qE '\bacl\b'
 }
@@ -690,17 +673,15 @@ EOF
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
     grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
     grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
-    grep -q 'WebDAV TS-IP alias' "$V2_ROOT/install.sh"
-    grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
-    grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
-    grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
-    grep -q '/downloads false' "$V2_ROOT/install.sh"
+    grep -q 'bare TS-IP' "$V2_ROOT/install.sh"
+    grep -q 'http://127.0.0.1:${COPYPARTY_UI_PORT}/' "$V2_ROOT/install.sh"
+    grep -q 'assert_webdav_propfind_unauthorized' "$V2_ROOT/install.sh"
+    grep -q "PROPFIND" "$V2_ROOT/install.sh"
+    ! grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
     ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
-    ! awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh" |
-        grep -qE '401\|403\|405'
     grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
-    grep -q 'docker port webdav' "$V2_ROOT/install.sh"
+    grep -q 'docker port copyparty' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
     grep -q 'for ui_host in portainer wg qbit file' "$V2_ROOT/install.sh"
@@ -717,7 +698,8 @@ EOF
     # second source of truth waiting to drift.
     local key
     for key in V2_CONFIG_SCHEMA NET_RETRY_ATTEMPTS ADDRESS_WAIT_DEADLINE_SECONDS \
-        WEBDAV_READ_ONLY; do
+        WEBDAV_READ_ONLY WEBDAV_PORT FILEBROWSER_UI_PORT RCLONE_IMAGE \
+        FILEBROWSER_IMAGE WEBDAV_HTPASSWD_FILE QUANTUM_CONFIG_FILE; do
         ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
     done
     # DNS_PORT and CADDY_HTTP_PORT exist and are now actually used.
@@ -727,8 +709,8 @@ EOF
 
 @test "compose images are digest-pinned without floating tags" {
     local key
-    for key in PORTAINER_IMAGE FILEBROWSER_IMAGE QBITTORRENT_IMAGE \
-        WG_EASY_IMAGE UNPACKERR_IMAGE RCLONE_IMAGE; do
+    for key in PORTAINER_IMAGE COPYPARTY_IMAGE QBITTORRENT_IMAGE \
+        WG_EASY_IMAGE UNPACKERR_IMAGE; do
         grep -qE "^${key}=\".+:.+@sha256:[0-9a-f]{64}\"" \
             "$V2_ROOT/config/defaults.env"
     done

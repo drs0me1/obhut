@@ -19,11 +19,12 @@ http://wg.__LOCAL_DOMAIN__ {
 http://qbit.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__QBIT_UI_PORT__
 }
+# UI + WebDAV: aynı copyparty loopback (DD-89).
 http://file.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
+	reverse_proxy 127.0.0.1:__COPYPARTY_UI_PORT__
 }
 # MagicDNS olmayan istemciler (Apple TV Infuse): düz Tailscale IPv4, port 80.
 # Compose TS IP bilmez; alias yalnız Caddy'de (state.env → {$TAILSCALE_IPV4}).
 http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4} {
-	reverse_proxy 127.0.0.1:__WEBDAV_PORT__
+	reverse_proxy 127.0.0.1:__COPYPARTY_UI_PORT__
 }
