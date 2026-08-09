@@ -40,7 +40,7 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, FileBrowser Quantum and Unpackerr |
+| R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, FileBrowser Quantum, Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the wg-easy UDP port and the qBittorrent peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation |
@@ -48,7 +48,7 @@ the ones agreed on 2026-08-05:
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Create persistent firewall rules that permit Tailscale traffic, the two public UDP ports, and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
+| R18 | Create persistent firewall rules that permit Tailscale traffic, the public peer ports (wg UDP + qBit TCP+UDP), and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
 | R19 | Filter Docker ports through `DOCKER-USER` |
 | R20 | Keep the installation re-runnable |
 
@@ -99,11 +99,13 @@ the ones agreed on 2026-08-05:
 - `/downloads`, `/downloads/media`, `/downloads/media/movies`,
   `/downloads/media/series` and the Unpackerr work directory are created
   when absent (**R8**).
-- **The downloads tree is owned `1000:1000` (defaults: `DOWNLOADS_UID` /
-  `DOWNLOADS_GID`) recursively on every run**, with directories `0775` and
-  files `0664`, so qBittorrent, FileBrowser and Unpackerr share read/write
-  access. WebDAV remains read-only via the Compose service (`:ro` mount +
-  `--read-only`).
+- **The downloads tree is repaired selectively on every run** (**DD-84**):
+  entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
+  (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
+  files not mode `0664` are `chmod`'d. Matching entries are left untouched
+  (no full-tree rewrite). qBittorrent, FileBrowser and Unpackerr share
+  read/write that way. WebDAV remains read-only via the Compose service
+  (`:ro` mount + `--read-only`).
 
 ### 1.5 DNS and Caddy
 
@@ -241,12 +243,10 @@ Rules:
   configuration.** Records are interface-based (`interface-name=…,tailscale0`),
   which resolves to whatever address the interface currently holds, so
   tearing down and recreating `tailscale0` needs nothing regenerated.
-- **Acceptance test, not an assumption:** whether a query arriving over
-  loopback answers `${TS_IPV4}` — rather than `127.0.0.1` or `NXDOMAIN` —
-  must be measured on a clean Debian 13 target during the DNS phase.
-  `dig +short webdav.${LOCAL_DOMAIN} @127.0.0.1` and the same query against
-  `@${TS_IPV4}` must both return `${TS_IPV4}`. The loopback listener's value
-  as a test path depends on this, and it has not yet been observed.
+- **Acceptance test:** a query arriving over loopback must answer
+  `${TS_IPV4}` — not `127.0.0.1` or `NXDOMAIN`. Stage 7 measures
+  `dig +short … @127.0.0.1` and `@${TS_IPV4}` for every name in
+  `SERVICE_NAMES`; both must return `${TS_IPV4}`.
 - Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
   no certificate machinery — the tailnet is the transport security boundary.
 - **Portainer is the only HTTPS upstream** (**DD-62**): Caddy proxies
@@ -272,8 +272,9 @@ Apple TV**, reading the media library over the tailnet.
   - `/downloads/media/series`
 - Access is **read-only**. Infuse never writes; the service must make a
   write impossible rather than merely discouraged.
-- The installer creates only the directories it needs. It does not run a
-  host ownership of `/downloads` (see §1.4); WebDAV itself stays read-only.
+- The installer creates only the directories it needs. Host ownership repair
+  of `/downloads` is the selective Stage 3 pass in §1.4 (**DD-84**); WebDAV
+  itself stays read-only.
 
 WebDAV is a Compose service (**DD-77**), not a host unit: it publishes only
 on loopback, Caddy is the Infuse path, and Docker down means WebDAV down —
@@ -481,7 +482,9 @@ and IPv6 — separate tables mean no collision — and both are declared in
 - Inside `MASTER-DOCKER`:
   - `ESTABLISHED,RELATED` returns early.
   - Container traffic arriving over `tailscale0` is accepted.
-  - New WAN traffic to the two public UDP publications is accepted.
+  - New WAN traffic to the public peer publications is accepted
+    (wg-easy UDP `${WG_PUBLIC_PORT}`; qBittorrent TCP+UDP
+    `${QBIT_PUBLIC_PORT}`).
   - Every other WAN → container flow is dropped.
 - IPv6 policy is explicit and fail-closed with the same shape. If the host
   has no IPv6 WAN route, the rule set reduces accordingly rather than
@@ -500,7 +503,7 @@ and IPv6 — separate tables mean no collision — and both are declared in
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
 | `master-firewall.service` | `docker.service tailscaled.service` | `PartOf=docker.service` + `PartOf=tailscaled.service` | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=2s`, `StartLimitBurst=5` / 60s) |
 | `refresh-tailnet-config.timer` | — | address poll | starts oneshot every 5 min (`OnBootSec=2min`) |
-| `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`) | package default |
+| `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | package default |
 | Compose `webdav` | Docker / Compose | loopback publish | `unless-stopped` |
 
@@ -509,19 +512,23 @@ The Caddy drop-in also carries
 `{$TAILSCALE_IPV4}` in the Caddyfile is resolved at daemon start. There is
 no separately rendered environment file (**DD-61**), so `state.env` must be
 written in a form both bash and systemd can parse: plain `KEY=value`,
-unquoted, no spaces around `=`.
+unquoted, no spaces around `=`. `ExecStartPre=wait-tailnet-addr` requires
+that address on `tailscale0` (**DD-85**).
 
 Invariants:
 
 - **Restarting `tailscaled` re-applies the firewall
   (`master-firewall` is `PartOf=tailscaled.service`) and leaves Compose
-  running.** Caddy is restarted only when `refresh-tailnet-config` sees an
-  address change (or the operator restarts it). WebDAV is a container and
+  running.** Caddy is restarted when `refresh-tailnet-config` sees an
+  address change, when Caddy fails and `OnFailure=` starts that oneshot
+  (**DD-87**), or when the operator restarts it. WebDAV is a container and
   is not tied to `tailscaled`.
 - **Restarting `docker` re-applies the firewall policy and restarts
   containers (including WebDAV).** It does not touch Caddy or dnsmasq.
-- No unit carries `OnFailure=` pointing at a repair engine, because there is
-  no repair engine. A failed unit stays failed and visible.
+- **No general-purpose repair engine.** The only `OnFailure=` in the stack
+  is Caddy → `refresh-tailnet-config` (same oneshot the timer /
+  `WantedBy=tailscaled` already use). There is no reconcile loop that
+  reverts files or restarts arbitrary units.
 - Containers come back after a reboot through the Compose restart policy.
 
 ---
@@ -542,8 +549,9 @@ Invariants:
 - Firewall application is idempotent by construction: the chain is rebuilt
   from scratch and swapped in, and the `DOCKER-USER` jump is inserted only
   when absent.
-- Directory creation is conditional; ownership is applied to newly created
-  directories only.
+- Directory creation is conditional; ownership/mode repair under downloads
+  is selective (mismatched UID/GID/mode only — **DD-84**), not a full-tree
+  rewrite and not limited to newly created directories.
 - No step is unconditionally expensive: package installation, image pulls
   and daemon restarts happen only when something actually changed.
 
@@ -626,11 +634,8 @@ A v2 run is successful when every one of these holds on the target host.
     `REFUSED`.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
-13. Each of the four container sites returns a non-5xx status through
-    Caddy.
-
-### WebDAV
-
+13. Each of `portainer`, `wg`, `qbit` and `file` returns a non-5xx status
+    through Caddy (`Host:` + `${TS_IPV4}`).
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}`, `0.0.0.0`, WAN, or LAN.
 15. An unauthenticated request to loopback and via Caddy returns `401`.
@@ -639,7 +644,8 @@ A v2 run is successful when every one of these holds on the target host.
 18. Install-time: running container has Cmd `--read-only`,
     `ReadonlyRootfs=true`, and `/downloads` mount `RW=false` (**DD-81**).
     Authenticated write refusal remains a live/manual check.
-19. Infuse path is `http://webdav.${LOCAL_DOMAIN}` only.
+19. Infuse paths: `http://webdav.${LOCAL_DOMAIN}` (MagicDNS) and
+    `http://${TS_IPV4}/` on port 80 (Apple TV / no MagicDNS — **DD-78**).
 
 ### WebDAV credential handling (§6.2, §6.4)
 

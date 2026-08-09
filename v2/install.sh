@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-48"
+V2_VERSION="2026.08.06-v2-49"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -812,6 +812,15 @@ stage_7() {
 
     health="$(curl -fsS --max-time 5 "http://${TAILSCALE_IPV4}/" -H "Host: health.${LOCAL_DOMAIN}" || true)"
     [[ "$health" == "ok" ]] || die "Caddy health yanıtı beklenen gibi değil"
+
+    # Contract §14.13 — dört UI sitesi Caddy üzerinden non-5xx (DD-88).
+    local ui_host ui_code
+    for ui_host in portainer wg qbit file; do
+        ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            -H "Host: ${ui_host}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+        [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
+            die "Caddy ${ui_host}.${LOCAL_DOMAIN}: HTTP '${ui_code}' (non-5xx beklenir)"
+    done
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         "http://127.0.0.1:${WEBDAV_PORT}/" || true)"

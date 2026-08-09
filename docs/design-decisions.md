@@ -3747,3 +3747,15 @@ separate document with its own numbering.
   `active` (DD-64 timer / `WantedBy=tailscaled` remain that path).
 - **Bounds:** Caddy `StartLimitBurst=3` / `600s` still caps fail loops if
   the tailnet never becomes usable.
+
+### DD-88: Stage 7 asserts Caddy UI sites are non-5xx (2026-08-09)
+
+- **Decision:** After the health probe, Stage 7 requests
+  `portainer` / `wg` / `qbit` / `file` via `Host:` on `${TAILSCALE_IPV4}`
+  and requires an HTTP status in `1xx–4xx` (not empty/5xx). WebDAV stays
+  on its separate `401` checks; `health` stays the `ok` body check.
+- **Why:** Contract §14.13 already required this; Stage 7 previously
+  stopped at DNS + health + WebDAV auth surface, so a dead upstream behind
+  Caddy could still pass install. Cheap and secrets-free.
+- **Not doing:** asserting exact `200` (wg returns `302`; first-run UIs
+  vary) or authenticated probes.

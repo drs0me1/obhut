@@ -89,8 +89,9 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
 - Aşağıdaki dizinler oluşturulacak:
   - `/downloads`
   - `/downloads/media`
-- Mevcut veri ağacının tamamında koşulsuz recursive `chown` çalıştırılmayacak.
-- Yalnız oluşturulan dizinlerin gerekli sahiplik ve izinleri ayarlanacak.
+- Mevcut `/downloads` ağacında sahiplik/izin **seçici** onarılır (DD-84):
+  sapmış UID/GID `chown -h`, sapmış dizin `0775` / dosya `0664`; eşleşen
+  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok.
 
 ### Docker
 
@@ -102,6 +103,7 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - qBittorrent
   - Filebrowser Quantum
   - Unpackerr
+  - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
 ### Port yayın politikası
 
@@ -111,6 +113,7 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - wg-easy web arayüzü: `127.0.0.1:51821`
   - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
   - Filebrowser Quantum: `127.0.0.1:<web-port>`
+  - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - wg-easy WireGuard: yalnız UDP
   - qBittorrent peer: TCP + UDP (aynı `QBIT_PUBLIC_PORT`; 2026-08-06, R12 revize)
@@ -139,6 +142,8 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - `wg.${LOCAL_DOMAIN}`
   - `qbit.${LOCAL_DOMAIN}`
   - `file.${LOCAL_DOMAIN}`
+  - `webdav.${LOCAL_DOMAIN}`
+  - `health.${LOCAL_DOMAIN}`
 - Gerekli görülürse ek servis isimleri aynı açık listeye eklenebilir.
 - Wildcard davranışı varsayılan olmasın. Yalnız tanımlı servis isimleri çözülsün.
 
@@ -165,10 +170,13 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - `http://wg.${LOCAL_DOMAIN}`
   - `http://qbit.${LOCAL_DOMAIN}`
   - `http://file.${LOCAL_DOMAIN}`
-- Her site yalnız kendi loopback upstream’ine proxy yapacak.
+  - `http://webdav.${LOCAL_DOMAIN}` (+ isteğe bağlı bare Tailscale IPv4 alias, DD-78)
+  - `http://health.${LOCAL_DOMAIN}`
+- Her site yalnız kendi loopback upstream’ine proxy yapacak (health hariç:
+  sabit `ok` yanıtı).
 - Örnek:
   - `portainer.${LOCAL_DOMAIN}` → `127.0.0.1:9443`
-- Portainer upstream HTTPS kullanıyorsa Caddy transport yapılandırması açıkça ele alınmalı. Alternatif olarak Portainer’ın loopback HTTP portu kullanılabilir. Seçilen yaklaşım tek ve tutarlı olmalı.
+- Portainer upstream HTTPS kullanıyorsa Caddy transport yapılandırması açıkça ele alınmalı (DD-62: loopback HTTPS + `tls_insecure_skip_verify`).
 
 ### Firewall
 
@@ -186,9 +194,11 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
   - `DOCKER-USER`
   - `DOCKER-FORWARD`
   - diğer Docker zincirleri
-- Proje yalnız kendi zincirini oluşturabilir. Örnek:
-  - `MASTER-DOCKER-FILTER`
-- `DOCKER-USER` içinde bu zincire tek bir idempotent jump bulunmalı.
+- Proje yalnız kendi zincirlerini oluşturabilir:
+  - `MASTER-INPUT`
+  - `MASTER-DOCKER`
+  (`MASTER-DOCKER-FILTER` kullanılmaz; tek isimler `defaults.env`’de.)
+- `DOCKER-USER` içinde `MASTER-DOCKER`’a tek bir idempotent jump bulunmalı.
 - Firewall kuralları reboot sonrasında yeniden kurulmalı.
 - Bunu sağlamak için Docker ve Tailscale sonrasında çalışan küçük bir systemd oneshot servisi kullanılmalı.
 - Servis her çalıştığında mevcut kuralları çoğaltmadan aynı sonucu üretmeli.
@@ -201,14 +211,14 @@ Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`do
 - Küçük bir `refresh-tailnet-config` betiği:
   - Güncel `TS_IPV4` ve `TS_IPV6` değerlerini okur.
   - Önceki değerlerle karşılaştırır.
-  - Değişiklik yoksa hiçbir işlem yapmadan çıkar.
+  - Değişiklik yoksa failed Caddy varsa kurtarır (`recover_failed`), çıkar.
   - Değişiklik varsa:
     - `/etc/master-stack/state.env` dosyasını atomik günceller,
-    - dnsmasq dosyasını yeniden üretir,
-    - Caddyfile’ı yeniden üretir,
-    - yapılandırmaları doğrular,
-    - yalnız dnsmasq ve Caddy’yi reload/restart eder.
+    - yalnız Caddy’yi restart eder (dnsmasq `bind-dynamic`; firewall
+      arayüz adına bağlı; Compose dokunulmaz).
   - Docker container’larını gereksiz yere yeniden başlatmaz.
+- Caddy drop-in `OnFailure=refresh-tailnet-config.service` (DD-87): stale
+  start fail’inde timer beklemeden aynı oneshot çalışır.
 - Bu helper küçük ve anlaşılır kalmalı. Büyük bir genel amaçlı reconcile motoruna dönüşmemeli.
 
 ## İstenen mimari sonuç

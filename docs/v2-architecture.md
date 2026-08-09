@@ -322,17 +322,18 @@ recreated — with no file to regenerate and no rule to reinstall.
 **A Tailscale address change never restarts the Compose stack.** This is
 the single most important lifecycle difference from v1, where
 `master-compose.service` carried `PartOf=tailscaled.service` and therefore
-made every `systemctl restart tailscaled` bounce all five containers.
+made every `systemctl restart tailscaled` bounce the whole Compose set
+(five containers then; six with WebDAV now).
 
-**Public IPv4 change — open question for a later phase.** The firewall
-re-applies itself on boot or Docker restart and therefore picks up a new
-public address, but the Compose port publications are baked into the running
-containers. Until a decision is made, the documented answer is: a changed
-public IPv4 requires re-running the installer. Options to evaluate later
-are (a) extending `refresh-tailnet-config` to re-render `.env` and recreate
-only `qbittorrent` and `wg-easy`, or (b) accepting the manual re-run on a
-host whose address is effectively static. This is recorded here so it is a
-decision rather than a gap.
+**Public IPv4 change — settled.** Compose publishes the peer ports on
+`0.0.0.0` (not a WAN address baked into the file), so a new public IPv4
+does **not** require re-rendering Compose or recreating containers for
+DNAT/publish. `master-firewall` re-applies on boot / Docker / Tailscale
+restart and reads current WAN facts from `state.env` / the interface.
+`WG_ENDPOINT_HOST` in `state.env` is an operator hint only; wg-easy peer
+configs that baked an old endpoint still need manual client updates
+(**DD-76**). There is no Compose `.env` path and no
+`refresh-tailnet-config` extension for WAN IP.
 
 ---
 
@@ -345,7 +346,7 @@ that could disagree.
 | Question | Single owner |
 |---|---|
 | What is the WAN interface / WAN IPv4 / Tailscale IPv4 / IPv6? | `install.sh` (write) / `refresh-tailnet-config` (update) |
-| Is the firewall policy in force? | `scripts/master-firewall --check` |
+| Is the firewall policy in force? | `scripts/firewall.sh` installed as `/usr/local/sbin/master-firewall --check` |
 | Has the Tailscale address changed? | `scripts/refresh-tailnet-config` |
 | Is a container healthy? | **Nobody.** Compose's restart policy handles crashes; there is no health arbiter |
 | Has a managed file drifted? | **Nobody.** Re-running the installer is the repair |
@@ -367,7 +368,7 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | 0 | Gates (root, tty, Debian 13, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
 | 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
-| 3 | Address detection → `state.env`; downloads tree `chown` `DOWNLOADS_UID:GID` | installer |
+| 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
 | 4 | Docker; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall`; enable refresh timer | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |

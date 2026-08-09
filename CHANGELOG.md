@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-49: structural doc sync + Stage 7 UI Caddy checks
+
+- **Docs:** `v2-contract`, `v2-architecture`, `master-stack.mdc`, root
+  README/SESSION aligned with shipped behaviour (OnFailure/DD-87, Infuse
+  bare-IP/DD-78, selective downloads/DD-84, R10 WebDAV, R18 peer
+  TCP+UDP, WAN publish settled, DNS acceptance observed).
+- **Added:** Stage 7 curls `portainer`/`wg`/`qbit`/`file` through Caddy
+  and requires a non-5xx status (**DD-88**, contract §14.13).
+- **Export:** portable `app/` rebuilt for `v2-49`.
+
 ### 2026-08-09 — v2-48: Caddy OnFailure runs refresh-tailnet
 
 - **Added:** Caddy drop-in `OnFailure=refresh-tailnet-config.service` so a

@@ -702,6 +702,9 @@ EOF
     grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
+    # Contract §14.13 / DD-88
+    grep -q 'for ui_host in portainer wg qbit file' "$V2_ROOT/install.sh"
+    grep -q 'non-5xx beklenir' "$V2_ROOT/install.sh"
 }
 
 @test "install holds systemd-inhibit" {
