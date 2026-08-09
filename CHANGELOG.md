@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-51: memorable FileBrowser / qBit UI defaults
+
+- **Changed:** Fresh-install loopback UI defaults in `defaults.env`:
+  `FILEBROWSER_UI_PORT=61007`, `QBIT_UI_PORT=61009` (same 6100x odd
+  series as peer/WebDAV). Portainer 9443 and wg-easy 51821 unchanged.
+  Existing hosts keep `config.env` values on re-run.
+
 ### 2026-08-09 — v2-50: memorable high default peer/WebDAV ports
 
 - **Changed:** Fresh-install defaults in `defaults.env`:

@@ -203,8 +203,8 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | Portainer | `127.0.0.1` | 9443 (HTTPS — **DD-62**) |
-| FileBrowser Quantum | `127.0.0.1` | 7113 |
-| qBittorrent WebUI | `127.0.0.1` | 13087 |
+| FileBrowser Quantum | `127.0.0.1` | 61007 |
+| qBittorrent WebUI | `127.0.0.1` | 61009 |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
@@ -228,8 +228,8 @@ defaults to the value recorded in `state.env` on a re-run.
 |---|---|---|---|
 | `portainer.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://portainer.…` | `https://127.0.0.1:9443` (**DD-62**, skip-verify on loopback) |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
-| `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:13087` |
-| `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:7113` |
+| `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:61009` |
+| `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
 | `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
 
