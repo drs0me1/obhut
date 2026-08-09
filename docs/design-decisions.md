@@ -3771,8 +3771,9 @@ separate document with its own numbering.
   **maintenance-only / planned archive** (no future patches) — recorded
   consciously, not ignored.
 - **Data:** Host dir `/etc/master-stack/filebrowser-data` (DOWNLOADS_UID)
-  holds the Bolt DB; `/downloads` mounts at `/srv`. Quantum
-  `filebrowser.yaml` and named volume `filebrowser_data` are removed on
-  Stage 4.
+  holds the Bolt DB (`/database`) and binds `config/` over the image
+  `VOLUME /config` so Compose does not allocate an anonymous volume
+  (v2-58). `/downloads` mounts at `/srv`. Quantum `filebrowser.yaml` and
+  named volume `filebrowser_data` are removed on Stage 4.
 - **Accounts:** Default `admin`/`admin` on first DB bootstrap — end-of-
   install warning; operator must change.

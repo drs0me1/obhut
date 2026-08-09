@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-58: FileBrowser /config bind (no anonymous volume)
+
+- **Fixed:** Classic FileBrowser image declares `VOLUME /config`; compose now
+  binds `__FILEBROWSER_DATA_DIR__/config` so Docker does not create an
+  anonymous volume. Install creates the host dir and uses `docker rm -fv`
+  so a prior anonymous `/config` volume is removed on re-run.
+
 ### 2026-08-09 — v2-57: qBittorrent WebUI default 61006
 
 - **Changed:** Fresh-install `QBIT_UI_PORT` default `61009` → `61006`

@@ -238,11 +238,13 @@ EOF
     grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/srv' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
     grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
     grep -q 'FILEBROWSER_DATA_DIR="/etc/master-stack/filebrowser-data"' \
         "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
+    grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
     ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
     ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"

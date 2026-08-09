@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-57"
+V2_VERSION="2026.08.06-v2-58"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -429,11 +429,11 @@ ensure_downloads_tree() {
     find "$root" -type f ! -perm 0664 -exec chmod 0664 {} +
 }
 
-# Klasik FileBrowser Bolt DB dizini — named volume www-data/root sorununu önler.
+# Klasik FileBrowser Bolt DB + image VOLUME /config — anonim volume oluşmasın.
 ensure_filebrowser_data_dir() {
-    mkdir -p "$FILEBROWSER_DATA_DIR"
+    mkdir -p "$FILEBROWSER_DATA_DIR/config"
     chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$FILEBROWSER_DATA_DIR"
-    chmod 0750 "$FILEBROWSER_DATA_DIR"
+    chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
 }
 
 stage_3() {
@@ -500,12 +500,12 @@ EOF
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
     rm -f "$COMPOSE_DIR/.env"
 
-    # Klasik FileBrowser veri dizini; Quantum YAML / named volume kalıntısı temizle.
+    # Klasik FileBrowser veri dizini; Quantum YAML / named+anon volume kalıntısı temizle.
     ensure_filebrowser_data_dir
     rm -f /etc/master-stack/filebrowser.yaml
     if command -v docker >/dev/null 2>&1; then
-        # Quantum → klasik geçişinde eski volume/container'ı bırakma.
-        docker rm -f filebrowser 2>/dev/null || true
+        # -v: image VOLUME /config anonim volume'ünü de sil (hijyen).
+        docker rm -fv filebrowser 2>/dev/null || true
         docker volume rm docker_filebrowser_data filebrowser_data 2>/dev/null || true
     fi
 

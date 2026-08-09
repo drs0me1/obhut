@@ -37,6 +37,8 @@ services:
     volumes:
       - __DOWNLOADS_PATH__:/srv
       - __FILEBROWSER_DATA_DIR__:/database
+      # Image VOLUME /config — anonim volume oluşmasın (DD-92 hijyen).
+      - __FILEBROWSER_DATA_DIR__/config:/config
     tmpfs:
       - /tmp
 
