@@ -10,7 +10,7 @@ alwaysApply: false
 
 Bu proje Debian 13 üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
 
-Ana hedef, mevcut `install.sh` dosyasının davranışını anlamak ve yalnızca gerekli işlevleri koruyarak daha sade, okunabilir ve güvenli bir mimariye dönüştürmektir.
+Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`docs/v2-contract.md`) dışına taşmadan davranışı korumaktır.
 
 ## Temel çalışma ilkeleri
 

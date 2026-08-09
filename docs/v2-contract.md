@@ -5,28 +5,21 @@ lean tree under `v2/` (`install.sh` and helpers). Where live code and this
 document diverge, prefer the code and update this file.
 
 This document is the authoritative statement of what the v2 installer does
-and — just as importantly — what it deliberately refuses to do. It exists
-because v1 (`legacy/install.sh`, 5495 lines) grew a large self-healing layer
-that no functional requirement ever asked for. Every removal below is a
-decision, not an oversight.
-
-**Relationship to v1:** `install.sh` at the repository root remains the
-running production installer until v2 reaches parity and is verified on a
-real host. `legacy/install.sh` is its frozen, byte-identical reference copy
-(`sha256 547a9132…`). v2 is developed beside them, never on top of them.
+and — just as importantly — what it deliberately refuses to do. Removals
+relative to the retired monolith (no reconcile engine, no
+canonical-bundle machinery, no host WebDAV unit) are decisions, not
+oversights. The repository is v2-only; there is no parallel v1 tree.
 
 **Relationship to `v2/.cursor/rules/`:** those rules are scoped to the `v2/`
 tree and govern *how* the work is done — process, Bash conventions, the
 per-phase verification set, and the hard prohibitions (do not delete Docker's
 chains, do not silently turn the UDP-only decision into TCP+UDP, do not grow
 a general-purpose reconcile engine). This document governs *what the result
-must do*. The rules file predates the WebDAV decisions and does not mention
-WebDAV; where it is silent this contract extends it. The four places where
-the two genuinely disagreed — the dnsmasq listening scope, the chain name,
-the refresh helper's scope, and Portainer's upstream scheme — were settled
-on 2026-08-05 and are recorded as **DD-59** through **DD-62** in
-`design-decisions.md`; this document states the resolved position
-throughout. The rules must not be applied to `legacy/install.sh`.
+must do*. Where the rules are silent (for example on WebDAV), this contract
+extends them. Settled disagreements with early rule drafts — dnsmasq
+listening scope, chain name, refresh helper scope, Portainer upstream
+scheme — are recorded as **DD-59** through **DD-62** in
+`design-decisions.md`.
 
 The single active rule source is `v2/.cursor/rules/master-stack.mdc`. The
 original RTF is archived unchanged at

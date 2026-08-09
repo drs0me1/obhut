@@ -1,36 +1,21 @@
 # Session Notes
 
-This file carries context between Claude Code sessions for this
-repository. Update it at the end of a working session so the next session
-can pick up without re-deriving context.
+Cross-session continuity for this repository.
 
 ## Current Task
 
-**`2026.08.06-v2-36` live on `nrm` — WebDAV in Compose (DD-77).**
-
-Legacy monolith remains under `legacy/install.sh` / root history; active
-work is `v2/`.
+**Repo is v2-only.** Legacy v1 trees (`install.sh`, `legacy/`, `versiyon/`,
+root `test/`, root `scripts/`, `SECURITY_REVIEW.md`, `TODO.md`, and
+v1-centric docs) were removed. Active work is `v2/`.
 
 | | |
 |---|---|
-| Version (repo + nrm) | `2026.08.06-v2-36` |
-| WebDAV | Compose loopback → Caddy; host unit gone |
-| Next | commit v2-36 |
+| Version | `2026.08.06-v2-45` |
+| Branch | `quantum` |
+| WebDAV | Compose loopback → Caddy (DD-77+) |
+| Next | operator-driven |
 
-### Verified 2026-08-07 (see CHANGELOG `[Unreleased]`)
-
-1. Firewall hardening pack **v2-23…v2-27**: oneshot retry + DOCKER-USER wait;
-   PartOf docker+tailscaled; minimal `--check`; drop `watch-tailnet-addr`;
-   IPv4-only peer Compose binds.
-2. Reboot smoke: fail=0.
-3. Natural TS IPv4 change `…61` → `…77`: timer refresh ~1.5 min later;
-   Caddy/WebDAV rebound; health 200. **Keep 5 min timer** (operator).
-4. Mac exit-node: external IP = nrm WAN `203.0.113.10`; path via
-   `ts-forward` + SNAT; not `MASTER-INPUT`.
-5. DERP (`fra`) while Mac on hotspot NAT — **not** server firewall
-   (`ts-input` 41641 counters live). No tune.
-
-### Operator preferences locked in this session
+### Operator preferences (locked)
 
 - Do not restore `watch-tailnet-addr`.
 - Do not shorten `refresh-tailnet-config.timer`.
@@ -39,13 +24,7 @@ work is `v2/`.
 
 ### Next session defaults
 
-- Read `CHANGELOG.md` Unreleased “Live verification of v2-23…v2-27” first.
+- Read `CHANGELOG.md` `[Unreleased]` and `docs/v2-contract.md` first.
 - `nrm` standing auth still applies for disposable testing.
-- Background IP watcher on host may still be at `/tmp/ts-ip-watch.*` from
-  this session; safe to kill if leftover.
-
-## Older notes
-
-Pre-v2 Quantum / Q1-* session history was truncated here once the lean v2
-line became the active live target. Recover detail from `git log` and
-older CHANGELOG sections if needed.
+- Portable export: `v2/dev/export-v2.sh` (rebuild after shipping changes;
+  `v2/app/` may lag `V2_VERSION` until the next export).

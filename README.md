@@ -1,517 +1,67 @@
-# Debian Server Installer
+# Debian Server Installer (v2)
 
-**Current manual-test export: R2.6 / Q1-21; latest live-verified release:
-R2.5 / Q1-20** (2026-08-02). The working-tree script reports
-`2026.08.02-Q1-21` in its banner, log header and final summary; this is
-distinct from `STACK_SCHEMA`, which versions `state.env`'s on-disk format
-and remains `10`. R2.5 was live-verified on Debian 13 through an
-R2.4 → R2.5 upgrade, controlled reconcile fault injection, a later
-from-scratch install after the host was reimaged, and unchanged idempotent
-reruns. The fresh run included the real browser-login path and completed
-without losing the Tailscale hand-off.
-Q1-21 follows a later live reproduction in which two distinct browser-login
-links created offline console entries and left LocalAPI at the same persistent
-410 signature before a third daemon-reset attempt succeeded. It recognizes
-that structured state after three consecutive samples instead of waiting the
-full five-minute fallback, while retaining the fallback for every unknown
-stall. Q1-21 is locally verified and, at the operator's explicit request,
-exported as the untagged R2.6 manual-test candidate before its exact automatic
-recovery path is exercised live. No live-success claim is attached to R2.6.
-Q1-16 through Q1-21 add atomic canonical publication, transactional
-DNS/Caddy file rollback, reliable deleted-node classification, retryable
-FileBrowser policy activation, and stricter reconcile/dependency semantics.
-See [`CHANGELOG.md`](CHANGELOG.md) for the complete history.
+Lean Bash installer for a fresh **Debian 13 (trixie)** host: Tailscale exit
+node, fixed Docker Compose bundle (including loopback WebDAV), host dnsmasq
++ Caddy on the tailnet, and a persistent firewall. No reconcile engine.
 
-## Project Overview
+**Current version:** `2026.08.06-v2-45` (see `v2/install.sh`).
 
-`install.sh` is a single, self-contained Bash script that turns a fresh
-**Debian 13 (trixie)** host into a hardened **Tailscale exit-node** running a
-fixed **Docker Compose** service bundle (VPN, file management, torrent
-client, and Tailnet-only reverse proxy/DNS).
+Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
+Layout and data flow: [`docs/v2-architecture.md`](docs/v2-architecture.md).  
+Design rationale: [`docs/design-decisions.md`](docs/design-decisions.md).
 
-The script is designed to be run as root, interactively, on a dedicated
-server. It is **idempotent by design**: it can be re-run safely against an
-already-provisioned host to reconcile drift, pick up new image versions, or
-recover from a partially failed prior run. Beyond the initial install, it
-also writes a **20-minute self-healing reconcile timer** that continuously
-verifies and repairs network addressing, firewall state, container health,
-and DNS/Caddy configuration for the lifetime of the server.
+## Quick start
 
-The script has seven sequential installation stages (0–7), root-only
-structured logging with a live progress bar, layered rollback/cleanup traps,
-and an extensive runtime verification pass at the end of the install.
+```bash
+# Developer workstation — build a portable macOS .command
+v2/dev/export-v2.sh --desktop
+# or double-click: v2/dev/export-v2.command
 
-## Features
-
-- **OS guard**: refuses to run on anything other than Debian 13 (trixie);
-  requires root, an interactive TTY, and a held `systemd-inhibit` lock for
-  the duration of the run.
-- **Tailscale exit-node**: installs Tailscale, brings it up (interactive
-  browser login, or keeps an existing connection if the host is already
-  enrolled), and configures it as an exit-node with stateful filtering,
-  netfilter mode, and subnet SNAT.
-- **Hardened Docker/Tailscale firewall**: a generated helper script
-  (`docker-tailscale-fw`) builds dedicated `iptables`/`ip6tables` chains
-  using an atomic "staging chain" swap technique so that Docker's
-  `DOCKER-USER` chain and the Tailscale forwarding path stay fail-closed by
-  default, with narrow, explicit allow rules for the public services.
-- **Fixed Compose stack**: Portainer, Filebrowser, qBittorrent, Unpackerr
-  and wg-easy, deployed with upstream channel tags whose resolved digests
-  are recorded in `state.env` (DD-23), plus a hardened host
-  `rclone` WebDAV unit (`master-webdav.service`) serving the media tree
-  read-only to the Tailnet.
-- **Tailnet-only DNS + reverse proxy**: `dnsmasq` (bound to `tailscale0`
-  only) and Caddy (bound to the current Tailscale IPv4) provide friendly
-  `*.<domain>` names for each service.
-- **Self-healing reconcile timer**: a `master-network-reconcile.timer`
-  (every 20 minutes) re-verifies and repairs WAN/Tailscale addressing,
-  firewall rule sets, Tailscale preferences, container health/port
-  bindings, and managed DNS/Caddy configuration, with restart cooldowns to
-  avoid flapping.
-- **Layered rollback on failure**: a single `EXIT` trap restores
-  pre-install timer state and unwinds a partially-configured DNS/Caddy
-  stack, regardless of where the script failed.
-- **Root-only logging with live progress**: verbose stage-by-stage logs go
-  to `/var/log/master-setup/`, while the interactive terminal only shows a
-  compact `[stage/7] [bar] percent · label` progress line.
-- **Extensive self-verification (Stage 7)**: re-checks systemd unit
-  dependency graphs (`systemd-analyze verify` plus explicit
-  `Requires`/`After`/`PartOf`/`OnFailure` assertions), firewall rule content
-  and ordering, container port bindings, and live HTTP/DNS/WebDAV endpoints
-  before declaring success.
-
-## Current Architecture
-
-The script runs as seven stages, gated by `progress_stage_begin`/
-`progress_stage_done` and driven by `set -Eeuo pipefail` with `ERR`/`EXIT`/
-`INT`/`TERM` traps for cleanup:
-
-| Stage | Purpose |
-|-------|---------|
-| 0 | Interactive prompts (downloads path, local DNS domain, WebDAV username/password), confirmation summary. Tailscale login is always interactive (browser) unless already connected; wg-easy admin setup is not prompted for — it's done manually via the web UI after install |
-| 1 | Base OS prep: apt/timer quiescing, timezone, `apt-get update` → `full-upgrade` → base packages |
-| 2 | UDP-socket-buffer sysctl, Tailscale install, interactive browser login, exit-node + stateful filtering + netfilter configuration, UDP GRO tuning |
-| 3 | Docker install, daemon.json DNS override, generation of the `docker-tailscale-fw` firewall helper and its systemd unit |
-| 4 | Data directories, `compose.yaml` + `.env` generation, WebDAV `htpasswd`, `master-compose-ipv4` / `master-network-reconcile` / `master-webdav-serve` helper scripts, systemd units for Compose, WebDAV and reconcile |
-| 5 | Image pull, systemd dependency graph verification, firewall + Compose stack startup |
-| 6 | Transactional Tailnet-only `dnsmasq` + Caddy provisioning and atomic canonical-bundle publication |
-| 7 | Full runtime verification (systemd properties, firewall rule content, container/service health, DNS/WebDAV endpoints) and final summary |
-
-Custom systemd units created by the script:
-
-- `tailscale-udp-gro.service` — one-shot UDP GRO forwarding tuning
-- `docker-tailscale-fw.service` — applies the dedicated firewall chains
-- `master-compose.service` — brings up the Compose stack once WAN/Tailscale
-  addresses are ready
-- `master-webdav.service` — hardened `rclone serve webdav` unit, read-only
-  over the media tree, bound to the Tailscale IPv4 only (`V1-3`, DD-20)
-- `master-network-reconcile.service` + `.timer` — the 20-minute self-healing
-  check/repair pass
-- `master-docker-netfilter-recovery.service` — last-resort Docker daemon
-  restart to recover Docker-owned DNAT/FORWARD rules
-- `caddy.service.d` / `dnsmasq.service.d` / `tailscaled.service.d`
-  drop-ins — ordering and `PartOf`/`OnFailure` wiring for the
-  DNS/Caddy stack
-
-See [`docs/architecture.md`](docs/architecture.md) for a deeper breakdown
-and [`docs/design-decisions.md`](docs/design-decisions.md) for the
-rationale behind specific choices (e.g. the staging-chain firewall swap,
-the canonical-bundle checksum model for reconcile).
-
-## Installation Flow
-
-1. **Stage 0** collects all interactive input up front (downloads path,
-   local DNS domain, and — unless a credential file already
-   exists — the WebDAV username/password) and prints a summary before
-   asking for final confirmation. All subsequent stages run non-interactively.
-2. Once confirmed, logging switches to `/var/log/master-setup/master-setup-<timestamp>-<pid>.log`;
-   the terminal only shows the live progress bar from this point on.
-3. Stages 1–3 prepare the base OS, Tailscale, and Docker plus the dedicated
-   firewall helper — each stage validates its own preconditions and exits
-   non-zero on failure, which triggers the `EXIT` trap's rollback logic.
-4. Stage 4 writes all state (`/etc/master-stack/state.env`), the Compose
-   file, and the reconcile/recovery helper scripts, but does not yet start
-   anything.
-5. Stage 5 pulls images, verifies the systemd dependency graph
-   (`systemd-analyze verify`), and applies the firewall and starts the
-   Compose stack. wg-easy comes up unconfigured on a fresh install — its
-   admin account is created manually via its web UI afterward, the same
-   as Portainer's.
-6. Stage 6 provisions `dnsmasq` + Caddy for Tailnet-only service
-   names, using a fail-closed pattern (services are `mask`ed until their
-   generated configuration is validated).
-7. Stage 7 re-derives all addresses (they may have changed during a long
-   install) and runs a comprehensive battery of runtime checks — systemd
-   unit properties, firewall rule content/order, container port bindings,
-   HTTP/DNS/WebDAV probes — before printing the final summary and enabling
-   the 20-minute reconcile timer.
-
-Re-running the script against an already-provisioned host is expected and
-supported: most stages detect existing state (Docker daemon.json content,
-canonical config checksums, timer states) and skip or reconcile rather
-than blindly re-applying.
-
-**Measured, 2026-07-31** — a re-run against a healthy host took **25
-seconds and restarted no container at all**: all five `StartedAt`
-timestamps were byte-identical before and after, the wg-easy peer and
-WireGuard port survived, Portainer's `InstanceID` was unchanged, and
-`webdav.htpasswd` was not rewritten. This falls out of the unit design
-rather than luck: `master-compose.service` is `Type=oneshot` with
-`RemainAfterExit=yes` and **no `ExecStop`**, so Stage 5's
-`systemctl stop master-compose` only marks the unit inactive — the
-containers keep running, and the subsequent `docker compose up -d --wait`
-is a no-op unless `compose.yaml` actually changed. The one service that
-does restart is `master-webdav`, deliberately and unconditionally, since
-its unit definition or credential may have changed; WebDAV is
-unavailable for a second or two.
-
-Since `V1-12` that measurement carries a qualifier: image tags float, so
-`docker compose pull` may fetch a newer image and `up -d` will then
-recreate **only the containers whose image actually changed**. A re-run is
-a no-op when nothing upstream has moved and a scoped upgrade when
-something has.
-
-Two things to know before re-running:
-
-- **Manual edits to `/root/docker/compose.yaml` are silently
-  overwritten.** There is a deliberate asymmetry here: reconcile only
-  *reports* Compose drift and never reverts it (M10, so an operator's
-  considered change is not undone behind their back), but `install.sh`
-  rewrites the file unconditionally. A change meant to last belongs in
-  `install.sh`, not on the host.
-- **A re-run is where container upgrades happen** (changed in `V1-12`;
-  before that, tags were exact and a re-run pulled the same digests).
-  Reconcile never pulls, so images never move on the 20-minute timer —
-  only an explicit re-run moves them. Upgrading is safe in the sense that
-  every container reads its existing data directory and continues;
-  **downgrading is not**, because Portainer migrates its database forward
-  with no reverse path. The rollback path is a provider-level VPS
-  snapshot taken before the run, not a re-pin.
-
-This is also why there is no separate upgrade script: `install.sh` *is*
-the upgrade path, exercised in place (`V1-10` → `V1-11`). A second script
-would need its own copy of the canonical unit/firewall/Compose/DNS
-definitions, and the entire self-healing model depends on there being
-exactly one.
-
-## Deploying to a host
-
-`versiyon/R2.6/` holds the current manual-test export plus the deployment
-helpers. `deploy.sh` copies it to a host, verifies the transfer by SHA256, and
-can start the install over interactive SSH. R2.6 is not yet a live-verified
-tagged release; R2.5 remains that baseline.
-
-```sh
-./versiyon/R2.6/deploy.sh nrm       # copy + verify
-./versiyon/R2.6/deploy.sh nrm --run # copy + verify + start
+# On the host (after upload)
+bash /root/debian-server-installer/v2/install.sh
 ```
 
-The expected hash is **computed from the local export at run time, not
-hardcoded** — a stored constant would be a second copy needing manual
-update on every export swap, and this repository has already been bitten
-by exactly that class of drift more than once (the repair cooldown, the
-architecture stage table, the "fixed image versions" wording). Each release
-directory's script also refuses to run unless that directory contains exactly
-one export, so a stale second file cannot be deployed by accident.
+Root, interactive TTY, Debian 13 only. Re-runs are supported.
 
-`--run` executes the installer directly over SSH. It deliberately does not
-wrap it in `tmux` (operator decision, 2026-07-31): the install can equally
-be started from the provider console, so the extra dependency was not worth
-it. The accepted cost is that an SSH drop after Stage 1 leaves the install
-incomplete — the remedy is built in, since re-running is idempotent.
+## Runtime tree
 
-It does warn about the Tailscale login. A pending registration can die with
-`410 auth path not found`; restarting the installer is one way to invalidate
-the previous nodekey/path, but the same persistent failure has also been
-measured twice without an installer restart. Q1-21 distinguishes the live
-LocalAPI failure signature from a merely slow login: three consecutive
-`NeedsLogin`/offline/empty-ID/410 samples trigger a daemon reset and fresh
-link, while every other pending state retains the full five-minute human
-window.
+```
+v2/
+├── install.sh          # orchestrator
+├── common.sh
+├── config/defaults.env # single source of truth for ports/images/paths
+├── templates/          # compose.yaml, Caddyfile, dnsmasq.conf
+├── scripts/            # firewall, refresh-tailnet, gro, wait helpers
+├── systemd/
+├── tests/              # bats critical-behaviour suite
+├── dev/                # export-v2.sh
+└── app/                # versioned portable .command exports
+```
 
-## Docker Services
+## Stack
 
-All services are defined in a single generated `/root/docker/compose.yaml`
-with shared JSON-file logging (10m × 3 files). Image tags float so that
-upstream updates arrive only on an explicit installer re-run; reconcile
-never pulls. Some aliases (`latest`, `stable`, `lts`) may cross release
-lines, so a provider-level snapshot is the rollback boundary. The digest
-each tag resolved to is written into `state.env` and asserted by Stage 7,
-so "what is actually running" stays answerable (DD-23).
+| Service | Exposure | Role |
+|---------|----------|------|
+| Portainer | loopback → Caddy | Docker UI |
+| FileBrowser | loopback → Caddy | media tree UI |
+| qBittorrent | loopback UI + public peer TCP/UDP | torrents |
+| Unpackerr | none | archive extraction |
+| wg-easy | loopback UI + public WireGuard UDP | VPN |
+| WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
-| Service | Image (tag) | Exposure | Purpose |
-|---------|-----------------|----------|---------|
-| `portainer` | `portainer/portainer-ce:lts` | `127.0.0.1:9443` (+ Tailnet via Caddy) | Docker management UI; mounts `/var/run/docker.sock` |
-| `filebrowser` | `ghcr.io/gtsteffaniak/filebrowser:stable` | `127.0.0.1:7113` (+ Tailnet via Caddy) | FileBrowser Quantum over the downloads/media tree |
-| `qbittorrent` | `lscr.io/linuxserver/qbittorrent:latest` | `127.0.0.1:13087` (WebUI) + public IPv4 on the configured peer port (tcp+udp) | Torrent client |
-| `unpackerr` | `ghcr.io/unpackerr/unpackerr:0.15` | none (no published ports) | Watches the media tree and extracts nested archives |
-| `wg-easy` | `ghcr.io/wg-easy/wg-easy:15.3` | `127.0.0.1:51821` (admin UI) + public IPv4 UDP (WireGuard) | WireGuard VPN server with a web admin UI |
+Host edge: dnsmasq + Caddy bound to the Tailscale address; firewall
+(`DOCKER-USER` + custom chains) for Tailscale, the two public peer ports,
+and WAN SSH.
 
-WebDAV is **not** a container. `master-webdav.service` (a host systemd
-unit, since `V1-3`) runs `rclone serve webdav --read-only` against the
-media tree, bound to `<tailscale-ip>:65113` only — never loopback, never
-the public IPv4. Credentials come from a bcrypt `htpasswd` file created
-from a Stage 0 prompt and passed in via systemd `LoadCredential=`. See
-DD-20 for why it stopped being a container.
+## Verify (workstation)
 
-Notes:
+```bash
+bats v2/tests
+bash -n v2/install.sh v2/common.sh v2/scripts/*
+shellcheck -x -s bash v2/install.sh v2/common.sh v2/scripts/*
+```
 
-- `wg-easy` runs with `cap_add: [NET_ADMIN]` only and `INSECURE: "true"`
-  (required because Caddy reverse-proxies it over plain HTTP inside the
-  Tailnet). The WireGuard kernel module, plus `ip6_tables`/`ip6table_nat`
-  (needed by `wg-quick`'s legacy-mode ip6tables rules — not loaded by
-  anything else on the host, which uses the nftables backend for its own
-  firewall), are loaded independently on the host in Stage 4 (standalone,
-  best-effort `modprobe` calls, unrelated to Tailscale's own networking
-  path) so the container itself never needs `SYS_MODULE` or a
-  `/lib/modules` mount (resolved 2026-07-27, see **H1** in
-  `SECURITY_REVIEW.md`; the `ip6_tables`/`ip6table_nat` gap was a
-  regression found and fixed via live testing on 2026-07-28).
-- `qbittorrent` and `unpackerr` run with `cap_drop: [ALL]`; `unpackerr`
-  (already non-root) also runs `read_only: true`. `qbittorrent` gets back
-  the minimal capability set its linuxserver.io entrypoint needs
-  (`cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]`) — `read_only`
-  was tested and found to break that entrypoint's `PUID`/`PGID` handling,
-  so it's deliberately not applied there (see **M1** in
-  `SECURITY_REVIEW.md`).
-- `filebrowser` keeps its database, index and cache in the Docker-managed
-  `filebrowser_data` volume. Its security policy is a separate read-only host
-  bind mount. On the very first start Quantum warns that the database file
-  does not exist and then creates it at the configured volume path; that
-  one-time message is expected. Later starts say `Using existing database`.
-- The downloads/media tree is bind-mounted read-write into `qbittorrent`
-  and `unpackerr`; the host WebDAV unit reads it directly, read-only.
-- Only `wg-easy` currently defines a Compose healthcheck; the reconcile
-  timer substitutes external port/HTTP/DNS probes for the rest of the
-  stack.
-- The service set is currently fixed — there is no per-service opt-out or
-  installation profile (see **Current Limitations** and
-  [`docs/profiles.md`](docs/profiles.md)).
+## Working conventions
 
-## Networking
-
-- **Exit-node**: Tailscale is configured with `--advertise-exit-node
-  --ssh=true --stateful-filtering=true --netfilter-mode=on
-  --snat-subnet-routes=true`. The interactive login itself runs `tailscale
-  up --advertise-exit-node --ssh`, so a fresh node asks for both in one
-  step; the `tailscale set` above is the idempotent path that also runs on
-  re-installs, and `tailscale_prefs_ok()` treats a lost `--ssh` as drift.
-  The WAN interface and public IPv4 are auto-detected from the default
-  route (`ip route get 1.1.1.1`).
-- **Tailscale SSH**: the node answers SSH on its own Tailscale address,
-  authenticated by the **tailnet's ACL `ssh` block** rather than by the
-  host's `authorized_keys`. It is reachable only from the tailnet and adds
-  nothing to the internet-facing surface, but it does move the "who gets a
-  root shell" decision into your tailnet policy — narrow that policy if a
-  new tailnet's default (members into their own devices, as root, with a
-  periodic browser check) is wider than you want. See **DD-43**.
-- **Dedicated firewall chains**: the `docker-tailscale-fw` helper builds
-  two custom chains — `MASTER-DOCKER` (filter/`DOCKER-USER`) and
-  `MASTER-TS-FORWARD` (mangle/`FORWARD`) — using a randomized staging-chain
-  name that is fully populated and then atomically renamed into place, so
-  the firewall is never briefly open or briefly fully closed during an
-  update.
-- **Default posture is fail-closed**: any WAN → Tailnet or Tailnet →
-  Docker/LAN traffic that isn't explicitly allowed is dropped; the exit-node
-  path (`tailscale0` → detected WAN interface) is the one broad ACCEPT.
-- **Narrow public exposure**: only the qBittorrent peer port and the
-  wg-easy WireGuard UDP port are DNAT'd to the public IPv4. WebDAV binds
-  directly to the current Tailscale IPv4 and nothing else; since `V1-3`
-  the Tailnet → Docker direction has **no** firewall exceptions at all
-  (the `--ctorigdst` WebDAV allow was the last one, and it left with the
-  container — DD-20).
-- **Dynamic addressing**: WAN IPv4 and Tailscale IPv4 can change at
-  runtime (DHCP renewal, node re-registration); `master-compose-ipv4` and
-  the reconcile timer keep `/root/docker/.env`, the firewall rules, and
-  (if enabled) dnsmasq/Caddy bindings in sync with the current addresses.
-- **Optional Tailnet-only DNS/Caddy**: when enabled, `dnsmasq` listens only
-  on `tailscale0` and answers a private zone (`*.your-domain`) with
-  interface-derived A records; Caddy binds only to the current Tailscale
-  IPv4 and reverse-proxies each service under a friendly hostname. Both are
-  installed `mask`ed and only unmasked after their generated configuration
-  passes validation, so a partially-configured daemon can never be
-  reachable on reboot.
-- **Docker container networking**: `wg-easy` runs on its own bridge network
-  (`wg`, `10.42.42.0/24` + a ULA IPv6 range) so its internal WireGuard
-  routing doesn't interact with the default Docker bridge used by the other
-  services.
-
-See [`docs/architecture.md`](docs/architecture.md) for rule-level detail
-and the reconcile drift-detection model.
-
-## Security Notes
-
-A full, line-referenced audit is tracked in
-[`SECURITY_REVIEW.md`](SECURITY_REVIEW.md). Highlights:
-
-- **No script-managed secrets**: as of 2026-07-27, `install.sh` no longer
-  handles any service admin credentials at all — wg-easy's unattended
-  bootstrap subsystem was removed (**M6**), so Portainer and wg-easy
-  admin accounts are created manually by the operator through each
-  service's own web UI. The one exception since `V1-3` is the WebDAV
-  credential: Stage 0 prompts for it, and Stage 4 writes only its bcrypt
-  hash to `/etc/master-stack/webdav.htpasswd` (`root:root 0600`) — the
-  plaintext never reaches disk. `state.env`, `compose.yaml`, and `.env`
-  remain `root:root 0600` for the non-secret configuration they do hold.
-- **Docker socket exposure (accepted risk, 2026-07-28)**: `portainer`
-  mounts `/var/run/docker.sock` directly — a compromise of Portainer is
-  equivalent to root on the host. A docker-socket-proxy was considered
-  and rejected: Portainer's actual management features (creating/
-  recreating containers, deploying stacks) need close to the same broad
-  API access that makes this risky in the first place, so a meaningfully
-  restrictive proxy would break Portainer's usefulness rather than
-  contain the risk. (A read-only socket mount is not a real mitigation
-  either — Unix domain sockets don't gate read/write access via the
-  mount's `ro` flag.) The user confirmed Portainer is actively used for
-  container monitoring/intervention and accepted this as the highest-value
-  target in the stack, scoped down by network exposure (`127.0.0.1` +
-  tailnet-only) rather than by API restriction. See **C1** in
-  `SECURITY_REVIEW.md`.
-- **Fail-closed defaults**: firewall, dnsmasq, and Caddy are all brought up
-  in a masked/deny-by-default state and only opened once their final,
-  validated configuration is in place — including across a mid-install
-  failure (the `EXIT` trap restores the pre-install masked/active state).
-- **Self-healing vs. operator changes**: the reconcile timer treats the
-  canonical (installer-written) copies of the firewall/dnsmasq/Caddy
-  configuration as the source of truth and will silently restore them
-  within 20 minutes if they drift — including manual operator edits made
-  outside the script.
-- **Container capabilities**: `wg-easy` was previously granted `SYS_MODULE`
-  in addition to `NET_ADMIN`; this was removed on 2026-07-27 in favor of a
-  host-level `modprobe wireguard` step, so the container now runs with
-  only `NET_ADMIN` (see **H1** in `SECURITY_REVIEW.md`).
-- **Tailscale device registration is not ephemeral**: the interactive
-  browser login used to join the tailnet registers a normal, persistent
-  device. Rebuilding this server (e.g. reinstalling from scratch) will
-  leave the old device entry behind in the Tailscale admin console —
-  remove it manually there; `install.sh` has no way to control this from
-  its side (see **L2** in `SECURITY_REVIEW.md`).
-- **First-run admin setup isn't automated**: Portainer and wg-easy both
-  require the operator to create their admin account through
-  each service's own web UI on first access (the install summary reminds
-  you of this and lists the URLs). Do this promptly — until it's done,
-  anyone else who can already reach the tailnet could complete that
-  service's setup screen first (see **L5** in `SECURITY_REVIEW.md`).
-
-## Current Limitations
-
-- **Monolithic script**: all logic — including the ~600-line firewall
-  helper and the ~1300-line reconcile helper — lives in a single
-  `install.sh`, embedded as heredocs. These embedded scripts are not
-  covered by running `shellcheck`/`bash -n` against `install.sh` itself.
-- **No installation profiles**: the five-container Compose bundle plus the
-  host WebDAV unit is fixed;
-  there is no way to opt out of an individual service (e.g. skip Portainer
-  to avoid exposing `docker.sock`, or skip the torrent stack). See
-  [`docs/profiles.md`](docs/profiles.md).
-- **No CI; unit + live-integration testing exist but aren't automated**:
-  end-to-end correctness has been verified via real, live installs (four
-  successful ones as of 2026-07-28, plus a full operational stress test —
-  see [`docs/testing.md`](docs/testing.md)), but there is no CI pipeline
-  running any of this automatically, and Tier 3 still requires a human to
-  relay `install.sh`'s interactive prompts. Static analysis of the
-  embedded heredoc scripts (`scripts/lint-embedded-scripts.sh`) and 32
-  `bats-core` unit tests for their pure-logic functions (`test/*.bats`)
-  do exist. See [`docs/testing.md`](docs/testing.md) for the full
-  breakdown.
-- **Tight service coupling**: several systemd units use `PartOf=docker.service
-  tailscaled.service`, meaning a routine `systemctl restart tailscaled`
-  (or `docker`) also stops and restarts the entire Compose stack, the
-  firewall, and (if enabled) Caddy — a non-obvious side effect for
-  operators.
-- **No automatic disk-space recovery**: reconcile (as of 2026-07-28)
-  reports when the filesystem backing the downloads path crosses 90%
-  used, but never frees space itself — deleting user data isn't a safe
-  automated action. A full disk stays a reported, non-self-healing
-  failure state until an operator intervenes.
-
-See [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md)
-for the full, prioritized list.
-
-## Roadmap
-
-Tracked in detail in [`TODO.md`](TODO.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md).
-
-**Done, as of 2026-07-29 (`v1rc`):** every finding is now resolved,
-accepted or closed except **M7**, whose remainder is parked. That covers
-the original 18 audit findings (**C2**, **M6**, **M5**, **H1**,
-**H2**/**H3** and **C1** — documented as intentional design or accepted
-risk rather than changed — **M4**, **L1**, **L2**, **L4**, **L5**,
-**M2**, **L3**, **H4**, **M1**, plus **M3** closed as won't-do), the
-three found through live testing and real use (**H5**, **H6**, **H7**),
-and the five from the post-R1.0 whole-file review (**M8**, **M9**,
-**M10**, **L6**, and **L7** closed as won't-do). Notably:
-- **M1** (container hardening) is fully applied: `security_opt:
-  no-new-privileges` and an empirically-determined minimal
-  `cap_drop`/`cap_add` set for both `qbittorrent` and `unpackerr`, plus
-  `read_only: true` for `unpackerr` (found to break `qbittorrent`'s
-  `PUID`/`PGID` handling, so deliberately not applied there).
-  `unpackerr` also has hardware-sized `mem_limit`/`cpus` ceilings;
-  `qbittorrent`'s were removed after real usage showed each raise was
-  chasing the workload rather than bounding it — an accepted deviation
-  documented under **M1** in `SECURITY_REVIEW.md`.
-- **M7**'s testing strategy: Tier 1 (static analysis of all seven embedded
-  heredoc scripts) is done; Tier 2 has **264** `bats-core` unit tests
-  across twenty-two files, with every stub-able reconcile function now covered
-  and a guard that fails when a file `install.sh` generates is left out of
-  the canonical bundle; `scripts/check-all.sh` runs all four verification
-  steps in one command. Tier 3 has succeeded
-  end-to-end on seven separate live installs, plus a full operational
-  validation round (deliberate drift injection into the reconcile loop,
-  resource-limit enforcement, real WireGuard/Tailscale-exit-node
-  traffic, CPU stress) and four reboots — see
-  [`docs/testing.md`](docs/testing.md) for the full results.
-- A final architecture review (reconcile's full monitored-state list,
-  systemd dependencies, IPv6, container DNS, wg-easy's kernel-module
-  approach, Caddy/dnsmasq boot-race safety) found no functional defects,
-  and added the one real gap found — disk-space monitoring for the
-  filesystem backing `$DOWNLOADS_PATH` — to `master-network-reconcile`.
-  Tagged **R1.0**.
-
-**Remaining, at a high level:**
-
-- **M7** is the only finding still open, and its remainder is **parked**:
-  Tier 1 is done and Tier 2 has 57 unit tests with no identified gaps
-  left, so all that is missing is a CI pipeline — and the repository
-  stays local with no git remote by decision (2026-07-28), leaving a
-  runner nowhere to build from. Running the four checks manually
-  (`bash -n`, `shellcheck`, `scripts/lint-embedded-scripts.sh`,
-  `bats test/`) is the substitute.
-- Installation profiles (**M3**) and the hardcoded firewall ports
-  (**L7**) were **closed as won't-do** on 2026-07-28: this installer
-  targets a single-purpose, single-operator host built from scratch every
-  time, with every service in the bundle in use, so neither problem can
-  arise.
-  [`docs/profiles.md`](docs/profiles.md) is kept as a design note in case
-  that ever changes.
-- Consider making the `PartOf` service-coupling behavior configurable,
-  not just documented (**H3** confirmed it as intentional; no
-  opt-out exists today).
-
-## Development Workflow
-
-- **Running the installer requires the user's explicit, specific
-  approval for that exact action, every time** — it makes systemd,
-  firewall, and Docker daemon-level changes that only mean something
-  against a real host with real `systemd`. A prior approval does not
-  carry over to a later turn or a different action, and an AI assistant
-  must never choose configuration values on the user's behalf — every
-  prompt is relayed to and answered by the user directly. In practice
-  (2026-07-28), this has been exercised successfully against the user's
-  own server, reimaged clean between attempts specifically so there was
-  no production data at risk — see [`docs/testing.md`](docs/testing.md)
-  Tier 3 for the full methodology (including how to drive the script's
-  `/dev/tty`-based prompts non-interactively via `tmux`) and results.
-- Before proposing any change to `install.sh`, run:
-  - `bash -n install.sh` (syntax check)
-  - `shellcheck install.sh` (static analysis — note this does **not**
-    cover the embedded heredoc scripts; see **Current Limitations**)
-- Read [`CLAUDE.md`](CLAUDE.md) for repository-specific working
-  conventions before making changes.
-- Design rationale for non-obvious choices (staging-chain firewall swaps,
-  the canonical-bundle checksum model, `PartOf` coupling, etc.) belongs in
-  [`docs/design-decisions.md`](docs/design-decisions.md) — check there
-  before "fixing" something that may be intentional.
-- Track in-progress work and open questions in [`SESSION.md`](SESSION.md)
-  and prioritized work items in [`TODO.md`](TODO.md).
-- Record user-facing changes in [`CHANGELOG.md`](CHANGELOG.md).
+See [`CLAUDE.md`](CLAUDE.md). Change history: [`CHANGELOG.md`](CHANGELOG.md).
+Session continuity: [`SESSION.md`](SESSION.md).

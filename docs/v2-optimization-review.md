@@ -420,7 +420,7 @@ so a reboot is recoverable.
 4. S1 + S3  UDP 41641 in MASTER-INPUT; tailnet warning line
 5. End-to-end: reboot + tailscaled restart + docker restart
             + IPv6 ping from a wg peer + a real Infuse 4K stream
-            Record the result in docs/testing.md as a manual acceptance list.
+            Record the result in `v2/tests/README.md` as a manual acceptance list.
 ```
 
 Roughly twelve lines across `firewall.sh`, `refresh-tailnet-config` and one
@@ -496,4 +496,4 @@ M1 escaped: a grep asking "does the IPv6 chain end in `DROP`?" would have
 **passed**.
 
 Do not try to move reboot, restart, exit-node or streaming behaviour into
-bats. Record them in `docs/testing.md` as a manual acceptance list instead.
+bats. Record them in `v2/tests/README.md` as a manual acceptance list instead.

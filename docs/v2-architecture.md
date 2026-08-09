@@ -111,12 +111,10 @@ v2/
 └── tests/                         bats suites (not on host)
 ```
 
-`.cursor/rules/` is a pre-existing component of this tree, not something the
-refactor created, and it is scoped to `v2/` on purpose: the rules describe
-how to build v2 and must not be applied to `legacy/install.sh`, which is
-frozen for reference only. It ships no runtime behaviour — nothing installs
-it, nothing reads it at run time — so it appears in the repository layout
-and nowhere in §3.4's host layout.
+`.cursor/rules/` is scoped to `v2/` on purpose: the rules describe how to
+build this tree. It ships no runtime behaviour — nothing installs it,
+nothing reads it at run time — so it appears in the repository layout and
+nowhere in §3.4's host layout.
 
 One rule set, one active file:
 
@@ -399,8 +397,9 @@ bash -n v2/install.sh v2/common.sh v2/scripts/*
 shellcheck -x -s bash v2/install.sh v2/common.sh v2/scripts/*
 ```
 
-Root `scripts/check-all.sh` still targets legacy `install.sh` until v1 is
-retired.
+There is no root `scripts/check-all.sh` wrapper; run the three workstation
+commands above directly. A missing tool must fail visibly — never report a
+silent pass.
 
 ---
 
@@ -423,8 +422,8 @@ alone:
 The split matters: the first three can gate every commit, the last four can
 only run where the software exists. So a phase that renders a template is
 **not** verifiable on the workstation alone, and claiming otherwise is the
-failure mode `scripts/check-all.sh` was written to prevent (a missing tool
-must report *doğrulanamadı*, never a pass).
+failure mode those host-only checks exist to prevent (a missing tool must
+report *doğrulanamadı*, never a pass).
 
 Two consequences for the phase that lands real rendering:
 

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — repository is v2-only
+
+- **Removed:** root `install.sh`, `legacy/`, `versiyon/`, root `test/`,
+  root `scripts/`, `SECURITY_REVIEW.md`, `TODO.md`, and v1-centric docs
+  (`docs/architecture.md`, `docs/profiles.md`, `docs/testing.md`,
+  `docs/v2-test-migration.md`). Active code and docs are `v2/` plus
+  `docs/v2-*.md`, `docs/design-decisions.md`, and the changelog.
+- **Changed:** root `README.md`, `CLAUDE.md`, and `SESSION.md` rewritten
+  for the lean v2 tree; `docs/v2-contract.md` no longer describes a
+  parallel v1 production path.
+
 ### 2026-08-09 — v2-45: selective downloads repair + P3 hygiene
 
 - **Changed:** Stage 3 only repairs mismatched UID/GID/mode under
