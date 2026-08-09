@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-48: Caddy OnFailure runs refresh-tailnet
+
+- **Added:** Caddy drop-in `OnFailure=refresh-tailnet-config.service` so a
+  stale-state / start failure triggers refresh immediately instead of
+  waiting for the five-minute timer (**DD-87**). Silent IP change with
+  Caddy still active remains timer/`WantedBy=tailscaled` territory.
+
+### 2026-08-09 — v2-47: refresh-tailnet warn names Online
+
+- **Fixed:** `warn_if_tailnet_unusable` now prints both `BackendState` and
+  `Online` so a Running-but-offline node is not logged as a bare
+  `BackendState=Running` contradiction (**DD-86**).
+
+### 2026-08-09 — v2-46: wait-tailnet matches state IP on the interface
+
+- **Fixed:** `wait-tailnet-addr` (Caddy `ExecStartPre`) no longer treats
+  “any IPv4 on `tailscale0`” as ready. When `TAILSCALE_IPV4` is set (from
+  `state.env` via `EnvironmentFile`), that exact address must be present;
+  a live interface with a different address fails immediately as stale so
+  Caddy does not sit in `activating` until the next refresh (**DD-85**).
+
 ### 2026-08-09 — repository is v2-only
 
 - **Removed:** root `install.sh`, `legacy/`, `versiyon/`, root `test/`,

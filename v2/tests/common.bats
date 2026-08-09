@@ -336,6 +336,9 @@ EOF
 @test "refresh-tailnet warns when the tailnet is unusable" {
     grep -q 'warn_if_tailnet_unusable' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'BackendState' "$V2_ROOT/scripts/refresh-tailnet-config"
+    # Warning must name Online as well — BackendState alone is ambiguous when
+    # the daemon is Running but Self.Online is false (DD-86).
+    grep -q 'Online=' "$V2_ROOT/scripts/refresh-tailnet-config"
     # A warning only; the helper must not try to repair Tailscale itself.
     ! grep -qE 'tailscale (up|set|login)' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
@@ -359,6 +362,72 @@ EOF
     grep -q 'StartLimitBurst=' <<<"$block"
     grep -q 'StartLimitIntervalSec=' <<<"$block"
     grep -q 'TimeoutStartSec=' <<<"$block"
+}
+
+@test "caddy OnFailure triggers refresh-tailnet without waiting for the timer" {
+    local block
+    block="$(awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh")"
+    grep -q 'OnFailure=refresh-tailnet-config.service' <<<"$block"
+    # Failure path must not invent a second refresh owner.
+    ! grep -q 'OnFailure=.*watch-tailnet' "$V2_ROOT/install.sh"
+}
+
+@test "wait-tailnet-addr accepts matching state IP on the interface" {
+    local stub bin rc
+    bin="$(mktemp -d)"
+    stub="$bin/ip"
+    cat >"$stub" <<'EOF'
+#!/bin/sh
+# emulate: ip -4 -o addr show dev tailscale0 scope global
+printf '%s\n' '2: tailscale0    inet 100.118.76.122/32 scope global'
+EOF
+    chmod +x "$stub"
+    set +e
+    PATH="$bin:$PATH" TAILSCALE_IPV4=100.118.76.122 TAILNET_ADDR_WAIT_SECONDS=4 \
+        "$V2_ROOT/scripts/wait-tailnet-addr"
+    rc=$?
+    set -e
+    rm -rf "$bin"
+    [ "$rc" -eq 0 ]
+}
+
+@test "wait-tailnet-addr fails fast when state IP is stale on a live interface" {
+    local stub bin rc out
+    bin="$(mktemp -d)"
+    stub="$bin/ip"
+    cat >"$stub" <<'EOF'
+#!/bin/sh
+printf '%s\n' '2: tailscale0    inet 100.118.76.122/32 scope global'
+EOF
+    chmod +x "$stub"
+    set +e
+    out="$(
+        PATH="$bin:$PATH" TAILSCALE_IPV4=100.64.0.1 TAILNET_ADDR_WAIT_SECONDS=4 \
+            "$V2_ROOT/scripts/wait-tailnet-addr" 2>&1
+    )"
+    rc=$?
+    set -e
+    rm -rf "$bin"
+    [ "$rc" -eq 1 ]
+    [[ "$out" == *stale* ]]
+}
+
+@test "wait-tailnet-addr without TAILSCALE_IPV4 still accepts any interface IP" {
+    local stub bin rc
+    bin="$(mktemp -d)"
+    stub="$bin/ip"
+    cat >"$stub" <<'EOF'
+#!/bin/sh
+printf '%s\n' '2: tailscale0    inet 100.118.76.122/32 scope global'
+EOF
+    chmod +x "$stub"
+    set +e
+    PATH="$bin:$PATH" env -u TAILSCALE_IPV4 TAILNET_ADDR_WAIT_SECONDS=4 \
+        "$V2_ROOT/scripts/wait-tailnet-addr"
+    rc=$?
+    set -e
+    rm -rf "$bin"
+    [ "$rc" -eq 0 ]
 }
 
 @test "refresh-tailnet soft-skips missing Tailscale IPv4" {

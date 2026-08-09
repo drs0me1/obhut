@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-45"
+V2_VERSION="2026.08.06-v2-48"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -683,14 +683,14 @@ EOF
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
 
     mkdir -p /etc/systemd/system/caddy.service.d
-    # ExecStartPre: Caddy adresin değerini state.env'den okur ama bind
-    # edebilmek için adresin arayüzde OLMASI gerekir. Beklemeden çöktüğünde
-    # sonsuz ve görünmez bir restart döngüsüne giriyordu. StartLimit, adres
-    # hiç gelmezse unit'i görünür biçimde failed yapar (DD-72).
+    # ExecStartPre: state.env TAILSCALE_IPV4 arayüzde olmalı (DD-72/DD-85).
+    # StartLimit, adres hiç gelmezse veya stale kalırsa unit'i failed yapar.
+    # OnFailure: stale/fail sonrası refresh'i timer beklemeden çalıştırır (DD-87).
     atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
 [Unit]
 Wants=tailscaled.service
 After=tailscaled.service
+OnFailure=refresh-tailnet-config.service
 StartLimitIntervalSec=600
 StartLimitBurst=3
 

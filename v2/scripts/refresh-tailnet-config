@@ -26,17 +26,21 @@ warn_if_tailnet_unusable() {
     # Node tailnet'ten silinirse arayüzdeki adres bir süre durur: her unit
     # yeşil kalır, systemctl --failed boş kalır, ama hiçbir tailnet cihazı
     # erişemez. Bu durum bir kez 4 saat sessizce sürdü. Tek satırlık uyarı
-    # onu greplenebilir yapar — izleme yığını değil (DD-73).
+    # onu greplenebilir yapar — izleme yığını değil (DD-86).
+    # BackendState tek başına yetmez: Running + Online=false da "unusable".
     command -v tailscale >/dev/null 2>&1 || return 0
-    local state=""
-    state="$(
+    local detail=""
+    detail="$(
         tailscale status --json 2>/dev/null |
             jq -r 'if (.BackendState == "Running" and .Self.Online == true)
-                   then "ok" else (.BackendState // "unknown") end' 2>/dev/null
-    )" || state=""
-    if [[ -n "$state" && "$state" != "ok" ]]; then
-        printf 'refresh-tailnet: UYARI tailnet kullanılamıyor (BackendState=%s)\n' \
-            "$state" >&2
+                   then "ok"
+                   else
+                     "BackendState=\(.BackendState // "unknown") Online=\(.Self.Online // false)"
+                   end' 2>/dev/null
+    )" || detail=""
+    if [[ -n "$detail" && "$detail" != "ok" ]]; then
+        printf 'refresh-tailnet: UYARI tailnet kullanılamıyor (%s)\n' \
+            "$detail" >&2
     fi
 }
 

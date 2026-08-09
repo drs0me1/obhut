@@ -3699,3 +3699,51 @@ separate document with its own numbering.
   injection/traversal shapes without a full path sandbox.
 - **Follow-up:** media-tree chown/chmod narrowing done in **DD-84**.
   Stage 7 WG listen / CGNAT warnings remain deferred (operator-tracked).
+
+### DD-85: `wait-tailnet-addr` requires the state IPv4 on the interface (2026-08-09)
+
+- **Decision:** When `TAILSCALE_IPV4` is set in the ExecStartPre
+  environment (systemd `EnvironmentFile=state.env`),
+  `wait-tailnet-addr` succeeds only if that exact address is present on
+  `tailscale0`. If the interface already has a different global IPv4, the
+  helper exits `1` immediately with a stale-state message instead of
+  waiting out the deadline. If the variable is unset, “any global IPv4”
+  remains sufficient.
+- **Why:** Caddy binds `{$TAILSCALE_IPV4}` from state, not “whatever is on
+  the iface”. The previous any-IP check turned green while Caddy stayed
+  `activating` on a poisoned/stale address (measured on `nrm`, 2026-08-09
+  resilience pass). Fail-fast hands recovery to the existing
+  `refresh-tailnet-config` path (`recover_failed` / IP rewrite + restart)
+  without a new watcher.
+- **Amends:** DD-72’s “wait only answers does an address exist” for the
+  Caddy pre-start helper; refresh still owns rewriting state.
+
+### DD-86: Unusable-tailnet warning names BackendState and Online (2026-08-09)
+
+- **Decision:** `warn_if_tailnet_unusable` logs
+  `BackendState=… Online=…` when the node is not both `Running` and
+  `Self.Online=true`. Still warning-only; no Tailscale repair.
+- **Why:** Live `nrm` resilience pass printed
+  `UYARI … (BackendState=Running)` while `Online` was false during a
+  `tailscaled` restart — correct trigger, contradictory message. Naming
+  both fields makes the line greppable without false “daemon is fine”
+  readings.
+- **Not doing:** hard-failing refresh; waiting for Online here (`tailscale
+  wait` already covers readiness).
+
+### DD-87: Caddy `OnFailure` starts `refresh-tailnet-config` (2026-08-09)
+
+- **Decision:** The Caddy master-stack drop-in sets
+  `OnFailure=refresh-tailnet-config.service`. No new timer, watcher, or
+  probe oneshot.
+- **Why:** After **DD-85**, a stale `state.env` IP fails `ExecStartPre`
+  immediately and leaves Caddy `failed` until the next refresh tick
+  (up to five minutes, or `OnBootSec=2min`). Wiring failure to the
+  existing oneshot updates `state.env` from the interface and restarts
+  Caddy in seconds. Refresh still writes the new address *before*
+  restarting Caddy when the iface IP differs — it does not resurrect
+  Caddy on the stale value.
+- **Does not cover:** Silent Tailscale readdress while Caddy stays
+  `active` (DD-64 timer / `WantedBy=tailscaled` remain that path).
+- **Bounds:** Caddy `StartLimitBurst=3` / `600s` still caps fail loops if
+  the tailnet never becomes usable.
