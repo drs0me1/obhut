@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-61: Extra WAN passes and referenced staging leftovers
+
+- **Fixed:** `--check` counted only exact `-j ACCEPT`/`-j RETURN` bodies as a
+  bypass, so an interface-qualified pass (`-i eth0 -j ACCEPT`, or any extra
+  `--dport`) satisfied every expected pattern and went unnoticed. The number
+  of WAN allows must now equal the allow list exactly, in `MASTER-INPUT` and
+  `MASTER-DOCKER`, both families (**DD-95**).
+- **Fixed:** A staging chain left *referenced* by an interrupted
+  `activate_named` was skipped by the purge, which failed `--check` forever
+  and left the unit failed with the watchdog restarting it in vain. Cleanup
+  now runs at the end of a successful apply and removes the parent jump too.
+- **Changed:** The allowed WAN `(proto, port)` pairs live in one list that
+  drives both the per-rule checks and the count.
+- **Docs:** The boot window is measured and stated: ~850 ms between the WAN
+  address becoming usable and the policy landing, with sshd (already allowed)
+  as the only WAN listener in it.
+
 ### 2026-08-09 — v2-60: Firewall converges instead of failing closed-open
 
 - **Fixed:** The WAN interface is detected from the live default route at

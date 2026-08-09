@@ -119,18 +119,28 @@ ensure_ts_input_precedence() {
     die "$bin: ts-input / $CHAIN_INPUT sırası düzeltilemedi"
 }
 
-# Ortada kesilen bir apply, referanssız staging zinciri bırakır; temizlenmezse
-# check_no_staging_artifacts politika doğru olsa bile sonsuza kadar fail eder.
-purge_orphan_staging_chains() {
-    local bin="$1" chain rules
+# Yarıda kalan bir apply iki tür artık bırakır: hiç bağlanmamış bir staging
+# zinciri, ya da activate_named'in -I ile bağlayıp rename'e yetişemediği
+# REFERANSLI bir zincir. İkincisini apply başında silmek yürürlükteki tek
+# politikayı yok edebilirdi; bu yüzden temizlik apply'ın SONUNDA yapılır —
+# o noktada final zincir parent'a bağlıdır ve kalan her staging artığı ölüdür.
+# Referanslıyı atlamak politikayı korurdu ama check_no_staging_artifacts'i
+# kalıcı fail bırakır, unit failed kalır ve watchdog sonuçsuz döner (DD-95).
+purge_staging_leftovers() {
+    local bin="$1" chain parent rules
     rules="$("$bin" -w 5 -S 2>/dev/null)" || return 0
     while read -r chain; do
         [[ -n "$chain" ]] || continue
-        # Referansı olan zincir aktif politikanın parçası olabilir; dokunma.
-        grep -q -- "-j ${chain}\$" <<<"$rules" && continue
+        while read -r parent; do
+            [[ -n "$parent" ]] || continue
+            while "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null; do
+                "$bin" -w 5 -D "$parent" -j "$chain"
+            done
+        done < <(awk -v c="$chain" \
+            '$1 == "-A" && $NF == c && $(NF - 1) == "-j" { print $2 }' <<<"$rules")
         "$bin" -w 5 -F "$chain" 2>/dev/null || true
         "$bin" -w 5 -X "$chain" 2>/dev/null || true
-        printf 'firewall: yetim staging zinciri silindi (%s %s)\n' "$bin" "$chain"
+        printf 'firewall: staging artığı silindi (%s %s)\n' "$bin" "$chain"
     done < <(awk -v p="$CHAIN_STAGING_PREFIX" \
         '$1 == "-N" && index($2, p) == 1 { print $2 }' <<<"$rules")
 }
@@ -388,67 +398,88 @@ check_chain_shape() {
     fi
 }
 
+# WAN'dan izinli (proto, port) çiftleri — tek liste. check_rule çağrıları da
+# beklenen sayı da buradan üretilir; ikinci bir yerde tekrarlanmaz.
+wan_allow_pairs() {
+    printf '%s\n' "udp $TAILSCALE_UDP_PORT" "tcp $SSH_PUBLIC_PORT"
+    [[ "$1" == v4 ]] || return 0
+    printf '%s\n' "udp $WG_PUBLIC_PORT" "tcp $QBIT_PUBLIC_PORT" \
+        "udp $QBIT_PUBLIC_PORT"
+}
+
+# MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok).
+docker_return_pairs() {
+    [[ "$1" == v4 ]] || return 0
+    printf '%s\n' "tcp $QBIT_PUBLIC_PORT" "udp $QBIT_PUBLIC_PORT" \
+        "udp $WG_PUBLIC_PORT"
+}
+
+# Tek tek desen kontrolü "eksik kural" bulur, "fazladan kural" bulamaz:
+# '-i WAN -j ACCEPT' gibi port nitelemesi olmayan bir geçiş, beklenen
+# kuralların hepsi yerinde olduğu için denetimden sağ çıkardı. Sayı birebir
+# tutmak zorunda: her fazladan WAN geçişi — blanket ya da portlu — düşer.
+check_wan_allow_count() {
+    local bin="$1" chain="$2" target="$3" expected="$4" actual
+    actual="$("$bin" -w 5 -S "$chain" 2>/dev/null |
+        grep -cE -- "^-A $chain .*-i $WAN_INTERFACE .*-j $target\$" || true)"
+    [[ "$actual" -eq "$expected" ]] ||
+        die "$bin: $chain WAN $target sayısı $actual (beklenen $expected) — fazladan geçiş"
+}
+
+check_input_chain() {
+    local bin="$1" family="$2" n=0 proto port
+    check_jump_exactly_one "$bin" INPUT "$CHAIN_INPUT"
+    check_no_staging_artifacts "$bin"
+    check_ts_input_precedence "$bin"
+    check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    while read -r proto port; do
+        [[ -n "$proto" ]] || continue
+        check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
+            -p "$proto" --dport "$port" -j ACCEPT
+        n=$((n + 1))
+    done < <(wan_allow_pairs "$family")
+    check_wan_allow_count "$bin" "$CHAIN_INPUT" ACCEPT "$n"
+    check_chain_shape "$bin" "$CHAIN_INPUT" ACCEPT
+}
+
 check_docker_chain() {
-    local bin="$1"
+    local bin="$1" family="$2" n=0 proto port
     check_jump_exactly_one "$bin" DOCKER-USER "$CHAIN_DOCKER"
     check_rule "$bin" "$CHAIN_DOCKER" \
         -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     check_rule "$bin" "$CHAIN_DOCKER" -i "$TAILSCALE_IF" -j RETURN
-    if [[ "$bin" == iptables ]]; then
-        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p tcp \
-            -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
-        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p udp \
-            -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
-        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p udp \
-            -m conntrack --ctstate NEW --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
-    fi
+    while read -r proto port; do
+        [[ -n "$proto" ]] || continue
+        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p "$proto" \
+            -m conntrack --ctstate NEW --ctorigdstport "$port" -j RETURN
+        n=$((n + 1))
+    done < <(docker_return_pairs "$family")
     check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
     check_rule "$bin" "$CHAIN_DOCKER" -j RETURN
+    check_wan_allow_count "$bin" "$CHAIN_DOCKER" RETURN "$n"
     check_chain_shape "$bin" "$CHAIN_DOCKER" RETURN
 }
 
 if [[ "$MODE" == check ]]; then
     resolve_wan_interface
-    check_jump_exactly_one iptables INPUT "$CHAIN_INPUT"
-    check_jump_exactly_one ip6tables INPUT "$CHAIN_INPUT"
-    check_no_staging_artifacts iptables
-    check_no_staging_artifacts ip6tables
-    check_ts_input_precedence iptables
-    check_ts_input_precedence ip6tables
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
-    check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
-    check_chain_shape iptables "$CHAIN_INPUT" ACCEPT
-    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
-    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
-    check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
-        -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
+    check_input_chain iptables v4
+    check_input_chain ip6tables v6
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
-    check_chain_shape ip6tables "$CHAIN_INPUT" ACCEPT
 
     if docker_user_present iptables; then
-        check_docker_chain iptables
+        check_docker_chain iptables v4
     elif docker_service_active; then
         die "iptables: Docker aktif ama DOCKER-USER yok"
     else
         printf 'firewall: Docker yok; IPv4 MASTER-DOCKER denetimi atlandı\n'
     fi
     if docker_user_present ip6tables; then
-        check_docker_chain ip6tables
+        check_docker_chain ip6tables v6
     elif docker_service_active; then
         die "ip6tables: Docker aktif ama DOCKER-USER yok"
     else
@@ -459,14 +490,14 @@ if [[ "$MODE" == check ]]; then
 fi
 
 resolve_wan_interface
-purge_orphan_staging_chains iptables
-purge_orphan_staging_chains ip6tables
 apply_input4
 ensure_ts_input_precedence iptables
 apply_input6
 ensure_ts_input_precedence ip6tables
 apply_docker4
 apply_docker6
+purge_staging_leftovers iptables
+purge_staging_leftovers ip6tables
 check_no_staging_artifacts iptables
 check_no_staging_artifacts ip6tables
 printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

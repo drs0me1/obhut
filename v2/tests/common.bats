@@ -379,7 +379,12 @@ EOF
     v6="$(awk '/^apply_input6\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
     grep -q 'TAILSCALE_UDP_PORT" -j ACCEPT' <<<"$v4"
     grep -q 'TAILSCALE_UDP_PORT" -j ACCEPT' <<<"$v6"
-    grep -q 'check_rule iptables "$CHAIN_INPUT"' "$V2_ROOT/scripts/firewall.sh"
+    # --check side: the pair list carries it before the v4-only guard, so both
+    # families assert it.
+    local pairs
+    pairs="$(awk '/^wan_allow_pairs\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    [[ "$(grep -n 'udp \$TAILSCALE_UDP_PORT' <<<"$pairs" | cut -d: -f1)" -lt \
+        "$(grep -n 'v4' <<<"$pairs" | head -1 | cut -d: -f1)" ]]
     # The port must not be selectable as a stack port.
     grep -q '"\$TAILSCALE_UDP_PORT")' "$V2_ROOT/install.sh"
 }
@@ -604,12 +609,34 @@ EOF
     grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
     awk '/^check_docker_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
         grep -q -- '-i "$WAN_INTERFACE" -j DROP'
-    grep -q 'check_rule ip6tables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
-        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_input_chain ip6tables v6' "$V2_ROOT/scripts/firewall.sh"
+    awk '/^check_input_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
+        grep -q -- '-i "$WAN_INTERFACE" -j DROP'
+    # IPv6 has no container publish, so no WAN RETURN is allowed at all.
+    awk '/^docker_return_pairs\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
+        grep -q '"\$1" == v4'
 }
 
 @test "firewall script does not flush DOCKER-USER" {
     ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
+}
+
+@test "WAN allow count is derived from one list and rejects extra passes" {
+    local script="$V2_ROOT/scripts/firewall.sh" body
+    # Pattern checks find a missing rule but never an extra one: an
+    # interface-qualified pass such as '-i WAN -j ACCEPT' satisfies every
+    # expected pattern. The count must match the list exactly.
+    body="$(awk '/^check_wan_allow_count\(\)/,/^}$/' "$script")"
+    [[ -n "$body" ]]
+    grep -q 'fazladan geçiş' <<<"$body"
+    grep -q 'expected' <<<"$body"
+    # Both the check_rule calls and the count come from the same list.
+    grep -q 'wan_allow_pairs "\$family"' "$script"
+    grep -q 'docker_return_pairs "\$family"' "$script"
+    grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_INPUT" ACCEPT "\$n"' "$script"
+    grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_DOCKER" RETURN "\$n"' "$script"
+    # Ports must not be restated next to the loop.
+    ! grep -q 'check_rule iptables "\$CHAIN_INPUT" -i "\$WAN_INTERFACE" \\' "$script"
 }
 
 @test "check_chain_shape rejects a single bypass rule before the WAN DROP" {
@@ -623,19 +650,19 @@ EOF
     grep -qF '== "-j RETURN"' <<<"$body"
 }
 
-@test "apply purges orphan staging chains before building" {
-    local body
-    body="$(awk '/^purge_orphan_staging_chains\(\)/,/^}$/' \
-        "$V2_ROOT/scripts/firewall.sh")"
+@test "apply purges staging leftovers including referenced ones" {
+    local script="$V2_ROOT/scripts/firewall.sh" body
+    body="$(awk '/^purge_staging_leftovers\(\)/,/^}$/' "$script")"
     [[ -n "$body" ]]
-    # A referenced chain may be the live policy; only unreferenced ones go.
-    grep -q -- '-j \${chain}' <<<"$body"
+    # An interrupted activate_named leaves the staging chain jumped from its
+    # parent; skipping it would fail --check forever. Jump goes first.
+    grep -q -- '-D "\$parent" -j "\$chain"' <<<"$body"
     grep -q -- '-X "\$chain"' <<<"$body"
-    # Must run before the first create_staging call in the apply path.
-    [[ "$(awk '/^purge_orphan_staging_chains iptables$/ { print NR; exit }' \
-        "$V2_ROOT/scripts/firewall.sh")" -lt \
-        "$(awk '/^apply_input4$/ { print NR; exit }' \
-        "$V2_ROOT/scripts/firewall.sh")" ]]
+    # It must run after the policy is in place, never before.
+    [[ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -gt \
+        "$(awk '/^apply_docker6$/ { print NR; exit }' "$script")" ]]
+    [[ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -lt \
+        "$(awk '/^check_no_staging_artifacts iptables$/ { print NR; exit }' "$script")" ]]
 }
 
 @test "ts-input precedence does not delete-all MASTER-INPUT jumps" {
@@ -695,8 +722,9 @@ EOF
 @test "firewall --check asserts critical IPv4 ACCEPT/DROP rules" {
     grep -q 'check_rule()' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'kritik politikalar yerinde' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'check_rule iptables "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP' \
-        "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'check_input_chain iptables v4' "$V2_ROOT/scripts/firewall.sh"
+    awk '/^check_input_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
+        grep -q -- '-i "$WAN_INTERFACE" -j DROP'
     grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_chain_shape' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"

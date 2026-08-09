@@ -3846,3 +3846,39 @@ separate document with its own numbering.
   `PartOf=docker.service` removal (the drop-in plus PartOf is cheap; a
   duplicate apply is idempotent), automatic `WG_ENDPOINT_HOST` rewrite on
   public-IP change, or watchdog coverage of anything but the firewall unit.
+
+### DD-95: Counting WAN allows, and adopting referenced staging (2026-08-09)
+
+- **Decision (two fixes, v2-61):**
+  1. **The WAN allow count must match the list.** DD-94's `check_chain_shape`
+     treated only a bare `-j ACCEPT` / `-j RETURN` body as a bypass. An
+     interface-qualified pass — `-i eth0 -j ACCEPT` in `MASTER-INPUT`, or
+     `-i eth0 -j RETURN` in `MASTER-DOCKER` — was instead recorded as a
+     legitimate WAN allow, so it satisfied the ordering rule and passed. So
+     did an extra port (`--dport 3306`). Pattern checks find a *missing*
+     rule; they structurally cannot find an *extra* one. `check_wan_allow_count`
+     now asserts that the number of `-i WAN … -j ACCEPT|RETURN` rules equals
+     the length of the allow list (5/2 for INPUT v4/v6, 3/0 for DOCKER),
+     and the same list feeds the per-rule `check_rule` calls, so the ports
+     are still written once.
+  2. **Staging cleanup runs at the end of apply and removes the jump.**
+     `activate_named` jumps the staging chain from its parent before the
+     rename, so an interruption in that window leaves it *referenced*.
+     DD-94's purge skipped referenced chains to avoid deleting a live policy;
+     the result was a chain nothing would ever adopt, a permanently failing
+     `check_no_staging_artifacts`, a permanently failed unit and a watchdog
+     restarting it every 5 minutes with the same outcome. Moving the purge to
+     the end of a successful apply removes the dilemma: the final chain is
+     already bound to the parent, so any remaining staging artifact is dead
+     by definition and its parent jump can go with it.
+- **Why:** a second review of v2-60 (2026-08-09). Both are drift the stack
+  never produces itself; they matter because `--check` is what the watchdog
+  trusts, and a check that cannot see a hole is worse than no check.
+- **Boot window (no change, measured):** ~850 ms passes between the WAN
+  address becoming usable and the policy landing (eth0 DAD 21:33:42.742 →
+  apply finished ~21:33:43.6 on `nrm`). The only WAN listener in that window
+  is sshd, which the policy allows anyway; Docker and every published
+  container port start ~2 s later, behind the policy. Closing it would mean
+  either persisting rules to disk (a second source of policy, against DD-66)
+  or ordering the unit before `network-online.target`, which DD-94's live
+  WAN detection needs. Accepted and documented instead.

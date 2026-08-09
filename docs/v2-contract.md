@@ -458,9 +458,15 @@ Dropped:
 Rules:
 
 - The policy is applied through a staging chain and swapped in atomically,
-  so there is no moment at which SSH is unreachable. An apply first deletes
-  **unreferenced** leftover staging chains from an interrupted earlier run;
-  a referenced one may be the live policy and is never touched.
+  so there is no moment at which SSH is unreachable. At the **end** of a
+  successful apply every leftover staging chain is removed together with its
+  parent jump, including one left referenced by an interrupted earlier run
+  (**DD-95**).
+- Boot exposes a measured ~850 ms window between the WAN address becoming
+  usable and the policy landing; sshd, which the policy allows anyway, is the
+  only WAN listener in it and Docker starts later, behind the policy. Rules
+  are not persisted to disk (**DD-66**), so this window is accepted, not
+  closed (**DD-95**).
 - Ordering guarantees that rule 2 precedes rule 7.
 - The WAN interface is the **live default route at apply time**, not the
   `WAN_INTERFACE` recorded in `state.env`. A renamed NIC produces a warning
@@ -505,11 +511,13 @@ and IPv6 — separate tables mean no collision — and both are declared in
 - The policy lives only in memory; `master-firewall.service` re-applies it
   after boot and after a Docker restart (`PartOf=docker.service` and
   `docker.service.d` `ExecStartPost=… --no-block restart master-firewall`).
-- `master-firewall --check` verifies **shape, not just presence**: in
-  `MASTER-INPUT` and `MASTER-DOCKER` there must be exactly one WAN DROP, it
-  must follow every WAN allow, and no unconditional `ACCEPT`/`RETURN` may
-  precede it. A permissive rule inserted ahead of the DROP fails the check
-  instead of passing it (**DD-94**).
+- `master-firewall --check` verifies **shape and cardinality, not just
+  presence**: in `MASTER-INPUT` and `MASTER-DOCKER` there must be exactly one
+  WAN DROP, it must follow every WAN allow, no unconditional
+  `ACCEPT`/`RETURN` may precede it (**DD-94**), and the number of WAN allows
+  must equal the allow list exactly — 5 for INPUT v4, 2 for INPUT v6, 3 for
+  DOCKER v4, 0 for DOCKER v6. Any extra WAN pass, whether a blanket
+  `-i eth0 -j ACCEPT` or one more port, fails the check (**DD-95**).
 
 ---
 
