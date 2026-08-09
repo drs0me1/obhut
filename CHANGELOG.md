@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-44: pin all Compose images to tag@digest
+
+- **Changed:** Replace floating `lts` / `stable` / `latest` (and unpinned
+  semver) with the live `nrm` digest pins in `defaults.env` (**DD-83**):
+  Portainer 2.39.5, FileBrowser 1.5.1-stable, qBittorrent
+  `5.2.3_v2.0.13-ls469`, wg-easy 15.3, unpackerr 0.15.2; rclone already
+  pinned. No automatic pull/updater — pin bumps remain intentional.
+
 ### 2026-08-09 — v2-43: WebDAV healthcheck + dedicated `webdav` network
 
 - **Added:** Compose `webdav` healthcheck — unauthenticated `wget` must see

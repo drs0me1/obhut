@@ -242,6 +242,9 @@ _All Low findings resolved or closed — see Completed below._
 
 ## Completed
 
+- [x] **v2-44: digest-pin all Compose images (2026-08-09, DD-83).** Drop
+      `lts`/`stable`/`latest`; pin Portainer/FileBrowser/qBit/wg-easy/
+      unpackerr/rclone to live nrm tag@sha256. No auto-updater.
 - [x] **v2-43: WebDAV healthcheck + dedicated `webdav` network (2026-08-09,
       DD-82).** Unauthenticated `401` healthcheck; named bridge `webdav`
       only (not `wg`, not `internal` — host publish); Caddy loopback kept;

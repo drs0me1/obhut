@@ -632,6 +632,19 @@ EOF
     ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
 }
 
+@test "compose images are digest-pinned without floating tags" {
+    local key
+    for key in PORTAINER_IMAGE FILEBROWSER_IMAGE QBITTORRENT_IMAGE \
+        WG_EASY_IMAGE UNPACKERR_IMAGE RCLONE_IMAGE; do
+        grep -qE "^${key}=\".+:.+@sha256:[0-9a-f]{64}\"" \
+            "$V2_ROOT/config/defaults.env"
+    done
+    ! grep -qE '_(IMAGE)="[^"]*:(latest|stable|lts)(@|")' \
+        "$V2_ROOT/config/defaults.env"
+    ! grep -qE '_(IMAGE)="[^"]*:(latest|stable|lts)"' \
+        "$V2_ROOT/config/defaults.env"
+}
+
 @test "stage 7 derives the container count from compose" {
     ! grep -q 'local expected=5' "$V2_ROOT/install.sh"
     grep -q 'docker compose config --services' "$V2_ROOT/install.sh"

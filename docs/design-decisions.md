@@ -3565,6 +3565,19 @@ separate document with its own numbering.
   assert SSH ACCEPT (v4/v6), IPv6 Tailscale UDP, and NS/NA. No automatic
   state rewrite on drift — operator re-runs the installer.
 
+### DD-83: Compose images are tag@digest pins, not floating tags (2026-08-09)
+
+- **Decision:** Every Compose image in `defaults.env` is a concrete
+  `name:tag@sha256:…` pin taken from the live `nrm` stack (2026-08-09).
+  `latest` / `stable` / `lts` are forbidden. Installer still skips
+  `compose up` when the rendered file is unchanged and still does not
+  auto-pull on a timer.
+- **Why:** Floating tags made “unchanged re-run” quietly freeze an old
+  digest while a later recreate could jump unpredictably. Digest pins make
+  re-runs and new installs reproduce the accepted set; updates are an
+  explicit pin bump + acceptance, not an automatic updater.
+- **Not doing:** Watchtower / reconcile-driven pulls.
+
 ### DD-82: WebDAV healthcheck and isolated `webdav` network (2026-08-09)
 
 - **Decision:** Compose `webdav` gets a Docker healthcheck that treats an
