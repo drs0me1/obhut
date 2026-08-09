@@ -541,9 +541,7 @@ EOF
 @test "webdav compose service is loopback rclone with htpasswd" {
     grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
     grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_IMAGE="rclone/rclone:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}"' \
-        "$V2_ROOT/config/defaults.env"
-    grep -q 'rclone/rclone:1.74.4@sha256:' "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
     grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
     grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
@@ -859,16 +857,27 @@ EOF
     ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
 }
 
-@test "compose images are digest-pinned without floating tags" {
-    local key
-    for key in PORTAINER_IMAGE FILEBROWSER_IMAGE QBITTORRENT_IMAGE \
-        WG_EASY_IMAGE UNPACKERR_IMAGE RCLONE_IMAGE; do
-        grep -qE "^${key}=\".+:.+@sha256:[0-9a-f]{64}\"" \
-            "$V2_ROOT/config/defaults.env"
-    done
-    ! grep -qE '_(IMAGE)="[^"]*:(latest|stable|lts)(@|")' \
+@test "compose images use upstream stable tracks where published" {
+    # DD-97: prefer the vendor's stable track over a frozen patch@digest.
+    grep -qE '^PORTAINER_IMAGE="portainer/portainer-ce:lts"' \
         "$V2_ROOT/config/defaults.env"
-    ! grep -qE '_(IMAGE)="[^"]*:(latest|stable|lts)"' \
+    grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -qE '^QBITTORRENT_IMAGE="lscr\.io/linuxserver/qbittorrent:latest"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -qE '^WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -qE '^UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0\.15"' \
+        "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' \
+        "$V2_ROOT/config/defaults.env"
+    # Forbidden floats — except qBittorrent:latest (LinuxServer's stable+lt v2 track).
+    ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
+        "$V2_ROOT/config/defaults.env"
+    ! grep -qE '^(PORTAINER|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
+        "$V2_ROOT/config/defaults.env"
+    # Track images must not carry a digest pin.
+    ! grep -qE '^(PORTAINER|FILEBROWSER|QBITTORRENT|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
         "$V2_ROOT/config/defaults.env"
 }
 

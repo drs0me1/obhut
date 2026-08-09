@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-09 — v2-63: Compose images follow upstream stable tracks
+
+- **Changed:** Prefer the vendor's stable track tag over a frozen
+  `patch@digest` (**DD-97**):
+  - Portainer CE → `portainer/portainer-ce:lts` (official docs)
+  - FileBrowser → `filebrowser/filebrowser:v2`
+  - wg-easy → `ghcr.io/wg-easy/wg-easy:15`
+  - Unpackerr → `ghcr.io/unpackerr/unpackerr:0.15`
+  - rclone → `rclone/rclone:1.75` (was pinned on `1.74.4`; tips at `1.75.0`)
+  - qBittorrent → `lscr.io/linuxserver/qbittorrent:latest` (LinuxServer’s
+    documented stable + libtorrent v2 track; tip `5.2.3_v2.0.13-ls470`)
+- **Forbidden still:** `libtorrentv1`, `sts`, `edge`, `nightly`, `beta`,
+  and `latest` on every image except linuxserver/qbittorrent.
+
 ### 2026-08-09 — v2-62: No migration cleanup; the installer owns only its own
 
 - **Removed:** `purge_host_webdav_leftovers` — the `master-webdav` unit,

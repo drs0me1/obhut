@@ -3586,6 +3586,11 @@ separate document with its own numbering.
 
 ### DD-83: Compose images are tag@digest pins, not floating tags (2026-08-09)
 
+> **Partially superseded by DD-97 (v2-63).** Images with an upstream stable
+> track now use that track without a digest. Digest pins remain for images
+> that only offer `:latest` (qBittorrent). The ban on `latest` / Watchtower
+> still stands; Portainer `lts` is an allowed named track under DD-97.
+
 - **Decision:** Every Compose image in `defaults.env` is a concrete
   `name:tag@sha256:…` pin taken from the live `nrm` stack (2026-08-09).
   `latest` / `stable` / `lts` are forbidden. Installer still skips
@@ -3850,6 +3855,35 @@ separate document with its own numbering.
   `PartOf=docker.service` removal (the drop-in plus PartOf is cheap; a
   duplicate apply is idempotent), automatic `WG_ENDPOINT_HOST` rewrite on
   public-IP change, or watchdog coverage of anything but the firewall unit.
+
+### DD-97: Prefer upstream stable tracks over patch@digest pins (2026-08-09)
+
+- **Decision:** Where the vendor publishes a stable track tag, Compose uses
+  that tag with **no** `@sha256`. Where it does not, the digest pin stays.
+
+  | Image | Tag | Why this track |
+  |---|---|---|
+  | Portainer CE | `lts` | Official install docs; Long-Term Support line (`sts` rejected) |
+  | FileBrowser | `v2` | Major track; equals current `v2.63.23` tip |
+  | qBittorrent (linuxserver) | `latest` | Documented as “Stable qbittorrent + libtorrent v2”; `libtorrentv1` is the other stable line and is rejected |
+  | wg-easy | `15` | Official getting-started tag; major line |
+  | Unpackerr | `0.15` | Minor track; equals `0.15.2` |
+  | rclone | `1.75` | Current stable minor (tips at `1.75.0`; was frozen on `1.74.4`) |
+
+- **Why:** Patch@digest pins made every upstream patch an installer bump.
+  The operator wants the current *stable line*. For LinuxServer qBittorrent
+  the stable+libtorrent-v2 line is literally named `latest` (there is no
+  `libtorrentv2` tag); that is an allowed exception, not a licence to use
+  `latest` elsewhere. `libtorrentv1`, `sts`, `edge`, `nightly`, beta stay
+  forbidden.
+- **Trade-off (accepted):** a pull/recreate can change the running digest
+  without a git change. Re-runs that leave `compose.yaml` byte-identical
+  still skip `compose up` (**R20**). First install or an explicit recreate
+  moves the tip. qBittorrent tip as of this decision:
+  `5.2.3_v2.0.13-ls470` (was pinned at `ls469`).
+- **Supersedes DD-83** for track-tagged images. Watchtower still out.
+- **Not doing:** `libtorrentv1`, Portainer `sts`, or `latest` on any image
+  other than linuxserver/qbittorrent.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
