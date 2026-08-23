@@ -809,6 +809,24 @@ EOF
         grep -qE '\|[[:space:]]*atomic_write'
 }
 
+@test "re-run offers an opt-in image pull, defaulted off and skipped on first install" {
+    grep -q 'PULL_IMAGES' "$V2_ROOT/install.sh"
+    grep -q 'V2_PULL_IMAGES' "$V2_ROOT/install.sh"
+    grep -q 'Konteyner imajları güncel sürüme çekilsin mi' "$V2_ROOT/install.sh"
+    grep -q 'docker compose pull' "$V2_ROOT/install.sh"
+    # Prompt only reachable when STATE_FILE already exists (re-run gate).
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
+        grep -B6 'pull_ans "Konteyner imajları' | grep -q '\-r "\$STATE_FILE"'
+    # First install skips the prompt outright (no redundant pull before compose up).
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'ilk kurulum (compose up zaten güncel imajları çeker)'
+    # Default answer is "hayır" (matches upgrade_ans's default).
+    grep -q 'local pull_ans="h"' "$V2_ROOT/install.sh"
+    # A pull forces stage_4 to treat compose as needing recreation.
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -A3 'PULL_IMAGES.*-eq 1' | grep -q 'COMPOSE_NEEDS_UP=1'
+}
+
 @test "base packages include htpasswd helpers" {
     grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
     ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"

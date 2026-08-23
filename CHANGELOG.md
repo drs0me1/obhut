@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-23 — v2-68: Optional image pull on re-run
+
+- **Added:** On a re-run against an already-provisioned host, the
+  installer asks "Konteyner imajları güncel sürüme çekilsin mi?"
+  (default: hayır). Answering evet runs `docker compose pull` before
+  `docker compose up -d`, so floating-tag images (`:lts`, `:v2`,
+  `:latest`, …) refresh to their current upstream digest. Skipped on
+  first install (`docker compose up -d` already pulls missing images)
+  and answerable non-interactively via `V2_PULL_IMAGES=1`. See **DD-99**.
+
 ### 2026-08-10 — v2-67: Caddy WebDAV port from state.env
 
 - **Changed:** Caddyfile Infuse/upstream ports use `{$WEBDAV_PORT}` (from

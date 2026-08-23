@@ -3904,6 +3904,36 @@ separate document with its own numbering.
 - **Supersedes DD-83** for track-tagged images. Watchtower still out.
 - **Not doing:** `libtorrentv1`, Portainer `sts`, or `latest` on any image
   other than linuxserver/qbittorrent.
+- **Follow-up:** the "first install or an explicit recreate moves the tip"
+  gap is now also reachable on a re-run via an opt-in prompt (**DD-99**),
+  without turning the installer into a reconcile engine.
+
+### DD-99: Image pull is a re-run prompt, not a background reconciler (2026-08-23)
+
+- **Decision:** `stage_0` asks, only when `state.env` already exists
+  (i.e. a re-run, never on first install), "Konteyner imajları güncel
+  sürüme çekilsin mi?" default **hayır**. Answering evet sets
+  `PULL_IMAGES=1`; `stage_4` then runs `docker compose pull` right after
+  rendering `compose.yaml` and forces `COMPOSE_NEEDS_UP=1` so `stage_7`
+  recreates any container whose digest moved. `V2_PULL_IMAGES=1`
+  answers the same question non-interactively (same shape as
+  `V2_FULL_UPGRADE`).
+- **Why:** DD-97 deliberately pins track tags (`lts`, `v2`, `latest`, …)
+  and accepts that a byte-identical re-run skips `compose up` (**R20**),
+  so a floating tag can drift stale for months with no supported way to
+  catch up short of a fresh install. An explicit, operator-driven pull
+  closes that gap without adding drift-detection or a timer — the
+  operator decides *when*, the installer still does nothing on its own.
+- **Why default hayır, not evet:** an unattended `Enter` on a routine
+  re-run (e.g. fixing a port) must not silently swap running image
+  digests — that is a bigger blast radius than what the operator asked
+  for. Matches `upgrade_ans`'s existing default (**R20** intro block).
+- **Why skipped on first install:** `docker compose up -d` already pulls
+  every missing image; a redundant `pull` right before it is a no-op that
+  only adds network time.
+- **Not doing:** a scheduled/automatic pull (Watchtower-shaped — rejected
+  by DD-97), and no attempt to pin/report the pre-pull digest for audit;
+  `docker compose pull`'s own output is the record.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

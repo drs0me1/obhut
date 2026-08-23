@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-67"
+V2_VERSION="2026.08.06-v2-68"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -17,6 +17,7 @@ V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
+PULL_IMAGES=0
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -336,6 +337,22 @@ stage_0() {
             log INFO "full-upgrade atlandı (yeniden kurulum)"
         fi
     fi
+
+    PULL_IMAGES=0
+    if [[ "${V2_PULL_IMAGES:-}" == "1" ]]; then
+        PULL_IMAGES=1
+        log INFO "image pull: V2_PULL_IMAGES=1"
+    elif [[ ! -r "$STATE_FILE" ]]; then
+        log INFO "image pull: ilk kurulum (compose up zaten güncel imajları çeker)"
+    else
+        local pull_ans="h"
+        prompt pull_ans "Konteyner imajları güncel sürüme çekilsin mi? (docker compose pull)" "h"
+        if [[ "$pull_ans" =~ ^[EeYy]$ ]]; then
+            PULL_IMAGES=1
+        else
+            log INFO "image pull atlandı"
+        fi
+    fi
 }
 
 stage_1() {
@@ -536,6 +553,12 @@ stage_4() {
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
+
+    if [[ "$PULL_IMAGES" -eq 1 ]]; then
+        log INFO "docker compose pull (imajlar güncelleniyor)"
+        (cd "$COMPOSE_DIR" && docker compose pull) || die "docker compose pull başarısız"
+        COMPOSE_NEEDS_UP=1
+    fi
 
     ensure_filebrowser_data_dir
 

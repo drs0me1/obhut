@@ -595,6 +595,12 @@ Invariants:
   rewrite and not limited to newly created directories.
 - No step is unconditionally expensive: package installation, image pulls
   and daemon restarts happen only when something actually changed.
+- The one operator-driven exception: on a re-run (`state.env` already
+  exists), the installer asks whether to refresh container images
+  (`docker compose pull`, default **hayır**; `V2_PULL_IMAGES=1` answers
+  non-interactively). Declining leaves this step a no-op, matching the
+  rule above; accepting is an explicit, single-run opt-in, not a
+  standing policy — see **DD-99**.
 
 ---
 
