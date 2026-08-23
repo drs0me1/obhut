@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-68"
+V2_VERSION="2026.08.06-v2-69"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -346,7 +346,7 @@ stage_0() {
         log INFO "image pull: ilk kurulum (compose up zaten güncel imajları çeker)"
     else
         local pull_ans="h"
-        prompt pull_ans "Konteyner imajları güncel sürüme çekilsin mi? (docker compose pull)" "h"
+        prompt pull_ans "Konteyner imajları güncel sürüme çekilsin mi? (pull + eski imajlar silinir)" "h"
         if [[ "$pull_ans" =~ ^[EeYy]$ ]]; then
             PULL_IMAGES=1
         else
@@ -800,6 +800,10 @@ stage_7() {
         (cd "$COMPOSE_DIR" && docker compose up -d)
     else
         log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
+    fi
+    if [[ "$PULL_IMAGES" -eq 1 ]]; then
+        log INFO "docker image prune (eski imaj katmanları temizleniyor)"
+        docker image prune -f >/dev/null || log WARN "docker image prune başarısız (yok sayıldı)"
     fi
     wait_webdav_healthy
     assert_webdav_network

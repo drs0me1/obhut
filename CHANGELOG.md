@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-23 — v2-69: Prune dangling images after an opted-in pull
+
+- **Changed:** When the operator accepts the v2-68 "pull güncel imaj"
+  prompt, `stage_7` now runs `docker image prune -f` right after
+  `docker compose up -d` recreates containers on the new digest, so the
+  old (now-dangling, untagged) image layers left behind by the pull are
+  reclaimed automatically. A prune failure is logged and does not abort
+  the install. Declining the prompt (the default) leaves image cleanup
+  untouched, as before. See **DD-99**.
+
 ### 2026-08-23 — v2-68: Optional image pull on re-run
 
 - **Added:** On a re-run against an already-provisioned host, the

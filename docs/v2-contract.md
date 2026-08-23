@@ -600,7 +600,10 @@ Invariants:
   (`docker compose pull`, default **hayır**; `V2_PULL_IMAGES=1` answers
   non-interactively). Declining leaves this step a no-op, matching the
   rule above; accepting is an explicit, single-run opt-in, not a
-  standing policy — see **DD-99**.
+  standing policy — see **DD-99**. Accepting also runs a host-wide
+  `docker image prune -f` after containers are recreated, reclaiming the
+  now-dangling old image layers; a prune failure is logged and does not
+  fail the run.
 
 ---
 

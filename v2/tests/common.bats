@@ -825,6 +825,11 @@ EOF
     # A pull forces stage_4 to treat compose as needing recreation.
     awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
         grep -A3 'PULL_IMAGES.*-eq 1' | grep -q 'COMPOSE_NEEDS_UP=1'
+    # A pull also prunes now-dangling images after compose up recreates
+    # containers on the new digest, and a prune failure does not abort.
+    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
+        grep -A2 'PULL_IMAGES.*-eq 1' | grep -q 'docker image prune -f'
+    grep -q 'docker image prune -f >/dev/null || log WARN' "$V2_ROOT/install.sh"
 }
 
 @test "base packages include htpasswd helpers" {

@@ -3931,6 +3931,19 @@ separate document with its own numbering.
 - **Why skipped on first install:** `docker compose up -d` already pulls
   every missing image; a redundant `pull` right before it is a no-op that
   only adds network time.
+- **Cleanup (v2-69):** once `stage_7`'s `docker compose up -d` has
+  recreated containers on the new digest, the same `PULL_IMAGES=1` gate
+  also runs `docker image prune -f`, so the old (now dangling, untagged)
+  layers a pulled floating tag leaves behind don't sit on disk
+  indefinitely. A prune failure is logged (`log WARN`) and does not fail
+  the run — reclaiming disk is a courtesy, not a correctness requirement.
+- **Trade-off accepted (prune scope):** `docker image prune -f` is
+  host-wide, not scoped to this stack's images — any dangling image on
+  the box is reclaimed, not just ones this pull produced. Acceptable
+  under the installer's single-host, root-only contract; an
+  image-ID-scoped `docker rmi` of just the pre-pull digests would need
+  capturing them before the pull, which the plain `pull` output doesn't
+  hand back cheaply.
 - **Not doing:** a scheduled/automatic pull (Watchtower-shaped — rejected
   by DD-97), and no attempt to pin/report the pre-pull digest for audit;
   `docker compose pull`'s own output is the record.
