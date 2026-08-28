@@ -603,7 +603,9 @@ Invariants:
   standing policy — see **DD-99**. Accepting also runs a host-wide
   `docker image prune -f` after containers are recreated, reclaiming the
   now-dangling old image layers; a prune failure is logged and does not
-  fail the run.
+  fail the run. The pull refuses to start when the filesystem holding
+  `/var/lib/docker` has less than `PULL_MIN_FREE_GB` free — fail-closed,
+  before any bytes are fetched (**DD-101**).
 
 ---
 

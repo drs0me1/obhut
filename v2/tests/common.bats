@@ -207,8 +207,31 @@ EOF
     # Downloads tree itself is selective find+chown, not chown -R on DOWNLOADS_PATH.
     ! awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -q 'chown -R'
+    # Single tree walk (v2-71): one find with comma-joined expressions, not
+    # three separate passes over the whole downloads tree.
+    [ "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -c 'find "\$root"')" -eq 1 ]
     grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
         "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "ensure_downloads_tree single pass fixes deviant modes and keeps compliant ones" {
+    # Run the REAL function (extracted from install.sh) against a tmp tree:
+    # deviant dir/file modes must be repaired, already-compliant entries kept.
+    die() { echo "die: $*" >&2; return 1; }
+    eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    mkdir -p "$TMP/dl/sub"
+    echo x >"$TMP/dl/sub/bad"
+    echo y >"$TMP/dl/sub/good"
+    chmod 0700 "$TMP/dl/sub"
+    chmod 0600 "$TMP/dl/sub/bad"
+    chmod 0664 "$TMP/dl/sub/good"
+    ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)"
+    [ "$(stat -f '%Lp' "$TMP/dl/sub" 2>/dev/null || stat -c '%a' "$TMP/dl/sub")" = "775" ]
+    [ "$(stat -f '%Lp' "$TMP/dl/sub/bad" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/bad")" = "664" ]
+    [ "$(stat -f '%Lp' "$TMP/dl/sub/good" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/good")" = "664" ]
+    run ensure_downloads_tree "$TMP/yok" "$(id -u)" "$(id -g)"
+    [ "$status" -ne 0 ]
 }
 
 @test "docker daemon.json merges dns via jq" {
@@ -824,12 +847,22 @@ EOF
     grep -q 'local pull_ans="h"' "$V2_ROOT/install.sh"
     # A pull forces stage_4 to treat compose as needing recreation.
     awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -A3 'PULL_IMAGES.*-eq 1' | grep -q 'COMPOSE_NEEDS_UP=1'
+        grep -A1 'docker compose pull) || die' | grep -q 'COMPOSE_NEEDS_UP=1'
     # A pull also prunes now-dangling images after compose up recreates
     # containers on the new digest, and a prune failure does not abort.
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
         grep -A2 'PULL_IMAGES.*-eq 1' | grep -q 'docker image prune -f'
     grep -q 'docker image prune -f >/dev/null || log WARN' "$V2_ROOT/install.sh"
+    # DD-101: the pull is gated on free disk under /var/lib/docker, the
+    # floor lives once in defaults.env, and the gate dies (fail-closed)
+    # BEFORE docker compose pull runs.
+    grep -q '^PULL_MIN_FREE_GB=' "$V2_ROOT/config/defaults.env"
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        awk '/PULL_MIN_FREE_GB/ { seen = 1 }
+             /docker compose pull/ { if (!seen) exit 1 }'
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'df -Pk /var/lib/docker'
+    grep -q 'boş alan yetersiz' "$V2_ROOT/install.sh"
 }
 
 @test "re-run skips apt-get update when the repo file is unchanged" {

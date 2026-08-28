@@ -3973,6 +3973,33 @@ separate document with its own numbering.
   boundaries (Tailscale must be installed in stage_2, Docker in stage_4)
   for a saving only the re-run path has; smallest-change preferred.
 
+### DD-101: The opted-in pull has a fail-closed disk floor (2026-08-28)
+
+- **Decision:** when the operator accepts the image-pull prompt (DD-99),
+  `stage_4` measures free space on the filesystem holding
+  `/var/lib/docker` (`df -Pk`) before running `docker compose pull` and
+  `die`s if it is below `PULL_MIN_FREE_GB` (declared once, in
+  `defaults.env`; default 5 GiB). An unreadable measurement also dies —
+  guessing about disk space before a multi-GB download is not an option.
+- **Why:** a pull that fills the disk mid-download does not just fail the
+  pull — a full `/var/lib/docker` can wedge the running containers and
+  the Docker daemon itself, which is exactly the "failure leaves the host
+  worse than before" outcome §12 of the contract forbids. Checking before
+  the first byte keeps the failure mode at "nothing happened, message
+  says why".
+- **Why die, not warn-and-continue:** the operator opted into the pull at
+  a prompt seconds earlier; a warning scrolling past in pull output is
+  not a decision. Declining is cheap: free space or re-run without the
+  pull. Matches the fail-closed posture everywhere else in the tree.
+- **Why a fixed floor, not a computed image-size estimate:** the real
+  space needed depends on layer overlap the registry only reveals during
+  the pull; estimating it would be reconcile-engine-shaped complexity for
+  a number that a single conservative constant covers on this fixed
+  six-image stack.
+- **Not doing:** any disk check on the non-pull path — the ordinary
+  re-run downloads nothing and stays gate-free (R20: no step is
+  unconditionally expensive).
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

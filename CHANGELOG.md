@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-28 — v2-71: Disk floor before pull, single-pass downloads repair
+
+- **Added:** the opted-in image pull (v2-68) now refuses to start when the
+  filesystem holding `/var/lib/docker` has less than `PULL_MIN_FREE_GB`
+  (defaults.env, 5 GiB) free — a half-finished pull on a full disk can
+  take running containers down with it, so the gate fails closed before
+  any bytes are fetched. See **DD-101**.
+- **Changed:** `ensure_downloads_tree` walks the downloads tree **once**
+  instead of three times (find's comma operator combines the chown and
+  the two chmod passes). Repair stays selective per **DD-84** — only
+  entries whose owner or mode deviates are touched; behaviour is
+  byte-identical, only the tree I/O drops to a third.
+
 ### 2026-08-23 — v2-70: Skip redundant apt-get update on a re-run
 
 - **Changed:** `stage_2`/`stage_4` only run `apt-get update` after writing

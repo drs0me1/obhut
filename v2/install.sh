@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-70"
+V2_VERSION="2026.08.06-v2-71"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -450,10 +450,16 @@ EOF
 ensure_downloads_tree() {
     local root="$1" uid="$2" gid="$3"
     [[ -d "$root" ]] || die "downloads dizini yok: $root"
-    find "$root" \( ! -uid "$uid" -o ! -gid "$gid" \) \
-        -exec chown -h "${uid}:${gid}" {} +
-    find "$root" -type d ! -perm 0775 -exec chmod 0775 {} +
-    find "$root" -type f ! -perm 0664 -exec chmod 0664 {} +
+    # Tek geçiş, üç ayrı find değil: büyük kütüphanede ağaç I/O'su üçte bire
+    # iner. "-exec … + -false" grubu her girdide sonraki gruba da bakılmasını
+    # sağlar (GNU virgül operatörü BSD find'da yok; testler iş istasyonunda
+    # koşar). Onarım DD-84 gereği seçici kalır (yalnız sapmış girdiler);
+    # hedef modlarda suid/sgid olmadığından exec sırası sonucu değiştirmez.
+    find "$root" \
+        \( \( ! -uid "$uid" -o ! -gid "$gid" \) \
+        -exec chown -h "${uid}:${gid}" {} + -false \) -o \
+        \( -type d ! -perm 0775 -exec chmod 0775 {} + -false \) -o \
+        \( -type f ! -perm 0664 -exec chmod 0664 {} + \)
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -563,7 +569,17 @@ stage_4() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
 
     if [[ "$PULL_IMAGES" -eq 1 ]]; then
-        log INFO "docker compose pull (imajlar güncelleniyor)"
+        # Fail-closed disk kapısı (DD-101): yarıda kalan bir pull disk-dolu
+        # durumunda çalışan konteynerleri de etkileyebilir; eşik altındaysa
+        # hiç başlama. Ölçüm imajların yaşadığı dosya sisteminden alınır.
+        local pull_free_kb pull_min_kb
+        pull_free_kb="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print $4}')"
+        [[ "$pull_free_kb" =~ ^[0-9]+$ ]] ||
+            die "disk boş alanı okunamadı (/var/lib/docker)"
+        pull_min_kb=$((PULL_MIN_FREE_GB * 1024 * 1024))
+        [[ "$pull_free_kb" -ge "$pull_min_kb" ]] ||
+            die "imaj pull için boş alan yetersiz: $((pull_free_kb / 1024 / 1024)) GiB < ${PULL_MIN_FREE_GB} GiB (/var/lib/docker)"
+        log INFO "docker compose pull (imajlar güncelleniyor; boş alan $((pull_free_kb / 1024 / 1024)) GiB)"
         (cd "$COMPOSE_DIR" && docker compose pull) || die "docker compose pull başarısız"
         COMPOSE_NEEDS_UP=1
     fi
