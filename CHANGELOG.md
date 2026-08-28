@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2026.08.06-v2-71] - 2026-08-28
+
+Maintenance cut of the lean `v2/` installer: Infuse/WebDAV addressing via
+Caddy (v2-65…67), the opt-in image pull with prune and disk floor
+(v2-68/69/71), re-run cost reductions (v2-70/71). `V2_VERSION` is
+`2026.08.06-v2-71`. Portable app: `v2/app/2026.08.06-v2-71.command`.
+Git tag: `2026.08.06-v2-71`.
+
 ### 2026-08-28 — v2-71: Disk floor before pull, single-pass downloads repair
 
 - **Added:** the opted-in image pull (v2-68) now refuses to start when the
@@ -14,10 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   take running containers down with it, so the gate fails closed before
   any bytes are fetched. See **DD-101**.
 - **Changed:** `ensure_downloads_tree` walks the downloads tree **once**
-  instead of three times (find's comma operator combines the chown and
-  the two chmod passes). Repair stays selective per **DD-84** — only
-  entries whose owner or mode deviates are touched; behaviour is
-  byte-identical, only the tree I/O drops to a third.
+  instead of three times (one find whose `-exec … + -false` groups chain
+  the chown and both chmod repairs — portable across GNU and BSD find,
+  since the bats suite runs on the macOS workstation). Repair stays
+  selective per **DD-84** — only entries whose owner or mode deviates are
+  touched; behaviour is byte-identical, only the tree I/O drops to a
+  third.
 
 ### 2026-08-23 — v2-70: Skip redundant apt-get update on a re-run
 
