@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-23 — v2-70: Skip redundant apt-get update on a re-run
+
+- **Changed:** `stage_2`/`stage_4` only run `apt-get update` after writing
+  the Tailscale/Docker apt source files when the file's content actually
+  changed (`V2_LAST_ATOMIC_CHANGED`). On a re-run — where both files
+  already existed before `stage_1`'s own `apt-get update` — this drops
+  two redundant full index refreshes per run. First install is
+  unaffected (the files are new, so `V2_LAST_ATOMIC_CHANGED=1`). See
+  **DD-100**.
+
 ### 2026-08-23 — v2-69: Prune dangling images after an opted-in pull
 
 - **Changed:** When the operator accepts the v2-68 "pull güncel imaj"

@@ -3948,6 +3948,31 @@ separate document with its own numbering.
   by DD-97), and no attempt to pin/report the pre-pull digest for audit;
   `docker compose pull`'s own output is the record.
 
+### DD-100: Skip a repo's apt-get update when its source file didn't change (2026-08-23)
+
+- **Decision:** `stage_2` and `stage_4` each write an apt source file
+  (`tailscale.list`, `docker.sources`) via `atomic_write`, then only run
+  `apt-get update` when `V2_LAST_ATOMIC_CHANGED` is `1` from that write.
+  Otherwise they log and skip it.
+- **Why this is safe, not a staleness risk:** `stage_1` already runs
+  `apt-get update` before either repo file is touched. On a re-run both
+  files already exist on disk from the prior run, so they're already
+  part of the sources `stage_1`'s update just refreshed — a second
+  `apt-get update` moments later, with the file byte-identical, re-fetches
+  the exact same index data. On first install the files are new
+  (`V2_LAST_ATOMIC_CHANGED=1`), so the update still runs — apt has never
+  seen that source before.
+- **Why not drop the per-stage updates entirely:** a re-run where the
+  operator's Tailscale/Docker apt config genuinely changed (key rotation,
+  suite bump) still needs its own fresh index before `apt-get install`
+  in that same stage; gating on the write result keeps that case correct
+  while eliminating the common no-op case (**R20**: no step is
+  unconditionally expensive).
+- **Not doing:** consolidating all three `apt-get update` calls into one
+  pass after every repo file is written — that would cross stage
+  boundaries (Tailscale must be installed in stage_2, Docker in stage_4)
+  for a saving only the re-run path has; smallest-change preferred.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

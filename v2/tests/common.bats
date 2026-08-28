@@ -832,6 +832,20 @@ EOF
     grep -q 'docker image prune -f >/dev/null || log WARN' "$V2_ROOT/install.sh"
 }
 
+@test "re-run skips apt-get update when the repo file is unchanged" {
+    # stage_2: tailscale repo write immediately gates its own apt-get update.
+    awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
+        grep -A4 'install_tailscale_repo$' | grep -q 'V2_LAST_ATOMIC_CHANGED.*-eq 1'
+    grep -q 'tailscale.list aynı; apt-get update atlandı' "$V2_ROOT/install.sh"
+    # stage_4: same gate for the docker repo write.
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -A4 'install_docker_repo$' | grep -q 'V2_LAST_ATOMIC_CHANGED.*-eq 1'
+    grep -q 'docker.sources aynı; apt-get update atlandı' "$V2_ROOT/install.sh"
+    # First install still updates: install_tailscale_repo/install_docker_repo
+    # write via atomic_write, which sets V2_LAST_ATOMIC_CHANGED=1 for a new file.
+    grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
+}
+
 @test "base packages include htpasswd helpers" {
     grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
     ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"

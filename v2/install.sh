@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-69"
+V2_VERSION="2026.08.06-v2-70"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -409,7 +409,11 @@ EOF
 stage_2() {
     log INFO "Aşama 2/7 — Tailscale"
     install_tailscale_repo
-    retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+        retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    else
+        log INFO "tailscale.list aynı; apt-get update atlandı (stage_1 zaten günceldi)"
+    fi
     # M11/DD-18: buffer tabanı paket kurulumundan önce
     apply_udp_netbuf_floor
     retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y tailscale
@@ -518,7 +522,11 @@ stage_3() {
 stage_4() {
     log INFO "Aşama 4/7 — Docker ve şablonlar"
     install_docker_repo
-    retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+        retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    else
+        log INFO "docker.sources aynı; apt-get update atlandı (stage_1 zaten günceldi)"
+    fi
     retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     mkdir -p /etc/docker
