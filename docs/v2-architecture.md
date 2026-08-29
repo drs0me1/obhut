@@ -366,7 +366,7 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, Debian 13, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, ufw inactive, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
 | 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
@@ -386,7 +386,7 @@ places.
 ## 8. Implementation status
 
 The lean `v2/` tree is executable: `install.sh` runs the seven stages on a
-Debian 13 host. `v2/dev/export-v2.sh` embeds a runtime-only tarball
+Debian 13 or Ubuntu 24.04/26.04 LTS host. `v2/dev/export-v2.sh` embeds a runtime-only tarball
 (excluding `.cursor/`, `dev/`, `tests/`, `app/`) into
 `v2/app/<V2_VERSION>.command`, which uploads and starts install over
 `ssh -t`.

@@ -4000,6 +4000,50 @@ separate document with its own numbering.
   re-run downloads nothing and stays gate-free (R20: no step is
   unconditionally expensive).
 
+### DD-102: Supported-OS matrix — Debian 13 plus the two Ubuntu LTS lines (2026-08-29)
+
+- **Decision:** `require_debian_trixie` became `require_supported_os`,
+  accepting exactly three ID/codename/major triples: `debian/trixie/13`,
+  `ubuntu/noble/24`, `ubuntu/resolute/26`. The gate sets `OS_ID` and
+  `OS_CODENAME`, and the Tailscale/Docker apt repo lines are rendered from
+  those — verified live (2026-08-29) that both vendors publish
+  `stable/ubuntu {noble,resolute}` and `linux/ubuntu` dists with the same
+  URL shape as Debian. The Caddy cloudsmith line is already
+  distro-agnostic (`any-version`) and Caddy's own Ubuntu instructions use
+  the identical line.
+- **Why pinned LTS releases, not `ID=ubuntu`:** same reason trixie was a
+  hard gate — the installer's behaviour is only known on releases it was
+  written against. Interim releases (25.04/25.10) have 9-month lives and
+  add nothing; the two LTS lines cover real hosts through 2029+.
+- **Ubuntu-specific guards that came with this:**
+  - **ufw:** Ubuntu server ships it (inactive by default). If active, it
+    manages INPUT alongside MASTER-INPUT — two owners for one chain.
+    stage_0 dies before any mutation; the operator runs `ufw disable`
+    first. Fail-closed, consistent with the rest of the tree.
+  - **resolv.conf stub:** stage_6 already wrote `DNSStubListener=no` when
+    systemd-resolved is active; on Ubuntu `/etc/resolv.conf` is a symlink
+    to the stub (`127.0.0.53`), so disabling the stub alone breaks host
+    DNS. When the symlink targets `stub-resolv.conf` it is repointed to
+    `/run/systemd/resolve/resolv.conf` (resolved's uplink file). No-op on
+    hosts without the stub symlink, including Debian.
+  - **apt lock:** Ubuntu enables unattended-upgrades by default, so the
+    dpkg lock can be held for minutes right when the installer starts.
+    Every `apt-get` call now carries `-o DPkg::Lock::Timeout=60`
+    (`APT_OPTS`), waiting on the lock instead of failing instantly;
+    `retry` still wraps each call above that.
+  - **debian-keyring:** installed only when `OS_ID=debian` — it came from
+    Caddy's official Debian install set and has no function on Ubuntu
+    (repo signing uses the downloaded cloudsmith keyring).
+- **Verification status:** static only. bats covers the gate matrix
+  (accept ×3, reject ×5 including ID/codename and codename/version
+  mismatches) and the repo-line derivation; **no live Ubuntu install has
+  been run** — `nrm` is Debian. The contract §1.1 and CLAUDE.md carry the
+  same caveat until a real Ubuntu host validates stages 1–7.
+- **Not doing:** distro-conditional package name mapping (the full
+  package set — dnsmasq, caddy via vendor repo, apache2-utils, dnsutils,
+  ethtool, jq, … — resolves identically on both), and no support for
+  derivatives (Mint, Pop!_OS) whose os-release IDs differ.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

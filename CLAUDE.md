@@ -4,7 +4,8 @@ Working guide for any AI assistant in this repository. Read this first.
 
 ## Project Overview
 
-Active code lives under **`v2/`**. It turns a fresh Debian 13 (trixie) host
+Active code lives under **`v2/`**. It turns a fresh Debian 13 (trixie)
+or Ubuntu 24.04/26.04 LTS host
 into a Tailscale exit-node with a fixed Docker Compose bundle, host
 dnsmasq + Caddy on the tailnet, and a persistent firewall. There is no
 reconcile / self-healing engine by design.
@@ -87,7 +88,8 @@ state. Treat every change as production-infrastructure work.
 ## Constraints
 
 - Root-only, interactive, single-host. No unattended mode.
-- Debian 13 (trixie) only.
+- Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)
+  only (**DD-102**). Ubuntu path not yet live-verified.
 - Fixed service bundle — no installation profiles.
 - Do not delete or recreate Docker-owned iptables chains; manage only
   project chains and jumps into `DOCKER-USER`.

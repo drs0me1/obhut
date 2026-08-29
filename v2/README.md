@@ -1,6 +1,6 @@
 # master-stack v2
 
-Lean Debian 13 installer: Tailscale exit node, fixed Compose bundle
+Lean Debian 13 / Ubuntu LTS installer: Tailscale exit node, fixed Compose bundle
 (including loopback WebDAV), host dnsmasq + Caddy on the tailnet, and a
 persistent firewall. No reconcile engine.
 
@@ -50,7 +50,8 @@ Not embedded: `.cursor/`, `dev/`, `tests/`, `app/`.
 bash /root/debian-server-installer/v2/install.sh
 ```
 
-Root, interactive TTY, Debian 13 (trixie) only. Re-runs are supported.
+Root, interactive TTY, Debian 13 (trixie) or Ubuntu 24.04/26.04 LTS only.
+Re-runs are supported.
 
 ## Verify (developer workstation)
 

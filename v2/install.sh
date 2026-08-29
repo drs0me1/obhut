@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# v2 kurulum — Debian 13, doğrusal aşamalar, tekrar çalıştırılabilir.
+# v2 kurulum — Debian 13 / Ubuntu 24.04 / 26.04 LTS, doğrusal aşamalar,
+# tekrar çalıştırılabilir.
 # shellcheck source-path=SCRIPTDIR
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-71"
+V2_VERSION="2026.08.06-v2-72"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -18,6 +19,9 @@ RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
 PULL_IMAGES=0
+# Ubuntu'da unattended-upgrades varsayılan açık: apt kilidi dakikalarca
+# tutulabilir. Kilitte hemen düşmek yerine bekle; retry üstte ayrıca sarar.
+APT_OPTS=(-o DPkg::Lock::Timeout=60)
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -208,29 +212,31 @@ EOF
     fi
 }
 
+# Depo suite'i os-release'ten (require_supported_os → OS_ID/OS_CODENAME);
+# hem Tailscale hem Docker debian/ubuntu için aynı URL kalıbını yayınlar.
 install_tailscale_repo() {
     local keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
     local tmp
     tmp="$(mktemp)"
     retry "tailscale-gpg" 3 60 -- \
-        curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" -o "$tmp"
+        curl -fsSL "https://pkgs.tailscale.com/stable/${OS_ID}/${OS_CODENAME}.noarmor.gpg" -o "$tmp"
     # apt/sqv keyring'i _apt kullanıcısı olarak okur; 0600 Permission denied verir.
     install -m 0644 "$tmp" "$keyring"
     rm -f "$tmp"
-    atomic_write /etc/apt/sources.list.d/tailscale.list 0644 <<'EOF'
-deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main
+    atomic_write /etc/apt/sources.list.d/tailscale.list 0644 <<EOF
+deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/$OS_ID $OS_CODENAME main
 EOF
 }
 
 install_docker_repo() {
     install -m 0755 -d /etc/apt/keyrings
     retry "docker-gpg" 3 60 -- \
-        curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+        curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
     atomic_write /etc/apt/sources.list.d/docker.sources 0644 <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/debian
-Suites: trixie
+URIs: https://download.docker.com/linux/$OS_ID
+Suites: $OS_CODENAME
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
@@ -239,8 +245,14 @@ EOF
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
-    require_debian_trixie
+    require_supported_os
     [[ -t 0 || -r /dev/tty ]] || die "etkileşimli TTY gerekli"
+    # Ubuntu server ufw ile gelir (varsayılan pasif). Aktifse INPUT'u ikinci
+    # bir el yönetir ve MASTER-INPUT ile çelişir — fail-closed: önce kapat.
+    if command -v ufw >/dev/null 2>&1 &&
+        ufw status 2>/dev/null | grep -q '^Status: active'; then
+        die "ufw aktif: INPUT politikası iki elden yönetilemez. Önce 'ufw disable' çalıştırın"
+    fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
 
     local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT"
@@ -330,7 +342,7 @@ stage_0() {
         log INFO "full-upgrade: ilk kurulum"
     else
         local upgrade_ans="h"
-        prompt upgrade_ans "Debian full-upgrade yapılsın mı? (uzun sürebilir)" "h"
+        prompt upgrade_ans "Sistem full-upgrade yapılsın mı? (uzun sürebilir)" "h"
         if [[ "$upgrade_ans" =~ ^[EeYy]$ ]]; then
             RUN_FULL_UPGRADE=1
         else
@@ -358,13 +370,13 @@ stage_0() {
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
-    retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+    retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
         retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
-            apt-get -y -o Dpkg::Options::=--force-confdef \
+            apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
                 -o Dpkg::Options::=--force-confold full-upgrade
     fi
-    retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
+    retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq \
         apache2-utils dnsutils
@@ -410,13 +422,13 @@ stage_2() {
     log INFO "Aşama 2/7 — Tailscale"
     install_tailscale_repo
     if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
-        retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+        retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     else
         log INFO "tailscale.list aynı; apt-get update atlandı (stage_1 zaten günceldi)"
     fi
     # M11/DD-18: buffer tabanı paket kurulumundan önce
     apply_udp_netbuf_floor
-    retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y tailscale
+    retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y tailscale
     systemctl enable --now tailscaled
 
     # Forwarding ayrı dosyada; rmem/wmem yalnız netbuf conf'ta (DD-18).
@@ -529,11 +541,11 @@ stage_4() {
     log INFO "Aşama 4/7 — Docker ve şablonlar"
     install_docker_repo
     if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
-        retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+        retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     else
         log INFO "docker.sources aynı; apt-get update atlandı (stage_1 zaten günceldi)"
     fi
-    retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get install -y \
+    retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     mkdir -p /etc/docker
     merge_docker_daemon_dns
@@ -630,7 +642,7 @@ apt_get_install_masked_quiet() {
     local tmp rc=0 line
     tmp="$(mktemp)"
     set +e
-    apt-get install -y "$@" >"$tmp" 2>&1
+    apt-get "${APT_OPTS[@]}" install -y "$@" >"$tmp" 2>&1
     rc=$?
     set -e
     if [[ -n "${V2_LOG_FILE:-}" ]]; then
@@ -657,8 +669,12 @@ stage_6() {
     if [[ "$need_pkg" -eq 1 ]]; then
         systemctl stop dnsmasq caddy 2>/dev/null || true
         systemctl mask dnsmasq.service caddy.service >/dev/null 2>&1 || true
+        # debian-keyring yalnız Debian'da: Caddy'nin resmi kurulum setinden;
+        # Ubuntu'da işlevi yok (imza doğrulaması cloudsmith keyring'iyle).
+        local -a dns_pkgs=(dnsmasq)
+        [[ "$OS_ID" == "debian" ]] && dns_pkgs+=(debian-keyring)
         retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- \
-            apt_get_install_masked_quiet dnsmasq debian-keyring
+            apt_get_install_masked_quiet "${dns_pkgs[@]}"
         if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
             retry "caddy-gpg" 3 60 -- curl -1sLf \
                 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
@@ -667,7 +683,7 @@ stage_6() {
             atomic_write /etc/apt/sources.list.d/caddy-stable.list 0644 <<'EOF'
 deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
 EOF
-            retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get update
+            retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
         fi
         retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt_get_install_masked_quiet caddy
     fi
@@ -687,6 +703,12 @@ DNSStubListener=no
 EOF
         if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
             systemctl restart systemd-resolved || true
+        fi
+        # Ubuntu: /etc/resolv.conf stub'a (127.0.0.53) symlink gelir; stub
+        # kapanınca host DNS kırılır. resolved'in gerçek uplink dosyasına çevir.
+        if [[ "$(readlink /etc/resolv.conf 2>/dev/null)" == *stub-resolv.conf ]]; then
+            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+            log INFO "resolv.conf stub yerine resolved uplink dosyasına bağlandı"
         fi
     fi
 

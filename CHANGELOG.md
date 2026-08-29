@@ -6,7 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Nothing yet.
+### 2026-08-29 — v2-72: Ubuntu 24.04/26.04 LTS support
+
+- **Added:** the OS gate (`require_supported_os`, formerly
+  `require_debian_trixie`) now accepts Debian 13 (trixie), Ubuntu 24.04
+  LTS (noble) and Ubuntu 26.04 LTS (resolute). Tailscale and Docker apt
+  repo lines are derived from `os-release` (`OS_ID`/`OS_CODENAME`) —
+  both vendors' Ubuntu repos verified live; the Caddy line was already
+  distro-agnostic. See **DD-102**.
+- **Added:** Ubuntu guards — stage_0 dies if ufw is active (two owners
+  for INPUT otherwise); stage_6 repoints an `/etc/resolv.conf` stub
+  symlink to resolved's uplink file so host DNS survives
+  `DNSStubListener=no`; every `apt-get` call waits on the dpkg lock
+  (`-o DPkg::Lock::Timeout=60`) because Ubuntu ships
+  unattended-upgrades enabled.
+- **Changed:** `debian-keyring` is installed on Debian only; the
+  full-upgrade prompt now says "Sistem" instead of "Debian".
+- **Not yet live-verified:** the Ubuntu path is covered by bats/static
+  checks only; no real Ubuntu install has been run (`nrm` is Debian).
 
 ## [2026.08.06-v2-71] - 2026-08-28
 

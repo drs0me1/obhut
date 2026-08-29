@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # v2 ortak yardımcılar — kısa ve tekrar kullanılanlar.
-# Docker / Tailscale / firewall bilmez. Production: Bash 5.x (Debian 13).
+# Docker / Tailscale / firewall bilmez. Production: Bash 5.x
+# (Debian 13 / Ubuntu 24.04 / Ubuntu 26.04).
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     printf 'HATA: %s source edilmek içindir.\n' "${BASH_SOURCE[0]}" >&2
@@ -33,7 +34,11 @@ require_root() {
     [[ "$(id -u)" == "0" ]] || die "bu betik root olarak çalıştırılmalıdır"
 }
 
-require_debian_trixie() {
+# Desteklenen sürümler (DD-102): Debian 13 (trixie), Ubuntu 24.04 LTS
+# (noble), Ubuntu 26.04 LTS (resolute). ID+codename+major üçlüsü birlikte
+# doğrulanır; OS_ID/OS_CODENAME apt depo satırlarını türetir — dağıtım
+# kimliğinin tek kaynağı os-release'tir, depo suite'i ayrıca yazılmaz.
+require_supported_os() {
     local f="${V2_OS_RELEASE_PATH:-/etc/os-release}"
     [[ -r "$f" ]] || die "işletim sistemi okunamıyor: $f"
     local id="" codename="" version_id=""
@@ -52,9 +57,19 @@ require_debian_trixie() {
                 ;;
         esac
     done <"$f"
-    [[ "$id" == "debian" ]] || die "yalnız Debian desteklenir (ID=${id:-yok})"
-    [[ "$codename" == "trixie" ]] || die "yalnız Debian 13 trixie (codename=${codename:-yok})"
-    [[ "${version_id%%.*}" == "13" ]] || die "yalnız Debian 13 (VERSION_ID=${version_id:-yok})"
+    local expected=""
+    case "$id/$codename" in
+        debian/trixie) expected=13 ;;
+        ubuntu/noble) expected=24 ;;
+        ubuntu/resolute) expected=26 ;;
+        *)
+            die "desteklenmeyen dağıtım: ID=${id:-yok} codename=${codename:-yok} (Debian 13 trixie / Ubuntu 24.04 noble / Ubuntu 26.04 resolute)"
+            ;;
+    esac
+    [[ "${version_id%%.*}" == "$expected" ]] ||
+        die "sürüm codename ile uyuşmuyor: $codename için VERSION_ID=${version_id:-yok} (beklenen ${expected}.*)"
+    # shellcheck disable=SC2034 # install.sh apt depo satırlarında tüketir
+    OS_ID="$id" OS_CODENAME="$codename"
 }
 
 acquire_lock() {

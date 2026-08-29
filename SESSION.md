@@ -4,19 +4,21 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
-**v2-71 released (2026-08-28):** maintenance cut after the v2-64 GA —
-Infuse/WebDAV addressing via Caddy on `TS_IPV4:WEBDAV_PORT` (v2-65…67,
-**DD-98**), opt-in image pull with dangling-image prune and a fail-closed
-disk floor (v2-68/69/71, **DD-99**/**DD-101**), re-run cost reductions:
-gated per-repo `apt-get update` (v2-70, **DD-100**) and a single-pass
-downloads repair (v2-71). Nothing is currently unreleased.
+**v2-72 in [Unreleased] (2026-08-29):** Ubuntu 24.04/26.04 LTS support —
+`require_supported_os` matrix, repo lines from `os-release`, ufw gate,
+resolv.conf stub repoint, dpkg-lock wait (**DD-102**). **The Ubuntu path
+is statically verified only** — no live Ubuntu install has been run yet
+(`nrm` is Debian 13); validate stages 1–7 on a real Ubuntu host before
+trusting it. Last release: **v2-71** (2026-08-28, tag
+`2026.08.06-v2-71`) — pull disk floor, single-pass downloads repair,
+plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-71` |
+| Version | `2026.08.06-v2-72` (unreleased) |
 | Branch | `quantum` |
-| Git tag | `2026.08.06-v2-71` |
-| Tests | 80 bats, all green on the workstation |
+| Last tag | `2026.08.06-v2-71` |
+| Tests | 82 bats, all green on the workstation |
 
 ### Operator preferences (locked)
 

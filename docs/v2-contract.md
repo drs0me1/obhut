@@ -58,8 +58,13 @@ the ones agreed on 2026-08-05:
 
 ### 1.1 Base system
 
-- Debian 13 (trixie) hard gate; the installer refuses any other OS or
-  release (**R1**).
+- Supported-OS hard gate (**R1**, **DD-102**): Debian 13 (trixie),
+  Ubuntu 24.04 LTS (noble) or Ubuntu 26.04 LTS (resolute); the installer
+  refuses any other OS or release. Apt repo suites for Tailscale and
+  Docker are derived from `os-release` (`OS_ID`/`OS_CODENAME`), never
+  hardcoded. On a host with ufw active the installer stops before any
+  mutation. The Ubuntu path is statically verified only — no live
+  Ubuntu install has been run yet.
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
   as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`

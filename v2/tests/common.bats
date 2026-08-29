@@ -27,29 +27,81 @@ teardown() {
     [[ "$output" == *"bitti"* ]]
 }
 
-@test "require_debian_trixie accepts trixie 13" {
-    cat >"$TMP/os" <<'EOF'
-ID=debian
-VERSION_CODENAME=trixie
-VERSION_ID="13"
+@test "require_supported_os accepts trixie noble and resolute" {
+    for triple in "debian trixie 13" "ubuntu noble 24.04" "ubuntu resolute 26.04"; do
+        set -- $triple
+        cat >"$TMP/os" <<EOF
+ID=$1
+VERSION_CODENAME=$2
+VERSION_ID="$3"
 EOF
-    V2_OS_RELEASE_PATH="$TMP/os"
-    run require_debian_trixie
-    [ "$status" -eq 0 ]
+        V2_OS_RELEASE_PATH="$TMP/os"
+        run require_supported_os
+        [ "$status" -eq 0 ]
+    done
 }
 
-@test "require_debian_trixie rejects ubuntu" {
+@test "require_supported_os exports OS_ID and OS_CODENAME for repo lines" {
     cat >"$TMP/os" <<'EOF'
 ID=ubuntu
-VERSION_CODENAME=trixie
-VERSION_ID="13"
+VERSION_CODENAME=noble
+VERSION_ID="24.04"
 EOF
     V2_OS_RELEASE_PATH="$TMP/os"
-    run require_debian_trixie
+    require_supported_os
+    [ "$OS_ID" = "ubuntu" ]
+    [ "$OS_CODENAME" = "noble" ]
+}
+
+@test "require_supported_os rejects unsupported and mismatched releases" {
+    # Non-LTS ubuntu, older debian, and an ID/codename mismatch all fail.
+    for triple in "ubuntu jammy 22.04" "debian bookworm 12" "ubuntu trixie 13" "debian noble 24.04"; do
+        set -- $triple
+        cat >"$TMP/os" <<EOF
+ID=$1
+VERSION_CODENAME=$2
+VERSION_ID="$3"
+EOF
+        V2_OS_RELEASE_PATH="$TMP/os"
+        run require_supported_os
+        [ "$status" -eq 1 ]
+    done
+    # Codename/version mismatch within a supported pair also fails.
+    cat >"$TMP/os" <<'EOF'
+ID=ubuntu
+VERSION_CODENAME=noble
+VERSION_ID="26.04"
+EOF
+    V2_OS_RELEASE_PATH="$TMP/os"
+    run require_supported_os
     [ "$status" -eq 1 ]
 }
 
-@test "require_debian_trixie does not source os-release" {
+@test "install derives apt repos from os-release and carries ubuntu guards" {
+    # Repo suite comes from OS_ID/OS_CODENAME — no hardcoded distro remains.
+    grep -qF 'https://pkgs.tailscale.com/stable/$OS_ID $OS_CODENAME main' \
+        "$V2_ROOT/install.sh"
+    grep -qF 'https://download.docker.com/linux/$OS_ID' "$V2_ROOT/install.sh"
+    grep -qF 'Suites: $OS_CODENAME' "$V2_ROOT/install.sh"
+    ! grep -q 'trixie' "$V2_ROOT/install.sh"
+    # Caddy repo stays distro-agnostic (any-version) — same line on ubuntu.
+    grep -q 'caddy/stable/deb/debian any-version main' "$V2_ROOT/install.sh"
+    # ufw active is a hard stop before any mutation (stage_0).
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
+        grep -q "ufw aktif"
+    # systemd-resolved stub symlink is repointed so host DNS survives.
+    grep -q 'stub-resolv.conf' "$V2_ROOT/install.sh"
+    grep -qF 'ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf' \
+        "$V2_ROOT/install.sh"
+    # debian-keyring is installed on debian only.
+    grep -q '\[\[ "\$OS_ID" == "debian" \]\] && dns_pkgs+=(debian-keyring)' \
+        "$V2_ROOT/install.sh"
+    # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
+    grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 9 ]
+}
+
+@test "require_supported_os does not source os-release" {
     cat >"$TMP/os" <<EOF
 ID=debian
 VERSION_CODENAME=trixie
@@ -57,7 +109,7 @@ VERSION_ID="13"
 X=\$(touch $TMP/pwned)
 EOF
     V2_OS_RELEASE_PATH="$TMP/os"
-    run require_debian_trixie
+    run require_supported_os
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/pwned" ]
 }
@@ -539,7 +591,7 @@ EOF
     grep -q '99-master-stack-netbuf.conf' "$V2_ROOT/install.sh"
     grep -q 'apply_udp_netbuf_floor' "$V2_ROOT/install.sh"
     # Ordering: floor call appears before apt-get install tailscale
-    awk '/apply_udp_netbuf_floor$/{f=NR} /apt-get install -y tailscale/{t=NR}
+    awk '/apply_udp_netbuf_floor$/{f=NR} /install -y tailscale/{t=NR}
          END { exit !(f && t && f < t) }' "$V2_ROOT/install.sh"
     ! grep -q 'rmem_max = 7500000' "$V2_ROOT/install.sh"
 }
