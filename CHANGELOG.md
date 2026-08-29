@@ -22,8 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unattended-upgrades enabled.
 - **Changed:** `debian-keyring` is installed on Debian only; the
   full-upgrade prompt now says "Sistem" instead of "Debian".
-- **Not yet live-verified:** the Ubuntu path is covered by bats/static
-  checks only; no real Ubuntu install has been run (`nrm` is Debian).
+- **Live-verified on noble (2026-08-29):** full install on a fresh
+  Ubuntu 24.04.4 host (`nrm` reimaged) passed stages 0–7 and
+  independent post-checks. Resolute (26.04) remains statically
+  verified only.
 
 ## [2026.08.06-v2-71] - 2026-08-28
 

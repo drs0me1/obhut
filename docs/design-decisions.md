@@ -4034,11 +4034,14 @@ separate document with its own numbering.
   - **debian-keyring:** installed only when `OS_ID=debian` — it came from
     Caddy's official Debian install set and has no function on Ubuntu
     (repo signing uses the downloaded cloudsmith keyring).
-- **Verification status:** static only. bats covers the gate matrix
-  (accept ×3, reject ×5 including ID/codename and codename/version
-  mismatches) and the repo-line derivation; **no live Ubuntu install has
-  been run** — `nrm` is Debian. The contract §1.1 and CLAUDE.md carry the
-  same caveat until a real Ubuntu host validates stages 1–7.
+- **Verification status:** bats covers the gate matrix (accept ×3,
+  reject ×5 including ID/codename and codename/version mismatches) and
+  the repo-line derivation. **Live-verified on noble (2026-08-29):**
+  `nrm` reimaged to clean Ubuntu 24.04.4, full install passed stages
+  0–7; independent post-checks confirmed the stub-symlink repoint (host
+  DNS intact), noble-derived repo files, debian-keyring correctly
+  absent, firewall --check green, 6/6 containers up. Resolute (26.04)
+  remains statically verified only.
 - **Not doing:** distro-conditional package name mapping (the full
   package set — dnsmasq, caddy via vendor repo, apache2-utils, dnsutils,
   ethtool, jq, … — resolves identically on both), and no support for

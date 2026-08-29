@@ -89,7 +89,8 @@ state. Treat every change as production-infrastructure work.
 
 - Root-only, interactive, single-host. No unattended mode.
 - Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)
-  only (**DD-102**). Ubuntu path not yet live-verified.
+  only (**DD-102**). Noble live-verified 2026-08-29; resolute
+  statically verified only.
 - Fixed service bundle — no installation profiles.
 - Do not delete or recreate Docker-owned iptables chains; manage only
   project chains and jumps into `DOCKER-USER`.

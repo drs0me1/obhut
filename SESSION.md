@@ -6,10 +6,12 @@ Cross-session continuity for this repository.
 
 **v2-72 in [Unreleased] (2026-08-29):** Ubuntu 24.04/26.04 LTS support —
 `require_supported_os` matrix, repo lines from `os-release`, ufw gate,
-resolv.conf stub repoint, dpkg-lock wait (**DD-102**). **The Ubuntu path
-is statically verified only** — no live Ubuntu install has been run yet
-(`nrm` is Debian 13); validate stages 1–7 on a real Ubuntu host before
-trusting it. Last release: **v2-71** (2026-08-28, tag
+resolv.conf stub repoint, dpkg-lock wait (**DD-102**). **Live-verified
+on noble:** `nrm` was reimaged to a clean Ubuntu 24.04.4 host and a
+full v2-72 install passed stages 0–7 plus independent post-checks
+(firewall --check, 6/6 containers, dual-resolver DNS, Caddy health,
+WebDAV 401 ×3, resolv.conf repoint, host DNS intact). Resolute (26.04)
+remains statically verified only. Last release: **v2-71** (2026-08-28, tag
 `2026.08.06-v2-71`) — pull disk floor, single-pass downloads repair,
 plus the v2-65…70 line (**DD-98…101**).
 

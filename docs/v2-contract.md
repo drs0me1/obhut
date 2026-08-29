@@ -63,8 +63,9 @@ the ones agreed on 2026-08-05:
   refuses any other OS or release. Apt repo suites for Tailscale and
   Docker are derived from `os-release` (`OS_ID`/`OS_CODENAME`), never
   hardcoded. On a host with ufw active the installer stops before any
-  mutation. The Ubuntu path is statically verified only — no live
-  Ubuntu install has been run yet.
+  mutation. Live-verified on Ubuntu 24.04.4 (noble) on 2026-08-29: a
+  full install on a fresh host passed stages 0–7 and the §14 checks.
+  Ubuntu 26.04 (resolute) remains statically verified only.
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
   as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`
