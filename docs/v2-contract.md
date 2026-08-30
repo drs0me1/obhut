@@ -63,9 +63,10 @@ the ones agreed on 2026-08-05:
   refuses any other OS or release. Apt repo suites for Tailscale and
   Docker are derived from `os-release` (`OS_ID`/`OS_CODENAME`), never
   hardcoded. On a host with ufw active the installer stops before any
-  mutation. Live-verified on Ubuntu 24.04.4 (noble) on 2026-08-29: a
-  full install on a fresh host passed stages 0–7 and the §14 checks.
-  Ubuntu 26.04 (resolute) remains statically verified only.
+  mutation. Live-verified on fresh Ubuntu 24.04.4 (noble) and Ubuntu
+  26.04.1 (resolute) hosts on 2026-08-29/30: full installs passed stages
+  0–7 and the §14 checks; resolute additionally passed a no-op re-run,
+  Tailscale/Docker restart recovery and a full reboot.
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
   as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`
@@ -95,6 +96,10 @@ the ones agreed on 2026-08-05:
 - Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
 - One Compose file with exactly six services: `portainer`, `filebrowser`,
   `qbittorrent`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**).
+- Before Compose starts, the host best-effort preloads `wireguard` plus the
+  legacy IPv4/IPv6 netfilter modules used by wg-easy and persists them in
+  `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
+  `NET_ADMIN`; it does not receive `SYS_MODULE` or `/lib/modules`.
 - Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
 - Containers survive a reboot through the Compose **restart policy**
   (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`

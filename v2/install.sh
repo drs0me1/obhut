@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-72"
+V2_VERSION="2026.08.06-v2-73"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -192,7 +192,7 @@ tailscale_login() {
 
 ensure_wg_kernel_modules() {
     local wg_module
-    for wg_module in wireguard ip6_tables ip6table_nat; do
+    for wg_module in wireguard ip_tables iptable_nat ip6_tables ip6table_nat; do
         if ! modprobe "$wg_module" 2>/tmp/modprobe-wg.err; then
             log WARN "modprobe $wg_module başarısız"
             cat /tmp/modprobe-wg.err >&2 || true
@@ -201,6 +201,8 @@ ensure_wg_kernel_modules() {
     done
     atomic_write /etc/modules-load.d/wg-easy.conf 0644 <<'EOF'
 wireguard
+ip_tables
+iptable_nat
 ip6_tables
 ip6table_nat
 EOF

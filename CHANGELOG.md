@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-08-30 — v2-73: Ubuntu wg-easy legacy IPv4 netfilter modules
+
+- **Fixed:** Stage 4 now preloads `ip_tables` and `iptable_nat` on the host
+  and persists them in `/etc/modules-load.d/wg-easy.conf`, alongside the
+  existing WireGuard and legacy IPv6 modules. Ubuntu 26.04 defaults to the
+  nft iptables backend, so those IPv4 legacy modules were not otherwise
+  loaded; wg-easy uses `iptables-legacy` internally and its `wg-quick up`
+  failed while creating the IPv4 NAT rule.
+- **Live-verified on resolute (2026-08-30):** loading the two modules and
+  restarting only wg-easy recovered a healthy `wg0` on UDP 61001. A v2-73
+  re-run wrote the five-module boot file without recreating any container;
+  after a cold reboot `systemd-modules-load` reported success, all five
+  modules were present, wg-easy started without iptables errors, and the full
+  six-container, firewall, DNS/Caddy and read-only WebDAV checks passed with
+  no failed units.
+
 ### 2026-08-29 — v2-72: Ubuntu 24.04/26.04 LTS support
 
 - **Added:** the OS gate (`require_supported_os`, formerly
@@ -24,8 +40,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   full-upgrade prompt now says "Sistem" instead of "Debian".
 - **Live-verified on noble (2026-08-29):** full install on a fresh
   Ubuntu 24.04.4 host (`nrm` reimaged) passed stages 0–7 and
-  independent post-checks. Resolute (26.04) remains statically
-  verified only.
+  independent post-checks.
+- **Live-verified on resolute (2026-08-30):** full install on a fresh
+  Ubuntu 26.04.1 cloud image (`nrm`, kernel 7.0) passed stages 0–7 and
+  independent contract checks. A default re-run kept 25/25 managed files
+  byte-identical, preserved all six container IDs/start times and restarted
+  no critical service. Tailscale and Docker restart recovery, asynchronous
+  firewall re-application, and a full reboot also passed with six containers,
+  DNS/Caddy, authenticated read-only WebDAV and host DNS healthy. On reboot,
+  Tailscale direct DNS may replace stage 6's uplink symlink with its managed
+  MagicDNS `resolv.conf`; this is the expected steady state, not resolver
+  drift.
 
 ## [2026.08.06-v2-71] - 2026-08-28
 

@@ -1,11 +1,12 @@
-# Debian Server Installer (v2)
+# Debian / Ubuntu Server Installer (v2)
 
-Lean Bash installer for a fresh **Debian 13 (trixie)** host: Tailscale exit
-node, fixed Docker Compose bundle (including loopback WebDAV), host dnsmasq
-+ Caddy on the tailnet, and a persistent firewall. No reconcile engine.
+Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
+(noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, fixed
+Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
+tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-67` (see `v2/install.sh`).
-GA baseline tag: `2026.08.06-v2-64`.
+**Current version:** `2026.08.06-v2-73` (see `v2/install.sh`).
+Latest tagged release: `2026.08.06-v2-71`.
 
 Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
 Layout and data flow: [`docs/v2-architecture.md`](docs/v2-architecture.md).  
@@ -22,7 +23,8 @@ v2/dev/export-v2.sh --desktop
 bash /root/debian-server-installer/v2/install.sh
 ```
 
-Root, interactive TTY, Debian 13 only. Re-runs are supported.
+Root, interactive TTY, Debian 13 or Ubuntu 24.04/26.04 LTS only. Re-runs are
+supported.
 
 ## Runtime tree
 

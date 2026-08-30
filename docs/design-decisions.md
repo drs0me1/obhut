@@ -172,14 +172,25 @@ comments plus structural inference from the 2026-07-27 audit
 
 - **v2 (2026-08-06):** Same policy in `v2/install.sh` (`ensure_wg_kernel_modules`
   during Stage 4, before Compose is written) and `v2/templates/compose.yaml`
-  (`cap_add: [NET_ADMIN]` only). Host preloads `wireguard`, `ip6_tables`, and
-  `ip6table_nat`, persists them via `/etc/modules-load.d/wg-easy.conf`, and
+  (`cap_add: [NET_ADMIN]` only). Host preloads `wireguard`, `ip_tables`,
+  `iptable_nat`, `ip6_tables`, and `ip6table_nat`, persists them via
+  `/etc/modules-load.d/wg-easy.conf`, and
   probes with a temporary `wg-easy-probe0` link. Confirmed on a live v2 host:
   without the host preload, container `wg-quick up` failed on legacy
   `ip6tables` (`Module ip6_tables not found`) even with `SYS_MODULE`, because
   `/lib/modules` is not mounted; after host `modprobe`, `wg0` and the
   healthcheck recovered. `SYS_MODULE` was therefore removed from the v2
   compose template rather than kept as a false safety net.
+- **v2-73 follow-up (2026-08-30):** Ubuntu 26.04 exposed the symmetric IPv4
+  failure. Its host defaults to nft-backed iptables, so the stock kernel's
+  loadable `ip_tables`/`iptable_nat` modules remained unloaded. wg-easy uses
+  `iptables-legacy` inside the container and cannot load host modules without
+  `SYS_MODULE` plus `/lib/modules`; `wg-quick up wg0` therefore failed at its
+  IPv4 NAT rule. Stage 4 now preloads and boot-persists both legacy IPv4
+  modules as well. Loading them live and restarting only wg-easy recovered a
+  healthy interface on the configured UDP port; v2-73's cold-reboot test
+  confirmed that `systemd-modules-load` closes the boot path too, with all
+  five modules present and no current-boot wg-easy iptables errors.
 - **Decision:** Instead of granting `wg-easy` the `SYS_MODULE` capability
   (so it could `modprobe wireguard` itself if needed), `install.sh` now
   runs a standalone `modprobe wireguard` on the **host** in Stage 4 (next
@@ -206,8 +217,8 @@ comments plus structural inference from the 2026-07-27 audit
 - **Hardening added:** Two follow-up questions from the user — "can we
   guarantee this," "should it persist across reboots," "does it risk
   Tailscale or other WireGuard services" — led to two more changes in the
-  same Stage 4 block: (1) `/etc/modules-load.d/wg-easy.conf` (content:
-  `wireguard`) makes the load persistent across reboots via
+  same Stage 4 block: (1) `/etc/modules-load.d/wg-easy.conf` makes the
+  WireGuard and legacy netfilter loads persistent across reboots via
   `systemd-modules-load.service`, not just the current session; (2) a
   functional probe (`ip link add wg-easy-probe0 type wireguard` then
   delete) replaces reliance on `modprobe`'s exit code — this correctly
@@ -218,11 +229,12 @@ comments plus structural inference from the 2026-07-27 audit
   wg-easy is the only kernel-WireGuard consumer on this host — modules
   don't share state or interfere with each other once loaded.
 - **Trade-off / open risk:** This assumes the host kernel can provide
-  WireGuard support at all (module or built-in) — true for a stock Debian
-  13 kernel and now functionally verified at install time (not just
-  assumed), but the actual target server hasn't been tested by this
-  assistant (no access to it). Requires a real functional test after this
-  change to confirm end-to-end (wg-easy actually bringing up `wg0`).
+  WireGuard and legacy IPv4/IPv6 netfilter support (modules or built-ins).
+  That is true for the stock Debian 13 and supported Ubuntu kernels; the
+  end-to-end wg-easy path is live-verified on Ubuntu 26.04. A custom kernel
+  that omits those features can still leave wg-easy unhealthy because the
+  preloads intentionally remain best-effort rather than aborting the whole
+  stack installation.
 - **Open alternative (not implemented):** Running WireGuard fully in
   userspace inside the container (e.g. `boringtun` or `wireguard-go`)
   would remove any kernel-module dependency at all — no `SYS_MODULE`
@@ -4025,7 +4037,12 @@ separate document with its own numbering.
     to the stub (`127.0.0.53`), so disabling the stub alone breaks host
     DNS. When the symlink targets `stub-resolv.conf` it is repointed to
     `/run/systemd/resolve/resolv.conf` (resolved's uplink file). No-op on
-    hosts without the stub symlink, including Debian.
+    hosts without the stub symlink, including Debian. This is a safe
+    bootstrap, not a permanent ownership claim: with Tailscale DNS enabled,
+    Tailscale may later replace the symlink with its direct-mode MagicDNS
+    `resolv.conf`. The resolute reboot test confirmed that steady state keeps
+    host and split DNS healthy; forcing Tailscale onto the resolved stub would
+    create a resolver loop on this dnsmasq layout and is deliberately not done.
   - **apt lock:** Ubuntu enables unattended-upgrades by default, so the
     dpkg lock can be held for minutes right when the installer starts.
     Every `apt-get` call now carries `-o DPkg::Lock::Timeout=60`
@@ -4036,12 +4053,12 @@ separate document with its own numbering.
     (repo signing uses the downloaded cloudsmith keyring).
 - **Verification status:** bats covers the gate matrix (accept ×3,
   reject ×5 including ID/codename and codename/version mismatches) and
-  the repo-line derivation. **Live-verified on noble (2026-08-29):**
-  `nrm` reimaged to clean Ubuntu 24.04.4, full install passed stages
-  0–7; independent post-checks confirmed the stub-symlink repoint (host
-  DNS intact), noble-derived repo files, debian-keyring correctly
-  absent, firewall --check green, 6/6 containers up. Resolute (26.04)
-  remains statically verified only.
+  the repo-line derivation. **Live-verified on both Ubuntu lines:** noble
+  24.04.4 on 2026-08-29 and resolute 26.04.1 on 2026-08-30. Both fresh
+  installs passed stages 0–7 and independent checks for derived repos, host
+  DNS, firewall, DNS/Caddy, WebDAV and 6/6 containers. Resolute additionally
+  passed a byte/container/service-stable re-run, Tailscale and Docker restart
+  recovery, firewall re-application, and a full reboot with no failed units.
 - **Not doing:** distro-conditional package name mapping (the full
   package set — dnsmasq, caddy via vendor repo, apache2-utils, dnsutils,
   ethtool, jq, … — resolves identically on both), and no support for

@@ -364,6 +364,20 @@ EOF
     grep -q 'wg show | /bin/grep -q interface' "$V2_ROOT/templates/compose.yaml"
 }
 
+@test "wg-easy host preloads legacy IPv4 and IPv6 netfilter modules" {
+    local module_block
+    module_block="$(awk '/^ensure_wg_kernel_modules\(\)/,/^}/' "$V2_ROOT/install.sh")"
+    [[ "$module_block" == *'wireguard ip_tables iptable_nat ip6_tables ip6table_nat'* ]]
+
+    run awk '
+        /atomic_write \/etc\/modules-load.d\/wg-easy.conf/ { capture = 1; next }
+        capture && /^EOF$/ { exit }
+        capture { print }
+    ' "$V2_ROOT/install.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'wireguard\nip_tables\niptable_nat\nip6_tables\nip6table_nat' ]
+}
+
 @test "wg-easy bridge addresses come from defaults.env tokens" {
     grep -q 'WG_BRIDGE_IPV4=' "$V2_ROOT/config/defaults.env"
     grep -q 'WG_BRIDGE_SUBNET=' "$V2_ROOT/config/defaults.env"
@@ -1038,4 +1052,3 @@ EOF
     ! awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'kill "\$up_pid"'
 }
-

@@ -187,6 +187,7 @@ error, not a warning.
 | `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | six services, `0600` |
+| `/etc/modules-load.d/wg-easy.conf` | installer | WireGuard + legacy IPv4/IPv6 netfilter modules required by wg-easy, `0644` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
 | `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
 | `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}` | installer | `0755` |
@@ -370,7 +371,7 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall`; enable refresh timer | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
 | 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy) | verification |
@@ -475,8 +476,11 @@ decision with a new name, not a constant that survives by inertia.
    of the first release; if a public IPv4 change is to be handled
    automatically, it may need to come back in a much smaller form.
 4. **`systemd-resolved` vs dnsmasq on `127.0.0.1:53`.** Stage 6 writes
-   `DNSStubListener=no` when resolved is active; still worth confirming on
-   unusual images.
+   `DNSStubListener=no` when resolved is active. Confirmed on noble and
+   resolute: dnsmasq owns loopback/Tailscale DNS, host DNS survives, and on
+   resolute Tailscale can legitimately replace the uplink symlink with its
+   direct-mode MagicDNS file after restart/reboot. Unusual images still need
+   the same live check.
 5. **What a loopback query actually answers.** `interface-name` is
    expected to return the `tailscale0` address regardless of the arrival
    interface, which is the entire reason the loopback listener is useful
