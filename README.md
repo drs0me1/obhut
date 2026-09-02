@@ -5,7 +5,7 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-77` (see `v2/install.sh`).
+**Current version:** `2026.08.06-v2-73` (see `v2/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
@@ -18,12 +18,6 @@ Design rationale: [`docs/design-decisions.md`](docs/design-decisions.md).
 # Developer workstation — build a portable macOS .command
 v2/dev/export-v2.sh --desktop
 # or double-click: v2/dev/export-v2.command
-
-# Optional private build: passwordless first-install settings for four services.
-# These files contain live credentials/keys; keep them under gitignored private/.
-v2/dev/export-v2.sh \
-  --settings-bundle v2/private/master-stack-settings-v3.tar.gz \
-  -o v2/private/2026.08.06-v2-77-WITH-SETTINGS.command
 
 # On the host (after upload)
 bash /root/debian-server-installer/v2/install.sh

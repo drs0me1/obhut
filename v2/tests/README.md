@@ -5,8 +5,8 @@ coverage suite.
 
 ```bash
 bats v2/tests
-bash -n v2/install.sh v2/common.sh v2/dev/export-v2.sh v2/scripts/*
-shellcheck -x -s bash v2/install.sh v2/common.sh v2/dev/export-v2.sh v2/scripts/*
+bash -n v2/install.sh v2/common.sh v2/scripts/*
+shellcheck -x -s bash v2/install.sh v2/common.sh v2/scripts/*
 ```
 
 Host acceptance (Debian 13 or supported Ubuntu target, after install) is

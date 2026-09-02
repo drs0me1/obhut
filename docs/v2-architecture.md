@@ -186,7 +186,6 @@ error, not a warning.
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB + `config/` bind (`0750`, DOWNLOADS_UID) |
-| `/etc/master-stack/settings-seed.env` | installer, optional/once | private seed SHA + fixed service scope (`qBittorrent.conf` only for qBit), `0600`; prevents re-application |
 | `/root/docker/compose.yaml` | installer | six services, `0600` |
 | `/etc/modules-load.d/wg-easy.conf` | installer | WireGuard + legacy IPv4/IPv6 netfilter modules required by wg-easy, `0644` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
@@ -199,17 +198,6 @@ error, not a warning.
 
 There is no `/usr/local/share/master-stack` in v2: no canonical copy, no
 manifest, no generation pointer.
-
-An optional custom portable can add
-`v2/settings/master-stack-settings-v3.tar.gz` to its uploaded runtime. Stage 0
-offers restore with a default of no; Stage 1 validates an accepted seed only
-under `/run/master-stack`, and Stage 4
-copies three trees into newly created Compose-owned volumes and atomically
-moves the FileBrowser bind tree before any container starts. The plaintext
-staging tree and uploaded seed are deleted on success, skip and EXIT. The
-passwordless source bundle and configured portable live under gitignored
-`v2/private/`; neither is a repository artifact and the configured portable is
-mode `0700`. Generic exports explicitly exclude both directories.
 
 Two absences in that table are decisions rather than oversights.
 
@@ -383,7 +371,7 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; render `compose.yaml`; optionally restore the validated four-service seed into empty targets; install FileBrowser config, scripts and units | templates |
+| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall`; enable refresh timer | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
 | 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy) | verification |
