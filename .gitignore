@@ -1,3 +1,7 @@
 # macOS Finder metadata, created on the dev workstation, never part of the
 # installer or its documentation.
 .DS_Store
+
+# Private service seeds and custom portable installers. These contain
+# passwordless production identities and must never be committed or published.
+v2/private/

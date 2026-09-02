@@ -966,6 +966,43 @@ EOF
     grep -q -- '--no-mac-metadata' "$V2_ROOT/dev/export-v2.sh"
     ! grep -q 'touch -t 197001010000' "$V2_ROOT/dev/export-v2.sh"
     grep -q 'reproducible/${V2_VERSION}' "$V2_ROOT/dev/export-v2.sh"
+    grep -q -- "--exclude='private/'" "$V2_ROOT/dev/export-v2.sh"
+    grep -q -- "--exclude='settings/'" "$V2_ROOT/dev/export-v2.sh"
+}
+
+@test "optional four-service seed is operator-selected first-install only and restored before compose" {
+    grep -q -- '--settings-bundle' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'install -m 0600.*SETTINGS_BUNDLE' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'master-stack-settings-v3.tar.gz' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'PORTABLE_SETTINGS_SEED=' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'AYAR PAKETİ: VAR' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'AYAR PAKETİ: YOK' "$V2_ROOT/dev/export-v2.sh"
+
+    local restore_block
+    restore_block="$(awk '/^configure_settings_restore\(\)/,/^}/' "$V2_ROOT/install.sh")"
+    [[ "$restore_block" == *'yalnız ilk kurulum'* ]]
+    [[ "$restore_block" == *'STATE_FILE'* ]]
+    [[ "$restore_block" == *'ayar paketi YOK'* ]]
+    [[ "$restore_block" == *'ayarları yedekten geri yüklensin mi'* ]]
+    [[ "$restore_block" == *'restore_answer'* ]]
+    [[ "$restore_block" == *'"h"'* ]]
+    [[ "$restore_block" == *'temiz servis kurulumu yapılacak'* ]]
+    ! grep -q -- '--passphrase-fd 0' "$V2_ROOT/install.sh"
+    ! grep -q 'SETTINGS_PASSPHRASE' "$V2_ROOT/install.sh"
+    ! grep -q 'gpg .*--decrypt' "$V2_ROOT/install.sh"
+    grep -q 'output_mode=0700' "$V2_ROOT/dev/export-v2.sh"
+    grep -q 'sha256sum -c SHA256SUMS' "$V2_ROOT/install.sh"
+    grep -q 'ayar paketinde özel dosya/symlink reddedildi' "$V2_ROOT/install.sh"
+    grep -q "grep -qx 'SETTINGS_SCHEMA=3'" "$V2_ROOT/install.sh"
+    grep -q 'QBITTORRENT_SCOPE=qBittorrent.conf' "$V2_ROOT/install.sh"
+    grep -q 'qbit_config/qBittorrent/qBittorrent.conf' "$V2_ROOT/install.sh"
+    ! grep -q 'qbit_config | qbit_config/\*' "$V2_ROOT/install.sh"
+    grep -q 'SETTINGS_RESTORE_MARKER' "$V2_ROOT/install.sh"
+    grep -q 'unlink "\$SETTINGS_BUNDLE_PATH"' "$V2_ROOT/install.sh"
+
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        awk '/restore_seeded_settings/ { restored = 1 }
+             /ensure_filebrowser_data_dir/ { exit !restored }'
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {

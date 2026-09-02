@@ -4064,6 +4064,72 @@ separate document with its own numbering.
   ethtool, jq, … — resolves identically on both), and no support for
   derivatives (Mint, Pop!_OS) whose os-release IDs differ.
 
+### DD-103: Optional settings seed is private and first-install-only (2026-09-02)
+
+- **Decision:** `export-v2.sh --settings-bundle FILE` may place one private
+  tarball at `v2/settings/master-stack-settings-v3.tar.gz` inside a custom
+  portable. Its schema is fixed to the three named volumes
+  (`portainer_data`, `qbit_config`, `wg_easy_data`) and the FileBrowser host
+  bind. WebDAV and Unpackerr are already fully configured by the installer;
+  `/downloads`, Tailscale identity, generated files and host identity are
+  explicitly excluded. Schema 3 narrows qBittorrent to the single
+  `qbit_config/qBittorrent/qBittorrent.conf` file: Web UI credentials and user
+  preferences are retained, while categories, RSS, watched folders, client
+  data, GeoDB, logs and torrent resume/session state are rejected by the path
+  allowlist.
+- **Why private despite no password:** the four trees contain VPN private
+  keys, application credential databases and Portainer private keys. At the
+  operator's request for this single-user workflow, schema 3 removes the GPG
+  password. Possession of the tarball or configured portable therefore grants
+  direct access to those identities. Both live only under gitignored
+  `v2/private/`; generic exports exclude `private/` and `settings/`, the
+  configured portable is mode `0700`, and neither file may be published.
+- **Restore boundary:** only a first install (`state.env` absent) is offered
+  restore, with a default of no. Only an explicit yes proceeds; no deletes the
+  uploaded seed and performs a clean service installation. Every path is
+  allowlisted, symlinks and special files are rejected, manifest/schema and
+  per-file SHA256 are checked, and all destination volumes/binds must be absent
+  or empty. Restore happens before Compose starts. Success writes a root-only
+  marker containing the bundle SHA; re-runs skip it and can never reset live
+  settings. The uploaded tarball is deleted after extraction/skip and an EXIT
+  trap removes the staging tree after any failure.
+- **Why not one shared WireGuard profile:** multiple
+  devices sharing one peer key race on the latest endpoint and cannot be
+  revoked independently. Restoring the wg-easy database preserves each
+  device's distinct peer identity instead. The accepted passwordless-private
+  trade-off means possession of the configured portable is silent VPN/admin
+  access, so its `0700`/gitignored handling is part of the security boundary.
+- **Why not Tailscale IP identity:** the numeric Tailscale IP is assigned by
+  the control plane to a node; it is not a local address preference. An admin
+  can assign the old address to a freshly registered replacement through
+  Tailscale IP management, but automating that requires a privileged API
+  credential which must not be embedded in a portable. Copying
+  `/var/lib/tailscale/tailscaled.state` would instead clone the node's private
+  identity and can cause collisions if both hosts run. Same-node disaster
+  recovery may keep that state in a separate encrypted, single-host backup,
+  restored before `tailscaled` starts and only after the old node is offline.
+  Normal installs obtain a fresh identity and use MagicDNS plus
+  `refresh-tailnet-config` to absorb address changes.
+- **Verification:** on a clean Debian 13 v2-73 source host, four services were
+  stopped briefly and 18 files were captured. The v2-74 harness restored all
+  four trees into isolated targets with byte-identical content, numeric owner
+  and mode; Docker Compose adopted the labeled volumes. Wrong-passphrase
+  decryption failed closed and the EXIT trap left no plaintext. Existing
+  production container IDs/start times were unchanged. A configured v2-74
+  no-op re-run also skipped the seed and preserved those IDs/start times while
+  the current-host service contract stayed green. A second full reimage
+  remains the end-to-end acceptance test for the configured portable.
+- **v2-75 operator guard:** a real operator selected the generic v2-74
+  portable and reasonably expected the private seed to be present. The
+  cryptographic/restore path correctly did nothing (`bundle=absent`), but the
+  artifact distinction was too quiet. Every portable now prints `AYAR PAKETİ:
+  VAR` or `YOK` before upload, and a seedless first install warns again inside
+  Stage 0. Private output names use the `WITH-SETTINGS` suffix.
+- **v2-77 operator choice:** schema 3 removes the seed passphrase and asks on
+  every eligible clean install whether settings should be restored. The
+  default/no path is clean and deletes the uploaded seed; only explicit yes
+  restores the four service trees.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

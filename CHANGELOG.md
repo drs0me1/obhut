@@ -6,6 +6,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-02 — v2-77: Operator-selected passwordless settings restore
+
+- **Changed:** the private four-service seed is now a plain root-only tarball;
+  the seed passphrase and GPG decrypt path were removed at the operator's
+  request for this single-user workflow. A configured portable is mode `0700`
+  and the embedded seed remains excluded from Git, but possession of that file
+  now directly grants access to the contained application/VPN identities.
+- **Added:** on a first install with a seed, Stage 0 asks whether settings
+  should be restored. Only an explicit yes restores Portainer, FileBrowser,
+  qBittorrent and wg-easy; the default/no path deletes the uploaded seed and
+  continues with clean service state. Existing hosts never receive a seed.
+  The server-side tarball is also deleted after extraction or skip, and an
+  EXIT trap removes the staging tree on failure. Schema 3 retains the strict
+  path/type/SHA256 checks and qBittorrent's single-file scope.
+- **Verified on trixie:** isolated Linux checks covered default/no, explicit
+  yes, an existing host and a matching restore marker. No/skip paths deleted
+  the uploaded seed; yes validated all 11 files and copied 6 Portainer, 2
+  FileBrowser, 1 qBittorrent and 2 wg-easy files into isolated targets. The
+  three temporary Docker volumes were removed and all production container
+  IDs remained unchanged. Generic/configured exports are byte-reproducible and
+  the configured portable embeds the schema-3 tarball byte-for-byte.
+
+### 2026-09-02 — v2-76: Narrow qBittorrent seed to user settings
+
+- **Changed:** the private first-install seed now accepts only
+  `qbit_config/qBittorrent/qBittorrent.conf` for qBittorrent. This preserves
+  the Web UI username/password hash and user preferences while excluding
+  categories, RSS state, watched folders, Web UI client data, GeoDB, logs and
+  torrent resume/session data. Seed schema 2 and the path allowlist enforce
+  this boundary rather than relying only on how the private archive was made.
+- **Not included:** Tailscale IP/node identity remains outside the reusable
+  portable. The address is assigned by the Tailscale control plane, not by a
+  local IP preference. After a reinstall, an administrator can safely assign
+  the old address to the fresh node through Tailscale IP management; automating
+  that would require a privileged API credential that must not be embedded.
+  Copying `/var/lib/tailscale/tailscaled.state` is reserved for a separate,
+  single-host disaster-recovery backup because cloning it onto concurrent
+  hosts duplicates the node private identity.
+
+### 2026-09-02 — v2-75: Make configured versus generic portable unmistakable
+
+- **Changed:** the portable startup banner now prints either `AYAR PAKETİ:
+  VAR — Portainer/FileBrowser/qBittorrent/wg-easy` or `AYAR PAKETİ: YOK`.
+  A first install without a seed also emits an explicit installer warning.
+  This follows a real clean-install incident where the generic v2-74 portable
+  was selected instead of the configured private artifact; restore correctly
+  did not run because no ciphertext was present.
+- **Recovered live:** the intended v2-74 ciphertext was subsequently
+  validated and applied in place to only the four target services. wg-easy
+  recovered three peers on UDP 61001; Portainer, FileBrowser and qBittorrent
+  returned healthy/non-5xx UI responses. WebDAV and Unpackerr were not
+  recreated, all six services were running, firewall passed and failed-unit
+  count was zero.
+
+### 2026-09-02 — v2-74: Encrypted first-install service settings seed
+
+- **Added:** `export-v2.sh --settings-bundle FILE` can embed one root-only,
+  symmetrically encrypted settings seed in a custom portable installer. The
+  seed scope is deliberately fixed to Portainer, FileBrowser, qBittorrent and
+  wg-easy; WebDAV/Unpackerr remain normal installer configuration and
+  `/downloads` is never bundled. See **DD-103**.
+- **Security/idempotency:** the passphrase is read from the TTY and sent to
+  GPG over stdin, never an argument/environment/file. The decrypted archive
+  exists only below `/run`, is path/schema/type/SHA256 validated, and is
+  removed by an EXIT trap. Restore is first-install-only, refuses non-empty
+  targets and records the encrypted bundle SHA in a root-only marker; re-runs
+  cannot reset live application state.
+- **Verified on trixie (2026-09-02):** a clean v2-73 Debian 13 source host
+  supplied an 18-file encrypted seed. A separate-volume restore harness
+  matched content, numeric ownership and modes for all four trees, Compose
+  adopted the restored volumes, a wrong password failed closed with no
+  plaintext residue, and the production containers were untouched. Generic
+  and configured portable exports were byte-reproducible. A configured v2-74
+  no-op re-run then skipped the seed on that provisioned host, preserved all
+  four container IDs/start times, and passed six-container, UI, WireGuard
+  (three peers), DNS and firewall checks.
+
 ### 2026-08-30 — v2-73: Ubuntu wg-easy legacy IPv4 netfilter modules
 
 - **Fixed:** Stage 4 now preloads `ip_tables` and `iptable_nat` on the host

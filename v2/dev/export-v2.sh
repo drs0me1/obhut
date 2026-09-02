@@ -15,16 +15,20 @@ V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$V2_ROO
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
 OUT_PATH=""
+SETTINGS_BUNDLE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --desktop) COPY_DESKTOP=1; shift ;;
+        --settings-bundle) SETTINGS_BUNDLE="$2"; shift 2 ;;
         -o|--output) OUT_PATH="$2"; shift 2 ;;
         -h|--help)
             cat <<EOF
-Kullanım: $(basename "$0") [--desktop] [-o PATH]
+Kullanım: $(basename "$0") [--desktop] [--settings-bundle FILE] [-o PATH]
 
   (varsayılan) v2/app/${V2_VERSION}.command — sürüm adıyla kaydet
   --desktop     aynı dosyayı ~/Desktop (veya ~/Masaüstü) altına da kopyala
+  --settings-bundle FILE
+                özel dört-servis ayar paketini runtime'a 0600 olarak ekle
   -o PATH       çıktı yolunu elle seç
 EOF
             exit 0
@@ -34,6 +38,12 @@ EOF
 done
 
 [[ -n "$OUT_PATH" ]] || OUT_PATH="$APP_DIR/$OUT_NAME"
+if [[ -n "$SETTINGS_BUNDLE" ]]; then
+    [[ -f "$SETTINGS_BUNDLE" && ! -L "$SETTINGS_BUNDLE" && -r "$SETTINGS_BUNDLE" ]] || {
+        echo "HATA: ayar paketi normal/okunabilir dosya değil: $SETTINGS_BUNDLE" >&2
+        exit 1
+    }
+fi
 
 file_sha256() {
     local f="$1"
@@ -62,9 +72,17 @@ rsync -a \
     --exclude='tests/' \
     --exclude='dist/' \
     --exclude='app/' \
+    --exclude='private/' \
+    --exclude='settings/' \
     --exclude='._*' \
     --exclude='.DS_Store' \
     "$V2_ROOT/" "$stage/v2/"
+if [[ -n "$SETTINGS_BUNDLE" ]]; then
+    mkdir -p "$stage/v2/settings"
+    install -m 0600 "$SETTINGS_BUNDLE" \
+        "$stage/v2/settings/master-stack-settings-v3.tar.gz"
+    echo "==> Ayar paketi eklendi: $(file_sha256 "$SETTINGS_BUNDLE")"
+fi
 xattr -cr "$stage" 2>/dev/null || true
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
 (
@@ -92,6 +110,12 @@ mv "$b64.folded" "$b64"
 mkdir -p "$(dirname -- "$OUT_PATH")"
 # Duvar saati .command hash'ini kirletmesin; sürüm kimliği yeterli.
 built_at="reproducible/${V2_VERSION}"
+portable_settings_seed="YOK"
+output_mode=0755
+if [[ -n "$SETTINGS_BUNDLE" ]]; then
+    portable_settings_seed="ŞİFRESİZ-4-SERVİS"
+    output_mode=0700
+fi
 
 {
     cat <<'HEADER_END'
@@ -106,6 +130,7 @@ HEADER_END
 PORTABLE_V2_VERSION="$V2_VERSION"
 PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
+PORTABLE_SETTINGS_SEED="$portable_settings_seed"
 ARCHIVE_MARKER="$MARKER"
 EOF
     cat <<'BODY_END'
@@ -141,7 +166,12 @@ trap cleanup_local EXIT
 printf '\n=== Master Stack v2 — taşınabilir kurulum ===\n'
 printf 'Sürüm:  %s\n' "$PORTABLE_V2_VERSION"
 printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
-printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
+printf 'SHA256: %s\n' "$PORTABLE_ARCHIVE_SHA256"
+if [[ "$PORTABLE_SETTINGS_SEED" == "ŞİFRESİZ-4-SERVİS" ]]; then
+    printf 'AYAR PAKETİ: VAR — Portainer/FileBrowser/qBittorrent/wg-easy (parola yok)\n\n'
+else
+    printf 'AYAR PAKETİ: YOK — dört servis boş/yeni ayarla başlayacak\n\n'
+fi
 
 read -r -p "SSH sunucu adı [${DEFAULT_HOST}]: " HOST || true
 HOST="${HOST:-$DEFAULT_HOST}"
@@ -232,7 +262,7 @@ BODY_END
     printf '\n'
 } >"$OUT_PATH"
 
-chmod 0755 "$OUT_PATH"
+chmod "$output_mode" "$OUT_PATH"
 xattr -d com.apple.quarantine "$OUT_PATH" 2>/dev/null || true
 
 bytes="$(wc -c <"$OUT_PATH" | tr -d ' ')"
@@ -240,7 +270,8 @@ echo "==> Yazıldı: $OUT_PATH ($bytes bayt)"
 echo "==> SHA256 (gömülü arşiv): $ARCHIVE_SHA256"
 
 latest_link="$APP_DIR/latest.command"
-if [[ "$(cd -- "$(dirname -- "$OUT_PATH")" && pwd)" == "$(cd -- "$APP_DIR" && pwd)" ]]; then
+if [[ -z "$SETTINGS_BUNDLE" &&
+      "$(cd -- "$(dirname -- "$OUT_PATH")" && pwd)" == "$(cd -- "$APP_DIR" && pwd)" ]]; then
     cp -f "$OUT_PATH" "$latest_link"
     chmod 0755 "$latest_link"
     xattr -d com.apple.quarantine "$latest_link" 2>/dev/null || true
@@ -252,7 +283,7 @@ if [[ "$COPY_DESKTOP" -eq 1 ]]; then
     [[ -d "$desk" ]] || desk="${HOME}/Masaüstü"
     if [[ -d "$desk" ]]; then
         cp -f "$OUT_PATH" "$desk/$OUT_NAME"
-        chmod 0755 "$desk/$OUT_NAME"
+        chmod "$output_mode" "$desk/$OUT_NAME"
         xattr -d com.apple.quarantine "$desk/$OUT_NAME" 2>/dev/null || true
         echo "==> Masaüstü: $desk/$OUT_NAME"
     else

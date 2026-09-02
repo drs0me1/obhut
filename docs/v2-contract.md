@@ -101,6 +101,10 @@ the ones agreed on 2026-08-05:
   `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
   `NET_ADMIN`; it does not receive `SYS_MODULE` or `/lib/modules`.
 - Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
+- A custom portable may carry one private, passwordless first-install seed for exactly
+  Portainer, FileBrowser, qBittorrent and wg-easy (**DD-103**). Generic
+  exports carry no seed. WebDAV, Unpackerr, `/downloads`, host/Tailscale
+  identity and generated edge configuration are outside this mechanism.
 - Containers survive a reboot through the Compose **restart policy**
   (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`
   does not exist in the first v2 release.
@@ -598,6 +602,15 @@ Invariants:
   the container volumes, the qBittorrent configuration, the wg-easy
   configuration, the operator's chosen local domain (offered as the
   default).
+- An embedded service seed is offered only when `state.env` and the restore
+  marker are absent and every destination is empty. The default/no operator
+  answer deletes it and continues clean; only an explicit yes enables restore.
+  The archive is accepted only after path allowlisting, regular-file/directory
+  enforcement, schema checks and per-file SHA256 verification. Success records
+  the bundle SHA in `/etc/master-stack/settings-seed.env`; a re-run never reapplies
+  or changes live service settings. qBittorrent seed scope is limited to
+  `qBittorrent.conf`; Tailscale node identity is never part of a reusable seed
+  (**DD-103**).
 - Firewall application is idempotent by construction: the chain is rebuilt
   from scratch and swapped in, and the `DOCKER-USER` jump is inserted only
   when absent.

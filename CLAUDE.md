@@ -67,6 +67,8 @@ state. Treat every change as production-infrastructure work.
   the trade-off.
 - Single source of truth for ports/images/paths:
   `v2/config/defaults.env`. Do not restate literals elsewhere.
+- `v2/private/` is gitignored and may contain passwordless production
+  identities; never stage, commit, log, or publish its contents.
 - Do not grow a general-purpose reconcile engine (contract + rules).
 
 ## Key Paths

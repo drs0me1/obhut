@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-73"
+V2_VERSION="2026.08.06-v2-77"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -19,6 +19,13 @@ RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
 PULL_IMAGES=0
+RESTORE_SETTINGS=0
+SETTINGS_BUNDLE_PATH="$V2_ROOT/settings/master-stack-settings-v3.tar.gz"
+SETTINGS_RESTORE_ROOT="$RUNTIME_DIR/settings-restore"
+SETTINGS_RESTORE_MARKER="$STATE_DIR/settings-seed.env"
+SETTINGS_BUNDLE_SHA256=""
+SETTINGS_CREATED_VOLUMES=()
+SETTINGS_FILEBROWSER_TMP=""
 # Ubuntu'da unattended-upgrades varsayılan açık: apt kilidi dakikalarca
 # tutulabilir. Kilitte hemen düşmek yerine bekle; retry üstte ayrıca sarar.
 APT_OPTS=(-o DPkg::Lock::Timeout=60)
@@ -47,6 +54,205 @@ prompt_secret_twice() {
     [[ "${#a}" -ge "$WEBDAV_MIN_PASSWORD_LENGTH" ]] ||
         die "parola en az $WEBDAV_MIN_PASSWORD_LENGTH karakter olmalı"
     printf -v "$var" '%s' "$a"
+}
+
+configure_settings_restore() {
+    if [[ ! -e "$SETTINGS_BUNDLE_PATH" ]]; then
+        if [[ ! -r "$STATE_FILE" ]]; then
+            log WARN "Özel servis ayar paketi YOK; Portainer/FileBrowser/qBittorrent/wg-easy yeni ayarla başlayacak"
+        fi
+        return 0
+    fi
+    [[ -f "$SETTINGS_BUNDLE_PATH" && ! -L "$SETTINGS_BUNDLE_PATH" ]] ||
+        die "ayar paketi normal dosya değil: $SETTINGS_BUNDLE_PATH"
+    if [[ "$(stat -c '%u:%g' "$SETTINGS_BUNDLE_PATH")" != "0:0" ]]; then
+        unlink "$SETTINGS_BUNDLE_PATH"
+        die "ayar paketi root:root değil"
+    fi
+    if [[ "$(stat -c '%a' "$SETTINGS_BUNDLE_PATH")" != "600" ]]; then
+        unlink "$SETTINGS_BUNDLE_PATH"
+        die "ayar paketi modu 0600 olmalı"
+    fi
+    SETTINGS_BUNDLE_SHA256="$(sha256sum "$SETTINGS_BUNDLE_PATH" | awk '{print $1}')"
+    if [[ ! "$SETTINGS_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        unlink "$SETTINGS_BUNDLE_PATH"
+        die "ayar paketi sha256 okunamadı"
+    fi
+
+    if [[ -r "$SETTINGS_RESTORE_MARKER" ]]; then
+        local restored_sha
+        restored_sha="$(awk -F= '/^BUNDLE_SHA256=/{print $2; exit}' "$SETTINGS_RESTORE_MARKER")"
+        if [[ "$restored_sha" != "$SETTINGS_BUNDLE_SHA256" ]]; then
+            unlink "$SETTINGS_BUNDLE_PATH"
+            die "farklı ayar paketi daha önce provision edilmiş hosta uygulanamaz"
+        fi
+        log INFO "Ayar paketi daha önce geri yüklenmiş; atlandı"
+        unlink "$SETTINGS_BUNDLE_PATH"
+        return 0
+    fi
+    if [[ -r "$STATE_FILE" ]]; then
+        log WARN "Ayar paketi mevcut hosta uygulanmadı (yalnız ilk kurulum)"
+        unlink "$SETTINGS_BUNDLE_PATH"
+        return 0
+    fi
+
+    local restore_answer="h"
+    prompt restore_answer \
+        "Portainer/FileBrowser/qBittorrent/wg-easy ayarları yedekten geri yüklensin mi? (Evet/Hayır)" \
+        "h"
+    case "$restore_answer" in
+        e | E | evet | Evet | EVET | y | Y | yes | Yes | YES)
+            RESTORE_SETTINGS=1
+            log INFO "Ayar yedeği seçildi; dört servis ilk kurulumdan önce geri yüklenecek"
+            ;;
+        h | H | hayır | Hayır | HAYIR | n | N | no | No | NO)
+            log INFO "Ayar yedeği kullanıcı tarafından atlandı; temiz servis kurulumu yapılacak"
+            unlink "$SETTINGS_BUNDLE_PATH"
+            SETTINGS_BUNDLE_SHA256=""
+            ;;
+        *)
+            unlink "$SETTINGS_BUNDLE_PATH"
+            die "ayar yedeği seçimi geçersiz; evet veya hayır girin"
+            ;;
+    esac
+}
+
+cleanup_settings_restore_material() {
+    [[ ! -e "$SETTINGS_BUNDLE_PATH" ]] || unlink "$SETTINGS_BUNDLE_PATH"
+    if [[ -d "$SETTINGS_RESTORE_ROOT" ]]; then
+        find "$SETTINGS_RESTORE_ROOT" -depth -delete
+    fi
+}
+
+prepare_settings_restore() {
+    [[ "$RESTORE_SETTINGS" -eq 1 ]] || return 0
+    [[ ! -e "$SETTINGS_RESTORE_ROOT" ]] ||
+        die "ayar geri-yükleme staging dizini zaten var: $SETTINGS_RESTORE_ROOT"
+    trap cleanup_settings_restore_material EXIT
+    mkdir -m 0700 "$SETTINGS_RESTORE_ROOT"
+
+    local archive="$SETTINGS_BUNDLE_PATH"
+    [[ -s "$archive" ]] || die "ayar paketi boş"
+
+    local entry
+    while IFS= read -r entry || [[ -n "$entry" ]]; do
+        [[ -n "$entry" && "$entry" != /* ]] || die "ayar arşivinde geçersiz yol"
+        case "/$entry/" in
+            */../* | */./*) die "ayar arşivinde path traversal reddedildi: $entry" ;;
+        esac
+        case "$entry" in
+            manifest.env | SHA256SUMS | \
+                portainer_data | portainer_data/* | \
+                qbit_config | qbit_config/ | \
+                qbit_config/qBittorrent | qbit_config/qBittorrent/ | \
+                qbit_config/qBittorrent/qBittorrent.conf | \
+                wg_easy_data | wg_easy_data/* | \
+                filebrowser-data | filebrowser-data/*) ;;
+            *) die "ayar arşivinde beklenmeyen yol: $entry" ;;
+        esac
+    done < <(tar -tzf "$archive")
+
+    tar --numeric-owner --same-owner --acls --xattrs \
+        -C "$SETTINGS_RESTORE_ROOT" -xzf "$archive"
+    unlink "$archive"
+
+    [[ -z "$(find "$SETTINGS_RESTORE_ROOT" -mindepth 1 \
+        ! -type f ! -type d -print -quit)" ]] ||
+        die "ayar paketinde özel dosya/symlink reddedildi"
+    grep -qx 'SETTINGS_SCHEMA=3' "$SETTINGS_RESTORE_ROOT/manifest.env" ||
+        die "ayar paketi schema desteklenmiyor"
+    grep -qx 'SERVICES=portainer,filebrowser,qbittorrent,wg-easy' \
+        "$SETTINGS_RESTORE_ROOT/manifest.env" ||
+        die "ayar paketi servis kapsamı uyuşmuyor"
+    grep -qx 'QBITTORRENT_SCOPE=qBittorrent.conf' \
+        "$SETTINGS_RESTORE_ROOT/manifest.env" ||
+        die "ayar paketi qBittorrent kapsamı uyuşmuyor"
+    (cd "$SETTINGS_RESTORE_ROOT" && sha256sum -c SHA256SUMS >/dev/null) ||
+        die "ayar paketi iç sha256 doğrulaması başarısız"
+    [[ -s "$SETTINGS_RESTORE_ROOT/portainer_data/portainer.db" ]] ||
+        die "ayar paketi Portainer veritabanı yok"
+    [[ -s "$SETTINGS_RESTORE_ROOT/qbit_config/qBittorrent/qBittorrent.conf" ]] ||
+        die "ayar paketi qBittorrent yapılandırması yok"
+    [[ -s "$SETTINGS_RESTORE_ROOT/wg_easy_data/wg-easy.db" &&
+       -s "$SETTINGS_RESTORE_ROOT/wg_easy_data/wg0.conf" ]] ||
+        die "ayar paketi wg-easy verisi eksik"
+    [[ -s "$SETTINGS_RESTORE_ROOT/filebrowser-data/filebrowser.db" ]] ||
+        die "ayar paketi FileBrowser veritabanı yok"
+    log INFO "Ayar paketi doğrulandı (4 servis)"
+}
+
+copy_seeded_settings_payload() {
+    local project="$1" compose_version="$2" logical source volume mountpoint
+    SETTINGS_FILEBROWSER_TMP="$STATE_DIR/.filebrowser-seed-${BASHPID}"
+    mkdir -m 0700 "$SETTINGS_FILEBROWSER_TMP" || return 1
+    cp -a "$SETTINGS_RESTORE_ROOT/filebrowser-data/." \
+        "$SETTINGS_FILEBROWSER_TMP/" || return 1
+
+    for logical in portainer_data qbit_config wg_easy_data; do
+        source="$SETTINGS_RESTORE_ROOT/$logical"
+        volume="${project}_${logical}"
+        docker volume create \
+            --label "com.docker.compose.project=$project" \
+            --label "com.docker.compose.version=$compose_version" \
+            --label "com.docker.compose.volume=$logical" \
+            "$volume" >/dev/null || return 1
+        SETTINGS_CREATED_VOLUMES+=("$volume")
+        mountpoint="$(docker volume inspect -f '{{.Mountpoint}}' "$volume")" || return 1
+        [[ -d "$mountpoint" &&
+           -z "$(find "$mountpoint" -mindepth 1 -print -quit)" ]] || return 1
+        cp -a "$source/." "$mountpoint/" || return 1
+    done
+}
+
+cleanup_seeded_settings_copy() {
+    local volume
+    if [[ -n "$SETTINGS_FILEBROWSER_TMP" && -d "$SETTINGS_FILEBROWSER_TMP" ]]; then
+        find "$SETTINGS_FILEBROWSER_TMP" -depth -delete
+    fi
+    for volume in "${SETTINGS_CREATED_VOLUMES[@]}"; do
+        docker volume rm "$volume" >/dev/null 2>&1 || true
+    done
+}
+
+restore_seeded_settings() {
+    [[ "$RESTORE_SETTINGS" -eq 1 ]] || return 0
+    local project="${COMPOSE_DIR##*/}" compose_version logical volume
+    [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+        die "Compose proje adı ayar restore için güvenli değil: $project"
+    compose_version="$(docker compose version --short)"
+    [[ -n "$compose_version" ]] || die "Docker Compose sürümü okunamadı"
+
+    for logical in portainer_data qbit_config wg_easy_data; do
+        volume="${project}_${logical}"
+        ! docker volume inspect "$volume" >/dev/null 2>&1 ||
+            die "ayar restore hedef volume zaten var: $volume"
+    done
+    if [[ -e "$FILEBROWSER_DATA_DIR" ]]; then
+        [[ -d "$FILEBROWSER_DATA_DIR" &&
+           -z "$(find "$FILEBROWSER_DATA_DIR" -mindepth 1 -print -quit)" ]] ||
+            die "ayar restore FileBrowser hedefi boş değil: $FILEBROWSER_DATA_DIR"
+        rmdir "$FILEBROWSER_DATA_DIR"
+    fi
+
+    if ! copy_seeded_settings_payload "$project" "$compose_version"; then
+        cleanup_seeded_settings_copy
+        die "ayar paketi hedeflere kopyalanamadı; oluşturulan volume'ler geri alındı"
+    fi
+    if ! mv "$SETTINGS_FILEBROWSER_TMP" "$FILEBROWSER_DATA_DIR"; then
+        cleanup_seeded_settings_copy
+        die "FileBrowser ayar paketi yerine taşınamadı"
+    fi
+    SETTINGS_FILEBROWSER_TMP=""
+
+    atomic_write "$SETTINGS_RESTORE_MARKER" 0600 <<EOF
+SETTINGS_SCHEMA=3
+BUNDLE_SHA256=$SETTINGS_BUNDLE_SHA256
+SERVICES=portainer,filebrowser,qbittorrent,wg-easy
+QBITTORRENT_SCOPE=qBittorrent.conf
+EOF
+    find "$SETTINGS_RESTORE_ROOT" -depth -delete
+    trap - EXIT
+    log INFO "Portainer/FileBrowser/qBittorrent/wg-easy ayarları geri yüklendi"
 }
 
 write_state() {
@@ -367,6 +573,7 @@ stage_0() {
             log INFO "image pull atlandı"
         fi
     fi
+    configure_settings_restore
 }
 
 stage_1() {
@@ -394,6 +601,7 @@ stage_1() {
         unset WEBDAV_NEW_PASS
         WEBDAV_NEW_USER=""
     fi
+    prepare_settings_restore
 }
 
 apply_udp_netbuf_floor() {
@@ -598,6 +806,7 @@ stage_4() {
         COMPOSE_NEEDS_UP=1
     fi
 
+    restore_seeded_settings
     ensure_filebrowser_data_dir
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
