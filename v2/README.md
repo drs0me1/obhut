@@ -18,7 +18,7 @@ Every export writes:
 
 | Path | Role |
 |---|---|
-| `app/<V2_VERSION>.command` | Versioned self-contained installer (kept) |
+| `app/<V2_VERSION>.command` | Current versioned self-contained installer |
 | `app/latest.command` | Copy of the most recent export |
 | `~/Desktop/<V2_VERSION>.command` | Optional Desktop copy (`--desktop`) |
 
@@ -27,8 +27,9 @@ The `.command` embeds the v2 runtime and the archive SHA-256
 file is required at click time. Double-click → SSH host → upload →
 interactive `install.sh`.
 
-Rebuild after any `v2/` change that should ship. Prior versioned files under
-`app/` are left in place.
+Rebuild after any `v2/` change that should ship. Keep only the current
+versioned file and `latest.command` under `app/`; older exports remain
+recoverable from Git history.
 
 ## Runtime tree (what lands on the server)
 

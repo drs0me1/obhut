@@ -38,7 +38,7 @@ v2/
 ├── systemd/
 ├── tests/              # bats critical-behaviour suite
 ├── dev/                # export-v2.sh
-└── app/                # versioned portable .command exports
+└── app/                # current portable .command + latest alias
 ```
 
 ## Stack
