@@ -1,14 +1,14 @@
-# v2 Architecture
+# Architecture
 
-**Status:** architecture for the lean `v2/` tree (updated 2026-08-09).
-Read [`v2-contract.md`](v2-contract.md) first — that document says *what* v2
+**Status:** architecture for the lean root-level installer tree.
+Read [`contract.md`](contract.md) first — that document says *what* the installer
 does; this one says *where each part of it lives* and *how data moves*.
-Operator entry point: [`v2/README.md`](../v2/README.md).
+Operator entry point: [`README.md`](../README.md).
 
 v1's structural problem was not its size but its ownership model: the same
 fact (a port number, a container name, an expected binding) was asserted in
 three or four places, and the same decision (is this healthy?) was made by
-the installer, by a helper and by a final test. v2's rule is one owner per
+the installer, by a helper and by a final test. The rule is one owner per
 fact and one owner per decision.
 
 ---
@@ -24,12 +24,12 @@ fact and one owner per decision.
               ┌──────────────────────────────┐
               │  /etc/master-stack/config.env│   persistent choices
               │  (rendered from              │   survives re-runs
-              │   v2/config/defaults.env)    │
+              │   config/defaults.env)       │
               └──────────────┬───────────────┘
                              │
                              ▼
                     address detection
-                    (v2/install.sh + refresh-tailnet-config)
+                    (install.sh + refresh-tailnet-config)
               WAN if + WAN IPv4, tailscale0
                     IPv4 + IPv6
                              │
@@ -74,7 +74,7 @@ later became a permanent drift alarm.
 |---|---|---|
 | **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
 | **Contains** | Choices: local domain, downloads path, timezone, `WG_PUBLIC_PORT`, WebDAV port | Detected facts: WAN interface, WAN IPv4, `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version; `WG_ENDPOINT_HOST` is a derived hint equal to current `WAN_IPV4` (not an operator prompt) |
-| **Source** | `v2/config/defaults.env` + operator answers | installer / `refresh-tailnet-config` at run time |
+| **Source** | `config/defaults.env` + operator answers | installer / `refresh-tailnet-config` at run time |
 | **Written by** | The installer, once per run | The installer, and `refresh-tailnet-config` when an address changes |
 | **Lifetime** | Persistent; a re-run offers the previous value as the default | Regenerated freely; nothing in it is a decision |
 | **Hand-editable** | Yes, by an operator who then re-runs the installer | No — it will be overwritten |
@@ -97,9 +97,9 @@ re-detected, never as an expectation to be violated.
 ### 3.1 Repository layout
 
 ```
-v2/
+.
 ├── README.md                      operator / export entry
-├── .cursor/rules/master-stack.mdc v2-scoped Cursor rules (not shipped to host)
+├── .cursor/rules/master-stack.mdc repository rules (not shipped to host)
 ├── install.sh                     orchestration
 ├── common.sh                      logging, guards, file writing, rendering
 ├── config/defaults.env            single source of truth for constants
@@ -108,12 +108,12 @@ v2/
 ├── systemd/                       units (firewall, GRO, refresh timer)
 ├── app/<V2_VERSION>.command       versioned portable install apps (export output)
 ├── app/latest.command             most recent export
-├── dev/export-v2.sh               build the portable install app (+ .command wrapper)
+├── dev/export-installer.sh         build the portable install app (+ .command wrapper)
 └── tests/                         bats suites (not on host)
 ```
 
-`.cursor/rules/` is scoped to `v2/` on purpose: the rules describe how to
-build this tree. It ships no runtime behaviour — nothing installs it,
+`.cursor/rules/` covers the repository tree. It describes how to build this
+installer and ships no runtime behaviour — nothing installs it,
 nothing reads it at run time — so it appears in the repository layout and
 nowhere in §3.4's host layout.
 
@@ -121,7 +121,7 @@ One rule set, one active file:
 
 | Path | Role |
 |---|---|
-| `v2/.cursor/rules/master-stack.mdc` | **The active source.** Plain text with `globs: v2/**` frontmatter, so Cursor actually loads it. Edits to the rules go here and only here. |
+| `.cursor/rules/master-stack.mdc` | **The active source.** Plain text with repository-wide frontmatter. Edits to the rules go here and only here. |
 | `docs/archive/master-stack-rules-source.rtf` | **Archive.** The operator's original RTF, byte-for-byte, kept as the historical record. Never edited, never loaded. |
 
 The `.rtf` moved out of `.cursor/rules/` because Cursor never parses it as
@@ -131,13 +131,13 @@ mechanism and no test** comparing the two: the archive is a snapshot of
 what was first written, not a second copy of the truth, and it is expected
 to fall behind as the `.mdc` evolves.
 
-Three documents govern v2, and they are not interchangeable:
+Three documents govern the installer, and they are not interchangeable:
 
 | Source | Governs |
 |---|---|
-| `v2/.cursor/rules/` | How to work: process, Bash conventions, per-phase verification, the hard "do not" list |
-| `docs/v2-contract.md` | What the result must do, and the success criteria |
-| `docs/v2-architecture.md` | Where each part lives and how data moves |
+| `.cursor/rules/` | How to work: process, Bash conventions, per-phase verification, the hard "do not" list |
+| `docs/contract.md` | What the result must do, and the success criteria |
+| `docs/architecture.md` | Where each part lives and how data moves |
 
 Where they overlap they agree. Where the rules file is silent — it predates
 the WebDAV decisions and does not mention WebDAV at all — the contract
@@ -148,7 +148,7 @@ in §10, not resolved silently.
 
 | File | Single responsibility | Deliberately does not know |
 |---|---|---|
-| `.cursor/rules/master-stack.mdc` | Carry the v2-scoped working rules for any AI assistant editing this tree — the single active, editable rule source | Anything about runtime behaviour — it is never installed to the host and never read by the installer |
+| `.cursor/rules/master-stack.mdc` | Carry the working rules for any AI assistant editing this tree — the single active, editable rule source | Anything about runtime behaviour — it is never installed to the host and never read by the installer |
 | `install.sh` | Ask the operator, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
@@ -161,7 +161,7 @@ in §10, not resolved silently.
 | *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
 | *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by Compose `webdav` on loopback (**DD-77**) |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
-| `dev/export-v2.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
+| `dev/export-installer.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
 
 ### 3.3 Placeholder convention
@@ -196,7 +196,7 @@ error, not a warning.
 | `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
 | `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |
 
-There is no `/usr/local/share/master-stack` in v2: no canonical copy, no
+There is no `/usr/local/share/master-stack`: no canonical copy, no
 manifest, no generation pointer.
 
 Two absences in that table are decisions rather than oversights.
@@ -241,7 +241,7 @@ htpasswd -i -B  ──►  /etc/master-stack/webdav.htpasswd   root:root 0600
 ### 4.1 The decision, stated as properties
 
 Recorded so that a later phase cannot quietly weaken it. The same list, in
-contract form, is `v2-contract.md` §6.2. **DD-77** replaced the former
+contract form, is `contract.md` §6.2. **DD-77** replaced the former
 systemd `LoadCredential=` path.
 
 1. Credentials live in a **separate, root-owned credential file**:
@@ -251,7 +251,7 @@ systemd `LoadCredential=` path.
 4. rclone is pointed at that **path** only (`--htpasswd=…`).
 5. The password is **not in Compose YAML or systemd unit content**.
 6. The password is **not in any environment file**: not `config.env`, not
-   `state.env`, not `v2/config/defaults.env`. There is no `webdav.env`.
+   `state.env`, not `config/defaults.env`. There is no `webdav.env`.
 7. The password **does not appear on a command line**.
 8. The password is **not written to logs**.
 9. Exposure checks against the running container assert items 7–8 (§4.3).
@@ -355,7 +355,7 @@ that could disagree.
 | Is the stack working end to end? | The final verification stage, once |
 | Is a port number correct? | `config/defaults.env` |
 
-A check that appears in two of these rows is a bug in v2, not defence in
+A check that appears in two of these rows is an installer bug, not defence in
 depth.
 
 ---
@@ -386,18 +386,18 @@ places.
 
 ## 8. Implementation status
 
-The lean `v2/` tree is executable: `install.sh` runs the seven stages on a
-Debian 13 or Ubuntu 24.04/26.04 LTS host. `v2/dev/export-v2.sh` embeds a runtime-only tarball
+The lean root tree is executable: `install.sh` runs the seven stages on a
+Debian 13 or Ubuntu 24.04/26.04 LTS host. `dev/export-installer.sh` embeds a runtime-only tarball
 (excluding `.cursor/`, `dev/`, `tests/`, `app/`) into
-`v2/app/<V2_VERSION>.command`, which uploads and starts install over
+`app/<V2_VERSION>.command`, which uploads and starts install over
 `ssh -t`.
 
 Static checks for this tree:
 
 ```bash
-bats v2/tests
-bash -n v2/install.sh v2/common.sh v2/scripts/*
-shellcheck -x -s bash v2/install.sh v2/common.sh v2/scripts/*
+bats tests
+bash -n install.sh common.sh scripts/*
+shellcheck -x -s bash install.sh common.sh scripts/*
 ```
 
 There is no root `scripts/check-all.sh` wrapper; run the three workstation
@@ -408,15 +408,15 @@ silent pass.
 
 ## 9. Per-phase verification
 
-`v2/.cursor/rules/` requires six checks at the end of every phase, not two.
+`.cursor/rules/` requires six checks at the end of every phase, not two.
 Recorded here so a phase cannot quietly declare itself done on `bash -n`
 alone:
 
 | Check | Scope | Available on the dev workstation? |
 |---|---|---|
-| `bash -n` | Every `v2/*.sh` and `v2/scripts/*` | **yes** |
+| `bash -n` | Root `*.sh`, `scripts/*` and the exporter | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
-| `bats v2/tests/` | Unit suites (repo convention, not from the rules file) | **yes** |
+| `bats tests/` | Unit suites (repo convention, not from the rules file) | **yes** |
 | `docker compose config` | The rendered `compose.yaml` | **no** — Debian target only |
 | `caddy validate` | The rendered `Caddyfile` | **no** — Debian target only |
 | `dnsmasq --test` | The rendered dnsmasq config | **no** — Debian target only |
@@ -441,7 +441,7 @@ Two consequences for the phase that lands real rendering:
 
 ### 10.1 Settled on 2026-08-05
 
-Four questions that were disagreements between `v2/.cursor/rules/` and the
+Four questions that were disagreements between `.cursor/rules/` and the
 decisions taken in conversation, plus the DD-9 supersession, were answered
 together. Each has a full entry in `docs/design-decisions.md`; the
 one-line versions:
@@ -469,9 +469,9 @@ decision with a new name, not a constant that survives by inertia.
    document a manual re-run. Note that **DD-61** closes the door on
    solving this inside `refresh-tailnet-config` as currently scoped: doing
    so would mean recreating containers, which that helper must not do.
-2. **Comment policy for v2.** Settled for `install.sh` (DD-44: no
+2. **Comment policy.** Settled for `install.sh` (DD-44: no
    editorial comments; rationale in `docs/design-decisions.md`). Helper
-   scripts under `v2/scripts/` may keep short operational comments.
+   scripts under `scripts/` may keep short operational comments.
 3. **Whether `master-compose.service` returns in a later phase.** It is out
    of the first release; if a public IPv4 change is to be handled
    automatically, it may need to come back in a much smaller form.

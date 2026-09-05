@@ -1,12 +1,12 @@
-# v2 tests
+# Tests
 
-Narrow critical-behaviour suite for the lean v2 tree. Not a framework
+Narrow critical-behaviour suite for the lean installer tree. Not a framework
 coverage suite.
 
 ```bash
-bats v2/tests
-bash -n v2/install.sh v2/common.sh v2/scripts/*
-shellcheck -x -s bash v2/install.sh v2/common.sh v2/scripts/*
+bats tests
+bash -n install.sh common.sh scripts/*
+shellcheck -x -s bash install.sh common.sh scripts/*
 ```
 
 Host acceptance (Debian 13 or supported Ubuntu target, after install) is

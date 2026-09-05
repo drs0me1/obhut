@@ -170,8 +170,8 @@ comments plus structural inference from the 2026-07-27 audit
 
 ### DD-10: `wg-easy`'s WireGuard kernel module is loaded independently of Tailscale (2026-07-27)
 
-- **v2 (2026-08-06):** Same policy in `v2/install.sh` (`ensure_wg_kernel_modules`
-  during Stage 4, before Compose is written) and `v2/templates/compose.yaml`
+- **v2 (2026-08-06):** Same policy in `install.sh` (`ensure_wg_kernel_modules`
+  during Stage 4, before Compose is written) and `templates/compose.yaml`
   (`cap_add: [NET_ADMIN]` only). Host preloads `wireguard`, `ip_tables`,
   `iptable_nat`, `ip6_tables`, and `ip6table_nat`, persists them via
   `/etc/modules-load.d/wg-easy.conf`, and
@@ -3067,12 +3067,13 @@ packaging action does not change the pending live-verification claim.
 
 ---
 
-## v2 design decisions
+## Installer design decisions
 
-The entries below describe **v2**, the multi-file successor developed under
-`v2/` (see `docs/v2-contract.md` and `docs/v2-architecture.md`). They do not
-apply to `install.sh` or to `legacy/install.sh`, which is frozen for
-reference. They are numbered in the same sequence deliberately: a decision
+The entries below describe the multi-file successor historically released
+with `v2-*` version identifiers (see `docs/contract.md` and
+`docs/architecture.md`). The active files now live at the repository root.
+They do not apply to the retired single-file monolith, which remains only in
+Git history. They are numbered in the same sequence deliberately: a decision
 that supersedes an earlier one should be findable next to it, not in a
 separate document with its own numbering.
 
@@ -3081,9 +3082,9 @@ separate document with its own numbering.
 - **Decision:** v2 is a repository tree — one orchestrating `install.sh`,
   two libraries, four templates, four helper scripts and three systemd
   units — rather than a single script that carries its helpers as heredocs.
-  DD-9 is superseded for v2. `install.sh` itself keeps the single-file
-  model unchanged; it is frozen, and DD-9 remains the accurate record of
-  what it is.
+  DD-9 is superseded for the successor. At the time of this decision, the
+  retired monolith kept its single-file model unchanged; DD-9 remains the
+  accurate historical record of that file.
 - **Rationale:** DD-9's trade-off line predicted this. The embedded scripts
   are invisible to `shellcheck install.sh` and `bash -n install.sh`, which
   is why `scripts/lint-embedded-scripts.sh` had to be written to lint
@@ -3094,7 +3095,7 @@ separate document with its own numbering.
   could not see into the heredocs. A file per responsibility gets all seven
   helpers under the normal linter with no custom tooling.
 - **Replacement delivery model:** `git clone` (or a release tarball of the
-  same tree), then `v2/install.sh`. The curl-pipeable single artefact is
+  same tree), then `install.sh`. The curl-pipeable single artefact is
   the thing being given up, and that is the real cost of this decision —
   provisioning now needs the repository present on the host.
 - **Trade-off accepted:** more files to keep in sync, and a class of bug
@@ -3109,11 +3110,11 @@ separate document with its own numbering.
   holds the container policy reached through a single jump from
   `DOCKER-USER`. `MASTER-DOCKER-FILTER` is not used. The same two logical
   names are used for IPv4 and IPv6 — the tables are separate, so there is
-  no collision — and both are declared in `v2/config/defaults.env` and
+  no collision — and both are declared in `config/defaults.env` and
   nowhere else. A chain name appearing as a literal in a second file is a
   defect.
 - **Rationale:** Two sources proposed names (`MASTER-DOCKER` in
-  conversation, `MASTER-DOCKER-FILTER` in `v2/.cursor/rules/`), both as
+  conversation, `MASTER-DOCKER-FILTER` in `.cursor/rules/`), both as
   examples. The value is cosmetic but it is a single-source-of-truth value:
   the failure it prevents is a helper that creates one chain while the
   verification step looks for another, which fails open — an absent chain
@@ -3277,14 +3278,14 @@ separate document with its own numbering.
 
 ### DD-70: Portable export verifies SHA-256 and extracts atomically (2026-08-07)
 
-- **Decision:** `export-v2.sh` records the runtime tarball SHA-256 only
+- **Decision:** `export-installer.sh` records the runtime tarball SHA-256 only
   inside the `.command` (`PORTABLE_ARCHIVE_SHA256`). The launcher checks
   the hash after decode and again on the host before extract. Remote
-  install unpacks into a temp directory, then `mv`s `v2/` into place
+  install unpacks into a temp directory, then moves the staged runtime into place
   (no `rm -rf` of the live tree until the new tree is ready to move).
   No separate `.sha256` sidecar is written.
 - **Context:** A truncated scp/tar could leave the host without a usable
-  `v2/` tree mid-sync. An external sidecar duplicated the same digest
+  installer tree mid-sync. An external sidecar duplicated the same digest
   without adding trust (it travels with the same file).
 - **Rationale:** Hash catches corruption; staging extract avoids a window
   with no installer on disk. One deliverable keeps the Desktop/app
@@ -3298,6 +3299,10 @@ separate document with its own numbering.
   UTC lands before Unix epoch (stored as 0 → Debian “implausibly old”);
   Apple provenance xattrs became `LIBARCHIVE.*` pax keywords GNU tar
   does not understand. Reproducible hash stays; extract stays quiet.
+- **Layout amendment (2026-09-02):** Repository and remote runtime files live
+  directly under `debian-server-installer/`. The portable archive uses an
+  `installer/` staging directory, atomically replaces the dedicated remote
+  root, and starts `/root/debian-server-installer/install.sh`.
 
 ### DD-69: Downloads tree is recursively `1000:1000` for stack R/W (2026-08-07)
 

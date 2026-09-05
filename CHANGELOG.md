@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-05 — Separate SSH container settings backup utility
+
+- **Added:** root-level `container-backup.command` with backup, restore and
+  non-mutating target/archive check modes. SSH prompts accept a configured
+  alias or `user@address`; timestamped, private, unencrypted snapshots live
+  under Git-ignored `backup/`.
+- **Scope:** Portainer data, FileBrowser database/config, wg-easy database and
+  WireGuard keys/config, and only qBittorrent's `qBittorrent.conf`. Downloads,
+  categories/session data, WebDAV, Unpackerr and Tailscale state are excluded.
+- **Restore:** archive path/type/hash checks, image/port/UID compatibility,
+  pre-restore local recovery backup, stopped-container copying and an error
+  rollback attempt. Existing v73 installer/portable behavior is unchanged.
+
+### 2026-09-02 — Flatten repository and portable runtime layout
+
+- **Changed:** active installer files now live at the repository root instead
+  of a nested `v2/` directory. Supporting directories (`config`, `templates`,
+  `scripts`, `systemd`, `tests`, `dev` and `app`) moved with them; current
+  documentation uses the shorter root-relative paths.
+- **Changed:** the portable exporter is now `dev/export-installer.sh`. Its
+  runtime archive stages an `installer/` tree and deploys directly to
+  `/root/debian-server-installer/install.sh`, atomically replacing the old
+  dedicated source tree, including a prior nested layout.
+- **Unchanged:** installer version `2026.08.06-v2-73`, service configuration,
+  prompts, ports, firewall policy and managed host paths. This is a source and
+  delivery-layout cleanup, not a stack behaviour change.
+
 ### 2026-08-30 — v2-73: Ubuntu wg-easy legacy IPv4 netfilter modules
 
 - **Fixed:** Stage 4 now preloads `ip_tables` and `iptable_nat` on the host

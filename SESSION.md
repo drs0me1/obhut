@@ -4,6 +4,14 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-05:** Added separate `container-backup.command` and Linux helper
+`dev/container-backup-remote.sh`. Scope: Portainer data, FileBrowser DB/config,
+wg-easy DB/keys/config, qBittorrent `qBittorrent.conf` only. Backups are private,
+unencrypted and Git-ignored under `backup/`; no installer seed integration.
+Initial live snapshot: `backup/20260905T173254Z-nrm-settings.nceicd/settings.tar.gz`.
+All 11 data files passed isolated restore/hash/ownership/mode verification;
+production restore was not performed. See `docs/container-backup.md`.
+
 **v2-73 in [Unreleased] (2026-08-30):** Ubuntu 26.04's nft-default host did
 not load the legacy IPv4 `ip_tables`/`iptable_nat` modules required by
 wg-easy's in-container `iptables-legacy`; `wg-quick up wg0` therefore failed

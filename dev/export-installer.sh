@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# v2 runtime'ını gömülü tek bir macOS .command dosyasına paketler.
-# Her export: v2/app/<V2_VERSION>.command (sürüm adıyla arşivlenir).
+# Kurulum çalışma dosyalarını gömülü tek bir macOS .command dosyasına paketler.
+# Her export: app/<V2_VERSION>.command (sürüm adıyla arşivlenir).
 set -Eeuo pipefail
 
 DEV_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$DEV_DIR/../.." && pwd)"
-V2_ROOT="$REPO_ROOT/v2"
-APP_DIR="$V2_ROOT/app"
-MARKER="__MASTER_STACK_V2_ARCHIVE__"
+REPO_ROOT="$(cd -- "$DEV_DIR/.." && pwd)"
+APP_DIR="$REPO_ROOT/app"
+MARKER="__MASTER_STACK_ARCHIVE__"
 
-V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$V2_ROOT/install.sh")"
+V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/install.sh")"
 [[ -n "$V2_VERSION" ]] || { echo "HATA: V2_VERSION okunamadı" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
@@ -23,7 +22,7 @@ while [[ $# -gt 0 ]]; do
             cat <<EOF
 Kullanım: $(basename "$0") [--desktop] [-o PATH]
 
-  (varsayılan) v2/app/${V2_VERSION}.command — sürüm adıyla kaydet
+  (varsayılan) app/${V2_VERSION}.command — sürüm adıyla kaydet
   --desktop     aynı dosyayı ~/Desktop (veya ~/Masaüstü) altına da kopyala
   -o PATH       çıktı yolunu elle seç
 EOF
@@ -44,27 +43,28 @@ file_sha256() {
     fi
 }
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dsi-v2-portable.XXXXXX")"
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dsi-portable.XXXXXX")"
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
-tgz="$tmpdir/v2.tgz"
+tgz="$tmpdir/installer.tgz"
 stage="$tmpdir/src"
-mkdir -p "$stage"
-echo "==> Paketleniyor: v2/ runtime (v$V2_VERSION) [deterministik]"
+mkdir -p "$stage/installer"
+echo "==> Paketleniyor: kurulum çalışma dosyaları ($V2_VERSION) [deterministik]"
 # Sabit mtime + gzip -n → aynı kaynak = aynı ARCHIVE_SHA256.
 # TZ=UTC + 2000-01-01: doğu TZ'de 1970-01-01 local Unix epoch öncesi olur
 # (mtime 0 → Debian tar "implausibly old"). --no-xattrs/--no-mac-metadata:
 # Apple provenance pax başlıkları Debian'da LIBARCHIVE uyarısı üretmesin.
 rsync -a \
-    --exclude='.cursor/' \
-    --exclude='dev/' \
-    --exclude='tests/' \
-    --exclude='dist/' \
-    --exclude='app/' \
     --exclude='._*' \
     --exclude='.DS_Store' \
-    "$V2_ROOT/" "$stage/v2/"
+    "$REPO_ROOT/install.sh" \
+    "$REPO_ROOT/common.sh" \
+    "$REPO_ROOT/config" \
+    "$REPO_ROOT/templates" \
+    "$REPO_ROOT/scripts" \
+    "$REPO_ROOT/systemd" \
+    "$stage/installer/"
 xattr -cr "$stage" 2>/dev/null || true
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
 (
@@ -75,7 +75,7 @@ TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
         --no-mac-metadata \
         --uid 0 --gid 0 \
         --uname root --gname root \
-        -cf - v2 | gzip -n >"$tgz"
+        -cf - installer | gzip -n >"$tgz"
 )
 
 ARCHIVE_SHA256="$(file_sha256 "$tgz")"
@@ -84,7 +84,7 @@ ARCHIVE_SHA256="$(file_sha256 "$tgz")"
     exit 1
 }
 
-b64="$tmpdir/v2.b64"
+b64="$tmpdir/installer.b64"
 base64 <"$tgz" | tr -d '\n' >"$b64"
 fold -w 76 "$b64" >"$b64.folded"
 mv "$b64.folded" "$b64"
@@ -96,14 +96,14 @@ built_at="reproducible/${V2_VERSION}"
 {
     cat <<'HEADER_END'
 #!/usr/bin/env bash
-# Master Stack v2 — taşınabilir tek dosya kurulum (macOS .command)
+# Master Stack — taşınabilir tek dosya kurulum (macOS .command)
 # Repo'ya ihtiyaç duymaz. Masaüstü'ne kopyalayıp çift tıklayın.
-# Yeniden üretmek: v2/dev/export-v2.sh
+# Yeniden üretmek: dev/export-installer.sh
 set -Eeuo pipefail
 
 HEADER_END
     cat <<EOF
-PORTABLE_V2_VERSION="$V2_VERSION"
+PORTABLE_INSTALLER_VERSION="$V2_VERSION"
 PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
@@ -111,7 +111,7 @@ EOF
     cat <<'BODY_END'
 
 DEFAULT_HOST="${DEPLOY_HOST:-nrm}"
-REMOTE_TGZ="/tmp/dsi-v2.tgz"
+REMOTE_TGZ="/tmp/debian-server-installer.tgz"
 REMOTE_ROOT="/root/debian-server-installer"
 
 pause_exit() {
@@ -134,12 +134,12 @@ here="$(cd -- "$(dirname -- "$0")" && pwd)"
 self="$here/$(basename -- "$0")"
 [[ -f "$self" ]] || { echo "HATA: betik yolu bulunamadı: $self" >&2; pause_exit 1; }
 
-tgz="$(mktemp "${TMPDIR:-/tmp}/dsi-v2-embed.XXXXXX.tgz")"
+tgz="$(mktemp "${TMPDIR:-/tmp}/dsi-embed.XXXXXX.tgz")"
 cleanup_local() { rm -f "$tgz"; }
 trap cleanup_local EXIT
 
-printf '\n=== Master Stack v2 — taşınabilir kurulum ===\n'
-printf 'Sürüm:  %s\n' "$PORTABLE_V2_VERSION"
+printf '\n=== Master Stack — taşınabilir kurulum ===\n'
+printf 'Sürüm:  %s\n' "$PORTABLE_INSTALLER_VERSION"
 printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
 printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
@@ -183,26 +183,40 @@ got="\$(sha256sum "\$remote_tgz" | awk '{print \$1}')"
     echo "HATA: uzak arşiv sha256 uyuşmuyor (\$got)" >&2
     exit 1
 }
-staging="\$(mktemp -d /tmp/dsi-v2-extract.XXXXXX)"
-cleanup_staging() { rm -rf "\$staging"; }
+staging="\$(mktemp -d /tmp/dsi-extract.XXXXXX)"
+incoming="\${remote_root}.incoming.\$\$"
+previous="\${remote_root}.previous.\$\$"
+cleanup_staging() {
+    rm -rf "\$staging" "\$incoming"
+    if [[ ! -e "\$remote_root" && -e "\$previous" ]]; then
+        mv "\$previous" "\$remote_root"
+    fi
+}
 trap cleanup_staging EXIT
 tar -C "\$staging" -xzf "\$remote_tgz"
-[[ -f "\$staging/v2/install.sh" ]] || {
-    echo "HATA: arşivde v2/install.sh yok" >&2
+[[ -f "\$staging/installer/install.sh" ]] || {
+    echo "HATA: arşivde install.sh yok" >&2
     exit 1
 }
-mkdir -p "\$remote_root"
-rm -rf "\$remote_root/v2"
-mv "\$staging/v2" "\$remote_root/v2"
+rm -rf "\$incoming" "\$previous"
+mv "\$staging/installer" "\$incoming"
+if [[ -e "\$remote_root" ]]; then
+    mv "\$remote_root" "\$previous"
+fi
+if ! mv "\$incoming" "\$remote_root"; then
+    [[ ! -e "\$previous" ]] || mv "\$previous" "\$remote_root"
+    exit 1
+fi
+rm -rf "\$previous"
 trap - EXIT
 rmdir "\$staging" 2>/dev/null || rm -rf "\$staging"
-find "\$remote_root/v2" -name '._*' -delete
-find "\$remote_root/v2" -name '.DS_Store' -delete
-chmod 0755 "\$remote_root/v2/install.sh"
-chmod 0755 "\$remote_root/v2/scripts/"*
-bash -n "\$remote_root/v2/install.sh"
-grep -E '^V2_VERSION=' "\$remote_root/v2/install.sh"
-echo "SYNC_OK → \$remote_root/v2"
+find "\$remote_root" -name '._*' -delete
+find "\$remote_root" -name '.DS_Store' -delete
+chmod 0755 "\$remote_root/install.sh"
+chmod 0755 "\$remote_root/scripts/"*
+bash -n "\$remote_root/install.sh"
+grep -E '^V2_VERSION=' "\$remote_root/install.sh"
+echo "SYNC_OK → \$remote_root"
 EOF
 
 printf '\n==> Kurulum başlıyor: %s\n' "$HOST"
@@ -214,7 +228,7 @@ ssh \
     -o ConnectTimeout=20 \
     -t \
     "$HOST" \
-    "bash '$REMOTE_ROOT/v2/install.sh'"
+    "bash '$REMOTE_ROOT/install.sh'"
 rc=$?
 set -e
 

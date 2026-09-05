@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v2 ortak yardımcılar — kısa ve tekrar kullanılanlar.
+# Ortak yardımcılar — kısa ve tekrar kullanılanlar.
 # Docker / Tailscale / firewall bilmez. Production: Bash 5.x
 # (Debian 13 / Ubuntu 24.04 / Ubuntu 26.04).
 
@@ -121,7 +121,7 @@ atomic_write() {
     local dir="${dest%/*}"
     [[ -d "$dir" ]] || die "atomic_write: dizin yok: $dir"
     local tmp
-    tmp="$(mktemp "$dir/.v2-XXXXXX")"
+    tmp="$(mktemp "$dir/.installer-XXXXXX")"
     # shellcheck disable=SC2064
     trap "rm -f -- '$tmp'" RETURN
     cat >"$tmp"

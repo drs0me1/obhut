@@ -13,6 +13,7 @@ APPLY_FAILED=0
 
 add_default_netdev() {
     local family="$1" probe="$2" dev=""
+    # shellcheck disable=SC2016 # awk owns $i and $(i+1)
     dev="$(
         "$IP_BIN" "$family" -o route get "$probe" 2>/dev/null |
             "$AWK_BIN" '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}'

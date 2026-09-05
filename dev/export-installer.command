@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Çift tık: v2'yi taşınabilir app olarak export et → v2/app/<sürüm>.command + Masaüstü
+# Çift tık: kurulumu taşınabilir app olarak export et → app/<sürüm>.command + Masaüstü
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "$0")"
-./export-v2.sh --desktop
+./export-installer.sh --desktop
 
 V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' ../install.sh)"
 APP_FILE="../app/${V2_VERSION}.command"

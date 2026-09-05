@@ -1,3 +1,6 @@
 # macOS Finder metadata, created on the dev workstation, never part of the
 # installer or its documentation.
 .DS_Store
+
+# Private service databases, credential hashes and VPN private keys.
+/backup/

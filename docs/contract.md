@@ -1,17 +1,17 @@
-# v2 Behaviour Contract
+# Behaviour Contract
 
 **Status:** behaviour contract (frozen intent 2026-08-05). Implemented by the
-lean tree under `v2/` (`install.sh` and helpers). Where live code and this
+lean tree at the repository root (`install.sh` and helpers). Where live code and this
 document diverge, prefer the code and update this file.
 
-This document is the authoritative statement of what the v2 installer does
+This document is the authoritative statement of what the installer does
 and — just as importantly — what it deliberately refuses to do. Removals
 relative to the retired monolith (no reconcile engine, no
 canonical-bundle machinery, no host WebDAV unit) are decisions, not
-oversights. The repository is v2-only; there is no parallel v1 tree.
+oversights. There is no parallel legacy installer tree.
 
-**Relationship to `v2/.cursor/rules/`:** those rules are scoped to the `v2/`
-tree and govern *how* the work is done — process, Bash conventions, the
+**Relationship to `.cursor/rules/`:** those rules cover the repository and
+govern *how* the work is done — process, Bash conventions, the
 per-phase verification set, and the hard prohibitions (do not delete Docker's
 chains, do not silently turn the UDP-only decision into TCP+UDP, do not grow
 a general-purpose reconcile engine). This document governs *what the result
@@ -21,7 +21,7 @@ listening scope, chain name, refresh helper scope, Portainer upstream
 scheme — are recorded as **DD-59** through **DD-62** in
 `design-decisions.md`.
 
-The single active rule source is `v2/.cursor/rules/master-stack.mdc`. The
+The single active rule source is `.cursor/rules/master-stack.mdc`. The
 original RTF is archived unchanged at
 `docs/archive/master-stack-rules-source.rtf` and is a historical record
 only — it is not edited and nothing synchronises it back.
@@ -54,7 +54,7 @@ the ones agreed on 2026-08-05:
 
 ---
 
-## 1. Features v2 includes
+## 1. Included features
 
 ### 1.1 Base system
 
@@ -130,7 +130,7 @@ the ones agreed on 2026-08-05:
 
 ### 1.6 Firewall
 
-- A host `INPUT` policy (new in v2 — v1 had none) and a Docker forwarding
+- A host `INPUT` policy (the retired installer had none) and a Docker forwarding
   policy, both fail-closed (**R18**, **R19**). Full contract in §8 and §9.
 - The **staging-chain swap** is preserved wherever it applies: rules are
   built in a throwaway chain and swapped in atomically, so there is no
@@ -152,11 +152,11 @@ Preserved in full as a core feature. Contract in §5–§7.
 
 ---
 
-## 2. Features v2 deliberately excludes
+## 2. Deliberately excluded features
 
 Each entry names the v1 mechanism, its cost, and why it is gone.
 
-| Excluded | v1 cost | Why it is not in v2 |
+| Excluded | Legacy cost | Why it is excluded |
 |---|---|---|
 | **Canonical generation directory, `SHA256SUMS` manifest, `current` pointer** | ~400 lines, 3 bats suites, 6 DD entries | Served no requirement. The correct way to repair a drifted managed file is to re-run the installer (**R20**), not to have a timer silently revert it. |
 | **Automatic file restore from a canonical copy** | ~90 lines of restore blocks | Same. An operator edit is now an operator's decision; v2 never silently reverts it. |
@@ -168,7 +168,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | First-boot credentials live in the container log; v2 does not probe or reprint them. |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
-| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). v2 never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
+| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). The installer never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
 | **Migration cleanup for older revisions** | `purge_host_webdav_leftovers`, `remove_stale_filebrowser`, retired unit/symlink deletion (~83 lines) | The upgrade path is a fresh install or a re-run that overwrites what the installer owns. A global `apt-get purge`, a `userdel`, or deleting a container the operator may still want is outside the installer's boundary (**DD-96**). |
 | **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains are re-established by Docker; v2 re-applies only its own chain. |
 | **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
@@ -228,9 +228,9 @@ Tailscale address. No WAN / `0.0.0.0` publish.
 
 ### 3.4 Single source of truth
 
-Every number above is declared exactly once, in `v2/config/defaults.env`,
+Every number above is declared exactly once, in `config/defaults.env`,
 and reaches the Compose file, the Caddyfile, the firewall script and the
-state file by substitution. A port literal appearing twice in v2 is a bug.
+state file by substitution. A port literal appearing twice is a bug.
 
 ---
 
@@ -330,7 +330,7 @@ property the implementation must satisfy and a test must assert.
    — not as `environment:`, not as a command argument value, not in a
    drop-in.
 6. **The password is not written to any environment file** — not
-   `config.env`, not `state.env`, not `v2/config/defaults.env`. The
+   `config.env`, not `state.env`, not `config/defaults.env`. The
    forbidden keys are named explicitly in `defaults.env`:
    `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`, `WEBDAV_USER_PASSWORD`.
    There is no `webdav.env`.
@@ -355,8 +355,8 @@ property the implementation must satisfy and a test must assert.
 | Item | Location | Mode | Secret |
 |---|---|---|---|
 | Username + password hash | `/etc/master-stack/webdav.htpasswd` | `0600` | **yes** |
-| Port (loopback + Caddy Infuse) | `v2/config/defaults.env` → Compose + Caddy | — | no |
-| Credential file **path** | `v2/config/defaults.env`, Compose volume | — | no |
+| Port (loopback + Caddy Infuse) | `config/defaults.env` → Compose + Caddy | — | no |
+| Credential file **path** | `config/defaults.env`, Compose volume | — | no |
 | Read-only / image pin | Compose template + `RCLONE_IMAGE` | — | no |
 
 The plaintext password exists only inside the installer process, for as
@@ -447,7 +447,7 @@ Caddy listens on `${TS_IPV4}:80`. WebDAV's own port never leaves loopback.
 
 ## 8. Host firewall contract (`INPUT`)
 
-New in v2. v1 filtered only Docker's forwarded traffic and left host
+The retired installer filtered only Docker's forwarded traffic and left host
 services exposed to whatever the provider's network allowed.
 
 Accepted:
@@ -497,14 +497,14 @@ Rules:
 `MASTER-DOCKER` for the container policy reached through `DOCKER-USER`.
 `MASTER-DOCKER-FILTER` is not used. The same two logical names serve IPv4
 and IPv6 — separate tables mean no collision — and both are declared in
-`v2/config/defaults.env` and nowhere else.
+`config/defaults.env` and nowhere else.
 
-- v2 creates **only its own chain** (`MASTER-DOCKER`) and inserts **one
+- The installer creates **only its own chain** (`MASTER-DOCKER`) and inserts **one
   idempotent jump** to it at the top of `DOCKER-USER`.
 - Docker's own chains (`DOCKER`, `DOCKER-FORWARD`, `DOCKER-ISOLATION-*`,
   `ts-forward`) are **never** flushed, deleted or reordered.
 - **Third-party rules already present in `DOCKER-USER` are never deleted.**
-  v2 adds its jump and leaves everything else in place. v1's
+  the installer adds its jump and leaves everything else in place. The retired installer's
   `activate_staging_chain` deleted every other `DOCKER-USER` rule; that
   behaviour is gone, and its absence is a tested property.
 - Inside `MASTER-DOCKER`:
@@ -666,7 +666,7 @@ only thing that needs updating is the nameserver IP in step 1.
 
 ## 14. Success criteria
 
-A v2 run is successful when every one of these holds on the target host.
+An installer run is successful when every one of these holds on the target host.
 
 ### Base and Tailscale
 

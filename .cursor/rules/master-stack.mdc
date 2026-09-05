@@ -1,7 +1,7 @@
 ---
-description: Master Stack v2 refactor kuralları (Debian 13 sunucu kurulum sistemi)
-globs: v2/**
-alwaysApply: false
+description: Master Stack refactor kuralları (Debian ve Ubuntu sunucu kurulum sistemi)
+globs: "**/*"
+alwaysApply: true
 ---
 
 # Master Stack Refactor Kuralları
@@ -10,7 +10,7 @@ alwaysApply: false
 
 Bu proje Debian 13 üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
 
-Ana hedef, `v2/` ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`docs/v2-contract.md`) dışına taşmadan davranışı korumaktır.
+Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`docs/contract.md`) dışına taşmadan davranışı korumaktır.
 
 ## Temel çalışma ilkeleri
 
@@ -259,9 +259,9 @@ Ana hedef:
 
 Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 
-1. `v2/dev/export-v2.sh --desktop` çalıştır.
-2. Çıktıyı `v2/app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `v2/install.sh` içinden).
-3. Aynı sürümü `v2/app/latest.command` olarak da güncelle.
+1. `dev/export-installer.sh --desktop` çalıştır.
+2. Çıktıyı `app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `install.sh` içinden).
+3. Aynı sürümü `app/latest.command` olarak da güncelle.
 4. `--desktop` ile Masaüstü'ne `<V2_VERSION>.command` kopyala.
 5. Ayrı upload/sync betiği kullanma; tek dağıtım birimi bu app dosyasıdır.
-6. Gömülü tarball `v2/app`, `v2/dev`, `v2/tests`, `v2/.cursor` içermez.
+6. Gömülü tarball `app`, `dev`, `tests`, `.cursor` ve `docs` içermez.

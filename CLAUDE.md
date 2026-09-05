@@ -4,17 +4,17 @@ Working guide for any AI assistant in this repository. Read this first.
 
 ## Project Overview
 
-Active code lives under **`v2/`**. It turns a fresh Debian 13 (trixie)
-or Ubuntu 24.04/26.04 LTS host
+Active code lives at the repository root. It turns a fresh Debian 13
+(trixie) or Ubuntu 24.04/26.04 LTS host
 into a Tailscale exit-node with a fixed Docker Compose bundle, host
 dnsmasq + Caddy on the tailnet, and a persistent firewall. There is no
 reconcile / self-healing engine by design.
 
-Authoritative behaviour: [`docs/v2-contract.md`](docs/v2-contract.md).  
-Architecture: [`docs/v2-architecture.md`](docs/v2-architecture.md).  
+Authoritative behaviour: [`docs/contract.md`](docs/contract.md).
+Architecture: [`docs/architecture.md`](docs/architecture.md).
 Non-obvious rationale: [`docs/design-decisions.md`](docs/design-decisions.md)
 (`DD-*` entries). Cursor rules for the tree:
-`v2/.cursor/rules/master-stack.mdc`.
+`.cursor/rules/master-stack.mdc`.
 
 The installer is destructive: firewall, systemd, Docker daemon, network
 state. Treat every change as production-infrastructure work.
@@ -22,10 +22,10 @@ state. Treat every change as production-infrastructure work.
 ## Language Rules
 
 - **Speak to the user in Turkish.** Conversational replies only.
-- **`v2/` operator-facing strings are Turkish** (messages printed by
+- **Operator-facing strings are Turkish** (messages printed by
   `install.sh` and helpers). Match existing style in each file.
 - **Markdown documentation and commit messages stay in English.**
-- **`v2/tests/*.bats` stay English** for comments and `@test` names
+- **`tests/*.bats` stay English** for comments and `@test` names
   (Turkish `@test` names break `bats` under `tr_TR.UTF-8`).
 - Keep each artifact internally consistent.
 
@@ -49,40 +49,40 @@ state. Treat every change as production-infrastructure work.
 
 ## Working Conventions
 
-- Prefer static analysis first (`bash -n`, `shellcheck`, `bats v2/tests`).
+- Prefer static analysis first (`bash -n`, `shellcheck`, `bats tests`).
   Escalate to live `nrm` installs when static review cannot catch the
   failure mode — still report destructive commands.
 - Analyze before editing; check `docs/design-decisions.md` and
-  `docs/v2-contract.md` before "fixing" intentional behaviour.
+  `docs/contract.md` before "fixing" intentional behaviour.
 - Wait for approval before making changes unless the user already asked
   for that change.
 - Smallest possible change. No opportunistic refactors.
 - Show the diff before committing. Commit only when the user asks (unless
   a user rule says otherwise for that turn).
-- Bump `V2_VERSION` in `v2/install.sh` on every behavioural change to the
+- Bump `V2_VERSION` in `install.sh` on every behavioural change to the
   installer tree. Record user-facing changes under `[Unreleased]` in
   `CHANGELOG.md` and add a `DD-*` entry when rationale is non-obvious.
 - Preserve idempotency: re-runs against a provisioned host must stay safe.
 - Prefer security over convenience when both achieve the same result; flag
   the trade-off.
 - Single source of truth for ports/images/paths:
-  `v2/config/defaults.env`. Do not restate literals elsewhere.
+  `config/defaults.env`. Do not restate literals elsewhere.
 - Do not grow a general-purpose reconcile engine (contract + rules).
 
 ## Key Paths
 
 | Path | Purpose |
 |------|---------|
-| `v2/install.sh` | Orchestrator |
-| `v2/common.sh` | Shared helpers |
-| `v2/config/defaults.env` | Ports, images, paths, chain names |
-| `v2/templates/` | Compose, Caddy, dnsmasq |
-| `v2/scripts/` | Firewall, refresh-tailnet, GRO, wait |
-| `v2/systemd/` | Unit/timer templates |
-| `v2/tests/` | Critical bats suite |
-| `v2/dev/export-v2.sh` | Portable `.command` exporter |
-| `docs/v2-contract.md` | What v2 does / refuses |
-| `docs/v2-architecture.md` | Layout and data flow |
+| `install.sh` | Orchestrator |
+| `common.sh` | Shared helpers |
+| `config/defaults.env` | Ports, images, paths, chain names |
+| `templates/` | Compose, Caddy, dnsmasq |
+| `scripts/` | Firewall, refresh-tailnet, GRO, wait |
+| `systemd/` | Unit/timer templates |
+| `tests/` | Critical bats suite |
+| `dev/export-installer.sh` | Portable `.command` exporter |
+| `docs/contract.md` | What the installer does / refuses |
+| `docs/architecture.md` | Layout and data flow |
 | `docs/design-decisions.md` | `DD-*` rationale |
 
 ## Constraints

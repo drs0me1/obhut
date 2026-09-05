@@ -131,7 +131,7 @@ EOF
 @test "atomic_write leaves no temp on failure" {
     run bash -c "source '$V2_ROOT/common.sh'; printf y | atomic_write '/' 0644"
     [ "$status" -ne 0 ]
-    # TMP scratch should not accumulate .v2- temps from that call (different dir)
+    # TMP scratch should not accumulate installer temps from that call (different dir)
     true
 }
 
@@ -953,19 +953,21 @@ EOF
         grep -qE '\bacl\b'
 }
 
-@test "export-v2 embeds archive sha256 and stages remote extract" {
-    grep -q 'PORTABLE_ARCHIVE_SHA256' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'sha256sum' "$V2_ROOT/dev/export-v2.sh"
-    ! grep -qE '\.sha256"|Sidecar' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'dsi-v2-extract' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'staging/v2' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'gzip -n' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'touch -t 200001010000' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'TZ=UTC' "$V2_ROOT/dev/export-v2.sh"
-    grep -q -- '--no-xattrs' "$V2_ROOT/dev/export-v2.sh"
-    grep -q -- '--no-mac-metadata' "$V2_ROOT/dev/export-v2.sh"
-    ! grep -q 'touch -t 197001010000' "$V2_ROOT/dev/export-v2.sh"
-    grep -q 'reproducible/${V2_VERSION}' "$V2_ROOT/dev/export-v2.sh"
+@test "exporter embeds archive sha256 and stages root-level runtime" {
+    local exporter="$V2_ROOT/dev/export-installer.sh"
+    grep -q 'PORTABLE_ARCHIVE_SHA256' "$exporter"
+    grep -q 'sha256sum' "$exporter"
+    ! grep -qE '\.sha256"|Sidecar' "$exporter"
+    grep -q 'dsi-extract' "$exporter"
+    grep -q 'staging/installer/install.sh' "$exporter"
+    grep -q 'REMOTE_ROOT/install.sh' "$exporter"
+    grep -q 'gzip -n' "$exporter"
+    grep -q 'touch -t 200001010000' "$exporter"
+    grep -q 'TZ=UTC' "$exporter"
+    grep -q -- '--no-xattrs' "$exporter"
+    grep -q -- '--no-mac-metadata' "$exporter"
+    ! grep -q 'touch -t 197001010000' "$exporter"
+    grep -q 'reproducible/${V2_VERSION}' "$exporter"
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {

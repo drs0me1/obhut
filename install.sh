@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v2 kurulum — Debian 13 / Ubuntu 24.04 / 26.04 LTS, doğrusal aşamalar,
+# Kurulum — Debian 13 / Ubuntu 24.04 / 26.04 LTS, doğrusal aşamalar,
 # tekrar çalıştırılabilir.
 # shellcheck source-path=SCRIPTDIR
 set -Eeuo pipefail
@@ -970,7 +970,7 @@ EOF
 }
 
 main() {
-    log INFO "master-stack v2 $V2_VERSION başlıyor"
+    log INFO "master-stack $V2_VERSION başlıyor"
     stage_0
     stage_1
     stage_2
@@ -991,8 +991,8 @@ if [[ "${V2_INHIBITED:-0}" != "1" ]]; then
     [[ -n "$self" && -f "$self" ]] || die "kurulum betiğinin yolu çözülemedi"
     exec systemd-inhibit \
         --what=shutdown:sleep \
-        --who=master-stack-v2 \
-        --why="master-stack v2 kurulum işlemi" \
+        --who=master-stack-installer \
+        --why="master-stack kurulum işlemi" \
         --mode=block \
         env V2_INHIBITED=1 bash "$self" "$@"
 fi

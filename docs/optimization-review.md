@@ -1,4 +1,4 @@
-# v2 Structural Optimisation Review
+# Structural Optimisation Review
 
 **Date:** 2026-08-07 · **Reviewed version:** `2026.08.06-v2-27`
 **Target host:** `nrm` (Debian 13 trixie, WAN `203.0.113.10`)
@@ -10,8 +10,8 @@ resilient, more efficient, and more predictable across reboot and daemon
 restart — **without growing the system**. Every finding below is backed by a
 measurement taken on the live host, not by reading alone.
 
-Related documents: [`v2-contract.md`](v2-contract.md) (what the system must
-do), [`v2-architecture.md`](v2-architecture.md) (how it is laid out),
+Related documents: [`contract.md`](contract.md) (what the system must
+do), [`architecture.md`](architecture.md) (how it is laid out),
 [`design-decisions.md`](design-decisions.md) (why).
 
 ---
@@ -420,7 +420,7 @@ so a reboot is recoverable.
 4. S1 + S3  UDP 41641 in MASTER-INPUT; tailnet warning line
 5. End-to-end: reboot + tailscaled restart + docker restart
             + IPv6 ping from a wg peer + a real Infuse 4K stream
-            Record the result in `v2/tests/README.md` as a manual acceptance list.
+            Record the result in `tests/README.md` as a manual acceptance list.
 ```
 
 Roughly twelve lines across `firewall.sh`, `refresh-tailnet-config` and one
@@ -496,4 +496,4 @@ M1 escaped: a grep asking "does the IPv6 chain end in `DROP`?" would have
 **passed**.
 
 Do not try to move reboot, restart, exit-node or streaming behaviour into
-bats. Record them in `v2/tests/README.md` as a manual acceptance list instead.
+bats. Record them in `tests/README.md` as a manual acceptance list instead.
