@@ -5,12 +5,14 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-73` (see `install.sh`).
+**Current version:** `2026.08.06-v2-74` (see `install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 Authoritative behaviour: [`docs/contract.md`](docs/contract.md).
 Layout and data flow: [`docs/architecture.md`](docs/architecture.md).
 Design rationale: [`docs/design-decisions.md`](docs/design-decisions.md).
+OS-awareness and optimisation review:
+[`docs/os-aware-review.md`](docs/os-aware-review.md).
 
 ## Quick start
 

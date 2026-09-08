@@ -4,6 +4,41 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-08 — v2-74, OS-aware install (live-verified on `nrm`):**
+Full OS-awareness + optimisation review written to
+[`docs/os-aware-review.md`](docs/os-aware-review.md), based on source review
+plus read-only live discovery on `nrm` (Ubuntu 26.04.1, systemd 259, kernel
+7.0.0-31, Docker 29.8.0, Tailscale 1.102.3). Conclusion: detection was already
+correct and the probe-over-identity design is kept; what was missing was
+*recording* the detected OS and *verifying* that OS-conditional steps landed.
+Plan steps 1–5 implemented as v2-74 (**DD-103…107**): needrestart suspended
+during apt (it runs in automatic restart mode on Ubuntu and was silently
+restarting sshd/docker/tailscaled/caddy/dnsmasq mid-stage); OS identity in
+`state.env` with `OS_CHANGED` forcing re-application; `sysctl.d` drop-ins
+renamed `99-zz-*` so they sort after provider files, plus a live `ip_forward`
+assertion in stage 7; three fail-early gates (nft backend, repo-suite preflight,
+rendered-config validation on the target); Docker container log rotation.
+Verified: `bash -n` and `shellcheck -x` clean, bats **86 passed / 3 skipped**,
+`detect_os_change` exercised across four state files, `assert_repo_suite` and
+the `jq` merge exercised against real inputs, and both validators plus the nft
+gate and stage-7 assertions exercised read-only on `nrm`.
+**Live acceptance on `nrm` (Ubuntu 26.04.1):** four default re-runs plus a cold
+reboot, all exit 0. Run 1 (v73→v74) logged "no OS record", deleted both legacy
+`99-master-*` sysctl files and rewrote them as `99-zz-*`, added the five `OS_*`
+lines to `state.env` and `log-opts` to `daemon.json` — **6/6 container IDs and
+start times bit-identical**. Run 2 a full no-op. Run 3 with a seeded
+`OS_CODENAME=noble` proved DD-104: logged the release change and re-applied both
+apt updates, the firewall, dnsmasq and Caddy (every skip message absent), then
+self-corrected `state.env`. After the reboot — the real DD-105 test —
+`99-zz-*` sorts after the provider's `99-nc-kernel.conf`, `ip_forward=1`,
+`rmem_max` 64 MiB preserved, 0 failed units, 6/6 healthy, firewall `--check`
+passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
+Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
+Run 4 (post-reboot) a no-op with container start times unchanged.
+**Still outstanding: the same acceptance on Debian 13 (trixie).** Steps 6
+(dnsmasq `listen-address`) and 7 (BBR/`fq`) deliberately not taken; both need
+before/after measurement on both OS families.
+
 **2026-09-06 follow-up:** Per user request, backup transfer between already
 provisioned v73 Debian/Ubuntu hosts no longer requires matching image IDs.
 Differences warn by default; `--allow-image-change` is a compatibility no-op.
@@ -61,10 +96,10 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-73` (unreleased) |
+| Version | `2026.08.06-v2-74` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 83 Bats: 80 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
+| Tests | 89 Bats: 86 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

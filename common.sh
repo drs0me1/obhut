@@ -38,10 +38,12 @@ require_root() {
 # (noble), Ubuntu 26.04 LTS (resolute). ID+codename+major üçlüsü birlikte
 # doğrulanır; OS_ID/OS_CODENAME apt depo satırlarını türetir — dağıtım
 # kimliğinin tek kaynağı os-release'tir, depo suite'i ayrıca yazılmaz.
+# OS_VERSION_ID/OS_ARCH yalnız state.env kaydı ve sürüm değişimi tespiti
+# içindir; kapı kararını değiştirmez (DD-104).
 require_supported_os() {
     local f="${V2_OS_RELEASE_PATH:-/etc/os-release}"
     [[ -r "$f" ]] || die "işletim sistemi okunamıyor: $f"
-    local id="" codename="" version_id=""
+    local id="" codename="" version_id="" line=""
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             ID=*) id="${line#ID=}"; id="${id%\"}"; id="${id#\"}" ;;
@@ -68,8 +70,12 @@ require_supported_os() {
     esac
     [[ "${version_id%%.*}" == "$expected" ]] ||
         die "sürüm codename ile uyuşmuyor: $codename için VERSION_ID=${version_id:-yok} (beklenen ${expected}.*)"
-    # shellcheck disable=SC2034 # install.sh apt depo satırlarında tüketir
-    OS_ID="$id" OS_CODENAME="$codename"
+    # dpkg yoksa (iş istasyonu testleri) uname'e düş; değer yalnız kayıt için.
+    local arch=""
+    arch="$(dpkg --print-architecture 2>/dev/null || uname -m 2>/dev/null || true)"
+    # shellcheck disable=SC2034 # install.sh apt depo satırlarında ve state.env'de tüketir
+    OS_ID="$id" OS_CODENAME="$codename" OS_VERSION_ID="$version_id" \
+        OS_ARCH="${arch:-bilinmiyor}"
 }
 
 acquire_lock() {

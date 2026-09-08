@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-08 — OS-aware install: record the release, verify the result (v2-74)
+
+- **Fixed:** `needrestart` — installed and hooked into apt on Ubuntu, and
+  running in *automatic* restart mode there regardless of
+  `DEBIAN_FRONTEND` — no longer restarts `sshd`, `docker`, `containerd`,
+  `tailscaled`, `caddy` or `dnsmasq` in the middle of a stage. `stage_1`
+  exports `NEEDRESTART_SUSPEND=1`; the installer owns its own restarts
+  (**DD-103**). No-op on Debian.
+- **Added:** `state.env` records `OS_ID`, `OS_CODENAME`, `OS_VERSION_ID`,
+  `OS_ARCH` and `KERNEL_RELEASE`. A re-run whose recorded identity differs
+  from the live one (for example after `do-release-upgrade`) warns and
+  re-applies the OS-dependent steps — apt repo refresh, `systemd-resolved`,
+  one dnsmasq/Caddy restart, firewall — even when the written files are
+  byte-identical (**DD-104**). A host with no recorded OS (v2-73 or earlier)
+  is not reported as a release change.
+- **Fixed:** the two `sysctl.d` drop-ins move to `99-zz-master-*` so they sort
+  after provider-supplied files (`99-nc-kernel.conf` on netcup sorted after
+  them and writes the same keys); the old names are deleted on upgrade.
+  `stage_7` now asserts the **live** `net.ipv4.ip_forward=1` and warns when
+  `net.core.rmem_max` is below the floor — a silently lost forwarding sysctl
+  would otherwise leave an exit node broken after a reboot with every unit
+  green (**DD-105**).
+- **Added:** three fail-early gates (**DD-106**) — the host `iptables`
+  backend must be `nf_tables` (Docker's), with the exact `update-alternatives`
+  remedy in the message; the Tailscale and Docker repo suites are probed for
+  the detected codename before the source file is written; and every rendered
+  config is validated on the target (`dnsmasq --test -C`, `caddy validate`
+  with the real `TAILSCALE_IPV4`/`WEBDAV_PORT`, `docker compose config -q`)
+  before the unit that consumes it is restarted.
+- **Added:** container log rotation. `daemon.json` gains
+  `log-opts.max-size=10m` / `max-file=3`, merged only when the logging driver
+  is `json-file` or unset and added to any existing `log-opts` (**DD-107**).
+  Takes effect for containers created after the change; Docker is
+  deliberately not restarted.
+- **Analysis:** [`docs/os-aware-review.md`](docs/os-aware-review.md) — the
+  full OS-awareness and optimisation review this release implements, with
+  live measurements from `nrm` (Ubuntu 26.04.1, systemd 259, kernel 7.0.0-31).
+- **Live-verified on Ubuntu 26.04.1** (2026-09-08): the v73→v74 upgrade run,
+  an idempotent re-run, a seeded release-change run that exercised the forced
+  re-application, a cold reboot and a post-reboot re-run — all exit 0, with
+  6/6 container IDs unchanged throughout and every §14 check passing after the
+  reboot. Debian 13 acceptance is still outstanding.
+- **Not taken here:** BBR/`fq` congestion control and the dnsmasq
+  `listen-address` change both need before/after measurement on both OS
+  families first; see the review's plan, steps 6–7.
+
 ### 2026-09-06 — Portable settings between provisioned v73 hosts
 
 - **Changed:** differing container image IDs now warn instead of blocking

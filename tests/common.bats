@@ -101,6 +101,85 @@ EOF
     [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 9 ]
 }
 
+@test "require_supported_os records version and architecture" {
+    cat >"$TMP/os" <<'EOF'
+ID=ubuntu
+VERSION_CODENAME=resolute
+VERSION_ID="26.04"
+EOF
+    V2_OS_RELEASE_PATH="$TMP/os"
+    require_supported_os
+    [ "$OS_VERSION_ID" = "26.04" ]
+    [ -n "$OS_ARCH" ]
+    # The reader loop must not leak its variable into the caller.
+    awk '/^require_supported_os\(\)/,/^}$/' "$V2_ROOT/common.sh" |
+        grep -q 'local id="" codename="" version_id="" line=""'
+}
+
+@test "state.env records the OS the install ran on and a change forces re-apply" {
+    # Identity is recorded, not just derived (DD-104).
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '^OS_ID=\$OS_ID$'
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q '^OS_CODENAME=\$OS_CODENAME$'
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q '^OS_VERSION_ID=\$OS_VERSION_ID$'
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '^OS_ARCH=\$OS_ARCH$'
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'KERNEL_RELEASE='
+    # A missing record must not be reported as a release change.
+    awk '/^detect_os_change\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'v2-73 öncesi'
+    # A real change re-runs the OS-conditional work rather than trusting bytes.
+    grep -q 'OS_CHANGED=1' "$V2_ROOT/install.sh"
+    grep -qF '"${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1' \
+        "$V2_ROOT/install.sh"
+    awk '/^detect_os_change\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'FIREWALL_NEEDS_RESTART=1'
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'detect_os_change'
+}
+
+@test "third-party restart managers are suspended during apt" {
+    # needrestart runs in automatic mode on ubuntu; DEBIAN_FRONTEND does not
+    # disable it. The installer owns its own restarts (DD-103).
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'export NEEDRESTART_SUSPEND=1'
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'export DEBIAN_FRONTEND=noninteractive'
+}
+
+@test "sysctl drop-ins sort last and the runtime value is asserted" {
+    # Provider images ship 99-*.conf too and the last assignment wins (DD-105).
+    grep -q 'SYSCTL_NETBUF_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
+    grep -q 'SYSCTL_FORWARD_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
+    grep -q 'SYSCTL_LEGACY_FILES=' "$V2_ROOT/config/defaults.env"
+    ! grep -q 'atomic_write /etc/sysctl.d/99-master' "$V2_ROOT/install.sh"
+    # Old names are removed, otherwise one key is written from two files.
+    awk '/^remove_legacy_sysctl_files\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'rm -f'
+    awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'remove_legacy_sysctl_files'
+    # File placement is not proof; stage 7 reads the live value.
+    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'sysctl -n net.ipv4.ip_forward'
+}
+
+@test "fail-early gates: nft backend, repo suite, rendered configs" {
+    # Docker and firewall.sh must share one netfilter backend (DD-106).
+    awk '/^require_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'nf_tables'
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'require_nft_iptables'
+    # A suite the vendor has not published is named, not timed out on.
+    awk '/^assert_repo_suite\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'curl'
+    grep -q 'assert_repo_suite "Tailscale"' "$V2_ROOT/install.sh"
+    grep -q 'assert_repo_suite "Docker"' "$V2_ROOT/install.sh"
+    # Every render is validated before the unit that consumes it is restarted.
+    grep -q 'dnsmasq --test -C "\$DNSMASQ_CONF_FILE"' "$V2_ROOT/install.sh"
+    grep -q 'caddy validate --config "\$CADDYFILE"' "$V2_ROOT/install.sh"
+    grep -q 'docker compose config -q' "$V2_ROOT/install.sh"
+    # Caddy resolves env placeholders at runtime; validate with the real values.
+    grep -qF 'TAILSCALE_IPV4="$TAILSCALE_IPV4" WEBDAV_PORT="$WEBDAV_PORT"' \
+        "$V2_ROOT/install.sh"
+}
+
 @test "require_supported_os does not source os-release" {
     cat >"$TMP/os" <<EOF
 ID=debian
@@ -286,14 +365,27 @@ EOF
     [ "$status" -ne 0 ]
 }
 
-@test "docker daemon.json merges dns via jq" {
-    grep -q 'merge_docker_daemon_dns' "$V2_ROOT/install.sh"
-    awk '/^merge_docker_daemon_dns\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+@test "docker daemon.json merges dns and log rotation via jq" {
+    grep -q 'merge_docker_daemon_config' "$V2_ROOT/install.sh"
+    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -q 'jq'
-    awk '/^merge_docker_daemon_dns\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -q '\.dns = \["1.1.1.1", "1.0.0.1"\]'
     ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'atomic_write /etc/docker/daemon.json'
+}
+
+@test "container log rotation is merged only for the json-file driver" {
+    grep -q 'DOCKER_LOG_MAX_SIZE=' "$V2_ROOT/config/defaults.env"
+    grep -q 'DOCKER_LOG_MAX_FILE=' "$V2_ROOT/config/defaults.env"
+    # The merge must be conditional: an operator-selected driver is preserved.
+    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'log-driver" // "json-file"'
+    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'max-size'
+    # Existing keys survive: log-opts is added to, not replaced.
+    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'log-opts" // {}'
 }
 
 @test "downloads path rejects unsafe characters and compose needs no .env" {
@@ -602,7 +694,7 @@ EOF
 
 @test "udp netbuf floor is 16MiB and applied before tailscale install" {
     grep -q 'NET_BUF_FLOOR_BYTES=16777216' "$V2_ROOT/config/defaults.env"
-    grep -q '99-master-stack-netbuf.conf' "$V2_ROOT/install.sh"
+    grep -q 'SYSCTL_NETBUF_FILE' "$V2_ROOT/install.sh"
     grep -q 'apply_udp_netbuf_floor' "$V2_ROOT/install.sh"
     # Ordering: floor call appears before apt-get install tailscale
     awk '/apply_udp_netbuf_floor$/{f=NR} /install -y tailscale/{t=NR}

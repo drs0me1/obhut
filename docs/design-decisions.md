@@ -4069,6 +4069,157 @@ separate document with its own numbering.
   ethtool, jq, … — resolves identically on both), and no support for
   derivatives (Mint, Pop!_OS) whose os-release IDs differ.
 
+### DD-103: The installer owns every restart it triggers (2026-09-08)
+
+- **Decision:** `stage_1` exports `NEEDRESTART_SUSPEND=1` next to
+  `DEBIAN_FRONTEND=noninteractive`.
+- **Why:** Ubuntu ships `needrestart` with an apt `DPkg::Post-Invoke` hook.
+  `/usr/sbin/needrestart` detects Ubuntu and, absent an explicit
+  `$nrconf{ui}`, sets `$nrconf{restart} = 'a'` — **automatic**. Verified on
+  `nrm` (needrestart 3.11, Ubuntu 26.04.1). `DEBIAN_FRONTEND=noninteractive`
+  does not disable this: it only suppresses the prompt, and only for
+  restart mode `i`, which Ubuntu mode has already replaced.
+  The effect is that after any `apt-get install`/`full-upgrade` that pulls a
+  library update, a process the installer does not own restarts `sshd`,
+  `docker`, `containerd`, `tailscaled`, `caddy` and `dnsmasq` in the middle
+  of stages 1, 2, 4 and 6. A `docker` restart there also fires the
+  `docker.service.d` drop-in (`master-firewall restart`); a `tailscaled`
+  restart fires `refresh-tailnet-config`. Both paths are re-entrant, so
+  nothing has been observed to break — but this is the same "two owners for
+  one thing" class the ufw gate refuses (**DD-102**), only silent.
+- **Why the env var and not a config file:** `NEEDRESTART_SUSPEND` is read by
+  `/usr/lib/needrestart/apt-pinvoke` and scoped to the installer's own
+  process tree. Writing `/etc/needrestart/conf.d/*` would be the installer
+  claiming a host policy it does not own after it exits (**DD-96**).
+- **Not doing:** an `OS_ID` branch. Debian does not install needrestart by
+  default, and an unread environment variable is a no-op there.
+
+### DD-104: The OS is recorded, not just detected (2026-09-08)
+
+- **Decision:** `require_supported_os` additionally sets `OS_VERSION_ID` and
+  `OS_ARCH`; `write_state` records `OS_ID`, `OS_CODENAME`, `OS_VERSION_ID`,
+  `OS_ARCH` and `KERNEL_RELEASE`; `stage_0` calls `detect_os_change`, which
+  compares the recorded identity against the live one and, on a mismatch,
+  sets `OS_CHANGED=1` and `FIREWALL_NEEDS_RESTART=1`. `OS_CHANGED` forces the
+  Tailscale and Docker `apt-get update`, the `systemd-resolved` restart and
+  one dnsmasq/Caddy restart, even when the written files are byte-identical.
+- **Why:** the tree handles Debian/Ubuntu differences by *probing* the host
+  (`command -v ufw`, `systemctl is-active systemd-resolved`, `readlink
+  /etc/resolv.conf`) rather than branching on the distro label. That design
+  is better than a switch statement and is kept. What it lacked was memory:
+  after a `do-release-upgrade` from noble to resolute the repo lines change
+  (so **DD-100**'s skip correctly triggers an update), but nothing else
+  re-evaluates — the probes happen to still be right, by luck rather than by
+  design. Recording the identity turns that luck into a decision, and gives
+  a provisioned host a support record that previously had to be read live.
+- **Absent record is not a change:** a host installed by v2-73 or earlier has
+  no `OS_*` lines. That case logs "no OS record" and leaves `OS_CHANGED=0`;
+  the fields are simply added on this run. Claiming a release change there
+  would force needless work on every upgrading host.
+- **Not doing:** gating on the recorded value, migration logic per release
+  pair, or any comparison of non-OS state. `OS_CHANGED` re-runs steps that
+  already exist unconditionally — it is a cache invalidation, not the
+  reconcile engine contract §2 refuses.
+- **Architecture:** recorded, warned about outside `amd64`/`arm64`, and not
+  gated on. arm64 is untested, not unsupported; both apt vendors and all six
+  images publish it.
+- **Live-verified (`nrm`, 2026-09-08):** the v73 host logged "no OS record" and
+  gained the fields without claiming a change. Seeding
+  `OS_CODENAME=noble`/`OS_VERSION_ID=24.04` then produced
+  `işletim sistemi değişmiş: ubuntu/noble/24.04 → ubuntu/resolute/26.04` and
+  suppressed **every** skip path — both apt updates ran, and the firewall,
+  dnsmasq and Caddy all restarted — after which `state.env` self-corrected.
+
+### DD-105: sysctl drop-ins must sort last, and the runtime value is what counts (2026-09-08)
+
+- **Decision:** the two drop-ins move to `99-zz-master-stack-netbuf.conf` and
+  `99-zz-master-tailscale.conf` (paths in `defaults.env`), the v2-73 names are
+  deleted on upgrade, and `stage_7` asserts the **live**
+  `net.ipv4.ip_forward=1` and warns when `net.core.rmem_max` sits below
+  `NET_BUF_FLOOR_BYTES`.
+- **Why:** `/etc/sysctl.d` is applied in lexicographic order and the last
+  assignment wins. On `nrm` the provider image ships
+  `/etc/sysctl.d/99-nc-kernel.conf`, which sorts **after** both
+  `99-master-*` files and writes `net.core.rmem_max`/`wmem_max` itself. Here
+  it is harmless — it sets 64 MiB, four times the floor, and **DD-18**'s
+  `max(current, floor)` correctly preserved it. But the same ordering applies
+  to `99-master-tailscale.conf`, which carries `ip_forward`. On a host whose
+  provider file sorts later and sets `ip_forward = 0`, the installer would
+  apply forwarding at install time (`sysctl -p`, immediate) and lose it at the
+  next reboot: an exit node that silently stops forwarding, with every unit
+  green and every file on disk correct.
+- **Why also assert at runtime:** file placement is a claim, not a
+  measurement. A `99-zzz-*` file from a future image would beat the rename;
+  reading the live value catches the class rather than the instance. This is
+  the same reasoning as `master-firewall --check` (**DD-94**) — assert the
+  effect, not the intent.
+- **Why delete the old names:** two files writing one key is a second source
+  of truth, and the old ones would keep losing the same race.
+- **Live-verified across a cold reboot (`nrm`, 2026-09-08):** `/etc/sysctl.d`
+  now lists `99-nc-kernel.conf` before `99-zz-master-stack-netbuf.conf` and
+  `99-zz-master-tailscale.conf`, and after the boot `ip_forward=1`,
+  `net.ipv6.conf.all.forwarding=1` and `rmem_max=67108864` (the provider's
+  value, preserved by DD-18's `max()`). The rename only matters across a boot,
+  so this is the test that counts.
+
+### DD-106: Fail early, with the real cause (2026-09-08)
+
+Three gates, one rationale: every one of them replaces a late, misleading
+failure with an early, named one.
+
+1. **Netfilter backend (`require_nft_iptables`, stage 0).** `firewall.sh` and
+   Docker must use the same backend. With the alternatives set to
+   `iptables-legacy`, Docker writes nft and the script reads legacy, so
+   `DOCKER-USER` appears absent and `wait_for_docker_user` dies after 10 s
+   with "Docker çalışıyor ama zincir yok" — the symptom, not the cause. The
+   gate names the remedy (`update-alternatives --set iptables
+   /usr/sbin/iptables-nft`). `nrm` verified `iptables v1.8.11 (nf_tables)`.
+2. **Repo suite preflight (`assert_repo_suite`).** A codename the vendor has
+   not published yet fails inside `apt-get update`, after 3 attempts of up to
+   `APT_LOCK_TIMEOUT` each, with apt's own wording. One `curl -I` against
+   `…/dists/$OS_CODENAME/Release` per repo says which vendor is missing which
+   suite. Three attempts, because a transient network failure must not be
+   reported as an unpublished release. All six current combinations verified
+   to return 200 (2026-09-08).
+3. **Rendered-config validation.** `dnsmasq --test -C`, `caddy validate` and
+   `docker compose config -q` all run on the target — every binary is present
+   there — before the unit that consumes the file is restarted. Previously the
+   first sign of a bad render was `systemctl restart dnsmasq` failing under
+   `set -e`, or Caddy burning its `StartLimitBurst` (**DD-72**). Both work;
+   both say "restart failed" instead of "line 20: bad option". The realistic
+   trigger is exactly what **DD-104** is about — a dnsmasq or Caddy version
+   bump between OS releases dropping a directive. Verified on `nrm` that both
+   validators accept the live configs and reject seeded errors with a line
+   number and the offending directive.
+- **Caddy is validated with the real environment.** The Caddyfile resolves
+  `{$TAILSCALE_IPV4}` and `{$WEBDAV_PORT}` at daemon start; validating with an
+  empty environment accepted a meaningless `http://:` site, so the values are
+  passed in.
+- **Not doing:** `systemd-analyze verify` on the generated units. The units are
+  static files in the tree, not renders, and the bats suite already reads them.
+
+### DD-107: Container logs are rotated (2026-09-08)
+
+- **Decision:** `merge_docker_daemon_dns` becomes
+  `merge_docker_daemon_config` and additionally merges
+  `log-opts.max-size`/`max-file` (`defaults.env`) — but **only** when
+  `log-driver` is `json-file` or unset, and by adding to any existing
+  `log-opts` rather than replacing it.
+- **Why:** the json-file driver's default is unbounded, six services run
+  `restart: unless-stopped`, and one of them is a torrent client. Measured on
+  `nrm`: `/var/lib/docker/containers` at 360 K with no rotation configured —
+  small today, unbounded by design.
+- **Why conditional:** **DD-8** says write the keys we own and preserve the
+  rest. An operator who selected another logging driver has chosen its
+  options too; overwriting them would be the installer claiming a setting it
+  does not own.
+- **Known limitation, deliberately not worked around:** `log-opts` applies to
+  containers **created after** the change, and this function does not restart
+  Docker (a restart would stop the running containers). On a provisioned host
+  the setting therefore takes effect at the next compose recreation, not at
+  the end of this run. Forcing it would cost a service interruption to fix a
+  problem that has not yet occurred.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

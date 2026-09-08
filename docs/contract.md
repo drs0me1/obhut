@@ -62,11 +62,29 @@ the ones agreed on 2026-08-05:
   Ubuntu 24.04 LTS (noble) or Ubuntu 26.04 LTS (resolute); the installer
   refuses any other OS or release. Apt repo suites for Tailscale and
   Docker are derived from `os-release` (`OS_ID`/`OS_CODENAME`), never
-  hardcoded. On a host with ufw active the installer stops before any
-  mutation. Live-verified on fresh Ubuntu 24.04.4 (noble) and Ubuntu
-  26.04.1 (resolute) hosts on 2026-08-29/30: full installs passed stages
-  0–7 and the §14 checks; resolute additionally passed a no-op re-run,
-  Tailscale/Docker restart recovery and a full reboot.
+  hardcoded, and each vendor's `dists/<codename>/Release` is probed before
+  its source file is written (**DD-106**). On a host with ufw active, or
+  whose `iptables` alternative is not the nft backend Docker uses, the
+  installer stops before any mutation (**DD-106**). Live-verified on fresh
+  Ubuntu 24.04.4 (noble) and Ubuntu 26.04.1 (resolute) hosts on
+  2026-08-29/30: full installs passed stages 0–7 and the §14 checks;
+  resolute additionally passed a no-op re-run, Tailscale/Docker restart
+  recovery and a full reboot.
+- The detected release is **recorded**, not only used (**DD-104**):
+  `state.env` carries `OS_ID`, `OS_CODENAME`, `OS_VERSION_ID`, `OS_ARCH`
+  and `KERNEL_RELEASE`. A re-run whose recorded identity differs from the
+  live one warns and re-applies the OS-dependent steps even when the
+  written files are byte-identical. A host with no recorded OS (v2-73 or
+  earlier) is not treated as a release change. Architecture outside
+  `amd64` warns; it is not refused.
+- Third-party restart managers are suspended for the installer's apt calls
+  (`NEEDRESTART_SUSPEND=1`, **DD-103**). Ubuntu's `needrestart` otherwise
+  restarts `sshd`, `docker`, `containerd`, `tailscaled`, `caddy` and
+  `dnsmasq` automatically in the middle of a stage.
+- Every rendered config is validated on the target before the unit that
+  consumes it restarts: `dnsmasq --test -C`, `caddy validate` with the real
+  `TAILSCALE_IPV4`/`WEBDAV_PORT`, and `docker compose config -q`
+  (**DD-106**).
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
   as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`

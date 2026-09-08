@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-73"
+V2_VERSION="2026.08.06-v2-74"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -19,6 +19,9 @@ RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
 PULL_IMAGES=0
+# state.env'de kayıtlı OS kimliği canlı os-release ile uyuşmuyorsa 1 olur;
+# OS'a bağlı adımlar dosya içeriği aynı kalsa bile yeniden uygulanır (DD-104).
+OS_CHANGED=0
 # Ubuntu'da unattended-upgrades varsayılan açık: apt kilidi dakikalarca
 # tutulabilir. Kilitte hemen düşmek yerine bekle; retry üstte ayrıca sarar.
 APT_OPTS=(-o DPkg::Lock::Timeout=60)
@@ -68,7 +71,34 @@ WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
+OS_ID=$OS_ID
+OS_CODENAME=$OS_CODENAME
+OS_VERSION_ID=$OS_VERSION_ID
+OS_ARCH=$OS_ARCH
+KERNEL_RELEASE=$(uname -r)
 EOF
+}
+
+# Kurulumun hangi OS üzerinde yapıldığını state.env'den okur. Kayıt yoksa
+# (v2-73 ve öncesi) sürüm değişimi iddia edilmez — yalnız yeni alanlar yazılır.
+detect_os_change() {
+    [[ -r "$STATE_FILE" ]] || return 0
+    local prev_id prev_codename prev_version
+    prev_id="$(awk -F= '/^OS_ID=/{print $2; exit}' "$STATE_FILE" || true)"
+    prev_codename="$(awk -F= '/^OS_CODENAME=/{print $2; exit}' "$STATE_FILE" || true)"
+    prev_version="$(awk -F= '/^OS_VERSION_ID=/{print $2; exit}' "$STATE_FILE" || true)"
+    [[ -n "$prev_id" && -n "$prev_codename" ]] || {
+        log INFO "state.env'de OS kaydı yok (v2-73 öncesi); bu çalıştırmada eklenecek"
+        return 0
+    }
+    if [[ "$prev_id" == "$OS_ID" && "$prev_codename" == "$OS_CODENAME" &&
+        "$prev_version" == "$OS_VERSION_ID" ]]; then
+        return 0
+    fi
+    OS_CHANGED=1
+    log WARN "işletim sistemi değişmiş: ${prev_id}/${prev_codename}/${prev_version:-yok} → ${OS_ID}/${OS_CODENAME}/${OS_VERSION_ID}"
+    log WARN "OS'a bağlı adımlar (apt depoları, çekirdek modülleri, resolved, dnsmasq/Caddy, firewall) yeniden uygulanacak"
+    FIREWALL_NEEDS_RESTART=1
 }
 
 write_config() {
@@ -214,10 +244,26 @@ EOF
     fi
 }
 
+# Yayıncı bu ID/codename için gerçekten bir suite yayınlamış mı? Yayınlamadıysa
+# hata `apt-get update`in içinde, 3 deneme x APT_LOCK_TIMEOUT sonra ve sebebi
+# gizleyen bir mesajla çıkardı. Ağ dalgalanmasında yanlış ölmemek için 3 deneme
+# yapılır; hepsi başarısızsa sebep adıyla söylenir (DD-106).
+assert_repo_suite() {
+    local label="$1" url="$2" n=1
+    while [[ "$n" -le 3 ]]; do
+        curl -fs -I --max-time 15 "$url" >/dev/null 2>&1 && return 0
+        n=$((n + 1))
+        [[ "$n" -le 3 ]] && sleep 2
+    done
+    die "$label deposunda $OS_ID/$OS_CODENAME suite'i yok ($url) — yayıncı bu sürümü henüz yayınlamamış olabilir"
+}
+
 # Depo suite'i os-release'ten (require_supported_os → OS_ID/OS_CODENAME);
 # hem Tailscale hem Docker debian/ubuntu için aynı URL kalıbını yayınlar.
 install_tailscale_repo() {
     local keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
+    assert_repo_suite "Tailscale" \
+        "https://pkgs.tailscale.com/stable/${OS_ID}/dists/${OS_CODENAME}/Release"
     local tmp
     tmp="$(mktemp)"
     retry "tailscale-gpg" 3 60 -- \
@@ -231,6 +277,8 @@ EOF
 }
 
 install_docker_repo() {
+    assert_repo_suite "Docker" \
+        "https://download.docker.com/linux/${OS_ID}/dists/${OS_CODENAME}/Release"
     install -m 0755 -d /etc/apt/keyrings
     retry "docker-gpg" 3 60 -- \
         curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc
@@ -244,10 +292,30 @@ Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 }
 
+# firewall.sh ve Docker aynı netfilter arka ucunu kullanmak zorunda. Alternatif
+# legacy'ye alınmışsa Docker nft tablosuna yazar, betik legacy'yi okur ve
+# DOCKER-USER "yok" görünür — semptomu bildiren, sebebi gizleyen bir ölüm.
+# Kapıyı burada koyup gerçek çareyi söylüyoruz (DD-106).
+require_nft_iptables() {
+    local ver
+    ver="$(iptables --version 2>/dev/null || true)"
+    [[ -n "$ver" ]] || die "iptables çalıştırılamadı"
+    [[ "$ver" == *"nf_tables"* ]] ||
+        die "iptables arka ucu nft değil ($ver); Docker nft kullanır. Çare: update-alternatives --set iptables /usr/sbin/iptables-nft (ip6tables için de)"
+}
+
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
     require_supported_os
+    log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
+    case "$OS_ARCH" in
+        amd64) ;;
+        arm64) log WARN "arm64: apt depoları ve imajlar bu mimariyi yayınlıyor ama canlı doğrulanmadı" ;;
+        *) log WARN "beklenmeyen mimari ($OS_ARCH); yalnız amd64 canlı doğrulandı" ;;
+    esac
+    detect_os_change
+    require_nft_iptables
     [[ -t 0 || -r /dev/tty ]] || die "etkileşimli TTY gerekli"
     # Ubuntu server ufw ile gelir (varsayılan pasif). Aktifse INPUT'u ikinci
     # bir el yönetir ve MASTER-INPUT ile çelişir — fail-closed: önce kapat.
@@ -372,6 +440,13 @@ stage_0() {
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
+    # Ubuntu'da needrestart apt kancasıyla gelir ve "Ubuntu modunda" restart
+    # kipini OTOMATİK'e ayarlar ($nrconf{restart}='a'); DEBIAN_FRONTEND bunu
+    # kapatmaz. Kütüphane güncellemesinden sonra sshd/docker/containerd/
+    # tailscaled/caddy/dnsmasq'ı aşamaların ortasında yeniden başlatır —
+    # ufw kapısının reddettiği "tek şeyin iki sahibi" sınıfının aynısı.
+    # SUSPEND apt kancasınca okunur; Debian'da needrestart kurulu değil, no-op.
+    export NEEDRESTART_SUSPEND=1
     retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
         retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
@@ -412,33 +487,48 @@ apply_udp_netbuf_floor() {
     if (( current_wmem > target_wmem )); then
         target_wmem="$current_wmem"
     fi
-    atomic_write /etc/sysctl.d/99-master-stack-netbuf.conf 0644 <<EOF
+    atomic_write "$SYSCTL_NETBUF_FILE" 0644 <<EOF
 net.core.rmem_max = $target_rmem
 net.core.wmem_max = $target_wmem
 EOF
-    sysctl -p /etc/sysctl.d/99-master-stack-netbuf.conf >/dev/null
+    sysctl -p "$SYSCTL_NETBUF_FILE" >/dev/null
     log INFO "UDP netbuf floor: rmem_max=$target_rmem wmem_max=$target_wmem"
+}
+
+# v2-73'e kadar dosyalar 99-master-*.conf idi ve sağlayıcı imajının
+# 99-nc-kernel.conf'u onlardan SONRA sıralanıyordu; son atama kazandığı için
+# ip_forward boot'ta sessizce geri alınabilirdi. Yeni adlar 99-zz-* (DD-105);
+# eskiler silinmezse aynı anahtar iki dosyadan yazılır.
+remove_legacy_sysctl_files() {
+    local f
+    # shellcheck disable=SC2086 # boşlukla ayrılmış liste bilinçli
+    for f in $SYSCTL_LEGACY_FILES; do
+        [[ -f "$f" ]] || continue
+        rm -f "$f"
+        log INFO "eski sysctl drop-in silindi: $f"
+    done
 }
 
 stage_2() {
     log INFO "Aşama 2/7 — Tailscale"
     install_tailscale_repo
-    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
         retry "apt-update-ts" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     else
         log INFO "tailscale.list aynı; apt-get update atlandı (stage_1 zaten günceldi)"
     fi
+    remove_legacy_sysctl_files
     # M11/DD-18: buffer tabanı paket kurulumundan önce
     apply_udp_netbuf_floor
     retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y tailscale
     systemctl enable --now tailscaled
 
     # Forwarding ayrı dosyada; rmem/wmem yalnız netbuf conf'ta (DD-18).
-    atomic_write /etc/sysctl.d/99-master-tailscale.conf 0644 <<'EOF'
+    atomic_write "$SYSCTL_FORWARD_FILE" 0644 <<'EOF'
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 EOF
-    sysctl -p /etc/sysctl.d/99-master-tailscale.conf >/dev/null || true
+    sysctl -p "$SYSCTL_FORWARD_FILE" >/dev/null || true
     install -m 0755 "$V2_ROOT/scripts/tailscale-udp-gro" "$SBIN_DIR/tailscale-udp-gro"
     install -m 0644 "$V2_ROOT/systemd/tailscale-udp-gro.service" \
         "$UNIT_DIR/tailscale-udp-gro.service"
@@ -506,16 +596,27 @@ ensure_filebrowser_data_dir() {
     chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
 }
 
-# DD-8: yalnız dns anahtarını yaz; diğer daemon.json ayarlarını koru.
-merge_docker_daemon_dns() {
+# DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
+# log-opts yalnız sürücü json-file iken (varsayılan) dokunulur — operatör
+# başka bir sürücü seçtiyse onun ayarı ezilmez (DD-107). Yürürlüğe girmesi
+# docker restart + konteynerlerin yeniden yaratılmasını bekler; bu yüzden
+# burada disruptif bir restart yapılmaz.
+merge_docker_daemon_config() {
     local existing='{}' merged
     command -v jq >/dev/null 2>&1 || die "jq gerekli (daemon.json merge)"
     if [[ -f /etc/docker/daemon.json ]]; then
         existing="$(cat /etc/docker/daemon.json)"
         [[ -n "${existing//[[:space:]]/}" ]] || existing='{}'
     fi
-    merged="$(jq '.dns = ["1.1.1.1", "1.0.0.1"]' <<<"$existing")" ||
-        die "daemon.json jq merge başarısız (geçersiz JSON?)"
+    merged="$(
+        jq --arg sz "$DOCKER_LOG_MAX_SIZE" --arg n "$DOCKER_LOG_MAX_FILE" '
+            .dns = ["1.1.1.1", "1.0.0.1"]
+            | if ((."log-driver" // "json-file") == "json-file")
+              then ."log-opts" = ((."log-opts" // {}) +
+                                  {"max-size": $sz, "max-file": $n})
+              else . end
+        ' <<<"$existing"
+    )" || die "daemon.json jq merge başarısız (geçersiz JSON?)"
     atomic_write /etc/docker/daemon.json 0644 <<<"$merged"
 }
 
@@ -542,7 +643,7 @@ stage_3() {
 stage_4() {
     log INFO "Aşama 4/7 — Docker ve şablonlar"
     install_docker_repo
-    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
         retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
     else
         log INFO "docker.sources aynı; apt-get update atlandı (stage_1 zaten günceldi)"
@@ -550,7 +651,7 @@ stage_4() {
     retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     mkdir -p /etc/docker
-    merge_docker_daemon_dns
+    merge_docker_daemon_config
     systemctl enable --now docker
     ensure_wg_kernel_modules
 
@@ -581,6 +682,11 @@ stage_4() {
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
+    # Render'ı aktifleştirmeden önce doğrula (DD-106): şema hatası pull/up
+    # yerine burada, kendi mesajıyla düşsün. Aşama 7'deki `config --services`
+    # zaten örtük doğrulardı ama iki aşama sonra ve pull'dan sonraydı.
+    (cd "$COMPOSE_DIR" && docker compose config -q) ||
+        die "compose.yaml doğrulanamadı: $COMPOSE_DIR/compose.yaml"
 
     if [[ "$PULL_IMAGES" -eq 1 ]]; then
         # Fail-closed disk kapısı (DD-101): yarıda kalan bir pull disk-dolu
@@ -696,6 +802,13 @@ EOF
         TAILSCALE_IF="$TAILSCALE_IF" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
+    # OS/paket sürümü değişince kaybolan bir direktif, aksi hâlde ilk belirtisini
+    # "systemctl restart dnsmasq başarısız" olarak verirdi. --test satır numarası
+    # ve direktif adı söyler (DD-106).
+    local validate_out=""
+    if ! validate_out="$(dnsmasq --test -C "$DNSMASQ_CONF_FILE" 2>&1)"; then
+        die "dnsmasq yapılandırması geçersiz ($DNSMASQ_CONF_FILE): ${validate_out:-sebep bildirilmedi}"
+    fi
 
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         mkdir -p /etc/systemd/resolved.conf.d
@@ -703,7 +816,7 @@ EOF
 [Resolve]
 DNSStubListener=no
 EOF
-        if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+        if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
             systemctl restart systemd-resolved || true
         fi
         # Ubuntu: /etc/resolv.conf stub'a (127.0.0.53) symlink gelir; stub
@@ -724,6 +837,24 @@ EOF
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
     # {$WEBDAV_PORT} Caddyfile'da sabit değil; state.env değişince yeniden başlat.
     [[ "${WEBDAV_PORT_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
+    # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
+    # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
+    # doğrula (DD-106). Çıktı normalde JSON log satırları; hata satırını süz,
+    # bulunamazsa son satırı göster.
+    if ! validate_out="$(
+        TAILSCALE_IPV4="$TAILSCALE_IPV4" WEBDAV_PORT="$WEBDAV_PORT" \
+            caddy validate --config "$CADDYFILE" --adapter caddyfile 2>&1
+    )"; then
+        die "Caddyfile geçersiz ($CADDYFILE): $(
+            grep -i -m1 'error' <<<"$validate_out" || tail -n1 <<<"$validate_out"
+        )"
+    fi
+    # Sürüm yükseltmesinden sonra dosyalar bayt olarak aynı kalsa bile paketler
+    # değişti; iki kenar servisi bir kez yeniden başlasın (DD-104).
+    if [[ "$OS_CHANGED" -eq 1 ]]; then
+        dnsmasq_changed=1
+        caddy_changed=1
+    fi
 
     mkdir -p /etc/systemd/system/dnsmasq.service.d
     atomic_write /etc/systemd/system/dnsmasq.service.d/master-stack.conf 0644 <<'EOF'
@@ -856,6 +987,19 @@ stage_7() {
     wait_webdav_healthy
     assert_webdav_network
     "$SBIN_DIR/master-firewall" --check
+
+    # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
+    # dosya onu ezebilir; belirleyici olan ÇALIŞMA ANINDAKİ değer (DD-105).
+    # ip_forward exit node'un varlık şartı: fail-closed.
+    local fwd rmem
+    fwd="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+    [[ "$fwd" == "1" ]] ||
+        die "net.ipv4.ip_forward=$fwd (exit node için 1 olmalı; $SYSCTL_FORWARD_FILE başka bir /etc/sysctl.d dosyasınca eziliyor olabilir)"
+    rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
+    [[ "$rmem" =~ ^[0-9]+$ ]] || rmem=0
+    if (( rmem < NET_BUF_FLOOR_BYTES )); then
+        log WARN "net.core.rmem_max=$rmem taban değerin ($NET_BUF_FLOOR_BYTES) altında; $SYSCTL_NETBUF_FILE eziliyor olabilir"
+    fi
 
     local name resolver ans dig_out code health line svc
     # shellcheck disable=SC2086

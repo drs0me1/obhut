@@ -367,8 +367,8 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, ufw inactive, lock, inhibit); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
-| 1 | `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
 | 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
@@ -417,16 +417,23 @@ alone:
 | `bash -n` | Root `*.sh`, `scripts/*` and the exporter | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
 | `bats tests/` | Unit suites (repo convention, not from the rules file) | **yes** |
-| `docker compose config` | The rendered `compose.yaml` | **no** — Debian target only |
-| `caddy validate` | The rendered `Caddyfile` | **no** — Debian target only |
-| `dnsmasq --test` | The rendered dnsmasq config | **no** — Debian target only |
-| `systemd-analyze verify` | Every generated unit and drop-in | **no** — Debian target only |
+| `docker compose config -q` | The rendered `compose.yaml` | **no** — runs on the target, in stage 4 (**DD-106**) |
+| `caddy validate` | The rendered `Caddyfile` | **no** — runs on the target, in stage 6, with the real env (**DD-106**) |
+| `dnsmasq --test -C` | The rendered dnsmasq config | **no** — runs on the target, in stage 6 (**DD-106**) |
+| `systemd-analyze verify` | Every generated unit and drop-in | **no** — not run; the units are static tree files, covered by bats |
 
 The split matters: the first three can gate every commit, the last four can
 only run where the software exists. So a phase that renders a template is
 **not** verifiable on the workstation alone, and claiming otherwise is the
 failure mode those host-only checks exist to prevent (a missing tool must
 report *doğrulanamadı*, never a pass).
+
+Since v2-74 the three renderer checks are no longer only a manual option:
+`install.sh` runs each of them on the target, against the file it just
+rendered, before the unit that consumes it is restarted (**DD-106**). The
+workstation still cannot run them — the split above is unchanged — but a bad
+render now fails with a line number and a directive name instead of a failed
+`systemctl restart`.
 
 Two consequences for the phase that lands real rendering:
 
