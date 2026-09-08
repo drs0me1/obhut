@@ -26,27 +26,70 @@ printf 'wg database fixture\n' >"${DATA[wg-easy]}/wg-easy.db"
 printf 'wg config fixture\n' >"${DATA[wg-easy]}/wg0.conf"
 chmod 640 "${DATA[filebrowser]}/filebrowser.db"
 chown 1000:1000 "${DATA[filebrowser]}" "${DATA[filebrowser]}/filebrowser.db"
-jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] | map({name:.,image:"fixture",image_id:"sha256:fixture",user:"",ids:[],ports:{}})' >"$WORK/services.json"
+jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] |
+    map({name:.,image:"fixture",image_id:"sha256:fixture",user:"",ids:[],ports:{}}) |
+    map(if .name=="qbittorrent" then
+        .ids=["PGID=1000","PUID=1000"] |
+        .ports={"61006/tcp":[{HostIp:"127.0.0.1",HostPort:"61006"}]}
+    else . end)' >"$WORK/services.json"
 snapshot "$WORK/source" settings
 pack "$WORK/source" "$WORK/source.tar.gz"
 validate_bundle "$WORK/source.tar.gz" "$WORK/validated"
-check_target "$WORK/validated" strict
+check_target "$WORK/validated"
 cp "$WORK/services.json" "$WORK/original-services.json"
-jq '.[0].image_id="sha256:different"' "$WORK/original-services.json" >"$WORK/services.json"
+# Docker environment order is not a user/group setting. Existing schema-1
+# archives can contain either order; both sides must be compared by value.
+jq 'map(if .name=="qbittorrent" then .ids |= reverse else . end)' \
+    "$WORK/original-services.json" >"$WORK/services.json"
+check_target "$WORK/validated"
+mkdir "$WORK/reordered-source"
+jq '.services |= map(if .name=="qbittorrent" then .ids |= reverse else . end)' \
+    "$WORK/validated/manifest.json" >"$WORK/reordered-source/manifest.json"
+cp "$WORK/original-services.json" "$WORK/services.json"
+check_target "$WORK/reordered-source"
+printf 'PASS: PUID/PGID ordering is ignored in existing backups and live targets\n'
+for setting in PUID PGID; do
+    jq --arg setting "$setting" 'map(if .name=="qbittorrent" then
+        .ids |= map(if startswith($setting+"=") then $setting+"=2000" else . end)
+    else . end)' "$WORK/original-services.json" >"$WORK/services.json"
+    set +e
+    (check_target "$WORK/validated") >"$WORK/target-reject.log" 2>&1
+    rc=$?
+    set -e
+    (( rc != 0 )) || fail "A genuinely different $setting must be rejected."
+    grep -Fq 'qbittorrent ids:' "$WORK/target-reject.log"
+    grep -Fq "$setting=2000" "$WORK/target-reject.log"
+done
+jq 'map(if .name=="qbittorrent" then .ports["61006/tcp"][0].HostPort="61008" else . end)' \
+    "$WORK/original-services.json" >"$WORK/services.json"
 set +e
-(check_target "$WORK/validated" strict) >/dev/null 2>&1
+(check_target "$WORK/validated") >"$WORK/target-reject.log" 2>&1
 rc=$?
 set -e
-(( rc != 0 )) || fail 'Different images should fail by default.'
-check_target "$WORK/validated" allow-image-change
+(( rc != 0 )) || fail 'A changed port must still be rejected.'
+grep -Fq 'qbittorrent ports:' "$WORK/target-reject.log"
+printf 'PASS: genuine PUID, PGID and port changes remain rejected\n'
+# A fresh v73 install can pull a newer digest under the same moving tag.
+# Version changes are warnings, without any explicit override argument.
+for c in "${SERVICES[@]}"; do
+    jq --arg c "$c" 'map(if .name==$c then .image_id="sha256:different" else . end)' \
+        "$WORK/original-services.json" >"$WORK/services.json"
+    check_target "$WORK/validated" 2>"$WORK/image-warning.log"
+    grep -Fq 'UYARI:' "$WORK/image-warning.log"
+done
+jq 'map(.image="fixture:new-version" | .image_id="sha256:new-version")' \
+    "$WORK/original-services.json" >"$WORK/services.json"
+check_target "$WORK/validated" 2>"$WORK/image-warning.log"
+grep -Fq 'UYARI:' "$WORK/image-warning.log"
+printf 'PASS: changed image digests/tags warn but allow transfer by default\n'
 jq '.[0].user="different"' "$WORK/original-services.json" >"$WORK/services.json"
 set +e
-(check_target "$WORK/validated" allow-image-change) >/dev/null 2>&1
+(check_target "$WORK/validated") >/dev/null 2>&1
 rc=$?
 set -e
-(( rc != 0 )) || fail 'Image override must not bypass user/port checks.'
+(( rc != 0 )) || fail 'A changed runtime user must still be rejected.'
 cp "$WORK/original-services.json" "$WORK/services.json"
-printf 'PASS: target image/user incompatibility rejected before writes\n'
+printf 'PASS: target user incompatibility rejected before writes\n'
 [[ ! -e "$WORK/validated/qbittorrent/categories.json" && ! -e "$WORK/validated/portainer/bin" ]]
 printf 'changed preference\n' >"${DATA[qbittorrent]}/qBittorrent/qBittorrent.conf"
 printf 'extra stale file\n' >"${DATA[wg-easy]}/obsolete"

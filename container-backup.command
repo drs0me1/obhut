@@ -5,7 +5,7 @@ umask 077
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BACKUPS="$ROOT/backup"
-HOST="" PORT="" ACTION="" ARCHIVE="" YES=0 ALLOW=strict
+HOST="" PORT="" ACTION="" ARCHIVE="" YES=0
 REMOTE="" SESSION_DIR=""
 SSH_OPTS=()
 INTERACTIVE=0
@@ -19,7 +19,7 @@ usage() {
         '  --port 22               İsteğe bağlı SSH portu; yoksa SSH config kullanılır' \
         '  --archive DOSYA         Geri yüklenecek backup/.../settings.tar.gz' \
         '  --yes                   İşlem onayını otomatik yanıtla' \
-        '  --allow-image-change    Farklı imajlarla geri yüklemeye açıkça izin ver' \
+        '  --allow-image-change    Eski komutlarla uyumluluk; artık gerekli değil' \
         'Argümansız çalıştırıldığında işlem, sunucu ve yedek seçimi sorulur.'
 }
 cleanup_remote() {
@@ -53,7 +53,7 @@ while (( $# )); do
             case "$1" in --host) HOST=$2 ;; --port) PORT=$2 ;; --archive) ARCHIVE=$2 ;; esac
             shift 2 ;;
         --yes) YES=1; shift ;;
-        --allow-image-change) ALLOW=allow-image-change; shift ;;
+        --allow-image-change) shift ;; # Backward-compatible no-op.
         -h|--help) usage; exit 0 ;;
         *) usage; fail "Bilinmeyen seçenek: $1" ;;
     esac
@@ -100,6 +100,7 @@ if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
     printf 'Bu dört konteyner kısa süre durdurulacak. SSH/Tailscale bağlantısı açık kalır.\n'
     if [[ "$ACTION" == restore ]]; then
         printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek; önce kurtarma yedeği alınacak.\n' "$HOST"
+        printf 'Dağıtım/imaj sürümü eşitliği aranmaz; farklı uygulama sürümlerinde veri uyumluluğu garanti edilmez.\n'
         printf 'wg-easy anahtarları korunur; IP/DNS değişirse istemcilerin Endpoint adresini güncelleyin.\n'
     fi
     if (( ! YES )); then
@@ -119,7 +120,7 @@ prepare_remote() {
     [[ "$REMOTE" =~ ^/tmp/master-stack-backup\.[a-zA-Z0-9]+$ ]] || { REMOTE=""; fail 'SSH geçici dizini doğrulanamadı.'; }
     scp -q "${SSH_OPTS[@]}" "$ROOT/dev/container-backup-remote.sh" "$HOST:$REMOTE/worker.sh"
 }
-remote_run() { ssh -T "${SSH_OPTS[@]}" "$HOST" "bash '$REMOTE/worker.sh' '$1' '$ALLOW'"; }
+remote_run() { ssh -T "${SSH_OPTS[@]}" "$HOST" "bash '$REMOTE/worker.sh' '$1'"; }
 download_backup() {
     local label=$1 output_dir expected actual
     output_dir=$(mktemp -d "$BACKUPS/$(date -u +%Y%m%dT%H%M%SZ)-${HOST//[:@]/_}-$label.XXXXXX")

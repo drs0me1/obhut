@@ -55,7 +55,7 @@ discover() {
     done
     jq '[.[] | {name:(.Name | ltrimstr("/")), image:.Config.Image, image_id:.Image,
         running:.State.Running, health:(.State.Health.Status // "none"),
-        user:.Config.User, ids:[.Config.Env[]? | select(startswith("PUID=") or startswith("PGID="))],
+        user:.Config.User, ids:([.Config.Env[]? | select(startswith("PUID=") or startswith("PGID="))] | sort),
         ports:.HostConfig.PortBindings}] | sort_by(.name)' "$WORK/inspect.json" >"$WORK/services.json"
 }
 
@@ -194,15 +194,27 @@ validate_bundle() {
 }
 
 check_target() {
-    local source=$1 allow=$2
-    jq -e --slurpfile target "$WORK/services.json" '
-        [.services[] | {name,user,ids,ports}] == [$target[0][] | {name,user,ids,ports}]
-    ' "$source/manifest.json" >/dev/null || fail "Hedef portları veya kullanıcı UID/GID değerleri kaynakla eşleşmiyor."
+    local source=$1
+    # Older schema-1 backups also need normalization: Docker environment order
+    # is not significant, but actual PUID/PGID values must still match exactly.
+    if ! jq -e --slurpfile target "$WORK/services.json" '
+        [.services[] | {name,user,ids:(.ids | sort),ports}] ==
+        [$target[0][] | {name,user,ids:(.ids | sort),ports}]
+    ' "$source/manifest.json" >/dev/null; then
+        jq -r --slurpfile target "$WORK/services.json" '
+            .services[] as $saved | $target[0][] | select(.name==$saved.name) as $live |
+            ["user","ids","ports"][] as $field |
+            ($saved[$field] | if $field=="ids" then sort else . end) as $a |
+            ($live[$field] | if $field=="ids" then sort else . end) as $b |
+            select($a!=$b) |
+            "\($saved.name) \($field): yedek=\($a | tojson), hedef=\($b | tojson)"
+        ' "$source/manifest.json" >&2
+        fail "Hedef portları veya kullanıcı UID/GID (PUID/PGID) değerleri kaynakla eşleşmiyor; ayarlar yüklenmedi."
+    fi
     if ! jq -e --slurpfile target "$WORK/services.json" '
         [.services[] | {name,image_id}] == [$target[0][] | {name,image_id}]
     ' "$source/manifest.json" >/dev/null; then
-        [[ "$allow" == allow-image-change ]] || fail "İmaj sürümleri farklı. Aynı imajları kurun veya uyumluluğu kontrol edip --allow-image-change kullanın."
-        say "UYARI: farklı imajlarla geri yükleme açıkça seçildi; veritabanı uyumluluğu garanti edilmez."
+        say "UYARI: konteyner imajları farklı; sürüm farkı aktarımı engellemez. Uygulama/veritabanı uyumluluğu garanti edilmez."
     fi
 }
 
@@ -256,7 +268,7 @@ finish() {
 }
 
 main() {
-    local action=${1:-inspect} allow=${2:-strict} owner_uid owner_gid
+    local action=${1:-inspect} owner_uid owner_gid
     WORK=$(cd -- "$(dirname -- "$0")" && pwd)
     [[ "$WORK" =~ ^/tmp/master-stack-backup\.[a-zA-Z0-9]+$ ]] || fail "Yardımcı yalnız SSH geçici dizininde çalıştırılır."
     if (( EUID != 0 )); then exec sudo -n bash "$0" "$@"; fi
@@ -289,7 +301,7 @@ main() {
             ;;
         check|restore)
             validate_bundle "$WORK/input.tar.gz" "$WORK/validated"
-            check_target "$WORK/validated" "$allow"
+            check_target "$WORK/validated"
             if [[ "$action" == restore ]]; then
                 stop_services
                 snapshot "$WORK/rollback" rollback

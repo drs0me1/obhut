@@ -4,6 +4,27 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-06 follow-up:** Per user request, backup transfer between already
+provisioned v73 Debian/Ubuntu hosts no longer requires matching image IDs.
+Differences warn by default; `--allow-image-change` is a compatibility no-op.
+There is no backup OS/release gate; the installer's OS matrix is unchanged.
+Keep actual user/group/port, mount and archive checks, recovery snapshots and
+rollback. The suite and existing 11-file settings backup passed on Debian and
+inside disposable Ubuntu 24.04/26.04 containers; these are isolated file and
+rollback tests, not application-version migration guarantees. Live `nrm`
+archive/target check passed; no production restore was performed.
+
+**2026-09-06:** Fixed a false restore UID/GID incompatibility: the saved
+qBittorrent environment listed `PGID=1000` before `PUID=1000`, while the
+live `nrm` listed them in the opposite order. Normalize both sides when
+checking existing schema-1 backups; retain real user/group/port checks and
+print field-specific mismatch details. The regression failed with the old
+helper and passed with the fix. Existing snapshot
+`backup/20260905T174849Z-nrm-settings.iGQ0JK/settings.tar.gz` passed the live
+non-mutating target check and isolated 11-file restore/hash/ownership/mode
+verification. No production restore or installer change was made. Bash
+syntax and ShellCheck passed; Bats: 80 passed, 3 skipped (no local `timeout`).
+
 **2026-09-05:** Added separate `container-backup.command` and Linux helper
 `dev/container-backup-remote.sh`. Scope: Portainer data, FileBrowser DB/config,
 wg-easy DB/keys/config, qBittorrent `qBittorrent.conf` only. Backups are private,
@@ -43,7 +64,7 @@ plus the v2-65…70 line (**DD-98…101**).
 | Version | `2026.08.06-v2-73` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 82 bats, all green on the workstation |
+| Tests | 83 Bats: 80 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

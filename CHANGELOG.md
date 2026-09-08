@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-06 — Portable settings between provisioned v73 hosts
+
+- **Changed:** differing container image IDs now warn instead of blocking
+  backup restore; no override is required. The backup utility has no host
+  distribution/release gate. Existing archives remain usable between
+  provisioned Debian/Ubuntu hosts with the expected v73 container layout.
+- **Preserved:** archive validation, mount/user/port checks, recovery snapshots
+  and rollback. Arbitrary application/database version compatibility is not
+  guaranteed. Installer behavior and its supported-OS matrix are unchanged.
+- **Compatibility:** `--allow-image-change` remains accepted as a no-op.
+
+### 2026-09-06 — Fix false backup restore UID/GID mismatch
+
+- **Fixed:** compare PUID/PGID independently of Docker environment ordering,
+  including in existing schema-1 backups. Matching values no longer block a
+  restore merely because PUID and PGID appear in a different order.
+- **Diagnostics:** real user/group or port mismatches show the affected
+  service and source/target values; compatibility safeguards remain enabled.
+- **Tests:** cover both environment orders and rejection of real PUID, PGID
+  and port changes, including with the image-change override.
+
 ### 2026-09-05 — Separate SSH container settings backup utility
 
 - **Added:** root-level `container-backup.command` with backup, restore and

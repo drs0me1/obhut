@@ -93,11 +93,28 @@ wizard is completed. The pre-restore safety backup accepts that existing
 baseline; a settings restore then requires the restored services to become
 healthy. A recovery snapshot also records the original health baseline.
 
-Image IDs and published ports/UIDs must match by default. This prevents silently
-restoring a newer database into an incompatible version. `--allow-image-change`
-explicitly bypasses only the image check after the operator has checked version
-compatibility; ports/UID checks still apply. The script does not promise that
-all cross-version migrations work.
+The backup utility does not gate on the host distribution, release or kernel:
+settings can move between already-provisioned v73 Debian and Ubuntu hosts.
+It requires the expected containers, writable local mounts and command-line
+dependencies, not matching OS versions. This does not expand the installer's
+separate supported-OS matrix.
+
+Different container image IDs produce a warning, not a refusal. Fresh v73
+installs can pull newer images under the same moving tags; no extra option is
+needed to transfer an existing backup. `--allow-image-change` is accepted as a
+backward-compatible no-op. Application/database compatibility across arbitrary
+versions, especially downgrades, is not guaranteed. Restore still takes recovery
+snapshots and attempts rollback on write/start/health failures; passing health
+checks cannot prove every application setting migrated correctly.
+
+Published ports and runtime user/group IDs must still match: these affect
+service connectivity and access to the restored files, not OS version matching.
+The utility does not rewrite target Compose, ports, users or host networking.
+
+PUID/PGID are compared by value, regardless of their order in Docker's
+environment list. Existing schema-1 backups remain compatible; they do not
+need to be recreated. A genuine user/group or port mismatch reports the
+service, field and source/target values before any settings are replaced.
 
 wg-easy server/client keys are preserved. A move to a new public IP or DNS name
 still requires the correct endpoint in wg-easy and existing client profiles;
@@ -133,8 +150,11 @@ shellcheck -x -s bash container-backup.command dev/container-backup-remote.sh te
 directories. It covers archive round-trip, SHA-256 and ownership/modes,
 out-of-scope preservation, stale-file removal, rollback on error, and rejection
 of traversal/absolute paths, symlinks, hardlinks, tampered and out-of-scope
-archives. An optional archive argument exercises a real backup against those
-isolated targets without restoring production data.
+archives. Target checks cover reordered PUID/PGID lists as well as rejection
+of actual UID/GID, user and port changes. Different image digests/tags are
+accepted with a warning and no override. An optional archive argument
+exercises a real backup against those isolated targets without restoring
+production data.
 
 On 2026-09-05, a real backup from the configured Debian 13 `nrm` passed the
 SSH download/hash check and target compatibility check. Its 11 data files
@@ -142,3 +162,16 @@ SSH download/hash check and target compatibility check. Its 11 data files
 isolated temporary targets with matching hashes, numeric ownership and modes.
 The live source was not restored over; all six services remained running
 after backup, with three WireGuard peers retained.
+
+On 2026-09-06, a reordered PUID/PGID regression failed with the old helper
+and passed with the fix. The existing 11-file settings archive passed the
+live `nrm` compatibility check and an isolated restore with matching hashes,
+ownership and modes. No live settings were replaced during verification.
+
+The version-independent transfer policy was also tested on 2026-09-06:
+the isolated suite and the same existing 11-file Debian backup passed on the
+Debian host and inside disposable Ubuntu 24.04 and 26.04 containers. Each
+service's changed image digest, plus changed image tags, was accepted with a
+warning. These are file-transfer/validation/rollback tests, not full application
+database migration tests or fresh Ubuntu host installs. The live Debian target
+check also passed without replacing application data.
