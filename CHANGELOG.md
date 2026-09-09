@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-08 — Fresh Debian installs work again (v2-75)
+
+- **Fixed:** v2-74's stage-0 netfilter backend gate made a **fresh Debian
+  install impossible**. A minimal Debian 13 image ships no `iptables` at all —
+  the package arrives in stage 1's base set — so the gate died at stage 0,
+  before the stage that installs the binary it inspects. Ubuntu ships
+  `iptables` preinstalled, which is why v2-74's acceptance did not catch it.
+  The gate is now `check_nft_iptables optional|required`: stage 0 verifies
+  whatever exists and defers otherwise, stage 1 makes it mandatory once the
+  package is in place. Both `iptables` and `ip6tables` are checked, since each
+  has its own alternatives link (**DD-108**).
+- **Live-verified on Debian 13.6 (trixie)** (2026-09-08): a fresh install from
+  a bare host through stages 0–7, an idempotent re-run, a cold reboot, a
+  post-reboot re-run and a seeded release-change run — all exit 0, 6/6
+  containers healthy, 0 failed units, and every §14 check passing after the
+  reboot. Both supported distributions have now had the same acceptance.
+
 ### 2026-09-08 — OS-aware install: record the release, verify the result (v2-74)
 
 - **Fixed:** `needrestart` — installed and hooked into apt on Ubuntu, and

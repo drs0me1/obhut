@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-74"
+V2_VERSION="2026.08.06-v2-75"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -295,13 +295,26 @@ EOF
 # firewall.sh ve Docker aynı netfilter arka ucunu kullanmak zorunda. Alternatif
 # legacy'ye alınmışsa Docker nft tablosuna yazar, betik legacy'yi okur ve
 # DOCKER-USER "yok" görünür — semptomu bildiren, sebebi gizleyen bir ölüm.
-# Kapıyı burada koyup gerçek çareyi söylüyoruz (DD-106).
-require_nft_iptables() {
-    local ver
-    ver="$(iptables --version 2>/dev/null || true)"
-    [[ -n "$ver" ]] || die "iptables çalıştırılamadı"
-    [[ "$ver" == *"nf_tables"* ]] ||
-        die "iptables arka ucu nft değil ($ver); Docker nft kullanır. Çare: update-alternatives --set iptables /usr/sbin/iptables-nft (ip6tables için de)"
+# Kapıyı koyup gerçek çareyi söylüyoruz (DD-106).
+#
+# İki çağrı yeri (DD-108): Ubuntu iptables'ı önyüklü getirir, Debian minimal
+# getirmez — paketi aşama 1 kurar. Aşama 0'da binary yoksa denetlenecek bir
+# yanlış yapılandırma da yoktur; kapı ertelenir. Aşama 1'den sonra zorunludur.
+check_nft_iptables() {
+    local required="${1:-optional}" bin ver missing=0
+    for bin in iptables ip6tables; do
+        ver="$("$bin" --version 2>/dev/null || true)"
+        if [[ -z "$ver" ]]; then
+            missing=1
+            continue
+        fi
+        [[ "$ver" == *"nf_tables"* ]] ||
+            die "$bin arka ucu nft değil ($ver); Docker nft kullanır. Çare: update-alternatives --set $bin /usr/sbin/${bin}-nft"
+    done
+    [[ "$missing" -eq 1 ]] || return 0
+    [[ "$required" != "required" ]] ||
+        die "iptables/ip6tables bulunamadı (aşama 1 kurmuş olmalıydı)"
+    log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
 stage_0() {
@@ -315,7 +328,7 @@ stage_0() {
         *) log WARN "beklenmeyen mimari ($OS_ARCH); yalnız amd64 canlı doğrulandı" ;;
     esac
     detect_os_change
-    require_nft_iptables
+    check_nft_iptables optional
     [[ -t 0 || -r /dev/tty ]] || die "etkileşimli TTY gerekli"
     # Ubuntu server ufw ile gelir (varsayılan pasif). Aktifse INPUT'u ikinci
     # bir el yönetir ve MASTER-INPUT ile çelişir — fail-closed: önce kapat.
@@ -457,6 +470,8 @@ stage_1() {
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq \
         apache2-utils dnsutils
+    # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
+    check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
 
     if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then

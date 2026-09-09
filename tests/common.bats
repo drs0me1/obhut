@@ -163,10 +163,20 @@ EOF
 }
 
 @test "fail-early gates: nft backend, repo suite, rendered configs" {
-    # Docker and firewall.sh must share one netfilter backend (DD-106).
-    awk '/^require_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'nf_tables'
+    # Docker and firewall.sh must share one netfilter backend (DD-106), and
+    # both families are checked because each has its own alternatives link.
+    awk '/^check_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'nf_tables'
+    awk '/^check_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'for bin in iptables ip6tables'
+    # Debian minimal has no iptables until stage 1 installs it, so stage 0 may
+    # only check what exists; stage 1 makes it mandatory (DD-108).
     awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'require_nft_iptables'
+        grep -q 'check_nft_iptables optional'
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'check_nft_iptables required'
+    # The mandatory check must come after the package that provides the binary.
+    awk '/retry "apt-base"/{i=NR} /check_nft_iptables required/{c=NR}
+         END { exit !(i && c && i < c) }' "$V2_ROOT/install.sh"
     # A suite the vendor has not published is named, not timed out on.
     awk '/^assert_repo_suite\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'curl'
     grep -q 'assert_repo_suite "Tailscale"' "$V2_ROOT/install.sh"

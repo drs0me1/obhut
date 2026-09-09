@@ -531,9 +531,56 @@ consistent with the design: apt reported *Waiting for cache lock … held by
 process 266758 (apt-get)* and waited it out under `DPkg::Lock::Timeout`
 (**DD-102**), and `dnsutils` resolved to `bind9-dnsutils` without incident.
 
-**Still outstanding: the same acceptance on Debian 13 (trixie).** Every change
-in this release is either OS-agnostic or a no-op on Debian by construction,
-but that is an argument, not a measurement.
+### Debian 13 acceptance — and what it caught (`v2-75`, 2026-09-08)
+
+The argument that every v2-74 change was "OS-agnostic or a no-op on Debian by
+construction" was wrong, and the measurement found it immediately.
+
+**A minimal Debian 13 image ships no `iptables` at all** — no binary, no dpkg
+entry, no `/usr/sbin/iptables*`. The package arrives in stage 1's base set.
+v2-74's stage-0 backend gate (C2 above) therefore died before the stage that
+installs the very binary it inspects, making **fresh Debian installs
+impossible**. Ubuntu ships `iptables` preinstalled, which is exactly why the
+Ubuntu acceptance could not see it. Fixed in v2-75 as a two-phase check
+(**DD-108**), with the general rule recorded: an early gate may only assert
+properties of a host as it *arrives*.
+
+Nothing else needed changing. A dry run of stage 1's full package set on
+trixie resolved cleanly — `dnsutils` maps to `bind9-dnsutils` with no error,
+and every other name exists.
+
+Fresh install on a bare trixie host, then the same sequence Ubuntu got:
+
+| Run | Result |
+|---|---|
+| 1 — fresh install | Stage 0 logged the deferred backend check, then stages 0–7 in **90 s**, exit 0. `state.env`: `debian`/`trixie`/`13`/`amd64`, kernel `6.12.107+deb13-amd64`. |
+| 2 — re-run | Full no-op in 7 s; 6/6 container IDs and start times bit-identical. |
+| reboot | `99-zz-master-*` sorts after the provider's `99-nc-kernel.conf`; `ip_forward=1`, IPv6 forwarding `1`, `rmem_max` 64 MiB preserved. |
+| 3 — post-reboot re-run | No-op again, exit 0. |
+| 4 — seeded `ubuntu/noble/24.04` | Logged `işletim sistemi değişmiş: ubuntu/noble/24.04 → debian/trixie/13`, re-applied every OS-dependent step, and self-corrected `state.env`. |
+
+The Debian-specific paths all behaved as the probe design predicts, and each
+was confirmed rather than assumed:
+
+| Probe | Debian reality | Outcome |
+|---|---|---|
+| `systemd-resolved` | **inactive** | Whole resolved block skipped; `/etc/systemd/resolved.conf.d/` never created — so A1's Ubuntu-only stub problem simply does not exist here |
+| `/etc/resolv.conf` | regular file, later owned by Tailscale | No stub symlink to repoint |
+| `needrestart` | **not installed** | `NEEDRESTART_SUSPEND=1` is the intended no-op (**DD-103**) |
+| `ufw` | **not installed** | Gate no-ops |
+| `debian-keyring` | installed | The one genuine `OS_ID=debian` branch (**DD-102**) |
+| `unattended-upgrades` | not installed | No dpkg-lock contention; `DPkg::Lock::Timeout` harmless |
+
+Post-reboot: 0 failed units, 6/6 containers healthy, `master-firewall --check`
+passes, all five wg modules loaded, `health.ayc` resolves from both
+`127.0.0.1` and the tailnet address with out-of-domain `REFUSED`, Caddy health
+`ok`, WebDAV `401` on both paths, `BackendState=Running`, `Online=true`,
+`ExitNodeOption=true`, and `daemon.json` carries the rotation keys.
+
+**Both supported distributions have now had the same acceptance.** systemd
+differs across them (257 on trixie, 259 on resolute) and so does the kernel
+(6.12 vs 7.0), which is what makes the probe-over-identity design worth
+keeping.
 
 ## 9. Do not change
 

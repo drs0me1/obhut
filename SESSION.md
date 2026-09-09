@@ -35,9 +35,25 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
-**Still outstanding: the same acceptance on Debian 13 (trixie).** Steps 6
-(dnsmasq `listen-address`) and 7 (BBR/`fq`) deliberately not taken; both need
-before/after measurement on both OS families.
+**2026-09-08 — v2-75, Debian 13 acceptance (nrm reinstalled as trixie):** the
+Debian run immediately caught a v2-74 regression: a minimal Debian image ships
+**no `iptables` at all**, so the stage-0 netfilter gate died before stage 1
+could install it — fresh Debian installs were impossible. Ubuntu ships the
+package preinstalled, which is why its acceptance missed it. Fixed as a
+two-phase `check_nft_iptables optional|required` (**DD-108**), with the rule
+recorded: an early gate may only assert what the host arrives with. Nothing
+else needed changing; a dry run of stage 1's package set on trixie resolved
+cleanly (`dnsutils` → `bind9-dnsutils`).
+Fresh install on a bare trixie host: stages 0–7 in 90 s, exit 0; re-run a
+7 s no-op with 6/6 container IDs identical; cold reboot with `99-zz-*` sorting
+after the provider file and `ip_forward=1`; post-reboot re-run a no-op; a
+seeded `ubuntu/noble/24.04` proved DD-104 on Debian too. All Debian probe
+paths confirmed rather than assumed: resolved **inactive** (block skipped,
+no drop-in created), no needrestart, no ufw, `debian-keyring` installed.
+**Both supported distributions have now had the same acceptance** (trixie
+systemd 257 / kernel 6.12; resolute systemd 259 / kernel 7.0).
+Steps 6 (dnsmasq `listen-address`) and 7 (BBR/`fq`) still deliberately not
+taken; both need before/after measurement on both OS families.
 
 **2026-09-06 follow-up:** Per user request, backup transfer between already
 provisioned v73 Debian/Ubuntu hosts no longer requires matching image IDs.
@@ -96,7 +112,7 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-74` (unreleased) |
+| Version | `2026.08.06-v2-75` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
 | Tests | 89 Bats: 86 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |

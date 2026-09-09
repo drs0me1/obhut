@@ -4220,6 +4220,43 @@ failure with an early, named one.
   the end of this run. Forcing it would cost a service interruption to fix a
   problem that has not yet occurred.
 
+### DD-108: A gate may only assert what the host already has (2026-09-08)
+
+- **Decision:** `require_nft_iptables` becomes `check_nft_iptables
+  optional|required`. Stage 0 calls it `optional`: it verifies the backend of
+  whichever of `iptables`/`ip6tables` exist and, when neither does, logs that
+  the check is deferred. Stage 1 calls it `required` immediately after the
+  base package install, where the binaries are guaranteed.
+- **Why:** DD-106 put the backend gate in stage 0 so a misconfigured host dies
+  before any mutation. That was verified on Ubuntu, which ships `iptables`
+  preinstalled — and it made **fresh Debian installs impossible**. A minimal
+  Debian 13 image has no `iptables` at all (`command not found`, no dpkg
+  entry, no `/usr/sbin/iptables*`); the package arrives in stage 1's base set.
+  v2-74's gate therefore killed the run at stage 0, before the stage that
+  would have installed the very binary it was inspecting. Verified on a fresh
+  trixie host on 2026-09-08.
+- **The general rule this encodes:** an early gate can only assert properties
+  of a host as it *arrives*. A check whose subject the installer itself
+  provides belongs after the step that provides it. Stage 0's other gates all
+  satisfy this — `root`, `os-release`, TTY, ufw (`command -v` guarded), and
+  `flock`, `ip`, `cmp` and `dpkg`, which are `required`/`essential` on both
+  distributions and present on any minimal image.
+- **Why not simply drop the stage-0 call:** a host whose alternatives were
+  deliberately pointed at `iptables-legacy` still has the binaries, and that
+  is the case the gate exists for. Checking what is present costs nothing and
+  keeps the fail-before-mutation property for every host that can fail it.
+- **Both families are checked.** `iptables` and `ip6tables` have separate
+  `update-alternatives` links and `firewall.sh` drives both, so the loop
+  covers both and names the failing one in the remedy.
+- **Not doing:** installing `iptables` earlier just to keep the gate in stage
+  0. That would move package installation before the input prompts and the
+  lock, for no gain.
+- **Live-verified (`nrm`, fresh Debian 13.6 trixie, 2026-09-08):** stage 0
+  logged `iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi
+  aşama 1'e ertelendi` and the install ran through to stage 7 in 90 seconds.
+  After stage 1 both binaries report `v1.8.11 (nf_tables)`. On the second
+  run the stage-0 check passes silently, because the package is now present.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

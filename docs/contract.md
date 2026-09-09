@@ -63,9 +63,12 @@ the ones agreed on 2026-08-05:
   refuses any other OS or release. Apt repo suites for Tailscale and
   Docker are derived from `os-release` (`OS_ID`/`OS_CODENAME`), never
   hardcoded, and each vendor's `dists/<codename>/Release` is probed before
-  its source file is written (**DD-106**). On a host with ufw active, or
-  whose `iptables` alternative is not the nft backend Docker uses, the
-  installer stops before any mutation (**DD-106**). Live-verified on fresh
+  its source file is written (**DD-106**). On a host with ufw active the
+  installer stops before any mutation. The `iptables`/`ip6tables` backend
+  must be the nft one Docker uses; stage 0 asserts this for whichever
+  binaries the host already has and stage 1 asserts it unconditionally once
+  the package is installed, because a minimal Debian image ships none
+  (**DD-106**, **DD-108**). Live-verified on fresh
   Ubuntu 24.04.4 (noble) and Ubuntu 26.04.1 (resolute) hosts on
   2026-08-29/30: full installs passed stages 0–7 and the §14 checks;
   resolute additionally passed a no-op re-run, Tailscale/Docker restart
