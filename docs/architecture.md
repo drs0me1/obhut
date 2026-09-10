@@ -411,7 +411,7 @@ forked into per-distribution paths.
 | `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
 | `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
 | `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |
-| `resolved-stub` | probe | ubuntu in practice | `DNSStubListener=no` written only when resolved is active; on Debian the whole block is skipped and no drop-in is created. **Open defect:** Ubuntu 26.04 / systemd 259 accepts and ignores the key (review A1) | DD-102 |
+| `resolved-stub` | probe | ubuntu in practice | `DNSStubListener=no` written only when resolved is active; on Debian the whole block is skipped and no drop-in is created. **Open defect:** Ubuntu 26.04 / systemd 259 accepts and ignores the key — reproduced on a fresh v2-76 install and across a reboot (review A1) | DD-102 |
 | `resolvconf-symlink` | probe | ubuntu | `/etc/resolv.conf` is repointed only when it targets the stub; Tailscale takes the file over later | DD-102 |
 
 <!-- OS-DIVERGENCE-INVENTORY:END -->

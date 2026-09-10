@@ -35,6 +35,22 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-10 — v2-76 accepted on Ubuntu 26.04.1 (nrm reinstalled as resolute):**
+closes the gap left at v2-75. Fresh install from bare metal in 95 s, no-op
+re-run (6/6 container ids identical), seeded release-change run, cold reboot,
+post-reboot re-run — all exit 0, 0 failed units, every §14 check passing.
+With the Debian run, **each capability probe is now measured on both branches**:
+resolved active (drop-in written) vs inactive (block skipped); stub symlink
+repointed vs absent; needrestart present vs absent; iptables present vs
+deferred; `debian-keyring` installed vs not. DD-103 measured rather than
+assumed — zero needrestart journal records and `sshd` kept its boot timestamp
+through a first-install full-upgrade, while every other service start mapped to
+an installer stage. DD-102's resolv.conf lifecycle confirmed end to end:
+repointed at install, replaced by Tailscale after the reboot, and correctly a
+no-op on the next run. **A1 is a standing Ubuntu 26.04 defect, not an upgrade
+artifact** — reproduced on a fresh install and across a reboot; still benign,
+still deliberately unfixed.
+
 **2026-09-11 — v2-76, OS-divergence inventory (no behaviour change):** after
 the Debian regression, the distro-dependent surface was made enumerable rather
 than forked. Measured first: of 1159 lines exactly one is a real

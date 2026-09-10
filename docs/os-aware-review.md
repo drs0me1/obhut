@@ -582,6 +582,67 @@ differs across them (257 on trixie, 259 on resolute) and so does the kernel
 (6.12 vs 7.0), which is what makes the probe-over-identity design worth
 keeping.
 
+### Ubuntu 26.04 acceptance at v2-76 — both sides of every probe (2026-09-10)
+
+`nrm` was reinstalled as Ubuntu 26.04.1 (resolute, systemd 259, kernel
+7.0.0-31) and v2-76 was accepted there from bare metal. This closes the gap
+left open at v2-75: **every supported distribution has now run the current
+version**, and — more usefully — each capability probe has been measured on
+*both* of its branches, the acting one and the skipping one.
+
+| Run | Result |
+|---|---|
+| 1 — fresh install | Stages 0–7 in **95 s**, exit 0. `state.env`: `ubuntu`/`resolute`/`26.04`/`amd64`, kernel `7.0.0-31-generic` |
+| 2 — re-run | Full no-op in 11 s; 6/6 container ids and start times bit-identical |
+| 3 — seeded `debian/trixie/13` | Logged the release change, re-applied every OS-dependent step, self-corrected `state.env` |
+| reboot | `99-zz-master-*` sorts after `99-nc-kernel.conf`; `ip_forward=1`, IPv6 forwarding `1`, `rmem_max` 64 MiB |
+| 4 — post-reboot re-run | No-op again; container start times unchanged from boot |
+
+**Each divergence, now measured on both branches:**
+
+| Slug | Debian branch (v2-75) | Ubuntu branch (v2-76) |
+|---|---|---|
+| `caddy-keyring-pkg` | `debian-keyring` installed | **not** installed — the one real branch, correct on both sides |
+| `ufw-gate` | package absent → no-op | package present, inactive → no-op |
+| `netfilter-binaries` | absent → check deferred to stage 1 | present → verified at stage 0, both families `nf_tables` |
+| `needrestart-suspend` | package absent → variable unread | package present → **measured, see below** |
+| `resolved-stub` | resolved inactive → block skipped, no drop-in created | resolved active → drop-in written |
+| `resolvconf-symlink` | no stub symlink → no-op | stub symlink → repointed |
+| `tailscale-repo-suite` / `docker-repo-suite` | `…/debian trixie` | `…/ubuntu resolute` |
+
+**`needrestart-suspend` (DD-103) measured rather than assumed.** The install
+ran 23:08:45–23:10:20 with `needrestart 3.11` installed and hooked into apt.
+Zero needrestart records in the boot journal, and the service start times
+account for every restart:
+
+```
+ssh          23:05:06   ← boot; never restarted during the install
+tailscaled   23:08:58   ← stage 2, the installer's own enable --now
+containerd   23:09:42   ← stage 4
+docker       23:09:43   ← stage 4
+dnsmasq      23:10:01   ← stage 6
+caddy        23:10:02   ← stage 6
+```
+
+`sshd` surviving a first-install `full-upgrade` untouched is the direct
+evidence: without the suspend this is the daemon needrestart would restart.
+
+**A1 is confirmed as a standing Ubuntu 26.04 defect, not an upgrade artifact.**
+It was first seen on a host upgraded v73→v74. On this *fresh* v76 install the
+drop-in is written correctly and `127.0.0.53` is still bound and answering, and
+it is still bound after the reboot. So the finding does not depend on install
+history — systemd 259 accepts `DNSStubListener=no` and ignores it. Still
+benign here (dnsmasq holds `127.0.0.1`, resolved holds `127.0.0.53`), still a
+latent start-order bind race, still deliberately unfixed pending the
+measurement the fix needs on both families.
+
+**DD-102's resolv.conf prediction confirmed end to end.** At install the
+`stub-resolv.conf` symlink was repointed to resolved's uplink; after the reboot
+Tailscale had replaced it with its own regular file, and host DNS stayed
+healthy throughout. On the post-reboot re-run the divergence correctly went
+quiet — `readlink` no longer matches the stub, so the repoint is a no-op. The
+bootstrap-not-ownership framing in DD-102 is exactly what the host does.
+
 ## 9. Do not change
 
 | Area | Why it stays |

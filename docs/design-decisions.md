@@ -4048,6 +4048,11 @@ separate document with its own numbering.
     `resolv.conf`. The resolute reboot test confirmed that steady state keeps
     host and split DNS healthy; forcing Tailscale onto the resolved stub would
     create a resolver loop on this dnsmasq layout and is deliberately not done.
+    Confirmed end to end on a fresh v2-76 install (2026-09-10): the stub
+    symlink was repointed at install time, Tailscale had replaced the file with
+    its own after the reboot, host and split DNS stayed healthy throughout, and
+    the post-reboot re-run correctly left the repoint alone because `readlink`
+    no longer matches the stub.
   - **apt lock:** Ubuntu enables unattended-upgrades by default, so the
     dpkg lock can be held for minutes right when the installer starts.
     Every `apt-get` call now carries `-o DPkg::Lock::Timeout=60`
@@ -4093,6 +4098,12 @@ separate document with its own numbering.
   claiming a host policy it does not own after it exits (**DD-96**).
 - **Not doing:** an `OS_ID` branch. Debian does not install needrestart by
   default, and an unread environment variable is a no-op there.
+- **Live-measured (`nrm`, fresh Ubuntu 26.04.1, 2026-09-10):** with
+  needrestart 3.11 installed and hooked into apt, a first install — which
+  forces `full-upgrade` — produced zero needrestart journal records, and every
+  service start time was attributable to an installer stage. `sshd` kept its
+  boot timestamp throughout, which is the direct evidence: it is the daemon
+  needrestart would otherwise have restarted mid-stage.
 
 ### DD-104: The OS is recorded, not just detected (2026-09-08)
 

@@ -32,6 +32,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Version bump with no behaviour change** is deliberate: the markers ship
   inside the portable `.command`, so the embedded archive differs, and
   `app/<version>.command` must keep identifying exactly one archive.
+- **Live-verified on Ubuntu 26.04.1 (resolute)** (2026-09-10): a fresh install
+  from a bare host (95 s), an idempotent re-run, a seeded release-change run, a
+  cold reboot and a post-reboot re-run — all exit 0. With the Debian 13
+  acceptance at v2-75, **every capability probe has now been measured on both
+  of its branches**, the acting one and the skipping one. `needrestart` was
+  measured rather than assumed: zero journal records and `sshd` keeping its
+  boot timestamp through a first-install `full-upgrade`.
 
 ### 2026-09-08 — Fresh Debian installs work again (v2-75)
 
