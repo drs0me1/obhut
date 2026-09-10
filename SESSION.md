@@ -35,6 +35,24 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-10 — v2-77, A1 closed (and a claim of ours withdrawn):** the fix that
+was planned for A1 — narrowing dnsmasq from `interface=lo` to
+`listen-address=127.0.0.1` — was tested before implementing and its premise
+failed. With resolved stopped and `127.0.0.53` completely free, dnsmasq was
+restarted and did **not** take it: `bind-dynamic` binds the addresses *assigned
+to* an interface, and `lo` carries only `127.0.0.1/8` and `::1/128`, so the
+"start-order bind race" the review claimed cannot happen. The binding change
+would have bought nothing and dropped `[::1]:53`; it is withdrawn and
+`os-aware-review.md` §4 is corrected. What remained real is that the installer
+wrote a setting this release ignores and called it success, so v2-77 reads the
+achieved stub state back and reports it either way (**DD-109**), with no
+binding change. Live on Ubuntu 26.04: the line appears immediately, run exits 0.
+The opposite branch cannot occur where the key is ignored, so it plus a missing
+`ss` were exercised in isolation; the wait is wall-clock bounded.
+**Debian re-verification of v2-77 is outstanding** — the resolved block is
+skipped entirely there, so the change is a no-op by construction, but nrm is
+Ubuntu now and that is an argument, not a measurement.
+
 **2026-09-10 — v2-76 accepted on Ubuntu 26.04.1 (nrm reinstalled as resolute):**
 closes the gap left at v2-75. Fresh install from bare metal in 95 s, no-op
 re-run (6/6 container ids identical), seeded release-change run, cold reboot,
@@ -141,10 +159,10 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-76` (unreleased) |
+| Version | `2026.08.06-v2-77` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 91 Bats: 88 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
+| Tests | 92 Bats: 89 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

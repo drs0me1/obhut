@@ -239,6 +239,22 @@ EOF
     # A restart only happens when the drop-in changed or the release changed.
     grep -q 'systemctl restart systemd-resolved' <<<"$block"
     grep -qF 'V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1' <<<"$block"
+
+    # The setting is not assumed to have worked: systemd 259 accepts and
+    # ignores it, so the achieved state is read back and reported (DD-109).
+    grep -q 'report_resolved_stub_state' <<<"$block"
+}
+
+@test "resolved stub state is read back, on a wall-clock bound" {
+    body="$(awk '/^report_resolved_stub_state\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$body" ]
+    # Reads the achieved state rather than trusting the write.
+    grep -q '127' <<<"$body"
+    # Both outcomes are reported; a silent no-op is the thing being fixed.
+    [ "$(grep -c 'log INFO' <<<"$body")" -eq 2 ]
+    # Every wait in this tree is bounded by wall clock, never by iteration count.
+    grep -q 'SECONDS + RESOLVED_STUB_SETTLE_SECONDS' <<<"$body"
+    grep -q 'RESOLVED_STUB_SETTLE_SECONDS=' "$V2_ROOT/config/defaults.env"
 }
 
 @test "require_supported_os does not source os-release" {

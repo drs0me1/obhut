@@ -29,7 +29,7 @@ the live host:
 
 | # | Finding | Severity | Evidence |
 |---|---|---|---|
-| A1 | `DNSStubListener=no` has **no effect** on Ubuntu 26.04; the installer reports success for a step that did nothing | SHOULD FIX | `127.0.0.53:53` UDP+TCP bound by `systemd-resolve`; `dig example.com @127.0.0.53` answers, after a clean restart with the drop-in last in the merge order |
+| A1 | `DNSStubListener=no` has **no effect** on Ubuntu 26.04; the installer reported success for a step that did nothing. *Fixed in v2-77 by reading the state back (DD-109); the "bind race" this entry originally also claimed was disproved by experiment — see §4* | FIXED | `127.0.0.53:53` UDP+TCP bound by `systemd-resolve`; `dig example.com @127.0.0.53` answers, after a clean restart with the drop-in last in the merge order |
 | A2 | `needrestart` **automatically restarts** sshd / docker / containerd / tailscaled / caddy / dnsmasq during every `apt-get` call on Ubuntu | MUST FIX | `needrestart 3.11` installed, apt `DPkg::Post-Invoke` hook active, `/usr/sbin/needrestart:255` sets `$nrconf{restart}='a'` in Ubuntu mode |
 | A3 | The installer's `sysctl.d` drop-ins are **not guaranteed to win at boot** — a provider file sorts after them | SHOULD FIX | `/etc/sysctl.d/99-nc-kernel.conf` sorts after `99-master-stack-netbuf.conf` and `99-master-tailscale.conf` |
 | B1 | `state.env` records no OS identity, so an in-place release upgrade is invisible to a re-run | SHOULD FIX | `state.env` head: `V2_VERSION`, `WAN_*`, `TAILSCALE_*` — no `OS_*` |
@@ -58,7 +58,7 @@ Every other divergence is a probe, not a branch:
 | Divergence | How it is handled | Verdict |
 |---|---|---|
 | ufw ships on Ubuntu, inactive | `command -v ufw` + `ufw status` → fail-closed in stage 0 | correct |
-| systemd-resolved active | `systemctl is-active` → write `DNSStubListener=no` | **applied, never verified — A1** |
+| systemd-resolved active | `systemctl is-active` → write `DNSStubListener=no`, then read the achieved state back | correct since v2-77 (**DD-109**); was applied-but-unverified — A1 |
 | `/etc/resolv.conf` → stub symlink | `readlink` target test → repoint to resolved uplink | correct, and correctly a no-op once Tailscale owns the file |
 | unattended-upgrades holds the dpkg lock | `-o DPkg::Lock::Timeout=60` on every call + `retry` | correct at the lock level; the *upgrade* itself is unowned |
 | nft-default host lacks legacy IPv4 modules | unconditional `modprobe` + `modules-load.d` (**DD-10**) | correct — a problem found on Ubuntu, solved for every OS |
@@ -162,33 +162,49 @@ release.
 `tailscale0` addresses; resolved holds `127.0.0.53` and `127.0.0.54`. No
 overlap, no conflict, and nothing on the host points at the stub.
 
-**Impact latent: a start-order race.** `templates/dnsmasq.conf` uses
-`interface=lo` with `bind-dynamic`. `bind-dynamic` claims every address on the
-listed interfaces as they appear. Today dnsmasq starts after resolved has taken
-`127.0.0.53`, so it skips it. In the reverse order — dnsmasq restarted while
-resolved is down, a boot ordering change, a package upgrade — dnsmasq takes
-`127.0.0.53:53` and resolved then fails to bind. Nothing in the tree would
-notice: `master-firewall --check` does not look at DNS sockets and stage 7 only
-queries `127.0.0.1` and the tailnet address.
+**Correction (2026-09-10): the latent start-order race claimed here does not
+exist.** The original text argued that `bind-dynamic` "claims every address on
+the listed interfaces as they appear", so a dnsmasq restart while resolved was
+down would let dnsmasq take `127.0.0.53:53` and lock resolved out. That
+inference was wrong, and it was tested rather than re-argued.
 
-**Two candidate fixes; recommend the second.**
+`bind-dynamic` binds the addresses **assigned to** an interface. `lo` carries
+exactly `127.0.0.1/8` and `::1/128`; `127.0.0.53` and `127.0.0.54` are not
+assigned to anything — they are merely reachable because 127/8 routes to `lo`,
+which is why resolved can bind them at all. The decisive experiment on `nrm`
+(2026-09-10): stop `systemd-resolved` so `.53` is completely free, restart
+dnsmasq, and look at what it takes.
 
-1. Keep writing the drop-in, and verify after the restart that the stub is
-   actually gone; log a WARN naming the release when it is not. Cheap, honest,
-   no behaviour change. But it leaves the race open.
-2. Stop depending on the stub being disabled at all. Replace `interface=lo`
-   with `listen-address=127.0.0.1` in `templates/dnsmasq.conf`, keeping
-   `bind-dynamic` and `interface=__TAILSCALE_IF__`. dnsmasq then binds exactly
-   the loopback address the contract names, the tailnet binding stays fully
-   dynamic (the property `optimization-review.md` §7 says must be preserved),
-   and the two resolvers can never contend for an address. The
-   `DNSStubListener=no` drop-in becomes belt-and-braces rather than
-   load-bearing.
+```
+[1] resolved stopped        → binders of 127.0.0.53: 0
+[2] dnsmasq restarted       → binds 127.0.0.1, ::1, and the three tailscale0
+                              addresses; 127.0.0.53 NOT taken
+[3] resolved started again  → binds 127.0.0.53 without conflict, active
+[4] health.ayc @127.0.0.1   → the tailnet address; 0 failed units
+```
 
-Option 2 is the smaller runtime surface and removes an OS-version dependency
-instead of tracking it. It needs a live re-verification of both DNS paths
-(`127.0.0.1` and the tailnet address, plus the out-of-domain `REFUSED`
-assertion) because it changes a binding.
+So the two resolvers never contend for the socket, and the proposed fix —
+replacing `interface=lo` with `listen-address=127.0.0.1` — would have changed a
+live DNS binding (and silently dropped `[::1]:53`) to buy nothing. It is
+withdrawn. This is exactly the class of change `optimization-review.md` §7
+protects `bind-dynamic` from.
+
+**What remains true, and what was fixed instead.** The installer still writes a
+setting that this release accepts and ignores, and still reported success for
+it. That is a real defect even when harmless: a configuration claim that is not
+true. v2-77 therefore reads the achieved state back and says which way it went
+(**DD-109**), rather than changing any binding:
+
+```
+resolved stub'ı 127.0.0.53'te ayakta — DNSStubListener=no bu sürümde
+yok sayılıyor; bu yerleşimde zararsız (DD-109)
+```
+
+The drop-in itself stays. Removing it would change behaviour on any host where
+the key still works — and there is currently no such host to verify against,
+since Debian keeps resolved inactive and Ubuntu 26.04 ignores the key. Writing
+a setting whose effect is then measured and reported is the honest position
+until one exists.
 
 ### A3 — the installer's `sysctl.d` files do not sort last
 
@@ -420,7 +436,8 @@ taken in v2-70.
 | B3 | `local line` | Removes a global leak | Trivial | None | `common.sh` 1 word | **APPLY** |
 | B1 | OS identity in `state.env` + change detection | Release upgrades stop being invisible; support record | Low | Low | `install.sh` ~10 lines, `common.sh` +3 | **APPLY** |
 | A3 | `99-zz-` sysctl prefix (+ `ip_forward` assertion in stage 7) | Forwarding and netbuf floor survive a hostile boot order | Low | Low | 2 renames + 1 `rm -f` + 1 assertion | **APPLY** |
-| A1 | dnsmasq `listen-address=127.0.0.1` (option 2) | Removes a systemd-version dependency and a bind race | Low | Medium — changes a binding | template 1 line | **APPLY after live DNS re-verification** |
+| A1 | dnsmasq `listen-address=127.0.0.1` (option 2) | ~~Removes a bind race~~ — the race was disproved by experiment (§4); buys nothing and drops `[::1]:53` | Low | Medium — changes a binding | template 1 line | **WITHDRAWN** |
+| A1 | Read the stub state back and report it (option 1) | A setting that silently does nothing becomes a stated fact | Very low | None — no binding changes | `install.sh` +1 helper | **APPLIED (v2-77, DD-109)** |
 | C1 | `dnsmasq --test` / `caddy validate` on the render | OS/package drift fails with a precise message | Low | Low | `install.sh` +3 lines | **APPLY** |
 | B4 | Repo-suite preflight | 15-minute timeout becomes a one-line explanation | Low | Low | `install.sh` +4 lines | **APPLY** opportunistically |
 | D2 | Docker `log-opts` | Removes an unbounded disk consumer | Very low | Low | `install.sh` +3 lines | **APPLY** |
@@ -441,7 +458,8 @@ taken in v2-70.
 3. A3 + stage-7 ip_forward     sysctl files sort last; runtime value asserted
 4. C1 + B4                     validate the render; preflight the repo suite
 5. D2                          docker log rotation (jq merge, DD-8 pattern)
-6. A1                          dnsmasq listen-address — needs a live DNS
+6. A1                          (superseded — see §4; done as DD-109 in v2-77)
+   [withdrawn]                 dnsmasq listen-address — needs a live DNS
                                re-verification on Ubuntu 26.04 AND Debian 13
 7. D1 (+ D3)                   measure BBR/fq on a WebDAV stream and an
                                exit-node sample; apply or record the rejection
@@ -473,7 +491,7 @@ before/after measurement on both OS families first.
 | B4 | `assert_repo_suite` probes `dists/<codename>/Release` for both vendors, 3 attempts | DD-106 |
 | C1 | `dnsmasq --test -C`, `caddy validate` (with the real `TAILSCALE_IPV4`/`WEBDAV_PORT`) and `docker compose config -q` run on the target before the consuming unit restarts | DD-106 |
 | D2 | `merge_docker_daemon_dns` → `merge_docker_daemon_config`; `log-opts` merged only for the `json-file` driver | DD-107 |
-| A1 | **Not taken.** The `DNSStubListener=no` drop-in stays; option 2 (dnsmasq `listen-address`) changes a binding and needs live DNS re-verification on both OS families | — |
+| A1 | **Done in v2-77**, but not as planned: the binding change was withdrawn after the race it targeted was disproved by experiment, and the achieved stub state is read back and reported instead | DD-109 |
 | D1, D3 | **Not taken.** BBR/`fq` and `tcp_mtu_probing` need before/after measurement | — |
 | B2, B6 | **Not taken.** `UBUNTU_CODENAME` fallback and operator-owned timezone are open decisions, not defects | — |
 
@@ -652,7 +670,7 @@ bootstrap-not-ownership framing in DD-102 is exactly what the host does.
 | **Repo suites derived from `os-release`** | Verified live: `docker-ce 5:29.8.0-1~ubuntu.26.04~resolute` and `tailscale 1.102.3` both installed from codename-derived lines |
 | **`max(current, floor)` netbuf logic (DD-18)** | Proved itself against a provider file that sets 4× the floor |
 | **Unconditional legacy-netfilter `modprobe` (DD-10)** | A problem found on one OS, fixed for all of them. Correct instinct; do not turn it into an `OS_ID` branch |
-| **dnsmasq `bind-dynamic`** | Unchanged from `optimization-review.md` §7. A1 option 2 narrows *which addresses* are claimed; it must not remove `bind-dynamic` itself |
+| **dnsmasq `bind-dynamic`** | Unchanged from `optimization-review.md` §7 — and now with a measured reason: it binds only the addresses *assigned* to `lo` and `tailscale0`, so it never contends with resolved's `127.0.0.53`. The A1 proposal to narrow it was withdrawn |
 | **Everything in `optimization-review.md` §7** | Staging-chain swap, third-party `DOCKER-USER` preservation, Compose decoupled from `tailscaled`, `--check`'s narrow scope, 1:1 publish style, MTU 1280 |
 | **No reconcile engine** | B1's `OS_CHANGED` flag forces a re-run of steps that already exist. It must not grow into state comparison for anything else |
 
@@ -665,7 +683,7 @@ As reviewed, at `2026.08.06-v2-73` on Ubuntu 26.04.1:
 ```
 OS DETECTION:            CORRECT
 OS-CONDITIONAL APPLY:    CORRECT
-OS-CONDITIONAL VERIFY:   MISSING          (A1, A3, C1, C2)
+OS-CONDITIONAL VERIFY:   ADDRESSED        (A1 v2-77; A3, C1, C2 v2-74)
 OS IDENTITY RECORD:      MISSING          (B1)
 THIRD-PARTY OWNERSHIP:   NEEDS CHANGES    (A2 — needrestart)
 PERFORMANCE HEADROOM:    UNMEASURED       (D1)

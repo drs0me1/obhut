@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-10 — A setting that silently did nothing now reports what happened (v2-77)
+
+- **Fixed (review A1):** `stage_6` still writes `DNSStubListener=no` when
+  systemd-resolved is active, but no longer assumes it worked. Ubuntu 26.04 /
+  systemd 259 accepts and ignores the key — the stub keeps answering on
+  `127.0.0.53`, on a fresh install and across a reboot — so the achieved state
+  is now read back and logged either way (**DD-109**). No binding changes.
+- **Withdrawn, after its premise failed a live test:** A1 also claimed a latent
+  start-order race in which dnsmasq could take `127.0.0.53` and lock resolved
+  out, with a proposed `listen-address=127.0.0.1` fix. Tested first: with
+  resolved stopped and the address completely free, dnsmasq did **not** take
+  it — `bind-dynamic` binds only the addresses *assigned* to an interface, and
+  `127.0.0.53` is not assigned to `lo`, merely reachable via 127/8. The change
+  would have altered a live DNS binding and dropped `[::1]:53` for no benefit.
+  `docs/os-aware-review.md` §4 is corrected accordingly.
+- **Verified:** the reporting line appears on Ubuntu 26.04 (stub up, reported
+  immediately, run exits 0). The opposite branch cannot occur on a host where
+  the key is ignored, so it was exercised in isolation along with a missing
+  `ss`; both behave correctly and the wait is wall-clock bounded.
+
 ### 2026-09-11 — The OS-divergence surface becomes an enumerable inventory (v2-76)
 
 - **No behaviour change.** Every distro-dependent point in `install.sh` now

@@ -4268,6 +4268,44 @@ failure with an early, named one.
   After stage 1 both binaries report `v1.8.11 (nf_tables)`. On the second
   run the stage-0 check passes silently, because the package is now present.
 
+### DD-109: A setting whose effect is not guaranteed gets read back (2026-09-10)
+
+- **Decision:** `stage_6` keeps writing `DNSStubListener=no` when
+  systemd-resolved is active, and then calls `report_resolved_stub_state`,
+  which reads whether `127.0.0.53` is actually bound and logs which way it
+  went. Bounded by `RESOLVED_STUB_SETTLE_SECONDS`, because the stub socket
+  appears a moment after a resolved restart.
+- **Why:** on Ubuntu 26.04 / systemd 259 the key is accepted and ignored — the
+  drop-in is present, last in the merge order, and `man resolved.conf` still
+  documents it, yet the stub stays up and answering, on a fresh install and
+  across a reboot. The installer was reporting success for a step that did
+  nothing. Harmless is not the same as true.
+- **What was NOT done, and why — a claim of ours that failed its own test.**
+  The review's A1 entry also asserted a latent start-order race: that
+  `bind-dynamic` "claims every address on the listed interfaces as they
+  appear", so a dnsmasq restart while resolved was down would let dnsmasq take
+  `127.0.0.53` and lock resolved out. The proposed fix was to replace
+  `interface=lo` with `listen-address=127.0.0.1`. Tested on `nrm` before
+  implementing: with resolved stopped and `.53` completely free, dnsmasq was
+  restarted and **did not take it** — `bind-dynamic` binds the addresses
+  *assigned to* an interface, and `lo` carries only `127.0.0.1/8` and
+  `::1/128`; `127.0.0.53` is merely reachable through the 127/8 route.
+  Resolved then rebound it cleanly. The race does not exist, so the binding
+  change would have bought nothing while dropping `[::1]:53` — it was
+  withdrawn. `optimization-review.md` §7's protection of `bind-dynamic` now
+  rests on a measurement rather than on reputation.
+- **Why not delete the ineffective drop-in instead:** it would change behaviour
+  on any host where the key still works, and there is no such host to verify
+  against — Debian keeps resolved inactive, Ubuntu 26.04 ignores the key.
+  Writing it and measuring the result is the honest position until one exists.
+- **The general rule:** where the installer cannot guarantee that a setting
+  takes effect, it reads the achieved state back and says so. Same principle as
+  `master-firewall --check` (**DD-94**) and stage 7's live `ip_forward`
+  assertion (**DD-105**): assert the effect, not the intent.
+- **Not doing:** failing the install over it. The state is benign here, and a
+  gate on a third party's configuration parser would be a new failure mode for
+  no gain.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

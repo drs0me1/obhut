@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-76"
+V2_VERSION="2026.08.06-v2-77"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -792,6 +792,24 @@ apt_get_install_masked_quiet() {
     return "$rc"
 }
 
+# DNSStubListener=no yazıldı; yürürlüğe girdi mi? systemd 259 (Ubuntu 26.04)
+# anahtarı kabul edip yok sayıyor. Bu yerleşimde zararsızdır ve ÖLÇÜLDÜ:
+# dnsmasq yalnız arayüze ATANMIŞ adresleri bağlar (127.0.0.1, ::1, tailscale0);
+# 127.0.0.53 atanmış bir adres değil, yalnız 127/8 rotasıyla erişilebilir, bu
+# yüzden iki çözümleyici aynı sokete hiç talip olmaz. Yine de uygulanan bir
+# ayarın sonucunu okumak, sessizce başarılı saymaktan iyidir (DD-109).
+report_resolved_stub_state() {
+    local deadline=$((SECONDS + RESOLVED_STUB_SETTLE_SECONDS))
+    while [[ "$SECONDS" -lt "$deadline" ]]; do
+        if ss -lnu 2>/dev/null | grep -q '127\.0\.0\.53'; then
+            log INFO "resolved stub'ı 127.0.0.53'te ayakta — DNSStubListener=no bu sürümde yok sayılıyor; bu yerleşimde zararsız (DD-109)"
+            return 0
+        fi
+        sleep 1
+    done
+    log INFO "resolved stub'ı kapalı — DNSStubListener=no yürürlükte"
+}
+
 stage_6() {
     log INFO "Aşama 6/7 — dnsmasq ve Caddy"
     local need_pkg=0
@@ -838,8 +856,8 @@ EOF
 
     # OS-DIVERGENCE: resolved-stub (pratikte ubuntu) — yoklama: resolved pasifse
     # (Debian varsayılanı) blok tamamen atlanır ve drop-in hiç oluşturulmaz.
-    # AÇIK KUSUR: Ubuntu 26.04 / systemd 259 bu anahtarı kabul edip yok sayıyor;
-    # stub 127.0.0.53'te ayakta kalır (os-aware-review A1) [DD-102]
+    # Ubuntu 26.04 / systemd 259 anahtarı kabul edip yok sayıyor; sonuç
+    # okunup bildirilir, sessizce başarılı sayılmaz [DD-102, DD-109]
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         mkdir -p /etc/systemd/resolved.conf.d
         atomic_write /etc/systemd/resolved.conf.d/master-stack.conf 0644 <<'EOF'
@@ -849,6 +867,7 @@ EOF
         if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
             systemctl restart systemd-resolved || true
         fi
+        report_resolved_stub_state
         # OS-DIVERGENCE: resolvconf-symlink (ubuntu) — hedef testi; stub symlink
         # yoksa (Debian) no-op. Tailscale sonradan dosyayı devralır [DD-102]
         # Ubuntu: /etc/resolv.conf stub'a (127.0.0.53) symlink gelir; stub
