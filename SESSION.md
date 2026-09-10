@@ -35,6 +35,19 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-11 — v2-76, OS-divergence inventory (no behaviour change):** after
+the Debian regression, the distro-dependent surface was made enumerable rather
+than forked. Measured first: of 1159 lines exactly one is a real
+`if OS = debian` branch, two are identity-substituted repo URLs, five are
+capability probes — so a per-distribution fork would duplicate ~1150 lines to
+isolate ~10, double every OS-agnostic fix (5 of this week's 6 DD entries), and
+break the single-artifact export model, without creating any test coverage.
+Instead: `# OS-DIVERGENCE: <slug>` markers in code, a delimited table in
+`architecture.md` §7.1, and bats asserting the two sets are equal with a `DD-*`
+on every row. Added the missing `resolved-stub` coverage. Both new tests were
+verified by mutation (remove a marker / a table row / a DD citation / move
+`DNSStubListener` outside the probe — each fails). A1 stays open.
+
 **2026-09-08 — v2-75, Debian 13 acceptance (nrm reinstalled as trixie):** the
 Debian run immediately caught a v2-74 regression: a minimal Debian image ships
 **no `iptables` at all**, so the stage-0 netfilter gate died before stage 1
@@ -112,10 +125,10 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-75` (unreleased) |
+| Version | `2026.08.06-v2-76` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 89 Bats: 86 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
+| Tests | 91 Bats: 88 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

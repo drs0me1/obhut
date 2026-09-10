@@ -190,6 +190,57 @@ EOF
         "$V2_ROOT/install.sh"
 }
 
+@test "OS-divergence inventory: code markers and the doc table agree" {
+    # Every distro-dependent point carries a marker; architecture.md lists the
+    # same set. Neither can drift without this failing.
+    code="$(grep -o 'OS-DIVERGENCE: [a-z-]*' "$V2_ROOT/install.sh" |
+        awk '{print $2}' | sort -u)"
+    doc="$(awk '/OS-DIVERGENCE-INVENTORY:BEGIN/,/OS-DIVERGENCE-INVENTORY:END/' \
+        "$V2_ROOT/docs/architecture.md" |
+        grep -oE '^\| `[a-z-]+`' | tr -d '|` ' | sort -u)"
+
+    # Guard against both extractions silently returning nothing, which would
+    # make the comparison below pass for the wrong reason.
+    [ -n "$code" ]
+    [ -n "$doc" ]
+    grep -qx 'caddy-keyring-pkg' <<<"$code"
+    grep -qx 'caddy-keyring-pkg' <<<"$doc"
+
+    [ "$code" = "$doc" ]
+
+    # Each inventory row cites the decision that justifies it.
+    while IFS= read -r slug; do
+        [ -n "$slug" ] || continue
+        awk '/OS-DIVERGENCE-INVENTORY:BEGIN/,/OS-DIVERGENCE-INVENTORY:END/' \
+            "$V2_ROOT/docs/architecture.md" |
+            grep -E "^\| \`${slug}\`" | grep -qE 'DD-[0-9]+'
+    done <<<"$doc"
+}
+
+@test "resolved divergence is probed, not assumed, and is actually written" {
+    # The one divergence that had no coverage at all until now. On Debian
+    # resolved is inactive, so the whole block must be skipped rather than
+    # writing a drop-in that nothing reads.
+    block="$(awk '/is-active --quiet systemd-resolved/,/^    fi$/' \
+        "$V2_ROOT/install.sh")"
+    [ -n "$block" ]
+    grep -q 'DNSStubListener=no' <<<"$block"
+
+    # Nothing under resolved.conf.d may be written outside that conditional.
+    total="$(grep -c 'resolved.conf.d' "$V2_ROOT/install.sh")"
+    inside="$(grep -c 'resolved.conf.d' <<<"$block")"
+    [ "$total" -eq "$inside" ]
+
+    # The stub repoint is nested inside the same probe and is target-tested,
+    # so it stays a no-op on a host without the stub symlink.
+    grep -q 'stub-resolv.conf' <<<"$block"
+    grep -q 'ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf' <<<"$block"
+
+    # A restart only happens when the drop-in changed or the release changed.
+    grep -q 'systemctl restart systemd-resolved' <<<"$block"
+    grep -qF 'V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1' <<<"$block"
+}
+
 @test "require_supported_os does not source os-release" {
     cat >"$TMP/os" <<EOF
 ID=debian

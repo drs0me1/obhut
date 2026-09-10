@@ -384,6 +384,43 @@ places.
 
 ---
 
+## 7.1 OS-divergence inventory
+
+Every point where behaviour depends on the host distribution is marked in the
+source with `# OS-DIVERGENCE: <slug>` and listed here. The two sets are
+asserted equal by `bats`, so a divergence cannot be added to the code without
+appearing here, or removed from here while it still exists in the code.
+
+`grep -n 'OS-DIVERGENCE:' install.sh` prints the live inventory.
+
+The list is short on purpose. Only **one** entry is a genuine
+`if OS = debian` branch; two are the same code with an `os-release` value
+substituted; the remaining five are *capability probes* that ask the host what
+it has rather than what it is called. A probe keeps working on a release the
+installer was never run against; a distro switch statement does not. See
+**DD-102** and **DD-104**, and `os-aware-review.md` for why the tree is not
+forked into per-distribution paths.
+
+<!-- OS-DIVERGENCE-INVENTORY:BEGIN -->
+
+| Slug | Kind | Affects | What differs | DD |
+|---|---|---|---|---|
+| `tailscale-repo-suite` | identity-derived | both | apt suite and keyring URL come from `OS_ID`/`OS_CODENAME`; both vendors publish the same URL shape | DD-102 |
+| `docker-repo-suite` | identity-derived | both | `URIs`/`Suites` from `OS_ID`/`OS_CODENAME` | DD-102 |
+| `caddy-keyring-pkg` | **branch** | debian | `debian-keyring` is added to the Caddy package set only on Debian. The only real `if OS = debian` in the tree | DD-102 |
+| `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
+| `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
+| `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |
+| `resolved-stub` | probe | ubuntu in practice | `DNSStubListener=no` written only when resolved is active; on Debian the whole block is skipped and no drop-in is created. **Open defect:** Ubuntu 26.04 / systemd 259 accepts and ignores the key (review A1) | DD-102 |
+| `resolvconf-symlink` | probe | ubuntu | `/etc/resolv.conf` is repointed only when it targets the stub; Tailscale takes the file over later | DD-102 |
+
+<!-- OS-DIVERGENCE-INVENTORY:END -->
+
+Two things are **deliberately not** divergences and must not become branches:
+the Caddy cloudsmith repo line (`any-version`, distro-agnostic) and the legacy
+IPv4 netfilter `modprobe` set, which is applied on every OS because the problem
+it solves was merely *found* on Ubuntu (**DD-10**).
+
 ## 8. Implementation status
 
 The lean root tree is executable: `install.sh` runs the seven stages on a

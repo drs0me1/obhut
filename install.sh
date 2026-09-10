@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-75"
+V2_VERSION="2026.08.06-v2-76"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -261,6 +261,8 @@ assert_repo_suite() {
 # Depo suite'i os-release'ten (require_supported_os → OS_ID/OS_CODENAME);
 # hem Tailscale hem Docker debian/ubuntu için aynı URL kalıbını yayınlar.
 install_tailscale_repo() {
+    # OS-DIVERGENCE: tailscale-repo-suite (debian+ubuntu) — depo suite'i ve
+    # keyring URL'i os-release'ten türer; iki yayıncı da aynı kalıbı kullanır [DD-102]
     local keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
     assert_repo_suite "Tailscale" \
         "https://pkgs.tailscale.com/stable/${OS_ID}/dists/${OS_CODENAME}/Release"
@@ -277,6 +279,8 @@ EOF
 }
 
 install_docker_repo() {
+    # OS-DIVERGENCE: docker-repo-suite (debian+ubuntu) — URIs/Suites os-release'ten
+    # türer; linux/debian ve linux/ubuntu aynı URL kalıbını yayınlar [DD-102]
     assert_repo_suite "Docker" \
         "https://download.docker.com/linux/${OS_ID}/dists/${OS_CODENAME}/Release"
     install -m 0755 -d /etc/apt/keyrings
@@ -328,8 +332,11 @@ stage_0() {
         *) log WARN "beklenmeyen mimari ($OS_ARCH); yalnız amd64 canlı doğrulandı" ;;
     esac
     detect_os_change
+    # OS-DIVERGENCE: netfilter-binaries (debian) — minimal Debian iptables'ı
+    # getirmez; aşama 0 yalnız var olanı denetler, aşama 1 zorunlu kılar [DD-108]
     check_nft_iptables optional
     [[ -t 0 || -r /dev/tty ]] || die "etkileşimli TTY gerekli"
+    # OS-DIVERGENCE: ufw-gate (pratikte ubuntu) — yoklama; paket yoksa no-op [DD-102]
     # Ubuntu server ufw ile gelir (varsayılan pasif). Aktifse INPUT'u ikinci
     # bir el yönetir ve MASTER-INPUT ile çelişir — fail-closed: önce kapat.
     if command -v ufw >/dev/null 2>&1 &&
@@ -453,6 +460,8 @@ stage_0() {
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
+    # OS-DIVERGENCE: needrestart-suspend (ubuntu) — env değişkeni; Debian'da
+    # paket kurulu olmadığı için no-op [DD-103]
     # Ubuntu'da needrestart apt kancasıyla gelir ve "Ubuntu modunda" restart
     # kipini OTOMATİK'e ayarlar ($nrconf{restart}='a'); DEBIAN_FRONTEND bunu
     # kapatmaz. Kütüphane güncellemesinden sonra sshd/docker/containerd/
@@ -792,6 +801,8 @@ stage_6() {
     if [[ "$need_pkg" -eq 1 ]]; then
         systemctl stop dnsmasq caddy 2>/dev/null || true
         systemctl mask dnsmasq.service caddy.service >/dev/null 2>&1 || true
+        # OS-DIVERGENCE: caddy-keyring-pkg (debian) — ağaçtaki TEK gerçek
+        # "if OS = debian" dallanması [DD-102]
         # debian-keyring yalnız Debian'da: Caddy'nin resmi kurulum setinden;
         # Ubuntu'da işlevi yok (imza doğrulaması cloudsmith keyring'iyle).
         local -a dns_pkgs=(dnsmasq)
@@ -825,6 +836,10 @@ EOF
         die "dnsmasq yapılandırması geçersiz ($DNSMASQ_CONF_FILE): ${validate_out:-sebep bildirilmedi}"
     fi
 
+    # OS-DIVERGENCE: resolved-stub (pratikte ubuntu) — yoklama: resolved pasifse
+    # (Debian varsayılanı) blok tamamen atlanır ve drop-in hiç oluşturulmaz.
+    # AÇIK KUSUR: Ubuntu 26.04 / systemd 259 bu anahtarı kabul edip yok sayıyor;
+    # stub 127.0.0.53'te ayakta kalır (os-aware-review A1) [DD-102]
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         mkdir -p /etc/systemd/resolved.conf.d
         atomic_write /etc/systemd/resolved.conf.d/master-stack.conf 0644 <<'EOF'
@@ -834,6 +849,8 @@ EOF
         if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
             systemctl restart systemd-resolved || true
         fi
+        # OS-DIVERGENCE: resolvconf-symlink (ubuntu) — hedef testi; stub symlink
+        # yoksa (Debian) no-op. Tailscale sonradan dosyayı devralır [DD-102]
         # Ubuntu: /etc/resolv.conf stub'a (127.0.0.53) symlink gelir; stub
         # kapanınca host DNS kırılır. resolved'in gerçek uplink dosyasına çevir.
         if [[ "$(readlink /etc/resolv.conf 2>/dev/null)" == *stub-resolv.conf ]]; then

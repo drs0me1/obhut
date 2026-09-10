@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-11 — The OS-divergence surface becomes an enumerable inventory (v2-76)
+
+- **No behaviour change.** Every distro-dependent point in `install.sh` now
+  carries a `# OS-DIVERGENCE: <slug>` marker, and `architecture.md` §7.1 lists
+  the same eight slugs in a delimited table. `grep -n 'OS-DIVERGENCE:'
+  install.sh` prints the live inventory. Previously this surface was
+  discoverable only by reading 1159 lines.
+- **The inventory checks itself:** bats asserts the code marker set and the doc
+  table set are equal and that every row cites a `DD-*`. A divergence cannot be
+  added to the code without appearing in the doc, or dropped from the doc while
+  it still exists. Verified by mutation — removing a marker, removing a table
+  row, and removing a DD citation each fail the test.
+- **Added:** coverage for the `resolved-stub` divergence, which had none. The
+  suite now asserts that `DNSStubListener=no` is written *only* inside the
+  `systemd-resolved` probe (so Debian, where resolved is inactive, writes no
+  drop-in at all), that the stub repoint is nested in the same probe and
+  target-tested, and that the restart is gated on a changed drop-in or a
+  changed release. Verified by mutation.
+- **Recorded:** the tree stays a single backbone rather than forking into
+  per-distribution paths. Measured basis — of 1159 lines, exactly **one** is a
+  real `if OS = debian` branch (`debian-keyring`), two are the same code with
+  an `os-release` value substituted, and five are capability probes. See
+  `os-aware-review.md`.
+- **Version bump with no behaviour change** is deliberate: the markers ship
+  inside the portable `.command`, so the embedded archive differs, and
+  `app/<version>.command` must keep identifying exactly one archive.
+
 ### 2026-09-08 — Fresh Debian installs work again (v2-75)
 
 - **Fixed:** v2-74's stage-0 netfilter backend gate made a **fresh Debian
