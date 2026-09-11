@@ -6,7 +6,8 @@ SSH config supplies the user, key and port; `--port` overrides the port.
 The target needs Docker, Bash, GNU tar, jq and root access (directly or through
 passwordless `sudo`). The script does not install packages.
 
-The utility is separate from the v73 installer. Run the installer on a new
+The utility is separate from the installer and does not depend on its
+version (it discovers mounts with `docker inspect`). Run the installer on a new
 target first, so the four containers and their data mounts exist. The backup
 utility never creates containers, pulls images or changes Compose/network
 configuration. `dev/container-backup-remote.sh` must remain beside the launcher
@@ -94,12 +95,12 @@ baseline; a settings restore then requires the restored services to become
 healthy. A recovery snapshot also records the original health baseline.
 
 The backup utility does not gate on the host distribution, release or kernel:
-settings can move between already-provisioned v73 Debian and Ubuntu hosts.
+settings can move between already-provisioned Debian and Ubuntu hosts.
 It requires the expected containers, writable local mounts and command-line
 dependencies, not matching OS versions. This does not expand the installer's
 separate supported-OS matrix.
 
-Different container image IDs produce a warning, not a refusal. Fresh v73
+Different container image IDs produce a warning, not a refusal. Fresh
 installs can pull newer images under the same moving tags; no extra option is
 needed to transfer an existing backup. `--allow-image-change` is accepted as a
 backward-compatible no-op. Application/database compatibility across arbitrary
@@ -175,3 +176,20 @@ service's changed image digest, plus changed image tags, was accepted with a
 warning. These are file-transfer/validation/rollback tests, not full application
 database migration tests or fresh Ubuntu host installs. The live Debian target
 check also passed without replacing application data.
+
+On 2026-09-11 the first **production restore** was performed: the 2026-09-06
+archive, taken on the previous Debian 13 `nrm` at v2-73, was restored onto a
+freshly installed Debian 13.6 `nrm` at v2-79. `check` passed with no image
+warning (the image IDs were identical). The restore produced the
+`before-restore` snapshot of the fresh host (`kind: rollback`, 11 files,
+SHA-256 verified) and completed with remote cleanup, so no recovery material
+was left behind. Verified afterwards on the live host: wg-easy `wg0.conf` and
+`wg-easy.db` byte-identical to the archive, with all three peer public keys
+present on `wg0`; the qBittorrent Web UI password hash identical; FileBrowser
+`config/settings.json` identical (`filebrowser.db` differs because the
+application rewrites it on start, as in the isolated tests); Portainer admin
+account present. 0 failed units, 6/6 containers, 3/3 healthchecks healthy,
+firewall `--check` passed. The host was rebooted immediately after the restore;
+nothing else was needed, and the wg-easy endpoint did not change because the
+host kept its public IP. Apart from a small "before-restore" archive, nothing in
+the fresh host's state was worth keeping: it had not been configured yet.

@@ -35,6 +35,17 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-11 — first production restore with container-backup:** the
+2026-09-06 archive (old Debian 13 nrm, v2-73) was restored onto the fresh
+Debian 13.6 v2-79 host from this Mac at 13:39 (+03), followed by a reboot.
+Verified afterwards: wg-easy config/db byte-identical to the archive with the
+three old peers on `wg0`, qBittorrent password hash identical, FileBrowser
+settings identical, Portainer admin present, host fully healthy. Recorded in
+`docs/container-backup.md`; its stale "v73" wording was corrected (the tool is
+version-agnostic and was exercised at v2-79). Open question raised by the user:
+whether WebDAV/Infuse state belongs in the backup — analysis in the session
+reply; no code change yet.
+
 **2026-09-11 — Debian 13 acceptance of v2-79 (nrm reinstalled as trixie):**
 closes the Debian gap for v2-77…v2-79. Fresh install from bare metal in 80 s,
 no-op re-run (0/6 recreated), seeded `ubuntu/resolute` → `debian/trixie`
