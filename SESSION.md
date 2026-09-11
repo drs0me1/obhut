@@ -35,6 +35,24 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-11 — Debian 13 acceptance of v2-79 (nrm reinstalled as trixie):**
+closes the Debian gap for v2-77…v2-79. Fresh install from bare metal in 80 s,
+no-op re-run (0/6 recreated), seeded `ubuntu/resolute` → `debian/trixie`
+release-change run, cold reboot, post-reboot re-run — all exit 0. On the
+settled post-reboot system the acceptance check passed 20/20: DD-108 deferred
+the netfilter gate (`iptables` absent on minimal Debian), DD-109's resolved
+block was skipped (resolved inactive, no drop-in created), DD-110's ordering
+held (daemon.json before dockerd's only init; container DNS and log options in
+effect with no restart), and DD-111's `tcp_bbr` — previously "expected but
+unverified" on Debian — loads on the 6.12 kernel, with `bbr` on Caddy's
+accepted socket and `fq` on `tailscale0` after the reboot. Two lessons about
+the *acceptance script itself* went into tests/README.md: `Self.ExitNodeOption`
+depends on admin approval, so it is informational, not an installer assertion;
+and healthchecks need settle time after a reboot (filebrowser's first healthy
+came 8 s after a premature check). Neither was an installer defect.
+**Both supported distributions have now had the same acceptance at v2-79.**
+Ubuntu 24.04 remains unverified since v2-72.
+
 **2026-09-11 — v2-79, BBR adopted after measuring it:** stage 2 now loads
 `tcp_bbr` and sets `bbr` and `fq` in `99-zz-master-tcp.conf`. If the module
 does not load, the install stays on the kernel default (the DD-108 lesson).

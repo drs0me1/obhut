@@ -29,3 +29,17 @@ than one interface carries the `wg` gateway address
 (`ip -o -4 addr show | grep <gateway>`) and which interface
 `ip route get <wg-easy address>` chooses.
 
+## Acceptance-check lessons (2026-09-11)
+
+- `tailscale status --json .Self.ExitNodeOption` is **not** an installer
+  assertion. It turns true only after the exit node is approved in the admin
+  console — the manual step the install summary lists. The installer's own
+  obligation is `AdvertiseRoutes` containing `0.0.0.0/0` in
+  `tailscale debug prefs`; assert that, and report `ExitNodeOption` as
+  information.
+- After a reboot, give healthchecks their `start_period` before asserting
+  `healthy`. On Debian 13 the host was back 11 s after boot and filebrowser
+  reached healthy 8 s later; a check that runs the moment SSH returns will
+  report a false failure. Stage 7's own `wait_webdav_healthy` already waits;
+  an external check must too.
+

@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   qBittorrent uploads and the web UIs. Exit-node traffic is forwarded, and
   forwarded TCP is controlled by its endpoints. The review had claimed
   otherwise; **DD-111** corrects it.
+- **Live-verified on Debian 13.6 (trixie)** (2026-09-11): a fresh install from
+  a bare host (80 s), an idempotent re-run, a seeded release-change run, a cold
+  reboot and a post-reboot re-run — all exit 0. `tcp_bbr` loads on the 6.12
+  kernel, the DD-110 ordering holds, and every stage-7 check passes after the
+  reboot. **v2-77 through v2-79 are now accepted on both supported
+  distributions.**
 
 ### 2026-09-11 — Container log rotation and Docker DNS actually take effect (v2-78)
 

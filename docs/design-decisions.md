@@ -4398,6 +4398,11 @@ failure with an early, named one.
   responses (`wg` 302). Exactly one interface held the `wg` gateway address,
   there were 0 failed units, 3/3 healthchecks were healthy, and firewall
   `--check` passed.
+- **Debian 13.6, fresh install (`nrm`, 2026-09-11):** the same ordering held
+  on the other distribution. `daemon.json` was written at 10:23:06 and dockerd
+  initialised once, at 10:23:14. With no restart, both probed containers
+  showed `ExtServers: [1.1.1.1 1.0.0.1]`, a `docker create` probe received the
+  daemon `log-opts`, and all six compose containers carry the log options.
 
 ### DD-111: TCP congestion control is BBR, measured before adopting it (2026-09-11)
 
@@ -4452,9 +4457,9 @@ failure with an early, named one.
   Also not doing: per-socket `setsockopt(TCP_CONGESTION)` in any service.
 - **Not an OS divergence:** this is a capability probe, not an
   `OS-DIVERGENCE` entry. `tcp_bbr` ships as a module on the Ubuntu 26.04
-  kernel (verified). Debian 13's kernel is expected to ship it too, but that
-  has not been verified, and if it does not the install stays on the default,
-  which is what the probe is for.
+  kernel and on the Debian 13 kernel (`6.12.107+deb13-amd64`,
+  `tcp_bbr.ko.xz`) — both verified live. If a future kernel drops it, the
+  install stays on the default, which is what the probe is for.
 - **Live-verified on Ubuntu 26.04.1 (`nrm`, 2026-09-11):** before the run the
   host was on cubic with `fq_codel`, and `tcp_bbr` was not loaded. The v2-79
   run logged `TCP: congestion_control=bbr default_qdisc=fq`, stage 7 raised no
@@ -4469,6 +4474,12 @@ failure with an early, named one.
   and recreated nothing. The live-tested code differs from the committed code
   in one comment only. That comment was corrected afterwards so that it no
   longer describes the Debian module as verified.
+- **Live-verified on Debian 13.6 (`nrm`, 2026-09-11), fresh install:** the
+  preflight found `tcp_bbr.ko.xz` in the 6.12 kernel; stage 2 logged
+  `TCP: congestion_control=bbr default_qdisc=fq`; the WebDAV socket Caddy
+  accepted ran `bbr`; and after a reboot the module was loaded from
+  `modules-load.d`, the live value was still `bbr` and `tailscale0` came up
+  with `fq`. Both supported distributions have now had the same measurement.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

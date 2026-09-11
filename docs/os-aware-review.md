@@ -502,7 +502,7 @@ before/after measurement on both OS families first.
 | C1 | `dnsmasq --test -C`, `caddy validate` (with the real `TAILSCALE_IPV4`/`WEBDAV_PORT`) and `docker compose config -q` run on the target before the consuming unit restarts | DD-106 |
 | D2 | `merge_docker_daemon_dns` → `merge_docker_daemon_config`; `log-opts` merged only for the `json-file` driver | DD-107 |
 | A1 | **Done in v2-77**, but not as planned: the binding change was withdrawn after the race it targeted was disproved by experiment, and the achieved stub state is read back and reported instead | DD-109 |
-| D1 | **Done in v2-79** after an interleaved A/B: peak identical, cubic's loss-driven dips removed | DD-111 |
+| D1 | **Done in v2-79** after an interleaved A/B: peak identical, cubic's loss-driven dips removed. Module verified on both kernels (Ubuntu 7.0, Debian 6.12) | DD-111 |
 | D3 | **Not taken.** `tcp_mtu_probing` — no measured PMTU problem | — |
 | B2, B6 | **Not taken.** `UBUNTU_CODENAME` fallback and operator-owned timezone are open decisions, not defects | — |
 
