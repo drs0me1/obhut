@@ -4,3 +4,6 @@
 
 # Private service databases, credential hashes and VPN private keys.
 /backup/
+
+# Ready-to-run copies for the operator (see export/OKUBENI.txt); not a source of truth.
+/export/
