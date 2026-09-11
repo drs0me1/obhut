@@ -4481,17 +4481,14 @@ failure with an early, named one.
   `modules-load.d`, the live value was still `bbr` and `tailscale0` came up
   with `fq`. Both supported distributions have now had the same measurement.
 
-### DD-112: Backups are password-encrypted with the OS's `openssl`; installer inputs are seeded, not restored (2026-09-11)
+### DD-112: Backups are password-encrypted with the OS's `openssl`; restore uploads once (2026-09-11)
 
 - **Decision:** `container-backup.command` encrypts every new backup on the
   workstation with `openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256
-  -salt`, asking for the password twice at backup and once at check, restore
-  and seed. Decryption is local, so the password never reaches the server.
-  Every backup also carries `/etc/master-stack/config.env` and
-  `webdav.htpasswd` (manifest schema 2), and a new `seed` action places them
-  on a fresh host before `install.sh`; `restore` never writes them. The
-  restore flow uploads the archive once and runs check, the before-restore
-  backup and the restore in one remote directory.
+  -salt`, asking for the password twice at backup and once at check and
+  restore. Decryption is local, so the password never reaches the server.
+  The restore flow uploads the archive once and runs check, the
+  before-restore backup and the restore in one remote directory.
 - **Why encrypt now:** the archives hold bcrypt hashes for four services and
   wg-easy's server and peer private keys. They live in a `0700` directory on
   one laptop, but a laptop backup, a sync folder or a copied disk carries
@@ -4527,25 +4524,6 @@ failure with an early, named one.
   environment, and the variable is cleared on exit. Standard input rather
   than `/dev/tty` keeps automation possible; a piped password in shell
   history is the caller's choice and is documented.
-- **Why seed is a separate action, before the install:** `install.sh` already
-  treats an existing `config.env` as its prompt defaults and keeps an
-  existing `webdav.htpasswd` (stage 0). Those files are installer inputs,
-  not container state: writing them during `restore`, after the install,
-  would change nothing the installer had already asked, and the WebDAV
-  account would already have been re-created under a new password. Placing
-  them first makes the reinstall reproduce the previous answers and
-  credentials, which is what Infuse needs (it keeps user and password; only
-  the address changes, because the Tailscale identity is not cloned). `seed`
-  therefore runs on a host with no Docker and no jq — its dependency list is
-  checked separately — and it never overwrites: identical files are a no-op,
-  a differing file stops the whole step before anything is written.
-- **Why seed validates the content:** `install.sh` sources `config.env` as
-  root. The file comes from a backup the user made, but the worker still
-  accepts only the five keys `write_config` writes, with values under the
-  same patterns the installer's prompts enforce, and a single bcrypt line in
-  the htpasswd. A bats test pins the key list to `write_config` and the two
-  paths to `defaults.env`, so a later installer change cannot silently
-  desynchronise the seed.
 - **Why one upload:** the old restore ran check, then a fresh remote
   directory for the before-restore backup, then a third for the restore,
   uploading the archive twice. The worker now removes its own intermediate
@@ -4556,34 +4534,36 @@ failure with an early, named one.
   tools (`sha256sum` or `shasum`, `openssl` from `PATH`, SSH multiplexing
   probed and dropped where absent, LF enforced by `.gitattributes`). It has
   not been run on Windows; that is recorded as a limit, not a claim.
+- **Built and removed the same day — `seed`:** the first version of this
+  change also saved `/etc/master-stack/config.env` and `webdav.htpasswd` in
+  every archive (manifest schema 2) and added a `seed` action that placed
+  them on a fresh host before `install.sh`, so the reinstall would reuse the
+  previous answers and WebDAV account. It was verified end to end (isolated
+  round-trip, minimal Debian/Ubuntu containers without jq or Docker, and a
+  seed → `install.sh` re-run on `nrm` that took the seeded values as prompt
+  defaults). The user then judged that five installer answers and one
+  WebDAV account, which `install.sh` asks for anyway, did not justify a
+  third step, a second archive schema and the content validation that came
+  with sourcing a restored file as root. The tool went back to copying and
+  loading container settings only; the archive layout and schema are the
+  ones from 2026-09-05. The verified design is in the history (`d92b338`)
+  if it is ever wanted.
 - **Not doing:** encrypting `settings.sha256` or `files.txt`; a key file or
   keychain integration; re-encrypting the two existing plaintext backups
   (they stay usable and are reported as unencrypted); a `.bat` wrapper that
   cannot be tested here.
 - **Verified (2026-09-11):** `/bin/bash -n` under macOS bash 3.2 and
-  `shellcheck` clean on all three scripts; bats 98 ok. The isolated
-  round-trip passed on the Debian 13.6 `nrm`, including schema 2, a
-  schema-1 archive without `host/`, rejection of schema-1-with-`host/` and
-  schema-2-without-htpasswd, and the seed rules. The worker's `seed` ran
-  inside `debian:13-slim` and `ubuntu:26.04` containers with neither jq nor
-  Docker, using a real archive: both files placed `0600 root:root`, re-run a
-  no-op, a differing file refused with nothing written. From the Mac under
-  Finder's `/bin/bash`: an encrypted backup in 17 s (24 entries, `host/`
-  included) that the LibreSSL one-liner decrypted to the server's hash; a
-  wrong password stopped before any SSH; short and mismatched passwords
-  rejected; `check` passed on the encrypted archive (13 files) and on the
-  2026-09-06 plaintext archive (11 files, unencrypted warning); `restore` of
-  the encrypted archive onto `nrm` in 30 s with one upload, its
-  before-restore backup encrypted (`kind: rollback`, schema 2), 6/6
-  containers, 3/3 healthy, 3 WireGuard peers, no remote directory left; and
-  `seed` on the live host a no-op. Finally, with `config.env` and
-  `webdav.htpasswd` moved aside on `nrm`, `seed` put them back byte-identical
-  as `0600 root:root`, and a default-answer `install.sh` re-run offered the
-  seeded values as its prompt defaults (`[ayc]`, `[/downloads]`, `[61001]`,
-  `[61003]`), logged `Mevcut WebDAV kimlik dosyası korunuyor`, exited 0 in
-  11 s and left both files unchanged, 6/6 containers, 3/3 healthy, 0 failed
-  units. Not yet run: the full runbook from a bare OS; it is the next
-  acceptance item when `nrm` is reimaged.
+  `shellcheck` clean on all three scripts; bats green. The isolated
+  round-trip passed on the Debian 13.6 `nrm`. From the Mac under Finder's
+  `/bin/bash`: an encrypted backup in 17 s that the LibreSSL one-liner
+  decrypted to the server's hash; a wrong password stopped before any SSH;
+  short and mismatched passwords rejected; `check` passed on the encrypted
+  archive and on the 2026-09-06 plaintext archive (unencrypted warning);
+  `restore` of the encrypted archive onto `nrm` in 30 s with one upload, its
+  before-restore backup encrypted (`kind: rollback`), 6/6 containers, 3/3
+  healthy, 3 WireGuard peers, no remote directory left. Not yet run: the
+  full runbook from a bare OS; it is the next acceptance item when `nrm` is
+  reimaged.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

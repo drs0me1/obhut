@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # macOS: çift tıkla (Windows: Git Bash/WSL'de `bash container-backup.command`).
-# Ayar yedeği al, yedeği SSH ile geri yükle, yeni sunucuya kurulum girdilerini
-# yerleştir (seed). Yedekler bu makinede parola ile şifrelenir; parola sunucuya
-# gitmez (DD-112).
+# Ayar yedeği al veya yedeği SSH ile geri yükle. Yedekler bu makinede parola ile
+# şifrelenir; parola sunucuya gitmez (DD-112).
 set -Eeuo pipefail
 umask 077
 
@@ -21,14 +20,12 @@ MIN_PASSWORD_LENGTH=8
 fail() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
 usage() {
     printf '%s\n' \
-        'Kullanım: ./container-backup.command [backup|restore|check|seed|inspect] [seçenekler]' \
+        'Kullanım: ./container-backup.command [backup|restore|check|inspect] [seçenekler]' \
         '  --host nrm|root@IP       SSH config takma adı veya kullanıcı@adres' \
         '  --port 22               İsteğe bağlı SSH portu; yoksa SSH config kullanılır' \
         '  --archive DOSYA         backup/.../settings.tar.gz.enc (eski şifresiz settings.tar.gz de olur)' \
         '  --yes                   İşlem onayını otomatik yanıtla (parola yine sorulur)' \
         '  --allow-image-change    Eski komutlarla uyumluluk; artık gerekli değil' \
-        'seed: install.sh çalıştırılmadan ÖNCE yeni sunucuya /etc/master-stack/config.env ve' \
-        '      webdav.htpasswd dosyalarını yerleştirir; kurulum bunları varsayılan olarak kullanır.' \
         'Argümansız çalıştırıldığında işlem, sunucu ve yedek seçimi sorulur.'
 }
 cleanup_remote() {
@@ -59,7 +56,7 @@ trap finish EXIT
 
 while (( $# )); do
     case "$1" in
-        backup|restore|check|seed|inspect) ACTION=$1; shift ;;
+        backup|restore|check|inspect) ACTION=$1; shift ;;
         --host|--port|--archive)
             (( $# >= 2 )) || fail "$1 değer istiyor."
             case "$1" in --host) HOST=$2 ;; --port) PORT=$2 ;; --archive) ARCHIVE=$2 ;; esac
@@ -71,9 +68,9 @@ while (( $# )); do
     esac
 done
 if [[ -z "$ACTION" ]]; then
-    printf '\nKonteyner ayarları\n  1) Yedek al\n  2) Yedekten geri yükle\n  3) Yedeği/hedefi kontrol et\n  4) Yeni sunucuya kurulum girdilerini yerleştir (seed; install.sh öncesi)\n'
+    printf '\nKonteyner ayarları\n  1) Yedek al\n  2) Yedekten geri yükle\n  3) Yedeği/hedefi kontrol et\n'
     read -r -p 'İşlem [1]: ' choice
-    case ${choice:-1} in 1) ACTION=backup ;; 2) ACTION=restore ;; 3) ACTION=check ;; 4) ACTION=seed ;; *) fail 'Geçersiz işlem.' ;; esac
+    case ${choice:-1} in 1) ACTION=backup ;; 2) ACTION=restore ;; 3) ACTION=check ;; *) fail 'Geçersiz işlem.' ;; esac
 fi
 if [[ -z "$HOST" ]]; then read -r -p 'SSH sunucusu (nrm veya root@IP) [nrm]: ' HOST; HOST=${HOST:-nrm}; fi
 [[ "$HOST" =~ ^([a-zA-Z_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9][a-zA-Z0-9_.:-]*$ ]] || fail 'Geçersiz SSH adresi.'
@@ -111,7 +108,7 @@ encrypt_file() { openssl enc "${ENC_OPTS[@]}" -salt -in "$1" -out "$2" -pass fd:
 decrypt_file() { openssl enc -d "${ENC_OPTS[@]}" -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD") 2>/dev/null; }
 
 SESSION_DIR=$(mktemp -d /tmp/master-stack-ssh.XXXXXX)
-if [[ "$ACTION" == restore || "$ACTION" == check || "$ACTION" == seed ]]; then
+if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
     if [[ -z "$ARCHIVE" ]]; then
         files=()
         while IFS= read -r file; do files+=("$file"); done < <(find "$BACKUPS" -mindepth 2 -maxdepth 2 -type f \( -name settings.tar.gz.enc -o -name settings.tar.gz \) | sort -r)
@@ -142,12 +139,8 @@ if [[ "$ACTION" == restore || "$ACTION" == check || "$ACTION" == seed ]]; then
         cp "$ARCHIVE" "$PLAIN"
         printf 'UYARI: bu yedek şifresiz (eski sürüm); yeni yedekler şifreli alınır.\n'
     fi
-    if [[ "$ACTION" == seed ]]; then
-        tar -tzf "$PLAIN" | grep -qx 'host/config.env' ||
-            fail 'Bu yedekte kurulum girdileri (host/) yok; seed için bu sürümle alınmış yeni bir yedek gerekir.'
-    fi
 fi
-printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf; ayrıca kurulum girdileri (config.env, webdav.htpasswd; yalnız seed yerleştirir).\n'
+printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf.\n'
 printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
 if [[ "$ACTION" == backup ]]; then
     read_password 1
@@ -162,11 +155,8 @@ if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
         printf 'Dağıtım/imaj sürümü eşitliği aranmaz; farklı uygulama sürümlerinde veri uyumluluğu garanti edilmez.\n'
         printf 'wg-easy anahtarları korunur; IP/DNS değişirse istemcilerin Endpoint adresini güncelleyin.\n'
     fi
-elif [[ "$ACTION" == seed ]]; then
-    printf 'Hedef %s üzerine /etc/master-stack/config.env ve webdav.htpasswd yerleştirilecek; var olan dosyalar değiştirilmez.\n' "$HOST"
-    printf 'Konteyner ayarları bu adımda yüklenmez: önce install.sh, sonra restore.\n'
 fi
-if [[ "$ACTION" == backup || "$ACTION" == restore || "$ACTION" == seed ]] && (( ! YES )); then
+if [[ "$ACTION" == backup || "$ACTION" == restore ]] && (( ! YES )); then
     read -r -p 'Devam edilsin mi? [e/H]: ' answer
     [[ "$answer" =~ ^([Ee]|[Ee][Vv][Ee][Tt])$ ]] || { printf 'İptal edildi.\n'; exit 0; }
 fi
@@ -216,10 +206,6 @@ prepare_remote
 case "$ACTION" in
     inspect) remote_run inspect ;;
     backup) remote_run backup; download_backup settings ;;
-    seed)
-        scp -q "${SSH_OPTS[@]}" "$PLAIN" "$HOST:$REMOTE/input.tar.gz"
-        remote_run seed
-        ;;
     check|restore)
         # Tek yükleme: check, kurtarma yedeği ve restore aynı uzak dizinde çalışır.
         scp -q "${SSH_OPTS[@]}" "$PLAIN" "$HOST:$REMOTE/input.tar.gz"

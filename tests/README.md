@@ -17,8 +17,7 @@ firewall `--check`, and the two public UDP ports.
 
 After the host acceptance above, run the backup utility's isolated round-trip
 on the target as root. It needs only the worker and the test at their
-repository paths, touches no container and no production data, and covers
-the `seed` action's content rules:
+repository paths and touches no container and no production data:
 
 ```bash
 tar -czf - dev/container-backup-remote.sh tests/backup-roundtrip.sh |
@@ -26,8 +25,8 @@ tar -czf - dev/container-backup-remote.sh tests/backup-roundtrip.sh |
     bash /root/debian-server-installer/tests/backup-roundtrip.sh'
 ```
 
-Pass a decrypted archive path as its argument to also restore and seed a real
-backup into isolated directories. Then, from the workstation, `check` against
+Pass a decrypted archive path as its argument to also restore a real backup
+into isolated directories. Then, from the workstation, `check` against
 the live host must pass. See `docs/container-backup.md`.
 
 ## Pitfall: simulating a fresh Docker install on a provisioned host

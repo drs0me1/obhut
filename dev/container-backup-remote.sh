@@ -5,10 +5,6 @@ umask 077
 export LC_ALL=C
 
 SERVICES=(portainer filebrowser qbittorrent wg-easy)
-# Installer inputs: saved in every backup but never restored; `seed` places
-# them on a fresh host before install.sh runs.
-HOST_STATE=/etc/master-stack
-HOST_FILES=(config.env webdav.htpasswd)
 declare -A DATA=() IDS=()
 RESTART=()
 RESTORING=0
@@ -107,11 +103,10 @@ wait_services() {
 }
 
 inventory() {
-    local root=$1 rel digest dirs=(portainer filebrowser qbittorrent wg-easy)
-    if [[ -d "$root/host" ]]; then dirs+=(host); fi
+    local root=$1 rel digest
     (
         cd "$root"
-        find "${dirs[@]}" -type f -print | sort |
+        find portainer filebrowser qbittorrent wg-easy -type f -print | sort |
         while IFS= read -r rel; do
             digest=$(sha256sum "$rel"); digest=${digest%% *}
             jq -cn --arg path "$rel" --arg sha "$digest" \
@@ -139,39 +134,30 @@ snapshot() {
             chown --reference="${DATA[$c]}" "$out/$c"
         fi
     done
-    mkdir -m 700 "$out/host"
-    for name in "${HOST_FILES[@]}"; do
-        entry="$HOST_STATE/$name"
-        [[ ! -L "$entry" ]] || fail "$entry symlink olamaz."
-        if [[ -f "$entry" ]]; then cp -a "$entry" "$out/host/"; fi
-    done
     # Only regular files and directories with portable names enter the format.
     find "$out" -mindepth 1 -printf '%y %P\n' >"$WORK/tree.txt"
     awk '$1 !~ /^[fd]$/ || $2 !~ /^[a-zA-Z0-9_.\/-]+$/ || NF!=2 {exit 1}' "$WORK/tree.txt" ||
         fail "Desteklenmeyen dosya adı/symlink/özel dosya; yedek oluşturulmadı."
     if [[ "$kind" == settings ]]; then
-        for entry in portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf host/config.env host/webdav.htpasswd; do
+        for entry in portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf; do
             [[ -s "$out/$entry" ]] || fail "Ayarlanmış kaynak dosyası eksik: $entry"
         done
     fi
     inventory "$out" >"$WORK/files.json"
     jq -n --arg kind "$kind" --arg date "$(date -u +%FT%TZ)" --arg host "$(hostname)" \
         --slurpfile services "$WORK/services.json" --slurpfile files "$WORK/files.json" \
-        '{format:"master-stack-settings",schema:2,kind:$kind,created_utc:$date,source_host:$host,
+        '{format:"master-stack-settings",schema:1,kind:$kind,created_utc:$date,source_host:$host,
           services:$services[0],files:$files[0]}' >"$out/manifest.json"
 }
 
 pack() {
-    local members=(manifest.json portainer filebrowser qbittorrent wg-easy)
-    if [[ -d "$1/host" ]]; then members+=(host); fi
-    tar --format=ustar --hard-dereference --numeric-owner -C "$1" -czf "$2" "${members[@]}"
+    tar --format=ustar --hard-dereference --numeric-owner -C "$1" -czf "$2" \
+        manifest.json portainer filebrowser qbittorrent wg-easy
     chmod 600 "$2"
 }
 
-# Names, types and sizes from the listing alone. It needs no jq, so seed can
-# run it on a fresh host before the installer has installed jq.
-check_listing() {
-    local archive=$1 rel
+validate_bundle() {
+    local archive=$1 out=$2 rel
     [[ -f "$archive" && ! -L "$archive" ]] || fail "Yedek dosyası bulunamadı."
     (( $(stat -c %s "$archive") <= 536870912 )) || fail "Yedek 512 MiB sınırını aşıyor."
     timeout 60 tar -tzf "$archive" >"$WORK/names.txt"
@@ -184,33 +170,23 @@ check_listing() {
         rel=${rel%/}
         [[ "$rel" =~ ^[a-zA-Z0-9_./-]+$ && "/$rel/" != *'/../'* && "/$rel/" != *'/./'* && "$rel" != *'//'* ]] || fail "Geçersiz arşiv yolu."
         case "$rel" in
-            manifest.json|portainer|filebrowser|qbittorrent|wg-easy|portainer/*|filebrowser/*|wg-easy/*|qbittorrent/qBittorrent.conf|host|host/config.env|host/webdav.htpasswd) ;;
+            manifest.json|portainer|filebrowser|qbittorrent|wg-easy|portainer/*|filebrowser/*|wg-easy/*|qbittorrent/qBittorrent.conf) ;;
             *) fail "Yedek kapsamı dışında dosya: $rel" ;;
         esac
         case "$rel" in portainer/bin|portainer/bin/*|portainer/backups|portainer/backups/*) fail "Portainer önbelleği/eski yedek kapsam dışında." ;; esac
     done <"$WORK/names.txt"
     [[ -z $(sed 's:/$::' "$WORK/names.txt" | sort | uniq -d) ]] || fail "Arşivde tekrarlanan yol."
-}
-
-validate_bundle() {
-    local archive=$1 out=$2 rel schema required=()
-    check_listing "$archive"
     mkdir -m 700 "$out"
     tar --extract --gzip --file "$archive" --directory "$out" --numeric-owner --same-owner --same-permissions --delay-directory-restore
-    jq -e '.format=="master-stack-settings" and (.schema==1 or .schema==2) and
+    jq -e '.format=="master-stack-settings" and .schema==1 and
         (.kind=="settings" or .kind=="rollback") and
         ([.services[].name] | sort)==["filebrowser","portainer","qbittorrent","wg-easy"]' \
         "$out/manifest.json" >/dev/null || fail "Yedek biçimi desteklenmiyor."
     for rel in "${SERVICES[@]}"; do [[ -d "$out/$rel" ]] || fail "Yedekte servis eksik: $rel"; done
-    # Schema 1 predates the installer inputs; schema-2 settings always carry them.
-    schema=$(jq -r .schema "$out/manifest.json")
-    [[ "$schema" == 2 || ! -e "$out/host" ]] || fail "Şema 1 yedekte host/ bulunamaz."
     inventory "$out" >"$WORK/actual.json"
     jq -e --slurpfile actual "$WORK/actual.json" '.files==$actual[0]' "$out/manifest.json" >/dev/null || fail "Dosya SHA256/sahiplik/izin doğrulaması başarısız."
     if [[ $(jq -r .kind "$out/manifest.json") == settings ]]; then
-        required=(portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf)
-        if [[ "$schema" == 2 ]]; then required+=(host/config.env host/webdav.htpasswd); fi
-        for rel in "${required[@]}"; do
+        for rel in portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf; do
             [[ -s "$out/$rel" ]] || fail "Yedekte gerekli dosya eksik: $rel"
         done
     fi
@@ -273,77 +249,6 @@ apply_tree() {
     done
 }
 
-# install.sh sources config.env as root before its prompt checks run, so seed
-# accepts only the KEY=value lines write_config writes, with values that cannot
-# carry shell syntax. install.sh validates them again at its prompts.
-check_config_env() {
-    local file=$1 line key value seen=' '
-    { [[ -s "$file" && ! -L "$file" ]] && (( $(stat -c %s "$file") <= 4096 )); } ||
-        fail "config.env boş veya çok büyük."
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ "$line" =~ ^([A-Z_]+)=(.*)$ ]] || fail "config.env: beklenmeyen satır."
-        key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
-        [[ "$seen" != *" $key "* ]] || fail "config.env: $key birden fazla kez tanımlı."
-        seen+="$key "
-        case "$key" in
-            LOCAL_DOMAIN) [[ "$value" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ;;
-            DOWNLOADS_PATH) [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ && "$value" != *//* && ! "$value" =~ (^|/)\.\.(/|$) ]] ;;
-            WG_PUBLIC_PORT|WEBDAV_PORT) [[ "$value" =~ ^[0-9]{1,5}$ ]] && (( 10#$value >= 1 && 10#$value <= 65535 )) ;;
-            TIMEZONE) [[ "$value" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] ;;
-            *) false ;;
-        esac || fail "config.env: $key kabul edilmedi."
-    done <"$file"
-}
-
-# A single bcrypt account, as `htpasswd -B` writes it for install.sh.
-check_htpasswd() {
-    local file=$1 lines=()
-    { [[ -f "$file" && ! -L "$file" ]] && (( $(stat -c %s "$file") <= 1024 )); } ||
-        fail "webdav.htpasswd geçersiz."
-    mapfile -t lines <"$file"
-    (( ${#lines[@]} == 1 )) &&
-        [[ "${lines[0]}" =~ ^[a-z][a-z0-9._-]{0,31}:\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]] ||
-        fail "webdav.htpasswd: tek bir bcrypt hesabı bekleniyordu."
-}
-
-# Runs before install.sh, when the host has neither Docker nor jq. An existing
-# file is never replaced; identical files make a re-run a no-op.
-seed_host() {
-    local archive=$1 out="$WORK/seed" name dest tmp
-    check_listing "$archive"
-    for name in "${HOST_FILES[@]}"; do
-        grep -qxF "host/$name" "$WORK/names.txt" ||
-            fail "Yedekte host/$name yok; seed için bu sürümle alınmış (şema 2) bir yedek gerekir."
-    done
-    rm -rf -- "$out"
-    mkdir -m 700 "$out"
-    tar --extract --gzip --file "$archive" --directory "$out" --no-same-owner --no-same-permissions \
-        "${HOST_FILES[@]/#/host/}"
-    check_config_env "$out/host/config.env"
-    check_htpasswd "$out/host/webdav.htpasswd"
-    [[ ! -L "$HOST_STATE" && ( ! -e "$HOST_STATE" || -d "$HOST_STATE" ) ]] || fail "$HOST_STATE bir dizin değil."
-    # All or nothing: every file is checked before any is written.
-    for name in "${HOST_FILES[@]}"; do
-        dest="$HOST_STATE/$name"
-        if [[ -e "$dest" || -L "$dest" ]]; then
-            { [[ -f "$dest" && ! -L "$dest" ]] && cmp -s "$out/host/$name" "$dest"; } ||
-                fail "$dest zaten var ve yedektekinden farklı; hiçbir dosya yazılmadı. Kasıtlıysa önce bu dosyayı kaldırın."
-        fi
-    done
-    if [[ ! -d "$HOST_STATE" ]]; then install -d -m 700 -o root -g root "$HOST_STATE"; fi
-    for name in "${HOST_FILES[@]}"; do
-        dest="$HOST_STATE/$name"
-        if [[ -e "$dest" ]]; then say "$dest zaten aynı; dokunulmadı."; continue; fi
-        tmp=$(mktemp "$HOST_STATE/.seed.XXXXXXXX")
-        cat -- "$out/host/$name" >"$tmp"
-        chown root:root "$tmp"
-        chmod 600 "$tmp"
-        mv -fT -- "$tmp" "$dest"
-        say "$dest yerleştirildi (0600 root:root)."
-    done
-    say "Şimdi install.sh'yi çalıştırın: sorular yedekteki değerleri varsayılan gösterir, WebDAV hesabı korunur."
-}
-
 finish() {
     local rc=$? id rollback_safe=1
     trap - EXIT HUP INT TERM
@@ -363,13 +268,11 @@ finish() {
 }
 
 main() {
-    local action=${1:-inspect} owner_uid owner_gid cmd deps=(tar flock sha256sum realpath timeout)
+    local action=${1:-inspect} owner_uid owner_gid
     WORK=$(cd -- "$(dirname -- "$0")" && pwd)
     [[ "$WORK" =~ ^/tmp/master-stack-backup\.[a-zA-Z0-9]+$ ]] || fail "Yardımcı yalnız SSH geçici dizininde çalıştırılır."
     if (( EUID != 0 )); then exec sudo -n bash "$0" "$@"; fi
-    # seed runs before install.sh, when the host has neither Docker nor jq.
-    if [[ "$action" == seed ]]; then deps+=(cmp install); else deps+=(docker jq); fi
-    for cmd in "${deps[@]}"; do command -v "$cmd" >/dev/null || fail "$cmd gerekli."; done
+    for cmd in docker jq tar flock sha256sum realpath timeout; do command -v "$cmd" >/dev/null || fail "$cmd gerekli."; done
     owner_uid=$(stat -c %u "$WORK"); owner_gid=$(stat -c %g "$WORK")
     mkdir -p /run/master-stack
     exec 9>/run/master-stack/install.lock
@@ -377,7 +280,6 @@ main() {
     trap finish EXIT
     trap 'exit 130' INT
     trap 'exit 143' HUP TERM
-    if [[ "$action" == seed ]]; then seed_host "$WORK/input.tar.gz"; return 0; fi
     discover
     # A restore uploads once and runs check, backup-current and restore in the
     # same directory, so each step replaces what an earlier step left behind.
