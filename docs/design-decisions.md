@@ -4230,6 +4230,11 @@ failure with an early, named one.
   the setting therefore takes effect at the next compose recreation, not at
   the end of this run. Forcing it would cost a service interruption to fix a
   problem that has not yet occurred.
+- **Superseded in part by DD-110 (2026-09-11):** the limitation above was
+  real, but it also applied to fresh installs, not only existing hosts. The
+  file was written after the package had already started dockerd, so no
+  container ever received these options. DD-110 corrects the order and moves
+  the log policy into `compose.yaml`.
 
 ### DD-108: A gate may only assert what the host already has (2026-09-08)
 
@@ -4305,6 +4310,94 @@ failure with an early, named one.
 - **Not doing:** failing the install over it. The state is benign here, and a
   gate on a third party's configuration parser would be a new failure mode for
   no gain.
+
+### DD-110: Daemon config before the daemon; log policy in the service definition (2026-09-11)
+
+- **Decision:** two changes.
+  1. `stage_4` writes `/etc/docker/daemon.json` **before** installing the
+     Docker packages, instead of after.
+  2. Log rotation moves into `templates/compose.yaml` as an `x-logging`
+     anchor that every service references. The values still come from
+     `DOCKER_LOG_MAX_SIZE`/`DOCKER_LOG_MAX_FILE` in `defaults.env`.
+     `daemon.json` keeps its `log-opts` copy, but only as the host default for
+     containers outside this stack.
+  When `daemon.json` changes while dockerd is already running, the installer
+  says the new daemon-level settings wait for the next Docker restart instead
+  of assuming they took effect.
+- **Why 1 — measured on a fresh Ubuntu 26.04 install (`nrm`, 2026-09-10):**
+  docker-ce's postinst starts dockerd straight away
+  (`deb-systemd-invoke … docker.service`). The journal shows it finished
+  initialising at **23:09:43**. `daemon.json` was written at **23:09:45**.
+  `systemctl enable --now docker` does nothing to a unit that is already
+  running, so dockerd kept its original configuration. The six containers
+  created at **23:10:11** all carry `LogConfig {}`, and that is permanent
+  because log configuration is fixed when a container is created. After a
+  reboot, a probe container created with `docker create` did get
+  `{"max-file":"3","max-size":"10m"}`, so the file was correct all along;
+  only the order was wrong. The same ordering meant **DD-8's `dns` setting did
+  not apply between a fresh install and its first Docker restart**. DNS is
+  applied when a container starts, so the reboot fixed it, but until then the
+  failure mode DD-8 exists to prevent (containers inheriting
+  `100.100.100.100`) was open.
+- **Why moving the write earlier is safe:** none of the five Docker packages
+  owns `daemon.json`. `dpkg -S` finds no owner, it appears in no package's
+  file list, and it is not a conffile. docker-ce only creates the
+  `/etc/docker` directory, so the package install cannot overwrite a file that
+  is already there, and dockerd reads it on its first start. This is the same
+  pattern as **DD-18**, where Tailscale's netbuf floor is written before the
+  tailscale package starts its daemon.
+- **Why 2 — the order fix alone cannot reach existing hosts.** Log
+  configuration is fixed when a container is created. Every container made
+  before this fix keeps `{}` until it is recreated, and restarting dockerd
+  would not change that. In `compose.yaml` the setting shows up as a change to
+  the service definition, so the existing `COMPOSE_NEEDS_UP` path recreates the
+  affected services on the next run with no daemon restart. The cost is one
+  recreation of the six containers on the upgrading run. Named volumes keep
+  their data and the interruption lasts seconds, the same as any other change
+  to the service definition.
+- **Correction of DD-107 and of the v2-76 acceptance record:** DD-107 said
+  `log-opts` "applies to containers created after the change". That is
+  technically true, but on a fresh install the containers were created before
+  dockerd had read the file, so rotation never applied anywhere. The v2-76
+  Ubuntu acceptance reported that `daemon.json` "carries the rotation keys".
+  The file did, but the containers did not. The check confirmed what was
+  written, not what took effect: the mistake **DD-109** warns against.
+- **Not doing:** having the installer restart dockerd. On an existing host that
+  would stop and start every running container without changing their fixed
+  log configuration, so it would cause an outage and fix nothing.
+- **Live-verified on Ubuntu 26.04.1 (`nrm`, 2026-09-11), on both paths:**
+  - *Existing host (v2-77 → v2-78):* the rendered `compose.yaml` changed, so
+    the run recreated all six containers once. All six ids changed, all six now
+    carry `{"max-file":"3","max-size":"10m"}`, 3/3 healthchecks are healthy and
+    stage 7 passed. `daemon.json` was untouched, and the new "changed under a
+    running dockerd" message correctly stayed silent. A second run recreated
+    nothing (0/6), so the anchor does not cause churn on every run.
+  - *Fresh Docker install (the ordering itself):* after Docker was purged
+    completely and the installer re-run, `daemon.json` was written at 08:50:44
+    and dockerd completed its first and only initialisation at 08:50:51. With no
+    restart or reboot, container DNS showed `ExtServers: [1.1.1.1 1.0.0.1]`, so
+    the DD-8 gap is closed. A `docker create` probe outside compose received the
+    daemon `log-opts`, and all six compose containers carry the log options.
+- **A test-method pitfall found along the way, not an installer defect:**
+  purging Docker without a reboot leaves the old dockerd's kernel bridges in
+  place. The networks with dynamic subnets avoided them, because Docker's IPAM
+  saw the existing routes and chose new ranges. The fixed-subnet `wg` network,
+  however, was created a second time on `WG_BRIDGE_SUBNET`, and the kernel kept
+  routing its addresses through the dead old bridge. Stage 7 correctly failed
+  on `wg.ayc` (502, `connection reset by peer`), but its message points at Caddy
+  rather than at the duplicate route. Deleting the three stale bridges (all
+  down, none known to Docker) restored the route, `wg.ayc` returned 302, and
+  the re-run exited 0. Recorded in `tests/README.md`.
+- **Clean record (2026-09-11):** Docker was purged and the host rebooted, so
+  no stale bridge survived (0 kernel bridges before the install). v2-78 then
+  installed from a clean Docker state and exited 0 (`INSTALL_EXIT=0`).
+  `daemon.json` was written at 09:01:21 and dockerd initialised once, at
+  09:01:27. With no restart, container DNS showed
+  `ExtServers: [1.1.1.1 1.0.0.1]` and the daemon `log-opts` were in effect. All
+  six containers carry the log options and all four UIs returned non-5xx
+  responses (`wg` 302). Exactly one interface held the `wg` gateway address,
+  there were 0 failed units, 3/3 healthchecks were healthy, and firewall
+  `--check` passed.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

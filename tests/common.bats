@@ -465,6 +465,33 @@ EOF
         grep -q 'log-opts" // {}'
 }
 
+@test "docker daemon config is in place before the package starts dockerd" {
+    # docker-ce's postinst starts dockerd at once; a daemon.json written after
+    # that is not read until the next restart, so the containers stage 7
+    # creates got neither dns nor log options (DD-110). Same pattern as DD-18.
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        awk '/^    merge_docker_daemon_config$/{m=NR} /retry "apt-docker"/{a=NR}
+             END { exit !(m && a && m < a) }'
+    # A daemon.json change on an already-running dockerd is reported, not assumed.
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" | grep -q 'docker_was_active'
+}
+
+@test "container log rotation is part of the compose definition" {
+    # daemon.json log-opts are read only at container creation and never reach
+    # existing containers; in compose they are a diff and trigger a recreate.
+    grep -q '^x-logging: &default-logging$' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'max-size: "__DOCKER_LOG_MAX_SIZE__"' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'max-file: "__DOCKER_LOG_MAX_FILE__"' "$V2_ROOT/templates/compose.yaml"
+    services="$(grep -c '^    container_name:' "$V2_ROOT/templates/compose.yaml")"
+    refs="$(grep -c '^    logging: \*default-logging$' "$V2_ROOT/templates/compose.yaml")"
+    [ "$services" -gt 0 ]
+    [ "$services" -eq "$refs" ]
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'DOCKER_LOG_MAX_SIZE="\$DOCKER_LOG_MAX_SIZE"'
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'DOCKER_LOG_MAX_FILE="\$DOCKER_LOG_MAX_FILE"'
+}
+
 @test "downloads path rejects unsafe characters and compose needs no .env" {
     grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
     grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"

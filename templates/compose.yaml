@@ -1,11 +1,21 @@
 # Master stack Compose — yer tutucular kurulumda defaults.env / state ile doldurulur.
 # Compose .env kullanılmaz; WAN/endpoint ipucu state.env'dedir, burada değil.
 
+# Log rotasyonu servis tanımının parçası (DD-110): daemon.json'daki log-opts
+# yalnız konteyner OLUŞTURULURKEN okunur ve mevcut konteynerlere hiç ulaşmaz.
+# Burada olunca değişiklik bir compose farkıdır ve konteyner yeniden yaratılır.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "__DOCKER_LOG_MAX_SIZE__"
+    max-file: "__DOCKER_LOG_MAX_FILE__"
+
 services:
   portainer:
     image: __PORTAINER_IMAGE__
     container_name: portainer
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:__PORTAINER_UI_PORT__:9443"
     volumes:
@@ -18,6 +28,7 @@ services:
     # Klasik filebrowser (hacdias); DOWNLOADS_UID ile /srv R/W (DD-92).
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges=true
     cap_drop:
@@ -47,6 +58,7 @@ services:
     image: __QBITTORRENT_IMAGE__
     container_name: qbittorrent
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:__QBIT_UI_PORT__:__QBIT_UI_PORT__"
       # Peer: IPv4-only 1:1 (0.0.0.0). [::] publish yok — MASTER-DOCKER6 zaten
@@ -69,6 +81,7 @@ services:
     container_name: unpackerr
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
+    logging: *default-logging
     # qBittorrent API yok: parola/port gerekmez. Yalnız /downloads ağacını
     # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
     security_opt:
@@ -101,6 +114,7 @@ services:
     image: __RCLONE_IMAGE__
     container_name: webdav
     restart: unless-stopped
+    logging: *default-logging
     # htpasswd host'ta 0600 root:root; konteyner root okur, cap_drop ALL.
     user: "0:0"
     command:
@@ -141,6 +155,7 @@ services:
     image: __WG_EASY_IMAGE__
     container_name: wg-easy
     restart: unless-stopped
+    logging: *default-logging
     # v15: WireGuard dinleme portu env ile set edilmez; ilk web kurulumunda
     # Host=tespit edilen WAN_IPV4, Port=WG_PUBLIC_PORT (aşama 0) seçilir.
     # Docker map 1:1 — iç ve dış UDP aynı; port değişince şablon yeniden yazılır.

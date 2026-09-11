@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-77"
+V2_VERSION="2026.08.06-v2-78"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -672,10 +672,21 @@ stage_4() {
     else
         log INFO "docker.sources aynı; apt-get update atlandı (stage_1 zaten günceldi)"
     fi
-    retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    # daemon.json paket kurulumundan ÖNCE (DD-110): docker-ce'nin postinst'i
+    # dockerd'yi hemen başlatır. Sonra yazılan ayar bir sonraki restart'a kadar
+    # okunmaz — sıfırdan kurulumda aşama 7'nin konteynerleri dns/log ayarını
+    # hiç almıyordu (ölçüldü: dockerd 23:09:43, daemon.json 23:09:45). DD-18'deki
+    # Tailscale netbuf tabanıyla aynı kalıp; hiçbir docker paketi bu dosyayı
+    # sahiplenmez, dolayısıyla kurulum onu ezmez.
+    local docker_was_active=0
+    systemctl is-active --quiet docker 2>/dev/null && docker_was_active=1
     mkdir -p /etc/docker
     merge_docker_daemon_config
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 && "$docker_was_active" -eq 1 ]]; then
+        log INFO "daemon.json değişti ama dockerd zaten çalışıyor; daemon düzeyindeki ayarlar bir sonraki docker yeniden başlatmasında okunur (proje konteynerlerinin log ayarı compose'ta — DD-110)"
+    fi
+    retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
+        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     systemctl enable --now docker
     ensure_wg_kernel_modules
 
@@ -704,6 +715,8 @@ stage_4() {
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
+        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
+        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
         TIMEZONE="$TIMEZONE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
     # Render'ı aktifleştirmeden önce doğrula (DD-106): şema hatası pull/up

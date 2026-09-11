@@ -35,6 +35,37 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-11 — Ubuntu smoke test → v2-78 (Docker DNS and log rotation now take
+effect):** The smoke test passed 23/23. The one FAIL on the first pass was a
+mistake in the test: it expected 403/405/500 from WebDAV, but rclone's
+read-only mode returns 404. Nothing was written, and both read-only layers
+were intact. An optimisation survey measured the host instead of assuming
+anything:
+- resources were idle;
+- boot took 8.4 s, most of it in the provider's devices;
+- tailnet peers sat on DERP while idle and switched to a direct path once
+  traffic started (70 → 58 ms);
+- the WebDAV hot path has no userspace bottleneck (rclone 475, docker-proxy
+  476, Caddy 500 MiB/s);
+- UDP offloads already match Tailscale's recommendation;
+- no MSS clamp is needed, because the tailnet client advertises an MSS of 1240.
+**The real finding:** DD-107's log rotation had never reached a single
+container. docker-ce's postinst starts dockerd 2 s before the installer
+wrote daemon.json, so every container was created with `LogConfig {}`. The
+same ordering left DD-8's container DNS off until the first Docker restart.
+v2-78 writes daemon.json before the Docker packages are installed (the DD-18
+pattern) and moves the log policy into compose.yaml as an `x-logging` anchor,
+so existing hosts get it through a one-time recreate (DD-110). Verified on
+the existing-host path, on the fresh-Docker path, and as a clean
+purge → reboot → install that exited 0. Along the way, a test-method pitfall
+turned up and is now in tests/README.md: a Docker purge without a reboot
+leaves stale kernel bridges that collide with the fixed `wg` subnet. That was
+the cause of the stage-7 `wg.ayc` 502, and deleting the bridges proved it.
+**BBR** was measured with an interleaved A/B, confirming the congestion
+control on each run's socket. Peak throughput was identical (~440 Mbit/s).
+Cubic dropped ~20% after loss bursts on 3 of 6 runs; BBR did not drop on any
+of its 3. BBR is adopted separately as v2-79 (DD-111).
+
 **2026-09-10 — v2-77, A1 closed (and a claim of ours withdrawn):** the fix that
 was planned for A1 — narrowing dnsmasq from `interface=lo` to
 `listen-address=127.0.0.1` — was tested before implementing and its premise
@@ -159,10 +190,10 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-77` (unreleased) |
+| Version | `2026.08.06-v2-78` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 92 Bats: 89 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
+| Tests | 94 Bats: 91 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

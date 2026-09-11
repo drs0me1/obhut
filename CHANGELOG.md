@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-11 — Container log rotation and Docker DNS actually take effect (v2-78)
+
+- **Fixed:** container log rotation (**DD-107**) never took effect on any host,
+  including fresh installs. docker-ce's postinst starts dockerd as soon as the
+  package installs, and `daemon.json` was written two seconds later. dockerd
+  was not restarted, so all six containers were created without the log
+  options. Their `LogConfig {}` stays that way permanently, because log
+  configuration is fixed when a container is created. The same ordering also
+  meant **DD-8's container DNS setting** did not apply between a fresh install
+  and the first Docker restart. `daemon.json` is now written **before** the
+  Docker packages are installed. No Docker package owns that file, so the
+  install cannot overwrite it (**DD-110**). This is the same pattern **DD-18**
+  already uses for Tailscale.
+- **Changed:** log rotation now lives in `compose.yaml` as an `x-logging`
+  anchor that every service references. The values still come from
+  `defaults.env`. On an existing host this appears as a change to the service
+  definitions, so the next run **recreates the six containers once** to apply
+  it. Named volumes keep their data. `daemon.json` keeps its `log-opts` only as
+  the host default for containers outside this stack.
+- **Added:** if `daemon.json` changes while dockerd is already running, the
+  installer now reports that daemon-level settings will apply at the next
+  Docker restart, instead of assuming they are already in effect.
+- **Corrected:** the v2-74 entry's "Takes effect for containers created after
+  the change" did not hold for fresh installs, and the v2-76 Ubuntu acceptance
+  checked `daemon.json` rather than the containers. Both are now noted in
+  **DD-110**.
+- **Live-verified on Ubuntu 26.04.1** (2026-09-11): on an existing host the run
+  recreated the six containers once and all six now carry the log options; a
+  second run recreated nothing. After Docker was purged completely,
+  `daemon.json` was in place before dockerd's first start, and container DNS
+  and the daemon log options were in effect with no restart. A stage-7
+  `wg.ayc` 502 seen during that test came from stale kernel bridges left by
+  purging Docker without a reboot. That is a test artifact, now documented in
+  `tests/README.md`.
+- **Clean record:** after a Docker purge and a reboot, v2-78 installed from a
+  clean Docker state and exited 0. DNS and log options were in effect from
+  dockerd's first start, and every stage-7 check passed.
+
 ### 2026-09-10 — A setting that silently did nothing now reports what happened (v2-77)
 
 - **Fixed (review A1):** `stage_6` still writes `DNSStubListener=no` when
