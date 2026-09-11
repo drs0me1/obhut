@@ -492,6 +492,28 @@ EOF
         grep -q 'DOCKER_LOG_MAX_FILE="\$DOCKER_LOG_MAX_FILE"'
 }
 
+@test "tcp congestion control is applied only when the host can load it" {
+    # DD-111: measured on TCP that terminates on the host. A kernel without the
+    # module must not stop the install (DD-108); the result is read back (DD-109).
+    body="$(awk '/^apply_tcp_congestion_control\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$body" ]
+    grep -q 'if ! modprobe' <<<"$body"
+    [ "$(grep -c 'return 0' <<<"$body")" -ge 2 ]
+    grep -q 'atomic_write "\$SYSCTL_TCP_FILE"' <<<"$body"
+    grep -q 'atomic_write "\$TCP_MODULES_LOAD_FILE"' <<<"$body"
+    grep -q 'SYSCTL_TCP_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
+    grep -q 'TCP_CONGESTION_CONTROL="bbr"' "$V2_ROOT/config/defaults.env"
+    grep -q 'TCP_DEFAULT_QDISC="fq"' "$V2_ROOT/config/defaults.env"
+    # Applied in stage 2, before the tailscale package creates tailscale0.
+    awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
+        awk '/^    apply_tcp_congestion_control$/{a=NR} /install -y tailscale/{t=NR}
+             END { exit !(a && t && a < t) }'
+    # Stage 7 reads the live value back; a mismatch warns, it does not fail.
+    block="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'sysctl -n net.ipv4.tcp_congestion_control' <<<"$block"
+    ! grep -q 'die "tcp_congestion_control' <<<"$block"
+}
+
 @test "downloads path rejects unsafe characters and compose needs no .env" {
     grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
     grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"

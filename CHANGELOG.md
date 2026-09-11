@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-11 — TCP congestion control is BBR, measured before adopting it (v2-79)
+
+- **Changed:** stage 2 now loads `tcp_bbr` and sets
+  `net.ipv4.tcp_congestion_control = bbr` and `net.core.default_qdisc = fq` in
+  `99-zz-master-tcp.conf` (**DD-111**). If the module cannot be loaded, the
+  install continues on the kernel default and says so. Stage 7 reads the live
+  value back and warns on a mismatch rather than failing.
+- **Measured before adopting:** runs were interleaved and each run's congestion
+  control was confirmed on the live socket. Peak throughput matched cubic's
+  (~440 Mbit/s over the direct tailnet path). Cubic lost about 20% on three of
+  six runs after bursts of packet loss; BBR did not. The gain is steadier
+  throughput, not a higher peak.
+- **Scope:** this affects only TCP that ends on this host: WebDAV to Infuse,
+  qBittorrent uploads and the web UIs. Exit-node traffic is forwarded, and
+  forwarded TCP is controlled by its endpoints. The review had claimed
+  otherwise; **DD-111** corrects it.
+
 ### 2026-09-11 — Container log rotation and Docker DNS actually take effect (v2-78)
 
 - **Fixed:** container log rotation (**DD-107**) never took effect on any host,

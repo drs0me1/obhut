@@ -35,6 +35,21 @@ self-corrected `state.env`. After the reboot — the real DD-105 test —
 passes, all five wg modules loaded, dual-path DNS + out-of-domain REFUSED,
 Caddy health `ok`, WebDAV 401 on both paths, Tailscale Running/Online/exit-node.
 Run 4 (post-reboot) a no-op with container start times unchanged.
+**2026-09-11 — v2-79, BBR adopted after measuring it:** stage 2 now loads
+`tcp_bbr` and sets `bbr` and `fq` in `99-zz-master-tcp.conf`. If the module
+does not load, the install stays on the kernel default (the DD-108 lesson).
+Stage 7 reads the live value back and warns on a mismatch instead of failing
+(DD-111). Live on nrm (Ubuntu 26.04): the run logged bbr/fq, the WebDAV socket
+Caddy accepted used `bbr`, no container was recreated, and the install exited
+0. `tailscale0` stayed on `fq_codel` until the reboot and came up on `fq`
+afterwards, as predicted. After the reboot the module was loaded from
+modules-load.d, the setting was still bbr, and a re-run exited 0. This also
+corrects the review's D1 claim that BBR speeds up exit-node traffic.
+Congestion control runs on the endpoints of a connection, so only TCP that
+terminates on this host benefits. **Debian verification of v2-77 through
+v2-79 is still outstanding** (nrm runs Ubuntu). These changes are either
+OS-agnostic or behind a probe, but that is an argument, not a measurement.
+
 **2026-09-11 — Ubuntu smoke test → v2-78 (Docker DNS and log rotation now take
 effect):** The smoke test passed 23/23. The one FAIL on the first pass was a
 mistake in the test: it expected 403/405/500 from WebDAV, but rclone's
@@ -190,10 +205,10 @@ plus the v2-65…70 line (**DD-98…101**).
 
 | | |
 |---|---|
-| Version | `2026.08.06-v2-78` (unreleased) |
+| Version | `2026.08.06-v2-79` (unreleased) |
 | Branch | `quantum` |
 | Last tag | `2026.08.06-v2-71` |
-| Tests | 94 Bats: 91 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
+| Tests | 95 Bats: 92 passed, 3 skipped (no workstation `timeout`); isolated backup tests passed |
 
 ### Operator preferences (locked)
 

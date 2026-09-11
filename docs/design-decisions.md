@@ -4399,6 +4399,77 @@ failure with an early, named one.
   there were 0 failed units, 3/3 healthchecks were healthy, and firewall
   `--check` passed.
 
+### DD-111: TCP congestion control is BBR, measured before adopting it (2026-09-11)
+
+- **Decision:** stage 2 loads `tcp_bbr` and writes
+  `net.ipv4.tcp_congestion_control = bbr` and `net.core.default_qdisc = fq` to
+  `99-zz-master-tcp.conf` (values in `defaults.env`), plus a `modules-load.d`
+  entry. If the module cannot be loaded, the install continues on the kernel
+  default and says so. Stage 7 reads the live value back and warns on a
+  mismatch; it does not fail, because this is an optimisation, not a contract
+  item.
+- **Why — measured on `nrm` (Ubuntu 26.04.1, kernel 7.0.0-31, 2026-09-11):** a
+  256 MiB file served by Caddy over WebDAV was downloaded by a MacBook over the
+  direct tailnet path (RTT ~59–67 ms, MSS 1228). The runs were interleaved
+  (cubic, bbr, bbr, cubic, cubic, bbr), and each run's congestion control was
+  confirmed on the live socket with `ss -tin`:
+
+  | | Runs (Mbit/s) | Mean |
+  |---|---|---|
+  | cubic | 439.9 · 444.8 · 355.1 | 413.3 |
+  | bbr + fq | 445.4 · 435.4 · 442.0 | 440.9 |
+
+  An earlier batch adds three more cubic runs: 436.4, 361.1 and 348.4. That
+  batch was meant to alternate with BBR, but a harness bug left every run on
+  cubic, which the same socket probe confirmed. Across all six cubic runs,
+  three hit a burst of about 2,000 retransmissions and lost roughly 20%. None
+  of BBR's three runs did. **Peak throughput is the same (~440 Mbit/s, the
+  path's ceiling).** BBR's gain is that cubic's loss-driven dips go away.
+- **Scope, and a correction to the review:** `os-aware-review.md` D1 said BBR
+  would help "an exit node relaying other devices' TCP". It does not. The two
+  endpoints of a TCP connection run its congestion control; a router that only
+  forwards the flow never does. On this host BBR affects only TCP that ends
+  here: Caddy's WebDAV stream to Infuse, qBittorrent's uploads and the web
+  UIs. For WebDAV that is the path that matters, and on lossy client networks
+  such as a phone or a remote Infuse session, cubic's sensitivity to loss grows
+  where BBR's does not.
+- **Why adopt it when nothing is broken:** even cubic's worst run (348
+  Mbit/s) is 3.5–7× what a 4K HDR remux needs (50–100 Mbit/s), so this does
+  not remove a bottleneck. It is adopted because the measured effect was
+  consistent, the mechanism is standard, it costs two sysctls in a pattern the
+  tree already uses, and a host that cannot load the module simply keeps its
+  default. It is an opportunistic improvement, not a fix, and is recorded that
+  way.
+- **Trade-offs accepted:** mainline `tcp_bbr` is BBRv1. It can take more than
+  its share against cubic flows at a shared bottleneck, and it retransmits
+  more on shallow buffers. Neither matters on a single-tenant host serving one
+  household. qBittorrent uploads become somewhat more assertive toward peers'
+  links.
+- **Not doing:** replacing existing qdiscs at runtime. `default_qdisc` only
+  applies to interfaces created afterwards, so on a re-run `tailscale0` keeps
+  `fq_codel` until tailscaled restarts or the host reboots. BBR has paced
+  internally since Linux 4.13, so `fq` complements it but is not required.
+  Also not doing: per-socket `setsockopt(TCP_CONGESTION)` in any service.
+- **Not an OS divergence:** this is a capability probe, not an
+  `OS-DIVERGENCE` entry. `tcp_bbr` ships as a module on the Ubuntu 26.04
+  kernel (verified). Debian 13's kernel is expected to ship it too, but that
+  has not been verified, and if it does not the install stays on the default,
+  which is what the probe is for.
+- **Live-verified on Ubuntu 26.04.1 (`nrm`, 2026-09-11):** before the run the
+  host was on cubic with `fq_codel`, and `tcp_bbr` was not loaded. The v2-79
+  run logged `TCP: congestion_control=bbr default_qdisc=fq`, stage 7 raised no
+  warning, and the run exited 0. Both files were written and no container was
+  recreated. **`ss -tin` showed `bbr` on the WebDAV socket Caddy had accepted,**
+  so the setting reached the socket that matters. Both qdisc predictions
+  held. On the re-run `tailscale0` kept `fq_codel`, because existing qdiscs
+  are not replaced. **After a reboot it came up with `fq`,** because
+  `default_qdisc` was applied before tailscaled created the interface. After
+  the reboot, `modules-load.d` had loaded `tcp_bbr` and the live value was
+  still `bbr`. There were 0 failed units, and the post-reboot re-run exited 0
+  and recreated nothing. The live-tested code differs from the committed code
+  in one comment only. That comment was corrected afterwards so that it no
+  longer describes the Debian module as verified.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

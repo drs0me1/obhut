@@ -336,6 +336,16 @@ All values below are live readings from `nrm`, idle.
 
 ### D1 — BBR + `fq` are available and unused
 
+**Measured and adopted on 2026-09-11 (v2-79, DD-111).** The test was an
+interleaved A/B over the direct tailnet path, with each run's congestion
+control confirmed on the live socket. Peak throughput was the same, about 440
+Mbit/s. Cubic lost roughly 20% on three of six runs after bursts of about 2,000
+retransmissions; BBR lost none of its three. **Correction to the paragraph
+below:** BBR does not help "an exit node relaying other devices' TCP". The
+endpoints of a TCP connection run its congestion control, and a forwarding
+router never runs it for flows it only passes through. It helps only TCP that
+terminates on this host: WebDAV to Infuse, qBittorrent uploads and the web UIs.
+
 ```
 net.ipv4.tcp_available_congestion_control = reno cubic
 net.ipv4.tcp_congestion_control           = cubic
@@ -441,7 +451,7 @@ taken in v2-70.
 | C1 | `dnsmasq --test` / `caddy validate` on the render | OS/package drift fails with a precise message | Low | Low | `install.sh` +3 lines | **APPLY** |
 | B4 | Repo-suite preflight | 15-minute timeout becomes a one-line explanation | Low | Low | `install.sh` +4 lines | **APPLY** opportunistically |
 | D2 | Docker `log-opts` | Removes an unbounded disk consumer | Very low | Low | `install.sh` +3 lines | **APPLY** |
-| D1 | BBR + `fq` (+ D3) | Potentially the largest throughput gain available | Low | Medium | modules-load + 2 sysctls | **MEASURE FIRST** |
+| D1 | BBR + `fq` (+ D3) | Potentially the largest throughput gain available | Low | Medium | modules-load + 2 sysctls | **APPLIED (v2-79, DD-111)** — measured first |
 | B2 | `UBUNTU_CODENAME` fallback | Derivative images | Very low | Low | `common.sh` +2 lines | **DECIDE** — rejecting them is also valid |
 | B6 | Timezone from `config.env` | Stops overriding the operator each run | Low | Low | prompt + `config.env` key | **DECIDE** |
 | B5 | Architecture record/warning | arm64 is untested, not unsupported | Very low | None | folded into B1 | **APPLY** with B1 |
@@ -492,7 +502,8 @@ before/after measurement on both OS families first.
 | C1 | `dnsmasq --test -C`, `caddy validate` (with the real `TAILSCALE_IPV4`/`WEBDAV_PORT`) and `docker compose config -q` run on the target before the consuming unit restarts | DD-106 |
 | D2 | `merge_docker_daemon_dns` → `merge_docker_daemon_config`; `log-opts` merged only for the `json-file` driver | DD-107 |
 | A1 | **Done in v2-77**, but not as planned: the binding change was withdrawn after the race it targeted was disproved by experiment, and the achieved stub state is read back and reported instead | DD-109 |
-| D1, D3 | **Not taken.** BBR/`fq` and `tcp_mtu_probing` need before/after measurement | — |
+| D1 | **Done in v2-79** after an interleaved A/B: peak identical, cubic's loss-driven dips removed | DD-111 |
+| D3 | **Not taken.** `tcp_mtu_probing` — no measured PMTU problem | — |
 | B2, B6 | **Not taken.** `UBUNTU_CODENAME` fallback and operator-owned timezone are open decisions, not defects | — |
 
 Verification performed for v2-74:

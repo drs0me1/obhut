@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-78"
+V2_VERSION="2026.08.06-v2-79"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -533,6 +533,32 @@ remove_legacy_sysctl_files() {
     done
 }
 
+# TCP tıkanıklık denetimi (DD-111). Yalnız bu host'ta SONLANAN TCP'yi etkiler:
+# Caddy'nin Infuse'a WebDAV akışı, qBittorrent yüklemeleri, arayüzler.
+# Exit-node üzerinden yönlendirilen akışların denetimi uç noktalardadır;
+# router'ın ayarı onlara dokunmaz. tcp_bbr Ubuntu 26.04 çekirdeğinde modül
+# olarak doğrulandı; Debian 13 için beklenir ama doğrulanmadı. Yüklenemezse
+# kurulum durmaz, varsayılanda kalır — bir kapı yalnız host'un sahip olduğunu
+# doğrulayabilir (DD-108).
+apply_tcp_congestion_control() {
+    if ! modprobe "tcp_${TCP_CONGESTION_CONTROL}" 2>/dev/null; then
+        log INFO "tcp_${TCP_CONGESTION_CONTROL} yüklenemedi; varsayılan tıkanıklık denetimi korunuyor ($(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null))"
+        return 0
+    fi
+    atomic_write "$TCP_MODULES_LOAD_FILE" 0644 <<EOF
+tcp_${TCP_CONGESTION_CONTROL}
+EOF
+    atomic_write "$SYSCTL_TCP_FILE" 0644 <<EOF
+net.core.default_qdisc = $TCP_DEFAULT_QDISC
+net.ipv4.tcp_congestion_control = $TCP_CONGESTION_CONTROL
+EOF
+    if ! sysctl -p "$SYSCTL_TCP_FILE" >/dev/null 2>&1; then
+        log WARN "TCP ayarları uygulanamadı ($SYSCTL_TCP_FILE); varsayılan korunuyor"
+        return 0
+    fi
+    log INFO "TCP: congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control) default_qdisc=$(sysctl -n net.core.default_qdisc)"
+}
+
 stage_2() {
     log INFO "Aşama 2/7 — Tailscale"
     install_tailscale_repo
@@ -544,6 +570,8 @@ stage_2() {
     remove_legacy_sysctl_files
     # M11/DD-18: buffer tabanı paket kurulumundan önce
     apply_udp_netbuf_floor
+    # DD-111: default_qdisc tailscale0 oluşmadan önce yazılsın (taze kurulumda)
+    apply_tcp_congestion_control
     retry "apt-tailscale" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y tailscale
     systemctl enable --now tailscaled
 
@@ -1063,6 +1091,13 @@ stage_7() {
     [[ "$rmem" =~ ^[0-9]+$ ]] || rmem=0
     if (( rmem < NET_BUF_FLOOR_BYTES )); then
         log WARN "net.core.rmem_max=$rmem taban değerin ($NET_BUF_FLOOR_BYTES) altında; $SYSCTL_NETBUF_FILE eziliyor olabilir"
+    fi
+    # DD-111: sonuç geri okunur. Bir optimizasyon, sözleşme maddesi değil —
+    # uyumsuzluk uyarı üretir, kurulumu düşürmez.
+    local cc
+    cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo bilinmiyor)"
+    if [[ -f "$SYSCTL_TCP_FILE" && "$cc" != "$TCP_CONGESTION_CONTROL" ]]; then
+        log WARN "tcp_congestion_control=$cc ($TCP_CONGESTION_CONTROL bekleniyordu; $SYSCTL_TCP_FILE eziliyor olabilir)"
     fi
 
     local name resolver ans dig_out code health line svc
