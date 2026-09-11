@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
-# macOS: çift tıkla; ayar yedeği al veya yedeği SSH ile geri yükle.
+# macOS: çift tıkla (Windows: Git Bash/WSL'de `bash container-backup.command`).
+# Ayar yedeği al, yedeği SSH ile geri yükle, yeni sunucuya kurulum girdilerini
+# yerleştir (seed). Yedekler bu makinede parola ile şifrelenir; parola sunucuya
+# gitmez (DD-112).
 set -Eeuo pipefail
 umask 077
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BACKUPS="$ROOT/backup"
 HOST="" PORT="" ACTION="" ARCHIVE="" YES=0
-REMOTE="" SESSION_DIR=""
+REMOTE="" SESSION_DIR="" PASSWORD="" PLAIN="" MUX=0
 SSH_OPTS=()
 INTERACTIVE=0
 [[ $# -gt 0 ]] || INTERACTIVE=1
+# Standart `openssl enc` biçimi: her Mac'teki LibreSSL, Git for Windows / WSL /
+# Linux'taki OpenSSL aynı dosyayı üretir ve çözer; ek kurulum gerekmez.
+ENC_OPTS=(-aes-256-cbc -pbkdf2 -iter 600000 -md sha256)
+MIN_PASSWORD_LENGTH=8
 
 fail() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
 usage() {
     printf '%s\n' \
-        'Kullanım: ./container-backup.command [backup|restore|check|inspect] [seçenekler]' \
+        'Kullanım: ./container-backup.command [backup|restore|check|seed|inspect] [seçenekler]' \
         '  --host nrm|root@IP       SSH config takma adı veya kullanıcı@adres' \
         '  --port 22               İsteğe bağlı SSH portu; yoksa SSH config kullanılır' \
-        '  --archive DOSYA         Geri yüklenecek backup/.../settings.tar.gz' \
-        '  --yes                   İşlem onayını otomatik yanıtla' \
+        '  --archive DOSYA         backup/.../settings.tar.gz.enc (eski şifresiz settings.tar.gz de olur)' \
+        '  --yes                   İşlem onayını otomatik yanıtla (parola yine sorulur)' \
         '  --allow-image-change    Eski komutlarla uyumluluk; artık gerekli değil' \
+        'seed: install.sh çalıştırılmadan ÖNCE yeni sunucuya /etc/master-stack/config.env ve' \
+        '      webdav.htpasswd dosyalarını yerleştirir; kurulum bunları varsayılan olarak kullanır.' \
         'Argümansız çalıştırıldığında işlem, sunucu ve yedek seçimi sorulur.'
 }
 cleanup_remote() {
@@ -33,11 +42,14 @@ cleanup_remote() {
 finish() {
     local rc=$?
     trap - EXIT
+    PASSWORD=""
     if [[ -n "$REMOTE" ]]; then
         printf 'Sunucudaki geçici/kurtarma dosyaları korundu: %s:%s\n' "$HOST" "$REMOTE" >&2
     fi
+    # bash 3.2 boş diziyi set -u altında tanımsız sayar; -O exit yalnız çoklama açıkken.
+    if (( MUX )); then ssh -T "${SSH_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; fi
     if [[ -n "$SESSION_DIR" ]]; then
-        ssh -T "${SSH_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true
+        # Çözülmüş yedek yalnız bu dizinde yaşar; çıkışta silinir.
         rm -rf -- "$SESSION_DIR"
     fi
     if (( INTERACTIVE )); then read -r -p 'Pencereyi kapatmak için Enter...' _ || true; fi
@@ -47,7 +59,7 @@ trap finish EXIT
 
 while (( $# )); do
     case "$1" in
-        backup|restore|check|inspect) ACTION=$1; shift ;;
+        backup|restore|check|seed|inspect) ACTION=$1; shift ;;
         --host|--port|--archive)
             (( $# >= 2 )) || fail "$1 değer istiyor."
             case "$1" in --host) HOST=$2 ;; --port) PORT=$2 ;; --archive) ARCHIVE=$2 ;; esac
@@ -59,9 +71,9 @@ while (( $# )); do
     esac
 done
 if [[ -z "$ACTION" ]]; then
-    printf '\nKonteyner ayarları\n  1) Yedek al\n  2) Yedekten geri yükle\n  3) Yedeği/hedefi kontrol et\n'
+    printf '\nKonteyner ayarları\n  1) Yedek al\n  2) Yedekten geri yükle\n  3) Yedeği/hedefi kontrol et\n  4) Yeni sunucuya kurulum girdilerini yerleştir (seed; install.sh öncesi)\n'
     read -r -p 'İşlem [1]: ' choice
-    case ${choice:-1} in 1) ACTION=backup ;; 2) ACTION=restore ;; 3) ACTION=check ;; *) fail 'Geçersiz işlem.' ;; esac
+    case ${choice:-1} in 1) ACTION=backup ;; 2) ACTION=restore ;; 3) ACTION=check ;; 4) ACTION=seed ;; *) fail 'Geçersiz işlem.' ;; esac
 fi
 if [[ -z "$HOST" ]]; then read -r -p 'SSH sunucusu (nrm veya root@IP) [nrm]: ' HOST; HOST=${HOST:-nrm}; fi
 [[ "$HOST" =~ ^([a-zA-Z_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9][a-zA-Z0-9_.:-]*$ ]] || fail 'Geçersiz SSH adresi.'
@@ -73,11 +85,36 @@ fi
 [[ ! -L "$BACKUPS" ]] || fail 'backup klasörü symlink olamaz.'
 mkdir -p "$BACKUPS"
 chmod 700 "$BACKUPS"
+for cmd in ssh scp tar openssl; do command -v "$cmd" >/dev/null || fail "$cmd gerekli."; done
+openssl enc -help 2>&1 | grep -q -- '-pbkdf2' || fail 'openssl -pbkdf2 desteklemiyor (OpenSSL 1.1.1+ / LibreSSL 2.9+ gerekli).'
+if command -v sha256sum >/dev/null; then
+    sha256_file() { local h; h=$(sha256sum "$1"); printf '%s' "${h%% *}"; }
+else
+    command -v shasum >/dev/null || fail 'sha256sum veya shasum gerekli.'
+    sha256_file() { local h; h=$(shasum -a 256 "$1"); printf '%s' "${h%% *}"; }
+fi
+# Parola argv'ye ve ortam değişkenlerine girmez: openssl'e fd:3 ile verilir.
+read_password() {
+    local confirm=$1 a b
+    read -r -s -p 'Yedek parolası: ' a || fail 'Parola okunamadı.'
+    printf '\n'
+    [[ -n "$a" ]] || fail 'Parola boş olamaz.'
+    if (( confirm )); then
+        (( ${#a} >= MIN_PASSWORD_LENGTH )) || fail "Parola en az $MIN_PASSWORD_LENGTH karakter olmalı."
+        read -r -s -p 'Yedek parolası (tekrar): ' b || fail 'Parola okunamadı.'
+        printf '\n'
+        [[ "$a" == "$b" ]] || fail 'Parolalar eşleşmiyor.'
+    fi
+    PASSWORD=$a
+}
+encrypt_file() { openssl enc "${ENC_OPTS[@]}" -salt -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD"); }
+decrypt_file() { openssl enc -d "${ENC_OPTS[@]}" -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD") 2>/dev/null; }
 
-if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
+SESSION_DIR=$(mktemp -d /tmp/master-stack-ssh.XXXXXX)
+if [[ "$ACTION" == restore || "$ACTION" == check || "$ACTION" == seed ]]; then
     if [[ -z "$ARCHIVE" ]]; then
         files=()
-        while IFS= read -r file; do files+=("$file"); done < <(find "$BACKUPS" -mindepth 2 -maxdepth 2 -type f -name settings.tar.gz | sort -r)
+        while IFS= read -r file; do files+=("$file"); done < <(find "$BACKUPS" -mindepth 2 -maxdepth 2 -type f \( -name settings.tar.gz.enc -o -name settings.tar.gz \) | sort -r)
         (( ${#files[@]} )) || fail 'backup/ içinde yedek yok.'
         for ((i=0;i<${#files[@]};i++)); do printf '  %s) %s\n' "$((i+1))" "${files[$i]#"$BACKUPS/"}"; done
         read -r -p 'Yedek numarası [1]: ' choice; choice=${choice:-1}
@@ -86,34 +123,68 @@ if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
         ARCHIVE=${files[$((10#$choice-1))]}
     fi
     [[ -f "$ARCHIVE" && ! -L "$ARCHIVE" ]] || fail 'Yedek dosyası bulunamadı.'
+    [[ "$ARCHIVE" == *.tar.gz.enc || "$ARCHIVE" == *.tar.gz ]] || fail 'Yedek settings.tar.gz.enc veya settings.tar.gz olmalı.'
     archive_dir=$(cd -- "$(dirname -- "$ARCHIVE")" && pwd)
     ARCHIVE="$archive_dir/$(basename -- "$ARCHIVE")"
     [[ -f "$archive_dir/settings.sha256" ]] || fail 'Yedeğin settings.sha256 dosyası eksik.'
     expected=$(tr -d '\r\n' <"$archive_dir/settings.sha256")
-    got=$(shasum -a 256 "$ARCHIVE"); got=${got%% *}
-    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$got" ]] || fail 'Yerel yedek SHA256 kontrolü başarısız.'
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail 'settings.sha256 geçersiz.'
     printf 'Seçilen yedek: %s\n' "$ARCHIVE"
+    # Çözme yerelde: sunucu parolayı görmez, yanlış parola SSH'tan önce yakalanır.
+    PLAIN="$SESSION_DIR/input.tar.gz"
+    if [[ "$ARCHIVE" == *.enc ]]; then
+        read_password 0
+        decrypt_file "$ARCHIVE" "$PLAIN" || fail 'Yedek çözülemedi: parola yanlış ya da dosya bozuk.'
+        [[ $(sha256_file "$PLAIN") == "$expected" ]] || fail 'Yedek çözüldü ancak SHA256 uyuşmuyor; dosya bozulmuş.'
+        printf 'Yedek çözüldü ve SHA256 doğrulandı.\n'
+    else
+        [[ $(sha256_file "$ARCHIVE") == "$expected" ]] || fail 'Yerel yedek SHA256 kontrolü başarısız.'
+        cp "$ARCHIVE" "$PLAIN"
+        printf 'UYARI: bu yedek şifresiz (eski sürüm); yeni yedekler şifreli alınır.\n'
+    fi
+    if [[ "$ACTION" == seed ]]; then
+        tar -tzf "$PLAIN" | grep -qx 'host/config.env' ||
+            fail 'Bu yedekte kurulum girdileri (host/) yok; seed için bu sürümle alınmış yeni bir yedek gerekir.'
+    fi
 fi
-printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf.\n'
-printf 'Yedekler şifresizdir; kullanıcı/parola özetleri ve VPN özel anahtarlarını içerir.\n'
+printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf; ayrıca kurulum girdileri (config.env, webdav.htpasswd; yalnız seed yerleştirir).\n'
+printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
+if [[ "$ACTION" == backup ]]; then
+    read_password 1
+elif [[ "$ACTION" == restore && -z "$PASSWORD" ]]; then
+    printf 'Kurtarma yedeği şifrelenecek; bunun için bir parola belirleyin.\n'
+    read_password 1
+fi
 if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
     printf 'Bu dört konteyner kısa süre durdurulacak. SSH/Tailscale bağlantısı açık kalır.\n'
     if [[ "$ACTION" == restore ]]; then
-        printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek; önce kurtarma yedeği alınacak.\n' "$HOST"
+        printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek; önce kurtarma yedeği alınacak (aynı parolayla şifreli).\n' "$HOST"
         printf 'Dağıtım/imaj sürümü eşitliği aranmaz; farklı uygulama sürümlerinde veri uyumluluğu garanti edilmez.\n'
         printf 'wg-easy anahtarları korunur; IP/DNS değişirse istemcilerin Endpoint adresini güncelleyin.\n'
     fi
-    if (( ! YES )); then
-        read -r -p 'Devam edilsin mi? [e/H]: ' answer
-        [[ "$answer" =~ ^([Ee]|[Ee][Vv][Ee][Tt])$ ]] || { printf 'İptal edildi.\n'; exit 0; }
-    fi
+elif [[ "$ACTION" == seed ]]; then
+    printf 'Hedef %s üzerine /etc/master-stack/config.env ve webdav.htpasswd yerleştirilecek; var olan dosyalar değiştirilmez.\n' "$HOST"
+    printf 'Konteyner ayarları bu adımda yüklenmez: önce install.sh, sonra restore.\n'
+fi
+if [[ "$ACTION" == backup || "$ACTION" == restore || "$ACTION" == seed ]] && (( ! YES )); then
+    read -r -p 'Devam edilsin mi? [e/H]: ' answer
+    [[ "$answer" =~ ^([Ee]|[Ee][Vv][Ee][Tt])$ ]] || { printf 'İptal edildi.\n'; exit 0; }
 fi
 
-SESSION_DIR=$(mktemp -d /tmp/master-stack-ssh.XXXXXX)
 SSH_OPTS=(-o ClearAllForwardings=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 \
-    -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new \
-    -o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$SESSION_DIR/socket")
+    -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
 [[ -z "$PORT" ]] || SSH_OPTS+=(-o "Port=$PORT")
+# SSH çoklama: Mac/Linux'ta tek kimlik doğrulama; Windows OpenSSH'ta yok, o
+# zaman her adım ayrı bağlanır.
+MUX_OPTS=(-o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$SESSION_DIR/socket")
+ssh -T "${SSH_OPTS[@]}" "${MUX_OPTS[@]}" "$HOST" true || fail "SSH bağlantısı kurulamadı: $HOST"
+if ssh -T "${SSH_OPTS[@]}" "${MUX_OPTS[@]}" -o BatchMode=yes "$HOST" true 2>/dev/null; then
+    SSH_OPTS+=("${MUX_OPTS[@]}")
+    MUX=1
+else
+    ssh -T "${MUX_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true
+    printf 'SSH çoklama kullanılamıyor; her adım ayrı bağlanacak.\n'
+fi
 
 prepare_remote() {
     REMOTE=$(ssh -T "${SSH_OPTS[@]}" "$HOST" 'umask 077; mktemp -d /tmp/master-stack-backup.XXXXXXXX')
@@ -127,29 +198,35 @@ download_backup() {
     scp -q "${SSH_OPTS[@]}" "$HOST:$REMOTE/settings.tar.gz" "$output_dir/settings.tar.gz.part"
     scp -q "${SSH_OPTS[@]}" "$HOST:$REMOTE/settings.sha256" "$output_dir/settings.sha256"
     expected=$(tr -d '\r\n' <"$output_dir/settings.sha256")
-    actual=$(shasum -a 256 "$output_dir/settings.tar.gz.part"); actual=${actual%% *}
-    [[ "$expected" == "$actual" ]] || fail 'SSH aktarımı sonrası SHA256 uyuşmuyor.'
-    mv "$output_dir/settings.tar.gz.part" "$output_dir/settings.tar.gz"
-    tar -tzf "$output_dir/settings.tar.gz" >"$output_dir/files.txt"
+    actual=$(sha256_file "$output_dir/settings.tar.gz.part")
+    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$actual" ]] || fail 'SSH aktarımı sonrası SHA256 uyuşmuyor.'
+    tar -tzf "$output_dir/settings.tar.gz.part" >"$output_dir/files.txt"
+    # Düz metin yalnız .part adıyla yaşar; şifreli dosya geri çözülüp doğrulanınca silinir.
+    encrypt_file "$output_dir/settings.tar.gz.part" "$output_dir/settings.tar.gz.enc.part"
+    decrypt_file "$output_dir/settings.tar.gz.enc.part" "$SESSION_DIR/verify.tar.gz" || fail 'Şifreli yedek geri çözülemedi.'
+    [[ $(sha256_file "$SESSION_DIR/verify.tar.gz") == "$expected" ]] || fail 'Şifreli yedek doğrulaması başarısız.'
+    rm -f "$SESSION_DIR/verify.tar.gz"
+    mv "$output_dir/settings.tar.gz.enc.part" "$output_dir/settings.tar.gz.enc"
+    rm -f "$output_dir/settings.tar.gz.part"
     chmod 600 "$output_dir/"*
-    printf 'Yedek kaydedildi: %s\n' "$output_dir/settings.tar.gz"
+    printf 'Yedek kaydedildi (şifreli): %s\n' "$output_dir/settings.tar.gz.enc"
 }
 
 prepare_remote
 case "$ACTION" in
     inspect) remote_run inspect ;;
     backup) remote_run backup; download_backup settings ;;
+    seed)
+        scp -q "${SSH_OPTS[@]}" "$PLAIN" "$HOST:$REMOTE/input.tar.gz"
+        remote_run seed
+        ;;
     check|restore)
-        scp -q "${SSH_OPTS[@]}" "$ARCHIVE" "$HOST:$REMOTE/input.tar.gz"
+        # Tek yükleme: check, kurtarma yedeği ve restore aynı uzak dizinde çalışır.
+        scp -q "${SSH_OPTS[@]}" "$PLAIN" "$HOST:$REMOTE/input.tar.gz"
         remote_run check
         if [[ "$ACTION" == restore ]]; then
-            cleanup_remote
-            prepare_remote
             remote_run backup-current
             download_backup before-restore
-            cleanup_remote
-            prepare_remote
-            scp -q "${SSH_OPTS[@]}" "$ARCHIVE" "$HOST:$REMOTE/input.tar.gz"
             remote_run restore
         fi
         ;;

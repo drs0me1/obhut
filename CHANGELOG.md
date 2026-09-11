@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-11 — Encrypted container backups, host seed and single-upload restore
+
+- **Added:** backups are encrypted with a password asked twice when the backup
+  is taken and once when it is checked, restored or seeded from. Standard
+  `openssl enc` format (AES-256-CBC, PBKDF2-HMAC-SHA256, 600,000 iterations),
+  decrypted locally so the password never reaches the server; any OpenSSL or
+  LibreSSL on any OS can decrypt the file. Before-restore backups are
+  encrypted with the same password. Existing plaintext backups stay usable
+  (**DD-112**).
+- **Added:** every backup now also saves the installer inputs
+  `/etc/master-stack/config.env` and `webdav.htpasswd` (manifest schema 2),
+  and a new `seed` action places them on a fresh host before `install.sh`, so
+  the reinstall reuses the previous answers and WebDAV account. `restore`
+  never writes them; `seed` needs neither Docker nor jq, re-runs as a no-op
+  and refuses to overwrite differing files. Schema-1 backups still restore.
+- **Changed:** restore uploads the archive once and runs check, the
+  before-restore backup and the restore in one remote directory, instead of
+  three SSH rounds with two uploads.
+- **Changed:** the launcher avoids macOS-only tools (`sha256sum` or `shasum`,
+  `openssl` from `PATH`, SSH multiplexing probed and dropped where absent) and
+  `.gitattributes` keeps the scripts LF on Windows checkouts, so it can run
+  from Git Bash or WSL; not yet exercised on Windows.
+- **Docs:** reinstall runbook (fresh OS → seed → install → restore →
+  Tailscale admin → Infuse address) and the encryption format in
+  `docs/container-backup.md`; `tests/backup-roundtrip.sh` is now part of the
+  host acceptance sequence and covers schema 2, legacy archives and seed.
+- **Live-verified on `nrm` (Debian 13.6):** isolated round-trip, `seed` in
+  minimal Debian 13 and Ubuntu 26.04 containers, encrypted backup/check/
+  restore/seed from the Mac, and a seed → `install.sh` re-run that took the
+  seeded answers as defaults and kept the WebDAV account. A reinstall from a
+  bare OS with this flow has not been run yet.
+- Installer tree unchanged; `V2_VERSION` stays at v2-79.
+
 ### 2026-09-11 — TCP congestion control is BBR, measured before adopting it (v2-79)
 
 - **Changed:** stage 2 now loads `tcp_bbr` and sets

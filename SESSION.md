@@ -45,6 +45,23 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-11 — container-backup: encryption, host seed, single upload
+(DD-112):** all five approved recommendations implemented. New backups are
+`settings.tar.gz.enc` (standard `openssl enc`, AES-256-CBC + PBKDF2-SHA256
+600k; password asked twice on backup, once on check/restore/seed; decrypted
+locally, never sent to the server; the two old plaintext backups stay usable).
+Manifest schema 2 adds `host/config.env` and `host/webdav.htpasswd`; the new
+`seed` action places them on a fresh host before `install.sh` (no Docker/jq
+needed, no-op when identical, refuses differing files, validates content
+against `write_config`'s keys and a single bcrypt line). Restore uploads once.
+The launcher avoids macOS-only tools so Git Bash/WSL can run it (`.gitattributes`
+forces LF); Windows itself is untested. Verified: static checks, bats 98 ok,
+round-trip on `nrm`, `seed` in minimal Debian/Ubuntu containers, encrypted
+backup/check/restore/seed from the Mac, and seed → `install.sh` re-run taking
+the seeded defaults. **Open:** run the full runbook (bare OS → seed → install →
+restore) at the next `nrm` reimage; try the launcher from Git Bash on Windows.
+The two 2026-09-11 test backups under `backup/` were encrypted with a
+throwaway password given in the session; re-take with a real password.
 
 **2026-09-11 — Debian 13 acceptance of v2-79 (nrm reinstalled as trixie):**
 closes the Debian gap for v2-77…v2-79. Fresh install from bare metal in 80 s,

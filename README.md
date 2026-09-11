@@ -66,9 +66,11 @@ and WAN SSH.
 ## Container settings backup
 
 Double-click `container-backup.command` to back up or restore Portainer,
-FileBrowser, wg-easy and qBittorrent preferences over SSH. Snapshots are stored
-under the Git-ignored `backup/` directory. This is separate from installation.
-See [scope and restore instructions](docs/container-backup.md).
+FileBrowser, wg-easy and qBittorrent preferences over SSH, or to seed a fresh
+host with the previous install's answers and WebDAV account before running
+`install.sh`. Snapshots are password-encrypted and stored under the
+Git-ignored `backup/` directory. This is separate from installation.
+See [scope, the reinstall runbook and encryption](docs/container-backup.md).
 
 ## Verify (workstation)
 

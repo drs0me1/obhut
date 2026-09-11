@@ -1272,3 +1272,33 @@ EOF
     ! awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'kill "\$up_pid"'
 }
+
+@test "container-backup seed paths are the installer's config and htpasswd files" {
+    # The worker restates the two paths because it runs before defaults.env
+    # exists on a fresh host; this pins them to the single source of truth.
+    local config_file htpasswd_file host_state host_files
+    config_file="$(awk -F'"' '/^CONFIG_FILE=/{print $2}' "$V2_ROOT/config/defaults.env")"
+    htpasswd_file="$(awk -F'"' '/^WEBDAV_HTPASSWD_FILE=/{print $2}' "$V2_ROOT/config/defaults.env")"
+    host_state="$(awk -F= '/^HOST_STATE=/{print $2}' "$V2_ROOT/dev/container-backup-remote.sh")"
+    host_files="$(sed -n 's/^HOST_FILES=(\(.*\))$/\1/p' "$V2_ROOT/dev/container-backup-remote.sh")"
+    [ "$host_files" = "config.env webdav.htpasswd" ]
+    [ "$host_state/config.env" = "$config_file" ]
+    [ "$host_state/webdav.htpasswd" = "$htpasswd_file" ]
+}
+
+@test "container-backup seed accepts exactly the keys write_config writes" {
+    local written accepted
+    written="$(awk '/^write_config\(\)/,/^EOF$/' "$V2_ROOT/install.sh" |
+        grep -oE '^[A-Z_]+=' | tr -d = | sort | tr '\n' ' ')"
+    accepted="$(awk '/^check_config_env\(\)/,/^}/' "$V2_ROOT/dev/container-backup-remote.sh" |
+        grep -oE '^ +[A-Z_|]+\)' | tr -d ' )' | tr '|' '\n' | sort | tr '\n' ' ')"
+    [ -n "$written" ]
+    [ "$written" = "$accepted" ]
+}
+
+@test "container-backup launcher stays on bash 3.2 features for Finder" {
+    # Finder runs .command files with macOS /bin/bash 3.2.
+    ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' "$V2_ROOT/container-backup.command"
+    grep -q 'seed' "$V2_ROOT/container-backup.command"
+    grep -q -- '-pbkdf2 -iter 600000 -md sha256' "$V2_ROOT/container-backup.command"
+}

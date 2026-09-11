@@ -4481,6 +4481,110 @@ failure with an early, named one.
   `modules-load.d`, the live value was still `bbr` and `tailscale0` came up
   with `fq`. Both supported distributions have now had the same measurement.
 
+### DD-112: Backups are password-encrypted with the OS's `openssl`; installer inputs are seeded, not restored (2026-09-11)
+
+- **Decision:** `container-backup.command` encrypts every new backup on the
+  workstation with `openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256
+  -salt`, asking for the password twice at backup and once at check, restore
+  and seed. Decryption is local, so the password never reaches the server.
+  Every backup also carries `/etc/master-stack/config.env` and
+  `webdav.htpasswd` (manifest schema 2), and a new `seed` action places them
+  on a fresh host before `install.sh`; `restore` never writes them. The
+  restore flow uploads the archive once and runs check, the before-restore
+  backup and the restore in one remote directory.
+- **Why encrypt now:** the archives hold bcrypt hashes for four services and
+  wg-easy's server and peer private keys. They live in a `0700` directory on
+  one laptop, but a laptop backup, a sync folder or a copied disk carries
+  them unchanged. The user asked for a password on backup and on restore;
+  that is what was built.
+- **Why `openssl enc`, not `age`, gpg or a rewrite:** the constraint was
+  "works on this Mac and on Windows without installing anything". macOS
+  ships LibreSSL, Git for Windows and WSL ship OpenSSL, every Linux has one,
+  and they all read and write this one format. Measured: LibreSSL 3.3.6 and
+  OpenSSL 3.6.3 derive the identical key and IV from the same salt and
+  password and decrypt each other's files byte-for-byte; the host's
+  OpenSSL 3.5.7 does too. `age` and gpg are not on the Mac, and installing
+  them is outside this repository. A PowerShell or Python rewrite would be a
+  second implementation of the SSH/tar workflow to keep in step, and Python
+  has no AES in its standard library. Encrypting on the server would have
+  sent the password to the one place it must not go.
+- **Why no MAC:** `openssl enc` has no authentication tag, and
+  encrypt-then-MAC in bash means a second PBKDF2 run plus a hand-rolled HMAC
+  (it works under bash 3.2 — checked against RFC 4231 and Python's `hmac` —
+  but it is more code than the whole encryption step). The threat encryption
+  addresses here is a *copied* file, not an attacker who can rewrite files
+  on the workstation; that attacker can rewrite the script. In place of a
+  tag, the decrypted archive's SHA-256 is checked against `settings.sha256`,
+  which the server computed over the plaintext, and the server checks every
+  file against the manifest. Without the password nobody can produce a
+  ciphertext whose decryption passes either. The hash check also catches the
+  one-in-256 wrong password that passes CBC padding. `settings.sha256` and
+  `files.txt` stay plaintext for this reason; they reveal names and a hash,
+  not contents.
+- **Why the password travels on stdin and fd 3:** `read -s` from standard
+  input like every other prompt in the script, then `-pass fd:3` from a
+  process substitution. It never appears in `argv` (visible in `ps`) or the
+  environment, and the variable is cleared on exit. Standard input rather
+  than `/dev/tty` keeps automation possible; a piped password in shell
+  history is the caller's choice and is documented.
+- **Why seed is a separate action, before the install:** `install.sh` already
+  treats an existing `config.env` as its prompt defaults and keeps an
+  existing `webdav.htpasswd` (stage 0). Those files are installer inputs,
+  not container state: writing them during `restore`, after the install,
+  would change nothing the installer had already asked, and the WebDAV
+  account would already have been re-created under a new password. Placing
+  them first makes the reinstall reproduce the previous answers and
+  credentials, which is what Infuse needs (it keeps user and password; only
+  the address changes, because the Tailscale identity is not cloned). `seed`
+  therefore runs on a host with no Docker and no jq — its dependency list is
+  checked separately — and it never overwrites: identical files are a no-op,
+  a differing file stops the whole step before anything is written.
+- **Why seed validates the content:** `install.sh` sources `config.env` as
+  root. The file comes from a backup the user made, but the worker still
+  accepts only the five keys `write_config` writes, with values under the
+  same patterns the installer's prompts enforce, and a single bcrypt line in
+  the htpasswd. A bats test pins the key list to `write_config` and the two
+  paths to `defaults.env`, so a later installer change cannot silently
+  desynchronise the seed.
+- **Why one upload:** the old restore ran check, then a fresh remote
+  directory for the before-restore backup, then a third for the restore,
+  uploading the archive twice. The worker now removes its own intermediate
+  outputs at the start of each action, so the three steps share one
+  directory and the archive goes up once. Same worker, same checks, one
+  round.
+- **Windows:** the format is portable and the launcher avoids macOS-only
+  tools (`sha256sum` or `shasum`, `openssl` from `PATH`, SSH multiplexing
+  probed and dropped where absent, LF enforced by `.gitattributes`). It has
+  not been run on Windows; that is recorded as a limit, not a claim.
+- **Not doing:** encrypting `settings.sha256` or `files.txt`; a key file or
+  keychain integration; re-encrypting the two existing plaintext backups
+  (they stay usable and are reported as unencrypted); a `.bat` wrapper that
+  cannot be tested here.
+- **Verified (2026-09-11):** `/bin/bash -n` under macOS bash 3.2 and
+  `shellcheck` clean on all three scripts; bats 98 ok. The isolated
+  round-trip passed on the Debian 13.6 `nrm`, including schema 2, a
+  schema-1 archive without `host/`, rejection of schema-1-with-`host/` and
+  schema-2-without-htpasswd, and the seed rules. The worker's `seed` ran
+  inside `debian:13-slim` and `ubuntu:26.04` containers with neither jq nor
+  Docker, using a real archive: both files placed `0600 root:root`, re-run a
+  no-op, a differing file refused with nothing written. From the Mac under
+  Finder's `/bin/bash`: an encrypted backup in 17 s (24 entries, `host/`
+  included) that the LibreSSL one-liner decrypted to the server's hash; a
+  wrong password stopped before any SSH; short and mismatched passwords
+  rejected; `check` passed on the encrypted archive (13 files) and on the
+  2026-09-06 plaintext archive (11 files, unencrypted warning); `restore` of
+  the encrypted archive onto `nrm` in 30 s with one upload, its
+  before-restore backup encrypted (`kind: rollback`, schema 2), 6/6
+  containers, 3/3 healthy, 3 WireGuard peers, no remote directory left; and
+  `seed` on the live host a no-op. Finally, with `config.env` and
+  `webdav.htpasswd` moved aside on `nrm`, `seed` put them back byte-identical
+  as `0600 root:root`, and a default-answer `install.sh` re-run offered the
+  seeded values as its prompt defaults (`[ayc]`, `[/downloads]`, `[61001]`,
+  `[61003]`), logged `Mevcut WebDAV kimlik dosyası korunuyor`, exited 0 in
+  11 s and left both files unchanged, 6/6 containers, 3/3 healthy, 0 failed
+  units. Not yet run: the full runbook from a bare OS; it is the next
+  acceptance item when `nrm` is reimaged.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no
