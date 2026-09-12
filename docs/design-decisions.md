@@ -4494,17 +4494,16 @@ failure with an early, named one.
   one laptop, but a laptop backup, a sync folder or a copied disk carries
   them unchanged. The user asked for a password on backup and on restore;
   that is what was built.
-- **Why `openssl enc`, not `age`, gpg or a rewrite:** the constraint was
-  "works on this Mac and on Windows without installing anything". macOS
-  ships LibreSSL, Git for Windows and WSL ship OpenSSL, every Linux has one,
-  and they all read and write this one format. Measured: LibreSSL 3.3.6 and
-  OpenSSL 3.6.3 derive the identical key and IV from the same salt and
-  password and decrypt each other's files byte-for-byte; the host's
-  OpenSSL 3.5.7 does too. `age` and gpg are not on the Mac, and installing
-  them is outside this repository. A PowerShell or Python rewrite would be a
-  second implementation of the SSH/tar workflow to keep in step, and Python
-  has no AES in its standard library. Encrypting on the server would have
-  sent the password to the one place it must not go.
+- **Why `openssl enc`, not `age` or gpg:** the constraint was "works on
+  this Mac without installing anything", and at decision time also on
+  Windows — a requirement the user withdrew the next day (below). macOS
+  ships LibreSSL and every OpenSSL reads and writes this one format.
+  Measured: LibreSSL 3.3.6 and OpenSSL 3.6.3 derive the identical key and
+  IV from the same salt and password and decrypt each other's files
+  byte-for-byte; the host's OpenSSL 3.5.7 does too, which is what lets a
+  backup be opened without this script. `age` and gpg are not on the Mac,
+  and installing them is outside this repository. Encrypting on the server
+  would have sent the password to the one place it must not go.
 - **Why no MAC:** `openssl enc` has no authentication tag, and
   encrypt-then-MAC in bash means a second PBKDF2 run plus a hand-rolled HMAC
   (it works under bash 3.2 — checked against RFC 4231 and Python's `hmac` —
@@ -4540,10 +4539,15 @@ failure with an early, named one.
   automatic rollback on a write/start/health failure uses. The trade-off is
   stated at the prompt and in the docs: a *successful* restore cannot be
   undone; back the target up first if its settings matter.
-- **Windows:** the format is portable and the launcher avoids macOS-only
-  tools (`sha256sum` or `shasum`, `openssl` from `PATH`, SSH multiplexing
-  probed and dropped where absent, LF enforced by `.gitattributes`). It has
-  not been run on Windows; that is recorded as a limit, not a claim.
+- **macOS only (2026-09-12):** the first version also tried to run from Git
+  Bash/WSL (`sha256sum` fallback, `openssl` from `PATH` with a `-pbkdf2`
+  preflight, SSH multiplexing probed and dropped where absent, LF forced by
+  `.gitattributes`). It was never exercised on Windows, and the user dropped
+  the requirement the next day. The launcher went back to the macOS tools
+  it is verified with — `shasum`, the system `/usr/bin/openssl`, one
+  multiplexed SSH connection — and `.gitattributes` was removed. The file
+  format is still standard OpenSSL, so a backup can be decrypted anywhere;
+  only the script is Mac-only.
 - **Built and removed the same day — `seed`:** the first version of this
   change also saved `/etc/master-stack/config.env` and `webdav.htpasswd` in
   every archive (manifest schema 2) and added a `seed` action that placed

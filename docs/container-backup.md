@@ -1,16 +1,12 @@
 # Container settings backup
 
-Double-click `container-backup.command` at the repository root. On Windows,
-run `bash container-backup.command` from Git Bash or WSL (the file format and
-the script avoid macOS-only tools, but this has not been exercised on Windows
-as of 2026-09-11). Choose backup, restore or check, then enter an SSH config
-alias such as `nrm`, or `root@address`. SSH config supplies the user, key and
-port; `--port` overrides the port. The target needs Docker, Bash, GNU tar, jq
-and root access (directly or through passwordless `sudo`). Locally the script
-needs `ssh`, `scp`,
-`tar`, an `openssl` with `-pbkdf2` (macOS LibreSSL, Git for Windows and every
-current Linux qualify) and `sha256sum` or `shasum`. Nothing is installed on
-either side.
+Double-click `container-backup.command` at the repository root (macOS only;
+it uses the system `/usr/bin/openssl`, `shasum` and Finder's `/bin/bash`
+3.2). Choose backup, restore or check, then enter an SSH config alias such as
+`nrm`, or `root@address`. SSH config supplies the user, key and port; `--port`
+overrides the port. The target needs Docker, Bash, GNU tar, jq and root access
+(directly or through passwordless `sudo`). Nothing is installed on either
+side.
 
 New backups are encrypted with a password typed when the backup is taken; the
 same password is required to check or restore that backup. See
@@ -105,9 +101,8 @@ at the cost of leaving them in shell history.
 
 Restore validates the archive and target, then replaces the data. The
 decrypted archive is uploaded once; validation and the restore run in the
-same remote temporary directory over one multiplexed SSH connection (or
-separate connections where multiplexing is unavailable, as on Windows
-OpenSSH). While the containers are stopped, immediately before replacing
+same remote temporary directory over one multiplexed SSH connection. While
+the containers are stopped, immediately before replacing
 data, restore takes a recovery snapshot on the server; a write/start/health
 error triggers an attempt to put those old settings back. That snapshot is
 the only copy of the target's previous settings and is removed with the rest
@@ -192,7 +187,7 @@ with the key and IV derived from the password by PBKDF2-HMAC-SHA256 over
 600,000 iterations and a random 8-byte salt
 (`-aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -salt`). The file starts with
 `Salted__` and the salt. This is the standard OpenSSL format, so any
-OpenSSL 1.1.1+ or LibreSSL 2.9+ on any OS decrypts it without this script:
+OpenSSL 1.1.1+ or LibreSSL 2.9+ decrypts it without this script:
 
 ```bash
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 \
@@ -219,10 +214,9 @@ workstation, who could alter the script itself. Every written backup is
 decrypted again and hashed before its plaintext is deleted, so a broken
 `openssl` cannot leave an unreadable file behind.
 
-Rejected alternatives: `age` (must be installed on every machine), a
-PowerShell or Python rewrite (a second implementation to maintain; Python has
-no AES in its standard library), and encrypting on the server (the password
-would leave the workstation). See **DD-112**.
+Rejected alternatives: `age` and gpg (not on the Mac; installing them is
+outside this repository) and encrypting on the server (the password would
+leave the workstation). See **DD-112**.
 
 ## Storage and SSH
 
@@ -236,9 +230,8 @@ out-of-scope files.
 SSH keeps host verification enabled (`accept-new`): changed known host keys
 are rejected. After a server reset, verify the new fingerprint before replacing
 that host's record in the known-hosts file configured for the SSH alias. The
-script neither deletes all known hosts nor disables host verification. SSH
-multiplexing is probed once per run and dropped where it does not work, so
-every step then authenticates on its own.
+script neither deletes all known hosts nor disables host verification. One
+multiplexed SSH connection serves every step of a run.
 
 ## Verification
 
@@ -317,4 +310,4 @@ request: the few values it carried are ones `install.sh` asks for anyway, and
 the tool stays a copy-and-load tool for container settings (**DD-112**). The
 two test archives written by that build contain a `host/` directory and are
 rejected by the final tool as out of scope. The full runbook from a bare OS
-has not been run yet; Windows remains unexercised.
+has not been run yet.

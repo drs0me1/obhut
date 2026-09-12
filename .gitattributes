@@ -1,4 +1,0 @@
-# Bash betikleri Windows checkout unda da LF kalmali (Git Bash/WSL ile calisir).
-*.command text eol=lf
-*.sh text eol=lf
-*.bats text eol=lf

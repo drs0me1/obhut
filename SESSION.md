@@ -51,9 +51,9 @@ PBKDF2-SHA256 600k; password asked twice on backup, once on check/restore;
 decrypted locally, never sent to the server; old plaintext backups stay
 usable; archive layout/schema unchanged). Restore uploads once and, since
 2026-09-12, no longer downloads a before-restore backup (single copy on
-backup, direct load on restore; server-side rollback snapshot kept). The launcher
-avoids macOS-only tools so Git Bash/WSL can run it (`.gitattributes` forces
-LF); Windows itself is untested. A `seed` action (installer inputs in the
+backup, direct load on restore; server-side rollback snapshot kept). The
+launcher is macOS only again: a Git Bash/WSL-portable variant was dropped
+on 2026-09-12 at the user's request. A `seed` action (installer inputs in the
 archive, placed before `install.sh`) was built, verified end to end and
 removed the same day at the user's request — see DD-112; the design is in
 `d92b338`. Verified: static checks, bats green, round-trip on `nrm`, encrypted
@@ -62,7 +62,7 @@ in git-ignored `export/` with a Turkish click-order note (`OKUBENI.txt`).
 **Open:** the user will reimage `nrm` (netcup), install by hand with real
 answers and a real WebDAV password, configure the services and take the real
 backup; the full runbook (bare OS → install → restore) is then the next
-acceptance item. Try the launcher from Git Bash on Windows. The four test
+acceptance item. The four test
 backups under `backup/` are throwaway (two use a session test password; the
 two from the seed build contain `host/` and are rejected by the final tool).
 

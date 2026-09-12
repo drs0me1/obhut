@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# macOS: çift tıkla (Windows: Git Bash/WSL'de `bash container-backup.command`).
-# Ayar yedeği al veya yedeği SSH ile geri yükle. Yedekler bu makinede parola ile
-# şifrelenir; parola sunucuya gitmez (DD-112).
+# macOS: çift tıkla; ayar yedeği al veya yedeği SSH ile geri yükle. Yedekler bu
+# Mac'te parola ile şifrelenir; parola sunucuya gitmez (DD-112).
 set -Eeuo pipefail
 umask 077
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BACKUPS="$ROOT/backup"
 HOST="" PORT="" ACTION="" ARCHIVE="" YES=0
-REMOTE="" SESSION_DIR="" PASSWORD="" PLAIN="" MUX=0
+REMOTE="" SESSION_DIR="" PASSWORD="" PLAIN="" SSH_UP=0
 SSH_OPTS=()
 INTERACTIVE=0
 [[ $# -gt 0 ]] || INTERACTIVE=1
-# Standart `openssl enc` biçimi: her Mac'teki LibreSSL, Git for Windows / WSL /
-# Linux'taki OpenSSL aynı dosyayı üretir ve çözer; ek kurulum gerekmez.
+# Standart `openssl enc` biçimi, macOS'un kendi LibreSSL'i ile; ek kurulum yok.
+# Aynı dosyayı herhangi bir OpenSSL/LibreSSL de açar (docs/container-backup.md).
+OPENSSL=/usr/bin/openssl
 ENC_OPTS=(-aes-256-cbc -pbkdf2 -iter 600000 -md sha256)
 MIN_PASSWORD_LENGTH=8
 
@@ -43,8 +43,8 @@ finish() {
     if [[ -n "$REMOTE" ]]; then
         printf 'Sunucudaki geçici/kurtarma dosyaları korundu: %s:%s\n' "$HOST" "$REMOTE" >&2
     fi
-    # bash 3.2 boş diziyi set -u altında tanımsız sayar; -O exit yalnız çoklama açıkken.
-    if (( MUX )); then ssh -T "${SSH_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; fi
+    # bash 3.2 boş diziyi set -u altında tanımsız sayar; -O exit yalnız SSH kurulduysa.
+    if (( SSH_UP )); then ssh -T "${SSH_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; fi
     if [[ -n "$SESSION_DIR" ]]; then
         # Çözülmüş yedek yalnız bu dizinde yaşar; çıkışta silinir.
         rm -rf -- "$SESSION_DIR"
@@ -82,14 +82,7 @@ fi
 [[ ! -L "$BACKUPS" ]] || fail 'backup klasörü symlink olamaz.'
 mkdir -p "$BACKUPS"
 chmod 700 "$BACKUPS"
-for cmd in ssh scp tar openssl; do command -v "$cmd" >/dev/null || fail "$cmd gerekli."; done
-openssl enc -help 2>&1 | grep -q -- '-pbkdf2' || fail 'openssl -pbkdf2 desteklemiyor (OpenSSL 1.1.1+ / LibreSSL 2.9+ gerekli).'
-if command -v sha256sum >/dev/null; then
-    sha256_file() { local h; h=$(sha256sum "$1"); printf '%s' "${h%% *}"; }
-else
-    command -v shasum >/dev/null || fail 'sha256sum veya shasum gerekli.'
-    sha256_file() { local h; h=$(shasum -a 256 "$1"); printf '%s' "${h%% *}"; }
-fi
+sha256_file() { local h; h=$(shasum -a 256 "$1"); printf '%s' "${h%% *}"; }
 # Parola argv'ye ve ortam değişkenlerine girmez: openssl'e fd:3 ile verilir.
 read_password() {
     local confirm=$1 a b
@@ -104,8 +97,8 @@ read_password() {
     fi
     PASSWORD=$a
 }
-encrypt_file() { openssl enc "${ENC_OPTS[@]}" -salt -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD"); }
-decrypt_file() { openssl enc -d "${ENC_OPTS[@]}" -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD") 2>/dev/null; }
+encrypt_file() { "$OPENSSL" enc "${ENC_OPTS[@]}" -salt -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD"); }
+decrypt_file() { "$OPENSSL" enc -d "${ENC_OPTS[@]}" -in "$1" -out "$2" -pass fd:3 3< <(printf '%s\n' "$PASSWORD") 2>/dev/null; }
 
 SESSION_DIR=$(mktemp -d /tmp/master-stack-ssh.XXXXXX)
 if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
@@ -157,19 +150,10 @@ if [[ "$ACTION" == backup || "$ACTION" == restore ]] && (( ! YES )); then
 fi
 
 SSH_OPTS=(-o ClearAllForwardings=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 \
-    -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
+    -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new \
+    -o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$SESSION_DIR/socket")
 [[ -z "$PORT" ]] || SSH_OPTS+=(-o "Port=$PORT")
-# SSH çoklama: Mac/Linux'ta tek kimlik doğrulama; Windows OpenSSH'ta yok, o
-# zaman her adım ayrı bağlanır.
-MUX_OPTS=(-o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$SESSION_DIR/socket")
-ssh -T "${SSH_OPTS[@]}" "${MUX_OPTS[@]}" "$HOST" true || fail "SSH bağlantısı kurulamadı: $HOST"
-if ssh -T "${SSH_OPTS[@]}" "${MUX_OPTS[@]}" -o BatchMode=yes "$HOST" true 2>/dev/null; then
-    SSH_OPTS+=("${MUX_OPTS[@]}")
-    MUX=1
-else
-    ssh -T "${MUX_OPTS[@]}" -O exit "$HOST" >/dev/null 2>&1 || true
-    printf 'SSH çoklama kullanılamıyor; her adım ayrı bağlanacak.\n'
-fi
+SSH_UP=1
 
 prepare_remote() {
     REMOTE=$(ssh -T "${SSH_OPTS[@]}" "$HOST" 'umask 077; mktemp -d /tmp/master-stack-backup.XXXXXXXX')

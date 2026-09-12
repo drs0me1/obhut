@@ -21,10 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   containers a second time and protected nothing on a fresh target. The
   server-side recovery snapshot and automatic rollback on failure remain; a
   successful restore cannot be undone (**DD-112**).
-- **Changed:** the launcher avoids macOS-only tools (`sha256sum` or `shasum`,
-  `openssl` from `PATH`, SSH multiplexing probed and dropped where absent) and
-  `.gitattributes` keeps the scripts LF on Windows checkouts, so it can run
-  from Git Bash or WSL; not yet exercised on Windows.
+- **Scope:** the launcher is macOS only (`shasum`, the system
+  `/usr/bin/openssl`, one multiplexed SSH connection). A Git Bash/WSL-portable
+  variant was tried and dropped the next day, unexercised (**DD-112**); the
+  encrypted file itself opens with any OpenSSL.
 - **Considered and dropped the same day:** a `seed` action that carried
   `config.env` and `webdav.htpasswd` in the archive and placed them on a
   fresh host before `install.sh`. It was verified end to end, then removed at
