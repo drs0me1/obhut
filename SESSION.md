@@ -45,6 +45,18 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-12 — v2-80, unattended security upgrades (DD-113):** the user
+reimaged `nrm` as Debian 13.6, installed v2-79 by hand and restored the real
+backup — the first bare-OS run of the runbook; the outcome was verified
+(18/18 acceptance, 3 wg peers, restored settings, all DD effects). The
+optimisation review found one gap: the netcup Debian image has no
+`unattended-upgrades`. v2-80 installs it with the distribution's default
+origin filter and `Automatic-Reboot "false"`, and stage 7 reads the policy
+back. Live-verified on the Debian host (re-run + no-op re-run, exit 0, no
+container recreated, Docker/Tailscale/Caddy outside the filter) after a
+first attempt exited 141 on a pipefail/SIGPIPE in the new read-back — now a
+bats guard and a tests/README pitfall. Portable v2-80 exported; `export/`
+refreshed. Not re-run on Ubuntu (package and files pre-exist there).
 **2026-09-11 — container-backup: encryption and single upload (DD-112):**
 new backups are `settings.tar.gz.enc` (standard `openssl enc`, AES-256-CBC +
 PBKDF2-SHA256 600k; password asked twice on backup, once on check/restore;

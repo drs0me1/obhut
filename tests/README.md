@@ -59,3 +59,14 @@ than one interface carries the `wg` gateway address
   report a false failure. Stage 7's own `wait_webdav_healthy` already waits;
   an external check must too.
 
+## Pitfall: an early-exiting pipe consumer under `pipefail` (2026-09-12)
+
+`install.sh` runs with `set -Eeuo pipefail`. A read-back written as
+`apt-config dump | awk '/pattern/{print $2; exit}'` looked harmless and
+passed every static check, but on the host it aborted the install with exit
+141 after all seven stages had run: `awk` exits on the first match,
+`apt-config` gets SIGPIPE writing the rest, `pipefail` turns that into 141,
+and `set -e` exits at the assignment. Let the consumer read the whole stream
+(`{v=$2} END{print v}`) or guard the pipeline with `|| true`, as the `dig |
+head -n1 || true` read-backs do. A bats test now rejects `| awk … exit`
+patterns in the installer tree.

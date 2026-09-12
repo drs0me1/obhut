@@ -1278,3 +1278,35 @@ EOF
     ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' "$V2_ROOT/container-backup.command"
     grep -q -- '-pbkdf2 -iter 600000 -md sha256' "$V2_ROOT/container-backup.command"
 }
+
+@test "unattended security upgrades are enabled without automatic reboot" {
+    # DD-113: distribution-default origin filter, explicit periodic policy,
+    # reboot left to the operator; stage 7 reads the effective policy back.
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'unattended-upgrades'
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q '^    apply_unattended_upgrades$'
+    body="$(awk '/^apply_unattended_upgrades\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$body" ]
+    grep -q 'atomic_write "\$APT_PERIODIC_FILE"' <<<"$body"
+    grep -q 'APT::Periodic::Unattended-Upgrade "1"' <<<"$body"
+    grep -q 'atomic_write "\$APT_UNATTENDED_POLICY_FILE"' <<<"$body"
+    grep -q 'Automatic-Reboot "false"' <<<"$body"
+    grep -q 'APT_PERIODIC_FILE="/etc/apt/apt.conf.d/20auto-upgrades"' "$V2_ROOT/config/defaults.env"
+    grep -q 'APT_UNATTENDED_POLICY_FILE="/etc/apt/apt.conf.d/5' "$V2_ROOT/config/defaults.env"
+    awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'APT::Periodic::Unattended-Upgrade'
+    ! awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh" |
+        grep -q 'die "otomatik güvenlik'
+}
+
+@test "pipe consumers in the installer tree do not exit early under pipefail" {
+    # An awk/sed that exits on first match sends SIGPIPE to the producer; with
+    # set -o pipefail the pipeline returns 141 and set -e aborts the install
+    # (seen live on 2026-09-12, DD-113). Consumers reading files are fine.
+    # [|] not \|: BSD grep -E (Finder/bats on macOS) reads \| differently
+    # from GNU grep. `exit *[}]` matches awk's `{...; exit}`, not a shell
+    # `|| { ...; exit 1; }` guard.
+    ! grep -nE '[|][^|]*(awk|sed)[^|]*; *exit *[}]' \
+        "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT"/scripts/*
+}

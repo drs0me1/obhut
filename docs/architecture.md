@@ -188,6 +188,7 @@ error, not a warning.
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | six services, `0600` |
 | `/etc/modules-load.d/wg-easy.conf` | installer | WireGuard + legacy IPv4/IPv6 netfilter modules required by wg-easy, `0644` |
+| `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), `0644` |
 | `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
 | `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
 | `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}` | installer | `0755` |

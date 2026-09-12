@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-79"
+V2_VERSION="2026.08.06-v2-80"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -457,6 +457,24 @@ stage_0() {
     fi
 }
 
+# DD-113: dağıtımın güvenlik güncellemeleri kendiliğinden insin. Kaynak
+# süzgeci paketin dağıtım varsayılanı (Debian: stable + security; Ubuntu:
+# security); Docker/Tailscale/Caddy depoları eşleşmez, onları yalnız yeniden
+# çalıştırma günceller. Reboot kararı operatörde; Ubuntu'da unattended-upgrades
+# paketi imajla gelir, dosyalar oradakiyle aynı içeriğe yazılır (no-op).
+apply_unattended_upgrades() {
+    atomic_write "$APT_PERIODIC_FILE" 0644 <<EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+    atomic_write "$APT_UNATTENDED_POLICY_FILE" 0644 <<EOF
+// master-stack (DD-113): otomatik reboot yok; yeniden başlatma operatörün kararı.
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 ||
+        log WARN "apt-daily zamanlayıcıları etkinleştirilemedi"
+}
+
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
@@ -478,10 +496,11 @@ stage_1() {
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq \
-        apache2-utils dnsutils
+        apache2-utils dnsutils unattended-upgrades
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
+    apply_unattended_upgrades
 
     if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then
         local tmp
@@ -1098,6 +1117,16 @@ stage_7() {
     cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo bilinmiyor)"
     if [[ -f "$SYSCTL_TCP_FILE" && "$cc" != "$TCP_CONGESTION_CONTROL" ]]; then
         log WARN "tcp_congestion_control=$cc ($TCP_CONGESTION_CONTROL bekleniyordu; $SYSCTL_TCP_FILE eziliyor olabilir)"
+    fi
+    # DD-113: güncelleme politikası geri okunur (etkin apt-config + zamanlayıcı).
+    # Bakım konusu, sözleşme maddesi değil — uyumsuzluk uyarı üretir.
+    local periodic
+    # awk boruyu sonuna kadar okur: erken `exit` apt-config'e SIGPIPE verir ve
+    # pipefail altında 141 ile kurulumu düşürür (canlı testte görüldü).
+    periodic="$(apt-config dump 2>/dev/null | awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{v=$2} END{print v}')"
+    if [[ "$periodic" != "1" ]] || ! command -v unattended-upgrade >/dev/null 2>&1 ||
+        ! systemctl is-active --quiet apt-daily-upgrade.timer; then
+        log WARN "otomatik güvenlik güncellemeleri etkin değil (APT::Periodic::Unattended-Upgrade=${periodic:-yok}; $APT_PERIODIC_FILE eziliyor olabilir)"
     fi
 
     local name resolver ans dig_out code health line svc

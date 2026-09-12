@@ -92,6 +92,10 @@ the ones agreed on 2026-08-05:
   (**R1**, **R2**). `apache2-utils` stays for `htpasswd`; rclone runs only
   as the Compose image (see §5, **DD-77**). No host `rclone` or `acl`
   package.
+- `unattended-upgrades` is installed and enabled for the distribution's own
+  origins (Debian stable + security; Ubuntu security), with automatic reboot
+  off; Docker, Tailscale and Caddy packages are updated only by a re-run
+  (**DD-113**).
 - Timezone set to the configured value.
 - Root-only, interactive, single-host, `flock`-serialised, wrapped in
   `systemd-inhibit` so a shutdown cannot land mid-transaction.

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-12 — Unattended security upgrades, reboot left to the operator (v2-80)
+
+- **Added:** stage 1 installs `unattended-upgrades`, writes
+  `/etc/apt/apt.conf.d/20auto-upgrades` (periodic list update and unattended
+  upgrade on) and `52master-stack-unattended` (`Automatic-Reboot "false"`),
+  and enables the `apt-daily` timers. The origin filter stays the
+  distribution default (Debian stable + security; Ubuntu security), so
+  Docker, Tailscale and Caddy are still updated only by re-running the
+  installer. Stage 7 reads the effective policy back and warns on a mismatch
+  (**DD-113**).
+- **Why:** the netcup Debian 13 image ships without the package; Ubuntu's
+  ships with it. The 2026-09-12 review of the freshly installed and restored
+  Debian host (18/18 acceptance checks, all DD-105/109/110/111 effects in
+  place) found nothing else worth changing.
+- **Live-verified on Debian 13.6 (`nrm`, 2026-09-12):** a v2-79 → v2-80
+  re-run installed the package (11 new packages, 4 MB), wrote both files,
+  left the `apt-daily` timers active and recreated no container (6/6 ID
+  signature unchanged, 3/3 healthy, 0 failed units). `apt-config dump` shows
+  `Unattended-Upgrade "1"` and `Automatic-Reboot "false"`;
+  `unattended-upgrade --dry-run --debug` lists only the three Debian origins
+  as allowed, so Docker, Tailscale and Caddy stay outside the filter. The
+  first attempt exited 141: the new stage-7 read-back piped `apt-config
+  dump` into an `awk` that exited on its first match, which sends SIGPIPE
+  to `apt-config` and, under `pipefail` + `set -e`, aborted verification
+  after every stage had completed. Fixed by letting `awk` read to the end;
+  the corrected run and a second no-op run exited 0 with no warnings.
+
 ### 2026-09-11 — Encrypted container backups and single-upload restore
 
 - **Added:** backups are encrypted with a password asked twice when the backup

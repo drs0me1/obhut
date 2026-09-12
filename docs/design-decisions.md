@@ -4579,6 +4579,54 @@ failure with an early, named one.
   full runbook from a bare OS; it is the next acceptance item when `nrm` is
   reimaged.
 
+### DD-113: Security updates install themselves; reboots stay with the operator (2026-09-12)
+
+- **Decision:** stage 1 installs `unattended-upgrades` and writes
+  `20auto-upgrades` (`Update-Package-Lists "1"`, `Unattended-Upgrade "1"`)
+  and a `52master-stack-unattended` drop-in with `Automatic-Reboot "false"`,
+  then enables the `apt-daily` timers. The package's origin filter is left
+  at the distribution default: Debian stable + security, Ubuntu security
+  (+ESM). Stage 7 reads the effective `APT::Periodic::Unattended-Upgrade`
+  back and checks `apt-daily-upgrade.timer`; a mismatch warns, as in DD-111.
+- **Why:** the netcup Debian 13 image ships without `unattended-upgrades`
+  (Ubuntu's ships with it, enabled). Until now a Debian host got security
+  fixes only when the operator re-ran the installer and answered the
+  full-upgrade prompt. For a host with sshd, WireGuard and Tailscale on the
+  WAN, that gap was the one thing the 2026-09-12 review of the fresh Debian
+  host found worth changing; everything else measured was already where it
+  should be.
+- **Why the distribution's filter:** Docker, Tailscale and Caddy come from
+  their own repositories (origins `Docker`, `Tailscale`,
+  `cloudsmith/caddy/stable`), which the default `Origins-Pattern` does not
+  match. So the daemon that runs the containers, the tailnet daemon and the
+  reverse proxy are never upgraded behind the operator's back; a re-run of
+  the installer updates them, as before. Debian's default also takes stable
+  point-release updates (`label=Debian`), which are conservative by design.
+- **Why no automatic reboot:** a kernel update lands but takes effect at the
+  next reboot, and `/var/run/reboot-required` says so. Rebooting an exit
+  node in the night because a kernel arrived is a policy the operator
+  should hold, not the package. The drop-in pins the default so a future
+  distribution change cannot flip it.
+- **Ubuntu interplay:** on Ubuntu `needrestart` runs in automatic mode during
+  unattended upgrades and may restart sshd, tailscaled or dockerd after a
+  library update; that was already the case before this change, because the
+  package was present and enabled. DD-103 suspends it only for the
+  installer's own apt calls. On Debian `needrestart` is absent, so updated
+  libraries are picked up at the next service restart or reboot.
+- **Not an OS divergence:** the same package and files on both
+  distributions; on Ubuntu the install is a no-op and the periodic file
+  matches what the image already had. Not adding a mail/report hook,
+  `-updates` on Ubuntu, or `Remove-Unused-Dependencies`.
+- **Live-verified on Debian 13.6 (`nrm`, 2026-09-12):** a re-run over the
+  restored v2-79 host installed the package, wrote both files and changed no
+  container; the effective apt-config shows the periodic upgrade on and
+  automatic reboot off, and a `--dry-run --debug` lists only the three Debian
+  origins as allowed. The first attempt exited 141 at the new read-back —
+  `apt-config dump | awk '...; exit'` under `pipefail` — after every stage
+  had completed; the read-back now lets `awk` consume the whole stream (see
+  `tests/README.md`). Ubuntu: not re-run; the files match what the Ubuntu
+  image already carries, and the package is present there by default.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no
