@@ -281,21 +281,17 @@ main() {
     trap 'exit 130' INT
     trap 'exit 143' HUP TERM
     discover
-    # A restore uploads once and runs check, backup-current and restore in the
-    # same directory, so each step replaces what an earlier step left behind.
+    # A restore uploads once and runs check and restore in the same directory,
+    # so each step replaces what an earlier step left behind.
     case "$action" in
         inspect) cat "$WORK/services.json" ;;
-        backup|backup-current)
+        backup)
             rm -rf -- "$WORK/snapshot"
             stop_services
-            if [[ "$action" == backup ]]; then snapshot "$WORK/snapshot" settings; else snapshot "$WORK/snapshot" rollback; fi
+            snapshot "$WORK/snapshot" settings
             pack "$WORK/snapshot" "$WORK/settings.tar.gz"
             start_services
-            if [[ "$action" == backup-current ]]; then
-                wait_services "$WORK/services.json" || fail "Kurtarma yedeği alındı ancak servis kontrolü başarısız."
-            else
-                wait_services || fail "Yedek alındı ancak servis kontrolü başarısız."
-            fi
+            wait_services || fail "Yedek alındı ancak servis kontrolü başarısız."
             RESTART=()
             chown "$owner_uid:$owner_gid" "$WORK/settings.tar.gz"
             sha256sum "$WORK/settings.tar.gz" | cut -d ' ' -f1 >"$WORK/settings.sha256"

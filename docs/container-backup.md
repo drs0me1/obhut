@@ -77,9 +77,8 @@ current settings.
 
 Backups taken before 2026-09-11 are plaintext `settings.tar.gz`. They remain
 selectable for `check` and `restore` without a password, and are reported as
-unencrypted; a restore from one still asks for a password, to encrypt the
-before-restore backup it takes. The archive layout and manifest schema are
-unchanged, so old and new backups differ only in the encryption wrapper.
+unencrypted. The archive layout and manifest schema are unchanged, so old and
+new backups differ only in the encryption wrapper.
 
 ```bash
 # Interactive menu (also works by double-clicking in Finder)
@@ -104,18 +103,22 @@ unchanged, so old and new backups differ only in the encryption wrapper.
 are read from standard input without echo, so automation can pipe them in,
 at the cost of leaving them in shell history.
 
-Restore first validates the archive and target, then downloads a
-`before-restore` backup of the target into the local `backup/` directory,
-encrypted with the same password as the session. The decrypted archive is
-uploaded once; validation, the before-restore backup and the restore itself
-run in the same remote temporary directory over one multiplexed SSH
-connection (or separate connections where multiplexing is unavailable, as on
-Windows OpenSSH). Restore also takes a fresh recovery snapshot while the
-containers are stopped, immediately before replacing data. A
-write/start/health error triggers an attempt to put those old settings back.
-Failed operations report the exact remote temporary directory, retaining
-recovery material for investigation. Successful operations remove their
-remote temporary copies.
+Restore validates the archive and target, then replaces the data. The
+decrypted archive is uploaded once; validation and the restore run in the
+same remote temporary directory over one multiplexed SSH connection (or
+separate connections where multiplexing is unavailable, as on Windows
+OpenSSH). While the containers are stopped, immediately before replacing
+data, restore takes a recovery snapshot on the server; a write/start/health
+error triggers an attempt to put those old settings back. That snapshot is
+the only copy of the target's previous settings and is removed with the rest
+of the temporary directory when the restore succeeds: **a successful restore
+cannot be undone.** In this workflow the target is a fresh install with
+nothing to keep; if a target's settings matter, take a `backup` of it first.
+(Until 2026-09-12 restore also downloaded a `before-restore` backup to the
+workstation, stopping the containers a second time; it was dropped as
+unnecessary.) Failed operations report the exact remote temporary directory,
+retaining recovery material for investigation. Successful operations remove
+their remote temporary copies.
 
 The four applications are stopped briefly to flush databases and preferences.
 Only previously running containers are restarted. WebDAV/Unpackerr and the
@@ -125,9 +128,9 @@ interrupted while it is stopped. Backups and installation share the host
 installer lock.
 
 A freshly installed wg-easy may be running but unhealthy before its setup
-wizard is completed. The pre-restore safety backup accepts that existing
-baseline; a settings restore then requires the restored services to become
-healthy. A recovery snapshot also records the original health baseline.
+wizard is completed. A settings restore requires the restored services to
+become healthy; a recovery snapshot records the original health baseline, so
+restoring one accepts it.
 
 The backup utility does not gate on the host distribution, release or kernel:
 settings can move between already-provisioned Debian and Ubuntu hosts.

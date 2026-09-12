@@ -122,8 +122,8 @@ grep -q '^start fixture-container$' "$TEST_DIR/docker-calls"
 unset -f docker
 printf 'PASS: failed restore returns previous state and restarts the original container\n'
 
-# A clean wg-easy is running but unconfigured/unhealthy; safety backups must
-# preserve that baseline so the subsequent restore can configure it.
+# A clean wg-easy is running but unconfigured/unhealthy; a recovery snapshot
+# records that baseline, and restoring one must accept it.
 jq -n '[{name:"wg-easy",health:"unhealthy"}]' >"$WORK/clean-health.json"
 # shellcheck disable=SC2329 # Called inside wait_services.
 docker() { printf '/wg-easy true unhealthy false\n'; }
@@ -131,7 +131,7 @@ RESTART=(fixture-wg)
 wait_services "$WORK/clean-health.json"
 RESTART=()
 unset -f docker
-printf 'PASS: unconfigured wg-easy does not block the pre-restore safety backup\n'
+printf 'PASS: unconfigured wg-easy baseline is accepted when restoring a recovery snapshot\n'
 
 expect_rejection() {
     local archive=$1 label=$2 rc

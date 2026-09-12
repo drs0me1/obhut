@@ -49,7 +49,9 @@ reply; no code change yet.
 new backups are `settings.tar.gz.enc` (standard `openssl enc`, AES-256-CBC +
 PBKDF2-SHA256 600k; password asked twice on backup, once on check/restore;
 decrypted locally, never sent to the server; old plaintext backups stay
-usable; archive layout/schema unchanged). Restore uploads once. The launcher
+usable; archive layout/schema unchanged). Restore uploads once and, since
+2026-09-12, no longer downloads a before-restore backup (single copy on
+backup, direct load on restore; server-side rollback snapshot kept). The launcher
 avoids macOS-only tools so Git Bash/WSL can run it (`.gitattributes` forces
 LF); Windows itself is untested. A `seed` action (installer inputs in the
 archive, placed before `install.sh`) was built, verified end to end and

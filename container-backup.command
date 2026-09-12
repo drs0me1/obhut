@@ -142,16 +142,11 @@ if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
 fi
 printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf.\n'
 printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
-if [[ "$ACTION" == backup ]]; then
-    read_password 1
-elif [[ "$ACTION" == restore && -z "$PASSWORD" ]]; then
-    printf 'Kurtarma yedeği şifrelenecek; bunun için bir parola belirleyin.\n'
-    read_password 1
-fi
+if [[ "$ACTION" == backup ]]; then read_password 1; fi
 if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
     printf 'Bu dört konteyner kısa süre durdurulacak. SSH/Tailscale bağlantısı açık kalır.\n'
     if [[ "$ACTION" == restore ]]; then
-        printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek; önce kurtarma yedeği alınacak (aynı parolayla şifreli).\n' "$HOST"
+        printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek. Hata olursa işlem öncesi ayarlara otomatik dönülür; başarılı yüklemeden geri dönüş yoktur.\n' "$HOST"
         printf 'Dağıtım/imaj sürümü eşitliği aranmaz; farklı uygulama sürümlerinde veri uyumluluğu garanti edilmez.\n'
         printf 'wg-easy anahtarları korunur; IP/DNS değişirse istemcilerin Endpoint adresini güncelleyin.\n'
     fi
@@ -207,14 +202,10 @@ case "$ACTION" in
     inspect) remote_run inspect ;;
     backup) remote_run backup; download_backup settings ;;
     check|restore)
-        # Tek yükleme: check, kurtarma yedeği ve restore aynı uzak dizinde çalışır.
+        # Tek yükleme: check ve restore aynı uzak dizinde çalışır.
         scp -q "${SSH_OPTS[@]}" "$PLAIN" "$HOST:$REMOTE/input.tar.gz"
         remote_run check
-        if [[ "$ACTION" == restore ]]; then
-            remote_run backup-current
-            download_backup before-restore
-            remote_run restore
-        fi
+        if [[ "$ACTION" == restore ]]; then remote_run restore; fi
         ;;
 esac
 cleanup_remote

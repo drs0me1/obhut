@@ -4487,8 +4487,8 @@ failure with an early, named one.
   workstation with `openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256
   -salt`, asking for the password twice at backup and once at check and
   restore. Decryption is local, so the password never reaches the server.
-  The restore flow uploads the archive once and runs check, the
-  before-restore backup and the restore in one remote directory.
+  The restore flow uploads the archive once and runs check and restore in
+  one remote directory; it no longer downloads a before-restore backup.
 - **Why encrypt now:** the archives hold bcrypt hashes for four services and
   wg-easy's server and peer private keys. They live in a `0700` directory on
   one laptop, but a laptop backup, a sync folder or a copied disk carries
@@ -4527,9 +4527,19 @@ failure with an early, named one.
 - **Why one upload:** the old restore ran check, then a fresh remote
   directory for the before-restore backup, then a third for the restore,
   uploading the archive twice. The worker now removes its own intermediate
-  outputs at the start of each action, so the three steps share one
-  directory and the archive goes up once. Same worker, same checks, one
-  round.
+  outputs at the start of each action, so the steps share one directory and
+  the archive goes up once. Same worker, same checks, one round.
+- **No before-restore download (2026-09-12):** restore used to take a backup
+  of the target and download it to the workstation before replacing
+  anything, which stopped the four containers a second time and left a
+  `before-restore` directory beside every real backup. The user asked for a
+  single copy on backup and a direct load on restore. In this workflow the
+  restore target is always a fresh install, so the copy protected nothing.
+  What stays is the server-side recovery snapshot taken while the containers
+  are already stopped: it costs no extra stop or transfer and is what the
+  automatic rollback on a write/start/health failure uses. The trade-off is
+  stated at the prompt and in the docs: a *successful* restore cannot be
+  undone; back the target up first if its settings matter.
 - **Windows:** the format is portable and the launcher avoids macOS-only
   tools (`sha256sum` or `shasum`, `openssl` from `PATH`, SSH multiplexing
   probed and dropped where absent, LF enforced by `.gitattributes`). It has

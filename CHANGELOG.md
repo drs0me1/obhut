@@ -12,12 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is taken and once when it is checked or restored. Standard `openssl enc`
   format (AES-256-CBC, PBKDF2-HMAC-SHA256, 600,000 iterations), decrypted
   locally so the password never reaches the server; any OpenSSL or LibreSSL
-  on any OS can decrypt the file. Before-restore backups are encrypted with
-  the same password. Existing plaintext backups stay usable; the archive
-  layout and manifest schema are unchanged (**DD-112**).
-- **Changed:** restore uploads the archive once and runs check, the
-  before-restore backup and the restore in one remote directory, instead of
-  three SSH rounds with two uploads.
+  on any OS can decrypt the file. Existing plaintext backups stay usable;
+  the archive layout and manifest schema are unchanged (**DD-112**).
+- **Changed:** restore uploads the archive once and runs check and restore in
+  one remote directory, instead of three SSH rounds with two uploads.
+- **Removed (2026-09-12):** the `before-restore` backup that restore
+  downloaded to the workstation before replacing data. It stopped the
+  containers a second time and protected nothing on a fresh target. The
+  server-side recovery snapshot and automatic rollback on failure remain; a
+  successful restore cannot be undone (**DD-112**).
 - **Changed:** the launcher avoids macOS-only tools (`sha256sum` or `shasum`,
   `openssl` from `PATH`, SSH multiplexing probed and dropped where absent) and
   `.gitattributes` keeps the scripts LF on Windows checkouts, so it can run
