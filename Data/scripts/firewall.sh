@@ -38,7 +38,7 @@ fi
 : "${CHAIN_DOCKER:?}"
 : "${CHAIN_STAGING_PREFIX:?}"
 : "${WG_PUBLIC_PORT:?}"
-: "${QBIT_PUBLIC_PORT:?}"
+: "${TORRENT_PUBLIC_PORT:?}"
 : "${SSH_PUBLIC_PORT:?}"
 : "${TAILSCALE_UDP_PORT:?}"
 
@@ -192,8 +192,8 @@ apply_input4() {
         --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$WG_PUBLIC_PORT" -j ACCEPT
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$QBIT_PUBLIC_PORT" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
@@ -241,9 +241,9 @@ apply_docker4() {
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
     # WAN IP adresi gömülmez; arayüz + orijinal hedef port yeterli.
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp \
-        -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
+        -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
-        -m conntrack --ctstate NEW --ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN
+        -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
         -m conntrack --ctstate NEW --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
@@ -403,14 +403,14 @@ check_chain_shape() {
 wan_allow_pairs() {
     printf '%s\n' "udp $TAILSCALE_UDP_PORT" "tcp $SSH_PUBLIC_PORT"
     [[ "$1" == v4 ]] || return 0
-    printf '%s\n' "udp $WG_PUBLIC_PORT" "tcp $QBIT_PUBLIC_PORT" \
-        "udp $QBIT_PUBLIC_PORT"
+    printf '%s\n' "udp $WG_PUBLIC_PORT" "tcp $TORRENT_PUBLIC_PORT" \
+        "udp $TORRENT_PUBLIC_PORT"
 }
 
 # MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok).
 docker_return_pairs() {
     [[ "$1" == v4 ]] || return 0
-    printf '%s\n' "tcp $QBIT_PUBLIC_PORT" "udp $QBIT_PUBLIC_PORT" \
+    printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT" \
         "udp $WG_PUBLIC_PORT"
 }
 

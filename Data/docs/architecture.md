@@ -194,7 +194,7 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
-| `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB + `config/` bind (`0750`, DOWNLOADS_UID) |
+| `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB, created once with the stage-0 account (**DD-118**), + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | six services, `0600` |
 | `/etc/modules-load.d/wg-easy.conf` | installer | WireGuard + legacy IPv4/IPv6 netfilter modules required by wg-easy, `0644` |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), `0644` |
@@ -377,7 +377,7 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); ask domain, downloads path, ports, WebDAV credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); ask domain, downloads path, ports, WebDAV/Dozzle/Transmission/FileBrowser credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |

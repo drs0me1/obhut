@@ -4,14 +4,14 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 
-SERVICES=(filebrowser qbittorrent wg-easy)
-# Her servisten yalnız operatörün oluşturduğu durumu tutan dosya: hesaplar,
-# parolalar, qBittorrent tercihleri, wg-easy peer'ları. Anahtarlar, sertifikalar,
-# wg0.conf ve imaj varsayılan ayarları kurulum/uygulama yeniden üretir (DD-114).
-declare -A SCOPE=([filebrowser]=filebrowser.db
-    [qbittorrent]=qBittorrent/qBittorrent.conf [wg-easy]=wg-easy.db)
-# 2026-09-13 öncesi yedekler Portainer'ı da taşır (DD-116); doğrulanır, yüklenmez.
-LEGACY_DIRS=(portainer)
+SERVICES=(wg-easy)
+# Yalnız kurulumun yeniden üretemediği durum: wg-easy yönetici hesabı ve
+# peer'ları. Anahtarlar, sertifikalar ve wg0.conf'u uygulama yeniden üretir
+# (DD-114); FileBrowser hesabı ve Transmission tercihleri kurulumdadır (DD-118).
+declare -A SCOPE=([wg-easy]=wg-easy.db)
+# Eski yedekler Portainer (DD-116), qBittorrent (DD-117), FileBrowser ve
+# Transmission (DD-118) taşır; doğrulanır, yüklenmez, hedefte dokunulmaz.
+LEGACY_DIRS=(portainer filebrowser qbittorrent transmission)
 declare -A DATA=() IDS=()
 RESTART=()
 RESTORING=0
@@ -21,40 +21,28 @@ say() { printf '%s\n' "$*" >&2; }
 fail() { say "HATA: $*"; exit 1; }
 
 discover() {
-    local c dest src kind volume config_src
+    local c dest=/etc/wireguard src volume
     docker inspect "${SERVICES[@]}" >"$WORK/inspect.json"
     for c in "${SERVICES[@]}"; do
-        case "$c" in
-            filebrowser) dest=/database; kind=bind ;;
-            qbittorrent) dest=/config; kind=volume ;;
-            wg-easy) dest=/etc/wireguard; kind=volume ;;
-        esac
         jq -e --arg c "$c" '
             .[] | select(.Name == "/"+$c) |
             .Config.Labels["com.docker.compose.service"] == $c and
             .State.Paused == false and .State.Restarting == false
         ' "$WORK/inspect.json" >/dev/null || fail "$c: beklenen Compose konteyneri bulunamadı."
-        src=$(jq -er --arg c "$c" --arg dest "$dest" --arg kind "$kind" '
+        src=$(jq -er --arg c "$c" --arg dest "$dest" '
             [.[] | select(.Name == "/"+$c) | .Mounts[] |
-             select(.Destination == $dest and .Type == $kind and .RW == true)] |
+             select(.Destination == $dest and .Type == "volume" and .RW == true)] |
             if length == 1 then .[0].Source else error("mount") end
         ' "$WORK/inspect.json")
         [[ "$src" =~ ^/[a-zA-Z0-9_./-]+$ && "$src" != *'/../'* ]] || fail "Geçersiz veri yolu: $c"
         [[ -d "$src" && "$(realpath -e "$src")" == "$src" ]] || fail "$c: veri yolu symlink veya eksik."
-        if [[ "$kind" == volume ]]; then
-            volume=$(jq -er --arg c "$c" --arg dest "$dest" '
-                .[] | select(.Name == "/"+$c) | .Mounts[] | select(.Destination==$dest) | .Name
-            ' "$WORK/inspect.json")
-            docker volume inspect "$volume" | jq -e --arg src "$src" '
-                .[0] | .Mountpoint==$src and .Driver=="local" and ((.Options // {}) | length)==0
-            ' >/dev/null || fail "$c: yalnız yerel Docker volume desteklenir."
-            [[ "$src" == */volumes/"$volume"/_data ]] || fail "$c: beklenmeyen volume yolu."
-        else
-            [[ "$src" == /etc/master-stack/filebrowser-data ]] || fail "FileBrowser veri yolu desteklenen kurulumla eşleşmiyor."
-            config_src=$(jq -er '.[] | select(.Name=="/filebrowser") | .Mounts[] |
-                select(.Destination=="/config" and .Type=="bind") | .Source' "$WORK/inspect.json")
-            [[ "$config_src" == "$src/config" && ! -L "$config_src" ]] || fail "FileBrowser /config bağlantısı eşleşmiyor."
-        fi
+        volume=$(jq -er --arg c "$c" --arg dest "$dest" '
+            .[] | select(.Name == "/"+$c) | .Mounts[] | select(.Destination==$dest) | .Name
+        ' "$WORK/inspect.json")
+        docker volume inspect "$volume" | jq -e --arg src "$src" '
+            .[0] | .Mountpoint==$src and .Driver=="local" and ((.Options // {}) | length)==0
+        ' >/dev/null || fail "$c: yalnız yerel Docker volume desteklenir."
+        [[ "$src" == */volumes/"$volume"/_data ]] || fail "$c: beklenmeyen volume yolu."
         DATA[$c]=$src
         IDS[$c]=$(jq -r --arg c "$c" '.[] | select(.Name=="/"+$c) | .Id' "$WORK/inspect.json")
         say "$c: $dest → $src"
@@ -108,7 +96,7 @@ wait_services() {
     return 1
 }
 
-# Arşivdeki servis dizinleri; eski yedeklerde Portainer da olabilir.
+# Arşivdeki servis dizinleri; eski yedeklerde LEGACY_DIRS de olabilir.
 archive_dirs() {
     local root=$1 dir
     for dir in "${LEGACY_DIRS[@]}" "${SERVICES[@]}"; do
@@ -183,7 +171,7 @@ validate_bundle() {
         rel=${rel%/}
         [[ "$rel" =~ ^[a-zA-Z0-9_./-]+$ && "/$rel/" != *'/../'* && "/$rel/" != *'/./'* && "$rel" != *'//'* ]] || fail "Geçersiz arşiv yolu."
         case "$rel" in
-            manifest.json|portainer|filebrowser|qbittorrent|wg-easy|portainer/*|filebrowser/*|wg-easy/*|qbittorrent/qBittorrent.conf) ;;
+            manifest.json|portainer|filebrowser|qbittorrent|transmission|wg-easy|portainer/*|filebrowser/*|wg-easy/*|qbittorrent/qBittorrent.conf|transmission/settings.json) ;;
             *) fail "Yedek kapsamı dışında dosya: $rel" ;;
         esac
         case "$rel" in portainer/bin|portainer/bin/*|portainer/backups|portainer/backups/*) fail "Portainer önbelleği/eski yedek kapsam dışında." ;; esac
@@ -193,13 +181,19 @@ validate_bundle() {
     tar --extract --gzip --file "$archive" --directory "$out" --numeric-owner --same-owner --same-permissions --delay-directory-restore
     jq -e '.format=="master-stack-settings" and .schema==1 and
         (.kind=="settings" or .kind=="rollback") and
-        ([.services[].name] - ["portainer"] | sort)==["filebrowser","qbittorrent","wg-easy"]' \
+        ([.services[].name] - ["portainer","filebrowser","qbittorrent","transmission"])==["wg-easy"]' \
         "$out/manifest.json" >/dev/null || fail "Yedek biçimi desteklenmiyor."
-    for rel in "${SERVICES[@]}"; do [[ -d "$out/$rel" ]] || fail "Yedekte servis eksik: $rel"; done
+    # Manifestte adı geçen her güncel servisin dizini olmalı.
+    for rel in "${SERVICES[@]}"; do
+        if jq -e --arg n "$rel" '[.services[].name] | index($n)' "$out/manifest.json" >/dev/null; then
+            [[ -d "$out/$rel" ]] || fail "Yedekte servis eksik: $rel"
+        fi
+    done
     inventory "$out" >"$WORK/actual.json"
     jq -e --slurpfile actual "$WORK/actual.json" '.files==$actual[0]' "$out/manifest.json" >/dev/null || fail "Dosya SHA256/sahiplik/izin doğrulaması başarısız."
     local c scoped=0 side
     for c in "${SERVICES[@]}"; do
+        [[ -d "$out/$c" ]] || continue
         rel="$c/${SCOPE[$c]##*/}"
         for side in -wal -journal; do
             [[ ! -s "$out/$rel$side" ]] || fail "Yedekte dolu SQLite yan dosyası var: $rel$side"
@@ -209,9 +203,10 @@ validate_bundle() {
             [[ -s "$out/$rel" ]] || fail "Yedekte gerekli dosya eksik: $rel"
         fi
     done
-    # 2026-09-13 öncesi yedekler servis dizinlerinin tamamını taşır.
+    # Eski yedekler FileBrowser/Transmission/Portainer/qBittorrent dosyalarını
+    # ve 2026-09-13 öncesinde servis dizinlerinin tamamını taşır.
     if (( $(jq '.files|length' "$out/manifest.json") > scoped )); then
-        say "Not: eski kapsamlı yedek; Portainer, anahtar/sertifika ve türetilmiş dosyalar yüklenmez, her servisten yalnız ayar dosyası yüklenir."
+        say "Not: eski yedek; FileBrowser, Transmission, Portainer, qBittorrent, anahtar/sertifika ve türetilmiş dosyalar yüklenmez, yalnız wg-easy.db yüklenir."
     fi
     say "Yedek doğrulandı: $(jq '.files|length' "$out/manifest.json") dosya, yüklenecek $scoped."
 }
@@ -220,13 +215,17 @@ check_target() {
     local source=$1
     # Older schema-1 backups also need normalization: Docker environment order
     # is not significant, but actual PUID/PGID values must still match exactly.
-    # Eski yedeklerdeki Portainer girdisi karşılaştırılmaz (DD-116).
-    if ! jq -e --slurpfile target "$WORK/services.json" '
-        [.services[] | select(.name != "portainer") | {name,user,ids:(.ids | sort),ports}] ==
-        [$target[0][] | {name,user,ids:(.ids | sort),ports}]
+    # Yalnız güncel servisler karşılaştırılır; eski yedeklerdeki LEGACY_DIRS
+    # servisleri yok sayılır.
+    local current
+    current=$(printf '%s\n' "${SERVICES[@]}" | jq -R . | jq -sc .)
+    if ! jq -e --slurpfile target "$WORK/services.json" --argjson current "$current" '
+        ([.services[].name] | map(select(. as $n | $current | index($n)))) as $keep |
+        [.services[] | select(.name as $n | $keep | index($n)) | {name,user,ids:(.ids | sort),ports}] ==
+        [$target[0][] | select(.name as $n | $keep | index($n)) | {name,user,ids:(.ids | sort),ports}]
     ' "$source/manifest.json" >/dev/null; then
-        jq -r --slurpfile target "$WORK/services.json" '
-            .services[] | select(.name != "portainer") as $saved | $target[0][] | select(.name==$saved.name) as $live |
+        jq -r --slurpfile target "$WORK/services.json" --argjson current "$current" '
+            .services[] | select(.name as $n | $current | index($n)) as $saved | $target[0][] | select(.name==$saved.name) as $live |
             ["user","ids","ports"][] as $field |
             ($saved[$field] | if $field=="ids" then sort else . end) as $a |
             ($live[$field] | if $field=="ids" then sort else . end) as $b |
@@ -235,26 +234,29 @@ check_target() {
         ' "$source/manifest.json" >&2
         fail "Hedef portları veya kullanıcı UID/GID (PUID/PGID) değerleri kaynakla eşleşmiyor; ayarlar yüklenmedi."
     fi
-    if ! jq -e --slurpfile target "$WORK/services.json" '
-        [.services[] | select(.name != "portainer") | {name,image_id}] == [$target[0][] | {name,image_id}]
+    if ! jq -e --slurpfile target "$WORK/services.json" --argjson current "$current" '
+        ([.services[].name] | map(select(. as $n | $current | index($n)))) as $keep |
+        [.services[] | select(.name as $n | $keep | index($n)) | {name,image_id}] ==
+        [$target[0][] | select(.name as $n | $keep | index($n)) | {name,image_id}]
     ' "$source/manifest.json" >/dev/null; then
         say "UYARI: konteyner imajları farklı; sürüm farkı aktarımı engellemez. Uygulama/veritabanı uyumluluğu garanti edilmez."
     fi
 }
 
-# Yalnız dört dosya yazılır; hedefteki diğer her şey (anahtarlar, sertifikalar,
-# wg0.conf, önbellekler) kurulumun/uygulamanın bıraktığı gibi kalır. Arşivde
+# Yalnız wg-easy.db yazılır; hedefteki diğer her şey (anahtarlar, sertifikalar,
+# wg0.conf, diğer servisler) kurulumun/uygulamanın bıraktığı gibi kalır. Arşivde
 # olmayan kapsam dosyası hedeften kaldırılır: kurtarma anlık kopyası o dosyanın
 # işlem öncesi yokluğunu da geri getirir.
 apply_tree() {
     local source=$1 c dest dir src tmp side
     for c in "${SERVICES[@]}"; do
+        [[ -d "$source/$c" ]] || continue
         [[ -d "${DATA[$c]}" && "$(realpath -e "${DATA[$c]}")" == "${DATA[$c]}" ]] || return 1
         dest="${DATA[$c]}/${SCOPE[$c]}"
         dir=${dest%/*}
         src="$source/$c/${SCOPE[$c]##*/}"
         if [[ ! -e "$dir" && ! -L "$dir" ]]; then
-            # Yalnız qBittorrent/ hiç açılmamış bir uygulamada eksik olabilir.
+            # Kapsam dosyalarının hepsi bağın kökünde; bu dal savunma amaçlı.
             mkdir -m 755 "$dir" || return 1
             if [[ -f "$src" ]]; then chown --reference="$src" "$dir" || return 1; fi
         fi

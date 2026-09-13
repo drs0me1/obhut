@@ -8,23 +8,29 @@ Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 A) Sıfırlama → ilk kurulum → yedek
   0. Terminal: ssh-keygen -R nrm
-  1. <sürüm>.command               gerçek değerler + WebDAV ve Dozzle kullanıcı/parola; Tailscale auth key
+  1. <sürüm>.command               gerçek değerler + WebDAV, Dozzle, Transmission ve FileBrowser kullanıcı/parola
+                                   (FileBrowser parolası en az 12 karakter); Tailscale auth key
                                    (ephemeral olmayan; boş bırakırsanız tarayıcıdan giriş URL'si)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
-  3. Tarayıcı: FileBrowser ve qBittorrent parolaları + ayarları, wg-easy hesabı ve peer'lar
-     (Dozzle: http://dozzle.ayc — kurulumda verdiğiniz kullanıcı/parola)
+  3. Tarayıcı: wg-easy hesabı ve peer'lar
+     (Dozzle, Transmission ve FileBrowser girişleri kurulumda verdiğiniz kullanıcı/parola;
+      Transmission tercihleri — DHT/PeX/yerel keşif kapalı, en çok 12 indirme — kurulumdan gelir)
   4. container-backup.command → 1  nrm → yedek parolası ×2 → e   (parolayı saklayın)
 
 B) Sıfırlama → yedekten dönüş
   0. Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
   1. <sürüm>.command               A-1 ile AYNI cevaplar: alan adı, downloads yolu,
-                                   portlar ve aynı WebDAV ve Dozzle kullanıcı/parola; Tailscale auth key
+                                   portlar ve aynı WebDAV, Dozzle, Transmission, FileBrowser kullanıcı/parola; Tailscale auth key
                                    ya da boş bırakıp URL
   2. container-backup.command → 2  (restore) nrm → yedek → parola → e
   3. Tailscale paneli + Infuse adresi
 
-Yedek her servisten tek dosya taşır: FileBrowser kullanıcıları, qBittorrent
-kullanıcı/parola ve ayarları, wg-easy hesabı ve peer'lar.
-Dozzle parolasını değiştirmek: sunucuda /etc/master-stack/dozzle/users.yml'ı silip kurulumu yeniden çalıştırın.
+Yedek yalnız wg-easy hesabını ve peer'ları taşır (wg-easy.db). Diğer hesaplar ve
+Transmission tercihleri kurulumdan gelir.
+Parola değiştirmek: sunucuda ilgili dosyayı silip kurulumu yeniden çalıştırın (servis kendiliğinden yeniden başlar):
+  Dozzle:       /etc/master-stack/dozzle/users.yml
+  Transmission: /etc/master-stack/transmission-auth/user ve pass
+  FileBrowser:  parolayı arayüzden değiştirin; unutulursa
+                /etc/master-stack/filebrowser-data/filebrowser.db silinir (paylaşım bağlantıları da gider)
 Kurulum soruları yedekte değildir; B-1'de aynı cevapları verin.
 Ayrıntı: Data/docs/container-backup.md

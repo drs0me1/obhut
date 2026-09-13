@@ -134,13 +134,13 @@ if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
         printf 'UYARI: bu yedek şifresiz (eski sürüm); yeni yedekler şifreli alınır.\n'
     fi
 fi
-printf 'Kapsam (her servisten tek dosya): FileBrowser kullanıcıları, qBittorrent ayarları, wg-easy hesabı ve peer'\''ları.\n'
+printf 'Kapsam: wg-easy hesabı ve peer'\''ları (wg-easy.db). FileBrowser, Transmission ve Dozzle hesapları ile ayarları kurulumdan gelir.\n'
 printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
 if [[ "$ACTION" == backup ]]; then read_password 1; fi
 if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
-    printf 'Bu dört konteyner kısa süre durdurulacak. SSH/Tailscale bağlantısı açık kalır.\n'
+    printf 'wg-easy kısa süre durdurulacak; diğer konteynerler çalışmaya devam eder. SSH/Tailscale bağlantısı açık kalır.\n'
     if [[ "$ACTION" == restore ]]; then
-        printf 'Hedef %s üzerindeki dört servisin ayarları değiştirilecek. Hata olursa işlem öncesi ayarlara otomatik dönülür; başarılı yüklemeden geri dönüş yoktur.\n' "$HOST"
+        printf 'Hedef %s üzerindeki wg-easy hesabı ve peer'\''ları değiştirilecek. Hata olursa işlem öncesi ayarlara otomatik dönülür; başarılı yüklemeden geri dönüş yoktur.\n' "$HOST"
         printf 'Dağıtım/imaj sürümü eşitliği aranmaz; farklı uygulama sürümlerinde veri uyumluluğu garanti edilmez.\n'
         printf 'wg-easy anahtarları korunur; IP/DNS değişirse istemcilerin Endpoint adresini güncelleyin.\n'
     fi

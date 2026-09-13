@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-82"
+V2_VERSION="2026.08.06-v2-84"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -76,7 +76,7 @@ LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
-QBIT_PUBLIC_PORT=$QBIT_PUBLIC_PORT
+TORRENT_PUBLIC_PORT=$TORRENT_PUBLIC_PORT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
@@ -380,6 +380,11 @@ stage_0() {
         die "ufw aktif: INPUT politikası iki elden yönetilemez. Önce 'ufw disable' çalıştırın"
     fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
+    # DD-117: qBittorrent'ten kalan konteyner peer portunu tutar, Transmission
+    # başlayamaz. Kurulum onu silmez (DD-96); hiçbir şey değişmeden durur.
+    if command -v docker >/dev/null 2>&1 && docker inspect qbittorrent >/dev/null 2>&1; then
+        die "qBittorrent konteyneri hâlâ var ve peer portunu tutuyor; Transmission başlayamaz (DD-117). Kaldırın: docker rm -f qbittorrent (ayarları docker_qbit_config volume'ünde kalır), sonra kurulumu yeniden çalıştırın"
+    fi
 
     local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT"
     local prev_webdav_port="$WEBDAV_PORT" prev_wg_port="$WG_PUBLIC_PORT"
@@ -416,8 +421,8 @@ stage_0() {
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
         die "wg-easy UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
-        "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
+        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
+        "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
         "$TAILSCALE_UDP_PORT")
             die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
             ;;
@@ -431,8 +436,8 @@ stage_0() {
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
     case "$WEBDAV_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
-        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | \
+        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | \
+        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_UI_PORT" | \
         "$TAILSCALE_UDP_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
@@ -470,6 +475,32 @@ stage_0() {
         [[ "$DOZZLE_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
             die "geçersiz Dozzle kullanıcı adı"
         prompt_secret_twice DOZZLE_NEW_PASS "Dozzle parolası" "$DOZZLE_MIN_PASSWORD_LENGTH"
+    fi
+
+    # DD-117: Transmission girişi. İmaj düz parolayı her açılışta ister; root'a
+    # özel dosyada durur, Compose'a ve docker inspect'e girmez. Dosyalar varsa korunur.
+    TRANSMISSION_NEW_USER=""
+    TRANSMISSION_NEW_PASS=""
+    if [[ -s "$TRANSMISSION_AUTH_DIR/user" && -s "$TRANSMISSION_AUTH_DIR/pass" ]]; then
+        log INFO "Mevcut Transmission kimlik dosyaları korunuyor: $TRANSMISSION_AUTH_DIR"
+    else
+        prompt TRANSMISSION_NEW_USER "Transmission kullanıcı adı"
+        [[ "$TRANSMISSION_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
+            die "geçersiz Transmission kullanıcı adı"
+        prompt_secret_twice TRANSMISSION_NEW_PASS "Transmission parolası" "$TRANSMISSION_MIN_PASSWORD_LENGTH"
+    fi
+
+    # DD-118: FileBrowser hesabı. Veritabanı varsa korunur; parola sonradan
+    # FileBrowser arayüzünden değişir. Parola yalnız bellekte durur.
+    FILEBROWSER_NEW_USER=""
+    FILEBROWSER_NEW_PASS=""
+    if [[ -f "$FILEBROWSER_DB_FILE" ]]; then
+        log INFO "Mevcut FileBrowser veritabanı korunuyor: $FILEBROWSER_DB_FILE"
+    else
+        prompt FILEBROWSER_NEW_USER "FileBrowser kullanıcı adı"
+        [[ "$FILEBROWSER_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
+            die "geçersiz FileBrowser kullanıcı adı"
+        prompt_secret_twice FILEBROWSER_NEW_PASS "FileBrowser parolası" "$FILEBROWSER_MIN_PASSWORD_LENGTH"
     fi
 
     # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
@@ -619,7 +650,7 @@ remove_legacy_sysctl_files() {
 }
 
 # TCP tıkanıklık denetimi (DD-111). Yalnız bu host'ta SONLANAN TCP'yi etkiler:
-# Caddy'nin Infuse'a WebDAV akışı, qBittorrent yüklemeleri, arayüzler.
+# Caddy'nin Infuse'a WebDAV akışı, Transmission yüklemeleri, arayüzler.
 # Exit-node üzerinden yönlendirilen akışların denetimi uç noktalardadır;
 # router'ın ayarı onlara dokunmaz. tcp_bbr Ubuntu 26.04 çekirdeğinde modül
 # olarak doğrulandı; Debian 13 için beklenir ama doğrulanmadı. Yüklenemezse
@@ -736,6 +767,68 @@ ensure_filebrowser_data_dir() {
     chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
 }
 
+# DD-118: FileBrowser CLI'ı ağsız, tek seferlik konteynerde, yalnız geçici
+# dizin bağlı çalışır. stdout (`config init` ayar dökümü, anahtar dahil)
+# atılır; stderr hata ayıklama için geçici dizine yazılır.
+filebrowser_cli() {
+    local work="$1"
+    shift
+    docker run --rm --network none --user "$DOWNLOADS_UID:$DOWNLOADS_GID" \
+        -w /database -v "$work:/database" --entrypoint filebrowser "$FILEBROWSER_IMAGE" \
+        "$@" --database /database/filebrowser.db >/dev/null 2>>"$work/cli.log"
+}
+
+filebrowser_account_fail() {
+    local work="$1" msg="$2"
+    [[ -s "$work/cli.log" ]] && tail -n 5 -- "$work/cli.log" >&2
+    rm -rf -- "$work"
+    die "$msg"
+}
+
+# DD-118: hesap kurulumda sorulur; ilk açılışın log'a yazdığı rastgele admin
+# parolası hiç oluşmaz. Veritabanı geçici dizinde kurulur: `config init`
+# bayrakları upstream'in ilk açılış ayarlarıyla aynıdır (ölçüldü, key hariç
+# fark yok). Kullanıcı, bcrypt özeti htpasswd'e stdin'den giden bir JSON
+# dosyasından içe aktarılır — parola argv'ye, loga, diske düz metin girmez.
+# Doğrulanan veritabanı tek `mv` ile yerine konur.
+ensure_filebrowser_account() {
+    local work hash
+    [[ -n "${FILEBROWSER_NEW_PASS:-}" ]] || return 0
+    work="$(mktemp -d "$FILEBROWSER_DATA_DIR/.init-XXXXXX")"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work"
+    if ! filebrowser_cli "$work" config init --address 0.0.0.0 --port 80 --root /srv \
+        --viewMode mosaic --sorting.by '' --redirectAfterCopyMove --hideLoginButton \
+        --minimumPasswordLength "$FILEBROWSER_MIN_PASSWORD_LENGTH" ||
+        ! filebrowser_cli "$work" config export /database/settings.json; then
+        filebrowser_account_fail "$work" "FileBrowser veritabanı başlatılamadı"
+    fi
+    hash="$(printf '%s' "$FILEBROWSER_NEW_PASS" | htpasswd -niB -C 10 "$FILEBROWSER_NEW_USER" | cut -d: -f2-)"
+    if [[ ! "$hash" =~ ^\$2[aby]\$10\$ ]] ||
+        ! jq --arg u "$FILEBROWSER_NEW_USER" --arg h "$hash" \
+            '[.settings.defaults + {id: 1, username: $u, password: $h, lockPassword: false, rules: []} |
+              .perm.admin = true]' "$work/settings.json" >"$work/users.json"; then
+        filebrowser_account_fail "$work" "FileBrowser kullanıcı kaydı hazırlanamadı"
+    fi
+    rm -f -- "$work/settings.json"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work/users.json"
+    if ! filebrowser_cli "$work" users import /database/users.json ||
+        ! filebrowser_cli "$work" users export /database/users.json ||
+        ! jq -e --arg u "$FILEBROWSER_NEW_USER" \
+            'length == 1 and .[0].username == $u and .[0].perm.admin == true and
+             (.[0].password | test("^\\$2[aby]\\$"))' "$work/users.json" >/dev/null; then
+        filebrowser_account_fail "$work" "FileBrowser hesabı oluşturulamadı"
+    fi
+    mv -f -- "$work/filebrowser.db" "$FILEBROWSER_DB_FILE"
+    rm -rf -- "$work"
+    unset FILEBROWSER_NEW_PASS
+    FILEBROWSER_NEW_USER=""
+    log INFO "FileBrowser hesabı oluşturuldu: $FILEBROWSER_DB_FILE"
+    # Veritabanı silinip yeniden oluşturulduysa çalışan konteyner eskisini tutar.
+    if docker inspect filebrowser >/dev/null 2>&1; then
+        docker restart filebrowser >/dev/null || log WARN "filebrowser yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
+    fi
+}
+
 # DD-116: users.yml imajın kendi `generate` aracıyla üretilir (bcrypt; biçim
 # upstream'in). Parola stdin'den gider — argv'ye, loga, diske düz metin girmez;
 # konteyner ağsız. Rol `actions`: başlat/durdur/sil, shell yok.
@@ -761,6 +854,44 @@ ensure_dozzle_users() {
     unset DOZZLE_NEW_PASS
     DOZZLE_NEW_USER=""
     log INFO "Dozzle kullanıcı dosyası yazıldı: $DOZZLE_USERS_FILE"
+    # Çalışan bir Dozzle yeni hesabı ancak yeniden açılışta okur.
+    if docker inspect dozzle >/dev/null 2>&1; then
+        docker restart dozzle >/dev/null || log WARN "dozzle yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
+    fi
+}
+
+# DD-117: /config bind — settings.json'u yalnız ilk kurulumda başlatır, sonrası
+# Transmission'ındır. `rpc-port` şarttır: imajın kapanış betiği portu buradan
+# okur; eksikse temiz kapanış olmaz ve ayarlar kaydedilmez (ölçüldü).
+# Kimlik dosyaları root'a özel; konteynere salt okunur bağlanır.
+ensure_transmission_files() {
+    local settings="$TRANSMISSION_DATA_DIR/settings.json"
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$TRANSMISSION_DATA_DIR"
+    if [[ ! -e "$settings" ]]; then
+        jq -n '{"download-dir": "/downloads", "incomplete-dir": "/downloads/incomplete",
+            "incomplete-dir-enabled": true, "port-forwarding-enabled": false, "rpc-port": 9091,
+            "dht-enabled": false, "pex-enabled": false, "lpd-enabled": false,
+            "download-queue-enabled": true, "download-queue-size": 12}' |
+            atomic_write "$settings" 0600
+        chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$settings"
+        log INFO "Transmission başlangıç ayarları yazıldı: $settings"
+    fi
+    install -d -m 0700 -o root -g root "$TRANSMISSION_AUTH_DIR"
+    [[ -n "${TRANSMISSION_NEW_PASS:-}" ]] || return 0
+    (
+        umask 077
+        printf '%s' "$TRANSMISSION_NEW_USER" >"$TRANSMISSION_AUTH_DIR/.user.tmp"
+        printf '%s' "$TRANSMISSION_NEW_PASS" >"$TRANSMISSION_AUTH_DIR/.pass.tmp"
+    )
+    chown root:root "$TRANSMISSION_AUTH_DIR/.user.tmp" "$TRANSMISSION_AUTH_DIR/.pass.tmp"
+    mv -f -- "$TRANSMISSION_AUTH_DIR/.user.tmp" "$TRANSMISSION_AUTH_DIR/user"
+    mv -f -- "$TRANSMISSION_AUTH_DIR/.pass.tmp" "$TRANSMISSION_AUTH_DIR/pass"
+    unset TRANSMISSION_NEW_PASS
+    TRANSMISSION_NEW_USER=""
+    log INFO "Transmission kimlik dosyaları yazıldı: $TRANSMISSION_AUTH_DIR"
+    if docker inspect transmission >/dev/null 2>&1; then
+        docker restart transmission >/dev/null || log WARN "transmission yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
+    fi
 }
 
 # DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
@@ -804,7 +935,7 @@ stage_3() {
         mkdir -p "$d"
     done
     ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
-    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; qBit/FileBrowser/Unpackerr R/W)"
+    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; Transmission/FileBrowser/Unpackerr R/W)"
 }
 
 stage_4() {
@@ -833,20 +964,21 @@ stage_4() {
     systemctl enable --now docker
     ensure_wg_kernel_modules
     ensure_dozzle_users
+    ensure_transmission_files
 
     mkdir -p "$COMPOSE_DIR"
     COMPOSE_NEEDS_UP=0
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         DOZZLE_IMAGE="$DOZZLE_IMAGE" \
         FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
-        QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
+        TRANSMISSION_IMAGE="$TRANSMISSION_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         WG_EASY_IMAGE="$WG_EASY_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
-        QBIT_UI_PORT="$QBIT_UI_PORT" \
-        QBIT_PUBLIC_PORT="$QBIT_PUBLIC_PORT" \
+        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
+        TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         WG_PUBLIC_PORT="$WG_PUBLIC_PORT" \
         WEBDAV_PORT="$WEBDAV_PORT" \
@@ -860,6 +992,8 @@ stage_4() {
         DOWNLOADS_GID="$DOWNLOADS_GID" \
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         DOZZLE_DATA_DIR="$DOZZLE_DATA_DIR" \
+        TRANSMISSION_DATA_DIR="$TRANSMISSION_DATA_DIR" \
+        TRANSMISSION_AUTH_DIR="$TRANSMISSION_AUTH_DIR" \
         DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
         DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
         TIMEZONE="$TIMEZONE"
@@ -887,6 +1021,7 @@ stage_4() {
     fi
 
     ensure_filebrowser_data_dir
+    ensure_filebrowser_account
 
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
@@ -1041,7 +1176,7 @@ EOF
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
-        QBIT_UI_PORT="$QBIT_UI_PORT" \
+        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
     # {$WEBDAV_PORT} Caddyfile'da sabit değil; state.env değişince yeniden başlat.
@@ -1252,7 +1387,7 @@ stage_7() {
 
     # Contract §14.13 — dört UI sitesi Caddy üzerinden non-5xx (DD-88).
     local ui_host ui_code
-    for ui_host in dozzle wg qbit file; do
+    for ui_host in dozzle wg torrent file; do
         ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
             -H "Host: ${ui_host}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
         [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
@@ -1264,6 +1399,11 @@ stage_7() {
         -H "Host: dozzle.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/api/events/stream" || true)"
     [[ "$code" == "401" ]] ||
         die "Dozzle API girişsiz yanıt $code verdi (beklenen 401)"
+    # DD-117: Transmission girişi zorunlu olmalı (imaj kimlik yoksa girişi kapatır).
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: torrent.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/transmission/rpc" || true)"
+    [[ "$code" == "401" ]] ||
+        die "Transmission RPC girişsiz yanıt $code verdi (beklenen 401)"
     # DD-96: kurulum eski Portainer'ı silmez; hâlâ çalışıyorsa söyler.
     if docker inspect -f '{{.State.Running}}' portainer 2>/dev/null | grep -qx true; then
         log WARN "Portainer artık kurulumun parçası değil (DD-116) ama çalışıyor ve docker.sock'a erişiyor; kaldırmak için: docker rm -f portainer (verisi: docker volume rm docker_portainer_data)"
@@ -1288,12 +1428,12 @@ stage_7() {
     (cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null |
         grep -q "${WG_PUBLIC_PORT}/udp" ||
         die "wg-easy public UDP ${WG_PUBLIC_PORT} publish yok"
-    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
-        grep -q "${QBIT_PUBLIC_PORT}/tcp" ||
-        die "qbittorrent public TCP ${QBIT_PUBLIC_PORT} publish yok"
-    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
-        grep -q "${QBIT_PUBLIC_PORT}/udp" ||
-        die "qbittorrent public UDP ${QBIT_PUBLIC_PORT} publish yok"
+    (cd "$COMPOSE_DIR" && docker port transmission) 2>/dev/null |
+        grep -q "${TORRENT_PUBLIC_PORT}/tcp" ||
+        die "transmission public TCP ${TORRENT_PUBLIC_PORT} publish yok"
+    (cd "$COMPOSE_DIR" && docker port transmission) 2>/dev/null |
+        grep -q "${TORRENT_PUBLIC_PORT}/udp" ||
+        die "transmission public UDP ${TORRENT_PUBLIC_PORT} publish yok"
 
     for svc in dozzle filebrowser webdav; do
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1307,10 +1447,10 @@ stage_7() {
         die "webdav loopback publish ${WEBDAV_PORT} yok"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        [[ "$line" == *"${QBIT_PUBLIC_PORT}/"* ]] && continue
+        [[ "$line" == *"${TORRENT_PUBLIC_PORT}/"* ]] && continue
         [[ "$line" == *127.0.0.1:* ]] ||
-            die "qBit UI publish yalnız loopback olmalı ($line)"
-    done < <((cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null || true)
+            die "Transmission UI publish yalnız loopback olmalı ($line)"
+    done < <((cd "$COMPOSE_DIR" && docker port transmission) 2>/dev/null || true)
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         [[ "$line" == *"${WG_PUBLIC_PORT}/"* ]] && continue
@@ -1330,7 +1470,7 @@ Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
 wg UDP:       ${WG_PUBLIC_PORT} (endpoint ipucu: $WG_ENDPOINT_HOST)
-qBit peer:    ${QBIT_PUBLIC_PORT}/tcp+udp
+Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
 Log:          $V2_LOG_FILE
@@ -1341,6 +1481,7 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
+Transmission: http://torrent.${LOCAL_DOMAIN} (kurulumda verilen kullanıcı/parola)
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
   Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}

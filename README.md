@@ -69,8 +69,8 @@ SHA-256. It uploads them to `/root/debian-server-installer`, then starts
 | Service | Exposure | Role |
 |---------|----------|------|
 | Dozzle | loopback → Caddy (login) | container state, live logs, start/stop/remove |
-| FileBrowser | loopback → Caddy | media tree UI |
-| qBittorrent | loopback UI + public peer TCP/UDP | torrents |
+| FileBrowser | loopback → Caddy (login) | media tree UI |
+| Transmission | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | wg-easy | loopback UI + public WireGuard UDP | VPN |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
@@ -81,8 +81,9 @@ and WAN SSH.
 
 ## Container settings backup
 
-Double-click `container-backup.command` to back up or restore FileBrowser,
-wg-easy and qBittorrent settings over SSH. Snapshots are
+Double-click `container-backup.command` to back up or restore the wg-easy
+account and peers over SSH; the installer asks for every other login and
+writes the Transmission preferences. Snapshots are
 password-encrypted and stored under the Git-ignored `backup/` directory. This
 is separate from installation.
 See [scope, the reinstall runbook and encryption](Data/docs/container-backup.md).

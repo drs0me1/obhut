@@ -42,7 +42,8 @@ state. Treat every change as production-infrastructure work.
   only: run the installer, `sudo`, mutating `systemctl`/`docker`, firewall
   changes, wipes, and reboots without per-turn approval. Answer installer
   prompts automatically — defaults, `E` for confirmations, `12345test` for
-  the WebDAV password, `admin` / `12345test` for the Dozzle account, an empty
+  the WebDAV password, `admin` / `12345test` for the Dozzle and Transmission accounts,
+  `admin` / `12345test1234` for the FileBrowser account (12-character minimum), an empty
   answer for the Tailscale auth key — and report what was answered. Non-default config
   values still need the user.
 - **Never ask for, read, store or type a Tailscale auth key.** Only the

@@ -100,8 +100,8 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Compose içerisinde şu servisler yer alacak:
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
   - wg-easy
-  - qBittorrent
-  - Filebrowser (classic)
+  - Transmission (qBittorrent yerine, DD-117; giriş zorunlu, kimlik root'a özel dosyada; tercihler ilk kurulumda yazılır, DD-118)
+  - Filebrowser (classic; tek hesap kurulumda sorulur, parola argv/log'a girmez, DD-118)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
@@ -111,13 +111,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Örnek:
   - Dozzle: `127.0.0.1:61002`
   - wg-easy web arayüzü: `127.0.0.1:51821`
-  - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
+  - Transmission web arayüzü: `127.0.0.1:61006`
   - Filebrowser (classic): `127.0.0.1:61007`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - wg-easy WireGuard: yalnız UDP
-  - qBittorrent peer: TCP + UDP (aynı `QBIT_PUBLIC_PORT`; 2026-08-06, R12 revize)
-- qBittorrent peer protokolünü sessizce daraltma; değişiklik açık karar ister.
+  - Transmission peer: TCP + UDP (aynı `TORRENT_PUBLIC_PORT`; 2026-08-06, R12 revize)
+- Torrent peer protokolünü sessizce daraltma; değişiklik açık karar ister.
 - Unpackerr web arayüzü gerektirmiyorsa port yayınlama.
 - Container isimleri, host portları, container portları ve volume yolları tek bir yapılandırma kaynağından yönetilmeli.
 
@@ -140,7 +140,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
   - `dozzle.${LOCAL_DOMAIN}`
   - `wg.${LOCAL_DOMAIN}`
-  - `qbit.${LOCAL_DOMAIN}`
+  - `torrent.${LOCAL_DOMAIN}`
   - `file.${LOCAL_DOMAIN}`
   - `webdav.${LOCAL_DOMAIN}`
   - `health.${LOCAL_DOMAIN}`
@@ -168,7 +168,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Örnek:
   - `http://dozzle.${LOCAL_DOMAIN}`
   - `http://wg.${LOCAL_DOMAIN}`
-  - `http://qbit.${LOCAL_DOMAIN}`
+  - `http://torrent.${LOCAL_DOMAIN}`
   - `http://file.${LOCAL_DOMAIN}`
   - `http://webdav.${LOCAL_DOMAIN}` (+ isteğe bağlı bare Tailscale IPv4 alias, DD-78)
   - `http://health.${LOCAL_DOMAIN}`
@@ -186,7 +186,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `tailscale0` üzerinden gelen trafik kabul edilecek,
   - public WAN üzerinden yalnız:
     - wg-easy UDP portu,
-    - qBittorrent TCP+UDP peer portu kabul edilecek,
+    - Transmission TCP+UDP peer portu kabul edilecek,
   - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
 - Docker-published portlar için kurallar `DOCKER-USER` zincirinde uygulanacak.
 - Docker’ın oluşturduğu şu zincirler silinmeyecek veya flush edilmeyecek:

@@ -41,15 +41,15 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), wg-easy, qBittorrent, FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), wg-easy, Transmission (replaced qBittorrent, **DD-117**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly the wg-easy UDP port and the qBittorrent peer port (TCP+UDP) |
+| R12 | Publish publicly the wg-easy UDP port and the torrent (Transmission) peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Create persistent firewall rules that permit Tailscale traffic, the public peer ports (wg UDP + qBit TCP+UDP), and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
+| R18 | Create persistent firewall rules that permit Tailscale traffic, the public peer ports (wg UDP + torrent peer TCP+UDP), and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
 | R19 | Filter Docker ports through `DOCKER-USER` |
 | R20 | Keep the installation re-runnable |
 
@@ -127,8 +127,21 @@ the ones agreed on 2026-08-05:
 
 - Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
 - One Compose file with exactly six services: `dozzle`, `filebrowser`,
-  `qbittorrent`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**,
-  **DD-116**).
+  `transmission`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**,
+  **DD-116**, **DD-117**).
+- Transmission (LinuxServer image) takes its user name and password from
+  root-only files under `/etc/master-stack/transmission-auth`, mounted
+  read-only and read through `FILE__USER`/`FILE__PASS`; they never appear in
+  `compose.yaml` or `docker inspect`. The installer asks for them in stage 0
+  and keeps existing files. On a fresh install it seeds
+  `/etc/master-stack/transmission/settings.json` with the download layout
+  (`/downloads`, partial files in `/downloads/incomplete`), port forwarding
+  off and `rpc-port` 9091, which the image's clean-shutdown script requires,
+  plus the operator's preferences: DHT, PeX and local peer discovery off and
+  a download queue of 12 (**DD-118**); from then on the file belongs to
+  Transmission. A leftover `qbittorrent`
+  container stops the installer in stage 0 before any change, because it
+  holds the peer port; the installer never removes it (**DD-96**, **DD-117**).
 - Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
   stop, restart, remove, update), no shell, read-only root, all capabilities
   dropped and `no-new-privileges`. Its `users.yml` is written once by the
@@ -136,6 +149,18 @@ the ones agreed on 2026-08-05:
   with the password on stdin and the `actions` role; an existing file is kept.
   An old `portainer` container is never removed by the installer; stage 7
   warns while it is still running (**DD-96**, **DD-116**).
+- FileBrowser's only account comes from a stage-0 prompt (user name, and a
+  password of at least `FILEBROWSER_MIN_PASSWORD_LENGTH`, 12, FileBrowser's
+  own minimum). Before Compose starts, the installer builds the Bolt database
+  in a temporary directory with the image's CLI in a network-less one-shot
+  container — `config init` with the settings the image's first start would
+  choose, then `users import` of an admin whose bcrypt hash `htpasswd` made
+  from stdin — verifies it holds exactly that admin, and moves it into
+  `/etc/master-stack/filebrowser-data`. The password never reaches argv, a log
+  or a plaintext file, and no first-start random admin password is ever
+  created. An existing `filebrowser.db` is kept and nothing is asked; the
+  password is changed in FileBrowser's UI, and deleting the database makes the
+  next run ask again (**DD-118**).
 - Before Compose starts, the host best-effort preloads `wireguard` plus the
   legacy IPv4/IPv6 netfilter modules used by wg-easy and persists them in
   `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
@@ -154,7 +179,7 @@ the ones agreed on 2026-08-05:
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
-  (no full-tree rewrite). qBittorrent, FileBrowser and Unpackerr share
+  (no full-tree rewrite). Transmission, FileBrowser and Unpackerr share
   read/write that way. WebDAV remains read-only via the Compose service
   (`:ro` mount + `--read-only`).
 
@@ -205,7 +230,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
 | **Image-digest-based recovery** | digest recording + final cross-check | Digests are still *recorded* for identification; nothing acts on a mismatch. |
 | **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
-| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | First-boot credentials live in the container log; v2 does not probe or reprint them. |
+| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: since v2-84 the installer creates the only account from a stage-0 prompt and no first-boot password exists (**DD-118**). |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
 | **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). The installer never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
@@ -226,7 +251,7 @@ Three exposure classes, and nothing may straddle them.
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
 | wg-easy (WireGuard) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (61001) | **UDP only** |
-| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${QBIT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
+| Transmission (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${TORRENT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
@@ -235,8 +260,8 @@ publish and does not appear in `docker port`.
 
 Public peer ports are IPv4-only host binds (`0.0.0.0:port:port/...`), not
 dual-stack unqualified publishes and not a specific WAN IP. Firewall
-limits NEW WAN traffic to wg UDP, qBit TCP+UDP, and SSH.
-(R12 revised 2026-08-06: qBit peer TCP restored to match legacy
+limits NEW WAN traffic to wg UDP, torrent peer TCP+UDP, and SSH.
+(R12 revised 2026-08-06: peer TCP restored to match legacy
 connectivity. 2026-08-07: drop `[::]` peer publish — unused and already
 dropped by IPv6 `MASTER-DOCKER`.)
 
@@ -258,7 +283,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 |---|---|---|
 | Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
-| qBittorrent WebUI | `127.0.0.1` | 61006 |
+| Transmission WebUI | `127.0.0.1` | 61006 (**DD-117**) |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
@@ -283,7 +308,7 @@ defaults to the value recorded in `state.env` on a re-run.
 |---|---|---|---|
 | `dozzle.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://dozzle.…` | `127.0.0.1:61002` (**DD-116**) |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
-| `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:61006` |
+| `torrent.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**) |
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
 | `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
@@ -498,7 +523,7 @@ Accepted:
    gets an individual rule.
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
-6. New inbound TCP and UDP on the WAN interface to `${QBIT_PUBLIC_PORT}`.
+6. New inbound TCP and UDP on the WAN interface to `${TORRENT_PUBLIC_PORT}`.
 
 Dropped:
 
@@ -549,8 +574,8 @@ and IPv6 — separate tables mean no collision — and both are declared in
   - `ESTABLISHED,RELATED` returns early.
   - Container traffic arriving over `tailscale0` is accepted.
   - New WAN traffic to the public peer publications is accepted
-    (wg-easy UDP `${WG_PUBLIC_PORT}`; qBittorrent TCP+UDP
-    `${QBIT_PUBLIC_PORT}`).
+    (wg-easy UDP `${WG_PUBLIC_PORT}`; Transmission TCP+UDP
+    `${TORRENT_PUBLIC_PORT}`).
   - Every other WAN → container flow is dropped.
 - IPv6 policy is explicit and fail-closed with the same shape. If the host
   has no IPv6 WAN route, the rule set reduces accordingly rather than
@@ -633,7 +658,7 @@ Invariants:
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
-  the container volumes, the qBittorrent configuration, the wg-easy
+  the container volumes, the Transmission settings and credential files, the wg-easy
   configuration, the operator's chosen local domain (offered as the
   default).
 - Firewall application is idempotent by construction: the chain is rebuilt
@@ -718,7 +743,7 @@ An installer run is successful when every one of these holds on the target host.
 ### Ports
 
 5. `docker port` shows public publications for wg-easy UDP
-   `${WG_PUBLIC_PORT}` and qBittorrent TCP+UDP `${QBIT_PUBLIC_PORT}`
+   `${WG_PUBLIC_PORT}` and Transmission TCP+UDP `${TORRENT_PUBLIC_PORT}`
    (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN IP; no `[::]` peer
    publish).
 6. No container web interface is published on a non-loopback address.
@@ -737,9 +762,9 @@ An installer run is successful when every one of these holds on the target host.
     `REFUSED`.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
-13. Each of `dozzle`, `wg`, `qbit` and `file` returns a non-5xx status
-    through Caddy (`Host:` + `${TS_IPV4}`), and Dozzle's
-    `/api/events/stream` answers `401` without a login.
+13. Each of `dozzle`, `wg`, `torrent` and `file` returns a non-5xx status
+    through Caddy (`Host:` + `${TS_IPV4}`); Dozzle's `/api/events/stream`
+    and Transmission's `/transmission/rpc` answer `401` without a login.
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
     socket), nor on `0.0.0.0`, WAN, or LAN.
@@ -769,14 +794,14 @@ An installer run is successful when every one of these holds on the target host.
 
 24. `MASTER-INPUT` accepts loopback, `ESTABLISHED,RELATED`, all
     `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH), WAN
-    UDP `${WG_PUBLIC_PORT}`, and WAN TCP+UDP `${QBIT_PUBLIC_PORT}`; it
+    UDP `${WG_PUBLIC_PORT}`, and WAN TCP+UDP `${TORRENT_PUBLIC_PORT}`; it
     drops other new WAN inbound.
 25. `DOCKER-USER` contains exactly one jump to `MASTER-DOCKER`, as its
     first rule.
 26. A third-party rule planted in `DOCKER-USER` before the run is still
     present after it.
 27. Docker's own chains are unchanged in name, count and order.
-28. `MASTER-DOCKER` permits NEW WAN TCP and UDP to `${QBIT_PUBLIC_PORT}`
+28. `MASTER-DOCKER` permits NEW WAN TCP and UDP to `${TORRENT_PUBLIC_PORT}`
     and NEW WAN UDP to `${WG_PUBLIC_PORT}`.
 29. The active SSH session survives policy application.
 
@@ -785,7 +810,7 @@ An installer run is successful when every one of these holds on the target host.
 30. `systemctl restart tailscaled` leaves all six containers running.
 31. `systemctl restart docker` results in a re-applied firewall policy.
 32. After a full reboot: six containers running, all six names resolving,
-    public wg UDP + qBit TCP/UDP published, WebDAV answering `401` via
+    public wg UDP + torrent peer TCP/UDP published, WebDAV answering `401` via
     Caddy.
 33. `systemctl --failed` is empty.
 

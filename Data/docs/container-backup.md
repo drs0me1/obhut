@@ -14,7 +14,7 @@ same password is required to check or restore that backup. See
 
 The utility is separate from the installer and does not depend on its
 version (it discovers mounts with `docker inspect`). Run the installer on a new
-target first, so the four containers and their data mounts exist. The backup
+target first, so the wg-easy container and its data volume exist. The backup
 utility never creates containers, pulls images or
 changes Compose/network configuration. The launcher at the repository root
 runs its worker from `Data/dev/container-backup-remote.sh`, which must stay
@@ -28,37 +28,30 @@ project prefix. The current `nrm` inventory on 2026-09-05 was:
 
 | Service | Container path | Saved content |
 |---|---|---|
-| FileBrowser | `/database/filebrowser.db` | Users and their passwords, preferences and shares |
-| qBittorrent | `/config/qBittorrent/qBittorrent.conf` | Web UI user name and password hash, and preferences |
 | wg-easy | `/etc/wireguard/wg-easy.db` | The wg-easy account, the server keys and every client (peer) |
 
-One file per service, and nothing else (**DD-114**). The scope follows what an
-operator does after an install: change the FileBrowser and qBittorrent
-passwords and a few qBittorrent preferences, create the wg-easy account and
-the peers. The Dozzle login is not backed up: like the WebDAV account, the
-installer asks for it (**DD-116**). Everything else in these
-directories is produced by the install or by the application, and restore
-leaves the destination's copies alone:
+One file, and nothing else (**DD-114**, **DD-118**). The backup carries only
+what the installer cannot recreate: the wg-easy account and the peers, with
+the server key the clients trust. Everything the operator used to set by hand
+on the other services now comes from the installer, the same way on every
+install:
 
-- FileBrowser copies the image's default `config/settings.json` in on first
-  start; the Compose command line overrides its address, port, root and
-  database. A fresh FileBrowser given only `filebrowser.db` started cleanly
-  and read its users.
-- wg-easy rewrites `wg0.conf` from its database every time it starts
-  (observed one second after start).
-- qBittorrent's categories, RSS, watched folders, torrent list, GeoIP data
-  and logs are not settings this workflow changes.
+- FileBrowser: the installer asks for the user name and password and creates
+  that account (**DD-118**). Later password changes happen in FileBrowser's
+  own UI and are not carried to a new host.
+- Transmission: the installer asks for the login (**DD-117**) and writes the
+  preferences once — DHT, PeX and local peer discovery off, at most 12 active
+  downloads (**DD-118**). Preferences changed later in the UI are not carried.
+- Dozzle and WebDAV: the installer asks for their logins (**DD-116**).
 
-Not carried, therefore: edits to FileBrowser's `settings.json`, and
-qBittorrent state other than its preferences file.
+wg-easy rewrites `wg0.conf` from its database every time it starts (observed
+one second after start), so restore leaves the destination's copy alone.
 
-Backups taken while the stack still ran Portainer (before 2026-09-13) also hold
-`portainer/` and a Portainer service entry. They still validate; the target
-check ignores the Portainer entry, restore does not write it, and `check`
-says so.
-LinuxServer persists application settings under `/config`; this utility
-takes only the preferences file from it.
-See [LinuxServer's volume documentation](https://docs.linuxserver.io/general/volumes/).
+Older backups hold more: before 2026-09-14 `filebrowser/filebrowser.db` and
+`transmission/settings.json`, and before 2026-09-13 `portainer/` or
+`qbittorrent/` with their service entries. They still validate; the target
+check ignores those entries, restore writes `wg-easy.db` only and leaves the
+destination's FileBrowser and Transmission files alone, and `check` says so.
 
 The installer's own inputs — `/etc/master-stack/config.env` (domain, ports,
 downloads path, time zone) and `webdav.htpasswd` — are not part of the backup.
@@ -77,7 +70,7 @@ Each run writes a new directory, for example:
 
 ```text
 backup/20260911T172611Z-nrm-settings.CqrYkY/
-    settings.tar.gz.enc   encrypted archive (manifest.json + four service directories)
+    settings.tar.gz.enc   encrypted archive (manifest.json + wg-easy/wg-easy.db)
     settings.sha256       SHA-256 of the decrypted archive, computed on the server
     files.txt             archive entry names, no contents
 ```
@@ -95,7 +88,7 @@ Backups taken before 2026-09-11 are plaintext `settings.tar.gz`. They remain
 selectable for `check` and `restore` without a password, and are reported as
 unencrypted. Backups taken before 2026-09-13 carry whole service directories
 (keys, certificates, `wg0.conf`, `settings.json`). They still validate and
-restore; only the four files are taken from them, and `check` says so. The
+restore; only `wg-easy.db` is taken from them, and `check` says so. The
 manifest schema is unchanged.
 
 ```bash
@@ -121,8 +114,8 @@ manifest schema is unchanged.
 are read from standard input without echo, so automation can pipe them in,
 at the cost of leaving them in shell history.
 
-Restore validates the archive and target, then writes the four files, each
-replaced atomically with its recorded owner and mode. SQLite side files
+Restore validates the archive and target, then writes `wg-easy.db`, replaced
+atomically with its recorded owner and mode. SQLite side files
 (`-wal`, `-shm`, `-journal`) next to a restored database are removed so they
 cannot be replayed onto it, and a backup refuses a database whose WAL or
 journal is not empty after the clean stop. Files the archive does not hold are
@@ -142,9 +135,9 @@ unnecessary.) Failed operations report the exact remote temporary directory,
 retaining recovery material for investigation. Successful operations remove
 their remote temporary copies.
 
-The four applications are stopped briefly to flush databases and preferences.
-Only previously running containers are restarted. WebDAV/Unpackerr and the
-host SSH/Tailscale services are not restarted. Use public SSH or Tailscale to
+wg-easy is stopped briefly to flush its database, and restarted only if it was
+running. FileBrowser, Transmission, Dozzle, WebDAV/Unpackerr and the host
+SSH/Tailscale services are not stopped. Use public SSH or Tailscale to
 reach the target: an SSH session routed through this wg-easy server will be
 interrupted while it is stopped. Backups and installation share the host
 installer lock.
@@ -193,11 +186,12 @@ Tailscale state is deliberately not cloned.
 3. Run `install.sh` and answer its prompts as before: the same domain,
    downloads path and ports (restore checks that the published ports match),
    and the same WebDAV user and password, so Infuse needs only a new address.
+   The FileBrowser, Dozzle and Transmission logins are asked here too.
    At the Tailscale auth key prompt, paste a non-ephemeral key to skip the
    browser, or leave it empty and open the login URL when it appears.
 4. `./container-backup.command restore --host root@NEW` with the backup. This
-   puts the four services' settings, including wg-easy's server key and
-   peers, on top of the fresh containers. Run `check` first for a dry run.
+   puts wg-easy's account, server key and peers on top of the fresh
+   container. Run `check` first for a dry run.
 5. Tailscale admin console: approve the exit node, and point the tailnet
    nameserver and the split-DNS domain (`LOCAL_DOMAIN`, `ayc` by default) at
    the new host's Tailscale IP. The IP changes on every reinstall, because the
@@ -277,12 +271,13 @@ bats Data/tests   # includes a static check keeping the launcher on bash 3.2 fea
 `tests/backup-roundtrip.sh` runs as root on Linux, exclusively against temporary
 directories, and is part of the host acceptance sequence after every
 Debian/Ubuntu install (see `tests/README.md`). It covers archive round-trip,
-SHA-256 and ownership/modes, an archive holding exactly the four files,
+SHA-256 and ownership/modes, an archive holding exactly `wg-easy.db`,
 restore leaving every other file on the destination untouched, SQLite side
-files, a qBittorrent that never started, whole-directory archives from before
-2026-09-13, rollback on error (including removing a file that did not exist
+files, FileBrowser/Transmission-era and Portainer/qBittorrent-era archives,
+rollback on error (including removing a database that did not exist
 before), and rejection of traversal/absolute paths, symlinks, hardlinks,
-non-empty WAL, tampered and out-of-scope archives. Target checks cover reordered
+non-empty WAL, a listed service without its directory, an archive without
+wg-easy, tampered and out-of-scope archives. Target checks cover reordered
 PUID/PGID lists as well as rejection of actual UID/GID, user and port changes.
 Different image digests/tags are accepted with a warning and no override. An
 optional archive argument exercises a real backup against those isolated
@@ -361,3 +356,10 @@ On 2026-09-13 Portainer left the stack (**DD-116**) and the scope became three
 files. On `nrm` the isolated round-trip passed, a live backup held
 `filebrowser.db`, `qBittorrent.conf` and `wg-easy.db`, and `check` on a
 Portainer-era archive reported four files with three to load.
+
+On 2026-09-13 Transmission replaced qBittorrent (**DD-117**); the scope is
+`filebrowser.db`, Transmission's `settings.json` and `wg-easy.db`. On `nrm`
+the isolated round-trip passed (19 checks), a live backup held those three
+files, `check` on a qBittorrent-era archive reported three files with two to
+load, and a restore of the new backup stopped and restarted Transmission
+cleanly (exit 0) with its login and settings intact.

@@ -6,6 +6,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — FileBrowser account and Transmission preferences from the installer (v2-84)
+
+- **Added:**
+  - Stage 0 asks for a FileBrowser user name and password (at least 12
+    characters, FileBrowser's own minimum) when no database exists.
+  - Stage 4 builds the database with the image's CLI in a network-less
+    one-shot container and installs it only after verifying it. The password
+    reaches only `htpasswd`'s stdin; no first-start random admin password is
+    created (**DD-118**).
+  - An existing FileBrowser database is kept. Deleting it makes the next run
+    ask again, and a running FileBrowser is restarted on the new database.
+  - A fresh Transmission `settings.json` also turns off DHT, PeX and local
+    peer discovery and limits active downloads to 12.
+- **Changed:** container backups carry `wg-easy.db` only.
+  - FileBrowser and Transmission are no longer stopped by a backup or
+    restore.
+  - Older archives still validate, and only their `wg-easy.db` is loaded.
+- **Verified on `nrm`:**
+  - A re-run over existing data asked nothing and touched no container.
+  - A short password was refused before any change.
+  - The new account logged in through Caddy while wrong and default
+    passwords were refused, and nothing leaked to logs or `docker inspect`.
+  - Transmission reported the seeded preferences over RPC and kept them
+    across a restart.
+  - A live backup held only `wg-easy.db`, and checks on older archives
+    reported one file to load. A restore of a v2-83-era archive left
+    FileBrowser and Transmission untouched.
+  - Backup round-trip 20 checks; bats 108 ok.
+
+### 2026-09-13 — Transmission replaces qBittorrent (v2-83)
+
+- **Changed:** the torrent client is Transmission 4.1.3 (LinuxServer image)
+  at `http://torrent.${LOCAL_DOMAIN}`. It keeps the peer port 61005 TCP+UDP
+  and qBittorrent's download layout (`/downloads`, partial files in
+  `/downloads/incomplete`). The `QBIT_*` settings become `TORRENT_*`,
+  including `state.env` and the firewall (**DD-117**).
+- **Added:**
+  - Stage 0 asks for a Transmission user name and password.
+  - They are stored in root-only files and passed with
+    `FILE__USER`/`FILE__PASS`, never in `compose.yaml` or `docker inspect`.
+    The image needs the plaintext at every start; this trade-off is
+    recorded in DD-117.
+  - On a fresh install the installer seeds `settings.json`, including the
+    `rpc-port` that the image's clean shutdown depends on.
+  - Stage 7 fails if Transmission's RPC answers without a login.
+  - A leftover `qbittorrent` container stops the installer before any
+    change. The installer does not remove it.
+- **Fixed:** when the installer writes new Dozzle or Transmission
+  credentials, it now restarts that container, so a password change takes
+  effect at once. A replaced Dozzle `users.yml` used to wait for the next
+  restart.
+- **Changed:** container backups carry Transmission's `settings.json`.
+  qBittorrent- and Portainer-era archives still restore FileBrowser and
+  wg-easy and leave Transmission alone.
+- **Removed:** the post-install step of reading qBittorrent's temporary
+  password from its logs.
+- **Verified on `nrm`:**
+  - Throwaway containers established the credential and shutdown behaviour.
+  - The stage-0 gate changed nothing, and the install recreated no other
+    container.
+  - Login was enforced through Caddy, the firewall check passed, and the
+    peer port was reachable from outside.
+  - Restarts were clean, and credential changes applied without a manual
+    restart.
+  - The backup round-trip, a live backup, a legacy check and a self-restore
+    passed; bats 106 ok.
+
 ### 2026-09-13 — Dozzle replaces Portainer (v2-82)
 
 - **Changed:** the `portainer` service is replaced by `dozzle`

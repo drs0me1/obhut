@@ -3825,7 +3825,8 @@ separate document with its own numbering.
   (v2-58). `/downloads` mounts at `/srv`. Quantum `filebrowser.yaml` and
   named volume `filebrowser_data` are removed on Stage 4.
 - **Accounts:** Default `admin`/`admin` on first DB bootstrap — end-of-
-  install warning; operator must change.
+  install warning; operator must change. *(Superseded by **DD-118**: the
+  installer creates the only account from a stage-0 prompt.)*
 
 ### DD-93: Firewall Docker re-apply + install path hygiene (2026-08-09)
 
@@ -4843,6 +4844,215 @@ failure with an early, named one.
   - Backup: the round-trip passed 18/18. A live backup held three files, and
     `check` on a four-file Portainer-era archive reported "4 files, 3 to
     load".
+
+### DD-117: Transmission replaces qBittorrent (2026-09-13)
+
+- **Decision:** the `qbittorrent` service becomes `transmission`
+  (`lscr.io/linuxserver/transmission:latest`, Transmission 4.1.3).
+  - Web UI at `torrent.${LOCAL_DOMAIN}` (loopback 61006 → 9091).
+  - The peer port stays 61005 TCP+UDP (`PEERPORT`).
+  - `QBIT_PUBLIC_PORT`/`QBIT_UI_PORT` become
+    `TORRENT_PUBLIC_PORT`/`TORRENT_UI_PORT` in `defaults.env`, `state.env`
+    and the firewall script alike.
+  - `/config` is a bind mount on `/etc/master-stack/transmission`.
+  - Credentials: stage 0 asks for a user name and password, stored in
+    `/etc/master-stack/transmission-auth/{user,pass}` (`0600 root`, directory
+    `0700`), mounted read-only and read through `FILE__USER`/`FILE__PASS`.
+  - The installer seeds `settings.json` on a fresh install (download layout,
+    port forwarding off, `rpc-port` 9091) and never touches it again.
+  - Stage 7 requires `401` from `/transmission/rpc` without a login.
+  - A leftover `qbittorrent` container stops stage 0 before any change.
+- **Why:** the user uses the torrent client only to download and wanted
+  something simpler than qBittorrent. Resource use was not the argument:
+  qBittorrent idled at 15.7 MB on `nrm`. The gain is a plain interface and one
+  post-install step fewer — reading qBittorrent's temporary password from the
+  logs and changing it — because the installer now sets the account.
+- **Why the credentials are a plaintext root-only file — measured, not
+  assumed (throwaway containers on `nrm`):**
+  - Without `USER`/`PASS` the image's init script sets
+    `rpc-authentication-required = false` on every start, so authentication
+    survives only if the credentials are supplied every time.
+  - Its clean-shutdown script calls `transmission-remote --exit` with them.
+  - A pre-hashed Transmission password (`{sha1…salt}`) did log in through the
+    web UI, but broke that shutdown RPC. `docker stop` waited out its timeout
+    and killed the container (exit 137), and a changed setting was lost.
+  - `FILE__` keeps the value out of `compose.yaml` and `docker inspect`
+    (verified).
+  - The host file is `0600 root`, which docker access already trumps.
+    Transmission itself keeps only a hash in `settings.json`, even while
+    running.
+  - The file must hold the plaintext; that is the trade-off, recorded here
+    rather than hidden.
+- **Why the settings seed includes `rpc-port`:** the image's shutdown and
+  readiness scripts read the port with `jq '.["rpc-port"]'`.
+  - A first seed without it produced `127.0.0.1:null`, and every stop hung
+    until killed, whichever way the password was supplied.
+  - With the key, stops took 4–6 s, exited 0, and a changed setting survived
+    a restart.
+  - The seed is written only when the file is absent; afterwards Transmission
+    owns it.
+- **Why that layout:** qBittorrent saved to `/downloads/` with partial files in
+  `/downloads/incomplete/`. Transmission's LinuxServer default is
+  `/downloads/complete`, which would add a level for FileBrowser, WebDAV,
+  Infuse and Unpackerr. DHT, PeX and queue limits are left to the operator,
+  who sets them in the UI once; the backup then carries them. *(Superseded
+  by **DD-118**: the installer writes them.)*
+- **Why no host whitelist:** with authentication on, Transmission accepted
+  requests under an arbitrary `Host:` (verified), so `HOST_WHITELIST` would add
+  nothing.
+- **Why a stage-0 gate instead of removing qBittorrent:** its container
+  publishes the same peer port, so Compose cannot start Transmission next to
+  it. DD-96 keeps deletion with the operator. The gate fails before anything
+  changes, prints `docker rm -f qbittorrent`, and leaves the
+  `docker_qbit_config` volume alone.
+- **Credential changes take effect immediately:** when the installer writes new
+  credentials for Dozzle (DD-116) or Transmission, it restarts that container.
+  Before, deleting Dozzle's `users.yml` and re-running wrote the file but left
+  the running Dozzle on the old account until its next restart. The procedure
+  previously given to the user was therefore incomplete.
+- **Backups:** the scope becomes `transmission/settings.json` next to
+  `filebrowser.db` and `wg-easy.db` (DD-114).
+  - qBittorrent- and Portainer-era archives still validate; their extra
+    entries are ignored.
+  - A service such an archive does not carry (Transmission) is neither
+    compared nor written. Restore now skips services absent from the archive
+    instead of removing the destination file. A rollback snapshot still
+    removes a file that did not exist.
+- **Verified on `nrm` (2026-09-13):**
+  - bats 106 ok, including functional tests for the settings seed, the
+    credential files and the restart; `bash -n` and `shellcheck` clean.
+  - With qBittorrent present, the installer exited 1 at stage 0 and
+    `state.env`, `compose.yaml` and every container were unchanged.
+  - After qBittorrent was removed, the v2-82 → v2-83 run created
+    Transmission with the seed and credentials and recreated none of the
+    other five containers.
+    - `settings.json` showed `/downloads`, peer-port 61005, `rpc-port` 9091
+      and a hashed password; `docker inspect` held no password.
+    - `state.env` carried `TORRENT_PUBLIC_PORT` and no `QBIT` key.
+  - DNS: `torrent.ayc` resolved; `qbit.ayc` became NXDOMAIN.
+  - Login through Caddy: the RPC answered 401 without or with a wrong
+    login, 409 (authorized) with the right one; the web UI answered 200.
+  - `--check` passed and both firewall chains held the 61005 rules. From the
+    Mac the public peer port was reachable and 61006 was not.
+  - `docker restart` took 4 s and was clean.
+  - Credential change: after deleting the Dozzle and Transmission credential
+    files and re-running with a new password, the new password worked and
+    the old one was rejected, with no manual restart. Reverting worked the
+    same way, and a final run asked nothing and changed nothing.
+  - Backup: the round-trip passed 19 checks. A live backup held three files,
+    and a qBittorrent-era `check` reported two to load. A self-restore
+    stopped and started Transmission cleanly.
+
+### DD-118: The installer sets up FileBrowser and Transmission; the backup keeps only wg-easy (2026-09-14)
+
+- **Decision:**
+  - Stage 0 asks for a FileBrowser user name and password (at least
+    `FILEBROWSER_MIN_PASSWORD_LENGTH`, 12) when `filebrowser.db` is absent.
+    Stage 4 creates the database before Compose starts. An existing database
+    is kept and nothing is asked.
+  - The Transmission settings seed adds `dht-enabled`, `pex-enabled` and
+    `lpd-enabled` false, `download-queue-enabled` true and
+    `download-queue-size` 12. As before, it is written only when
+    `settings.json` is absent.
+  - `container-backup` carries `wg-easy.db` only. FileBrowser and
+    Transmission join Portainer and qBittorrent as legacy archive entries:
+    validated, never written. A backup or restore no longer stops their
+    containers.
+- **Why:** the user wants the installer to take over from the backup wherever
+  it can. After an install they changed only the FileBrowser password and a
+  few torrent preferences (DHT/PeX/local discovery off, at most 12 active
+  downloads, as they had set in qBittorrent). Both are fixed answers an
+  installer can give on every install. wg-easy's server key and peers cannot
+  be recreated without re-provisioning every client, so they stay in the
+  backup.
+- **Where the FileBrowser password comes from — the user chose the prompt
+  (2026-09-14) over:**
+  - The password from the existing backup: the backup holds only a bcrypt
+    hash, and it is encrypted with a password that must not leave the
+    workstation (DD-112).
+  - A plaintext password in `defaults.env`: it would enter git history and
+    every exported `.command`.
+  - A git-ignored local secrets file sent over SSH: plaintext on the
+    workstation, and a new transfer path in the launcher.
+- **How the account is created — measured on `nrm` with throwaway containers
+  (FileBrowser 2.63.23):**
+  - A first start without a database ("quick setup") creates `admin` with a
+    random password written to the container log. Quick setup takes a user
+    name and a bcrypt hash as flags of the serving process itself.
+  - `config init --viewMode mosaic --sorting.by '' --redirectAfterCopyMove
+    --hideLoginButton` produced settings identical to quick setup's apart
+    from the random key. Without those flags four defaults differed.
+  - The user record is `.settings.defaults` from `config export` plus id,
+    name, hash, `lockPassword: false`, `rules: []` and `perm.admin`.
+    `users import` reads it from a file. The imported user matched quick
+    setup's user field for field apart from name and hash.
+  - `htpasswd -niB -C 10` reads the password from stdin. FileBrowser accepted
+    its `$2y$` hash: login 200, a wrong password 403, `admin`/`admin` 403.
+    Cost 10 is FileBrowser's own.
+  - `users import --replace` writes `users.backup.json` into the working
+    directory and failed on the container's `/`. A plain import into an
+    empty database needs no backup file, and `-w /database` keeps the
+    working directory writable anyway.
+- **Safety properties:**
+  - The CLI runs as `DOWNLOADS_UID` in a one-shot container with
+    `--network none` and only a temporary directory mounted. Its stdout
+    (`config init` prints the settings, key included) is discarded; stderr
+    goes to a file in that directory and is shown only on failure.
+  - The password reaches `htpasswd`'s stdin and nothing else: not argv, a
+    log, `docker inspect` or a plaintext file.
+  - The database is verified — exactly one user, that name, admin, a bcrypt
+    hash — and moved into place with one `mv`. A failure removes the
+    temporary directory, so no half-made database is left for a re-run to
+    keep.
+  - A database deleted under a running container is rebuilt, and the
+    container restarted, the same rule as the Dozzle and Transmission
+    credentials (DD-117).
+- **Why 12:** FileBrowser refuses a shorter password when it is changed in its
+  UI. The installer enforces the same minimum at the prompt and stores it in
+  the database.
+- **Trade-offs:** not carried to a new host any more:
+  - A FileBrowser password changed later in its UI, other FileBrowser users
+    and share links.
+  - Transmission preferences changed later in its UI.
+
+  Existing installs keep their `settings.json`: the preference keys reach
+  only a fresh install, or a Transmission whose `settings.json` was removed
+  while it was stopped. Deleting `filebrowser.db` is the way to recover a
+  forgotten FileBrowser password; shares go with it.
+- **Verified on `nrm` (2026-09-14):**
+  - bats 108 ok, including functional tests for the account creation
+    (success, a rebuilt database under a running container, a failed import
+    that leaves nothing) and the preference seed; `bash -n` and `shellcheck`
+    clean. The isolated backup round-trip passed 20 checks.
+  - v2-83 → v2-84 over existing data: exit 0, no FileBrowser prompt, and no
+    container recreated or restarted.
+  - With `filebrowser.db` deleted, an 11-character password stopped stage 0
+    with exit 1; `state.env`, `compose.yaml` and the missing database were
+    unchanged.
+  - The fresh account, in the same run as a Transmission seed (Transmission
+    stopped, `settings.json` moved aside):
+    - Exit 0; FileBrowser was restarted on the new database.
+    - Through Caddy: login 200, wrong password 403, `admin`/`admin` 403.
+    - One user, an admin; `minimumPasswordLength` 12; new-user view `mosaic`.
+    - Database `0640 1000:1000`, no temporary directory left, no password line
+      in the container log and none in `docker inspect`.
+  - Transmission, started by stage 7's `compose up`:
+    - RPC `session-get` reported DHT, PeX and LPD off, the queue on at 12,
+      `/downloads` and peer port 61005.
+    - The image's init script kept the keys and authentication on.
+    - After a restart (exit 0) the file still held them.
+  - A no-op re-run: exit 0, no prompt, database and containers unchanged,
+    firewall `--check` passed.
+  - Backup from the Mac:
+    - Took 11 s and held `manifest.json` and `wg-easy/wg-easy.db`. Only
+      wg-easy was restarted.
+    - `check` reported one file to load for the new archive, a v2-83-era
+      archive (three files) and a Portainer-era archive (four files), with
+      the legacy note on the older two.
+    - Restoring the v2-83-era archive took 11 s and restarted only wg-easy.
+      The FileBrowser database and Transmission settings were untouched,
+      the FileBrowser login still worked, every peer was present and no
+      remote temporary directory was left.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

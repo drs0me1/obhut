@@ -76,27 +76,31 @@ services:
     tmpfs:
       - /tmp
 
-  qbittorrent:
-    image: __QBITTORRENT_IMAGE__
-    container_name: qbittorrent
+  transmission:
+    image: __TRANSMISSION_IMAGE__
+    container_name: transmission
     restart: unless-stopped
     logging: *default-logging
     ports:
-      - "127.0.0.1:__QBIT_UI_PORT__:__QBIT_UI_PORT__"
+      - "127.0.0.1:__TORRENT_UI_PORT__:9091"
       # Peer: IPv4-only 1:1 (0.0.0.0). [::] publish yok — MASTER-DOCKER6 zaten
       # WAN peer'i DROP ederdi; çift yığın gürültüydü. WAN IP gömülmez.
-      - "0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"
-      - "0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"
+      - "0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/tcp"
+      - "0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/udp"
     environment:
       TZ: __TIMEZONE__
       PUID: "__DOWNLOADS_UID__"
       PGID: "__DOWNLOADS_GID__"
-      WEBUI_PORT: "__QBIT_UI_PORT__"
-      TORRENTING_PORT: "__QBIT_PUBLIC_PORT__"
+      PEERPORT: "__TORRENT_PUBLIC_PORT__"
+      # DD-117: imaj kimliği her açılışta ister (yoksa girişi kapatır, temiz
+      # kapanış RPC'si parolayla yapılır). Compose'da değil, root'a özel dosyada.
+      FILE__USER: /run/secrets/transmission/user
+      FILE__PASS: /run/secrets/transmission/pass
     volumes:
-      - qbit_config:/config
+      - __TRANSMISSION_DATA_DIR__:/config
       - __DOWNLOADS_PATH__:/downloads
-    stop_grace_period: 10s
+      - __TRANSMISSION_AUTH_DIR__:/run/secrets/transmission:ro
+    stop_grace_period: 30s
 
   unpackerr:
     image: __UNPACKERR_IMAGE__
@@ -104,7 +108,7 @@ services:
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     logging: *default-logging
-    # qBittorrent API yok: parola/port gerekmez. Yalnız /downloads ağacını
+    # Torrent istemcisinin API'si kullanılmaz: parola/port gerekmez. Yalnız /downloads ağacını
     # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
     security_opt:
       - no-new-privileges=true
@@ -231,5 +235,4 @@ networks:
     driver: bridge
 
 volumes:
-  qbit_config:
   wg_easy_data:

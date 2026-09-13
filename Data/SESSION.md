@@ -45,6 +45,30 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-84, FileBrowser account and Transmission preferences from
+the installer (DD-118):** the user wants to rely on the backup as little as
+possible. Stage 0 asks for the FileBrowser account (12-character minimum);
+stage 4 builds the Bolt DB with `config init` (flags matching quick setup)
+and `users import` of an htpasswd-made bcrypt hash, in a network-less one-shot
+container, verifies it and moves it into place. The user first suggested
+embedding the password from the backup or in `defaults.env`, then chose the
+prompt after the trade-offs were laid out. The Transmission seed adds DHT/PeX/LPD
+off and a download queue of 12. The backup now carries `wg-easy.db` only.
+Verified live on `nrm`. Test credentials on `nrm`: FileBrowser `admin` /
+`12345test1234`; Dozzle and Transmission `admin` / `12345test`.
+**2026-09-13 — v2-83, Transmission replaces qBittorrent (DD-117):** the user
+downloads only and wanted a simpler client. Transmission (LinuxServer, 4.1.3)
+at `torrent.ayc`, peer port 61005 unchanged, `QBIT_*` → `TORRENT_*`
+everywhere (incl. `state.env` and firewall). Credentials are asked in stage 0
+and kept as plaintext root-only files passed via `FILE__` — measured necessary:
+the image disables auth without them and its clean-shutdown RPC needs the
+plaintext (a hash made stops hang and lose settings). The settings seed must
+contain `rpc-port` (without it every stop hung). A leftover qbittorrent
+container gates stage 0. Credential rewrites now restart the container (also
+fixes Dozzle's password change). Backup scope: Transmission `settings.json`.
+Verified live on `nrm`, which the user now treats as a test host again and
+will reimage. Test credentials on `nrm`: Dozzle and Transmission `admin` /
+`12345test`; `docker_portainer_data` and `docker_qbit_config` volumes remain.
 **2026-09-13 — v2-82, Dozzle replaces Portainer (DD-116):** the user uses
 Portainer only for state, logs and removal. Dozzle (`amir20/dozzle:v11`) is
 now the sixth service at `dozzle.ayc`, with login from a stage-0 prompt

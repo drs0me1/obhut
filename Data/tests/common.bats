@@ -367,33 +367,33 @@ EOF
     [[ "$output" == *"ok:hi"* ]]
 }
 
-@test "compose publishes qbit peer TCP and UDP 1:1" {
-    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/tcp"' \
+@test "compose publishes the torrent peer TCP and UDP 1:1" {
+    grep -q '"0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/tcp"' \
         "$V2_ROOT/templates/compose.yaml"
-    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
+    grep -q '"0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "firewall allows qbit peer TCP and UDP on WAN" {
-    grep -q 'tcp --dport "$QBIT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'udp --dport "$QBIT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
+@test "firewall allows the torrent peer TCP and UDP on WAN" {
+    grep -q 'tcp --dport "$TORRENT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'udp --dport "$TORRENT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
     # DOCKER-USER: both protocols for NEW --ctorigdstport
-    [[ "$(grep -c 'ctorigdstport "$QBIT_PUBLIC_PORT"' \
+    [[ "$(grep -c 'ctorigdstport "$TORRENT_PUBLIC_PORT"' \
         "$V2_ROOT/scripts/firewall.sh")" -ge 2 ]]
 }
 
 @test "firewall requires ports and chains from state" {
     grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'QBIT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'TORRENT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
-    ! grep -qE 'WG_PUBLIC_PORT:=61001|QBIT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
+    ! grep -qE 'WG_PUBLIC_PORT:=61001|TORRENT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "qbittorrent and unpackerr use DOWNLOADS_UID/GID tokens" {
+@test "transmission and unpackerr use DOWNLOADS_UID/GID tokens" {
     grep -q 'PUID: "__DOWNLOADS_UID__"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
     grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
@@ -402,7 +402,7 @@ EOF
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "downloads tree is chown 1000 for qbit filebrowser unpackerr" {
+@test "downloads tree is chown 1000 for transmission filebrowser unpackerr" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
@@ -573,6 +573,7 @@ EOF
     install() { mkdir -p "${!#}"; chmod 700 "${!#}"; }
     hash="\$2a\$11\$$(printf 'a%.0s' {1..53})"
     docker() {
+        [ "$1" = run ] || return 1
         printf '%s\n' "$*" >"$TMP/argv"
         IFS= read -r pw
         printf '%s' "$pw" >"$TMP/stdin"
@@ -587,7 +588,7 @@ EOF
     mode="$(stat -c %a "$TMP/dozzle/users.yml" 2>/dev/null || stat -f %Lp "$TMP/dozzle/users.yml")"
     [ "$mode" = 600 ]
     rm -f "$TMP/dozzle/users.yml"
-    docker() { IFS= read -r _; printf 'not a users file\n'; }
+    docker() { [ "$1" = run ] || return 1; IFS= read -r _; printf 'not a users file\n'; }
     DOZZLE_NEW_USER=admin DOZZLE_NEW_PASS='fixture-password-123'
     run ensure_dozzle_users
     [ "$status" -ne 0 ]
@@ -595,11 +596,73 @@ EOF
     [ -z "$(ls -A "$TMP/dozzle")" ]
 }
 
-@test "unpackerr watches folders, not the qBittorrent API" {
+@test "unpackerr watches folders, not a torrent client API" {
     grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q 'UN_QBITTORRENT_' "$V2_ROOT/templates/compose.yaml"
+    ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "transmission keeps credentials out of compose and a clean-shutdown settings seed" {
+    # DD-117: the image needs USER/PASS at every start (it disables auth and
+    # cannot RPC-exit without them), so they come from root-only files.
+    block="$(awk '/^  transmission:$/,/^  unpackerr:$/' "$V2_ROOT/templates/compose.yaml")"
+    [ -n "$block" ]
+    grep -q '"127.0.0.1:__TORRENT_UI_PORT__:9091"' <<<"$block"
+    grep -q 'PEERPORT: "__TORRENT_PUBLIC_PORT__"' <<<"$block"
+    grep -q 'FILE__USER: /run/secrets/transmission/user' <<<"$block"
+    grep -q 'FILE__PASS: /run/secrets/transmission/pass' <<<"$block"
+    grep -q '__TRANSMISSION_AUTH_DIR__:/run/secrets/transmission:ro' <<<"$block"
+    grep -q '__TRANSMISSION_DATA_DIR__:/config' <<<"$block"
+    ! grep -qE '^ +(USER|PASS|HOST_WHITELIST):' <<<"$block"
+    ! grep -qi qbittorrent "$V2_ROOT/templates/compose.yaml"
+    body="$(awk '/^ensure_transmission_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q '"rpc-port": 9091' <<<"$body"
+    grep -q '"download-dir": "/downloads"' <<<"$body"
+    # DD-118: the operator's torrent preferences are installed, not restored.
+    grep -q '"dht-enabled": false, "pex-enabled": false, "lpd-enabled": false' <<<"$body"
+    grep -q '"download-queue-enabled": true, "download-queue-size": 12' <<<"$body"
+    # A heredoc closing brace at column 0 would end the extracted function early.
+    [ "$(grep -c '^}$' <<<"$body")" -eq 1 ]
+    grep -q 'if \[\[ ! -e "\$settings" \]\]' <<<"$body"
+    grep -q 'umask 077' <<<"$body"
+    grep -q 'unset TRANSMISSION_NEW_PASS' <<<"$body"
+    grep -q 'docker restart transmission' <<<"$body"
+    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'prompt_secret_twice TRANSMISSION_NEW_PASS' <<<"$stage0"
+    grep -q 'docker inspect qbittorrent' <<<"$stage0"
+    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'Transmission RPC girişsiz yanıt'
+}
+
+@test "ensure_transmission_files seeds settings once and writes private credentials" {
+    eval "$(awk '/^ensure_transmission_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    TRANSMISSION_DATA_DIR="$TMP/tr" TRANSMISSION_AUTH_DIR="$TMP/tr-auth" DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
+    log() { :; }
+    chown() { :; }
+    install() { mkdir -p "${!#}"; }
+    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; [ "$1" != inspect ]; }
+    TRANSMISSION_NEW_USER=admin TRANSMISSION_NEW_PASS='fixture-password-123'
+    run ensure_transmission_files
+    [ "$status" -eq 0 ]
+    jq -e '."rpc-port" == 9091 and ."dht-enabled" == false and ."pex-enabled" == false and
+        ."lpd-enabled" == false and ."download-queue-enabled" == true and ."download-queue-size" == 12' \
+        "$TMP/tr/settings.json" >/dev/null
+    [ "$(cat "$TMP/tr-auth/user")" = admin ]
+    [ "$(cat "$TMP/tr-auth/pass")" = 'fixture-password-123' ]
+    mode="$(stat -c %a "$TMP/tr-auth/pass" 2>/dev/null || stat -f %Lp "$TMP/tr-auth/pass")"
+    [ "$mode" = 600 ]
+    ! grep -q 'fixture-password-123' "$TMP/docker-calls"
+    ! grep -q '^restart' "$TMP/docker-calls"
+    # A second run keeps Transmission's own settings file untouched.
+    printf '{"speed-limit-down":123}\n' >"$TMP/tr/settings.json"
+    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; }
+    TRANSMISSION_NEW_USER=admin2 TRANSMISSION_NEW_PASS='fixture-password-456'
+    run ensure_transmission_files
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TMP/tr/settings.json")" = '{"speed-limit-down":123}' ]
+    [ "$(cat "$TMP/tr-auth/user")" = admin2 ]
+    grep -q '^restart transmission' "$TMP/docker-calls"
 }
 
 @test "filebrowser classic serves downloads at /srv with disableExec" {
@@ -624,6 +687,82 @@ EOF
     ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
     ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
+}
+
+@test "filebrowser account is asked once and never reaches argv" {
+    # DD-118: no first-boot random admin; the installer creates the account.
+    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'if \[\[ -f "\$FILEBROWSER_DB_FILE" \]\]' <<<"$stage0"
+    grep -q 'Mevcut FileBrowser veritabanı korunuyor' <<<"$stage0"
+    grep -q 'prompt_secret_twice FILEBROWSER_NEW_PASS "FileBrowser parolası" "\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$stage0"
+    body="$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ "$(grep -c '^}$' <<<"$body")" -eq 1 ]
+    grep -q 'htpasswd -niB -C 10' <<<"$body"
+    grep -q -- '--minimumPasswordLength "\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$body"
+    grep -q 'unset FILEBROWSER_NEW_PASS' <<<"$body"
+    ! grep -qE -- '--password|users (add|update)' <<<"$body"
+    ! grep -q 'FILEBROWSER_NEW_PASS' <<<"$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker run --rm --network none'
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    grep -A1 '^    ensure_filebrowser_data_dir$' <<<"$stage4" | grep -q '^    ensure_filebrowser_account$'
+    grep -q '^FILEBROWSER_DB_FILE="/etc/master-stack/filebrowser-data/filebrowser.db"' "$V2_ROOT/config/defaults.env"
+    grep -q '^FILEBROWSER_MIN_PASSWORD_LENGTH=12$' "$V2_ROOT/config/defaults.env"
+}
+
+@test "ensure_filebrowser_account installs a verified database and leaves nothing on failure" {
+    eval "$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^filebrowser_account_fail\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    FILEBROWSER_DATA_DIR="$TMP/fb" FILEBROWSER_DB_FILE="$TMP/fb/filebrowser.db" FILEBROWSER_IMAGE=fixture
+    FILEBROWSER_MIN_PASSWORD_LENGTH=12 DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
+    mkdir -p "$TMP/fb"
+    log() { :; }
+    chown() { :; }
+    htpasswd() {
+        IFS= read -r pw || true
+        printf '%s' "$pw" >"$TMP/htpasswd-stdin"
+        printf '%s\n' "$*" >"$TMP/htpasswd-argv"
+        printf '%s:$2y$10$%s\n\n' "${!#}" "$(printf 'a%.0s' {1..53})"
+    }
+    docker() {
+        local a w=""
+        printf '%s\n' "$*" >>"$TMP/docker-calls"
+        case "$1" in
+            inspect) return "${FB_CONTAINER_RC:-1}" ;;
+            run) ;;
+            *) return 0 ;;
+        esac
+        for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
+        case "$*" in
+            *" config init "*) printf 'db\n' >"$w/filebrowser.db" ;;
+            *" config export "*) printf '{"settings":{"key":"k","defaults":{"scope":".","viewMode":"mosaic","perm":{"admin":false,"create":true}}}}\n' >"$w/settings.json" ;;
+            *" users import "*) [ -z "${FB_IMPORT_FAIL:-}" ] || return 1; cp "$w/users.json" "$w/imported.json" ;;
+            *" users export "*) cp "$w/imported.json" "$w/users.json" ;;
+        esac
+    }
+    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-123'
+    run ensure_filebrowser_account
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TMP/fb/filebrowser.db")" = db ]
+    [ "$(cat "$TMP/htpasswd-stdin")" = 'fixture-password-123' ]
+    ! grep -q 'fixture-password-123' "$TMP/docker-calls" "$TMP/htpasswd-argv"
+    grep -q 'config init .*--viewMode mosaic' "$TMP/docker-calls"
+    grep -q -- '--minimumPasswordLength 12' "$TMP/docker-calls"
+    ! grep -q '^restart' "$TMP/docker-calls"
+    [ -z "$(find "$TMP/fb" -name '.init-*')" ]
+    # A database deleted under a running container: rebuilt, then restarted.
+    rm -f "$TMP/fb/filebrowser.db" "$TMP/docker-calls"
+    FB_CONTAINER_RC=0 FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-456'
+    run ensure_filebrowser_account
+    [ "$status" -eq 0 ]
+    grep -q '^restart filebrowser$' "$TMP/docker-calls"
+    # A failed import installs nothing and cleans up after itself.
+    rm -f "$TMP/fb/filebrowser.db"
+    FB_IMPORT_FAIL=1 FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-789'
+    run ensure_filebrowser_account
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/fb/filebrowser.db" ]
+    [ -z "$(ls -A "$TMP/fb")" ]
 }
 
 @test "wg-easy publishes WireGuard UDP 1:1 without remap" {
@@ -682,16 +821,16 @@ EOF
 }
 
 @test "compose public UDP ports are not bound to WAN_IPV4" {
-    grep -q '"0.0.0.0:__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/udp"' \
+    grep -q '"0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
     ! grep -q '\${WAN_IPV4}' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "compose public peer ports are IPv4-only" {
-    grep -q '0.0.0.0:__QBIT_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
+    grep -q '0.0.0.0:__TORRENT_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
     grep -q '0.0.0.0:__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
     # Unqualified host:port would also bind [::] on Docker.
-    ! grep -qE '^[[:space:]]*- "__QBIT_PUBLIC_PORT__:__QBIT_PUBLIC_PORT__/' \
+    ! grep -qE '^[[:space:]]*- "__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/' \
         "$V2_ROOT/templates/compose.yaml"
     ! grep -qE '^[[:space:]]*- "__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/' \
         "$V2_ROOT/templates/compose.yaml"
@@ -1110,12 +1249,12 @@ EOF
     grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_chain_shape' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"
-    grep -q -- '--ctorigdstport "$QBIT_PUBLIC_PORT" -j RETURN' \
+    grep -q -- '--ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT" -j RETURN' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
-    grep -c 'QBIT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
+    grep -c 'TORRENT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
 }
 
 @test "firewall --check enforces jump uniqueness staging SSH and WAN drift" {
@@ -1261,11 +1400,11 @@ EOF
     ! awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh" |
         grep -qE '401\|403\|405'
     grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
-    grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
+    grep -q 'docker port transmission' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
-    grep -q 'for ui_host in dozzle wg qbit file' "$V2_ROOT/install.sh"
+    grep -q 'for ui_host in dozzle wg torrent file' "$V2_ROOT/install.sh"
     grep -q 'non-5xx beklenir' "$V2_ROOT/install.sh"
 }
 
@@ -1293,7 +1432,7 @@ EOF
         "$V2_ROOT/config/defaults.env"
     grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
         "$V2_ROOT/config/defaults.env"
-    grep -qE '^QBITTORRENT_IMAGE="lscr\.io/linuxserver/qbittorrent:latest"' \
+    grep -qE '^TRANSMISSION_IMAGE="lscr\.io/linuxserver/transmission:latest"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15"' \
         "$V2_ROOT/config/defaults.env"
@@ -1301,13 +1440,14 @@ EOF
         "$V2_ROOT/config/defaults.env"
     grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' \
         "$V2_ROOT/config/defaults.env"
-    # Forbidden floats — except qBittorrent:latest (LinuxServer's stable+lt v2 track).
+    # Forbidden floats — except LinuxServer Transmission:latest, its only stable
+    # track (LinuxServer publishes no major tag).
     ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
         "$V2_ROOT/config/defaults.env"
     ! grep -qE '^(DOZZLE|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
         "$V2_ROOT/config/defaults.env"
     # Track images must not carry a digest pin.
-    ! grep -qE '^(DOZZLE|FILEBROWSER|QBITTORRENT|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
+    ! grep -qE '^(DOZZLE|FILEBROWSER|TRANSMISSION|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
         "$V2_ROOT/config/defaults.env"
 }
 
