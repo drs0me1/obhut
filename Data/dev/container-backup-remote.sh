@@ -4,12 +4,14 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 
-SERVICES=(portainer filebrowser qbittorrent wg-easy)
+SERVICES=(filebrowser qbittorrent wg-easy)
 # Her servisten yalnız operatörün oluşturduğu durumu tutan dosya: hesaplar,
 # parolalar, qBittorrent tercihleri, wg-easy peer'ları. Anahtarlar, sertifikalar,
 # wg0.conf ve imaj varsayılan ayarları kurulum/uygulama yeniden üretir (DD-114).
-declare -A SCOPE=([portainer]=portainer.db [filebrowser]=filebrowser.db
+declare -A SCOPE=([filebrowser]=filebrowser.db
     [qbittorrent]=qBittorrent/qBittorrent.conf [wg-easy]=wg-easy.db)
+# 2026-09-13 öncesi yedekler Portainer'ı da taşır (DD-116); doğrulanır, yüklenmez.
+LEGACY_DIRS=(portainer)
 declare -A DATA=() IDS=()
 RESTART=()
 RESTORING=0
@@ -23,7 +25,6 @@ discover() {
     docker inspect "${SERVICES[@]}" >"$WORK/inspect.json"
     for c in "${SERVICES[@]}"; do
         case "$c" in
-            portainer) dest=/data; kind=volume ;;
             filebrowser) dest=/database; kind=bind ;;
             qbittorrent) dest=/config; kind=volume ;;
             wg-easy) dest=/etc/wireguard; kind=volume ;;
@@ -107,11 +108,20 @@ wait_services() {
     return 1
 }
 
+# Arşivdeki servis dizinleri; eski yedeklerde Portainer da olabilir.
+archive_dirs() {
+    local root=$1 dir
+    for dir in "${LEGACY_DIRS[@]}" "${SERVICES[@]}"; do
+        if [[ -d "$root/$dir" ]]; then printf '%s\n' "$dir"; fi
+    done
+}
+
 inventory() {
-    local root=$1 rel digest
+    local root=$1 rel digest dirs=()
+    mapfile -t dirs < <(archive_dirs "$root")
     (
         cd "$root"
-        find portainer filebrowser qbittorrent wg-easy -type f -print | sort |
+        find "${dirs[@]}" -type f -print | sort |
         while IFS= read -r rel; do
             digest=$(sha256sum "$rel"); digest=${digest%% *}
             jq -cn --arg path "$rel" --arg sha "$digest" \
@@ -152,8 +162,10 @@ snapshot() {
 }
 
 pack() {
+    local dirs=()
+    mapfile -t dirs < <(archive_dirs "$1")
     tar --format=ustar --hard-dereference --numeric-owner -C "$1" -czf "$2" \
-        manifest.json portainer filebrowser qbittorrent wg-easy
+        manifest.json "${dirs[@]}"
     chmod 600 "$2"
 }
 
@@ -181,7 +193,7 @@ validate_bundle() {
     tar --extract --gzip --file "$archive" --directory "$out" --numeric-owner --same-owner --same-permissions --delay-directory-restore
     jq -e '.format=="master-stack-settings" and .schema==1 and
         (.kind=="settings" or .kind=="rollback") and
-        ([.services[].name] | sort)==["filebrowser","portainer","qbittorrent","wg-easy"]' \
+        ([.services[].name] - ["portainer"] | sort)==["filebrowser","qbittorrent","wg-easy"]' \
         "$out/manifest.json" >/dev/null || fail "Yedek biçimi desteklenmiyor."
     for rel in "${SERVICES[@]}"; do [[ -d "$out/$rel" ]] || fail "Yedekte servis eksik: $rel"; done
     inventory "$out" >"$WORK/actual.json"
@@ -199,7 +211,7 @@ validate_bundle() {
     done
     # 2026-09-13 öncesi yedekler servis dizinlerinin tamamını taşır.
     if (( $(jq '.files|length' "$out/manifest.json") > scoped )); then
-        say "Not: eski kapsamlı yedek; anahtar/sertifika/türetilmiş dosyalar yüklenmez, her servisten yalnız ayar dosyası yüklenir."
+        say "Not: eski kapsamlı yedek; Portainer, anahtar/sertifika ve türetilmiş dosyalar yüklenmez, her servisten yalnız ayar dosyası yüklenir."
     fi
     say "Yedek doğrulandı: $(jq '.files|length' "$out/manifest.json") dosya, yüklenecek $scoped."
 }
@@ -208,12 +220,13 @@ check_target() {
     local source=$1
     # Older schema-1 backups also need normalization: Docker environment order
     # is not significant, but actual PUID/PGID values must still match exactly.
+    # Eski yedeklerdeki Portainer girdisi karşılaştırılmaz (DD-116).
     if ! jq -e --slurpfile target "$WORK/services.json" '
-        [.services[] | {name,user,ids:(.ids | sort),ports}] ==
+        [.services[] | select(.name != "portainer") | {name,user,ids:(.ids | sort),ports}] ==
         [$target[0][] | {name,user,ids:(.ids | sort),ports}]
     ' "$source/manifest.json" >/dev/null; then
         jq -r --slurpfile target "$WORK/services.json" '
-            .services[] as $saved | $target[0][] | select(.name==$saved.name) as $live |
+            .services[] | select(.name != "portainer") as $saved | $target[0][] | select(.name==$saved.name) as $live |
             ["user","ids","ports"][] as $field |
             ($saved[$field] | if $field=="ids" then sort else . end) as $a |
             ($live[$field] | if $field=="ids" then sort else . end) as $b |
@@ -223,7 +236,7 @@ check_target() {
         fail "Hedef portları veya kullanıcı UID/GID (PUID/PGID) değerleri kaynakla eşleşmiyor; ayarlar yüklenmedi."
     fi
     if ! jq -e --slurpfile target "$WORK/services.json" '
-        [.services[] | {name,image_id}] == [$target[0][] | {name,image_id}]
+        [.services[] | select(.name != "portainer") | {name,image_id}] == [$target[0][] | {name,image_id}]
     ' "$source/manifest.json" >/dev/null; then
         say "UYARI: konteyner imajları farklı; sürüm farkı aktarımı engellemez. Uygulama/veritabanı uyumluluğu garanti edilmez."
     fi

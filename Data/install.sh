@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-80"
+V2_VERSION="2026.08.06-v2-82"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -40,16 +40,27 @@ prompt() {
 }
 
 prompt_secret_twice() {
-    local var="$1" msg="$2" a="" b=""
+    local var="$1" msg="$2" min="${3:-$WEBDAV_MIN_PASSWORD_LENGTH}" a="" b=""
     read -r -s -p "$msg: " a </dev/tty || true
     printf '\n' >/dev/tty
     read -r -s -p "$msg (tekrar): " b </dev/tty || true
     printf '\n' >/dev/tty
     [[ -n "$a" ]] || die "parola boş olamaz"
     [[ "$a" == "$b" ]] || die "parolalar eşleşmiyor"
-    [[ "${#a}" -ge "$WEBDAV_MIN_PASSWORD_LENGTH" ]] ||
-        die "parola en az $WEBDAV_MIN_PASSWORD_LENGTH karakter olmalı"
+    [[ "${#a}" -ge "$min" ]] ||
+        die "parola en az $min karakter olmalı"
     printf -v "$var" '%s' "$a"
+}
+
+# Boş bırakılabilen, tek girişlik gizli değer (DD-115). Ekrana ve loga yazılmaz;
+# yapıştırmadan kalan baş/son boşluk atılır.
+prompt_optional_secret() {
+    local var="$1" msg="$2" reply=""
+    read -r -s -p "$msg: " reply </dev/tty || true
+    printf '\n' >/dev/tty
+    reply="${reply#"${reply%%[![:space:]]*}"}"
+    reply="${reply%"${reply##*[![:space:]]}"}"
+    printf -v "$var" '%s' "$reply"
 }
 
 write_state() {
@@ -220,6 +231,31 @@ tailscale_login() {
     die "Tailscale girişi tamamlanamadı"
 }
 
+# DD-115: auth key ile giriş. Anahtar argv'ye (ps), loga ve kalıcı diske girmez:
+# root'a özel tmpfs'teki dosyadan `--auth-key=file:` ile okunur, komut döner
+# dönmez (ya da betik yarıda kalırsa çıkışta) silinir. Anahtar reddedilir veya
+# süre dolarsa 1 döner; çağıran tarayıcı akışına geçer.
+tailscale_login_with_key() {
+    local keyfile="$RUNTIME_DIR/tailscale-authkey" rc=0
+    log INFO "Tailscale: auth key ile giriş"
+    trap 'rm -f -- "$RUNTIME_DIR/tailscale-authkey"' EXIT
+    (umask 077 && printf '%s' "$TS_AUTH_KEY" >"$keyfile")
+    # Çıkış kodu tee'nin değil tailscale'in: pipefail ayarından bağımsız okunur.
+    set +e
+    timeout "$TS_AUTHKEY_LOGIN_SECONDS" \
+        tailscale up --auth-key="file:$keyfile" --advertise-exit-node --ssh 2>&1 |
+        tee -a "$V2_LOG_FILE"
+    rc=${PIPESTATUS[0]}
+    set -e
+    rm -f -- "$keyfile"
+    trap - EXIT
+    # rc 0: aşama 2'nin çevrimiçi bekleme döngüsü sonrasını bekler (cihaz onayı dahil).
+    [[ "$rc" -ne 0 ]] || return 0
+    [[ "$(tailscale_login_state)" != "complete" ]] || return 0
+    log WARN "Tailscale auth key ile giriş olmadı (çıkış $rc: anahtar geçersiz, süresi dolmuş ya da tek kullanımlık ve kullanılmış olabilir); tarayıcıdan girişe geçiliyor"
+    return 1
+}
+
 ensure_wg_kernel_modules() {
     local wg_module
     for wg_module in wireguard ip_tables iptable_nat ip6_tables ip6table_nat; do
@@ -380,7 +416,7 @@ stage_0() {
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
         die "wg-easy UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$PORTAINER_UI_PORT" | \
+        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
         "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
         "$TAILSCALE_UDP_PORT")
             die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
@@ -396,7 +432,7 @@ stage_0() {
         die "WebDAV portu 1-65535 arasında olmalı"
     case "$WEBDAV_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$QBIT_PUBLIC_PORT" | \
-        "$PORTAINER_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | \
+        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$QBIT_UI_PORT" | "$WG_UI_PORT" | \
         "$TAILSCALE_UDP_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
@@ -421,6 +457,36 @@ stage_0() {
         [[ "$WEBDAV_NEW_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]] ||
             die "geçersiz WebDAV kullanıcı adı"
         prompt_secret_twice WEBDAV_NEW_PASS "WebDAV parolası"
+    fi
+
+    # DD-116: Dozzle girişi. Dosya varsa korunur (WebDAV hesabıyla aynı kural);
+    # parola yalnız bellekte durur, aşama 4'te imajın kendi aracına stdin'den gider.
+    DOZZLE_NEW_USER=""
+    DOZZLE_NEW_PASS=""
+    if [[ -f "$DOZZLE_USERS_FILE" ]]; then
+        log INFO "Mevcut Dozzle kullanıcı dosyası korunuyor: $DOZZLE_USERS_FILE"
+    else
+        prompt DOZZLE_NEW_USER "Dozzle kullanıcı adı"
+        [[ "$DOZZLE_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
+            die "geçersiz Dozzle kullanıcı adı"
+        prompt_secret_twice DOZZLE_NEW_PASS "Dozzle parolası" "$DOZZLE_MIN_PASSWORD_LENGTH"
+    fi
+
+    # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
+    # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
+    TS_AUTH_KEY=""
+    if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 &&
+        [[ "$(tailscale_login_state)" == "complete" ]]; then
+        log INFO "Tailscale zaten online; auth key sorulmadı"
+    else
+        prompt_optional_secret TS_AUTH_KEY "Tailscale auth key (boş bırakın = tarayıcıdan giriş)"
+        if [[ -n "$TS_AUTH_KEY" ]]; then
+            [[ "$TS_AUTH_KEY" != tskey-client-* ]] ||
+                die "bu bir OAuth istemci sırrı; admin panelinden bir auth key (tskey-auth-…) oluşturun ya da boş bırakın"
+            [[ "$TS_AUTH_KEY" =~ ^tskey-[A-Za-z0-9-]+$ ]] ||
+                die "Tailscale auth key 'tskey-' ile başlamalı ve yalnız harf, rakam, '-' içermeli; tarayıcıdan giriş için boş bırakın"
+            log INFO "Tailscale auth key alındı; aşama 2'de tarayıcı adımı atlanacak"
+        fi
     fi
 
     RUN_FULL_UPGRADE=0
@@ -608,10 +674,13 @@ EOF
         log WARN "tailscale-udp-gro başlatılamadı"
 
     if [[ "$(tailscale_login_state)" != "complete" ]]; then
-        tailscale_login
+        if [[ -z "${TS_AUTH_KEY:-}" ]] || ! tailscale_login_with_key; then
+            tailscale_login
+        fi
     else
         log INFO "Tailscale zaten online"
     fi
+    unset TS_AUTH_KEY
     tailscale set --advertise-exit-node --ssh=true \
         --stateful-filtering=true --netfilter-mode=on --snat-subnet-routes=true
 
@@ -665,6 +734,33 @@ ensure_filebrowser_data_dir() {
     mkdir -p "$FILEBROWSER_DATA_DIR/config"
     chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$FILEBROWSER_DATA_DIR"
     chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
+}
+
+# DD-116: users.yml imajın kendi `generate` aracıyla üretilir (bcrypt; biçim
+# upstream'in). Parola stdin'den gider — argv'ye, loga, diske düz metin girmez;
+# konteyner ağsız. Rol `actions`: başlat/durdur/sil, shell yok.
+ensure_dozzle_users() {
+    local tmp
+    install -d -m 0700 -o root -g root "$DOZZLE_DATA_DIR"
+    [[ -n "${DOZZLE_NEW_PASS:-}" ]] || return 0
+    tmp="$(mktemp "$DOZZLE_DATA_DIR/.users-XXXXXX")"
+    if ! printf '%s\n' "$DOZZLE_NEW_PASS" |
+        docker run -i --rm --network none "$DOZZLE_IMAGE" \
+            generate --user-roles actions "$DOZZLE_NEW_USER" >"$tmp"; then
+        rm -f -- "$tmp"
+        die "Dozzle kullanıcı dosyası üretilemedi"
+    fi
+    if ! awk -v u="$DOZZLE_NEW_USER" '$1 == u ":" {user=1} $1 == "password:" && $2 ~ /^\$2[aby]\$/ {hash=1}
+        END {exit !(user && hash)}' "$tmp"; then
+        rm -f -- "$tmp"
+        die "Dozzle kullanıcı dosyası beklenen biçimde değil"
+    fi
+    chmod 0600 "$tmp"
+    chown root:root "$tmp"
+    mv -f -- "$tmp" "$DOZZLE_USERS_FILE"
+    unset DOZZLE_NEW_PASS
+    DOZZLE_NEW_USER=""
+    log INFO "Dozzle kullanıcı dosyası yazıldı: $DOZZLE_USERS_FILE"
 }
 
 # DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
@@ -736,17 +832,18 @@ stage_4() {
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     systemctl enable --now docker
     ensure_wg_kernel_modules
+    ensure_dozzle_users
 
     mkdir -p "$COMPOSE_DIR"
     COMPOSE_NEEDS_UP=0
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
-        PORTAINER_IMAGE="$PORTAINER_IMAGE" \
+        DOZZLE_IMAGE="$DOZZLE_IMAGE" \
         FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         WG_EASY_IMAGE="$WG_EASY_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
-        PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
+        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
         QBIT_PUBLIC_PORT="$QBIT_PUBLIC_PORT" \
@@ -762,6 +859,7 @@ stage_4() {
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
         FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
+        DOZZLE_DATA_DIR="$DOZZLE_DATA_DIR" \
         DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
         DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
         TIMEZONE="$TIMEZONE"
@@ -941,7 +1039,7 @@ EOF
     render_template "$V2_ROOT/templates/Caddyfile" "$CADDYFILE" 0644 \
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        PORTAINER_UI_PORT="$PORTAINER_UI_PORT" \
+        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         WG_UI_PORT="$WG_UI_PORT" \
         QBIT_UI_PORT="$QBIT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
@@ -1154,12 +1252,22 @@ stage_7() {
 
     # Contract §14.13 — dört UI sitesi Caddy üzerinden non-5xx (DD-88).
     local ui_host ui_code
-    for ui_host in portainer wg qbit file; do
+    for ui_host in dozzle wg qbit file; do
         ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
             -H "Host: ${ui_host}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
         [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
             die "Caddy ${ui_host}.${LOCAL_DOMAIN}: HTTP '${ui_code}' (non-5xx beklenir)"
     done
+
+    # DD-116: Dozzle docker.sock'a erişir; giriş zorunlu olmalı (fail-closed).
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: dozzle.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/api/events/stream" || true)"
+    [[ "$code" == "401" ]] ||
+        die "Dozzle API girişsiz yanıt $code verdi (beklenen 401)"
+    # DD-96: kurulum eski Portainer'ı silmez; hâlâ çalışıyorsa söyler.
+    if docker inspect -f '{{.State.Running}}' portainer 2>/dev/null | grep -qx true; then
+        log WARN "Portainer artık kurulumun parçası değil (DD-116) ama çalışıyor ve docker.sock'a erişiyor; kaldırmak için: docker rm -f portainer (verisi: docker volume rm docker_portainer_data)"
+    fi
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         "http://127.0.0.1:${WEBDAV_PORT}/" || true)"
@@ -1187,7 +1295,7 @@ stage_7() {
         grep -q "${QBIT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${QBIT_PUBLIC_PORT} publish yok"
 
-    for svc in portainer filebrowser webdav; do
+    for svc in dozzle filebrowser webdav; do
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" ]] && continue
             [[ "$line" == *127.0.0.1:* ]] ||
@@ -1232,6 +1340,7 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
+Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
   Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
 wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}

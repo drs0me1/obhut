@@ -6,6 +6,7 @@ umask 077
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BACKUPS="$ROOT/backup"
+WORKER="$ROOT/Data/dev/container-backup-remote.sh"
 HOST="" PORT="" ACTION="" ARCHIVE="" YES=0
 REMOTE="" SESSION_DIR="" PASSWORD="" PLAIN="" SSH_UP=0
 SSH_OPTS=()
@@ -78,7 +79,7 @@ if [[ -n "$PORT" ]]; then
     [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || fail 'Geçersiz SSH portu.'
     (( 10#$PORT > 0 && 10#$PORT < 65536 )) || fail 'Geçersiz SSH portu.'
 fi
-[[ -f "$ROOT/dev/container-backup-remote.sh" ]] || fail 'dev/container-backup-remote.sh bulunamadı; betiği repo içinden çalıştırın.'
+[[ -f "$WORKER" ]] || fail 'Data/dev/container-backup-remote.sh bulunamadı; betiği repo kökünden çalıştırın.'
 [[ ! -L "$BACKUPS" ]] || fail 'backup klasörü symlink olamaz.'
 mkdir -p "$BACKUPS"
 chmod 700 "$BACKUPS"
@@ -133,7 +134,7 @@ if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
         printf 'UYARI: bu yedek şifresiz (eski sürüm); yeni yedekler şifreli alınır.\n'
     fi
 fi
-printf 'Kapsam (her servisten tek dosya): Portainer ve FileBrowser kullanıcıları, qBittorrent ayarları, wg-easy hesabı ve peer'\''ları.\n'
+printf 'Kapsam (her servisten tek dosya): FileBrowser kullanıcıları, qBittorrent ayarları, wg-easy hesabı ve peer'\''ları.\n'
 printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
 if [[ "$ACTION" == backup ]]; then read_password 1; fi
 if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then
@@ -158,7 +159,7 @@ SSH_UP=1
 prepare_remote() {
     REMOTE=$(ssh -T "${SSH_OPTS[@]}" "$HOST" 'umask 077; mktemp -d /tmp/master-stack-backup.XXXXXXXX')
     [[ "$REMOTE" =~ ^/tmp/master-stack-backup\.[a-zA-Z0-9]+$ ]] || { REMOTE=""; fail 'SSH geçici dizini doğrulanamadı.'; }
-    scp -q "${SSH_OPTS[@]}" "$ROOT/dev/container-backup-remote.sh" "$HOST:$REMOTE/worker.sh"
+    scp -q "${SSH_OPTS[@]}" "$WORKER" "$HOST:$REMOTE/worker.sh"
 }
 remote_run() { ssh -T "${SSH_OPTS[@]}" "$HOST" "bash '$REMOTE/worker.sh' '$1'"; }
 download_backup() {

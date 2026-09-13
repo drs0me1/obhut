@@ -3234,6 +3234,9 @@ separate document with its own numbering.
 
 ### DD-62: Portainer is proxied to loopback HTTPS on 9443 (revised 2026-08-06)
 
+> **Superseded by DD-116 (2026-09-13):** Portainer was replaced by Dozzle,
+> which is proxied over plain loopback HTTP. Kept as history.
+
 - **Decision (revised):** Caddy's upstream for `portainer.${LOCAL_DOMAIN}` is
   `https://127.0.0.1:9443`. Compose publishes `127.0.0.1:9443:9443` only
   (image default HTTPS listener). `--http-enabled` / port 9000 are not used.
@@ -4696,6 +4699,150 @@ failure with an early, named one.
     3/3 healthy, every peer was present and the web UIs answered.
   - The user's real 2026-09-12 backup lists only entries the validator
     accepts, and `check` on a same-format archive reported "4 to load".
+
+### DD-115: An optional Tailscale auth key replaces the browser step (2026-09-13)
+
+- **Decision:** stage 0 asks `Tailscale auth key (boş bırakın = tarayıcıdan
+  giriş)` with hidden input, after the WebDAV prompts, and only when the node
+  is not already online.
+  - With a key, stage 2 writes it to `$RUNTIME_DIR/tailscale-authkey`
+    (tmpfs, root-only directory, file mode `0600`). It runs `tailscale up
+    --auth-key=file:<that path> --advertise-exit-node --ssh` under
+    `TS_AUTHKEY_LOGIN_SECONDS` (300 s), then removes the file.
+  - An `EXIT` trap removes the file if the run is interrupted.
+  - If `tailscale up` fails and the node is not online, the installer logs
+    a warning and runs the existing interactive login.
+  - The variable is unset after stage 2.
+- **Why:** the user asked for it. The login URL is the one step of an
+  install that needs a browser, and a key lets the install continue by
+  itself once the prompts are answered. It is not an unattended mode: every
+  other prompt stays, and an empty answer keeps today's behaviour exactly.
+- **Why a file, not the argument:** `--auth-key=tskey-…` would be readable by
+  any local user in `ps` and `/proc/<pid>/cmdline` for as long as `tailscale
+  up` runs. Tailscale 1.102.4 documents `file:` for exactly this ("a path to
+  a file containing the authkey"). The key also stays out of `config.env`,
+  `state.env`, the install log, the environment of child processes and,
+  therefore, container backups. The prompt reuses the `read -s` pattern of
+  the WebDAV password, and a bats test rejects any `--auth-key=$TS_AUTH_KEY`,
+  `export TS_AUTH_KEY` or a log line carrying it.
+- **Why fall back instead of stopping:** a key is a convenience with a
+  shelf life. A one-off key already used, an expired key or a typo must not
+  strand a fresh install half-way through stage 2. The browser path, with
+  its three-attempt 410 recovery (**DD-37**, **DD-42**), is unchanged and
+  follows directly.
+  - A successful `tailscale up` returns straight to stage 2's online wait,
+    which also covers a tailnet with device approval.
+  - The exit status is read from `PIPESTATUS`, not from the `tee` it is piped
+    through. The first version returned success for a rejected key whenever
+    `pipefail` was off; a test caught it.
+- **Why validate the shape:** keys start with `tskey-` and contain only
+  letters, digits and `-`. OAuth client secrets (`tskey-client-…`) also log
+  in only with `--advertise-tags`; stage 0 names that mistake instead of
+  letting it fail in stage 2.
+- **Which key to create (operator guidance, not enforced):**
+  - Reusable or one-off.
+  - **Not ephemeral:** an ephemeral node is removed once it has been offline
+    for a while, so an exit node that reboots would disappear from the
+    tailnet.
+  - Pre-approved if the tailnet requires device approval.
+  - Exit-node approval and the DNS settings stay manual unless the tailnet
+    policy auto-approves them; the install summary still lists them.
+- **Verified (2026-09-13):**
+  - bats: three tests check that the key reaches `tailscale up` only through
+    a `0600` file that is gone afterwards, never appears in argv or the log,
+    that a rejected key falls back, and the prompt and persistence rules.
+  - Live on `nrm`, inside a throwaway container running the host's
+    `tailscaled` 1.102.4 with its own state: the installer's real function
+    passed a fake key by `file:`. Tailscale read it and rejected it in 5 s
+    (`backend error: invalid key: API key does not exist`); the function
+    fell back with the warning, no key file remained and the key was in
+    neither log.
+  - The prompt trimmed pasted whitespace over a real TTY.
+  - A v2-81 re-run on the online production host skipped the prompt, exited
+    0 with no warnings and recreated no container.
+  - Not yet verified: a successful login with a real key; that needs a key
+    from the user's tailnet on the next fresh install.
+  - The first attempt at the isolated test had a test-procedure flaw,
+    recorded in `tests/README.md`.
+
+### DD-116: Dozzle replaces Portainer (2026-09-13)
+
+- **Decision:** the Compose `portainer` service becomes `dozzle`
+  (`amir20/dozzle:v11`, loopback `127.0.0.1:61002` → 8080, site
+  `dozzle.${LOCAL_DOMAIN}`).
+  - It runs with `DOZZLE_AUTH_PROVIDER=simple`,
+    `DOZZLE_ENABLE_ACTIONS=true` and `DOZZLE_NO_ANALYTICS=true`. Shell is
+    left disabled.
+  - Hardening: read-only root, a `/tmp` tmpfs, `cap_drop: ALL`,
+    `no-new-privileges`, and a Compose healthcheck (`/dozzle healthcheck`,
+    which the image does not wire in by itself).
+  - Stage 0 asks for a Dozzle user name and password when
+    `/etc/master-stack/dozzle/users.yml` does not exist. Stage 4 writes it
+    with the image's own `generate --user-roles actions`, password on stdin,
+    in a container without network; `/etc/master-stack/dozzle` is bound to
+    `/data`.
+  - Stage 7 requires `401` from `/api/events/stream` through Caddy, so a
+    Dozzle without its login fails the install.
+- **Why:** the user uses Portainer for three things only — container state,
+  logs, and removing a container when needed — and said most of its features
+  do not fit. Dozzle is built for exactly those three: live logs with search,
+  container state and resource use, and start/stop/restart/remove.
+  - Two burdens go away: the post-install setup-token step (create the
+    Portainer admin within its timeout) and `portainer.db` in the backup.
+  - Portainer also offered a way to edit and recreate the installer's
+    containers outside `compose.yaml`; Dozzle does not, apart from `update`
+    (below).
+  - Resource use was not the reason: Portainer used about 96 MB of a 7.8 GB
+    host.
+- **Why the login comes from the installer:** Dozzle with actions can stop
+  and remove every container, and `docker.sock` is root-equivalent whether or
+  not it is mounted `:ro` (Dozzle's own documentation says the flag does not
+  limit the API). Tailnet-only reachability was offered and not chosen.
+  - The account follows the WebDAV pattern: asked once, kept on re-runs,
+    replaced by deleting the file and re-running.
+  - `generate` owns the file format and bcrypt hashing, so nothing is
+    reimplemented. Stdin keeps the password out of `argv`.
+  - The `actions` role instead of the empty default (all roles) leaves
+    shell and cloud linking out even if they are enabled later.
+- **Why `v11`:** DD-97 prefers the vendor's major track. v11.0.0 was
+  published on 2026-09-11 with no breaking changes listed; `v10` stopped at
+  10.10.0.
+- **Measured before adopting (2026-09-13, throwaway container on `nrm`):**
+  - The hardened settings ran without restarts, and `/healthcheck`
+    answered 200.
+  - Without a login: `/` → 307 to `/login` and `/api/events/stream` → 401.
+    A wrong password → 401. The right one → 200, and the event stream then
+    delivered.
+  - The page configuration reported `authProvider: simple`,
+    `enableActions: true`, `enableShell: false`.
+  - Dozzle writes `session_secret` next to `users.yml` in `/data`, so the
+    directory stays writable.
+- **Trade-offs:**
+  - Dozzle's single actions switch also enables `update`, which pulls and
+    recreates a container outside the installer. A re-run restores the
+    Compose definition; updating images remains the installer's job
+    (DD-97).
+  - Portainer's stack/volume/image management is gone.
+  - Old backups still restore, with Portainer ignored (**DD-114**).
+- **Existing hosts:** per DD-96 the installer does not delete the
+  `portainer` container or its `docker_portainer_data` volume. `docker
+  compose up` reports it as an orphan, and stage 7 logs a warning with the
+  removal commands while it runs. On `nrm` the container was removed by hand
+  after verification; the volume was left for the operator.
+- **Verified on `nrm` (Debian 13.6, 2026-09-13):**
+  - Static: bats 104 ok; `bash -n` and `shellcheck` clean.
+  - Install: a v2-81 → v2-82 re-run answered the new prompts, wrote
+    `users.yml` (`0600 root:root`, role `actions`) and created a healthy
+    `dozzle` with the hardening in effect. The other five containers were not
+    recreated.
+  - DNS and login: `dozzle.ayc` resolved to the Tailscale IP and
+    `portainer.ayc` became NXDOMAIN. Through Caddy the login was enforced
+    and a login worked. Stage 7 warned about the running Portainer.
+  - After removing the Portainer container, a second run skipped the prompt,
+    warned nothing and changed nothing.
+  - Backup: the round-trip passed 18/18. A live backup held three files, and
+    `check` on a four-file Portainer-era archive reported "4 files, 3 to
+    load".
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

@@ -3,7 +3,7 @@
 **Status:** architecture for the lean root-level installer tree.
 Read [`contract.md`](contract.md) first — that document says *what* the installer
 does; this one says *where each part of it lives* and *how data moves*.
-Operator entry point: [`README.md`](../README.md).
+Operator entry point: [`README.md`](../../README.md).
 
 v1's structural problem was not its size but its ownership model: the same
 fact (a port number, a container name, an expected binding) was asserted in
@@ -98,19 +98,28 @@ re-detected, never as an expectation to be violated.
 
 ```
 .
-├── README.md                      operator / export entry
-├── .cursor/rules/master-stack.mdc repository rules (not shipped to host)
-├── install.sh                     orchestration
-├── common.sh                      logging, guards, file writing, rendering
-├── config/defaults.env            single source of truth for constants
-├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
-├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
-├── systemd/                       units (firewall, GRO, refresh timer)
-├── app/<V2_VERSION>.command       versioned portable install apps (export output)
-├── app/latest.command             most recent export
-├── dev/export-installer.sh         build the portable install app (+ .command wrapper)
-└── tests/                         bats suites (not on host)
+├── <V2_VERSION>.command               current portable installer (double-click; copied by the exporter)
+├── container-backup.command           container settings backup/restore (double-click)
+├── backup/                            encrypted backups (Git-ignored)
+├── README.md, CLAUDE.md               entry points
+├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
+└── Data/
+    ├── install.sh                     orchestration
+    ├── common.sh                      logging, guards, file writing, rendering
+    ├── config/defaults.env            single source of truth for constants
+    ├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
+    ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
+    ├── systemd/                       units (firewall, GRO, refresh timer)
+    ├── app/<V2_VERSION>.command       every exported portable install app
+    ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
+    ├── dev/container-backup-remote.sh backup worker, copied to the host per run
+    ├── docs/                          contract, architecture, design decisions
+    └── tests/                         bats suites (not on host)
 ```
+
+The root holds only what the operator double-clicks (2026-09-13). Paths in the
+rest of this document are relative to `Data/`, which is also the layout the
+installer has on the host under `/root/debian-server-installer`.
 
 `.cursor/rules/` covers the repository tree. It describes how to build this
 installer and ships no runtime behaviour — nothing installs it,
@@ -161,7 +170,7 @@ in §10, not resolved silently.
 | *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
 | *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by Compose `webdav` on loopback (**DD-77**) |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
-| `dev/export-installer.sh` | Write `app/<V2_VERSION>.command` (+ `latest`) portable installer | Host runtime |
+| `dev/export-installer.sh` | Write `app/<V2_VERSION>.command` and replace the repository-root copy of the current version | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
 
 ### 3.3 Placeholder convention
@@ -427,7 +436,8 @@ it solves was merely *found* on Ubuntu (**DD-10**).
 The lean root tree is executable: `install.sh` runs the seven stages on a
 Debian 13 or Ubuntu 24.04/26.04 LTS host. `dev/export-installer.sh` embeds a runtime-only tarball
 (excluding `.cursor/`, `dev/`, `tests/`, `app/`) into
-`app/<V2_VERSION>.command`, which uploads and starts install over
+`app/<V2_VERSION>.command`, copied to the repository root as the one
+installer there, which uploads and starts install over
 `ssh -t`.
 
 Static checks for this tree:
@@ -499,7 +509,7 @@ one-line versions:
 | **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy (WebDAV was dropped from the set by **DD-77**). dnsmasq, the firewall and the stack are untouched. |
 | **DD-77** | Where does WebDAV run? | Compose on `127.0.0.1`, Caddy reverse_proxy; host unit removed. |
 | **DD-98** | Apple TV without MagicDNS? | Caddy listens on `${TS_IPV4}:${WEBDAV_PORT}` → loopback WebDAV; Compose has no TS IP. |
-| **DD-62** | Portainer's upstream | HTTPS `127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`. |
+| **DD-62** | Portainer's upstream | Superseded by **DD-116**: Portainer was replaced by Dozzle on plain loopback HTTP `127.0.0.1:61002`. |
 
 **DD-59 removed a chain that was never decided on.** `defaults.env`
 previously also declared `MASTER-TS-FORWARD`, carried over from v1's

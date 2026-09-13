@@ -4,6 +4,7 @@ Narrow critical-behaviour suite for the lean installer tree. Not a framework
 coverage suite.
 
 ```bash
+cd Data   # from the repository root; paths below are relative to Data/
 bats tests
 bash -n install.sh common.sh scripts/*
 shellcheck -x -s bash install.sh common.sh scripts/*
@@ -20,6 +21,7 @@ on the target as root. It needs only the worker and the test at their
 repository paths and touches no container and no production data:
 
 ```bash
+cd Data
 tar -czf - dev/container-backup-remote.sh tests/backup-roundtrip.sh |
   ssh root@HOST 'mkdir -p /root/debian-server-installer && tar -C /root/debian-server-installer -xzf - &&
     bash /root/debian-server-installer/tests/backup-roundtrip.sh'
@@ -70,3 +72,18 @@ and `set -e` exits at the assignment. Let the consumer read the whole stream
 (`{v=$2} END{print v}`) or guard the pipeline with `|| true`, as the `dig |
 head -n1 || true` read-backs do. A bats test now rejects `| awk … exit`
 patterns in the installer tree.
+
+## Pitfall: a second `tailscaled` on a provisioned host (2026-09-13)
+
+`tailscaled --statedir=DIR` does not isolate a test daemon. `--state` has a
+compiled default of `/var/lib/tailscale/tailscaled.state`, so the daemon
+loads the production node's identity and preferences. On `nrm` such a daemon
+came up `Running` as the production node for a few seconds and rewrote
+`/etc/resolv.conf`; the production daemon restored it within the same second
+(`trample: resolv.conf again matches expected content`). The state file,
+login and prefs were unaffected, and a `BackendState == NeedsLogin` gate
+stopped the test before `tailscale up`.
+
+Run test daemons inside a container with the binaries bind-mounted
+read-only, pass `--state` explicitly, and gate on `NeedsLogin` before any
+`up`.

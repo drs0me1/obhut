@@ -6,6 +6,85 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-13 — Dozzle replaces Portainer (v2-82)
+
+- **Changed:** the `portainer` service is replaced by `dozzle`
+  (`amir20/dozzle:v11`) at `http://dozzle.${LOCAL_DOMAIN}` (loopback 61002).
+  It offers container state, live logs and start/stop/restart/remove.
+  - Login is required.
+  - Shell is off and analytics are off.
+  - The container runs with a read-only root, all capabilities dropped,
+    `no-new-privileges` and a healthcheck (**DD-116**).
+- **Added:**
+  - Stage 0 asks for a Dozzle user name and password; an existing
+    `/etc/master-stack/dozzle/users.yml` is kept.
+  - Stage 4 writes that file with the image's own `generate` command
+    (bcrypt, `actions` role), password on stdin, in a container without
+    network.
+  - Stage 7 fails if Dozzle's API answers without a login, and warns while
+    an old `portainer` container is still running. The installer does not
+    remove it (**DD-96**).
+- **Changed:** container backups carry three files (FileBrowser,
+  qBittorrent, wg-easy). Portainer-era archives still validate and restore,
+  with the Portainer part ignored.
+- **Removed:**
+  - The Portainer setup-token step after an install.
+  - The loopback HTTPS upstream with `tls_insecure_skip_verify` (**DD-62**,
+    superseded).
+- **Verified on `nrm` (Debian 13.6):**
+  - Before adopting, a throwaway hardened Dozzle ran and enforced its login.
+  - The v2-81 → v2-82 re-run created a healthy Dozzle without recreating
+    the other five containers.
+  - DNS and Caddy worked, the login was enforced, and a login worked.
+  - The Portainer warning appeared. After removing that container by hand, a
+    second run was a no-op.
+  - The backup round-trip passed 18/18; a live backup held three files, and
+    `check` accepted a Portainer-era archive.
+  - bats 104 ok.
+
+### 2026-09-13 — Optional Tailscale auth key (v2-81)
+
+- **Added:** stage 0 asks for an optional Tailscale auth key, hidden, only
+  when the node is not already online. With a key, stage 2 logs in with
+  `tailscale up --auth-key=file:…` from a `0600` file in the root-only
+  runtime tmpfs, removed right after, and skips the browser step. An empty
+  answer, a rejected key or a timeout (`TS_AUTHKEY_LOGIN_SECONDS`, 300 s)
+  uses the interactive login URL as before. The key never reaches
+  `config.env`, `state.env`, the log, a command line or child environments.
+  OAuth client secrets are refused with a clear message (**DD-115**).
+- **Verified:**
+  - bats 102 ok. A new test caught an exit status that depended on
+    `pipefail` and was fixed.
+  - Live, the real function with a fake key against the host's Tailscale
+    1.102.4, run in a throwaway container: rejected in 5 s, fallback taken,
+    no residue.
+  - A v2-81 re-run on the online production host skipped the prompt and
+    changed nothing.
+  - A successful real-key login is still to be seen on the next fresh
+    install.
+
+### 2026-09-13 — Repository root holds only what is double-clicked
+
+- **Changed:** the installer tree (`install.sh`, `common.sh`, `config/`,
+  `templates/`, `scripts/`, `systemd/`), `dev/`, `tests/`, `docs/`, `app/`,
+  `CHANGELOG.md` and `SESSION.md` moved under `Data/` with `git mv`. The
+  root keeps the current portable installer (`<V2_VERSION>.command`),
+  `container-backup.command`, the Git-ignored `backup/`, `README.md`,
+  `CLAUDE.md`, `.gitignore` and `.cursor/`. Paths in `Data/` documents are
+  relative to `Data/`, which matches the installer's layout on the host.
+- **Changed:** the exporter writes `Data/app/<V2_VERSION>.command` and
+  replaces the root copy of the current version; `app/latest.command` is
+  gone. `container-backup.command` runs its worker from
+  `Data/dev/container-backup-remote.sh`.
+- **Removed:** the Git-ignored `export/` folder. Its copies were
+  byte-identical to the repository files, and the one backup in it was moved
+  to `backup/` with its content hashes unchanged. The Turkish click-order
+  note is now `Data/OKUBENI.txt`.
+- **Unchanged:** installer behaviour and version. Re-exporting v2-80 from
+  the new layout produced a file byte-identical to the committed one. bats
+  99 ok (one new test pins the root copy to its `Data/app/` archive);
+  `bash -n` and `shellcheck` clean from the root.
+
 ### 2026-09-13 — Container backups carry one file per service
 
 - **Changed:** `container-backup` saves and restores only the files holding

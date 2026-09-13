@@ -14,16 +14,12 @@ WORK="$TEST_DIR/work"
 mkdir "$WORK"
 for c in "${SERVICES[@]}"; do DATA[$c]="$TEST_DIR/$c"; mkdir "${DATA[$c]}"; done
 QB="${DATA[qbittorrent]}/qBittorrent"
-mkdir -p "$QB/BT_backup" "${DATA[filebrowser]}/config" "${DATA[portainer]}/certs" "${DATA[portainer]}/bin"
+mkdir -p "$QB/BT_backup" "${DATA[filebrowser]}/config"
 # In scope: what the operator creates — accounts, passwords, peers, preferences.
-printf 'portainer users fixture\n' >"${DATA[portainer]}/portainer.db"
 printf 'filebrowser users fixture\n' >"${DATA[filebrowser]}/filebrowser.db"
 printf 'preferences fixture\n' >"$QB/qBittorrent.conf"
 printf 'wg account and peers fixture\n' >"${DATA[wg-easy]}/wg-easy.db"
 # Out of scope: produced by the install or by the application on start.
-printf 'instance key\n' >"${DATA[portainer]}/portainer.key"
-printf 'certificate\n' >"${DATA[portainer]}/certs/cert.pem"
-printf 'cache\n' >"${DATA[portainer]}/bin/cache"
 printf '{"port":80}\n' >"${DATA[filebrowser]}/config/settings.json"
 printf 'rendered from wg-easy.db\n' >"${DATA[wg-easy]}/wg0.conf"
 printf 'categories\n' >"$QB/categories.json"
@@ -31,7 +27,7 @@ printf 'resume\n' >"$QB/BT_backup/torrent.fastresume"
 chmod 640 "${DATA[filebrowser]}/filebrowser.db"
 chown 1000:1000 "${DATA[filebrowser]}" "${DATA[filebrowser]}/filebrowser.db"
 chown -R 1000:1000 "${DATA[qbittorrent]}"
-jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] |
+jq -n '["filebrowser","qbittorrent","wg-easy"] |
     map({name:.,image:"fixture",image_id:"sha256:fixture",user:"",ids:[],ports:{}}) |
     map(if .name=="qbittorrent" then
         .ids=["PGID=1000","PUID=1000"] |
@@ -40,9 +36,9 @@ jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] |
 snapshot "$WORK/source" settings
 pack "$WORK/source" "$WORK/source.tar.gz"
 tar -tzf "$WORK/source.tar.gz" | grep -v '/$' | sort >"$WORK/members.txt"
-printf '%s\n' filebrowser/filebrowser.db manifest.json portainer/portainer.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db |
+printf '%s\n' filebrowser/filebrowser.db manifest.json qbittorrent/qBittorrent.conf wg-easy/wg-easy.db |
     sort | diff - "$WORK/members.txt"
-printf 'PASS: the archive holds exactly the four operator-state files\n'
+printf 'PASS: the archive holds exactly the three operator-state files\n'
 validate_bundle "$WORK/source.tar.gz" "$WORK/validated"
 check_target "$WORK/validated"
 cp "$WORK/services.json" "$WORK/original-services.json"
@@ -102,7 +98,6 @@ printf 'PASS: target user incompatibility rejected before writes\n'
 
 # The destination is a fresh install: its own keys, rendered wg0.conf and image
 # defaults, plus database side files a restore must not let SQLite replay.
-printf 'destination key\n' >"${DATA[portainer]}/portainer.key"
 printf 'destination wg0\n' >"${DATA[wg-easy]}/wg0.conf"
 printf '{"port":8080}\n' >"${DATA[filebrowser]}/config/settings.json"
 printf 'changed preference\n' >"$QB/qBittorrent.conf"
@@ -110,15 +105,15 @@ printf 'destination peers\n' >"${DATA[wg-easy]}/wg-easy.db"
 snapshot "$WORK/rollback" rollback
 printf 'stale wal\n' >"${DATA[wg-easy]}/wg-easy.db-wal"
 printf 'stale shm\n' >"${DATA[wg-easy]}/wg-easy.db-shm"
-( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name portainer.db ! -name filebrowser.db ! -name qBittorrent.conf \
+( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name filebrowser.db ! -name qBittorrent.conf \
     ! -name 'wg-easy.db*' -exec sha256sum {} + | sort ) >"$WORK/untouched-before.txt"
 apply_tree "$WORK/validated"
 for c in "${SERVICES[@]}"; do cmp "$WORK/validated/$c/${SCOPE[$c]##*/}" "${DATA[$c]}/${SCOPE[$c]}"; done
 [[ $(stat -c '%a:%u:%g' "${DATA[filebrowser]}/filebrowser.db") == 640:1000:1000 ]]
 [[ ! -e "${DATA[wg-easy]}/wg-easy.db-wal" && ! -e "${DATA[wg-easy]}/wg-easy.db-shm" ]]
-( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name portainer.db ! -name filebrowser.db ! -name qBittorrent.conf \
+( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name filebrowser.db ! -name qBittorrent.conf \
     ! -name 'wg-easy.db*' -exec sha256sum {} + | sort ) | diff "$WORK/untouched-before.txt" -
-printf 'PASS: restore writes only the four files with their UID/GID/modes, clears SQLite side files, leaves everything else alone\n'
+printf 'PASS: restore writes only the three files with their UID/GID/modes, clears SQLite side files, leaves everything else alone\n'
 
 # Exercise the actual EXIT recovery handler without touching any real container.
 # shellcheck disable=SC2329 # Called by the sourced EXIT recovery handler.
@@ -161,25 +156,31 @@ RESTART=()
 unset -f docker
 printf 'PASS: unconfigured wg-easy baseline is accepted when restoring a recovery snapshot\n'
 
-# Archives from before 2026-09-13 carry whole service directories. They still
-# validate; restore takes only the four files from them.
+# Archives from before 2026-09-13 carry whole service directories and a
+# Portainer service (DD-116). They still validate and pass the target check;
+# restore takes only the three files from them.
 cp -a "$WORK/source" "$WORK/legacy"
 mkdir -p "$WORK/legacy/portainer/certs" "$WORK/legacy/filebrowser/config"
+printf 'old portainer users\n' >"$WORK/legacy/portainer/portainer.db"
 printf 'old instance key\n' >"$WORK/legacy/portainer/portainer.key"
 printf 'old certificate\n' >"$WORK/legacy/portainer/certs/cert.pem"
 printf '{}\n' >"$WORK/legacy/filebrowser/config/settings.json"
 printf 'old wg0\n' >"$WORK/legacy/wg-easy/wg0.conf"
 inventory "$WORK/legacy" >"$WORK/legacy-files.json"
-jq --slurpfile files "$WORK/legacy-files.json" '.files=$files[0]' "$WORK/source/manifest.json" >"$WORK/legacy-manifest.json"
+jq --slurpfile files "$WORK/legacy-files.json" '.files=$files[0] |
+    .services += [{name:"portainer",image:"portainer/portainer-ce:lts",image_id:"sha256:old",user:"",ids:[],ports:{"9443/tcp":[{HostIp:"127.0.0.1",HostPort:"9443"}]}}]' \
+    "$WORK/source/manifest.json" >"$WORK/legacy-manifest.json"
 mv "$WORK/legacy-manifest.json" "$WORK/legacy/manifest.json"
 pack "$WORK/legacy" "$WORK/legacy.tar.gz"
 validate_bundle "$WORK/legacy.tar.gz" "$WORK/validated-legacy" 2>"$WORK/legacy.log"
 grep -q 'eski kapsamlı yedek' "$WORK/legacy.log"
+check_target "$WORK/validated-legacy" 2>"$WORK/legacy-target.log"
+if grep -q 'UYARI' "$WORK/legacy-target.log"; then fail 'A legacy Portainer entry must not affect the target check.'; fi
 apply_tree "$WORK/validated-legacy"
+[[ ! -e "$TEST_DIR/portainer" ]]
 for c in "${SERVICES[@]}"; do cmp "$WORK/validated-legacy/$c/${SCOPE[$c]##*/}" "${DATA[$c]}/${SCOPE[$c]}"; done
-[[ $(cat "${DATA[portainer]}/portainer.key") == 'destination key' && $(cat "${DATA[portainer]}/certs/cert.pem") == 'certificate' ]]
 [[ $(cat "${DATA[wg-easy]}/wg0.conf") == 'destination wg0' && $(cat "${DATA[filebrowser]}/config/settings.json") == '{"port":8080}' ]]
-printf 'PASS: whole-directory archives from before 2026-09-13 restore only the four files\n'
+printf 'PASS: whole-directory archives with Portainer from before 2026-09-13 restore only the three files\n'
 
 # A database whose SQLite journal did not drain is incomplete on its own.
 printf 'unflushed transactions\n' >"${DATA[wg-easy]}/wg-easy.db-wal"

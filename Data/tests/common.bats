@@ -526,15 +526,73 @@ EOF
     ! grep -q '\${' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "compose publishes portainer https on 9443" {
-    ! grep -q -- '--http-enabled' "$V2_ROOT/templates/compose.yaml"
-    grep -q '127.0.0.1:__PORTAINER_UI_PORT__:9443' "$V2_ROOT/templates/compose.yaml"
+@test "compose runs dozzle behind a login with actions, no shell, loopback only" {
+    # DD-116: docker.sock is root-equivalent, so loopback + Caddy + users.yml.
+    block="$(awk '/^  dozzle:$/,/^  filebrowser:$/' "$V2_ROOT/templates/compose.yaml")"
+    [ -n "$block" ]
+    grep -q '"127.0.0.1:__DOZZLE_UI_PORT__:8080"' <<<"$block"
+    grep -q 'DOZZLE_AUTH_PROVIDER: simple' <<<"$block"
+    grep -q 'DOZZLE_ENABLE_ACTIONS: "true"' <<<"$block"
+    grep -q 'DOZZLE_NO_ANALYTICS: "true"' <<<"$block"
+    ! grep -q 'DOZZLE_ENABLE_SHELL' <<<"$block"
+    grep -q 'read_only: true' <<<"$block"
+    grep -q -- '- no-new-privileges=true' <<<"$block"
+    grep -q -- '- ALL' <<<"$block"
+    grep -q '__DOZZLE_DATA_DIR__:/data' <<<"$block"
+    grep -q '\["CMD", "/dozzle", "healthcheck"\]' <<<"$block"
+    ! grep -qi portainer "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/templates/Caddyfile" \
+        "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "caddy proxies portainer over https with skip-verify" {
-    grep -q 'reverse_proxy https://127.0.0.1:__PORTAINER_UI_PORT__' \
-        "$V2_ROOT/templates/Caddyfile"
-    grep -q 'tls_insecure_skip_verify' "$V2_ROOT/templates/Caddyfile"
+@test "caddy proxies dozzle over plain loopback http" {
+    grep -q 'reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__' "$V2_ROOT/templates/Caddyfile"
+    ! grep -q 'tls_insecure_skip_verify' "$V2_ROOT/templates/Caddyfile"
+    # Stage 7 fails closed when the login is not enforced.
+    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
+        grep -q 'Dozzle API girişsiz yanıt'
+}
+
+@test "dozzle account is asked once and never reaches argv" {
+    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'Mevcut Dozzle kullanıcı dosyası korunuyor' <<<"$stage0"
+    grep -q 'prompt_secret_twice DOZZLE_NEW_PASS "Dozzle parolası" "\$DOZZLE_MIN_PASSWORD_LENGTH"' <<<"$stage0"
+    body="$(awk '/^ensure_dozzle_users\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'docker run -i --rm --network none "\$DOZZLE_IMAGE"' <<<"$body"
+    grep -q 'generate --user-roles actions' <<<"$body"
+    ! grep -q -- '--password' <<<"$body"
+    grep -q 'unset DOZZLE_NEW_PASS' <<<"$body"
+    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" | grep -q '^    ensure_dozzle_users$'
+    grep -q '^DOZZLE_USERS_FILE="/etc/master-stack/dozzle/users.yml"' "$V2_ROOT/config/defaults.env"
+}
+
+@test "ensure_dozzle_users writes a private file from stdin and rejects malformed output" {
+    eval "$(awk '/^ensure_dozzle_users\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    DOZZLE_DATA_DIR="$TMP/dozzle" DOZZLE_USERS_FILE="$TMP/dozzle/users.yml" DOZZLE_IMAGE=fixture
+    log() { :; }
+    chown() { :; }
+    install() { mkdir -p "${!#}"; chmod 700 "${!#}"; }
+    hash="\$2a\$11\$$(printf 'a%.0s' {1..53})"
+    docker() {
+        printf '%s\n' "$*" >"$TMP/argv"
+        IFS= read -r pw
+        printf '%s' "$pw" >"$TMP/stdin"
+        printf 'users:\n    admin:\n        password: %s\n        roles: actions\n' "$hash"
+    }
+    DOZZLE_NEW_USER=admin DOZZLE_NEW_PASS='fixture-password-123'
+    run ensure_dozzle_users
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TMP/stdin")" = 'fixture-password-123' ]
+    ! grep -q 'fixture-password-123' "$TMP/argv"
+    grep -q 'generate --user-roles actions admin' "$TMP/argv"
+    mode="$(stat -c %a "$TMP/dozzle/users.yml" 2>/dev/null || stat -f %Lp "$TMP/dozzle/users.yml")"
+    [ "$mode" = 600 ]
+    rm -f "$TMP/dozzle/users.yml"
+    docker() { IFS= read -r _; printf 'not a users file\n'; }
+    DOZZLE_NEW_USER=admin DOZZLE_NEW_PASS='fixture-password-123'
+    run ensure_dozzle_users
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/dozzle/users.yml" ]
+    [ -z "$(ls -A "$TMP/dozzle")" ]
 }
 
 @test "unpackerr watches folders, not the qBittorrent API" {
@@ -1207,7 +1265,7 @@ EOF
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
-    grep -q 'for ui_host in portainer wg qbit file' "$V2_ROOT/install.sh"
+    grep -q 'for ui_host in dozzle wg qbit file' "$V2_ROOT/install.sh"
     grep -q 'non-5xx beklenir' "$V2_ROOT/install.sh"
 }
 
@@ -1231,7 +1289,7 @@ EOF
 
 @test "compose images use upstream stable tracks where published" {
     # DD-97: prefer the vendor's stable track over a frozen patch@digest.
-    grep -qE '^PORTAINER_IMAGE="portainer/portainer-ce:lts"' \
+    grep -qE '^DOZZLE_IMAGE="amir20/dozzle:v11"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
         "$V2_ROOT/config/defaults.env"
@@ -1246,10 +1304,10 @@ EOF
     # Forbidden floats — except qBittorrent:latest (LinuxServer's stable+lt v2 track).
     ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
         "$V2_ROOT/config/defaults.env"
-    ! grep -qE '^(PORTAINER|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
+    ! grep -qE '^(DOZZLE|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
         "$V2_ROOT/config/defaults.env"
     # Track images must not carry a digest pin.
-    ! grep -qE '^(PORTAINER|FILEBROWSER|QBITTORRENT|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
+    ! grep -qE '^(DOZZLE|FILEBROWSER|QBITTORRENT|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
         "$V2_ROOT/config/defaults.env"
 }
 
@@ -1275,8 +1333,8 @@ EOF
 
 @test "container-backup launcher stays on bash 3.2 features for Finder" {
     # Finder runs .command files with macOS /bin/bash 3.2.
-    ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' "$V2_ROOT/container-backup.command"
-    grep -q -- '-pbkdf2 -iter 600000 -md sha256' "$V2_ROOT/container-backup.command"
+    ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' "$V2_ROOT/../container-backup.command"
+    grep -q -- '-pbkdf2 -iter 600000 -md sha256' "$V2_ROOT/../container-backup.command"
 }
 
 @test "unattended security upgrades are enabled without automatic reboot" {
@@ -1309,4 +1367,76 @@ EOF
     # `|| { ...; exit 1; }` guard.
     ! grep -nE '[|][^|]*(awk|sed)[^|]*; *exit *[}]' \
         "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT"/scripts/*
+}
+
+@test "repository root carries one exported installer, identical to its Data/app archive" {
+    # The root holds what is double-clicked; everything else lives under Data/.
+    local top copies
+    top="$(cd "$V2_ROOT/.." && pwd)"
+    copies=( "$top"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command )
+    [ "${#copies[@]}" -eq 1 ]
+    [ -f "${copies[0]}" ]
+    cmp "${copies[0]}" "$V2_ROOT/app/$(basename "${copies[0]}")"
+    [ -f "$top/container-backup.command" ]
+    [ -f "$V2_ROOT/dev/container-backup-remote.sh" ]
+    grep -q 'Data/dev/container-backup-remote.sh' "$top/container-backup.command"
+    [ ! -e "$V2_ROOT/app/latest.command" ]
+}
+
+@test "tailscale auth key is optional, asked once, and never persisted" {
+    # DD-115: stage 0 asks only when the node is not already online; the key is
+    # never written to config/state and never placed on a command line.
+    body="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'prompt_optional_secret TS_AUTH_KEY' <<<"$body"
+    grep -q 'Tailscale zaten online; auth key sorulmadı' <<<"$body"
+    grep -q 'tskey-client-' <<<"$body"
+    helper="$(awk '/^prompt_optional_secret\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'read -r -s' <<<"$helper"
+    ! awk '/^write_(state|config)\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'TS_AUTH_KEY'
+    ! grep -nE -- '--auth-?key[= ]"?\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    ! grep -nE 'export +TS_AUTH_KEY|log [A-Z]+ .*\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    stage2="$(awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh")"
+    grep -q '! tailscale_login_with_key' <<<"$stage2"
+    grep -q 'unset TS_AUTH_KEY' <<<"$stage2"
+    grep -q '^TS_AUTHKEY_LOGIN_SECONDS=' "$V2_ROOT/config/defaults.env"
+}
+
+@test "tailscale auth key reaches tailscale up only through a private file" {
+    eval "$(awk '/^tailscale_login_with_key\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    RUNTIME_DIR="$TMP" V2_LOG_FILE="$TMP/install.log" TS_AUTHKEY_LOGIN_SECONDS=5
+    TS_AUTH_KEY="tskey-auth-kFIXTURE1CNTRL-notarealsecret0123"
+    log() { printf '%s\n' "$*" >>"$TMP/install.log"; }
+    timeout() { shift; "$@"; }
+    tailscale_login_state() { printf 'pending\n'; }
+    tailscale() {
+        [ "$1" = up ] || return 0
+        printf '%s\n' "$*" >"$TMP/argv"
+        local file="${2#--auth-key=file:}"
+        stat -c %a "$file" >"$TMP/mode" 2>/dev/null || stat -f %Lp "$file" >"$TMP/mode"
+        cat "$file" >"$TMP/seen"
+        printf 'Success.\n'
+    }
+    run tailscale_login_with_key
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TMP/seen")" = "$TS_AUTH_KEY" ]
+    [ "$(cat "$TMP/mode")" = 600 ]
+    grep -q -- '--auth-key=file:' "$TMP/argv"
+    ! grep -qF "$TS_AUTH_KEY" "$TMP/argv"
+    ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
+    [ ! -e "$TMP/tailscale-authkey" ]
+}
+
+@test "a rejected tailscale auth key falls back to the browser login" {
+    eval "$(awk '/^tailscale_login_with_key\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    RUNTIME_DIR="$TMP" V2_LOG_FILE="$TMP/install.log" TS_AUTHKEY_LOGIN_SECONDS=5
+    TS_AUTH_KEY="tskey-auth-kFIXTURE1CNTRL-notarealsecret0123"
+    log() { printf '%s\n' "$*" >>"$TMP/install.log"; }
+    timeout() { shift; "$@"; }
+    tailscale_login_state() { printf 'pending\n'; }
+    tailscale() { [ "$1" = up ] && { printf 'backend error: invalid key\n'; return 1; }; }
+    run tailscale_login_with_key
+    [ "$status" -eq 1 ]
+    grep -q 'tarayıcıdan girişe geçiliyor' "$TMP/install.log"
+    ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
+    [ ! -e "$TMP/tailscale-authkey" ]
 }

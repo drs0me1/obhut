@@ -16,8 +16,9 @@ The utility is separate from the installer and does not depend on its
 version (it discovers mounts with `docker inspect`). Run the installer on a new
 target first, so the four containers and their data mounts exist. The backup
 utility never creates containers, pulls images or
-changes Compose/network configuration. `dev/container-backup-remote.sh` must
-remain beside the launcher in the repository; neither script is embedded in the
+changes Compose/network configuration. The launcher at the repository root
+runs its worker from `Data/dev/container-backup-remote.sh`, which must stay
+there; neither script is embedded in the
 portable installer.
 
 ## Scope
@@ -27,21 +28,18 @@ project prefix. The current `nrm` inventory on 2026-09-05 was:
 
 | Service | Container path | Saved content |
 |---|---|---|
-| Portainer | `/data/portainer.db` | Users, including the admin created with the setup token; settings and environments |
 | FileBrowser | `/database/filebrowser.db` | Users and their passwords, preferences and shares |
 | qBittorrent | `/config/qBittorrent/qBittorrent.conf` | Web UI user name and password hash, and preferences |
 | wg-easy | `/etc/wireguard/wg-easy.db` | The wg-easy account, the server keys and every client (peer) |
 
 One file per service, and nothing else (**DD-114**). The scope follows what an
-operator does after an install: create the Portainer admin, change the
-FileBrowser and qBittorrent passwords and a few qBittorrent preferences,
-create the wg-easy account and the peers. Everything else in these
+operator does after an install: change the FileBrowser and qBittorrent
+passwords and a few qBittorrent preferences, create the wg-easy account and
+the peers. The Dozzle login is not backed up: like the WebDAV account, the
+installer asks for it (**DD-116**). Everything else in these
 directories is produced by the install or by the application, and restore
 leaves the destination's copies alone:
 
-- Portainer generates `portainer.key`/`.pub`, `certs/` and `chisel/` on first
-  start. Measured 2026-09-13: a fresh Portainer given only a backed-up
-  `portainer.db` started cleanly with its own keys and recognised the admin.
 - FileBrowser copies the image's default `config/settings.json` in on first
   start; the Compose command line overrides its address, port, root and
   database. A fresh FileBrowser given only `filebrowser.db` started cleanly
@@ -51,12 +49,13 @@ leaves the destination's copies alone:
 - qBittorrent's categories, RSS, watched folders, torrent list, GeoIP data
   and logs are not settings this workflow changes.
 
-Not carried, therefore: Portainer stacks deployed from Portainer (their
-compose files live under `/data/compose/`), edits to FileBrowser's
-`settings.json`, and qBittorrent state other than its preferences file.
+Not carried, therefore: edits to FileBrowser's `settings.json`, and
+qBittorrent state other than its preferences file.
 
-Portainer data is configuration for Portainer itself, not a backup of the
-containers it manages. See [Portainer's backup scope](https://docs.portainer.io/faqs/getting-started/what-does-portainers-backup-include).
+Backups taken while the stack still ran Portainer (before 2026-09-13) also hold
+`portainer/` and a Portainer service entry. They still validate; the target
+check ignores the Portainer entry, restore does not write it, and `check`
+says so.
 LinuxServer persists application settings under `/config`; this utility
 takes only the preferences file from it.
 See [LinuxServer's volume documentation](https://docs.linuxserver.io/general/volumes/).
@@ -194,7 +193,8 @@ Tailscale state is deliberately not cloned.
 3. Run `install.sh` and answer its prompts as before: the same domain,
    downloads path and ports (restore checks that the published ports match),
    and the same WebDAV user and password, so Infuse needs only a new address.
-   Relay the Tailscale login URL when it appears.
+   At the Tailscale auth key prompt, paste a non-ephemeral key to skip the
+   browser, or leave it empty and open the login URL when it appears.
 4. `./container-backup.command restore --host root@NEW` with the backup. This
    puts the four services' settings, including wg-easy's server key and
    peers, on top of the fresh containers. Run `check` first for a dry run.
@@ -267,10 +267,11 @@ Local static checks (the launcher must also parse under macOS `/bin/bash`
 3.2, which Finder uses):
 
 ```bash
-bash -n dev/container-backup-remote.sh tests/backup-roundtrip.sh
+# from the repository root
+bash -n Data/dev/container-backup-remote.sh Data/tests/backup-roundtrip.sh
 /bin/bash -n container-backup.command
-shellcheck -x -s bash container-backup.command dev/container-backup-remote.sh tests/backup-roundtrip.sh
-bats tests   # includes a static check keeping the launcher on bash 3.2 features
+shellcheck -x -s bash container-backup.command Data/dev/container-backup-remote.sh Data/tests/backup-roundtrip.sh
+bats Data/tests   # includes a static check keeping the launcher on bash 3.2 features
 ```
 
 `tests/backup-roundtrip.sh` runs as root on Linux, exclusively against temporary
@@ -355,3 +356,8 @@ the archive byte for byte, the two BoltDB files had been updated by their
 applications on start, owners and modes matched on all four, all 12 files
 outside the scope were unchanged in content, and 6/6 containers ran with 3/3
 healthy and every WireGuard peer present.
+
+On 2026-09-13 Portainer left the stack (**DD-116**) and the scope became three
+files. On `nrm` the isolated round-trip passed, a live backup held
+`filebrowser.db`, `qBittorrent.conf` and `wg-easy.db`, and `check` on a
+Portainer-era archive reported four files with three to load.

@@ -19,7 +19,8 @@ must do*. Where the rules are silent (for example on WebDAV), this contract
 extends them. Settled disagreements with early rule drafts — dnsmasq
 listening scope, chain name, refresh helper scope, Portainer upstream
 scheme — are recorded as **DD-59** through **DD-62** in
-`design-decisions.md`.
+`design-decisions.md`. Portainer itself was replaced by Dozzle in v2-82
+(**DD-116**).
 
 The single active rule source is `.cursor/rules/master-stack.mdc`. The
 original RTF is archived unchanged at
@@ -40,7 +41,7 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Portainer, wg-easy, qBittorrent, FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), wg-easy, qBittorrent, FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the wg-easy UDP port and the qBittorrent peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation |
@@ -103,6 +104,12 @@ the ones agreed on 2026-08-05:
 ### 1.2 Tailscale
 
 - Official Tailscale repository and package (**R3**).
+- Stage 0 asks for an optional Tailscale auth key (hidden input, only when
+  the node is not already online). With a key, stage 2 runs `tailscale up
+  --auth-key=file:<root-only tmpfs file> --advertise-exit-node --ssh` and
+  skips the browser step; the key is never written to `config.env`,
+  `state.env`, the log or a command line. An empty answer, or a key that is
+  rejected or times out, uses the interactive login below (**DD-115**).
 - `tailscale up --advertise-exit-node --ssh`, then `tailscale set` to hold
   exit-node, SSH, stateful filtering, netfilter mode and subnet-route SNAT
   (**R4**, **R5**).
@@ -119,8 +126,16 @@ the ones agreed on 2026-08-05:
 ### 1.3 Docker and containers
 
 - Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
-- One Compose file with exactly six services: `portainer`, `filebrowser`,
-  `qbittorrent`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**).
+- One Compose file with exactly six services: `dozzle`, `filebrowser`,
+  `qbittorrent`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**,
+  **DD-116**).
+- Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
+  stop, restart, remove, update), no shell, read-only root, all capabilities
+  dropped and `no-new-privileges`. Its `users.yml` is written once by the
+  installer from a stage-0 prompt, using the image's own `generate` command
+  with the password on stdin and the `actions` role; an existing file is kept.
+  An old `portainer` container is never removed by the installer; stage 7
+  warns while it is still running (**DD-96**, **DD-116**).
 - Before Compose starts, the host best-effort preloads `wireguard` plus the
   legacy IPv4/IPv6 netfilter modules used by wg-easy and persists them in
   `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
@@ -241,7 +256,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 
 | Service | Listen address | Port |
 |---|---|---|
-| Portainer | `127.0.0.1` | 9443 (HTTPS — **DD-62**) |
+| Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
 | qBittorrent WebUI | `127.0.0.1` | 61006 |
 | wg-easy WebUI | `127.0.0.1` | 51821 |
@@ -266,7 +281,7 @@ defaults to the value recorded in `state.env` on a re-run.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
-| `portainer.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://portainer.…` | `https://127.0.0.1:9443` (**DD-62**, skip-verify on loopback) |
+| `dozzle.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://dozzle.…` | `127.0.0.1:61002` (**DD-116**) |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
 | `qbit.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://qbit.…` | `127.0.0.1:61006` |
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
@@ -289,10 +304,8 @@ Rules:
   `SERVICE_NAMES`; both must return `${TS_IPV4}`.
 - Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
   no certificate machinery — the tailnet is the transport security boundary.
-- **Portainer is the only HTTPS upstream** (**DD-62**): Caddy proxies
-  `https://127.0.0.1:9443` with loopback-only `tls_insecure_skip_verify`.
-  Other upstreams stay plain HTTP on loopback. Compose publishes
-  `127.0.0.1:9443:9443` and does not pass `--http-enabled`.
+- Every upstream is plain HTTP on loopback. The only HTTPS upstream,
+  Portainer's (**DD-62**), went with Portainer in v2-82 (**DD-116**).
 - The six names live in one list in the templates; adding a service means
   editing that one list.
 
@@ -724,8 +737,9 @@ An installer run is successful when every one of these holds on the target host.
     `REFUSED`.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
-13. Each of `portainer`, `wg`, `qbit` and `file` returns a non-5xx status
-    through Caddy (`Host:` + `${TS_IPV4}`).
+13. Each of `dozzle`, `wg`, `qbit` and `file` returns a non-5xx status
+    through Caddy (`Host:` + `${TS_IPV4}`), and Dozzle's
+    `/api/events/stream` answers `401` without a login.
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
     socket), nor on `0.0.0.0`, WAN, or LAN.

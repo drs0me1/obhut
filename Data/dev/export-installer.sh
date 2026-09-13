@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Kurulum çalışma dosyalarını gömülü tek bir macOS .command dosyasına paketler.
-# Her export: app/<V2_VERSION>.command (sürüm adıyla arşivlenir).
+# Her export: Data/app/<V2_VERSION>.command (sürüm arşivi) + repo kökünde
+# güncel sürümün kopyası (çift tıklanan dosya).
 set -Eeuo pipefail
 
 DEV_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Kurulum ağacı Data/ altında; çift tıklanan dosyalar repo kökünde.
 REPO_ROOT="$(cd -- "$DEV_DIR/.." && pwd)"
+TOP_DIR="$(cd -- "$REPO_ROOT/.." && pwd)"
 APP_DIR="$REPO_ROOT/app"
 MARKER="__MASTER_STACK_ARCHIVE__"
 
@@ -22,7 +25,8 @@ while [[ $# -gt 0 ]]; do
             cat <<EOF
 Kullanım: $(basename "$0") [--desktop] [-o PATH]
 
-  (varsayılan) app/${V2_VERSION}.command — sürüm adıyla kaydet
+  (varsayılan) Data/app/${V2_VERSION}.command — sürüm adıyla kaydet,
+                repo köküne güncel kopya (kökteki önceki sürüm kaldırılır)
   --desktop     aynı dosyayı ~/Desktop (veya ~/Masaüstü) altına da kopyala
   -o PATH       çıktı yolunu elle seç
 EOF
@@ -253,12 +257,16 @@ bytes="$(wc -c <"$OUT_PATH" | tr -d ' ')"
 echo "==> Yazıldı: $OUT_PATH ($bytes bayt)"
 echo "==> SHA256 (gömülü arşiv): $ARCHIVE_SHA256"
 
-latest_link="$APP_DIR/latest.command"
+# Repo kökünde yalnız güncel sürüm durur; önceki sürümlerin kopyası kalkar,
+# arşivleri Data/app/ altında kalır.
 if [[ "$(cd -- "$(dirname -- "$OUT_PATH")" && pwd)" == "$(cd -- "$APP_DIR" && pwd)" ]]; then
-    cp -f "$OUT_PATH" "$latest_link"
-    chmod 0755 "$latest_link"
-    xattr -d com.apple.quarantine "$latest_link" 2>/dev/null || true
-    echo "==> latest: $latest_link"
+    for old in "$TOP_DIR"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command; do
+        if [[ -f "$old" && "$old" != "$TOP_DIR/$OUT_NAME" ]]; then rm -f -- "$old"; fi
+    done
+    cp -f "$OUT_PATH" "$TOP_DIR/$OUT_NAME"
+    chmod 0755 "$TOP_DIR/$OUT_NAME"
+    xattr -d com.apple.quarantine "$TOP_DIR/$OUT_NAME" 2>/dev/null || true
+    echo "==> kök: $TOP_DIR/$OUT_NAME"
 fi
 
 if [[ "$COPY_DESKTOP" -eq 1 ]]; then

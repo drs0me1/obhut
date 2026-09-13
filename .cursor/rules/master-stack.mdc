@@ -6,11 +6,11 @@ alwaysApply: true
 
 # Master Stack Refactor Kuralları
 
-*Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz.*
+*Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `Data/docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz.*
 
 Bu proje Debian 13 üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
 
-Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`docs/contract.md`) dışına taşmadan davranışı korumaktır.
+Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`Data/docs/contract.md`) dışına taşmadan davranışı korumaktır.
 
 ## Temel çalışma ilkeleri
 
@@ -98,7 +98,7 @@ Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleş
 - Docker Engine, Docker Compose plugin ve gerekli bileşenler resmî Docker Debian deposundan kurulacak.
 - Compose projesi `/root/docker` altında tutulacak.
 - Compose içerisinde şu servisler yer alacak:
-  - Portainer
+  - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
   - wg-easy
   - qBittorrent
   - Filebrowser (classic)
@@ -109,7 +109,7 @@ Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleş
 
 - Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
 - Örnek:
-  - Portainer: `127.0.0.1:9443`
+  - Dozzle: `127.0.0.1:61002`
   - wg-easy web arayüzü: `127.0.0.1:51821`
   - qBittorrent web arayüzü: `127.0.0.1:<web-port>`
   - Filebrowser (classic): `127.0.0.1:61007`
@@ -138,7 +138,7 @@ Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleş
 
   üzerinde kontrollü biçimde dinleyecek.
 - Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
-  - `portainer.${LOCAL_DOMAIN}`
+  - `dozzle.${LOCAL_DOMAIN}`
   - `wg.${LOCAL_DOMAIN}`
   - `qbit.${LOCAL_DOMAIN}`
   - `file.${LOCAL_DOMAIN}`
@@ -166,7 +166,7 @@ Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleş
 - İlk sürüm HTTP-only olacak.
 - Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
 - Örnek:
-  - `http://portainer.${LOCAL_DOMAIN}`
+  - `http://dozzle.${LOCAL_DOMAIN}`
   - `http://wg.${LOCAL_DOMAIN}`
   - `http://qbit.${LOCAL_DOMAIN}`
   - `http://file.${LOCAL_DOMAIN}`
@@ -175,8 +175,8 @@ Ana hedef, kök kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleş
 - Her site yalnız kendi loopback upstream’ine proxy yapacak (health hariç:
   sabit `ok` yanıtı).
 - Örnek:
-  - `portainer.${LOCAL_DOMAIN}` → `127.0.0.1:9443`
-- Portainer upstream HTTPS kullanıyorsa Caddy transport yapılandırması açıkça ele alınmalı (DD-62: loopback HTTPS + `tls_insecure_skip_verify`).
+  - `dozzle.${LOCAL_DOMAIN}` → `127.0.0.1:61002`
+- Tüm upstream'ler loopback üzerinde düz HTTP'dir; tek HTTPS upstream (Portainer, DD-62) Portainer'la birlikte kaldırıldı (DD-116).
 
 ### Firewall
 
@@ -259,9 +259,9 @@ Ana hedef:
 
 Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 
-1. `dev/export-installer.sh --desktop` çalıştır.
-2. Çıktıyı `app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `install.sh` içinden).
-3. Aynı sürümü `app/latest.command` olarak da güncelle.
+1. `Data/dev/export-installer.sh --desktop` çalıştır.
+2. Çıktıyı `Data/app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `Data/install.sh` içinden).
+3. Aynı sürümü repo köküne `<V2_VERSION>.command` olarak kopyala; kökteki önceki sürüm kopyası kaldırılır (exporter bunu yapar). Repo kökünde yalnız çift tıklanan dosyalar durur; geri kalan her şey `Data/` altındadır.
 4. `--desktop` ile Masaüstü'ne `<V2_VERSION>.command` kopyala.
 5. Ayrı upload/sync betiği kullanma; tek dağıtım birimi bu app dosyasıdır.
 6. Gömülü tarball `app`, `dev`, `tests`, `.cursor` ve `docs` içermez.

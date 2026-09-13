@@ -45,6 +45,38 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-13 — v2-82, Dozzle replaces Portainer (DD-116):** the user uses
+Portainer only for state, logs and removal. Dozzle (`amir20/dozzle:v11`) is
+now the sixth service at `dozzle.ayc`, with login from a stage-0 prompt
+(`users.yml` via the image's `generate`, password on stdin, role `actions`),
+actions on, shell off, hardened container, stage-7 login check, and a warning
+for a leftover Portainer. The backup scope became three files; Portainer-era
+archives still restore. Verified live on `nrm`. **On `nrm`:** Dozzle account
+set to `admin` / `12345test` (test answer — the user should replace it); the
+Portainer container was removed by hand, and its volume
+`docker_portainer_data` is kept pending the user's decision.
+**2026-09-13 — v2-81, optional Tailscale auth key (DD-115):** stage 0 asks
+for an optional key (hidden, skipped when already online); stage 2 logs in
+via `--auth-key=file:` from a 0600 tmpfs file and falls back to the browser
+URL on rejection/timeout. Verified by bats (including a fixed
+pipefail-dependent exit status), a container-isolated real Tailscale
+rejecting a fake key, TTY trimming, and a no-op re-run on the online
+production host. A successful real-key login is pending the next fresh
+install. **Test incident:** the first isolated test started a host-level
+`tailscaled` with only `--statedir`; it loaded the production state for a
+few seconds and rewrote `/etc/resolv.conf`, which production restored the
+same second — no lasting effect (verified: state file, prefs, DNS, peers,
+Caddy). Pitfall recorded in `tests/README.md`.
+**2026-09-13 — repository reorganised:** at the user's request the root now
+holds only what is double-clicked (current `<V2_VERSION>.command`,
+`container-backup.command`, `backup/`) plus `README.md`, `CLAUDE.md`,
+`.gitignore`, `.cursor/`; everything else moved under `Data/` (`git mv`).
+Exporter keeps the root copy current and archives every version in
+`Data/app/`; `latest.command` and the `export/` folder are gone (its backup
+moved to `backup/`, click-order note to `Data/OKUBENI.txt`). Re-export was
+byte-identical; bats 99 ok. Test backups (`…eVtDgc`, `…DGguu4`, `…j8xNnG`,
+test password) are still in `backup/` next to the user's real
+`…G3rRfA`; deleting them is pending the user's go-ahead.
 **2026-09-13 — container-backup narrowed to one file per service (DD-114):**
 the user described their whole post-install routine (Portainer admin,
 FileBrowser and qBittorrent passwords and a few preferences, wg-easy account

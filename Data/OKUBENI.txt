@@ -1,0 +1,30 @@
+Master Stack — kullanım (yalnız macOS)
+
+Repo kökünde yalnız çift tıklanan dosyalar durur:
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-80.command)
+  container-backup.command   yedek alma / geri yükleme (çift tık → menü)
+  backup/                    yedekleriniz (şifreli, git dışı)
+Diğer her şey Data/ altındadır; elle çalıştırılmaz.
+
+A) Sıfırlama → ilk kurulum → yedek
+  0. Terminal: ssh-keygen -R nrm
+  1. <sürüm>.command               gerçek değerler + WebDAV ve Dozzle kullanıcı/parola; Tailscale auth key
+                                   (ephemeral olmayan; boş bırakırsanız tarayıcıdan giriş URL'si)
+  2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
+  3. Tarayıcı: FileBrowser ve qBittorrent parolaları + ayarları, wg-easy hesabı ve peer'lar
+     (Dozzle: http://dozzle.ayc — kurulumda verdiğiniz kullanıcı/parola)
+  4. container-backup.command → 1  nrm → yedek parolası ×2 → e   (parolayı saklayın)
+
+B) Sıfırlama → yedekten dönüş
+  0. Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
+  1. <sürüm>.command               A-1 ile AYNI cevaplar: alan adı, downloads yolu,
+                                   portlar ve aynı WebDAV ve Dozzle kullanıcı/parola; Tailscale auth key
+                                   ya da boş bırakıp URL
+  2. container-backup.command → 2  (restore) nrm → yedek → parola → e
+  3. Tailscale paneli + Infuse adresi
+
+Yedek her servisten tek dosya taşır: FileBrowser kullanıcıları, qBittorrent
+kullanıcı/parola ve ayarları, wg-easy hesabı ve peer'lar.
+Dozzle parolasını değiştirmek: sunucuda /etc/master-stack/dozzle/users.yml'ı silip kurulumu yeniden çalıştırın.
+Kurulum soruları yedekte değildir; B-1'de aynı cevapları verin.
+Ayrıntı: Data/docs/container-backup.md

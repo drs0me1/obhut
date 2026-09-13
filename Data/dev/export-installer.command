@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Çift tık: kurulumu taşınabilir app olarak export et → app/<sürüm>.command + Masaüstü
+# Çift tık: kurulumu taşınabilir app olarak export et → Data/app/<sürüm>.command,
+# repo kökünde güncel kopya + Masaüstü
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "$0")"
@@ -12,8 +13,8 @@ cat <<EOF
 
 Export tamam.
 
-  • App:      $APP_FILE
-  • latest:   ../app/latest.command
+  • Arşiv:    $APP_FILE
+  • Kök:      ../../${V2_VERSION}.command
   • Masaüstü: ~/{Desktop|Masaüstü}/${V2_VERSION}.command
 
 EOF

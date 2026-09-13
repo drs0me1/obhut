@@ -4,15 +4,21 @@ Working guide for any AI assistant in this repository. Read this first.
 
 ## Project Overview
 
-Active code lives at the repository root. It turns a fresh Debian 13
+Active code lives under `Data/`; the repository root holds only what the
+operator double-clicks — the current portable installer (`<V2_VERSION>.command`),
+`container-backup.command` — plus the Git-ignored `backup/`, this file and
+`README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
+`config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
+
+The installer turns a fresh Debian 13
 (trixie) or Ubuntu 24.04/26.04 LTS host
 into a Tailscale exit-node with a fixed Docker Compose bundle, host
 dnsmasq + Caddy on the tailnet, and a persistent firewall. There is no
 reconcile / self-healing engine by design.
 
-Authoritative behaviour: [`docs/contract.md`](docs/contract.md).
-Architecture: [`docs/architecture.md`](docs/architecture.md).
-Non-obvious rationale: [`docs/design-decisions.md`](docs/design-decisions.md)
+Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
+Architecture: [`Data/docs/architecture.md`](Data/docs/architecture.md).
+Non-obvious rationale: [`Data/docs/design-decisions.md`](Data/docs/design-decisions.md)
 (`DD-*` entries). Cursor rules for the tree:
 `.cursor/rules/master-stack.mdc`.
 
@@ -36,8 +42,11 @@ state. Treat every change as production-infrastructure work.
   only: run the installer, `sudo`, mutating `systemctl`/`docker`, firewall
   changes, wipes, and reboots without per-turn approval. Answer installer
   prompts automatically — defaults, `E` for confirmations, `12345test` for
-  the WebDAV password — and report what was answered. Non-default config
+  the WebDAV password, `admin` / `12345test` for the Dozzle account, an empty
+  answer for the Tailscale auth key — and report what was answered. Non-default config
   values still need the user.
+- **Never ask for, read, store or type a Tailscale auth key.** Only the
+  operator enters one at the installer prompt (**DD-115**).
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
   and wait; it expires if left unused.
 - That authorization does **not** cover: local Mac outside this repo;
@@ -73,17 +82,22 @@ state. Treat every change as production-infrastructure work.
 
 | Path | Purpose |
 |------|---------|
-| `install.sh` | Orchestrator |
-| `common.sh` | Shared helpers |
-| `config/defaults.env` | Ports, images, paths, chain names |
-| `templates/` | Compose, Caddy, dnsmasq |
-| `scripts/` | Firewall, refresh-tailnet, GRO, wait |
-| `systemd/` | Unit/timer templates |
-| `tests/` | Critical bats suite |
-| `dev/export-installer.sh` | Portable `.command` exporter |
-| `docs/contract.md` | What the installer does / refuses |
-| `docs/architecture.md` | Layout and data flow |
-| `docs/design-decisions.md` | `DD-*` rationale |
+| `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
+| `container-backup.command` (root) | Container settings backup/restore launcher |
+| `backup/` (root) | Encrypted backups, Git-ignored |
+| `Data/install.sh` | Orchestrator |
+| `Data/common.sh` | Shared helpers |
+| `Data/config/defaults.env` | Ports, images, paths, chain names |
+| `Data/templates/` | Compose, Caddy, dnsmasq |
+| `Data/scripts/` | Firewall, refresh-tailnet, GRO, wait |
+| `Data/systemd/` | Unit/timer templates |
+| `Data/tests/` | Critical bats suite (`bats Data/tests`) |
+| `Data/dev/export-installer.sh` | Portable `.command` exporter |
+| `Data/dev/container-backup-remote.sh` | Backup worker copied to the host per run |
+| `Data/app/` | Every exported `<V2_VERSION>.command` |
+| `Data/docs/contract.md` | What the installer does / refuses |
+| `Data/docs/architecture.md` | Layout and data flow |
+| `Data/docs/design-decisions.md` | `DD-*` rationale |
 
 ## Constraints
 

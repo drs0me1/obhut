@@ -11,16 +11,38 @@ x-logging: &default-logging
     max-file: "__DOCKER_LOG_MAX_FILE__"
 
 services:
-  portainer:
-    image: __PORTAINER_IMAGE__
-    container_name: portainer
+  dozzle:
+    image: __DOZZLE_IMAGE__
+    container_name: dozzle
     restart: unless-stopped
     logging: *default-logging
+    # DD-116: durum, canlı log, başlat/durdur/sil. docker.sock root'a denk
+    # (`:ro` API'yi kısıtlamaz): yalnız loopback + Caddy (tailnet) + users.yml
+    # girişi. Shell (exec) kapalı; kullanıcı rolü `actions`.
+    security_opt:
+      - no-new-privileges=true
+    cap_drop:
+      - ALL
+    read_only: true
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+      DOZZLE_ENABLE_ACTIONS: "true"
+      DOZZLE_NO_ANALYTICS: "true"
+      TZ: __TIMEZONE__
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
     ports:
-      - "127.0.0.1:__PORTAINER_UI_PORT__:9443"
+      - "127.0.0.1:__DOZZLE_UI_PORT__:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
+      - __DOZZLE_DATA_DIR__:/data
+    tmpfs:
+      - /tmp
 
   filebrowser:
     image: __FILEBROWSER_IMAGE__
@@ -209,6 +231,5 @@ networks:
     driver: bridge
 
 volumes:
-  portainer_data:
   qbit_config:
   wg_easy_data:

@@ -6,12 +6,8 @@
 http://health.__LOCAL_DOMAIN__ {
 	respond "ok" 200
 }
-http://portainer.__LOCAL_DOMAIN__ {
-	reverse_proxy https://127.0.0.1:__PORTAINER_UI_PORT__ {
-		transport http {
-			tls_insecure_skip_verify
-		}
-	}
+http://dozzle.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__
 }
 http://wg.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__WG_UI_PORT__
