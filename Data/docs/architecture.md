@@ -107,9 +107,9 @@ re-detected, never as an expectation to be violated.
     ├── install.sh                     orchestration
     ├── common.sh                      logging, guards, file writing, rendering
     ├── config/defaults.env            single source of truth for constants
-    ├── templates/                     compose.yaml, Caddyfile, dnsmasq.conf
+    ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
-    ├── systemd/                       units (firewall, GRO, refresh timer)
+    ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg)
     ├── app/<V2_VERSION>.command       every exported portable install app
     ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
     ├── dev/container-backup-remote.sh backup worker, copied to the host per run
@@ -161,9 +161,10 @@ in §10, not resolved silently.
 | `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
-| `templates/compose.yaml` | The six services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
-| `templates/Caddyfile` | Six HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
-| `templates/dnsmasq.conf` | Six `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
+| `templates/compose.yaml` | The five services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
+| `templates/Caddyfile` | Five HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
+| `templates/Caddyfile.wg` | The three UI ports on the WireGuard address, for `caddy-wg` (**DD-120**) | Tailscale, names, WebDAV |
+| `templates/dnsmasq.conf` | Five `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
 | `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
 | `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
@@ -195,13 +196,15 @@ error, not a warning.
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB, created once with the stage-0 account (**DD-118**), + `config/` bind (`0750`, DOWNLOADS_UID) |
-| `/root/docker/compose.yaml` | installer | six services, `0600` |
-| `/etc/modules-load.d/wg-easy.conf` | installer | WireGuard + legacy IPv4/IPv6 netfilter modules required by wg-easy, `0644` |
+| `/root/docker/compose.yaml` | installer | five services, `0600` |
+| `/etc/wireguard/wg0.conf` | installer | server key, peer public keys, PSKs, `AllowedIPs` from `kurulum/wireguard` (**DD-120**), `0600` |
+| `/etc/modules-load.d/master-stack-wireguard.conf` | installer | `wireguard`, `0644` |
+| `/etc/caddy/Caddyfile.wg` | installer | `caddy-wg`: three UI ports on `10.8.0.1`, `0644` |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), `0644` |
-| `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
-| `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
+| `/etc/dnsmasq.d/local-services.conf` | installer | five records, `0644` |
+| `/etc/caddy/Caddyfile` | installer | five sites, `0644` |
 | `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}.service` (+ `.timer`) | installer | `0644` |
+| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,caddy-wg}.service` (+ `.timer`) | installer | `0644`; `wg-quick@wg0.service` comes from `wireguard-tools` |
 | `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
 | `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
 | `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |
@@ -342,8 +345,8 @@ made every `systemctl restart tailscaled` bounce the whole Compose set
 does **not** require re-rendering Compose or recreating containers for
 DNAT/publish. `master-firewall` re-applies on boot / Docker / Tailscale
 restart and reads current WAN facts from `state.env` / the interface.
-`WG_ENDPOINT_HOST` in `state.env` is an operator hint only; wg-easy peer
-configs that baked an old endpoint still need manual client updates
+`WG_ENDPOINT_HOST` in `state.env` is an operator hint only; WireGuard client
+profiles that baked an old endpoint still need manual client updates
 (**DD-76**). There is no Compose `.env` path and no
 `refresh-tailnet-config` extension for WAN IP.
 
@@ -377,14 +380,14 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, validate domain, downloads path, ports and the WebDAV/Dozzle/Transmission/FileBrowser accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input folder (`kurulum.env`, `wireguard/`), validate domain, downloads path, ports and the WebDAV/Dozzle/Transmission/FileBrowser accounts and the WireGuard profiles, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd when it differs from the input file; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; sync the Dozzle, Transmission and FileBrowser accounts to the input file (**DD-119**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
-| 5 | apply `master-firewall`; enable refresh timer | firewall |
-| 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
-| 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy) | verification |
+| 4 | Docker; sync the Dozzle, Transmission and FileBrowser accounts to the input file (**DD-119**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 5 | apply `master-firewall` (incl. WireGuard INPUT/FORWARD/NAT); enable refresh timer; then `wireguard-tools`, key checks, `wg0.conf` and `wg-quick@wg0` (**DD-120**) | firewall, WireGuard |
+| 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed; `caddy-wg` for the UIs over WireGuard | DNS/HTTP |
+| 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy, WireGuard port/peers/`caddy-wg`) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,

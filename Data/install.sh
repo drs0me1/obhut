@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-85"
+V2_VERSION="2026.08.06-v2-86"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -71,7 +71,16 @@ SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
+CHAIN_FORWARD=$CHAIN_FORWARD
+CHAIN_NAT=$CHAIN_NAT
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
+WG_INTERFACE=$WG_INTERFACE
+WG_SERVER_IPV4=$WG_SERVER_IPV4
+WG_SUBNET4=$WG_SUBNET4
+WG_SUBNET6=$WG_SUBNET6
+DOZZLE_UI_PORT=$DOZZLE_UI_PORT
+TORRENT_UI_PORT=$TORRENT_UI_PORT
+FILEBROWSER_UI_PORT=$FILEBROWSER_UI_PORT
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -246,27 +255,220 @@ tailscale_login_with_key() {
     return 1
 }
 
-ensure_wg_kernel_modules() {
-    local wg_module
-    for wg_module in wireguard ip_tables iptable_nat ip6_tables ip6table_nat; do
-        if ! modprobe "$wg_module" 2>/tmp/modprobe-wg.err; then
-            log WARN "modprobe $wg_module başarısız"
-            cat /tmp/modprobe-wg.err >&2 || true
+# DD-120: kurulum/wireguard (tmpfs) belleğe alınır ve hemen silinir. Burada
+# hiçbir kontrol düşmez: aksi hâlde kurulum.env de /run'da kalırdı. Doğrulama
+# validate_wireguard_inputs'ta, dosyalar silindikten sonra.
+slurp_wireguard_inputs() {
+    local dir="$1" f
+    WG_INPUT_PRESENT=0
+    WG_SERVER_KEY_RAW=""
+    WG_SERVER_KEY_MODE=""
+    WG_PEER_FILES=()
+    WG_PEER_MODES=()
+    WG_PEER_RAW=()
+    if [[ -d "$dir" && ! -L "$dir" ]]; then
+        WG_INPUT_PRESENT=1
+        if [[ -f "$dir/sunucu.key" && ! -L "$dir/sunucu.key" ]]; then
+            WG_SERVER_KEY_MODE="$(stat -c %a "$dir/sunucu.key" 2>/dev/null ||
+                stat -f %Lp "$dir/sunucu.key" 2>/dev/null || true)"
+            WG_SERVER_KEY_RAW="$(cat -- "$dir/sunucu.key" 2>/dev/null || true)"
         fi
-        rm -f /tmp/modprobe-wg.err
+        for f in "$dir"/*.conf; do
+            [[ -f "$f" && ! -L "$f" ]] || continue
+            WG_PEER_FILES+=("${f##*/}")
+            WG_PEER_MODES+=("$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f" 2>/dev/null || true)")
+            WG_PEER_RAW+=("$(cat -- "$f" 2>/dev/null || true)")
+        done
+    fi
+    rm -rf -- "$dir"
+}
+
+# İstemci IPv4'ü WG_SUBNET4 içinde, ağ/yayın/sunucu adresi değil.
+wg_client_ipv4_ok() {
+    local ip="$1" net="${WG_SUBNET4%/*}" bits="${WG_SUBNET4#*/}" a b c d ipn netn mask
+    # Baştaki sıfır yok: inet_pton "08"i reddeder ve yinelenen adres denetimini atlatırdı.
+    local octet='(0|[1-9][0-9]{0,2})'
+    [[ "$ip" =~ ^$octet\.$octet\.$octet\.$octet$ ]] || return 1
+    IFS=. read -r a b c d <<<"$ip"
+    ((a <= 255 && b <= 255 && c <= 255 && d <= 255)) || return 1
+    ipn=$(((a << 24) | (b << 16) | (c << 8) | d))
+    IFS=. read -r a b c d <<<"$net"
+    netn=$(((a << 24) | (b << 16) | (c << 8) | d))
+    mask=$(((0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF))
+    (((ipn & mask) == (netn & mask))) || return 1
+    (((ipn & ~mask & 0xFFFFFFFF) != 0 && (ipn | mask) != 0xFFFFFFFF)) || return 1
+    [[ "$ip" != "$WG_SERVER_IPV4" ]]
+}
+
+# İstemci IPv6'sı sunucununkiyle aynı yazımda, yalnız son grubu farklı (/112,
+# wg-easy biçimi). Başka bir yazım (açık biçim, büyük harf) reddedilir.
+wg_client_ipv6_ok() {
+    local ip="$1" prefix="${WG_SERVER_IPV6%:*}:"
+    [[ "${WG_SUBNET6#*/}" == 112 && "$ip" == "$prefix"* ]] || return 1
+    [[ "${ip#"$prefix"}" =~ ^[0-9a-f]{1,4}$ && "${ip#"$prefix"}" != 0 ]] || return 1
+    [[ "$ip" != "$WG_SERVER_IPV6" ]]
+}
+
+# parse_wireguard_profile DOSYA İÇERİK — wg-easy'nin istemci profili biçimi.
+# PROFILE_* değişkenlerini doldurur. Mesajlar anahtar değeri yazmaz.
+parse_wireguard_profile() {
+    local file="$1" raw="$2" line section="" key value n=0 interfaces=0 peers=0
+    local address="" endpoint="" addr host
+    local kv_re='^([A-Za-z0-9]+)[[:space:]]*=[[:space:]]*(.*)$' key_re='^[A-Za-z0-9+/]{43}=$'
+    local -a addrs=()
+    PROFILE_PRIVATE="" PROFILE_PSK="" PROFILE_SERVER_PUB="" PROFILE_IPV4="" PROFILE_IPV6=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -n "$line" && "$line" != \#* ]] || continue
+        case "$line" in
+            "[Interface]") section=interface interfaces=$((interfaces + 1)); continue ;;
+            "[Peer]") section=peer peers=$((peers + 1)); continue ;;
+            \[*) die "girdi: wireguard/$file satır $n: bilinmeyen bölüm" ;;
+        esac
+        [[ "$line" =~ $kv_re ]] || die "girdi: wireguard/$file satır $n: 'Alan = değer' biçiminde değil"
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        case "$section/$key" in
+            interface/PrivateKey) PROFILE_PRIVATE="$value" ;;
+            interface/Address) address="$value" ;;
+            peer/PublicKey) PROFILE_SERVER_PUB="$value" ;;
+            peer/PresharedKey) PROFILE_PSK="$value" ;;
+            peer/Endpoint) endpoint="$value" ;;
+            /*) die "girdi: wireguard/$file satır $n: bölüm dışında alan" ;;
+        esac
+    done <<<"$raw"
+    [[ "$interfaces" -eq 1 && "$peers" -eq 1 ]] ||
+        die "girdi: wireguard/$file tek [Interface] ve tek [Peer] içermeli"
+    [[ "$PROFILE_PRIVATE" =~ $key_re ]] ||
+        die "girdi: wireguard/$file: [Interface] PrivateKey eksik ya da WireGuard anahtarı değil"
+    [[ "$PROFILE_SERVER_PUB" =~ $key_re ]] ||
+        die "girdi: wireguard/$file: [Peer] PublicKey eksik ya da WireGuard anahtarı değil"
+    [[ -z "$PROFILE_PSK" || "$PROFILE_PSK" =~ $key_re ]] ||
+        die "girdi: wireguard/$file: PresharedKey WireGuard anahtarı değil"
+    if [[ -n "$endpoint" && "${endpoint##*:}" != "$WG_PUBLIC_PORT" ]]; then
+        die "girdi: wireguard/$file: Endpoint portu ${endpoint##*:}, sunucu portu $WG_PUBLIC_PORT"
+    fi
+    IFS=, read -r -a addrs <<<"$address"
+    for addr in "${addrs[@]}"; do
+        addr="${addr//[[:space:]]/}"
+        [[ -n "$addr" ]] || continue
+        host="${addr%%/*}"
+        if [[ "$host" == *:* ]]; then
+            [[ -z "$PROFILE_IPV6" ]] || die "girdi: wireguard/$file: Address birden çok IPv6 içeriyor"
+            PROFILE_IPV6="$host"
+        else
+            [[ -z "$PROFILE_IPV4" ]] || die "girdi: wireguard/$file: Address birden çok IPv4 içeriyor"
+            PROFILE_IPV4="$host"
+        fi
     done
-    atomic_write /etc/modules-load.d/wg-easy.conf 0644 <<'EOF'
-wireguard
-ip_tables
-iptable_nat
-ip6_tables
-ip6table_nat
-EOF
-    if ip link add wg-easy-probe0 type wireguard 2>/dev/null; then
-        ip link del wg-easy-probe0
-        log INFO "WireGuard host çekirdek desteği doğrulandı"
+    wg_client_ipv4_ok "$PROFILE_IPV4" ||
+        die "girdi: wireguard/$file: Address IPv4 '${PROFILE_IPV4}' $WG_SUBNET4 içinde bir istemci adresi değil"
+    [[ -z "$PROFILE_IPV6" ]] || wg_client_ipv6_ok "$PROFILE_IPV6" ||
+        die "girdi: wireguard/$file: Address IPv6 '${PROFILE_IPV6}' $WG_SUBNET6 içinde bir istemci adresi değil"
+}
+
+# DD-120: sunucu anahtarı ve cihaz profilleri yapısal olarak doğrulanır.
+# Anahtarların birbirini tutması (wg pubkey) wireguard-tools kurulunca,
+# ensure_wireguard'da denetlenir; yapılandırma o denetimden önce yazılmaz.
+validate_wireguard_inputs() {
+    local i file name mode seen4=" " seen6=" " seenkey=" "
+    [[ "$WG_INPUT_PRESENT" -eq 1 ]] ||
+        die "girdi: kurulum/wireguard klasörü yok (sunucu.key ve cihaz profilleri)"
+    [[ -n "$WG_SERVER_KEY_RAW" ]] || die "girdi: kurulum/wireguard/sunucu.key yok ya da boş"
+    [[ "$WG_SERVER_KEY_MODE" == 600 || "$WG_SERVER_KEY_MODE" == 400 ]] ||
+        die "girdi: wireguard/sunucu.key izinleri ${WG_SERVER_KEY_MODE:-okunamadı}; 600 olmalı"
+    WG_SERVER_PRIVATE="${WG_SERVER_KEY_RAW//[[:space:]]/}"
+    WG_SERVER_KEY_RAW=""
+    [[ "$WG_SERVER_PRIVATE" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
+        die "girdi: wireguard/sunucu.key bir WireGuard özel anahtarı değil"
+    WG_PEER_NAMES=()
+    WG_PEER_PRIVATE=()
+    WG_PEER_PSK=()
+    WG_PEER_SERVER_PUB=()
+    WG_PEER_IPV4=()
+    WG_PEER_IPV6=()
+    for i in "${!WG_PEER_FILES[@]}"; do
+        file="${WG_PEER_FILES[$i]}"
+        mode="${WG_PEER_MODES[$i]}"
+        name="${file%.conf}"
+        [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] ||
+            die "girdi: wireguard/$file: dosya adı yalnız harf, rakam, . _ - içerebilir (en çok 32)"
+        [[ "$mode" == 600 || "$mode" == 400 ]] ||
+            die "girdi: wireguard/$file izinleri ${mode:-okunamadı}; 600 olmalı"
+        parse_wireguard_profile "$file" "${WG_PEER_RAW[$i]}"
+        [[ "$seen4" != *" $PROFILE_IPV4 "* ]] ||
+            die "girdi: wireguard/$file: IPv4 $PROFILE_IPV4 başka bir profilde de var"
+        [[ -z "$PROFILE_IPV6" || "$seen6" != *" $PROFILE_IPV6 "* ]] ||
+            die "girdi: wireguard/$file: IPv6 $PROFILE_IPV6 başka bir profilde de var"
+        [[ "$seenkey" != *" $PROFILE_PRIVATE "* && "$PROFILE_PRIVATE" != "$WG_SERVER_PRIVATE" ]] ||
+            die "girdi: wireguard/$file: özel anahtarı başka bir profilde ya da sunucu.key'de de var"
+        seen4+="$PROFILE_IPV4 "
+        seen6+="$PROFILE_IPV6 "
+        seenkey+="$PROFILE_PRIVATE "
+        WG_PEER_NAMES+=("$name")
+        WG_PEER_PRIVATE+=("$PROFILE_PRIVATE")
+        WG_PEER_PSK+=("$PROFILE_PSK")
+        WG_PEER_SERVER_PUB+=("$PROFILE_SERVER_PUB")
+        WG_PEER_IPV4+=("$PROFILE_IPV4")
+        WG_PEER_IPV6+=("$PROFILE_IPV6")
+    done
+    PROFILE_PRIVATE="" PROFILE_PSK=""
+    WG_PEER_RAW=()
+    WG_PEER_COUNT="${#WG_PEER_NAMES[@]}"
+}
+
+# DD-120: çekirdek WireGuard. wg0.conf girdi profillerinden üretilir: sunucu
+# anahtarı, peer public key'leri, PSK'lar ve adresler. İstemcilerin özel
+# anahtarları yalnız public key türetmek için bellekte durur, diske yazılmaz.
+# NAT ve FORWARD master-firewall'dadır (DD-16/DD-17): PostUp yok. Firewall'dan
+# sonra çağrılır, böylece arayüz kuralları yokken hiç ayağa kalkmaz.
+ensure_wireguard() {
+    local server_pub peer_pub i content changed
+    # Kernel modülü çekirdekte; öneriler wireguard-dkms çekebilirdi.
+    retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
+        --no-install-recommends wireguard-tools
+    modprobe wireguard 2>/dev/null || log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa wg-quick başlamaz"
+    atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<<"wireguard"
+    server_pub="$(printf '%s' "$WG_SERVER_PRIVATE" | wg pubkey)" ||
+        die "wireguard/sunucu.key'den public key türetilemedi"
+    content="# master-stack — kurulum/wireguard'dan üretilir; elle düzenlemeyin (DD-120).
+[Interface]
+Address = ${WG_SERVER_IPV4}/${WG_SUBNET4#*/}, ${WG_SERVER_IPV6}/${WG_SUBNET6#*/}
+ListenPort = ${WG_PUBLIC_PORT}
+MTU = ${WG_MTU}
+PrivateKey = ${WG_SERVER_PRIVATE}
+"
+    for i in "${!WG_PEER_NAMES[@]}"; do
+        [[ "${WG_PEER_SERVER_PUB[$i]}" == "$server_pub" ]] ||
+            die "girdi: wireguard/${WG_PEER_NAMES[$i]}.conf başka bir sunucuya ait ([Peer] PublicKey sunucu.key ile uyuşmuyor)"
+        peer_pub="$(printf '%s' "${WG_PEER_PRIVATE[$i]}" | wg pubkey)" ||
+            die "girdi: wireguard/${WG_PEER_NAMES[$i]}.conf özel anahtarından public key türetilemedi"
+        content+="
+# ${WG_PEER_NAMES[$i]}
+[Peer]
+PublicKey = ${peer_pub}
+"
+        [[ -z "${WG_PEER_PSK[$i]}" ]] || content+="PresharedKey = ${WG_PEER_PSK[$i]}
+"
+        content+="AllowedIPs = ${WG_PEER_IPV4[$i]}/32${WG_PEER_IPV6[$i]:+, ${WG_PEER_IPV6[$i]}/128}
+"
+    done
+    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}"
+    atomic_write "$WG_CONF_FILE" 0600 <<<"$content"
+    changed="$V2_LAST_ATOMIC_CHANGED"
+    content=""
+    WG_SERVER_PRIVATE=""
+    WG_PEER_PRIVATE=()
+    WG_PEER_PSK=()
+    systemctl enable --quiet "wg-quick@${WG_INTERFACE}.service"
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
+        systemctl restart "wg-quick@${WG_INTERFACE}.service"
+        log INFO "WireGuard ${WG_INTERFACE}: UDP ${WG_PUBLIC_PORT}, ${WG_PEER_COUNT} peer"
     else
-        log WARN "Host WireGuard arayüzü oluşturamıyor; wg-easy başlatılamayabilir"
+        log INFO "WireGuard yapılandırması aynı; yeniden başlatılmadı"
     fi
 }
 
@@ -350,9 +552,12 @@ check_nft_iptables() {
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
-    # DD-119: dosya ilk iş okunur ve silinir; kapılardan biri düşse bile
-    # parolalar /run'da kalmaz.
+    # DD-119/DD-120: girdiler ilk iş okunur ve silinir; kapılardan biri düşse
+    # bile parolalar ve anahtarlar /run'da kalmaz. WireGuard klasörü önce:
+    # read_input_file hata verirse o da çoktan silinmiş olur.
+    slurp_wireguard_inputs "$INPUT_WG_DIR"
     read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
+    rm -rf -- "$INPUT_DIR"
     require_supported_os
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
@@ -411,18 +616,18 @@ stage_0() {
     assert_downloads_path_allowed "$DOWNLOADS_PATH"
 
     WG_PUBLIC_PORT="${INPUT_WG_PUBLIC_PORT:-$def_wg_port}"
-    [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "wg-easy UDP portu sayı olmalı"
+    [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "WireGuard UDP portu sayı olmalı"
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
-        die "wg-easy UDP portu 1-65535 arasında olmalı"
+        die "WireGuard UDP portu 1-65535 arasında olmalı"
     case "$WG_PUBLIC_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
-        "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_UI_PORT" | "$prev_webdav_port" | \
+        "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$prev_webdav_port" | \
         "$TAILSCALE_UDP_PORT")
-            die "wg-easy UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
+            die "WireGuard UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
             ;;
     esac
     if [[ "$WG_PUBLIC_PORT" != "$prev_wg_port" ]]; then
-        log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
+        log INFO "WireGuard UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (wg0.conf ve firewall yeniden yazılacak)"
     fi
 
     WEBDAV_PORT="${INPUT_WEBDAV_PORT:-$def_webdav_port}"
@@ -431,7 +636,7 @@ stage_0() {
         die "WebDAV portu 1-65535 arasında olmalı"
     case "$WEBDAV_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | \
-        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_UI_PORT" | \
+        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | \
         "$TAILSCALE_UDP_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
@@ -468,6 +673,7 @@ stage_0() {
     FILEBROWSER_NEW_PASS="$INPUT_FILEBROWSER_PASS"
     validate_account FileBrowser "$FILEBROWSER_NEW_USER" "$FILEBROWSER_NEW_PASS" \
         '^[a-z][a-z0-9_-]{0,31}$' "$FILEBROWSER_MIN_PASSWORD_LENGTH"
+    validate_wireguard_inputs
 
     # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
     # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
@@ -534,7 +740,7 @@ stage_0() {
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Downloads:     $DOWNLOADS_PATH
-  wg-easy UDP:   $WG_PUBLIC_PORT
+  WireGuard:     UDP $WG_PUBLIC_PORT, $WG_PEER_COUNT peer${WG_PEER_NAMES[0]:+ (${WG_PEER_NAMES[*]})}
   WebDAV portu:  $WEBDAV_PORT
   Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, Transmission $TRANSMISSION_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER
                  (dosyadakinden farklı olan hesap güncellenir)
@@ -1085,7 +1291,6 @@ stage_4() {
     retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     systemctl enable --now docker
-    ensure_wg_kernel_modules
     ensure_dozzle_users
     ensure_transmission_files
 
@@ -1096,20 +1301,13 @@ stage_4() {
         FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
         TRANSMISSION_IMAGE="$TRANSMISSION_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
-        WG_EASY_IMAGE="$WG_EASY_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
-        WG_UI_PORT="$WG_UI_PORT" \
-        WG_PUBLIC_PORT="$WG_PUBLIC_PORT" \
         WEBDAV_PORT="$WEBDAV_PORT" \
         WEBDAV_HTPASSWD_FILE="$WEBDAV_HTPASSWD_FILE" \
-        WG_BRIDGE_SUBNET="$WG_BRIDGE_SUBNET" \
-        WG_BRIDGE_IPV4="$WG_BRIDGE_IPV4" \
-        WG_BRIDGE_SUBNET6="$WG_BRIDGE_SUBNET6" \
-        WG_BRIDGE_IPV6="$WG_BRIDGE_IPV6" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
@@ -1184,6 +1382,7 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
+    ensure_wireguard
 }
 
 apt_get_install_masked_quiet() {
@@ -1298,7 +1497,6 @@ EOF
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
-        WG_UI_PORT="$WG_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
@@ -1377,6 +1575,36 @@ EOF
     else
         log INFO "Caddy yapılandırması aynı; yeniden başlatılmadı"
     fi
+    ensure_caddy_wg "$OS_CHANGED"
+}
+
+# DD-120: WireGuard istemcilerinin arayüzlere eriştiği ikinci Caddy. Yalnız
+# WireGuard adresinde IP:port dinler; Tailscale'e bağlı değildir, wg-quick
+# ile birlikte kalkar ve iner. Tailnet Caddy'sine ve refresh'e dokunmaz.
+ensure_caddy_wg() {
+    local changed="${1:-0}" validate_out
+    render_template "$V2_ROOT/templates/Caddyfile.wg" "$CADDY_WG_FILE" 0644 \
+        WG_SERVER_IPV4="$WG_SERVER_IPV4" \
+        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
+        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
+        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    if ! validate_out="$(caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
+        die "Caddyfile.wg geçersiz ($CADDY_WG_FILE): $(
+            grep -i -m1 'error' <<<"$validate_out" || tail -n1 <<<"$validate_out"
+        )"
+    fi
+    render_template "$V2_ROOT/systemd/caddy-wg.service" "$UNIT_DIR/caddy-wg.service" 0644 \
+        WG_INTERFACE="$WG_INTERFACE" \
+        CADDY_WG_FILE="$CADDY_WG_FILE"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    systemctl daemon-reload
+    systemctl enable --quiet caddy-wg.service
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet caddy-wg.service; then
+        systemctl restart caddy-wg.service
+    else
+        log INFO "caddy-wg yapılandırması aynı; yeniden başlatılmadı"
+    fi
 }
 
 assert_webdav_readonly_runtime() {
@@ -1407,7 +1635,6 @@ assert_webdav_network() {
             2>/dev/null || true
     )"
     grep -qx 'webdav' <<<"$nets" || die "webdav konteyneri webdav ağına bağlı değil"
-    grep -qx 'wg' <<<"$nets" && die "webdav konteyneri wg ağına bağlı olmamalı"
     count="$(grep -c . <<<"$nets" || true)"
     [[ "$count" -eq 1 ]] || die "webdav beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
 }
@@ -1510,7 +1737,7 @@ stage_7() {
 
     # Contract §14.13 — dört UI sitesi Caddy üzerinden non-5xx (DD-88).
     local ui_host ui_code
-    for ui_host in dozzle wg torrent file; do
+    for ui_host in dozzle torrent file; do
         ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
             -H "Host: ${ui_host}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
         [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
@@ -1548,9 +1775,6 @@ stage_7() {
 
     assert_webdav_readonly_runtime
 
-    (cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null |
-        grep -q "${WG_PUBLIC_PORT}/udp" ||
-        die "wg-easy public UDP ${WG_PUBLIC_PORT} publish yok"
     (cd "$COMPOSE_DIR" && docker port transmission) 2>/dev/null |
         grep -q "${TORRENT_PUBLIC_PORT}/tcp" ||
         die "transmission public TCP ${TORRENT_PUBLIC_PORT} publish yok"
@@ -1574,12 +1798,24 @@ stage_7() {
         [[ "$line" == *127.0.0.1:* ]] ||
             die "Transmission UI publish yalnız loopback olmalı ($line)"
     done < <((cd "$COMPOSE_DIR" && docker port transmission) 2>/dev/null || true)
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" == *"${WG_PUBLIC_PORT}/"* ]] && continue
-        [[ "$line" == *127.0.0.1:* ]] ||
-            die "wg-easy UI publish yalnız loopback olmalı ($line)"
-    done < <((cd "$COMPOSE_DIR" && docker port wg-easy) 2>/dev/null || true)
+
+    # DD-120: WireGuard ayakta, girdi profilleri kadar peer, arayüzler WireGuard
+    # adresinde caddy-wg'den non-5xx.
+    local wg_port wg_peers wg_ui_port
+    wg_port="$(wg show "$WG_INTERFACE" listen-port 2>/dev/null || true)"
+    [[ "$wg_port" == "$WG_PUBLIC_PORT" ]] ||
+        die "WireGuard $WG_INTERFACE dinleme portu '${wg_port}' (beklenen $WG_PUBLIC_PORT)"
+    wg_peers="$(wg show "$WG_INTERFACE" peers 2>/dev/null | grep -c . || true)"
+    [[ "$wg_peers" -eq "$WG_PEER_COUNT" ]] ||
+        die "WireGuard peer sayısı $wg_peers (girdi profili $WG_PEER_COUNT)"
+    ip -4 -o addr show dev "$WG_INTERFACE" 2>/dev/null | grep -q " ${WG_SERVER_IPV4}/" ||
+        die "WireGuard $WG_INTERFACE üzerinde $WG_SERVER_IPV4 yok"
+    for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"; do
+        ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            "http://${WG_SERVER_IPV4}:${wg_ui_port}/" || true)"
+        [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
+            die "caddy-wg ${WG_SERVER_IPV4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
+    done
 
     log INFO "Temel doğrulamalar geçti"
 }
@@ -1592,7 +1828,7 @@ WAN:          $WAN_INTERFACE $WAN_IPV4
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
-wg UDP:       ${WG_PUBLIC_PORT} (endpoint ipucu: $WG_ENDPOINT_HOST)
+WireGuard:    ${WG_INTERFACE} UDP ${WG_PUBLIC_PORT}, ${WG_PEER_COUNT} peer (endpoint: $WG_ENDPOINT_HOST)
 Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
@@ -1607,8 +1843,9 @@ Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 Transmission: http://torrent.${LOCAL_DOMAIN} (kurulumda verilen kullanıcı/parola)
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
   Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
-wg-easy ilk kurulum: Host=${WG_ENDPOINT_HOST}, Port=${WG_PUBLIC_PORT}
-  (UDP ${WG_PUBLIC_PORT}:${WG_PUBLIC_PORT} — WAN IP compose'a gömülmez; port değişince yeniden kur)
+WireGuard üzerinden arayüzler (yalnız IP:port; tailnet ve WebDAV kapalı):
+  Dozzle http://${WG_SERVER_IPV4}:${DOZZLE_UI_PORT}  Transmission http://${WG_SERVER_IPV4}:${TORRENT_UI_PORT}  FileBrowser http://${WG_SERVER_IPV4}:${FILEBROWSER_UI_PORT}
+  Peer eklemek/çıkarmak: kurulum/wireguard/<cihaz>.conf, sonra kurulumu yeniden çalıştırın
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF

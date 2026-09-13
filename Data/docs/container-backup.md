@@ -26,6 +26,11 @@ portable installer.
 Mount sources are discovered with `docker inspect`, not guessed from a Compose
 project prefix. The current `nrm` inventory on 2026-09-05 was:
 
+> **Since v2-86 (DD-120) wg-easy is gone.** WireGuard runs in the host kernel
+> and its keys and peers live in `kurulum/wireguard/` on the workstation, so a
+> v2-86 host has nothing for this tool to back up. It remains only to read
+> older archives and is due to be retired.
+
 | Service | Container path | Saved content |
 |---|---|---|
 | wg-easy | `/etc/wireguard/wg-easy.db` | The wg-easy account, the server keys and every client (peer) |

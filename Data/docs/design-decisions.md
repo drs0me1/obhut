@@ -170,6 +170,9 @@ comments plus structural inference from the 2026-07-27 audit
 
 ### DD-10: `wg-easy`'s WireGuard kernel module is loaded independently of Tailscale (2026-07-27)
 
+- **Superseded by DD-120 (2026-09-14):** wg-easy is removed; WireGuard runs in
+  the host kernel from `kurulum/wireguard`.
+
 - **v2 (2026-08-06):** Same policy in `install.sh` (`ensure_wg_kernel_modules`
   during Stage 4, before Compose is written) and `templates/compose.yaml`
   (`cap_add: [NET_ADMIN]` only). Host preloads `wireguard`, `ip_tables`,
@@ -320,6 +323,9 @@ comments plus structural inference from the 2026-07-27 audit
   It is reported as `gro_unit=` in `--check` output.
 
 ### DD-12: wg-easy's pending first-run setup must never gate Stage 7 or `--check` (2026-07-28)
+
+- **Superseded by DD-120 (2026-09-14):** wg-easy is removed; WireGuard runs in
+  the host kernel from `kurulum/wireguard`.
 
 - **Decision:** `probe_compose_runtime()`'s `/setup`-redirect branch (the
   case where wg-easy's admin account hasn't been created yet) sets a flag
@@ -858,6 +864,9 @@ reordering is not proposed a second time on the same reasoning.
   be set before `tailscale set --advertise-exit-node`.
 
 ### DD-22: A wg-easy still on its `/setup` screen is reported, not failed (2026-07-31)
+
+- **Superseded by DD-120 (2026-09-14):** wg-easy is removed; WireGuard runs in
+  the host kernel from `kurulum/wireguard`.
 
 - **Decision:** the reconcile helper distinguishes "wg-easy is waiting for
   its first web setup" (`WG_SETUP_PENDING`, reported as `UYARI`, no effect
@@ -5191,6 +5200,136 @@ failure with an early, named one.
       in again.
     - **Cleanup:** the operator's original WebDAV htpasswd was put back
       byte-identical, `webdav` was restarted, and the saved copy was removed.
+
+### DD-120: WireGuard runs in the host kernel from kurulum/wireguard; wg-easy is removed (2026-09-14)
+
+- **Decision:**
+  - **What goes away:** the `wg-easy` Compose service, its bridge network,
+    volume definition, `WG_EASY_IMAGE`, `WG_UI_PORT` and `WG_BRIDGE_*`, plus
+    the tailnet name `wg.${LOCAL_DOMAIN}` and its Caddy site. WireGuard is
+    `wg-quick@wg0` on the host with the same addresses as wg-easy
+    (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `WG_PUBLIC_PORT`,
+    MTU 1420), so existing client profiles connect unchanged.
+  - **Inputs:** `kurulum/wireguard/sunucu.key` (the server private key) and
+    one wg-easy-format profile per device, `kurulum/wireguard/<device>.conf`.
+    The launcher sends them with `kurulum.env` as a tar stream to `INPUT_DIR`
+    on `tmpfs`, each file mode-checked. Stage 0 reads the WireGuard folder
+    into memory and deletes it before parsing `kurulum.env`, then deletes the
+    whole input folder.
+  - **Validation in stage 0, before any change:**
+    - One `[Interface]` and one `[Peer]` per profile.
+    - Well-formed keys and a PSK when present.
+    - An IPv4 inside `WG_SUBNET4` that is not the network, broadcast or server
+      address, and has no leading zeros.
+    - An optional IPv6 in the server's `/112` written the wg-easy way.
+    - Unique addresses and private keys, an `Endpoint` port equal to
+      `WG_PUBLIC_PORT`, and a safe file name.
+    - Messages name the file and the address, never a key.
+  - **`ensure_wireguard`, at the end of stage 5, after the firewall:**
+    - Installs `wireguard-tools` with `--no-install-recommends`, so no
+      `wireguard-dkms`.
+    - Checks that every profile's `[Peer] PublicKey` equals `wg pubkey` of
+      `sunucu.key`.
+    - Derives each peer's public key from its private key, key on stdin.
+    - Writes `/etc/wireguard/wg0.conf` (`0600`) with the server key, peer
+      public keys, PSKs and `AllowedIPs` only. Client private keys never reach
+      the disk, and the file carries no `PostUp`.
+    - Restarts `wg-quick@wg0` only when the file changed.
+  - **Firewall (`firewall.sh` owns every rule, DD-16/DD-17):**
+    - `MASTER-INPUT` accepts, from `wg0`, only TCP to `10.8.0.1` on the three
+      UI ports and ping; everything else from `wg0` is dropped (IPv6: all).
+    - A new `MASTER-FORWARD` chain at the top of `FORWARD` accepts `wg0` → WAN
+      and replies, and drops everything else to or from `wg0`: the tailnet,
+      Docker networks, other peers.
+    - A new `MASTER-NAT` chain in `nat POSTROUTING` masquerades both WireGuard
+      subnets out of the WAN.
+    - The WireGuard `ctorigdstport` return leaves `MASTER-DOCKER`; the port
+      stays in `MASTER-INPUT`.
+    - `--check` asserts the new rules, their order (read from `iptables -S`,
+      where `-d` precedes `-i`) and the exact `MASTER-FORWARD` rule count.
+  - **UIs over WireGuard:** a second Caddy, `caddy-wg.service` with
+    `templates/Caddyfile.wg`, has `admin off` and `default_bind 10.8.0.1`. It
+    proxies `http://10.8.0.1:{61002,61006,61007}` to the loopback UIs, with no
+    names and no WebDAV. It `Requires`/`PartOf` `wg-quick@wg0` and has no
+    Tailscale dependency.
+  - **Stage 7:** checks the listen port, that the peer count equals the
+    profile count, the `wg0` address, and a non-5xx from each `caddy-wg` port.
+  - **No leftover gate:** a stale `wg-easy` container is not detected. The
+    operator reinstalls from scratch, and the migration host had it removed by
+    hand.
+- **Why:** the peers never change, and wg-easy's layers were the source of
+  past failures:
+  - in-container `iptables-legacy` needing host modules (DD-10);
+  - the IPv6 egress drop (DD-71);
+  - the fixed bridge IP;
+  - the first-run web setup (DD-12/DD-22).
+
+  The tunnel itself was already the host kernel module; only the management
+  layer changes.
+- **Why a second Caddy and not the tailnet one:** Caddy refuses to start when
+  any listener cannot bind, and the tailnet Caddy binds the Tailscale address.
+  One process would take the WireGuard path down whenever Tailscale is down,
+  which is exactly when the user wants the backup path.
+- **Why no tailnet over WireGuard (the user's call, 2026-09-14):** it would
+  need NAT to `tailscale0`, and a lost device would become a tailnet member
+  with this node's rights. `ts-forward` already drops new connections into the
+  tailnet from other interfaces; `MASTER-FORWARD` is a second layer.
+- **Measured on `nrm` (2026-09-14):**
+  - The OpenSSL 3.5 X25519 derivation equals `wg pubkey`, and macOS LibreSSL
+    3.3.6 cannot derive, so key checks run on the server.
+  - wg-easy v15's client template is `Address = <v4>/32, <v6>/128`, `DNS`,
+    `MTU`, and `[Peer]
+    PublicKey`/`PresharedKey`/`AllowedIPs`/`PersistentKeepalive`/`Endpoint =
+    host:port`.
+  - `caddy validate` accepts the `Caddyfile.wg` shape, and `caddy adapt` shows
+    listeners `10.8.0.1:<port>`.
+  - Docker leaves the `FORWARD` policy `ACCEPT` here because forwarding was
+    already on.
+  - `wireguard-tools` recommends `wireguard-dkms`.
+- **Rollback:** the `docker_wg_easy_data` volume is kept. Disabling
+  `wg-quick@wg0` and `caddy-wg` and re-running v2-85 brings wg-easy back with
+  the same keys.
+- **Verified (2026-09-14):**
+  - bats 119 ok, with `bash -n` and `shellcheck` clean. The new tests cover
+    input parsing in wg-easy's format, thirteen rejection cases that never
+    echo a key, `wg0.conf` rendering (public keys only, restart only on
+    change, a foreign server key stopping before the file changes), firewall
+    rule presence and order, the `MASTER-FORWARD` count and order checks, and
+    the `caddy-wg` wiring. Four deliberate mutations each failed their test.
+  - **Migration on `nrm`:**
+    - The four device profiles were generated from wg-easy's database into
+      `kurulum/wireguard/` without printing a key.
+    - Each profile's derived public key, PSK and server key matched the
+      running wg-easy peers, and the interface key matched `sunucu.key`.
+    - `docker rm -f wg-easy` (volume kept).
+    - The exported v2-86 `.command` then ran with the operator's own
+      `kurulum/` folder, never opened. That night the node had been deleted
+      from the tailnet (00:52 CEST); the auth key in the file logged it back
+      in during stage 2, and it kept its Tailscale IP.
+    - Result: exit 0 in 20 s. `wg0` listened on 61001 with 4 peers, `wg0.conf`
+      was `0600` with one `PrivateKey`, and `caddy-wg` listened on the three
+      `10.8.0.1` ports. `--check` passed, `MASTER-FORWARD` was first in
+      `FORWARD`, the input folder was gone and the log held no key material.
+  - **A temporary runtime peer in a network namespace** (`wg set`, never
+    written to a file):
+    - Allowed: ping `10.8.0.1`; Dozzle 307, Transmission 401 and FileBrowser
+      200 on `10.8.0.1`; IPv4 and IPv6 internet egress, seen as the WAN
+      addresses.
+    - Blocked: SSH to `10.8.0.1` and to the WAN address, WebDAV on the TS IP,
+      tailnet Caddy, dnsmasq, the WebDAV container's bridge IP, an online
+      tailnet device (reachable from the host itself) and another peer.
+    - The peer and the namespace were removed afterwards.
+  - **A second run with the same folder:** a full no-op; every account, the
+    firewall, WireGuard, dnsmasq, Caddy and `caddy-wg` were unchanged, and no
+    container or unit start time moved.
+  - **A reboot:** every unit active and none failed, Tailscale online, `wg0`
+    with 4 peers, `caddy-wg` on its three ports, `--check` passing with
+    `MASTER-FORWARD` first, and the UIs, DNS and WebDAV (401) answering.
+  - **A real device** (one of the four migrated profiles, unchanged on the
+    device) connected, handshook and opened Dozzle at
+    `http://10.8.0.1:61002`, confirmed by the user.
+  - **Not verified:** a fresh install on a bare Debian host with these
+    inputs.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

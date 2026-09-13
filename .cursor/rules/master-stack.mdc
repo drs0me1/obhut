@@ -99,23 +99,28 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Compose projesi `/root/docker` altında tutulacak.
 - Compose içerisinde şu servisler yer alacak:
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
-  - wg-easy
   - Transmission (qBittorrent yerine, DD-117; giriş zorunlu, kimlik root'a özel dosyada; tercihler ilk kurulumda yazılır, DD-118)
   - Filebrowser (classic; hesap kurulum girdi dosyasından gelir ve her kurulumda ona eşitlenir, parola argv/log'a girmez, DD-118/DD-119)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
+
+### WireGuard (DD-120)
+
+- wg-easy yok; WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır, adresler wg-easy'nin kullandıklarıdır.
+- Peer'lar `kurulum/wireguard/<cihaz>.conf`, sunucu anahtarı `kurulum/wireguard/sunucu.key`; `wg0.conf` yalnız public key/PSK taşır.
+- WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
+- NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
 ### Port yayın politikası
 
 - Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
 - Örnek:
   - Dozzle: `127.0.0.1:61002`
-  - wg-easy web arayüzü: `127.0.0.1:51821`
   - Transmission web arayüzü: `127.0.0.1:61006`
   - Filebrowser (classic): `127.0.0.1:61007`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
-  - wg-easy WireGuard: yalnız UDP
+  - WireGuard (host çekirdeği, wg-quick@wg0; DD-120): yalnız UDP
   - Transmission peer: TCP + UDP (aynı `TORRENT_PUBLIC_PORT`; 2026-08-06, R12 revize)
 - Torrent peer protokolünü sessizce daraltma; değişiklik açık karar ister.
 - Unpackerr web arayüzü gerektirmiyorsa port yayınlama.
@@ -139,7 +144,6 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   üzerinde kontrollü biçimde dinleyecek.
 - Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
   - `dozzle.${LOCAL_DOMAIN}`
-  - `wg.${LOCAL_DOMAIN}`
   - `torrent.${LOCAL_DOMAIN}`
   - `file.${LOCAL_DOMAIN}`
   - `webdav.${LOCAL_DOMAIN}`
@@ -167,7 +171,6 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
 - Örnek:
   - `http://dozzle.${LOCAL_DOMAIN}`
-  - `http://wg.${LOCAL_DOMAIN}`
   - `http://torrent.${LOCAL_DOMAIN}`
   - `http://file.${LOCAL_DOMAIN}`
   - `http://webdav.${LOCAL_DOMAIN}` (+ isteğe bağlı bare Tailscale IPv4 alias, DD-78)
@@ -185,7 +188,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - loopback kabul edilecek,
   - `tailscale0` üzerinden gelen trafik kabul edilecek,
   - public WAN üzerinden yalnız:
-    - wg-easy UDP portu,
+    - WireGuard UDP portu,
     - Transmission TCP+UDP peer portu kabul edilecek,
   - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
 - Docker-published portlar için kurallar `DOCKER-USER` zincirinde uygulanacak.

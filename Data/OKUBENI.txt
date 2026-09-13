@@ -1,9 +1,10 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-85.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-86.command)
   container-backup.command   yedek alma / geri yükleme (çift tık → menü)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
+  kurulum/wireguard/         WireGuard: sunucu.key + her cihaz için <cihaz>.conf (git dışı)
   backup/                    yedekleriniz (şifreli, git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
@@ -16,21 +17,26 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
-A) Sıfırlama → ilk kurulum → yedek
+WireGuard (kurulum/wireguard, tüm dosyalar chmod 600):
+  sunucu.key      sunucunun özel anahtarı (tek satır); değişirse bütün cihaz profilleri de değişmeli
+  <cihaz>.conf    cihaza aktarılan profilin aynısı; peer sayısı = dosya sayısı
+  Peer eklemek/çıkarmak: dosyayı ekleyin/silin, kurulumu yeniden çalıştırın.
+  Sunucuya yalnız public key ve PSK yazılır; cihazların özel anahtarları sunucuda kalmaz.
+  WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 Transmission, :61007 FileBrowser
+  (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
+
+A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm
   1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
-  3. Tarayıcı: wg-easy hesabı ve peer'lar
-     (Dozzle, Transmission ve FileBrowser girişleri kurulum/kurulum.env'deki kullanıcı/parola;
-      Transmission tercihleri — DHT/PeX/yerel keşif kapalı, en çok 12 indirme — kurulumdan gelir)
-  4. container-backup.command → 1  nrm → yedek parolası ×2 → e   (parolayı saklayın)
+  (Dozzle, Transmission, FileBrowser girişleri ve WireGuard peer'ları kurulum/ klasöründen gelir;
+   Transmission tercihleri — DHT/PeX/yerel keşif kapalı, en çok 12 indirme — kurulumdan gelir)
 
-B) Sıfırlama → yedekten dönüş
+B) Sıfırlama → yeniden kurulum
   0. Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
-  1. <sürüm>.command               aynı kurulum/kurulum.env; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL; özet → E
-  2. container-backup.command → 2  (restore) nrm → yedek → parola → e
-  3. Tailscale paneli + Infuse adresi
+  1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL; özet → E
+  2. Tailscale paneli + Infuse adresi
 
-Yedek yalnız wg-easy hesabını ve peer'ları taşır (wg-easy.db). Diğer hesaplar kurulum/kurulum.env'den,
-Transmission tercihleri kurulumdan gelir. kurulum/kurulum.env yedekte değildir; kendiniz saklayın.
+v2-86'dan sonra container-backup'a gerek yoktur (wg-easy kaldırıldı); yalnız eski yedekleri açar.
+Saklamanız gereken tek şey kurulum/ klasörüdür (kurulum.env + wireguard/); kendiniz yedekleyin.
 Ayrıntı: Data/docs/container-backup.md

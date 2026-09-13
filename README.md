@@ -5,7 +5,7 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-85` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-86` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
@@ -24,8 +24,9 @@ OS-awareness and optimisation review:
 
 ```bash
 # Once: installer inputs (domain, ports, accounts, optional Tailscale auth key)
-mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
+mkdir -p kurulum/wireguard && cp Data/config/kurulum.env.example kurulum/kurulum.env
 chmod 600 kurulum/kurulum.env   # then fill it in
+# WireGuard: kurulum/wireguard/sunucu.key + <device>.conf profiles, all mode 600
 
 # Install: double-click the current <version>.command at the repository root
 
@@ -54,7 +55,9 @@ only the runtime files and their archive SHA-256. It uploads them to
 .
 ├── <version>.command      # current portable installer (double-click)
 ├── container-backup.command  # container settings backup/restore (double-click)
-├── kurulum/kurulum.env    # installer inputs, mode 600 (Git-ignored)
+├── kurulum/               # installer inputs, mode 600 (Git-ignored)
+│   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
+│   └── wireguard/         #   sunucu.key + one <device>.conf per peer
 ├── backup/                # encrypted backups (Git-ignored)
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
@@ -80,18 +83,20 @@ only the runtime files and their archive SHA-256. It uploads them to
 | FileBrowser | loopback → Caddy (login) | media tree UI |
 | Transmission | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
-| wg-easy | loopback UI + public WireGuard UDP | VPN |
+| WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers from `kurulum/wireguard` |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
-Host edge: dnsmasq + Caddy bound to the Tailscale address; firewall
-(`DOCKER-USER` + custom chains) for Tailscale, the two public peer ports,
-and WAN SSH.
+Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
+to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT
+chains) for Tailscale, WireGuard, the torrent peer port and WAN SSH.
 
 ## Container settings backup
 
-Double-click `container-backup.command` to back up or restore the wg-easy
-account and peers over SSH; every other login comes from
-`kurulum/kurulum.env`, and the installer writes the Transmission preferences. Snapshots are
+Since v2-86 there is nothing left to back up: every login comes from
+`kurulum/kurulum.env`, the WireGuard keys and peers from `kurulum/wireguard/`,
+and the installer writes the Transmission preferences. `container-backup.command`
+still restores older wg-easy archives and is due to be retired; keep the
+`kurulum/` folder safe instead. Snapshots are
 password-encrypted and stored under the Git-ignored `backup/` directory. This
 is separate from installation.
 See [scope, the reinstall runbook and encryption](Data/docs/container-backup.md).

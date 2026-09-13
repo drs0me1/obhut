@@ -177,62 +177,9 @@ services:
     networks:
       - webdav
 
-  wg-easy:
-    image: __WG_EASY_IMAGE__
-    container_name: wg-easy
-    restart: unless-stopped
-    logging: *default-logging
-    # v15: WireGuard dinleme portu env ile set edilmez; ilk web kurulumunda
-    # Host=tespit edilen WAN_IPV4, Port=WG_PUBLIC_PORT (aşama 0) seçilir.
-    # Docker map 1:1 — iç ve dış UDP aynı; port değişince şablon yeniden yazılır.
-    # Healthcheck: H5 — yalnız wg0 ayakta mı; port/UI kurulumu beklenmez.
-    # start_interval: imaj varsayılanı (~60s) "starting"i uzatmasın diye legacy ile aynı.
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - '/usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface"'
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-      start_interval: 5s
-    environment:
-      TZ: __TIMEZONE__
-      INSECURE: "true"
-    ports:
-      - "127.0.0.1:__WG_UI_PORT__:__WG_UI_PORT__/tcp"
-      # WireGuard UDP: IPv4-only 1:1. WAN IP gömülmez; IP değişince remap yok.
-      - "0.0.0.0:__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"
-    volumes:
-      - wg_easy_data:/etc/wireguard
-    cap_add:
-      - NET_ADMIN
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv4.conf.all.src_valid_mark: "1"
-      net.ipv6.conf.all.disable_ipv6: "0"
-      net.ipv6.conf.all.forwarding: "1"
-      net.ipv6.conf.default.forwarding: "1"
-    networks:
-      wg:
-        ipv4_address: __WG_BRIDGE_IPV4__
-        ipv6_address: __WG_BRIDGE_IPV6__
-
 networks:
-  wg:
-    name: wg
-    driver: bridge
-    enable_ipv6: true
-    ipam:
-      driver: default
-      config:
-        - subnet: __WG_BRIDGE_SUBNET__
-        - subnet: __WG_BRIDGE_SUBNET6__
-  # Yalnız WebDAV; Caddy host loopback publish ile erişir (wg / docker_default yok).
+  # Yalnız WebDAV; Caddy host loopback publish ile erişir (docker_default yok).
   # internal:true host port publish'i düşürür — kullanılmaz (DD-82).
   webdav:
     name: webdav
     driver: bridge
-
-volumes:
-  wg_easy_data:

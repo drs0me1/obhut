@@ -41,9 +41,9 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), wg-easy, Transmission (replaced qBittorrent, **DD-117**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), Transmission (replaced qBittorrent, **DD-117**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly the wg-easy UDP port and the torrent (Transmission) peer port (TCP+UDP) |
+| R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (Transmission) peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
@@ -139,9 +139,9 @@ the ones agreed on 2026-08-05:
 ### 1.3 Docker and containers
 
 - Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
-- One Compose file with exactly six services: `dozzle`, `filebrowser`,
-  `transmission`, `unpackerr`, `wg-easy`, `webdav` (**R10**, **DD-77**,
-  **DD-116**, **DD-117**).
+- One Compose file with exactly five services: `dozzle`, `filebrowser`,
+  `transmission`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
+  **DD-117**, **DD-120**).
 - Transmission (LinuxServer image) takes its user name and password from
   root-only files under `/etc/master-stack/transmission-auth`, mounted
   read-only and read through `FILE__USER`/`FILE__PASS`; they never appear in
@@ -181,10 +181,6 @@ the ones agreed on 2026-08-05:
   moved in before the container starts again. A password changed in
   FileBrowser's UI therefore returns to the file's value on the next run;
   other users are left alone (**DD-119**).
-- Before Compose starts, the host best-effort preloads `wireguard` plus the
-  legacy IPv4/IPv6 netfilter modules used by wg-easy and persists them in
-  `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
-  `NET_ADMIN`; it does not receive `SYS_MODULE` or `/lib/modules`.
 - Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
 - Containers survive a reboot through the Compose **restart policy**
   (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`
@@ -232,8 +228,35 @@ Preserved in full as a core feature. Contract in §5–§7.
 ### 1.8 Operator guidance
 
 - The manual Tailscale admin steps are printed at the end (**R17**, §13).
-- No container admin / password reminders are printed; operators create
-  those accounts in each service UI.
+- No password reminders are printed: every service account comes from
+  `kurulum/kurulum.env` (**DD-119**).
+
+### 1.9 WireGuard (DD-120)
+
+- `wg-quick@wg0` in the host kernel: `10.8.0.1/24` and
+  `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420 — the
+  addresses wg-easy used, so existing client profiles keep working.
+- Inputs:
+  - `kurulum/wireguard/sunucu.key` holds the server private key.
+  - One wg-easy-format profile per device: `kurulum/wireguard/<device>.conf`.
+    Peers are exactly these files; adding or removing one is a re-run.
+- **Validation and rendering:**
+  - Stage 0 validates structure, keys, addresses (inside the subnets,
+    unique, not the server's), the endpoint port and file names before any
+    change; messages never carry a key.
+  - After the firewall is applied, the installer installs `wireguard-tools`
+    (`--no-install-recommends`) and checks every profile's server key
+    against `sunucu.key` with `wg pubkey`.
+  - It then writes `/etc/wireguard/wg0.conf` (`0600`: server key, peer public
+    keys, PSKs, `AllowedIPs`; no client private key, no `PostUp`) and
+    restarts the interface only when that file changed.
+- **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
+  Dozzle, Transmission and FileBrowser UIs at `http://10.8.0.1:<port>`.
+  Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
+  other peers (§9).
+- The UIs are served by `caddy-wg.service` (`/etc/caddy/Caddyfile.wg`, admin
+  API off). It binds only `10.8.0.1`, follows `wg-quick@wg0` and has no
+  Tailscale dependency, so the path survives a Tailscale outage.
 
 ---
 
@@ -270,8 +293,11 @@ Three exposure classes, and nothing may straddle them.
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| wg-easy (WireGuard) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${WG_PUBLIC_PORT}` (61001) | **UDP only** |
 | Transmission (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${TORRENT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
+
+**WireGuard is a host listener, not a Compose publication (DD-120):** the
+kernel's `wg0` socket on UDP `${WG_PUBLIC_PORT}` (61001) is admitted by
+`MASTER-INPUT` on the WAN interface.
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
@@ -280,7 +306,7 @@ publish and does not appear in `docker port`.
 
 Public peer ports are IPv4-only host binds (`0.0.0.0:port:port/...`), not
 dual-stack unqualified publishes and not a specific WAN IP. Firewall
-limits NEW WAN traffic to wg UDP, torrent peer TCP+UDP, and SSH.
+limits NEW WAN traffic to WireGuard UDP, torrent peer TCP+UDP, and SSH.
 (R12 revised 2026-08-06: peer TCP restored to match legacy
 connectivity. 2026-08-07: drop `[::]` peer publish — unused and already
 dropped by IPv6 `MASTER-DOCKER`.)
@@ -304,7 +330,6 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
 | Transmission WebUI | `127.0.0.1` | 61006 (**DD-117**) |
-| wg-easy WebUI | `127.0.0.1` | 51821 |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
@@ -317,6 +342,14 @@ Every number above is declared exactly once, in `config/defaults.env`,
 and reaches the Compose file, the Caddyfile, the firewall script and the
 state file by substitution. A port literal appearing twice is a bug.
 
+### 3.5 WireGuard (`wg0`) — reachable only by WireGuard clients
+
+| Service | Listen address | Port |
+|---|---|---|
+| caddy-wg → Dozzle, Transmission, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+
+No names, no WebDAV, no dnsmasq on `wg0` (**DD-120**).
+
 ---
 
 ## 4. DNS and Caddy service map
@@ -327,7 +360,6 @@ an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
 | `dozzle.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://dozzle.…` | `127.0.0.1:61002` (**DD-116**) |
-| `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:51821` |
 | `torrent.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**) |
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
 | `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
@@ -601,8 +633,17 @@ and IPv6 — separate tables mean no collision — and both are declared in
   - `ESTABLISHED,RELATED` returns early.
   - Container traffic arriving over `tailscale0` is accepted.
   - New WAN traffic to the public peer publications is accepted
-    (wg-easy UDP `${WG_PUBLIC_PORT}`; Transmission TCP+UDP
-    `${TORRENT_PUBLIC_PORT}`).
+    (Transmission TCP+UDP `${TORRENT_PUBLIC_PORT}`; WireGuard is a host
+    listener admitted by `MASTER-INPUT`, **DD-120**).
+- WireGuard (**DD-120**), all interface-based and in both families:
+  - `MASTER-INPUT` accepts from `wg0` only TCP to `10.8.0.1` on the three UI
+    ports and ping (IPv4), and drops everything else from `wg0`.
+  - `MASTER-FORWARD`, jumped at the top of `FORWARD`, accepts `wg0` → WAN
+    and its replies and drops all other traffic to or from `wg0` (tailnet,
+    Docker networks, other peers).
+  - `MASTER-NAT`, in `nat POSTROUTING`, masquerades the WireGuard subnets out
+    of the WAN.
+  - wg-quick carries no `PostUp`: every rule belongs to `master-firewall`.
   - Every other WAN → container flow is dropped.
 - IPv6 policy is explicit and fail-closed with the same shape. If the host
   has no IPv6 WAN route, the rule set reduces accordingly rather than
@@ -685,9 +726,9 @@ Invariants:
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
-  the container volumes, the Transmission settings and credential files, the wg-easy
-  configuration, the operator's chosen local domain (offered as the
-  default).
+  the container volumes, the Transmission settings and credential files,
+  `wg0.conf` (rewritten only when `kurulum/wireguard` changes), the
+  operator's chosen local domain.
 - Firewall application is idempotent by construction: the chain is rebuilt
   from scratch and swapped in, and the `DOCKER-USER` jump is inserted only
   when absent.
@@ -769,10 +810,12 @@ An installer run is successful when every one of these holds on the target host.
 
 ### Ports
 
-5. `docker port` shows public publications for wg-easy UDP
-   `${WG_PUBLIC_PORT}` and Transmission TCP+UDP `${TORRENT_PUBLIC_PORT}`
-   (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN IP; no `[::]` peer
-   publish).
+5. `docker port` shows public publications for Transmission TCP+UDP
+   `${TORRENT_PUBLIC_PORT}` (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN
+   IP; no `[::]` peer publish). `wg show wg0 listen-port` is
+   `${WG_PUBLIC_PORT}`, its peer count equals the profiles in
+   `kurulum/wireguard`, `10.8.0.1` is on `wg0`, and `caddy-wg` answers
+   non-5xx on its three ports (**DD-120**).
 6. No container web interface is published on a non-loopback address.
 7. The five container web interfaces (incl. WebDAV) listen on `127.0.0.1`
    only.
@@ -783,13 +826,13 @@ An installer run is successful when every one of these holds on the target host.
 
 ### DNS and Caddy
 
-10. All six names resolve to `${TS_IPV4}` when queried against
+10. All five names resolve to `${TS_IPV4}` when queried against
     `${TS_IPV4}`.
 11. A query for an out-of-domain name against `${TS_IPV4}` returns
     `REFUSED`.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
-13. Each of `dozzle`, `wg`, `torrent` and `file` returns a non-5xx status
+13. Each of `dozzle`, `torrent` and `file` returns a non-5xx status
     through Caddy (`Host:` + `${TS_IPV4}`); Dozzle's `/api/events/stream`
     and Transmission's `/transmission/rpc` answer `401` without a login.
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing

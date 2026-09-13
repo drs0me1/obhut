@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Kernel WireGuard replaces wg-easy (v2-86)
+
+- **Changed:**
+  - WireGuard runs in the host kernel (`wg-quick@wg0`) with wg-easy's
+    addresses and port, so existing client profiles connect unchanged
+    (**DD-120**).
+  - Peers come from `kurulum/wireguard/<device>.conf` (wg-easy's profile
+    format) and the server key from `kurulum/wireguard/sunucu.key`. The
+    launcher sends them with `kurulum.env` to `tmpfs`, and the installer
+    deletes them first.
+  - `wg0.conf` holds public keys and PSKs only, and changes only when the
+    profiles do.
+- **Added:**
+  - WireGuard clients reach the Dozzle, Transmission and FileBrowser UIs at
+    `http://10.8.0.1:<port>` through a second Caddy (`caddy-wg`) that does not
+    depend on Tailscale.
+  - New firewall chains: `MASTER-FORWARD` lets clients out to the internet and
+    nowhere else (no tailnet, Docker networks or other peers), and `MASTER-NAT`
+    masquerades both subnets. `MASTER-INPUT` limits `wg0` to the three UI ports
+    and ping. `--check` asserts rules, order and count.
+  - Stage 0 rejects malformed profiles, duplicate addresses or keys and a
+    wrong endpoint port. Stage 7 checks the port, the peer count and the
+    three UI ports.
+- **Removed:**
+  - The `wg-easy` container, its network and settings.
+  - `wg.${LOCAL_DOMAIN}` from dnsmasq and Caddy.
+  - The legacy netfilter modules wg-easy needed.
+- **Verified on `nrm`:**
+  - The four device profiles were generated from wg-easy's database and
+    matched its running peers. wg-easy was removed and v2-86 installed with
+    the operator's `kurulum/` folder (Tailscale logged back in with its auth
+    key).
+  - A namespace test peer reached the internet over IPv4 and IPv6 and the
+    three UIs, and was refused SSH, WebDAV, the tailnet, Docker networks and
+    other peers.
+  - A second run was a no-op, and a reboot came back clean.
+  - A real device connected with its unchanged profile and opened Dozzle at
+    `http://10.8.0.1:61002`.
+  - bats 119 ok.
+
 ### 2026-09-14 — Installer inputs from one file (v2-85)
 
 - **Changed:**

@@ -9,9 +9,6 @@ http://health.__LOCAL_DOMAIN__ {
 http://dozzle.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__
 }
-http://wg.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__WG_UI_PORT__
-}
 http://torrent.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
 }

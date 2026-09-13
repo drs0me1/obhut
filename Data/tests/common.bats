@@ -98,7 +98,7 @@ EOF
         "$V2_ROOT/install.sh"
     # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 9 ]
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 10 ]
 }
 
 @test "require_supported_os records version and architecture" {
@@ -805,44 +805,18 @@ EOF
     [ -z "$(ls -A "$TMP/fb")" ]
 }
 
-@test "wg-easy publishes WireGuard UDP 1:1 without remap" {
-    grep -q '"0.0.0.0:__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/udp"' \
-        "$V2_ROOT/templates/compose.yaml"
-    ! grep -q 'WAN_IPV4' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q ':51820/udp' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q 'WG_PORT:' "$V2_ROOT/templates/compose.yaml"
-}
-
-@test "wg-easy healthcheck matches legacy H5 timing" {
-    grep -q 'start_interval: 5s' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'start_period: 60s' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'wg show | /bin/grep -q interface' "$V2_ROOT/templates/compose.yaml"
-}
-
-@test "wg-easy host preloads legacy IPv4 and IPv6 netfilter modules" {
-    local module_block
-    module_block="$(awk '/^ensure_wg_kernel_modules\(\)/,/^}/' "$V2_ROOT/install.sh")"
-    [[ "$module_block" == *'wireguard ip_tables iptable_nat ip6_tables ip6table_nat'* ]]
-
-    run awk '
-        /atomic_write \/etc\/modules-load.d\/wg-easy.conf/ { capture = 1; next }
-        capture && /^EOF$/ { exit }
-        capture { print }
-    ' "$V2_ROOT/install.sh"
-    [ "$status" -eq 0 ]
-    [ "$output" = $'wireguard\nip_tables\niptable_nat\nip6_tables\nip6table_nat' ]
-}
-
-@test "wg-easy bridge addresses come from defaults.env tokens" {
-    grep -q 'WG_BRIDGE_IPV4=' "$V2_ROOT/config/defaults.env"
-    grep -q 'WG_BRIDGE_SUBNET=' "$V2_ROOT/config/defaults.env"
-    grep -q 'ipv4_address: __WG_BRIDGE_IPV4__' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'ipv6_address: __WG_BRIDGE_IPV6__' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'subnet: __WG_BRIDGE_SUBNET__' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'subnet: __WG_BRIDGE_SUBNET6__' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'WG_BRIDGE_IPV4=' "$V2_ROOT/install.sh"
-    grep -q 'name: wg' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'enable_ipv6: true' "$V2_ROOT/templates/compose.yaml"
+@test "wg-easy is gone from compose, defaults and the tailnet edge" {
+    # DD-120: WireGuard runs in the host kernel; nothing of wg-easy remains.
+    # Comments may name wg-easy as the origin of the profile format; code may not.
+    local code
+    code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/config/defaults.env" \
+        "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf" \
+        "$V2_ROOT/install.sh" "$V2_ROOT/scripts/firewall.sh")"
+    run ! grep -qE 'wg-easy|wg_easy|WG_BRIDGE|WG_UI_PORT|WG_EASY' <<<"$code"
+    run ! grep -q '__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -qE '^[[:space:]]+wg:$' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -qw wg <<<"$(awk -F'"' '/^SERVICE_NAMES=/{print $2}' "$V2_ROOT/config/defaults.env")"
+    [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 5 ]
 }
 
 @test "SERVICE_NAMES drives DNS check and matches edge templates" {
@@ -868,11 +842,8 @@ EOF
 
 @test "compose public peer ports are IPv4-only" {
     grep -q '0.0.0.0:__TORRENT_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
-    grep -q '0.0.0.0:__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
     # Unqualified host:port would also bind [::] on Docker.
-    ! grep -qE '^[[:space:]]*- "__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/' \
-        "$V2_ROOT/templates/compose.yaml"
-    ! grep -qE '^[[:space:]]*- "__WG_PUBLIC_PORT__:__WG_PUBLIC_PORT__/' \
+    run ! grep -qE '^[[:space:]]*- "__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/' \
         "$V2_ROOT/templates/compose.yaml"
 }
 
@@ -1291,8 +1262,8 @@ EOF
     grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"
     grep -q -- '--ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN' \
         "$V2_ROOT/scripts/firewall.sh"
-    grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT" -j RETURN' \
-        "$V2_ROOT/scripts/firewall.sh"
+    # DD-120: WireGuard is not a Docker publish any more; the port lives in INPUT.
+    run ! grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -c 'TORRENT_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" | grep -q '^[2-9]'
 }
@@ -1439,12 +1410,12 @@ EOF
     ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
     ! awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh" |
         grep -qE '401\|403\|405'
-    grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
+    run ! grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port transmission' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
-    grep -q 'for ui_host in dozzle wg torrent file' "$V2_ROOT/install.sh"
+    grep -q 'for ui_host in dozzle torrent file' "$V2_ROOT/install.sh"
     grep -q 'non-5xx beklenir' "$V2_ROOT/install.sh"
 }
 
@@ -1473,8 +1444,6 @@ EOF
     grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^TRANSMISSION_IMAGE="lscr\.io/linuxserver/transmission:latest"' \
-        "$V2_ROOT/config/defaults.env"
-    grep -qE '^WG_EASY_IMAGE="ghcr.io/wg-easy/wg-easy:15"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0\.15"' \
         "$V2_ROOT/config/defaults.env"
@@ -1687,9 +1656,16 @@ EOF
 
 @test "stage 0 reads the input file first and confirms before the first write" {
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -A4 '^    require_root$' <<<"$stage0" |
-        grep -q 'read_input_file "\$INPUT_FILE" "\$INPUT_KEYS" "\$INPUT_NONEMPTY_KEYS"'
-    grep -q '^INPUT_FILE="/run/master-stack/kurulum.env"$' "$V2_ROOT/config/defaults.env"
+    # DD-120: the WireGuard folder is taken first, so a bad kurulum.env cannot
+    # leave keys behind in /run; then the whole input folder goes.
+    grep -A8 '^    require_root$' <<<"$stage0" | awk '
+        /slurp_wireguard_inputs "\$INPUT_WG_DIR"/ { w = NR }
+        /read_input_file "\$INPUT_FILE" "\$INPUT_KEYS" "\$INPUT_NONEMPTY_KEYS"/ { r = NR }
+        /rm -rf -- "\$INPUT_DIR"/ { d = NR }
+        END { exit !(w && r && d && w < r && r < d) }'
+    grep -q '^INPUT_DIR="/run/master-stack/kurulum"$' "$V2_ROOT/config/defaults.env"
+    grep -q '^INPUT_FILE="/run/master-stack/kurulum/kurulum.env"$' "$V2_ROOT/config/defaults.env"
+    grep -q '^INPUT_WG_DIR="/run/master-stack/kurulum/wireguard"$' "$V2_ROOT/config/defaults.env"
     # Every INPUT_* is dropped once mapped; secrets stay only in the *_NEW_* vars.
     grep -q 'unset "INPUT_\$input_key"' <<<"$stage0"
     # One confirmation, then config.env: nothing is written before the operator agrees.
@@ -1829,12 +1805,18 @@ EOF
     [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
 }
 
-@test "portable launcher reads kurulum.env beside it and sends it only to tmpfs" {
+@test "portable launcher reads kurulum/ beside it and sends it only to tmpfs" {
     local exporter="$V2_ROOT/dev/export-installer.sh" body
     body="$(awk "/cat <<'BODY_END'/,/^BODY_END\$/" "$exporter")"
     [ -n "$body" ]
-    grep -q 'INPUT_FILE_LOCAL="\$here/kurulum/kurulum.env"' <<<"$body"
-    grep -q 'stat -f %Lp "\$INPUT_FILE_LOCAL"' <<<"$body"
+    grep -q 'INPUT_LOCAL_DIR="\$here/kurulum"' <<<"$body"
+    grep -q 'INPUT_FILE_LOCAL="\$INPUT_LOCAL_DIR/kurulum.env"' <<<"$body"
+    grep -q 'wireguard/sunucu.key' <<<"$body"
+    # Every file sent is mode-checked, and only listed files are sent.
+    grep -q 'for f in "\${input_files\[@\]}"; do' <<<"$body"
+    grep -q 'stat -f %Lp "\$INPUT_LOCAL_DIR/\$f"' <<<"$body"
+    grep -q -- '-cf - "\${input_files\[@\]}"' <<<"$body"
+    grep -q -- '--no-same-owner -xf -' <<<"$body"
     # Only SSH_HOST is read on the Mac; the rest is validated by the installer.
     grep -q 'index(\$0, "SSH_HOST=") == 1' <<<"$body"
     run ! grep -qE '_PASS|TS_AUTH_KEY' <<<"$body"
@@ -1842,14 +1824,261 @@ EOF
     run ! grep -q 'DEPLOY_HOST' "$exporter"
     grep -q 'stat -f -c %T' <<<"$body"
     grep -q '= tmpfs \]' <<<"$body"
-    grep -q '<"\$INPUT_FILE_LOCAL"' <<<"$body"
     grep -q 'remote_input_sent=1' <<<"$body"
-    awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q "rm -f '\$REMOTE_INPUT_FILE'"
+    awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q "rm -rf '\$REMOTE_INPUT_DIR'"
     # The server-side path has one source: defaults.env.
-    grep -q "awk -F= '/^INPUT_FILE=/" "$exporter"
-    grep -q 'REMOTE_INPUT_FILE="\$INPUT_FILE"' "$exporter"
+    grep -q "awk -F= '/^INPUT_DIR=/" "$exporter"
+    grep -q 'REMOTE_INPUT_DIR="\$INPUT_DIR"' "$exporter"
     # The archive is built from Data/ only; kurulum/ lives in the repo root.
     run ! grep -q 'TOP_DIR/kurulum' "$exporter"
     # Finder runs .command files with macOS /bin/bash 3.2.
     run ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' <<<"$body"
+}
+
+wg_fixture_key() {
+    # 32 random bytes, base64: the shape of a WireGuard key (not a real key pair).
+    openssl rand -base64 32
+}
+
+wg_load_input_functions() {
+    local f
+    for f in slurp_wireguard_inputs wg_client_ipv4_ok wg_client_ipv6_ok \
+        parse_wireguard_profile validate_wireguard_inputs; do
+        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    # shellcheck source=/dev/null
+    source "$V2_ROOT/config/defaults.env"
+}
+
+@test "wireguard inputs are read into memory, deleted, and validated in wg-easy's format" {
+    wg_load_input_functions
+    local dir="$TMP/in/wireguard" sk spub p1 p2 psk
+    mkdir -p "$dir"
+    sk="$(wg_fixture_key)" spub="$(wg_fixture_key)" p1="$(wg_fixture_key)"
+    p2="$(wg_fixture_key)" psk="$(wg_fixture_key)"
+    printf '%s\n' "$sk" >"$dir/sunucu.key"
+    cat >"$dir/iphone.conf" <<EOF
+[Interface]
+PrivateKey = $p1
+Address = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128
+MTU = 1420
+DNS = 1.1.1.1, 2606:4700:4700::1111
+
+[Peer]
+PublicKey = $spub
+PresharedKey = $psk
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 0
+Endpoint = 203.0.113.10:61001
+EOF
+    printf '[Interface]\nPrivateKey = %s\nAddress = 10.8.0.3/32\n\n[Peer]\nPublicKey = %s\n' \
+        "$p2" "$spub" >"$dir/mac.conf"
+    printf 'not a profile\n' >"$dir/notes.txt"
+    chmod 600 "$dir"/*
+    slurp_wireguard_inputs "$dir"
+    [ ! -e "$dir" ]
+    validate_wireguard_inputs
+    [ "$WG_PEER_COUNT" -eq 2 ]
+    [ "${WG_PEER_NAMES[*]}" = "iphone mac" ]
+    [ "${WG_PEER_IPV4[*]}" = "10.8.0.2 10.8.0.3" ]
+    [ "${WG_PEER_IPV6[0]}" = "fdcc:ad94:bacf:61a4::cafe:2" ]
+    [ -z "${WG_PEER_IPV6[1]}" ]
+    [ "${WG_PEER_PSK[0]}" = "$psk" ]
+    [ -z "${WG_PEER_PSK[1]}" ]
+    [ "$WG_SERVER_PRIVATE" = "$sk" ]
+    [ "${WG_PEER_SERVER_PUB[1]}" = "$spub" ]
+}
+
+@test "wireguard inputs reject bad profiles without echoing key material" {
+    wg_load_input_functions
+    local sk spub p1 p2 case_body expect dir="$TMP/in/wireguard"
+    sk="$(wg_fixture_key)" spub="$(wg_fixture_key)" p1="$(wg_fixture_key)" p2="$(wg_fixture_key)"
+    good() { printf '[Interface]\nPrivateKey = %s\nAddress = %s\n[Peer]\nPublicKey = %s\n%b' "$1" "$2" "$spub" "${3:-}"; }
+    run_case() {
+        rm -rf "$TMP/in"
+        mkdir -p "$dir"
+        printf '%s\n' "$sk" >"$dir/sunucu.key"
+        good "$p1" 10.8.0.2/32 >"$dir/a.conf"
+        eval "$1"
+        chmod 600 "$dir"/* 2>/dev/null || true
+        eval "${2:-}"
+        slurp_wireguard_inputs "$dir"
+        [ ! -e "$dir" ]
+        run validate_wireguard_inputs
+        [ "$status" -ne 0 ]
+        case "$output" in *"$3"*) ;; *) printf 'expected %s, got: %s\n' "$3" "$output"; false ;; esac
+        case "$output" in *"$sk"* | *"$p1"* | *"$p2"* | *"$spub"*) false ;; esac
+    }
+    run_case 'rm -f "$dir/sunucu.key"' '' 'sunucu.key yok'
+    run_case 'printf "short\n" >"$dir/sunucu.key"' '' 'WireGuard özel anahtarı değil'
+    run_case '' 'chmod 644 "$dir/a.conf"' 'izinleri 644'
+    run_case 'good "$p2" 10.8.0.2/32 >"$dir/b.conf"' '' 'başka bir profilde de var'
+    run_case 'good "$p1" 10.8.0.9/32 >"$dir/b.conf"' '' 'özel anahtarı başka bir profilde'
+    run_case 'good "$p2" 10.8.1.2/32 >"$dir/b.conf"' '' "'10.8.1.2' 10.8.0.0/24 içinde"
+    run_case 'good "$p2" 10.8.0.1/32 >"$dir/b.conf"' '' "'10.8.0.1'"
+    run_case 'good "$p2" "10.8.0.3/32, fdcc::3/128" >"$dir/b.conf"' '' "IPv6 'fdcc::3'"
+    run_case 'good "$p2" 10.8.0.3/32 "[Peer]\nPublicKey = $spub\n" >"$dir/b.conf"' '' 'tek [Interface] ve tek [Peer]'
+    run_case 'good "$p2" 10.8.0.3/32 "Endpoint = 1.2.3.4:51820\n" >"$dir/b.conf"' '' 'Endpoint portu 51820'
+    run_case 'good "$p2" 10.8.0.3/32 >"$dir/bad name.conf"' '' 'dosya adı'
+    run_case 'printf "[Interface]\nPrivateKey = %s\nAddress = 10.8.0.3/32\n[Peer]\nPublicKey = %s\nPresharedKey = nope\n" "$p2" "$spub" >"$dir/b.conf"' '' 'PresharedKey'
+    run_case 'rm -rf "$dir"' '' 'kurulum/wireguard klasörü yok'
+}
+
+@test "ensure_wireguard writes only public keys, checks the server key, restarts on change" {
+    eval "$(awk '/^ensure_wireguard\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    # shellcheck source=/dev/null
+    source "$V2_ROOT/config/defaults.env"
+    WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
+    WG_PUBLIC_PORT=61001 APT_OPTS=() APT_LOCK_TIMEOUT=1
+    log() { [ "$1" != HATA ] || printf '%s\n' "$*"; }
+    retry() { printf 'retry %s\n' "$*" >>"$TMP/calls"; }
+    modprobe() { :; }
+    install() { mkdir -p "${!#}"; }
+    systemctl() { printf 'systemctl %s\n' "$*" >>"$TMP/calls"; [ "$1" != is-active ]; }
+    # Deterministic stand-in for `wg pubkey`: reads the key from stdin only.
+    wg() { [ "$1" = pubkey ] || return 1; local k; IFS= read -r k; printf 'PUB-%s\n' "${k:0:8}"; }
+    set_inputs() {
+        WG_SERVER_PRIVATE="SERVERKEYaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
+        WG_PEER_NAMES=(iphone mac)
+        WG_PEER_PRIVATE=("CLIENT1keybbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=" "CLIENT2keycccccccccccccccccccccccccccccccccc=")
+        WG_PEER_PSK=("PSKddddddddddddddddddddddddddddddddddddddd=" "")
+        WG_PEER_SERVER_PUB=("PUB-SERVERKE" "PUB-SERVERKE")
+        WG_PEER_IPV4=(10.8.0.2 10.8.0.3)
+        WG_PEER_IPV6=(fdcc:ad94:bacf:61a4::cafe:2 "")
+        WG_PEER_COUNT=2
+    }
+    set_inputs
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    conf="$(cat "$WG_CONF_FILE")"
+    mode="$(stat -c %a "$WG_CONF_FILE" 2>/dev/null || stat -f %Lp "$WG_CONF_FILE")"
+    [ "$mode" = 600 ]
+    grep -q '^Address = 10.8.0.1/24, fdcc:ad94:bacf:61a4::cafe:1/112$' <<<"$conf"
+    grep -q '^ListenPort = 61001$' <<<"$conf"
+    grep -q '^PrivateKey = SERVERKEYa' <<<"$conf"
+    grep -q '^PublicKey = PUB-CLIENT1k$' <<<"$conf"
+    grep -q '^PresharedKey = PSKddd' <<<"$conf"
+    grep -q '^AllowedIPs = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128$' <<<"$conf"
+    grep -q '^AllowedIPs = 10.8.0.3/32$' <<<"$conf"
+    [ "$(grep -c '^\[Peer\]$' <<<"$conf")" -eq 2 ]
+    run ! grep -qE 'CLIENT1key|CLIENT2key|PostUp|PreUp' <<<"$conf"
+    run ! grep -q 'retry.*CLIENT' "$TMP/calls"
+    grep -q 'no-install-recommends wireguard-tools' "$TMP/calls"
+    grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
+    # Unchanged inputs on an active interface: no restart.
+    rm -f "$TMP/calls"
+    systemctl() { printf 'systemctl %s\n' "$*" >>"$TMP/calls"; }
+    set_inputs
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    run ! grep -q 'restart' "$TMP/calls"
+    # A profile made for another server stops before wg0.conf changes.
+    before="$(cat "$WG_CONF_FILE")"
+    set_inputs
+    WG_PEER_SERVER_PUB=("PUB-SERVERKE" "PUB-OTHERSRV")
+    WG_PEER_IPV4=(10.8.0.2 10.8.0.9)
+    run ensure_wireguard
+    [ "$status" -ne 0 ]
+    case "$output" in *"mac.conf başka bir sunucuya ait"*) ;; *) false ;; esac
+    [ "$(cat "$WG_CONF_FILE")" = "$before" ]
+}
+
+@test "firewall confines WireGuard clients to internet egress and the caddy-wg ports" {
+    local fw="$V2_ROOT/scripts/firewall.sh" in4 in6 fwd nat
+    for v in CHAIN_FORWARD CHAIN_NAT WG_INTERFACE WG_SERVER_IPV4 WG_SUBNET4 WG_SUBNET6 \
+        DOZZLE_UI_PORT TORRENT_UI_PORT FILEBROWSER_UI_PORT; do
+        grep -q ": \"\${$v:?}\"" "$fw"
+        awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v=\\\$$v$"
+    done
+    in4="$(awk '/^apply_input4\(\)/,/^}$/' "$fw")"
+    grep -q -- '-i "$WG_INTERFACE" -d "$WG_SERVER_IPV4" -p tcp' <<<"$in4"
+    grep -q -- '--dports "$(wg_ui_ports)" -j ACCEPT' <<<"$in4"
+    grep -q -- '-i "$WG_INTERFACE" -j DROP' <<<"$in4"
+    # The allow rules come before the DROP, and both before the final RETURN.
+    awk '/wg_ui_ports/ {a = NR} /-i "\$WG_INTERFACE" -j DROP/ {d = NR} /-j RETURN$/ {r = NR}
+         END { exit !(a && d && r && a < d && d < r) }' <<<"$in4"
+    in6="$(awk '/^apply_input6\(\)/,/^}$/' "$fw")"
+    grep -q -- '-i "$WG_INTERFACE" -j DROP' <<<"$in6"
+    run ! grep -q 'wg_ui_ports' <<<"$in6"
+    fwd="$(awk '/^apply_forward\(\)/,/^}$/' "$fw")"
+    grep -q -- '-i "$WG_INTERFACE" -o "$WAN_INTERFACE" -j ACCEPT' <<<"$fwd"
+    grep -q -- '-o "$WG_INTERFACE" -j DROP' <<<"$fwd"
+    grep -q 'activate_named "$bin" FORWARD "$staging" "$CHAIN_FORWARD"' <<<"$fwd"
+    awk '/-o "\$WAN_INTERFACE" -j ACCEPT/ {a = NR} /-i "\$WG_INTERFACE" -j DROP/ {d = NR}
+         END { exit !(a && d && a < d) }' <<<"$fwd"
+    nat="$(awk '/^apply_nat\(\)/,/^}$/' "$fw")"
+    grep -q -- '-s "$subnet" -o "$WAN_INTERFACE" -j MASQUERADE' <<<"$nat"
+    grep -q 'activate_named "$bin" POSTROUTING "$staging" "$CHAIN_NAT"' <<<"$nat"
+    grep -q '^apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" "$WG_SUBNET4"$' "$fw"
+    grep -q '^apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" "$WG_SUBNET6"$' "$fw"
+    grep -q '^purge_staging_leftovers ip6tables_nat$' "$fw"
+    grep -q '^iptables_nat() { iptables -t nat "$@"; }$' "$fw"
+    # --check asserts all of it, counts the FORWARD chain and checks order.
+    grep -q '^    check_forward_chain ip6tables$' "$fw"
+    grep -q '^    check_nat_chain ip6tables_nat "$WG_SUBNET6"$' "$fw"
+    awk '/^check_forward_chain\(\)/,/^}$/' "$fw" | grep -q 'beklenen 5'
+    # WireGuard is no longer a Docker publish.
+    run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
+    # No wg-quick PostUp rules: the firewall script owns netfilter (DD-16/DD-17).
+    run ! grep -q 'PostUp' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
+}
+
+@test "check_before and the WireGuard FORWARD count catch order and extra rules" {
+    eval "$(awk '/^check_before\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    eval "$(awk '/^check_forward_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
+    die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+    check_jump_exactly_one() { :; }
+    check_rule() { :; }
+    CHAIN_FORWARD=MASTER-FORWARD WG_INTERFACE=wg0 WAN_INTERFACE=eth0
+    good='-A MASTER-FORWARD -i wg0 -o eth0 -j ACCEPT
+-A MASTER-FORWARD -i wg0 -j DROP
+-A MASTER-FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A MASTER-FORWARD -o wg0 -j DROP
+-A MASTER-FORWARD -j RETURN'
+    fake() { printf -- '-N MASTER-FORWARD\n%s\n' "$RULES"; }
+    iptables() { fake; }
+    RULES="$good"
+    run check_forward_chain iptables
+    [ "$status" -eq 0 ]
+    # The DROP before the ACCEPT: every packet dropped.
+    RULES="$(printf '%s\n' "$good" | awk 'NR == 1 { first = $0; next } NR == 2 { print; print first; next } { print }')"
+    run check_forward_chain iptables
+    [ "$status" -ne 0 ]
+    # An extra blanket ACCEPT.
+    RULES="$(printf -- '-A MASTER-FORWARD -i wg0 -j ACCEPT\n%s' "$good")"
+    run check_forward_chain iptables
+    [ "$status" -ne 0 ]
+    case "$output" in *"beklenen 5"*) ;; *) false ;; esac
+}
+
+@test "caddy-wg serves only the UI ports on the WireGuard address and follows wg-quick" {
+    local t="$V2_ROOT/templates/Caddyfile.wg" u="$V2_ROOT/systemd/caddy-wg.service" body
+    grep -q '^	admin off$' "$t"
+    grep -q '^	auto_https off$' "$t"
+    grep -q '^	default_bind __WG_SERVER_IPV4__$' "$t"
+    for p in DOZZLE_UI_PORT TORRENT_UI_PORT FILEBROWSER_UI_PORT; do
+        grep -q "^http://:__${p}__ {\$" "$t"
+        grep -q "reverse_proxy 127.0.0.1:__${p}__\$" "$t"
+    done
+    [ "$(grep -c '^http://' "$t")" -eq 3 ]
+    run ! grep -qiE 'webdav|TAILSCALE|LOCAL_DOMAIN' <<<"$(grep -v '^#' "$t")"
+    grep -q '^Requires=wg-quick@__WG_INTERFACE__.service$' "$u"
+    grep -q '^PartOf=wg-quick@__WG_INTERFACE__.service$' "$u"
+    grep -q '^User=caddy$' "$u"
+    grep -q -- '--config __CADDY_WG_FILE__ --adapter caddyfile' "$u"
+    run ! grep -qi 'tailscale' "$u"
+    body="$(awk '/^ensure_caddy_wg\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'caddy validate --config "$CADDY_WG_FILE"' <<<"$body"
+    grep -q 'systemctl restart caddy-wg.service' <<<"$body"
+    awk '/^stage_6\(\)/,/^assert_webdav_readonly_runtime\(\)/' "$V2_ROOT/install.sh" |
+        grep -q '^    ensure_caddy_wg "\$OS_CHANGED"$'
+    # WireGuard comes up after the firewall has its rules, then caddy-wg in stage 6.
+    awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
+        awk '/restart master-firewall.service/ {f = NR} /^    ensure_wireguard$/ {w = NR}
+             END { exit !(f && w && f < w) }'
+    # Stage 7 proves the interface, the peer count and the three UI ports.
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'wg show "$WG_INTERFACE" listen-port' <<<"$s7"
+    grep -q '"$wg_peers" -eq "$WG_PEER_COUNT"' <<<"$s7"
+    grep -q 'http://${WG_SERVER_IPV4}:${wg_ui_port}/' <<<"$s7"
 }

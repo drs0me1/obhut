@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Host INPUT + DOCKER-USER politikası. Staging zincir, atomik swap.
+# Host INPUT + DOCKER-USER + WireGuard FORWARD/NAT politikası. Staging zincir,
+# atomik swap.
 # Üçüncü taraf DOCKER-USER kuralları silinmez. Docker zincirleri silinmez.
 set -Eeuo pipefail
 
@@ -41,6 +42,26 @@ fi
 : "${TORRENT_PUBLIC_PORT:?}"
 : "${SSH_PUBLIC_PORT:?}"
 : "${TAILSCALE_UDP_PORT:?}"
+: "${CHAIN_FORWARD:?}"
+: "${CHAIN_NAT:?}"
+: "${WG_INTERFACE:?}"
+: "${WG_SERVER_IPV4:?}"
+: "${WG_SUBNET4:?}"
+: "${WG_SUBNET6:?}"
+: "${DOZZLE_UI_PORT:?}"
+: "${TORRENT_UI_PORT:?}"
+: "${FILEBROWSER_UI_PORT:?}"
+
+# nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
+# seçimi bu sarmalayıcılardadır.
+iptables_nat() { iptables -t nat "$@"; }
+ip6tables_nat() { ip6tables -t nat "$@"; }
+
+# DD-120: WireGuard istemcilerinin host'ta ulaşabildiği tek yer: caddy-wg'nin
+# WireGuard adresindeki arayüz portları.
+wg_ui_ports() {
+    printf '%s,%s,%s\n' "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"
+}
 
 input_line() {
     local bin="$1" target="$2"
@@ -195,6 +216,13 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    # DD-120: WireGuard istemcisi host'ta yalnız arayüz portlarına ve ping'e
+    # ulaşır; SSH, DNS ve TS IP (dolayısıyla WebDAV) kapalı.
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -d "$WG_SERVER_IPV4" -p tcp \
+        -m multiport --dports "$(wg_ui_ports)" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -d "$WG_SERVER_IPV4" -p icmp \
+        --icmp-type echo-request -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
@@ -244,8 +272,6 @@ apply_docker4() {
         -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
         -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
-        -m conntrack --ctstate NEW --ctorigdstport "$WG_PUBLIC_PORT" -j RETURN
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
@@ -273,14 +299,43 @@ apply_input6() {
         --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    # DD-120: arayüzlere WireGuard erişimi yalnız IPv4 adresinden.
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
+# DD-120: WireGuard istemcileri yalnız internete çıkar ve dönüşünü alır;
+# tailnet, Docker ağları ve istemciler arası trafik kapalı. Zincir FORWARD'ın
+# başına bağlanır; Docker ya da tailscaled yeniden başlayınca drop-in ve PartOf
+# politikayı yeniden uygular. Arada altta kalsa bile ts-forward tailnet'e yeni
+# bağlantıyı zaten düşürür.
+apply_forward() {
+    local bin="$1" prefix="$2" staging
+    staging="$(create_staging "$bin" "$prefix")"
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -o "$WAN_INTERFACE" -j ACCEPT
+    "$bin" -w 5 -A "$staging" -i "$WG_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -o "$WG_INTERFACE" \
+        -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    "$bin" -w 5 -A "$staging" -o "$WG_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -j RETURN
+    activate_named "$bin" FORWARD "$staging" "$CHAIN_FORWARD"
+}
+
+# DD-120: WireGuard alt ağı WAN'a çıkarken maskelenir (wg-easy'nin PostUp'ı
+# yerine; kural sahibi bu betik, DD-16/DD-17).
+apply_nat() {
+    local bin="$1" prefix="$2" subnet="$3" staging
+    staging="$(create_staging "$bin" "$prefix")"
+    "$bin" -w 5 -A "$staging" -s "$subnet" -o "$WAN_INTERFACE" -j MASQUERADE
+    "$bin" -w 5 -A "$staging" -j RETURN
+    activate_named "$bin" POSTROUTING "$staging" "$CHAIN_NAT"
+}
+
 apply_docker6() {
     # IPv4 ile aynı şekil: yalnız WAN'dan GELEN düşer, köprü çıkışı RETURN ile
-    # DOCKER-FORWARD'a devam eder. Koşulsuz DROP wg-easy peer IPv6 çıkışını da
-    # keserdi. Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
+    # DOCKER-FORWARD'a devam eder. Koşulsuz DROP köprü IPv6 çıkışını da keserdi
+    # (DD-71). Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
     local bin=ip6tables staging
     if ! wait_for_docker_user "$bin"; then
         printf 'firewall: UYARI: Docker yok/hazır değil; IPv6 MASTER-DOCKER atlandı (docker start → drop-in restart)\n'
@@ -408,10 +463,10 @@ wan_allow_pairs() {
 }
 
 # MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok).
+# WireGuard Docker'da değil (DD-120): portu yalnız INPUT'ta.
 docker_return_pairs() {
     [[ "$1" == v4 ]] || return 0
-    printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT" \
-        "udp $WG_PUBLIC_PORT"
+    printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT"
 }
 
 # Tek tek desen kontrolü "eksik kural" bulur, "fazladan kural" bulamaz:
@@ -440,6 +495,56 @@ check_input_chain() {
     done < <(wan_allow_pairs "$family")
     check_wan_allow_count "$bin" "$CHAIN_INPUT" ACCEPT "$n"
     check_chain_shape "$bin" "$CHAIN_INPUT" ACCEPT
+    check_rule "$bin" "$CHAIN_INPUT" -i "$WG_INTERFACE" -j DROP
+    if [[ "$family" == v4 ]]; then
+        check_rule "$bin" "$CHAIN_INPUT" -i "$WG_INTERFACE" -d "$WG_SERVER_IPV4" \
+            -p tcp -m multiport --dports "$(wg_ui_ports)" -j ACCEPT
+        check_rule "$bin" "$CHAIN_INPUT" -i "$WG_INTERFACE" -d "$WG_SERVER_IPV4" \
+            -p icmp --icmp-type echo-request -j ACCEPT
+        # `-S` önce -d, sonra -i yazar (ölçüldü, iptables 1.8 nft).
+        check_before "$bin" "$CHAIN_INPUT" "-i $WG_INTERFACE -j DROP" \
+            "-d $WG_SERVER_IPV4/32 -i $WG_INTERFACE "
+    fi
+}
+
+# check_before BIN CHAIN SON_KURAL ÖNCEKİ_DESEN — ÖNCEKİ_DESEN'le başlayan her
+# kural (-A CHAIN sonrası) SON_KURAL'dan önce gelmeli. -C sırayı görmez.
+check_before() {
+    local bin="$1" chain="$2" last="$3" earlier="$4" n=0 last_pos=0 max_earlier=0 line body
+    while IFS= read -r line; do
+        [[ "$line" == "-A $chain "* ]] || continue
+        n=$((n + 1))
+        body="${line#-A "$chain" }"
+        [[ "$body" == "$last" ]] && last_pos=$n
+        [[ "$body" == "$earlier"* ]] && max_earlier=$n
+    done < <("$bin" -w 5 -S "$chain")
+    [[ "$last_pos" -gt 0 ]] || die "$bin: $chain içinde '$last' yok"
+    [[ "$last_pos" -gt "$max_earlier" ]] ||
+        die "$bin: $chain sırası hatalı: '$earlier…' ($max_earlier) '$last' ($last_pos) önünde değil"
+}
+
+check_forward_chain() {
+    local bin="$1" count
+    check_jump_exactly_one "$bin" FORWARD "$CHAIN_FORWARD"
+    check_rule "$bin" "$CHAIN_FORWARD" -i "$WG_INTERFACE" -o "$WAN_INTERFACE" -j ACCEPT
+    check_rule "$bin" "$CHAIN_FORWARD" -i "$WG_INTERFACE" -j DROP
+    check_rule "$bin" "$CHAIN_FORWARD" -o "$WG_INTERFACE" \
+        -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    check_rule "$bin" "$CHAIN_FORWARD" -o "$WG_INTERFACE" -j DROP
+    check_before "$bin" "$CHAIN_FORWARD" "-i $WG_INTERFACE -j DROP" \
+        "-i $WG_INTERFACE -o $WAN_INTERFACE "
+    check_before "$bin" "$CHAIN_FORWARD" "-o $WG_INTERFACE -j DROP" \
+        "-o $WG_INTERFACE -m conntrack --ctstate RELATED,ESTABLISHED "
+    # Fazladan kural (ör. -i wg0 -j ACCEPT) -C ile görünmez; sayı birebir tutmalı.
+    count="$("$bin" -w 5 -S "$CHAIN_FORWARD" | grep -c "^-A $CHAIN_FORWARD " || true)"
+    [[ "$count" -eq 5 ]] || die "$bin: $CHAIN_FORWARD kural sayısı $count (beklenen 5)"
+}
+
+check_nat_chain() {
+    local bin="$1" subnet="$2"
+    check_jump_exactly_one "$bin" POSTROUTING "$CHAIN_NAT"
+    check_rule "$bin" "$CHAIN_NAT" -s "$subnet" -o "$WAN_INTERFACE" -j MASQUERADE
+    check_no_staging_artifacts "$bin"
 }
 
 check_docker_chain() {
@@ -485,6 +590,10 @@ if [[ "$MODE" == check ]]; then
     else
         printf 'firewall: Docker yok; IPv6 MASTER-DOCKER denetimi atlandı\n'
     fi
+    check_forward_chain iptables
+    check_forward_chain ip6tables
+    check_nat_chain iptables_nat "$WG_SUBNET4"
+    check_nat_chain ip6tables_nat "$WG_SUBNET6"
     printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi
@@ -494,10 +603,18 @@ apply_input4
 ensure_ts_input_precedence iptables
 apply_input6
 ensure_ts_input_precedence ip6tables
+apply_forward iptables "${CHAIN_STAGING_PREFIX}FW-"
+apply_forward ip6tables "${CHAIN_STAGING_PREFIX}FW6-"
+apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" "$WG_SUBNET4"
+apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" "$WG_SUBNET6"
 apply_docker4
 apply_docker6
 purge_staging_leftovers iptables
 purge_staging_leftovers ip6tables
+purge_staging_leftovers iptables_nat
+purge_staging_leftovers ip6tables_nat
 check_no_staging_artifacts iptables
 check_no_staging_artifacts ip6tables
+check_no_staging_artifacts iptables_nat
+check_no_staging_artifacts ip6tables_nat
 printf 'firewall: politika uygulandı (WAN if=%s)\n' "$WAN_INTERFACE"

@@ -44,7 +44,9 @@ state. Treat every change as production-infrastructure work.
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
   `admin` / `12345test` for Dozzle and Transmission; `admin` / `12345test1234`
-  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Answer the
+  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`; test
+  WireGuard keys and peers in the scratch `wireguard/` (never print real
+  keys; derive or compare them without output). Answer the
   re-run questions with their defaults and `E` at the confirmation, and report
   what was used. The input file is the truth (**DD-119**): a run rewrites any
   account that differs from it, so save and restore a real credential on
@@ -52,7 +54,8 @@ state. Treat every change as production-infrastructure work.
   Non-default config values still need the user.
 - **Never ask for, read, store or type a Tailscale auth key.** Only the
   operator puts one in `kurulum/kurulum.env` (**DD-115**, **DD-119**); never
-  open, print or copy that file.
+  open, print or copy that file. Running the launcher with the operator's
+  folder is allowed only when the user asks for it in chat.
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
   and wait; it expires if left unused.
 - That authorization does **not** cover: local Mac outside this repo;
@@ -91,6 +94,7 @@ state. Treat every change as production-infrastructure work.
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `container-backup.command` (root) | Container settings backup/restore launcher |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
+| `kurulum/wireguard/` (root) | WireGuard server key (`sunucu.key`) and one profile per peer (`<device>.conf`), mode 600 (**DD-120**) |
 | `backup/` (root) | Encrypted backups, Git-ignored |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |

@@ -45,6 +45,43 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-86, kernel WireGuard replaces wg-easy (DD-120):**
+- `kurulum/wireguard/sunucu.key` plus one wg-easy-format `<device>.conf` per
+  peer feed `wg-quick@wg0`, using wg-easy's addresses and port 61001.
+- The launcher tars them with `kurulum.env` to `/run`. Stage 0 slurps and
+  deletes the folder and validates it.
+- After the firewall, `wireguard-tools` is installed and the key match is
+  checked with `wg pubkey`. `wg0.conf` then gets public keys and PSKs only.
+- `master-firewall` gained `MASTER-FORWARD` (`wg0` → WAN only) and
+  `MASTER-NAT`; `MASTER-INPUT` lets `wg0` reach only `10.8.0.1` on the three
+  UI ports plus ping.
+- `caddy-wg` (admin off, bound to `10.8.0.1`) serves the UIs, independent of
+  Tailscale.
+- The wg-easy service, network, UI name and legacy modules are gone.
+- On `nrm`, before the migration run:
+  - The user had deleted the node from the tailnet at 00:52 CEST. A first
+    test run with a test file therefore stopped at stage 2 (no auth key,
+    410 retries); only the WebDAV htpasswd had changed, and it was restored
+    byte-identical.
+  - The four device profiles were generated from wg-easy's DB into
+    `kurulum/wireguard/` without printing keys, and they matched the running
+    peers.
+  - `docker rm -f wg-easy`, keeping the volume.
+- Migration and checks on `nrm`:
+  - v2-86 ran with the operator's own `kurulum/` folder, at the user's
+    request and never opened: the auth key logged back in, the node kept
+    100.76.190.121 and the run exited 0.
+  - A namespace test peer confirmed the allowed and blocked matrix; a no-op
+    re-run and a reboot came back clean.
+  - A real device then handshook and opened Dozzle at `10.8.0.1:61002`
+    (the user confirmed it).
+- bats 119.
+- **Open:**
+  - The operator re-approves the exit node and re-checks DNS in the Tailscale
+    admin console.
+  - Retire `container-backup` in a separate commit.
+  - Run a fresh-install test when `nrm` is reimaged.
+
 **2026-09-14 — v2-85, installer inputs from one file (DD-119):** the user runs
 a fixed setup and wants a reinstall with no typed answers.
 - `kurulum/kurulum.env` holds every input and is the truth on every run.

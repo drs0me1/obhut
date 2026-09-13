@@ -13,9 +13,9 @@ MARKER="__MASTER_STACK_ARCHIVE__"
 
 V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/install.sh")"
 [[ -n "$V2_VERSION" ]] || { echo "HATA: V2_VERSION okunamadı" >&2; exit 1; }
-# DD-119: girdi dosyasının sunucudaki yeri tek kaynaktan (defaults.env) gelir.
-INPUT_FILE="$(awk -F= '/^INPUT_FILE=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
-[[ "$INPUT_FILE" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_FILE /run altında değil: $INPUT_FILE" >&2; exit 1; }
+# DD-119/DD-120: girdilerin sunucudaki yeri tek kaynaktan (defaults.env) gelir.
+INPUT_DIR="$(awk -F= '/^INPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
+[[ "$INPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_DIR /run altında değil: $INPUT_DIR" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
@@ -115,7 +115,7 @@ PORTABLE_INSTALLER_VERSION="$V2_VERSION"
 PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
-REMOTE_INPUT_FILE="$INPUT_FILE"
+REMOTE_INPUT_DIR="$INPUT_DIR"
 EOF
     cat <<'BODY_END'
 
@@ -144,13 +144,13 @@ self="$here/$(basename -- "$0")"
 
 tgz="$(mktemp "${TMPDIR:-/tmp}/dsi-embed.XXXXXX.tgz")"
 remote_input_sent=0
-# Kurulum girdi dosyasını okur okumaz siler; bu yalnız yarıda kalan bir
-# oturumdan artakalanı temizler.
+# Kurulum girdileri okur okumaz siler; bu yalnız yarıda kalan bir oturumdan
+# artakalanı temizler.
 cleanup_local() {
     rm -f "$tgz"
     if [[ "$remote_input_sent" -eq 1 ]]; then
         ssh "${ssh_base[@]}" "$HOST" \
-            "rm -f '$REMOTE_INPUT_FILE' '$REMOTE_INPUT_FILE.incoming'" >/dev/null 2>&1 || true
+            "rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming'" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup_local EXIT
@@ -160,28 +160,41 @@ printf 'Sürüm:  %s\n' "$PORTABLE_INSTALLER_VERSION"
 printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
 printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
-# DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de.
-# Burada yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz,
-# alanların doğrulaması sunucuda kurulumun kendisindedir.
-INPUT_FILE_LOCAL="$here/kurulum/kurulum.env"
+# DD-119/DD-120: bütün girdiler .command'ın yanındaki kurulum/ klasöründe:
+# kurulum.env, wireguard/sunucu.key ve wireguard/<cihaz>.conf. Burada yalnız
+# varlıkları, izinleri ve SSH_HOST okunur; parolalara ve anahtarlara bakılmaz,
+# doğrulama sunucuda kurulumun kendisindedir.
+INPUT_LOCAL_DIR="$here/kurulum"
+INPUT_FILE_LOCAL="$INPUT_LOCAL_DIR/kurulum.env"
 if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
     echo "HATA: girdi dosyası yok: $INPUT_FILE_LOCAL" >&2
     echo "  Şablon: Data/config/kurulum.env.example — kurulum/kurulum.env olarak kopyalayıp doldurun," >&2
     echo "  ardından: chmod 600 kurulum/kurulum.env" >&2
     pause_exit 1
 fi
-input_mode="$(stat -f %Lp "$INPUT_FILE_LOCAL")"
-if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
-    echo "HATA: $INPUT_FILE_LOCAL izinleri $input_mode; parola içerdiği için 600 olmalı:" >&2
-    echo "  chmod 600 \"$INPUT_FILE_LOCAL\"" >&2
+if [[ ! -f "$INPUT_LOCAL_DIR/wireguard/sunucu.key" ]]; then
+    echo "HATA: WireGuard sunucu anahtarı yok: $INPUT_LOCAL_DIR/wireguard/sunucu.key" >&2
+    echo "  Cihaz profilleri de aynı klasörde: kurulum/wireguard/<cihaz>.conf" >&2
     pause_exit 1
 fi
+input_files=(kurulum.env wireguard/sunucu.key)
+for f in "$INPUT_LOCAL_DIR"/wireguard/*.conf; do
+    [[ -f "$f" ]] && input_files+=("wireguard/${f##*/}")
+done
+for f in "${input_files[@]}"; do
+    input_mode="$(stat -f %Lp "$INPUT_LOCAL_DIR/$f")"
+    if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
+        echo "HATA: kurulum/$f izinleri $input_mode; parola ya da anahtar içerdiği için 600 olmalı:" >&2
+        echo "  chmod 600 \"$INPUT_LOCAL_DIR/$f\"" >&2
+        pause_exit 1
+    fi
+done
 HOST="$(awk 'index($0, "SSH_HOST=") == 1 {print substr($0, 10); exit}' "$INPUT_FILE_LOCAL")"
 if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
     echo "HATA: kurulum.env içinde SSH_HOST boş ya da geçersiz (ör. SSH_HOST=nrm)" >&2
     pause_exit 1
 fi
-echo "Sunucu:  $HOST (kurulum/kurulum.env)"
+echo "Sunucu:  $HOST (kurulum/kurulum.env); WireGuard profili: $((${#input_files[@]} - 2))"
 
 echo "==> Gömülü arşiv açılıyor"
 marker_line="$(grep -n "^${ARCHIVE_MARKER}$" "$self" | head -n1 | cut -d: -f1 || true)"
@@ -255,13 +268,16 @@ grep -E '^V2_VERSION=' "\$remote_root/install.sh"
 echo "SYNC_OK → \$remote_root"
 EOF
 
-# /run tmpfs değilse dosya diske inerdi: gönderilmez.
-echo "==> Girdi dosyası gönderiliyor → ${HOST}:${REMOTE_INPUT_FILE} (tmpfs)"
+# /run tmpfs değilse girdiler diske inerdi: gönderilmez. Yalnız listelenen
+# dosyalar gider (Finder'ın .DS_Store'u, yedek kopyalar gitmez).
+echo "==> Girdiler gönderiliyor → ${HOST}:${REMOTE_INPUT_DIR} (tmpfs)"
 remote_input_sent=1
-ssh "${ssh_base[@]}" "$HOST" "set -e; umask 077; install -d -m 0700 '${REMOTE_INPUT_FILE%/*}'; \
-fs=\$(stat -f -c %T '${REMOTE_INPUT_FILE%/*}'); \
-[ \"\$fs\" = tmpfs ] || { echo \"HATA: ${REMOTE_INPUT_FILE%/*} tmpfs değil (\$fs); girdi dosyası gönderilmedi\" >&2; exit 1; }; \
-cat >'$REMOTE_INPUT_FILE.incoming'; mv -f '$REMOTE_INPUT_FILE.incoming' '$REMOTE_INPUT_FILE'" <"$INPUT_FILE_LOCAL"
+COPYFILE_DISABLE=1 tar -C "$INPUT_LOCAL_DIR" --no-xattrs --no-mac-metadata -cf - "${input_files[@]}" |
+    ssh "${ssh_base[@]}" "$HOST" "set -e; umask 077; install -d -m 0700 '${REMOTE_INPUT_DIR%/*}'; \
+fs=\$(stat -f -c %T '${REMOTE_INPUT_DIR%/*}'); \
+[ \"\$fs\" = tmpfs ] || { echo \"HATA: ${REMOTE_INPUT_DIR%/*} tmpfs değil (\$fs); girdiler gönderilmedi\" >&2; exit 1; }; \
+rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming'; mkdir -m 0700 '$REMOTE_INPUT_DIR.incoming'; \
+tar -C '$REMOTE_INPUT_DIR.incoming' --no-same-owner -xf -; mv '$REMOTE_INPUT_DIR.incoming' '$REMOTE_INPUT_DIR'"
 
 printf '\n==> Kurulum başlıyor: %s\n' "$HOST"
 printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n\n'
