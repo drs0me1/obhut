@@ -5,6 +5,11 @@ umask 077
 export LC_ALL=C
 
 SERVICES=(portainer filebrowser qbittorrent wg-easy)
+# Her servisten yalnız operatörün oluşturduğu durumu tutan dosya: hesaplar,
+# parolalar, qBittorrent tercihleri, wg-easy peer'ları. Anahtarlar, sertifikalar,
+# wg0.conf ve imaj varsayılan ayarları kurulum/uygulama yeniden üretir (DD-114).
+declare -A SCOPE=([portainer]=portainer.db [filebrowser]=filebrowser.db
+    [qbittorrent]=qBittorrent/qBittorrent.conf [wg-easy]=wg-easy.db)
 declare -A DATA=() IDS=()
 RESTART=()
 RESTORING=0
@@ -116,30 +121,26 @@ inventory() {
 }
 
 snapshot() {
-    local out=$1 kind=$2 c entry name
+    local out=$1 kind=$2 c entry side
     mkdir -m 700 "$out"
     for c in "${SERVICES[@]}"; do
         mkdir -m 700 "$out/$c"
-        if [[ "$c" == qbittorrent ]]; then
-            entry="${DATA[$c]}/qBittorrent/qBittorrent.conf"
-            [[ ! -L "$entry" ]] || fail "qBittorrent.conf symlink olamaz."
-            if [[ -f "$entry" ]]; then cp -a "$entry" "$out/$c/"; fi
-        else
-            while IFS= read -r -d '' entry; do
-                name=${entry##*/}
-                if [[ "$c" == portainer && ( "$name" == bin || "$name" == backups ) ]]; then continue; fi
-                cp -a "$entry" "$out/$c/"
-            done < <(find "${DATA[$c]}" -mindepth 1 -maxdepth 1 -print0)
-            chmod --reference="${DATA[$c]}" "$out/$c"
-            chown --reference="${DATA[$c]}" "$out/$c"
-        fi
+        entry="${DATA[$c]}/${SCOPE[$c]}"
+        [[ ! -e "$entry" || "$(realpath -e "$entry")" == "$entry" ]] || fail "$c: ${SCOPE[$c]} yolunda symlink olamaz."
+        # Temiz kapanışta SQLite yan dosyalarını boşaltır; dolu kalmışsa tek
+        # veritabanı dosyası eksik olur.
+        for side in -wal -journal; do
+            [[ ! -s "$entry$side" ]] || fail "$c: ${SCOPE[$c]}$side dolu; uygulama temiz kapanmadı, yedek alınmadı."
+        done
+        if [[ -f "$entry" ]]; then cp -a "$entry" "$out/$c/"; fi
     done
     # Only regular files and directories with portable names enter the format.
     find "$out" -mindepth 1 -printf '%y %P\n' >"$WORK/tree.txt"
     awk '$1 !~ /^[fd]$/ || $2 !~ /^[a-zA-Z0-9_.\/-]+$/ || NF!=2 {exit 1}' "$WORK/tree.txt" ||
         fail "Desteklenmeyen dosya adı/symlink/özel dosya; yedek oluşturulmadı."
     if [[ "$kind" == settings ]]; then
-        for entry in portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf; do
+        for c in "${SERVICES[@]}"; do
+            entry="$c/${SCOPE[$c]##*/}"
             [[ -s "$out/$entry" ]] || fail "Ayarlanmış kaynak dosyası eksik: $entry"
         done
     fi
@@ -185,12 +186,22 @@ validate_bundle() {
     for rel in "${SERVICES[@]}"; do [[ -d "$out/$rel" ]] || fail "Yedekte servis eksik: $rel"; done
     inventory "$out" >"$WORK/actual.json"
     jq -e --slurpfile actual "$WORK/actual.json" '.files==$actual[0]' "$out/manifest.json" >/dev/null || fail "Dosya SHA256/sahiplik/izin doğrulaması başarısız."
-    if [[ $(jq -r .kind "$out/manifest.json") == settings ]]; then
-        for rel in portainer/portainer.db filebrowser/filebrowser.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db wg-easy/wg0.conf; do
-            [[ -s "$out/$rel" ]] || fail "Yedekte gerekli dosya eksik: $rel"
+    local c scoped=0 side
+    for c in "${SERVICES[@]}"; do
+        rel="$c/${SCOPE[$c]##*/}"
+        for side in -wal -journal; do
+            [[ ! -s "$out/$rel$side" ]] || fail "Yedekte dolu SQLite yan dosyası var: $rel$side"
         done
+        if [[ -f "$out/$rel" ]]; then scoped=$((scoped + 1)); fi
+        if [[ $(jq -r .kind "$out/manifest.json") == settings ]]; then
+            [[ -s "$out/$rel" ]] || fail "Yedekte gerekli dosya eksik: $rel"
+        fi
+    done
+    # 2026-09-13 öncesi yedekler servis dizinlerinin tamamını taşır.
+    if (( $(jq '.files|length' "$out/manifest.json") > scoped )); then
+        say "Not: eski kapsamlı yedek; anahtar/sertifika/türetilmiş dosyalar yüklenmez, her servisten yalnız ayar dosyası yüklenir."
     fi
-    say "Yedek doğrulandı: $(jq '.files|length' "$out/manifest.json") dosya."
+    say "Yedek doğrulandı: $(jq '.files|length' "$out/manifest.json") dosya, yüklenecek $scoped."
 }
 
 check_target() {
@@ -218,33 +229,31 @@ check_target() {
     fi
 }
 
+# Yalnız dört dosya yazılır; hedefteki diğer her şey (anahtarlar, sertifikalar,
+# wg0.conf, önbellekler) kurulumun/uygulamanın bıraktığı gibi kalır. Arşivde
+# olmayan kapsam dosyası hedeften kaldırılır: kurtarma anlık kopyası o dosyanın
+# işlem öncesi yokluğunu da geri getirir.
 apply_tree() {
-    local source=$1 c dest entry name tmp
+    local source=$1 c dest dir src tmp side
     for c in "${SERVICES[@]}"; do
-        dest=${DATA[$c]}
-        [[ -d "$dest" && "$(realpath -e "$dest")" == "$dest" ]] || return 1
-        if [[ "$c" == qbittorrent ]]; then
-            [[ ! -L "$dest/qBittorrent" ]] || return 1
-            if [[ ! -d "$dest/qBittorrent" ]]; then
-                mkdir -m 755 "$dest/qBittorrent" || return 1
-                if [[ -f "$source/$c/qBittorrent.conf" ]]; then
-                    chown --reference="$source/$c/qBittorrent.conf" "$dest/qBittorrent" || return 1
-                fi
-            fi
-            if [[ -f "$source/$c/qBittorrent.conf" ]]; then
-                tmp=$(mktemp "$dest/qBittorrent/.restore.XXXXXXXX") || return 1
-                cp -a "$source/$c/qBittorrent.conf" "$tmp" || return 1
-                mv -fT "$tmp" "$dest/qBittorrent/qBittorrent.conf" || return 1
-            else
-                rm -f -- "$dest/qBittorrent/qBittorrent.conf" || return 1
-            fi
+        [[ -d "${DATA[$c]}" && "$(realpath -e "${DATA[$c]}")" == "${DATA[$c]}" ]] || return 1
+        dest="${DATA[$c]}/${SCOPE[$c]}"
+        dir=${dest%/*}
+        src="$source/$c/${SCOPE[$c]##*/}"
+        if [[ ! -e "$dir" && ! -L "$dir" ]]; then
+            # Yalnız qBittorrent/ hiç açılmamış bir uygulamada eksik olabilir.
+            mkdir -m 755 "$dir" || return 1
+            if [[ -f "$src" ]]; then chown --reference="$src" "$dir" || return 1; fi
+        fi
+        [[ -d "$dir" && "$(realpath -e "$dir")" == "$dir" && ! -L "$dest" ]] || return 1
+        # Hedefte kalan SQLite yan dosyaları geri yüklenen veritabanına işlenmesin.
+        for side in -wal -shm -journal; do rm -f -- "$dest$side" || return 1; done
+        if [[ -f "$src" ]]; then
+            tmp=$(mktemp "$dir/.restore.XXXXXXXX") || return 1
+            cp -a "$src" "$tmp" || return 1
+            mv -fT "$tmp" "$dest" || return 1
         else
-            while IFS= read -r -d '' entry; do
-                name=${entry##*/}
-                if [[ "$c" == portainer && ( "$name" == bin || "$name" == backups ) ]]; then continue; fi
-                rm -rf -- "$entry" || return 1
-            done < <(find "$dest" -mindepth 1 -maxdepth 1 -print0)
-            cp -a "$source/$c/." "$dest/" || return 1
+            rm -f -- "$dest" || return 1
         fi
     done
 }

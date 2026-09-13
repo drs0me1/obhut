@@ -4627,6 +4627,76 @@ failure with an early, named one.
   `tests/README.md`). Ubuntu: not re-run; the files match what the Ubuntu
   image already carries, and the package is present there by default.
 
+### DD-114: Container backups carry one operator-state file per service (2026-09-13)
+
+- **Decision:** `container-backup` saves and restores exactly four files:
+  Portainer's `portainer.db`, FileBrowser's `filebrowser.db`, qBittorrent's
+  `qBittorrent.conf` and wg-easy's `wg-easy.db`. Restore replaces each one
+  atomically with its recorded owner and mode, removes SQLite side files
+  beside it, and touches nothing else on the destination. Whole-directory
+  archives from before this date still restore; only these four files are
+  taken from them.
+- **Why:** the user listed everything they do after an install: create the
+  Portainer admin from the setup token, change the FileBrowser password,
+  change the qBittorrent user name, password and a few preferences, create
+  the wg-easy account and the peers. Each of those lives in one file. The
+  user's concern was that writing more back — keys, certificates, derived
+  configuration — could interfere with what a newer image produces for
+  itself. Carrying only the state the operator created removes that
+  question.
+- **Why the other files are safe to leave behind (measured on `nrm`):**
+  - wg-easy wrote `wg0.conf` one second after its container started, so the
+    file is rendered from `wg-easy.db` on every start.
+  - FileBrowser's `config/settings.json` carries a July image-build date,
+    and a fresh FileBrowser created it on first start. The Compose command
+    line overrides its address, port, root and database.
+  - Portainer's keys, certificates and Edge tunnel key are dated from the
+    install. A throwaway Portainer, started once so it generated its own
+    keys, was then given only a backed-up `portainer.db`. It served
+    `/api/status`, reported the admin as present and rejected a wrong
+    password with 422 (the user table was read), and its own keys stayed in
+    place. It logged no errors.
+  - A throwaway FileBrowser run with the Compose restrictions behaved the
+    same with only `filebrowser.db`: healthy, and 403 for a wrong login.
+  - Both throwaway containers had no published port and no Docker socket,
+    and were removed.
+- **SQLite side files:** replacing a single SQLite database while an old
+  `-wal` is left beside it would let SQLite replay the destination's
+  transactions onto the restored file. Restore removes `-wal`, `-shm` and
+  `-journal` next to each restored file. A backup refuses a database whose
+  WAL or journal is not empty after the clean stop, and validation refuses an
+  archive that carries one. BoltDB and the `.conf` file have none. This
+  replaces the protection the old whole-directory copy gave implicitly.
+- **Trade-offs:** the following are not carried:
+  - Portainer stacks deployed from Portainer, whose compose files live under
+    `/data/compose/`.
+  - Edits to FileBrowser's `settings.json`.
+  - qBittorrent's categories, RSS, watched folders and torrent list.
+  - Stale files on the destination, which are no longer cleaned; there is
+    nothing to clean on a fresh install.
+
+  The restore semantics also changed: a scope file absent from the archive is
+  removed, which is how the server-side recovery snapshot brings back a file
+  that did not exist before.
+- **Considered and not committed:** widening qBittorrent to its whole
+  settings tree minus GeoDB, logs, the RSS article cache and runtime files.
+  It was built and verified on 2026-09-13, then reverted before commit when
+  the user described what they actually change.
+- **Verified (2026-09-13):**
+  - The isolated round-trip on `nrm` passed, 18 checks including an archive
+    with exactly four files, untouched out-of-scope files, side-file
+    clearing, a qBittorrent that never started, whole-directory archives,
+    rollback, and non-empty-WAL rejection.
+  - Live from the Mac: the backup held exactly the four files (40 KB), and a
+    self-restore took 16 s.
+  - After the restore, `qBittorrent.conf` and `wg-easy.db` were
+    byte-identical to the archive. The two BoltDB files had been updated by
+    their applications on open. Owners and modes matched on all four.
+  - All 12 out-of-scope files were unchanged in content; 6/6 containers ran,
+    3/3 healthy, every peer was present and the web UIs answered.
+  - The user's real 2026-09-12 backup lists only entries the validator
+    accepts, and `check` on a same-format archive reported "4 to load".
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

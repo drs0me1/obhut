@@ -27,15 +27,38 @@ project prefix. The current `nrm` inventory on 2026-09-05 was:
 
 | Service | Container path | Saved content |
 |---|---|---|
-| Portainer | `/data` | Database, users, settings, keys, certificates and Portainer stack definitions; `bin/` cache and `backups/` are excluded |
-| FileBrowser | `/database` and its nested `/config` bind | `filebrowser.db` and `config/settings.json`, including user accounts and preferences |
-| qBittorrent | `/config/qBittorrent/qBittorrent.conf` | Only this file: Web UI account/password hash and user preferences |
-| wg-easy | `/etc/wireguard` | Database, server/client keys and WireGuard configuration; currently `wg-easy.db` and `wg0.conf` |
+| Portainer | `/data/portainer.db` | Users, including the admin created with the setup token; settings and environments |
+| FileBrowser | `/database/filebrowser.db` | Users and their passwords, preferences and shares |
+| qBittorrent | `/config/qBittorrent/qBittorrent.conf` | Web UI user name and password hash, and preferences |
+| wg-easy | `/etc/wireguard/wg-easy.db` | The wg-easy account, the server keys and every client (peer) |
+
+One file per service, and nothing else (**DD-114**). The scope follows what an
+operator does after an install: create the Portainer admin, change the
+FileBrowser and qBittorrent passwords and a few qBittorrent preferences,
+create the wg-easy account and the peers. Everything else in these
+directories is produced by the install or by the application, and restore
+leaves the destination's copies alone:
+
+- Portainer generates `portainer.key`/`.pub`, `certs/` and `chisel/` on first
+  start. Measured 2026-09-13: a fresh Portainer given only a backed-up
+  `portainer.db` started cleanly with its own keys and recognised the admin.
+- FileBrowser copies the image's default `config/settings.json` in on first
+  start; the Compose command line overrides its address, port, root and
+  database. A fresh FileBrowser given only `filebrowser.db` started cleanly
+  and read its users.
+- wg-easy rewrites `wg0.conf` from its database every time it starts
+  (observed one second after start).
+- qBittorrent's categories, RSS, watched folders, torrent list, GeoIP data
+  and logs are not settings this workflow changes.
+
+Not carried, therefore: Portainer stacks deployed from Portainer (their
+compose files live under `/data/compose/`), edits to FileBrowser's
+`settings.json`, and qBittorrent state other than its preferences file.
 
 Portainer data is configuration for Portainer itself, not a backup of the
 containers it manages. See [Portainer's backup scope](https://docs.portainer.io/faqs/getting-started/what-does-portainers-backup-include).
 LinuxServer persists application settings under `/config`; this utility
-intentionally narrows qBittorrent to the one requested preferences file.
+takes only the preferences file from it.
 See [LinuxServer's volume documentation](https://docs.linuxserver.io/general/volumes/).
 
 The installer's own inputs — `/etc/master-stack/config.env` (domain, ports,
@@ -45,11 +68,9 @@ the same WebDAV user and password keeps Infuse working with its stored
 credentials once its address is updated. WebDAV has no other server-side
 state: the rclone container runs read-only with no configuration file.
 
-Excluded: downloads/media, torrent resume files, categories, RSS, watched
-folders, GeoDB, logs, Docker images, WebDAV, Unpackerr, host firewall/DNS and
-Tailscale identity. qBittorrent exclusions on the destination are preserved,
-not reset, when restoring its single configuration file. WebDAV and Unpackerr
-remain installer-configured.
+Also excluded: downloads/media, Docker images, WebDAV, Unpackerr, host
+firewall/DNS and Tailscale identity. WebDAV and Unpackerr remain
+installer-configured.
 
 ## Files and usage
 
@@ -73,8 +94,10 @@ current settings.
 
 Backups taken before 2026-09-11 are plaintext `settings.tar.gz`. They remain
 selectable for `check` and `restore` without a password, and are reported as
-unencrypted. The archive layout and manifest schema are unchanged, so old and
-new backups differ only in the encryption wrapper.
+unencrypted. Backups taken before 2026-09-13 carry whole service directories
+(keys, certificates, `wg0.conf`, `settings.json`). They still validate and
+restore; only the four files are taken from them, and `check` says so. The
+manifest schema is unchanged.
 
 ```bash
 # Interactive menu (also works by double-clicking in Finder)
@@ -99,7 +122,12 @@ new backups differ only in the encryption wrapper.
 are read from standard input without echo, so automation can pipe them in,
 at the cost of leaving them in shell history.
 
-Restore validates the archive and target, then replaces the data. The
+Restore validates the archive and target, then writes the four files, each
+replaced atomically with its recorded owner and mode. SQLite side files
+(`-wal`, `-shm`, `-journal`) next to a restored database are removed so they
+cannot be replayed onto it, and a backup refuses a database whose WAL or
+journal is not empty after the clean stop. Files the archive does not hold are
+not touched. The
 decrypted archive is uploaded once; validation and the restore run in the
 same remote temporary directory over one multiplexed SSH connection. While
 the containers are stopped, immediately before replacing
@@ -248,9 +276,12 @@ bats tests   # includes a static check keeping the launcher on bash 3.2 features
 `tests/backup-roundtrip.sh` runs as root on Linux, exclusively against temporary
 directories, and is part of the host acceptance sequence after every
 Debian/Ubuntu install (see `tests/README.md`). It covers archive round-trip,
-SHA-256 and ownership/modes, out-of-scope preservation, stale-file removal,
-rollback on error, and rejection of traversal/absolute paths, symlinks,
-hardlinks, tampered and out-of-scope archives. Target checks cover reordered
+SHA-256 and ownership/modes, an archive holding exactly the four files,
+restore leaving every other file on the destination untouched, SQLite side
+files, a qBittorrent that never started, whole-directory archives from before
+2026-09-13, rollback on error (including removing a file that did not exist
+before), and rejection of traversal/absolute paths, symlinks, hardlinks,
+non-empty WAL, tampered and out-of-scope archives. Target checks cover reordered
 PUID/PGID lists as well as rejection of actual UID/GID, user and port changes.
 Different image digests/tags are accepted with a warning and no override. An
 optional archive argument exercises a real backup against those isolated
@@ -311,3 +342,16 @@ the tool stays a copy-and-load tool for container settings (**DD-112**). The
 two test archives written by that build contain a `host/` directory and are
 rejected by the final tool as out of scope. The full runbook from a bare OS
 has not been run yet.
+
+On 2026-09-13 the scope was narrowed to one file per service. On `nrm`
+(Debian 13.6, the configured production host): throwaway Portainer and
+FileBrowser containers without published ports, given only the backed-up
+database, started cleanly with their own keys and read the existing accounts,
+then were removed. The isolated round-trip passed. From the Mac, a backup
+held exactly the four files (40 KB encrypted); `check` passed on it and, with
+a note, on a whole-directory archive from 2026-09-11; a restore onto the same
+host completed in 16 s. Afterwards `qBittorrent.conf` and `wg-easy.db` matched
+the archive byte for byte, the two BoltDB files had been updated by their
+applications on start, owners and modes matched on all four, all 12 files
+outside the scope were unchanged in content, and 6/6 containers ran with 3/3
+healthy and every WireGuard peer present.

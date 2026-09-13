@@ -133,7 +133,7 @@ if [[ "$ACTION" == restore || "$ACTION" == check ]]; then
         printf 'UYARI: bu yedek şifresiz (eski sürüm); yeni yedekler şifreli alınır.\n'
     fi
 fi
-printf 'Kapsam: Portainer, FileBrowser, wg-easy; qBittorrent yalnız qBittorrent.conf.\n'
+printf 'Kapsam (her servisten tek dosya): Portainer ve FileBrowser kullanıcıları, qBittorrent ayarları, wg-easy hesabı ve peer'\''ları.\n'
 printf 'Yedekler parola ile şifrelenir (AES-256, PBKDF2); parola kaybolursa yedek çözülemez.\n'
 if [[ "$ACTION" == backup ]]; then read_password 1; fi
 if [[ "$ACTION" == backup || "$ACTION" == restore ]]; then

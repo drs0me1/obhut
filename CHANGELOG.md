@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-13 — Container backups carry one file per service
+
+- **Changed:** `container-backup` saves and restores only the files holding
+  what an operator creates: `portainer.db`, `filebrowser.db`,
+  `qBittorrent.conf` and `wg-easy.db`. Keys, certificates, `wg0.conf` and
+  FileBrowser's `settings.json` are produced by the install or the
+  application and are no longer copied or overwritten; restore touches
+  nothing but the four files and clears SQLite side files beside them
+  (**DD-114**).
+- **Compatibility:** whole-directory archives from before this date still
+  validate and restore; only the four files are taken from them, and `check`
+  says so.
+- **Verified on `nrm`:**
+  - Throwaway Portainer and FileBrowser instances accepted a backed-up
+    database with their own fresh keys.
+  - The isolated round-trip passed.
+  - A live backup held exactly four files (40 KB), and a self-restore left
+    all 12 out-of-scope files unchanged, with 6/6 containers healthy.
+
 ### 2026-09-12 — Unattended security upgrades, reboot left to the operator (v2-80)
 
 - **Added:** stage 1 installs `unattended-upgrades`, writes

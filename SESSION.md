@@ -45,6 +45,18 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-13 — container-backup narrowed to one file per service (DD-114):**
+the user described their whole post-install routine (Portainer admin,
+FileBrowser and qBittorrent passwords and a few preferences, wg-easy account
+and peers) and asked to minimise the scope. The same morning's uncommitted
+widening of qBittorrent to its settings tree was reverted. Backups now carry
+`portainer.db`, `filebrowser.db`, `qBittorrent.conf` and `wg-easy.db` only;
+restore writes those four and clears SQLite side files, leaving keys,
+certificates, `wg0.conf` and `settings.json` to the install/app. Proven with
+throwaway Portainer/FileBrowser instances and a live self-restore on `nrm`
+(12 out-of-scope files unchanged). The user's 2026-09-12 real backup stays
+valid. The test archive `backup/20260913T105036Z-nrm-settings.DGguu4` came
+from the reverted widening and is rejected; delete it.
 **2026-09-12 — v2-80, unattended security upgrades (DD-113):** the user
 reimaged `nrm` as Debian 13.6, installed v2-79 by hand and restored the real
 backup — the first bare-OS run of the runbook; the outcome was verified

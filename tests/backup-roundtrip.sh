@@ -13,19 +13,24 @@ trap test_cleanup EXIT
 WORK="$TEST_DIR/work"
 mkdir "$WORK"
 for c in "${SERVICES[@]}"; do DATA[$c]="$TEST_DIR/$c"; mkdir "${DATA[$c]}"; done
-mkdir -p "${DATA[qbittorrent]}/qBittorrent/BT_backup" "${DATA[filebrowser]}/config" "${DATA[portainer]}/bin" "${DATA[portainer]}/backups"
-printf 'portainer fixture\n' >"${DATA[portainer]}/portainer.db"
-printf 'filebrowser fixture\n' >"${DATA[filebrowser]}/filebrowser.db"
-printf '{}\n' >"${DATA[filebrowser]}/config/settings.json"
-printf 'preferences fixture\n' >"${DATA[qbittorrent]}/qBittorrent/qBittorrent.conf"
-printf 'categories must survive\n' >"${DATA[qbittorrent]}/qBittorrent/categories.json"
-printf 'torrent must survive\n' >"${DATA[qbittorrent]}/qBittorrent/BT_backup/torrent.fastresume"
-printf 'cache must survive\n' >"${DATA[portainer]}/bin/cache"
-printf 'old backup must survive\n' >"${DATA[portainer]}/backups/prior.db"
-printf 'wg database fixture\n' >"${DATA[wg-easy]}/wg-easy.db"
-printf 'wg config fixture\n' >"${DATA[wg-easy]}/wg0.conf"
+QB="${DATA[qbittorrent]}/qBittorrent"
+mkdir -p "$QB/BT_backup" "${DATA[filebrowser]}/config" "${DATA[portainer]}/certs" "${DATA[portainer]}/bin"
+# In scope: what the operator creates — accounts, passwords, peers, preferences.
+printf 'portainer users fixture\n' >"${DATA[portainer]}/portainer.db"
+printf 'filebrowser users fixture\n' >"${DATA[filebrowser]}/filebrowser.db"
+printf 'preferences fixture\n' >"$QB/qBittorrent.conf"
+printf 'wg account and peers fixture\n' >"${DATA[wg-easy]}/wg-easy.db"
+# Out of scope: produced by the install or by the application on start.
+printf 'instance key\n' >"${DATA[portainer]}/portainer.key"
+printf 'certificate\n' >"${DATA[portainer]}/certs/cert.pem"
+printf 'cache\n' >"${DATA[portainer]}/bin/cache"
+printf '{"port":80}\n' >"${DATA[filebrowser]}/config/settings.json"
+printf 'rendered from wg-easy.db\n' >"${DATA[wg-easy]}/wg0.conf"
+printf 'categories\n' >"$QB/categories.json"
+printf 'resume\n' >"$QB/BT_backup/torrent.fastresume"
 chmod 640 "${DATA[filebrowser]}/filebrowser.db"
 chown 1000:1000 "${DATA[filebrowser]}" "${DATA[filebrowser]}/filebrowser.db"
+chown -R 1000:1000 "${DATA[qbittorrent]}"
 jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] |
     map({name:.,image:"fixture",image_id:"sha256:fixture",user:"",ids:[],ports:{}}) |
     map(if .name=="qbittorrent" then
@@ -34,6 +39,10 @@ jq -n '["filebrowser","portainer","qbittorrent","wg-easy"] |
     else . end)' >"$WORK/services.json"
 snapshot "$WORK/source" settings
 pack "$WORK/source" "$WORK/source.tar.gz"
+tar -tzf "$WORK/source.tar.gz" | grep -v '/$' | sort >"$WORK/members.txt"
+printf '%s\n' filebrowser/filebrowser.db manifest.json portainer/portainer.db qbittorrent/qBittorrent.conf wg-easy/wg-easy.db |
+    sort | diff - "$WORK/members.txt"
+printf 'PASS: the archive holds exactly the four operator-state files\n'
 validate_bundle "$WORK/source.tar.gz" "$WORK/validated"
 check_target "$WORK/validated"
 cp "$WORK/services.json" "$WORK/original-services.json"
@@ -69,7 +78,7 @@ set -e
 (( rc != 0 )) || fail 'A changed port must still be rejected.'
 grep -Fq 'qbittorrent ports:' "$WORK/target-reject.log"
 printf 'PASS: genuine PUID, PGID and port changes remain rejected\n'
-# A fresh v73 install can pull a newer digest under the same moving tag.
+# A fresh install can pull a newer digest under the same moving tag.
 # Version changes are warnings, without any explicit override argument.
 for c in "${SERVICES[@]}"; do
     jq --arg c "$c" 'map(if .name==$c then .image_id="sha256:different" else . end)' \
@@ -90,17 +99,26 @@ set -e
 (( rc != 0 )) || fail 'A changed runtime user must still be rejected.'
 cp "$WORK/original-services.json" "$WORK/services.json"
 printf 'PASS: target user incompatibility rejected before writes\n'
-[[ ! -e "$WORK/validated/qbittorrent/categories.json" && ! -e "$WORK/validated/portainer/bin" ]]
-printf 'changed preference\n' >"${DATA[qbittorrent]}/qBittorrent/qBittorrent.conf"
-printf 'extra stale file\n' >"${DATA[wg-easy]}/obsolete"
+
+# The destination is a fresh install: its own keys, rendered wg0.conf and image
+# defaults, plus database side files a restore must not let SQLite replay.
+printf 'destination key\n' >"${DATA[portainer]}/portainer.key"
+printf 'destination wg0\n' >"${DATA[wg-easy]}/wg0.conf"
+printf '{"port":8080}\n' >"${DATA[filebrowser]}/config/settings.json"
+printf 'changed preference\n' >"$QB/qBittorrent.conf"
+printf 'destination peers\n' >"${DATA[wg-easy]}/wg-easy.db"
 snapshot "$WORK/rollback" rollback
+printf 'stale wal\n' >"${DATA[wg-easy]}/wg-easy.db-wal"
+printf 'stale shm\n' >"${DATA[wg-easy]}/wg-easy.db-shm"
+( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name portainer.db ! -name filebrowser.db ! -name qBittorrent.conf \
+    ! -name 'wg-easy.db*' -exec sha256sum {} + | sort ) >"$WORK/untouched-before.txt"
 apply_tree "$WORK/validated"
-[[ ! -e "${DATA[wg-easy]}/obsolete" ]]
-cmp "$WORK/validated/qbittorrent/qBittorrent.conf" "${DATA[qbittorrent]}/qBittorrent/qBittorrent.conf"
+for c in "${SERVICES[@]}"; do cmp "$WORK/validated/$c/${SCOPE[$c]##*/}" "${DATA[$c]}/${SCOPE[$c]}"; done
 [[ $(stat -c '%a:%u:%g' "${DATA[filebrowser]}/filebrowser.db") == 640:1000:1000 ]]
-[[ $(cat "${DATA[qbittorrent]}/qBittorrent/categories.json") == 'categories must survive' ]]
-[[ -f "${DATA[qbittorrent]}/qBittorrent/BT_backup/torrent.fastresume" && -f "${DATA[portainer]}/bin/cache" && -f "${DATA[portainer]}/backups/prior.db" ]]
-printf 'PASS: archive roundtrip, UID/GID/modes, excluded files preserved\n'
+[[ ! -e "${DATA[wg-easy]}/wg-easy.db-wal" && ! -e "${DATA[wg-easy]}/wg-easy.db-shm" ]]
+( cd "$TEST_DIR" && find . -type f ! -path './work/*' ! -name portainer.db ! -name filebrowser.db ! -name qBittorrent.conf \
+    ! -name 'wg-easy.db*' -exec sha256sum {} + | sort ) | diff "$WORK/untouched-before.txt" -
+printf 'PASS: restore writes only the four files with their UID/GID/modes, clears SQLite side files, leaves everything else alone\n'
 
 # Exercise the actual EXIT recovery handler without touching any real container.
 # shellcheck disable=SC2329 # Called by the sourced EXIT recovery handler.
@@ -115,12 +133,22 @@ set +e
 rc=$?
 set -e
 [[ "$rc" == 17 ]]
-[[ -f "${DATA[wg-easy]}/obsolete" ]]
-cmp "$WORK/rollback/qbittorrent/qBittorrent.conf" "${DATA[qbittorrent]}/qBittorrent/qBittorrent.conf"
+cmp "$WORK/rollback/qbittorrent/qBittorrent.conf" "$QB/qBittorrent.conf"
+[[ $(cat "${DATA[wg-easy]}/wg-easy.db") == 'destination peers' ]]
 grep -q '^stop -t 45 fixture-container$' "$TEST_DIR/docker-calls"
 grep -q '^start fixture-container$' "$TEST_DIR/docker-calls"
 unset -f docker
 printf 'PASS: failed restore returns previous state and restarts the original container\n'
+
+# qBittorrent that never started has no qBittorrent/ directory yet.
+rm -rf "$QB"
+snapshot "$WORK/rollback-no-qbittorrent" rollback
+apply_tree "$WORK/validated"
+[[ $(stat -c '%a:%u:%g' "$QB") == 755:1000:1000 ]]
+cmp "$WORK/validated/qbittorrent/qBittorrent.conf" "$QB/qBittorrent.conf"
+apply_tree "$WORK/rollback-no-qbittorrent"
+[[ ! -e "$QB/qBittorrent.conf" ]]
+printf 'PASS: a missing qBittorrent directory is created for the container user; rollback removes a file that did not exist\n'
 
 # A clean wg-easy is running but unconfigured/unhealthy; a recovery snapshot
 # records that baseline, and restoring one must accept it.
@@ -132,6 +160,36 @@ wait_services "$WORK/clean-health.json"
 RESTART=()
 unset -f docker
 printf 'PASS: unconfigured wg-easy baseline is accepted when restoring a recovery snapshot\n'
+
+# Archives from before 2026-09-13 carry whole service directories. They still
+# validate; restore takes only the four files from them.
+cp -a "$WORK/source" "$WORK/legacy"
+mkdir -p "$WORK/legacy/portainer/certs" "$WORK/legacy/filebrowser/config"
+printf 'old instance key\n' >"$WORK/legacy/portainer/portainer.key"
+printf 'old certificate\n' >"$WORK/legacy/portainer/certs/cert.pem"
+printf '{}\n' >"$WORK/legacy/filebrowser/config/settings.json"
+printf 'old wg0\n' >"$WORK/legacy/wg-easy/wg0.conf"
+inventory "$WORK/legacy" >"$WORK/legacy-files.json"
+jq --slurpfile files "$WORK/legacy-files.json" '.files=$files[0]' "$WORK/source/manifest.json" >"$WORK/legacy-manifest.json"
+mv "$WORK/legacy-manifest.json" "$WORK/legacy/manifest.json"
+pack "$WORK/legacy" "$WORK/legacy.tar.gz"
+validate_bundle "$WORK/legacy.tar.gz" "$WORK/validated-legacy" 2>"$WORK/legacy.log"
+grep -q 'eski kapsamlı yedek' "$WORK/legacy.log"
+apply_tree "$WORK/validated-legacy"
+for c in "${SERVICES[@]}"; do cmp "$WORK/validated-legacy/$c/${SCOPE[$c]##*/}" "${DATA[$c]}/${SCOPE[$c]}"; done
+[[ $(cat "${DATA[portainer]}/portainer.key") == 'destination key' && $(cat "${DATA[portainer]}/certs/cert.pem") == 'certificate' ]]
+[[ $(cat "${DATA[wg-easy]}/wg0.conf") == 'destination wg0' && $(cat "${DATA[filebrowser]}/config/settings.json") == '{"port":8080}' ]]
+printf 'PASS: whole-directory archives from before 2026-09-13 restore only the four files\n'
+
+# A database whose SQLite journal did not drain is incomplete on its own.
+printf 'unflushed transactions\n' >"${DATA[wg-easy]}/wg-easy.db-wal"
+set +e
+(set -e; snapshot "$WORK/unclean" settings) >"$WORK/unclean.log" 2>&1
+rc=$?
+set -e
+(( rc != 0 )) || fail 'A non-empty SQLite WAL must stop the backup.'
+rm -f "${DATA[wg-easy]}/wg-easy.db-wal"
+printf 'PASS: a backup refuses a database with a non-empty WAL\n'
 
 expect_rejection() {
     local archive=$1 label=$2 rc
@@ -155,6 +213,13 @@ expect_rejection "$WORK/symlink.tar.gz" symlink
 ln "$WORK/evil/file" "$WORK/evil/hardlink"
 tar -C "$WORK/evil" -czf "$WORK/hardlink.tar.gz" file hardlink
 expect_rejection "$WORK/hardlink.tar.gz" hardlink
+cp -a "$WORK/source" "$WORK/with-wal"
+printf 'unflushed\n' >"$WORK/with-wal/wg-easy/wg-easy.db-wal"
+inventory "$WORK/with-wal" >"$WORK/with-wal-files.json"
+jq --slurpfile files "$WORK/with-wal-files.json" '.files=$files[0]' "$WORK/source/manifest.json" >"$WORK/with-wal-manifest.json"
+mv "$WORK/with-wal-manifest.json" "$WORK/with-wal/manifest.json"
+pack "$WORK/with-wal" "$WORK/with-wal.tar.gz"
+expect_rejection "$WORK/with-wal.tar.gz" sqlite-wal
 printf 'changed after checksum\n' >>"$WORK/source/qbittorrent/qBittorrent.conf"
 pack "$WORK/source" "$WORK/tampered.tar.gz"
 expect_rejection "$WORK/tampered.tar.gz" tampered
@@ -164,10 +229,14 @@ expect_rejection "$WORK/out-of-scope.tar.gz" out-of-scope
 
 if [[ -n ${1:-} ]]; then
     validate_bundle "$1" "$WORK/real"
+    snapshot "$WORK/before-real" rollback
     apply_tree "$WORK/real"
-    snapshot "$WORK/real-roundtrip" settings
-    jq -e --slurpfile actual "$WORK/real-roundtrip/manifest.json" '.files==$actual[0].files' "$WORK/real/manifest.json" >/dev/null
-    apply_tree "$WORK/rollback"
-    printf 'PASS: real backup restored to isolated targets; all hashes/ownership/modes matched\n'
+    for c in "${SERVICES[@]}"; do
+        rel="$c/${SCOPE[$c]##*/}"
+        cmp "$WORK/real/$rel" "${DATA[$c]}/${SCOPE[$c]}"
+        [[ $(stat -c '%a:%u:%g' "$WORK/real/$rel") == $(stat -c '%a:%u:%g' "${DATA[$c]}/${SCOPE[$c]}") ]]
+    done
+    apply_tree "$WORK/before-real"
+    printf 'PASS: real backup restored to isolated targets; the four files matched with ownership and modes\n'
 fi
 printf 'ALL BACKUP TESTS PASSED (no production restore)\n'
