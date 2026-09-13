@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-84"
+V2_VERSION="2026.08.06-v2-85"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -25,6 +25,12 @@ OS_CHANGED=0
 # Ubuntu'da unattended-upgrades varsayılan açık: apt kilidi dakikalarca
 # tutulabilir. Kilitte hemen düşmek yerine bekle; retry üstte ayrıca sarar.
 APT_OPTS=(-o DPkg::Lock::Timeout=60)
+# DD-119: kurulum girdi dosyasının alanları (şablon: config/kurulum.env.example).
+# Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
+# downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
+# tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS TRANSMISSION_USER TRANSMISSION_PASS FILEBROWSER_USER FILEBROWSER_PASS TS_AUTH_KEY"
+INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS TRANSMISSION_USER TRANSMISSION_PASS FILEBROWSER_USER FILEBROWSER_PASS"
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -39,28 +45,12 @@ prompt() {
     printf -v "$var" '%s' "$reply"
 }
 
-prompt_secret_twice() {
-    local var="$1" msg="$2" min="${3:-$WEBDAV_MIN_PASSWORD_LENGTH}" a="" b=""
-    read -r -s -p "$msg: " a </dev/tty || true
-    printf '\n' >/dev/tty
-    read -r -s -p "$msg (tekrar): " b </dev/tty || true
-    printf '\n' >/dev/tty
-    [[ -n "$a" ]] || die "parola boş olamaz"
-    [[ "$a" == "$b" ]] || die "parolalar eşleşmiyor"
-    [[ "${#a}" -ge "$min" ]] ||
-        die "parola en az $min karakter olmalı"
-    printf -v "$var" '%s' "$a"
-}
-
-# Boş bırakılabilen, tek girişlik gizli değer (DD-115). Ekrana ve loga yazılmaz;
-# yapıştırmadan kalan baş/son boşluk atılır.
-prompt_optional_secret() {
-    local var="$1" msg="$2" reply=""
-    read -r -s -p "$msg: " reply </dev/tty || true
-    printf '\n' >/dev/tty
-    reply="${reply#"${reply%%[![:space:]]*}"}"
-    reply="${reply%"${reply##*[![:space:]]}"}"
-    printf -v "$var" '%s' "$reply"
+# DD-119: girdi dosyasındaki bir hesabı eski soruların kurallarıyla doğrular.
+# Mesaj değeri yazmaz.
+validate_account() {
+    local label="$1" user="$2" pass="$3" user_re="$4" min="$5"
+    [[ "$user" =~ $user_re ]] || die "girdi dosyası: geçersiz $label kullanıcı adı"
+    [[ "${#pass}" -ge "$min" ]] || die "girdi dosyası: $label parolası en az $min karakter olmalı"
 }
 
 write_state() {
@@ -360,6 +350,9 @@ check_nft_iptables() {
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
+    # DD-119: dosya ilk iş okunur ve silinir; kapılardan biri düşse bile
+    # parolalar /run'da kalmaz.
+    read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
     require_supported_os
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
@@ -386,7 +379,9 @@ stage_0() {
         die "qBittorrent konteyneri hâlâ var ve peer portunu tutuyor; Transmission başlayamaz (DD-117). Kaldırın: docker rm -f qbittorrent (ayarları docker_qbit_config volume'ünde kalır), sonra kurulumu yeniden çalıştırın"
     fi
 
-    local prev_domain="$DEFAULT_LOCAL_DOMAIN" prev_dl="$DOWNLOADS_PATH_DEFAULT"
+    # defaults.env değerleri config.env source edilmeden önce alınır.
+    local def_domain="$DEFAULT_LOCAL_DOMAIN" def_dl="$DOWNLOADS_PATH_DEFAULT"
+    local def_webdav_port="$WEBDAV_PORT" def_wg_port="$WG_PUBLIC_PORT"
     local prev_webdav_port="$WEBDAV_PORT" prev_wg_port="$WG_PUBLIC_PORT"
     if [[ -r "$STATE_FILE" ]]; then
         local state_wg
@@ -396,18 +391,17 @@ stage_0() {
     if [[ -r "$CONFIG_FILE" ]]; then
         # shellcheck source=/dev/null
         source "$CONFIG_FILE"
-        prev_domain="${LOCAL_DOMAIN:-$prev_domain}"
-        prev_dl="${DOWNLOADS_PATH:-$prev_dl}"
         prev_webdav_port="${WEBDAV_PORT:-$prev_webdav_port}"
         if grep -q '^WG_PUBLIC_PORT=' "$CONFIG_FILE"; then
             prev_wg_port="${WG_PUBLIC_PORT:-$prev_wg_port}"
         fi
     fi
 
-    prompt LOCAL_DOMAIN "Yerel alan adı" "$prev_domain"
+    # DD-119: değerler girdi dosyasından; boş alan defaults.env varsayılanı.
+    LOCAL_DOMAIN="${INPUT_LOCAL_DOMAIN:-$def_domain}"
     [[ "$LOCAL_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
         die "geçersiz alan adı: $LOCAL_DOMAIN"
-    prompt DOWNLOADS_PATH "Downloads dizini" "$prev_dl"
+    DOWNLOADS_PATH="${INPUT_DOWNLOADS_PATH:-$def_dl}"
     [[ "$DOWNLOADS_PATH" == /* ]] || die "downloads yolu mutlak olmalı"
     [[ "$DOWNLOADS_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
         die "downloads yolu yalnızca [A-Za-z0-9._/-] içerebilir"
@@ -416,7 +410,7 @@ stage_0() {
         die "downloads yolu '..' içeremez"
     assert_downloads_path_allowed "$DOWNLOADS_PATH"
 
-    prompt WG_PUBLIC_PORT "wg-easy public UDP port" "$prev_wg_port"
+    WG_PUBLIC_PORT="${INPUT_WG_PUBLIC_PORT:-$def_wg_port}"
     [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "wg-easy UDP portu sayı olmalı"
     [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
         die "wg-easy UDP portu 1-65535 arasında olmalı"
@@ -431,7 +425,7 @@ stage_0() {
         log INFO "wg-easy UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (compose yeniden yazılacak)"
     fi
 
-    prompt WEBDAV_PORT "WebDAV portu (loopback; Infuse = TS IP:bu port)" "$prev_webdav_port"
+    WEBDAV_PORT="${INPUT_WEBDAV_PORT:-$def_webdav_port}"
     [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
     [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
         die "WebDAV portu 1-65535 arasında olmalı"
@@ -451,74 +445,51 @@ stage_0() {
     detect_wan
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
-    write_config
-
-    WEBDAV_NEW_USER=""
-    WEBDAV_NEW_PASS=""
-    if [[ -f "$WEBDAV_HTPASSWD_FILE" ]]; then
-        log INFO "Mevcut WebDAV kimlik dosyası korunuyor: $WEBDAV_HTPASSWD_FILE"
-    else
-        prompt WEBDAV_NEW_USER "WebDAV kullanıcı adı"
-        [[ "$WEBDAV_NEW_USER" =~ ^[a-z][a-z0-9._-]{0,31}$ ]] ||
-            die "geçersiz WebDAV kullanıcı adı"
-        prompt_secret_twice WEBDAV_NEW_PASS "WebDAV parolası"
-    fi
-
-    # DD-116: Dozzle girişi. Dosya varsa korunur (WebDAV hesabıyla aynı kural);
-    # parola yalnız bellekte durur, aşama 4'te imajın kendi aracına stdin'den gider.
-    DOZZLE_NEW_USER=""
-    DOZZLE_NEW_PASS=""
-    if [[ -f "$DOZZLE_USERS_FILE" ]]; then
-        log INFO "Mevcut Dozzle kullanıcı dosyası korunuyor: $DOZZLE_USERS_FILE"
-    else
-        prompt DOZZLE_NEW_USER "Dozzle kullanıcı adı"
-        [[ "$DOZZLE_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
-            die "geçersiz Dozzle kullanıcı adı"
-        prompt_secret_twice DOZZLE_NEW_PASS "Dozzle parolası" "$DOZZLE_MIN_PASSWORD_LENGTH"
-    fi
-
-    # DD-117: Transmission girişi. İmaj düz parolayı her açılışta ister; root'a
-    # özel dosyada durur, Compose'a ve docker inspect'e girmez. Dosyalar varsa korunur.
-    TRANSMISSION_NEW_USER=""
-    TRANSMISSION_NEW_PASS=""
-    if [[ -s "$TRANSMISSION_AUTH_DIR/user" && -s "$TRANSMISSION_AUTH_DIR/pass" ]]; then
-        log INFO "Mevcut Transmission kimlik dosyaları korunuyor: $TRANSMISSION_AUTH_DIR"
-    else
-        prompt TRANSMISSION_NEW_USER "Transmission kullanıcı adı"
-        [[ "$TRANSMISSION_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
-            die "geçersiz Transmission kullanıcı adı"
-        prompt_secret_twice TRANSMISSION_NEW_PASS "Transmission parolası" "$TRANSMISSION_MIN_PASSWORD_LENGTH"
-    fi
-
-    # DD-118: FileBrowser hesabı. Veritabanı varsa korunur; parola sonradan
-    # FileBrowser arayüzünden değişir. Parola yalnız bellekte durur.
-    FILEBROWSER_NEW_USER=""
-    FILEBROWSER_NEW_PASS=""
-    if [[ -f "$FILEBROWSER_DB_FILE" ]]; then
-        log INFO "Mevcut FileBrowser veritabanı korunuyor: $FILEBROWSER_DB_FILE"
-    else
-        prompt FILEBROWSER_NEW_USER "FileBrowser kullanıcı adı"
-        [[ "$FILEBROWSER_NEW_USER" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] ||
-            die "geçersiz FileBrowser kullanıcı adı"
-        prompt_secret_twice FILEBROWSER_NEW_PASS "FileBrowser parolası" "$FILEBROWSER_MIN_PASSWORD_LENGTH"
-    fi
+    # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
+    # karşılaştırılır; farklıysa aşama 1 (WebDAV) ve 4 (Dozzle, Transmission,
+    # FileBrowser) günceller. Parolalar yalnız bellekte durur.
+    WEBDAV_NEW_USER="$INPUT_WEBDAV_USER"
+    WEBDAV_NEW_PASS="$INPUT_WEBDAV_PASS"
+    validate_account WebDAV "$WEBDAV_NEW_USER" "$WEBDAV_NEW_PASS" \
+        '^[a-z][a-z0-9._-]{0,31}$' "$WEBDAV_MIN_PASSWORD_LENGTH"
+    # DD-116: Dozzle parolası aşama 4'te imajın kendi aracına stdin'den gider.
+    DOZZLE_NEW_USER="$INPUT_DOZZLE_USER"
+    DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
+    validate_account Dozzle "$DOZZLE_NEW_USER" "$DOZZLE_NEW_PASS" \
+        '^[a-z][a-z0-9_-]{0,31}$' "$DOZZLE_MIN_PASSWORD_LENGTH"
+    # DD-117: Transmission imajı düz parolayı her açılışta ister; root'a özel
+    # dosyada durur, Compose'a ve docker inspect'e girmez.
+    TRANSMISSION_NEW_USER="$INPUT_TRANSMISSION_USER"
+    TRANSMISSION_NEW_PASS="$INPUT_TRANSMISSION_PASS"
+    validate_account Transmission "$TRANSMISSION_NEW_USER" "$TRANSMISSION_NEW_PASS" \
+        '^[a-z][a-z0-9_-]{0,31}$' "$TRANSMISSION_MIN_PASSWORD_LENGTH"
+    # DD-118: FileBrowser hesabı; arayüzden değiştirilen parola dosyadakine döner.
+    FILEBROWSER_NEW_USER="$INPUT_FILEBROWSER_USER"
+    FILEBROWSER_NEW_PASS="$INPUT_FILEBROWSER_PASS"
+    validate_account FileBrowser "$FILEBROWSER_NEW_USER" "$FILEBROWSER_NEW_PASS" \
+        '^[a-z][a-z0-9_-]{0,31}$' "$FILEBROWSER_MIN_PASSWORD_LENGTH"
 
     # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
     # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
-    TS_AUTH_KEY=""
+    TS_AUTH_KEY="$INPUT_TS_AUTH_KEY"
+    if [[ -n "$TS_AUTH_KEY" ]]; then
+        [[ "$TS_AUTH_KEY" != tskey-client-* ]] ||
+            die "girdi dosyası: TS_AUTH_KEY bir OAuth istemci sırrı; admin panelinden bir auth key (tskey-auth-…) oluşturun ya da boş bırakın"
+        [[ "$TS_AUTH_KEY" =~ ^tskey-[A-Za-z0-9-]+$ ]] ||
+            die "girdi dosyası: TS_AUTH_KEY 'tskey-' ile başlamalı ve yalnız harf, rakam, '-' içermeli; tarayıcıdan giriş için boş bırakın"
+    fi
+    local ts_key_note="yok (tarayıcıdan giriş)"
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 &&
         [[ "$(tailscale_login_state)" == "complete" ]]; then
-        log INFO "Tailscale zaten online; auth key sorulmadı"
-    else
-        prompt_optional_secret TS_AUTH_KEY "Tailscale auth key (boş bırakın = tarayıcıdan giriş)"
-        if [[ -n "$TS_AUTH_KEY" ]]; then
-            [[ "$TS_AUTH_KEY" != tskey-client-* ]] ||
-                die "bu bir OAuth istemci sırrı; admin panelinden bir auth key (tskey-auth-…) oluşturun ya da boş bırakın"
-            [[ "$TS_AUTH_KEY" =~ ^tskey-[A-Za-z0-9-]+$ ]] ||
-                die "Tailscale auth key 'tskey-' ile başlamalı ve yalnız harf, rakam, '-' içermeli; tarayıcıdan giriş için boş bırakın"
-            log INFO "Tailscale auth key alındı; aşama 2'de tarayıcı adımı atlanacak"
-        fi
+        TS_AUTH_KEY=""
+        ts_key_note="kullanılmayacak (Tailscale zaten online)"
+    elif [[ -n "$TS_AUTH_KEY" ]]; then
+        ts_key_note="var (aşama 2'de tarayıcı adımı atlanacak)"
     fi
+    local input_key
+    for input_key in $INPUT_KEYS; do
+        unset "INPUT_$input_key"
+    done
 
     RUN_FULL_UPGRADE=0
     if [[ "${V2_FULL_UPGRADE:-}" == "1" ]]; then
@@ -552,6 +523,30 @@ stage_0() {
             log INFO "image pull atlandı"
         fi
     fi
+
+    # DD-119: dosyadan gelen her şey tek ekranda, parolasız; ilk yazımdan
+    # (config.env) önce tek onay.
+    local yes_no_upgrade="hayır" yes_no_pull="hayır" confirm_ans="h"
+    [[ "$RUN_FULL_UPGRADE" -eq 1 ]] && yes_no_upgrade="evet"
+    [[ "$PULL_IMAGES" -eq 1 ]] && yes_no_pull="evet"
+    cat <<EOF
+
+Kurulum girdileri (kurulum/kurulum.env):
+  Alan adı:      $LOCAL_DOMAIN
+  Downloads:     $DOWNLOADS_PATH
+  wg-easy UDP:   $WG_PUBLIC_PORT
+  WebDAV portu:  $WEBDAV_PORT
+  Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, Transmission $TRANSMISSION_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER
+                 (dosyadakinden farklı olan hesap güncellenir)
+  Tailscale key: $ts_key_note
+  full-upgrade:  $yes_no_upgrade
+  image pull:    $yes_no_pull
+
+EOF
+    prompt confirm_ans "Bu değerlerle kurulum başlasın mı? (E/h)" "h"
+    [[ "$confirm_ans" =~ ^[EeYy]$ ]] || die "kurulum iptal edildi; hiçbir ayar değiştirilmedi"
+
+    write_config
 }
 
 # DD-113: dağıtımın güvenlik güncellemeleri kendiliğinden insin. Kaynak
@@ -599,16 +594,32 @@ stage_1() {
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
 
-    if [[ -n "${WEBDAV_NEW_PASS:-}" ]]; then
-        local tmp
+    ensure_webdav_htpasswd
+}
+
+# DD-119: htpasswd tek satırda dosyadaki hesabı taşıyorsa dokunulmaz; değilse
+# yeniden yazılır ve çalışan webdav yeniden başlatılır (secret bir bind mount:
+# `mv` sonrası konteyner eski dosyayı görür). Parola stdin'den gider.
+ensure_webdav_htpasswd() {
+    local tmp
+    [[ -n "${WEBDAV_NEW_PASS:-}" ]] || return 0
+    if [[ -f "$WEBDAV_HTPASSWD_FILE" && "$(wc -l <"$WEBDAV_HTPASSWD_FILE")" -eq 1 ]] &&
+        printf '%s' "$WEBDAV_NEW_PASS" |
+        htpasswd -vi "$WEBDAV_HTPASSWD_FILE" "$WEBDAV_NEW_USER" >/dev/null 2>&1; then
+        log INFO "WebDAV hesabı girdi dosyasıyla aynı; dokunulmadı"
+    else
         tmp="$(mktemp "$STATE_DIR/.htpasswd-XXXXXX")"
         printf '%s' "$WEBDAV_NEW_PASS" | htpasswd -i -B "$tmp" "$WEBDAV_NEW_USER"
         chmod 0600 "$tmp"
         chown root:root "$tmp"
         mv -f "$tmp" "$WEBDAV_HTPASSWD_FILE"
-        unset WEBDAV_NEW_PASS
-        WEBDAV_NEW_USER=""
+        log INFO "WebDAV hesabı yazıldı: $WEBDAV_HTPASSWD_FILE ($WEBDAV_NEW_USER)"
+        if docker inspect webdav >/dev/null 2>&1; then
+            docker restart webdav >/dev/null || log WARN "webdav yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
+        fi
     fi
+    unset WEBDAV_NEW_PASS
+    WEBDAV_NEW_USER=""
 }
 
 apply_udp_netbuf_floor() {
@@ -785,15 +796,26 @@ filebrowser_account_fail() {
     die "$msg"
 }
 
-# DD-118: hesap kurulumda sorulur; ilk açılışın log'a yazdığı rastgele admin
-# parolası hiç oluşmaz. Veritabanı geçici dizinde kurulur: `config init`
-# bayrakları upstream'in ilk açılış ayarlarıyla aynıdır (ölçüldü, key hariç
-# fark yok). Kullanıcı, bcrypt özeti htpasswd'e stdin'den giden bir JSON
-# dosyasından içe aktarılır — parola argv'ye, loga, diske düz metin girmez.
-# Doğrulanan veritabanı tek `mv` ile yerine konur.
+# DD-118/DD-119: hesap girdi dosyasından gelir. Veritabanı yoksa kurulur,
+# varsa dosyadakiyle eşitlenir. Parola argv'ye, loga, diske düz metin girmez.
 ensure_filebrowser_account() {
-    local work hash
     [[ -n "${FILEBROWSER_NEW_PASS:-}" ]] || return 0
+    if [[ -f "$FILEBROWSER_DB_FILE" ]]; then
+        sync_filebrowser_account
+    else
+        create_filebrowser_account
+    fi
+    unset FILEBROWSER_NEW_PASS
+    FILEBROWSER_NEW_USER=""
+}
+
+# DD-118: ilk açılışın log'a yazdığı rastgele admin parolası hiç oluşmaz.
+# Veritabanı geçici dizinde kurulur: `config init` bayrakları upstream'in ilk
+# açılış ayarlarıyla aynıdır (ölçüldü, key hariç fark yok). Kullanıcı, bcrypt
+# özeti htpasswd'e stdin'den giden bir JSON dosyasından içe aktarılır.
+# Doğrulanan veritabanı tek `mv` ile yerine konur.
+create_filebrowser_account() {
+    local work hash
     work="$(mktemp -d "$FILEBROWSER_DATA_DIR/.init-XXXXXX")"
     chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work"
     if ! filebrowser_cli "$work" config init --address 0.0.0.0 --port 80 --root /srv \
@@ -820,13 +842,99 @@ ensure_filebrowser_account() {
     fi
     mv -f -- "$work/filebrowser.db" "$FILEBROWSER_DB_FILE"
     rm -rf -- "$work"
-    unset FILEBROWSER_NEW_PASS
-    FILEBROWSER_NEW_USER=""
     log INFO "FileBrowser hesabı oluşturuldu: $FILEBROWSER_DB_FILE"
     # Veritabanı silinip yeniden oluşturulduysa çalışan konteyner eskisini tutar.
     if docker inspect filebrowser >/dev/null 2>&1; then
         docker restart filebrowser >/dev/null || log WARN "filebrowser yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
     fi
+}
+
+# Hedef kayıt: dosyadaki adı taşıyan kullanıcı, yoksa en küçük id'li yönetici.
+filebrowser_target_id() {
+    jq -r --arg u "$FILEBROWSER_NEW_USER" \
+        '(map(select(.username == $u)) + (map(select(.perm.admin == true)) | sort_by(.id))) | .[0].id // empty' \
+        "$1"
+}
+
+# USERS_JSON ID: o id dosyadaki adı ve parolayı taşıyorsa 0.
+filebrowser_user_matches() {
+    local hash
+    hash="$(jq -r --argjson id "$2" --arg u "$FILEBROWSER_NEW_USER" \
+        '.[] | select(.id == $id and .username == $u) | .password' "$1")" || return 1
+    bcrypt_matches "$FILEBROWSER_NEW_USER" "$hash" "$FILEBROWSER_NEW_PASS"
+}
+
+filebrowser_sync_fail() {
+    local work="$1" was_running="$2" msg="$3"
+    if [[ "$was_running" -eq 1 ]]; then
+        docker start filebrowser >/dev/null || true
+    fi
+    filebrowser_account_fail "$work" "$msg"
+}
+
+# DD-119: çalışan FileBrowser Bolt dosyasını kilitler (CLI zaman aşımına düşer
+# — ölçüldü), bu yüzden karşılaştırma bir kopyada yapılır ve hesap aynıysa
+# konteynere dokunulmaz. Fark varsa konteyner durdurulur, taze kopyada
+# `users import --overwrite` aynı id'ye adı ve özeti yazar (diğer alanlar ve
+# ayarlar korunur; `--replace` "sole admin" hatası verir — ölçüldü), sonuç
+# doğrulanır ve tek `mv` ile yerine konur. Başka kullanıcılara dokunulmaz.
+sync_filebrowser_account() {
+    local work id hash was_running=0
+    work="$(mktemp -d "$FILEBROWSER_DATA_DIR/.sync-XXXXXX")"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work"
+    cp -p -- "$FILEBROWSER_DB_FILE" "$work/filebrowser.db"
+    filebrowser_cli "$work" users export /database/users.json ||
+        filebrowser_account_fail "$work" "FileBrowser kullanıcıları okunamadı"
+    id="$(filebrowser_target_id "$work/users.json" || true)"
+    [[ "$id" =~ ^[0-9]+$ ]] ||
+        filebrowser_account_fail "$work" "FileBrowser veritabanında yönetici hesabı yok"
+    if filebrowser_user_matches "$work/users.json" "$id"; then
+        rm -rf -- "$work"
+        log INFO "FileBrowser hesabı girdi dosyasıyla aynı; dokunulmadı"
+        return 0
+    fi
+    if [[ "$(docker inspect -f '{{.State.Running}}' filebrowser 2>/dev/null)" == true ]]; then
+        docker stop filebrowser >/dev/null ||
+            filebrowser_account_fail "$work" "filebrowser durdurulamadı; hesap güncellenmedi"
+        was_running=1
+    fi
+    # Durdurmadan önceki son yazımlar da gelsin: kopya yeniden alınır.
+    cp -p -- "$FILEBROWSER_DB_FILE" "$work/filebrowser.db"
+    rm -f -- "$work/users.json"
+    hash="$(printf '%s' "$FILEBROWSER_NEW_PASS" | htpasswd -niB -C 10 "$FILEBROWSER_NEW_USER" | cut -d: -f2-)"
+    if ! filebrowser_cli "$work" users export /database/users.json ||
+        [[ ! "$hash" =~ ^\$2[aby]\$10\$ ]] ||
+        ! jq --argjson id "$id" --arg u "$FILEBROWSER_NEW_USER" --arg h "$hash" \
+            'map(select(.id == $id) | .username = $u | .password = $h)' \
+            "$work/users.json" >"$work/import.json" ||
+        ! jq -e 'length == 1' "$work/import.json" >/dev/null; then
+        filebrowser_sync_fail "$work" "$was_running" "FileBrowser kullanıcı kaydı hazırlanamadı"
+    fi
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work/import.json"
+    rm -f -- "$work/users.json"
+    if ! filebrowser_cli "$work" users import --overwrite /database/import.json ||
+        ! filebrowser_cli "$work" users export /database/users.json ||
+        ! filebrowser_user_matches "$work/users.json" "$id"; then
+        filebrowser_sync_fail "$work" "$was_running" "FileBrowser hesabı güncellenemedi"
+    fi
+    mv -f -- "$work/filebrowser.db" "$FILEBROWSER_DB_FILE"
+    rm -rf -- "$work"
+    log INFO "FileBrowser hesabı girdi dosyasıyla eşitlendi: $FILEBROWSER_NEW_USER"
+    if [[ "$was_running" -eq 1 ]]; then
+        docker start filebrowser >/dev/null || log WARN "filebrowser başlatılamadı"
+    fi
+}
+
+# DD-119: users.yml tek kullanıcı taşıyor, adı dosyadaki ve özeti parolayla
+# eşleşiyorsa 0. Kullanıcılar 4, alanları 8 boşluk girintili (generate çıktısı).
+dozzle_users_match() {
+    local hash
+    [[ -f "$DOZZLE_USERS_FILE" ]] || return 1
+    [[ "$(awk '/^    [^ #][^:]*:[[:space:]]*$/ {n++} END {print n+0}' "$DOZZLE_USERS_FILE")" -eq 1 ]] ||
+        return 1
+    hash="$(awk -v u="$DOZZLE_NEW_USER" '/^    [^ ]/ {in_user = ($1 == u ":")}
+        in_user && $1 == "password:" {print $2}' "$DOZZLE_USERS_FILE")"
+    bcrypt_matches "$DOZZLE_NEW_USER" "$hash" "$DOZZLE_NEW_PASS"
 }
 
 # DD-116: users.yml imajın kendi `generate` aracıyla üretilir (bcrypt; biçim
@@ -836,6 +944,12 @@ ensure_dozzle_users() {
     local tmp
     install -d -m 0700 -o root -g root "$DOZZLE_DATA_DIR"
     [[ -n "${DOZZLE_NEW_PASS:-}" ]] || return 0
+    if dozzle_users_match; then
+        log INFO "Dozzle hesabı girdi dosyasıyla aynı; dokunulmadı"
+        unset DOZZLE_NEW_PASS
+        DOZZLE_NEW_USER=""
+        return 0
+    fi
     tmp="$(mktemp "$DOZZLE_DATA_DIR/.users-XXXXXX")"
     if ! printf '%s\n' "$DOZZLE_NEW_PASS" |
         docker run -i --rm --network none "$DOZZLE_IMAGE" \
@@ -878,6 +992,15 @@ ensure_transmission_files() {
     fi
     install -d -m 0700 -o root -g root "$TRANSMISSION_AUTH_DIR"
     [[ -n "${TRANSMISSION_NEW_PASS:-}" ]] || return 0
+    # DD-119: kimlik dosyaları dosyadakiyle aynıysa dokunulmaz.
+    if [[ -f "$TRANSMISSION_AUTH_DIR/user" && -f "$TRANSMISSION_AUTH_DIR/pass" &&
+        "$(<"$TRANSMISSION_AUTH_DIR/user")" == "$TRANSMISSION_NEW_USER" &&
+        "$(<"$TRANSMISSION_AUTH_DIR/pass")" == "$TRANSMISSION_NEW_PASS" ]]; then
+        log INFO "Transmission hesabı girdi dosyasıyla aynı; dokunulmadı"
+        unset TRANSMISSION_NEW_PASS
+        TRANSMISSION_NEW_USER=""
+        return 0
+    fi
     (
         umask 077
         printf '%s' "$TRANSMISSION_NEW_USER" >"$TRANSMISSION_AUTH_DIR/.user.tmp"

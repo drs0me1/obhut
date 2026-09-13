@@ -1,36 +1,36 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-80.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-85.command)
   container-backup.command   yedek alma / geri yükleme (çift tık → menü)
+  kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   backup/                    yedekleriniz (şifreli, git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
+Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
+  mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
+  chmod 600 kurulum/kurulum.env
+  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (FileBrowser parolası en az 12 karakter).
+  Alan adı, downloads yolu ve portlar boş kalırsa varsayılan kullanılır.
+  TS_AUTH_KEY: ephemeral olmayan, tek kullanımlık bir anahtar; boş bırakırsanız tarayıcıdan giriş URL'si.
+  Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
+  sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
+
 A) Sıfırlama → ilk kurulum → yedek
   0. Terminal: ssh-keygen -R nrm
-  1. <sürüm>.command               gerçek değerler + WebDAV, Dozzle, Transmission ve FileBrowser kullanıcı/parola
-                                   (FileBrowser parolası en az 12 karakter); Tailscale auth key
-                                   (ephemeral olmayan; boş bırakırsanız tarayıcıdan giriş URL'si)
+  1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
   3. Tarayıcı: wg-easy hesabı ve peer'lar
-     (Dozzle, Transmission ve FileBrowser girişleri kurulumda verdiğiniz kullanıcı/parola;
+     (Dozzle, Transmission ve FileBrowser girişleri kurulum/kurulum.env'deki kullanıcı/parola;
       Transmission tercihleri — DHT/PeX/yerel keşif kapalı, en çok 12 indirme — kurulumdan gelir)
   4. container-backup.command → 1  nrm → yedek parolası ×2 → e   (parolayı saklayın)
 
 B) Sıfırlama → yedekten dönüş
   0. Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
-  1. <sürüm>.command               A-1 ile AYNI cevaplar: alan adı, downloads yolu,
-                                   portlar ve aynı WebDAV, Dozzle, Transmission, FileBrowser kullanıcı/parola; Tailscale auth key
-                                   ya da boş bırakıp URL
+  1. <sürüm>.command               aynı kurulum/kurulum.env; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL; özet → E
   2. container-backup.command → 2  (restore) nrm → yedek → parola → e
   3. Tailscale paneli + Infuse adresi
 
-Yedek yalnız wg-easy hesabını ve peer'ları taşır (wg-easy.db). Diğer hesaplar ve
-Transmission tercihleri kurulumdan gelir.
-Parola değiştirmek: sunucuda ilgili dosyayı silip kurulumu yeniden çalıştırın (servis kendiliğinden yeniden başlar):
-  Dozzle:       /etc/master-stack/dozzle/users.yml
-  Transmission: /etc/master-stack/transmission-auth/user ve pass
-  FileBrowser:  parolayı arayüzden değiştirin; unutulursa
-                /etc/master-stack/filebrowser-data/filebrowser.db silinir (paylaşım bağlantıları da gider)
-Kurulum soruları yedekte değildir; B-1'de aynı cevapları verin.
+Yedek yalnız wg-easy hesabını ve peer'ları taşır (wg-easy.db). Diğer hesaplar kurulum/kurulum.env'den,
+Transmission tercihleri kurulumdan gelir. kurulum/kurulum.env yedekte değildir; kendiniz saklayın.
 Ayrıntı: Data/docs/container-backup.md

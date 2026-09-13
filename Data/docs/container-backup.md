@@ -36,13 +36,16 @@ the server key the clients trust. Everything the operator used to set by hand
 on the other services now comes from the installer, the same way on every
 install:
 
-- FileBrowser: the installer asks for the user name and password and creates
-  that account (**DD-118**). Later password changes happen in FileBrowser's
-  own UI and are not carried to a new host.
-- Transmission: the installer asks for the login (**DD-117**) and writes the
-  preferences once — DHT, PeX and local peer discovery off, at most 12 active
-  downloads (**DD-118**). Preferences changed later in the UI are not carried.
-- Dozzle and WebDAV: the installer asks for their logins (**DD-116**).
+- FileBrowser: the installer creates the account from the installer input
+  file `kurulum/kurulum.env` and keeps it equal to that file on every run
+  (**DD-118**, **DD-119**). A password changed in FileBrowser's UI is not
+  carried; change it in the file instead.
+- Transmission: the login comes from the same file (**DD-117**, **DD-119**),
+  and the installer writes the preferences once — DHT, PeX and local peer
+  discovery off, at most 12 active downloads (**DD-118**). Preferences changed
+  later in the UI are not carried.
+- Dozzle and WebDAV: their logins come from the same file (**DD-116**,
+  **DD-119**).
 
 wg-easy rewrites `wg0.conf` from its database every time it starts (observed
 one second after start), so restore leaves the destination's copy alone.
@@ -55,9 +58,9 @@ destination's FileBrowser and Transmission files alone, and `check` says so.
 
 The installer's own inputs — `/etc/master-stack/config.env` (domain, ports,
 downloads path, time zone) and `webdav.htpasswd` — are not part of the backup.
-`install.sh` asks for them, and a reinstall answers them the same way; giving
-the same WebDAV user and password keeps Infuse working with its stored
-credentials once its address is updated. WebDAV has no other server-side
+They are derived from `kurulum/kurulum.env` on the workstation, which a
+reinstall reuses unchanged (**DD-119**); the same WebDAV user and password
+keep Infuse working with its stored credentials once its address is updated. WebDAV has no other server-side
 state: the rclone container runs read-only with no configuration file.
 
 Also excluded: downloads/media, Docker images, WebDAV, Unpackerr, host
@@ -183,12 +186,12 @@ Tailscale state is deliberately not cloned.
 2. Reinstall the OS (Debian 13 or a supported Ubuntu). If the SSH host key
    changed, verify the new fingerprint and replace the old known-hosts entry
    by hand; the script does not do that.
-3. Run `install.sh` and answer its prompts as before: the same domain,
-   downloads path and ports (restore checks that the published ports match),
-   and the same WebDAV user and password, so Infuse needs only a new address.
-   The FileBrowser, Dozzle and Transmission logins are asked here too.
-   At the Tailscale auth key prompt, paste a non-ephemeral key to skip the
-   browser, or leave it empty and open the login URL when it appears.
+3. Double-click the portable installer with the same `kurulum/kurulum.env`
+   (**DD-119**): the same domain, downloads path and ports (restore checks
+   that the published ports match) and the same accounts, so Infuse needs
+   only a new address. For `TS_AUTH_KEY`, put in a fresh non-ephemeral key to
+   skip the browser, or leave it empty and open the login URL when it
+   appears. Confirm the summary with `E`.
 4. `./container-backup.command restore --host root@NEW` with the backup. This
    puts wg-easy's account, server key and peers on top of the fresh
    container. Run `check` first for a dry run.

@@ -4766,6 +4766,11 @@ failure with an early, named one.
   - The first attempt at the isolated test had a test-procedure flaw,
     recorded in `tests/README.md`.
 
+- **Amended by DD-119 (2026-09-14):** the key comes from `TS_AUTH_KEY` in
+  the installer input file instead of a hidden prompt, and is dropped when
+  the node is already online. The `file:` login, the fallback and the
+  persistence rules are unchanged.
+
 ### DD-116: Dozzle replaces Portainer (2026-09-13)
 
 - **Decision:** the Compose `portainer` service becomes `dozzle`
@@ -5053,6 +5058,139 @@ failure with an early, named one.
       The FileBrowser database and Transmission settings were untouched,
       the FileBrowser login still worked, every peer was present and no
       remote temporary directory was left.
+- **Superseded in part by DD-119 (2026-09-14):** the accounts come from a
+  git-ignored input file instead of prompts. An existing database is synced
+  to that file on every run instead of being kept, so a password changed in
+  FileBrowser's UI is reset on the next run.
+
+### DD-119: Installer inputs come from one git-ignored file, and that file is the truth (2026-09-14)
+
+- **Decision:**
+  - **Where the inputs live:**
+    - Every operator input is in `kurulum/kurulum.env` at the repository root:
+      SSH host, local domain, downloads path, WireGuard and WebDAV ports, the
+      four service accounts and the optional Tailscale auth key.
+    - The file is git-ignored and must have mode `600` (or `400`).
+    - The template `config/kurulum.env.example` lists every key with no value.
+      A test keeps its keys equal to `INPUT_KEYS`.
+  - **The launcher:**
+    - It stops locally if the file is missing or has a wider mode.
+    - It reads `SSH_HOST` and nothing else; no host prompt remains.
+    - It sends the file over SSH to `INPUT_FILE`
+      (`/run/master-stack/kurulum.env`, declared in `defaults.env`). It
+      refuses when that directory is not `tmpfs`.
+    - It removes any leftover when it exits.
+  - **Stage 0 reads the file right after the root check and deletes it before
+    any other gate**, whether or not the file validates. `read_input_file`
+    (`common.sh`) never sources it:
+    - One `KEY=value` per line, with the value taken literally.
+    - An unknown key, a duplicate, a missing key, CRLF, surrounding quotes,
+      surrounding whitespace or a malformed line stops the install. The
+      message gives the line number and key name, never a value.
+    - Every key must be present, and the account keys must be non-empty. An
+      empty domain, path or port takes the `defaults.env` value; an empty
+      `TS_AUTH_KEY` means the browser login.
+  - **Validation and confirmation:**
+    - The old prompt rules still apply: user-name character sets, minimum
+      password lengths, port conflicts and the `tskey-` shape.
+    - The `INPUT_*` variables are unset once mapped.
+    - Stage 0 prints a summary without passwords and asks for one `E` before
+      `config.env` is written. The re-run questions (full-upgrade, image pull)
+      remain.
+  - **The file is the single source of truth.** Every run compares each
+    account with the file, rewrites only what differs and restarts only that
+    container:
+    - **WebDAV:** kept when the htpasswd has one line and `htpasswd -vi`
+      accepts the password. A rewrite restarts `webdav`, because the secret is
+      a bind mount and still points at the replaced file.
+    - **Dozzle:** kept when `users.yml` holds exactly one user with that name
+      and `htpasswd -vi` accepts the stored hash.
+    - **Transmission:** kept when both root-only files hold the file's values.
+    - **FileBrowser:** users are exported from a copy of the database. When
+      the account differs:
+      - the container is stopped;
+      - `users import --overwrite` writes the name and hash into a fresh copy,
+        keeping the same id;
+      - the result is verified and moved in with one `mv`, then the container
+        is started.
+
+      Any failure starts the container again on the untouched database. The
+      target is the user with the file's name, else the lowest-id admin. Other
+      users are left alone.
+- **Why:**
+  - The user runs a fixed setup and wants a reinstall to need no typed
+    answers. Until now the reinstall runbook depended on repeating the same
+    answers by hand.
+  - This reverses DD-118's choice of the prompt over "a git-ignored local
+    secrets file sent over SSH". The two costs recorded there are accepted and
+    bounded:
+    - Plaintext on the workstation: git-ignored and `600`.
+    - A new transfer path: a `tmpfs`-only target, deleted by the installer as
+      its first read.
+- **Why the file wins over changes made in a UI:** a password changed in
+  FileBrowser's UI returns to the file's value on the next run. The user
+  agreed to this. The alternative, applying a file change only when the file
+  itself changes, would need a stored fingerprint of every password.
+- **Measured on `nrm` (2026-09-14, apache2-utils 2.4.68-1~deb13u1, FileBrowser
+  v2):**
+  - `htpasswd -vi` verifies both a `$2y$` hash (htpasswd) and Dozzle's `$2a$`
+    hash from stdin. It returns 0 on a match, 3 on a mismatch and 6 for an
+    unknown user.
+  - A running FileBrowser holds the Bolt lock: the CLI on the live database
+    fails with `Error: timeout`, while `users export` on a copy works.
+  - `users import --replace` fails with "the sole admin can't be deleted".
+    `users import --overwrite` updates the same id, including a rename, and
+    leaves every other field byte-identical.
+- **Not doing:**
+  - A prompt fallback when the file is absent: two input paths to test and
+    document.
+  - Validating fields on the Mac: Finder's bash 3.2 would need a second
+    validator.
+  - Encrypting the file: a password at every run for a file that leaves the
+    workstation only as RAM on the server.
+- **Consequences:**
+  - "No unattended mode" now means one confirmation. The Tailscale login URL
+    still needs a browser when no key is given.
+  - DD-115's hidden prompt is gone. Its `--auth-key=file:` login and the
+    fallback to the browser are unchanged.
+- **Verified (2026-09-14):**
+  - bats 116 ok, with `bash -n` and `shellcheck` clean.
+  - New functional tests: the parser (literal values, eight rejection cases
+    and a wrong mode, all deleting the file and never echoing a value),
+    `bcrypt_matches`, the WebDAV keep/rewrite, the Dozzle match, the
+    Transmission keep, and the FileBrowser sync (match, overwrite that keeps
+    other fields and users, failed import that restarts the container on the
+    untouched database).
+  - Three deliberate code mutations each failed their test.
+  - A mid-test `! cmd` or `[[ ]]` does not fail a bats test under macOS bash
+    3.2, so the new negative checks use `run !`, `[ ]` or `case`.
+  - Live on `nrm`, driving the exported v2-85 `.command` from the Mac under
+    `expect`:
+    - **Mode 644:** refused on the Mac, before SSH.
+    - **Answering `h` at the confirmation:** exit 1; the summary showed no
+      password, `config.env` was unchanged, `/run/master-stack` held only the
+      lock and the log had no password.
+    - **v2-84 → v2-85:** exit 0 in 15 s. The operator's real WebDAV hash was
+      saved beforehand and differed from the test file, so the htpasswd was
+      rewritten and only `webdav` restarted. Dozzle, Transmission and
+      FileBrowser were logged unchanged, and the six container ids plus the
+      other five start times were identical. WebDAV answered 401 without
+      credentials and 207 with them; the FileBrowser login returned 200.
+    - **Same file again:** a full no-op, with every restart skipped.
+    - **Three passwords changed in the file:** Dozzle regenerated and
+      restarted, Transmission rewritten and restarted, FileBrowser stopped,
+      overwritten and started. New passwords: 200, 200, 409 (Transmission's
+      RPC session handshake, authenticated). Old passwords: 403, 401, 401.
+      `webdav`, `wg-easy` and `unpackerr` were untouched, and there was no
+      password in the log or `docker inspect`.
+    - **An unknown key (`WEBDAV_PAS`) and an 11-character FileBrowser
+      password:** both stopped stage 0 with the line and key named.
+      `config.env` and the database were unchanged, and the values were absent
+      from the log.
+    - **The test passwords restored:** all three services updated and logged
+      in again.
+    - **Cleanup:** the operator's original WebDAV htpasswd was put back
+      byte-identical, `webdav` was restarted, and the saved copy was removed.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

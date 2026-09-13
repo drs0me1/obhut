@@ -101,7 +101,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
   - wg-easy
   - Transmission (qBittorrent yerine, DD-117; giriş zorunlu, kimlik root'a özel dosyada; tercihler ilk kurulumda yazılır, DD-118)
-  - Filebrowser (classic; tek hesap kurulumda sorulur, parola argv/log'a girmez, DD-118)
+  - Filebrowser (classic; hesap kurulum girdi dosyasından gelir ve her kurulumda ona eşitlenir, parola argv/log'a girmez, DD-118/DD-119)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 

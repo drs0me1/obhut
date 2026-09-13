@@ -552,11 +552,13 @@ EOF
         grep -q 'Dozzle API girişsiz yanıt'
 }
 
-@test "dozzle account is asked once and never reaches argv" {
+@test "dozzle account comes from the input file and never reaches argv" {
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'Mevcut Dozzle kullanıcı dosyası korunuyor' <<<"$stage0"
-    grep -q 'prompt_secret_twice DOZZLE_NEW_PASS "Dozzle parolası" "\$DOZZLE_MIN_PASSWORD_LENGTH"' <<<"$stage0"
+    grep -q 'DOZZLE_NEW_PASS="\$INPUT_DOZZLE_PASS"' <<<"$stage0"
+    grep -q 'validate_account Dozzle' <<<"$stage0"
+    grep -q '"\$DOZZLE_MIN_PASSWORD_LENGTH"' <<<"$stage0"
     body="$(awk '/^ensure_dozzle_users\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'if dozzle_users_match; then' <<<"$body"
     grep -q 'docker run -i --rm --network none "\$DOZZLE_IMAGE"' <<<"$body"
     grep -q 'generate --user-roles actions' <<<"$body"
     ! grep -q -- '--password' <<<"$body"
@@ -566,8 +568,10 @@ EOF
 }
 
 @test "ensure_dozzle_users writes a private file from stdin and rejects malformed output" {
+    eval "$(awk '/^dozzle_users_match\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^ensure_dozzle_users\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     DOZZLE_DATA_DIR="$TMP/dozzle" DOZZLE_USERS_FILE="$TMP/dozzle/users.yml" DOZZLE_IMAGE=fixture
+    RUNTIME_DIR="$TMP"
     log() { :; }
     chown() { :; }
     install() { mkdir -p "${!#}"; chmod 700 "${!#}"; }
@@ -587,6 +591,23 @@ EOF
     grep -q 'generate --user-roles actions admin' "$TMP/argv"
     mode="$(stat -c %a "$TMP/dozzle/users.yml" 2>/dev/null || stat -f %Lp "$TMP/dozzle/users.yml")"
     [ "$mode" = 600 ]
+    # DD-119: a users file already holding this account is left alone.
+    if command -v htpasswd >/dev/null; then
+        real="$(printf '%s' 'fixture-password-123' | htpasswd -niB -C 4 admin | cut -d: -f2-)"
+        printf 'users:\n    admin:\n        email: ""\n        password: %s\n        roles: actions\n' "$real" \
+            >"$TMP/dozzle/users.yml"
+        docker() { printf '%s\n' "$*" >>"$TMP/dozzle-calls"; return 1; }
+        DOZZLE_NEW_USER=admin DOZZLE_NEW_PASS='fixture-password-123'
+        run ensure_dozzle_users
+        [ "$status" -eq 0 ]
+        [ ! -e "$TMP/dozzle-calls" ]
+        grep -qF "$real" "$TMP/dozzle/users.yml"
+        # A second user in the file is not the account the input file describes.
+        printf '    other:\n        password: %s\n' "$real" >>"$TMP/dozzle/users.yml"
+        run dozzle_users_match
+        [ "$status" -ne 0 ]
+        [ -z "$(find "$TMP" -maxdepth 1 -name '.bcrypt-*')" ]
+    fi
     rm -f "$TMP/dozzle/users.yml"
     docker() { [ "$1" = run ] || return 1; IFS= read -r _; printf 'not a users file\n'; }
     DOZZLE_NEW_USER=admin DOZZLE_NEW_PASS='fixture-password-123'
@@ -629,7 +650,8 @@ EOF
     grep -q 'unset TRANSMISSION_NEW_PASS' <<<"$body"
     grep -q 'docker restart transmission' <<<"$body"
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'prompt_secret_twice TRANSMISSION_NEW_PASS' <<<"$stage0"
+    grep -q 'TRANSMISSION_NEW_PASS="\$INPUT_TRANSMISSION_PASS"' <<<"$stage0"
+    grep -q 'validate_account Transmission' <<<"$stage0"
     grep -q 'docker inspect qbittorrent' <<<"$stage0"
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'Transmission RPC girişsiz yanıt'
@@ -663,6 +685,14 @@ EOF
     [ "$(cat "$TMP/tr/settings.json")" = '{"speed-limit-down":123}' ]
     [ "$(cat "$TMP/tr-auth/user")" = admin2 ]
     grep -q '^restart transmission' "$TMP/docker-calls"
+    # DD-119: the same credentials again leave the files and the container alone.
+    rm -f "$TMP/docker-calls"
+    touch -t 200001010000 "$TMP/tr-auth/pass"
+    TRANSMISSION_NEW_USER=admin2 TRANSMISSION_NEW_PASS='fixture-password-456'
+    run ensure_transmission_files
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/docker-calls" ]
+    [ -z "$(find "$TMP/tr-auth/pass" -newermt '2001-01-01')" ]
 }
 
 @test "filebrowser classic serves downloads at /srv with disableExec" {
@@ -689,18 +719,26 @@ EOF
     ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "filebrowser account is asked once and never reaches argv" {
+@test "filebrowser account comes from the input file and never reaches argv" {
     # DD-118: no first-boot random admin; the installer creates the account.
+    # DD-119: an existing database is synced to the input file, not kept.
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'if \[\[ -f "\$FILEBROWSER_DB_FILE" \]\]' <<<"$stage0"
-    grep -q 'Mevcut FileBrowser veritabanı korunuyor' <<<"$stage0"
-    grep -q 'prompt_secret_twice FILEBROWSER_NEW_PASS "FileBrowser parolası" "\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$stage0"
-    body="$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'FILEBROWSER_NEW_PASS="\$INPUT_FILEBROWSER_PASS"' <<<"$stage0"
+    grep -q 'validate_account FileBrowser' <<<"$stage0"
+    grep -q '"\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$stage0"
+    ensure="$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'if \[\[ -f "\$FILEBROWSER_DB_FILE" \]\]' <<<"$ensure"
+    grep -q 'sync_filebrowser_account' <<<"$ensure"
+    grep -q 'create_filebrowser_account' <<<"$ensure"
+    grep -q 'unset FILEBROWSER_NEW_PASS' <<<"$ensure"
+    body="$(awk '/^create_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     [ "$(grep -c '^}$' <<<"$body")" -eq 1 ]
     grep -q 'htpasswd -niB -C 10' <<<"$body"
     grep -q -- '--minimumPasswordLength "\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$body"
-    grep -q 'unset FILEBROWSER_NEW_PASS' <<<"$body"
-    ! grep -qE -- '--password|users (add|update)' <<<"$body"
+    run ! grep -qE -- '--password|users (add|update)' <<<"$body"
+    sync="$(awk '/^sync_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'users import --overwrite' <<<"$sync"
+    run ! grep -qE -- '--replace|--password|users (add|update)' <<<"$sync"
     ! grep -q 'FILEBROWSER_NEW_PASS' <<<"$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker run --rm --network none'
     stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
@@ -712,7 +750,9 @@ EOF
 @test "ensure_filebrowser_account installs a verified database and leaves nothing on failure" {
     eval "$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^filebrowser_account_fail\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^create_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    sync_filebrowser_account() { printf 'sync\n' >>"$TMP/docker-calls"; }
     FILEBROWSER_DATA_DIR="$TMP/fb" FILEBROWSER_DB_FILE="$TMP/fb/filebrowser.db" FILEBROWSER_IMAGE=fixture
     FILEBROWSER_MIN_PASSWORD_LENGTH=12 DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
     mkdir -p "$TMP/fb"
@@ -1523,15 +1563,16 @@ EOF
     [ ! -e "$V2_ROOT/app/latest.command" ]
 }
 
-@test "tailscale auth key is optional, asked once, and never persisted" {
-    # DD-115: stage 0 asks only when the node is not already online; the key is
-    # never written to config/state and never placed on a command line.
+@test "tailscale auth key is optional, read from the input file, and never persisted" {
+    # DD-115/DD-119: the key comes from the input file, is dropped when the node
+    # is already online, never written to config/state and never placed on a
+    # command line.
     body="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'prompt_optional_secret TS_AUTH_KEY' <<<"$body"
-    grep -q 'Tailscale zaten online; auth key sorulmadı' <<<"$body"
+    grep -q 'TS_AUTH_KEY="\$INPUT_TS_AUTH_KEY"' <<<"$body"
+    grep -q 'kullanılmayacak (Tailscale zaten online)' <<<"$body"
+    grep -A1 'tailscale_login_state)" == "complete"' <<<"$body" | grep -q 'TS_AUTH_KEY=""'
     grep -q 'tskey-client-' <<<"$body"
-    helper="$(awk '/^prompt_optional_secret\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'read -r -s' <<<"$helper"
+    run ! grep -qE 'prompt_optional_secret|read -r -s' "$V2_ROOT/install.sh"
     ! awk '/^write_(state|config)\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'TS_AUTH_KEY'
     ! grep -nE -- '--auth-?key[= ]"?\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
     ! grep -nE 'export +TS_AUTH_KEY|log [A-Z]+ .*\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
@@ -1579,4 +1620,236 @@ EOF
     grep -q 'tarayıcıdan girişe geçiliyor' "$TMP/install.log"
     ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
     [ ! -e "$TMP/tailscale-authkey" ]
+}
+
+@test "read_input_file takes values literally and deletes the file" {
+    # DD-119: the file is never sourced; '$', quotes inside, '=' and spaces
+    # inside a value are data.
+    cat >"$TMP/in.env" <<'EOF'
+# comment
+   # indented comment
+
+A=p@ss $HOME "x" =y
+B=
+C=it's
+EOF
+    chmod 600 "$TMP/in.env"
+    read_input_file "$TMP/in.env" "A B C" "A C"
+    [ "$INPUT_A" = 'p@ss $HOME "x" =y' ]
+    [ -z "$INPUT_B" ]
+    [ "$INPUT_C" = "it's" ]
+    [ ! -e "$TMP/in.env" ]
+    run ! grep -qE '\bsource\b|^\s*\. ' <<<"$(awk '/^read_input_file\(\)/,/^}$/' "$V2_ROOT/common.sh")"
+}
+
+@test "read_input_file rejects bad input, never echoes a value, always deletes" {
+    local body expect
+    while IFS='|' read -r body expect; do
+        printf '%b' "$body" >"$TMP/in.env"
+        chmod 600 "$TMP/in.env"
+        run read_input_file "$TMP/in.env" "A B" "A"
+        [ "$status" -ne 0 ]
+        case "$output" in *"$expect"*) ;; *) false ;; esac
+        case "$output" in *secretvalue*) false ;; esac
+        [ ! -e "$TMP/in.env" ]
+    done <<'EOF'
+A=secretvalue\nB=\nZ=1\n|bilinmeyen alan: Z
+A=secretvalue\nA=secretvalue\nB=\n|A iki kez yazılmış
+A=secretvalue\n|eksik alan: B
+A=\nB=secretvalue\n|boş bırakılamayan alan: A
+A=secretvalue\r\nB=\n|CRLF
+A=secretvalue \nB=\n|boşluk var
+A="secretvalue"\nB=\n|tırnak
+a=secretvalue\nB=\n|ALAN=değer biçiminde değil
+EOF
+    printf 'A=secretvalue\nB=\n' >"$TMP/in.env"
+    chmod 644 "$TMP/in.env"
+    run read_input_file "$TMP/in.env" "A B" "A"
+    [ "$status" -ne 0 ]
+    case "$output" in *"izinleri 644"*) ;; *) false ;; esac
+    [ ! -e "$TMP/in.env" ]
+    run read_input_file "$TMP/missing.env" "A B" "A"
+    [ "$status" -ne 0 ]
+    case "$output" in *"girdi dosyası yok"*) ;; *) false ;; esac
+}
+
+@test "bcrypt_matches verifies through stdin and leaves no temp file" {
+    command -v htpasswd >/dev/null || skip "htpasswd yok"
+    RUNTIME_DIR="$TMP"
+    hash="$(printf '%s' 'pw with $pace' | htpasswd -niB -C 4 u | cut -d: -f2-)"
+    bcrypt_matches u "$hash" 'pw with $pace'
+    run ! bcrypt_matches u "$hash" 'other'
+    run ! bcrypt_matches u 'plain-not-bcrypt' 'pw with $pace'
+    [ -z "$(ls -A "$TMP")" ]
+    body="$(awk '/^bcrypt_matches\(\)/,/^}$/' "$V2_ROOT/common.sh")"
+    grep -q "printf '%s' \"\$pass\" | htpasswd -vi" <<<"$body"
+}
+
+@test "stage 0 reads the input file first and confirms before the first write" {
+    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -A4 '^    require_root$' <<<"$stage0" |
+        grep -q 'read_input_file "\$INPUT_FILE" "\$INPUT_KEYS" "\$INPUT_NONEMPTY_KEYS"'
+    grep -q '^INPUT_FILE="/run/master-stack/kurulum.env"$' "$V2_ROOT/config/defaults.env"
+    # Every INPUT_* is dropped once mapped; secrets stay only in the *_NEW_* vars.
+    grep -q 'unset "INPUT_\$input_key"' <<<"$stage0"
+    # One confirmation, then config.env: nothing is written before the operator agrees.
+    awk '/prompt confirm_ans/ {c = NR} /^    write_config$/ {w = NR}
+         END { exit !(c && w && c < w) }' <<<"$stage0"
+    [ "$(grep -c 'write_config' <<<"$stage0")" -eq 1 ]
+    grep -q 'die "kurulum iptal edildi' <<<"$stage0"
+    # The old secret prompts are gone for good.
+    run ! grep -qE 'prompt_secret_twice|prompt_optional_secret|read -r -s' "$V2_ROOT/install.sh"
+    # The summary names accounts, never passwords.
+    summary="$(awk '/Kurulum girdileri \(kurulum\/kurulum.env\)/,/^EOF$/' <<<"$stage0")"
+    [ -n "$summary" ]
+    run ! grep -q '_PASS' <<<"$summary"
+    run ! grep -q 'TS_AUTH_KEY' <<<"$summary"
+}
+
+@test "input template lists exactly the installer's keys with no values" {
+    local template="$V2_ROOT/config/kurulum.env.example" keys tkeys
+    keys="$(awk -F'"' '/^INPUT_KEYS=/{print $2}' "$V2_ROOT/install.sh" | tr ' ' '\n' | sort)"
+    tkeys="$(grep -E '^[A-Z][A-Z0-9_]*=' "$template" | cut -d= -f1 | sort)"
+    [ -n "$keys" ]
+    [ "$keys" = "$tkeys" ]
+    run ! grep -qE '^[A-Z][A-Z0-9_]*=.+' "$template"
+    for k in $(awk -F'"' '/^INPUT_NONEMPTY_KEYS=/{print $2}' "$V2_ROOT/install.sh"); do
+        grep -q "^$k=$" "$template"
+    done
+    cp "$template" "$TMP/in.env"
+    chmod 600 "$TMP/in.env"
+    read_input_file "$TMP/in.env" "$(awk -F'"' '/^INPUT_KEYS=/{print $2}' "$V2_ROOT/install.sh")" ""
+    grep -qx '/kurulum/' "$V2_ROOT/../.gitignore"
+}
+
+@test "ensure_webdav_htpasswd keeps a matching account and rewrites a changed one" {
+    command -v htpasswd >/dev/null || skip "htpasswd yok"
+    eval "$(awk '/^ensure_webdav_htpasswd\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    STATE_DIR="$TMP" WEBDAV_HTPASSWD_FILE="$TMP/webdav.htpasswd"
+    log() { :; }
+    chown() { :; }
+    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; }
+    WEBDAV_NEW_USER=infuse WEBDAV_NEW_PASS='fixture pass $1'
+    run ensure_webdav_htpasswd
+    [ "$status" -eq 0 ]
+    printf '%s' 'fixture pass $1' | htpasswd -vi "$TMP/webdav.htpasswd" infuse 2>/dev/null
+    grep -q '^restart webdav$' "$TMP/docker-calls"
+    before="$(cat "$TMP/webdav.htpasswd")"
+    rm -f "$TMP/docker-calls"
+    run ensure_webdav_htpasswd
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TMP/webdav.htpasswd")" = "$before" ]
+    [ ! -e "$TMP/docker-calls" ]
+    WEBDAV_NEW_USER=infuse WEBDAV_NEW_PASS='changed-pass-2'
+    run ensure_webdav_htpasswd
+    [ "$status" -eq 0 ]
+    printf '%s' 'changed-pass-2' | htpasswd -vi "$TMP/webdav.htpasswd" infuse 2>/dev/null
+    grep -q '^restart webdav$' "$TMP/docker-calls"
+    [ "$(wc -l <"$TMP/webdav.htpasswd")" -eq 1 ]
+    run ! grep -q 'changed-pass-2' "$TMP/docker-calls"
+    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
+        grep -q '^    ensure_webdav_htpasswd$'
+}
+
+@test "sync_filebrowser_account leaves a matching account alone and overwrites a changed one in place" {
+    command -v htpasswd >/dev/null || skip "htpasswd yok"
+    for f in filebrowser_cli filebrowser_account_fail filebrowser_target_id \
+        filebrowser_user_matches filebrowser_sync_fail sync_filebrowser_account; do
+        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    FILEBROWSER_DATA_DIR="$TMP/fb" FILEBROWSER_DB_FILE="$TMP/fb/filebrowser.db" FILEBROWSER_IMAGE=fixture
+    DOWNLOADS_UID=1000 DOWNLOADS_GID=1000 RUNTIME_DIR="$TMP"
+    mkdir -p "$TMP/fb"
+    printf 'db-v1\n' >"$TMP/fb/filebrowser.db"
+    log() { :; }
+    chown() { :; }
+    old="$(printf '%s' 'fixture-password-123' | htpasswd -niB -C 4 murat | cut -d: -f2-)"
+    jq -n --arg h "$old" '[{id: 1, username: "murat", password: $h, perm: {admin: true}, viewMode: "list"},
+        {id: 2, username: "guest", password: $h, perm: {admin: false}}]' >"$TMP/store.json"
+    docker() {
+        local a w=""
+        printf '%s\n' "$*" >>"$TMP/docker-calls"
+        case "$1" in
+            inspect) printf 'true\n'; return 0 ;;
+            stop | start) return 0 ;;
+            run) ;;
+            *) return 0 ;;
+        esac
+        for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
+        case "$*" in
+            *" users export "*) cp "$TMP/store.json" "$w/users.json" ;;
+            *" users import --overwrite "*)
+                jq -s '.[1][0] as $n | .[0] | map(if .id == $n.id then $n else . end)' \
+                    "$TMP/store.json" "$w/import.json" >"$TMP/store.new" && mv "$TMP/store.new" "$TMP/store.json"
+                printf 'db-v2\n' >"$w/filebrowser.db" ;;
+            *) return 1 ;;
+        esac
+    }
+    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-123'
+    run sync_filebrowser_account
+    [ "$status" -eq 0 ]
+    run ! grep -qE '^(stop|start) ' "$TMP/docker-calls"
+    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v1 ]
+    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
+    # A changed password: container stopped, same id overwritten, other fields
+    # and other users kept, verified database moved in, container started.
+    rm -f "$TMP/docker-calls"
+    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='changed-password-456'
+    run sync_filebrowser_account
+    [ "$status" -eq 0 ]
+    grep -q '^stop filebrowser$' "$TMP/docker-calls"
+    grep -q '^start filebrowser$' "$TMP/docker-calls"
+    grep -q 'users import --overwrite /database/import.json' "$TMP/docker-calls"
+    run ! grep -q 'changed-password-456' "$TMP/docker-calls"
+    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v2 ]
+    jq -e 'length == 2 and (.[] | select(.id == 1) | .viewMode == "list" and .username == "murat")' \
+        "$TMP/store.json" >/dev/null
+    jq -r '.[] | select(.id == 1) | "murat:" + .password' "$TMP/store.json" >"$TMP/ht"
+    printf '%s' 'changed-password-456' | htpasswd -vi "$TMP/ht" murat 2>/dev/null
+    jq -e --arg h "$old" '.[] | select(.id == 2) | .password == $h' "$TMP/store.json" >/dev/null
+    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
+    # A failed import restarts the container on the untouched database.
+    rm -f "$TMP/docker-calls"
+    printf 'db-v2\n' >"$TMP/fb/filebrowser.db"
+    docker() {
+        printf '%s\n' "$*" >>"$TMP/docker-calls"
+        case "$*" in
+            inspect*) printf 'true\n' ;;
+            *" users export "*) local a w=""; for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
+                cp "$TMP/store.json" "$w/users.json" ;;
+            *" users import "*) return 1 ;;
+        esac
+        return 0
+    }
+    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='third-password-789'
+    run sync_filebrowser_account
+    [ "$status" -ne 0 ]
+    grep -q '^start filebrowser$' "$TMP/docker-calls"
+    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v2 ]
+    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
+}
+
+@test "portable launcher reads kurulum.env beside it and sends it only to tmpfs" {
+    local exporter="$V2_ROOT/dev/export-installer.sh" body
+    body="$(awk "/cat <<'BODY_END'/,/^BODY_END\$/" "$exporter")"
+    [ -n "$body" ]
+    grep -q 'INPUT_FILE_LOCAL="\$here/kurulum/kurulum.env"' <<<"$body"
+    grep -q 'stat -f %Lp "\$INPUT_FILE_LOCAL"' <<<"$body"
+    # Only SSH_HOST is read on the Mac; the rest is validated by the installer.
+    grep -q 'index(\$0, "SSH_HOST=") == 1' <<<"$body"
+    run ! grep -qE '_PASS|TS_AUTH_KEY' <<<"$body"
+    run ! grep -q 'SSH sunucu adı' <<<"$body"
+    run ! grep -q 'DEPLOY_HOST' "$exporter"
+    grep -q 'stat -f -c %T' <<<"$body"
+    grep -q '= tmpfs \]' <<<"$body"
+    grep -q '<"\$INPUT_FILE_LOCAL"' <<<"$body"
+    grep -q 'remote_input_sent=1' <<<"$body"
+    awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q "rm -f '\$REMOTE_INPUT_FILE'"
+    # The server-side path has one source: defaults.env.
+    grep -q "awk -F= '/^INPUT_FILE=/" "$exporter"
+    grep -q 'REMOTE_INPUT_FILE="\$INPUT_FILE"' "$exporter"
+    # The archive is built from Data/ only; kurulum/ lives in the repo root.
+    run ! grep -q 'TOP_DIR/kurulum' "$exporter"
+    # Finder runs .command files with macOS /bin/bash 3.2.
+    run ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' <<<"$body"
 }

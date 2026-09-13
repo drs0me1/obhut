@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Installer inputs from one file (v2-85)
+
+- **Changed:**
+  - Stage 0 no longer asks for anything it needs to configure. The domain,
+    downloads path, ports, the WebDAV, Dozzle, Transmission and FileBrowser
+    accounts and the optional Tailscale auth key come from
+    `kurulum/kurulum.env` beside the `.command` in the repository root. The
+    file is git-ignored and must have mode `600`; the template is
+    `Data/config/kurulum.env.example` (**DD-119**).
+  - The launcher takes the SSH host from that file and sends the file only to
+    `/run/master-stack` on the server (`tmpfs`). The installer reads it and
+    deletes it before any other step.
+  - The file is the truth on every run. An account that differs from it is
+    rewritten and only that container restarts; an account that matches is
+    left alone. A password changed in FileBrowser's UI returns to the file's
+    value on the next run.
+  - Stage 0 shows the inputs without passwords and asks for one confirmation
+    before the first write. The full-upgrade and image-pull questions stay
+    for re-runs.
+- **Added:** strict parsing: no `source`, values taken literally, and a clear
+  stop naming the line and key for an unknown, duplicate, missing, quoted,
+  padded or CRLF line. Values never appear in a message or the log.
+- **Removed:** the hidden password and auth-key prompts, and the launcher's
+  host prompt.
+- **Verified on `nrm`:**
+  - The exported `.command` refused a mode-644 file on the Mac.
+  - Answering `h` at the confirmation changed nothing.
+  - v2-84 → v2-85 exit 0: only the WebDAV account differed, so only `webdav`
+    restarted.
+  - A second run was a full no-op.
+  - Three changed passwords updated exactly those three services: new
+    passwords accepted, old ones refused, nothing in the log or
+    `docker inspect`.
+  - An unknown key and a short password each stopped stage 0 before any
+    change.
+  - The operator's WebDAV credential was restored byte-identical afterwards.
+  - bats 116 ok.
+
 ### 2026-09-14 — FileBrowser account and Transmission preferences from the installer (v2-84)
 
 - **Added:**

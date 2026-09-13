@@ -13,6 +13,9 @@ MARKER="__MASTER_STACK_ARCHIVE__"
 
 V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/install.sh")"
 [[ -n "$V2_VERSION" ]] || { echo "HATA: V2_VERSION okunamadı" >&2; exit 1; }
+# DD-119: girdi dosyasının sunucudaki yeri tek kaynaktan (defaults.env) gelir.
+INPUT_FILE="$(awk -F= '/^INPUT_FILE=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
+[[ "$INPUT_FILE" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_FILE /run altında değil: $INPUT_FILE" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
@@ -101,7 +104,8 @@ built_at="reproducible/${V2_VERSION}"
     cat <<'HEADER_END'
 #!/usr/bin/env bash
 # Master Stack — taşınabilir tek dosya kurulum (macOS .command)
-# Repo'ya ihtiyaç duymaz. Masaüstü'ne kopyalayıp çift tıklayın.
+# Kurulum girdileri yanındaki kurulum/kurulum.env'den gelir (DD-119;
+# şablon: Data/config/kurulum.env.example).
 # Yeniden üretmek: dev/export-installer.sh
 set -Eeuo pipefail
 
@@ -111,10 +115,10 @@ PORTABLE_INSTALLER_VERSION="$V2_VERSION"
 PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
+REMOTE_INPUT_FILE="$INPUT_FILE"
 EOF
     cat <<'BODY_END'
 
-DEFAULT_HOST="${DEPLOY_HOST:-nrm}"
 REMOTE_TGZ="/tmp/debian-server-installer.tgz"
 REMOTE_ROOT="/root/debian-server-installer"
 
@@ -139,7 +143,16 @@ self="$here/$(basename -- "$0")"
 [[ -f "$self" ]] || { echo "HATA: betik yolu bulunamadı: $self" >&2; pause_exit 1; }
 
 tgz="$(mktemp "${TMPDIR:-/tmp}/dsi-embed.XXXXXX.tgz")"
-cleanup_local() { rm -f "$tgz"; }
+remote_input_sent=0
+# Kurulum girdi dosyasını okur okumaz siler; bu yalnız yarıda kalan bir
+# oturumdan artakalanı temizler.
+cleanup_local() {
+    rm -f "$tgz"
+    if [[ "$remote_input_sent" -eq 1 ]]; then
+        ssh "${ssh_base[@]}" "$HOST" \
+            "rm -f '$REMOTE_INPUT_FILE' '$REMOTE_INPUT_FILE.incoming'" >/dev/null 2>&1 || true
+    fi
+}
 trap cleanup_local EXIT
 
 printf '\n=== Master Stack — taşınabilir kurulum ===\n'
@@ -147,9 +160,28 @@ printf 'Sürüm:  %s\n' "$PORTABLE_INSTALLER_VERSION"
 printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
 printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
-read -r -p "SSH sunucu adı [${DEFAULT_HOST}]: " HOST || true
-HOST="${HOST:-$DEFAULT_HOST}"
-[[ -n "$HOST" ]] || { echo "HATA: sunucu adı boş" >&2; pause_exit 1; }
+# DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de.
+# Burada yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz,
+# alanların doğrulaması sunucuda kurulumun kendisindedir.
+INPUT_FILE_LOCAL="$here/kurulum/kurulum.env"
+if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
+    echo "HATA: girdi dosyası yok: $INPUT_FILE_LOCAL" >&2
+    echo "  Şablon: Data/config/kurulum.env.example — kurulum/kurulum.env olarak kopyalayıp doldurun," >&2
+    echo "  ardından: chmod 600 kurulum/kurulum.env" >&2
+    pause_exit 1
+fi
+input_mode="$(stat -f %Lp "$INPUT_FILE_LOCAL")"
+if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
+    echo "HATA: $INPUT_FILE_LOCAL izinleri $input_mode; parola içerdiği için 600 olmalı:" >&2
+    echo "  chmod 600 \"$INPUT_FILE_LOCAL\"" >&2
+    pause_exit 1
+fi
+HOST="$(awk 'index($0, "SSH_HOST=") == 1 {print substr($0, 10); exit}' "$INPUT_FILE_LOCAL")"
+if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
+    echo "HATA: kurulum.env içinde SSH_HOST boş ya da geçersiz (ör. SSH_HOST=nrm)" >&2
+    pause_exit 1
+fi
+echo "Sunucu:  $HOST (kurulum/kurulum.env)"
 
 echo "==> Gömülü arşiv açılıyor"
 marker_line="$(grep -n "^${ARCHIVE_MARKER}$" "$self" | head -n1 | cut -d: -f1 || true)"
@@ -223,8 +255,16 @@ grep -E '^V2_VERSION=' "\$remote_root/install.sh"
 echo "SYNC_OK → \$remote_root"
 EOF
 
+# /run tmpfs değilse dosya diske inerdi: gönderilmez.
+echo "==> Girdi dosyası gönderiliyor → ${HOST}:${REMOTE_INPUT_FILE} (tmpfs)"
+remote_input_sent=1
+ssh "${ssh_base[@]}" "$HOST" "set -e; umask 077; install -d -m 0700 '${REMOTE_INPUT_FILE%/*}'; \
+fs=\$(stat -f -c %T '${REMOTE_INPUT_FILE%/*}'); \
+[ \"\$fs\" = tmpfs ] || { echo \"HATA: ${REMOTE_INPUT_FILE%/*} tmpfs değil (\$fs); girdi dosyası gönderilmedi\" >&2; exit 1; }; \
+cat >'$REMOTE_INPUT_FILE.incoming'; mv -f '$REMOTE_INPUT_FILE.incoming' '$REMOTE_INPUT_FILE'" <"$INPUT_FILE_LOCAL"
+
 printf '\n==> Kurulum başlıyor: %s\n' "$HOST"
-printf '    Promptlarda Enter = varsayılan. Tailscale URL gelince tarayıcıda onayla.\n\n'
+printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n\n'
 
 set +e
 ssh \

@@ -6,8 +6,8 @@ Working guide for any AI assistant in this repository. Read this first.
 
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`),
-`container-backup.command` — plus the Git-ignored `backup/`, this file and
-`README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
+`container-backup.command` — plus the Git-ignored `kurulum/` (installer inputs)
+and `backup/`, this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
 The installer turns a fresh Debian 13
@@ -40,14 +40,19 @@ state. Treat every change as production-infrastructure work.
 - **The `nrm` host is a disposable test target under standing
   authorization (2026-07-31).** Unless the user says otherwise, on `nrm`
   only: run the installer, `sudo`, mutating `systemctl`/`docker`, firewall
-  changes, wipes, and reboots without per-turn approval. Answer installer
-  prompts automatically — defaults, `E` for confirmations, `12345test` for
-  the WebDAV password, `admin` / `12345test` for the Dozzle and Transmission accounts,
-  `admin` / `12345test1234` for the FileBrowser account (12-character minimum), an empty
-  answer for the Tailscale auth key — and report what was answered. Non-default config
-  values still need the user.
+  changes, wipes, and reboots without per-turn approval. Drive the installer
+  with a scratch test input file, never the operator's `kurulum/kurulum.env`:
+  empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
+  `admin` / `12345test` for Dozzle and Transmission; `admin` / `12345test1234`
+  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Answer the
+  re-run questions with their defaults and `E` at the confirmation, and report
+  what was used. The input file is the truth (**DD-119**): a run rewrites any
+  account that differs from it, so save and restore a real credential on
+  `nrm` around a test — the operator's WebDAV htpasswd is real (Infuse).
+  Non-default config values still need the user.
 - **Never ask for, read, store or type a Tailscale auth key.** Only the
-  operator enters one at the installer prompt (**DD-115**).
+  operator puts one in `kurulum/kurulum.env` (**DD-115**, **DD-119**); never
+  open, print or copy that file.
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
   and wait; it expires if left unused.
 - That authorization does **not** cover: local Mac outside this repo;
@@ -85,6 +90,7 @@ state. Treat every change as production-infrastructure work.
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `container-backup.command` (root) | Container settings backup/restore launcher |
+| `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
 | `backup/` (root) | Encrypted backups, Git-ignored |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
@@ -102,7 +108,8 @@ state. Treat every change as production-infrastructure work.
 
 ## Constraints
 
-- Root-only, interactive, single-host. No unattended mode.
+- Root-only, single-host. Inputs come from `kurulum/kurulum.env`; the
+  installer still needs a TTY and one confirmation. No unattended mode.
 - Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)
   only (**DD-102**). Noble live-verified 2026-08-29; resolute
   live-verified 2026-08-30, including re-run, service restarts and reboot.

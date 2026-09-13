@@ -45,6 +45,36 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-85, installer inputs from one file (DD-119):** the user runs
+a fixed setup and wants a reinstall with no typed answers.
+- `kurulum/kurulum.env` holds every input and is the truth on every run.
+  - It is git-ignored with mode 600; the template is
+    `config/kurulum.env.example`.
+  - The launcher reads `SSH_HOST` and sends the file only to `/run` (tmpfs).
+  - Stage 0 parses it strictly (never sourced) and deletes it first, then
+    validates, shows a summary without passwords and asks for one `E`.
+  - Accounts that differ are rewritten and only their container restarts.
+    FileBrowser is compared on a DB copy and updated by stop, then
+    `users import --overwrite`, then start.
+- Verified: bats 116 (new negative checks use `run !`/`[ ]`, because
+  mid-test `!` and `[[ ]]` do not fail under macOS bash 3.2 — a suite-wide
+  fix was offered as a separate task), static checks clean, three mutations
+  caught.
+- Live on `nrm` with the exported `.command` under `expect`: mode 644 refused
+  on the Mac; cancel changed nothing; v2-84→v2-85 rewrote only WebDAV; a no-op
+  re-run; three password changes hit exactly three services; an unknown key
+  and a short password stopped stage 0.
+- The operator's real WebDAV htpasswd was saved first and restored
+  byte-identical (sha prefix `fead38157cb39fb2`). Test credentials on `nrm`
+  are unchanged.
+- **Next (agreed, not started):** step 2 — kernel WireGuard replaces wg-easy.
+  - Peers are `kurulum/wireguard/*.conf`; the 4 existing peers on
+    10.8.0.2–.5 migrate without touching devices.
+  - Peers get internet egress plus the container UIs on `10.8.0.1:<UI port>`
+    only, through a second, Tailscale-independent Caddy. They get no tailnet
+    access, and WebDAV stays Tailscale-only.
+  - `container-backup` is retired after the migration is verified.
+
 **2026-09-14 — v2-84, FileBrowser account and Transmission preferences from
 the installer (DD-118):** the user wants to rely on the backup as little as
 possible. Stage 0 asks for the FileBrowser account (12-character minimum);

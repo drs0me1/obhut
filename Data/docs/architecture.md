@@ -74,10 +74,10 @@ later became a permanent drift alarm.
 |---|---|---|
 | **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
 | **Contains** | Choices: local domain, downloads path, timezone, `WG_PUBLIC_PORT`, WebDAV port | Detected facts: WAN interface, WAN IPv4, `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version; `WG_ENDPOINT_HOST` is a derived hint equal to current `WAN_IPV4` (not an operator prompt) |
-| **Source** | `config/defaults.env` + operator answers | installer / `refresh-tailnet-config` at run time |
+| **Source** | `config/defaults.env` + the installer input file `kurulum/kurulum.env` (**DD-119**) | installer / `refresh-tailnet-config` at run time |
 | **Written by** | The installer, once per run | The installer, and `refresh-tailnet-config` when an address changes |
-| **Lifetime** | Persistent; a re-run offers the previous value as the default | Regenerated freely; nothing in it is a decision |
-| **Hand-editable** | Yes, by an operator who then re-runs the installer | No — it will be overwritten |
+| **Lifetime** | Persistent; every run rewrites it from the input file (an empty value takes `defaults.env`) | Regenerated freely; nothing in it is a decision |
+| **Hand-editable** | No — edit `kurulum/kurulum.env` and re-run the installer | No — it will be overwritten |
 | **Read by** | The installer, template rendering | The installer, `master-firewall`, Caddy (`EnvironmentFile=`), `refresh-tailnet-config` |
 | **Contains secrets** | **No** | **No** |
 
@@ -158,7 +158,7 @@ in §10, not resolved silently.
 | File | Single responsibility | Deliberately does not know |
 |---|---|---|
 | `.cursor/rules/master-stack.mdc` | Carry the working rules for any AI assistant editing this tree — the single active, editable rule source | Anything about runtime behaviour — it is never installed to the host and never read by the installer |
-| `install.sh` | Ask the operator, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
+| `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
 | `templates/compose.yaml` | The six services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
@@ -377,11 +377,11 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); ask domain, downloads path, ports, WebDAV/Dozzle/Transmission/FileBrowser credentials; `config.env`; optional full-upgrade prompt on re-run | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd if new; timezone | `apt` |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, validate domain, downloads path, ports and the WebDAV/Dozzle/Transmission/FileBrowser accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd when it differs from the input file; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker; preload and boot-persist wg-easy kernel/netfilter modules; sync the Dozzle, Transmission and FileBrowser accounts to the input file (**DD-119**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall`; enable refresh timer | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed | DNS/HTTP |
 | 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy) | verification |

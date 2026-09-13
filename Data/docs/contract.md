@@ -44,7 +44,7 @@ the ones agreed on 2026-08-05:
 | R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), wg-easy, Transmission (replaced qBittorrent, **DD-117**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the wg-easy UDP port and the torrent (Transmission) peer port (TCP+UDP) |
-| R13 | Ask the operator for a local domain at the start of the installation |
+| R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
@@ -98,18 +98,31 @@ the ones agreed on 2026-08-05:
   off; Docker, Tailscale and Caddy packages are updated only by a re-run
   (**DD-113**).
 - Timezone set to the configured value.
-- Root-only, interactive, single-host, `flock`-serialised, wrapped in
-  `systemd-inhibit` so a shutdown cannot land mid-transaction.
+- Root-only, single-host, `flock`-serialised, wrapped in `systemd-inhibit`
+  so a shutdown cannot land mid-transaction.
+- **Inputs come from one file, not prompts (DD-119).**
+  - The operator fills `kurulum/kurulum.env` (git-ignored, mode `600`;
+    template `config/kurulum.env.example`) beside the portable `.command`.
+  - The launcher sends it only to `INPUT_FILE` in `/run` (`tmpfs`). Stage 0
+    reads it right after the root check and deletes it before any other gate,
+    whether or not it validates.
+  - It is never sourced: one `KEY=value` per line, values taken literally.
+    Unknown, duplicate, missing, quoted, padded or CRLF lines stop the
+    install. Messages name the line and key, never the value.
+  - Stage 0 validates every value, prints them without passwords and asks for
+    one confirmation before `config.env` is written. Re-runs still ask about
+    full-upgrade and image pull; an interactive TTY stays required.
 
 ### 1.2 Tailscale
 
 - Official Tailscale repository and package (**R3**).
-- Stage 0 asks for an optional Tailscale auth key (hidden input, only when
-  the node is not already online). With a key, stage 2 runs `tailscale up
-  --auth-key=file:<root-only tmpfs file> --advertise-exit-node --ssh` and
-  skips the browser step; the key is never written to `config.env`,
-  `state.env`, the log or a command line. An empty answer, or a key that is
-  rejected or times out, uses the interactive login below (**DD-115**).
+- The optional Tailscale auth key is `TS_AUTH_KEY` in the input file, and
+  is ignored when the node is already online. With a key, stage 2 runs
+  `tailscale up --auth-key=file:<root-only tmpfs file> --advertise-exit-node
+  --ssh` and skips the browser step. The key is never written to
+  `config.env`, `state.env`, the log or a command line. An empty value, or a
+  key that is rejected or times out, uses the interactive login below
+  (**DD-115**, **DD-119**).
 - `tailscale up --advertise-exit-node --ssh`, then `tailscale set` to hold
   exit-node, SSH, stateful filtering, netfilter mode and subnet-route SNAT
   (**R4**, **R5**).
@@ -132,8 +145,9 @@ the ones agreed on 2026-08-05:
 - Transmission (LinuxServer image) takes its user name and password from
   root-only files under `/etc/master-stack/transmission-auth`, mounted
   read-only and read through `FILE__USER`/`FILE__PASS`; they never appear in
-  `compose.yaml` or `docker inspect`. The installer asks for them in stage 0
-  and keeps existing files. On a fresh install it seeds
+  `compose.yaml` or `docker inspect`. They come from the input file and are
+  rewritten, with a Transmission restart, only when they differ from it
+  (**DD-119**). On a fresh install it seeds
   `/etc/master-stack/transmission/settings.json` with the download layout
   (`/downloads`, partial files in `/downloads/incomplete`), port forwarding
   off and `rpc-port` 9091, which the image's clean-shutdown script requires,
@@ -144,12 +158,14 @@ the ones agreed on 2026-08-05:
   holds the peer port; the installer never removes it (**DD-96**, **DD-117**).
 - Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
   stop, restart, remove, update), no shell, read-only root, all capabilities
-  dropped and `no-new-privileges`. Its `users.yml` is written once by the
-  installer from a stage-0 prompt, using the image's own `generate` command
-  with the password on stdin and the `actions` role; an existing file is kept.
+  dropped and `no-new-privileges`. Its `users.yml` is written by the
+  installer from the input file, using the image's own `generate` command
+  with the password on stdin and the `actions` role. It is regenerated, with
+  a Dozzle restart, only when it no longer holds exactly that account
+  (**DD-119**).
   An old `portainer` container is never removed by the installer; stage 7
   warns while it is still running (**DD-96**, **DD-116**).
-- FileBrowser's only account comes from a stage-0 prompt (user name, and a
+- FileBrowser's account comes from the input file (user name, and a
   password of at least `FILEBROWSER_MIN_PASSWORD_LENGTH`, 12, FileBrowser's
   own minimum). Before Compose starts, the installer builds the Bolt database
   in a temporary directory with the image's CLI in a network-less one-shot
@@ -158,9 +174,13 @@ the ones agreed on 2026-08-05:
   from stdin — verifies it holds exactly that admin, and moves it into
   `/etc/master-stack/filebrowser-data`. The password never reaches argv, a log
   or a plaintext file, and no first-start random admin password is ever
-  created. An existing `filebrowser.db` is kept and nothing is asked; the
-  password is changed in FileBrowser's UI, and deleting the database makes the
-  next run ask again (**DD-118**).
+  created (**DD-118**). An existing `filebrowser.db` is compared with the
+  input file on a copy, so a running container is not touched. If the account
+  differs, the container is stopped, `users import --overwrite` writes the
+  name and hash into a fresh copy under the same id, and the verified copy is
+  moved in before the container starts again. A password changed in
+  FileBrowser's UI therefore returns to the file's value on the next run;
+  other users are left alone (**DD-119**).
 - Before Compose starts, the host best-effort preloads `wireguard` plus the
   legacy IPv4/IPv6 netfilter modules used by wg-easy and persists them in
   `/etc/modules-load.d/wg-easy.conf` (**DD-10**). The container keeps only
@@ -230,7 +250,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
 | **Image-digest-based recovery** | digest recording + final cross-check | Digests are still *recorded* for identification; nothing acts on a mismatch. |
 | **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
-| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: since v2-84 the installer creates the only account from a stage-0 prompt and no first-boot password exists (**DD-118**). |
+| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: since v2-84 the installer creates the account, since v2-85 from the input file, and no first-boot password exists (**DD-118**, **DD-119**). |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
 | **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). The installer never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
@@ -301,8 +321,8 @@ state file by substitution. A port literal appearing twice is a bug.
 
 ## 4. DNS and Caddy service map
 
-`${LOCAL_DOMAIN}` is asked at the start of the installation (**R13**) and
-defaults to the value recorded in `state.env` on a re-run.
+`${LOCAL_DOMAIN}` comes from the installer input file (**R13**, **DD-119**);
+an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
@@ -365,9 +385,11 @@ producers.
 
 ### 6.1 Credentials
 
-- The installer asks for a WebDAV **username** and **password** at the start.
-- The password is read with echo disabled, asked **twice**, and the two
-  entries must match.
+- The WebDAV **username** and **password** are `WEBDAV_USER` and
+  `WEBDAV_PASS` in the installer input file (**DD-119**).
+- Every run checks the htpasswd against them with `htpasswd -vi`, password on
+  stdin. The file is rewritten, and `webdav` restarted, only when it no longer
+  holds exactly that account.
 - The username is validated against a safe character set:
   lowercase first character, then lowercase letters, digits, dot,
   underscore or hyphen, at most 32 characters.
@@ -396,18 +418,23 @@ property the implementation must satisfy and a test must assert.
    `config.env`, not `state.env`, not `config/defaults.env`. The
    forbidden keys are named explicitly in `defaults.env`:
    `WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH`, `WEBDAV_USER_PASSWORD`.
-   There is no `webdav.env`.
+   There is no `webdav.env`. The operator's input file
+   (`kurulum/kurulum.env`) is not one of these files. It stays on the
+   workstation, git-ignored with mode `600`, and reaches the server only in
+   `/run` (`tmpfs`) until stage 0 deletes it (**DD-119**).
 7. **The password does not appear on a command line.** The server is
    pointed at a file path, so `ps` / `docker inspect` args contain no
    secret.
-8. **The password is not written to logs.** The prompt reads with echo
-   disabled, the hashing tool takes it on stdin, and no log statement
-   echoes the variable.
+8. **The password is not written to logs.** The input-file parser never
+   prints a value, the hashing and verification tools take it on stdin, and
+   no log statement echoes the variable.
 9. **The username is managed with the credential, not with the
    configuration.** The htpasswd format already stores `user:hash`, so
    recording the name separately would create a second source of truth
    that can drift from the hash. `WEBDAV_USER` therefore does not exist in
-   any of the configuration files either.
+   any of the configuration files either. The operator's input file is the
+   source the htpasswd is derived from, and each run rewrites the htpasswd
+   when it drifts (**DD-119**).
 10. **On a re-run, an existing valid credential file is preserved.** The
     operator resets it by deleting the file and re-running, and the
     installer says so. Nothing left by an older revision is hunted down

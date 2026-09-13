@@ -5,12 +5,12 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-80` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-85` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
-installer (`<version>.command`), `container-backup.command` and the
-Git-ignored `backup/`. Everything else lives under `Data/`; paths in the
+installer (`<version>.command`), `container-backup.command`, and the
+Git-ignored `kurulum/` (installer inputs) and `backup/`. Everything else lives under `Data/`; paths in the
 documents there are relative to `Data/`. Turkish click order:
 [`Data/OKUBENI.txt`](Data/OKUBENI.txt).
 
@@ -23,6 +23,10 @@ OS-awareness and optimisation review:
 ## Quick start
 
 ```bash
+# Once: installer inputs (domain, ports, accounts, optional Tailscale auth key)
+mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
+chmod 600 kurulum/kurulum.env   # then fill it in
+
 # Install: double-click the current <version>.command at the repository root
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
@@ -30,16 +34,19 @@ OS-awareness and optimisation review:
 Data/dev/export-installer.sh --desktop
 # or double-click: Data/dev/export-installer.command
 
-# On the host (after upload)
+# On the host (after upload; needs the input file in /run/master-stack)
 bash /root/debian-server-installer/install.sh
 ```
 
-Root, interactive TTY, Debian 13 or Ubuntu 24.04/26.04 LTS only. Re-runs are
-supported.
+Root, interactive TTY (one confirmation), Debian 13 or Ubuntu 24.04/26.04 LTS
+only. Re-runs are supported.
 
-The portable `.command` embeds only the runtime files and their archive
-SHA-256. It uploads them to `/root/debian-server-installer`, then starts
-`install.sh`; no Git checkout or sidecar file is required.
+The installer asks nothing it configures: every input comes from
+`kurulum/kurulum.env`, which is also the truth on re-runs — an account that
+differs from the file is updated (**DD-119**). The portable `.command` embeds
+only the runtime files and their archive SHA-256. It uploads them to
+`/root/debian-server-installer`, sends the input file to `/run/master-stack`
+(`tmpfs`, deleted by the installer as it reads it), then starts `install.sh`.
 
 ## Repository layout
 
@@ -47,6 +54,7 @@ SHA-256. It uploads them to `/root/debian-server-installer`, then starts
 .
 ├── <version>.command      # current portable installer (double-click)
 ├── container-backup.command  # container settings backup/restore (double-click)
+├── kurulum/kurulum.env    # installer inputs, mode 600 (Git-ignored)
 ├── backup/                # encrypted backups (Git-ignored)
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
@@ -82,8 +90,8 @@ and WAN SSH.
 ## Container settings backup
 
 Double-click `container-backup.command` to back up or restore the wg-easy
-account and peers over SSH; the installer asks for every other login and
-writes the Transmission preferences. Snapshots are
+account and peers over SSH; every other login comes from
+`kurulum/kurulum.env`, and the installer writes the Transmission preferences. Snapshots are
 password-encrypted and stored under the Git-ignored `backup/` directory. This
 is separate from installation.
 See [scope, the reinstall runbook and encryption](Data/docs/container-backup.md).

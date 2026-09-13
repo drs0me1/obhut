@@ -168,3 +168,69 @@ render_template() {
     printf '%s' "$content" >"$awtmp"
     atomic_write "$dest" "$mode" <"$awtmp"
 }
+
+# read_input_file FILE "ALANLAR" "BOŞ_OLAMAYAN_ALANLAR"
+# DD-119: kurulum girdi dosyası. `source` edilmez; satır başına ALAN=değer,
+# değer ilk '=' işaretinden sonrası olduğu gibi alınır (tırnak, '$', boşluk
+# işlenmez). Her alan yazılmış olmalı, ikincisindekiler boş da olamaz;
+# sonuç INPUT_<ALAN> değişkenlerine gider. Dosya okunur okunmaz silinir —
+# doğrulama başarısız olsa bile. Hata mesajları satır numarası ve alan adı
+# verir, bir değeri asla yazmaz: değer parola olabilir.
+read_input_file() {
+    local file="$1" keys="$2" nonempty="$3"
+    local mode content line n=0 key value seen=" " k missing="" empty=""
+    local re='^([A-Z][A-Z0-9_]*)=(.*)$' ws_re='(^[[:space:]]|[[:space:]]$)'
+    local comment_re='^[[:space:]]*#'
+    [[ -f "$file" && ! -L "$file" ]] ||
+        die "girdi dosyası yok: $file (kurulum .command ile başlatılır; kurulum/kurulum.env)"
+    mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file" 2>/dev/null || true)"
+    content="$(cat -- "$file")" || { rm -f -- "$file"; die "girdi dosyası okunamadı: $file"; }
+    rm -f -- "$file"
+    [[ "$mode" == 600 || "$mode" == 400 ]] ||
+        die "girdi dosyası izinleri ${mode:-okunamadı}; parola içerdiği için 600 olmalı"
+    for k in $keys; do
+        printf -v "INPUT_$k" '%s' ""
+    done
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        [[ "$line" != *$'\r'* ]] ||
+            die "girdi satır $n: Windows satır sonu (CRLF); dosyayı LF olarak kaydedin"
+        [[ -n "${line//[[:space:]]/}" ]] || continue
+        [[ ! "$line" =~ $comment_re ]] || continue
+        [[ "$line" =~ $re ]] || die "girdi satır $n: ALAN=değer biçiminde değil"
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        [[ " $keys " == *" $key "* ]] || die "girdi satır $n: bilinmeyen alan: $key"
+        [[ "$seen" != *" $key "* ]] || die "girdi satır $n: $key iki kez yazılmış"
+        seen+="$key "
+        [[ ! "$value" =~ $ws_re ]] ||
+            die "girdi satır $n: $key değerinin başında ya da sonunda boşluk var"
+        if [[ "${#value}" -ge 2 && ("$value" == \"*\" || "$value" == \'*\') ]]; then
+            die "girdi satır $n: $key değeri tırnak içinde; tırnak kullanmayın"
+        fi
+        printf -v "INPUT_$key" '%s' "$value"
+    done <<<"$content"
+    for k in $keys; do
+        [[ "$seen" == *" $k "* ]] || missing+=" $k"
+    done
+    [[ -z "$missing" ]] || die "girdi dosyasında eksik alan:$missing"
+    for k in $nonempty; do
+        k="INPUT_$k"
+        [[ -n "${!k}" ]] || empty+=" ${k#INPUT_}"
+    done
+    [[ -z "$empty" ]] || die "girdi dosyasında boş bırakılamayan alan:$empty"
+}
+
+# bcrypt_matches KULLANICI ÖZET PAROLA — özet dosyadakiyle eşleşirse 0.
+# Parola htpasswd'e stdin'den gider (argv'ye girmez); özet geçici bir 0600
+# dosyada durur. `htpasswd -vi` $2y$ (htpasswd) ve $2a$ (Go bcrypt: Dozzle,
+# FileBrowser arayüzü) özetlerini doğrular — ölçüldü, apache2-utils 2.4.68.
+bcrypt_matches() {
+    local user="$1" hash="$2" pass="$3" tmp rc=0
+    [[ "$hash" =~ ^\$2[aby]\$ ]] || return 1
+    tmp="$(mktemp "${RUNTIME_DIR:-/tmp}/.bcrypt-XXXXXX")" || return 1
+    printf '%s:%s\n' "$user" "$hash" >"$tmp"
+    printf '%s' "$pass" | htpasswd -vi "$tmp" "$user" >/dev/null 2>&1 || rc=1
+    rm -f -- "$tmp"
+    return "$rc"
+}
