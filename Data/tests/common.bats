@@ -93,12 +93,20 @@ EOF
     grep -q 'stub-resolv.conf' "$V2_ROOT/install.sh"
     grep -qF 'ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf' \
         "$V2_ROOT/install.sh"
-    # debian-keyring is installed on debian only.
-    grep -q '\[\[ "\$OS_ID" == "debian" \]\] && dns_pkgs+=(debian-keyring)' \
+    # The Caddy repo is verified by its signed-by keyring; debian-keyring is
+    # not installed on any OS (DD-125).
+    grep -q 'signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg' \
         "$V2_ROOT/install.sh"
+    run grep -q 'dns_pkgs+=(debian-keyring)' "$V2_ROOT/install.sh"
+    [ "$status" -ne 0 ]
     # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 10 ]
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 9 ]
+    # retry runs a function in a child bash that does not inherit arrays, so
+    # the masked-quiet installs take APT_OPTS as arguments (DD-125).
+    [ "$(grep -cF 'apt_get_install_masked_quiet "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 2 ]
+    run bash -c "awk '/^apt_get_install_masked_quiet\\(\\)/,/^}/' '$V2_ROOT/install.sh' | grep -q APT_OPTS"
+    [ "$status" -ne 0 ]
 }
 
 @test "require_supported_os records version and architecture" {
@@ -190,6 +198,20 @@ EOF
         "$V2_ROOT/install.sh"
 }
 
+@test "apt keeps no downloaded packages and Docker skips its recommends" {
+    # DD-125: the installer's own .deb downloads are not left in the cache,
+    # and Docker comes without buildx, git/perl or rootless-extras.
+    grep -qF 'APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)' \
+        "$V2_ROOT/install.sh"
+    docker_install="$(awk '/retry "apt-docker"/{p=1} p{print} p && !/\\$/{exit}' \
+        "$V2_ROOT/install.sh")"
+    grep -q -- '--no-install-recommends' <<<"$docker_install"
+    grep -q 'docker-ce docker-ce-cli containerd.io docker-compose-plugin apparmor pigz' \
+        <<<"$docker_install"
+    run grep -qE 'docker-buildx-plugin|docker-ce-rootless-extras' "$V2_ROOT/install.sh"
+    [ "$status" -ne 0 ]
+}
+
 @test "OS-divergence inventory: code markers and the doc table agree" {
     # Every distro-dependent point carries a marker; architecture.md lists the
     # same set. Neither can drift without this failing.
@@ -203,8 +225,8 @@ EOF
     # make the comparison below pass for the wrong reason.
     [ -n "$code" ]
     [ -n "$doc" ]
-    grep -qx 'caddy-keyring-pkg' <<<"$code"
-    grep -qx 'caddy-keyring-pkg' <<<"$doc"
+    grep -qx 'docker-repo-suite' <<<"$code"
+    grep -qx 'docker-repo-suite' <<<"$doc"
 
     [ "$code" = "$doc" ]
 
@@ -1296,6 +1318,30 @@ EOF
         grep -q 'After=tailscaled.service'
     ! awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -q 'PartOf=tailscaled.service'
+}
+
+@test "masked-quiet apt install under retry receives APT_OPTS" {
+    # retry runs a function in a child bash, where the APT_OPTS array is not
+    # inherited. Options passed as arguments must still reach apt-get (DD-125).
+    mkdir -p "$TMP/bin"
+    cat >"$TMP/bin/apt-get" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/apt-calls"
+EOF
+    cat >"$TMP/bin/timeout" <<'EOF'
+#!/bin/bash
+[ "$1" = --foreground ] && shift
+shift
+exec "$@"
+EOF
+    chmod +x "$TMP/bin/apt-get" "$TMP/bin/timeout"
+    eval "$(awk '/^apt_get_install_masked_quiet\(\)/,/^}/' "$V2_ROOT/install.sh")"
+    APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
+    V2_LOG_FILE=""
+    PATH="$TMP/bin:$PATH" retry "apt-test" 1 10 -- \
+        apt_get_install_masked_quiet "${APT_OPTS[@]}" caddy
+    grep -qx 'install -y -o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false caddy' \
+        "$TMP/apt-calls"
 }
 
 @test "edge apt install masks units until configured" {

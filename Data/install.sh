@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-89"
+V2_VERSION="2026.08.06-v2-90"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -24,7 +24,9 @@ PULL_IMAGES=0
 OS_CHANGED=0
 # Ubuntu'da unattended-upgrades varsayılan açık: apt kilidi dakikalarca
 # tutulabilir. Kilitte hemen düşmek yerine bekle; retry üstte ayrıca sarar.
-APT_OPTS=(-o DPkg::Lock::Timeout=60)
+# Kurulumun indirdiği .deb'ler kurulduktan sonra önbellekte bırakılmaz
+# (~300 MB; DD-125). Başkasının önbelleğe koyduğu dosyaya dokunulmaz.
+APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # DD-119: kurulum girdi dosyasının alanları (şablon: config/kurulum.env.example).
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
 # downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
@@ -1139,8 +1141,14 @@ stage_4() {
     if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 && "$docker_was_active" -eq 1 ]]; then
         log INFO "daemon.json değişti ama dockerd zaten çalışıyor; daemon düzeyindeki ayarlar bir sonraki docker yeniden başlatmasında okunur (proje konteynerlerinin log ayarı compose'ta — DD-110)"
     fi
+    # Önerilen paketler olmadan (DD-125): stack imaj derlemez ve rootless
+    # çalışmaz; buildx, git (+perl) ve rootless-extras ~200 MB yer tutuyordu.
+    # docker-ce'nin önerilerinden çalışma zamanının kullandığı ikisi açıkça
+    # yazılır: apparmor (çekirdekte AppArmor açıkken docker-default profili
+    # için gerekir) ve pigz (katman açma).
     retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io docker-compose-plugin apparmor pigz
     systemctl enable --now docker
     ensure_dozzle_users
     ensure_transmission_files
@@ -1237,11 +1245,13 @@ stage_5() {
     ensure_wireguard
 }
 
+# retry fonksiyonu export -f + bash -c ile ayrı süreçte çalıştırır; diziler
+# oraya geçmez. APT_OPTS bu yüzden çağırandan argüman olarak gelir (DD-125).
 apt_get_install_masked_quiet() {
     local tmp rc=0 line
     tmp="$(mktemp)"
     set +e
-    apt-get "${APT_OPTS[@]}" install -y "$@" >"$tmp" 2>&1
+    apt-get install -y "$@" >"$tmp" 2>&1
     rc=$?
     set -e
     if [[ -n "${V2_LOG_FILE:-}" ]]; then
@@ -1286,14 +1296,10 @@ stage_6() {
     if [[ "$need_pkg" -eq 1 ]]; then
         systemctl stop dnsmasq caddy 2>/dev/null || true
         systemctl mask dnsmasq.service caddy.service >/dev/null 2>&1 || true
-        # OS-DIVERGENCE: caddy-keyring-pkg (debian) — ağaçtaki TEK gerçek
-        # "if OS = debian" dallanması [DD-102]
-        # debian-keyring yalnız Debian'da: Caddy'nin resmi kurulum setinden;
-        # Ubuntu'da işlevi yok (imza doğrulaması cloudsmith keyring'iyle).
-        local -a dns_pkgs=(dnsmasq)
-        [[ "$OS_ID" == "debian" ]] && dns_pkgs+=(debian-keyring)
+        # debian-keyring kurulmaz (DD-125): Caddy deposunun imzası indirilen
+        # cloudsmith keyring'iyle (signed-by) doğrulanır.
         retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- \
-            apt_get_install_masked_quiet "${dns_pkgs[@]}"
+            apt_get_install_masked_quiet "${APT_OPTS[@]}" dnsmasq
         if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
             retry "caddy-gpg" 3 60 -- curl -1sLf \
                 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
@@ -1304,7 +1310,7 @@ deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.
 EOF
             retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
         fi
-        retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt_get_install_masked_quiet caddy
+        retry "apt-caddy" 2 "$APT_LOCK_TIMEOUT" -- apt_get_install_masked_quiet "${APT_OPTS[@]}" caddy
     fi
 
     mkdir -p /etc/dnsmasq.d

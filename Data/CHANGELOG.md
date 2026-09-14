@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Smaller install footprint (v2-90)
+
+- **Changed:** Docker is installed without its recommended packages: no
+  buildx, git/perl or rootless extras. `apparmor` and `pigz` are named
+  explicitly (**DD-125**).
+- **Changed:** apt no longer keeps the `.deb` files the installer downloads
+  (`APT::Keep-Downloaded-Packages=false`), about 300 MB.
+- **Removed:** `debian-keyring`. The Caddy repo is verified by its own
+  keyring.
+- **Fixed:** the dnsmasq and Caddy installs never received the apt options,
+  such as the dpkg lock timeout, because `retry` runs them in a child shell.
+- A fresh install uses about 450 MB less disk (2389 → 1940 MB on `nrm`).
+  Existing hosts keep what they already have.
+- **Verified on `nrm`:**
+  - Fresh-path simulation with Docker, Caddy and dnsmasq purged, exit 0.
+  - A no-op re-run.
+  - Real accounts restored afterwards.
+  - bats 122 ok.
+
 ### 2026-09-14 — WireGuard peers generated on the server, managed from wireguard.command (v2-89)
 
 - **Added:**

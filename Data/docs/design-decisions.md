@@ -4073,7 +4073,11 @@ separate document with its own numbering.
     `retry` still wraps each call above that.
   - **debian-keyring:** installed only when `OS_ID=debian` — it came from
     Caddy's official Debian install set and has no function on Ubuntu
-    (repo signing uses the downloaded cloudsmith keyring).
+    (repo signing uses the downloaded cloudsmith keyring). **Dropped on every
+    OS in v2-90 (DD-125).**
+    - The two `apt_get_install_masked_quiet` installs (dnsmasq, Caddy) never
+      received `APT_OPTS`, because `retry` runs functions in a child bash that
+      does not inherit arrays. This was fixed in v2-90 (DD-125).
 - **Verification status:** bats covers the gate matrix (accept ×3,
   reject ×5 including ID/codename and codename/version mismatches) and
   the repo-line derivation. **Live-verified on both Ubuntu lines:** noble
@@ -5624,6 +5628,88 @@ failure with an early, named one.
   - **Open:** `pppp` had not handshaken since the `wg0` restart. Its tunnel was
     probably off or the phone asleep; the user checks it on the phone.
 
+
+### DD-125: A smaller footprint — no Docker recommends, no kept apt downloads, no debian-keyring (2026-09-14)
+
+- **Context:** after a fresh v2-89 install the operator saw disk use grow by
+  about 1.7 GB.
+  - Measured on `nrm`: 672 MB of new packages, 421 MB of images and a 303 MB
+    apt cache holding all 73 downloaded `.deb` files.
+  - Of the packages, about 200 MB served nothing in this stack: Docker's
+    recommends (`git` with `perl`, `docker-ce-rootless-extras`) and
+    `docker-buildx-plugin`.
+  - The rest of the gap in the provider panel was freed but untrimmed blocks,
+    released by the weekly `fstrim.timer`.
+- **Decision:**
+  - **Docker:** installed with `--no-install-recommends` as `docker-ce
+    docker-ce-cli containerd.io docker-compose-plugin apparmor pigz`.
+    - The stack never builds images and never runs rootless, so buildx, git
+      and rootless-extras go.
+    - Two recommends the runtime uses are named explicitly. `apparmor`
+      provides the parser for the `docker-default` profile when the kernel has
+      AppArmor on. `pigz` speeds up layer decompression.
+  - **apt downloads:** `APT_OPTS` carries `APT::Keep-Downloaded-Packages=false`,
+    so every `.deb` the installer downloads is deleted once installed.
+    Nothing else in the cache is touched (DD-96), and unattended-upgrades is
+    not reconfigured.
+  - **debian-keyring:** no longer installed. The Caddy repo is verified by
+    its `signed-by` cloudsmith keyring, so the package did nothing. This
+    removes the tree's only real `if OS = debian` branch (`caddy-keyring-pkg`
+    in the OS-divergence inventory).
+  - **Fix found on the way:** `retry` runs a shell function through
+    `export -f` and `bash -c`, and arrays do not cross into that child.
+    - As a result, `apt_get_install_masked_quiet` (dnsmasq, Caddy) had run
+      with an empty `APT_OPTS` since DD-102: no lock timeout, and now no
+      download cleanup.
+    - The callers now pass `"${APT_OPTS[@]}"` as arguments, and a bats test
+      runs the helper under `retry` with a mocked `apt-get`.
+- **Not doing:**
+  - Switching Docker from the containerd image store back to `overlay2`. It
+    would drop about 114 MB of compressed layers, but go against the Docker 29
+    default.
+  - Removing anything from existing hosts. A re-run installs nothing new and
+    removes nothing, so buildx, git or debian-keyring already on a host stay
+    until the operator removes them.
+- **Trade-off:** `apparmor` and `pigz` become manually installed packages in
+  apt's view. Both were already present, from the image or through Docker.
+- **Verification:**
+  - bats 122 ok. `shellcheck -x` is clean.
+  - Deliberate mutations each failed a test: recommends back, the apt option
+    dropped, buildx back, a masked-quiet caller without `APT_OPTS`.
+  - **Live on `nrm` (Debian 13), with the scratch test inputs and the real
+    account files saved and restored:**
+    - Fresh-path simulation:
+      - `apt-get clean`.
+      - Docker, containerd, compose, buildx, rootless-extras, git/perl, pigz,
+        Caddy, dnsmasq and debian-keyring purged, `/var/lib/docker` and
+        `/var/lib/containerd` removed.
+      - The Caddy repo list and keyring deleted.
+    - The first v2-90 run stopped at stage 7 on a transient registry error
+      (`error from registry: retry-after …`) while pulling. A plain re-run
+      finished with exit 0.
+      - That run showed the two masked-quiet installs without the options: 4
+        `.deb` files left, and apt history lines without `-o`. This led to the
+        fix above.
+    - After the fix, purged again, one run with exit 0 in 41 s:
+      - apt's "Recommended packages" listed rootless-extras, git and buildx as
+        not installed.
+      - All three apt history lines carried both options, and the cache held
+        0 `.deb` files.
+      - The cloudsmith InRelease verified with no warning and no
+        debian-keyring.
+      - Docker 29.8.0 with Compose v5.5.1 and no buildx. The AppArmor
+        `docker-default` profile was enforced.
+      - All 5 containers were up (the 3 with health checks healthy), and every
+        unit was active with none failed.
+      - `--check` passed with `MASTER-FORWARD` first. Both WireGuard peers were
+        kept.
+      - The UIs, tailnet names, DNS and WebDAV answered.
+      - The log held no test password.
+    - A second run was a full no-op, and its before/after snapshot was
+      identical: unit and container start times, `wg0.conf`, both
+      Caddyfiles, `compose.yaml` and the cache.
+    - `df` used on `/`: 2389 MB with v2-89, 1940 MB with v2-90 (−449 MB).
+      `fstrim` then returned freed blocks to the virtual disk.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

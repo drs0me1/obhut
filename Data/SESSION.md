@@ -45,6 +45,30 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-90, smaller install footprint (DD-125):**
+- The user saw a fresh install grow disk use by 1.7 GB.
+  - Measured: Docker recommends and buildx about 200 MB, the kept apt cache
+    303 MB, and debian-keyring 34 MB.
+  - The rest was untrimmed blocks.
+- v2-90 installs Docker with `--no-install-recommends` plus `apparmor pigz`,
+  without buildx. apt deletes its downloaded debs, and debian-keyring is
+  dropped (the OS-divergence branch goes with it).
+- Found live: `retry` runs functions in a child bash, so the masked-quiet
+  dnsmasq/Caddy installs never had `APT_OPTS`. Callers now pass it; a bats
+  test covers it.
+- Live on `nrm`:
+  - Purged Docker/Caddy/dnsmasq and ran with the scratch inputs.
+  - The first run hit a transient registry rate-limit at the stage 7 pull.
+    The re-run was fine but exposed the `APT_OPTS` bug.
+  - After the fix: exit 0, 0 debs, no buildx/git/perl/keyring, no-op re-run,
+    df 2389 → 1940 MB.
+  - Real account files were restored (hash-identical), and `fstrim` ran. The
+    Mac's WireGuard was switched off for the launcher. bats 122.
+- Open:
+  - The user runs the first install manually.
+  - `pppp` handshake.
+  - Infuse address.
+
 **2026-09-14 — v2-89, server-generated WireGuard peers and wireguard.command (DD-124):**
 - The user wanted peers handled the native admin way, with nothing sent to
   the server.

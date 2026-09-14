@@ -408,9 +408,10 @@ appearing here, or removed from here while it still exists in the code.
 
 `grep -n 'OS-DIVERGENCE:' install.sh` prints the live inventory.
 
-The list is short on purpose. Only **one** entry is a genuine
-`if OS = debian` branch; two are the same code with an `os-release` value
-substituted; the remaining five are *capability probes* that ask the host what
+The list is short on purpose. No entry is a genuine `if OS = debian`
+branch any more: the last one, `debian-keyring`, was dropped in v2-90
+(**DD-125**). Two entries are the same code with an `os-release` value
+substituted. The remaining five are *capability probes* that ask the host what
 it has rather than what it is called. A probe keeps working on a release the
 installer was never run against; a distro switch statement does not. See
 **DD-102** and **DD-104**, and `os-aware-review.md` for why the tree is not
@@ -422,7 +423,6 @@ forked into per-distribution paths.
 |---|---|---|---|---|
 | `tailscale-repo-suite` | identity-derived | both | apt suite and keyring URL come from `OS_ID`/`OS_CODENAME`; both vendors publish the same URL shape | DD-102 |
 | `docker-repo-suite` | identity-derived | both | `URIs`/`Suites` from `OS_ID`/`OS_CODENAME` | DD-102 |
-| `caddy-keyring-pkg` | **branch** | debian | `debian-keyring` is added to the Caddy package set only on Debian. The only real `if OS = debian` in the tree | DD-102 |
 | `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
 | `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
 | `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |

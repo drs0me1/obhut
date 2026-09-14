@@ -138,7 +138,11 @@ the ones agreed on 2026-08-05:
 
 ### 1.3 Docker and containers
 
-- Docker Engine, CLI, containerd, buildx and the Compose plugin (**R9**).
+- Docker Engine, CLI, containerd and the Compose plugin, installed without
+  their recommended packages (no buildx, git or rootless extras) plus
+  `apparmor` and `pigz` (**R9**, **DD-125**).
+- The installer's own apt downloads are not kept in `/var/cache/apt/archives`
+  (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
 - One Compose file with exactly five services: `dozzle`, `filebrowser`,
   `transmission`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
   **DD-117**, **DD-120**).
