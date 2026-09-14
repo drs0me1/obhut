@@ -45,6 +45,23 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — container-backup retired (DD-122) and v2-88, live WireGuard changes (DD-123):**
+- The backup tool, its worker, document and round-trip test were removed
+  (commit `dccdfbb`); `backup/` stays Git-ignored.
+- The user wanted peers handled the kernel WireGuard way: `wg genkey`,
+  `wg pubkey` and `wg genpsk`, a `[Peer]` block, then `wg syncconf wg0
+  <(wg-quick strip wg0)` with no restart. The installer already did the
+  first steps; v2-88 now restarts `wg-quick@wg0` only when it is down, when
+  its `Address`/`MTU` changed or when `syncconf` fails, and never passes an
+  empty strip.
+- Live on `nrm`: removing `deneme` from `WG_PEERS` went from 5 peers to 4
+  with `wg-quick@wg0` and `caddy-wg` untouched. `deneme.conf` was deleted and
+  the next run was a full no-op. bats 120.
+- **Open:**
+  - Commit v2-88.
+  - Tailscale exit-node re-approval.
+  - Fresh-install test when `nrm` is reimaged.
+
 **2026-09-14 — v2-87, WireGuard peers from kurulum.env (DD-121):**
 - `WG_PEERS` lists the peers; `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
   `WG_CLIENT_DNS_OVERRIDE` (`name=dns; …`) shape every profile.

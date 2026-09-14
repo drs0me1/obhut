@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-87"
+V2_VERSION="2026.08.06-v2-88"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -571,8 +571,12 @@ wg_client_profile() {
 # launcher onları Mac'teki kurulum/wireguard'a alır. Yeni peer'ın QR kodu
 # yalnız terminale basılır, loga girmez. NAT ve FORWARD master-firewall'dadır
 # (DD-16/DD-17): PostUp yok. Firewall'dan sonra çağrılır.
+# DD-123: değişiklik WireGuard'ın doğal yoluyla uygulanır. Peer eklemek ya da
+# çıkarmak, PSK ve port `wg syncconf` ile canlı gider; bağlı cihazlar kopmaz.
+# Arayüz yalnız adresi/MTU'su değişince ya da ayakta değilken yeniden başlar.
 ensure_wireguard() {
     local server_pub peer_pub i name content changed profile new_out="" updated_out=""
+    local old_iface="" new_iface stripped
     # Kernel modülü çekirdekte; öneriler wireguard-dkms çekebilirdi.
     retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         --no-install-recommends wireguard-tools qrencode
@@ -613,6 +617,10 @@ PublicKey = ${peer_pub}
 "
     done
     install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}"
+    if [[ -f "$WG_CONF_FILE" ]]; then
+        old_iface="$(awk '/^\[Peer\]$/ {exit} /^(Address|MTU) = /' "$WG_CONF_FILE")"
+    fi
+    new_iface="$(awk '/^\[Peer\]$/ {exit} /^(Address|MTU) = /' <<<"$content")"
     atomic_write "$WG_CONF_FILE" 0600 <<<"$content"
     changed="$V2_LAST_ATOMIC_CHANGED"
     content=""
@@ -647,9 +655,22 @@ PublicKey = ${peer_pub}
     WG_PEER_PSK=()
     WG_PEER_ORIG=()
     systemctl enable --quiet "wg-quick@${WG_INTERFACE}.service"
-    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
+    if ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service" ||
+        [[ "$changed" -eq 1 && "$old_iface" != "$new_iface" ]]; then
         systemctl restart "wg-quick@${WG_INTERFACE}.service"
         log INFO "WireGuard ${WG_INTERFACE}: UDP ${WG_PUBLIC_PORT}, ${WG_PEER_COUNT} peer"
+    elif [[ "$changed" -eq 1 ]]; then
+        # `wg-quick strip` boş dönerse syncconf anahtarı ve bütün peer'ları
+        # silerdi: çıktı önce denetlenir. Anahtar printf ile (builtin) gider.
+        stripped="$(wg-quick strip "$WG_INTERFACE" 2>/dev/null || true)"
+        if [[ "$stripped" == *"PrivateKey = "* ]] &&
+            wg syncconf "$WG_INTERFACE" <(printf '%s\n' "$stripped"); then
+            log INFO "WireGuard ${WG_INTERFACE}: değişiklik canlı uygulandı (${WG_PEER_COUNT} peer; yeniden başlatılmadı)"
+        else
+            log WARN "wg syncconf başarısız; ${WG_INTERFACE} yeniden başlatılıyor"
+            systemctl restart "wg-quick@${WG_INTERFACE}.service"
+        fi
+        stripped=""
     else
         log INFO "WireGuard yapılandırması aynı; yeniden başlatılmadı"
     fi

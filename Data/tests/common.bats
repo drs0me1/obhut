@@ -2025,9 +2025,11 @@ EOF
             pubkey) local k; IFS= read -r k; printf 'PUB-%s\n' "$(printf '%s' "${k:0:8}" | tr 'A-Za-z' 'N-ZA-Mn-za-m')" ;;
             genkey) printf 'GENKEY%02d%s=\n' "$GEN" "$(printf 'g%.0s' {1..35})"; GEN=$((GEN + 1)) ;;
             genpsk) printf 'GENPSK%s=\n' "$(printf 'p%.0s' {1..37})" ;;
+            syncconf) printf 'wg syncconf %s\n' "$2" >>"$TMP/calls"; cat "$3" >"$TMP/syncconf-input"; return "${SYNC_RC:-0}" ;;
             *) return 1 ;;
         esac
     }
+    wg-quick() { [ "$1" = strip ] && grep -vE '^(Address|MTU) = ' "$WG_CONF_FILE"; }
     existing_profile() {
         printf '[Interface]\nPrivateKey = CLIENT1keybbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=\nAddress = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128\nMTU = 1420\nDNS = %s\n\n[Peer]\nPublicKey = PUB-FREIREXR\nPresharedKey = PSKddddddddddddddddddddddddddddddddddddddd=\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 21\nEndpoint = 203.0.113.7:61001' "$1"
     }
@@ -2084,7 +2086,9 @@ EOF
     [ "$(grep -c '^qrencode' "$TMP/calls")" -eq 1 ]
     grep -q 'GENKEY00' "$TMP/qr-input"
     grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
-    # Everything already handed back: no restart, and no output folder left.
+    # DD-123: on a running interface a peer change is applied live, the kernel
+    # WireGuard way (wg syncconf of `wg-quick strip`), with no restart. Here two
+    # peers are removed and nothing is left to hand back.
     rm -f "$TMP/calls"
     systemctl() { printf 'systemctl %s\n' "$*" >>"$TMP/calls"; }
     set_inputs
@@ -2095,6 +2099,46 @@ EOF
     [ "$status" -eq 0 ]
     [ ! -e "$OUTPUT_DIR" ]
     run ! grep -q '^qrencode' "$TMP/calls"
+    grep -q '^wg syncconf wg0$' "$TMP/calls"
+    run ! grep -q 'restart' "$TMP/calls"
+    [ "$(grep -c '^\[Peer\]$' "$TMP/syncconf-input")" -eq 1 ]
+    run ! grep -qE '^(Address|MTU) = ' "$TMP/syncconf-input"
+    # The same inputs again: nothing to apply at all.
+    rm -f "$TMP/calls"
+    set_inputs
+    WG_PEER_NAMES=(iphone) WG_PEER_COUNT=1 WG_PEER_NEW=(0) WG_PEER_ORIG=("$(existing_profile 1.1.1.1)")
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    run ! grep -qE 'syncconf|restart' "$TMP/calls"
+    # A failed syncconf falls back to a restart.
+    rm -f "$TMP/calls"
+    set_inputs
+    SYNC_RC=1
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    grep -q '^wg syncconf wg0$' "$TMP/calls"
+    grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
+    SYNC_RC=0
+    # An empty `wg-quick strip` must never reach syncconf (it would wipe the
+    # key and every peer): restart instead.
+    rm -f "$TMP/calls"
+    set_inputs
+    WG_PEER_NAMES=(iphone) WG_PEER_COUNT=1 WG_PEER_NEW=(0) WG_PEER_ORIG=("$(existing_profile 1.1.1.1)")
+    wg-quick() { :; }
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    run ! grep -q 'syncconf' "$TMP/calls"
+    grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
+    wg-quick() { [ "$1" = strip ] && grep -vE '^(Address|MTU) = ' "$WG_CONF_FILE"; }
+    # An interface change (MTU) needs wg-quick itself: restart, no syncconf.
+    rm -f "$TMP/calls"
+    set_inputs
+    WG_MTU=1380
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
+    run ! grep -q 'syncconf' "$TMP/calls"
+    WG_MTU=1420
     # A fresh server key is handed back with the profiles.
     set_inputs
     WG_SERVER_KEY_NEW=1 WG_SERVER_PRIVATE=""

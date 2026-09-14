@@ -254,8 +254,11 @@ Preserved in full as a core feature. Contract in §5–§7.
     (`--no-install-recommends`) and checks every profile's server key
     against `sunucu.key` with `wg pubkey`.
   - It then writes `/etc/wireguard/wg0.conf` (`0600`: server key, peer public
-    keys, PSKs, `AllowedIPs`; no client private key, no `PostUp`) and
-    restarts the interface only when that file changed.
+    keys, PSKs, `AllowedIPs`; no client private key, no `PostUp`).
+  - A change reaches a running interface with `wg syncconf` (no restart,
+    connected devices stay up). `wg-quick@wg0` restarts only when it is not
+    running, when `Address`/`MTU` changed, or when `syncconf` fails
+    (**DD-123**).
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
   Dozzle, Transmission and FileBrowser UIs at `http://10.8.0.1:<port>`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or

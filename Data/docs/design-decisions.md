@@ -5428,6 +5428,39 @@ failure with an early, named one.
   folder on the workstation and does not want it copied elsewhere.
 - **Supersedes:** DD-112 and DD-114 (the tool they describe no longer exists).
 
+### DD-123: WireGuard changes are applied the kernel WireGuard way, without a restart (2026-09-14)
+
+- **Decision:** when `wg0.conf` changes and `wg-quick@wg0` is running with the
+  same `Address` and `MTU`, the installer applies it with `wg syncconf wg0
+  <(wg-quick strip wg0)`. That covers adding or removing a peer, a PSK, the
+  listen port and the server key. The interface is restarted only when it is
+  not running, when `Address` or `MTU` changed (the settings only `wg-quick`
+  applies), or when `syncconf` fails. An empty `wg-quick strip` is never
+  passed on: syncconf would remove the key and every peer.
+- **Why:** this is how kernel WireGuard is meant to be changed, and the user
+  asked to follow the native protocol rather than wg-easy. v2-86/87 restarted
+  the interface on any change, dropping every connected device and restarting
+  `caddy-wg` (`PartOf`) just to add one `[Peer]` block. `syncconf` updates
+  only what differs, so existing sessions and handshakes stay up.
+- **How the WireGuard model maps (for the record):** the server has one key
+  pair. Every device has its own random key pair, unrelated to the server's.
+  The device profile carries the server's public key, and the server's
+  `wg0.conf` carries one `[Peer]` block per device (its public key, PSK and
+  `AllowedIPs`). Adding a device adds such a block; nothing is derived from
+  the server's private key.
+- **Verified:** bats covers the live path, a no-op, a failed syncconf falling
+  back to a restart, an empty strip output never reaching syncconf, and an MTU
+  change restarting. Two deliberate mutations each failed the test.
+- **Live on `nrm` (v2-88, the operator's folder):**
+  - The temporary peer `deneme` was removed from `WG_PEERS`. The run logged
+    the change as applied live and the unlisted-profile warning for
+    `deneme.conf`, and went from 5 peers to 4, the other four unchanged.
+  - `wg-quick@wg0` and `caddy-wg` kept their start times. `master-firewall`
+    restarted because the version change rewrote `state.env`, as on every
+    version bump.
+  - After `deneme.conf` was deleted, a further run reported WireGuard, the
+    firewall, dnsmasq, Caddy and `caddy-wg` unchanged.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

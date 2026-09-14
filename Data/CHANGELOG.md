@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — WireGuard changes applied live (v2-88)
+
+- **Changed:** adding or removing a peer, a PSK, the port or the server key
+  is applied to the running interface with `wg syncconf`, the kernel
+  WireGuard way. Connected devices and `caddy-wg` stay up. `wg-quick@wg0`
+  restarts only when it is not running, when its address or MTU changes, or
+  when `syncconf` fails (**DD-123**).
+- **Verified on `nrm`:** removing a peer from `WG_PEERS` removed it live;
+  `wg-quick@wg0` and `caddy-wg` did not restart, and the next run was a
+  no-op.
+
 ### 2026-09-14 — container-backup retired
 
 - **Removed:** `container-backup.command`, its worker, its document and its
