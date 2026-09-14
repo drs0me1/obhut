@@ -6238,6 +6238,67 @@ failure with an early, named one.
   as-is. A hard-coded menu default and an unnormalised default list were each
   caught.
 
+### DD-132: The QR code comes to the Mac as a PNG with the profile (2026-09-15)
+
+- **Context:** the user wanted each profile's QR code saved next to it in
+  `kurulum/wireguard/`, as JPG or PNG, to show it on a screen or another
+  device without opening the menu.
+- **Decision:**
+  - PNG, not JPG: a QR code needs sharp module edges, and JPG compression
+    blurs them. `qrencode` writes PNG directly.
+  - The server makes it. `master-wg png NAME` runs
+    `qrencode -t PNG -s 8 -o -` on the stored profile (616×616 px and about
+    1.4 KB for a 388-byte profile).
+    - It refuses when standard output is a terminal, so binary data is never
+      printed.
+  - `wireguard.command` saves `<name>.png` whenever it saves `<name>.conf`:
+    add, DNS change, and "4) QR göster" with the refresh answer.
+    - It goes through a temporary file, mode `600`, and is kept only when it
+      starts with the PNG signature. Otherwise the menu warns and the profile
+      stays.
+  - "3) Peer çıkar" deletes both files locally, even when the backup after
+    it fails.
+  - The backup (option 6, and the automatic one) makes a PNG for every
+    profile on the server.
+    - They are made in `mktemp -d /run/wg-yedek.*` (tmpfs, root-only, removed
+      on exit) at the same relative path as the profiles, and sent in the
+      same tar.
+    - A profile whose PNG fails still comes through, with a warning.
+    - The Mac mirrors `.png` like `.conf`: a picture whose profile the server
+      no longer has is removed.
+  - The launcher still sends only `*.conf` (and `sunucu/wg0.conf`), so
+    pictures never reach the server and stage 0's allow-list is unchanged.
+- **Security:** the picture encodes the whole profile, client private key
+  included, so it is protected exactly like the `.conf` file: mode `600` in
+  the Git-ignored `kurulum/`, never printed, never sent to the server.
+  Sharing the picture shares the tunnel.
+- **Rejected:**
+  - Making the PNG on the Mac: macOS has no QR encoder, and adding Homebrew
+    `qrencode` would add a tool to install.
+  - Keeping the PNG on the server: nothing there needs it, and it would be a
+    second copy of the key to manage.
+- **Cost:** `master-wg` changed, so this is v2-98. The menu refuses a server
+  on another version; re-run the installer once. Peers, keys and accounts
+  are kept.
+- **Verified (2026-09-15):**
+  - bats 137 ok. Eight mutations were each caught: terminal QR instead of PNG;
+    no terminal check; no PNG-signature check; no PNG download in the
+    backup; no stale-PNG removal; PNG not added to the tar; the server
+    temporary directory kept; no local PNG removal on a remove whose backup
+    fails.
+  - On `nrm`, with the new `master-wg` against a throwaway `wgtst0`
+    interface and two test peers:
+    - `png` gave a valid PNG (616×616, 1,397 bytes), identical when made
+      twice. On a pseudo-terminal it was refused; an unknown peer was
+      refused.
+    - The backup script listed `wgtst0.conf`, both profiles and both
+      pictures, and left nothing in `/run/wg-yedek.*`. Its picture matched
+      the one `png` made.
+    - The test picture, decoded on the Mac with CoreImage, gave the
+      388-byte profile byte for byte.
+    - `wg0` (4 peers, 4 profiles) was untouched, and the test interface and
+      files were removed.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

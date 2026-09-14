@@ -117,11 +117,15 @@ the ones agreed on 2026-08-05:
     settings into `kurulum/`, mode `600`, printing no content:
     - `wg0.conf` into `wireguard/sunucu/`;
     - the device profiles into `wireguard/<name>.conf`, mirrored, so a local
-      profile the server no longer has is removed.
+      profile the server no longer has is removed;
+    - a QR picture of each profile into `wireguard/<name>.png`, made on the
+      server by `master-wg png` in a root-only temporary directory under
+      `/run` that is removed afterwards, and mirrored the same way
+      (**DD-132**).
     - qBittorrent is not pulled (**DD-129**). A `kurulum/qbittorrent/` copy
       left by v2-93 is deleted.
   - The launcher sends those files with `kurulum.env` (each must be mode
-    `600`).
+    `600`). The `.png` pictures are never sent.
   - Stage 0 moves them into the root-only `RESTORE_DIR` in `/run` before the
     input directory is deleted, then validates them before any change:
     - Only those names are allowed, each at most `SNAPSHOT_MAX_BYTES`, with
@@ -300,6 +304,8 @@ Preserved in full as a core feature. Contract in §5–§7.
   - `list` prints name, address, last handshake, transfer and whether a
     profile is stored; `profile NAME` and `qr NAME` print the stored profile
     or its QR code.
+  - `png NAME` writes the profile's QR code as a PNG (8 pixels per module) to
+    standard output, and refuses when that output is a terminal (**DD-132**).
   - It takes the installer's lock, so the two never write `wg0.conf` at once.
   - A failed apply restores the previous `wg0.conf` and removes a new profile.
 - **Changes reach a running interface with `wg syncconf`** (no restart;
@@ -310,7 +316,9 @@ Preserved in full as a core feature. Contract in §5–§7.
   `kurulum.env`. It refuses a server whose `master-wg version` differs from
   the repository's `V2_VERSION`. It asks for the name, DNS, keepalive and MTU
   (defaults from `defaults.env`; DNS is Cloudflare IPv4 first, **DD-131**), prints the QR code and saves the profile as
-  `kurulum/wireguard/<name>.conf` (`600`).
+  `kurulum/wireguard/<name>.conf` and its QR picture as `<name>.png` (both
+  `600`, **DD-132**). A picture without the PNG signature is not kept; the
+  menu warns and the profile stays.
   - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
     then prints the new QR code and saves the new profile.
   - Option 8 "wg0 yeniden üret" lists the peers that will be lost and runs

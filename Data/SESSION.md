@@ -45,6 +45,18 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-15 — v2-98, QR PNG with each profile (user: "sunucu üretsin mac insin profille beraber", DD-132):**
+- `master-wg png AD` (qrencode PNG, `-s 8`, refuses a tty).
+- `wireguard.command` saves `<ad>.png` next to `<ad>.conf` (600, PNG-signature
+  check).
+- The backup script makes PNGs in `/run/wg-yedek.*` and tars them; the Mac
+  mirrors them.
+- The launcher still sends only `*.conf`.
+- bats 137 ok; eight mutations caught. Live test on `nrm` with `wgtst0`; the
+  test PNG decoded on the Mac (CoreImage) to the exact profile.
+- Open: the user re-runs the installer (v2-98), then option 6 creates PNGs
+  for the 4 existing peers.
+
 **2026-09-14 — WireGuard DNS default (user: "cloudflare en düşük ping", DD-131):**
 - Measured from `nrm`: IPv4 Cloudflare answers consistently under 7 ms; IPv6
   pings 0.5 ms lower but half its answers take 12 ms or more. Uncached: 8 ms

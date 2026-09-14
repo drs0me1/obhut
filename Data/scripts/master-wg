@@ -11,6 +11,7 @@
 #   master-wg remove AD
 #   master-wg profile AD                  istemci profili (stdout)
 #   master-wg qr AD                       profilin QR kodu (terminal)
+#   master-wg png AD                      profilin QR kodu PNG olarak (stdout, dosyaya/boruya)
 #   master-wg dns AD DNS                  profildeki DNS satırı; anahtarlar aynı
 #   master-wg reset --onay                yeni sunucu anahtarı, bütün peer'lar silinir
 set -Eeuo pipefail
@@ -283,6 +284,15 @@ cmd_qr() {
     qrencode -t ansiutf8 <"$WG_CLIENTS_DIR/$1.conf"
 }
 
+# DD-132: QR resmi Mac'e profille birlikte iner. İçinde istemci anahtarı vardır;
+# ikili veri terminale basılmaz.
+cmd_png() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    [[ ! -t 1 ]] || die "PNG terminale yazılmaz; çıktıyı bir dosyaya yönlendirin"
+    qrencode -t PNG -s 8 -o - <"$WG_CLIENTS_DIR/$1.conf"
+}
+
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
     list) cmd_list ;;
@@ -290,7 +300,8 @@ case "${1:-}" in
     remove) [[ "$#" -eq 2 ]] || die "kullanım: master-wg remove AD"; cmd_remove "$2" ;;
     profile) [[ "$#" -eq 2 ]] || die "kullanım: master-wg profile AD"; cmd_profile "$2" ;;
     qr) [[ "$#" -eq 2 ]] || die "kullanım: master-wg qr AD"; cmd_qr "$2" ;;
+    png) [[ "$#" -eq 2 ]] || die "kullanım: master-wg png AD"; cmd_png "$2" ;;
     dns) [[ "$#" -eq 3 ]] || die "kullanım: master-wg dns AD DNS"; cmd_dns "$2" "$3" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
-    *) die "kullanım: master-wg version|list|add|remove|profile|qr|dns|reset" ;;
+    *) die "kullanım: master-wg version|list|add|remove|profile|qr|png|dns|reset" ;;
 esac

@@ -2243,7 +2243,9 @@ EOF
     touch "$srv/etc/master-stack/state.env"
     snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
     snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
+    printf '\211PNG\r\n\032\nIPH0' >"$srv/etc/wireguard/clients/iph0.png"
     printf 'stale\n' >"$repo/kurulum/wireguard/gone.conf"
+    printf 'stale\n' >"$repo/kurulum/wireguard/gone.png"
     # A v2-93 pull left a qBittorrent copy with a password hash: it is removed.
     printf '[Preferences]\nWebUI\\Password_PBKDF2="@ByteArray(secret-hash)"\n' \
         >"$repo/kurulum/qbittorrent/qBittorrent.conf"
@@ -2264,28 +2266,66 @@ EOF
     [ "$status" -eq 0 ]
     cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
     cmp "$srv/etc/wireguard/clients/iph0.conf" "$repo/kurulum/wireguard/iph0.conf"
+    cmp "$srv/etc/wireguard/clients/iph0.png" "$repo/kurulum/wireguard/iph0.png"
     [ ! -e "$repo/kurulum/wireguard/gone.conf" ]
+    [ ! -e "$repo/kurulum/wireguard/gone.png" ]
     [ ! -e "$repo/kurulum/qbittorrent" ]
-    for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf"; do
+    for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf" "$repo/kurulum/wireguard/iph0.png"; do
         [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
     done
     pulled="$output"
     case "$pulled" in *"6) Yedek al"*) ;; *) false ;; esac
     case "$pulled" in *"profil gone"*"silindi"*) ;; *) false ;; esac
+    case "$pulled" in *"QR resmi gone"*"silindi"*) ;; *) false ;; esac
     case "$pulled" in *"eski qBittorrent kopyası"*"silindi"*) ;; *) false ;; esac
     run ! grep -qE 'AAAA|BBBB|secret-hash|never-read' <<<"$pulled"
     [ -z "$(find "$repo/kurulum" -name '.yedek.*')" ]
     # A second backup reports unchanged files.
     run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
-    case "$output" in *"profil iph0"*"aynı"*) ;; *) false ;; esac
+    case "$output" in *"profil iph0"*"aynı"*"QR resmi iph0"*"aynı"*) ;; *) false ;; esac
     # The server side needs an install and a wg0.conf, tars only WireGuard files.
-    grep -q 'tar -C / -cf - -- "\${list\[@\]}"' "$TMP/ssh-script"
+    grep -qF 'tar -cf - -C / "${list[@]}" -C "$work" ${pngs[@]+"${pngs[@]}"}' "$TMP/ssh-script"
     grep -q 'sunucuda kurulum yok' "$TMP/ssh-script"
     grep -q 'sunucuda WireGuard yapılandırması yok' "$TMP/ssh-script"
     run ! grep -qiE 'qbittorrent|categories|feeds' "$TMP/ssh-script"
-    grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients$' "$TMP/ssh-args"
+    grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients /usr/local/sbin/master-wg$' "$TMP/ssh-args"
     # The separate ayarlar.command is gone.
     [ ! -e "$V2_ROOT/../ayarlar.command" ]
+}
+
+@test "wireguard.command backup script tars wg0.conf, profiles and server-made QR PNGs at the same relative paths" {
+    local cmd="$V2_ROOT/../wireguard.command" root="$TMP/root" tmpd="$TMP/tmpd"
+    awk "/<<'REMOTE'\$/ {f = 1; next} /^REMOTE\$/ {f = 0} f" "$cmd" >"$TMP/remote.sh"
+    mkdir -p "$root/etc/master-stack" "$root/etc/wireguard/clients" "$tmpd" "$TMP/x"
+    touch "$root/etc/master-stack/state.env"
+    printf '[Interface]\nPrivateKey = K\n' >"$root/etc/wireguard/wg0.conf"
+    printf 'profile-a\n' >"$root/etc/wireguard/clients/a.conf"
+    printf 'profile-b\n' >"$root/etc/wireguard/clients/b.conf"
+    printf 'not-a-profile\n' >"$root/etc/wireguard/clients/notes.txt"
+    # Fake master-wg: PNG signature plus the profile; "b" fails.
+    cat >"$TMP/master-wg" <<EOF
+#!/bin/bash
+[ "\$1" = png ] && [ "\$2" != b ] || exit 1
+printf '\211PNG\r\n\032\n'; cat "$root/etc/wireguard/clients/\$2.conf"
+EOF
+    chmod +x "$TMP/master-wg"
+    TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
+        "$root/etc/wireguard/clients" "$TMP/master-wg" >"$TMP/out.tar" 2>"$TMP/err"
+    rel="${root#/}"
+    tar -tf "$TMP/out.tar" | sort >"$TMP/list"
+    [ "$(cat "$TMP/list")" = "$(printf '%s\n' "$rel/etc/wireguard/clients/a.conf" "$rel/etc/wireguard/clients/a.png" \
+        "$rel/etc/wireguard/clients/b.conf" "$rel/etc/wireguard/wg0.conf" | sort)" ]
+    tar -C "$TMP/x" -xf "$TMP/out.tar"
+    [ "$(tail -c +9 "$TMP/x/$rel/etc/wireguard/clients/a.png")" = profile-a ]
+    grep -q 'b için QR resmi üretilemedi' "$TMP/err"
+    # The temporary PNG directory is gone.
+    [ -z "$(ls -A "$tmpd")" ]
+    # No install or no wg0.conf: refused before anything is sent.
+    run env TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/none" "$root/etc/wireguard/wg0.conf" "$root/etc/wireguard/clients" "$TMP/master-wg"
+    [ "$status" -eq 3 ]
+    run env TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/none" "$root/etc/wireguard/clients" "$TMP/master-wg"
+    [ "$status" -eq 4 ]
+    [ -z "$(ls -A "$tmpd")" ]
 }
 
 @test "wireguard.command options 7 and 8 change DNS with a new QR and regenerate wg0 only after SIL" {
@@ -2311,6 +2351,7 @@ case "\$*" in
     *"master-wg profile iph0"*) printf '[Interface]\nPrivateKey = SECRETKEY\nDNS = 1.1.1.1\n' ;;
     *"master-wg dns iph0 "*) echo "\$*" >>"$TMP/calls"; a="\${*% }"; last="\${a##* }"; printf 'iph0\t%s\n' "\$last" ;;
     *"master-wg qr iph0"*) echo "QR-CODE" ;;
+    *"master-wg png iph0"*) echo "not a png" ;;
     *"master-wg reset --onay"*) echo "\$*" >>"$TMP/calls"; touch "$TMP/reset-done"; printf '4\t4\n'
         rm -f "$srv/etc/wireguard/clients/iph0.conf"
         printf '[Interface]\nPrivateKey = NEWKEY\n' >"$srv/etc/wireguard/wg0.conf" ;;
@@ -2328,6 +2369,9 @@ EOF
     [ "$(sed -n 1p "$TMP/calls" | awk '{print $NF}')" = "1.1.1.1" ]
     case "$output" in *"DNS değişti: iph0 → 2a07:a8c0::df:877b"*"QR-CODE"*) ;; *) false ;; esac
     case "$output" in *"Vazgeçildi; hiçbir şey değişmedi."*) ;; *) false ;; esac
+    # A PNG answer without the PNG signature is not kept.
+    case "$output" in *"UYARI: QR resmi alınamadı"*) ;; *) false ;; esac
+    [ -z "$(find "$repo/kurulum/wireguard" -name '*.png*')" ]
     # Each DNS change backed up on its own; the refused 8 did not.
     case "$output" in *"Yedek güncelleniyor"*"profil iph0"*) ;; *) false ;; esac
     [ "$(wc -l <"$TMP/backups")" -eq 2 ]
@@ -2370,8 +2414,9 @@ case "\$*" in
         cp "$TMP/phone.conf" "$srv/etc/wireguard/clients/phone.conf"; printf 'phone\t10.8.0.2\n' ;;
     *"master-wg profile phone"*) cat "$srv/etc/wireguard/clients/phone.conf" ;;
     *"master-wg qr phone"*) echo "QR-CODE" ;;
-    *"master-wg remove phone"*) rm -f "$srv/etc/wireguard/clients/phone.conf" ;;
-    *"bash -s"*) cat >/dev/null; echo backup >>"$TMP/backups"
+    *"master-wg png phone"*) printf '\211PNG\r\n\032\nPHONE' | tee "$srv/etc/wireguard/clients/phone.png" ;;
+    *"master-wg remove phone"*) rm -f "$srv/etc/wireguard/clients/phone.conf" "$srv/etc/wireguard/clients/phone.png" ;;
+    *"bash -s"*) cat >/dev/null; [ ! -e "$TMP/backup-fails" ] || exit 1; echo backup >>"$TMP/backups"
         cd "$srv" && tar -cf - \$(find etc/wireguard -type f | sort) ;;
     *) exit 1 ;;
 esac
@@ -2388,7 +2433,10 @@ EOF
     [ "$5 $6" = "$(awk -F'"' '/^WG_CLIENT_KEEPALIVE_DEFAULT=/{print $2} /^WG_MTU=/{m = $2} END {print m}' "$V2_ROOT/config/defaults.env" | paste -sd' ' -)" ]
     cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
     cmp "$srv/etc/wireguard/clients/phone.conf" "$repo/kurulum/wireguard/phone.conf"
-    case "$output" in *"QR-CODE"*"Yedek güncelleniyor"*"profil phone"*) ;; *) false ;; esac
+    cmp "$srv/etc/wireguard/clients/phone.png" "$repo/kurulum/wireguard/phone.png"
+    [ "$(stat -f %Lp "$repo/kurulum/wireguard/phone.png" 2>/dev/null || stat -c %a "$repo/kurulum/wireguard/phone.png")" = 600 ]
+    [ -z "$(find "$repo/kurulum/wireguard" -name '*.gelen')" ]
+    case "$output" in *"QR resmi alındı: kurulum/wireguard/phone.png"*"QR-CODE"*"Yedek güncelleniyor"*"profil phone"*"QR resmi phone"*) ;; *) false ;; esac
     run ! grep -qE 'AAAA|BBBB' <<<"$output"
     # 3: the removal is mirrored, including a stale local profile.
     printf 'stale\n' >"$repo/kurulum/wireguard/old.conf"
@@ -2397,10 +2445,20 @@ EOF
     [ "$status" -eq 0 ]
     [ "$(wc -l <"$TMP/backups")" -eq 2 ]
     [ ! -e "$repo/kurulum/wireguard/phone.conf" ]
+    [ ! -e "$repo/kurulum/wireguard/phone.png" ]
     [ ! -e "$repo/kurulum/wireguard/old.conf" ]
     # 3 answered "h" changes nothing and takes no backup.
     run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nh\n5\n\n')
     [ "$(wc -l <"$TMP/backups")" -eq 2 ]
+    # With the backup failing, 3 still drops the local profile and QR picture and warns.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '2\nphone\n\n\n\n5\n\n')
+    [ -f "$repo/kurulum/wireguard/phone.png" ]
+    touch "$TMP/backup-fails"
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nE\n5\n\n')
+    [ "$status" -eq 0 ]
+    case "$output" in *"UYARI: yedek eşitlenemedi"*) ;; *) false ;; esac
+    [ ! -e "$repo/kurulum/wireguard/phone.conf" ]
+    [ ! -e "$repo/kurulum/wireguard/phone.png" ]
 }
 
 wg_mock_bin() {
@@ -2524,6 +2582,36 @@ master_wg() {
     [ "$status" -ne 0 ]
     run master_wg profile nosuch
     [ "$status" -ne 0 ]
+}
+
+@test "master-wg png writes the stored profile's QR code as PNG to a pipe and never to a terminal" {
+    wg_mock_bin
+    wg_state_fixture
+    master_wg add iphone 1.1.1.1 21 1420 >/dev/null
+    cat >"$TMP/bin/qrencode" <<'EOF'
+#!/bin/bash
+printf 'qrencode %s\n' "$*" >>"$MOCK_LOG"
+printf '\211PNG\r\n\032\n'
+cat
+EOF
+    chmod +x "$TMP/bin/qrencode"
+    rm -f "$TMP/calls"
+    master_wg png iphone >"$TMP/out.png"
+    grep -qx 'qrencode -t PNG -s 8 -o -' "$TMP/calls"
+    [ "$(head -c 8 "$TMP/out.png" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]
+    tail -c +9 "$TMP/out.png" | cmp - "$TMP/etc/wireguard/clients/iphone.conf"
+    # Nothing is applied or changed.
+    run ! grep -qE '^(wg|systemctl) ' "$TMP/calls"
+    run master_wg png ghost
+    [ "$status" -ne 0 ]
+    case "$output" in *"'ghost' için sunucuda profil yok"*) ;; *) false ;; esac
+    run master_wg png "../iphone"
+    [ "$status" -ne 0 ]
+    run master_wg png
+    [ "$status" -ne 0 ]
+    # Binary output is refused on a terminal.
+    body="$(awk '/^cmd_png\(\)/,/^}$/' "$V2_ROOT/scripts/master-wg")"
+    grep -q '\[\[ ! -t 1 \]\] || die' <<<"$body"
 }
 
 @test "master-wg dns rewrites only the profile's DNS line and leaves keys and wg0.conf alone" {

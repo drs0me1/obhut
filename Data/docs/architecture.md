@@ -100,7 +100,7 @@ re-detected, never as an expectation to be violated.
 .
 ├── <V2_VERSION>.command               current portable installer (double-click; copied by the exporter)
 ├── wireguard.command                  WireGuard peer menu (double-click; calls master-wg over SSH)
-├── kurulum/                           installer inputs: kurulum.env; wireguard/ (profiles + sunucu/wg0.conf) pulled by wireguard.command → 6) Yedek al (Git-ignored)
+├── kurulum/                           installer inputs: kurulum.env; wireguard/ (profiles + QR .png + sunucu/wg0.conf) pulled by wireguard.command → 6) Yedek al (Git-ignored)
 ├── README.md, CLAUDE.md               entry points
 ├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
 └── Data/

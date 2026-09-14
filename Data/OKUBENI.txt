@@ -4,7 +4,7 @@ Repo kökünde yalnız çift tıklanan dosyalar durur:
   <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
   wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR, yedek al, DNS, wg0 yeniden üret (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
-  kurulum/wireguard/         cihaz profilleri; sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
+  kurulum/wireguard/         cihaz profilleri (.conf) ve QR resimleri (.png); sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
@@ -21,8 +21,9 @@ WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
              7) DNS değiştir 8) wg0 yeniden üret
   Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
   Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
-  profil kurulum/wireguard/<ad>.conf olarak Mac'e iner (cihaza bu dosyayı ya da QR'ı aktarın).
-  6) yedek al: sunucu anahtarı, peer listesi ve profiller kurulum/wireguard'a iner (içerik ekrana yazılmaz);
+  profil kurulum/wireguard/<ad>.conf, QR resmi <ad>.png olarak Mac'e iner (cihaza dosyayı ya da QR'ı aktarın).
+  QR resmi de profil gibi gizli anahtarı taşır: kimseyle paylaşmayın.
+  6) yedek al: sunucu anahtarı, peer listesi, profiller ve QR resimleri kurulum/wireguard'a iner (içerik ekrana yazılmaz);
   yeniden kurulumda aynı anahtar ve peer'lar gelir. 2) ekle, 3) çıkar, 7) ve 8) yedeği kendiliğinden
   günceller; 6) elle yedek içindir.
   7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).

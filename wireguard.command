@@ -2,7 +2,7 @@
 # WireGuard peer menüsü (DD-124). Repo kökünde çift tıklanır; sunucudaki
 # master-wg'yi SSH ile çağırır. Sunucuya hiçbir anahtar ya da profil gönderilmez:
 # peer sunucuda üretilir, QR kodu terminale basılır, profil
-# kurulum/wireguard/<ad>.conf olarak alınır. "Yedek al" sunucu yapılandırmasını
+# kurulum/wireguard/<ad>.conf, QR resmi <ad>.png olarak alınır (DD-132). "Yedek al" sunucu yapılandırmasını
 # (wg0.conf) ve bütün profilleri kurulum/wireguard'a çeker; yeniden kurulumda
 # kurulum bunları, sunucuda karşılığı yoksa geri koyar (DD-128). "DNS değiştir"
 # yalnız profildeki DNS satırını, "wg0'ı yeniden üret" sunucu anahtarını ve
@@ -126,6 +126,20 @@ fetch_profile() {
     chmod 600 "$tmp"
     mv -f "$tmp" "$WG_DIR/$name.conf"
     echo "Profil alındı: kurulum/wireguard/$name.conf"
+    # DD-132: QR resmini sunucu üretir; profille aynı anahtarı taşır (izin 600).
+    tmp="$WG_DIR/.$name.png.gelen"
+    if (umask 077 && remote png "$name" >"$tmp") && is_png "$tmp"; then
+        chmod 600 "$tmp"
+        mv -f "$tmp" "$WG_DIR/$name.png"
+        echo "QR resmi alındı: kurulum/wireguard/$name.png"
+    else
+        rm -f "$tmp"
+        echo "UYARI: QR resmi alınamadı; '6) Yedek al' ile yeniden deneyin." >&2
+    fi
+}
+
+is_png() {
+    [[ "$(head -c 8 "$1" | od -An -tx1 | tr -d ' \n')" == 89504e470d0a1a0a ]]
 }
 
 add_peer() {
@@ -153,7 +167,7 @@ remove_peer() {
     ask confirm "'$name' sunucudan kaldırılsın, profili silinsin mi? (E/h)" "h"
     [[ "$confirm" =~ ^[EeYy]$ ]] || { echo "Vazgeçildi."; return 0; }
     remote remove "$name" >/dev/null || return 1
-    rm -f "$WG_DIR/$name.conf"
+    rm -f "$WG_DIR/$name.conf" "$WG_DIR/$name.png"
     echo "Kaldırıldı: $name"
     auto_backup
 }
@@ -235,23 +249,36 @@ auto_backup() {
 # olur. Yeniden kurulumda <sürüm>.command bunları gönderir ve kurulum, sunucuda
 # wg0.conf yoksa yerine koyar.
 backup_settings() {
-    local src_wg src_clients f name peers kept=" "
+    local src_wg src_clients f name ext peers kept=" "
     mkdir -p "$ROOT/kurulum"
     chmod 700 "$ROOT/kurulum"
     backup_work="$(mktemp -d "$ROOT/kurulum/.yedek.XXXXXX")"
     # Sunucu yalnız var olan dosyaları, köke göre göreli yollarla tar olarak
     # gönderir; bu Mac'te diske iner, ekrana değil.
     if ! ssh "${ssh_base[@]}" "$HOST" bash -s -- \
-        "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" >"$backup_work/yedek.tar" <<'REMOTE'
+        "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$MASTER_WG" >"$backup_work/yedek.tar" <<'REMOTE'
 set -euo pipefail
-state="$1" wg_conf="$2" wg_clients="$3"
+state="$1" wg_conf="$2" wg_clients="$3" master_wg="$4"
 [[ -f "$state" ]] || { echo "sunucuda kurulum yok ($state)" >&2; exit 3; }
 [[ -f "$wg_conf" ]] || { echo "sunucuda WireGuard yapılandırması yok" >&2; exit 4; }
-list=("${wg_conf#/}")
+# QR resimleri (DD-132) root'a özel geçici dizinde, profille aynı göreli yolda üretilir.
+work="$(mktemp -d "${TMPDIR:-/run}/wg-yedek.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/${wg_clients#/}"
+list=("${wg_conf#/}") pngs=()
 for f in "$wg_clients"/*.conf; do
-    [[ ! -f "$f" ]] || list+=("${f#/}")
+    [[ -f "$f" ]] || continue
+    list+=("${f#/}")
+    name="${f##*/}"
+    name="${name%.conf}"
+    if "$master_wg" png "$name" >"$work/${wg_clients#/}/$name.png"; then
+        pngs+=("${wg_clients#/}/$name.png")
+    else
+        echo "UYARI: $name için QR resmi üretilemedi" >&2
+    fi
 done
-tar -C / -cf - -- "${list[@]}"
+# Yollar köke göreli ("etc/..."), tire ile başlamaz.
+tar -cf - -C / "${list[@]}" -C "$work" ${pngs[@]+"${pngs[@]}"}
 REMOTE
     then
         echo "HATA: yedek alınamadı (bağlantı ya da sunucu hatası; ayrıntı yukarıda)" >&2
@@ -278,15 +305,17 @@ REMOTE
         name="${name%.conf}"
         [[ "$name" =~ $NAME_RE ]] || { echo "  UYARI: geçersiz profil adı atlandı: $name" >&2; continue; }
         put "$f" "$WG_DIR/$name.conf" "profil $name"
+        [[ ! -f "$src_clients/$name.png" ]] || put "$src_clients/$name.png" "$WG_DIR/$name.png" "QR resmi $name"
         kept="$kept$name "
     done
-    for f in "$WG_DIR"/*.conf; do
+    for f in "$WG_DIR"/*.conf "$WG_DIR"/*.png; do
         [[ -f "$f" ]] || continue
         name="${f##*/}"
-        name="${name%.conf}"
+        ext="${name##*.}"
+        name="${name%.*}"
         case "$kept" in
             *" $name "*) ;;
-            *) rm -f "$f" && printf '  %-40s silindi (sunucuda yok)\n' "profil $name" ;;
+            *) rm -f "$f" && printf '  %-40s silindi (sunucuda yok)\n' "$([[ "$ext" == png ]] && echo "QR resmi" || echo profil) $name" ;;
         esac
     done
     # v2-93'ün çektiği qBittorrent kopyası artık kullanılmıyor (DD-129); parola
@@ -308,7 +337,7 @@ show_qr() {
     ask name "QR'ı gösterilecek peer adı"
     [[ -n "$name" ]] || return 0
     remote qr "$name" || return 1
-    ask refresh "Profil kurulum/wireguard'a da alınsın mı? (E/h)" "h"
+    ask refresh "Profil ve QR resmi kurulum/wireguard'a da alınsın mı? (E/h)" "h"
     [[ ! "$refresh" =~ ^[EeYy]$ ]] || fetch_profile "$name" || true
 }
 

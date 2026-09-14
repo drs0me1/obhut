@@ -31,7 +31,7 @@ chmod 600 kurulum/kurulum.env   # then fill it in
 # WireGuard peers (after the install): double-click wireguard.command
 # Change a peer's DNS: 7) DNS değiştir; new server key, all peers removed: 8) wg0 yeniden üret
 # Options 2, 3, 7 and 8 back up the WireGuard key, peers and profiles into kurulum/ themselves
-# (manual backup: 6) Yedek al)
+# (manual backup: 6) Yedek al); each profile also comes with its QR code as <name>.png
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)

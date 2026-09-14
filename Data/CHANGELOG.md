@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-15 — QR code saved as PNG next to each WireGuard profile (v2-98)
+
+- **Added** (**DD-132**):
+  - `wireguard.command` saves `kurulum/wireguard/<name>.png` (mode 600)
+    with every profile it saves: add, DNS change and the QR display refresh.
+  - The backup (option 6 and the automatic one) pulls a PNG for every
+    profile and removes pictures whose profile is gone.
+  - `master-wg png NAME` on the server writes the PNG to a pipe; it refuses
+    a terminal.
+- The picture holds the client key, like the profile: keep it private. It is
+  never sent to the server.
+- Re-run the installer once (v2-98): the menu requires the same version on
+  the server. Then run option 6 to create pictures for existing peers.
+- **Verified:** bats 137 ok, eight mutations caught. Tested on `nrm` with a
+  throwaway interface; the PNG decoded on the Mac to the exact profile.
+
 ### 2026-09-14 — WireGuard client DNS default: Cloudflare IPv4 first (v2-97, menu only)
 
 - **Changed:** the DNS offered for a new peer is now
