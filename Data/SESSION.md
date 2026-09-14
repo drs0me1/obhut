@@ -45,6 +45,29 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — other sessions merged into this one:** at the user's request,
+so nothing is lost when those sessions are archived.
+- **"SERVER SETUP" (2026-09-08..13):** v2-74..v2-84 decisions. They are all
+  committed (`d2f778b` and earlier) and recorded in the entries below and in
+  the DDs. Durable user preferences went to Claude's memory.
+- **"Make bats negative assertions actually fail" (worktree
+  `claude/magical-shannon-e0b514`):**
+  - Its uncommitted work was on a v2-84 base. It is now preserved as `fab2643`
+    on branch `wip/bats-negation-v2-84`, not merged.
+  - Under macOS bash 3.2 a mid-test `! cmd` or `[[ ]]` never fails a test.
+  - Open work:
+    - Redo the conversion on the current base (~98 `!`, 17 `[[` at v2-90).
+    - Remove the dead v2-65 block in `stage_6` that recreates `webdav` when
+      it still publishes `${TAILSCALE_IPV4}:${WEBDAV_PORT}`. The user chose
+      removal (DD-96).
+    - Fix four tests that match comments or operator messages.
+    - Update the DD-96 "Guard" wording.
+  - That session's read-only disk check listed `kurulum/kurulum.env` keys
+    with the values stripped, which showed only `SSH_HOST=nrm`.
+- **"DATABASE CORE" (archived, 2026-09-02, old iCloud copy):** the transcript
+  and the path are gone, so nothing was recoverable. Its work predates the
+  entries here.
+
 **2026-09-14 — v2-90, smaller install footprint (DD-125):**
 - The user saw a fresh install grow disk use by 1.7 GB.
   - Measured: Docker recommends and buildx about 200 MB, the kept apt cache
