@@ -2,9 +2,5 @@
 # installer or its documentation.
 .DS_Store
 
-# Archives of the retired container-backup tool (DD-122): private service
-# databases, credential hashes and VPN private keys.
-/backup/
-
 # Installer inputs: passwords and the Tailscale auth key (DD-119).
 /kurulum/

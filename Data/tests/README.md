@@ -31,7 +31,7 @@ Caddy rather than at the duplicate route (**DD-110**).
 **Reboot between the purge and the install.** To diagnose, check whether more
 than one interface carries the `wg` gateway address
 (`ip -o -4 addr show | grep <gateway>`) and which interface
-`ip route get <wg-easy address>` chooses.
+`ip route get <WireGuard address>` chooses.
 
 ## Acceptance-check lessons (2026-09-11)
 

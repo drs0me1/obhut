@@ -106,7 +106,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### WireGuard (DD-120, DD-124, DD-128)
 
-- wg-easy yok; WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır, adresler wg-easy'nin kullandıklarıdır.
+- WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP 61001).
 - Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
 - `wireguard.command` → 6) Yedek al sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`) ve profilleri `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.

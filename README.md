@@ -5,8 +5,7 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-95` (see `Data/install.sh`).
-Latest tagged release: `2026.08.06-v2-71`.
+**Current version:** `2026.08.06-v2-96` (see `Data/install.sh`).
 
 The repository root holds only what is double-clicked: the current portable
 installer (`<version>.command`), `wireguard.command` (WireGuard peers and
@@ -18,8 +17,8 @@ documents there are relative to `Data/`. Turkish click order:
 Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
 Layout and data flow: [`Data/docs/architecture.md`](Data/docs/architecture.md).
 Design rationale: [`Data/docs/design-decisions.md`](Data/docs/design-decisions.md).
-OS-awareness and optimisation review:
-[`Data/docs/os-aware-review.md`](Data/docs/os-aware-review.md).
+Earlier reviews (historical, v2-27 and v2-73):
+[`Data/docs/archive/`](Data/docs/archive/).
 
 ## Quick start
 
@@ -101,8 +100,7 @@ There is no container backup tool. A host is rebuilt from `kurulum/` alone:
   `kurulum/`. A fresh install restores them only where the server has none
   (**DD-128**), and devices reconnect unchanged.
 - Pull again after changing peers.
-Keep that folder safe. `container-backup` was retired after v2-87 (**DD-122**);
-old archives in a Git-ignored `backup/` folder are no longer read by anything.
+Keep that folder safe.
 
 ## Verify (workstation)
 

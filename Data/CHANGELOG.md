@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Cleanup of transition code and stale references (v2-96)
+
+- **Removed** (no host needs them after the v2-95 rebuild; **DD-96**):
+  - the stage 0 Transmission leftover gate and the `TRANSMISSION_*`
+    removed-key hint;
+  - the stage 7 Portainer warning;
+  - the v2-73 sysctl file-name migration;
+  - the "no OS record (v2-73)" log branch.
+- **Fixed:**
+  - The downloads tree line now reports how many entries were actually
+    fixed ("… girdinin sahibi ya da izni düzeltildi") and otherwise says
+    ownership and modes are in place. It used to claim a repair on every run.
+  - `V2_LOG_FILE` is exported, so the full apt output of the dnsmasq/Caddy
+    installs (run by `retry` in a child bash) reaches `install.log`.
+- **Changed:**
+  - Comments no longer describe the WireGuard addresses as wg-easy's.
+  - `optimization-review.md` and `os-aware-review.md` moved to
+    `docs/archive/` with a historical note.
+  - README drops the stale tag line and the `backup/` note.
+- **Repository:**
+  - Deleted: the empty `backup/` folder (and its `.gitignore` entry), the
+    `wip/bats-negation-v2-84` and `claude/magical-shannon-e0b514` branches and
+    their worktree.
+  - Removed: the exports v2-79 to v2-95 from `Data/app/`, which Git history
+    already holds.
+- **Verified:** bats 131 ok; shellcheck clean.
+
 ### 2026-09-14 — WireGuard backup moves into wireguard.command (v2-95)
 
 - **Changed:** `ayarlar.command` is removed. Its pull of the WireGuard server

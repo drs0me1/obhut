@@ -135,7 +135,7 @@ EOF
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'KERNEL_RELEASE='
     # A missing record must not be reported as a release change.
     awk '/^detect_os_change\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'v2-73 öncesi'
+        grep -qF '[[ -n "$prev_id" && -n "$prev_codename" ]] || return 0'
     # A real change re-runs the OS-conditional work rather than trusting bytes.
     grep -q 'OS_CHANGED=1' "$V2_ROOT/install.sh"
     grep -qF '"${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1' \
@@ -159,12 +159,10 @@ EOF
     # Provider images ship 99-*.conf too and the last assignment wins (DD-105).
     grep -q 'SYSCTL_NETBUF_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
     grep -q 'SYSCTL_FORWARD_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
-    grep -q 'SYSCTL_LEGACY_FILES=' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'atomic_write /etc/sysctl.d/99-master' "$V2_ROOT/install.sh"
-    # Old names are removed, otherwise one key is written from two files.
-    awk '/^remove_legacy_sysctl_files\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'rm -f'
-    awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'remove_legacy_sysctl_files'
+    # The v2-73 file-name migration is gone (v2-96, DD-96): no host still has it.
+    run ! grep -qE 'SYSCTL_LEGACY_FILES|remove_legacy_sysctl_files' \
+        "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env"
     # File placement is not proof; stage 7 reads the live value.
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'sysctl -n net.ipv4.ip_forward'
@@ -457,12 +455,15 @@ EOF
     chmod 0700 "$TMP/dl/sub"
     chmod 0600 "$TMP/dl/sub/bad"
     chmod 0664 "$TMP/dl/sub/good"
-    ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)"
+    # It reports how many entries it fixed, so the log says so only when true.
+    chmod 0775 "$TMP/dl"
+    [ "$(ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)")" = 2 ]
+    [ "$(ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)")" = 0 ]
     [ "$(stat -f '%Lp' "$TMP/dl/sub" 2>/dev/null || stat -c '%a' "$TMP/dl/sub")" = "775" ]
     [ "$(stat -f '%Lp' "$TMP/dl/sub/bad" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/bad")" = "664" ]
     [ "$(stat -f '%Lp' "$TMP/dl/sub/good" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/good")" = "664" ]
     run ensure_downloads_tree "$TMP/yok" "$(id -u)" "$(id -g)"
-    [ "$status" -ne 0 ]
+    case "$output" in *"die: downloads dizini yok"*) ;; *) false ;; esac
 }
 
 @test "docker daemon.json merges dns and log rotation via jq" {
@@ -680,11 +681,11 @@ EOF
     grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS"' "$V2_ROOT/install.sh"
     grep -qx 'TORRENT_USER=' "$V2_ROOT/config/kurulum.env.example"
     grep -qx 'TORRENT_PASS=' "$V2_ROOT/config/kurulum.env.example"
-    grep -q 'INPUT_REMOVED_KEYS="TRANSMISSION_USER TRANSMISSION_PASS"' "$V2_ROOT/install.sh"
+    # The Transmission and Portainer transition aids are gone (v2-96).
+    run ! grep -qiE 'transmission|portainer|INPUT_REMOVED_KEYS' "$V2_ROOT/install.sh" "$V2_ROOT/common.sh"
     run ! grep -q 'TRANSMISSION' "$V2_ROOT/config/kurulum.env.example"
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
     grep -q 'validate_account qBittorrent "\$TORRENT_NEW_USER" "\$TORRENT_NEW_PASS"' <<<"$stage0"
-    grep -q 'docker inspect transmission' <<<"$stage0"
     grep -q 'unattended-upgrades python3' "$V2_ROOT/install.sh"
     stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
     awk '/ensure_qbittorrent_dir$/ {a = NR} /sync_qbittorrent_config$/ {b = NR}
@@ -848,21 +849,6 @@ EOF
     # qBittorrent 5.2 answers a good login with 204 and a SID cookie (measured).
     grep -qF '[[ "$code" != "200" && "$code" != "204" ]] || ! grep -q '"'"'SID'"'"' "$jar"' <<<"$body"
     grep -q 'rm -f -- "\$jar"' <<<"$body"
-}
-
-@test "read_input_file names a removed key instead of calling it unknown" {
-    printf 'A=1\nTRANSMISSION_PASS=fixture-secret\n' >"$TMP/in.env"
-    chmod 600 "$TMP/in.env"
-    run read_input_file "$TMP/in.env" "A" "A" "TRANSMISSION_USER TRANSMISSION_PASS"
-    [ "$status" -ne 0 ]
-    case "$output" in *"satır 2: TRANSMISSION_PASS artık kullanılmıyor"*) ;; *) false ;; esac
-    run ! grep -q 'fixture-secret' <<<"$output"
-    [ ! -e "$TMP/in.env" ]
-    # Without the fourth argument it is still just an unknown key.
-    printf 'A=1\nTRANSMISSION_PASS=x\n' >"$TMP/in.env"
-    chmod 600 "$TMP/in.env"
-    run read_input_file "$TMP/in.env" "A" "A"
-    case "$output" in *"bilinmeyen alan: TRANSMISSION_PASS"*) ;; *) false ;; esac
 }
 
 @test "filebrowser classic serves downloads at /srv with disableExec" {
@@ -1405,8 +1391,8 @@ EOF
     run ! grep -q 'purge_host_webdav_leftovers' "$s"
     run ! grep -qE 'apt-get (purge|autoremove)' "$s"
     run ! grep -qE 'userdel|groupdel|setfacl' "$s"
-    # Leftover gates name the removal command for the operator to run by hand
-    # (DD-116, DD-117); only a command the installer runs itself counts.
+    # An operator message may name a removal command to run by hand; only a
+    # command the installer runs itself counts.
     code="$(grep -vE '^[[:space:]]*(die|log [A-Z]+) "' "$s")"
     [ -n "$code" ]
     run ! grep -qE 'docker (rm|volume rm)' <<<"$code"
@@ -1497,6 +1483,7 @@ EOF
     cat >"$TMP/bin/apt-get" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/apt-calls"
+echo "fake apt output"
 EOF
     cat >"$TMP/bin/timeout" <<'EOF'
 #!/bin/bash
@@ -1507,11 +1494,15 @@ EOF
     chmod +x "$TMP/bin/apt-get" "$TMP/bin/timeout"
     eval "$(awk '/^apt_get_install_masked_quiet\(\)/,/^}/' "$V2_ROOT/install.sh")"
     APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
-    V2_LOG_FILE=""
+    # V2_LOG_FILE is exported by install.sh, so the child bash appends apt's
+    # full output to the install log too (v2-96).
+    grep -qx 'export V2_LOG_FILE' "$V2_ROOT/install.sh"
+    export V2_LOG_FILE="$TMP/install.log"
     PATH="$TMP/bin:$PATH" retry "apt-test" 1 10 -- \
         apt_get_install_masked_quiet "${APT_OPTS[@]}" caddy
     grep -qx 'install -y -o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false caddy' \
         "$TMP/apt-calls"
+    grep -qx 'fake apt output' "$TMP/install.log"
 }
 
 @test "edge apt install masks units until configured" {

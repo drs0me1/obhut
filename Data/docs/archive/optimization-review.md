@@ -1,5 +1,7 @@
 # Structural Optimisation Review
 
+> **Archived (v2-96):** this review describes the system at the version it names. Parts of that system are gone, such as wg-easy, Portainer and qBittorrent's defaults. For current behaviour see [`contract.md`](../contract.md) and [`design-decisions.md`](../design-decisions.md).
+
 **Date:** 2026-08-07 · **Reviewed version:** `2026.08.06-v2-27`
 **Target host:** `nrm` (Debian 13 trixie, WAN `203.0.113.10`)
 **Method:** source review + live read-only discovery + two controlled restart tests.
@@ -10,9 +12,9 @@ resilient, more efficient, and more predictable across reboot and daemon
 restart — **without growing the system**. Every finding below is backed by a
 measurement taken on the live host, not by reading alone.
 
-Related documents: [`contract.md`](contract.md) (what the system must
-do), [`architecture.md`](architecture.md) (how it is laid out),
-[`design-decisions.md`](design-decisions.md) (why).
+Related documents: [`contract.md`](../contract.md) (what the system must
+do), [`architecture.md`](../architecture.md) (how it is laid out),
+[`design-decisions.md`](../design-decisions.md) (why).
 
 ---
 

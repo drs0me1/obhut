@@ -322,8 +322,8 @@ apply_forward() {
     activate_named "$bin" FORWARD "$staging" "$CHAIN_FORWARD"
 }
 
-# DD-120: WireGuard alt ağı WAN'a çıkarken maskelenir (wg-easy'nin PostUp'ı
-# yerine; kural sahibi bu betik, DD-16/DD-17).
+# DD-120: WireGuard alt ağı WAN'a çıkarken maskelenir (wg-quick PostUp'ı yok;
+# kural sahibi bu betik, DD-16/DD-17).
 apply_nat() {
     local bin="$1" prefix="$2" subnet="$3" staging
     staging="$(create_staging "$bin" "$prefix")"

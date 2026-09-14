@@ -45,6 +45,23 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-96, cleanup (user: "tüm önerileri uygula"):**
+- Removed transition code no host needs anymore:
+  - the Transmission gate and removed-key hint;
+  - the Portainer warning;
+  - the v2-73 sysctl migration and OS-record log branch.
+- Fixed:
+  - the always-on "sapma düzeltildi" log, which now counts real fixes;
+  - `V2_LOG_FILE`, now exported so retry children log apt output.
+- Stale wg-easy comments were corrected, and the old reviews moved to
+  `docs/archive/`.
+- Deleted:
+  - the empty `backup/` folder;
+  - the two wip branches and their worktree;
+  - `Data/app` exports v2-79 to v2-95.
+- Kept: the `master` branch and the tags. Not touched (outside the repo):
+  `~/.ssh/config` `LocalForward 51821`.
+
 **2026-09-14 — first real rebuild with v2-95 (by the user):**
 - The user reset `nrm` and installed v2-95 with their own `kurulum/`.
   Accounts came from `kurulum.env` and qBittorrent from the template.

@@ -1,7 +1,7 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-95.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
   wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR, yedek al (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   kurulum/wireguard/         cihaz profilleri; sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
@@ -51,4 +51,4 @@ B) Sıfırlama → yeniden kurulum
   (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin)
 
 Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + wireguard.command yedeği).
-Bu klasörü güvende tutun. Eski container-backup arşivleri (backup/) artık hiçbir şeyce okunmaz; silebilirsiniz.
+Bu klasörü güvende tutun.

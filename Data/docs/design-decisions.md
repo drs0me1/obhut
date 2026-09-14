@@ -4314,7 +4314,7 @@ failure with an early, named one.
   `::1/128`; `127.0.0.53` is merely reachable through the 127/8 route.
   Resolved then rebound it cleanly. The race does not exist, so the binding
   change would have bought nothing while dropping `[::1]:53` — it was
-  withdrawn. `optimization-review.md` §7's protection of `bind-dynamic` now
+  withdrawn. `archive/optimization-review.md` §7's protection of `bind-dynamic` now
   rests on a measurement rather than on reputation.
 - **Why not delete the ineffective drop-in instead:** it would change behaviour
   on any host where the key still works, and there is no such host to verify
@@ -4447,7 +4447,7 @@ failure with an early, named one.
   three hit a burst of about 2,000 retransmissions and lost roughly 20%. None
   of BBR's three runs did. **Peak throughput is the same (~440 Mbit/s, the
   path's ceiling).** BBR's gain is that cubic's loss-driven dips go away.
-- **Scope, and a correction to the review:** `os-aware-review.md` D1 said BBR
+- **Scope, and a correction to the review:** `archive/os-aware-review.md` D1 said BBR
   would help "an exit node relaying other devices' TCP". It does not. The two
   endpoints of a TCP connection run its congestion control; a router that only
   forwards the flow never does. On this host BBR affects only TCP that ends
@@ -6136,6 +6136,18 @@ failure with an early, named one.
       the next run was still a no-op.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
+
+- **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,
+  the last transition aids went:
+  - the stage 0 Transmission container gate and `TRANSMISSION_*` removed-key
+    hints (with `read_input_file`'s removed-keys argument);
+  - the stage 7 Portainer warning;
+  - the v2-73 sysctl file-name migration (`remove_legacy_sysctl_files`,
+    `SYSCTL_LEGACY_FILES`);
+  - the "no OS record (v2-73)" log branch.
+
+  Stale wg-easy wording in comments was corrected, and the two dated reviews
+  moved to `docs/archive/`.
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no
   longer deletes `master-webdav.service`, its user, group and downloads ACL,

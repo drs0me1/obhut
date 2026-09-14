@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-95"
+V2_VERSION="2026.08.06-v2-96"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -15,6 +15,8 @@ source "$V2_ROOT/config/defaults.env"
 
 mkdir -p "$LOG_DIR" "$STATE_DIR" "$RUNTIME_DIR"
 V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
+# retry fonksiyonları ayrı bash'te çalıştırır; apt çıktısı loga oradan da yazılsın.
+export V2_LOG_FILE
 RUN_FULL_UPGRADE=0
 COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
@@ -33,8 +35,6 @@ APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
 INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS TS_AUTH_KEY"
 INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS"
-# Kaldırılmış alanlar: dosyada kalırsa kurulum ne yapılacağını söyleyerek durur.
-INPUT_REMOVED_KEYS="TRANSMISSION_USER TRANSMISSION_PASS"
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -98,18 +98,15 @@ KERNEL_RELEASE=$(uname -r)
 EOF
 }
 
-# Kurulumun hangi OS üzerinde yapıldığını state.env'den okur. Kayıt yoksa
-# (v2-73 ve öncesi) sürüm değişimi iddia edilmez — yalnız yeni alanlar yazılır.
+# Kurulumun hangi OS üzerinde yapıldığını state.env'den okur. Kayıt eksikse
+# sürüm değişimi iddia edilmez.
 detect_os_change() {
     [[ -r "$STATE_FILE" ]] || return 0
     local prev_id prev_codename prev_version
     prev_id="$(awk -F= '/^OS_ID=/{print $2; exit}' "$STATE_FILE" || true)"
     prev_codename="$(awk -F= '/^OS_CODENAME=/{print $2; exit}' "$STATE_FILE" || true)"
     prev_version="$(awk -F= '/^OS_VERSION_ID=/{print $2; exit}' "$STATE_FILE" || true)"
-    [[ -n "$prev_id" && -n "$prev_codename" ]] || {
-        log INFO "state.env'de OS kaydı yok (v2-73 öncesi); bu çalıştırmada eklenecek"
-        return 0
-    }
+    [[ -n "$prev_id" && -n "$prev_codename" ]] || return 0
     if [[ "$prev_id" == "$OS_ID" && "$prev_codename" == "$OS_CODENAME" &&
         "$prev_version" == "$OS_VERSION_ID" ]]; then
         return 0
@@ -553,7 +550,7 @@ stage_0() {
     require_root
     # DD-119: girdi ilk iş okunur ve silinir; kapılardan biri düşse bile
     # parolalar /run'da kalmaz.
-    read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS" "$INPUT_REMOVED_KEYS"
+    read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
     take_snapshot_input
     rm -rf -- "$INPUT_DIR"
     validate_snapshot
@@ -577,11 +574,6 @@ stage_0() {
         die "ufw aktif: INPUT politikası iki elden yönetilemez. Önce 'ufw disable' çalıştırın"
     fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
-    # DD-127: Transmission'dan kalan konteyner peer portunu tutar, qBittorrent
-    # başlayamaz. Kurulum onu silmez (DD-96); hiçbir şey değişmeden durur.
-    if command -v docker >/dev/null 2>&1 && docker inspect transmission >/dev/null 2>&1; then
-        die "Transmission konteyneri hâlâ var ve peer portunu tutuyor; qBittorrent başlayamaz (DD-127). Kaldırın: docker rm -f transmission (ayar ve kimlik dizinleri silinmez), sonra kurulumu yeniden çalıştırın"
-    fi
 
     # defaults.env değerleri config.env source edilmeden önce alınır.
     local def_domain="$DEFAULT_LOCAL_DOMAIN" def_dl="$DOWNLOADS_PATH_DEFAULT"
@@ -852,20 +844,6 @@ EOF
     log INFO "UDP netbuf floor: rmem_max=$target_rmem wmem_max=$target_wmem"
 }
 
-# v2-73'e kadar dosyalar 99-master-*.conf idi ve sağlayıcı imajının
-# 99-nc-kernel.conf'u onlardan SONRA sıralanıyordu; son atama kazandığı için
-# ip_forward boot'ta sessizce geri alınabilirdi. Yeni adlar 99-zz-* (DD-105);
-# eskiler silinmezse aynı anahtar iki dosyadan yazılır.
-remove_legacy_sysctl_files() {
-    local f
-    # shellcheck disable=SC2086 # boşlukla ayrılmış liste bilinçli
-    for f in $SYSCTL_LEGACY_FILES; do
-        [[ -f "$f" ]] || continue
-        rm -f "$f"
-        log INFO "eski sysctl drop-in silindi: $f"
-    done
-}
-
 # TCP tıkanıklık denetimi (DD-111). Yalnız bu host'ta SONLANAN TCP'yi etkiler:
 # Caddy'nin Infuse'a WebDAV akışı, qBittorrent yüklemeleri, arayüzler.
 # Exit-node üzerinden yönlendirilen akışların denetimi uç noktalardadır;
@@ -900,7 +878,6 @@ stage_2() {
     else
         log INFO "tailscale.list aynı; apt-get update atlandı (stage_1 zaten günceldi)"
     fi
-    remove_legacy_sysctl_files
     # M11/DD-18: buffer tabanı paket kurulumundan önce
     apply_udp_netbuf_floor
     # DD-111: default_qdisc tailscale0 oluşmadan önce yazılsın (taze kurulumda)
@@ -947,11 +924,14 @@ ensure_downloads_tree() {
     # sağlar (GNU virgül operatörü BSD find'da yok; testler iş istasyonunda
     # koşar). Onarım DD-84 gereği seçici kalır (yalnız sapmış girdiler);
     # hedef modlarda suid/sgid olmadığından exec sırası sonucu değiştirmez.
+    # -print düzeltilen girdiyi yazar; aynı girdi hem sahip hem mod için
+    # görünebilir, sayı tekilleştirilir. Çıktı: düzeltilen girdi sayısı.
     find "$root" \
         \( \( ! -uid "$uid" -o ! -gid "$gid" \) \
-        -exec chown -h "${uid}:${gid}" {} + -false \) -o \
-        \( -type d ! -perm 0775 -exec chmod 0775 {} + -false \) -o \
-        \( -type f ! -perm 0664 -exec chmod 0664 {} + \)
+        -print -exec chown -h "${uid}:${gid}" {} + -false \) -o \
+        \( -type d ! -perm 0775 -print -exec chmod 0775 {} + -false \) -o \
+        \( -type f ! -perm 0664 -print -exec chmod 0664 {} + \) |
+        sort -u | wc -l | tr -d ' '
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -1413,8 +1393,13 @@ stage_3() {
         "$DOWNLOADS_PATH/.unpackerr"; do
         mkdir -p "$d"
     done
-    ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
-    log INFO "Downloads sahibi ${DOWNLOADS_UID}:${DOWNLOADS_GID} (sapma düzeltildi; qBittorrent/FileBrowser/Unpackerr R/W)"
+    local fixed
+    fixed="$(ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
+    if [[ "$fixed" -gt 0 ]]; then
+        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/FileBrowser/Unpackerr R/W)"
+    else
+        log INFO "Downloads sahipliği ve izinleri yerinde (${DOWNLOADS_UID}:${DOWNLOADS_GID})"
+    fi
 }
 
 stage_4() {
@@ -1906,10 +1891,6 @@ stage_7() {
         die "qBittorrent API girişsiz yanıt $code verdi (beklenen 403; arayüzde giriş atlama/beyaz liste açık olabilir)"
     qbit_login_check
     unset TORRENT_NEW_PASS
-    # DD-96: kurulum eski Portainer'ı silmez; hâlâ çalışıyorsa söyler.
-    if docker inspect -f '{{.State.Running}}' portainer 2>/dev/null | grep -qx true; then
-        log WARN "Portainer artık kurulumun parçası değil (DD-116) ama çalışıyor ve docker.sock'a erişiyor; kaldırmak için: docker rm -f portainer (verisi: docker volume rm docker_portainer_data)"
-    fi
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         "http://127.0.0.1:${WEBDAV_PORT}/" || true)"

@@ -415,7 +415,7 @@ branch any more: the last one, `debian-keyring`, was dropped in v2-90
 substituted. The remaining five are *capability probes* that ask the host what
 it has rather than what it is called. A probe keeps working on a release the
 installer was never run against; a distro switch statement does not. See
-**DD-102** and **DD-104**, and `os-aware-review.md` for why the tree is not
+**DD-102** and **DD-104**, and `archive/os-aware-review.md` for why the tree is not
 forked into per-distribution paths.
 
 <!-- OS-DIVERGENCE-INVENTORY:BEGIN -->

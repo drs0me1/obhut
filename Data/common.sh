@@ -169,16 +169,15 @@ render_template() {
     atomic_write "$dest" "$mode" <"$awtmp"
 }
 
-# read_input_file FILE "ALANLAR" "BOŞ_OLAMAYAN_ALANLAR" ["KALDIRILMIŞ_ALANLAR"]
+# read_input_file FILE "ALANLAR" "BOŞ_OLAMAYAN_ALANLAR"
 # DD-119: kurulum girdi dosyası. `source` edilmez; satır başına ALAN=değer,
 # değer ilk '=' işaretinden sonrası olduğu gibi alınır (tırnak, '$', boşluk
 # işlenmez). Her alan yazılmış olmalı, ikincisindekiler boş da olamaz;
 # sonuç INPUT_<ALAN> değişkenlerine gider. Dosya okunur okunmaz silinir —
 # doğrulama başarısız olsa bile. Hata mesajları satır numarası ve alan adı
-# verir, bir değeri asla yazmaz: değer parola olabilir. Kaldırılmış bir alan
-# kalmışsa satırın silinmesi söylenir.
+# verir, bir değeri asla yazmaz: değer parola olabilir.
 read_input_file() {
-    local file="$1" keys="$2" nonempty="$3" removed="${4:-}"
+    local file="$1" keys="$2" nonempty="$3"
     local mode content line n=0 key value seen=" " k missing="" empty=""
     local re='^([A-Z][A-Z0-9_]*)=(.*)$' ws_re='(^[[:space:]]|[[:space:]]$)'
     local comment_re='^[[:space:]]*#'
@@ -201,8 +200,6 @@ read_input_file() {
         [[ "$line" =~ $re ]] || die "girdi satır $n: ALAN=değer biçiminde değil"
         key="${BASH_REMATCH[1]}"
         value="${BASH_REMATCH[2]}"
-        [[ " $removed " != *" $key "* ]] ||
-            die "girdi satır $n: $key artık kullanılmıyor; bu satırı kurulum/kurulum.env'den silin"
         [[ " $keys " == *" $key "* ]] || die "girdi satır $n: bilinmeyen alan: $key"
         [[ "$seen" != *" $key "* ]] || die "girdi satır $n: $key iki kez yazılmış"
         seen+="$key "

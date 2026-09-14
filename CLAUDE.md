@@ -105,10 +105,11 @@ state. Treat every change as production-infrastructure work.
 | `Data/systemd/` | Unit/timer templates |
 | `Data/tests/` | Critical bats suite (`bats Data/tests`) |
 | `Data/dev/export-installer.sh` | Portable `.command` exporter |
-| `Data/app/` | Every exported `<V2_VERSION>.command` |
+| `Data/app/` | Exported `<V2_VERSION>.command` files (older exports pruned in v2-96; history is in Git) |
 | `Data/docs/contract.md` | What the installer does / refuses |
 | `Data/docs/architecture.md` | Layout and data flow |
 | `Data/docs/design-decisions.md` | `DD-*` rationale |
+| `Data/docs/archive/` | Historical reviews (v2-27, v2-73) and the original rules source; not current behaviour |
 
 ## Constraints
 

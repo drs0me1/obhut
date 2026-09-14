@@ -1,5 +1,7 @@
 # OS-Awareness and Optimisation Review
 
+> **Archived (v2-96):** this review describes the system at the version it names. Parts of that system are gone, such as wg-easy, Portainer and qBittorrent's defaults. For current behaviour see [`contract.md`](../contract.md) and [`design-decisions.md`](../design-decisions.md).
+
 **Date:** 2026-09-08 · **Reviewed version:** `2026.08.06-v2-73`
 **Target host:** `nrm` — Ubuntu 26.04.1 LTS (resolute), kernel `7.0.0-31-generic`,
 amd64, systemd 259, Docker 29.8.0, Tailscale 1.102.3, netcup VPS, 8 GB / 248 GB
@@ -7,8 +9,8 @@ amd64, systemd 259, Docker 29.8.0, Tailscale 1.102.3, netcup VPS, 8 GB / 248 GB
 controlled `systemd-resolved` restart. Workstation static gates re-run:
 `bash -n` clean, `shellcheck -x` clean, `bats tests` 80 passed / 3 skipped.
 
-Companion documents: [`contract.md`](contract.md),
-[`architecture.md`](architecture.md), [`design-decisions.md`](design-decisions.md),
+Companion documents: [`contract.md`](../contract.md),
+[`architecture.md`](../architecture.md), [`design-decisions.md`](../design-decisions.md),
 [`optimization-review.md`](optimization-review.md) (2026-08-07, `v2-27`).
 
 ---

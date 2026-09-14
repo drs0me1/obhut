@@ -78,8 +78,8 @@ the ones agreed on 2026-08-05:
   `state.env` carries `OS_ID`, `OS_CODENAME`, `OS_VERSION_ID`, `OS_ARCH`
   and `KERNEL_RELEASE`. A re-run whose recorded identity differs from the
   live one warns and re-applies the OS-dependent steps even when the
-  written files are byte-identical. A host with no recorded OS (v2-73 or
-  earlier) is not treated as a release change. Architecture outside
+  written files are byte-identical. A missing record is not treated as a
+  release change. Architecture outside
   `amd64` warns; it is not refused.
 - Third-party restart managers are suspended for the installer's apt calls
   (`NEEDRESTART_SUSPEND=1`, **DD-103**). Ubuntu's `needrestart` otherwise
@@ -196,9 +196,6 @@ the ones agreed on 2026-08-05:
   - The web UI and peer ports come from `WEBUI_PORT`/`TORRENTING_PORT`, which
     the image passes on the command line at every start, so the config file
     cannot move them.
-  - A leftover `transmission` container stops the installer in stage 0 before
-    any change, because it holds the peer port. The installer never removes
-    it (**DD-96**, **DD-127**).
 - Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
   stop, restart, remove, update), no shell, read-only root, all capabilities
   dropped and `no-new-privileges`. Its `users.yml` is written by the
@@ -206,8 +203,6 @@ the ones agreed on 2026-08-05:
   with the password on stdin and the `actions` role. It is regenerated, with
   a Dozzle restart, only when it no longer holds exactly that account
   (**DD-119**).
-  An old `portainer` container is never removed by the installer; stage 7
-  warns while it is still running (**DD-96**, **DD-116**).
 - FileBrowser's account comes from the input file (user name, and a
   password of at least `FILEBROWSER_MIN_PASSWORD_LENGTH`, 12, FileBrowser's
   own minimum). Before Compose starts, the installer builds the Bolt database
