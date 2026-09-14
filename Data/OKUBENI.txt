@@ -17,10 +17,14 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
-WireGuard (kurulum/wireguard, tüm dosyalar chmod 600):
-  sunucu.key      sunucunun özel anahtarı (tek satır); değişirse bütün cihaz profilleri de değişmeli
-  <cihaz>.conf    cihaza aktarılan profilin aynısı; peer sayısı = dosya sayısı
-  Peer eklemek/çıkarmak: dosyayı ekleyin/silin, kurulumu yeniden çalıştırın.
+WireGuard — ayarlar kurulum.env'de, anahtarlar kurulum/wireguard'da:
+  WG_PEERS=iPh0 Mcp0 iPd0 NiPh0      peer adları (her ad = kurulum/wireguard/<ad>.conf)
+  WG_CLIENT_DNS=... ; WG_CLIENT_KEEPALIVE=21 ; WG_CLIENT_DNS_OVERRIDE=iPd0=9.9.9.9
+  Peer eklemek: adı WG_PEERS'e yazın, kurulumu çalıştırın. Sunucu anahtarı ve IP'yi üretir,
+  profil kurulum/wireguard/<ad>.conf olarak Mac'e iner ve QR kodu terminalde basılır.
+  Peer çıkarmak: adı WG_PEERS'ten silin, kurulumu çalıştırın; .conf dosyasını siz silersiniz.
+  DNS/keepalive değişince profiller güncellenip yeniden iner (cihaza yeniden aktarın).
+  sunucu.key ve .conf dosyaları anahtardır: kaybolursa cihaz yeniden kurulmalı; klasörü yedekleyin.
   Sunucuya yalnız public key ve PSK yazılır; cihazların özel anahtarları sunucuda kalmaz.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 Transmission, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)

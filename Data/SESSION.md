@@ -45,6 +45,28 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-87, WireGuard peers from kurulum.env (DD-121):**
+- `WG_PEERS` lists the peers; `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
+  `WG_CLIENT_DNS_OVERRIDE` (`name=dns; …`) shape every profile.
+- A listed peer without a `kurulum/wireguard/<name>.conf` gets `wg genkey`,
+  `wg genpsk` and the next free address on the server (plus `sunucu.key` on a
+  first install).
+- New and changed profiles go to tmpfs `OUTPUT_WG_DIR`, a QR is printed for
+  new ones, and the launcher fetches them back into `kurulum/wireguard/`
+  before removing the server copy.
+- Verified: bats 121 and three mutations caught.
+- Live on `nrm` with the operator's folder (4 devices + temporary `deneme`,
+  keepalive 21, one DNS override): exit 0, `deneme` = 10.8.0.6, five profiles
+  back and matching `wg0` exactly.
+- The fetched `deneme` profile worked as a namespace client (UIs, IPv4/IPv6
+  egress; SSH, WebDAV and other peers refused).
+- **Open:**
+  - The operator removes `deneme` from `WG_PEERS`, then one run removes the
+    peer; delete `deneme.conf` by hand.
+  - Re-import profiles on devices if DNS/keepalive changed.
+  - Commit v2-87.
+  - Retire `container-backup`.
+
 **2026-09-14 — v2-86, kernel WireGuard replaces wg-easy (DD-120):**
 - `kurulum/wireguard/sunucu.key` plus one wg-easy-format `<device>.conf` per
   peer feed `wg-quick@wg0`, using wg-easy's addresses and port 61001.

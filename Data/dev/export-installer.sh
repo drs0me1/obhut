@@ -16,6 +16,10 @@ V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_R
 # DD-119/DD-120: girdilerin sunucudaki yeri tek kaynaktan (defaults.env) gelir.
 INPUT_DIR="$(awk -F= '/^INPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
 [[ "$INPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_DIR /run altında değil: $INPUT_DIR" >&2; exit 1; }
+OUTPUT_DIR="$(awk -F= '/^OUTPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
+OUTPUT_WG_DIR="$(awk -F= '/^OUTPUT_WG_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
+[[ "$OUTPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ && "$OUTPUT_WG_DIR" == "$OUTPUT_DIR"/* ]] ||
+    { echo "HATA: OUTPUT_DIR/OUTPUT_WG_DIR /run altında ve iç içe değil" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
@@ -116,6 +120,8 @@ PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
 REMOTE_INPUT_DIR="$INPUT_DIR"
+REMOTE_OUTPUT_DIR="$OUTPUT_DIR"
+REMOTE_OUTPUT_WG_DIR="$OUTPUT_WG_DIR"
 EOF
     cat <<'BODY_END'
 
@@ -172,12 +178,10 @@ if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
     echo "  ardından: chmod 600 kurulum/kurulum.env" >&2
     pause_exit 1
 fi
-if [[ ! -f "$INPUT_LOCAL_DIR/wireguard/sunucu.key" ]]; then
-    echo "HATA: WireGuard sunucu anahtarı yok: $INPUT_LOCAL_DIR/wireguard/sunucu.key" >&2
-    echo "  Cihaz profilleri de aynı klasörde: kurulum/wireguard/<cihaz>.conf" >&2
-    pause_exit 1
-fi
-input_files=(kurulum.env wireguard/sunucu.key)
+# DD-121: wireguard/ isteğe bağlı. sunucu.key ya da bir peer'ın profili yoksa
+# kurulum üretir ve kurulum bitince buraya geri yazılır.
+input_files=(kurulum.env)
+[[ -f "$INPUT_LOCAL_DIR/wireguard/sunucu.key" ]] && input_files+=(wireguard/sunucu.key)
 for f in "$INPUT_LOCAL_DIR"/wireguard/*.conf; do
     [[ -f "$f" ]] && input_files+=("wireguard/${f##*/}")
 done
@@ -194,7 +198,7 @@ if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
     echo "HATA: kurulum.env içinde SSH_HOST boş ya da geçersiz (ör. SSH_HOST=nrm)" >&2
     pause_exit 1
 fi
-echo "Sunucu:  $HOST (kurulum/kurulum.env); WireGuard profili: $((${#input_files[@]} - 2))"
+echo "Sunucu:  $HOST (kurulum/kurulum.env); gönderilecek girdi dosyası: ${#input_files[@]}"
 
 echo "==> Gömülü arşiv açılıyor"
 marker_line="$(grep -n "^${ARCHIVE_MARKER}$" "$self" | head -n1 | cut -d: -f1 || true)"
@@ -291,6 +295,39 @@ ssh \
     "bash '$REMOTE_ROOT/install.sh'"
 rc=$?
 set -e
+
+# DD-121: kurulumun ürettiği ya da güncellediği WireGuard profilleri (yeni
+# peer'lar, ilk kurulumda sunucu.key) Mac'teki kurulum/wireguard'a alınır.
+# Kurulum yarıda kalsa da denenir: wg0.conf yazıldıysa anahtarlar yalnız orada
+# durur. Sunucudaki kopya ancak dosyalar yerine konduktan sonra silinir.
+fetch_wireguard_output() {
+    local staging="$INPUT_LOCAL_DIR/.wireguard-gelen" f n=0
+    ssh "${ssh_base[@]}" "$HOST" "test -d '$REMOTE_OUTPUT_WG_DIR'" 2>/dev/null || return 0
+    rm -rf "$staging"
+    (umask 077 && mkdir -p "$staging")
+    if ! ssh "${ssh_base[@]}" "$HOST" "tar -C '$REMOTE_OUTPUT_WG_DIR' -cf - ." |
+        (umask 077 && tar -C "$staging" -xf -); then
+        rm -rf "$staging"
+        echo "HATA: WireGuard profilleri alınamadı; sunucuda ${REMOTE_OUTPUT_WG_DIR} içinde duruyor." >&2
+        echo "  Launcher'ı yeniden çalıştırın (sunucu yeniden başlarsa silinir; eksik peer yeniden üretilir)." >&2
+        return 1
+    fi
+    (umask 077 && mkdir -p "$INPUT_LOCAL_DIR/wireguard")
+    chmod 700 "$INPUT_LOCAL_DIR/wireguard"
+    echo "==> WireGuard profilleri alındı → kurulum/wireguard"
+    for f in "$staging"/*; do
+        [[ -f "$f" ]] || continue
+        chmod 600 "$f"
+        mv -f "$f" "$INPUT_LOCAL_DIR/wireguard/"
+        echo "    ${f##*/}"
+        n=$((n + 1))
+    done
+    rm -rf "$staging"
+    ssh "${ssh_base[@]}" "$HOST" "rm -rf '$REMOTE_OUTPUT_DIR'" ||
+        echo "UYARI: sunucudaki ${REMOTE_OUTPUT_DIR} silinemedi; yeniden başlatmada silinir" >&2
+    [[ "$n" -gt 0 ]] || echo "    (dosya yok)"
+}
+fetch_wireguard_output || rc=1
 
 echo
 if [[ "$rc" -eq 0 ]]; then

@@ -1842,12 +1842,13 @@ wg_fixture_key() {
 
 wg_load_input_functions() {
     local f
-    for f in slurp_wireguard_inputs wg_client_ipv4_ok wg_client_ipv6_ok \
+    for f in slurp_wireguard_inputs wg_trim wg_dns_list_ok wg_client_ipv4_ok wg_client_ipv6_ok \
         parse_wireguard_profile validate_wireguard_inputs; do
         eval "$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
     done
     # shellcheck source=/dev/null
     source "$V2_ROOT/config/defaults.env"
+    INPUT_WG_PEERS="" INPUT_WG_CLIENT_DNS="" INPUT_WG_CLIENT_KEEPALIVE="" INPUT_WG_CLIENT_DNS_OVERRIDE=""
 }
 
 @test "wireguard inputs are read into memory, deleted, and validated in wg-easy's format" {
@@ -1877,6 +1878,7 @@ EOF
     chmod 600 "$dir"/*
     slurp_wireguard_inputs "$dir"
     [ ! -e "$dir" ]
+    INPUT_WG_PEERS="iphone mac"
     validate_wireguard_inputs
     [ "$WG_PEER_COUNT" -eq 2 ]
     [ "${WG_PEER_NAMES[*]}" = "iphone mac" ]
@@ -1886,12 +1888,84 @@ EOF
     [ "${WG_PEER_PSK[0]}" = "$psk" ]
     [ -z "${WG_PEER_PSK[1]}" ]
     [ "$WG_SERVER_PRIVATE" = "$sk" ]
+    [ "$WG_SERVER_KEY_NEW" -eq 0 ]
     [ "${WG_PEER_SERVER_PUB[1]}" = "$spub" ]
+    [ "${WG_PEER_NEW[*]}" = "0 0" ]
+    [ -z "$WG_NEW_PEERS" ]
+    # Empty env fields take the defaults.env values.
+    [ "$WG_CLIENT_DNS" = "$WG_CLIENT_DNS_DEFAULT" ]
+    [ "$WG_CLIENT_KEEPALIVE" = "$WG_CLIENT_KEEPALIVE_DEFAULT" ]
+    [ "${WG_PEER_ORIG[0]}" = "$(printf '%s' "$(cat <<EOF
+[Interface]
+PrivateKey = $p1
+Address = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128
+MTU = 1420
+DNS = 1.1.1.1, 2606:4700:4700::1111
+
+[Peer]
+PublicKey = $spub
+PresharedKey = $psk
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 0
+Endpoint = 203.0.113.10:61001
+EOF
+)")" ]
 }
 
-@test "wireguard inputs reject bad profiles without echoing key material" {
+@test "WG_PEERS plans new peers on free addresses, keeps existing ones, and applies DNS overrides" {
     wg_load_input_functions
-    local sk spub p1 p2 case_body expect dir="$TMP/in/wireguard"
+    local dir="$TMP/in/wireguard" sk spub
+    sk="$(wg_fixture_key)" spub="$(wg_fixture_key)"
+    mkdir -p "$dir"
+    printf '%s\n' "$sk" >"$dir/sunucu.key"
+    # Existing peers hold .2 and .4 (and :2, :4); .9 is taken to prove skipping.
+    for spec in "iPh0 10.8.0.2 fdcc:ad94:bacf:61a4::cafe:2" "iPd0 10.8.0.4 fdcc:ad94:bacf:61a4::cafe:4" \
+        "eski 10.8.0.9 fdcc:ad94:bacf:61a4::cafe:9"; do
+        set -- $spec
+        printf '[Interface]\nPrivateKey = %s\nAddress = %s/32, %s/128\n[Peer]\nPublicKey = %s\n' \
+            "$(wg_fixture_key)" "$2" "$3" "$spub" >"$dir/$1.conf"
+    done
+    chmod 600 "$dir"/*
+    slurp_wireguard_inputs "$dir"
+    INPUT_WG_PEERS="yeni1 iPh0  iPd0 yeni2"
+    INPUT_WG_CLIENT_DNS="9.9.9.9, 2620:fe::fe"
+    INPUT_WG_CLIENT_KEEPALIVE=21
+    INPUT_WG_CLIENT_DNS_OVERRIDE=" iPd0 = 1.1.1.1, 1.0.0.1 ; yeni2=8.8.8.8 "
+    validate_wireguard_inputs
+    [ "$WG_PEER_COUNT" -eq 4 ]
+    [ "${WG_PEER_NAMES[*]}" = "yeni1 iPh0 iPd0 yeni2" ]
+    [ "${WG_PEER_NEW[*]}" = "1 0 0 1" ]
+    # New peers fill .3 then .5; the unlisted "eski" still owns nothing.
+    [ "${WG_PEER_IPV4[*]}" = "10.8.0.3 10.8.0.2 10.8.0.4 10.8.0.5" ]
+    [ "${WG_PEER_IPV6[0]}" = "fdcc:ad94:bacf:61a4::cafe:3" ]
+    [ "${WG_PEER_IPV6[3]}" = "fdcc:ad94:bacf:61a4::cafe:5" ]
+    [ "${WG_PEER_DNS[0]}" = "9.9.9.9, 2620:fe::fe" ]
+    [ "${WG_PEER_DNS[2]}" = "1.1.1.1, 1.0.0.1" ]
+    [ "${WG_PEER_DNS[3]}" = "8.8.8.8" ]
+    [ "$WG_CLIENT_KEEPALIVE" = 21 ]
+    [ "$WG_UNLISTED_FILES" = "eski.conf " ]
+    [ "$WG_NEW_PEERS" = "yeni1=10.8.0.3 yeni2=10.8.0.5 " ]
+    [ "$WG_DNS_OVERRIDE_NAMES" = "iPd0 yeni2 " ]
+    # Host 10 is written in hex on IPv6, matching wg-easy's .2 <-> :2 layout.
+    rm -rf "$TMP/in"; mkdir -p "$dir"
+    slurp_wireguard_inputs "$dir"
+    INPUT_WG_PEERS="p2 p3 p4 p5 p6 p7 p8 p9 p10" INPUT_WG_CLIENT_DNS_OVERRIDE=""
+    validate_wireguard_inputs
+    [ "$WG_SERVER_KEY_NEW" -eq 1 ]
+    [ "${WG_PEER_IPV4[8]}" = "10.8.0.10" ]
+    [ "${WG_PEER_IPV6[8]}" = "fdcc:ad94:bacf:61a4::cafe:a" ]
+    # No folder at all: a fresh install with no peers is valid.
+    rm -rf "$TMP/in"
+    slurp_wireguard_inputs "$dir"
+    INPUT_WG_PEERS=""
+    validate_wireguard_inputs
+    [ "$WG_PEER_COUNT" -eq 0 ]
+    [ "$WG_SERVER_KEY_NEW" -eq 1 ]
+}
+
+@test "wireguard inputs reject bad profiles and env fields without echoing key material" {
+    wg_load_input_functions
+    local sk spub p1 p2 dir="$TMP/in/wireguard"
     sk="$(wg_fixture_key)" spub="$(wg_fixture_key)" p1="$(wg_fixture_key)" p2="$(wg_fixture_key)"
     good() { printf '[Interface]\nPrivateKey = %s\nAddress = %s\n[Peer]\nPublicKey = %s\n%b' "$1" "$2" "$spub" "${3:-}"; }
     run_case() {
@@ -1899,6 +1973,7 @@ EOF
         mkdir -p "$dir"
         printf '%s\n' "$sk" >"$dir/sunucu.key"
         good "$p1" 10.8.0.2/32 >"$dir/a.conf"
+        INPUT_WG_PEERS="a b" INPUT_WG_CLIENT_DNS="" INPUT_WG_CLIENT_KEEPALIVE="" INPUT_WG_CLIENT_DNS_OVERRIDE=""
         eval "$1"
         chmod 600 "$dir"/* 2>/dev/null || true
         eval "${2:-}"
@@ -1909,7 +1984,7 @@ EOF
         case "$output" in *"$3"*) ;; *) printf 'expected %s, got: %s\n' "$3" "$output"; false ;; esac
         case "$output" in *"$sk"* | *"$p1"* | *"$p2"* | *"$spub"*) false ;; esac
     }
-    run_case 'rm -f "$dir/sunucu.key"' '' 'sunucu.key yok'
+    run_case 'rm -f "$dir/sunucu.key"' '' 'sunucu.key yok ama profiller var'
     run_case 'printf "short\n" >"$dir/sunucu.key"' '' 'WireGuard özel anahtarı değil'
     run_case '' 'chmod 644 "$dir/a.conf"' 'izinleri 644'
     run_case 'good "$p2" 10.8.0.2/32 >"$dir/b.conf"' '' 'başka bir profilde de var'
@@ -1919,33 +1994,62 @@ EOF
     run_case 'good "$p2" "10.8.0.3/32, fdcc::3/128" >"$dir/b.conf"' '' "IPv6 'fdcc::3'"
     run_case 'good "$p2" 10.8.0.3/32 "[Peer]\nPublicKey = $spub\n" >"$dir/b.conf"' '' 'tek [Interface] ve tek [Peer]'
     run_case 'good "$p2" 10.8.0.3/32 "Endpoint = 1.2.3.4:51820\n" >"$dir/b.conf"' '' 'Endpoint portu 51820'
-    run_case 'good "$p2" 10.8.0.3/32 >"$dir/bad name.conf"' '' 'dosya adı'
     run_case 'printf "[Interface]\nPrivateKey = %s\nAddress = 10.8.0.3/32\n[Peer]\nPublicKey = %s\nPresharedKey = nope\n" "$p2" "$spub" >"$dir/b.conf"' '' 'PresharedKey'
-    run_case 'rm -rf "$dir"' '' 'kurulum/wireguard klasörü yok'
+    run_case 'INPUT_WG_PEERS="a bad/name"' '' "'bad/name' geçersiz ad"
+    run_case 'INPUT_WG_PEERS="a a"' '' "'a' iki kez"
+    run_case 'INPUT_WG_CLIENT_DNS="dns.example"' '' 'WG_CLIENT_DNS virgülle'
+    run_case 'INPUT_WG_CLIENT_KEEPALIVE=70000' '' 'WG_CLIENT_KEEPALIVE 0-65535'
+    run_case 'INPUT_WG_CLIENT_KEEPALIVE=021' '' 'WG_CLIENT_KEEPALIVE 0-65535'
+    run_case 'INPUT_WG_CLIENT_DNS_OVERRIDE="zz=1.1.1.1"' '' "'zz' WG_PEERS'te yok"
+    run_case 'INPUT_WG_CLIENT_DNS_OVERRIDE="a=1.1.1.1; a=8.8.8.8"' '' "'a' iki kez"
+    run_case 'INPUT_WG_CLIENT_DNS_OVERRIDE="a=bad"' '' "'a' için DNS"
+    run_case 'INPUT_WG_CLIENT_DNS_OVERRIDE="1.1.1.1"' '' "'ad=dns' biçiminde"
 }
 
-@test "ensure_wireguard writes only public keys, checks the server key, restarts on change" {
-    eval "$(awk '/^ensure_wireguard\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+@test "ensure_wireguard generates missing keys, writes public keys only, and hands back changed profiles" {
+    for f in wg_client_profile ensure_wireguard; do
+        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
     # shellcheck source=/dev/null
     source "$V2_ROOT/config/defaults.env"
     WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
-    WG_PUBLIC_PORT=61001 APT_OPTS=() APT_LOCK_TIMEOUT=1
+    OUTPUT_DIR="$TMP/out" OUTPUT_WG_DIR="$TMP/out/wireguard"
+    WG_PUBLIC_PORT=61001 WG_ENDPOINT_HOST=203.0.113.7 APT_OPTS=() APT_LOCK_TIMEOUT=1
     log() { [ "$1" != HATA ] || printf '%s\n' "$*"; }
     retry() { printf 'retry %s\n' "$*" >>"$TMP/calls"; }
     modprobe() { :; }
     install() { mkdir -p "${!#}"; }
     systemctl() { printf 'systemctl %s\n' "$*" >>"$TMP/calls"; [ "$1" != is-active ]; }
-    # Deterministic stand-in for `wg pubkey`: reads the key from stdin only.
-    wg() { [ "$1" = pubkey ] || return 1; local k; IFS= read -r k; printf 'PUB-%s\n' "${k:0:8}"; }
+    qrencode() { printf 'qrencode %s\n' "$*" >>"$TMP/calls"; cat >"$TMP/qr-input"; }
+    GEN=0
+    # Deterministic stand-ins for wg: keys only ever cross stdin/stdout, and a
+    # derived "public key" (rot13) never contains its private key.
+    wg() {
+        case "$1" in
+            pubkey) local k; IFS= read -r k; printf 'PUB-%s\n' "$(printf '%s' "${k:0:8}" | tr 'A-Za-z' 'N-ZA-Mn-za-m')" ;;
+            genkey) printf 'GENKEY%02d%s=\n' "$GEN" "$(printf 'g%.0s' {1..35})"; GEN=$((GEN + 1)) ;;
+            genpsk) printf 'GENPSK%s=\n' "$(printf 'p%.0s' {1..37})" ;;
+            *) return 1 ;;
+        esac
+    }
+    existing_profile() {
+        printf '[Interface]\nPrivateKey = CLIENT1keybbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=\nAddress = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128\nMTU = 1420\nDNS = %s\n\n[Peer]\nPublicKey = PUB-FREIREXR\nPresharedKey = PSKddddddddddddddddddddddddddddddddddddddd=\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 21\nEndpoint = 203.0.113.7:61001' "$1"
+    }
     set_inputs() {
+        WG_SERVER_KEY_NEW=0
         WG_SERVER_PRIVATE="SERVERKEYaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
-        WG_PEER_NAMES=(iphone mac)
-        WG_PEER_PRIVATE=("CLIENT1keybbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=" "CLIENT2keycccccccccccccccccccccccccccccccccc=")
-        WG_PEER_PSK=("PSKddddddddddddddddddddddddddddddddddddddd=" "")
-        WG_PEER_SERVER_PUB=("PUB-SERVERKE" "PUB-SERVERKE")
-        WG_PEER_IPV4=(10.8.0.2 10.8.0.3)
-        WG_PEER_IPV6=(fdcc:ad94:bacf:61a4::cafe:2 "")
-        WG_PEER_COUNT=2
+        WG_PEER_NAMES=(iphone ipad yeni)
+        WG_PEER_PRIVATE=("CLIENT1keybbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=" "CLIENT2keycccccccccccccccccccccccccccccccccc=" "")
+        WG_PEER_PSK=("PSKddddddddddddddddddddddddddddddddddddddd=" "" "")
+        WG_PEER_SERVER_PUB=("PUB-FREIREXR" "PUB-FREIREXR" "")
+        WG_PEER_IPV4=(10.8.0.2 10.8.0.3 10.8.0.4)
+        WG_PEER_IPV6=(fdcc:ad94:bacf:61a4::cafe:2 "" fdcc:ad94:bacf:61a4::cafe:4)
+        WG_PEER_DNS=("1.1.1.1" "9.9.9.9" "1.1.1.1")
+        WG_PEER_NEW=(0 0 1)
+        # iphone's stored profile already matches; ipad's does not (old DNS/keepalive).
+        WG_PEER_ORIG=("$(existing_profile 1.1.1.1)" "old ipad profile" "")
+        WG_CLIENT_KEEPALIVE=21
+        WG_PEER_COUNT=3
     }
     set_inputs
     run ensure_wireguard
@@ -1954,33 +2058,88 @@ EOF
     mode="$(stat -c %a "$WG_CONF_FILE" 2>/dev/null || stat -f %Lp "$WG_CONF_FILE")"
     [ "$mode" = 600 ]
     grep -q '^Address = 10.8.0.1/24, fdcc:ad94:bacf:61a4::cafe:1/112$' <<<"$conf"
-    grep -q '^ListenPort = 61001$' <<<"$conf"
     grep -q '^PrivateKey = SERVERKEYa' <<<"$conf"
-    grep -q '^PublicKey = PUB-CLIENT1k$' <<<"$conf"
-    grep -q '^PresharedKey = PSKddd' <<<"$conf"
-    grep -q '^AllowedIPs = 10.8.0.2/32, fdcc:ad94:bacf:61a4::cafe:2/128$' <<<"$conf"
-    grep -q '^AllowedIPs = 10.8.0.3/32$' <<<"$conf"
-    [ "$(grep -c '^\[Peer\]$' <<<"$conf")" -eq 2 ]
-    run ! grep -qE 'CLIENT1key|CLIENT2key|PostUp|PreUp' <<<"$conf"
-    run ! grep -q 'retry.*CLIENT' "$TMP/calls"
-    grep -q 'no-install-recommends wireguard-tools' "$TMP/calls"
+    grep -q '^PublicKey = PUB-PYVRAG1x$' <<<"$conf"
+    grep -q '^PublicKey = PUB-TRAXRL00$' <<<"$conf"
+    grep -q '^PresharedKey = GENPSKppp' <<<"$conf"
+    grep -q '^AllowedIPs = 10.8.0.4/32, fdcc:ad94:bacf:61a4::cafe:4/128$' <<<"$conf"
+    [ "$(grep -c '^\[Peer\]$' <<<"$conf")" -eq 3 ]
+    [ "$(grep -c '^PrivateKey' <<<"$conf")" -eq 1 ]
+    run ! grep -qE 'CLIENT1key|CLIENT2key|GENKEY00|PostUp' <<<"$conf"
+    grep -q 'no-install-recommends wireguard-tools qrencode' "$TMP/calls"
+    # Hand-back: the new peer and the changed ipad, not the unchanged iphone.
+    [ -f "$OUTPUT_WG_DIR/yeni.conf" ]
+    [ -f "$OUTPUT_WG_DIR/ipad.conf" ]
+    [ ! -e "$OUTPUT_WG_DIR/iphone.conf" ]
+    [ ! -e "$OUTPUT_WG_DIR/sunucu.key" ]
+    mode="$(stat -c %a "$OUTPUT_WG_DIR/yeni.conf" 2>/dev/null || stat -f %Lp "$OUTPUT_WG_DIR/yeni.conf")"
+    [ "$mode" = 600 ]
+    yeni="$(cat "$OUTPUT_WG_DIR/yeni.conf")"
+    grep -q '^PrivateKey = GENKEY00' <<<"$yeni"
+    grep -q '^PresharedKey = GENPSKppp' <<<"$yeni"
+    grep -q '^PublicKey = PUB-FREIREXR$' <<<"$yeni"
+    grep -q '^Address = 10.8.0.4/32, fdcc:ad94:bacf:61a4::cafe:4/128$' <<<"$yeni"
+    grep -q '^PersistentKeepalive = 21$' <<<"$yeni"
+    grep -q '^Endpoint = 203.0.113.7:61001$' <<<"$yeni"
+    grep -q '^DNS = 9.9.9.9$' "$OUTPUT_WG_DIR/ipad.conf"
+    grep -q '^Address = 10.8.0.3/32$' "$OUTPUT_WG_DIR/ipad.conf"
+    run ! grep -q 'PresharedKey' "$OUTPUT_WG_DIR/ipad.conf"
+    # The QR code is for the new peer only, and goes to the terminal, not the log.
+    [ "$(grep -c '^qrencode' "$TMP/calls")" -eq 1 ]
+    grep -q 'GENKEY00' "$TMP/qr-input"
     grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
-    # Unchanged inputs on an active interface: no restart.
+    # Everything already handed back: no restart, and no output folder left.
     rm -f "$TMP/calls"
     systemctl() { printf 'systemctl %s\n' "$*" >>"$TMP/calls"; }
     set_inputs
+    WG_PEER_NAMES=(iphone) WG_PEER_COUNT=1
+    WG_PEER_NEW=(0)
+    WG_PEER_ORIG=("$(existing_profile 1.1.1.1)")
     run ensure_wireguard
     [ "$status" -eq 0 ]
-    run ! grep -q 'restart' "$TMP/calls"
+    [ ! -e "$OUTPUT_DIR" ]
+    run ! grep -q '^qrencode' "$TMP/calls"
+    # A fresh server key is handed back with the profiles.
+    set_inputs
+    WG_SERVER_KEY_NEW=1 WG_SERVER_PRIVATE=""
+    WG_PEER_NAMES=(yeni) WG_PEER_PRIVATE=("") WG_PEER_PSK=("") WG_PEER_SERVER_PUB=("")
+    WG_PEER_IPV4=(10.8.0.2) WG_PEER_IPV6=("") WG_PEER_DNS=(1.1.1.1) WG_PEER_NEW=(1) WG_PEER_ORIG=("") WG_PEER_COUNT=1
+    run ensure_wireguard
+    [ "$status" -eq 0 ]
+    [ -f "$OUTPUT_WG_DIR/sunucu.key" ]
+    grep -q '^PublicKey = PUB-TRAXRL' "$OUTPUT_WG_DIR/yeni.conf"
     # A profile made for another server stops before wg0.conf changes.
     before="$(cat "$WG_CONF_FILE")"
     set_inputs
-    WG_PEER_SERVER_PUB=("PUB-SERVERKE" "PUB-OTHERSRV")
-    WG_PEER_IPV4=(10.8.0.2 10.8.0.9)
+    WG_PEER_SERVER_PUB=("PUB-FREIREXR" "PUB-OTHERSRV" "")
     run ensure_wireguard
     [ "$status" -ne 0 ]
-    case "$output" in *"mac.conf başka bir sunucuya ait"*) ;; *) false ;; esac
+    case "$output" in *"ipad.conf başka bir sunucuya ait"*) ;; *) false ;; esac
     [ "$(cat "$WG_CONF_FILE")" = "$before" ]
+}
+
+@test "launcher hands generated WireGuard profiles back before removing them from the server" {
+    local exporter="$V2_ROOT/dev/export-installer.sh" body fetch
+    body="$(awk "/cat <<'BODY_END'/,/^BODY_END\$/" "$exporter")"
+    fetch="$(awk '/^fetch_wireguard_output\(\)/,/^}$/' <<<"$body")"
+    [ -n "$fetch" ]
+    # The remote copy is removed only after every file is in kurulum/wireguard.
+    awk '/mv -f "\$f" "\$INPUT_LOCAL_DIR\/wireguard\/"/ {m = NR} /rm -rf .\$REMOTE_OUTPUT_DIR./ {r = NR}
+         END { exit !(m && r && m < r) }' <<<"$fetch"
+    grep -q 'chmod 600 "$f"' <<<"$fetch"
+    grep -q 'umask 077 && tar -C "$staging" -xf -' <<<"$fetch"
+    # It runs after the install session whatever its exit code.
+    awk '/"bash .\$REMOTE_ROOT\/install.sh."/ {i = NR} /^fetch_wireguard_output \|\| rc=1$/ {f = NR}
+         END { exit !(i && f && i < f) }' <<<"$body"
+    # wireguard/ is optional now; sunucu.key is sent only when present.
+    run ! grep -q 'WireGuard sunucu anahtarı yok' <<<"$body"
+    grep -q '\[\[ -f "\$INPUT_LOCAL_DIR/wireguard/sunucu.key" \]\] && input_files+=(wireguard/sunucu.key)' <<<"$body"
+    grep -q 'REMOTE_OUTPUT_WG_DIR="\$OUTPUT_WG_DIR"' "$exporter"
+    grep -q '^OUTPUT_DIR="/run/master-stack/kurulum-cikti"$' "$V2_ROOT/config/defaults.env"
+    grep -q '^OUTPUT_WG_DIR="/run/master-stack/kurulum-cikti/wireguard"$' "$V2_ROOT/config/defaults.env"
+    # Stage 0 clears a previous run's output that was never fetched.
+    awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" | grep -A3 'rm -rf -- "\$INPUT_DIR"' |
+        grep -q 'rm -rf -- "\$OUTPUT_DIR"'
 }
 
 @test "firewall confines WireGuard clients to internet egress and the caddy-wg ports" {

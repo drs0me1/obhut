@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-86"
+V2_VERSION="2026.08.06-v2-87"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -29,7 +29,7 @@ APT_OPTS=(-o DPkg::Lock::Timeout=60)
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
 # downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
 # tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS TRANSMISSION_USER TRANSMISSION_PASS FILEBROWSER_USER FILEBROWSER_PASS TS_AUTH_KEY"
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS TRANSMISSION_USER TRANSMISSION_PASS FILEBROWSER_USER FILEBROWSER_PASS WG_PEERS WG_CLIENT_DNS WG_CLIENT_KEEPALIVE WG_CLIENT_DNS_OVERRIDE TS_AUTH_KEY"
 INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS TRANSMISSION_USER TRANSMISSION_PASS FILEBROWSER_USER FILEBROWSER_PASS"
 
 prompt() {
@@ -260,14 +260,12 @@ tailscale_login_with_key() {
 # validate_wireguard_inputs'ta, dosyalar silindikten sonra.
 slurp_wireguard_inputs() {
     local dir="$1" f
-    WG_INPUT_PRESENT=0
     WG_SERVER_KEY_RAW=""
     WG_SERVER_KEY_MODE=""
     WG_PEER_FILES=()
     WG_PEER_MODES=()
     WG_PEER_RAW=()
     if [[ -d "$dir" && ! -L "$dir" ]]; then
-        WG_INPUT_PRESENT=1
         if [[ -f "$dir/sunucu.key" && ! -L "$dir/sunucu.key" ]]; then
             WG_SERVER_KEY_MODE="$(stat -c %a "$dir/sunucu.key" 2>/dev/null ||
                 stat -f %Lp "$dir/sunucu.key" 2>/dev/null || true)"
@@ -370,32 +368,108 @@ parse_wireguard_profile() {
         die "girdi: wireguard/$file: Address IPv6 '${PROFILE_IPV6}' $WG_SUBNET6 içinde bir istemci adresi değil"
 }
 
-# DD-120: sunucu anahtarı ve cihaz profilleri yapısal olarak doğrulanır.
-# Anahtarların birbirini tutması (wg pubkey) wireguard-tools kurulunca,
-# ensure_wireguard'da denetlenir; yapılandırma o denetimden önce yazılmaz.
+# wg_trim DEĞİŞKEN — baştaki ve sondaki boşlukları atar (yerinde).
+wg_trim() {
+    local v="${!1}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    printf -v "$1" '%s' "$v"
+}
+
+# Virgülle ayrılmış, boş olmayan bir IPv4/IPv6 adres listesi mi.
+wg_dns_list_ok() {
+    local entry n=0 octet='(0|[1-9][0-9]{0,2})'
+    local -a entries=()
+    IFS=, read -r -a entries <<<"$1"
+    for entry in "${entries[@]}"; do
+        wg_trim entry
+        if [[ "$entry" =~ ^$octet\.$octet\.$octet\.$octet$ ]]; then
+            n=$((n + 1))
+        elif [[ "$entry" == *:* && "$entry" =~ ^[0-9A-Fa-f:]+$ ]]; then
+            n=$((n + 1))
+        else
+            return 1
+        fi
+    done
+    [[ "$n" -gt 0 ]]
+}
+
+# DD-120/DD-121: peer listesi kurulum.env'den (WG_PEERS), anahtarlar ve adresler
+# kurulum/wireguard'dan. Listede olup profili bulunan peer'ın anahtarı, PSK'sı
+# ve IP'si korunur; profili olmayan yeni sayılır, anahtarını ensure_wireguard
+# üretir. Yeni peer'a sıradaki boş IPv4 ve aynı son sayının onaltılık yazımıyla
+# IPv6 burada atanır (wg-easy'nin .2 ↔ :2 düzeni). sunucu.key yoksa ve hiç profil
+# yoksa sunucu anahtarı da yeni üretilir. Anahtar tutarlılığı (wg pubkey)
+# wireguard-tools kurulunca denetlenir; yapılandırma o denetimden önce yazılmaz.
 validate_wireguard_inputs() {
-    local i file name mode seen4=" " seen6=" " seenkey=" "
-    [[ "$WG_INPUT_PRESENT" -eq 1 ]] ||
-        die "girdi: kurulum/wireguard klasörü yok (sunucu.key ve cihaz profilleri)"
-    [[ -n "$WG_SERVER_KEY_RAW" ]] || die "girdi: kurulum/wireguard/sunucu.key yok ya da boş"
-    [[ "$WG_SERVER_KEY_MODE" == 600 || "$WG_SERVER_KEY_MODE" == 400 ]] ||
-        die "girdi: wireguard/sunucu.key izinleri ${WG_SERVER_KEY_MODE:-okunamadı}; 600 olmalı"
-    WG_SERVER_PRIVATE="${WG_SERVER_KEY_RAW//[[:space:]]/}"
-    WG_SERVER_KEY_RAW=""
-    [[ "$WG_SERVER_PRIVATE" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
-        die "girdi: wireguard/sunucu.key bir WireGuard özel anahtarı değil"
+    local i j file name mode entry o_name o_dns host v4 v6 found prefix4 prefix6
+    local seen4=" " seen6=" " seenkey=" " names=" " overridden=" "
+    local -a ex_names=() ex_priv=() ex_psk=() ex_spub=() ex_v4=() ex_v6=() ex_raw=()
+    local -a listed=() overrides=()
+    read -r -a listed <<<"$INPUT_WG_PEERS"
     WG_PEER_NAMES=()
-    WG_PEER_PRIVATE=()
-    WG_PEER_PSK=()
-    WG_PEER_SERVER_PUB=()
-    WG_PEER_IPV4=()
-    WG_PEER_IPV6=()
+    for name in "${listed[@]}"; do
+        [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] ||
+            die "girdi: WG_PEERS: '$name' geçersiz ad (harf, rakam, . _ -; en çok 32)"
+        [[ "$names" != *" $name "* ]] || die "girdi: WG_PEERS: '$name' iki kez yazılmış"
+        names+="$name "
+        WG_PEER_NAMES+=("$name")
+    done
+    WG_CLIENT_DNS="${INPUT_WG_CLIENT_DNS:-$WG_CLIENT_DNS_DEFAULT}"
+    wg_dns_list_ok "$WG_CLIENT_DNS" ||
+        die "girdi: WG_CLIENT_DNS virgülle ayrılmış IP adresleri olmalı"
+    WG_CLIENT_KEEPALIVE="${INPUT_WG_CLIENT_KEEPALIVE:-$WG_CLIENT_KEEPALIVE_DEFAULT}"
+    [[ "$WG_CLIENT_KEEPALIVE" =~ ^(0|[1-9][0-9]{0,4})$ && "$WG_CLIENT_KEEPALIVE" -le 65535 ]] ||
+        die "girdi: WG_CLIENT_KEEPALIVE 0-65535 arasında bir sayı olmalı"
+    WG_PEER_DNS=()
+    for name in "${WG_PEER_NAMES[@]}"; do
+        WG_PEER_DNS+=("$WG_CLIENT_DNS")
+    done
+    WG_DNS_OVERRIDE_NAMES=""
+    IFS=';' read -r -a overrides <<<"$INPUT_WG_CLIENT_DNS_OVERRIDE"
+    for entry in "${overrides[@]}"; do
+        wg_trim entry
+        [[ -n "$entry" ]] || continue
+        [[ "$entry" == *=* ]] || die "girdi: WG_CLIENT_DNS_OVERRIDE 'ad=dns' biçiminde olmalı"
+        o_name="${entry%%=*}"
+        o_dns="${entry#*=}"
+        wg_trim o_name
+        wg_trim o_dns
+        [[ "$names" == *" $o_name "* ]] || die "girdi: WG_CLIENT_DNS_OVERRIDE: '$o_name' WG_PEERS'te yok"
+        [[ "$overridden" != *" $o_name "* ]] || die "girdi: WG_CLIENT_DNS_OVERRIDE: '$o_name' iki kez yazılmış"
+        wg_dns_list_ok "$o_dns" ||
+            die "girdi: WG_CLIENT_DNS_OVERRIDE: '$o_name' için DNS virgülle ayrılmış IP adresleri olmalı"
+        overridden+="$o_name "
+        for i in "${!WG_PEER_NAMES[@]}"; do
+            if [[ "${WG_PEER_NAMES[$i]}" == "$o_name" ]]; then
+                WG_PEER_DNS[i]="$o_dns"
+            fi
+        done
+        WG_DNS_OVERRIDE_NAMES+="$o_name "
+    done
+
+    WG_SERVER_KEY_NEW=0
+    WG_SERVER_PRIVATE=""
+    if [[ -n "$WG_SERVER_KEY_RAW" ]]; then
+        [[ "$WG_SERVER_KEY_MODE" == 600 || "$WG_SERVER_KEY_MODE" == 400 ]] ||
+            die "girdi: wireguard/sunucu.key izinleri ${WG_SERVER_KEY_MODE:-okunamadı}; 600 olmalı"
+        WG_SERVER_PRIVATE="${WG_SERVER_KEY_RAW//[[:space:]]/}"
+        [[ "$WG_SERVER_PRIVATE" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
+            die "girdi: wireguard/sunucu.key bir WireGuard özel anahtarı değil"
+    else
+        WG_SERVER_KEY_NEW=1
+    fi
+    WG_SERVER_KEY_RAW=""
+
+    WG_UNLISTED_FILES=""
     for i in "${!WG_PEER_FILES[@]}"; do
         file="${WG_PEER_FILES[$i]}"
         mode="${WG_PEER_MODES[$i]}"
         name="${file%.conf}"
-        [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] ||
-            die "girdi: wireguard/$file: dosya adı yalnız harf, rakam, . _ - içerebilir (en çok 32)"
+        if [[ "$names" != *" $name "* ]]; then
+            WG_UNLISTED_FILES+="$file "
+            continue
+        fi
         [[ "$mode" == 600 || "$mode" == 400 ]] ||
             die "girdi: wireguard/$file izinleri ${mode:-okunamadı}; 600 olmalı"
         parse_wireguard_profile "$file" "${WG_PEER_RAW[$i]}"
@@ -406,35 +480,111 @@ validate_wireguard_inputs() {
         [[ "$seenkey" != *" $PROFILE_PRIVATE "* && "$PROFILE_PRIVATE" != "$WG_SERVER_PRIVATE" ]] ||
             die "girdi: wireguard/$file: özel anahtarı başka bir profilde ya da sunucu.key'de de var"
         seen4+="$PROFILE_IPV4 "
-        seen6+="$PROFILE_IPV6 "
+        seen6+="${PROFILE_IPV6:-} "
         seenkey+="$PROFILE_PRIVATE "
-        WG_PEER_NAMES+=("$name")
-        WG_PEER_PRIVATE+=("$PROFILE_PRIVATE")
-        WG_PEER_PSK+=("$PROFILE_PSK")
-        WG_PEER_SERVER_PUB+=("$PROFILE_SERVER_PUB")
-        WG_PEER_IPV4+=("$PROFILE_IPV4")
-        WG_PEER_IPV6+=("$PROFILE_IPV6")
+        ex_names+=("$name")
+        ex_priv+=("$PROFILE_PRIVATE")
+        ex_psk+=("$PROFILE_PSK")
+        ex_spub+=("$PROFILE_SERVER_PUB")
+        ex_v4+=("$PROFILE_IPV4")
+        ex_v6+=("$PROFILE_IPV6")
+        ex_raw+=("${WG_PEER_RAW[$i]}")
     done
     PROFILE_PRIVATE="" PROFILE_PSK=""
     WG_PEER_RAW=()
+    if [[ "$WG_SERVER_KEY_NEW" -eq 1 && "${#ex_names[@]}" -gt 0 ]]; then
+        die "girdi: kurulum/wireguard/sunucu.key yok ama profiller var (${ex_names[*]}); profiller yalnız kendi sunucu anahtarıyla çalışır"
+    fi
+
+    prefix4="${WG_SERVER_IPV4%.*}"
+    prefix6="${WG_SERVER_IPV6%:*}"
+    WG_PEER_PRIVATE=()
+    WG_PEER_PSK=()
+    WG_PEER_SERVER_PUB=()
+    WG_PEER_IPV4=()
+    WG_PEER_IPV6=()
+    WG_PEER_NEW=()
+    WG_PEER_ORIG=()
+    WG_NEW_PEERS=""
+    for i in "${!WG_PEER_NAMES[@]}"; do
+        name="${WG_PEER_NAMES[$i]}"
+        found=""
+        for j in "${!ex_names[@]}"; do
+            if [[ "${ex_names[$j]}" == "$name" ]]; then
+                found="$j"
+                break
+            fi
+        done
+        if [[ -n "$found" ]]; then
+            WG_PEER_PRIVATE+=("${ex_priv[$found]}")
+            WG_PEER_PSK+=("${ex_psk[$found]}")
+            WG_PEER_SERVER_PUB+=("${ex_spub[$found]}")
+            WG_PEER_IPV4+=("${ex_v4[$found]}")
+            WG_PEER_IPV6+=("${ex_v6[$found]}")
+            WG_PEER_NEW+=(0)
+            WG_PEER_ORIG+=("${ex_raw[$found]}")
+            continue
+        fi
+        v4=""
+        for ((host = 2; host <= 254; host++)); do
+            wg_client_ipv4_ok "$prefix4.$host" || continue
+            [[ "$seen4" != *" $prefix4.$host "* ]] || continue
+            printf -v v6 '%s:%x' "$prefix6" "$host"
+            [[ "$v6" != "$WG_SERVER_IPV6" && "$seen6" != *" $v6 "* ]] || continue
+            v4="$prefix4.$host"
+            break
+        done
+        [[ -n "$v4" ]] || die "girdi: $WG_SUBNET4 içinde yeni peer için boş adres kalmadı"
+        seen4+="$v4 "
+        seen6+="$v6 "
+        WG_PEER_PRIVATE+=("")
+        WG_PEER_PSK+=("")
+        WG_PEER_SERVER_PUB+=("")
+        WG_PEER_IPV4+=("$v4")
+        WG_PEER_IPV6+=("$v6")
+        WG_PEER_NEW+=(1)
+        WG_PEER_ORIG+=("")
+        WG_NEW_PEERS+="$name=$v4 "
+    done
     WG_PEER_COUNT="${#WG_PEER_NAMES[@]}"
 }
 
-# DD-120: çekirdek WireGuard. wg0.conf girdi profillerinden üretilir: sunucu
-# anahtarı, peer public key'leri, PSK'lar ve adresler. İstemcilerin özel
-# anahtarları yalnız public key türetmek için bellekte durur, diske yazılmaz.
-# NAT ve FORWARD master-firewall'dadır (DD-16/DD-17): PostUp yok. Firewall'dan
-# sonra çağrılır, böylece arayüz kuralları yokken hiç ayağa kalkmaz.
+# wg_client_profile İNDEKS SUNUCU_PUBLIC_KEY — cihaza aktarılan profil (wg-easy
+# biçimi). Anahtarlar printf'e argüman olarak girer: builtin, ps'te görünmez.
+wg_client_profile() {
+    local i="$1" server_pub="$2"
+    printf '[Interface]\nPrivateKey = %s\nAddress = %s/32%s\nMTU = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\n' \
+        "${WG_PEER_PRIVATE[$i]}" "${WG_PEER_IPV4[$i]}" \
+        "${WG_PEER_IPV6[$i]:+, ${WG_PEER_IPV6[$i]}/128}" "$WG_MTU" "${WG_PEER_DNS[$i]}" "$server_pub"
+    if [[ -n "${WG_PEER_PSK[$i]}" ]]; then
+        printf 'PresharedKey = %s\n' "${WG_PEER_PSK[$i]}"
+    fi
+    printf 'AllowedIPs = %s\nPersistentKeepalive = %s\nEndpoint = %s:%s\n' \
+        "$WG_CLIENT_ALLOWED_IPS" "$WG_CLIENT_KEEPALIVE" "$WG_ENDPOINT_HOST" "$WG_PUBLIC_PORT"
+}
+
+# DD-120/DD-121: çekirdek WireGuard. Yeni peer'ların (ve gerekirse sunucunun)
+# anahtarları burada `wg genkey`/`wg genpsk` ile üretilir. wg0.conf yalnız sunucu
+# anahtarı, peer public key'leri, PSK'lar ve adresleri taşır; istemcilerin özel
+# anahtarları diske yazılmaz. Profili değişen ya da yeni olan her peer'ın
+# profili (ve üretildiyse sunucu.key) yalnız tmpfs'teki OUTPUT_WG_DIR'e yazılır;
+# launcher onları Mac'teki kurulum/wireguard'a alır. Yeni peer'ın QR kodu
+# yalnız terminale basılır, loga girmez. NAT ve FORWARD master-firewall'dadır
+# (DD-16/DD-17): PostUp yok. Firewall'dan sonra çağrılır.
 ensure_wireguard() {
-    local server_pub peer_pub i content changed
+    local server_pub peer_pub i name content changed profile new_out="" updated_out=""
     # Kernel modülü çekirdekte; öneriler wireguard-dkms çekebilirdi.
     retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        --no-install-recommends wireguard-tools
+        --no-install-recommends wireguard-tools qrencode
     modprobe wireguard 2>/dev/null || log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa wg-quick başlamaz"
     atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<<"wireguard"
+    if [[ "$WG_SERVER_KEY_NEW" -eq 1 ]]; then
+        WG_SERVER_PRIVATE="$(wg genkey)" || die "WireGuard sunucu anahtarı üretilemedi"
+        log INFO "WireGuard sunucu anahtarı üretildi (kurulum/wireguard/sunucu.key olarak geri alınacak)"
+    fi
     server_pub="$(printf '%s' "$WG_SERVER_PRIVATE" | wg pubkey)" ||
         die "wireguard/sunucu.key'den public key türetilemedi"
-    content="# master-stack — kurulum/wireguard'dan üretilir; elle düzenlemeyin (DD-120).
+    content="# master-stack — kurulum.env ve kurulum/wireguard'dan üretilir; elle düzenlemeyin (DD-120).
 [Interface]
 Address = ${WG_SERVER_IPV4}/${WG_SUBNET4#*/}, ${WG_SERVER_IPV6}/${WG_SUBNET6#*/}
 ListenPort = ${WG_PUBLIC_PORT}
@@ -442,12 +592,18 @@ MTU = ${WG_MTU}
 PrivateKey = ${WG_SERVER_PRIVATE}
 "
     for i in "${!WG_PEER_NAMES[@]}"; do
-        [[ "${WG_PEER_SERVER_PUB[$i]}" == "$server_pub" ]] ||
-            die "girdi: wireguard/${WG_PEER_NAMES[$i]}.conf başka bir sunucuya ait ([Peer] PublicKey sunucu.key ile uyuşmuyor)"
+        name="${WG_PEER_NAMES[$i]}"
+        if [[ "${WG_PEER_NEW[$i]}" -eq 1 ]]; then
+            WG_PEER_PRIVATE[i]="$(wg genkey)" || die "WireGuard peer anahtarı üretilemedi: $name"
+            WG_PEER_PSK[i]="$(wg genpsk)" || die "WireGuard PSK üretilemedi: $name"
+        else
+            [[ "${WG_PEER_SERVER_PUB[$i]}" == "$server_pub" ]] ||
+                die "girdi: wireguard/$name.conf başka bir sunucuya ait ([Peer] PublicKey sunucu.key ile uyuşmuyor)"
+        fi
         peer_pub="$(printf '%s' "${WG_PEER_PRIVATE[$i]}" | wg pubkey)" ||
-            die "girdi: wireguard/${WG_PEER_NAMES[$i]}.conf özel anahtarından public key türetilemedi"
+            die "girdi: wireguard/$name.conf özel anahtarından public key türetilemedi"
         content+="
-# ${WG_PEER_NAMES[$i]}
+# ${name}
 [Peer]
 PublicKey = ${peer_pub}
 "
@@ -460,9 +616,36 @@ PublicKey = ${peer_pub}
     atomic_write "$WG_CONF_FILE" 0600 <<<"$content"
     changed="$V2_LAST_ATOMIC_CHANGED"
     content=""
+
+    rm -rf -- "$OUTPUT_WG_DIR"
+    install -d -m 0700 -o root -g root "$OUTPUT_WG_DIR"
+    if [[ "$WG_SERVER_KEY_NEW" -eq 1 ]]; then
+        (umask 077 && printf '%s\n' "$WG_SERVER_PRIVATE" >"$OUTPUT_WG_DIR/sunucu.key")
+    fi
+    for i in "${!WG_PEER_NAMES[@]}"; do
+        name="${WG_PEER_NAMES[$i]}"
+        profile="$(wg_client_profile "$i" "$server_pub")"
+        [[ "$profile" != "${WG_PEER_ORIG[$i]}" ]] || continue
+        (umask 077 && printf '%s\n' "$profile" >"$OUTPUT_WG_DIR/$name.conf")
+        if [[ "${WG_PEER_NEW[$i]}" -eq 1 ]]; then
+            new_out+="$name "
+            printf '\nYeni WireGuard peer: %s (%s) — WireGuard uygulamasıyla okutun:\n' \
+                "$name" "${WG_PEER_IPV4[$i]}"
+            printf '%s\n' "$profile" | qrencode -t ansiutf8 || log WARN "QR kodu basılamadı: $name"
+        else
+            updated_out+="$name "
+        fi
+    done
+    profile=""
+    if [[ -z "$(ls -A "$OUTPUT_WG_DIR")" ]]; then
+        rm -rf -- "$OUTPUT_DIR"
+    else
+        log INFO "WireGuard profilleri kurulum/wireguard'a alınacak — yeni: ${new_out:-yok}; güncellenen: ${updated_out:-yok}"
+    fi
     WG_SERVER_PRIVATE=""
     WG_PEER_PRIVATE=()
     WG_PEER_PSK=()
+    WG_PEER_ORIG=()
     systemctl enable --quiet "wg-quick@${WG_INTERFACE}.service"
     if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
         systemctl restart "wg-quick@${WG_INTERFACE}.service"
@@ -558,6 +741,9 @@ stage_0() {
     slurp_wireguard_inputs "$INPUT_WG_DIR"
     read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
     rm -rf -- "$INPUT_DIR"
+    # DD-121: önceki bir çalıştırmanın alınmamış profilleri; eksik kalan peer
+    # bu çalıştırmada yeniden üretilir.
+    rm -rf -- "$OUTPUT_DIR"
     require_supported_os
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
@@ -674,6 +860,9 @@ stage_0() {
     validate_account FileBrowser "$FILEBROWSER_NEW_USER" "$FILEBROWSER_NEW_PASS" \
         '^[a-z][a-z0-9_-]{0,31}$' "$FILEBROWSER_MIN_PASSWORD_LENGTH"
     validate_wireguard_inputs
+    if [[ -n "$WG_UNLISTED_FILES" ]]; then
+        log WARN "WG_PEERS'te olmayan profiller yok sayıldı (sunucuda peer olmayacak; dosyayı silebilirsiniz): $WG_UNLISTED_FILES"
+    fi
 
     # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
     # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
@@ -732,7 +921,8 @@ stage_0() {
 
     # DD-119: dosyadan gelen her şey tek ekranda, parolasız; ilk yazımdan
     # (config.env) önce tek onay.
-    local yes_no_upgrade="hayır" yes_no_pull="hayır" confirm_ans="h"
+    local yes_no_upgrade="hayır" yes_no_pull="hayır" confirm_ans="h" wg_server_note=""
+    [[ "$WG_SERVER_KEY_NEW" -eq 0 ]] || wg_server_note="; sunucu anahtarı yeni üretilecek"
     [[ "$RUN_FULL_UPGRADE" -eq 1 ]] && yes_no_upgrade="evet"
     [[ "$PULL_IMAGES" -eq 1 ]] && yes_no_pull="evet"
     cat <<EOF
@@ -741,6 +931,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Downloads:     $DOWNLOADS_PATH
   WireGuard:     UDP $WG_PUBLIC_PORT, $WG_PEER_COUNT peer${WG_PEER_NAMES[0]:+ (${WG_PEER_NAMES[*]})}
+                 yeni peer: ${WG_NEW_PEERS:-yok}; DNS farklı: ${WG_DNS_OVERRIDE_NAMES:-yok}; keepalive: $WG_CLIENT_KEEPALIVE$wg_server_note
   WebDAV portu:  $WEBDAV_PORT
   Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, Transmission $TRANSMISSION_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER
                  (dosyadakinden farklı olan hesap güncellenir)

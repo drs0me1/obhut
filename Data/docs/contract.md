@@ -236,10 +236,16 @@ Preserved in full as a core feature. Contract in §5–§7.
 - `wg-quick@wg0` in the host kernel: `10.8.0.1/24` and
   `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420 — the
   addresses wg-easy used, so existing client profiles keep working.
-- Inputs:
-  - `kurulum/wireguard/sunucu.key` holds the server private key.
-  - One wg-easy-format profile per device: `kurulum/wireguard/<device>.conf`.
-    Peers are exactly these files; adding or removing one is a re-run.
+- Inputs (**DD-121**):
+  - `kurulum.env` lists the peers (`WG_PEERS`) and sets `WG_CLIENT_DNS`,
+    `WG_CLIENT_KEEPALIVE` and per-peer `WG_CLIENT_DNS_OVERRIDE`.
+  - `kurulum/wireguard/sunucu.key` holds the server private key and
+    `kurulum/wireguard/<name>.conf` each listed peer's keys and addresses.
+  - A listed peer without a profile gets a generated key, PSK and the next
+    free address (the server key too on a first install). New and changed
+    profiles are written to `tmpfs` only, fetched back into
+    `kurulum/wireguard/` by the launcher and then removed from the server.
+    Unlisted profiles are ignored with a warning and never deleted.
 - **Validation and rendering:**
   - Stage 0 validates structure, keys, addresses (inside the subnets,
     unique, not the server's), the endpoint port and file names before any

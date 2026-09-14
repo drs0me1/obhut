@@ -5331,6 +5331,81 @@ failure with an early, named one.
   - **Not verified:** a fresh install on a bare Debian host with these
     inputs.
 
+### DD-121: kurulum.env lists the WireGuard peers; the server generates what is missing and hands it back (2026-09-14)
+
+- **Decision:**
+  - **What the operator writes:** `kurulum.env` names the peers (`WG_PEERS`,
+    space-separated) and sets `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
+    `WG_CLIENT_DNS_OVERRIDE` (`name=dns; name=dns`) for every profile. Empty
+    fields take `defaults.env`: wg-easy's DNS, keepalive 0, `AllowedIPs
+    0.0.0.0/0, ::/0`.
+  - **What `kurulum/wireguard/` holds:** the keys. A listed peer with a
+    `<name>.conf` keeps its private key, PSK and addresses. A listed peer
+    without one is new: stage 0 gives it the lowest free host in the `/24` and
+    the same number in hex on the `/112` (wg-easy's `.2` ↔ `:2`), and
+    `ensure_wireguard` generates its key and PSK with `wg genkey`/`wg genpsk`.
+    With no `sunucu.key` and no profiles the server key is generated too; with
+    profiles but no `sunucu.key` stage 0 stops, since those profiles only work
+    with their own server key. A profile not in `WG_PEERS` is ignored with a
+    warning and is never deleted.
+  - **Profiles are rendered from the keys plus the env settings** (wg-easy's
+    layout, `Endpoint = WG_ENDPOINT_HOST:WG_PUBLIC_PORT`). Every profile that
+    is new or differs from the one sent — and a generated `sunucu.key` — is
+    written only to `OUTPUT_WG_DIR` on `tmpfs`, and a new peer's QR code is
+    printed to the terminal, never the log. `wg0.conf` still holds public keys
+    and PSKs only.
+  - **The launcher fetches the output after the install session, whatever its
+    exit code,** into `kurulum/wireguard/` (`600`), and removes the server
+    copy only after every file is in place. Stage 0 of the next run clears any
+    output that was never fetched; a peer whose profile was lost is generated
+    again.
+  - `wireguard/` is optional in the launcher; `sunucu.key` is sent only when
+    present.
+- **Why:** the user asked to manage peers from the one file: they set a
+  keepalive of 21 everywhere and a different DNS on one device, and want to
+  add a device by adding a name. The Mac cannot generate a profile: macOS
+  LibreSSL cannot derive an X25519 public key (measured for DD-120), and the
+  server already has `wireguard-tools`.
+- **Why the keys stay in files and not in `kurulum.env`:** a profile is what
+  the device imports, and the private keys must survive reinstalls. Keeping
+  them per device lets the env stay readable and lets a lost device be
+  re-provisioned by deleting its file.
+- **Why nothing is deleted automatically:** removing a name from `WG_PEERS`
+  removes the peer from the server, but deleting its `.conf` would destroy a
+  key that cannot be recovered. The warning names the file.
+- **Trade-offs:**
+  - A client private key now exists on the server for the length of one run
+    (memory and `tmpfs`), as with wg-easy's download; it never reaches the
+    disk.
+  - The QR code shows a private key on screen.
+  - An existing profile's `Endpoint` host is rewritten to `WG_ENDPOINT_HOST`
+    (the WAN IPv4).
+- **Verified (2026-09-14):**
+  - bats 121 ok, with `bash -n` and `shellcheck` clean. The new tests cover
+    peer planning (kept vs new, the lowest free address skipping used ones,
+    hex IPv6 for host 10, DNS overrides, unlisted profiles, a fresh folder),
+    twenty rejection cases for profiles and env fields that never echo a key,
+    key generation with only public keys in `wg0.conf`, the hand-back of new
+    and changed profiles only (with a generated `sunucu.key` when there was
+    none), the QR for new peers only, and the launcher removing the server
+    copy only after the files are in place. Three deliberate mutations each
+    failed their test.
+  - **Live on `nrm`, running the exported v2-87 `.command` with the operator's
+    `kurulum/` folder:**
+    - The operator added `WG_PEERS` with the four migrated devices plus a
+      temporary `deneme`, keepalive 21 and a DNS override on one device.
+    - Exit 0. `deneme` got `10.8.0.6` (`:6`), a generated key and PSK, and a
+      QR code in the terminal.
+    - All five profiles came back into `kurulum/wireguard/` (`600`): the four
+      existing ones rewritten with keepalive 21 and their DNS, the override on
+      its device only.
+    - Each profile's derived public key, PSK, server key and `AllowedIPs`
+      matched `wg show wg0 dump`, and the server's output folder was gone.
+  - **The fetched `deneme` profile, used as a client in a network namespace:**
+    handshook; reached the three UIs and the internet over IPv4 and IPv6; was
+    refused SSH, WebDAV on the TS IP and another peer.
+
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no

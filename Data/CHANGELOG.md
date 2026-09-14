@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — WireGuard peers from kurulum.env (v2-87)
+
+- **Changed:** `kurulum.env` lists the peers (`WG_PEERS`) and sets the DNS,
+  PersistentKeepalive and per-peer DNS overrides for every profile. A listed
+  peer without a `kurulum/wireguard/<name>.conf` gets a new key, PSK and the
+  next free address on the server; the first install also generates
+  `sunucu.key` (**DD-121**).
+- **Added:**
+  - New and changed profiles are handed back to `kurulum/wireguard/` by the
+    launcher after the install, and deleted from the server afterwards.
+  - A new peer's QR code is printed in the terminal.
+  - Stage 0 rejects bad names, DNS lists, keepalive values and overrides for
+    unknown peers, and warns about profiles not in `WG_PEERS`.
+- **Changed:** `kurulum/wireguard/` is optional in the launcher.
+
 ### 2026-09-14 — Kernel WireGuard replaces wg-easy (v2-86)
 
 - **Changed:**
