@@ -110,6 +110,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
 - `wireguard.command` → 6) Yedek al sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`) ve profilleri `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
 - `wireguard.command` → 7) DNS değiştir yalnız profilin `DNS =` satırını değiştirir (`master-wg dns`); 8) wg0 yeniden üret `SIL` onayıyla yeni anahtar üretir, bütün peer ve profilleri siler (`master-wg reset --onay`), ardından yedeği günceller.
+- 2) ekle, 3) çıkar, 7) ve 8) başarılı olunca yedek kendiliğinden alınır (`auto_backup` → 6); vazgeçilen ya da başarısız değişiklikte yedek alınmaz.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 

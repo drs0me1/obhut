@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — wireguard.command backs up after every change (v2-97, menu only)
+
+- **Changed:** options 2 (add), 3 (remove) and 7 (DNS) take the backup
+  (option 6) themselves after a successful change, like option 8. The
+  "6) Yedek al" reminders are gone; option 6 stays for a manual backup
+  (**DD-130**).
+- The installer is unchanged (still v2-97): no re-run is needed.
+- **Verified:** bats 135 ok; five mutations caught.
+
 ### 2026-09-14 — wireguard.command: change DNS, regenerate wg0 (v2-97)
 
 - **Added** (**DD-130**):

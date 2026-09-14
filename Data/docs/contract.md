@@ -314,9 +314,12 @@ Preserved in full as a core feature. Contract in §5–§7.
   - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
     then prints the new QR code and saves the new profile.
   - Option 8 "wg0 yeniden üret" lists the peers that will be lost and runs
-    `reset --onay` only after the operator types `SIL`. It then runs option 6,
-    so `kurulum/` holds the new key and no old profile, and a reinstall cannot
-    bring the old key back (**DD-130**).
+    `reset --onay` only after the operator types `SIL` (**DD-130**).
+  - After a successful add (2), remove (3), DNS change (7) or regenerate (8)
+    the menu runs option 6 itself, so `kurulum/` always matches the server
+    and a reinstall cannot bring back a removed peer or an old key. A refused
+    or failed change takes no backup; a failed backup prints a warning and
+    points to option 6.
 - **A reinstall keeps the same server key and peers when the pulled settings
   are in `kurulum/`** (`wireguard.command` → 6, **DD-128**), and devices reconnect
   unchanged. Without them it generates a new key, starts with no peers, and

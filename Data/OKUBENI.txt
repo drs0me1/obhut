@@ -23,10 +23,11 @@ WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
   Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
   profil kurulum/wireguard/<ad>.conf olarak Mac'e iner (cihaza bu dosyayı ya da QR'ı aktarın).
   6) yedek al: sunucu anahtarı, peer listesi ve profiller kurulum/wireguard'a iner (içerik ekrana yazılmaz);
-  yeniden kurulumda aynı anahtar ve peer'lar gelir. Peer ekleyip çıkardıktan sonra yeniden alın.
+  yeniden kurulumda aynı anahtar ve peer'lar gelir. 2) ekle, 3) çıkar, 7) ve 8) yedeği kendiliğinden
+  günceller; 6) elle yedek içindir.
   7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).
   8) wg0 yeniden üret: yeni sunucu anahtarı; bütün peer'lar ve profiller silinir, geri alınamaz.
-     SIL yazınca çalışır ve yedeği kendisi günceller; cihazları 2) ekle ile yeniden ekleyin.
+     SIL yazınca çalışır; cihazları 2) ekle ile yeniden ekleyin.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 qBittorrent, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
@@ -36,8 +37,8 @@ A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm
   1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
-  3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun
-  4. wireguard.command → 6) yedek al (Mac'te WireGuard kapalıyken) → WireGuard ayarları kurulum/'a iner
+  3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun (Mac'te WireGuard kapalıyken)
+     Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
   (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
   v2-94'e geçerken: kurulum.env'e TORRENT_USER= ve TORRENT_PASS= satırlarını ekleyin

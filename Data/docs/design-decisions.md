@@ -6137,6 +6137,19 @@ failure with an early, named one.
 
 ### DD-130: wireguard.command changes a peer's DNS and regenerates wg0 (2026-09-14)
 
+- **Extended the same day:** the user did not want to wait for a manual
+  backup. Options 2 (add), 3 (remove) and 7 (DNS) now run option 6 after a
+  successful change, as option 8 already did.
+  - Before, the menu only printed a reminder. A forgotten backup left
+    `kurulum/wireguard/` behind the server, and a reinstall on a fresh server
+    brought back a removed peer or missed a new one (DD-128).
+  - A refused confirmation or a failed server call takes no backup. A failed
+    backup does not undo the change; it warns and points to option 6.
+  - Only `wireguard.command` changed. It is not part of the installer
+    archive, so `V2_VERSION` stays v2-97 and the server needs no re-run.
+  - bats 135 ok. Mutations were each caught: no backup after add, remove or
+    DNS; a backup after a failed add; a backup after a declined remove.
+
 - **Context:** the user benchmarked resolvers and wanted to point one peer at
   NextDNS without removing it. They also wanted a clean `wg0`: a new server
   key, with every peer and profile deleted when some exist.

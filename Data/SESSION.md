@@ -45,6 +45,11 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — wireguard.command auto backup (user: "2-3-7-8 otomatik yedek"):**
+- Options 2, 3 and 7 now call `auto_backup` (option 6) after a successful
+  server change; option 8 uses the same helper.
+- Menu only, so `V2_VERSION` stays v2-97. bats 135 ok, five mutations caught.
+
 **2026-09-14 — v2-97, DNS change and wg0 regenerate in wireguard.command (DD-130):**
 - `master-wg dns NAME DNS` (profile `DNS =` line only) and
   `master-wg reset --onay` (new key, all peers and profiles removed,

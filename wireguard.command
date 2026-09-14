@@ -6,8 +6,9 @@
 # (wg0.conf) ve bütün profilleri kurulum/wireguard'a çeker; yeniden kurulumda
 # kurulum bunları, sunucuda karşılığı yoksa geri koyar (DD-128). "DNS değiştir"
 # yalnız profildeki DNS satırını, "wg0'ı yeniden üret" sunucu anahtarını ve
-# bütün peer'ları sıfırlar (DD-130). Finder bu dosyayı macOS /bin/bash 3.2 ile
-# çalıştırır.
+# bütün peer'ları sıfırlar (DD-130). Ekle, çıkar, DNS değiştir ve wg0'ı yeniden
+# üret başarılı olunca yedek kendiliğinden alınır. Finder bu dosyayı macOS
+# /bin/bash 3.2 ile çalıştırır.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
@@ -140,7 +141,7 @@ add_peer() {
     fetch_profile "$name" || echo "UYARI: profil alınamadı; menüden '4) QR göster' ile yeniden alabilirsiniz." >&2
     printf '\n%s — WireGuard uygulamasıyla okutun:\n' "$name"
     remote qr "$name" || true
-    echo "Yeniden kurulumda bu peer da gelsin: 6) Yedek al"
+    auto_backup
 }
 
 remove_peer() {
@@ -154,7 +155,7 @@ remove_peer() {
     remote remove "$name" >/dev/null || return 1
     rm -f "$WG_DIR/$name.conf"
     echo "Kaldırıldı: $name"
-    echo "Yeniden kurulumda bu peer gelmesin: 6) Yedek al"
+    auto_backup
 }
 
 # Değişti mi? Yalnız özetler karşılaştırılır.
@@ -196,7 +197,7 @@ change_dns() {
     fetch_profile "$name" || echo "UYARI: profil alınamadı; menüden '4) QR göster' ile yeniden alabilirsiniz." >&2
     printf '\n%s — yeni profil; cihazda WireGuard uygulamasıyla okutun (eski tüneli silin):\n' "$name"
     remote qr "$name" || true
-    echo "Yeniden kurulumda bu hal gelsin: 6) Yedek al"
+    auto_backup
 }
 
 # DD-130: sunucuda yeni anahtar üretir, bütün peer kayıtlarını ve profilleri
@@ -218,6 +219,14 @@ regenerate_wg0() {
     out="$(remote reset --onay)" || return 1
     printf '\nwg0 yeniden üretildi: %s peer ve %s profil silindi; yeni sunucu anahtarı etkin.\n' \
         "${out%%$'\t'*}" "${out##*$'\t'}"
+    auto_backup
+}
+
+# DD-130: sunucuda değişiklik başarılı olunca kurulum/wireguard eşitlenir; yeniden
+# kurulum silinmiş bir peer'ı ya da eski anahtarı geri getirmez.
+auto_backup() {
+    echo
+    echo "Yedek güncelleniyor (kurulum/wireguard):"
     backup_settings || echo "UYARI: yedek eşitlenemedi; '6) Yedek al' ile yeniden deneyin." >&2
 }
 

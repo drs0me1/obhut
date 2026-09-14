@@ -2298,8 +2298,10 @@ EOF
     printf 'SSH_HOST=nrm\n' >"$repo/kurulum/kurulum.env"
     touch "$srv/etc/master-stack/state.env"
     snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
+    snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
     snapshot_profile >"$repo/kurulum/wireguard/iph0.conf"
-    # Fake server: records master-wg calls; after "reset" the server has no peers.
+    # Fake server: records master-wg calls and backups; after "reset" the server
+    # has no peers and no profiles.
     cat >"$TMP/bin/ssh" <<EOF
 #!/bin/bash
 case "\$*" in
@@ -2310,8 +2312,10 @@ case "\$*" in
     *"master-wg dns iph0 "*) echo "\$*" >>"$TMP/calls"; a="\${*% }"; last="\${a##* }"; printf 'iph0\t%s\n' "\$last" ;;
     *"master-wg qr iph0"*) echo "QR-CODE" ;;
     *"master-wg reset --onay"*) echo "\$*" >>"$TMP/calls"; touch "$TMP/reset-done"; printf '4\t4\n'
+        rm -f "$srv/etc/wireguard/clients/iph0.conf"
         printf '[Interface]\nPrivateKey = NEWKEY\n' >"$srv/etc/wireguard/wg0.conf" ;;
-    *"bash -s"*) cat >/dev/null; cd "$srv" && tar -cf - etc/wireguard/wg0.conf ;;
+    *"bash -s"*) cat >/dev/null; echo backup >>"$TMP/backups"
+        cd "$srv" && tar -cf - \$(find etc/wireguard -type f | sort) ;;
     *) exit 1 ;;
 esac
 EOF
@@ -2324,6 +2328,9 @@ EOF
     [ "$(sed -n 1p "$TMP/calls" | awk '{print $NF}')" = "1.1.1.1" ]
     case "$output" in *"DNS değişti: iph0 → 2a07:a8c0::df:877b"*"QR-CODE"*) ;; *) false ;; esac
     case "$output" in *"Vazgeçildi; hiçbir şey değişmedi."*) ;; *) false ;; esac
+    # Each DNS change backed up on its own; the refused 8 did not.
+    case "$output" in *"Yedek güncelleniyor"*"profil iph0"*) ;; *) false ;; esac
+    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
     grep -q 'master-wg dns iph0 2a07' "$TMP/calls"
     run ! grep -q 'reset' "$TMP/calls"
     run ! grep -q 'SECRETKEY' <<<"$output"
@@ -2335,7 +2342,59 @@ EOF
     case "$output" in *"4 peer ve 4 profil silindi"*) ;; *) false ;; esac
     [ ! -e "$repo/kurulum/wireguard/iph0.conf" ]
     grep -qx 'PrivateKey = NEWKEY' "$repo/kurulum/wireguard/sunucu/wg0.conf"
+    [ "$(wc -l <"$TMP/backups")" -eq 3 ]
     case "$output" in *"8) wg0 yeniden üret"*) ;; *) false ;; esac
+}
+
+@test "wireguard.command options 2 and 3 back up kurulum/wireguard after a successful change only" {
+    local repo="$TMP/repo" srv="$TMP/srv" ver
+    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
+    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
+    cp "$V2_ROOT/../wireguard.command" "$repo/"
+    cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
+    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
+    printf 'SSH_HOST=nrm\n' >"$repo/kurulum/kurulum.env"
+    touch "$srv/etc/master-stack/state.env"
+    snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
+    snapshot_profile >"$TMP/phone.conf"
+    # Fake server: add creates the profile, remove deletes it, a failing add
+    # changes nothing; every backup is counted.
+    cat >"$TMP/bin/ssh" <<EOF
+#!/bin/bash
+case "\$*" in
+    *" -O exit "*) exit 0 ;;
+    *"master-wg version"*) echo "$ver" ;;
+    *"master-wg list"*) [ ! -f "$srv/etc/wireguard/clients/phone.conf" ] || printf 'phone\t10.8.0.2\t0\t0\t0\tvar\n' ;;
+    *"master-wg add bad "*) echo "HATA: test" >&2; exit 1 ;;
+    *"master-wg add phone "*) cp "$TMP/phone.conf" "$srv/etc/wireguard/clients/phone.conf"; printf 'phone\t10.8.0.2\n' ;;
+    *"master-wg profile phone"*) cat "$srv/etc/wireguard/clients/phone.conf" ;;
+    *"master-wg qr phone"*) echo "QR-CODE" ;;
+    *"master-wg remove phone"*) rm -f "$srv/etc/wireguard/clients/phone.conf" ;;
+    *"bash -s"*) cat >/dev/null; echo backup >>"$TMP/backups"
+        cd "$srv" && tar -cf - \$(find etc/wireguard -type f | sort) ;;
+    *) exit 1 ;;
+esac
+EOF
+    chmod +x "$TMP/bin/ssh"
+    # 2 with defaults, then an add the server refuses.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '2\nphone\n\n\n\n2\nbad\n\n\n\n5\n\n')
+    [ "$status" -eq 0 ]
+    [ "$(wc -l <"$TMP/backups")" -eq 1 ]
+    cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
+    cmp "$srv/etc/wireguard/clients/phone.conf" "$repo/kurulum/wireguard/phone.conf"
+    case "$output" in *"QR-CODE"*"Yedek güncelleniyor"*"profil phone"*) ;; *) false ;; esac
+    run ! grep -qE 'AAAA|BBBB' <<<"$output"
+    # 3: the removal is mirrored, including a stale local profile.
+    printf 'stale\n' >"$repo/kurulum/wireguard/old.conf"
+    chmod 600 "$repo/kurulum/wireguard/old.conf"
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nE\n5\n\n')
+    [ "$status" -eq 0 ]
+    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
+    [ ! -e "$repo/kurulum/wireguard/phone.conf" ]
+    [ ! -e "$repo/kurulum/wireguard/old.conf" ]
+    # 3 answered "h" changes nothing and takes no backup.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nh\n5\n\n')
+    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
 }
 
 wg_mock_bin() {
@@ -2652,7 +2711,13 @@ master_wg() {
     # Option 8 needs the typed word and re-syncs the backup afterwards (DD-130).
     body="$(awk '/^regenerate_wg0\(\)/,/^}$/' "$cmd")"
     grep -q 'SIL | SİL) ;;' <<<"$body"
-    awk '/remote reset --onay/ {r = NR} /backup_settings/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
+    awk '/remote reset --onay/ {r = NR} /auto_backup/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
+    # Add, remove and DNS change back up after the server call succeeds.
+    for fn in add_peer:add remove_peer:remove change_dns:dns; do
+        body="$(awk -v f="^${fn%%:*}\\(\\)" '$0 ~ f, /^}$/' "$cmd")"
+        awk -v c="remote ${fn#*:} " 'index($0, c) {r = NR} /auto_backup/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
+    done
+    grep -q "backup_settings || echo \"UYARI: yedek eşitlenemedi" "$cmd"
     grep -q '7) change_dns || true ;;' "$cmd"
     grep -q '8) regenerate_wg0 || true ;;' "$cmd"
     # Reading the profile for the current DNS never exits the pipe early.
