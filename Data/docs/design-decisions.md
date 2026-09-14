@@ -5557,15 +5557,72 @@ failure with an early, named one.
       addresses, WebDAV, tailnet Caddy, dnsmasq, another tailnet node, the other
       peer and the UIs over IPv6. The `wg0` DROP counters rose.
     - With Tailscale also up, the `*.ayc` names and WebDAV kept working.
-  - Speed was 120–210 Mbit/s through the tunnel against 265–407 Mbit/s direct.
-    The server CPU stayed about 97% idle, so the limit is the longer path, not
-    the server.
+  - Speed to public test sites was 120–210 Mbit/s through the tunnel against
+    265–407 Mbit/s direct. The server CPU stayed about 97% idle, so the limit
+    was the server's path to those sites. The Mac-to-server measurement under
+    "Failure tests" below replaces it.
 - **Known limit, kept by choice:**
   - `SSH_HOST` points at the server's public IP. While the Mac itself is on
     the full tunnel, that IP is routed into `wg0`, where SSH is dropped, so
     `wireguard.command` times out.
   - The operator switches WireGuard off on the Mac before using the menu.
   - A hint, a Tailscale fallback or SSH over `wg0` were offered and declined.
+- **Failure tests on `nrm` (2026-09-14), with this Mac on the tunnel:**
+  - Setup:
+    - Each disruptive step ran as a transient `systemd-run` script on the
+      server, so a lost SSH session could not leave it half done. A Mac loop
+      polled `10.8.0.1` and the internet meanwhile.
+    - Temporary pieces (a sender on `10.8.0.1:5201-5205`, its `MASTER-INPUT`
+      accept rule, the scripts and a safety timer) were removed afterwards, and
+      `--check` passed.
+  - **Throughput, Mac to server** (zeros, no compression; outside the tunnel
+    over SSH on the Mac's physical interface):
+
+    | | Through `wg0` | Outside the tunnel (SSH) |
+    |---|---|---|
+    | Download, 1 stream | 461–498 Mbit/s | 237–241 Mbit/s |
+    | Download, 4 streams | 386–465 Mbit/s | 495–526 Mbit/s |
+    | Upload, 1 stream | 48 Mbit/s | 51 Mbit/s |
+
+    - With 4 streams the server was 75–80% idle, with the `wg-crypt-wg0`
+      workers spread over all 4 cores. The Mac was only about 40% idle.
+    - The ceiling is the Mac's WireGuard client and the home line (about 50
+      Mbit/s up), not the server.
+    - Public test sites began answering 429 and were dropped as a
+      measurement.
+  - **`wg-quick@wg0`:**
+    - `restart`: `caddy-wg` restarted with it (`PartOf`). Both peers came
+      back, `wg0.conf` was unchanged, and `--check` passed. The Mac recovered
+      in about 15 s, the WireGuard handshake retry.
+    - `stop`: `caddy-wg` stopped with it, and the Mac's internet stopped too:
+      the client fails closed.
+    - `start`: `caddy-wg` came back through its `WantedBy`, and the Mac
+      recovered at once.
+  - **`systemctl restart docker`:**
+    - Containers were healthy again in 11 s; `caddy-wg` answered 502 in
+      between.
+    - `master-firewall` re-applied itself (`PartOf`), with `MASTER-FORWARD`
+      still first and `DOCKER-USER` jumping to `MASTER-DOCKER`.
+    - Transmission's bridge IP moved from `.5` to `.4` (DD-16). Bridge IPs
+      were unreachable over WireGuard before and after.
+    - The Mac's poll with a 1 s timeout showed scattered timeouts around this
+      step, some before the restart. They did not recur: 40/40 polls
+      succeeded afterwards and ping loss was 0%.
+  - **`tailscaled` stopped for 3 min 37 s:**
+    - The WireGuard path held: 109/109 Mac polls got the three UIs and
+      internet egress.
+    - `caddy-wg`, `wg0`, dnsmasq and Docker stayed active, and the firewall
+      rules and `--check` held. `master-firewall` showed inactive through
+      `PartOf`, but has no `ExecStop`, so its rules stayed in place.
+    - Tailnet names, WebDAV and DNS on the TS IP were unreachable, as
+      expected.
+    - `tailscaled` came back online in 1 s, and names, WebDAV and DNS
+      answered at once. Caddy was not restarted: its sockets on the TS IP
+      stayed bound.
+    - `master-firewall` re-applied with `MASTER-FORWARD` first, the exit node
+      was offered again and no unit failed.
+  - **Open:** `pppp` had not handshaken since the `wg0` restart. Its tunnel was
+    probably off or the phone asleep; the user checks it on the phone.
 
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)

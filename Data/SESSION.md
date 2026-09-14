@@ -66,11 +66,25 @@ reply; no code change yet.
   `ayc` splits to `100.73.123.57`.
 - Real devices `pppp` and `mmmm` (this Mac) were added from the menu and
   verified over the tunnel: egress, DNS, UIs, MTU and every blocked path.
-  Speed was 120–210 Mbit/s against 265–407 direct, with the server CPU idle.
+  Public-site speed tests were path-limited and later rate-limited.
 - Found: `wireguard.command` cannot reach `SSH_HOST` (public IP) while the Mac
   itself is on WireGuard. The user chose no code change: switch WireGuard off
   on the Mac first. This is noted in `OKUBENI.txt` and DD-124.
-- Open: update the Infuse address, if not done yet.
+- Failure tests, with this Mac on the tunnel; the steps ran as transient server
+  scripts and were cleaned up afterwards (DD-124):
+  - Mac-to-server throughput: `wg0` 461–498 Mbit/s single stream against
+    237–241 over SSH, and 386–465 with 4 streams. The server was 75–80% idle;
+    the Mac and the home line are the ceiling.
+  - `wg-quick@wg0` restart, stop and start: `caddy-wg` followed, peers were
+    kept, and the client failed closed and recovered.
+  - Docker restart: healthy in 11 s, firewall re-applied with `MASTER-FORWARD`
+    first, and bridge IPs closed over WireGuard.
+  - `tailscaled` down for 3.5 min: WireGuard UIs and egress 109/109, and
+    everything recovered when it came back, without a Caddy restart.
+- Open:
+  - `pppp` has not handshaken since the `wg0` restart; the user checks the
+    phone.
+  - Update the Infuse address, if not done yet.
 
 **2026-09-14 — container-backup retired (DD-122) and v2-88, live WireGuard changes (DD-123):**
 - The backup tool, its worker, document and round-trip test were removed
