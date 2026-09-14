@@ -25,6 +25,8 @@ WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
   cihazları wireguard.command ile yeniden ekleyin.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 Transmission, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
+  Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
+  menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
 
 A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm

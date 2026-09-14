@@ -5546,6 +5546,26 @@ failure with an early, named one.
     there, `--check` passed with `MASTER-FORWARD` first, and the UIs answered.
   - `test1` was removed at the end: the server has no peers and
     `kurulum/wireguard/` is empty.
+- **Real devices (2026-09-14):**
+  - The operator added `pppp` (`10.8.0.2`) and this Mac, `mmmm` (`10.8.0.3`),
+    from the menu. Both handshook and passed traffic.
+  - On the Mac, over the tunnel:
+    - Egress used the server's IPv4 and IPv6, and the MTU of 1420 held.
+    - DNS did not leak: Tailscale's resolver forwards to the tunnel's `1.1.1.1`.
+    - The three UIs answered on `10.8.0.1`.
+    - These stayed closed when bound to the tunnel interface: SSH on all three
+      addresses, WebDAV, tailnet Caddy, dnsmasq, another tailnet node, the other
+      peer and the UIs over IPv6. The `wg0` DROP counters rose.
+    - With Tailscale also up, the `*.ayc` names and WebDAV kept working.
+  - Speed was 120–210 Mbit/s through the tunnel against 265–407 Mbit/s direct.
+    The server CPU stayed about 97% idle, so the limit is the longer path, not
+    the server.
+- **Known limit, kept by choice:**
+  - `SSH_HOST` points at the server's public IP. While the Mac itself is on
+    the full tunnel, that IP is routed into `wg0`, where SSH is dropped, so
+    `wireguard.command` times out.
+  - The operator switches WireGuard off on the Mac before using the menu.
+  - A hint, a Tailscale fallback or SSH over `wg0` were offered and declined.
 
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)

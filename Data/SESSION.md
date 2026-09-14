@@ -62,10 +62,15 @@ reply; no code change yet.
 - Live: fresh install with the operator's folder; menu adds, duplicate
   refused, list, QR, removal; namespace client test; no-op re-run; reboot.
   Test peers were removed, so `nrm` has 0 peers. bats 120.
-- **Open:**
-  - The user adds real devices with `wireguard.command`.
-  - Tailscale admin: exit-node approval and DNS nameserver for the new TS IP
-    `100.73.123.57`; update the Infuse address.
+- The user set up the Tailscale admin side: the exit node is offered and
+  `ayc` splits to `100.73.123.57`.
+- Real devices `pppp` and `mmmm` (this Mac) were added from the menu and
+  verified over the tunnel: egress, DNS, UIs, MTU and every blocked path.
+  Speed was 120–210 Mbit/s against 265–407 direct, with the server CPU idle.
+- Found: `wireguard.command` cannot reach `SSH_HOST` (public IP) while the Mac
+  itself is on WireGuard. The user chose no code change: switch WireGuard off
+  on the Mac first. This is noted in `OKUBENI.txt` and DD-124.
+- Open: update the Infuse address, if not done yet.
 
 **2026-09-14 — container-backup retired (DD-122) and v2-88, live WireGuard changes (DD-123):**
 - The backup tool, its worker, document and round-trip test were removed
