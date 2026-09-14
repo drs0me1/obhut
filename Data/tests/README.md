@@ -14,24 +14,10 @@ Host acceptance (Debian 13 or supported Ubuntu target, after install) is
 separate: DNS loopback vs Tailscale answers, WebDAV PROPFIND/read-only,
 firewall `--check`, and the two public UDP ports.
 
-## Container backup acceptance
+## Pitfall: simulating a fresh Docker install on a provisioned host (up to v2-85)
 
-After the host acceptance above, run the backup utility's isolated round-trip
-on the target as root. It needs only the worker and the test at their
-repository paths and touches no container and no production data:
-
-```bash
-cd Data
-tar -czf - dev/container-backup-remote.sh tests/backup-roundtrip.sh |
-  ssh root@HOST 'mkdir -p /root/debian-server-installer && tar -C /root/debian-server-installer -xzf - &&
-    bash /root/debian-server-installer/tests/backup-roundtrip.sh'
-```
-
-Pass a decrypted archive path as its argument to also restore a real backup
-into isolated directories. Then, from the workstation, `check` against
-the live host must pass. See `docs/container-backup.md`.
-
-## Pitfall: simulating a fresh Docker install on a provisioned host
+Since v2-86 no Compose network has a fixed subnet, so this no longer applies;
+kept for the record.
 
 Purging Docker (`apt-get purge docker-ce …` and removing `/var/lib/docker`)
 does not remove the old dockerd's kernel bridges. They remain until the next

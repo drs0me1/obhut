@@ -1480,12 +1480,6 @@ EOF
         grep -q 'kill "\$up_pid"'
 }
 
-@test "container-backup launcher stays on bash 3.2 features for Finder" {
-    # Finder runs .command files with macOS /bin/bash 3.2.
-    ! grep -qE 'mapfile|readarray|declare -A|\$\{[A-Za-z_]+(,,|\^\^)' "$V2_ROOT/../container-backup.command"
-    grep -q -- '-pbkdf2 -iter 600000 -md sha256' "$V2_ROOT/../container-backup.command"
-}
-
 @test "unattended security upgrades are enabled without automatic reboot" {
     # DD-113: distribution-default origin filter, explicit periodic policy,
     # reboot left to the operator; stage 7 reads the effective policy back.
@@ -1526,9 +1520,11 @@ EOF
     [ "${#copies[@]}" -eq 1 ]
     [ -f "${copies[0]}" ]
     cmp "${copies[0]}" "$V2_ROOT/app/$(basename "${copies[0]}")"
-    [ -f "$top/container-backup.command" ]
-    [ -f "$V2_ROOT/dev/container-backup-remote.sh" ]
-    grep -q 'Data/dev/container-backup-remote.sh' "$top/container-backup.command"
+    # DD-122: the backup tool is retired; nothing of it may come back.
+    [ ! -e "$top/container-backup.command" ]
+    [ ! -e "$V2_ROOT/dev/container-backup-remote.sh" ]
+    [ ! -e "$V2_ROOT/docs/container-backup.md" ]
+    [ ! -e "$V2_ROOT/tests/backup-roundtrip.sh" ]
     [ ! -e "$V2_ROOT/app/latest.command" ]
 }
 

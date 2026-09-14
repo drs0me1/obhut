@@ -5,12 +5,12 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-86` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-87` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
-installer (`<version>.command`), `container-backup.command`, and the
-Git-ignored `kurulum/` (installer inputs) and `backup/`. Everything else lives under `Data/`; paths in the
+installer (`<version>.command`) and the Git-ignored `kurulum/` (installer
+inputs). Everything else lives under `Data/`; paths in the
 documents there are relative to `Data/`. Turkish click order:
 [`Data/OKUBENI.txt`](Data/OKUBENI.txt).
 
@@ -54,11 +54,9 @@ only the runtime files and their archive SHA-256. It uploads them to
 ```
 .
 ├── <version>.command      # current portable installer (double-click)
-├── container-backup.command  # container settings backup/restore (double-click)
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
 │   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
 │   └── wireguard/         #   sunucu.key + one <device>.conf per peer
-├── backup/                # encrypted backups (Git-ignored)
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
     ├── install.sh          # orchestrator
@@ -90,16 +88,13 @@ Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT
 chains) for Tailscale, WireGuard, the torrent peer port and WAN SSH.
 
-## Container settings backup
+## Backups
 
-Since v2-86 there is nothing left to back up: every login comes from
-`kurulum/kurulum.env`, the WireGuard keys and peers from `kurulum/wireguard/`,
-and the installer writes the Transmission preferences. `container-backup.command`
-still restores older wg-easy archives and is due to be retired; keep the
-`kurulum/` folder safe instead. Snapshots are
-password-encrypted and stored under the Git-ignored `backup/` directory. This
-is separate from installation.
-See [scope, the reinstall runbook and encryption](Data/docs/container-backup.md).
+There is no backup tool. A host is rebuilt from `kurulum/` alone: every login
+comes from `kurulum/kurulum.env`, the WireGuard keys and peers from
+`kurulum/wireguard/`, and the installer writes the Transmission preferences.
+Keep that folder safe. `container-backup` was retired after v2-87 (**DD-122**);
+old archives in a Git-ignored `backup/` folder are no longer read by anything.
 
 ## Verify (workstation)
 

@@ -4496,6 +4496,8 @@ failure with an early, named one.
 
 ### DD-112: Backups are password-encrypted with the OS's `openssl`; restore uploads once (2026-09-11)
 
+- **Superseded by DD-122 (2026-09-14):** container-backup is retired.
+
 - **Decision:** `container-backup.command` encrypts every new backup on the
   workstation with `openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256
   -salt`, asking for the password twice at backup and once at check and
@@ -4641,6 +4643,8 @@ failure with an early, named one.
   image already carries, and the package is present there by default.
 
 ### DD-114: Container backups carry one operator-state file per service (2026-09-13)
+
+- **Superseded by DD-122 (2026-09-14):** container-backup is retired.
 
 - **Decision:** `container-backup` saves and restores exactly four files:
   Portainer's `portainer.db`, FileBrowser's `filebrowser.db`, qBittorrent's
@@ -5405,6 +5409,24 @@ failure with an early, named one.
     handshook; reached the three UIs and the internet over IPv4 and IPv6; was
     refused SSH, WebDAV on the TS IP and another peer.
 
+
+### DD-122: container-backup is retired; kurulum/ is the only thing to keep (2026-09-14)
+
+- **Decision:** `container-backup.command`, its worker
+  `dev/container-backup-remote.sh`, `docs/container-backup.md` and
+  `tests/backup-roundtrip.sh` are removed. A test fails if any of them
+  returns. `/backup/` stays Git-ignored so old archives cannot be committed;
+  nothing reads them.
+- **Why:** since v2-86 the backup had nothing left to carry. It saved one file
+  per service (DD-114), and every one of them now comes from the installer:
+  the accounts from `kurulum.env` (DD-119), the Transmission preferences from
+  the installer (DD-118), and the WireGuard keys and peers from
+  `kurulum/wireguard/` (DD-120, DD-121) instead of `wg-easy.db`. A reinstall
+  from `kurulum/` produces the same host. The user keeps that folder on the
+  workstation and asked for the tool to go.
+- **Not doing:** a replacement that archives `kurulum/`. The user keeps the
+  folder on the workstation and does not want it copied elsewhere.
+- **Supersedes:** DD-112 and DD-114 (the tool they describe no longer exists).
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

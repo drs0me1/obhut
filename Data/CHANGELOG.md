@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — container-backup retired
+
+- **Removed:** `container-backup.command`, its worker, its document and its
+  round-trip test (**DD-122**). Since v2-86 every setting it carried comes
+  from `kurulum/`; keep that folder safe instead. Old archives in `backup/`
+  stay Git-ignored and are no longer read.
+
 ### 2026-09-14 — WireGuard peers from kurulum.env (v2-87)
 
 - **Changed:** `kurulum.env` lists the peers (`WG_PEERS`) and sets the DNS,

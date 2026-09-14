@@ -2,10 +2,8 @@ Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
   <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-86.command)
-  container-backup.command   yedek alma / geri yükleme (çift tık → menü)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   kurulum/wireguard/         WireGuard: sunucu.key + her cihaz için <cihaz>.conf (git dışı)
-  backup/                    yedekleriniz (şifreli, git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
@@ -41,6 +39,5 @@ B) Sıfırlama → yeniden kurulum
   1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL; özet → E
   2. Tailscale paneli + Infuse adresi
 
-v2-86'dan sonra container-backup'a gerek yoktur (wg-easy kaldırıldı); yalnız eski yedekleri açar.
-Saklamanız gereken tek şey kurulum/ klasörüdür (kurulum.env + wireguard/); kendiniz yedekleyin.
-Ayrıntı: Data/docs/container-backup.md
+Yedek aracı yoktur: sunucu yalnız kurulum/ klasöründen (kurulum.env + wireguard/) yeniden kurulur.
+Bu klasörü güvende tutun. Eski container-backup arşivleri (backup/) artık hiçbir şeyce okunmaz; silebilirsiniz.

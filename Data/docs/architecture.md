@@ -99,8 +99,7 @@ re-detected, never as an expectation to be violated.
 ```
 .
 ├── <V2_VERSION>.command               current portable installer (double-click; copied by the exporter)
-├── container-backup.command           container settings backup/restore (double-click)
-├── backup/                            encrypted backups (Git-ignored)
+├── kurulum/                           installer inputs: kurulum.env, wireguard/ (Git-ignored)
 ├── README.md, CLAUDE.md               entry points
 ├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
 └── Data/
@@ -112,7 +111,6 @@ re-detected, never as an expectation to be violated.
     ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg)
     ├── app/<V2_VERSION>.command       every exported portable install app
     ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
-    ├── dev/container-backup-remote.sh backup worker, copied to the host per run
     ├── docs/                          contract, architecture, design decisions
     └── tests/                         bats suites (not on host)
 ```

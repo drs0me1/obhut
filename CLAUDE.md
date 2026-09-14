@@ -5,9 +5,9 @@ Working guide for any AI assistant in this repository. Read this first.
 ## Project Overview
 
 Active code lives under `Data/`; the repository root holds only what the
-operator double-clicks — the current portable installer (`<V2_VERSION>.command`),
-`container-backup.command` — plus the Git-ignored `kurulum/` (installer inputs)
-and `backup/`, this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
+operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
+— plus the Git-ignored `kurulum/` (installer inputs), this file and
+`README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
 The installer turns a fresh Debian 13
@@ -92,10 +92,8 @@ state. Treat every change as production-infrastructure work.
 | Path | Purpose |
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
-| `container-backup.command` (root) | Container settings backup/restore launcher |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
 | `kurulum/wireguard/` (root) | WireGuard server key (`sunucu.key`) and one profile per peer (`<device>.conf`), mode 600 (**DD-120**) |
-| `backup/` (root) | Encrypted backups, Git-ignored |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
 | `Data/config/defaults.env` | Ports, images, paths, chain names |
@@ -104,7 +102,6 @@ state. Treat every change as production-infrastructure work.
 | `Data/systemd/` | Unit/timer templates |
 | `Data/tests/` | Critical bats suite (`bats Data/tests`) |
 | `Data/dev/export-installer.sh` | Portable `.command` exporter |
-| `Data/dev/container-backup-remote.sh` | Backup worker copied to the host per run |
 | `Data/app/` | Every exported `<V2_VERSION>.command` |
 | `Data/docs/contract.md` | What the installer does / refuses |
 | `Data/docs/architecture.md` | Layout and data flow |
