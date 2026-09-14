@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-92"
+V2_VERSION="2026.08.06-v2-93"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -266,6 +266,31 @@ tailscale_login_with_key() {
 }
 
 # wg_peer_section DOSYA — ilk "# peer: " ya da [Peer] satırından sona kadar.
+# DD-128: sunucuda wg0.conf yoksa kurulum/wireguard'daki sunucu yapılandırması
+# ve cihaz profilleri konur: aynı anahtar, aynı peer'lar; cihazlara dokunulmaz.
+# [Interface] ardından ensure_wireguard'da kurulumun değerleriyle yazılır.
+restore_wireguard_snapshot() {
+    local src="$RESTORE_DIR/wireguard" f n=0 stale=0
+    WG_RESTORED=0
+    [[ -f "$src/sunucu/wg0.conf" ]] || return 0
+    if [[ -f "$WG_CONF_FILE" ]]; then
+        log INFO "WireGuard yapılandırması sunucuda var; kurulum/wireguard kullanılmadı (DD-128)"
+        return 0
+    fi
+    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}" "$WG_CLIENTS_DIR"
+    install -m 0600 -o root -g root "$src/sunucu/wg0.conf" "$WG_CONF_FILE"
+    for f in "$src"/*.conf; do
+        [[ -f "$f" ]] || continue
+        install -m 0600 -o root -g root "$f" "$WG_CLIENTS_DIR/${f##*/}"
+        n=$((n + 1))
+        grep -qxF "Endpoint = ${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT}" "$f" || stale=$((stale + 1))
+    done
+    WG_RESTORED=1
+    log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: sunucu anahtarı, $SNAPSHOT_PEERS peer, $n profil"
+    [[ "$stale" -eq 0 ]] ||
+        log WARN "$stale cihaz profilinin Endpoint'i ${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT} değil; o cihazlar yeni profil ister"
+}
+
 wg_peer_section() {
     awk '/^# peer: / || /^\[Peer\]$/ {p = 1} p {print}' "$1"
 }
@@ -408,13 +433,138 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
+# DD-128: kurulum/ klasöründen gelen hazır ayarlar (ayarlar.command çeker).
+# Girdi dizini silinmeden root'a özel RESTORE_DIR'e alınır; biçimi aşama 0'da,
+# hiçbir şey değişmeden doğrulanır. Yalnız sunucuda karşılığı yoksa (temiz
+# kurulum) yerine konur. Anahtar ve parola özeti hiçbir zaman loga yazılmaz.
+take_snapshot_input() {
+    SNAPSHOT_PEERS=0
+    SNAPSHOT_WG_PROFILES=0
+    SNAPSHOT_QB=0
+    rm -rf -- "$RESTORE_DIR"
+    [[ -d "$INPUT_DIR/wireguard" || -d "$INPUT_DIR/qbittorrent" ]] || return 0
+    install -d -m 0700 -o root -g root "$RESTORE_DIR"
+    local d
+    for d in wireguard qbittorrent; do
+        [[ -e "$INPUT_DIR/$d" ]] || continue
+        [[ -d "$INPUT_DIR/$d" && ! -L "$INPUT_DIR/$d" ]] ||
+            die "hazır ayarlar: kurulum/$d bir dizin değil"
+        mv -- "$INPUT_DIR/$d" "$RESTORE_DIR/$d"
+    done
+}
+
+# WireGuard dosyasında yalnız master-stack'in yazdığı alanlar olabilir. PostUp
+# gibi wg-quick'in root olarak çalıştırdığı satırlar ya da alt ağ dışı
+# AllowedIPs reddedilir. Çıktı "ok <peer sayısı>" ya da satır numaralı sebep;
+# hiçbir değer yazılmaz (AllowedIPs adresi dışında).
+wg_snapshot_check() {
+    local file="$1" kind="$2"
+    awk -v kind="$kind" -v v4p="${WG_SERVER_IPV4%.*}." -v v6p="${WG_SERVER_IPV6%:*}:" '
+        function fail(msg) { print "satır " NR ": " msg; bad = 1; exit }
+        function key_ok(v) { return length(v) == 44 && v ~ /^[A-Za-z0-9+\/]+=$/ }
+        /^[[:space:]]*$/ { next }
+        /^# peer: / {
+            name = substr($0, 9)
+            if (kind != "server" || length(name) > 32 || name !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+                fail("geçersiz peer adı satırı")
+            if (name in names) fail("aynı peer adı iki kez")
+            names[name] = 1
+            next
+        }
+        /^#/ { next }
+        $0 == "[Interface]" { if (ifaces++) fail("iki [Interface]"); sec = "i"; next }
+        $0 == "[Peer]" {
+            if (sec == "p" && pub == "") fail("[Peer] PublicKey yok")
+            if (kind == "profile" && peers) fail("profilde birden fazla [Peer]")
+            sec = "p"; pub = ""; peers++
+            next
+        }
+        {
+            eq = index($0, " = ")
+            if (!eq) fail("ALAN = değer biçiminde değil")
+            k = substr($0, 1, eq - 1); v = substr($0, eq + 3)
+            if (sec == "i") {
+                if (k == "PrivateKey") { if (!key_ok(v)) fail("PrivateKey biçimi"); priv = 1 }
+                else if (kind == "server" && (k == "Address" || k == "ListenPort" || k == "MTU")) {}
+                else if (kind == "profile" && (k == "Address" || k == "MTU" || k == "DNS")) {}
+                else fail("[Interface] içinde izin verilmeyen alan: " k)
+            } else if (sec == "p") {
+                if (k == "PublicKey" || k == "PresharedKey") {
+                    if (!key_ok(v)) fail(k " biçimi")
+                    if (k == "PublicKey") { if (v in keys) fail("aynı PublicKey iki kez"); keys[v] = 1; pub = v }
+                } else if (k == "AllowedIPs" && kind == "server") {
+                    n = split(v, a, /, /)
+                    for (i = 1; i <= n; i++)
+                        if (!((index(a[i], v4p) == 1 && a[i] ~ /\/32$/) || (index(a[i], v6p) == 1 && a[i] ~ /\/128$/)))
+                            fail("AllowedIPs WireGuard alt ağı dışında: " a[i])
+                } else if (kind == "profile" && (k == "AllowedIPs" || k == "PersistentKeepalive" || k == "Endpoint")) {
+                } else fail("[Peer] içinde izin verilmeyen alan: " k)
+            } else fail("bölüm başlığından önce alan")
+        }
+        END {
+            if (bad) exit 0
+            if (!ifaces || !priv) { print "[Interface] PrivateKey yok"; exit 0 }
+            if (sec == "p" && pub == "") { print "son [Peer] PublicKey yok"; exit 0 }
+            print "ok " peers + 0
+        }
+    ' "$file"
+}
+
+validate_snapshot() {
+    [[ -d "$RESTORE_DIR" ]] || return 0
+    local f rel res name
+    [[ -z "$(find "$RESTORE_DIR" -mindepth 1 ! -type f ! -type d)" ]] ||
+        die "hazır ayarlar: kurulum/ içinde bağlantı ya da özel dosya var"
+    while IFS= read -r f; do
+        rel="${f#"$RESTORE_DIR"/}"
+        [[ "$(wc -c <"$f")" -le "$SNAPSHOT_MAX_BYTES" ]] ||
+            die "hazır ayarlar: kurulum/$rel çok büyük"
+        case "$rel" in
+            wireguard/sunucu/wg0.conf | qbittorrent/qBittorrent.conf) ;;
+            wireguard/*/*) die "hazır ayarlar: beklenmeyen dosya kurulum/$rel" ;;
+            wireguard/*.conf)
+                name="${rel#wireguard/}"
+                name="${name%.conf}"
+                [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] ||
+                    die "hazır ayarlar: geçersiz profil adı kurulum/$rel"
+                ;;
+            *) die "hazır ayarlar: beklenmeyen dosya kurulum/$rel" ;;
+        esac
+    done < <(find "$RESTORE_DIR" -type f)
+    if [[ -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf" ]]; then
+        res="$(wg_snapshot_check "$RESTORE_DIR/wireguard/sunucu/wg0.conf" server)"
+        [[ "$res" == "ok "* ]] || die "hazır ayarlar: kurulum/wireguard/sunucu/wg0.conf geçersiz ($res)"
+        SNAPSHOT_PEERS="${res#ok }"
+        for f in "$RESTORE_DIR"/wireguard/*.conf; do
+            [[ -f "$f" ]] || continue
+            res="$(wg_snapshot_check "$f" profile)"
+            [[ "$res" == "ok "* ]] || die "hazır ayarlar: kurulum/wireguard/${f##*/} geçersiz ($res)"
+            SNAPSHOT_WG_PROFILES=$((SNAPSHOT_WG_PROFILES + 1))
+        done
+    elif [[ -d "$RESTORE_DIR/wireguard" ]]; then
+        # Sunucu anahtarı olmadan cihaz kopyaları işe yaramaz; gönderilmez.
+        rm -rf -- "$RESTORE_DIR/wireguard"
+    fi
+    [[ ! -f "$RESTORE_DIR/qbittorrent/qBittorrent.conf" ]] || SNAPSHOT_QB=1
+}
+
+snapshot_note() {
+    local wg="yok" qb="yok"
+    [[ ! -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf" ]] ||
+        wg="sunucu anahtarı + $SNAPSHOT_PEERS peer, $SNAPSHOT_WG_PROFILES profil"
+    [[ "$SNAPSHOT_QB" -eq 0 ]] || qb="var (hesap dahil)"
+    printf 'WireGuard %s; qBittorrent %s' "$wg" "$qb"
+}
+
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
     # DD-119: girdi ilk iş okunur ve silinir; kapılardan biri düşse bile
     # parolalar /run'da kalmaz.
     read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS" "$INPUT_REMOVED_KEYS"
+    take_snapshot_input
     rm -rf -- "$INPUT_DIR"
+    validate_snapshot
     require_supported_os
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
@@ -595,6 +745,8 @@ Kurulum girdileri (kurulum/kurulum.env):
   Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER (qBittorrent: kendi arayüzünden)
                  (dosyadakinden farklı olan hesap güncellenir)
   Tailscale key: $ts_key_note
+  Hazır ayarlar: $(snapshot_note)
+                 (yalnız sunucuda karşılığı yoksa kullanılır)
   full-upgrade:  $yes_no_upgrade
   image pull:    $yes_no_pull
 
@@ -1037,6 +1189,27 @@ ensure_qbittorrent_dir() {
     install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$QBITTORRENT_DATA_DIR"
 }
 
+# DD-128: sunucuda qBittorrent.conf yoksa kurulum/qbittorrent/qBittorrent.conf
+# olduğu gibi konur (hesap dahil). Varsa sunucudaki doğrudur; dokunulmaz.
+# qBittorrent kapanırken dosyayı yeniden yazdığından çalışan konteyner önce
+# durdurulur.
+restore_qbittorrent_snapshot() {
+    local src="$RESTORE_DIR/qbittorrent" dst="$QBITTORRENT_DATA_DIR/qBittorrent" running
+    QB_RESTORED=0
+    [[ -f "$src/qBittorrent.conf" ]] || return 0
+    if [[ -f "$dst/qBittorrent.conf" ]]; then
+        log INFO "qBittorrent ayarları sunucuda var; kurulum/qbittorrent kullanılmadı (DD-128)"
+        return 0
+    fi
+    running="$(docker inspect -f '{{.State.Running}}' qbittorrent 2>/dev/null || true)"
+    [[ "$running" != "true" ]] || docker stop qbittorrent >/dev/null
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$dst"
+    install -m 0600 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$src/qBittorrent.conf" "$dst/qBittorrent.conf"
+    QB_RESTORED=1
+    log INFO "qBittorrent ayarları kurulum/qbittorrent'ten geri yüklendi (hesap dahil)"
+    [[ "$running" != "true" ]] || docker start qbittorrent >/dev/null
+}
+
 # DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
 # log-opts yalnız sürücü json-file iken (varsayılan) dokunulur — operatör
 # başka bir sürücü seçtiyse onun ayarı ezilmez (DD-107). Yürürlüğe girmesi
@@ -1113,6 +1286,7 @@ stage_4() {
     systemctl enable --now docker
     ensure_dozzle_users
     ensure_qbittorrent_dir
+    restore_qbittorrent_snapshot
 
     mkdir -p "$COMPOSE_DIR"
     COMPOSE_NEEDS_UP=0
@@ -1202,6 +1376,7 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
+    restore_wireguard_snapshot
     ensure_wireguard
 }
 
@@ -1633,7 +1808,11 @@ stage_7() {
 }
 
 print_summary() {
+    local qb_note="ilk kurulumda kullanıcı admin; geçici parola Dozzle'da qbittorrent logunda — arayüzden değiştirin"
+    [[ "${QB_RESTORED:-0}" -ne 1 ]] || qb_note="ayarlar ve hesap kurulum/qbittorrent'ten geri yüklendi"
     log INFO "Kurulum tamam — v$V2_VERSION"
+    [[ "${WG_RESTORED:-0}" -ne 1 ]] ||
+        log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: cihazlar mevcut profilleriyle bağlanır"
     cat <<EOF
 
 WAN:          $WAN_INTERFACE $WAN_IPV4
@@ -1652,12 +1831,13 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
-qBittorrent: http://torrent.${LOCAL_DOMAIN} (ilk kurulumda kullanıcı admin; geçici parola Dozzle'da qbittorrent logunda — arayüzden değiştirin)
+qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
   Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
 WireGuard üzerinden arayüzler (yalnız IP:port; tailnet ve WebDAV kapalı):
   Dozzle http://${WG_SERVER_IPV4}:${DOZZLE_UI_PORT}  qBittorrent http://${WG_SERVER_IPV4}:${TORRENT_UI_PORT}  FileBrowser http://${WG_SERVER_IPV4}:${FILEBROWSER_UI_PORT}
   Peer eklemek/çıkarmak, QR: Mac'te wireguard.command (peer sunucuda üretilir, profil kurulum/wireguard'a alınır)
+Hazır ayarları kurulum/'a almak (yeniden kurulumda geri yüklenir): Mac'te ayarlar.command
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF
@@ -1671,6 +1851,8 @@ main() {
     stage_3
     stage_4
     stage_5
+    # DD-128: hazır ayarların işi bitti; anahtarlar /run'da kalmaz.
+    rm -rf -- "$RESTORE_DIR"
     stage_6
     stage_7
     print_summary

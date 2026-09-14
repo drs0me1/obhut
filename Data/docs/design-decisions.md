@@ -5427,6 +5427,10 @@ failure with an early, named one.
 
 ### DD-122: container-backup is retired; kurulum/ is the only thing to keep (2026-09-14)
 
+- **Note (DD-128, 2026-09-14):** `kurulum/` now also holds settings pulled by
+  `ayarlar.command` (WireGuard, qBittorrent). This is a narrow snapshot the
+  installer restores where absent, not a container backup.
+
 - **Decision:** `container-backup.command`, its worker
   `dev/container-backup-remote.sh`, `docs/container-backup.md` and
   `tests/backup-roundtrip.sh` are removed. A test fails if any of them
@@ -5477,6 +5481,11 @@ failure with an early, named one.
     firewall, dnsmasq, Caddy and `caddy-wg` unchanged.
 
 ### DD-124: The server generates and owns WireGuard peers; wireguard.command manages them (2026-09-14)
+
+- **Amended by DD-128 (2026-09-14):** the server stays the source of truth
+  while it lives, but `ayarlar.command` pulls `wg0.conf` and the profiles into
+  `kurulum/`, and a fresh install restores them. A reinstall then keeps the
+  key and peers, instead of "nothing sent, new key".
 
 - **Decision:**
   - `/etc/wireguard/wg0.conf` on the server is the WireGuard source of truth.
@@ -5849,6 +5858,128 @@ failure with an early, named one.
       hash-identical.
     - The old `/etc/master-stack/transmission{,-auth}` directories remain
       for the operator to delete.
+
+### DD-128: Pulled WireGuard and qBittorrent settings rebuild a server; restored only where absent (2026-09-14)
+
+- **Context:** the user wants a reset server back in one pass, with the same
+  WireGuard devices working and qBittorrent configured as they left it.
+  - v2-92 deliberately writes no qBittorrent settings: the operator sets them
+    once in the UI.
+  - DD-124 made a reinstall generate a new WireGuard key.
+  - The user proposed pulling both from the server into `kurulum/` and having
+    the installer put them back.
+- **Decision:**
+  - **`ayarlar.command`** (repository root, macOS `/bin/bash` 3.2, reads only
+    `SSH_HOST`):
+    - One SSH call runs a server-side script. It needs `state.env`, lists only
+      `wg0.conf`, `clients/*.conf` and qBittorrent's `qBittorrent.conf`, and
+      streams them as a tar relative to `/`.
+    - qBittorrent's `categories.json`, `watched_folders.json` and
+      `rss/feeds.json` are not pulled: the user changes only the settings
+      file. The stage 0 whitelist rejects them.
+    - The Mac extracts into a temporary directory inside `kurulum/`, then
+      places `wireguard/sunucu/wg0.conf`, `wireguard/<name>.conf` (mirrored:
+      a local profile the server no longer has is removed) and
+      `qbittorrent/qBittorrent.conf`, all `600` in `700` directories.
+    - It prints per file only "değişti/aynı/silindi", plus the peer count, and
+      warns if qBittorrent has no password yet.
+  - **Launcher:** sends those files with `kurulum.env` when present.
+    - Profile names are filtered, and profiles go only with a server
+      `wg0.conf`.
+    - Each file must be mode `600`.
+    - The confirmation summary shows what was sent.
+    - Its exit cleanup also removes `RESTORE_DIR`.
+  - **Stage 0:** moves `wireguard/` and `qbittorrent/` into the root-only
+    `RESTORE_DIR` (`/run`) before the input directory is deleted, then
+    validates before any change:
+    - Only the names above are allowed, each at most `SNAPSHOT_MAX_BYTES`
+      (1 MiB), with no links or special files.
+    - `wg_snapshot_check` accepts in `wg0.conf` only what master-stack
+      writes:
+      - `[Interface]`: `Address`, `ListenPort`, `MTU`, `PrivateKey`.
+      - `[Peer]`: `PublicKey`, `PresharedKey`, `AllowedIPs` inside the
+        WireGuard `/24` and `/112` as `/32` and `/128`.
+      - Peer names must be valid and unique, and public keys unique.
+    - Profiles may hold `PrivateKey`/`Address`/`MTU`/`DNS` and one `[Peer]`
+      with `PublicKey`/`PresharedKey`/`AllowedIPs`/`PersistentKeepalive`/
+      `Endpoint`.
+    - Keys are checked by length and alphabet; mawk has no `{n}` intervals.
+    - Messages name the line and field, never a key.
+  - **Stage 4 / stage 5:** qBittorrent's files are placed only when
+    `qBittorrent.conf` is absent, and `wg0.conf` and the profiles only when
+    `wg0.conf` is absent.
+    - A running qBittorrent is stopped first, because it rewrites its file
+      on exit.
+    - Profiles whose `Endpoint` is not `${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT}`
+      are counted in a warning.
+    - `ensure_wireguard` then keeps the key and peers and rewrites
+      `[Interface]` from the installer's values.
+  - `RESTORE_DIR` is removed right after stage 5.
+- **Why "only where absent":**
+  - While a server lives, peers are added with `master-wg` and preferences
+    change in the UI. An older snapshot must not undo that.
+  - qBittorrent and wg-quick rewrite or compare their own files, so
+    enforcing a snapshot on every run would restart services.
+  - The rule keeps re-runs no-ops. The operator pulls again after changes.
+- **Why validation is strict:** wg-quick runs `PostUp`/`PreUp` lines as root,
+  and the file arrives from the workstation. A tampered or hand-edited
+  snapshot must stop the install, not execute. qBittorrent's `AutoRun`
+  program runs inside the container as the unprivileged user; it is the
+  operator's own setting and is not filtered.
+- **Trade-off, stated:**
+  - `kurulum/` on the Mac now holds the WireGuard server and device private
+    keys and qBittorrent's password hash, next to the Tailscale auth key and
+    passwords it already held.
+  - They stay Git-ignored, `600`, and reach the server only in tmpfs.
+  - Protecting that folder (FileVault) is the operator's part.
+- **Limits:**
+  - A server with a different public IP needs new device profiles; the
+    installer warns about this.
+  - `ayarlar.command` uses SSH to the public IP, so the Mac must be off its
+    own WireGuard tunnel (DD-124's accepted limit).
+- **Verification:**
+  - bats 128 ok. `shellcheck -x` is clean on install.sh, common.sh and the
+    exporter; the launcher and `ayarlar.command` parse under `/bin/bash`.
+  - New tests cover:
+    - rejection of `PostUp`, out-of-subnet `AllowedIPs`, short keys,
+      duplicate or bad names, a missing key, extra `[Peer]` fields,
+      `PostDown` and two `[Peer]`s in a profile, with no key echoed;
+    - the file whitelist, links, the size limit and profiles dropped without
+      a server file;
+    - restore versus no-touch, stop/start around the qBittorrent file, bad
+      and the Endpoint warning;
+    - the stage wiring and `RESTORE_DIR` removal;
+    - `ayarlar.command` against a fake server: byte-identical `600` copies,
+      a stale profile removed, "aynı" on a second pull, and no key, hash or
+      password in the output.
+  - Six mutations were each caught.
+  - **Live on `nrm`** (the operator's real host: `nrm-1`, peer `iph0`,
+    qBittorrent account set), with the scratch inputs. Real account files,
+    `/etc/wireguard` and qBittorrent's `/config` were saved and put back:
+    - `ayarlar.command` pulled `wg0.conf`, `iph0.conf` and four qBittorrent
+      files, all `600`, printing no content. After it was narrowed to
+      `qBittorrent.conf` only, a second pull brought exactly `wg0.conf`,
+      `iph0.conf` and `qBittorrent.conf`. The restore test was not repeated
+      live: the only change removed three optional files from a copy loop,
+      and bats covers it.
+    - The v2-93 install over the existing v2-92 server reported both
+      snapshots "sunucuda var; kullanılmadı". WireGuard, both Caddies,
+      qBittorrent and both config files were unchanged, and no restore
+      directory was left.
+    - **Fresh simulation:** `wg-quick@wg0` was stopped, `wg0.conf`, the
+      profiles and qBittorrent's `/config` removed, and the container
+      stopped.
+      - The install exited 0 in 15 s with both "geri yüklendi" lines.
+      - The server public key, `wg0.conf`, the profiles and qBittorrent's
+        account lines hashed identical to before.
+      - qBittorrent printed no temporary password; the API answered 403 and
+        `caddy-wg` was active.
+      - The Mac's `iph0` tunnel, never touched, reconnected (handshake 9 s)
+        and opened `10.8.0.1:61006`.
+    - Afterwards `/etc/wireguard` compared identical to the saved copy, and
+      qBittorrent's original `/config` (torrent state included) went back
+      while stopped. Only its lockfile and log changed on start. The real
+      accounts were restored, and the pulled test copies deleted.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

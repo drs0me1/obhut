@@ -112,6 +112,31 @@ the ones agreed on 2026-08-05:
   - Stage 0 validates every value, prints them without passwords and asks for
     one confirmation before `config.env` is written. Re-runs still ask about
     full-upgrade and image pull; an interactive TTY stays required.
+- **Pulled settings are restored only where the server has none (DD-128).**
+  - `ayarlar.command` (repository root, macOS) copies the server's settings
+    into `kurulum/`, mode `600`, printing no content:
+    - `wg0.conf` into `wireguard/sunucu/`;
+    - the device profiles into `wireguard/<name>.conf`, mirrored, so a local
+      profile the server no longer has is removed;
+    - qBittorrent's `qBittorrent.conf` (settings and account) into
+      `qbittorrent/`. Categories, RSS and watched folders are not pulled.
+  - The launcher sends those files with `kurulum.env` (each must be mode
+    `600`).
+  - Stage 0 moves them into the root-only `RESTORE_DIR` in `/run` before the
+    input directory is deleted, then validates them before any change:
+    - Only those names are allowed, each at most `SNAPSHOT_MAX_BYTES`, with
+      no links or special files.
+    - `wg0.conf` may hold only `Address`/`ListenPort`/`MTU`/`PrivateKey` in
+      `[Interface]`, and `PublicKey`/`PresharedKey`/`AllowedIPs` inside the
+      WireGuard subnets in each `[Peer]`, with valid, unique peer names. Any
+      `PostUp`-style line stops the install.
+    - Profiles are checked the same way.
+  - Stage 4 places qBittorrent's files only if `qBittorrent.conf` is absent,
+    stopping a running container first. Stage 5 places `wg0.conf` and the
+    profiles only if `wg0.conf` is absent, and warns about profiles whose
+    `Endpoint` is not this server.
+  - Otherwise the server's own files win and are not touched.
+  - `RESTORE_DIR` is removed after stage 5, and by the launcher on exit.
 
 ### 1.2 Tailscale
 
@@ -240,7 +265,8 @@ Preserved in full as a core feature. Contract in §5–§7.
   `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420.
 - **The server is the source of truth.** `/etc/wireguard/wg0.conf` (`0600`)
   holds the server key and one `# peer: <name>` + `[Peer]` block per device.
-  Nothing WireGuard-related is sent from the workstation.
+  The only WireGuard files sent from the workstation are the pulled copies,
+  and only for a server that has no `wg0.conf` (§1.1, **DD-128**).
 - **The installer manages `[Interface]` only.** A first install generates the
   server key with `wg genkey`; later runs keep the key and every `[Peer]` block
   byte for byte. It installs `wireguard-tools` and `qrencode`
@@ -266,10 +292,11 @@ Preserved in full as a core feature. Contract in §5–§7.
   `kurulum.env`. It refuses a server whose `master-wg version` differs from
   the repository's `V2_VERSION`. It asks for the name, DNS, keepalive and MTU
   (defaults from `defaults.env`), prints the QR code and saves the profile as
-  `kurulum/wireguard/<name>.conf` (`600`). That folder is a copy for the
-  operator; the installer never reads it.
-- **A reinstall generates a new server key and starts with no peers**; devices
-  are added again with `wireguard.command`.
+  `kurulum/wireguard/<name>.conf` (`600`).
+- **A reinstall keeps the same server key and peers when the pulled settings
+  are in `kurulum/`** (`ayarlar.command`, **DD-128**), and devices reconnect
+  unchanged. Without them it generates a new key, starts with no peers, and
+  devices are added again with `wireguard.command`.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
   Dozzle, qBittorrent and FileBrowser UIs at `http://10.8.0.1:<port>`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or

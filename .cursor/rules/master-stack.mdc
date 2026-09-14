@@ -104,10 +104,11 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
-### WireGuard (DD-120)
+### WireGuard (DD-120, DD-124, DD-128)
 
 - wg-easy yok; WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır, adresler wg-easy'nin kullandıklarıdır.
-- Peer'lar `kurulum/wireguard/<cihaz>.conf`, sunucu anahtarı `kurulum/wireguard/sunucu.key`; `wg0.conf` yalnız public key/PSK taşır.
+- Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
+- `ayarlar.command` sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`), profilleri ve qBittorrent ayarlarını `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Pulled settings rebuild a server: ayarlar.command (v2-93)
+
+- **Added:** `ayarlar.command` at the repository root. It pulls into
+  `kurulum/`, mode 600, without printing anything (**DD-128**):
+  - the WireGuard server config (`wireguard/sunucu/wg0.conf`: key and peers);
+  - the device profiles;
+  - qBittorrent's `qBittorrent.conf` (settings and account). Categories, RSS
+    and watched folders are not pulled.
+- **Changed:** the installer `.command` sends those files with `kurulum.env`.
+  On a fresh server the installer puts them back, and only where the server
+  has none:
+  - the same WireGuard key and peers, so devices reconnect untouched;
+  - qBittorrent configured with its account.
+  A server that already has its own files keeps them.
+- **Security:** the files are validated before any change. A WireGuard file
+  with `PostUp`-style lines, foreign fields, out-of-subnet addresses or bad
+  keys stops the install.
+- **Verified on `nrm`:**
+  - The pull.
+  - A run over an existing server that left everything untouched.
+  - A fresh simulation restored identical keys, peers and the qBittorrent
+    account; the Mac's unchanged tunnel reconnected.
+  - bats 128 ok.
+
 ### 2026-09-14 — qBittorrent returns, configured in its own web UI (v2-92)
 
 - **Changed:** the torrent client is qBittorrent again

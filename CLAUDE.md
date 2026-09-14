@@ -6,7 +6,7 @@ Working guide for any AI assistant in this repository. Read this first.
 
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
-and `wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs),
+`wireguard.command` and `ayarlar.command` — plus the Git-ignored `kurulum/` (installer inputs and pulled settings),
 this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
@@ -94,7 +94,9 @@ state. Treat every change as production-infrastructure work.
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
 | `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**) |
-| `kurulum/wireguard/` (root) | Device profiles saved by `wireguard.command`, mode 600; never sent to the server |
+| `ayarlar.command` (root) | Pulls WireGuard (`wg0.conf`, profiles) and qBittorrent settings into `kurulum/` without printing them (**DD-128**) |
+| `kurulum/wireguard/` (root) | Device profiles, plus `sunucu/wg0.conf` (server key + peers), mode 600; sent only for restore on a server without `wg0.conf` |
+| `kurulum/qbittorrent/` (root) | `qBittorrent.conf` only (settings incl. account hash), mode 600; restored only where absent |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |

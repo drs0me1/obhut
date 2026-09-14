@@ -45,6 +45,29 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-93, ayarlar.command and restore-where-absent (DD-128):**
+- The old Transmission dirs on `nrm` were deleted at the user's request.
+- New:
+  - `ayarlar.command` pulls `wg0.conf`, the profiles (mirrored) and
+    qBittorrent's `qBittorrent.conf` only (the user's call: categories, RSS
+    and watched folders are unused) into `kurulum/`, printing no content.
+  - The launcher sends them.
+  - Stage 0 moves them to `RESTORE_DIR` and validates strictly (no `PostUp`,
+    subnet-bound AllowedIPs, key format, whitelist, size).
+  - Stages 4/5 restore only when the server file is absent, and
+    `RESTORE_DIR` is removed after stage 5.
+- Live on `nrm` (the user's real host), with real accounts, `/etc/wireguard`
+  and qBittorrent `/config` saved and put back:
+  - pull OK;
+  - a run over the existing server was untouched and no-op;
+  - a fresh simulation restored identical key, peers and qBittorrent account
+    lines, and the Mac's `iph0` reconnected unchanged.
+  - bats 128.
+- Open:
+  - The user runs `ayarlar.command` into their real `kurulum/`, with the Mac
+    off WireGuard.
+  - Infuse and Tailscale admin for `100.85.4.106`, if not done.
+
 **2026-09-14 — v2-92, qBittorrent returns (DD-127):**
 - The user found Transmission slow.
   - We discussed that DHT/PeX off limits peers in any client; the user keeps
