@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-94"
+V2_VERSION="2026.08.06-v2-95"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -432,7 +432,7 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
-# DD-128: kurulum/ klasöründen gelen hazır ayarlar (ayarlar.command çeker).
+# DD-128: kurulum/ klasöründen gelen hazır ayarlar (wireguard.command → 6) Yedek al).
 # Girdi dizini silinmeden root'a özel RESTORE_DIR'e alınır; biçimi aşama 0'da,
 # hiçbir şey değişmeden doğrulanır. Yalnız sunucuda karşılığı yoksa (temiz
 # kurulum) yerine konur. Anahtar ve parola özeti hiçbir zaman loga yazılmaz.
@@ -2001,7 +2001,7 @@ WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
 WireGuard üzerinden arayüzler (yalnız IP:port; tailnet ve WebDAV kapalı):
   Dozzle http://${WG_SERVER_IPV4}:${DOZZLE_UI_PORT}  qBittorrent http://${WG_SERVER_IPV4}:${TORRENT_UI_PORT}  FileBrowser http://${WG_SERVER_IPV4}:${FILEBROWSER_UI_PORT}
   Peer eklemek/çıkarmak, QR: Mac'te wireguard.command (peer sunucuda üretilir, profil kurulum/wireguard'a alınır)
-Hazır ayarları kurulum/'a almak (yeniden kurulumda geri yüklenir): Mac'te ayarlar.command
+WireGuard yedeği (yeniden kurulumda geri yüklenir): Mac'te wireguard.command → 6) Yedek al
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF

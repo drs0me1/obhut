@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — WireGuard backup moves into wireguard.command (v2-95)
+
+- **Changed:** `ayarlar.command` is removed. Its pull of the WireGuard server
+  config and profiles is now option 6 "Yedek al" of `wireguard.command`, with
+  the same behaviour: no content printed, files mode 600, profiles mirrored,
+  and an old `kurulum/qbittorrent/` copy deleted (**DD-128**).
+  - After adding or removing a peer, the menu reminds you to take a backup.
+- **Fixed:** the menu's master-wg calls use `ssh -n`, so ssh can no longer
+  swallow queued menu input.
+- The installer's summary now points to option 6. Re-run the installer once:
+  the menu requires the server to run the same version.
+- **Verified:**
+  - bats 132 ok, and three mutations were caught.
+  - On `nrm`, option 6 pulled `wg0.conf` and 4 profiles byte-identical to the
+    operator's existing copy; a second backup reported "aynı".
+
 ### 2026-09-14 — qBittorrent configured by the installer: template + kurulum.env account (v2-94)
 
 - **Added:** `TORRENT_USER` and `TORRENT_PASS` in `kurulum.env` (required; add

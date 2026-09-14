@@ -5,13 +5,13 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-94` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-95` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
-installer (`<version>.command`), `wireguard.command` (WireGuard peers),
-`ayarlar.command` (pull server settings) and the Git-ignored `kurulum/`
-(installer inputs and pulled settings). Everything else lives under `Data/`; paths in the
+installer (`<version>.command`), `wireguard.command` (WireGuard peers and
+their backup) and the Git-ignored `kurulum/` (installer inputs and the
+WireGuard backup). Everything else lives under `Data/`; paths in the
 documents there are relative to `Data/`. Turkish click order:
 [`Data/OKUBENI.txt`](Data/OKUBENI.txt).
 
@@ -30,7 +30,7 @@ chmod 600 kurulum/kurulum.env   # then fill it in
 
 # Install: double-click the current <version>.command at the repository root
 # WireGuard peers (after the install): double-click wireguard.command
-# Keep a rebuildable copy of the WireGuard key and peers: double-click ayarlar.command
+# Keep a rebuildable copy of the WireGuard key and peers: wireguard.command → 6) Yedek al
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)
@@ -57,7 +57,6 @@ only the runtime files and their archive SHA-256. It uploads them to
 .
 ├── <version>.command      # current portable installer (double-click)
 ├── wireguard.command      # WireGuard peer menu (double-click)
-├── ayarlar.command        # pull the WireGuard server config and profiles into kurulum/
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
 │   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
 │   └── wireguard/         #   device profiles; sunucu/wg0.conf = server key + peers
@@ -98,7 +97,7 @@ There is no container backup tool. A host is rebuilt from `kurulum/` alone:
 - Every login comes from `kurulum/kurulum.env`, qBittorrent's included.
 - qBittorrent's settings come from `Data/templates/qBittorrent.conf`
   (**DD-129**).
-- `ayarlar.command` pulls the WireGuard server key, peers and profiles into
+- `wireguard.command` → 6) Yedek al pulls the WireGuard server key, peers and profiles into
   `kurulum/`. A fresh install restores them only where the server has none
   (**DD-128**), and devices reconnect unchanged.
 - Pull again after changing peers.

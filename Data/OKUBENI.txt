@@ -1,9 +1,8 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-94.command)
-  wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR (kurulumdan sonra)
-  ayarlar.command            hazır WireGuard ayarlarını çek: sunucu anahtarı, peer'lar, profiller
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-95.command)
+  wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR, yedek al (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   kurulum/wireguard/         cihaz profilleri; sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
@@ -18,11 +17,12 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
 WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
-  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster
+  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış 6) yedek al
   Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
   Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
   profil kurulum/wireguard/<ad>.conf olarak Mac'e iner (cihaza bu dosyayı ya da QR'ı aktarın).
-  Yeniden kurulumda aynı anahtarın ve peer'ların gelmesi için ayarlar.command ile çekin (aşağıda).
+  6) yedek al: sunucu anahtarı, peer listesi ve profiller kurulum/wireguard'a iner (içerik ekrana yazılmaz);
+  yeniden kurulumda aynı anahtar ve peer'lar gelir. Peer ekleyip çıkardıktan sonra yeniden alın.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 qBittorrent, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
@@ -33,8 +33,7 @@ A) İlk kurulum
   1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
   3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun
-  4. ayarlar.command (Mac'te WireGuard kapalıyken) → WireGuard ayarları kurulum/'a iner
-     (peer ekleyip çıkardıktan sonra yeniden çalıştırın)
+  4. wireguard.command → 6) yedek al (Mac'te WireGuard kapalıyken) → WireGuard ayarları kurulum/'a iner
   (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
   v2-94'e geçerken: kurulum.env'e TORRENT_USER= ve TORRENT_PASS= satırlarını ekleyin
@@ -42,7 +41,7 @@ A) İlk kurulum
   eski sunucuda kurulum durursa: docker rm -f transmission
 
 B) Sıfırlama → yeniden kurulum
-  0. Sıfırlamadan önce: ayarlar.command (son hali kurulum/'da olsun)
+  0. Sıfırlamadan önce: wireguard.command → 6) yedek al (son hali kurulum/'da olsun)
      Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
   1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL
      Özette "Hazır ayarlar: WireGuard sunucu anahtarı + … peer" görünür → E
@@ -51,5 +50,5 @@ B) Sıfırlama → yeniden kurulum
   2. Tailscale paneli + Infuse adresi
   (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin)
 
-Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + ayarlar.command'ın çektikleri).
+Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + wireguard.command yedeği).
 Bu klasörü güvende tutun. Eski container-backup arşivleri (backup/) artık hiçbir şeyce okunmaz; silebilirsiniz.

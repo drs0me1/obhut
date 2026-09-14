@@ -2240,58 +2240,61 @@ EOF
     grep -q 'Hazır ayarlar: \$(snapshot_note)' "$V2_ROOT/install.sh"
 }
 
-@test "ayarlar.command mirrors server settings into kurulum/ without printing them" {
-    local repo="$TMP/repo" srv="$TMP/srv"
+@test "wireguard.command option 6 mirrors the server's WireGuard files into kurulum/ without printing them" {
+    local repo="$TMP/repo" srv="$TMP/srv" ver
+    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
     mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$repo/kurulum/qbittorrent" \
         "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
-    cp "$V2_ROOT/../ayarlar.command" "$repo/"
+    cp "$V2_ROOT/../wireguard.command" "$repo/"
     cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
+    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
     printf 'SSH_HOST=nrm\nWEBDAV_PASS=never-read\n' >"$repo/kurulum/kurulum.env"
     touch "$srv/etc/master-stack/state.env"
     snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
     snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
+    printf 'stale\n' >"$repo/kurulum/wireguard/gone.conf"
     # A v2-93 pull left a qBittorrent copy with a password hash: it is removed.
     printf '[Preferences]\nWebUI\\Password_PBKDF2="@ByteArray(secret-hash)"\n' \
         >"$repo/kurulum/qbittorrent/qBittorrent.conf"
-    printf 'stale\n' >"$repo/kurulum/wireguard/gone.conf"
-    # Fake ssh: keep the remote script for inspection and send the fixture tree
-    # the way the server would (paths relative to /).
+    # Fake ssh: master-wg version answers the local version; the backup script
+    # is kept for inspection and the fixture tree is sent relative to /.
     cat >"$TMP/bin/ssh" <<EOF
 #!/bin/bash
-printf '%s\n' "\$*" >"$TMP/ssh-args"
-cat >"$TMP/ssh-script"
-cd "$srv" && tar -cf - \$(find etc -type f ! -name state.env | sort)
+case "\$*" in
+    *" -O exit "*) exit 0 ;;
+    *"master-wg version"*) echo "$ver" ;;
+    *"bash -s"*) printf '%s\n' "\$*" >"$TMP/ssh-args"; cat >"$TMP/ssh-script"
+        cd "$srv" && tar -cf - \$(find etc -type f ! -name state.env | sort) ;;
+    *) exit 1 ;;
+esac
 EOF
     chmod +x "$TMP/bin/ssh"
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/ayarlar.command" </dev/null
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
     [ "$status" -eq 0 ]
-    [ -f "$repo/kurulum/wireguard/sunucu/wg0.conf" ]
     cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
     cmp "$srv/etc/wireguard/clients/iph0.conf" "$repo/kurulum/wireguard/iph0.conf"
-    [ ! -e "$repo/kurulum/qbittorrent" ]
     [ ! -e "$repo/kurulum/wireguard/gone.conf" ]
+    [ ! -e "$repo/kurulum/qbittorrent" ]
     for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf"; do
         [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
     done
     pulled="$output"
+    case "$pulled" in *"6) Yedek al"*) ;; *) false ;; esac
     case "$pulled" in *"profil gone"*"silindi"*) ;; *) false ;; esac
-    case "$pulled" in *"qBittorrent qBittorrent.conf"*"silindi"*) ;; *) false ;; esac
+    case "$pulled" in *"eski qBittorrent kopyası"*"silindi"*) ;; *) false ;; esac
     run ! grep -qE 'AAAA|BBBB|secret-hash|never-read' <<<"$pulled"
-    [ -z "$(find "$repo/kurulum" -name '.ayarlar.*')" ]
-    # A second pull reports unchanged files.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/ayarlar.command" </dev/null
+    [ -z "$(find "$repo/kurulum" -name '.yedek.*')" ]
+    # A second backup reports unchanged files.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
     case "$output" in *"profil iph0"*"aynı"*) ;; *) false ;; esac
-    # The server side tars only known names, relative to /, and needs an install.
+    # The server side needs an install and a wg0.conf, tars only WireGuard files.
     grep -q 'tar -C / -cf - -- "\${list\[@\]}"' "$TMP/ssh-script"
-    run ! grep -qiE 'qbittorrent|categories|watched_folders|feeds' "$TMP/ssh-script"
     grep -q 'sunucuda kurulum yok' "$TMP/ssh-script"
+    grep -q 'sunucuda WireGuard yapılandırması yok' "$TMP/ssh-script"
+    run ! grep -qiE 'qbittorrent|categories|feeds' "$TMP/ssh-script"
     grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients$' "$TMP/ssh-args"
-    # Static: bash 3.2, only SSH_HOST read, no plain copy tools, nothing sent.
-    local cmd="$V2_ROOT/../ayarlar.command"
-    /bin/bash -n "$cmd"
-    run ! grep -qE 'mapfile|readarray|declare -A|scp |rsync' "$cmd"
-    grep -q 'index(\$0, "SSH_HOST=") == 1' "$cmd"
-    grep -q '^umask 077$' "$cmd"
+    # The separate ayarlar.command is gone.
+    [ ! -e "$V2_ROOT/../ayarlar.command" ]
 }
 
 wg_mock_bin() {
@@ -2523,11 +2526,18 @@ master_wg() {
     run ! grep -qE '_PASS|TS_AUTH_KEY' "$cmd"
     # Every server call goes through master-wg with %q-quoted arguments.
     grep -q "printf '%q ' \"\$MASTER_WG\" \"\$@\"" "$cmd"
+    # master-wg reads no stdin; ssh -n keeps typed menu input from being swallowed.
+    grep -q 'ssh -n "\${ssh_base\[@\]}" "\$HOST" "\$cmd"' "$cmd"
     for sub in version list add remove profile qr; do
         grep -q "remote $sub" "$cmd"
     done
-    # Nothing local is sent to the server: no stdin redirect into ssh, no tar, no scp.
-    run ! grep -qE '^[^#]*(scp |tar |ssh [^|#]*<)' "$cmd"
+    # Nothing local is sent to the server: no scp, no local tar archive, no
+    # file redirected into ssh. The only stdin is the backup script heredoc,
+    # whose body runs on the server.
+    outside="$(awk "/<<'REMOTE'\$/ {skip = 1; print; next} skip && /^REMOTE\$/ {skip = 0; next} !skip" "$cmd")"
+    [ "$(grep -c "<<'REMOTE'" "$cmd")" -eq 1 ]
+    run ! grep -qE '^[^#]*(scp |tar -c|tar [^|]*-cf|ssh [^|#]*< *["$/])' <<<"$outside"
+    run ! grep -qE '^[^#]*\| *ssh' <<<"$outside"
     # The profile lands in kurulum/wireguard with mode 600 via a temporary file.
     body="$(awk '/^fetch_profile\(\)/,/^}$/' "$cmd")"
     grep -q 'umask 077 && remote profile "\$name" >"\$tmp"' <<<"$body"

@@ -45,6 +45,17 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-95, backup merged into wireguard.command:**
+- At the user's request `ayarlar.command` became option 6 "Yedek al" of
+  `wireguard.command`, and the separate file was removed.
+- The live test piped the choices on stdin. The first `remote version` ssh
+  read and swallowed that input, so `remote()` now uses `ssh -n`.
+- On `nrm`, from a scratch copy pinned to the server's v2-94, the option
+  pulled `wg0.conf` and 4 profiles identical to the user's copy; a second run
+  showed "aynı". bats 132.
+- Open: the user re-runs the installer (v2-95); the menu version check
+  needs it.
+
 **2026-09-14 — v2-94, qBittorrent settings from a template, account from kurulum.env (DD-129):**
 - The user dropped pulling qBittorrent and asked the installer to write it,
   with the password in `kurulum.env`.

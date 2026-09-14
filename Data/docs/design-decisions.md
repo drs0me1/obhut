@@ -5866,6 +5866,11 @@ failure with an early, named one.
 
 ### DD-128: Pulled WireGuard and qBittorrent settings rebuild a server; restored only where absent (2026-09-14)
 
+- **Tool merged (v2-95, 2026-09-14):** `ayarlar.command` is gone. The same pull
+  is option 6 "Yedek al" of `wireguard.command`, reusing its SSH connection
+  and version check. `remote()` now runs `ssh -n`: a live test showed that an
+  ssh reading stdin could swallow queued menu input. The installer and
+  launcher only changed their wording.
 - **qBittorrent part removed by DD-129 (2026-09-14):** qBittorrent is no longer
   pulled or restored. `ayarlar.command` pulls WireGuard only and deletes a
   `kurulum/qbittorrent/` copy left by v2-93. Stage 0 now rejects a

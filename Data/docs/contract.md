@@ -113,7 +113,7 @@ the ones agreed on 2026-08-05:
     one confirmation before `config.env` is written. Re-runs still ask about
     full-upgrade and image pull; an interactive TTY stays required.
 - **Pulled WireGuard settings are restored only where the server has none (DD-128).**
-  - `ayarlar.command` (repository root, macOS) copies the server's WireGuard
+  - `wireguard.command` option 6 "Yedek al" (repository root, macOS) copies the server's WireGuard
     settings into `kurulum/`, mode `600`, printing no content:
     - `wg0.conf` into `wireguard/sunucu/`;
     - the device profiles into `wireguard/<name>.conf`, mirrored, so a local
@@ -309,7 +309,7 @@ Preserved in full as a core feature. Contract in §5–§7.
   (defaults from `defaults.env`), prints the QR code and saves the profile as
   `kurulum/wireguard/<name>.conf` (`600`).
 - **A reinstall keeps the same server key and peers when the pulled settings
-  are in `kurulum/`** (`ayarlar.command`, **DD-128**), and devices reconnect
+  are in `kurulum/`** (`wireguard.command` → 6, **DD-128**), and devices reconnect
   unchanged. Without them it generates a new key, starts with no peers, and
   devices are added again with `wireguard.command`.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the

@@ -166,7 +166,7 @@ printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 # DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de. Burada
 # yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz, doğrulama
 # sunucuda kurulumun kendisindedir. WireGuard peer'ları sunucuda üretilir
-# (wireguard.command, DD-124); ayarlar.command'ın çektiği hazır ayarlar varsa
+# (wireguard.command, DD-124); menünün "6) Yedek al" ile çektiği hazır ayarlar varsa
 # onlar da gider ve yalnız sunucuda karşılığı yoksa kullanılır (DD-128).
 INPUT_LOCAL_DIR="$here/kurulum"
 INPUT_FILE_LOCAL="$INPUT_LOCAL_DIR/kurulum.env"
