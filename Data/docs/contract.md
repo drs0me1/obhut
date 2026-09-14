@@ -289,6 +289,14 @@ Preserved in full as a core feature. Contract in §5–§7.
     (`0600`) and appends the `[Peer]` block. It validates the name, DNS list,
     keepalive (0–65535) and MTU (1280–1500) before any change.
   - `remove NAME` deletes the block and the stored profile.
+  - `dns NAME DNS` rewrites only the `DNS =` line in the `[Interface]` part of
+    the stored profile. Keys, address and `wg0.conf` stay the same and
+    nothing is applied on the server: DNS is a client setting, so the device
+    imports the new profile (**DD-130**).
+  - `reset --onay` issues a new server key and drops every `[Peer]` block and
+    every stored profile. The other `[Interface]` lines are kept. It applies
+    like any change; a failed apply restores the previous `wg0.conf` and
+    keeps the profiles. Without `--onay` it changes nothing (**DD-130**).
   - `list` prints name, address, last handshake, transfer and whether a
     profile is stored; `profile NAME` and `qr NAME` print the stored profile
     or its QR code.
@@ -303,6 +311,12 @@ Preserved in full as a core feature. Contract in §5–§7.
   the repository's `V2_VERSION`. It asks for the name, DNS, keepalive and MTU
   (defaults from `defaults.env`), prints the QR code and saves the profile as
   `kurulum/wireguard/<name>.conf` (`600`).
+  - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
+    then prints the new QR code and saves the new profile.
+  - Option 8 "wg0 yeniden üret" lists the peers that will be lost and runs
+    `reset --onay` only after the operator types `SIL`. It then runs option 6,
+    so `kurulum/` holds the new key and no old profile, and a reinstall cannot
+    bring the old key back (**DD-130**).
 - **A reinstall keeps the same server key and peers when the pulled settings
   are in `kurulum/`** (`wireguard.command` → 6, **DD-128**), and devices reconnect
   unchanged. Without them it generates a new key, starts with no peers, and

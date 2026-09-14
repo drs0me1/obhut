@@ -93,7 +93,7 @@ state. Treat every change as production-infrastructure work.
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
-| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**); 6) Yedek al pulls `wg0.conf` and profiles into `kurulum/` without printing them (**DD-128**) |
+| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**); 6) Yedek al pulls `wg0.conf` and profiles into `kurulum/` without printing them (**DD-128**); 7) DNS change, 8) wg0 regenerate after typing `SIL` (**DD-130**) |
 | `kurulum/wireguard/` (root) | Device profiles, plus `sunucu/wg0.conf` (server key + peers), mode 600; sent only for restore on a server without `wg0.conf` |
 | `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |

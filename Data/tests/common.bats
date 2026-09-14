@@ -2288,6 +2288,56 @@ EOF
     [ ! -e "$V2_ROOT/../ayarlar.command" ]
 }
 
+@test "wireguard.command options 7 and 8 change DNS with a new QR and regenerate wg0 only after SIL" {
+    local repo="$TMP/repo" srv="$TMP/srv" ver
+    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
+    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
+    cp "$V2_ROOT/../wireguard.command" "$repo/"
+    cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
+    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
+    printf 'SSH_HOST=nrm\n' >"$repo/kurulum/kurulum.env"
+    touch "$srv/etc/master-stack/state.env"
+    snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
+    snapshot_profile >"$repo/kurulum/wireguard/iph0.conf"
+    # Fake server: records master-wg calls; after "reset" the server has no peers.
+    cat >"$TMP/bin/ssh" <<EOF
+#!/bin/bash
+case "\$*" in
+    *" -O exit "*) exit 0 ;;
+    *"master-wg version"*) echo "$ver" ;;
+    *"master-wg list"*) [ -e "$TMP/reset-done" ] || printf 'iph0\t10.8.0.2\t0\t0\t0\tvar\n' ;;
+    *"master-wg profile iph0"*) printf '[Interface]\nPrivateKey = SECRETKEY\nDNS = 1.1.1.1\n' ;;
+    *"master-wg dns iph0 "*) echo "\$*" >>"$TMP/calls"; a="\${*% }"; last="\${a##* }"; printf 'iph0\t%s\n' "\$last" ;;
+    *"master-wg qr iph0"*) echo "QR-CODE" ;;
+    *"master-wg reset --onay"*) echo "\$*" >>"$TMP/calls"; touch "$TMP/reset-done"; printf '4\t4\n'
+        printf '[Interface]\nPrivateKey = NEWKEY\n' >"$srv/etc/wireguard/wg0.conf" ;;
+    *"bash -s"*) cat >/dev/null; cd "$srv" && tar -cf - etc/wireguard/wg0.conf ;;
+    *) exit 1 ;;
+esac
+EOF
+    chmod +x "$TMP/bin/ssh"
+    # 7 twice: Enter keeps the current DNS read from the profile, then a new one;
+    # 8 with a wrong word changes nothing.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" \
+        < <(printf '7\niph0\n\n7\niph0\n2a07:a8c0::df:877b\n8\nevet\n5\n\n')
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 1p "$TMP/calls" | awk '{print $NF}')" = "1.1.1.1" ]
+    case "$output" in *"DNS değişti: iph0 → 2a07:a8c0::df:877b"*"QR-CODE"*) ;; *) false ;; esac
+    case "$output" in *"Vazgeçildi; hiçbir şey değişmedi."*) ;; *) false ;; esac
+    grep -q 'master-wg dns iph0 2a07' "$TMP/calls"
+    run ! grep -q 'reset' "$TMP/calls"
+    run ! grep -q 'SECRETKEY' <<<"$output"
+    [ -f "$repo/kurulum/wireguard/iph0.conf" ]
+    # 8 with SIL: reset, then the backup mirrors the clean server.
+    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '8\nSIL\n5\n\n')
+    [ "$status" -eq 0 ]
+    grep -q 'master-wg reset --onay' "$TMP/calls"
+    case "$output" in *"4 peer ve 4 profil silindi"*) ;; *) false ;; esac
+    [ ! -e "$repo/kurulum/wireguard/iph0.conf" ]
+    grep -qx 'PrivateKey = NEWKEY' "$repo/kurulum/wireguard/sunucu/wg0.conf"
+    case "$output" in *"8) wg0 yeniden üret"*) ;; *) false ;; esac
+}
+
 wg_mock_bin() {
     # Stand-ins on PATH for the tools master-wg and ensure_wireguard call; every
     # call is logged, keys come from a counter and never from randomness.
@@ -2411,6 +2461,83 @@ master_wg() {
     [ "$status" -ne 0 ]
 }
 
+@test "master-wg dns rewrites only the profile's DNS line and leaves keys and wg0.conf alone" {
+    wg_mock_bin
+    wg_state_fixture
+    master_wg add iphone 1.1.1.1 21 1420 >/dev/null
+    profile="$TMP/etc/wireguard/clients/iphone.conf"
+    rest_before="$(grep -v '^DNS = ' "$profile")"
+    conf_before="$(shasum <"$WG_CONF_FILE")"
+    rm -f "$TMP/calls"
+    run master_wg dns iphone "2a07:a8c0::df:877b , 2a07:a8c1::df:877b"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'iphone\t2a07:a8c0::df:877b, 2a07:a8c1::df:877b' ]
+    grep -qx 'DNS = 2a07:a8c0::df:877b, 2a07:a8c1::df:877b' "$profile"
+    [ "$(grep -c '^DNS = ' "$profile")" = 1 ]
+    [ "$(grep -v '^DNS = ' "$profile")" = "$rest_before" ]
+    [ "$(shasum <"$WG_CONF_FILE")" = "$conf_before" ]
+    mode="$(stat -c %a "$profile" 2>/dev/null || stat -f %Lp "$profile")"
+    [ "$mode" = 600 ]
+    # DNS is client-side only: nothing is applied to the interface.
+    run ! grep -qE 'syncconf|systemctl restart' "$TMP/calls"
+    # Bad input changes nothing.
+    before="$(shasum <"$profile")"
+    run master_wg dns iphone "dns.google"
+    [ "$status" -ne 0 ]
+    run master_wg dns iphone " , "
+    [ "$status" -ne 0 ]
+    run master_wg dns ghost 1.1.1.1
+    [ "$status" -ne 0 ]
+    case "$output" in *"adında bir peer yok"*) ;; *) false ;; esac
+    run master_wg dns iphone
+    [ "$status" -ne 0 ]
+    [ "$(shasum <"$profile")" = "$before" ]
+    [ -z "$(find "$TMP/etc/wireguard/clients" -name '.peer-*')" ]
+}
+
+@test "master-wg reset needs --onay, issues a new server key and drops every peer and profile" {
+    wg_mock_bin
+    wg_state_fixture
+    master_wg add iphone 1.1.1.1 21 1420 >/dev/null
+    master_wg add ipad 1.1.1.1 21 1420 >/dev/null
+    conf_before="$(cat "$WG_CONF_FILE")"
+    run master_wg reset
+    [ "$status" -ne 0 ]
+    [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
+    [ -f "$TMP/etc/wireguard/clients/iphone.conf" ]
+    rm -f "$TMP/calls"
+    run master_wg reset --onay
+    [ "$status" -eq 0 ]
+    [ "$output" = $'2\t2' ]
+    # [Interface] lines and the header stay, the key is new, no peer is left.
+    grep -qx '# header' "$WG_CONF_FILE"
+    grep -qx 'Address = 10.8.0.1/24, fdcc:ad94:bacf:61a4::cafe:1/112' "$WG_CONF_FILE"
+    grep -qx 'ListenPort = 61001' "$WG_CONF_FILE"
+    grep -qx 'MTU = 1420' "$WG_CONF_FILE"
+    [ "$(grep -c '^PrivateKey = ' "$WG_CONF_FILE")" = 1 ]
+    run ! grep -q 'SRVKEY' "$WG_CONF_FILE"
+    [ "$(tail -n 1 "$WG_CONF_FILE" | cut -c1-13)" = "PrivateKey = " ]
+    run ! grep -qE '^\[Peer\]$|^# peer: ' "$WG_CONF_FILE"
+    [ -z "$(ls -A "$TMP/etc/wireguard/clients")" ]
+    # Applied live, with the new key and no peers.
+    grep -q '^PrivateKey = PRIV' "$TMP/syncconf"
+    run ! grep -q '^\[Peer\]' "$TMP/syncconf"
+    # A failed apply restores wg0.conf and keeps the profiles.
+    master_wg add mac 1.1.1.1 21 1420 >/dev/null
+    conf_before="$(cat "$WG_CONF_FILE")"
+    export SYNC_RC=1
+    run master_wg reset --onay
+    unset SYNC_RC
+    [ "$status" -ne 0 ]
+    [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
+    [ -f "$TMP/etc/wireguard/clients/mac.conf" ]
+    # Nothing but the interface section is ever written back: wg0.conf with no
+    # [Interface] is refused.
+    printf '[Peer]\nPublicKey = x\n' >"$WG_CONF_FILE"
+    run master_wg reset --onay
+    [ "$status" -ne 0 ]
+}
+
 @test "master-wg remove drops exactly one block, rolls back a failed apply and never feeds an empty strip" {
     wg_mock_bin
     wg_state_fixture
@@ -2519,9 +2646,17 @@ master_wg() {
     grep -q "printf '%q ' \"\$MASTER_WG\" \"\$@\"" "$cmd"
     # master-wg reads no stdin; ssh -n keeps typed menu input from being swallowed.
     grep -q 'ssh -n "\${ssh_base\[@\]}" "\$HOST" "\$cmd"' "$cmd"
-    for sub in version list add remove profile qr; do
+    for sub in version list add remove profile qr dns 'reset --onay'; do
         grep -q "remote $sub" "$cmd"
     done
+    # Option 8 needs the typed word and re-syncs the backup afterwards (DD-130).
+    body="$(awk '/^regenerate_wg0\(\)/,/^}$/' "$cmd")"
+    grep -q 'SIL | SİL) ;;' <<<"$body"
+    awk '/remote reset --onay/ {r = NR} /backup_settings/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
+    grep -q '7) change_dns || true ;;' "$cmd"
+    grep -q '8) regenerate_wg0 || true ;;' "$cmd"
+    # Reading the profile for the current DNS never exits the pipe early.
+    grep -qF "awk -F' = ' '\$1 == \"DNS\" {v = \$2} END {print v}'" "$cmd"
     # Nothing local is sent to the server: no scp, no local tar archive, no
     # file redirected into ssh. The only stdin is the backup script heredoc,
     # whose body runs on the server.

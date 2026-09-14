@@ -4,8 +4,10 @@
 # peer sunucuda üretilir, QR kodu terminale basılır, profil
 # kurulum/wireguard/<ad>.conf olarak alınır. "Yedek al" sunucu yapılandırmasını
 # (wg0.conf) ve bütün profilleri kurulum/wireguard'a çeker; yeniden kurulumda
-# kurulum bunları, sunucuda karşılığı yoksa geri koyar (DD-128). Finder bu
-# dosyayı macOS /bin/bash 3.2 ile çalıştırır.
+# kurulum bunları, sunucuda karşılığı yoksa geri koyar (DD-128). "DNS değiştir"
+# yalnız profildeki DNS satırını, "wg0'ı yeniden üret" sunucu anahtarını ve
+# bütün peer'ları sıfırlar (DD-130). Finder bu dosyayı macOS /bin/bash 3.2 ile
+# çalıştırır.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
@@ -177,6 +179,48 @@ put() { # kaynak hedef etiket
     fi
 }
 
+# DD-130: profildeki DNS satırını değiştirir; anahtarlar ve wg0.conf aynı kalır.
+# Cihaz yeni QR'ı (ya da kurulum/wireguard'daki dosyayı) içe aktarınca geçerli olur.
+change_dns() {
+    local name current dns result
+    list_peers || return 1
+    echo
+    ask name "DNS'i değiştirilecek peer adı"
+    [[ -n "$name" ]] || return 0
+    [[ "$name" =~ $NAME_RE ]] || { echo "Geçersiz ad."; return 1; }
+    # awk boruyu sonuna kadar okur: erken çıkış ssh'e SIGPIPE verirdi.
+    current="$(remote profile "$name" | awk -F' = ' '$1 == "DNS" {v = $2} END {print v}')" || return 1
+    ask dns "Yeni DNS" "${current:-$DEFAULT_DNS}"
+    result="$(remote dns "$name" "$dns")" || return 1
+    printf '\nDNS değişti: %s → %s (anahtarlar aynı).\n' "$name" "${result#*$'\t'}"
+    fetch_profile "$name" || echo "UYARI: profil alınamadı; menüden '4) QR göster' ile yeniden alabilirsiniz." >&2
+    printf '\n%s — yeni profil; cihazda WireGuard uygulamasıyla okutun (eski tüneli silin):\n' "$name"
+    remote qr "$name" || true
+    echo "Yeniden kurulumda bu hal gelsin: 6) Yedek al"
+}
+
+# DD-130: sunucuda yeni anahtar üretir, bütün peer kayıtlarını ve profilleri
+# siler; ardından kurulum/wireguard yedeğini bu temiz hale eşitler. Yazılı onay ister.
+regenerate_wg0() {
+    local out confirm=""
+    echo
+    echo "UYARI: sunucuda yeni bir WireGuard anahtarı üretilir; bütün peer kayıtları ve profilleri silinir."
+    echo "       Kayıtlı cihazların hiçbiri bağlanamaz; hepsinin '2) Peer ekle' ile yeniden eklenmesi gerekir."
+    echo "       Ardından kurulum/wireguard yedeği de bu temiz hale eşitlenir (eski profiller silinir)."
+    echo
+    list_peers || return 1
+    echo
+    ask confirm "Devam etmek için SIL yazın"
+    case "$confirm" in
+        SIL | SİL) ;;
+        *) echo "Vazgeçildi; hiçbir şey değişmedi."; return 0 ;;
+    esac
+    out="$(remote reset --onay)" || return 1
+    printf '\nwg0 yeniden üretildi: %s peer ve %s profil silindi; yeni sunucu anahtarı etkin.\n' \
+        "${out%%$'\t'*}" "${out##*$'\t'}"
+    backup_settings || echo "UYARI: yedek eşitlenemedi; '6) Yedek al' ile yeniden deneyin." >&2
+}
+
 # DD-128: sunucu yapılandırmasını (anahtar + peer listesi) ve bütün profilleri
 # kurulum/wireguard'a çeker; içerik ekrana yazılmaz. Profiller sunucunun aynası
 # olur. Yeniden kurulumda <sürüm>.command bunları gönderir ve kurulum, sunucuda
@@ -270,6 +314,8 @@ while true; do
     printf '\n--- %s (%s) ---\n' "$HOST" "$LOCAL_VERSION"
     printf '  1) Peer listesi\n  2) Peer ekle\n  3) Peer çıkar\n  4) QR göster\n  5) Çıkış\n'
     printf '  6) Yedek al (sunucu anahtarı + peer listesi + profiller → kurulum/wireguard)\n'
+    printf '  7) DNS değiştir (anahtarlar aynı, yeni QR)\n'
+    printf '  8) wg0 yeniden üret (yeni anahtar, bütün peer%s silinir)\n' "'lar"
     choice=""
     read -r -p "Seçim: " choice || break
     case "$choice" in
@@ -279,8 +325,10 @@ while true; do
         4) show_qr || true ;;
         5 | q | Q) break ;;
         6) backup_settings || true ;;
+        7) change_dns || true ;;
+        8) regenerate_wg0 || true ;;
         "") ;;
-        *) echo "1-6 arası seçin." ;;
+        *) echo "1-8 arası seçin." ;;
     esac
 done
 pause_exit 0

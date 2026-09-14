@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — wireguard.command: change DNS, regenerate wg0 (v2-97)
+
+- **Added** (**DD-130**):
+  - Option 7 "DNS değiştir" changes one peer's DNS and keeps its keys and
+    address. The current DNS is the default. The menu prints the new QR code
+    and saves the new profile; import it on the device.
+  - Option 8 "wg0 yeniden üret" issues a new server key and deletes every
+    peer and profile. It runs only after you type `SIL`, then takes a backup
+    (option 6) so `kurulum/` does not keep the old key.
+  - `master-wg dns NAME DNS` and `master-wg reset --onay` on the server.
+- Re-run the installer once: the menu requires the server to run the same
+  version.
+- **Verified:** bats 134 ok, with five mutations caught; both commands were
+  run on `nrm` against a throwaway `wgtst0` interface, leaving `wg0`
+  untouched.
+
 ### 2026-09-14 — Cleanup of transition code and stale references (v2-96)
 
 - **Removed** (no host needs them after the v2-95 rebuild; **DD-96**):

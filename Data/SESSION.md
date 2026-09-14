@@ -45,6 +45,17 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-97, DNS change and wg0 regenerate in wireguard.command (DD-130):**
+- `master-wg dns NAME DNS` (profile `DNS =` line only) and
+  `master-wg reset --onay` (new key, all peers and profiles removed,
+  rollback on failed apply).
+- Menu: 7) DNS değiştir (new QR), 8) wg0 yeniden üret (asks `SIL`, then
+  backs up).
+- bats 134 ok; tested live on `nrm` with a throwaway `wgtst0` interface.
+- Meanwhile the user reinstalled `nrm` (Tailscale IP now `100.109.236.5`) and
+  removed every peer themselves, to add them again; the Mac backup has no
+  peers either. `nrm` still runs v2-96.
+- Open: the user re-runs the installer (v2-97) before using the menu.
 **2026-09-14 — v2-96, cleanup (user: "tüm önerileri uygula"):**
 - Removed transition code no host needs anymore:
   - the Transmission gate and removed-key hint;

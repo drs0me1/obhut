@@ -6135,6 +6135,56 @@ failure with an early, named one.
     - After `docker restart` made qBittorrent rewrite its file (47 lines),
       the next run was still a no-op.
 
+### DD-130: wireguard.command changes a peer's DNS and regenerates wg0 (2026-09-14)
+
+- **Context:** the user benchmarked resolvers and wanted to point one peer at
+  NextDNS without removing it. They also wanted a clean `wg0`: a new server
+  key, with every peer and profile deleted when some exist.
+- **Decision — DNS change (option 7, `master-wg dns NAME DNS`):**
+  - Only the `DNS =` line of the stored profile's `[Interface]` changes. The
+    keys, PSK, address and `wg0.conf` stay the same.
+  - DNS is a client setting the server never sees, so nothing is applied and
+    connected devices stay up. The device imports the new profile or QR code.
+  - The list is validated as IPv4/IPv6 addresses and normalised to
+    `a, b`, the form `add` writes.
+  - The menu offers the current DNS as the default and saves the new profile
+    to `kurulum/wireguard/`.
+- **Decision — regenerate `wg0` (option 8, `master-wg reset --onay`):**
+  - The `[Interface]` lines are kept (comment, address, port, MTU); only
+    `PrivateKey` is new. Every `[Peer]` block and every profile in
+    `/etc/wireguard/clients/` is removed. With no peers it is just a new key.
+  - It goes through the same `write_and_apply` as `add`/`remove`, under the
+    installer lock. A failed apply restores the previous `wg0.conf`, and
+    profiles are deleted only after a successful apply.
+  - Two guards: the server tool refuses without `--onay`, and the menu lists
+    the peers and asks for `SIL` (or `SİL`). Anything else changes nothing.
+  - The menu then runs option 6 "Yedek al". Otherwise `kurulum/wireguard/`
+    would keep the old `wg0.conf` and profiles, a reinstall on a fresh server
+    would restore the old key (DD-128), and deleted profiles would come back.
+- **Rejected:**
+  - Rebuilding `wg0.conf` from `defaults.env`: it would override a live
+    interface the installer already manages (DD-124); a re-run of the
+    installer does that part anyway.
+  - Keeping peers with a new server key: every device would still need a new
+    profile, so it is no better than adding them again.
+  - Changing DNS by removing and re-adding the peer: new keys and address
+    for a client-only setting.
+- **Verified (2026-09-14):**
+  - bats 134 ok; mutations of the `--onay` guard, the profile deletion, the
+    `[Interface]` scoping of the DNS rewrite, the `SIL` check and the backup
+    after reset were each caught.
+  - On `nrm`, the new `master-wg` ran against a throwaway `wgtst0` interface
+    (its own `STATE_FILE`, subnet `10.99.0.0/24`, port 61901) with two test
+    peers.
+    - `dns` wrote the NextDNS IPv6 pair; every other profile line,
+      `wgtst0.conf` and the interface key were unchanged, with 2 peers still
+      up. A hostname was refused.
+    - `reset` without `--onay` was refused. With it: "2/2", a new key, 0
+      peers on the interface and in the file, no profiles, the four
+      `[Interface]` lines kept, mode 600, the unit still active on its port.
+    - `wg0` (key and peers) was unchanged; the test interface and files were
+      removed afterwards.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

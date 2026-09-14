@@ -30,6 +30,7 @@ chmod 600 kurulum/kurulum.env   # then fill it in
 # Install: double-click the current <version>.command at the repository root
 # WireGuard peers (after the install): double-click wireguard.command
 # Keep a rebuildable copy of the WireGuard key and peers: wireguard.command → 6) Yedek al
+# Change a peer's DNS: 7) DNS değiştir; new server key, all peers removed: 8) wg0 yeniden üret
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)
