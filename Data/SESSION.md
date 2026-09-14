@@ -45,6 +45,23 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-91, negated bats assertions made effective (DD-126):**
+- The work from the merged worktree session was redone on the current tree.
+  - 115 bare `!`/`[[ ]]` statements were converted, and a guard test was
+    added.
+  - Four over-broad assertions were narrowed to code lines: `--disable-exec`,
+    `try-restart`, the old FileBrowser password hints, and `docker rm` in
+    `die`/`log`.
+  - The dead v2-65 `webdav` recreate block in `stage_6` was removed, as the
+    user had chosen.
+  - The DD-96 guard wording was updated.
+- Checks:
+  - bats 123 ok, 3 `timeout yok` skips.
+  - An exit-code diagnostic showed all 144 negated evaluations returning 1.
+  - Six mutations were caught.
+- No live run: the removed path needed the uncommitted v2-65 layout.
+- `wip/bats-negation-v2-84` is kept for reference.
+
 **2026-09-14 — other sessions merged into this one:** at the user's request,
 so nothing is lost when those sessions are archived.
 - **"SERVER SETUP" (2026-09-08..13):** v2-74..v2-84 decisions. They are all

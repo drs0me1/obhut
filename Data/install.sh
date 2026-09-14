@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-90"
+V2_VERSION="2026.08.06-v2-91"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1419,14 +1419,6 @@ EOF
         systemctl restart dnsmasq
     else
         log INFO "dnsmasq yapılandırması aynı; yeniden başlatılmadı"
-    fi
-    # Infuse: Caddy ${TS_IPV4}:${WEBDAV_PORT}. Eski Compose TS publish (v2-65)
-    # hâlâ o soketi tutuyorsa Caddy bind edemez — önce webdav'ı yeni
-    # (loopback-only) compose ile yeniden yarat.
-    if docker port webdav 2>/dev/null |
-        grep -q "${TAILSCALE_IPV4}:${WEBDAV_PORT}"; then
-        log INFO "WebDAV Tailscale publish bırakılıyor (Infuse portu Caddy'ye)"
-        (cd "$COMPOSE_DIR" && docker compose up -d webdav)
     fi
     if [[ "$caddy_changed" -eq 1 ]] || ! systemctl is-active --quiet caddy; then
         systemctl restart caddy

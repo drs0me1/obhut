@@ -5711,6 +5711,57 @@ failure with an early, named one.
     - `df` used on `/`: 2389 MB with v2-89, 1940 MB with v2-90 (−449 MB).
       `fstrim` then returned freed blocks to the virtual disk.
 
+### DD-126: Negated bats assertions must be able to fail under bash 3.2 (2026-09-14)
+
+- **Context:** the suite runs under macOS `/bin/bash` 3.2 (Bats 1.14.0).
+  - A mid-test `! cmd` never fails a test, because errexit ignores negated
+    commands.
+  - A mid-test `[[ ]]` does not fail under bash 3.2 either.
+  - So most negative assertions in `tests/common.bats` checked nothing.
+  - The finding and a first conversion came from a separate session on a
+    v2-84 base. That work was never merged and is kept on branch
+    `wip/bats-negation-v2-84`; v2-91 redoes it on the current tree.
+- **Decision:**
+  - Every negation is `run !`: 115 statements, 86 simple ones converted
+    mechanically and the rest by hand. Pipelines are captured into a variable,
+    guarded with `[ -n ]` so an empty awk range cannot pass, and checked with
+    `run ! grep … <<<"$var"`.
+  - Every `[[ ]]` is `[ ]` or `case`.
+  - A guard test fails the suite if a bare `! ` or `[[ ` statement appears
+    again.
+- **What the now-effective assertions exposed:**
+  - **Four tests matched comments or deliberate text** and now look at code
+    lines only:
+    - the deprecated `--disable-exec` named in a compose comment;
+    - `try-restart` in refresh-tailnet-config's DD-72 comment;
+    - the old FileBrowser password hints matching the DD-118 comment in
+      `install.sh`;
+    - `docker rm` / `docker volume rm` in the qBittorrent and Portainer
+      `die`/`log` messages, which tell the operator what to run
+      (DD-116, DD-117). DD-96's guard wording now says so.
+  - **One was real:**
+    - `stage_6` still recreated `webdav` when it published
+      `${TAILSCALE_IPV4}:${WEBDAV_PORT}`. Only the uncommitted v2-65 working
+      tree ever had that layout, so no host needs the step.
+    - It is migration cleanup, which DD-96 excludes, and the test forbidding
+      it had been silent since v2-67. The block is removed. The user chose
+      this (option A).
+- **Verification:**
+  - bats 123 ok; the same 3 `timeout yok` skips as before.
+  - `shellcheck -x` is clean.
+  - A diagnostic copy of the suite logged the exit code of every negated
+    command: all 144 evaluations returned 1, and none passed on a grep error
+    (2).
+  - Deliberate mutations each failed their test:
+    - a real `docker rm` command;
+    - a real `try-restart` line;
+    - `--disable-exec` in code;
+    - the removed WebDAV log line put back;
+    - a code line with the old password hint;
+    - a bare `!` assertion.
+  - The removed block could only run on the uncommitted v2-65 layout, so no
+    live run was needed.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Decision:** All migration cleanup is removed (v2-62). The installer no
@@ -5740,6 +5791,11 @@ failure with an early, named one.
 - **Guard:** a bats test fails the suite if `apt-get purge`, `userdel`,
   `setfacl`, `docker rm`, `docker volume rm` or `disable --now` reappear in
   `install.sh`, so the pattern cannot creep back one convenience at a time.
+  - `docker rm` and `docker volume rm` count only as commands the installer
+    runs. A leftover gate may name them in a `die` or `log` message for the
+    operator to run by hand (DD-116, DD-117).
+  - Until v2-91 the negated assertions never failed under macOS bash 3.2
+    (DD-126), so the guard was silent.
 - **Not doing:** an uninstall command. Removing what v2 installed is a
   separate, explicit operation, not a side effect of installing.
 

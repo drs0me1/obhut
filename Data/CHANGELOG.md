@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — Negated test assertions that can fail, dead WebDAV migration removed (v2-91)
+
+- **Removed:** stage 6 no longer recreates `webdav` when it still publishes
+  `${TAILSCALE_IPV4}:${WEBDAV_PORT}`. Only the uncommitted v2-65 tree
+  published that port, and migration cleanup is outside the installer's
+  boundary (**DD-96**).
+- **Fixed (tests):** under macOS `/bin/bash` 3.2 a `! cmd` or `[[ ]]` never
+  failed a test, so most negative assertions checked nothing (**DD-126**).
+  - All 115 are now `run !`, `[ ]` or `case`.
+  - A guard test keeps bare negations out.
+  - Four assertions that matched comments or operator messages now check code
+    lines only. The fifth exposed the stage 6 step above.
+- **Verified:**
+  - bats 123 ok, 3 skipped as before.
+  - Every negated command returned exactly 1.
+  - Six mutations were caught.
+
 ### 2026-09-14 — Smaller install footprint (v2-90)
 
 - **Changed:** Docker is installed without its recommended packages: no

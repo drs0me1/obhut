@@ -1,7 +1,7 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-90.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-91.command)
   wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   kurulum/wireguard/         wireguard.command'ın aldığı cihaz profilleri (git dışı)

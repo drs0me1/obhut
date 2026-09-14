@@ -18,13 +18,13 @@ teardown() {
 @test "log does not treat message as format string" {
     run log INFO '%s%s'
     [ "$status" -eq 0 ]
-    [[ "$output" == *'%s%s'* ]]
+    case "$output" in *'%s%s'*) ;; *) false ;; esac
 }
 
 @test "die exits non-zero" {
     run die "bitti"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"bitti"* ]]
+    case "$output" in *"bitti"*) ;; *) false ;; esac
 }
 
 @test "require_supported_os accepts trixie noble and resolute" {
@@ -83,7 +83,7 @@ EOF
         "$V2_ROOT/install.sh"
     grep -qF 'https://download.docker.com/linux/$OS_ID' "$V2_ROOT/install.sh"
     grep -qF 'Suites: $OS_CODENAME' "$V2_ROOT/install.sh"
-    ! grep -q 'trixie' "$V2_ROOT/install.sh"
+    run ! grep -q 'trixie' "$V2_ROOT/install.sh"
     # Caddy repo stays distro-agnostic (any-version) — same line on ubuntu.
     grep -q 'caddy/stable/deb/debian any-version main' "$V2_ROOT/install.sh"
     # ufw active is a hard stop before any mutation (stage_0).
@@ -160,7 +160,7 @@ EOF
     grep -q 'SYSCTL_NETBUF_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
     grep -q 'SYSCTL_FORWARD_FILE="/etc/sysctl.d/99-zz-' "$V2_ROOT/config/defaults.env"
     grep -q 'SYSCTL_LEGACY_FILES=' "$V2_ROOT/config/defaults.env"
-    ! grep -q 'atomic_write /etc/sysctl.d/99-master' "$V2_ROOT/install.sh"
+    run ! grep -q 'atomic_write /etc/sysctl.d/99-master' "$V2_ROOT/install.sh"
     # Old names are removed, otherwise one key is written from two files.
     awk '/^remove_legacy_sysctl_files\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'rm -f'
     awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
@@ -346,7 +346,7 @@ EOF
 @test "render_template preserves trailing newline" {
     printf 'v=__V__\n' >"$TMP/t"
     render_template "$TMP/t" "$TMP/o" 0644 V=ok
-    [[ "$(tail -c1 "$TMP/o" | wc -l | tr -d ' ')" == "1" ]]
+    [ "$(tail -c1 "$TMP/o" | wc -l | tr -d ' ')" = "1" ]
 }
 
 @test "render_template keeps ampersand and slash in values" {
@@ -364,7 +364,7 @@ EOF
     command -v flock >/dev/null 2>&1 && skip "flock var; negatif yol Debian'da ayrı"
     run acquire_lock "$TMP/k" 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"flock"* ]]
+    case "$output" in *"flock"*) ;; *) false ;; esac
 }
 
 @test "retry preserves argument boundaries" {
@@ -386,7 +386,7 @@ EOF
     _v2_retry_fn() { printf '%s\n' "ok:$1"; }
     run retry etiket 1 5 -- _v2_retry_fn hi
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ok:hi"* ]]
+    case "$output" in *"ok:hi"*) ;; *) false ;; esac
 }
 
 @test "compose publishes the torrent peer TCP and UDP 1:1" {
@@ -400,8 +400,8 @@ EOF
     grep -q 'tcp --dport "$TORRENT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'udp --dport "$TORRENT_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
     # DOCKER-USER: both protocols for NEW --ctorigdstport
-    [[ "$(grep -c 'ctorigdstport "$TORRENT_PUBLIC_PORT"' \
-        "$V2_ROOT/scripts/firewall.sh")" -ge 2 ]]
+    [ "$(grep -c 'ctorigdstport "$TORRENT_PUBLIC_PORT"' \
+        "$V2_ROOT/scripts/firewall.sh")" -ge 2 ]
 }
 
 @test "firewall requires ports and chains from state" {
@@ -410,7 +410,7 @@ EOF
     grep -q 'TORRENT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
-    ! grep -qE 'WG_PUBLIC_PORT:=61001|TORRENT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
+    run ! grep -qE 'WG_PUBLIC_PORT:=61001|TORRENT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
@@ -420,7 +420,7 @@ EOF
     grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
     grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
         "$V2_ROOT/templates/compose.yaml" | grep -q '^[2-9]'
-    ! grep -qE 'PUID: "1000"|PGID: "1000"|user: "1000:1000"' \
+    run ! grep -qE 'PUID: "1000"|PGID: "1000"|user: "1000:1000"' \
         "$V2_ROOT/templates/compose.yaml"
 }
 
@@ -435,8 +435,9 @@ EOF
     grep -q '! -perm 0775' "$V2_ROOT/install.sh"
     grep -q '! -perm 0664' "$V2_ROOT/install.sh"
     # Downloads tree itself is selective find+chown, not chown -R on DOWNLOADS_PATH.
-    ! awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'chown -R'
+    downloads_tree="$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$downloads_tree" ]
+    run ! grep -q 'chown -R' <<<"$downloads_tree"
     # Single tree walk (v2-71): one find with comma-joined expressions, not
     # three separate passes over the whole downloads tree.
     [ "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
@@ -470,8 +471,9 @@ EOF
         grep -q 'jq'
     awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -q '\.dns = \["1.1.1.1", "1.0.0.1"\]'
-    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'atomic_write /etc/docker/daemon.json'
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$stage4" ]
+    run ! grep -q 'atomic_write /etc/docker/daemon.json' <<<"$stage4"
 }
 
 @test "container log rotation is merged only for the json-file driver" {
@@ -533,7 +535,7 @@ EOF
     # Stage 7 reads the live value back; a mismatch warns, it does not fail.
     block="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q 'sysctl -n net.ipv4.tcp_congestion_control' <<<"$block"
-    ! grep -q 'die "tcp_congestion_control' <<<"$block"
+    run ! grep -q 'die "tcp_congestion_control' <<<"$block"
 }
 
 @test "downloads path rejects unsafe characters and compose needs no .env" {
@@ -541,11 +543,12 @@ EOF
     grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"
     grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
     grep -q 'sistem dizinine izin vermez' "$V2_ROOT/install.sh"
-    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'atomic_write "$COMPOSE_DIR/.env"'
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$stage4" ]
+    run ! grep -q 'atomic_write "$COMPOSE_DIR/.env"' <<<"$stage4"
     # Every value is rendered into the file, so no interpolation is left for
     # Compose to resolve and a stray .env cannot change the stack.
-    ! grep -q '\${' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -q '\${' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "compose runs dozzle behind a login with actions, no shell, loopback only" {
@@ -556,19 +559,19 @@ EOF
     grep -q 'DOZZLE_AUTH_PROVIDER: simple' <<<"$block"
     grep -q 'DOZZLE_ENABLE_ACTIONS: "true"' <<<"$block"
     grep -q 'DOZZLE_NO_ANALYTICS: "true"' <<<"$block"
-    ! grep -q 'DOZZLE_ENABLE_SHELL' <<<"$block"
+    run ! grep -q 'DOZZLE_ENABLE_SHELL' <<<"$block"
     grep -q 'read_only: true' <<<"$block"
     grep -q -- '- no-new-privileges=true' <<<"$block"
     grep -q -- '- ALL' <<<"$block"
     grep -q '__DOZZLE_DATA_DIR__:/data' <<<"$block"
     grep -q '\["CMD", "/dozzle", "healthcheck"\]' <<<"$block"
-    ! grep -qi portainer "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/templates/Caddyfile" \
+    run ! grep -qi portainer "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/templates/Caddyfile" \
         "$V2_ROOT/templates/dnsmasq.conf"
 }
 
 @test "caddy proxies dozzle over plain loopback http" {
     grep -q 'reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__' "$V2_ROOT/templates/Caddyfile"
-    ! grep -q 'tls_insecure_skip_verify' "$V2_ROOT/templates/Caddyfile"
+    run ! grep -q 'tls_insecure_skip_verify' "$V2_ROOT/templates/Caddyfile"
     # Stage 7 fails closed when the login is not enforced.
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'Dozzle API girişsiz yanıt'
@@ -583,7 +586,7 @@ EOF
     grep -q 'if dozzle_users_match; then' <<<"$body"
     grep -q 'docker run -i --rm --network none "\$DOZZLE_IMAGE"' <<<"$body"
     grep -q 'generate --user-roles actions' <<<"$body"
-    ! grep -q -- '--password' <<<"$body"
+    run ! grep -q -- '--password' <<<"$body"
     grep -q 'unset DOZZLE_NEW_PASS' <<<"$body"
     awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" | grep -q '^    ensure_dozzle_users$'
     grep -q '^DOZZLE_USERS_FILE="/etc/master-stack/dozzle/users.yml"' "$V2_ROOT/config/defaults.env"
@@ -609,7 +612,7 @@ EOF
     run ensure_dozzle_users
     [ "$status" -eq 0 ]
     [ "$(cat "$TMP/stdin")" = 'fixture-password-123' ]
-    ! grep -q 'fixture-password-123' "$TMP/argv"
+    run ! grep -q 'fixture-password-123' "$TMP/argv"
     grep -q 'generate --user-roles actions admin' "$TMP/argv"
     mode="$(stat -c %a "$TMP/dozzle/users.yml" 2>/dev/null || stat -f %Lp "$TMP/dozzle/users.yml")"
     [ "$mode" = 600 ]
@@ -643,7 +646,7 @@ EOF
     grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/templates/compose.yaml"
-    ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "transmission keeps credentials out of compose and a clean-shutdown settings seed" {
@@ -657,8 +660,8 @@ EOF
     grep -q 'FILE__PASS: /run/secrets/transmission/pass' <<<"$block"
     grep -q '__TRANSMISSION_AUTH_DIR__:/run/secrets/transmission:ro' <<<"$block"
     grep -q '__TRANSMISSION_DATA_DIR__:/config' <<<"$block"
-    ! grep -qE '^ +(USER|PASS|HOST_WHITELIST):' <<<"$block"
-    ! grep -qi qbittorrent "$V2_ROOT/templates/compose.yaml"
+    run ! grep -qE '^ +(USER|PASS|HOST_WHITELIST):' <<<"$block"
+    run ! grep -qi qbittorrent "$V2_ROOT/templates/compose.yaml"
     body="$(awk '/^ensure_transmission_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -q '"rpc-port": 9091' <<<"$body"
     grep -q '"download-dir": "/downloads"' <<<"$body"
@@ -696,8 +699,8 @@ EOF
     [ "$(cat "$TMP/tr-auth/pass")" = 'fixture-password-123' ]
     mode="$(stat -c %a "$TMP/tr-auth/pass" 2>/dev/null || stat -f %Lp "$TMP/tr-auth/pass")"
     [ "$mode" = 600 ]
-    ! grep -q 'fixture-password-123' "$TMP/docker-calls"
-    ! grep -q '^restart' "$TMP/docker-calls"
+    run ! grep -q 'fixture-password-123' "$TMP/docker-calls"
+    run ! grep -q '^restart' "$TMP/docker-calls"
     # A second run keeps Transmission's own settings file untouched.
     printf '{"speed-limit-down":123}\n' >"$TMP/tr/settings.json"
     docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; }
@@ -723,22 +726,29 @@ EOF
     grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--disableExec' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q -- '--disable-exec' "$V2_ROOT/templates/compose.yaml"
+    # The template comment names the deprecated flag; only uncommented lines count.
+    compose="$(grep -v '^[[:space:]]*#' "$V2_ROOT/templates/compose.yaml")"
+    [ -n "$compose" ]
+    run ! grep -q -- '--disable-exec' <<<"$compose"
     grep -q 'no-new-privileges=true' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q 'no-new-privileges:true' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -q 'no-new-privileges:true' "$V2_ROOT/templates/compose.yaml"
     grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
     grep -q 'FILEBROWSER_DATA_DIR="/etc/master-stack/filebrowser-data"' \
         "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
     grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
-    ! grep -q 'FileBrowser varsayılan: admin / admin' "$V2_ROOT/install.sh"
-    ! grep -q 'rastgele admin parolası' "$V2_ROOT/install.sh"
-    ! grep -q 'qBittorrent varsayılan WebUI' "$V2_ROOT/install.sh"
-    ! grep -q 'docker logs filebrowser' "$V2_ROOT/install.sh"
-    ! grep -q 'ilk yönetici hesabını sen kur' "$V2_ROOT/install.sh"
-    ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
-    ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
-    ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
+    # Old operator hints about default or logged passwords are gone. The DD-118
+    # comment still names the random admin password, so only code lines count.
+    install_code="$(grep -v '^[[:space:]]*#' "$V2_ROOT/install.sh")"
+    [ -n "$install_code" ]
+    run ! grep -q 'FileBrowser varsayılan: admin / admin' <<<"$install_code"
+    run ! grep -q 'rastgele admin parolası' <<<"$install_code"
+    run ! grep -q 'qBittorrent varsayılan WebUI' <<<"$install_code"
+    run ! grep -q 'docker logs filebrowser' <<<"$install_code"
+    run ! grep -q 'ilk yönetici hesabını sen kur' <<<"$install_code"
+    run ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
+    run ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
+    run ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "filebrowser account comes from the input file and never reaches argv" {
@@ -761,7 +771,7 @@ EOF
     sync="$(awk '/^sync_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -q 'users import --overwrite' <<<"$sync"
     run ! grep -qE -- '--replace|--password|users (add|update)' <<<"$sync"
-    ! grep -q 'FILEBROWSER_NEW_PASS' <<<"$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    run ! grep -q 'FILEBROWSER_NEW_PASS' <<<"$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker run --rm --network none'
     stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
     grep -A1 '^    ensure_filebrowser_data_dir$' <<<"$stage4" | grep -q '^    ensure_filebrowser_account$'
@@ -807,10 +817,10 @@ EOF
     [ "$status" -eq 0 ]
     [ "$(cat "$TMP/fb/filebrowser.db")" = db ]
     [ "$(cat "$TMP/htpasswd-stdin")" = 'fixture-password-123' ]
-    ! grep -q 'fixture-password-123' "$TMP/docker-calls" "$TMP/htpasswd-argv"
+    run ! grep -q 'fixture-password-123' "$TMP/docker-calls" "$TMP/htpasswd-argv"
     grep -q 'config init .*--viewMode mosaic' "$TMP/docker-calls"
     grep -q -- '--minimumPasswordLength 12' "$TMP/docker-calls"
-    ! grep -q '^restart' "$TMP/docker-calls"
+    run ! grep -q '^restart' "$TMP/docker-calls"
     [ -z "$(find "$TMP/fb" -name '.init-*')" ]
     # A database deleted under a running container: rebuilt, then restarted.
     rm -f "$TMP/fb/filebrowser.db" "$TMP/docker-calls"
@@ -845,7 +855,7 @@ EOF
     grep -q 'for name in \$SERVICE_NAMES' "$V2_ROOT/install.sh"
     # shellcheck source=/dev/null
     source "$V2_ROOT/config/defaults.env"
-    [[ -n "$SERVICE_NAMES" ]]
+    [ -n "$SERVICE_NAMES" ]
     local name
     for name in $SERVICE_NAMES; do
         grep -q "interface-name=${name}.__LOCAL_DOMAIN__" \
@@ -853,13 +863,13 @@ EOF
         grep -q "http://${name}.__LOCAL_DOMAIN__" \
             "$V2_ROOT/templates/Caddyfile"
     done
-    ! grep -q 'CONTAINER_NAMES=' "$V2_ROOT/config/defaults.env"
+    run ! grep -q 'CONTAINER_NAMES=' "$V2_ROOT/config/defaults.env"
 }
 
 @test "compose public UDP ports are not bound to WAN_IPV4" {
     grep -q '"0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/udp"' \
         "$V2_ROOT/templates/compose.yaml"
-    ! grep -q '\${WAN_IPV4}' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -q '\${WAN_IPV4}' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "compose public peer ports are IPv4-only" {
@@ -871,9 +881,9 @@ EOF
 
 @test "refresh-tailnet-config touches only Caddy state and the firewall unit" {
     # Compose, WebDAV and raw netfilter stay out of the timer's scope.
-    ! grep -qE 'compose|DOCKER-USER|master-webdav|iptables' \
+    run ! grep -qE 'compose|DOCKER-USER|master-webdav|iptables' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
-    ! grep -q 'rebind_webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
+    run ! grep -q 'rebind_webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'BOUND_UNITS="caddy.service"' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
 }
@@ -882,7 +892,7 @@ EOF
     local body
     body="$(awk '/^recover_firewall_if_broken\(\)/,/^}$/' \
         "$V2_ROOT/scripts/refresh-tailnet-config")"
-    [[ -n "$body" ]]
+    [ -n "$body" ]
     grep -q 'is-failed --quiet "\$FIREWALL_UNIT"' <<<"$body"
     grep -q -- '--check' <<<"$body"
     # start-limit exhaustion makes a plain restart fail; reset-failed first.
@@ -893,10 +903,10 @@ EOF
     # Must run regardless of tailnet state: called before the tailscale wait.
     awk '/^recover_firewall_if_broken$/ { print NR; exit }' \
         "$V2_ROOT/scripts/refresh-tailnet-config" | grep -qE '[0-9]+'
-    [[ "$(awk '/^recover_firewall_if_broken$/ { print NR; exit }' \
+    [ "$(awk '/^recover_firewall_if_broken$/ { print NR; exit }' \
         "$V2_ROOT/scripts/refresh-tailnet-config")" -lt \
         "$(awk '/^if ! wait_for_tailscale_ready; then$/ { print NR; exit }' \
-        "$V2_ROOT/scripts/refresh-tailnet-config")" ]]
+        "$V2_ROOT/scripts/refresh-tailnet-config")" ]
 }
 
 @test "refresh-tailnet timer is five minutes" {
@@ -907,7 +917,7 @@ EOF
     grep -q 'refresh-tailnet-config.timer' "$V2_ROOT/install.sh"
     # Unit= already names the oneshot; Requires= is redundant and couples
     # timer activation to service start failure modes.
-    ! grep -q 'Requires=refresh-tailnet-config.service' \
+    run ! grep -q 'Requires=refresh-tailnet-config.service' \
         "$V2_ROOT/systemd/refresh-tailnet-config.timer"
 }
 
@@ -926,8 +936,8 @@ EOF
     # families assert it.
     local pairs
     pairs="$(awk '/^wan_allow_pairs\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
-    [[ "$(grep -n 'udp \$TAILSCALE_UDP_PORT' <<<"$pairs" | cut -d: -f1)" -lt \
-        "$(grep -n 'v4' <<<"$pairs" | head -1 | cut -d: -f1)" ]]
+    [ "$(grep -n 'udp \$TAILSCALE_UDP_PORT' <<<"$pairs" | cut -d: -f1)" -lt \
+        "$(grep -n 'v4' <<<"$pairs" | head -1 | cut -d: -f1)" ]
     # The port must not be selectable as a stack port.
     grep -q '"\$TAILSCALE_UDP_PORT")' "$V2_ROOT/install.sh"
 }
@@ -939,14 +949,17 @@ EOF
     # the daemon is Running but Self.Online is false (DD-86).
     grep -q 'Online=' "$V2_ROOT/scripts/refresh-tailnet-config"
     # A warning only; the helper must not try to repair Tailscale itself.
-    ! grep -qE 'tailscale (up|set|login)' "$V2_ROOT/scripts/refresh-tailnet-config"
+    run ! grep -qE 'tailscale (up|set|login)' "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
 @test "refresh-tailnet uses restart, never try-restart" {
     # try-restart is a no-op on a failed unit AND returns 0, so the old
     # "try-restart || restart" fallback was unreachable and a failed unit was
-    # never resurrected when the address came back.
-    ! grep -q 'try-restart' "$V2_ROOT/scripts/refresh-tailnet-config"
+    # never resurrected when the address came back. The script's own comment
+    # explains this, so only uncommented lines count.
+    code="$(grep -v '^[[:space:]]*#' "$V2_ROOT/scripts/refresh-tailnet-config")"
+    [ -n "$code" ]
+    run ! grep -q 'try-restart' <<<"$code"
     grep -q 'systemctl restart "$unit"' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'recover_failed_bound_units' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'is-failed' "$V2_ROOT/scripts/refresh-tailnet-config"
@@ -968,7 +981,7 @@ EOF
     block="$(awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh")"
     grep -q 'OnFailure=refresh-tailnet-config.service' <<<"$block"
     # Failure path must not invent a second refresh owner.
-    ! grep -q 'OnFailure=.*watch-tailnet' "$V2_ROOT/install.sh"
+    run ! grep -q 'OnFailure=.*watch-tailnet' "$V2_ROOT/install.sh"
 }
 
 @test "wait-tailnet-addr accepts matching state IP on the interface" {
@@ -1008,7 +1021,7 @@ EOF
     set -e
     rm -rf "$bin"
     [ "$rc" -eq 1 ]
-    [[ "$out" == *stale* ]]
+    case "$out" in *stale*) ;; *) false ;; esac
 }
 
 @test "wait-tailnet-addr without TAILSCALE_IPV4 still accepts any interface IP" {
@@ -1055,13 +1068,13 @@ EOF
     # Ordering: floor call appears before apt-get install tailscale
     awk '/apply_udp_netbuf_floor$/{f=NR} /install -y tailscale/{t=NR}
          END { exit !(f && t && f < t) }' "$V2_ROOT/install.sh"
-    ! grep -q 'rmem_max = 7500000' "$V2_ROOT/install.sh"
+    run ! grep -q 'rmem_max = 7500000' "$V2_ROOT/install.sh"
 }
 
 @test "watch-tailnet-addr is removed; refresh timer remains" {
     [ ! -e "$V2_ROOT/scripts/watch-tailnet-addr" ]
     [ ! -e "$V2_ROOT/systemd/watch-tailnet-addr.service" ]
-    ! grep -q 'watch-tailnet-addr' "$V2_ROOT/install.sh"
+    run ! grep -q 'watch-tailnet-addr' "$V2_ROOT/install.sh"
     grep -q 'OnUnitActiveSec=5min' \
         "$V2_ROOT/systemd/refresh-tailnet-config.timer"
     grep -q 'WantedBy=tailscaled.service' \
@@ -1073,7 +1086,7 @@ EOF
         "$V2_ROOT/systemd/tailscale-udp-gro.service"
     grep -q 'rx-udp-gro-forwarding on' "$V2_ROOT/scripts/tailscale-udp-gro"
     grep -q 'tailscale-udp-gro.service' "$V2_ROOT/install.sh"
-    ! grep -q 'apply_udp_gro' "$V2_ROOT/install.sh"
+    run ! grep -q 'apply_udp_gro' "$V2_ROOT/install.sh"
 }
 
 @test "dnsmasq binds lo and tailscale only" {
@@ -1088,19 +1101,19 @@ EOF
     grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
     grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
     grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
-    ! grep -q '__TAILSCALE_IPV4__:__WEBDAV_PORT__' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -q '__TAILSCALE_IPV4__:__WEBDAV_PORT__' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
     grep -q 'reverse_proxy 127.0.0.1:{$WEBDAV_PORT}' "$V2_ROOT/templates/Caddyfile"
     grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT}' \
         "$V2_ROOT/templates/Caddyfile"
-    ! grep -q '__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
-    ! grep -qE 'http://\{\$TAILSCALE_IPV4\}[[:space:],}]' \
+    run ! grep -q '__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
+    run ! grep -qE 'http://\{\$TAILSCALE_IPV4\}[[:space:],}]' \
         "$V2_ROOT/templates/Caddyfile"
     grep -q 'WEBDAV_PORT_CHANGED' "$V2_ROOT/install.sh"
-    ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
-    ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
+    run ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
+    run ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
     grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
         "$V2_ROOT/templates/compose.yaml"
     grep -q "grep -q '401'" "$V2_ROOT/templates/compose.yaml"
@@ -1125,7 +1138,7 @@ EOF
       in_nets && found && /internal: true/ {bad=1}
       END {exit (named && !bad) ? 0 : 1}
     ' "$V2_ROOT/templates/compose.yaml"
-    ! awk '
+    run ! awk '
       /^  webdav:/ {in_webdav=1; next}
       in_webdav && /^  [a-z]/ {in_webdav=0}
       in_webdav && /networks:/ {in_nets=1; next}
@@ -1140,8 +1153,8 @@ EOF
     # An unconditional DROP here also kills wg-easy peer IPv6 egress.
     local body
     body="$(awk '/^apply_docker6\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
-    [[ -n "$body" ]]
-    ! grep -qE '\-A "\$staging" -j DROP$' <<<"$body"
+    [ -n "$body" ]
+    run ! grep -qE '\-A "\$staging" -j DROP$' <<<"$body"
     grep -q -- '-i "$WAN_INTERFACE" -j DROP' <<<"$body"
     grep -qE '\-A "\$staging" -j RETURN$' <<<"$body"
     # --check must assert the WAN-scoped shape so the regression cannot return.
@@ -1157,7 +1170,7 @@ EOF
 }
 
 @test "firewall script does not flush DOCKER-USER" {
-    ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
+    run ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
 
 @test "WAN allow count is derived from one list and rejects extra passes" {
@@ -1166,7 +1179,7 @@ EOF
     # interface-qualified pass such as '-i WAN -j ACCEPT' satisfies every
     # expected pattern. The count must match the list exactly.
     body="$(awk '/^check_wan_allow_count\(\)/,/^}$/' "$script")"
-    [[ -n "$body" ]]
+    [ -n "$body" ]
     grep -q 'fazladan geçiş' <<<"$body"
     grep -q 'expected' <<<"$body"
     # Both the check_rule calls and the count come from the same list.
@@ -1175,13 +1188,13 @@ EOF
     grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_INPUT" ACCEPT "\$n"' "$script"
     grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_DOCKER" RETURN "\$n"' "$script"
     # Ports must not be restated next to the loop.
-    ! grep -q 'check_rule iptables "\$CHAIN_INPUT" -i "\$WAN_INTERFACE" \\' "$script"
+    run ! grep -q 'check_rule iptables "\$CHAIN_INPUT" -i "\$WAN_INTERFACE" \\' "$script"
 }
 
 @test "check_chain_shape rejects a single bypass rule before the WAN DROP" {
     local body
     body="$(awk '/^check_chain_shape\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
-    [[ -n "$body" ]]
+    [ -n "$body" ]
     # Exactly one WAN DROP, allows before it, and no unconditional rule before.
     grep -q 'WAN DROP sayısı' <<<"$body"
     grep -q 'bypass' <<<"$body"
@@ -1192,33 +1205,33 @@ EOF
 @test "apply purges staging leftovers including referenced ones" {
     local script="$V2_ROOT/scripts/firewall.sh" body
     body="$(awk '/^purge_staging_leftovers\(\)/,/^}$/' "$script")"
-    [[ -n "$body" ]]
+    [ -n "$body" ]
     # An interrupted activate_named leaves the staging chain jumped from its
     # parent; skipping it would fail --check forever. Jump goes first.
     grep -q -- '-D "\$parent" -j "\$chain"' <<<"$body"
     grep -q -- '-X "\$chain"' <<<"$body"
     # It must run after the policy is in place, never before.
-    [[ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -gt \
-        "$(awk '/^apply_docker6$/ { print NR; exit }' "$script")" ]]
-    [[ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -lt \
-        "$(awk '/^check_no_staging_artifacts iptables$/ { print NR; exit }' "$script")" ]]
+    [ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -gt \
+        "$(awk '/^apply_docker6$/ { print NR; exit }' "$script")" ]
+    [ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -lt \
+        "$(awk '/^check_no_staging_artifacts iptables$/ { print NR; exit }' "$script")" ]
 }
 
 @test "ts-input precedence does not delete-all MASTER-INPUT jumps" {
     grep -q 'ensure_ts_input_precedence' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'insert_pos_after_ts_input' "$V2_ROOT/scripts/firewall.sh"
-    ! awk '/^ensure_ts_input_precedence\(\)/,/^create_staging\(\)/' \
-        "$V2_ROOT/scripts/firewall.sh" |
-        grep -qE 'while .*-D INPUT -j "\$CHAIN_INPUT"'
+    ts_precedence="$(awk '/^ensure_ts_input_precedence\(\)/,/^create_staging\(\)/' "$V2_ROOT/scripts/firewall.sh")"
+    [ -n "$ts_precedence" ]
+    run ! grep -qE 'while .*-D INPUT -j "\$CHAIN_INPUT"' <<<"$ts_precedence"
 }
 
 @test "master-firewall converges without ordering on docker" {
     local unit="$V2_ROOT/systemd/master-firewall.service"
     # Host INPUT must not wait on Docker; the drop-in adds MASTER-DOCKER later.
-    ! grep -q 'After=.*docker.service' "$unit"
-    ! grep -q 'Wants=.*docker.service' "$unit"
-    ! grep -q 'Requires=docker.service' "$unit"
-    ! grep -q 'WantedBy=docker.service' "$unit"
+    run ! grep -q 'After=.*docker.service' "$unit"
+    run ! grep -q 'Wants=.*docker.service' "$unit"
+    run ! grep -q 'Requires=docker.service' "$unit"
+    run ! grep -q 'WantedBy=docker.service' "$unit"
     grep -q 'Wants=network-online.target' "$unit"
     # PartOf stays as the belt-and-braces trigger next to the drop-in.
     grep -q 'PartOf=docker.service' "$unit"
@@ -1231,7 +1244,7 @@ EOF
     grep -q 'StartLimitBurst=12' "$unit"
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
     # Compose must not be PartOf/Requires-coupled to the firewall unit.
-    ! grep -qiE 'compose|master-compose' "$unit"
+    run ! grep -qiE 'compose|master-compose' "$unit"
     # Docker start re-applies firewall even when RemainAfterExit left it active.
     grep -q 'docker.service.d/master-stack.conf' "$V2_ROOT/install.sh"
     grep -q 'ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service' \
@@ -1243,16 +1256,20 @@ EOF
     # installer owns. Nothing hunts for leftovers of an older revision, so no
     # global package, user or container removal lives here (DD-96).
     local s="$V2_ROOT/install.sh"
-    ! grep -q 'remove_stale_filebrowser' "$s"
-    ! grep -q 'purge_host_webdav_leftovers' "$s"
-    ! grep -qE 'apt-get (purge|autoremove)' "$s"
-    ! grep -qE 'userdel|groupdel|setfacl' "$s"
-    ! grep -qE 'docker (rm|volume rm)' "$s"
-    ! grep -q 'docker.service.wants' "$s"
-    ! grep -q 'filebrowser.yaml' "$s"
-    ! grep -qE 'disable --now' "$s"
+    run ! grep -q 'remove_stale_filebrowser' "$s"
+    run ! grep -q 'purge_host_webdav_leftovers' "$s"
+    run ! grep -qE 'apt-get (purge|autoremove)' "$s"
+    run ! grep -qE 'userdel|groupdel|setfacl' "$s"
+    # Leftover gates name the removal command for the operator to run by hand
+    # (DD-116, DD-117); only a command the installer runs itself counts.
+    code="$(grep -vE '^[[:space:]]*(die|log [A-Z]+) "' "$s")"
+    [ -n "$code" ]
+    run ! grep -qE 'docker (rm|volume rm)' <<<"$code"
+    run ! grep -q 'docker.service.wants' "$s"
+    run ! grep -q 'filebrowser.yaml' "$s"
+    run ! grep -qE 'disable --now' "$s"
     # Deleting a file the installer does not own is the same overreach.
-    ! grep -q 'rm -f "\$COMPOSE_DIR/.env"' "$s"
+    run ! grep -q 'rm -f "\$COMPOSE_DIR/.env"' "$s"
 }
 
 @test "firewall waits for DOCKER-USER only when Docker is active" {
@@ -1296,14 +1313,14 @@ EOF
     grep -q 'resolve_wan_interface' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WAN arayüzü drift' "$V2_ROOT/scripts/firewall.sh"
     # Drift is a runtime fact, not a fatal state mismatch: live iface wins.
-    ! grep -q 'assert_wan_interface_current' "$V2_ROOT/scripts/firewall.sh"
-    ! grep -q 'WAN_INTERFACE:?' "$V2_ROOT/scripts/firewall.sh"
+    run ! grep -q 'assert_wan_interface_current' "$V2_ROOT/scripts/firewall.sh"
+    run ! grep -q 'WAN_INTERFACE:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'SSH_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-solicitation -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-advertisement -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'packet-too-big -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     # Helper does not consume WAN_IPV4 (endpoint hint stays in state.env).
-    ! grep -q 'WAN_IPV4' "$V2_ROOT/scripts/firewall.sh"
+    run ! grep -q 'WAN_IPV4' "$V2_ROOT/scripts/firewall.sh"
     # IPv6 Tailscale UDP must be checked, not only IPv4.
     grep -c 'TAILSCALE_UDP_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh" |
         grep -q '^[2-9]'
@@ -1316,8 +1333,16 @@ EOF
         grep -q 'After=tailscaled.service'
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -q 'After=tailscaled.service'
-    ! awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
-        grep -q 'PartOf=tailscaled.service'
+    caddy_dropin="$(awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh")"
+    [ -n "$caddy_dropin" ]
+    run ! grep -q 'PartOf=tailscaled.service' <<<"$caddy_dropin"
+}
+
+@test "no assertion relies on a bare negation or [[ ]] (bash 3.2)" {
+    # Under macOS /bin/bash 3.2 a `! cmd` or `[[ ]]` statement never fails a
+    # test, because errexit ignores it. Use `run !`, `[ ]` or `case` (DD-126).
+    run grep -nE '^[[:space:]]+(! |\[\[ )' "$BATS_TEST_FILENAME"
+    [ "$status" -eq 1 ]
 }
 
 @test "masked-quiet apt install under retry receives APT_OPTS" {
@@ -1347,7 +1372,7 @@ EOF
 @test "edge apt install masks units until configured" {
     grep -q 'systemctl mask dnsmasq.service caddy.service' "$V2_ROOT/install.sh"
     grep -q 'apt_get_install_masked_quiet' "$V2_ROOT/install.sh"
-    ! grep -q '/usr/sbin/policy-rc.d' "$V2_ROOT/install.sh"
+    run ! grep -q '/usr/sbin/policy-rc.d' "$V2_ROOT/install.sh"
     awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'systemctl unmask dnsmasq caddy'
 }
@@ -1358,16 +1383,18 @@ EOF
     grep -q 'full-upgrade yapılsın mı' "$V2_ROOT/install.sh"
     grep -q 'COMPOSE_NEEDS_UP' "$V2_ROOT/install.sh"
     grep -q 'FIREWALL_NEEDS_RESTART' "$V2_ROOT/install.sh"
-    ! grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
+    run ! grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
     grep -q 'yapılandırması aynı; yeniden başlatılmadı' "$V2_ROOT/install.sh"
     grep -q 'Compose dosyası aynı ve konteynerler ayakta' "$V2_ROOT/install.sh"
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
     awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'systemctl restart master-firewall.service'
-    ! awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'master-webdav'
-    ! awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -qE '\|[[:space:]]*atomic_write'
+    stage5="$(awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$stage5" ]
+    run ! grep -q 'master-webdav' <<<"$stage5"
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$stage4" ]
+    run ! grep -qE '\|[[:space:]]*atomic_write' <<<"$stage4"
 }
 
 @test "re-run offers an opt-in image pull, defaulted off and skipped on first install" {
@@ -1419,17 +1446,18 @@ EOF
 
 @test "base packages include htpasswd helpers" {
     grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
-    ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
+    run ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
     # acl may be installed only as a migration helper inside the purge path.
-    ! awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh" |
-        grep -qE '\bacl\b'
+    stage1="$(awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$stage1" ]
+    run ! grep -qE '\bacl\b' <<<"$stage1"
 }
 
 @test "exporter embeds archive sha256 and stages root-level runtime" {
     local exporter="$V2_ROOT/dev/export-installer.sh"
     grep -q 'PORTABLE_ARCHIVE_SHA256' "$exporter"
     grep -q 'sha256sum' "$exporter"
-    ! grep -qE '\.sha256"|Sidecar' "$exporter"
+    run ! grep -qE '\.sha256"|Sidecar' "$exporter"
     grep -q 'dsi-extract' "$exporter"
     grep -q 'staging/installer/install.sh' "$exporter"
     grep -q 'REMOTE_ROOT/install.sh' "$exporter"
@@ -1438,7 +1466,7 @@ EOF
     grep -q 'TZ=UTC' "$exporter"
     grep -q -- '--no-xattrs' "$exporter"
     grep -q -- '--no-mac-metadata' "$exporter"
-    ! grep -q 'touch -t 197001010000' "$exporter"
+    run ! grep -q 'touch -t 197001010000' "$exporter"
     grep -q 'reproducible/${V2_VERSION}' "$exporter"
 }
 
@@ -1449,13 +1477,14 @@ EOF
     grep -q 'WebDAV Caddy TS-IP:' "$V2_ROOT/install.sh"
     grep -q 'http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
     grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
-    ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
+    run ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
     grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
     grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
     grep -q '/downloads false' "$V2_ROOT/install.sh"
-    ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
-    ! awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh" |
-        grep -qE '401\|403\|405'
+    run ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
+    webdav_runtime="$(awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh")"
+    [ -n "$webdav_runtime" ]
+    run ! grep -qE '401\|403\|405' <<<"$webdav_runtime"
     run ! grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port transmission' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
@@ -1476,11 +1505,11 @@ EOF
     local key
     for key in V2_CONFIG_SCHEMA NET_RETRY_ATTEMPTS ADDRESS_WAIT_DEADLINE_SECONDS \
         WEBDAV_READ_ONLY; do
-        ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
+        run ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
     done
     # DNS_PORT and CADDY_HTTP_PORT exist and are now actually used.
     grep -q '"\$DNS_PORT" | "\$CADDY_HTTP_PORT"' "$V2_ROOT/install.sh"
-    ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
+    run ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
 }
 
 @test "compose images use upstream stable tracks where published" {
@@ -1497,23 +1526,23 @@ EOF
         "$V2_ROOT/config/defaults.env"
     # Forbidden floats — except LinuxServer Transmission:latest, its only stable
     # track (LinuxServer publishes no major tag).
-    ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
+    run ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
         "$V2_ROOT/config/defaults.env"
-    ! grep -qE '^(DOZZLE|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
+    run ! grep -qE '^(DOZZLE|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
         "$V2_ROOT/config/defaults.env"
     # Track images must not carry a digest pin.
-    ! grep -qE '^(DOZZLE|FILEBROWSER|TRANSMISSION|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
+    run ! grep -qE '^(DOZZLE|FILEBROWSER|TRANSMISSION|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
         "$V2_ROOT/config/defaults.env"
 }
 
 @test "stage 7 derives the container count from compose" {
-    ! grep -q 'local expected=5' "$V2_ROOT/install.sh"
+    run ! grep -q 'local expected=5' "$V2_ROOT/install.sh"
     grep -q 'docker compose config --services' "$V2_ROOT/install.sh"
 }
 
 @test "refresh timer has no no-op Persistent key" {
     # Persistent= only applies to OnCalendar= timers; this one is monotonic.
-    ! grep -q 'Persistent=' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
+    run ! grep -q 'Persistent=' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
     grep -q 'OnUnitActiveSec=5min' "$V2_ROOT/systemd/refresh-tailnet-config.timer"
 }
 
@@ -1522,8 +1551,9 @@ EOF
     grep -q 'kill -KILL' "$V2_ROOT/install.sh"
     awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
         grep -q 'reap_bg_pid "\$up_pid"'
-    ! awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'kill "\$up_pid"'
+    login_body="$(awk '/^tailscale_login\(\)/,/^stage_0\(\)/' "$V2_ROOT/install.sh")"
+    [ -n "$login_body" ]
+    run ! grep -q 'kill "\$up_pid"' <<<"$login_body"
 }
 
 @test "unattended security upgrades are enabled without automatic reboot" {
@@ -1543,8 +1573,9 @@ EOF
     grep -q 'APT_UNATTENDED_POLICY_FILE="/etc/apt/apt.conf.d/5' "$V2_ROOT/config/defaults.env"
     awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -q 'APT::Periodic::Unattended-Upgrade'
-    ! awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'die "otomatik güvenlik'
+    stage7="$(awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$stage7" ]
+    run ! grep -q 'die "otomatik güvenlik' <<<"$stage7"
 }
 
 @test "pipe consumers in the installer tree do not exit early under pipefail" {
@@ -1554,7 +1585,7 @@ EOF
     # [|] not \|: BSD grep -E (Finder/bats on macOS) reads \| differently
     # from GNU grep. `exit *[}]` matches awk's `{...; exit}`, not a shell
     # `|| { ...; exit 1; }` guard.
-    ! grep -nE '[|][^|]*(awk|sed)[^|]*; *exit *[}]' \
+    run ! grep -nE '[|][^|]*(awk|sed)[^|]*; *exit *[}]' \
         "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT"/scripts/*
 }
 
@@ -1584,9 +1615,11 @@ EOF
     grep -A1 'tailscale_login_state)" == "complete"' <<<"$body" | grep -q 'TS_AUTH_KEY=""'
     grep -q 'tskey-client-' <<<"$body"
     run ! grep -qE 'prompt_optional_secret|read -r -s' "$V2_ROOT/install.sh"
-    ! awk '/^write_(state|config)\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'TS_AUTH_KEY'
-    ! grep -nE -- '--auth-?key[= ]"?\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
-    ! grep -nE 'export +TS_AUTH_KEY|log [A-Z]+ .*\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    state_writers="$(awk '/^write_(state|config)\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$state_writers" ]
+    run ! grep -q 'TS_AUTH_KEY' <<<"$state_writers"
+    run ! grep -nE -- '--auth-?key[= ]"?\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    run ! grep -nE 'export +TS_AUTH_KEY|log [A-Z]+ .*\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
     stage2="$(awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh")"
     grep -q '! tailscale_login_with_key' <<<"$stage2"
     grep -q 'unset TS_AUTH_KEY' <<<"$stage2"
@@ -1613,8 +1646,8 @@ EOF
     [ "$(cat "$TMP/seen")" = "$TS_AUTH_KEY" ]
     [ "$(cat "$TMP/mode")" = 600 ]
     grep -q -- '--auth-key=file:' "$TMP/argv"
-    ! grep -qF "$TS_AUTH_KEY" "$TMP/argv"
-    ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
+    run ! grep -qF "$TS_AUTH_KEY" "$TMP/argv"
+    run ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
     [ ! -e "$TMP/tailscale-authkey" ]
 }
 
@@ -1629,7 +1662,7 @@ EOF
     run tailscale_login_with_key
     [ "$status" -eq 1 ]
     grep -q 'tarayıcıdan girişe geçiliyor' "$TMP/install.log"
-    ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
+    run ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
     [ ! -e "$TMP/tailscale-authkey" ]
 }
 
