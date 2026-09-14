@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — WireGuard client DNS default: Cloudflare IPv4 first (v2-97, menu only)
+
+- **Changed:** the DNS offered for a new peer is now
+  `1.1.1.1, 1.0.0.1, 2606:4700:4700::1001` (was
+  `1.1.1.1, 2606:4700:4700::1111`), based on measurements from `nrm`: IPv6
+  pinged 0.5 ms lower, but about half its DNS answers took 12 ms or more,
+  against under 7 ms over IPv4 (**DD-131**).
+- Existing peers keep their DNS; change it with `wireguard.command` → 7.
+- The installer is unchanged (still v2-97, re-exported); no re-run is needed.
+- **Verified:** bats 135 ok; two mutations caught.
+
 ### 2026-09-14 — wireguard.command backs up after every change (v2-97, menu only)
 
 - **Changed:** options 2 (add), 3 (remove) and 7 (DNS) take the backup

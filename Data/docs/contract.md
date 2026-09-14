@@ -309,7 +309,7 @@ Preserved in full as a core feature. Contract in §5–§7.
 - **`wireguard.command`** (repository root, macOS) reads only `SSH_HOST` from
   `kurulum.env`. It refuses a server whose `master-wg version` differs from
   the repository's `V2_VERSION`. It asks for the name, DNS, keepalive and MTU
-  (defaults from `defaults.env`), prints the QR code and saves the profile as
+  (defaults from `defaults.env`; DNS is Cloudflare IPv4 first, **DD-131**), prints the QR code and saves the profile as
   `kurulum/wireguard/<name>.conf` (`600`).
   - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
     then prints the new QR code and saves the new profile.

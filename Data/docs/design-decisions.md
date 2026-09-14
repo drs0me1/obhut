@@ -6198,6 +6198,46 @@ failure with an early, named one.
     - `wg0` (key and peers) was unchanged; the test interface and files were
       removed afterwards.
 
+### DD-131: WireGuard client DNS default — Cloudflare IPv4 first, one IPv6 third (2026-09-14)
+
+- **Context:** the user wanted the lowest-latency Cloudflare setup as the
+  default of `wireguard.command` → 2) ekle. The old default was
+  `1.1.1.1, 2606:4700:4700::1111`. Peers' DNS queries leave through `nrm`,
+  so the `nrm`→Cloudflare leg is the part the address choice can change.
+- **Measured from `nrm` (2026-09-14, raw UDP queries, orders shuffled):**
+  - All four addresses reach Cloudflare's Frankfurt PoP (`colo=FRA`), with
+    no loss.
+  - Ping: IPv4 about 4.3 ms, IPv6 about 3.8 ms.
+  - Uncached names (random `*.cloudflare.com`): IPv4 median 7.3–8.4 ms, IPv6
+    median 16.8–17.8 ms.
+  - The same cached name 100 times: `1.1.1.1` answered 97–99 under 7 ms.
+    `2606:4700:4700::1111` was bimodal: 46–53 under 7 ms and 46–54 at 12 ms
+    or more. Ping answers at the edge; the DNS answer comes from a resolver
+    behind it, so the lower ping did not mean faster DNS.
+  - `::1001` against `::1111`, three runs of 120 cached and 60 uncached
+    queries each:
+    - Cached: `::1001` was ahead in every run (median 5.3–5.9 against 14.8 ms;
+      mean 9.4–9.8 against 10.1–10.5 ms; 50–54% against 43–46% under 7 ms).
+    - Uncached: mixed, overall mean 13.2 against 13.5 ms. Both stayed bimodal.
+- **Decision:** `WG_CLIENT_DNS_DEFAULT="1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"`.
+  - The two IPv4 anycast addresses come first; either covers the other.
+  - One IPv6 address is third, as a fallback for a client that only
+    reaches IPv6; `::1001` for its slightly better cached answers.
+  - IPv4 resolvers still return AAAA records, so IPv6 browsing through the
+    tunnel is unaffected.
+  - No other provider is mixed in: clients may spread queries across the
+    list.
+- **Scope:** only the menu's default for new peers. Existing peers keep their
+  DNS until changed with option 7. The server never reads this key, so
+  `V2_VERSION` stays v2-97 and the launcher is re-exported under the same
+  version.
+- **Revisit:** a single day's measurement from one host. If Cloudflare's
+  IPv6 answers stop being bimodal, measure again before reordering.
+- **Verified:** bats 135 ok. Option 2 with Enter sends exactly the defaults.env
+  value, and `master-wg` writes it back unchanged, so option 7 offers it
+  as-is. A hard-coded menu default and an unnormalised default list were each
+  caught.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

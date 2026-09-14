@@ -45,6 +45,16 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — WireGuard DNS default (user: "cloudflare en düşük ping", DD-131):**
+- Measured from `nrm`: IPv4 Cloudflare answers consistently under 7 ms; IPv6
+  pings 0.5 ms lower but half its answers take 12 ms or more. Uncached: 8 ms
+  against 17 ms.
+- `WG_CLIENT_DNS_DEFAULT="1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"`
+  (`::1001` slightly ahead of `::1111` on cached answers).
+- Menu-only default, so v2-97 was re-exported without a version bump. bats
+  135 ok.
+- Open: the user may move existing peers to it with option 7.
+
 **2026-09-14 — wireguard.command auto backup (user: "2-3-7-8 otomatik yedek"):**
 - Options 2, 3 and 7 now call `auto_backup` (option 6) after a successful
   server change; option 8 uses the same helper.

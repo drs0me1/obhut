@@ -2366,7 +2366,8 @@ case "\$*" in
     *"master-wg version"*) echo "$ver" ;;
     *"master-wg list"*) [ ! -f "$srv/etc/wireguard/clients/phone.conf" ] || printf 'phone\t10.8.0.2\t0\t0\t0\tvar\n' ;;
     *"master-wg add bad "*) echo "HATA: test" >&2; exit 1 ;;
-    *"master-wg add phone "*) cp "$TMP/phone.conf" "$srv/etc/wireguard/clients/phone.conf"; printf 'phone\t10.8.0.2\n' ;;
+    *"master-wg add phone "*) printf '%s\n' "\${@: -1}" >"$TMP/add-cmd"
+        cp "$TMP/phone.conf" "$srv/etc/wireguard/clients/phone.conf"; printf 'phone\t10.8.0.2\n' ;;
     *"master-wg profile phone"*) cat "$srv/etc/wireguard/clients/phone.conf" ;;
     *"master-wg qr phone"*) echo "QR-CODE" ;;
     *"master-wg remove phone"*) rm -f "$srv/etc/wireguard/clients/phone.conf" ;;
@@ -2380,6 +2381,11 @@ EOF
     run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '2\nphone\n\n\n\n2\nbad\n\n\n\n5\n\n')
     [ "$status" -eq 0 ]
     [ "$(wc -l <"$TMP/backups")" -eq 1 ]
+    # Enter at every question sends the defaults.env values (DD-131 DNS first).
+    eval "set -- $(cat "$TMP/add-cmd")"
+    [ "$2 $3" = "add phone" ]
+    [ "$4" = "$(awk -F'"' '/^WG_CLIENT_DNS_DEFAULT=/{print $2; exit}' "$V2_ROOT/config/defaults.env")" ]
+    [ "$5 $6" = "$(awk -F'"' '/^WG_CLIENT_KEEPALIVE_DEFAULT=/{print $2} /^WG_MTU=/{m = $2} END {print m}' "$V2_ROOT/config/defaults.env" | paste -sd' ' -)" ]
     cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
     cmp "$srv/etc/wireguard/clients/phone.conf" "$repo/kurulum/wireguard/phone.conf"
     case "$output" in *"QR-CODE"*"Yedek güncelleniyor"*"profil phone"*) ;; *) false ;; esac
@@ -2552,6 +2558,11 @@ master_wg() {
     [ "$status" -ne 0 ]
     [ "$(shasum <"$profile")" = "$before" ]
     [ -z "$(find "$TMP/etc/wireguard/clients" -name '.peer-*')" ]
+    # The menu default (DD-131) is valid and written back exactly as defaults.env has it.
+    default_dns="$(awk -F'"' '/^WG_CLIENT_DNS_DEFAULT=/{print $2; exit}' "$V2_ROOT/config/defaults.env")"
+    run master_wg dns iphone "$default_dns"
+    [ "$status" -eq 0 ]
+    grep -qxF "DNS = $default_dns" "$profile"
 }
 
 @test "master-wg reset needs --onay, issues a new server key and drops every peer and profile" {
