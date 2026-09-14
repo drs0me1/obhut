@@ -5866,6 +5866,25 @@ failure with an early, named one.
 
 ### DD-128: Pulled WireGuard and qBittorrent settings rebuild a server; restored only where absent (2026-09-14)
 
+- **First real rebuild (v2-95, 2026-09-14, by the operator):** `nrm` was reset
+  to a bare Debian 13 and the v2-95 `.command` ran with the operator's own
+  `kurulum/`, which held the backup from option 6.
+  - The install log recorded the accounts written and the qBittorrent file
+    created from the template (DD-129).
+  - It also recorded "WireGuard kurulum/wireguard'tan geri yüklendi: sunucu
+    anahtarı, 4 peer, 4 profil", the login check, "Temel doğrulamalar geçti",
+    and no hash or auth-key trace.
+  - Checked read-only afterwards:
+    - every unit was active with none failed, `--check` passed with
+      `MASTER-FORWARD` first, and all 5 containers were up;
+    - Tailscale came back as `nrm` on a new IP (100.102.206.71), exit node
+      offered and `ayc` split DNS already repointed by the operator;
+    - the tailnet UIs, WebDAV `401`, qBittorrent API `403` and DNS/`REFUSED`
+      all held.
+  - Two devices (`Mcp0`, `NxiPh0`) reconnected with untouched profiles; the
+    other two had not come online yet.
+  - The server's `wg0.conf` and profiles still hashed identical to the Mac
+    backup, and no `RESTORE_DIR` was left.
 - **Tool merged (v2-95, 2026-09-14):** `ayarlar.command` is gone. The same pull
   is option 6 "Yedek al" of `wireguard.command`, reusing its SSH connection
   and version check. `remote()` now runs `ssh -n`: a live test showed that an

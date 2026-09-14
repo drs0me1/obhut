@@ -45,6 +45,21 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — first real rebuild with v2-95 (by the user):**
+- The user reset `nrm` and installed v2-95 with their own `kurulum/`.
+  Accounts came from `kurulum.env` and qBittorrent from the template.
+- WireGuard was restored from the option-6 backup (key, 4 peers, 4
+  profiles); `Mcp0` and `NxiPh0` reconnected unchanged.
+- Tailscale is now `nrm` on **100.102.206.71**, with the panel already
+  updated.
+- The read-only check was all green (units, firewall, containers, tailnet
+  UIs, auth checks, DNS), and the Mac backup is identical to the server.
+- Open:
+  - `iPh0` and `iPd0` have not handshaken yet (devices offline).
+  - Confirm the Infuse address.
+  - Proposed, not started: a Tailscale identity backup
+    (`tailscaled.state`) so a rebuild keeps the same IP and name.
+
 **2026-09-14 — v2-95, backup merged into wireguard.command:**
 - At the user's request `ayarlar.command` became option 6 "Yedek al" of
   `wireguard.command`, and the separate file was removed.
