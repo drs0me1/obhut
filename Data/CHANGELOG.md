@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — qBittorrent configured by the installer: template + kurulum.env account (v2-94)
+
+- **Added:** `TORRENT_USER` and `TORRENT_PASS` in `kurulum.env` (required; add
+  both lines) (**DD-129**).
+- **Added:** `Data/templates/qBittorrent.conf`, the operator's qBittorrent
+  settings taken from a diff against a clean file. Every run keeps those keys
+  and the account in sync:
+  - When nothing differs, nothing is written and nothing restarts.
+  - When something differs, only the differing keys are fixed, with
+    qBittorrent stopped around the write.
+  - The password is stored only as qBittorrent's PBKDF2 hash.
+- **Added:** stage 7 logs in with the input account and checks that
+  authentication cannot be bypassed.
+- **Removed:** pulling and restoring qBittorrent's file (`ayarlar.command`
+  now handles WireGuard only and deletes an old `kurulum/qbittorrent/` copy).
+- **Verified on `nrm`:**
+  - Existing server synced (only the account and auth guards differed).
+  - No-op re-run.
+  - A UI change reverted.
+  - A fresh config came up with every template value and no temporary
+    password.
+  - A no-op after qBittorrent rewrote its own file.
+  - bats 132 ok.
+
 ### 2026-09-14 — Pulled settings rebuild a server: ayarlar.command (v2-93)
 
 - **Added:** `ayarlar.command` at the repository root. It pulls into

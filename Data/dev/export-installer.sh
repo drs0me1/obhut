@@ -189,12 +189,11 @@ if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
 fi
 echo "Sunucu:  $HOST (kurulum/kurulum.env)"
 
-# DD-128: hazır ayarlar. Adlar burada da süzülür (boşluklu ad listeyi bozmasın);
+# DD-128: hazır WireGuard ayarları. Adlar burada da süzülür (boşluklu ad listeyi bozmasın);
 # biçim denetimi sunucuda kurulumdadır. Anahtar içerdikleri için izin 600 olmalı.
 send_files="kurulum.env"
 snapshot_wg=0
 snapshot_profiles=0
-snapshot_qb=0
 if [[ -f "$INPUT_LOCAL_DIR/wireguard/sunucu/wg0.conf" ]]; then
     send_files="$send_files wireguard/sunucu/wg0.conf"
     snapshot_wg=1
@@ -203,10 +202,6 @@ if [[ -f "$INPUT_LOCAL_DIR/wireguard/sunucu/wg0.conf" ]]; then
         send_files="$send_files wireguard/${f##*/}"
         snapshot_profiles=$((snapshot_profiles + 1))
     done
-fi
-if [[ -f "$INPUT_LOCAL_DIR/qbittorrent/qBittorrent.conf" ]]; then
-    send_files="$send_files qbittorrent/qBittorrent.conf"
-    snapshot_qb=1
 fi
 for rel in $send_files; do
     mode="$(stat -f %Lp "$INPUT_LOCAL_DIR/$rel")"
@@ -217,11 +212,7 @@ for rel in $send_files; do
     fi
 done
 snapshot_desc="yok"
-if [[ "$snapshot_wg" -eq 1 || "$snapshot_qb" -eq 1 ]]; then
-    snapshot_desc=""
-    [[ "$snapshot_wg" -eq 0 ]] || snapshot_desc="WireGuard (sunucu + $snapshot_profiles profil)"
-    [[ "$snapshot_qb" -eq 0 ]] || snapshot_desc="${snapshot_desc:+$snapshot_desc, }qBittorrent"
-fi
+[[ "$snapshot_wg" -eq 0 ]] || snapshot_desc="WireGuard (sunucu + $snapshot_profiles profil)"
 echo "Hazır ayarlar: $snapshot_desc (yalnız sunucuda karşılığı yoksa kullanılır)"
 
 echo "==> Gömülü arşiv açılıyor"

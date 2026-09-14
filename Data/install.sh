@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-93"
+V2_VERSION="2026.08.06-v2-94"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -31,10 +31,9 @@ APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
 # downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
 # tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TS_AUTH_KEY"
-INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS"
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS TS_AUTH_KEY"
+INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS"
 # Kaldırılmış alanlar: dosyada kalırsa kurulum ne yapılacağını söyleyerek durur.
-# DD-127: qBittorrent hesabı kendi ayar dosyasındadır.
 INPUT_REMOVED_KEYS="TRANSMISSION_USER TRANSMISSION_PASS"
 
 prompt() {
@@ -440,17 +439,12 @@ check_nft_iptables() {
 take_snapshot_input() {
     SNAPSHOT_PEERS=0
     SNAPSHOT_WG_PROFILES=0
-    SNAPSHOT_QB=0
     rm -rf -- "$RESTORE_DIR"
-    [[ -d "$INPUT_DIR/wireguard" || -d "$INPUT_DIR/qbittorrent" ]] || return 0
+    [[ -e "$INPUT_DIR/wireguard" ]] || return 0
+    [[ -d "$INPUT_DIR/wireguard" && ! -L "$INPUT_DIR/wireguard" ]] ||
+        die "hazır ayarlar: kurulum/wireguard bir dizin değil"
     install -d -m 0700 -o root -g root "$RESTORE_DIR"
-    local d
-    for d in wireguard qbittorrent; do
-        [[ -e "$INPUT_DIR/$d" ]] || continue
-        [[ -d "$INPUT_DIR/$d" && ! -L "$INPUT_DIR/$d" ]] ||
-            die "hazır ayarlar: kurulum/$d bir dizin değil"
-        mv -- "$INPUT_DIR/$d" "$RESTORE_DIR/$d"
-    done
+    mv -- "$INPUT_DIR/wireguard" "$RESTORE_DIR/wireguard"
 }
 
 # WireGuard dosyasında yalnız master-stack'in yazdığı alanlar olabilir. PostUp
@@ -520,7 +514,7 @@ validate_snapshot() {
         [[ "$(wc -c <"$f")" -le "$SNAPSHOT_MAX_BYTES" ]] ||
             die "hazır ayarlar: kurulum/$rel çok büyük"
         case "$rel" in
-            wireguard/sunucu/wg0.conf | qbittorrent/qBittorrent.conf) ;;
+            wireguard/sunucu/wg0.conf) ;;
             wireguard/*/*) die "hazır ayarlar: beklenmeyen dosya kurulum/$rel" ;;
             wireguard/*.conf)
                 name="${rel#wireguard/}"
@@ -545,15 +539,13 @@ validate_snapshot() {
         # Sunucu anahtarı olmadan cihaz kopyaları işe yaramaz; gönderilmez.
         rm -rf -- "$RESTORE_DIR/wireguard"
     fi
-    [[ ! -f "$RESTORE_DIR/qbittorrent/qBittorrent.conf" ]] || SNAPSHOT_QB=1
 }
 
 snapshot_note() {
-    local wg="yok" qb="yok"
+    local wg="yok"
     [[ ! -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf" ]] ||
         wg="sunucu anahtarı + $SNAPSHOT_PEERS peer, $SNAPSHOT_WG_PROFILES profil"
-    [[ "$SNAPSHOT_QB" -eq 0 ]] || qb="var (hesap dahil)"
-    printf 'WireGuard %s; qBittorrent %s' "$wg" "$qb"
+    printf 'WireGuard %s' "$wg"
 }
 
 stage_0() {
@@ -658,8 +650,8 @@ stage_0() {
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
     # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
-    # karşılaştırılır; farklıysa aşama 1 (WebDAV) ve 4 (Dozzle, FileBrowser)
-    # günceller. Parolalar yalnız bellekte durur.
+    # karşılaştırılır; farklıysa aşama 1 (WebDAV) ve 4 (Dozzle, FileBrowser,
+    # qBittorrent) günceller. Parolalar yalnız bellekte durur.
     WEBDAV_NEW_USER="$INPUT_WEBDAV_USER"
     WEBDAV_NEW_PASS="$INPUT_WEBDAV_PASS"
     validate_account WebDAV "$WEBDAV_NEW_USER" "$WEBDAV_NEW_PASS" \
@@ -669,6 +661,12 @@ stage_0() {
     DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
     validate_account Dozzle "$DOZZLE_NEW_USER" "$DOZZLE_NEW_PASS" \
         '^[a-z][a-z0-9_-]{0,31}$' "$DOZZLE_MIN_PASSWORD_LENGTH"
+    # DD-129: qBittorrent hesabı; parola sunucuya yalnız qBittorrent'in PBKDF2
+    # özeti olarak gider.
+    TORRENT_NEW_USER="$INPUT_TORRENT_USER"
+    TORRENT_NEW_PASS="$INPUT_TORRENT_PASS"
+    validate_account qBittorrent "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" \
+        '^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$' "$TORRENT_MIN_PASSWORD_LENGTH"
     # DD-118: FileBrowser hesabı; arayüzden değiştirilen parola dosyadakine döner.
     FILEBROWSER_NEW_USER="$INPUT_FILEBROWSER_USER"
     FILEBROWSER_NEW_PASS="$INPUT_FILEBROWSER_PASS"
@@ -742,7 +740,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Downloads:     $DOWNLOADS_PATH
   WireGuard:     UDP $WG_PUBLIC_PORT (peer'lar sunucuda; eklemek/çıkarmak: wireguard.command)
   WebDAV portu:  $WEBDAV_PORT
-  Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER (qBittorrent: kendi arayüzünden)
+  Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER
                  (dosyadakinden farklı olan hesap güncellenir)
   Tailscale key: $ts_key_note
   Hazır ayarlar: $(snapshot_note)
@@ -796,7 +794,7 @@ stage_1() {
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
         iptables coreutils util-linux diffutils jq \
-        apache2-utils dnsutils unattended-upgrades
+        apache2-utils dnsutils unattended-upgrades python3
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
@@ -1182,32 +1180,197 @@ ensure_dozzle_users() {
     fi
 }
 
-# DD-127: /config bind. Kurulum qBittorrent ayarı yazmaz: hesap ve tercihler
-# arayüzden yapılır; ilk açılışta imaj varsayılan dosyayı kopyalar ve geçici
-# parolayı loga (Dozzle) yazar. Portları imaj her açılışta komut satırından verir.
+# DD-129: /config bind. qBittorrent.conf, templates/qBittorrent.conf'taki
+# anahtarlar ve kurulum.env hesabıyla eşitlenir; qBittorrent'in kendi eklediği
+# anahtarlar olduğu gibi kalır. Portları imaj her açılışta komut satırından verir.
 ensure_qbittorrent_dir() {
     install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$QBITTORRENT_DATA_DIR"
 }
 
-# DD-128: sunucuda qBittorrent.conf yoksa kurulum/qbittorrent/qBittorrent.conf
-# olduğu gibi konur (hesap dahil). Varsa sunucudaki doğrudur; dokunulmaz.
-# qBittorrent kapanırken dosyayı yeniden yazdığından çalışan konteyner önce
-# durdurulur.
-restore_qbittorrent_snapshot() {
-    local src="$RESTORE_DIR/qbittorrent" dst="$QBITTORRENT_DATA_DIR/qBittorrent" running
-    QB_RESTORED=0
-    [[ -f "$src/qBittorrent.conf" ]] || return 0
-    if [[ -f "$dst/qBittorrent.conf" ]]; then
-        log INFO "qBittorrent ayarları sunucuda var; kurulum/qbittorrent kullanılmadı (DD-128)"
-        return 0
+# qBittorrent'in WebUI parola özeti: PBKDF2-HMAC-SHA512, 100000 tur, 16 bayt
+# tuz, 64 bayt özet, "@ByteArray(tuz:özet)" (base64, tırnaklı). Parola stdin'den
+# okunur. Argüman verilirse o özeti doğrular (0 eşleşir, 1 eşleşmez, 2 biçim
+# bozuk); özet python'a ortamdan gider, argv'de görünmez. Argümansız yeni özet
+# yazar.
+qbit_pbkdf2() {
+    QB_EXISTING="${1:-}" python3 -c '
+import base64, binascii, hashlib, hmac, os, sys
+pw = sys.stdin.buffer.read()
+cur = os.environ.get("QB_EXISTING", "")
+if cur:
+    inner = cur[1:-1] if len(cur) > 1 and cur[0] == cur[-1] == "\"" else cur
+    if not (inner.startswith("@ByteArray(") and inner.endswith(")")):
+        sys.exit(2)
+    salt, sep, want = inner[len("@ByteArray("):-1].partition(":")
+    try:
+        salt = base64.b64decode(salt, validate=True)
+        want = base64.b64decode(want, validate=True)
+    except (binascii.Error, ValueError):
+        sys.exit(2)
+    if not sep or not salt or not want:
+        sys.exit(2)
+    got = hashlib.pbkdf2_hmac("sha512", pw, salt, 100000, len(want))
+    sys.exit(0 if hmac.compare_digest(got, want) else 1)
+salt = os.urandom(16)
+key = hashlib.pbkdf2_hmac("sha512", pw, salt, 100000, 64)
+sys.stdout.write("\"@ByteArray(%s:%s)\"\n" % (base64.b64encode(salt).decode(), base64.b64encode(key).decode()))
+'
+}
+
+# INI → "[bölüm]<TAB>anahtar=değer". qBittorrent anahtarları ters eğik çizgi
+# içerir, değerler '=' içerebilir: yalnız ilk '=' ayırır. Yorum ve boş satır atlanır.
+qbit_conf_flatten() {
+    awk '/^\[[^]]*\]$/ {s = $0; next} /^[^#;]/ && index($0, "=") > 1 {print s "\t" $0}' "$@"
+}
+
+# stdin: istenen düz liste; $1: canlı dosya. Değeri farklı ya da eksik olan
+# anahtarları "[bölüm] anahtar" olarak yazar (değer yazmaz).
+qbit_conf_diff() {
+    awk -F'\t' '
+        FNR == NR { k = $1 "\t" substr($2, 1, index($2, "=") - 1); want[k] = $2; order[++n] = k; next }
+        /^\[[^]]*\]$/ { s = $0; next }
+        index($0, "=") > 1 {
+            k = s "\t" substr($0, 1, index($0, "=") - 1)
+            if ((k in want) && !(k in have)) have[k] = $0
+        }
+        END {
+            for (i = 1; i <= n; i++)
+                if (have[order[i]] != want[order[i]]) { split(order[i], p, "\t"); print p[1] " " p[2] }
+        }
+    ' - "$1"
+}
+
+# stdin: istenen düz liste; $1: canlı dosya (yoksa /dev/null). Çıktı: istenen
+# anahtarları kendi bölümünde yerinde değiştirilmiş, eksikleri bölüm sonuna,
+# eksik bölümleri dosya sonuna eklenmiş dosya. Diğer satırlar aynen kalır;
+# yönetilen bir anahtarın ikinci kopyası atılır.
+qbit_conf_merge() {
+    awk -F'\t' '
+        function flush(sec,   list, m, i) {
+            m = split(keys[sec], list, SUBSEP)
+            for (i = 2; i <= m; i++)
+                if (!(list[i] in done)) { print substr(want[list[i]], 1); done[list[i]] = 1 }
+        }
+        FNR == NR {
+            k = $1 "\t" substr($2, 1, index($2, "=") - 1)
+            if (!(k in want)) {
+                want[k] = $2
+                keys[$1] = keys[$1] SUBSEP k
+                if (!($1 in known)) { known[$1] = 1; secs[++ns] = $1 }
+            }
+            next
+        }
+        /^[[:space:]]*$/ { blanks++; next }
+        /^\[[^]]*\]$/ {
+            if (s != "") flush(s)
+            for (; blanks > 0; blanks--) print ""
+            s = $0; present[s] = 1; print; next
+        }
+        {
+            for (; blanks > 0; blanks--) print ""
+            if (index($0, "=") > 1) {
+                k = s "\t" substr($0, 1, index($0, "=") - 1)
+                if (k in want) {
+                    if (!(k in done)) { print want[k]; done[k] = 1 }
+                    next
+                }
+            }
+            print
+        }
+        END {
+            if (s != "") flush(s)
+            for (i = 1; i <= ns; i++) {
+                if (secs[i] in present) continue
+                if (printed++ || s != "") print ""
+                print secs[i]
+                flush(secs[i])
+            }
+        }
+    ' - "$1"
+}
+
+# DD-129: qBittorrent.conf'u şablon + kurulum.env hesabıyla eşitler. Değişiklik
+# yoksa dosyaya ve konteynere dokunulmaz. Parola özeti, mevcut özet aynı parolayı
+# doğruluyorsa korunur (her çalıştırmada yeni tuz = sahte değişiklik olurdu).
+# qBittorrent kapanırken dosyasını yazdığından değişiklik konteyner durunca yapılır.
+sync_qbittorrent_config() {
+    local conf="$QBITTORRENT_CONF_FILE" cur="" hash desired diff running merged rc=0
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$QBITTORRENT_DATA_DIR" "${conf%/*}"
+    if [[ -f "$conf" ]]; then
+        cur="$(awk 'index($0, "WebUI\\Password_PBKDF2=") == 1 {print substr($0, 23); exit}' "$conf")"
+    fi
+    if [[ -n "$cur" ]]; then
+        printf '%s' "$TORRENT_NEW_PASS" | qbit_pbkdf2 "$cur" || rc=$?
+    else
+        rc=1
+    fi
+    if [[ "$rc" -eq 0 ]]; then
+        hash="$cur"
+    else
+        hash="$(printf '%s' "$TORRENT_NEW_PASS" | qbit_pbkdf2)" ||
+            die "qBittorrent parola özeti hesaplanamadı (python3)"
+    fi
+    desired="$(
+        qbit_conf_flatten "$V2_ROOT/templates/qBittorrent.conf"
+        printf '[Preferences]\tWebUI\\Username=%s\n' "$TORRENT_NEW_USER"
+        printf '[Preferences]\tWebUI\\Password_PBKDF2=%s\n' "$hash"
+    )"
+    if [[ -f "$conf" ]]; then
+        diff="$(qbit_conf_diff "$conf" <<<"$desired")"
+        if [[ -z "$diff" ]]; then
+            log INFO "qBittorrent ayarları ve hesabı şablonla aynı; dokunulmadı"
+            hash="" desired="" cur=""
+            return 0
+        fi
+    else
+        diff="(yeni dosya)"
     fi
     running="$(docker inspect -f '{{.State.Running}}' qbittorrent 2>/dev/null || true)"
     [[ "$running" != "true" ]] || docker stop qbittorrent >/dev/null
-    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$dst"
-    install -m 0600 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$src/qBittorrent.conf" "$dst/qBittorrent.conf"
-    QB_RESTORED=1
-    log INFO "qBittorrent ayarları kurulum/qbittorrent'ten geri yüklendi (hesap dahil)"
+    # Durunca qBittorrent dosyasını yeniden yazmış olabilir: birleştirme sonra.
+    if [[ -f "$conf" ]]; then
+        merged="$(qbit_conf_merge "$conf" <<<"$desired")"
+    else
+        merged="$(qbit_conf_merge /dev/null <<<"$desired")"
+    fi
+    atomic_write "$conf" 0600 <<<"$merged"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$conf"
+    log INFO "qBittorrent ayarları eşitlendi: $(paste -sd, - <<<"$diff" | sed 's/,/, /g')"
     [[ "$running" != "true" ]] || docker start qbittorrent >/dev/null
+    hash="" desired="" cur="" merged=""
+}
+
+# DD-129: kurulum.env hesabıyla gerçekten giriş yapılabildiğini ve girişin
+# atlanamadığını doğrular. Parola urlencode için python3'e, oradan curl'e
+# stdin'den gider (argv'de görünmez). qBittorrent başarısız girişte istemci
+# IP'sini yasakladığından yalnız "hazır değil" (000/5xx) beklenir; 401'de durulur.
+qbit_login_check() {
+    local jar code n=0 prefs
+    jar="$(mktemp "$RUNTIME_DIR/qbit-cookie.XXXXXX")"
+    while :; do
+        code="$(printf '%s\n%s' "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" |
+            python3 -c 'import sys, urllib.parse; u, p = sys.stdin.read().split("\n", 1); sys.stdout.write(urllib.parse.urlencode({"username": u, "password": p}))' |
+            curl -s -o /dev/null -w '%{http_code}' --max-time 5 -c "$jar" --data @- \
+                -H "Referer: http://127.0.0.1:${TORRENT_UI_PORT}" \
+                "http://127.0.0.1:${TORRENT_UI_PORT}/api/v2/auth/login" || true)"
+        case "$code" in 000 | 5??) ;; *) break ;; esac
+        n=$((n + 1))
+        [[ "$n" -lt 30 ]] || break
+        sleep 1
+    done
+    # qBittorrent 5.2 başarılı girişte 204 döner (eskiler 200 "Ok."); asıl kanıt
+    # oturum çerezidir.
+    if [[ "$code" != "200" && "$code" != "204" ]] || ! grep -q 'SID' "$jar"; then
+        rm -f -- "$jar"
+        die "qBittorrent girişi kurulum.env hesabıyla başarısız (HTTP ${code})"
+    fi
+    prefs="$(curl -s --max-time 5 -b "$jar" "http://127.0.0.1:${TORRENT_UI_PORT}/api/v2/app/preferences" || true)"
+    rm -f -- "$jar"
+    jq -e --arg u "$TORRENT_NEW_USER" \
+        '.web_ui_username == $u and .bypass_local_auth == false and .bypass_auth_subnet_whitelist_enabled == false' \
+        >/dev/null <<<"$prefs" ||
+        die "qBittorrent tercihleri beklenen gibi değil (kullanıcı adı ya da giriş atlama)"
+    log INFO "qBittorrent girişi kurulum.env hesabıyla doğrulandı"
 }
 
 # DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
@@ -1286,7 +1449,7 @@ stage_4() {
     systemctl enable --now docker
     ensure_dozzle_users
     ensure_qbittorrent_dir
-    restore_qbittorrent_snapshot
+    sync_qbittorrent_config
 
     mkdir -p "$COMPOSE_DIR"
     COMPOSE_NEEDS_UP=0
@@ -1741,6 +1904,8 @@ stage_7() {
         -H "Host: torrent.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/api/v2/app/version" || true)"
     [[ "$code" == "403" ]] ||
         die "qBittorrent API girişsiz yanıt $code verdi (beklenen 403; arayüzde giriş atlama/beyaz liste açık olabilir)"
+    qbit_login_check
+    unset TORRENT_NEW_PASS
     # DD-96: kurulum eski Portainer'ı silmez; hâlâ çalışıyorsa söyler.
     if docker inspect -f '{{.State.Running}}' portainer 2>/dev/null | grep -qx true; then
         log WARN "Portainer artık kurulumun parçası değil (DD-116) ama çalışıyor ve docker.sock'a erişiyor; kaldırmak için: docker rm -f portainer (verisi: docker volume rm docker_portainer_data)"
@@ -1808,8 +1973,7 @@ stage_7() {
 }
 
 print_summary() {
-    local qb_note="ilk kurulumda kullanıcı admin; geçici parola Dozzle'da qbittorrent logunda — arayüzden değiştirin"
-    [[ "${QB_RESTORED:-0}" -ne 1 ]] || qb_note="ayarlar ve hesap kurulum/qbittorrent'ten geri yüklendi"
+    local qb_note="kurulum.env hesabı; ayarlar templates/qBittorrent.conf"
     log INFO "Kurulum tamam — v$V2_VERSION"
     [[ "${WG_RESTORED:-0}" -ne 1 ]] ||
         log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: cihazlar mevcut profilleriyle bağlanır"

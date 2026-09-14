@@ -100,14 +100,14 @@ re-detected, never as an expectation to be violated.
 .
 ├── <V2_VERSION>.command               current portable installer (double-click; copied by the exporter)
 ├── wireguard.command                  WireGuard peer menu (double-click; calls master-wg over SSH)
-├── kurulum/                           installer inputs: kurulum.env; wireguard/ (profiles + sunucu/wg0.conf) and qbittorrent/ pulled by ayarlar.command (Git-ignored)
+├── kurulum/                           installer inputs: kurulum.env; wireguard/ (profiles + sunucu/wg0.conf) pulled by ayarlar.command (Git-ignored)
 ├── README.md, CLAUDE.md               entry points
 ├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
 └── Data/
     ├── install.sh                     orchestration
     ├── common.sh                      logging, guards, file writing, rendering
     ├── config/defaults.env            single source of truth for constants
-    ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf
+    ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf, qBittorrent.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
     ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg)
     ├── app/<V2_VERSION>.command       every exported portable install app
@@ -163,6 +163,7 @@ in §10, not resolved silently.
 | `templates/compose.yaml` | The five services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
 | `templates/Caddyfile` | Five HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `scripts/master-wg` | WireGuard peers on the server: list, add, remove, profile, QR (**DD-124**) | The firewall, the installer's inputs |
+| `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
 | `templates/Caddyfile.wg` | The three UI ports on the WireGuard address, for `caddy-wg` (**DD-120**) | Tailscale, names, WebDAV |
 | `templates/dnsmasq.conf` | Five `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
@@ -382,11 +383,11 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain, downloads path, ports and the WebDAV/Dozzle/FileBrowser accounts (qBittorrent keeps its own, **DD-127**), one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain, downloads path, ports and the WebDAV/Dozzle/FileBrowser/qBittorrent accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd when it differs from the input file; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; sync the Dozzle and FileBrowser accounts to the input file (**DD-119**); create qBittorrent's `/config` directory (no settings, **DD-127**) and restore pulled qBittorrent settings if absent (**DD-128**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker; sync the Dozzle and FileBrowser accounts to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall` (incl. WireGuard INPUT/FORWARD/NAT); enable refresh timer; then restore a pulled `wg0.conf` + profiles if absent (**DD-128**), `wireguard-tools`, `[Interface]` of `wg0.conf` (key generated once, peers kept) and `wg-quick@wg0` (**DD-120**, **DD-124**) | firewall, WireGuard |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed; `caddy-wg` for the UIs over WireGuard | DNS/HTTP |
 | 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy, WireGuard port/`master-wg`/`caddy-wg`) | verification |

@@ -649,9 +649,10 @@ EOF
     run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "qbittorrent gets no seeded settings or account, and its ports come from the image" {
-    # DD-127: the account and preferences live in qBittorrent's own config file;
-    # the image passes --webui-port/--torrenting-port on every start.
+@test "qbittorrent is synced from its template and the input account, ports stay on the command line" {
+    # DD-129: managed keys live in templates/qBittorrent.conf; the account comes
+    # from TORRENT_USER/TORRENT_PASS; the image passes --webui-port and
+    # --torrenting-port on every start, so ports are not template keys.
     block="$(awk '/^  qbittorrent:$/,/^  unpackerr:$/' "$V2_ROOT/templates/compose.yaml")"
     [ -n "$block" ]
     grep -q 'image: __QBITTORRENT_IMAGE__' <<<"$block"
@@ -662,29 +663,191 @@ EOF
     grep -q 'stop_grace_period: 30s' <<<"$block"
     run ! grep -qE 'FILE__|/run/secrets|PEERPORT' <<<"$block"
     run ! grep -qi transmission "$V2_ROOT/templates/compose.yaml"
-    grep -q '^QBITTORRENT_DATA_DIR="/etc/master-stack/qbittorrent"' "$V2_ROOT/config/defaults.env"
+    grep -q '^QBITTORRENT_CONF_FILE="/etc/master-stack/qbittorrent/qBittorrent/qBittorrent.conf"$' \
+        "$V2_ROOT/config/defaults.env"
     run ! grep -qE '^TRANSMISSION_' "$V2_ROOT/config/defaults.env"
-    # The installer only creates the directory: it composes no settings and no
-    # password. The operator's own file may be restored as is (DD-128).
-    body="$(awk '/^ensure_qbittorrent_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    [ "$(grep -c . <<<"$body")" -eq 3 ]
-    grep -q 'install -d -m 0750 -o "\$DOWNLOADS_UID" -g "\$DOWNLOADS_GID" "\$QBITTORRENT_DATA_DIR"' <<<"$body"
-    run ! grep -qE 'Password_PBKDF2|WebUI\\\\|\[Preferences\]|ensure_transmission_files|TRANSMISSION_(NEW|DATA|AUTH|MIN)' \
-        "$V2_ROOT/install.sh"
-    # The removed input keys are named so the operator deletes them.
+    # The template: the operator's settings plus the auth guards, no ports, no
+    # generated or account keys.
+    local tpl="$V2_ROOT/templates/qBittorrent.conf"
+    for key in 'Session\MaxActiveDownloads=12' 'Session\MaxConnections=800' \
+        'Session\Preallocation=true' 'Session\TempPathEnabled=true' 'General\Locale=en' \
+        'WebUI\LocalHostAuth=true' 'WebUI\AuthSubnetWhitelistEnabled=false' 'Accepted=true'; do
+        grep -qxF "$key" "$tpl"
+    done
+    run ! grep -qE '^(Session\\Port|Session\\SSL\\Port|WebUI\\Port|Connection\\PortRangeMin|MigrationVersion|Cookies|WebUI\\Username|WebUI\\Password_PBKDF2)=' "$tpl"
+    # Input keys, stage wiring and the Caddy auth check.
+    grep -q 'TORRENT_USER TORRENT_PASS TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS"' "$V2_ROOT/install.sh"
+    grep -qx 'TORRENT_USER=' "$V2_ROOT/config/kurulum.env.example"
+    grep -qx 'TORRENT_PASS=' "$V2_ROOT/config/kurulum.env.example"
     grep -q 'INPUT_REMOVED_KEYS="TRANSMISSION_USER TRANSMISSION_PASS"' "$V2_ROOT/install.sh"
-    grep -q 'read_input_file "\$INPUT_FILE" "\$INPUT_KEYS" "\$INPUT_NONEMPTY_KEYS" "\$INPUT_REMOVED_KEYS"' \
-        "$V2_ROOT/install.sh"
     run ! grep -q 'TRANSMISSION' "$V2_ROOT/config/kurulum.env.example"
-    # A leftover transmission container holds the peer port: stop before change.
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'validate_account qBittorrent "\$TORRENT_NEW_USER" "\$TORRENT_NEW_PASS"' <<<"$stage0"
     grep -q 'docker inspect transmission' <<<"$stage0"
-    run ! grep -q 'docker inspect qbittorrent' <<<"$stage0"
-    # Authentication must still be required through Caddy.
+    grep -q 'unattended-upgrades python3' "$V2_ROOT/install.sh"
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    awk '/ensure_qbittorrent_dir$/ {a = NR} /sync_qbittorrent_config$/ {b = NR}
+         /render_template .*compose.yaml/ {c = NR} END {exit !(a && b && c && a < b && b < c)}' <<<"$stage4"
     stage7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q '/api/v2/app/version' <<<"$stage7"
     grep -q '"\$code" == "403"' <<<"$stage7"
-    grep -q 'qBittorrent API girişsiz yanıt' <<<"$stage7"
+    awk '/"\$code" == "403"/ {a = NR} /^    qbit_login_check$/ {b = NR} /^    unset TORRENT_NEW_PASS$/ {c = NR}
+         END {exit !(a && b && c && a < b && b < c)}' <<<"$stage7"
+    # No file-pull or restore path for qBittorrent is left (DD-128 narrowed).
+    run ! grep -qE 'restore_qbittorrent_snapshot|kurulum/qbittorrent|SNAPSHOT_QB' "$V2_ROOT/install.sh"
+}
+
+@test "qbit_pbkdf2 writes qBittorrent's hash format and verifies it without argv" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    eval "$(awk '/^qbit_pbkdf2\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    h="$(printf '%s' 'pw with $pace&=' | qbit_pbkdf2)"
+    case "$h" in '"@ByteArray('*':'*')"') ;; *) false ;; esac
+    # 16-byte salt and 64-byte key, base64.
+    inner="${h#\"@ByteArray(}"; inner="${inner%)\"}"
+    [ "$(printf '%s' "${inner%%:*}" | base64 -D 2>/dev/null | wc -c | tr -d ' ' || printf '%s' "${inner%%:*}" | base64 -d | wc -c)" = 16 ]
+    [ "$(printf '%s' "${inner#*:}" | base64 -D 2>/dev/null | wc -c | tr -d ' ')" = 64 ]
+    printf '%s' 'pw with $pace&=' | qbit_pbkdf2 "$h"
+    run bash -c "$(declare -f qbit_pbkdf2); printf '%s' other | qbit_pbkdf2 '$h'"
+    [ "$status" -eq 1 ]
+    run bash -c "$(declare -f qbit_pbkdf2); printf '%s' x | qbit_pbkdf2 'plain-not-a-hash'"
+    [ "$status" -eq 2 ]
+    # A fresh salt every time.
+    [ "$(printf '%s' same | qbit_pbkdf2)" != "$(printf '%s' same | qbit_pbkdf2)" ]
+    # Known vector: salt "0123456789abcdef", password "12345test".
+    kv="$(python3 -c 'import base64,hashlib; s=b"0123456789abcdef"; print("\"@ByteArray(%s:%s)\"" % (base64.b64encode(s).decode(), base64.b64encode(hashlib.pbkdf2_hmac("sha512", b"12345test", s, 100000, 64)).decode()))')"
+    printf '%s' 12345test | qbit_pbkdf2 "$kv"
+    body="$(awk '/^qbit_pbkdf2\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'QB_EXISTING="\${1:-}" python3 -c' <<<"$body"
+    grep -q 'sys.stdin.buffer.read()' <<<"$body"
+}
+
+@test "qbit_conf_diff and qbit_conf_merge touch only managed keys and are idempotent" {
+    eval "$(awk '/^qbit_conf_flatten\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^qbit_conf_diff\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^qbit_conf_merge\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    cat >"$TMP/live.conf" <<'EOF'
+[Application]
+FileLogger\Enabled=true
+
+[BitTorrent]
+Session\DHTEnabled=true
+Session\MaxActiveDownloads=3
+Session\SSL\Port=11680
+Session\MaxActiveDownloads=5
+
+[Preferences]
+WebUI\Address=*
+WebUI\Port=61006
+
+[RSS]
+AutoDownloader\SmartEpisodeFilter=s(\\d+)e(\\d+), "(\\d{4}[.\\-]\\d{1,2})"
+EOF
+    cat >"$TMP/tpl.conf" <<'EOF'
+# comment
+[BitTorrent]
+Session\MaxActiveDownloads=12
+Session\Preallocation=true
+
+[LegalNotice]
+Accepted=true
+
+[Preferences]
+WebUI\Address=*
+WebUI\LocalHostAuth=true
+EOF
+    desired="$(qbit_conf_flatten "$TMP/tpl.conf"; printf '[Preferences]\tWebUI\\Username=me\n')"
+    [ "$(qbit_conf_diff "$TMP/live.conf" <<<"$desired")" = "[BitTorrent] Session\\MaxActiveDownloads
+[BitTorrent] Session\\Preallocation
+[LegalNotice] Accepted
+[Preferences] WebUI\\LocalHostAuth
+[Preferences] WebUI\\Username" ]
+    qbit_conf_merge "$TMP/live.conf" <<<"$desired" >"$TMP/merged.conf"
+    # Managed keys set in place, missing ones added to their section, a missing
+    # section appended; unmanaged lines untouched, values with '=' kept.
+    grep -qxF 'Session\MaxActiveDownloads=12' "$TMP/merged.conf"
+    grep -qxF 'Session\DHTEnabled=true' "$TMP/merged.conf"
+    grep -qxF 'Session\SSL\Port=11680' "$TMP/merged.conf"
+    grep -qxF 'WebUI\Port=61006' "$TMP/merged.conf"
+    grep -qF 'SmartEpisodeFilter=s(\\d+)e(\\d+), "(\\d{4}[.\\-]\\d{1,2})"' "$TMP/merged.conf"
+    [ "$(grep -c 'MaxActiveDownloads' "$TMP/merged.conf")" = 1 ]
+    awk '/^\[BitTorrent\]$/ {b = 1} b && /^Session\\Preallocation=true$/ {p = NR} /^\[Preferences\]$/ {q = NR}
+         END {exit !(p && q && p < q)}' "$TMP/merged.conf"
+    awk '/^\[Preferences\]$/ {s = 1; next} /^\[/ {s = 0} s && /^WebUI\\Username=me$/ {f = 1} END {exit !f}' "$TMP/merged.conf"
+    grep -qx '\[LegalNotice\]' "$TMP/merged.conf"
+    [ -z "$(qbit_conf_diff "$TMP/merged.conf" <<<"$desired")" ]
+    qbit_conf_merge "$TMP/merged.conf" <<<"$desired" >"$TMP/merged2.conf"
+    cmp "$TMP/merged.conf" "$TMP/merged2.conf"
+    # A fresh file from nothing holds exactly the desired keys.
+    qbit_conf_merge /dev/null <<<"$desired" >"$TMP/fresh.conf"
+    [ -z "$(qbit_conf_diff "$TMP/fresh.conf" <<<"$desired")" ]
+    [ "$(grep -c '=' "$TMP/fresh.conf")" = "$(grep -c . <<<"$desired")" ]
+    # The real template parses into the expected sections.
+    [ "$(qbit_conf_flatten "$V2_ROOT/templates/qBittorrent.conf" | cut -f1 | sort -u | tr '\n' ' ')" = "[AutoRun] [BitTorrent] [LegalNotice] [Network] [Preferences] " ]
+}
+
+@test "sync_qbittorrent_config writes once, keeps a matching hash, stops the client only to change" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    for fn in qbit_pbkdf2 qbit_conf_flatten qbit_conf_diff qbit_conf_merge sync_qbittorrent_config; do
+        eval "$(awk "/^${fn}\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    log() { printf '%s %s\n' "$1" "$2" >>"$TMP/log"; }
+    install() { local a; for a in "$@"; do :; done; mkdir -p "$TMP/qbdata/qBittorrent"; }
+    chown() { :; }
+    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; [ "$1" != inspect ] || echo true; }
+    QBITTORRENT_DATA_DIR="$TMP/qbdata" QBITTORRENT_CONF_FILE="$TMP/qbdata/qBittorrent/qBittorrent.conf"
+    DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
+    TORRENT_NEW_USER=admin TORRENT_NEW_PASS='fixture-pass-123'
+
+    # Fresh: written from the template plus the account.
+    sync_qbittorrent_config
+    conf="$QBITTORRENT_CONF_FILE"
+    grep -qxF 'Session\MaxActiveDownloads=12' "$conf"
+    grep -qxF 'WebUI\Username=admin' "$conf"
+    h1="$(awk 'index($0, "WebUI\\Password_PBKDF2=") == 1' "$conf")"
+    [ -n "$h1" ]
+    printf '%s' 'fixture-pass-123' | qbit_pbkdf2 "${h1#*=}"
+
+    # Same input: nothing written, the container left alone, same hash.
+    printf 'Session\\SSL\\Port=4242\n' >>"$conf"
+    before="$(shasum "$conf")"
+    rm -f "$TMP/docker-calls"
+    sync_qbittorrent_config
+    [ "$(shasum "$conf")" = "$before" ]
+    grep -q 'şablonla aynı; dokunulmadı' "$TMP/log"
+    run ! grep -q '^stop' "$TMP/docker-calls"
+
+    # A setting changed in the UI and a new password: stop, fix only those, start.
+    sed -i.bak 's/^Session\\MaxActiveDownloads=12$/Session\\MaxActiveDownloads=3/' "$conf"
+    TORRENT_NEW_PASS='fixture-pass-456'
+    rm -f "$TMP/docker-calls"
+    sync_qbittorrent_config
+    grep -qxF 'Session\MaxActiveDownloads=12' "$conf"
+    grep -qxF 'Session\SSL\Port=4242' "$conf"
+    h2="$(awk 'index($0, "WebUI\\Password_PBKDF2=") == 1' "$conf")"
+    [ "$h2" != "$h1" ]
+    printf '%s' 'fixture-pass-456' | qbit_pbkdf2 "${h2#*=}"
+    [ "$(sed -n 1p "$TMP/docker-calls")" = "inspect -f {{.State.Running}} qbittorrent" ]
+    grep -qx 'stop qbittorrent' "$TMP/docker-calls"
+    grep -qx 'start qbittorrent' "$TMP/docker-calls"
+    grep -q 'eşitlendi: \[BitTorrent\] Session\\MaxActiveDownloads, \[Preferences\] WebUI\\Password_PBKDF2' "$TMP/log"
+    # Neither password nor hash reaches the log.
+    run ! grep -qE 'fixture-pass|ByteArray' "$TMP/log"
+}
+
+@test "qbit_login_check sends the password on stdin and never retries a refused login" {
+    body="$(awk '/^qbit_login_check\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ -n "$body" ]
+    grep -q "printf '%s\\\\n%s' \"\$TORRENT_NEW_USER\" \"\$TORRENT_NEW_PASS\" |" <<<"$body"
+    grep -q 'curl .*--data @-' <<<"$body"
+    # The password never appears as a command argument.
+    run ! grep -qE '(curl|jq|python3)[^|]*\$TORRENT_NEW_PASS' <<<"$body"
+    # Only "not ready" is retried; a 401 would count toward qBittorrent's IP ban.
+    grep -q 'case "\$code" in 000 | 5??) ;; \*) break ;; esac' <<<"$body"
+    grep -q '.bypass_local_auth == false and .bypass_auth_subnet_whitelist_enabled == false' <<<"$body"
+    # qBittorrent 5.2 answers a good login with 204 and a SID cookie (measured).
+    grep -qF '[[ "$code" != "200" && "$code" != "204" ]] || ! grep -q '"'"'SID'"'"' "$jar"' <<<"$body"
+    grep -q 'rm -f -- "\$jar"' <<<"$body"
 }
 
 @test "read_input_file names a removed key instead of calling it unknown" {
@@ -1880,8 +2043,7 @@ EOF
     grep -q -- '--no-mac-metadata -cf - \$send_files |' <<<"$body"
     grep -q 'send_files="\$send_files wireguard/sunucu/wg0.conf"' <<<"$body"
     grep -qF '"${f##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}\.conf$' <<<"$body"
-    grep -q 'send_files="\$send_files qbittorrent/qBittorrent.conf"' <<<"$body"
-    run ! grep -qE 'categories.json|watched_folders|feeds.json' <<<"$body"
+    run ! grep -qiE 'qbittorrent' <<<"$body"
     grep -q 'anahtar/parola içerdiği için 600 olmalı' <<<"$body"
     grep -q -- '--no-same-owner -xf -' <<<"$body"
     run ! grep -qE 'input_files|fetch_wireguard_output|OUTPUT_' <<<"$body"
@@ -1999,20 +2161,19 @@ EOF
     eval "$(awk '/^snapshot_note\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     source "$V2_ROOT/config/defaults.env"
     RESTORE_DIR="$TMP/restore"
-    mkdir -p "$RESTORE_DIR/wireguard/sunucu" "$RESTORE_DIR/qbittorrent/rss"
+    mkdir -p "$RESTORE_DIR/wireguard/sunucu"
     snapshot_server_conf >"$RESTORE_DIR/wireguard/sunucu/wg0.conf"
     snapshot_profile >"$RESTORE_DIR/wireguard/iph0.conf"
     snapshot_profile >"$RESTORE_DIR/wireguard/mac.book_1.conf"
-    printf '[Preferences]\n' >"$RESTORE_DIR/qbittorrent/qBittorrent.conf"
-    SNAPSHOT_PEERS=0 SNAPSHOT_WG_PROFILES=0 SNAPSHOT_QB=0
+    SNAPSHOT_PEERS=0 SNAPSHOT_WG_PROFILES=0
     validate_snapshot
     [ "$SNAPSHOT_PEERS" = 2 ]
     [ "$SNAPSHOT_WG_PROFILES" = 2 ]
-    [ "$SNAPSHOT_QB" = 1 ]
-    [ "$(snapshot_note)" = "WireGuard sunucu anahtarı + 2 peer, 2 profil; qBittorrent var (hesap dahil)" ]
+    [ "$(snapshot_note)" = "WireGuard sunucu anahtarı + 2 peer, 2 profil" ]
     # Anything else stops the install before a change.
     local extra
-    for extra in qbittorrent/evil.sh qbittorrent/categories.json qbittorrent/rss/feeds.json \
+    # qBittorrent is no longer pulled (DD-129): its file is refused too.
+    for extra in qbittorrent/qBittorrent.conf qbittorrent/evil.sh \
         wireguard/sunucu/other.conf "wireguard/bad name.conf" wireguard/x/y.conf; do
         mkdir -p "$(dirname "$RESTORE_DIR/$extra")"
         printf 'x\n' >"$RESTORE_DIR/$extra"
@@ -2021,12 +2182,10 @@ EOF
         case "$output" in *"hazır ayarlar"*) ;; *) false ;; esac
         rm -f "$RESTORE_DIR/$extra"
     done
-    mv "$RESTORE_DIR/qbittorrent/qBittorrent.conf" "$TMP/qb.conf"
-    ln -s /etc/passwd "$RESTORE_DIR/qbittorrent/qBittorrent.conf"
+    ln -s /etc/passwd "$RESTORE_DIR/wireguard/linked.conf"
     run validate_snapshot
     [ "$status" -ne 0 ]
-    rm -f "$RESTORE_DIR/qbittorrent/qBittorrent.conf"
-    mv "$TMP/qb.conf" "$RESTORE_DIR/qbittorrent/qBittorrent.conf"
+    rm -f "$RESTORE_DIR/wireguard/linked.conf"
     SNAPSHOT_MAX_BYTES=10
     run validate_snapshot
     case "$output" in *"çok büyük"*) ;; *) false ;; esac
@@ -2037,9 +2196,8 @@ EOF
     [ ! -e "$RESTORE_DIR/wireguard" ]
 }
 
-@test "snapshot restores happen only where the server has nothing" {
+@test "the WireGuard snapshot is restored only where the server has nothing" {
     eval "$(awk '/^restore_wireguard_snapshot\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^restore_qbittorrent_snapshot\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     log() { printf '%s %s\n' "$1" "$2" >>"$TMP/log"; }
     install() {
         local dir=0 a=()
@@ -2049,15 +2207,12 @@ EOF
         done
         if [ "$dir" = 1 ]; then mkdir -p "${a[@]}"; else cp "${a[0]}" "${a[1]}"; fi
     }
-    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; [ "$1" != inspect ] || echo true; }
     RESTORE_DIR="$TMP/restore" WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_CLIENTS_DIR="$TMP/etc/wireguard/clients"
-    QBITTORRENT_DATA_DIR="$TMP/qb" DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
     WG_ENDPOINT_HOST=203.0.113.10 WG_PUBLIC_PORT=61001 SNAPSHOT_PEERS=2
-    mkdir -p "$RESTORE_DIR/wireguard/sunucu" "$RESTORE_DIR/qbittorrent"
+    mkdir -p "$RESTORE_DIR/wireguard/sunucu"
     snapshot_server_conf >"$RESTORE_DIR/wireguard/sunucu/wg0.conf"
     snapshot_profile >"$RESTORE_DIR/wireguard/iph0.conf"
     snapshot_profile 203.0.113.9 >"$RESTORE_DIR/wireguard/old.conf"
-    printf '[Preferences]\nWebUI\\Username=me\n' >"$RESTORE_DIR/qbittorrent/qBittorrent.conf"
 
     # Fresh server: everything goes in as is.
     restore_wireguard_snapshot
@@ -2065,33 +2220,16 @@ EOF
     cmp "$RESTORE_DIR/wireguard/sunucu/wg0.conf" "$WG_CONF_FILE"
     cmp "$RESTORE_DIR/wireguard/iph0.conf" "$WG_CLIENTS_DIR/iph0.conf"
     grep -q '^WARN 1 cihaz profilinin Endpoint' "$TMP/log"
-    restore_qbittorrent_snapshot
-    [ "$QB_RESTORED" = 1 ]
-    cmp "$RESTORE_DIR/qbittorrent/qBittorrent.conf" "$TMP/qb/qBittorrent/qBittorrent.conf"
-    [ "$(ls "$TMP/qb/qBittorrent")" = qBittorrent.conf ]
-    # The running container is stopped before its file changes, then started.
-    grep -q '^stop qbittorrent$' "$TMP/docker-calls"
-    grep -q '^start qbittorrent$' "$TMP/docker-calls"
 
     # Existing server config: the server is the truth, nothing is touched.
     printf 'server-own\n' >"$WG_CONF_FILE"
-    printf 'server-own\n' >"$TMP/qb/qBittorrent/qBittorrent.conf"
-    rm -f "$TMP/docker-calls"
     restore_wireguard_snapshot
-    restore_qbittorrent_snapshot
     [ "$WG_RESTORED" = 0 ]
-    [ "$QB_RESTORED" = 0 ]
     [ "$(cat "$WG_CONF_FILE")" = server-own ]
-    [ "$(cat "$TMP/qb/qBittorrent/qBittorrent.conf")" = server-own ]
-    [ ! -e "$TMP/docker-calls" ]
     grep -q 'kurulum/wireguard kullanılmadı' "$TMP/log"
-    grep -q 'kurulum/qbittorrent kullanılmadı' "$TMP/log"
 }
 
 @test "snapshot restores are wired into the stages and the runtime copy is removed" {
-    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
-    awk '/ensure_qbittorrent_dir$/ {a = NR} /restore_qbittorrent_snapshot$/ {b = NR}
-         /render_template .*compose.yaml/ {c = NR} END {exit !(a && b && c && a < b && b < c)}' <<<"$stage4"
     stage5="$(awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh")"
     awk '/restore_wireguard_snapshot$/ {a = NR} /^    ensure_wireguard$/ {b = NR}
          END {exit !(a && b && a < b)}' <<<"$stage5"
@@ -2104,16 +2242,17 @@ EOF
 
 @test "ayarlar.command mirrors server settings into kurulum/ without printing them" {
     local repo="$TMP/repo" srv="$TMP/srv"
-    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$srv/etc/wireguard/clients" \
-        "$srv/etc/master-stack/qbittorrent/qBittorrent" "$TMP/bin"
+    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$repo/kurulum/qbittorrent" \
+        "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
     cp "$V2_ROOT/../ayarlar.command" "$repo/"
     cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
     printf 'SSH_HOST=nrm\nWEBDAV_PASS=never-read\n' >"$repo/kurulum/kurulum.env"
     touch "$srv/etc/master-stack/state.env"
     snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
     snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
+    # A v2-93 pull left a qBittorrent copy with a password hash: it is removed.
     printf '[Preferences]\nWebUI\\Password_PBKDF2="@ByteArray(secret-hash)"\n' \
-        >"$srv/etc/master-stack/qbittorrent/qBittorrent/qBittorrent.conf"
+        >"$repo/kurulum/qbittorrent/qBittorrent.conf"
     printf 'stale\n' >"$repo/kurulum/wireguard/gone.conf"
     # Fake ssh: keep the remote script for inspection and send the fixture tree
     # the way the server would (paths relative to /).
@@ -2129,14 +2268,14 @@ EOF
     [ -f "$repo/kurulum/wireguard/sunucu/wg0.conf" ]
     cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
     cmp "$srv/etc/wireguard/clients/iph0.conf" "$repo/kurulum/wireguard/iph0.conf"
-    cmp "$srv/etc/master-stack/qbittorrent/qBittorrent/qBittorrent.conf" "$repo/kurulum/qbittorrent/qBittorrent.conf"
+    [ ! -e "$repo/kurulum/qbittorrent" ]
     [ ! -e "$repo/kurulum/wireguard/gone.conf" ]
-    for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf" \
-        "$repo/kurulum/qbittorrent/qBittorrent.conf"; do
+    for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf"; do
         [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
     done
     pulled="$output"
     case "$pulled" in *"profil gone"*"silindi"*) ;; *) false ;; esac
+    case "$pulled" in *"qBittorrent qBittorrent.conf"*"silindi"*) ;; *) false ;; esac
     run ! grep -qE 'AAAA|BBBB|secret-hash|never-read' <<<"$pulled"
     [ -z "$(find "$repo/kurulum" -name '.ayarlar.*')" ]
     # A second pull reports unchanged files.
@@ -2144,10 +2283,9 @@ EOF
     case "$output" in *"profil iph0"*"aynı"*) ;; *) false ;; esac
     # The server side tars only known names, relative to /, and needs an install.
     grep -q 'tar -C / -cf - -- "\${list\[@\]}"' "$TMP/ssh-script"
-    grep -qF '[[ ! -f "$qb_dir/qBittorrent.conf" ]] || list+=("${qb_dir#/}/qBittorrent.conf")' "$TMP/ssh-script"
-    run ! grep -qE 'categories|watched_folders|feeds' "$TMP/ssh-script"
+    run ! grep -qiE 'qbittorrent|categories|watched_folders|feeds' "$TMP/ssh-script"
     grep -q 'sunucuda kurulum yok' "$TMP/ssh-script"
-    grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients /etc/master-stack/qbittorrent/qBittorrent$' "$TMP/ssh-args"
+    grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients$' "$TMP/ssh-args"
     # Static: bash 3.2, only SSH_HOST read, no plain copy tools, nothing sent.
     local cmd="$V2_ROOT/../ayarlar.command"
     /bin/bash -n "$cmd"

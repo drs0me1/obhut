@@ -112,14 +112,14 @@ the ones agreed on 2026-08-05:
   - Stage 0 validates every value, prints them without passwords and asks for
     one confirmation before `config.env` is written. Re-runs still ask about
     full-upgrade and image pull; an interactive TTY stays required.
-- **Pulled settings are restored only where the server has none (DD-128).**
-  - `ayarlar.command` (repository root, macOS) copies the server's settings
-    into `kurulum/`, mode `600`, printing no content:
+- **Pulled WireGuard settings are restored only where the server has none (DD-128).**
+  - `ayarlar.command` (repository root, macOS) copies the server's WireGuard
+    settings into `kurulum/`, mode `600`, printing no content:
     - `wg0.conf` into `wireguard/sunucu/`;
     - the device profiles into `wireguard/<name>.conf`, mirrored, so a local
-      profile the server no longer has is removed;
-    - qBittorrent's `qBittorrent.conf` (settings and account) into
-      `qbittorrent/`. Categories, RSS and watched folders are not pulled.
+      profile the server no longer has is removed.
+    - qBittorrent is not pulled (**DD-129**). A `kurulum/qbittorrent/` copy
+      left by v2-93 is deleted.
   - The launcher sends those files with `kurulum.env` (each must be mode
     `600`).
   - Stage 0 moves them into the root-only `RESTORE_DIR` in `/run` before the
@@ -131,10 +131,8 @@ the ones agreed on 2026-08-05:
       WireGuard subnets in each `[Peer]`, with valid, unique peer names. Any
       `PostUp`-style line stops the install.
     - Profiles are checked the same way.
-  - Stage 4 places qBittorrent's files only if `qBittorrent.conf` is absent,
-    stopping a running container first. Stage 5 places `wg0.conf` and the
-    profiles only if `wg0.conf` is absent, and warns about profiles whose
-    `Endpoint` is not this server.
+  - Stage 5 places `wg0.conf` and the profiles only if `wg0.conf` is absent,
+    and warns about profiles whose `Endpoint` is not this server.
   - Otherwise the server's own files win and are not touched.
   - `RESTORE_DIR` is removed after stage 5, and by the launcher on exit.
 
@@ -172,12 +170,29 @@ the ones agreed on 2026-08-05:
   `qbittorrent`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
   **DD-127**, **DD-120**).
 - qBittorrent (LinuxServer image) keeps `/config` on
-  `/etc/master-stack/qbittorrent`.
-  - The installer writes no qBittorrent settings and no account; both live in
-    qBittorrent's own `qBittorrent.conf`.
-  - On the first start the image copies its default file and prints a
-    temporary `admin` password to the container log (read it in Dozzle). The
-    operator sets the account and preferences in the web UI (**DD-127**).
+  `/etc/master-stack/qbittorrent`, and its settings come from the installer
+  (**DD-129**):
+  - `templates/qBittorrent.conf` lists the managed keys: the operator's
+    settings, derived from a clean-file diff, plus
+    `WebUI\LocalHostAuth=true` and `WebUI\AuthSubnetWhitelistEnabled=false`.
+    `TORRENT_USER`/`TORRENT_PASS` supply `WebUI\Username` and
+    `WebUI\Password_PBKDF2`.
+  - Stage 4 compares those keys with `QBITTORRENT_CONF_FILE` on every run.
+    - Nothing differs: nothing is written and the container is not touched.
+    - Something differs: qBittorrent is stopped (it rewrites its file on
+      exit), only the differing keys are set in place or added, and it is
+      started again.
+    - No file: it is created from the template.
+    - Keys qBittorrent adds itself are kept.
+  - The password is stored only as qBittorrent's PBKDF2-SHA512 hash (100000
+    iterations, 16-byte salt), computed by `python3` from stdin. An existing
+    hash is kept when it verifies against `TORRENT_PASS`.
+  - A setting changed in the UI for a managed key returns to the template on
+    the next run; unmanaged settings stay.
+  - Stage 7 logs in with the input account (password on stdin; success is
+    `204`/`200` plus a `SID` cookie). It stops on the first refusal, because
+    qBittorrent bans an IP after repeated failures. It then requires the
+    username and both authentication bypasses off.
   - The web UI and peer ports come from `WEBUI_PORT`/`TORRENTING_PORT`, which
     the image passes on the command line at every start, so the config file
     cannot move them.
@@ -773,7 +788,7 @@ Invariants:
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
-  the container volumes, qBittorrent's `/config` (its own settings and account),
+  the container volumes, qBittorrent's `/config` apart from the managed keys,
   `wg0.conf` (its key and every `[Peer]` block are kept; only `[Interface]`
   follows the installer), `/etc/wireguard/clients/`, the operator's chosen
   local domain.
@@ -883,7 +898,8 @@ An installer run is successful when every one of these holds on the target host.
     through Caddy (`Host:` + `${TS_IPV4}`). Without a login, Dozzle's
     `/api/events/stream` answers `401` and qBittorrent's
     `/api/v2/app/version` answers `403`. A `200` there means a localhost or
-    subnet authentication bypass is on (**DD-127**).
+    subnet authentication bypass is on (**DD-127**). A login with the input
+    account succeeds (**DD-129**).
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
     socket), nor on `0.0.0.0`, WAN, or LAN.

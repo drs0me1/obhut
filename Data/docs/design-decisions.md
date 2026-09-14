@@ -5780,6 +5780,11 @@ failure with an early, named one.
 
 ### DD-127: qBittorrent returns; its settings and account are its own (2026-09-14)
 
+- **Settings part superseded by DD-129 (2026-09-14):** the installer now writes
+  qBittorrent's managed settings from a template and the account from
+  `TORRENT_USER`/`TORRENT_PASS`. The image choice, ports, the stage 7 `403`
+  check and the Transmission gate stand.
+
 - **Context:** the user found Transmission slow again and asked to go back to
   qBittorrent.
   - They were told that the v2-84 preferences carried over from Transmission
@@ -5860,6 +5865,11 @@ failure with an early, named one.
       for the operator to delete.
 
 ### DD-128: Pulled WireGuard and qBittorrent settings rebuild a server; restored only where absent (2026-09-14)
+
+- **qBittorrent part removed by DD-129 (2026-09-14):** qBittorrent is no longer
+  pulled or restored. `ayarlar.command` pulls WireGuard only and deletes a
+  `kurulum/qbittorrent/` copy left by v2-93. Stage 0 now rejects a
+  `qbittorrent/` file, and the WireGuard part stands.
 
 - **Context:** the user wants a reset server back in one pass, with the same
   WireGuard devices working and qBittorrent configured as they left it.
@@ -5980,6 +5990,126 @@ failure with an early, named one.
       qBittorrent's original `/config` (torrent state included) went back
       while stopped. Only its lockfile and log changed on start. The real
       accounts were restored, and the pulled test copies deleted.
+
+### DD-129: The installer writes qBittorrent's settings from a template and the account from kurulum.env (2026-09-14)
+
+- **Context:** after DD-128 the user preferred no file pulling for
+  qBittorrent: its settings should be part of the installer, the password in
+  `kurulum.env`.
+  - To take only real changes, qBittorrent was reset on `nrm` and its clean
+    file kept. The user then set everything in the UI, and the two files were
+    compared.
+  - A reset was repeated once when the user picked a wrong option.
+- **What the diff showed:** 22 keys in the clean file and 48 after.
+  - The user's changes:
+    - `Session\MaxActiveDownloads/Torrents/Uploads=12`;
+    - `MaxConnections=800`, `MaxConnectionsPerTorrent=220`;
+    - `MaxUploads=120`, `MaxUploadsPerTorrent=64`;
+    - `Preallocation=true`, `RefreshInterval=600`, `TempPathEnabled=true`;
+    - `General\Locale=en`.
+  - Written by qBittorrent when options are saved, at their defaults, and not
+    managed: `FileLogger\*`, `AutoDeleteAddedTorrentFile`,
+    `MailNotification\req_auth`, `WebUI\AuthSubnetWhitelist`, RSS
+    `AutoDownloader\*`.
+  - DHT, PeX, LSD and anonymous mode stayed at their defaults this time, unlike
+    the earlier configuration.
+- **Decision:**
+  - **`templates/qBittorrent.conf`** holds the managed keys:
+    - The clean-file keys the image default provides: `[AutoRun]
+      enabled=false`, save/temp paths, `QueueingSystemEnabled`,
+      `[LegalNotice] Accepted`, `PortForwardingEnabled=false`, `UPnP=false`,
+      `WebUI\Address=*` and `ServerDomains=*`. Without them a fresh file
+      would lack what the image would have copied.
+    - The user's changes.
+    - `WebUI\LocalHostAuth=true` and `WebUI\AuthSubnetWhitelistEnabled=false`,
+      so the UI cannot be opened without a login through Caddy.
+    - Not managed: ports (`Session\Port`, `WebUI\Port`,
+      `Connection\PortRangeMin`: the image passes them on the command line),
+      generated values (`Session\SSL\Port`, `MigrationVersion`, `Cookies`)
+      and the account lines.
+  - **Input:** `TORRENT_USER` (`^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`) and
+    `TORRENT_PASS` (at least `TORRENT_MIN_PASSWORD_LENGTH`, 8), required.
+    `python3` joins the base packages.
+  - **`sync_qbittorrent_config`** (stage 4, before Compose):
+    - Flattens the template, adds `WebUI\Username` and
+      `WebUI\Password_PBKDF2`, and compares key by key (INI-aware awk; keys
+      contain backslashes and values `=`).
+    - No difference: nothing happens.
+    - A difference: `docker stop qbittorrent` first, because qBittorrent
+      rewrites its file on exit. The merge then sets managed keys in place,
+      adds missing ones to their section and missing sections at the end,
+      drops a duplicate managed key and keeps every other line. The file is
+      written atomically (`0600`, `DOWNLOADS_UID:GID`), and the container
+      started again.
+    - The log names the changed keys, never a value.
+  - **Password hash:** qBittorrent's format `"@ByteArray(salt:key)"`,
+    PBKDF2-HMAC-SHA512 with 100000 iterations, a 16-byte salt and a 64-byte
+    key.
+    - `python3` reads the password from stdin, and the existing hash from the
+      environment rather than argv.
+    - A new salt every run would be a false change on every run, so the
+      existing hash is verified against `TORRENT_PASS` and kept when it
+      matches. This is the WebDAV bcrypt pattern.
+  - **Stage 7 `qbit_login_check`:**
+    - Logs in on loopback with the input account; the body is urlencoded by
+      `python3` from stdin and posted with `curl --data @-`.
+    - qBittorrent 5.2.3 answers a good login with `204` (measured), so `200`
+      or `204` plus a `SID` cookie counts as success.
+    - Only "not ready" (`000`/`5xx`) is retried. A refusal stops at once,
+      because qBittorrent bans an IP after repeated failures, and every Caddy
+      request arrives from the same Docker gateway.
+    - It then requires the username and both bypasses off in
+      `/api/v2/app/preferences`.
+    - `TORRENT_NEW_PASS` is unset afterwards.
+  - **Removed:** `restore_qbittorrent_snapshot` and the qBittorrent parts of
+    `ayarlar.command`, the launcher and `validate_snapshot` (DD-128).
+- **Why this over pulling the file:**
+  - The template holds only settings, reviewed in Git, while the file held a
+    password hash on the Mac.
+  - Password changes follow `kurulum.env` like every other account.
+  - A reset server comes up configured without a prior pull.
+- **Trade-off:**
+  - A managed setting changed in the UI returns to the template on the next
+    run. Changing it for good means editing the template.
+  - If a future qBittorrent renames a managed key, every run would see a
+    difference and restart the client. The log names the key, so this cannot
+    go unnoticed.
+- **Verification:**
+  - bats 132 ok. `shellcheck -x` is clean.
+  - New tests cover:
+    - the template contents, and the absence of ports, generated keys and the
+      account;
+    - PBKDF2 format, salt and key length, verify/mismatch/bad-format exit
+      codes, fresh salts and a known vector;
+    - diff/merge with in-place change, added keys and sections, preserved
+      unmanaged lines, `=` in values, duplicate dropping, idempotence and a
+      file built from nothing;
+    - the sync: write once, no-op, UI-change revert plus a new password with
+      stop/start, and no password or hash in the log;
+    - the login check: stdin only, no retry on refusal, `204` plus `SID`.
+  - Six mutations were each caught (after a duplicate-key fixture was added
+    for the merge).
+  - **Live on `nrm`** (the operator's host). The real account files and the
+    user's own qBittorrent `/config` were saved and put back byte-identical;
+    scratch inputs with `TORRENT_USER=admin`:
+    - First run over the user's configured qBittorrent: the diff was exactly
+      `WebUI\AuthSubnetWhitelistEnabled`, `WebUI\LocalHostAuth` and the two
+      account lines, confirming that the template matches the user's
+      settings.
+      - The login check failed on `HTTP 204`, qBittorrent's success code, and
+        was fixed.
+      - The Python-generated hash logged in (`204` with a `SID` cookie).
+    - Re-run: "şablonla aynı; dokunulmadı". The container start time and the
+      file hash were unchanged.
+    - A UI change through the API (`max_active_downloads=3`, `dht=false`)
+      logged exactly `[BitTorrent] Session\MaxActiveDownloads`. The API
+      then showed 12, and `dht` stayed false (unmanaged).
+    - A fresh `/config`: "(yeni dosya)", `600 1000:1000`, no temporary
+      password. The API showed every template value (12/12/12, 800/220,
+      120/64, preallocation, 600 ms, temp path, `en`, queueing, paths, UPnP
+      off, ports 61005/61006) and the `403` check held.
+    - After `docker restart` made qBittorrent rewrite its file (47 lines),
+      the next run was still a no-op.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

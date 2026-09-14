@@ -45,6 +45,37 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-94, qBittorrent settings from a template, account from kurulum.env (DD-129):**
+- The user dropped pulling qBittorrent and asked the installer to write it,
+  with the password in `kurulum.env`.
+- To isolate real changes:
+  - qBittorrent on `nrm` was reset to a clean file; the old config was kept
+    at `/root/qbittorrent-onceki-20260914-182545`.
+  - The user set it up in the UI; a second reset was needed after a wrong
+    pick.
+  - The two files were diffed into `templates/qBittorrent.conf`.
+  - DHT/PeX/LSD and anonymous mode stayed default this time.
+- Code:
+  - `TORRENT_USER`/`TORRENT_PASS` inputs and `python3` in base packages.
+  - `qbit_pbkdf2`, which keeps a verifying hash.
+  - INI-aware `qbit_conf_diff`/`qbit_conf_merge`.
+  - `sync_qbittorrent_config`, which stops the client only to change.
+  - Stage 7 `qbit_login_check`: qBittorrent 5.2.3 returns `204` on success,
+    found live.
+  - The qBittorrent parts of DD-128 were removed.
+- Live on `nrm`:
+  - sync over the user's config: only the account and auth guards differed;
+  - no-op re-run;
+  - API change reverted;
+  - fresh config correct;
+  - no-op after qBittorrent's own rewrite.
+  - The user's qBittorrent config and the real accounts were restored
+    byte-identical. bats 132.
+- Open:
+  - The user adds `TORRENT_USER`/`TORRENT_PASS` (their qBittorrent login) to
+    `kurulum/kurulum.env`.
+  - Delete `/root/qbittorrent-onceki-*` on `nrm` if not needed.
+
 **2026-09-14 — v2-93, ayarlar.command and restore-where-absent (DD-128):**
 - The old Transmission dirs on `nrm` were deleted at the user's request.
 - New:

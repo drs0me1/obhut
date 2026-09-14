@@ -1,11 +1,11 @@
 #!/bin/bash
-# Sunucudaki hazır ayarları kurulum/ klasörüne çeker (DD-128). Repo kökünde çift
-# tıklanır; Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
+# Sunucudaki hazır WireGuard ayarlarını kurulum/ klasörüne çeker (DD-128). Repo
+# kökünde çift tıklanır; Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
 #   kurulum/wireguard/sunucu/wg0.conf  sunucu anahtarı + peer listesi
 #   kurulum/wireguard/<ad>.conf        cihaz profilleri (sunucudakilerin aynası)
-#   kurulum/qbittorrent/qBittorrent.conf  qBittorrent ayarları, hesap dahil
 # Sunucu sıfırdan kurulduğunda <sürüm>.command bunları gönderir ve kurulum,
 # sunucuda karşılıkları yoksa yerine koyar. Dosya içerikleri ekrana yazılmaz.
+# qBittorrent çekilmez: ayarları şablondan, hesabı kurulum.env'den gelir (DD-129).
 set -Eeuo pipefail
 umask 077
 
@@ -13,7 +13,7 @@ ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
 INPUT_FILE="$ROOT/kurulum/kurulum.env"
 DEFAULTS_FILE="$ROOT/Data/config/defaults.env"
 WG_DIR="$ROOT/kurulum/wireguard"
-QB_DIR="$ROOT/kurulum/qbittorrent"
+OLD_QB_DIR="$ROOT/kurulum/qbittorrent"
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
 
 pause_exit() {
@@ -39,9 +39,8 @@ HOST="$(awk 'index($0, "SSH_HOST=") == 1 {print substr($0, 10); exit}' "$INPUT_F
 [[ "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]] || fail "kurulum.env içinde SSH_HOST boş ya da geçersiz"
 REMOTE_WG_CONF="$(default_of WG_CONF_FILE)"
 REMOTE_WG_CLIENTS="$(default_of WG_CLIENTS_DIR)"
-REMOTE_QB_DIR="$(default_of QBITTORRENT_DATA_DIR)/qBittorrent"
 REMOTE_STATE="$(default_of STATE_FILE)"
-for p in "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_QB_DIR" "$REMOTE_STATE"; do
+for p in "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_STATE"; do
     [[ "$p" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "defaults.env yolu beklenmeyen biçimde: $p"
 done
 
@@ -49,21 +48,20 @@ work="$(mktemp -d "$ROOT/kurulum/.ayarlar.XXXXXX")"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 
-printf '\n=== Hazır ayarları çek ===\n'
+printf '\n=== Hazır WireGuard ayarlarını çek ===\n'
 echo "==> Sunucu: $HOST"
 # Sunucu yalnız var olan dosyaları tar ile gönderir; içerik bu Mac'te diske
 # iner, ekrana değil. Göreli yollar, sunucunun kök dizinine göredir.
 if ! ssh -o BatchMode=yes -o ClearAllForwardings=yes -o ConnectTimeout=20 "$HOST" bash -s -- \
-    "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_QB_DIR" >"$work/ayarlar.tar" <<'REMOTE'
+    "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" >"$work/ayarlar.tar" <<'REMOTE'
 set -euo pipefail
-state="$1" wg_conf="$2" wg_clients="$3" qb_dir="$4"
+state="$1" wg_conf="$2" wg_clients="$3"
 [[ -f "$state" ]] || { echo "sunucuda kurulum yok ($state)" >&2; exit 3; }
 list=()
 [[ ! -f "$wg_conf" ]] || list+=("${wg_conf#/}")
 for f in "$wg_clients"/*.conf; do
     [[ ! -f "$f" ]] || list+=("${f#/}")
 done
-[[ ! -f "$qb_dir/qBittorrent.conf" ]] || list+=("${qb_dir#/}/qBittorrent.conf")
 [[ "${#list[@]}" -gt 0 ]] || { echo "sunucuda çekilecek ayar yok" >&2; exit 4; }
 tar -C / -cf - -- "${list[@]}"
 REMOTE
@@ -76,7 +74,6 @@ rm -f "$work/ayarlar.tar"
 
 src_wg="$work/x${REMOTE_WG_CONF}"
 src_clients="$work/x${REMOTE_WG_CLIENTS}"
-src_qb="$work/x${REMOTE_QB_DIR}"
 
 # Değişti mi? Yalnız özetler karşılaştırılır.
 changed() {
@@ -130,12 +127,12 @@ else
     echo "  WireGuard: sunucuda yapılandırma yok; atlandı"
 fi
 
-if [[ -f "$src_qb/qBittorrent.conf" ]]; then
-    grep -q 'Password_PBKDF2' "$src_qb/qBittorrent.conf" ||
-        echo "  UYARI: qBittorrent hesabı henüz ayarlanmamış (parola yok); arayüzden ayarlayıp yeniden çekin" >&2
-    put "$src_qb/qBittorrent.conf" "$QB_DIR/qBittorrent.conf" "qBittorrent qBittorrent.conf"
-else
-    echo "  qBittorrent: sunucuda ayar dosyası yok; atlandı"
+# v2-93'ün çektiği qBittorrent kopyası artık kullanılmıyor; parola özeti taşıdığı
+# için kaldırılır.
+if [[ -f "$OLD_QB_DIR/qBittorrent.conf" ]]; then
+    rm -f "$OLD_QB_DIR/qBittorrent.conf"
+    rmdir "$OLD_QB_DIR" 2>/dev/null || true
+    printf '  %-40s silindi (artık kurulum.env + şablon)\n' "qBittorrent qBittorrent.conf"
 fi
 
 cat <<'EOF'

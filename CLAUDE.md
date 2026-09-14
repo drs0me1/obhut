@@ -43,7 +43,7 @@ state. Treat every change as production-infrastructure work.
   changes, wipes, and reboots without per-turn approval. Drive the installer
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
-  `admin` / `12345test` for Dozzle; `admin` / `12345test1234`
+  `admin` / `12345test` for Dozzle and qBittorrent (`TORRENT_USER`/`TORRENT_PASS`); `admin` / `12345test1234`
   for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the
@@ -94,9 +94,9 @@ state. Treat every change as production-infrastructure work.
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
 | `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**) |
-| `ayarlar.command` (root) | Pulls WireGuard (`wg0.conf`, profiles) and qBittorrent settings into `kurulum/` without printing them (**DD-128**) |
+| `ayarlar.command` (root) | Pulls WireGuard (`wg0.conf`, profiles) into `kurulum/` without printing them (**DD-128**) |
 | `kurulum/wireguard/` (root) | Device profiles, plus `sunucu/wg0.conf` (server key + peers), mode 600; sent only for restore on a server without `wg0.conf` |
-| `kurulum/qbittorrent/` (root) | `qBittorrent.conf` only (settings incl. account hash), mode 600; restored only where absent |
+| `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |

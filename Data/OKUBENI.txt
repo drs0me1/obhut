@@ -1,12 +1,11 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-93.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-94.command)
   wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR (kurulumdan sonra)
-  ayarlar.command            hazır ayarları çek: WireGuard (sunucu anahtarı, peer'lar, profiller) + qBittorrent
+  ayarlar.command            hazır WireGuard ayarlarını çek: sunucu anahtarı, peer'lar, profiller
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
   kurulum/wireguard/         cihaz profilleri; sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
-  kurulum/qbittorrent/       qBittorrent.conf: qBittorrent ayarları, hesap dahil (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
@@ -34,23 +33,23 @@ A) İlk kurulum
   1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
   3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun
-  4. qBittorrent: http://torrent.ayc → kullanıcı admin, geçici parola Dozzle'da qbittorrent logunda;
-     arayüzden kullanıcı adı/parola ve tercihleri (DHT, kuyruk, klasörler) ayarlayın
-  5. ayarlar.command (Mac'te WireGuard kapalıyken) → WireGuard + qBittorrent ayarları kurulum/'a iner
-     (peer ekleyip çıkardıktan ya da qBittorrent ayarı değiştirdikten sonra yeniden çalıştırın)
-  (Dozzle ve FileBrowser girişleri kurulum.env'den; qBittorrent kendi arayüzünden)
-  v2-92'ye geçerken: kurulum.env'den TRANSMISSION_USER ve TRANSMISSION_PASS satırlarını silin;
+  4. ayarlar.command (Mac'te WireGuard kapalıyken) → WireGuard ayarları kurulum/'a iner
+     (peer ekleyip çıkardıktan sonra yeniden çalıştırın)
+  (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
+   Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-94'e geçerken: kurulum.env'e TORRENT_USER= ve TORRENT_PASS= satırlarını ekleyin
+  (qBittorrent arayüzünde kullandığınız kullanıcı adı ve parola); TRANSMISSION_* satırları silinmiş olmalı;
   eski sunucuda kurulum durursa: docker rm -f transmission
 
 B) Sıfırlama → yeniden kurulum
   0. Sıfırlamadan önce: ayarlar.command (son hali kurulum/'da olsun)
      Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
   1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL
-     Özette "Hazır ayarlar: WireGuard … ; qBittorrent var" görünür → E
-     Kurulum WireGuard anahtarını, peer'ları ve qBittorrent ayarlarını geri koyar; cihazlara dokunmanız gerekmez
+     Özette "Hazır ayarlar: WireGuard sunucu anahtarı + … peer" görünür → E
+     Kurulum WireGuard anahtarını ve peer'ları geri koyar (cihazlara dokunmanız gerekmez);
+     qBittorrent şablondaki ayarlar ve kurulum.env hesabıyla hazır gelir
   2. Tailscale paneli + Infuse adresi
-  (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin;
-   qBittorrent geçici parolayla açılır)
+  (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin)
 
 Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + ayarlar.command'ın çektikleri).
 Bu klasörü güvende tutun. Eski container-backup arşivleri (backup/) artık hiçbir şeyce okunmaz; silebilirsiniz.

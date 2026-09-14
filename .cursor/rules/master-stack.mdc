@@ -99,7 +99,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Compose projesi `/root/docker` altında tutulacak.
 - Compose içerisinde şu servisler yer alacak:
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
-  - qBittorrent (Transmission'dan geri dönüldü, DD-127; kurulum ayar/hesap yazmaz, hesap ve tercihler arayüzden; giriş zorunlu)
+  - qBittorrent (Transmission'dan geri dönüldü, DD-127; yönetilen ayarlar `templates/qBittorrent.conf`, hesap `TORRENT_USER`/`TORRENT_PASS`, parola yalnız PBKDF2 özeti, DD-129; giriş zorunlu)
   - Filebrowser (classic; hesap kurulum girdi dosyasından gelir ve her kurulumda ona eşitlenir, parola argv/log'a girmez, DD-118/DD-119)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
@@ -108,7 +108,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 - wg-easy yok; WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır, adresler wg-easy'nin kullandıklarıdır.
 - Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
-- `ayarlar.command` sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`), profilleri ve qBittorrent ayarlarını `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
+- `ayarlar.command` sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`) ve profilleri `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
