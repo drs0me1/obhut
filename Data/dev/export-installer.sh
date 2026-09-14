@@ -13,13 +13,9 @@ MARKER="__MASTER_STACK_ARCHIVE__"
 
 V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/install.sh")"
 [[ -n "$V2_VERSION" ]] || { echo "HATA: V2_VERSION okunamadı" >&2; exit 1; }
-# DD-119/DD-120: girdilerin sunucudaki yeri tek kaynaktan (defaults.env) gelir.
+# DD-119: girdinin sunucudaki yeri tek kaynaktan (defaults.env) gelir.
 INPUT_DIR="$(awk -F= '/^INPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
 [[ "$INPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_DIR /run altında değil: $INPUT_DIR" >&2; exit 1; }
-OUTPUT_DIR="$(awk -F= '/^OUTPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
-OUTPUT_WG_DIR="$(awk -F= '/^OUTPUT_WG_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
-[[ "$OUTPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ && "$OUTPUT_WG_DIR" == "$OUTPUT_DIR"/* ]] ||
-    { echo "HATA: OUTPUT_DIR/OUTPUT_WG_DIR /run altında ve iç içe değil" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
@@ -120,8 +116,6 @@ PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
 REMOTE_INPUT_DIR="$INPUT_DIR"
-REMOTE_OUTPUT_DIR="$OUTPUT_DIR"
-REMOTE_OUTPUT_WG_DIR="$OUTPUT_WG_DIR"
 EOF
     cat <<'BODY_END'
 
@@ -166,10 +160,10 @@ printf 'Sürüm:  %s\n' "$PORTABLE_INSTALLER_VERSION"
 printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
 printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
-# DD-119/DD-120: bütün girdiler .command'ın yanındaki kurulum/ klasöründe:
-# kurulum.env, wireguard/sunucu.key ve wireguard/<cihaz>.conf. Burada yalnız
-# varlıkları, izinleri ve SSH_HOST okunur; parolalara ve anahtarlara bakılmaz,
-# doğrulama sunucuda kurulumun kendisindedir.
+# DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de. Burada
+# yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz, doğrulama
+# sunucuda kurulumun kendisindedir. WireGuard peer'ları sunucuda üretilir
+# (wireguard.command, DD-124): hiçbir anahtar gönderilmez.
 INPUT_LOCAL_DIR="$here/kurulum"
 INPUT_FILE_LOCAL="$INPUT_LOCAL_DIR/kurulum.env"
 if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
@@ -178,27 +172,18 @@ if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
     echo "  ardından: chmod 600 kurulum/kurulum.env" >&2
     pause_exit 1
 fi
-# DD-121: wireguard/ isteğe bağlı. sunucu.key ya da bir peer'ın profili yoksa
-# kurulum üretir ve kurulum bitince buraya geri yazılır.
-input_files=(kurulum.env)
-[[ -f "$INPUT_LOCAL_DIR/wireguard/sunucu.key" ]] && input_files+=(wireguard/sunucu.key)
-for f in "$INPUT_LOCAL_DIR"/wireguard/*.conf; do
-    [[ -f "$f" ]] && input_files+=("wireguard/${f##*/}")
-done
-for f in "${input_files[@]}"; do
-    input_mode="$(stat -f %Lp "$INPUT_LOCAL_DIR/$f")"
-    if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
-        echo "HATA: kurulum/$f izinleri $input_mode; parola ya da anahtar içerdiği için 600 olmalı:" >&2
-        echo "  chmod 600 \"$INPUT_LOCAL_DIR/$f\"" >&2
-        pause_exit 1
-    fi
-done
+input_mode="$(stat -f %Lp "$INPUT_FILE_LOCAL")"
+if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
+    echo "HATA: $INPUT_FILE_LOCAL izinleri $input_mode; parola içerdiği için 600 olmalı:" >&2
+    echo "  chmod 600 \"$INPUT_FILE_LOCAL\"" >&2
+    pause_exit 1
+fi
 HOST="$(awk 'index($0, "SSH_HOST=") == 1 {print substr($0, 10); exit}' "$INPUT_FILE_LOCAL")"
 if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
     echo "HATA: kurulum.env içinde SSH_HOST boş ya da geçersiz (ör. SSH_HOST=nrm)" >&2
     pause_exit 1
 fi
-echo "Sunucu:  $HOST (kurulum/kurulum.env); gönderilecek girdi dosyası: ${#input_files[@]}"
+echo "Sunucu:  $HOST (kurulum/kurulum.env)"
 
 echo "==> Gömülü arşiv açılıyor"
 marker_line="$(grep -n "^${ARCHIVE_MARKER}$" "$self" | head -n1 | cut -d: -f1 || true)"
@@ -272,11 +257,10 @@ grep -E '^V2_VERSION=' "\$remote_root/install.sh"
 echo "SYNC_OK → \$remote_root"
 EOF
 
-# /run tmpfs değilse girdiler diske inerdi: gönderilmez. Yalnız listelenen
-# dosyalar gider (Finder'ın .DS_Store'u, yedek kopyalar gitmez).
-echo "==> Girdiler gönderiliyor → ${HOST}:${REMOTE_INPUT_DIR} (tmpfs)"
+# /run tmpfs değilse girdi diske inerdi: gönderilmez. Yalnız kurulum.env gider.
+echo "==> Girdi gönderiliyor → ${HOST}:${REMOTE_INPUT_DIR} (tmpfs)"
 remote_input_sent=1
-COPYFILE_DISABLE=1 tar -C "$INPUT_LOCAL_DIR" --no-xattrs --no-mac-metadata -cf - "${input_files[@]}" |
+COPYFILE_DISABLE=1 tar -C "$INPUT_LOCAL_DIR" --no-xattrs --no-mac-metadata -cf - kurulum.env |
     ssh "${ssh_base[@]}" "$HOST" "set -e; umask 077; install -d -m 0700 '${REMOTE_INPUT_DIR%/*}'; \
 fs=\$(stat -f -c %T '${REMOTE_INPUT_DIR%/*}'); \
 [ \"\$fs\" = tmpfs ] || { echo \"HATA: ${REMOTE_INPUT_DIR%/*} tmpfs değil (\$fs); girdiler gönderilmedi\" >&2; exit 1; }; \
@@ -284,7 +268,8 @@ rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming'; mkdir -m 0700 '$REMOTE_
 tar -C '$REMOTE_INPUT_DIR.incoming' --no-same-owner -xf -; mv '$REMOTE_INPUT_DIR.incoming' '$REMOTE_INPUT_DIR'"
 
 printf '\n==> Kurulum başlıyor: %s\n' "$HOST"
-printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n\n'
+printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n'
+printf '    WireGuard peer eklemek/çıkarmak: kurulumdan sonra repo kökünde wireguard.command.\n\n'
 
 set +e
 ssh \
@@ -296,38 +281,6 @@ ssh \
 rc=$?
 set -e
 
-# DD-121: kurulumun ürettiği ya da güncellediği WireGuard profilleri (yeni
-# peer'lar, ilk kurulumda sunucu.key) Mac'teki kurulum/wireguard'a alınır.
-# Kurulum yarıda kalsa da denenir: wg0.conf yazıldıysa anahtarlar yalnız orada
-# durur. Sunucudaki kopya ancak dosyalar yerine konduktan sonra silinir.
-fetch_wireguard_output() {
-    local staging="$INPUT_LOCAL_DIR/.wireguard-gelen" f n=0
-    ssh "${ssh_base[@]}" "$HOST" "test -d '$REMOTE_OUTPUT_WG_DIR'" 2>/dev/null || return 0
-    rm -rf "$staging"
-    (umask 077 && mkdir -p "$staging")
-    if ! ssh "${ssh_base[@]}" "$HOST" "tar -C '$REMOTE_OUTPUT_WG_DIR' -cf - ." |
-        (umask 077 && tar -C "$staging" -xf -); then
-        rm -rf "$staging"
-        echo "HATA: WireGuard profilleri alınamadı; sunucuda ${REMOTE_OUTPUT_WG_DIR} içinde duruyor." >&2
-        echo "  Launcher'ı yeniden çalıştırın (sunucu yeniden başlarsa silinir; eksik peer yeniden üretilir)." >&2
-        return 1
-    fi
-    (umask 077 && mkdir -p "$INPUT_LOCAL_DIR/wireguard")
-    chmod 700 "$INPUT_LOCAL_DIR/wireguard"
-    echo "==> WireGuard profilleri alındı → kurulum/wireguard"
-    for f in "$staging"/*; do
-        [[ -f "$f" ]] || continue
-        chmod 600 "$f"
-        mv -f "$f" "$INPUT_LOCAL_DIR/wireguard/"
-        echo "    ${f##*/}"
-        n=$((n + 1))
-    done
-    rm -rf "$staging"
-    ssh "${ssh_base[@]}" "$HOST" "rm -rf '$REMOTE_OUTPUT_DIR'" ||
-        echo "UYARI: sunucudaki ${REMOTE_OUTPUT_DIR} silinemedi; yeniden başlatmada silinir" >&2
-    [[ "$n" -gt 0 ]] || echo "    (dosya yok)"
-}
-fetch_wireguard_output || rc=1
 
 echo
 if [[ "$rc" -eq 0 ]]; then

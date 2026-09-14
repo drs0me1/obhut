@@ -6,8 +6,8 @@ Working guide for any AI assistant in this repository. Read this first.
 
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
-— plus the Git-ignored `kurulum/` (installer inputs), this file and
-`README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
+and `wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs),
+this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
 The installer turns a fresh Debian 13
@@ -44,9 +44,9 @@ state. Treat every change as production-infrastructure work.
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
   `admin` / `12345test` for Dozzle and Transmission; `admin` / `12345test1234`
-  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`; test
-  WireGuard keys and peers in the scratch `wireguard/` (never print real
-  keys; derive or compare them without output). Answer the
+  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Add and
+  remove test peers with `master-wg`/`wireguard.command` (never print a
+  profile; QR codes of test peers only). Answer the
   re-run questions with their defaults and `E` at the confirmation, and report
   what was used. The input file is the truth (**DD-119**): a run rewrites any
   account that differs from it, so save and restore a real credential on
@@ -93,7 +93,9 @@ state. Treat every change as production-infrastructure work.
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
-| `kurulum/wireguard/` (root) | WireGuard server key (`sunucu.key`) and one profile per peer (`<device>.conf`), mode 600 (**DD-120**) |
+| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**) |
+| `kurulum/wireguard/` (root) | Device profiles saved by `wireguard.command`, mode 600; never sent to the server |
+| `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
 | `Data/config/defaults.env` | Ports, images, paths, chain names |

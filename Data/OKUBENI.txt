@@ -1,9 +1,10 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-86.command)
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-89.command)
+  wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
-  kurulum/wireguard/         WireGuard: sunucu.key + her cihaz için <cihaz>.conf (git dışı)
+  kurulum/wireguard/         wireguard.command'ın aldığı cihaz profilleri (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
@@ -15,15 +16,13 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
-WireGuard — ayarlar kurulum.env'de, anahtarlar kurulum/wireguard'da:
-  WG_PEERS=iPh0 Mcp0 iPd0 NiPh0      peer adları (her ad = kurulum/wireguard/<ad>.conf)
-  WG_CLIENT_DNS=... ; WG_CLIENT_KEEPALIVE=21 ; WG_CLIENT_DNS_OVERRIDE=iPd0=9.9.9.9
-  Peer eklemek: adı WG_PEERS'e yazın, kurulumu çalıştırın. Sunucu anahtarı ve IP'yi üretir,
-  profil kurulum/wireguard/<ad>.conf olarak Mac'e iner ve QR kodu terminalde basılır.
-  Peer çıkarmak: adı WG_PEERS'ten silin, kurulumu çalıştırın; .conf dosyasını siz silersiniz.
-  DNS/keepalive değişince profiller güncellenip yeniden iner (cihaza yeniden aktarın).
-  sunucu.key ve .conf dosyaları anahtardır: kaybolursa cihaz yeniden kurulmalı; klasörü yedekleyin.
-  Sunucuya yalnız public key ve PSK yazılır; cihazların özel anahtarları sunucuda kalmaz.
+WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
+  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster
+  Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
+  Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
+  profil kurulum/wireguard/<ad>.conf olarak Mac'e iner (cihaza bu dosyayı ya da QR'ı aktarın).
+  Sunucuya hiçbir anahtar gönderilmez. Sunucu sıfırdan kurulursa yeni anahtar üretilir:
+  cihazları wireguard.command ile yeniden ekleyin.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 Transmission, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
 
@@ -31,13 +30,15 @@ A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm
   1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
-  (Dozzle, Transmission, FileBrowser girişleri ve WireGuard peer'ları kurulum/ klasöründen gelir;
+  3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun
+  (Dozzle, Transmission, FileBrowser girişleri kurulum.env'den;
    Transmission tercihleri — DHT/PeX/yerel keşif kapalı, en çok 12 indirme — kurulumdan gelir)
 
 B) Sıfırlama → yeniden kurulum
   0. Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
   1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL; özet → E
   2. Tailscale paneli + Infuse adresi
+  3. wireguard.command → cihazları yeniden ekleyin (eski profiller yeni sunucuda çalışmaz)
 
-Yedek aracı yoktur: sunucu yalnız kurulum/ klasöründen (kurulum.env + wireguard/) yeniden kurulur.
+Yedek aracı yoktur: sunucu kurulum/kurulum.env'den yeniden kurulur; WireGuard peer'ları menüyle yeniden eklenir.
 Bu klasörü güvende tutun. Eski container-backup arşivleri (backup/) artık hiçbir şeyce okunmaz; silebilirsiniz.

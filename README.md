@@ -5,12 +5,12 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-88` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-89` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
-installer (`<version>.command`) and the Git-ignored `kurulum/` (installer
-inputs). Everything else lives under `Data/`; paths in the
+installer (`<version>.command`), `wireguard.command` (WireGuard peers) and the
+Git-ignored `kurulum/` (installer inputs, saved WireGuard profiles). Everything else lives under `Data/`; paths in the
 documents there are relative to `Data/`. Turkish click order:
 [`Data/OKUBENI.txt`](Data/OKUBENI.txt).
 
@@ -24,11 +24,11 @@ OS-awareness and optimisation review:
 
 ```bash
 # Once: installer inputs (domain, ports, accounts, optional Tailscale auth key)
-mkdir -p kurulum/wireguard && cp Data/config/kurulum.env.example kurulum/kurulum.env
+mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
 chmod 600 kurulum/kurulum.env   # then fill it in
-# WireGuard: kurulum/wireguard/sunucu.key + <device>.conf profiles, all mode 600
 
 # Install: double-click the current <version>.command at the repository root
+# WireGuard peers (after the install): double-click wireguard.command
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)
@@ -54,9 +54,10 @@ only the runtime files and their archive SHA-256. It uploads them to
 ```
 .
 ├── <version>.command      # current portable installer (double-click)
+├── wireguard.command      # WireGuard peer menu (double-click)
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
 │   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
-│   └── wireguard/         #   sunucu.key + one <device>.conf per peer
+│   └── wireguard/         #   device profiles saved by wireguard.command
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
     ├── install.sh          # orchestrator
@@ -81,7 +82,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 | FileBrowser | loopback → Caddy (login) | media tree UI |
 | Transmission | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
-| WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers from `kurulum/wireguard` |
+| WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
@@ -91,8 +92,9 @@ chains) for Tailscale, WireGuard, the torrent peer port and WAN SSH.
 ## Backups
 
 There is no backup tool. A host is rebuilt from `kurulum/` alone: every login
-comes from `kurulum/kurulum.env`, the WireGuard keys and peers from
-`kurulum/wireguard/`, and the installer writes the Transmission preferences.
+comes from `kurulum/kurulum.env` and the installer writes the Transmission
+preferences. WireGuard peers live on the server; after a reinstall add the
+devices again with `wireguard.command`.
 Keep that folder safe. `container-backup` was retired after v2-87 (**DD-122**);
 old archives in a Git-ignored `backup/` folder are no longer read by anything.
 

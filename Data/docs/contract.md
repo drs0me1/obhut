@@ -231,34 +231,42 @@ Preserved in full as a core feature. Contract in §5–§7.
 - No password reminders are printed: every service account comes from
   `kurulum/kurulum.env` (**DD-119**).
 
-### 1.9 WireGuard (DD-120)
+### 1.9 WireGuard (DD-120, DD-124)
 
 - `wg-quick@wg0` in the host kernel: `10.8.0.1/24` and
-  `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420 — the
-  addresses wg-easy used, so existing client profiles keep working.
-- Inputs (**DD-121**):
-  - `kurulum.env` lists the peers (`WG_PEERS`) and sets `WG_CLIENT_DNS`,
-    `WG_CLIENT_KEEPALIVE` and per-peer `WG_CLIENT_DNS_OVERRIDE`.
-  - `kurulum/wireguard/sunucu.key` holds the server private key and
-    `kurulum/wireguard/<name>.conf` each listed peer's keys and addresses.
-  - A listed peer without a profile gets a generated key, PSK and the next
-    free address (the server key too on a first install). New and changed
-    profiles are written to `tmpfs` only, fetched back into
-    `kurulum/wireguard/` by the launcher and then removed from the server.
-    Unlisted profiles are ignored with a warning and never deleted.
-- **Validation and rendering:**
-  - Stage 0 validates structure, keys, addresses (inside the subnets,
-    unique, not the server's), the endpoint port and file names before any
-    change; messages never carry a key.
-  - After the firewall is applied, the installer installs `wireguard-tools`
-    (`--no-install-recommends`) and checks every profile's server key
-    against `sunucu.key` with `wg pubkey`.
-  - It then writes `/etc/wireguard/wg0.conf` (`0600`: server key, peer public
-    keys, PSKs, `AllowedIPs`; no client private key, no `PostUp`).
-  - A change reaches a running interface with `wg syncconf` (no restart,
-    connected devices stay up). `wg-quick@wg0` restarts only when it is not
-    running, when `Address`/`MTU` changed, or when `syncconf` fails
-    (**DD-123**).
+  `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420.
+- **The server is the source of truth.** `/etc/wireguard/wg0.conf` (`0600`)
+  holds the server key and one `# peer: <name>` + `[Peer]` block per device.
+  Nothing WireGuard-related is sent from the workstation.
+- **The installer manages `[Interface]` only.** A first install generates the
+  server key with `wg genkey`; later runs keep the key and every `[Peer]` block
+  byte for byte. It installs `wireguard-tools` and `qrencode`
+  (`--no-install-recommends`), `master-wg`, and writes no `PostUp`.
+- **Peers are managed with `master-wg`** (`/usr/local/sbin`, root), driven from
+  the workstation by `wireguard.command`:
+  - `add NAME DNS KEEPALIVE MTU` runs `wg genkey`, `wg pubkey` and `wg genpsk`,
+    takes the next free address (IPv4 from `.2`, IPv6 with the same host
+    number in hex), stores the device profile in `/etc/wireguard/clients/`
+    (`0600`) and appends the `[Peer]` block. It validates the name, DNS list,
+    keepalive (0–65535) and MTU (1280–1500) before any change.
+  - `remove NAME` deletes the block and the stored profile.
+  - `list` prints name, address, last handshake, transfer and whether a
+    profile is stored; `profile NAME` and `qr NAME` print the stored profile
+    or its QR code.
+  - It takes the installer's lock, so the two never write `wg0.conf` at once.
+  - A failed apply restores the previous `wg0.conf` and removes a new profile.
+- **Changes reach a running interface with `wg syncconf`** (no restart;
+  connected devices stay up). `wg-quick@wg0` restarts only when it is not
+  running, when `Address`/`MTU` changed, or when `syncconf` fails; an empty
+  `wg-quick strip` output is never passed on (**DD-123**).
+- **`wireguard.command`** (repository root, macOS) reads only `SSH_HOST` from
+  `kurulum.env`. It refuses a server whose `master-wg version` differs from
+  the repository's `V2_VERSION`. It asks for the name, DNS, keepalive and MTU
+  (defaults from `defaults.env`), prints the QR code and saves the profile as
+  `kurulum/wireguard/<name>.conf` (`600`). That folder is a copy for the
+  operator; the installer never reads it.
+- **A reinstall generates a new server key and starts with no peers**; devices
+  are added again with `wireguard.command`.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
   Dozzle, Transmission and FileBrowser UIs at `http://10.8.0.1:<port>`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
@@ -736,8 +744,9 @@ Invariants:
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
   the container volumes, the Transmission settings and credential files,
-  `wg0.conf` (rewritten only when `kurulum/wireguard` changes), the
-  operator's chosen local domain.
+  `wg0.conf` (its key and every `[Peer]` block are kept; only `[Interface]`
+  follows the installer), `/etc/wireguard/clients/`, the operator's chosen
+  local domain.
 - Firewall application is idempotent by construction: the chain is rebuilt
   from scratch and swapped in, and the `DOCKER-USER` jump is inserted only
   when absent.
@@ -822,9 +831,8 @@ An installer run is successful when every one of these holds on the target host.
 5. `docker port` shows public publications for Transmission TCP+UDP
    `${TORRENT_PUBLIC_PORT}` (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN
    IP; no `[::]` peer publish). `wg show wg0 listen-port` is
-   `${WG_PUBLIC_PORT}`, its peer count equals the profiles in
-   `kurulum/wireguard`, `10.8.0.1` is on `wg0`, and `caddy-wg` answers
-   non-5xx on its three ports (**DD-120**).
+   `${WG_PUBLIC_PORT}`, `10.8.0.1` is on `wg0`, `master-wg version` runs, and
+   `caddy-wg` answers non-5xx on its three ports (**DD-120**, **DD-124**).
 6. No container web interface is published on a non-loopback address.
 7. The five container web interfaces (incl. WebDAV) listen on `127.0.0.1`
    only.

@@ -45,6 +45,28 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-89, server-generated WireGuard peers and wireguard.command (DD-124):**
+- The user wanted peers handled the native admin way, with nothing sent to
+  the server.
+- `master-wg` on the server generates keys, allocates addresses, keeps
+  profiles in `/etc/wireguard/clients` and applies them with `wg syncconf`.
+- `wireguard.command` on the Mac lists, adds (name/DNS/keepalive/MTU), removes
+  and shows QR codes, saving profiles to `kurulum/wireguard/`.
+- The installer now manages only `[Interface]`. `WG_PEERS`/`WG_CLIENT_*`,
+  profile parsing and the launcher's WireGuard send/fetch were removed.
+- A reinstall means new keys, with devices re-added from the menu.
+- Found by tests: `state.env` needed quotes for `WG_CLIENT_ALLOWED_IPS`;
+  `master-wg list` clobbered its loop variable.
+- `nrm` was reset by the user for a clean test; the old WireGuard files in
+  `kurulum/wireguard/` were deleted at their request.
+- Live: fresh install with the operator's folder; menu adds, duplicate
+  refused, list, QR, removal; namespace client test; no-op re-run; reboot.
+  Test peers were removed, so `nrm` has 0 peers. bats 120.
+- **Open:**
+  - The user adds real devices with `wireguard.command`.
+  - Tailscale admin: exit-node approval and DNS nameserver for the new TS IP
+    `100.73.123.57`; update the Infuse address.
+
 **2026-09-14 — container-backup retired (DD-122) and v2-88, live WireGuard changes (DD-123):**
 - The backup tool, its worker, document and round-trip test were removed
   (commit `dccdfbb`); `backup/` stays Git-ignored.

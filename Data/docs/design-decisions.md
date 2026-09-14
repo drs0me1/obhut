@@ -5337,6 +5337,10 @@ failure with an early, named one.
 
 ### DD-121: kurulum.env lists the WireGuard peers; the server generates what is missing and hands it back (2026-09-14)
 
+- **Superseded by DD-124 (2026-09-14):** peers are generated and kept on the
+  server and managed with `wireguard.command`; `WG_PEERS` and the fetch-back
+  are gone.
+
 - **Decision:**
   - **What the operator writes:** `kurulum.env` names the peers (`WG_PEERS`,
     space-separated) and sets `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
@@ -5460,6 +5464,89 @@ failure with an early, named one.
     version bump.
   - After `deneme.conf` was deleted, a further run reported WireGuard, the
     firewall, dnsmasq, Caddy and `caddy-wg` unchanged.
+
+### DD-124: The server generates and owns WireGuard peers; wireguard.command manages them (2026-09-14)
+
+- **Decision:**
+  - `/etc/wireguard/wg0.conf` on the server is the WireGuard source of truth.
+    The installer writes only its `[Interface]` part: the server key is
+    generated with `wg genkey` when the file is missing and kept afterwards,
+    together with every `[Peer]` block.
+  - Peers are added and removed on the server by `master-wg`, installed to
+    `/usr/local/sbin`. It generates the keys and PSK with the `wg` tools,
+    allocates the next address, stores the device profile in
+    `/etc/wireguard/clients/` and applies the change with `wg syncconf`
+    (DD-123). A failed apply is rolled back, and it shares the installer's
+    lock.
+  - `wireguard.command`, at the repository root, is the operator's menu: list,
+    add (name, DNS, keepalive, MTU), remove, show QR. It calls `master-wg`
+    over SSH with `%q`-quoted arguments, prints the QR code and saves the
+    profile to `kurulum/wireguard/<name>.conf` (`600`). It reads only
+    `SSH_HOST` from `kurulum.env` and refuses a server running another
+    version.
+  - Removed: `WG_PEERS`, `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
+    `WG_CLIENT_DNS_OVERRIDE` in `kurulum.env`; profile parsing, validation and
+    regeneration in the installer; sending `kurulum/wireguard` to the server;
+    and the launcher's fetch-back. The DNS and keepalive defaults moved to
+    `defaults.env` as prompt defaults (keepalive 21, the user's value).
+- **Why:** the user wanted peer management to work the way WireGuard is
+  administered natively, easy to add and remove, with nothing secret sent to
+  the server: "the server generates, we take it". Each device profile carries
+  its own DNS, keepalive and MTU, which are client-side settings the server
+  never uses. Keeping a workstation folder as the truth (DD-120/121) would
+  have made the installer overwrite per-peer choices or require sending keys
+  up.
+- **Trade-off (accepted by the user):** a reinstall generates a new server key
+  and starts with no peers; devices are added again with the menu. The copies
+  in `kurulum/wireguard/` are for re-importing on a device, not for rebuilding
+  the server. `nrm` is a test host and its old peers were not carried over.
+- **Also fixed while testing:**
+  - `state.env` now quotes `WG_CLIENT_ALLOWED_IPS`: its space made `source
+    state.env` run `::/0` as a command, which would have broken `master-wg`
+    and `master-firewall`.
+  - `master-wg list` used a helper that overwrote the loop's `line` variable,
+    losing the next peer's name.
+- **Supersedes:** DD-121, and DD-120's input model (the kernel interface,
+  firewall and `caddy-wg` parts of DD-120 stand).
+- **Verified:** bats 120 ok, with `bash -n` and `shellcheck` clean. Functional
+  tests run the real `master-wg` against PATH stand-ins for `wg`, `wg-quick`,
+  `systemctl`, `flock` and `qrencode`. They cover: add (keys generated
+  server-side, profile `0600` with the asked DNS/keepalive/MTU, next address,
+  live apply), list, profile, QR and version; eight rejected inputs and a
+  duplicate that change nothing; removal of exactly one block and reuse of its
+  address; rollback of a failed apply; an empty strip never reaching syncconf.
+  `ensure_wireguard` is covered for a first install, a re-run that keeps the
+  peers byte for byte, a live port change, an MTU restart and a missing server
+  key. Three deliberate mutations each failed their test.
+- **Live on a freshly reset `nrm` (Debian 13), with the operator's `kurulum/`
+  folder:**
+  - The exported v2-89 `.command` installed from bare metal: exit 0 in about a
+    minute. The auth key logged in to Tailscale, a server key was generated,
+    `wg0.conf` held `[Interface]` only (`0600`), `master-wg` answered its
+    version, `--check` passed, and neither password nor auth key reached the
+    log.
+  - `wireguard.command`, driven under `expect`:
+    - `test1` with the defaults got `10.8.0.2`: DNS `1.1.1.1,
+      2606:4700:4700::1111`, keepalive 21, MTU 1420.
+    - `test2` with DNS `9.9.9.9, 149.112.112.112`, keepalive 0 and MTU 1380
+      got `10.8.0.3`.
+    - Both printed a QR code and saved a `600` profile to
+      `kurulum/wireguard/`.
+    - A second `test1` was refused. The list showed both; the QR display
+      re-fetched a profile.
+  - The fetched `test1` profile, used as a client in a network namespace:
+    handshook and the list showed its transfer. It reached ping, the three UIs
+    and the internet over IPv4 and IPv6, and was refused SSH, WebDAV on the TS
+    IP, tailnet Caddy and the other peer.
+  - Removing `test2` from the menu deleted its block, its server profile and
+    the local copy.
+  - A re-run with the same folder restarted no unit and no container and left
+    `wg0.conf` byte-identical, with `test1` kept.
+  - After a reboot every unit was active and none failed, `test1` was still
+    there, `--check` passed with `MASTER-FORWARD` first, and the UIs answered.
+  - `test1` was removed at the end: the server has no peers and
+    `kurulum/wireguard/` is empty.
+
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 

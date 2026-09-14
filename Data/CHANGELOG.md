@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — WireGuard peers generated on the server, managed from wireguard.command (v2-89)
+
+- **Added:**
+  - `wireguard.command` at the repository root: list peers with their last
+    handshake and transfer, add a peer (name, DNS, keepalive, MTU), remove
+    one, show a QR code. The peer is generated on the server, the QR code
+    is printed and the profile is saved to `kurulum/wireguard/<name>.conf`.
+    Nothing is sent to the server (**DD-124**).
+  - `master-wg` on the server does the work: `wg genkey`/`wg pubkey`/
+    `wg genpsk`, the next free address, a `[Peer]` block applied with
+    `wg syncconf`, and the profile kept in `/etc/wireguard/clients/`.
+- **Changed:** the installer manages only `[Interface]` in `wg0.conf`. It
+  generates the server key on a first install and keeps the key and every
+  peer on re-runs. A reinstall starts with a new key and no peers.
+- **Removed:** `WG_PEERS`, `WG_CLIENT_DNS`, `WG_CLIENT_KEEPALIVE` and
+  `WG_CLIENT_DNS_OVERRIDE` from `kurulum.env` (delete those lines), and sending
+  `kurulum/wireguard` to the server and fetching profiles back.
+- **Fixed:** `state.env` quotes `WG_CLIENT_ALLOWED_IPS`, whose space broke
+  sourcing the file.
+- **Verified on a freshly reset `nrm`** with the operator's folder:
+  - A fresh install (exit 0).
+  - Two peers added from the menu, one with defaults and one with custom DNS,
+    keepalive and MTU, each with a QR code and a saved profile; a duplicate
+    name refused.
+  - A generated profile working as a real client, with the internet and the
+    UIs reachable and SSH, WebDAV, the tailnet and other peers blocked.
+  - A removal from the menu.
+  - A re-run and a reboot that kept the peers.
+  - bats 120 ok.
+
 ### 2026-09-14 — WireGuard changes applied live (v2-88)
 
 - **Changed:** adding or removing a peer, a PSK, the port or the server key
