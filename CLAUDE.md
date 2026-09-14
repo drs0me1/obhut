@@ -43,7 +43,7 @@ state. Treat every change as production-infrastructure work.
   changes, wipes, and reboots without per-turn approval. Drive the installer
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
-  `admin` / `12345test` for Dozzle and Transmission; `admin` / `12345test1234`
+  `admin` / `12345test` for Dozzle; `admin` / `12345test1234`
   for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the

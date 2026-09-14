@@ -382,11 +382,11 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, validate domain, downloads path, ports and the WebDAV/Dozzle/Transmission/FileBrowser accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, validate domain, downloads path, ports and the WebDAV/Dozzle/FileBrowser accounts (qBittorrent keeps its own, **DD-127**), one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd when it differs from the input file; timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; sync the Dozzle, Transmission and FileBrowser accounts to the input file (**DD-119**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker; sync the Dozzle and FileBrowser accounts to the input file (**DD-119**); create qBittorrent's `/config` directory (no settings, **DD-127**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | apply `master-firewall` (incl. WireGuard INPUT/FORWARD/NAT); enable refresh timer; then `wireguard-tools`, `[Interface]` of `wg0.conf` (key generated once, peers kept) and `wg-quick@wg0` (**DD-120**, **DD-124**) | firewall, WireGuard |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed; `caddy-wg` for the UIs over WireGuard | DNS/HTTP |
 | 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy, WireGuard port/`master-wg`/`caddy-wg`) | verification |

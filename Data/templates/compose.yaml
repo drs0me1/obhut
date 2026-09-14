@@ -76,13 +76,13 @@ services:
     tmpfs:
       - /tmp
 
-  transmission:
-    image: __TRANSMISSION_IMAGE__
-    container_name: transmission
+  qbittorrent:
+    image: __QBITTORRENT_IMAGE__
+    container_name: qbittorrent
     restart: unless-stopped
     logging: *default-logging
     ports:
-      - "127.0.0.1:__TORRENT_UI_PORT__:9091"
+      - "127.0.0.1:__TORRENT_UI_PORT__:__TORRENT_UI_PORT__"
       # Peer: IPv4-only 1:1 (0.0.0.0). [::] publish yok — MASTER-DOCKER6 zaten
       # WAN peer'i DROP ederdi; çift yığın gürültüydü. WAN IP gömülmez.
       - "0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/tcp"
@@ -91,15 +91,13 @@ services:
       TZ: __TIMEZONE__
       PUID: "__DOWNLOADS_UID__"
       PGID: "__DOWNLOADS_GID__"
-      PEERPORT: "__TORRENT_PUBLIC_PORT__"
-      # DD-117: imaj kimliği her açılışta ister (yoksa girişi kapatır, temiz
-      # kapanış RPC'si parolayla yapılır). Compose'da değil, root'a özel dosyada.
-      FILE__USER: /run/secrets/transmission/user
-      FILE__PASS: /run/secrets/transmission/pass
+      # DD-127: imaj iki portu her açılışta komut satırından verir
+      # (--webui-port, --torrenting-port); ayar dosyası bunları değiştiremez.
+      WEBUI_PORT: "__TORRENT_UI_PORT__"
+      TORRENTING_PORT: "__TORRENT_PUBLIC_PORT__"
     volumes:
-      - __TRANSMISSION_DATA_DIR__:/config
+      - __QBITTORRENT_DATA_DIR__:/config
       - __DOWNLOADS_PATH__:/downloads
-      - __TRANSMISSION_AUTH_DIR__:/run/secrets/transmission:ro
     stop_grace_period: 30s
 
   unpackerr:

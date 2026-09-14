@@ -5,7 +5,7 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
-**Current version:** `2026.08.06-v2-91` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-92` (see `Data/install.sh`).
 Latest tagged release: `2026.08.06-v2-71`.
 
 The repository root holds only what is double-clicked: the current portable
@@ -80,7 +80,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 |---------|----------|------|
 | Dozzle | loopback → Caddy (login) | container state, live logs, start/stop/remove |
 | FileBrowser | loopback → Caddy (login) | media tree UI |
-| Transmission | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
+| qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
@@ -92,9 +92,9 @@ chains) for Tailscale, WireGuard, the torrent peer port and WAN SSH.
 ## Backups
 
 There is no backup tool. A host is rebuilt from `kurulum/` alone: every login
-comes from `kurulum/kurulum.env` and the installer writes the Transmission
-preferences. WireGuard peers live on the server; after a reinstall add the
-devices again with `wireguard.command`.
+comes from `kurulum/kurulum.env`, except qBittorrent's account and
+preferences, which are set in its web UI. WireGuard peers live on the server;
+after a reinstall, add the devices again with `wireguard.command`.
 Keep that folder safe. `container-backup` was retired after v2-87 (**DD-122**);
 old archives in a Git-ignored `backup/` folder are no longer read by anything.
 

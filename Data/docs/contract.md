@@ -41,9 +41,9 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), Transmission (replaced qBittorrent, **DD-117**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), qBittorrent (replaced Transmission again, **DD-127**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
 | R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (Transmission) peer port (TCP+UDP) |
+| R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (qBittorrent) peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
@@ -144,22 +144,21 @@ the ones agreed on 2026-08-05:
 - The installer's own apt downloads are not kept in `/var/cache/apt/archives`
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
 - One Compose file with exactly five services: `dozzle`, `filebrowser`,
-  `transmission`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
-  **DD-117**, **DD-120**).
-- Transmission (LinuxServer image) takes its user name and password from
-  root-only files under `/etc/master-stack/transmission-auth`, mounted
-  read-only and read through `FILE__USER`/`FILE__PASS`; they never appear in
-  `compose.yaml` or `docker inspect`. They come from the input file and are
-  rewritten, with a Transmission restart, only when they differ from it
-  (**DD-119**). On a fresh install it seeds
-  `/etc/master-stack/transmission/settings.json` with the download layout
-  (`/downloads`, partial files in `/downloads/incomplete`), port forwarding
-  off and `rpc-port` 9091, which the image's clean-shutdown script requires,
-  plus the operator's preferences: DHT, PeX and local peer discovery off and
-  a download queue of 12 (**DD-118**); from then on the file belongs to
-  Transmission. A leftover `qbittorrent`
-  container stops the installer in stage 0 before any change, because it
-  holds the peer port; the installer never removes it (**DD-96**, **DD-117**).
+  `qbittorrent`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
+  **DD-127**, **DD-120**).
+- qBittorrent (LinuxServer image) keeps `/config` on
+  `/etc/master-stack/qbittorrent`.
+  - The installer writes no qBittorrent settings and no account; both live in
+    qBittorrent's own `qBittorrent.conf`.
+  - On the first start the image copies its default file and prints a
+    temporary `admin` password to the container log (read it in Dozzle). The
+    operator sets the account and preferences in the web UI (**DD-127**).
+  - The web UI and peer ports come from `WEBUI_PORT`/`TORRENTING_PORT`, which
+    the image passes on the command line at every start, so the config file
+    cannot move them.
+  - A leftover `transmission` container stops the installer in stage 0 before
+    any change, because it holds the peer port. The installer never removes
+    it (**DD-96**, **DD-127**).
 - Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
   stop, restart, remove, update), no shell, read-only root, all capabilities
   dropped and `no-new-privileges`. Its `users.yml` is written by the
@@ -199,7 +198,7 @@ the ones agreed on 2026-08-05:
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
-  (no full-tree rewrite). Transmission, FileBrowser and Unpackerr share
+  (no full-tree rewrite). qBittorrent, FileBrowser and Unpackerr share
   read/write that way. WebDAV remains read-only via the Compose service
   (`:ro` mount + `--read-only`).
 
@@ -272,7 +271,7 @@ Preserved in full as a core feature. Contract in §5–§7.
 - **A reinstall generates a new server key and starts with no peers**; devices
   are added again with `wireguard.command`.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
-  Dozzle, Transmission and FileBrowser UIs at `http://10.8.0.1:<port>`.
+  Dozzle, qBittorrent and FileBrowser UIs at `http://10.8.0.1:<port>`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
   other peers (§9).
 - The UIs are served by `caddy-wg.service` (`/etc/caddy/Caddyfile.wg`, admin
@@ -314,7 +313,7 @@ Three exposure classes, and nothing may straddle them.
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| Transmission (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${TORRENT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
+| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${TORRENT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
 
 **WireGuard is a host listener, not a Compose publication (DD-120):** the
 kernel's `wg0` socket on UDP `${WG_PUBLIC_PORT}` (61001) is admitted by
@@ -350,7 +349,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 |---|---|---|
 | Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
-| Transmission WebUI | `127.0.0.1` | 61006 (**DD-117**) |
+| qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
@@ -367,7 +366,7 @@ state file by substitution. A port literal appearing twice is a bug.
 
 | Service | Listen address | Port |
 |---|---|---|
-| caddy-wg → Dozzle, Transmission, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+| caddy-wg → Dozzle, qBittorrent, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
 
 No names, no WebDAV, no dnsmasq on `wg0` (**DD-120**).
 
@@ -654,7 +653,7 @@ and IPv6 — separate tables mean no collision — and both are declared in
   - `ESTABLISHED,RELATED` returns early.
   - Container traffic arriving over `tailscale0` is accepted.
   - New WAN traffic to the public peer publications is accepted
-    (Transmission TCP+UDP `${TORRENT_PUBLIC_PORT}`; WireGuard is a host
+    (qBittorrent TCP+UDP `${TORRENT_PUBLIC_PORT}`; WireGuard is a host
     listener admitted by `MASTER-INPUT`, **DD-120**).
 - WireGuard (**DD-120**), all interface-based and in both families:
   - `MASTER-INPUT` accepts from `wg0` only TCP to `10.8.0.1` on the three UI
@@ -747,7 +746,7 @@ Invariants:
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
-  the container volumes, the Transmission settings and credential files,
+  the container volumes, qBittorrent's `/config` (its own settings and account),
   `wg0.conf` (its key and every `[Peer]` block are kept; only `[Interface]`
   follows the installer), `/etc/wireguard/clients/`, the operator's chosen
   local domain.
@@ -832,7 +831,7 @@ An installer run is successful when every one of these holds on the target host.
 
 ### Ports
 
-5. `docker port` shows public publications for Transmission TCP+UDP
+5. `docker port` shows public publications for qBittorrent TCP+UDP
    `${TORRENT_PUBLIC_PORT}` (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN
    IP; no `[::]` peer publish). `wg show wg0 listen-port` is
    `${WG_PUBLIC_PORT}`, `10.8.0.1` is on `wg0`, `master-wg version` runs, and
@@ -854,8 +853,10 @@ An installer run is successful when every one of these holds on the target host.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
 13. Each of `dozzle`, `torrent` and `file` returns a non-5xx status
-    through Caddy (`Host:` + `${TS_IPV4}`); Dozzle's `/api/events/stream`
-    and Transmission's `/transmission/rpc` answer `401` without a login.
+    through Caddy (`Host:` + `${TS_IPV4}`). Without a login, Dozzle's
+    `/api/events/stream` answers `401` and qBittorrent's
+    `/api/v2/app/version` answers `403`. A `200` there means a localhost or
+    subnet authentication bypass is on (**DD-127**).
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
     socket), nor on `0.0.0.0`, WAN, or LAN.

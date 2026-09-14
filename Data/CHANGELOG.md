@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-14 — qBittorrent returns, configured in its own web UI (v2-92)
+
+- **Changed:** the torrent client is qBittorrent again
+  (`lscr.io/linuxserver/qbittorrent:latest`, 5.2.3), replacing Transmission
+  (**DD-127**). The UI address (`torrent.${LOCAL_DOMAIN}`, `10.8.0.1:61006`),
+  the peer port 61005 and Unpackerr are unchanged.
+- **Changed:** the installer writes no torrent settings and no account.
+  - On a first install, log in as `admin` with the temporary password from
+    the `qbittorrent` log in Dozzle.
+  - Then set the account and preferences in the UI.
+- **Removed:** `TRANSMISSION_USER` and `TRANSMISSION_PASS` from `kurulum.env`.
+  Delete both lines; if they remain, the installer names them and stops.
+- **Added:**
+  - Stage 7 requires qBittorrent's API to answer `403` without a login, which
+    catches an authentication bypass.
+  - A leftover `transmission` container stops the installer before any change
+    (`docker rm -f transmission`).
+- **Verified on `nrm`:**
+  - The old keys and the leftover container were refused.
+  - A switch from Transmission exited 0; the UI, API and peer port checks
+    passed and the WireGuard peer was kept.
+  - A re-run was a no-op.
+  - bats 123 ok.
+
 ### 2026-09-14 — Negated test assertions that can fail, dead WebDAV migration removed (v2-91)
 
 - **Removed:** stage 6 no longer recreates `webdav` when it still publishes

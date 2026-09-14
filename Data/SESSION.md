@@ -45,6 +45,35 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-14 — v2-92, qBittorrent returns (DD-127):**
+- The user found Transmission slow.
+  - We discussed that DHT/PeX off limits peers in any client; the user keeps
+    them off.
+  - Docker vs. a host package: Docker stays.
+  - The user asked for no installer-written qBittorrent settings. They will
+    configure the UI once, then (v2-93) an `ayarlar.command` pulls the
+    whole `qBittorrent.conf` plus the WireGuard server config and profiles
+    into `kurulum/`. A fresh install restores them, and only when absent on
+    the server.
+- v2-92 changes:
+  - The `qbittorrent` service with `/config` on
+    `/etc/master-stack/qbittorrent`; ports come from the image's command line.
+  - Stage 7 requires API `403` without a login.
+  - `TRANSMISSION_*` input keys are removed and named when present.
+  - A leftover `transmission` container gate.
+- Live on `nrm`:
+  - The host was the user's own fresh v2-90 manual install: Tailscale node
+    `nrm-1`, **100.85.4.106**, WG peer `iph0`, installed 14:38 server time.
+  - Old keys refused, gate refused, then exit 0 after `docker rm -f
+    transmission`, and a no-op re-run.
+  - Real account files restored. The Mac's `iph0` tunnel was paused for the
+    launcher and reconnected. bats 123.
+- Open:
+  - **v2-93**: `ayarlar.command` plus the restore.
+  - The user sets qBittorrent up in the UI (temporary password in Dozzle).
+  - The old `/etc/master-stack/transmission{,-auth}` dirs on `nrm`, to delete
+    (they hold the old Transmission password in plaintext).
+
 **2026-09-14 — v2-91, negated bats assertions made effective (DD-126):**
 - The work from the merged worktree session was redone on the current tree.
   - 115 bare `!`/`[[ ]]` statements were converted, and a guard test was

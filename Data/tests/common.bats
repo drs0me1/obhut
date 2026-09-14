@@ -415,7 +415,7 @@ EOF
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "transmission and unpackerr use DOWNLOADS_UID/GID tokens" {
+@test "qbittorrent and unpackerr use DOWNLOADS_UID/GID tokens" {
     grep -q 'PUID: "__DOWNLOADS_UID__"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
     grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
@@ -424,7 +424,7 @@ EOF
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "downloads tree is chown 1000 for transmission filebrowser unpackerr" {
+@test "downloads tree is chown 1000 for qbittorrent filebrowser unpackerr" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
@@ -649,75 +649,56 @@ EOF
     run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "transmission keeps credentials out of compose and a clean-shutdown settings seed" {
-    # DD-117: the image needs USER/PASS at every start (it disables auth and
-    # cannot RPC-exit without them), so they come from root-only files.
-    block="$(awk '/^  transmission:$/,/^  unpackerr:$/' "$V2_ROOT/templates/compose.yaml")"
+@test "qbittorrent gets no seeded settings or account, and its ports come from the image" {
+    # DD-127: the account and preferences live in qBittorrent's own config file;
+    # the image passes --webui-port/--torrenting-port on every start.
+    block="$(awk '/^  qbittorrent:$/,/^  unpackerr:$/' "$V2_ROOT/templates/compose.yaml")"
     [ -n "$block" ]
-    grep -q '"127.0.0.1:__TORRENT_UI_PORT__:9091"' <<<"$block"
-    grep -q 'PEERPORT: "__TORRENT_PUBLIC_PORT__"' <<<"$block"
-    grep -q 'FILE__USER: /run/secrets/transmission/user' <<<"$block"
-    grep -q 'FILE__PASS: /run/secrets/transmission/pass' <<<"$block"
-    grep -q '__TRANSMISSION_AUTH_DIR__:/run/secrets/transmission:ro' <<<"$block"
-    grep -q '__TRANSMISSION_DATA_DIR__:/config' <<<"$block"
-    run ! grep -qE '^ +(USER|PASS|HOST_WHITELIST):' <<<"$block"
-    run ! grep -qi qbittorrent "$V2_ROOT/templates/compose.yaml"
-    body="$(awk '/^ensure_transmission_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q '"rpc-port": 9091' <<<"$body"
-    grep -q '"download-dir": "/downloads"' <<<"$body"
-    # DD-118: the operator's torrent preferences are installed, not restored.
-    grep -q '"dht-enabled": false, "pex-enabled": false, "lpd-enabled": false' <<<"$body"
-    grep -q '"download-queue-enabled": true, "download-queue-size": 12' <<<"$body"
-    # A heredoc closing brace at column 0 would end the extracted function early.
-    [ "$(grep -c '^}$' <<<"$body")" -eq 1 ]
-    grep -q 'if \[\[ ! -e "\$settings" \]\]' <<<"$body"
-    grep -q 'umask 077' <<<"$body"
-    grep -q 'unset TRANSMISSION_NEW_PASS' <<<"$body"
-    grep -q 'docker restart transmission' <<<"$body"
+    grep -q 'image: __QBITTORRENT_IMAGE__' <<<"$block"
+    grep -q '"127.0.0.1:__TORRENT_UI_PORT__:__TORRENT_UI_PORT__"' <<<"$block"
+    grep -q 'WEBUI_PORT: "__TORRENT_UI_PORT__"' <<<"$block"
+    grep -q 'TORRENTING_PORT: "__TORRENT_PUBLIC_PORT__"' <<<"$block"
+    grep -q '__QBITTORRENT_DATA_DIR__:/config' <<<"$block"
+    grep -q 'stop_grace_period: 30s' <<<"$block"
+    run ! grep -qE 'FILE__|/run/secrets|PEERPORT' <<<"$block"
+    run ! grep -qi transmission "$V2_ROOT/templates/compose.yaml"
+    grep -q '^QBITTORRENT_DATA_DIR="/etc/master-stack/qbittorrent"' "$V2_ROOT/config/defaults.env"
+    run ! grep -qE '^TRANSMISSION_' "$V2_ROOT/config/defaults.env"
+    # The installer only creates the directory: no settings, no password.
+    body="$(awk '/^ensure_qbittorrent_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ "$(grep -c . <<<"$body")" -eq 3 ]
+    grep -q 'install -d -m 0750 -o "\$DOWNLOADS_UID" -g "\$DOWNLOADS_GID" "\$QBITTORRENT_DATA_DIR"' <<<"$body"
+    run ! grep -qE 'qBittorrent\.conf|Password_PBKDF2|ensure_transmission_files|TRANSMISSION_(NEW|DATA|AUTH|MIN)' \
+        "$V2_ROOT/install.sh"
+    # The removed input keys are named so the operator deletes them.
+    grep -q 'INPUT_REMOVED_KEYS="TRANSMISSION_USER TRANSMISSION_PASS"' "$V2_ROOT/install.sh"
+    grep -q 'read_input_file "\$INPUT_FILE" "\$INPUT_KEYS" "\$INPUT_NONEMPTY_KEYS" "\$INPUT_REMOVED_KEYS"' \
+        "$V2_ROOT/install.sh"
+    run ! grep -q 'TRANSMISSION' "$V2_ROOT/config/kurulum.env.example"
+    # A leftover transmission container holds the peer port: stop before change.
     stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'TRANSMISSION_NEW_PASS="\$INPUT_TRANSMISSION_PASS"' <<<"$stage0"
-    grep -q 'validate_account Transmission' <<<"$stage0"
-    grep -q 'docker inspect qbittorrent' <<<"$stage0"
-    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'Transmission RPC girişsiz yanıt'
+    grep -q 'docker inspect transmission' <<<"$stage0"
+    run ! grep -q 'docker inspect qbittorrent' <<<"$stage0"
+    # Authentication must still be required through Caddy.
+    stage7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -q '/api/v2/app/version' <<<"$stage7"
+    grep -q '"\$code" == "403"' <<<"$stage7"
+    grep -q 'qBittorrent API girişsiz yanıt' <<<"$stage7"
 }
 
-@test "ensure_transmission_files seeds settings once and writes private credentials" {
-    eval "$(awk '/^ensure_transmission_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    TRANSMISSION_DATA_DIR="$TMP/tr" TRANSMISSION_AUTH_DIR="$TMP/tr-auth" DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
-    log() { :; }
-    chown() { :; }
-    install() { mkdir -p "${!#}"; }
-    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; [ "$1" != inspect ]; }
-    TRANSMISSION_NEW_USER=admin TRANSMISSION_NEW_PASS='fixture-password-123'
-    run ensure_transmission_files
-    [ "$status" -eq 0 ]
-    jq -e '."rpc-port" == 9091 and ."dht-enabled" == false and ."pex-enabled" == false and
-        ."lpd-enabled" == false and ."download-queue-enabled" == true and ."download-queue-size" == 12' \
-        "$TMP/tr/settings.json" >/dev/null
-    [ "$(cat "$TMP/tr-auth/user")" = admin ]
-    [ "$(cat "$TMP/tr-auth/pass")" = 'fixture-password-123' ]
-    mode="$(stat -c %a "$TMP/tr-auth/pass" 2>/dev/null || stat -f %Lp "$TMP/tr-auth/pass")"
-    [ "$mode" = 600 ]
-    run ! grep -q 'fixture-password-123' "$TMP/docker-calls"
-    run ! grep -q '^restart' "$TMP/docker-calls"
-    # A second run keeps Transmission's own settings file untouched.
-    printf '{"speed-limit-down":123}\n' >"$TMP/tr/settings.json"
-    docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; }
-    TRANSMISSION_NEW_USER=admin2 TRANSMISSION_NEW_PASS='fixture-password-456'
-    run ensure_transmission_files
-    [ "$status" -eq 0 ]
-    [ "$(cat "$TMP/tr/settings.json")" = '{"speed-limit-down":123}' ]
-    [ "$(cat "$TMP/tr-auth/user")" = admin2 ]
-    grep -q '^restart transmission' "$TMP/docker-calls"
-    # DD-119: the same credentials again leave the files and the container alone.
-    rm -f "$TMP/docker-calls"
-    touch -t 200001010000 "$TMP/tr-auth/pass"
-    TRANSMISSION_NEW_USER=admin2 TRANSMISSION_NEW_PASS='fixture-password-456'
-    run ensure_transmission_files
-    [ "$status" -eq 0 ]
-    [ ! -e "$TMP/docker-calls" ]
-    [ -z "$(find "$TMP/tr-auth/pass" -newermt '2001-01-01')" ]
+@test "read_input_file names a removed key instead of calling it unknown" {
+    printf 'A=1\nTRANSMISSION_PASS=fixture-secret\n' >"$TMP/in.env"
+    chmod 600 "$TMP/in.env"
+    run read_input_file "$TMP/in.env" "A" "A" "TRANSMISSION_USER TRANSMISSION_PASS"
+    [ "$status" -ne 0 ]
+    case "$output" in *"satır 2: TRANSMISSION_PASS artık kullanılmıyor"*) ;; *) false ;; esac
+    run ! grep -q 'fixture-secret' <<<"$output"
+    [ ! -e "$TMP/in.env" ]
+    # Without the fourth argument it is still just an unknown key.
+    printf 'A=1\nTRANSMISSION_PASS=x\n' >"$TMP/in.env"
+    chmod 600 "$TMP/in.env"
+    run read_input_file "$TMP/in.env" "A" "A"
+    case "$output" in *"bilinmeyen alan: TRANSMISSION_PASS"*) ;; *) false ;; esac
 }
 
 @test "filebrowser classic serves downloads at /srv with disableExec" {
@@ -1486,7 +1467,7 @@ EOF
     [ -n "$webdav_runtime" ]
     run ! grep -qE '401\|403\|405' <<<"$webdav_runtime"
     run ! grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
-    grep -q 'docker port transmission' "$V2_ROOT/install.sh"
+    grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
     grep -q 'docker port webdav' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
@@ -1518,20 +1499,20 @@ EOF
         "$V2_ROOT/config/defaults.env"
     grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
         "$V2_ROOT/config/defaults.env"
-    grep -qE '^TRANSMISSION_IMAGE="lscr\.io/linuxserver/transmission:latest"' \
+    grep -qE '^QBITTORRENT_IMAGE="lscr\.io/linuxserver/qbittorrent:latest"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0\.15"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' \
         "$V2_ROOT/config/defaults.env"
-    # Forbidden floats — except LinuxServer Transmission:latest, its only stable
+    # Forbidden floats — except LinuxServer qBittorrent:latest, its only stable
     # track (LinuxServer publishes no major tag).
     run ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|libtorrentv1)(@|")' \
         "$V2_ROOT/config/defaults.env"
     run ! grep -qE '^(DOZZLE|FILEBROWSER|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*:latest' \
         "$V2_ROOT/config/defaults.env"
     # Track images must not carry a digest pin.
-    run ! grep -qE '^(DOZZLE|FILEBROWSER|TRANSMISSION|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
+    run ! grep -qE '^(DOZZLE|FILEBROWSER|QBITTORRENT|WG_EASY|UNPACKERR|RCLONE)_IMAGE="[^"]*@sha256:' \
         "$V2_ROOT/config/defaults.env"
 }
 

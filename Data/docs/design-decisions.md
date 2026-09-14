@@ -4869,6 +4869,9 @@ failure with an early, named one.
 
 ### DD-117: Transmission replaces qBittorrent (2026-09-13)
 
+- **Superseded by DD-127 (2026-09-14):** the user found Transmission slow and
+  went back to qBittorrent, with no installer-written settings or account.
+
 - **Decision:** the `qbittorrent` service becomes `transmission`
   (`lscr.io/linuxserver/transmission:latest`, Transmission 4.1.3).
   - Web UI at `torrent.${LOCAL_DOMAIN}` (loopback 61006 → 9091).
@@ -4966,6 +4969,10 @@ failure with an early, named one.
     stopped and started Transmission cleanly.
 
 ### DD-118: The installer sets up FileBrowser and Transmission; the backup keeps only wg-easy (2026-09-14)
+
+- **Transmission part superseded by DD-127 (2026-09-14):** qBittorrent
+  returned, and the installer no longer writes torrent preferences. The
+  FileBrowser account part stands (now from the input file, DD-119).
 
 - **Decision:**
   - Stage 0 asks for a FileBrowser user name and password (at least
@@ -5761,6 +5768,87 @@ failure with an early, named one.
     - a bare `!` assertion.
   - The removed block could only run on the uncommitted v2-65 layout, so no
     live run was needed.
+
+### DD-127: qBittorrent returns; its settings and account are its own (2026-09-14)
+
+- **Context:** the user found Transmission slow again and asked to go back to
+  qBittorrent.
+  - They were told that the v2-84 preferences carried over from Transmission
+    (DHT, PeX and local discovery off, a queue of 12) limit peer discovery
+    whatever the client.
+  - They chose to keep DHT/PeX/LSD off.
+  - Docker against a host package (`qbittorrent-nox` 5.1.0 on Debian 13) was
+    weighed. Writing the config is the same work either way (PBKDF2 password,
+    qBittorrent rewrites the file on exit), while Docker keeps a current
+    version on every OS, logs in Dozzle and one layout. Docker stays.
+- **Decision:**
+  - `qbittorrent` service, `lscr.io/linuxserver/qbittorrent:latest`
+    (measured 5.2.3 with libtorrent 2.0.14):
+    - `/config` on `/etc/master-stack/qbittorrent` (`QBITTORRENT_DATA_DIR`),
+      and `/downloads`.
+    - Web UI `127.0.0.1:61006 → 61006` behind Caddy `torrent.${LOCAL_DOMAIN}`
+      and `caddy-wg`. Peer port 61005 TCP+UDP. Stop grace 30 s.
+  - **No installer-written settings or account**, at the user's request: they
+    set everything in the web UI once. The planned next step (v2-93) pulls the
+    whole config file into `kurulum/` and restores it on a fresh install.
+    - `ensure_qbittorrent_dir` only creates the directory
+      (`0750`, `DOWNLOADS_UID:GID`).
+    - The first start prints a temporary `admin` password to the container
+      log. The summary points to Dozzle; the installer never reads or logs
+      the value.
+  - **Ports cannot drift with a restored file:**
+    - The image's `svc-qbittorrent/run` passes `--webui-port=${WEBUI_PORT}`
+      and `--torrenting-port=${TORRENTING_PORT}` on every start (read from
+      the image).
+    - `init-qbittorrent-config` copies the default file only when
+      `qBittorrent.conf` is absent.
+  - **Stage 7:** unauthenticated `GET /api/v2/app/version` through Caddy must
+    be `403` (measured: `403`; a wrong login gets `401`).
+    - Requests reach the container from the Docker gateway, not localhost.
+    - An authentication bypass for localhost or a whitelisted subnet set in
+      the UI would therefore let every tailnet or WireGuard client in, and
+      the check fails the install.
+    - The `docker port qbittorrent` publish checks return.
+  - **Input file:**
+    - `TRANSMISSION_USER`/`TRANSMISSION_PASS` are removed.
+    - `read_input_file` takes an optional list of removed keys and names them
+      ("artık kullanılmıyor; bu satırı silin") instead of "unknown field". The
+      value is still never echoed.
+  - **Leftover gate:** a `transmission` container stops stage 0 before any
+    change (it holds the peer port) and prints `docker rm -f transmission`.
+    Its directories are not removed (DD-96).
+- **Verification:**
+  - bats 123 ok (3 skips as before). `shellcheck -x` is clean.
+  - Five mutations each failed a test: stage 7 expecting `401`, `WEBUI_PORT`
+    dropped, the removed-key message dropped, the gate on `qbittorrent`, and
+    a settings write in `ensure_qbittorrent_dir`.
+  - **A throwaway container on `nrm`** confirmed:
+    - the config paths (`qBittorrent.conf`, `categories.json`,
+      `watched_folders.json`, `rss/feeds.json`);
+    - the temporary password line in the log (value not printed);
+    - `GET /` 200, API 403, wrong login 401;
+    - stop in 3 s with exit 0.
+  - **Live on `nrm`:** the host held the operator's own v2-90 manual install
+    (Tailscale node `nrm-1`, `100.85.4.106`, WireGuard peer `iph0`). The run
+    used the scratch test inputs, with the real account files saved and
+    restored.
+    - The old input file with `TRANSMISSION_*` stopped at stage 0 with
+      "satır 37: TRANSMISSION_USER artık kullanılmıyor", changing nothing.
+    - With the lines deleted, the Transmission gate stopped at stage 0 and
+      the host stayed on v2-90.
+    - After `docker rm -f transmission`, the install exited 0 in 22 s:
+      - `qbittorrent` was up with 61005 TCP/UDP on `0.0.0.0` and 61006 on
+        loopback, and the log held a temporary password line.
+      - Through Caddy, `torrent.ayc` answered 200, the API 403 and a wrong
+        login 401; `10.8.0.1:61006` answered 200 and 403.
+      - 61005/tcp was reachable from the Internet, `--check` passed, no unit
+        had failed, and `iph0` was kept.
+    - A re-run was a no-op: unit and container start times, `wg0.conf`, both
+      Caddyfiles and `compose.yaml` were unchanged.
+    - The real WebDAV, Dozzle and FileBrowser files were restored
+      hash-identical.
+    - The old `/etc/master-stack/transmission{,-auth}` directories remain
+      for the operator to delete.
 
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
