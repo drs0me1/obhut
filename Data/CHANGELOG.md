@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-15 — Fix: backup failed on a server with no peers (v2-98, menu only)
+
+- **Fixed:** the backup script ended its `tar` command with `-C <temp dir>`
+  even when there was no PNG to add. GNU tar 1.35 on the server rejects a
+  `-C` with no member after it (exit 2), so the backup failed whenever the
+  server had no profiles: after "8) wg0 yeniden üret" or removing the last
+  peer. The Mac kept the old `wg0.conf`, profiles and pictures (**DD-132**).
+  The `-C` part is now added only when there are pictures.
+- The script is sent from the Mac at run time: no installer re-run is needed.
+- **Verified:** a test now runs the script with a `tar` that rejects a
+  trailing `-C` like GNU tar, with and without profiles; the old script
+  fails it. On `nrm` (0 peers) the fixed script exited 0 and sent only
+  `wg0.conf`. Option 6 then removed the operator's 3 stale profiles and 4
+  pictures and wrote the new `wg0.conf` (0 peers). bats 137 ok.
+
 ### 2026-09-15 — QR code saved as PNG next to each WireGuard profile (v2-98)
 
 - **Added** (**DD-132**):

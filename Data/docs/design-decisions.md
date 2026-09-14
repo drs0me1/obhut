@@ -6277,6 +6277,12 @@ failure with an early, named one.
     `qrencode` would add a tool to install.
   - Keeping the PNG on the server: nothing there needs it, and it would be a
     second copy of the key to manage.
+- **Fixed the same day:** with no profiles the script ended with
+  `tar … -C <temp dir>` and no member after it. GNU tar 1.35 rejects that
+  (exit 2), so the automatic backup after "8) wg0 yeniden üret" failed and
+  the Mac kept the old files. macOS tar accepts it, which is why bats missed
+  it. The `-C` part is now added only when a picture exists. A test runs the
+  script with a GNU-strict `tar` wrapper, with and without profiles.
 - **Cost:** `master-wg` changed, so this is v2-98. The menu refuses a server
   on another version; re-run the installer once. Peers, keys and accounts
   are kept.

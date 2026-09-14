@@ -277,8 +277,11 @@ for f in "$wg_clients"/*.conf; do
         echo "UYARI: $name için QR resmi üretilemedi" >&2
     fi
 done
-# Yollar köke göreli ("etc/..."), tire ile başlamaz.
-tar -cf - -C / "${list[@]}" -C "$work" ${pngs[@]+"${pngs[@]}"}
+# Yollar köke göreli ("etc/..."), tire ile başlamaz. GNU tar, arkasından dosya
+# gelmeyen -C'yi hata sayar: peer yokken (wg0 yeniden üretilince) eklenmez.
+args=(-C / "${list[@]}")
+[[ "${#pngs[@]}" -eq 0 ]] || args+=(-C "$work" "${pngs[@]}")
+tar -cf - "${args[@]}"
 REMOTE
     then
         echo "HATA: yedek alınamadı (bağlantı ya da sunucu hatası; ayrıntı yukarıda)" >&2

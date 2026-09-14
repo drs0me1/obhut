@@ -45,6 +45,16 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-15 — fix: backup with zero peers (user: "8 SIL yaptım ama conf dosyaları halen duruyor"):**
+- The reset worked on the server (0 peers, new key), but the automatic
+  backup failed.
+- Cause: the v2-98 backup script's trailing `tar -C "$work"` with no PNGs.
+  GNU tar 1.35 exits 2; bsdtar in bats does not.
+- Fixed in `wireguard.command` only (no version bump). The test now uses a
+  GNU-strict tar wrapper.
+- Ran option 6 for the user: the Mac copy now matches the server (0 peers;
+  stale profiles and PNGs removed).
+
 **2026-09-15 — v2-98, QR PNG with each profile (user: "sunucu üretsin mac insin profille beraber", DD-132):**
 - `master-wg png AD` (qrencode PNG, `-s 8`, refuses a tty).
 - `wireguard.command` saves `<ad>.png` next to `<ad>.conf` (600, PNG-signature

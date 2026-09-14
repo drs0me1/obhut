@@ -2284,7 +2284,7 @@ EOF
     run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
     case "$output" in *"profil iph0"*"aynı"*"QR resmi iph0"*"aynı"*) ;; *) false ;; esac
     # The server side needs an install and a wg0.conf, tars only WireGuard files.
-    grep -qF 'tar -cf - -C / "${list[@]}" -C "$work" ${pngs[@]+"${pngs[@]}"}' "$TMP/ssh-script"
+    grep -qF 'tar -cf - "${args[@]}"' "$TMP/ssh-script"
     grep -q 'sunucuda kurulum yok' "$TMP/ssh-script"
     grep -q 'sunucuda WireGuard yapılandırması yok' "$TMP/ssh-script"
     run ! grep -qiE 'qbittorrent|categories|feeds' "$TMP/ssh-script"
@@ -2309,7 +2309,19 @@ EOF
 printf '\211PNG\r\n\032\n'; cat "$root/etc/wireguard/clients/\$2.conf"
 EOF
     chmod +x "$TMP/master-wg"
-    TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
+    # The server runs GNU tar, which fails on a -C with no member after it
+    # (tar 1.35: "has no effect", exit 2); macOS tar does not, so mimic it.
+    mkdir -p "$TMP/strict"
+    cat >"$TMP/strict/tar" <<EOF
+#!/bin/bash
+n=\$#
+if [ "\$n" -ge 2 ] && [ "\${@:\$((n - 1)):1}" = -C ]; then echo "tar: -C has no effect" >&2; exit 2; fi
+exec $(command -v tar) "\$@"
+EOF
+    chmod +x "$TMP/strict/tar"
+    run env PATH="$TMP/strict:$PATH" bash -c 'tar -cf - -C / etc -C /tmp >/dev/null'
+    [ "$status" -eq 2 ]
+    PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
         "$root/etc/wireguard/clients" "$TMP/master-wg" >"$TMP/out.tar" 2>"$TMP/err"
     rel="${root#/}"
     tar -tf "$TMP/out.tar" | sort >"$TMP/list"
@@ -2319,6 +2331,16 @@ EOF
     [ "$(tail -c +9 "$TMP/x/$rel/etc/wireguard/clients/a.png")" = profile-a ]
     grep -q 'b için QR resmi üretilemedi' "$TMP/err"
     # The temporary PNG directory is gone.
+    [ -z "$(ls -A "$tmpd")" ]
+    # No profiles at all (after "wg0 yeniden üret" or removing the last peer):
+    # only wg0.conf is sent, and GNU tar has nothing to reject.
+    rm -f "$root/etc/wireguard/clients"/*
+    run env PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" \
+        "$root/etc/wireguard/wg0.conf" "$root/etc/wireguard/clients" "$TMP/master-wg"
+    [ "$status" -eq 0 ]
+    PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
+        "$root/etc/wireguard/clients" "$TMP/master-wg" >"$TMP/empty.tar"
+    [ "$(tar -tf "$TMP/empty.tar")" = "$rel/etc/wireguard/wg0.conf" ]
     [ -z "$(ls -A "$tmpd")" ]
     # No install or no wg0.conf: refused before anything is sent.
     run env TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/none" "$root/etc/wireguard/wg0.conf" "$root/etc/wireguard/clients" "$TMP/master-wg"
