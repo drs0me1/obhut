@@ -10,7 +10,7 @@ Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
   chmod 600 kurulum/kurulum.env
-  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (FileBrowser parolası en az 12 karakter).
+  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (FileBrowser ve WireGuard paneli parolası en az 12 karakter).
   Alan adı, downloads yolu ve portlar boş kalırsa varsayılan kullanılır.
   TS_AUTH_KEY: ephemeral olmayan, tek kullanımlık bir anahtar; boş bırakırsanız tarayıcıdan giriş URL'si.
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
@@ -28,11 +28,20 @@ WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
   günceller; 6) elle yedek içindir.
   7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).
   8) wg0 yeniden üret: yeni sunucu anahtarı; bütün peer'lar ve profiller silinir, geri alınamaz.
-     SIL yazınca çalışır; cihazları 2) ekle ile yeniden ekleyin.
+     onayla yazınca çalışır (büyük/küçük harf fark etmez); cihazları 2) ekle ile yeniden ekleyin.
   WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 qBittorrent, :61007 FileBrowser
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
+
+WireGuard paneli (tarayıcıdan; v2-99):
+  http://wg.ayc — yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
+  Giriş: kurulum.env'deki WG_PANEL_USER / WG_PANEL_PASS (tarayıcı kendi penceresinde sorar).
+  Peer listesi (bağlı/boşta, el sıkışma, trafik), ekle, çıkar, QR göster (60 sn sonra gizlenir),
+  profil ve QR resmi indir, DNS değiştir, wg0 yeniden üret (onayla yazınca).
+  Değişiklikler sunucuda hemen geçerli; Mac'teki kurulum/wireguard yedeği için sonra
+  wireguard.command → 6) yedek al (sayfa "Mac yedeği eski" diye hatırlatır).
+  10 hatalı parolada o cihaz 15 dakika bekletilir.
 
 A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm
@@ -42,6 +51,10 @@ A) İlk kurulum
      Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
   (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-100'e geçerken: WireGuard IPv6 adresleri değişti (fdcc:ad94:bacf:61a4::2 …; eski …::cafe:2 değil).
+  Eski yedek kullanılamaz: kurulum/wireguard klasörünü silin, sunucuyu sıfırlayıp kurun, cihazları yeniden ekleyin
+  v2-99'a geçerken: kurulum.env'e WG_PANEL_USER= ve WG_PANEL_PASS= satırlarını ekleyin
+  (panel kullanıcı adı küçük harfle başlar; parola en az 12 karakter); yoksa kurulum durur
   v2-94'e geçerken: kurulum.env'e TORRENT_USER= ve TORRENT_PASS= satırlarını ekleyin
   (qBittorrent arayüzünde kullandığınız kullanıcı adı ve parola); TRANSMISSION_* satırları silinmiş olmalı;
   eski sunucuda kurulum durursa: docker rm -f transmission

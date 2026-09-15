@@ -276,7 +276,7 @@ Preserved in full as a core feature. Contract in §5–§7.
 ### 1.9 WireGuard (DD-120, DD-124)
 
 - `wg-quick@wg0` in the host kernel: `10.8.0.1/24` and
-  `fdcc:ad94:bacf:61a4::cafe:1/112`, UDP `${WG_PUBLIC_PORT}`, MTU 1420.
+  `fdcc:ad94:bacf:61a4::1/112` (peers `…::N`, the hex of the IPv4 host number; **DD-135**), UDP `${WG_PUBLIC_PORT}`, MTU 1420.
 - **The server is the source of truth.** `/etc/wireguard/wg0.conf` (`0600`)
   holds the server key and one `# peer: <name>` + `[Peer]` block per device.
   The only WireGuard files sent from the workstation are the pulled copies,
@@ -322,7 +322,7 @@ Preserved in full as a core feature. Contract in §5–§7.
   - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
     then prints the new QR code and saves the new profile.
   - Option 8 "wg0 yeniden üret" lists the peers that will be lost and runs
-    `reset --onay` only after the operator types `SIL` (**DD-130**).
+    `reset --onay` only after the operator types `onayla`, in any case (**DD-130**, **DD-134**).
   - After a successful add (2), remove (3), DNS change (7) or regenerate (8)
     the menu runs option 6 itself, so `kurulum/` always matches the server
     and a reinstall cannot bring back a removed peer or an old key. A refused
@@ -339,6 +339,44 @@ Preserved in full as a core feature. Contract in §5–§7.
 - The UIs are served by `caddy-wg.service` (`/etc/caddy/Caddyfile.wg`, admin
   API off). It binds only `10.8.0.1`, follows `wg-quick@wg0` and has no
   Tailscale dependency, so the path survives a Tailscale outage.
+- **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
+  `http://wg.${LOCAL_DOMAIN}` to list, add and remove peers, show a peer's QR
+  code, download its profile or picture, change its DNS and regenerate `wg0`.
+  - It runs Python 3's standard library only and listens on
+    `127.0.0.1:61008`. Caddy exposes it on the tailnet; nothing exposes it on
+    `wg0` or the WAN.
+  - Every change goes through `master-wg` (`info`, `add`, `remove`, `dns`,
+    `reset --onay`, `profile`, `png`): same validation, lock and live apply as
+    `wireguard.command`.
+  - The account is `WG_PANEL_USER`/`WG_PANEL_PASS` from `kurulum.env` (user
+    `^[a-z][a-z0-9_-]{0,31}$`, password at least 12 characters). The installer
+    stores only a PBKDF2-SHA256 hash (600000 rounds) in
+    `/etc/master-stack/wg-panel.auth` (`0600`). It keeps the hash while it
+    verifies and rewrites it when the file differs; the panel re-reads it
+    without a restart.
+  - The browser signs in with HTTP Basic. After 10 wrong passwords in
+    15 minutes a client is refused for 15 minutes, and each wrong attempt waits
+    one second.
+  - Requests with another `Host` than `wg.${LOCAL_DOMAIN}` (or the loopback
+    port) are refused. `/api/*` needs the `X-WG-Panel: 1` header and a
+    same-origin fetch. Adds, removes, DNS changes and regenerations need a
+    JSON body; regeneration also needs `confirm` `onayla` (any case, **DD-134**).
+  - Responses carry `Cache-Control: no-store`, a CSP with only `'self'` sources
+    (plus `blob:` images), `X-Frame-Options: DENY` and no referrer. The page
+    loads nothing from other hosts.
+  - Keys are never in a listing or preview. The profile preview masks
+    `PrivateKey` and `PresharedKey`. The full profile and the QR picture are
+    returned only on an explicit request, and the audit line in the journal
+    names the user, client, action and peer, never the content.
+  - The unit runs with `NoNewPrivileges`, `ProtectSystem=full` with
+    `/etc/wireguard` writable, `ProtectHome`, `PrivateTmp`, the kernel
+    protections and `AF_UNIX`/`AF_INET`/`AF_INET6`/`AF_NETLINK` only.
+  - "Mac yedeği güncel" is true when the Mac backup marker
+    (`/etc/master-stack/wg-backup.at`, touched by `wireguard.command`'s backup
+    after a successful archive) is not older than `wg0.conf` and the profile
+    directory.
+  - Changes made in the panel reach `kurulum/wireguard/` on the Mac only through
+    `wireguard.command` → 6.
 
 ---
 
@@ -413,6 +451,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
 | qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
+| WireGuard panel (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 `webdav.*:80` and `${TS_IPV4}:${WEBDAV_PORT}`. Compose never names the
@@ -446,6 +485,7 @@ an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
 | `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
+| `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:61008` (**DD-133**) |
 
 Rules:
 
@@ -465,8 +505,8 @@ Rules:
   no certificate machinery — the tailnet is the transport security boundary.
 - Every upstream is plain HTTP on loopback. The only HTTPS upstream,
   Portainer's (**DD-62**), went with Portainer in v2-82 (**DD-116**).
-- The six names live in one list in the templates; adding a service means
-  editing that one list.
+- The six names live in one list (`SERVICE_NAMES`) mirrored in both templates;
+  adding a service means editing that list and both templates.
 
 ---
 

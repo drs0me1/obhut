@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-15 — Panel layout and the "onayla" confirmation (v2-100)
+
+- **Changed** (**DD-134**):
+  - Regenerating `wg0` is confirmed by typing `onayla` (any case) in both the
+    panel and `wireguard.command` option 8. "SIL" no longer works.
+  - The panel's regenerate section is a compact single row.
+  - Table columns are resized: DNS and address get more room, headers stay on
+    one line, and an address is never split across lines.
+- **Changed** (**DD-135**): WireGuard IPv6 addresses no longer carry `cafe`.
+  The server is `fdcc:ad94:bacf:61a4::1/112` and peers are `…::2`, `…::3`, …
+  The snapshot check now accepts only a host number after the prefix.
+- **Not migrated** (fresh install only): delete `kurulum/wireguard` (its
+  `cafe` backup is refused), reset the server, install v2-100 and add the
+  devices again.
+- **Verified:**
+  - bats 143 ok, with four mutations caught.
+  - The page was checked in a browser with sample peers.
+  - The old backup was refused as expected.
+
+### 2026-09-15 — WireGuard web panel on the tailnet (v2-99)
+
+- **Added** (**DD-133**): `http://wg.<domain>` — manage `wg0` peers from a
+  browser. You can list them with status, handshake and traffic, add, remove,
+  show the QR code (hidden until asked, hidden again after 60 s), download the
+  profile or QR picture, change DNS and regenerate `wg0` after typing `SIL`.
+  The page warns when the Mac backup is older than the last change.
+- **Access:** tailnet only, with the new `kurulum.env` account
+  `WG_PANEL_USER` / `WG_PANEL_PASS` (password at least 12 characters). **Add
+  both lines before running v2-99**; the installer stops without them.
+- The panel runs on the server (`master-wg-panel`, Python standard library,
+  `127.0.0.1:61008`) and makes every change through `master-wg`.
+  `wireguard.command` keeps working as before.
+- Also:
+  - `master-wg info`;
+  - the menu's backup leaves a marker the panel reads;
+  - stage 7 checks the panel with the input account.
+- **Verified:**
+  - bats 143 ok, with thirteen mutations caught.
+  - Installed live on `nrm`: the panel was exercised through Caddy (add,
+    duplicate, masked and full profile, QR, DNS, remove, refused reset) with
+    `wg0` left byte-identical. The reset and the interface-restart path ran
+    under the same sandbox on a throwaway interface.
+  - The page was checked in a browser against sample data.
+
 ### 2026-09-15 — Fix: backup failed on a server with no peers (v2-98, menu only)
 
 - **Fixed:** the backup script ended its `tar` command with `-C <temp dir>`

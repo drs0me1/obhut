@@ -7,6 +7,7 @@
 #
 #   master-wg version
 #   master-wg list                        ad, IPv4, son el sıkışma, rx, tx, profil
+#   master-wg info                        list + IPv6, DNS, keepalive, MTU (panel; gizli alan yok)
 #   master-wg add AD DNS KEEPALIVE MTU
 #   master-wg remove AD
 #   master-wg profile AD                  istemci profili (stdout)
@@ -105,19 +106,34 @@ write_and_apply() {
     return 1
 }
 
+# list: ad, IPv4, el sıkışma, rx, tx, profil (wireguard.command bu altı alanı okur).
+# info (DD-133, panel): aynı alanlar + IPv6, DNS, keepalive, MTU; anahtar yok.
 cmd_list() {
-    local dump line name="" pub="" ips="" hs rx tx profile
+    local mode="${1:-list}" dump line name="" pub="" ips="" hs rx tx profile
     dump="$(wg show "$WG_INTERFACE" dump 2>/dev/null | tail -n +2 || true)"
     # `line` döngünün değişkeni; burada ayrı değişken kullanılır.
     emit() {
-        local row
+        local row v6="" extra="" f
         [[ -n "$pub" ]] || return 0
         hs=0 rx=0 tx=0
         row="$(awk -F'\t' -v k="$pub" '$1 == k {print $5 "\t" $6 "\t" $7}' <<<"$dump")"
         [[ -z "$row" ]] || IFS=$'\t' read -r hs rx tx <<<"$row"
         profile=yok
-        [[ ! -f "$WG_CLIENTS_DIR/${name}.conf" ]] || profile=var
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$hs" "$rx" "$tx" "$profile"
+        f="$WG_CLIENTS_DIR/${name}.conf"
+        [[ ! -f "$f" ]] || profile=var
+        if [[ "$mode" == list ]]; then
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$hs" "$rx" "$tx" "$profile"
+            return 0
+        fi
+        [[ "$ips" != *", "* ]] || { v6="${ips#*, }"; v6="${v6%%/*}"; }
+        # Profildeki DNS, keepalive (yoksa 0) ve MTU; boş alanlar sekmede kaybolmasın diye awk yazar.
+        [[ ! -f "$f" ]] || extra="$(awk -F' = ' '/^\[/ {sec = $0}
+            sec == "[Interface]" && $1 == "DNS" {d = $2}
+            sec == "[Interface]" && $1 == "MTU" {m = $2}
+            sec == "[Peer]" && $1 == "PersistentKeepalive" {k = $2}
+            END {printf "%s\t%s\t%s", d, (k == "" ? 0 : k), m}' "$f")"
+        [[ -n "$extra" ]] || extra=$'\t\t'
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$v6" "$hs" "$rx" "$tx" "$profile" "$extra"
     }
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
@@ -295,7 +311,8 @@ cmd_png() {
 
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
-    list) cmd_list ;;
+    list) cmd_list list ;;
+    info) cmd_list info ;;
     add) [[ "$#" -eq 5 ]] || die "kullanım: master-wg add AD DNS KEEPALIVE MTU"; cmd_add "$2" "$3" "$4" "$5" ;;
     remove) [[ "$#" -eq 2 ]] || die "kullanım: master-wg remove AD"; cmd_remove "$2" ;;
     profile) [[ "$#" -eq 2 ]] || die "kullanım: master-wg profile AD"; cmd_profile "$2" ;;
@@ -303,5 +320,5 @@ case "${1:-}" in
     png) [[ "$#" -eq 2 ]] || die "kullanım: master-wg png AD"; cmd_png "$2" ;;
     dns) [[ "$#" -eq 3 ]] || die "kullanım: master-wg dns AD DNS"; cmd_dns "$2" "$3" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
-    *) die "kullanım: master-wg version|list|add|remove|profile|qr|png|dns|reset" ;;
+    *) die "kullanım: master-wg version|list|info|add|remove|profile|qr|png|dns|reset" ;;
 esac

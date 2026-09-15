@@ -6305,6 +6305,232 @@ failure with an early, named one.
     - `wg0` (4 peers, 4 profiles) was untouched, and the test interface and
       files were removed.
 
+### DD-133: A WireGuard web panel on the tailnet, built on master-wg (2026-09-15)
+
+- **Context:** the user liked the menu but wanted to manage peers from a
+  browser as well: add, remove, show and download the QR code and profile,
+  change DNS. A design prototype was approved, including tabs per interface.
+  - Multiple interfaces (`wg1`, `wg2`, …) were agreed as a second step. This
+    decision covers `wg0` only; the tab strip is ready for more.
+  - Access option A was chosen: the tailnet only, with a password.
+- **Decision:**
+  - **Server-side and small.** `master-wg-panel` uses Python 3's standard
+    library (already installed for the qBittorrent hash). There is no Docker
+    and no new package. It listens on `127.0.0.1:61008`, and the tailnet
+    Caddy proxies `http://wg.${LOCAL_DOMAIN}` to it. Nothing listens on `wg0`
+    or the WAN, and stage 7 proves that.
+  - **One rule set.** Every change calls `master-wg`, so the panel and
+    `wireguard.command` share validation, the installer lock, the live
+    `wg syncconf` apply and the rollback. `master-wg info` was added for the
+    listing: `list`'s six fields plus IPv6, DNS, keepalive and MTU, never a
+    key. `list` keeps its format for the menu.
+  - **Account from the input file (DD-119).** `WG_PANEL_USER`/`WG_PANEL_PASS`
+    are required keys; the password needs at least 12 characters, like
+    FileBrowser, because the panel can mint tunnels.
+    - The installer runs `master-wg-panel account` with the password on stdin.
+      It stores PBKDF2-SHA256 (600000 rounds, 16-byte salt) in a `0600` file
+      and keeps it while it verifies. The panel re-reads the file when it
+      changes.
+    - Stage 7 signs in with the input account through Caddy (`check`, also
+      password on stdin) and then forgets the password.
+  - **Authentication and abuse.**
+    - HTTP Basic, the browser's own prompt. The tailnet (WireGuard) encrypts
+      it, as for the other UIs.
+    - A verified `Authorization` header is cached in memory for 15 minutes as
+      a SHA-256 digest, so PBKDF2 runs once, not on every request.
+    - Each wrong password waits one second. Ten in 15 minutes lock that client
+      out for 15 minutes, keyed by the `X-Forwarded-For` Caddy sets, trusted
+      only from loopback.
+  - **Browser attacks.**
+    - Basic credentials are sent automatically, so every `/api/*` request
+      needs `X-WG-Panel: 1`. A cross-site page cannot add that header without
+      a CORS preflight the panel never grants. A `Sec-Fetch-Site` other than
+      `same-origin` or `none` is refused.
+    - A `Host` other than `wg.${LOCAL_DOMAIN}` or the loopback port is refused
+      (DNS rebinding).
+    - The CSP allows only `'self'` (plus `blob:` for the QR picture), with no
+      inline code. Responses are `no-store`, no-referrer and `DENY` for
+      frames.
+    - The page uses system fonts and loads nothing from other hosts.
+  - **Secrets on demand.** The profile preview masks `PrivateKey` and
+    `PresharedKey` on the server. The QR picture is fetched only after "QR'ı
+    göster" and dropped after 60 seconds. Downloads fetch the full profile or
+    picture only when clicked. The journal names user, client, action and
+    peer.
+  - **Least privilege that still works.** `master-wg` needs root
+    (`wg syncconf`, `/etc/wireguard`). The unit adds `NoNewPrivileges`,
+    `ProtectSystem=full` with only `/etc/wireguard` writable (the lock lives in
+    `/run`), `ProtectHome`, `PrivateTmp`, kernel protections, no namespaces or
+    realtime, and four address families.
+  - **Backup state.** `wireguard.command`'s backup script touches
+    `/etc/master-stack/wg-backup.at` after a successful archive. The panel
+    shows "Mac yedeği eski" while `wg0.conf` or the profile directory is
+    newer. Panel changes still reach the Mac only through option 6, since the
+    server cannot write to it.
+  - **DNS choices.** The default comes from `WG_CLIENT_DNS_DEFAULT` (DD-131),
+    plus Google, Quad9 and every DNS list already used by a peer (for example
+    the operator's NextDNS pair), and custom. No personal resolver address is
+    hard-coded.
+  - `wg` becomes a service name again. wg-easy's use ended with DD-120; the
+    wg-easy test now checks that `wg.` points to the loopback panel.
+- **Rejected:**
+  - A login form with a session cookie: more code (cookie flags without
+    HTTPS, session store, logout) for the same protection on the tailnet.
+  - Caddy `basic_auth`: the hash would sit in the world-readable Caddyfile or
+    need a group-readable import. Local processes could reach the upstream
+    without a password. The panel would need a shared secret header to tell
+    Caddy's requests apart.
+  - A Unix socket: tighter, but the panel would need `caddy` group handling,
+    and loopback with its own authentication already refuses local callers
+    without the password.
+  - Exposing the panel on WireGuard (option B): a device on `wg0` could delete
+    its own tunnel or regenerate `wg0` and lock everyone out.
+  - Reading `/etc/wireguard` directly from Python: a second parser and a
+    second writer beside `master-wg`.
+- **Cost:** v2-99 adds two required keys to `kurulum.env`; the installer stops
+  with a clear message until they are there. One service, one Caddy site, one
+  DNS name and port 61008 are added.
+- **Verified (2026-09-15, bats):**
+  - 143 ok. The panel was started against a fake `master-wg` for these checks:
+    - 401 without or with a wrong password and 200 with the account;
+    - the CSP, `no-store` and `DENY` headers;
+    - 403 for another `Host`, for `/api` without the header and for a
+      cross-site fetch;
+    - JSON state with backup freshness;
+    - exact `add`/`dns`/`remove`/`reset --onay` arguments;
+    - bad names, bodies and confirmations never reaching `master-wg`;
+    - `master-wg` refusals returned as messages;
+    - a masked preview against a full download;
+    - PNG only on request;
+    - an audit log without secrets;
+    - a new account read without a restart;
+    - a 429 lockout for one client while another passes.
+  - `account` keeps a matching hash, rewrites a changed one, stores no
+    plaintext and leaves no temporary file.
+  - `master-wg info` gives exact fields: keepalive 0 when absent, empty profile
+    fields without a profile, no key material.
+  - Thirteen mutations were caught, one of each guard: the panel header,
+    `Sec-Fetch-Site`, `Host`, account reload, masking, the name check, the
+    reset confirmation, the lockout, keeping a matching hash, keepalive 0 and
+    the API origin gate.
+- **Verified live (2026-09-15, `nrm`, Debian 13):**
+  - The v2-99 launcher ran with a scratch input file and exited 0. Stage 7
+    signed in to the panel through Caddy ("4 peer"). The operator's account
+    files were saved and restored; FileBrowser's account export matched.
+  - Through the tailnet Caddy (`Host: wg.ayc`):
+    - 401 without or with a wrong password, and 200 with the account;
+    - CSS and JS served with their types and the CSP; 403 for `/api` without
+      the header;
+    - state with the four real peers;
+    - `paneltest` added (4 → 5 peers on `wg0`), a duplicate refused with
+      master-wg's message;
+    - the masked preview carried no key, the download carried it, and the QR
+      PNG equalled `qrencode` of the stored profile;
+    - DNS changed and a hostname refused;
+    - removed (back to 4); `wg0.conf` and the profile list byte-identical to
+      before the test;
+    - a reset without `SIL` refused.
+  - Another `Host` never reached the panel: Caddy answered its empty default.
+    Nothing answered on `10.8.0.1:61008` or the WAN.
+  - The unit showed `NoNewPrivileges=yes`, `ProtectSystem=full`, `/etc/wireguard`
+    writable and four address families. The journal had audit lines and no
+    password or key.
+  - With the same sandbox (`systemd-run`) on a throwaway `wgtst0`:
+    - two adds;
+    - an add while the interface was stopped, which restarted it through
+      `systemctl` from inside the sandbox;
+    - a `SİL` reset (3 peers and 3 profiles removed, new key, unit active);
+    - no permission errors, `wg0` untouched.
+  - The scratch panel account was deleted afterwards, so the panel stays
+    locked until the operator's install writes theirs.
+- **Browser check (2026-09-15):** the real page ran against a loopback copy
+  with sign-in removed, sample peers and a fake `master-wg`, never published.
+  - Add opened the QR dialog with the masked profile, and the QR appeared on
+    "QR'ı göster" with the 60 s countdown. The DNS presets included the
+    operator's NextDNS pair as "Bu sunucuda". DNS change and inline remove
+    confirmation worked, and typing `sil` enabled regeneration, which ended in
+    the empty state.
+  - A mouse click on "Çıkar" was lost once because the 10-second refresh
+    replaced the rows. The refresh now updates status, age, traffic and
+    totals in place while the peer set is unchanged; the same button element
+    survived a refresh, and the click then worked.
+
+### DD-134: Regenerating wg0 is confirmed with "onayla"; the panel layout is tightened (2026-09-15)
+
+- **Context:** after using v2-99, the user asked for three changes:
+  - a smaller regenerate section;
+  - the confirmation word "onayla" instead of "SIL";
+  - wider table columns, because the DNS column wrapped a single character
+    onto a new line and spare room sat beside the traffic column.
+- **Decision:**
+  - **One word everywhere.** The panel (page and server check) and
+    `wireguard.command` option 8 accept `onayla` in any case; "SIL" no longer
+    confirms. `master-wg reset --onay` is unchanged. The word lives once in
+    each tool: `CONFIRM_WORD` in `master-wg-panel` and `panel.js`, the `case`
+    in the menu.
+  - **Compact danger row.** Smaller padding, title and text, a short input
+    with `onayla` as placeholder, and a small button on one line. It keeps
+    the red border, stays at the bottom, and the button stays disabled until
+    the word is typed.
+  - **Columns sized to their content.**
+    - Status 7rem, name `minmax(6rem, .7fr)`, address `minmax(13rem, 1.2fr)`,
+      DNS `minmax(14rem, 1.5fr)`, handshake 7.5rem, traffic 6rem, actions
+      10.5rem.
+    - Headers stay on one line.
+    - An address never breaks: the IPv6 address is `nowrap`, and each DNS
+      address is its own `nowrap` span, so lists wrap only after a comma.
+- **Found in the browser check:** the confirmation input was full width. The
+  generic `input[type="text"]` rule came later with equal specificity; the
+  danger rule is now more specific.
+- **The `cafe` in the IPv6 addresses:** not a protocol requirement. The
+  `fdcc:ad94:bacf:61a4::cafe:0/112` range is wg-easy's default. DD-120 kept it
+  so existing profiles connected unchanged; `cafe` is just a readable hex
+  group. Changing it would give every peer a new address and profile, so it
+  stays.
+- **Verified (2026-09-15):**
+  - bats 143 ok. The panel test now refuses `SIL` and accepts `Onayla`; the
+    menu test refuses `SIL` and accepts `Onayla`. Two mutations were caught:
+    accepting `sil` again in the panel and dropping the menu's lower-casing.
+  - Browser check of the page against sample peers (Cloudflare, Google, Quad9)
+    at 1440 px: one-line headers, no address split, and a one-line danger row.
+
+### DD-135: WireGuard IPv6 addresses without a word: fdcc:ad94:bacf:61a4::N (2026-09-15)
+
+- **Context:** the user asked to replace `cafe` in `fdcc:ad94:bacf:61a4::cafe:N`,
+  the range kept from wg-easy by DD-120.
+  - `root` and `peer` are not valid: IPv6 groups are hexadecimal (0–9, a–f).
+  - Among the valid choices the user picked plain numbers.
+- **Decision:**
+  - `WG_SERVER_IPV6="fdcc:ad94:bacf:61a4::1"` and
+    `WG_SUBNET6="fdcc:ad94:bacf:61a4::/112"` (the canonical form `ip6tables`
+    prints). A peer's address stays the hex of its IPv4 host number:
+    `10.8.0.2` → `…::2`, `10.8.0.10` → `…::a`.
+  - `master-wg`, the panel and the firewall already derive everything from
+    these two values; no code depended on `cafe`.
+  - **Stricter snapshot check.** `wg_snapshot_check` used to test only that
+    an address starts with the prefix. With `…::` as the prefix, `…::1:2`
+    (outside the /112) or `…::cafe:2` would have passed. Now the part after
+    the prefix must be only a hex host number (`/128`), and for IPv4 only
+    digits (`/32`).
+  - **No migration, by the user's rule (2026-09-15):**
+    the scenario is a fresh install on a test server. Nothing converts, keeps
+    or accepts peers, profiles or backups made with the `cafe` range.
+    - A pulled `kurulum/wireguard` from before stops stage 0 with "AllowedIPs
+      WireGuard alt ağı dışında"; delete it and install fresh.
+    - Installing over a server that still has `cafe` peers leaves those peers
+      without IPv6; reset and re-add them.
+  - A stage-0 gate for old peers and an exception for an old backup were
+    written and then removed at the user's request.
+- **Verified (2026-09-15):**
+  - bats 143 ok. Fixtures use the new range: `master-wg add` writes `…::2/128`
+    and `info` lists it.
+  - The snapshot check rejects `…::cafe:3/128`, `…::1:3/128` and
+    `10.8.0.3.4/32`; two mutations (prefix-only IPv6 and IPv4 checks) were
+    caught.
+  - On `nrm`, `ip6tables -t nat -C … -s fdcc:ad94:bacf:61a4::/112` parsed the
+    subnet (read-only).
+  - The operator's pulled backup was rejected as expected (`…::cafe:2/128`).
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

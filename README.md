@@ -61,6 +61,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
 │   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
 │   └── wireguard/         #   device profiles; sunucu/wg0.conf = server key + peers
+├── versiyon/              # copies of verified working versions, each with OKUBENI.txt
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
     ├── install.sh          # orchestrator
@@ -86,6 +87,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
+| WireGuard panel | loopback → Caddy `wg.<domain>` (tailnet only, login) | peers in the browser: add/remove, QR, profile, DNS, regenerate (**DD-133**) |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound

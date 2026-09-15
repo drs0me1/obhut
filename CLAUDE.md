@@ -7,7 +7,7 @@ Working guide for any AI assistant in this repository. Read this first.
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
 `wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs and the WireGuard backup),
-this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
+`versiyon/` (frozen copies of verified working versions), this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
 The installer turns a fresh Debian 13
@@ -44,7 +44,7 @@ state. Treat every change as production-infrastructure work.
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
   `admin` / `12345test` for Dozzle and qBittorrent (`TORRENT_USER`/`TORRENT_PASS`); `admin` / `12345test1234`
-  for FileBrowser (12-character minimum); an empty `TS_AUTH_KEY`. Add and
+  for FileBrowser and the WireGuard panel (`WG_PANEL_USER`/`WG_PANEL_PASS`; 12-character minimum); an empty `TS_AUTH_KEY`. Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the
   re-run questions with their defaults and `E` at the confirmation, and report
@@ -93,10 +93,12 @@ state. Treat every change as production-infrastructure work.
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
-| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**); 6) Yedek al pulls `wg0.conf` and profiles into `kurulum/` without printing them (**DD-128**); 7) DNS change, 8) wg0 regenerate after typing `SIL`; 2, 3, 7 and 8 back up automatically (**DD-130**) |
+| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**); 6) Yedek al pulls `wg0.conf` and profiles into `kurulum/` without printing them (**DD-128**); 7) DNS change, 8) wg0 regenerate after typing `onayla`; 2, 3, 7 and 8 back up automatically (**DD-130**) |
+| `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
 | `kurulum/wireguard/` (root) | Device profiles and their QR pictures (`<name>.png`, **DD-132**), plus `sunucu/wg0.conf` (server key + peers), mode 600; only the `.conf` files are sent, for restore on a server without `wg0.conf` |
 | `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
+| `Data/panel/` | WireGuard web panel (`master-wg-panel`, Python stdlib, `127.0.0.1:61008` → Caddy `wg.<domain>`, tailnet only; page files) built on `master-wg` (**DD-133**) |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
 | `Data/config/defaults.env` | Ports, images, paths, chain names |

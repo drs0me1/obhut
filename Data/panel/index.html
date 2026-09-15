@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>WireGuard paneli</title>
+<link rel="stylesheet" href="/panel.css">
+<script src="/panel.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="strip">
+    <div class="ident">
+      <span class="wordmark"><span id="host">sunucu</span><span class="dot">.</span></span>
+      <div class="chips">
+        <span class="chip" id="chip-active"><span class="dotmark"></span><span id="chip-active-text">Yükleniyor</span></span>
+        <span class="chip">Uç nokta <span class="mono" id="chip-endpoint">–</span></span>
+        <span class="chip">Sürüm <span class="mono" id="chip-version">–</span></span>
+      </div>
+    </div>
+    <div class="actions-top">
+      <button class="backup" id="backup-pill" type="button" aria-expanded="false" aria-controls="backup-note">
+        <span class="dotmark"></span><span id="backup-text">Mac yedeği</span>
+      </button>
+      <button class="btn btn-primary" id="open-add" type="button" disabled>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+        <span id="open-add-text">Peer ekle</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="backup-note" id="backup-note" hidden>
+    Bu sayfadaki değişiklikler sunucuda <strong>hemen</strong> geçerli olur. Mac'teki
+    <span class="mono">kurulum/wireguard</span> kopyası (yeniden kurulumda geri gelen anahtar ve peer'lar)
+    kendiliğinden güncellenmez: değişiklikten sonra Mac'te <strong>wireguard.command → 6) Yedek al</strong>.
+    <span id="backup-detail"></span>
+  </div>
+
+  <nav class="tabs-bar" id="tabs" role="tablist" aria-label="WireGuard arayüzleri"></nav>
+
+  <section class="panel" id="panel" role="tabpanel" aria-live="polite">
+    <p class="hint">Yükleniyor…</p>
+  </section>
+</div>
+
+<dialog class="drawer" id="add-dialog" aria-labelledby="add-title">
+  <form class="dlg" id="add-form" novalidate>
+    <div class="dlg-head">
+      <div>
+        <h3 id="add-title">Peer ekle</h3>
+        <p>Anahtarlar sunucuda üretilir; profil ve QR hemen hazır olur.</p>
+      </div>
+      <button class="x" type="button" data-close aria-label="Kapat"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l10 10M14 4L4 14"/></svg></button>
+    </div>
+    <div class="field">
+      <label for="add-name">Cihaz adı</label>
+      <input type="text" id="add-name" autocomplete="off" spellcheck="false" maxlength="32" placeholder="ör. iPh1">
+      <small id="add-name-help"></small>
+    </div>
+    <div class="assign" id="add-assign"></div>
+    <fieldset class="field">
+      <legend class="lbl">DNS</legend>
+      <div class="presets" id="add-presets"></div>
+      <input type="text" id="add-custom" placeholder="ör. 9.9.9.9, 149.112.112.112" spellcheck="false" hidden>
+    </fieldset>
+    <details class="adv">
+      <summary>Gelişmiş: keepalive ve MTU</summary>
+      <div class="two">
+        <div class="field">
+          <label for="add-ka">PersistentKeepalive (sn)</label>
+          <input type="number" id="add-ka" min="0" max="65535">
+          <small>0 = kapalı</small>
+        </div>
+        <div class="field">
+          <label for="add-mtu">MTU</label>
+          <input type="number" id="add-mtu" min="1280" max="1500">
+          <small>1280–1500</small>
+        </div>
+      </div>
+    </details>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" data-close>Vazgeç</button>
+      <button class="btn btn-primary" type="submit" id="add-submit">Peer oluştur</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="wide" id="qr-dialog" aria-labelledby="qr-title">
+  <div class="dlg">
+    <div class="dlg-head">
+      <div>
+        <h3 id="qr-title">Profil</h3>
+        <p id="qr-sub"></p>
+      </div>
+      <button class="x" type="button" data-close aria-label="Kapat"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l10 10M14 4L4 14"/></svg></button>
+    </div>
+    <div class="qr-layout">
+      <div class="qr-plate veiled" id="qr-plate">
+        <img id="qr-img" alt="Profilin QR kodu" hidden>
+        <button class="reveal" type="button" id="qr-reveal">
+          <span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>QR'ı göster</span>
+        </button>
+        <span class="timer num" id="qr-timer">60</span>
+      </div>
+      <div class="qr-side">
+        <div class="warnline">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.8l6.5 12H1.5z"/><path d="M8 6.5v3.2M8 11.6v.1"/></svg>
+          <span>QR ve profil cihazın gizli anahtarını taşır. Okutunca kapatın; kimseyle paylaşmayın.</span>
+        </div>
+        <pre class="profile" id="qr-profile">Yükleniyor…</pre>
+        <div class="qr-dl">
+          <button class="btn btn-quiet btn-sm" type="button" id="dl-conf">Profili indir (.conf)</button>
+          <button class="btn btn-quiet btn-sm" type="button" id="dl-png">QR resmini indir (.png)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dns-dialog" aria-labelledby="dns-title">
+  <form class="dlg" id="dns-form" novalidate>
+    <div class="dlg-head">
+      <div>
+        <h3 id="dns-title">DNS değiştir</h3>
+        <p>Anahtar ve adres aynı kalır. Kaydedince cihazda yeni QR'ı okutun.</p>
+      </div>
+      <button class="x" type="button" data-close aria-label="Kapat"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l10 10M14 4L4 14"/></svg></button>
+    </div>
+    <div class="presets" id="dns-presets"></div>
+    <input type="text" id="dns-custom" placeholder="ör. 9.9.9.9, 149.112.112.112" spellcheck="false" hidden>
+    <small class="err" id="dns-err" hidden></small>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" data-close>Vazgeç</button>
+      <button class="btn btn-primary" type="submit" id="dns-submit">DNS'i kaydet</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

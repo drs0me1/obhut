@@ -15,6 +15,10 @@ http://torrent.__LOCAL_DOMAIN__ {
 http://file.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
 }
+# WireGuard paneli (DD-133): yalnız tailnet'ten; giriş ve CSRF denetimi panelde.
+http://wg.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
+}
 # MagicDNS: webdav.*:80. Infuse: {$TAILSCALE_IPV4}:{$WEBDAV_PORT} (state.env;
 # re-run'da port değişince Caddy EnvironmentFile ile güncellenir — DD-98).
 http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT} {

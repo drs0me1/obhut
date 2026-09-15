@@ -45,6 +45,52 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-15 — v2-100, panel tweaks (DD-134):**
+- The user installed v2-99 with their own account ("sorunsuz görülüyor").
+- They asked for a smaller regenerate section, "onayla" instead of "SIL" and
+  wider columns. Done in the panel and in menu option 8.
+- Answered: the `cafe` in `fdcc:…::cafe:N` is wg-easy's default range, kept by
+  DD-120.
+- bats 143 ok; browser-checked at 1440 px.
+- Also in v2-100 (DD-135): the IPv6 range is `fdcc:ad94:bacf:61a4::N`
+  without `cafe` (the user picked plain numbers).
+- No migration: the user said to design for a fresh install and not to
+  preserve or fix earlier state. A gate and an old-backup exception were
+  written and removed.
+- The user must delete `kurulum/wireguard` (a cafe backup, refused) and
+  reinstall.
+- Multiple interfaces become v2-101.
+
+**2026-09-15 — v2-99, WireGuard web panel (user: "A seçeneği, önerdiğin sıra ile başlayalım", DD-133):**
+- The design artifact was approved (tabs per interface). Multiple interfaces
+  come as a second step (v2-100).
+- Built: `Data/panel/master-wg-panel` (Python stdlib), `index.html`,
+  `panel.css`, `panel.js`, `systemd/master-wg-panel.service`, `master-wg
+  info`, Caddy `wg.` site, dnsmasq name, `WG_PANEL_*` keys, stage 6
+  `ensure_wg_panel`, stage 7 checks, a backup marker in `wireguard.command`.
+- bats 143 ok; 13 mutations caught.
+- Live on `nrm` with scratch inputs (accounts saved and restored):
+  - the panel through Caddy — add, dup, masked/full profile, QR, DNS,
+    remove; `wg0` byte-identical;
+  - the sandboxed reset and restart on `wgtst0`.
+  - The scratch panel account was deleted afterwards: the panel is locked
+    until the operator's install.
+- Browser check on a loopback copy without sign-in: flows OK. A lost click
+  was fixed by updating rows in place on refresh.
+- Open:
+  - the operator adds `WG_PANEL_USER`/`WG_PANEL_PASS` and re-runs v2-99
+    (that also installs the final page files);
+  - they try `http://wg.ayc`;
+  - offer a `versiyon/` snapshot once it is verified.
+
+**2026-09-15 — versiyon/ folder (user: "çalışan sistemi /versiyon klasörüne kopyala"):**
+- `versiyon/2026.08.06-v2-98/` is `git archive` of a4fc938: root commands,
+  README and `Data/` without `Data/app`, 36 files. It has a Turkish
+  `OKUBENI.txt`, and `versiyon/OKUBENI.txt` is the index.
+- Health at snapshot time: every unit active, 5 containers up, `--check`
+  passed, Tailscale exit node, 4 peers.
+- Future snapshots only on the user's instruction.
+
 **2026-09-15 — fix: backup with zero peers (user: "8 SIL yaptım ama conf dosyaları halen duruyor"):**
 - The reset worked on the server (0 peers, new key), but the automatic
   backup failed.
