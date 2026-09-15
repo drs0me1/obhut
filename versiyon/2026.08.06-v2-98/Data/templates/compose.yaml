@@ -1,0 +1,183 @@
+# Master stack Compose — yer tutucular kurulumda defaults.env / state ile doldurulur.
+# Compose .env kullanılmaz; WAN/endpoint ipucu state.env'dedir, burada değil.
+
+# Log rotasyonu servis tanımının parçası (DD-110): daemon.json'daki log-opts
+# yalnız konteyner OLUŞTURULURKEN okunur ve mevcut konteynerlere hiç ulaşmaz.
+# Burada olunca değişiklik bir compose farkıdır ve konteyner yeniden yaratılır.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "__DOCKER_LOG_MAX_SIZE__"
+    max-file: "__DOCKER_LOG_MAX_FILE__"
+
+services:
+  dozzle:
+    image: __DOZZLE_IMAGE__
+    container_name: dozzle
+    restart: unless-stopped
+    logging: *default-logging
+    # DD-116: durum, canlı log, başlat/durdur/sil. docker.sock root'a denk
+    # (`:ro` API'yi kısıtlamaz): yalnız loopback + Caddy (tailnet) + users.yml
+    # girişi. Shell (exec) kapalı; kullanıcı rolü `actions`.
+    security_opt:
+      - no-new-privileges=true
+    cap_drop:
+      - ALL
+    read_only: true
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+      DOZZLE_ENABLE_ACTIONS: "true"
+      DOZZLE_NO_ANALYTICS: "true"
+      TZ: __TIMEZONE__
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+    ports:
+      - "127.0.0.1:__DOZZLE_UI_PORT__:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - __DOZZLE_DATA_DIR__:/data
+    tmpfs:
+      - /tmp
+
+  filebrowser:
+    image: __FILEBROWSER_IMAGE__
+    container_name: filebrowser
+    # Klasik filebrowser (hacdias); DOWNLOADS_UID ile /srv R/W (DD-92).
+    user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges=true
+    cap_drop:
+      - ALL
+    read_only: true
+    # --disableExec: bilinen shell CVE yüzeyini kapatır (GHSA-8c9q… vb.).
+    # Eski --disable-exec adı bu imajda deprecated.
+    command:
+      - --address=0.0.0.0
+      - --port=80
+      - --root=/srv
+      - --database=/database/filebrowser.db
+      - --disableExec
+    environment:
+      TZ: __TIMEZONE__
+    ports:
+      - "127.0.0.1:__FILEBROWSER_UI_PORT__:80"
+    volumes:
+      - __DOWNLOADS_PATH__:/srv
+      - __FILEBROWSER_DATA_DIR__:/database
+      # Image VOLUME /config — anonim volume oluşmasın (DD-92 hijyen).
+      - __FILEBROWSER_DATA_DIR__/config:/config
+    tmpfs:
+      - /tmp
+
+  qbittorrent:
+    image: __QBITTORRENT_IMAGE__
+    container_name: qbittorrent
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:__TORRENT_UI_PORT__:__TORRENT_UI_PORT__"
+      # Peer: IPv4-only 1:1 (0.0.0.0). [::] publish yok — MASTER-DOCKER6 zaten
+      # WAN peer'i DROP ederdi; çift yığın gürültüydü. WAN IP gömülmez.
+      - "0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/tcp"
+      - "0.0.0.0:__TORRENT_PUBLIC_PORT__:__TORRENT_PUBLIC_PORT__/udp"
+    environment:
+      TZ: __TIMEZONE__
+      PUID: "__DOWNLOADS_UID__"
+      PGID: "__DOWNLOADS_GID__"
+      # DD-127: imaj iki portu her açılışta komut satırından verir
+      # (--webui-port, --torrenting-port); ayar dosyası bunları değiştiremez.
+      WEBUI_PORT: "__TORRENT_UI_PORT__"
+      TORRENTING_PORT: "__TORRENT_PUBLIC_PORT__"
+    volumes:
+      - __QBITTORRENT_DATA_DIR__:/config
+      - __DOWNLOADS_PATH__:/downloads
+    stop_grace_period: 30s
+
+  unpackerr:
+    image: __UNPACKERR_IMAGE__
+    container_name: unpackerr
+    user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
+    restart: unless-stopped
+    logging: *default-logging
+    # Torrent istemcisinin API'si kullanılmaz: parola/port gerekmez. Yalnız /downloads ağacını
+    # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
+    security_opt:
+      - no-new-privileges=true
+    cap_drop:
+      - ALL
+    read_only: true
+    environment:
+      TZ: __TIMEZONE__
+      UN_LOG_FILE: "/downloads/.unpackerr/unpackerr.log"
+      UN_LOG_FILE_MB: "10"
+      UN_LOG_FILES: "3"
+      UN_LOG_QUEUES: "30m"
+      UN_FOLDERS_INTERVAL: "10s"
+      UN_FOLDER_0_PATH: "/downloads"
+      UN_FOLDER_0_EXTRACT_PATH: ""
+      UN_FOLDER_0_DELETE_AFTER: "0"
+      UN_FOLDER_0_DISABLE_RECURSION: "false"
+      UN_FOLDER_0_DELETE_FILES: "false"
+      UN_FOLDER_0_DELETE_ORIGINAL: "false"
+      UN_FOLDER_0_MOVE_BACK: "true"
+      UN_FOLDER_0_EXTRACT_ISOS: "false"
+    volumes:
+      - __DOWNLOADS_PATH__:/downloads
+    tmpfs:
+      - /tmp
+    stop_grace_period: 30s
+
+  webdav:
+    image: __RCLONE_IMAGE__
+    container_name: webdav
+    restart: unless-stopped
+    logging: *default-logging
+    # htpasswd host'ta 0600 root:root; konteyner root okur, cap_drop ALL.
+    user: "0:0"
+    command:
+      - serve
+      - webdav
+      - /downloads
+      - --config=/dev/null
+      - --addr=:8080
+      - --htpasswd=/run/secrets/webdav_htpasswd
+      - --dir-cache-time=1m
+      - --read-only
+    # 401 = rclone ayakta + htpasswd zorunlu; kimlik bilgisi gerekmez.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -q -S -O /dev/null http://127.0.0.1:8080/ 2>&1 | grep -q '401'"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 5s
+    ports:
+      - "127.0.0.1:__WEBDAV_PORT__:8080"
+    volumes:
+      - __DOWNLOADS_PATH__:/downloads:ro
+      - __WEBDAV_HTPASSWD_FILE__:/run/secrets/webdav_htpasswd:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges=true
+    cap_drop:
+      - ALL
+    networks:
+      - webdav
+
+networks:
+  # Yalnız WebDAV; Caddy host loopback publish ile erişir (docker_default yok).
+  # internal:true host port publish'i düşürür — kullanılmaz (DD-82).
+  webdav:
+    name: webdav
+    driver: bridge

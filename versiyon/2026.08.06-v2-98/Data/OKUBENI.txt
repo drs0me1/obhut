@@ -1,0 +1,60 @@
+Master Stack — kullanım (yalnız macOS)
+
+Repo kökünde yalnız çift tıklanan dosyalar durur:
+  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
+  wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR, yedek al, DNS, wg0 yeniden üret (kurulumdan sonra)
+  kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
+  kurulum/wireguard/         cihaz profilleri (.conf) ve QR resimleri (.png); sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
+Diğer her şey Data/ altındadır; elle çalıştırılmaz.
+
+Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
+  mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
+  chmod 600 kurulum/kurulum.env
+  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (FileBrowser parolası en az 12 karakter).
+  Alan adı, downloads yolu ve portlar boş kalırsa varsayılan kullanılır.
+  TS_AUTH_KEY: ephemeral olmayan, tek kullanımlık bir anahtar; boş bırakırsanız tarayıcıdan giriş URL'si.
+  Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
+  sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
+
+WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
+  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış 6) yedek al
+             7) DNS değiştir 8) wg0 yeniden üret
+  Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
+  Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
+  profil kurulum/wireguard/<ad>.conf, QR resmi <ad>.png olarak Mac'e iner (cihaza dosyayı ya da QR'ı aktarın).
+  QR resmi de profil gibi gizli anahtarı taşır: kimseyle paylaşmayın.
+  6) yedek al: sunucu anahtarı, peer listesi, profiller ve QR resimleri kurulum/wireguard'a iner (içerik ekrana yazılmaz);
+  yeniden kurulumda aynı anahtar ve peer'lar gelir. 2) ekle, 3) çıkar, 7) ve 8) yedeği kendiliğinden
+  günceller; 6) elle yedek içindir.
+  7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).
+  8) wg0 yeniden üret: yeni sunucu anahtarı; bütün peer'lar ve profiller silinir, geri alınamaz.
+     SIL yazınca çalışır; cihazları 2) ekle ile yeniden ekleyin.
+  WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 qBittorrent, :61007 FileBrowser
+  (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
+  Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
+  menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
+
+A) İlk kurulum
+  0. Terminal: ssh-keygen -R nrm
+  1. <sürüm>.command               özeti kontrol edin → E   (soru yok; değerler kurulum/kurulum.env'den)
+  2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
+  3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun (Mac'te WireGuard kapalıyken)
+     Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
+  (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
+   Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-94'e geçerken: kurulum.env'e TORRENT_USER= ve TORRENT_PASS= satırlarını ekleyin
+  (qBittorrent arayüzünde kullandığınız kullanıcı adı ve parola); TRANSMISSION_* satırları silinmiş olmalı;
+  eski sunucuda kurulum durursa: docker rm -f transmission
+
+B) Sıfırlama → yeniden kurulum
+  0. Sıfırlamadan önce: wireguard.command → 6) yedek al (son hali kurulum/'da olsun)
+     Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
+  1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL
+     Özette "Hazır ayarlar: WireGuard sunucu anahtarı + … peer" görünür → E
+     Kurulum WireGuard anahtarını ve peer'ları geri koyar (cihazlara dokunmanız gerekmez);
+     qBittorrent şablondaki ayarlar ve kurulum.env hesabıyla hazır gelir
+  2. Tailscale paneli + Infuse adresi
+  (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin)
+
+Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + wireguard.command yedeği).
+Bu klasörü güvende tutun.

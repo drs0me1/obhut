@@ -1,0 +1,23 @@
+[Unit]
+Description=Caddy for the WireGuard interface (master-stack, DD-120)
+# WireGuard sunucu adresi yalnız arayüz ayaktayken vardır: onunla kalkar, onunla iner.
+Requires=wg-quick@__WG_INTERFACE__.service
+After=wg-quick@__WG_INTERFACE__.service
+PartOf=wg-quick@__WG_INTERFACE__.service
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --config __CADDY_WG_FILE__ --adapter caddyfile
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target wg-quick@__WG_INTERFACE__.service

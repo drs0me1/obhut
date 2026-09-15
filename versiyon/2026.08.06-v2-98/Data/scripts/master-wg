@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+# WireGuard peer yönetimi (DD-124). Sunucuda root olarak çalışır; Mac'teki
+# wireguard.command SSH ile çağırır. Anahtarlar burada `wg genkey` / `wg pubkey`
+# / `wg genpsk` ile üretilir, istemci profili root'a özel WG_CLIENTS_DIR'de
+# durur. wg0.conf'a "# peer: <ad>" ile başlayan bir [Peer] bloğu eklenir ya da
+# çıkarılır ve `wg syncconf` ile kopmadan uygulanır (DD-123).
+#
+#   master-wg version
+#   master-wg list                        ad, IPv4, son el sıkışma, rx, tx, profil
+#   master-wg add AD DNS KEEPALIVE MTU
+#   master-wg remove AD
+#   master-wg profile AD                  istemci profili (stdout)
+#   master-wg qr AD                       profilin QR kodu (terminal)
+#   master-wg png AD                      profilin QR kodu PNG olarak (stdout, dosyaya/boruya)
+#   master-wg dns AD DNS                  profildeki DNS satırı; anahtarlar aynı
+#   master-wg reset --onay                yeni sunucu anahtarı, bütün peer'lar silinir
+set -Eeuo pipefail
+umask 077
+
+STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+[[ -r "$STATE_FILE" ]] ||
+    die "state.env okunamıyor ($STATE_FILE): kurulum yapılmamış ya da root değilsiniz"
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+: "${V2_VERSION:?}"
+: "${WG_INTERFACE:?}"
+: "${WG_CONF_FILE:?}"
+: "${WG_CLIENTS_DIR:?}"
+: "${WG_SERVER_IPV4:?}"
+: "${WG_SERVER_IPV6:?}"
+: "${WG_SUBNET4:?}"
+: "${WG_SUBNET6:?}"
+: "${WG_PUBLIC_PORT:?}"
+: "${WG_ENDPOINT_HOST:?}"
+: "${WG_CLIENT_ALLOWED_IPS:?}"
+: "${RUNTIME_DIR:?}"
+
+KEY_RE='^[A-Za-z0-9+/]{43}=$'
+NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
+
+valid_name() {
+    [[ "$1" =~ $NAME_RE ]] || die "geçersiz peer adı '$1' (harf, rakam, . _ -; en çok 32)"
+}
+
+# Kurulumla aynı kilit: ikisi aynı anda wg0.conf yazamaz.
+take_lock() {
+    mkdir -p -- "$RUNTIME_DIR"
+    exec 9>"$RUNTIME_DIR/install.lock"
+    flock -w 10 9 || die "kurulum ya da başka bir peer işlemi sürüyor; biraz sonra yeniden deneyin"
+}
+
+server_private() {
+    local key
+    key="$(awk -F' = ' '/^# peer: / || /^\[Peer\]$/ {exit} $1 == "PrivateKey" {print $2; exit}' "$WG_CONF_FILE")"
+    [[ "$key" =~ $KEY_RE ]] || die "$WG_CONF_FILE içinde sunucu anahtarı yok; önce kurulumu çalıştırın"
+    printf '%s' "$key"
+}
+
+# "1.1.1.1 , 2606:4700::1111" → "1.1.1.1, 2606:4700::1111"; yalnız IP adresleri.
+normalize_dns() {
+    local token tokens=() out=""
+    IFS=',' read -r -a tokens <<<"$1"
+    for token in "${tokens[@]}"; do
+        token="${token//[[:space:]]/}"
+        [[ -n "$token" ]] || continue
+        [[ "$token" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$token" =~ ^[0-9A-Fa-f:]*:[0-9A-Fa-f:]*$ ]] ||
+            die "DNS virgülle ayrılmış IP adresleri olmalı ('$token')"
+        out+="${out:+, }$token"
+    done
+    [[ -n "$out" ]] || die "en az bir DNS adresi gerekli"
+    printf '%s' "$out"
+}
+
+peer_exists() {
+    grep -qxF "# peer: $1" "$WG_CONF_FILE"
+}
+
+# İçerik wg0.conf'a atomik yazılır ve çalışan arayüze uygulanır. Uygulama
+# başarısız olursa önceki dosya geri konur.
+write_and_apply() {
+    local content="$1" previous stripped tmp
+    previous="$(cat -- "$WG_CONF_FILE")"
+    tmp="$(mktemp "${WG_CONF_FILE%/*}/.wg-XXXXXX")"
+    printf '%s\n' "$content" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CONF_FILE"
+    if ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
+        systemctl restart "wg-quick@${WG_INTERFACE}.service" && return 0
+    else
+        # Boş `wg-quick strip` syncconf'a verilirse anahtar ve bütün peer'lar
+        # silinirdi (DD-123).
+        stripped="$(wg-quick strip "$WG_INTERFACE" 2>/dev/null || true)"
+        if [[ "$stripped" == *"PrivateKey = "* ]] &&
+            wg syncconf "$WG_INTERFACE" <(printf '%s\n' "$stripped"); then
+            return 0
+        fi
+    fi
+    tmp="$(mktemp "${WG_CONF_FILE%/*}/.wg-XXXXXX")"
+    printf '%s\n' "$previous" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CONF_FILE"
+    return 1
+}
+
+cmd_list() {
+    local dump line name="" pub="" ips="" hs rx tx profile
+    dump="$(wg show "$WG_INTERFACE" dump 2>/dev/null | tail -n +2 || true)"
+    # `line` döngünün değişkeni; burada ayrı değişken kullanılır.
+    emit() {
+        local row
+        [[ -n "$pub" ]] || return 0
+        hs=0 rx=0 tx=0
+        row="$(awk -F'\t' -v k="$pub" '$1 == k {print $5 "\t" $6 "\t" $7}' <<<"$dump")"
+        [[ -z "$row" ]] || IFS=$'\t' read -r hs rx tx <<<"$row"
+        profile=yok
+        [[ ! -f "$WG_CLIENTS_DIR/${name}.conf" ]] || profile=var
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$hs" "$rx" "$tx" "$profile"
+    }
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            "# peer: "*) emit; name="${line#\# peer: }" pub="" ips="" ;;
+            "[Peer]") [[ -z "$pub" ]] || { emit; name=""; }; pub="" ips="" ;;
+            "PublicKey = "*) pub="${line#PublicKey = }" ;;
+            "AllowedIPs = "*) ips="${line#AllowedIPs = }" ;;
+        esac
+    done <"$WG_CONF_FILE"
+    emit
+}
+
+cmd_add() {
+    local name="$1" dns="$2" keepalive="$3" mtu="$4" dns_out
+    local used4 used6 host v4="" v6="" prefix4 prefix6 priv pub psk spub content profile tmp
+    valid_name "$name"
+    dns_out="$(normalize_dns "$dns")"
+    [[ "$keepalive" =~ ^(0|[1-9][0-9]{0,4})$ && "$keepalive" -le 65535 ]] ||
+        die "keepalive 0-65535 arasında bir sayı olmalı (0 = kapalı)"
+    [[ "$mtu" =~ ^[0-9]{4}$ && "$mtu" -ge 1280 && "$mtu" -le 1500 ]] ||
+        die "MTU 1280-1500 arasında olmalı"
+    [[ "${WG_SUBNET4#*/}" == 24 && "${WG_SUBNET6#*/}" == 112 ]] ||
+        die "adres dağıtımı /24 ve /112 alt ağ bekler ($WG_SUBNET4, $WG_SUBNET6)"
+
+    take_lock
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    ! peer_exists "$name" || die "'$name' adında bir peer zaten var"
+    [[ ! -e "$WG_CLIENTS_DIR/${name}.conf" ]] || die "'$name' için profil zaten var: $WG_CLIENTS_DIR/${name}.conf"
+    spub="$(server_private | wg pubkey)" || die "sunucu public key'i türetilemedi"
+
+    # Sıradaki boş adres: .2'den başlar; sunucu ve kullanılanlar atlanır.
+    used4=" $(awk -F' = ' '$1 == "AllowedIPs" {print $2}' "$WG_CONF_FILE" | tr ',' '\n' |
+        awk '{gsub(/ /, ""); sub(/\/.*/, ""); print}' | tr '\n' ' ')"
+    prefix4="${WG_SERVER_IPV4%.*}"
+    prefix6="${WG_SERVER_IPV6%:*}"
+    for host in $(seq 2 254); do
+        [[ "$prefix4.$host" != "$WG_SERVER_IPV4" && "$used4" != *" $prefix4.$host "* ]] || continue
+        used6="$prefix6:$(printf '%x' "$host")"
+        [[ "$used6" != "$WG_SERVER_IPV6" && "$used4" != *" $used6 "* ]] || continue
+        v4="$prefix4.$host"
+        v6="$used6"
+        break
+    done
+    [[ -n "$v4" ]] || die "$WG_SUBNET4 içinde boş adres kalmadı"
+
+    priv="$(wg genkey)" || die "anahtar üretilemedi"
+    pub="$(printf '%s' "$priv" | wg pubkey)" || die "public key türetilemedi"
+    psk="$(wg genpsk)" || die "PSK üretilemedi"
+    [[ "$priv" =~ $KEY_RE && "$pub" =~ $KEY_RE && "$psk" =~ $KEY_RE ]] ||
+        die "wg beklenmeyen biçimde anahtar üretti"
+
+    profile="[Interface]
+PrivateKey = ${priv}
+Address = ${v4}/32, ${v6}/128
+MTU = ${mtu}
+DNS = ${dns_out}
+
+[Peer]
+PublicKey = ${spub}
+PresharedKey = ${psk}
+AllowedIPs = ${WG_CLIENT_ALLOWED_IPS}
+PersistentKeepalive = ${keepalive}
+Endpoint = ${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT}"
+    content="$(cat -- "$WG_CONF_FILE")
+
+# peer: ${name}
+[Peer]
+PublicKey = ${pub}
+PresharedKey = ${psk}
+AllowedIPs = ${v4}/32, ${v6}/128"
+    priv=""
+
+    install -d -m 0700 "$WG_CLIENTS_DIR"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    printf '%s\n' "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CLIENTS_DIR/${name}.conf"
+    profile=""
+    if ! write_and_apply "$content"; then
+        rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
+        die "peer uygulanamadı; wg0.conf geri alındı"
+    fi
+    printf '%s\t%s\n' "$name" "$v4"
+}
+
+cmd_remove() {
+    local name="$1" content
+    valid_name "$name"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    # Blok "# peer: <ad>" satırından bir sonraki "# peer: " ya da [Peer]
+    # satırına kadar; aradaki boş satırlar tek boşluğa iner.
+    content="$(awk -v t="# peer: $name" '
+        $0 == t { skip = 1; head = 1; next }
+        skip && head && $0 == "[Peer]" { head = 0; next }
+        skip && (/^# peer: / || $0 == "[Peer]") { skip = 0 }
+        !skip { print }
+    ' "$WG_CONF_FILE" | cat -s)"
+    write_and_apply "$content" || die "peer kaldırılamadı; wg0.conf geri alındı"
+    rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
+    printf '%s\n' "$name"
+}
+
+# DNS yalnız istemci profilinin ayarıdır: wg0.conf ve çalışan arayüz değişmez,
+# anahtarlar aynı kalır. Cihaz yeni profili (QR) içe aktarınca geçerli olur.
+cmd_dns() {
+    local name="$1" dns profile tmp
+    valid_name "$name"
+    dns="$(normalize_dns "$2")"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    profile="$WG_CLIENTS_DIR/${name}.conf"
+    [[ -f "$profile" ]] || die "'$name' için sunucuda profil yok"
+    grep -q '^DNS = ' "$profile" || die "'$name' profilinde DNS satırı yok"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    awk -v dns="$dns" '/^\[/ {sec = $0} sec == "[Interface]" && index($0, "DNS = ") == 1 {print "DNS = " dns; next} {print}' \
+        "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$profile"
+    printf '%s\t%s\n' "$name" "$dns"
+}
+
+# wg0.conf'u temiz üretir: [Interface] satırları (Address, ListenPort, MTU) kalır,
+# yeni sunucu anahtarı yazılır, bütün [Peer] blokları ve istemci profilleri
+# silinir. Uygulama başarısızsa önceki wg0.conf geri konur, profiller silinmez.
+# Çıktı: "<silinen peer>\t<silinen profil>".
+cmd_reset() {
+    [[ "${1:-}" == "--onay" ]] ||
+        die "kullanım: master-wg reset --onay (bütün peer'lar ve profiller silinir, yeni sunucu anahtarı üretilir)"
+    local peers iface priv content f n=0
+    take_lock
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    peers="$(grep -c '^\[Peer\]$' "$WG_CONF_FILE" || true)"
+    iface="$(awk '/^# peer: / || /^\[Peer\]$/ {exit} index($0, "PrivateKey = ") != 1 {print}' "$WG_CONF_FILE" |
+        awk '{line[NR] = $0} NF {last = NR} END {for (i = 1; i <= last; i++) print line[i]}')"
+    grep -qx '\[Interface\]' <<<"$iface" || die "$WG_CONF_FILE içinde [Interface] yok"
+    priv="$(wg genkey)" || die "anahtar üretilemedi"
+    [[ "$priv" =~ $KEY_RE ]] || die "wg beklenmeyen biçimde anahtar üretti"
+    content="${iface}
+PrivateKey = ${priv}"
+    priv=""
+    if ! write_and_apply "$content"; then
+        content=""
+        die "wg0 yeniden üretilemedi; önceki wg0.conf geri alındı"
+    fi
+    content=""
+    for f in "$WG_CLIENTS_DIR"/*.conf; do
+        [[ -f "$f" ]] || continue
+        rm -f -- "$f"
+        n=$((n + 1))
+    done
+    printf '%s\t%s\n' "$peers" "$n"
+}
+
+cmd_profile() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    cat -- "$WG_CLIENTS_DIR/$1.conf"
+}
+
+cmd_qr() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    qrencode -t ansiutf8 <"$WG_CLIENTS_DIR/$1.conf"
+}
+
+# DD-132: QR resmi Mac'e profille birlikte iner. İçinde istemci anahtarı vardır;
+# ikili veri terminale basılmaz.
+cmd_png() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    [[ ! -t 1 ]] || die "PNG terminale yazılmaz; çıktıyı bir dosyaya yönlendirin"
+    qrencode -t PNG -s 8 -o - <"$WG_CLIENTS_DIR/$1.conf"
+}
+
+case "${1:-}" in
+    version) printf '%s\n' "$V2_VERSION" ;;
+    list) cmd_list ;;
+    add) [[ "$#" -eq 5 ]] || die "kullanım: master-wg add AD DNS KEEPALIVE MTU"; cmd_add "$2" "$3" "$4" "$5" ;;
+    remove) [[ "$#" -eq 2 ]] || die "kullanım: master-wg remove AD"; cmd_remove "$2" ;;
+    profile) [[ "$#" -eq 2 ]] || die "kullanım: master-wg profile AD"; cmd_profile "$2" ;;
+    qr) [[ "$#" -eq 2 ]] || die "kullanım: master-wg qr AD"; cmd_qr "$2" ;;
+    png) [[ "$#" -eq 2 ]] || die "kullanım: master-wg png AD"; cmd_png "$2" ;;
+    dns) [[ "$#" -eq 3 ]] || die "kullanım: master-wg dns AD DNS"; cmd_dns "$2" "$3" ;;
+    reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
+    *) die "kullanım: master-wg version|list|add|remove|profile|qr|png|dns|reset" ;;
+esac

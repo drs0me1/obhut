@@ -1,0 +1,23 @@
+Çalışan sürümler
+================
+
+Her alt klasör, çalıştığı doğrulanmış bir sürümün tam kopyasıdır: kurulum
+(.command), WireGuard menüsü (wireguard.command), README ve Data/ (kaynak,
+testler, belgeler). Data/app'teki eski kurulum dosyaları kopyalanmaz.
+Kişisel dosyalar (kurulum/ — parolalar, WireGuard anahtarları) hiçbir
+kopyada yoktur; o klasör yalnız repo kökünde durur.
+
+Bir sürüme dönmek
+-----------------
+  Yalnız kurulum için: klasördeki <sürüm>.command dosyasını repo köküne
+  (kurulum/ klasörünün yanına) kopyalayıp çift tıklayın.
+  Menü ile birlikte: <sürüm>.command, wireguard.command ve Data/ klasörünü
+  repo köküne kopyalayın. Menü, sunucuda aynı sürümün kurulu olmasını ister.
+  Aynı hal Git'te de durur: her klasörün notunda commit numarası yazar.
+
+Sürümler (en yeni üstte)
+------------------------
+  2026.08.06-v2-98   2026-09-15   commit a4fc938
+    WireGuard menüsü: ekle/çıkar/QR/yedek/DNS değiştir/wg0 yeniden üret,
+    otomatik yedek, her profille QR resmi (.png). qBittorrent ayarları
+    şablondan. Sunucuda (nrm) kurulu ve çalışır halde kaydedildi.

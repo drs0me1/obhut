@@ -1,0 +1,32 @@
+2026.08.06-v2-98 — çalışan sürüm
+================================
+
+Kaydedildi: 2026-09-15, commit a4fc938 ("Fix the WireGuard backup on a server
+with no peers"). Bu klasör o commit'in birebir kopyasıdır (Data/app hariç).
+
+İçinde
+  2026.08.06-v2-98.command   taşınabilir kurulum (Data/ gömülü; kurulum/ yanında olmalı)
+  wireguard.command          WireGuard peer menüsü (yanında Data/ ve kurulum/ ister)
+  README.md, Data/           kaynak, testler, belgeler (Data/OKUBENI.txt: kullanım)
+
+Bu sürümde
+  - Debian 13 / Ubuntu 24.04–26.04; Tailscale çıkış noktası, Docker (WebDAV,
+    qBittorrent, Dozzle, FileBrowser, Unpackerr), dnsmasq, Caddy, güvenlik duvarı.
+  - Çekirdek WireGuard (wg0, UDP 61001). Peer'lar sunucuda master-wg ile üretilir.
+  - wireguard.command: 1 liste, 2 ekle, 3 çıkar, 4 QR, 6 yedek, 7 DNS değiştir,
+    8 wg0 yeniden üret (SIL onayı). 2/3/7/8 yedeği kendiliğinden alır.
+  - Her profille birlikte QR resmi kurulum/wireguard/<ad>.png olarak iner.
+  - Yeni peer DNS varsayılanı: 1.1.1.1, 1.0.0.1, 2606:4700:4700::1001.
+  - qBittorrent ayarları Data/templates/qBittorrent.conf'tan, hesap kurulum.env'den.
+
+Çalıştığının kanıtı (2026-09-15, nrm, Debian 13)
+  - Sunucuda v2-98 kurulu. wg-quick@wg0, caddy, caddy-wg, dnsmasq, docker,
+    tailscaled, master-firewall ve zamanlayıcı aktif; başarısız birim yok.
+  - 5 konteyner ayakta; güvenlik duvarı --check geçti; Tailscale Running,
+    çıkış noktası açık; 4 WireGuard peer tanımlı.
+  - Operatör 8) wg0 yeniden üret ile sıfırladı ve peer'ları yeniden ekledi.
+  - bats 137 test geçti.
+
+Bilinen sınır
+  - Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz;
+    menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.

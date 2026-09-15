@@ -1,0 +1,22 @@
+{
+	default_bind {$TAILSCALE_IPV4}
+	http_port __CADDY_HTTP_PORT__
+	auto_https off
+}
+http://health.__LOCAL_DOMAIN__ {
+	respond "ok" 200
+}
+http://dozzle.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__
+}
+http://torrent.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
+}
+http://file.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
+}
+# MagicDNS: webdav.*:80. Infuse: {$TAILSCALE_IPV4}:{$WEBDAV_PORT} (state.env;
+# re-run'da port değişince Caddy EnvironmentFile ile güncellenir — DD-98).
+http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT} {
+	reverse_proxy 127.0.0.1:{$WEBDAV_PORT}
+}

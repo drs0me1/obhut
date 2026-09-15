@@ -1,0 +1,18 @@
+# WireGuard istemcileri için arayüzler (DD-120): yalnız WireGuard sunucu
+# adresinde, IP:port ile — ad yok, WebDAV yok. Tailscale'e bağlı değildir;
+# tailnet Caddy'si (Caddyfile) ayrı süreçtir, biri düşünce öteki ayakta kalır.
+{
+	admin off
+	persist_config off
+	auto_https off
+	default_bind __WG_SERVER_IPV4__
+}
+http://:__DOZZLE_UI_PORT__ {
+	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__
+}
+http://:__TORRENT_UI_PORT__ {
+	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
+}
+http://:__FILEBROWSER_UI_PORT__ {
+	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
+}
