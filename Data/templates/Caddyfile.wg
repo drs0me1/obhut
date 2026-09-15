@@ -5,7 +5,7 @@
 	admin off
 	persist_config off
 	auto_https off
-	default_bind __WG_SERVER_IPV4__
+	default_bind {$WG_BIND}
 }
 http://:__DOZZLE_UI_PORT__ {
 	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__

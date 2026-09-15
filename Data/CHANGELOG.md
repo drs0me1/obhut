@@ -6,6 +6,105 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-15 — File panel for the downloads folder (v2-104)
+
+- **Added** (**DD-139**): `http://dosya.<domain>`, a file manager for
+  `/downloads` in the WireGuard panel's look.
+  - Browse with a path bar, filter, sort, hidden files, and a list or icon view
+    that the browser remembers.
+  - Operations: new folder, rename, move (a folder picker, or drag and drop),
+    download.
+  - Delete moves items to a trash on the same disk. The trash restores items to
+    where they were, deletes a single item permanently, and is emptied after
+    typing `onayla`.
+  - Text files (`.txt`, `.log`, `.nfo`, `.srt`, …) open read-only: the first
+    1 MiB, encoding guessed (UTF-8, Windows-1254, CP437 for `.nfo`) or chosen,
+    with previous/next file.
+  - A switch at the top of both panels moves between WireGuard and Dosyalar.
+- **Access:** tailnet only, with the WireGuard panel's account (no new input
+  keys). The service runs as the downloads uid (not root) and can write only to
+  `/downloads`.
+  - The installer creates the system account `master-downloads` (no login)
+    when that uid has no name.
+- **Changed:**
+  - `unpackerr` and `webdav` mount an empty read-only tmpfs over
+    `/downloads/.cop`, so archives in the trash are not extracted again and
+    Infuse sees only an empty folder.
+  - Stage 7 checks the panel: 401 without login, opens with the account, runs as
+    the downloads uid, nothing on the WireGuard address, trash hidden in both
+    containers.
+- **Unchanged:** FileBrowser stays.
+- **Verified:**
+  - bats 152 ok, with ten mutations caught.
+  - Live on `nrm`: the install passed stage 7. Over Tailscale and Caddy: a link
+    to `/etc` was listed but not followed. Rename onto an existing file was
+    refused by `renameat2`. A Windows-1254 subtitle and a CP437 `.nfo` were
+    decoded, and a download worked. A folder with a zip went to the trash and
+    unpackerr did not extract it; restore, purge and empty worked. After a
+    reboot the panel came back; the real accounts were restored.
+
+### 2026-09-15 — Server IPv6 detected and stored; no fixed IP anywhere (v2-103)
+
+- **Added** (**DD-138**): the installer also detects the server's global IPv6
+  from its own routing table and writes `WAN_IPV6` to `state.env` (empty when
+  the server has none). The summary's WAN line shows it.
+- **Unchanged:** profiles and the panel keep the IPv4 endpoint,
+  `WG_ENDPOINT_HOST`, which is still detected on every run (`ip route get`),
+  never typed. The WireGuard port stays open on IPv4 only, so the IPv6 address
+  is recorded, not offered as an endpoint. After an IP change, re-run the
+  installer and give the devices new profiles; stage 5 warns about profiles
+  with the old endpoint.
+- **Tests:** the real server address in test fixtures was replaced with the
+  documentation address `203.0.113.7`. A new test checks detection and that
+  no public IP literal is left in the installer, `master-wg`, the panel or
+  `defaults.env`.
+- **Verified:** bats 147 ok.
+
+### 2026-09-15 — Panel "Bağlı" follows traffic, not the handshake (v2-102)
+
+- **Fixed** (**DD-137**): a peer that had disconnected stayed "Bağlı" for up
+  to three minutes, because the status came from the last handshake. Now a
+  peer is "Bağlı" only while data keeps arriving from it: its received bytes
+  grew within the last 45 s and its handshake is under 3 minutes old.
+- **Changed:** the panel samples every network every 10 s in the background,
+  so the status does not depend on the page being open. Until a peer has been
+  watched for 45 s, the handshake decides as before.
+- **Verified:**
+  - bats 146 ok, including a test that stops the traffic and waits for the
+    peer to fall back to "Boşta".
+  - Live on `nrm` with the Mac as a real peer: "Bağlı" 2–5 s after
+    connecting, "Boşta" 47–48 s after disconnecting (was up to 3 minutes).
+
+### 2026-09-15 — More WireGuard networks from the panel (v2-101)
+
+- **Added** (**DD-136**):
+  - "Arayüz ekle" in the panel creates `wg1`…`wg9`, each in its own tab with
+    its own key, UDP port and addresses (`10.8.N.0/24`,
+    `fdcc:ad94:bacf:61a4::N:0/112`).
+  - Choose per network: internet only, or internet plus Dozzle, qBittorrent
+    and FileBrowser on that network's server address.
+  - Networks never see each other.
+  - Each tab adds, removes and shows peers, changes DNS and regenerates its
+    key. Extra networks can be removed with `onayla`.
+  - `master-wg --if wgN`, `master-wg nets`, `net-add` and `net-remove` on the
+    server.
+- **Changed:**
+  - The firewall builds and checks rules for every network.
+  - `caddy-wg` became `caddy-wg@<interface>`.
+  - The panel's API routes are now per network.
+- **Removed:** the panel's "Mac yedeği" indicator and the backup marker file;
+  `wireguard.command` is managed separately (`wg0` only).
+- **Fresh install:** a server installed before v2-101 keeps its old
+  `caddy-wg.service`, which clashes with `caddy-wg@wg0`; install on a fresh
+  server.
+- **Verified:**
+  - bats 145 ok, with mutations caught.
+  - Live on `nrm`: two networks were created from the panel. Namespaced
+    WireGuard clients reached the internet and only their own allowed ports,
+    and not the other networks. A network was removed, and everything came
+    back after a reboot.
+  - The page was checked in a browser.
+
 ### 2026-09-15 — Panel layout and the "onayla" confirmation (v2-100)
 
 - **Changed** (**DD-134**):

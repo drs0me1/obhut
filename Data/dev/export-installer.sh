@@ -74,6 +74,7 @@ rsync -a \
     "$REPO_ROOT/scripts" \
     "$REPO_ROOT/systemd" \
     "$REPO_ROOT/panel" \
+    "$REPO_ROOT/files-panel" \
     "$stage/installer/"
 xattr -cr "$stage" 2>/dev/null || true
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +

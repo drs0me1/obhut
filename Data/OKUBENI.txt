@@ -38,10 +38,25 @@ WireGuard paneli (tarayıcıdan; v2-99):
   http://wg.ayc — yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
   Giriş: kurulum.env'deki WG_PANEL_USER / WG_PANEL_PASS (tarayıcı kendi penceresinde sorar).
   Peer listesi (bağlı/boşta, el sıkışma, trafik), ekle, çıkar, QR göster (60 sn sonra gizlenir),
-  profil ve QR resmi indir, DNS değiştir, wg0 yeniden üret (onayla yazınca).
-  Değişiklikler sunucuda hemen geçerli; Mac'teki kurulum/wireguard yedeği için sonra
-  wireguard.command → 6) yedek al (sayfa "Mac yedeği eski" diye hatırlatır).
+  profil ve QR resmi indir, DNS değiştir, ağı yeniden üret (onayla yazınca).
+  Arayüz ekle (v2-101): wg1…wg9 — her ağın sekmesi, anahtarı, UDP portu ve adresleri ayrı
+  (wg1: 10.8.1.x). "Yalnız internet" ya da "İnternet + arayüzler" seçilir; ağlar birbirini görmez.
+  Ek ağ kaldırılabilir (onayla); wg0 kaldırılamaz. Ek ağlar yalnız panelden yönetilir.
+  wireguard.command ayrı takip edilir ve yalnız wg0'ı yönetir; Mac yedeği de yalnız wg0'ı kapsar.
   10 hatalı parolada o cihaz 15 dakika bekletilir.
+  Bağlı (v2-102): son 45 sn içinde cihazdan veri geldi; kapanan cihaz ~50 sn içinde Boşta olur.
+  Uç nokta (v2-103): sunucunun IPv4'ü (uç nokta) ve varsa IPv6'sı (kayıt) kurulumda sunucuda tespit edilir, elle yazılmaz.
+  Sunucunun IP'si değişirse kurulumu yeniden çalıştırın ve cihazlara yeni profil verin.
+
+Dosya paneli (tarayıcıdan; v2-104):
+  http://dosya.ayc — /downloads klasörü; yalnız Tailscale'e bağlı cihazdan açılır.
+  Giriş: WireGuard paneliyle aynı kullanıcı adı ve parola (tarayıcı iki adres için ayrı sorar).
+  Klasöre gir, süz, sırala, liste ya da simge görünümü; yeni klasör, yeniden adlandır, taşı (sürükle-bırak da olur), indir.
+  Sil: öge çöpe gider (aynı diskte, yer açmaz). Çöp sekmesinden geri yükle ya da kalıcı sil; çöpü boşaltmak için onayla yazın.
+  Metin dosyaları (.txt .log .nfo .srt …) tıklayınca açılır; Türkçe altyazı bozuk görünürse Kodlama'dan Türkçe seçin.
+  Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz. Üstteki düğmeyle WireGuard paneline geçilir.
+  incomplete klasörü qBittorrent'in yarım indirmeleridir: oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
+  FileBrowser (http://file.ayc) yerinde duruyor.
 
 A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm

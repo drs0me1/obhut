@@ -19,6 +19,10 @@ http://file.__LOCAL_DOMAIN__ {
 http://wg.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
 }
+# Dosya paneli (DD-139): yalnız tailnet'ten; giriş, CSRF ve kök denetimi panelde.
+http://dosya.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__
+}
 # MagicDNS: webdav.*:80. Infuse: {$TAILSCALE_IPV4}:{$WEBDAV_PORT} (state.env;
 # re-run'da port değişince Caddy EnvironmentFile ile güncellenir — DD-98).
 http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT} {

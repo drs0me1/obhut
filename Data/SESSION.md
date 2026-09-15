@@ -45,6 +45,40 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-15 — v2-104, file panel (DD-139):**
+- The user approved the design artifact (https://claude.ai/artifact/9EP7Z5awyKe2h5QizmaDqN) and decided:
+  `/downloads` only, trash, the WireGuard panel's account, FileBrowser stays, no access over WireGuard.
+- Built `Data/files-panel/` (Python stdlib server plus page), the unit as the downloads uid with
+  `LoadCredential`, the Caddy/dnsmasq name `dosya`, the trash tmpfs in unpackerr and webdav, stage 7 checks
+  and a panel switch in both pages.
+- Live findings: Unpackerr extracts inside hidden folders and ignores `UN_FOLDER_0_EXCLUDE_PATHS_0`, hence the
+  tmpfs. systemd needs a user entry for `User=1000`, hence `master-downloads`.
+- bats 152 ok, ten mutations caught. Live on nrm: stage 7, the API end to end over Tailscale, and a reboot; the
+  operator's accounts were restored.
+**2026-09-15 — v2-102 and v2-103 (DD-137, DD-138):**
+- v2-102: the panel's "Bağlı" follows received traffic (45 s window, 10 s
+  sampler). Live on nrm with the Mac: connect 2–5 s, disconnect 47–48 s.
+- v2-103: the user asked that no IP be fixed anywhere. The IPv4 endpoint was
+  already detected; `detect_wan` now also stores `WAN_IPV6` (summary only).
+  The live check found WireGuard's port closed on the IPv6 WAN, so IPv6 is not
+  offered as an endpoint; opening it is the user's call. Test fixtures use
+  `203.0.113.7`; a test forbids public IPv4 literals. bats 147 ok; live on nrm.
+**2026-09-15 — v2-101, multiple WireGuard networks (user: "wg0-wg1-wg2 … panel arayüz ekle", DD-136):**
+- Committed first: `3e9c381` (versiyon/) and `6a711ab` (v2-99/v2-100).
+- Built:
+  - `master-wg --if/nets/net-add/net-remove`, with the registry at
+    `/etc/wireguard/networks`;
+  - a multi-network firewall with validation;
+  - the `caddy-wg@` template;
+  - the panel networks API and tabs;
+  - "Mac yedeği" and the backup marker removed.
+- bats 145 ok, mutations caught.
+- Live on nrm: namespaced clients confirmed per-network internet, `ui`/`inet`
+  scope and isolation; remove, reboot, then cleanup. The accounts and the
+  user's panel auth were restored.
+- nrm now runs v2-101 with wg0 only (0 peers).
+- Open: the menu still covers wg0 only (the user tracks it separately).
+
 **2026-09-15 — v2-100, panel tweaks (DD-134):**
 - The user installed v2-99 with their own account ("sorunsuz görülüyor").
 - They asked for a smaller regenerate section, "onayla" instead of "SIL" and

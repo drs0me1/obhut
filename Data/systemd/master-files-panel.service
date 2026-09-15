@@ -1,0 +1,44 @@
+[Unit]
+Description=File manager panel for the downloads folder (master-stack, DD-139)
+# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar. İndirme klasörünün sahibi olarak çalışır.
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=__DOWNLOADS_PATH__
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# DOWNLOADS_UID/GID'nin adı (kurulum bulur ya da girişsiz sistem hesabı açar).
+User=__FILES_PANEL_USER__
+Group=__FILES_PANEL_GROUP__
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-files-panel serve --listen 127.0.0.1:__FILES_PANEL_PORT__ --root __DOWNLOADS_PATH__ --web __FILES_PANEL_WEB_DIR__ --auth-credential panel-auth --trash __FILES_PANEL_TRASH__ --domain=__LOCAL_DOMAIN__ --version=__V2_VERSION__ --temp-dir=__QBITTORRENT_TEMP_DIR__
+# Hesap WireGuard paneliyle aynı: root'a özel özet dosyasının kopyası yalnız bu servise açılır.
+LoadCredential=panel-auth:__WG_PANEL_AUTH_FILE__
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0002
+# Yazabildiği tek yer indirme klasörü; /etc, /root ve WireGuard anahtarları görünmez ya da salt okunur.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=__DOWNLOADS_PATH__
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

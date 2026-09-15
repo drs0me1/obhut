@@ -48,8 +48,7 @@ DEFAULT_MTU="$(default_of WG_MTU)"
 REMOTE_WG_CONF="$(default_of WG_CONF_FILE)"
 REMOTE_WG_CLIENTS="$(default_of WG_CLIENTS_DIR)"
 REMOTE_STATE="$(default_of STATE_FILE)"
-REMOTE_BACKUP_MARK="$(default_of WG_BACKUP_MARK_FILE)"
-for p in "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_STATE" "$REMOTE_BACKUP_MARK"; do
+for p in "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_STATE"; do
     [[ "$p" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "defaults.env yolu beklenmeyen biçimde: $p"
 done
 
@@ -258,9 +257,9 @@ backup_settings() {
     # Sunucu yalnız var olan dosyaları, köke göre göreli yollarla tar olarak
     # gönderir; bu Mac'te diske iner, ekrana değil.
     if ! ssh "${ssh_base[@]}" "$HOST" bash -s -- \
-        "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$MASTER_WG" "$REMOTE_BACKUP_MARK" >"$backup_work/yedek.tar" <<'REMOTE'
+        "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$MASTER_WG" >"$backup_work/yedek.tar" <<'REMOTE'
 set -euo pipefail
-state="$1" wg_conf="$2" wg_clients="$3" master_wg="$4" mark="$5"
+state="$1" wg_conf="$2" wg_clients="$3" master_wg="$4"
 [[ -f "$state" ]] || { echo "sunucuda kurulum yok ($state)" >&2; exit 3; }
 [[ -f "$wg_conf" ]] || { echo "sunucuda WireGuard yapılandırması yok" >&2; exit 4; }
 # QR resimleri (DD-132) root'a özel geçici dizinde, profille aynı göreli yolda üretilir.
@@ -284,8 +283,6 @@ done
 args=(-C / "${list[@]}")
 [[ "${#pngs[@]}" -eq 0 ]] || args+=(-C "$work" "${pngs[@]}")
 tar -cf - "${args[@]}"
-# Panel "Mac yedeği güncel" bilgisini bu dosyanın zamanından okur (DD-133).
-touch -- "$mark"
 REMOTE
     then
         echo "HATA: yedek alınamadı (bağlantı ya da sunucu hatası; ayrıntı yukarıda)" >&2

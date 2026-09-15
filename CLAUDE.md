@@ -98,7 +98,9 @@ state. Treat every change as production-infrastructure work.
 | `kurulum/wireguard/` (root) | Device profiles and their QR pictures (`<name>.png`, **DD-132**), plus `sunucu/wg0.conf` (server key + peers), mode 600; only the `.conf` files are sent, for restore on a server without `wg0.conf` |
 | `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
-| `Data/panel/` | WireGuard web panel (`master-wg-panel`, Python stdlib, `127.0.0.1:61008` → Caddy `wg.<domain>`, tailnet only; page files) built on `master-wg` (**DD-133**) |
+| `Data/panel/` | WireGuard web panel (`master-wg-panel`, Python stdlib, `127.0.0.1:61008` → Caddy `wg.<domain>`, tailnet only; page files) built on `master-wg`; tabs per network, "Arayüz ekle" creates wg1…wg9 (**DD-133**, **DD-136**) |
+| `Data/files-panel/` | File panel for the downloads folder (`master-files-panel`, Python stdlib, `127.0.0.1:61009` → Caddy `dosya.<domain>`, tailnet only, same account as the WireGuard panel, runs as the downloads uid; trash in `.cop`) (**DD-139**) |
+| `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
 | `Data/config/defaults.env` | Ports, images, paths, chain names |

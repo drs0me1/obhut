@@ -104,7 +104,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
-### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133)
+### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)
 
 - WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::1/112`, peer'lar `…::N`, UDP 61001).
 - Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
@@ -114,7 +114,15 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - 2) ekle, 3) çıkar, 7) ve 8) başarılı olunca yedek kendiliğinden alınır (`auto_backup` → 6); vazgeçilen ya da başarısız değişiklikte yedek alınmaz.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
 - WireGuard paneli (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler, tailnet'e Caddy `wg.<alan>` ile açar; WireGuard'dan ve WAN'dan kapalı. Hesap `WG_PANEL_USER`/`WG_PANEL_PASS` (PBKDF2 özeti), `/api/*` için `X-WG-Panel` başlığı ve Host denetimi; her değişiklik `master-wg` ile. Sayfa dış kaynak yüklemez, satır içi kod yok.
+- Panelden ek ağlar (DD-136): `master-wg net-add/net-remove` wg1…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını o ağda çalıştırır. Güvenlik duvarı kaydı okuyup her ağ için kural kurar ve bozuk kayıtta hiçbir zinciri değiştirmez; `caddy-wg@<arayüz>` şablon birimdir. wireguard.command ve Mac yedeği yalnız wg0'ı kapsar.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
+
+### Dosya paneli (DD-139)
+
+- `Data/files-panel/master-files-panel` yalnız `127.0.0.1:61009` dinler, tailnet'e Caddy `dosya.<alan>` ile açar; WireGuard'dan ve WAN'dan kapalı. Hesap WireGuard paneliyle aynı (`LoadCredential`), yeni girdi anahtarı yok.
+- Servis root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Yazabildiği tek yer `DOWNLOADS_PATH`.
+- Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
+- `unpackerr` ve `webdav` konteynerleri `.cop`'u boş tmpfs olarak görür (çöpteki arşivler yeniden açılmaz). Bu bağlantıyı kaldırma.
 
 ### Port yayın politikası
 

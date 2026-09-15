@@ -336,8 +336,8 @@ Preserved in full as a core feature. Contract in §5–§7.
   Dozzle, qBittorrent and FileBrowser UIs at `http://10.8.0.1:<port>`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
   other peers (§9).
-- The UIs are served by `caddy-wg.service` (`/etc/caddy/Caddyfile.wg`, admin
-  API off). It binds only `10.8.0.1`, follows `wg-quick@wg0` and has no
+- The UIs are served by `caddy-wg@wg0.service` (`/etc/caddy/Caddyfile.wg`, admin
+  API off, address from `/etc/wireguard/caddy-wg-wg0.env`). It binds only `10.8.0.1`, follows `wg-quick@wg0` and has no
   Tailscale dependency, so the path survives a Tailscale outage.
 - **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
   `http://wg.${LOCAL_DOMAIN}` to list, add and remove peers, show a peer's QR
@@ -371,12 +371,92 @@ Preserved in full as a core feature. Contract in §5–§7.
   - The unit runs with `NoNewPrivileges`, `ProtectSystem=full` with
     `/etc/wireguard` writable, `ProtectHome`, `PrivateTmp`, the kernel
     protections and `AF_UNIX`/`AF_INET`/`AF_INET6`/`AF_NETLINK` only.
-  - "Mac yedeği güncel" is true when the Mac backup marker
-    (`/etc/master-stack/wg-backup.at`, touched by `wireguard.command`'s backup
-    after a successful archive) is not older than `wg0.conf` and the profile
-    directory.
-  - Changes made in the panel reach `kurulum/wireguard/` on the Mac only through
-    `wireguard.command` → 6.
+  - A peer shows "Bağlı" only while data arrives from it: its received bytes
+    grew within the last 45 s and its handshake is under 3 minutes old. A
+    background sampler reads every network every 10 s (**DD-137**).
+  - The header shows the endpoint `WG_ENDPOINT_HOST`, the IPv4 the installer
+    detected on the server; no address is written by hand (**DD-138**).
+  - The panel does not track or mention the Mac backup (**DD-136**);
+    `wireguard.command` is managed on its own and covers `wg0` only.
+- **More WireGuard networks from the panel (DD-136).** "Arayüz ekle" creates
+  `wg1`…`wg9` at run time with `master-wg net-add PORT SCOPE DNS LABEL`; each
+  network has its own tab, server key, UDP port and addresses.
+  - Addressing: `wgN` is `10.8.N.0/24` (server `10.8.N.1`) and
+    `fdcc:ad94:bacf:61a4::N:0/112` (server `…::N:1`); peers get `10.8.N.H`
+    and `…::N:H` (H in hex). Profiles live in `/etc/wireguard/clients-wgN`;
+    the interface in `/etc/wireguard/wgN.conf`.
+  - Scope per network: `inet` reaches only the internet; `ui` also reaches
+    Dozzle, qBittorrent and FileBrowser on its own server address through
+    `caddy-wg@wgN`. Every network pings its own server address; nothing
+    reaches another network, the tailnet, SSH, DNS, WebDAV or the panel.
+  - The registry `/etc/wireguard/networks` (one tab-separated line per
+    network: interface, port, scope, server and subnet IPv4 and IPv6, default
+    DNS, label) is written only by `master-wg`, and read by `master-firewall`
+    and the panel. A malformed or clashing registry stops the firewall
+    before any chain changes.
+  - A new network's port may not be a stack port, wg0's port, another
+    network's port or a UDP port already listened on; the next free number is
+    taken (at most `WG_NETWORKS_MAX`, 9).
+  - Order when adding: files and registry, `master-firewall` restart, then
+    `wg-quick@wgN`, then `caddy-wg@wgN` for `ui`. A failing step removes
+    every trace of the network and restores the firewall.
+  - `master-wg --if wgN` runs any peer command on that network;
+    `net-remove wgN --onay` stops its units, deletes its files, key, peers and
+    registry line and re-applies the firewall. `wg0` cannot be removed.
+  - The panel confirms regenerating or removing a network with `onayla`.
+  - Networks and their units survive reboots and installer re-runs; the
+    installer manages only `wg0` and refuses a `wg0` or WebDAV port that a
+    panel network uses. The Mac backup and the restore cover `wg0` only.
+
+### 1.10 File panel (DD-139)
+
+- `master-files-panel.service` serves a file manager for `DOWNLOADS_PATH` at
+  `http://dosya.${LOCAL_DOMAIN}`: browse, filter, sort, list or icon view, new
+  folder, rename, move (also by drag and drop), move to trash, restore, delete
+  from the trash, empty the trash, read a text file and download a file.
+  - It runs Python 3's standard library only and listens on
+    `127.0.0.1:61009`. Caddy exposes it on the tailnet; nothing exposes it on
+    WireGuard or the WAN.
+  - It runs as `DOWNLOADS_UID`/`DOWNLOADS_GID`, never as root.
+    - systemd needs a user entry for that uid. The installer uses an existing
+      name, or creates the system account and group `DOWNLOADS_ACCOUNT`
+      (`master-downloads`, no login, no home). File ownership stays numeric.
+    - The unit has no capabilities and `ProtectSystem=strict` with only
+      `DOWNLOADS_PATH` writable, plus `ProtectHome`, `PrivateTmp`,
+      `PrivateDevices` and `NoNewPrivileges`.
+  - The account is the WireGuard panel's (no new input keys). systemd hands
+    the root-only hash file to the service with `LoadCredential`. The service
+    restarts when the installer rewrites the account.
+  - Authentication, lockout, `Host` check, CSP, `no-store` and the audit log
+    match the WireGuard panel. `/api/*` needs the `X-Files-Panel: 1` header and
+    a same-origin fetch; only a download, opened as a link, needs no header, and
+    a cross-site download is still refused.
+- The file panel never leaves its root and never overwrites.
+  - Every path step is opened from a directory descriptor with `O_NOFOLLOW`. A
+    symbolic link is listed but never followed, and `..` and `/` are refused.
+  - Rename and move use `renameat2(RENAME_NOREPLACE)`. An existing target
+    refuses the operation, and a folder cannot move into itself.
+  - Names over 255 bytes or with `/` are refused; new names may not contain
+    control characters or leading and trailing spaces.
+- Delete moves the item into `DOWNLOADS_PATH/.cop/<id>/` with a small origin
+  record, on the same disk.
+  - Restore puts it back where it was, or into the root if that folder is gone.
+    A taken name gets a number.
+  - Deleting permanently works only from the trash; emptying it needs
+    `onayla`. The trash is not reachable through any path, and the root listing
+    hides it.
+  - The installer creates the folder. The `unpackerr` and `webdav` containers
+    mount an empty read-only tmpfs over `/downloads/.cop`, so archives in the
+    trash are not extracted again and WebDAV lists only an empty folder.
+- Text view: the first 1 MiB of a regular file.
+  - A file with a NUL in the first 8 KiB is refused as binary.
+  - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
+    by the operator, and decoded on the server.
+  - The page inserts the text as text nodes only.
+- The page marks qBittorrent's temporary folder (`Session\TempPath` from
+  `templates/qBittorrent.conf`) and warns before moving or deleting there.
+- A switch at the top links `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}`.
+- FileBrowser stays as it is (**DD-139** keeps both).
 
 ---
 
@@ -452,6 +532,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 | WireGuard panel (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**) |
+| File panel (`master-files-panel`) | `127.0.0.1` | 61009 (**DD-139**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 `webdav.*:80` and `${TS_IPV4}:${WEBDAV_PORT}`. Compose never names the
@@ -467,9 +548,11 @@ state file by substitution. A port literal appearing twice is a bug.
 
 | Service | Listen address | Port |
 |---|---|---|
-| caddy-wg → Dozzle, qBittorrent, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+| caddy-wg@wg0 → Dozzle, qBittorrent, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+| caddy-wg@wgN (panel networks with scope `ui`) | `10.8.N.1` | 61002, 61006, 61007 (TCP, HTTP only) |
 
-No names, no WebDAV, no dnsmasq on `wg0` (**DD-120**).
+No names, no WebDAV, no dnsmasq on any WireGuard network (**DD-120**,
+**DD-136**). Each network's UDP port is open on the WAN in `MASTER-INPUT`.
 
 ---
 
@@ -486,6 +569,7 @@ an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
 | `webdav.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://webdav.…` | `127.0.0.1:${WEBDAV_PORT}` (see §7.4) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
 | `wg.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://wg.…` | `127.0.0.1:61008` (**DD-133**) |
+| `dosya.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://dosya.…` | `127.0.0.1:61009` (**DD-139**) |
 
 Rules:
 

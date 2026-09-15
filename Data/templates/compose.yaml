@@ -132,6 +132,8 @@ services:
       - __DOWNLOADS_PATH__:/downloads
     tmpfs:
       - /tmp
+      # DD-139: dosya panelinin çöpü burada boş görünür; çöpe atılan arşivler yeniden açılmaz.
+      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555
     stop_grace_period: 30s
 
   webdav:
@@ -168,6 +170,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      # DD-139: dosya panelinin çöpü Infuse'a boş klasör olarak görünür.
+      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555
     security_opt:
       - no-new-privileges=true
     cap_drop:

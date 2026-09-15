@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-100"
+V2_VERSION="2026.08.06-v2-104"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -62,6 +62,7 @@ write_state() {
 V2_VERSION=$V2_VERSION
 WAN_INTERFACE=$WAN_INTERFACE
 WAN_IPV4=$WAN_IPV4
+WAN_IPV6=$WAN_IPV6
 TAILSCALE_IF=$TAILSCALE_IF
 TAILSCALE_UDP_PORT=$TAILSCALE_UDP_PORT
 TAILSCALE_IPV4=$TAILSCALE_IPV4
@@ -85,6 +86,11 @@ WG_SUBNET4=$WG_SUBNET4
 WG_SUBNET6=$WG_SUBNET6
 WG_CONF_FILE=$WG_CONF_FILE
 WG_CLIENTS_DIR=$WG_CLIENTS_DIR
+WG_MTU=$WG_MTU
+WG_NETWORKS_FILE=$WG_NETWORKS_FILE
+WG_NETWORKS_MAX=$WG_NETWORKS_MAX
+WG_PANEL_PORT=$WG_PANEL_PORT
+FILES_PANEL_PORT=$FILES_PANEL_PORT
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 DOZZLE_UI_PORT=$DOZZLE_UI_PORT
@@ -135,6 +141,14 @@ detect_wan() {
     [[ -n "$WAN_INTERFACE" && -n "$WAN_IPV4" ]] || die "WAN arayüzü/IPv4 tespit edilemedi"
     ip -4 -o addr show dev "$WAN_INTERFACE" | grep -q " $WAN_IPV4/" ||
         die "WAN_IPV4 ($WAN_IPV4) $WAN_INTERFACE üzerinde değil"
+    # DD-138: IPv6 da sunucunun kendi yönlendirme tablosundan (paket gönderilmez, dış
+    # site sorulmaz). Yoksa ya da WAN arayüzünde global adres değilse boş kalır.
+    WAN_IPV6="$(ip -6 -o route get 2606:4700:4700::1111 2>/dev/null |
+        awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')" || WAN_IPV6=""
+    if [[ -n "$WAN_IPV6" ]] &&
+        ! ip -6 -o addr show dev "$WAN_INTERFACE" scope global | grep -q " $WAN_IPV6/"; then
+        WAN_IPV6=""
+    fi
 }
 
 detect_tailscale() {
@@ -616,7 +630,7 @@ stage_0() {
     case "$WG_PUBLIC_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
         "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$prev_webdav_port" | "$WG_PANEL_PORT" | \
-        "$TAILSCALE_UDP_PORT")
+        "$FILES_PANEL_PORT" | "$TAILSCALE_UDP_PORT")
             die "WireGuard UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
             ;;
     esac
@@ -631,10 +645,19 @@ stage_0() {
     case "$WEBDAV_PORT" in
         "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | \
         "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_PANEL_PORT" | \
-        "$TAILSCALE_UDP_PORT")
+        "$FILES_PANEL_PORT" | "$TAILSCALE_UDP_PORT")
             die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
             ;;
     esac
+    # DD-136: panelde eklenen WireGuard ağlarının portları da dolu sayılır.
+    if [[ -f "$WG_NETWORKS_FILE" ]]; then
+        local net_iface net_port
+        while IFS=$'\t' read -r net_iface net_port _; do
+            [[ "$net_iface" =~ ^wg[1-9]$ ]] || continue
+            [[ "$WG_PUBLIC_PORT" != "$net_port" && "$WEBDAV_PORT" != "$net_port" ]] ||
+                die "port $net_port panelde eklenen WireGuard ağında ($net_iface) kullanılıyor"
+        done <"$WG_NETWORKS_FILE"
+    fi
     WEBDAV_PORT_CHANGED=0
     if [[ "$WEBDAV_PORT" != "$prev_webdav_port" ]]; then
         WEBDAV_PORT_CHANGED=1
@@ -741,7 +764,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   WireGuard:     UDP $WG_PUBLIC_PORT (peer'lar sunucuda; eklemek/çıkarmak: wireguard.command)
   WebDAV portu:  $WEBDAV_PORT
   Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER,
-                 WireGuard paneli $WG_PANEL_NEW_USER
+                 WireGuard ve dosya paneli $WG_PANEL_NEW_USER
                  (dosyadakinden farklı olan hesap güncellenir)
   Tailscale key: $ts_key_note
   Hazır ayarlar: $(snapshot_note)
@@ -1399,7 +1422,8 @@ stage_3() {
         "$DOWNLOADS_PATH/media" \
         "$DOWNLOADS_PATH/media/movies" \
         "$DOWNLOADS_PATH/media/series" \
-        "$DOWNLOADS_PATH/.unpackerr"; do
+        "$DOWNLOADS_PATH/.unpackerr" \
+        "$DOWNLOADS_PATH/$FILES_PANEL_TRASH"; do
         mkdir -p "$d"
     done
     local fixed
@@ -1453,6 +1477,7 @@ stage_4() {
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
+        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
@@ -1649,7 +1674,8 @@ EOF
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
-        WG_PANEL_PORT="$WG_PANEL_PORT"
+        WG_PANEL_PORT="$WG_PANEL_PORT" \
+        FILES_PANEL_PORT="$FILES_PANEL_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
     # {$WEBDAV_PORT} Caddyfile'da sabit değil; state.env değişince yeniden başlat.
     [[ "${WEBDAV_PORT_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
@@ -1720,34 +1746,48 @@ EOF
     fi
     ensure_caddy_wg "$OS_CHANGED"
     ensure_wg_panel "$OS_CHANGED"
+    ensure_files_panel "$OS_CHANGED"
 }
 
 # DD-120: WireGuard istemcilerinin arayüzlere eriştiği ikinci Caddy. Yalnız
 # WireGuard adresinde IP:port dinler; Tailscale'e bağlı değildir, wg-quick
 # ile birlikte kalkar ve iner. Tailnet Caddy'sine ve refresh'e dokunmaz.
+# DD-136: tek Caddyfile.wg, arayüz başına bir örnek (caddy-wg@wgN). Dinlenen adres
+# /etc/wireguard/caddy-wg-<arayüz>.env'deki WG_BIND; wg0'ınkini kurulum, panel ağlarınınkini
+# master-wg yazar. Ortak dosya ya da şablon değişince panel ağlarının örnekleri de
+# yeniden başlar.
 ensure_caddy_wg() {
-    local changed="${1:-0}" validate_out
+    local changed="${1:-0}" validate_out iface
     render_template "$V2_ROOT/templates/Caddyfile.wg" "$CADDY_WG_FILE" 0644 \
-        WG_SERVER_IPV4="$WG_SERVER_IPV4" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    if ! validate_out="$(caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
+    if ! validate_out="$(WG_BIND="$WG_SERVER_IPV4" caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
         die "Caddyfile.wg geçersiz ($CADDY_WG_FILE): $(
             grep -i -m1 'error' <<<"$validate_out" || tail -n1 <<<"$validate_out"
         )"
     fi
-    render_template "$V2_ROOT/systemd/caddy-wg.service" "$UNIT_DIR/caddy-wg.service" 0644 \
-        WG_INTERFACE="$WG_INTERFACE" \
+    render_template "$V2_ROOT/systemd/caddy-wg@.service" "$UNIT_DIR/caddy-wg@.service" 0644 \
+        WG_CONF_DIR="${WG_CONF_FILE%/*}" \
         CADDY_WG_FILE="$CADDY_WG_FILE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    local wg0_changed="$changed"
+    atomic_write "${WG_CONF_FILE%/*}/caddy-wg-${WG_INTERFACE}.env" 0644 <<<"WG_BIND=${WG_SERVER_IPV4}"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && wg0_changed=1
     systemctl daemon-reload
-    systemctl enable --quiet caddy-wg.service
-    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet caddy-wg.service; then
-        systemctl restart caddy-wg.service
+    systemctl enable --quiet "caddy-wg@${WG_INTERFACE}.service"
+    if [[ "$wg0_changed" -eq 1 ]] || ! systemctl is-active --quiet "caddy-wg@${WG_INTERFACE}.service"; then
+        systemctl restart "caddy-wg@${WG_INTERFACE}.service"
     else
         log INFO "caddy-wg yapılandırması aynı; yeniden başlatılmadı"
+    fi
+    if [[ "$changed" -eq 1 && -f "$WG_NETWORKS_FILE" ]]; then
+        while IFS=$'\t' read -r iface _; do
+            [[ "$iface" =~ ^wg[1-9]$ ]] || continue
+            systemctl try-restart "caddy-wg@${iface}.service" ||
+                log WARN "caddy-wg@${iface} yeniden başlatılamadı"
+        done <"$WG_NETWORKS_FILE"
     fi
 }
 
@@ -1771,6 +1811,8 @@ ensure_wg_panel() {
             log INFO "WireGuard paneli hesabı girdi dosyasıyla aynı; dokunulmadı"
         else
             log INFO "WireGuard paneli hesabı yazıldı: $WG_PANEL_AUTH_FILE ($WG_PANEL_NEW_USER)"
+            # DD-139: dosya paneli hesabın kopyasını başlarken alır; yeniden başlaması gerekir.
+            WG_PANEL_ACCOUNT_CHANGED=1
         fi
     fi
     [[ -f "$WG_PANEL_AUTH_FILE" ]] || die "WireGuard paneli hesabı yok: $WG_PANEL_AUTH_FILE"
@@ -1783,7 +1825,6 @@ ensure_wg_panel() {
         STATE_FILE="$STATE_FILE" \
         WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
         WG_PANEL_WEB_DIR="$WG_PANEL_WEB_DIR" \
-        WG_BACKUP_MARK_FILE="$WG_BACKUP_MARK_FILE" \
         WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
         WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
         WG_MTU="$WG_MTU"
@@ -1794,6 +1835,66 @@ ensure_wg_panel() {
         systemctl restart master-wg-panel.service
     else
         log INFO "WireGuard paneli aynı; yeniden başlatılmadı"
+    fi
+}
+
+# DD-139: dosya paneli. 127.0.0.1:FILES_PANEL_PORT dinler; tailnet'e Caddy açar. Servis
+# DOWNLOADS_UID olarak çalışır ve yalnız DOWNLOADS_PATH'e yazar. Hesap WireGuard paneliyle
+# aynıdır: root'a özel özet dosyası LoadCredential ile servisin kendi kopyasına gelir, bu
+# yüzden hesap değişince panel yeniden başlar. qBittorrent'in yarım indirme klasörü
+# şablondan okunur; panel orada taşıma/silme için uyarır.
+ensure_files_panel() {
+    local changed="${1:-0}" f temp_dir user group
+    # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
+    # yoksa girişsiz, ev dizinsiz bir sistem hesabı; dosya sahipliği sayısal kaldığı için değişmez.
+    # getent bulamayınca 2 döner; pipefail altında kurulumu düşürmesin.
+    group="$(getent group "$DOWNLOADS_GID" | cut -d: -f1 || true)"
+    if [[ -z "$group" ]]; then
+        groupadd --system --gid "$DOWNLOADS_GID" "$DOWNLOADS_ACCOUNT" ||
+            die "gid $DOWNLOADS_GID için grup açılamadı ($DOWNLOADS_ACCOUNT)"
+        group="$DOWNLOADS_ACCOUNT"
+        log INFO "gid $DOWNLOADS_GID için sistem grubu açıldı: $group (dosya paneli)"
+    fi
+    user="$(getent passwd "$DOWNLOADS_UID" | cut -d: -f1 || true)"
+    if [[ -z "$user" ]]; then
+        useradd --system --uid "$DOWNLOADS_UID" --gid "$DOWNLOADS_GID" --no-create-home \
+            --home-dir /nonexistent --shell /usr/sbin/nologin "$DOWNLOADS_ACCOUNT" ||
+            die "uid $DOWNLOADS_UID için sistem hesabı açılamadı ($DOWNLOADS_ACCOUNT)"
+        user="$DOWNLOADS_ACCOUNT"
+        log INFO "uid $DOWNLOADS_UID için girişsiz sistem hesabı açıldı: $user (dosya paneli)"
+    fi
+    atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    install -d -m 0755 "$FILES_PANEL_WEB_DIR"
+    for f in index.html panel.css panel.js; do
+        atomic_write "$FILES_PANEL_WEB_DIR/$f" 0644 <"$V2_ROOT/files-panel/$f"
+    done
+    temp_dir="$(awk -F= '$1 == "Session\\TempPath" {print $2; exit}' "$V2_ROOT/templates/qBittorrent.conf")"
+    temp_dir="${temp_dir#/downloads/}"
+    temp_dir="${temp_dir%/}"
+    [[ "$temp_dir" =~ ^[A-Za-z0-9._-]+$ ]] || temp_dir=""
+    render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" \
+        FILES_PANEL_PORT="$FILES_PANEL_PORT" \
+        FILES_PANEL_WEB_DIR="$FILES_PANEL_WEB_DIR" \
+        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
+        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        FILES_PANEL_USER="$user" \
+        FILES_PANEL_GROUP="$group" \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        V2_VERSION="$V2_VERSION" \
+        QBITTORRENT_TEMP_DIR="$temp_dir"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    [[ "${WG_PANEL_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
+    systemctl daemon-reload
+    systemctl enable --quiet master-files-panel.service
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-files-panel.service; then
+        # Önceki bir çalıştırmada başlama sınırına takıldıysa yeniden denemeyi engellemesin.
+        systemctl reset-failed master-files-panel.service 2>/dev/null || true
+        systemctl restart master-files-panel.service
+    else
+        log INFO "Dosya paneli aynı; yeniden başlatılmadı"
     fi
 }
 
@@ -2017,8 +2118,29 @@ stage_7() {
         --url "http://${TAILSCALE_IPV4}/api/state" --host "wg.${LOCAL_DOMAIN}" \
         --user "$WG_PANEL_NEW_USER" 2>&1)" ||
         die "WireGuard paneli kurulum.env hesabıyla açılmadı: $panel_out"
-    unset WG_PANEL_NEW_PASS
     log INFO "WireGuard paneli hesapla açıldı: http://wg.${LOCAL_DOMAIN} ($panel_out)"
+    # DD-139: dosya paneli girişsiz 401, aynı hesapla açılır, kök yazılabilir, root değil.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: dosya.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+    [[ "$code" == "401" ]] || die "Dosya paneli girişsiz yanıt $code verdi (beklenen 401)"
+    local files_out files_uid svc
+    files_out="$(printf '%s' "$WG_PANEL_NEW_PASS" | python3 "$SBIN_DIR/master-files-panel" check \
+        --url "http://${TAILSCALE_IPV4}/api/state" --host "dosya.${LOCAL_DOMAIN}" \
+        --user "$WG_PANEL_NEW_USER" 2>&1)" ||
+        die "Dosya paneli WireGuard paneli hesabıyla açılmadı: $files_out"
+    unset WG_PANEL_NEW_PASS
+    log INFO "Dosya paneli hesapla açıldı: http://dosya.${LOCAL_DOMAIN} ($files_out)"
+    files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
+    [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
+        die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+        "http://${WG_SERVER_IPV4}:${FILES_PANEL_PORT}/" || true)"
+    [[ "$code" == "000" ]] || die "Dosya paneli WireGuard adresinde yanıt verdi (HTTP $code)"
+    # Çöp unpackerr'a ve WebDAV'a boş görünmeli: içindeki arşivler yeniden açılmaz, Infuse listelemez.
+    for svc in unpackerr webdav; do
+        docker exec "$svc" sh -c "grep -q ' /downloads/${FILES_PANEL_TRASH} tmpfs ' /proc/mounts" ||
+            die "$svc konteyneri çöp klasörünü (/downloads/${FILES_PANEL_TRASH}) boş tmpfs olarak görmüyor"
+    done
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
         "http://${WG_SERVER_IPV4}:${WG_PANEL_PORT}/" || true)"
     [[ "$code" == "000" ]] || die "WireGuard paneli WireGuard adresinde yanıt verdi (HTTP $code)"
@@ -2033,7 +2155,7 @@ print_summary() {
         log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: cihazlar mevcut profilleriyle bağlanır"
     cat <<EOF
 
-WAN:          $WAN_INTERFACE $WAN_IPV4
+WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
@@ -2049,6 +2171,7 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 WireGuard paneli: http://wg.${LOCAL_DOMAIN} (peer ekle/çıkar, QR, DNS; yalnız Tailscale, kurulum.env hesabı)
+Dosya paneli: http://dosya.${LOCAL_DOMAIN} (${DOWNLOADS_PATH}: gez, taşı, yeniden adlandır, çöp, metin oku; aynı hesap)
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
 WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)

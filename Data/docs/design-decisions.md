@@ -6531,6 +6531,279 @@ failure with an early, named one.
     subnet (read-only).
   - The operator's pulled backup was rejected as expected (`…::cafe:2/128`).
 
+### DD-136: More WireGuard networks from the panel; the panel stops pointing to the Mac backup (2026-09-15)
+
+- **Context:** the user approved the tabbed design and asked for the second
+  step: "Arayüz ekle" in the panel creating `wg1`, `wg2`, … with peers added
+  and removed per network. They also asked to drop "Mac yedeği alınmadı" from
+  the panel: `wireguard.command` is tracked separately, and the panel does not
+  redirect to it.
+- **Decision:**
+  - **Runtime networks, not installer inputs.** Extra networks are created
+    and removed from the panel through `master-wg net-add`/`net-remove`; the
+    installer manages only `wg0`. Re-runs, reboots and firewall restarts keep
+    them.
+  - **One registry, three readers.** `/etc/wireguard/networks` holds one
+    tab-separated line per network with every value spelled out (interface,
+    port, scope, server and subnet IPv4/IPv6, default DNS, label).
+    - `master-wg` computes the addresses once and writes the line;
+      `master-firewall` and the panel read it and derive nothing.
+    - It sits in `/etc/wireguard` because the hardened panel service may
+      write only there (`ProtectSystem=full`), as do the per-instance Caddy
+      env files.
+  - **Addressing** follows DD-135: `wgN` = `10.8.N.0/24` and
+    `fdcc:ad94:bacf:61a4::N:0/112`, a peer `10.8.N.H` / `…::N:H`. `wg0` stays
+    `…::H`. At most `WG_NETWORKS_MAX` (9) extra networks.
+  - **`master-wg --if wgN`** swaps every `WG_*` value (interface, port,
+    addresses, `wgN.conf`, `clients-wgN`) before any command runs. So `add`,
+    `remove`, `dns`, `reset`, `info`, `profile`, `qr` and `png` are unchanged
+    and share one code path, lock and rollback.
+  - **Safe order when adding.** Files and registry, then the firewall (the
+    port opens and forwarding/NAT exist before the interface), then
+    `wg-quick@wgN`, then `caddy-wg@wgN` for `ui`. A failure tears the network
+    down and re-applies the firewall.
+    - Ports are checked against the stack's ports (from `state.env`: SSH,
+      torrent, WebDAV, UIs, Tailscale, panel, DNS, HTTP), wg0, other networks
+      and live UDP listeners.
+    - Stage 0 in turn refuses a `wg0`/WebDAV port a panel network uses.
+  - **Firewall loops over networks.** `load_wg_networks` reads `wg0` from
+    `state.env` plus the registry and validates everything (interface names,
+    ports, scopes, addresses, duplicates) before any chain is built.
+    - Per network: a WAN UDP accept; on INPUT an echo-request and a DROP, plus
+      the UI ports on its own address only for `ui`; on FORWARD
+      `-i wgN -o WAN ACCEPT`, `-i wgN DROP`, replies back and `-o wgN DROP`;
+      a NAT masquerade per subnet.
+    - A packet from one network to another dies at its own `-i … DROP`.
+    - `--check` asserts every rule, forbids UI ports on an `inet` network and
+      expects exactly `4 × networks + 1` FORWARD rules.
+  - **`caddy-wg` becomes a template.** One `Caddyfile.wg` with
+    `default_bind {$WG_BIND}`; `caddy-wg@<interface>` reads
+    `/etc/wireguard/caddy-wg-<interface>.env`, requires and follows its
+    `wg-quick@`. The installer restarts panel networks' instances when the
+    shared file changes.
+  - **Panel.**
+    - `/api/state` returns every network with its peers.
+    - Peer routes move under `/api/nets/<iface>/…`.
+    - `POST /api/nets` adds a network; `/api/nets/<iface>/remove` and
+      `/reset` need `onayla`.
+    - The page shows a tab per network, a split "Peer ekle" button with
+      "Arayüz ekle", a network drawer (next free `wgN`, suggested port, label,
+      scope, default DNS) and a danger row per network (regenerate; remove for
+      `wg1+`).
+    - The network's default DNS leads the presets when adding a peer.
+  - **Backup marker removed.** The panel's backup pill, the
+    `/etc/master-stack/wg-backup.at` marker and its `touch` in
+    `wireguard.command` are gone.
+- **Not covered, by the user's split:** `wireguard.command` manages `wg0`
+  only, and the Mac backup and the restore on a fresh install cover `wg0`
+  only; panel networks are recreated in the panel. Earlier single-network
+  servers are not migrated: the old `caddy-wg.service` stays on a server
+  installed before v2-101, so install fresh (DD-135 rule).
+- **Rejected:**
+  - Networks in `kurulum.env`: the user wanted them created from the page.
+  - A second Caddy per network file: one shared file and a template instance
+    keep the UI surface identical.
+  - Deriving addresses in each reader: three copies of the same arithmetic.
+  - Letting the panel write `/etc/master-stack`: a wider sandbox for no gain.
+- **Verified (2026-09-15):**
+  - bats 145 ok.
+    - The firewall's rules are generated for wg0 + an `inet` wg1 + a `ui` wg2
+      and checked line by line (ports, UI only on `ui`, FORWARD order and the
+      count of 13, NAT per subnet); a broken or clashing registry is refused
+      before any rule.
+    - `master-wg` tests cover `net-add` (addresses, registry, env file, order
+      firewall → interface → Caddy, refusals, rollback on an interface or
+      Caddy failure, the limit), `--if`, `nets` and `net-remove`.
+    - The panel passes each network's actions with the right `--if` and
+      refuses bad interfaces and confirmations.
+    - Mutations were caught: WAN port only for wg0, UI ports on `inet`, no
+      FORWARD DROP between networks, a duplicate port accepted, the interface
+      before the firewall, a registry line left after rollback, wg0 removable,
+      a panel network writing wg0's profiles, no interface check in the panel
+      and removal without confirmation.
+  - **Live on `nrm`** (v2-101 over a v2-100 install with scratch inputs; the
+    old `caddy-wg.service` was removed by hand first):
+    - Stage 7 passed ("1 ağ, 0 peer").
+    - Through the panel API: wg1 (`inet`, 61011) and wg2 (`ui`, 61021) were
+      created and a duplicate port was refused. The firewall showed three WAN
+      UDP ports, 13 FORWARD rules in IPv4 and IPv6 and three NAT subnets, and
+      `--check` passed. `caddy-wg@wg2` listened on `10.8.2.1`.
+    - Real WireGuard clients in network namespaces:
+      - wg1 reached the internet over IPv4 and IPv6 and its own server by
+        ping. It was refused its own UI ports, wg0's and wg2's addresses,
+        the tailnet Caddy, SSH and port 61008.
+      - wg2 reached the internet and its own Dozzle (307), qBittorrent (200)
+        and FileBrowser (200), and was refused wg0's and wg1's addresses.
+      - wg1 ↔ wg2 and wg2 → a wg0 peer address were blocked.
+    - Removing wg1 needed `onayla`. It stopped the unit, deleted its files,
+      closed 61011, left 9 FORWARD rules and passed `--check`.
+    - After a reboot, wg0, wg2, both `caddy-wg@` instances, the firewall and
+      the panel came back with no failed unit.
+    - wg2 and the test peer were removed through the panel. The operator's
+      accounts, including the panel account, were restored.
+  - **Browser check** of the page against sample networks: tabs with labels
+    and counts, per-network header and chips, the network drawer with the
+    next free `wg2`, port 61021 and addresses, and the new tab opening after
+    creation.
+
+### DD-137: The panel's "Bağlı" follows traffic, not the handshake (2026-09-15)
+
+- **Context:** the user connected two peers, disconnected one, and both still
+  showed "Bağlı". The status came from the last handshake (< 180 s), and a
+  WireGuard handshake stays fresh for up to three minutes after a device
+  goes away, whether or not it sends anything.
+- **Decision:**
+  - A peer is online when its received bytes grew within `ACTIVE_WINDOW`
+    (45 s) **and** its last handshake is under 180 s. A connected device
+    sends at least a keepalive (25 s by default) within that window.
+  - A sampler thread reads every network every `SAMPLE_SECONDS` (10 s), so
+    the counter history does not depend on an open page.
+  - Until a peer has been watched for a whole window (after a panel restart
+    or a new peer), the handshake decides as before.
+  - The page shows "Bağlı" from `online`, otherwise "Boşta" within 24 hours
+    of a handshake and "Görülmedi" after. The hint explains the window.
+  - `PANEL_ACTIVE_WINDOW` and `PANEL_SAMPLE_SECONDS` exist only for tests.
+- **Rejected:**
+  - A shorter handshake limit: a quiet but connected device (keepalive off)
+    would flap.
+  - Probing the device: the server has no way to ping through a peer's
+    firewall, and a probe would be traffic it never asked for.
+- **Verified (2026-09-15):** bats 146 ok. Live on `nrm` with the Mac as a peer:
+  "Bağlı" 2–5 s after connecting, "Boşta" 47–48 s after disconnecting.
+
+### DD-138: The server's IPv4 and IPv6 are detected and stored, never written by hand (2026-09-15)
+
+- **Context:** the user asked whether the endpoint `203.0.113.10` had been
+  typed by hand. Server addresses may change, so no file may hold a fixed IP;
+  the installer should detect IPv4 and IPv6 on the server, store them, and
+  every part should read them from there.
+- **Finding:** the IPv4 endpoint was already detected on every run
+  (`ip -4 route get 1.1.1.1` → `WAN_IPV4` → `WG_ENDPOINT_HOST` in
+  `state.env`), and `master-wg` and the panel read it from there. The literal
+  address appeared only in test fixtures and history. IPv6 was not detected.
+- **Decision:**
+  - `detect_wan` also reads the source of `ip -6 route get 2606:4700:4700::1111`
+    and keeps it only if it is a global address on the WAN interface; otherwise
+    `WAN_IPV6` is empty. Nothing is sent and no outside service is asked.
+  - `state.env` gets `WAN_IPV6`, and the summary's WAN line shows it.
+  - It is not an endpoint. The firewall opens WireGuard's UDP ports on the
+    IPv4 WAN only (IPv6 WAN allows Tailscale and SSH, contract §9), so
+    profiles and the panel keep the IPv4 `WG_ENDPOINT_HOST`. A first draft
+    showed an IPv6 endpoint; the live check on `nrm` found the port closed on
+    IPv6 and the label was dropped.
+  - Opening WireGuard on the IPv6 WAN is left to the user: it changes the
+    firewall contract (2 → 2 + networks IPv6 allows).
+  - Test fixtures use the documentation address `203.0.113.7`; a test fails
+    if a public IPv4 literal appears in the installer, `master-wg`, the panel
+    or `defaults.env`.
+- **Not doing:** rewriting profiles or `state.env` automatically when the
+  address changes (DD-76 still applies). A re-run detects the new address;
+  existing devices need a new profile, and stage 5 warns about stale ones.
+- **Verified (2026-09-15):**
+  - bats 147 ok.
+  - Live on `nrm` (v2-103 over v2-102, scratch inputs, accounts restored):
+    `state.env` holds `WAN_IPV4` and the detected `WAN_IPV6`, the summary
+    shows both, profiles keep `Endpoint = <WAN_IPV4>:port`, `--check`
+    passes, 0 failed units.
+
+### DD-139: A file panel for the downloads folder, run as the downloads uid (2026-09-15)
+
+- **Context:** after the WireGuard panel, the user asked for a second
+  FileBrowser-like page. It should browse the server's folders, and delete,
+  move and rename.
+  - They approved the design artifact (list/icon view, trash, text viewer) and
+    asked for text files to open in the page.
+  - Their decisions: `/downloads` only, delete goes to a trash, the same account
+    as the WireGuard panel, FileBrowser stays, no access over WireGuard.
+- **Decision:**
+  - **A separate service, not a tab of the WireGuard panel.** The WireGuard
+    panel runs as root because `master-wg` needs it. A file manager inside it
+    would move files with root rights. `master-files-panel` runs as
+    `DOWNLOADS_UID`, the owner of every file qBittorrent, Unpackerr and
+    FileBrowser write, with no capabilities and only `DOWNLOADS_PATH` writable.
+    - systemd refused a numeric `User=1000` without a user entry (seen live:
+      `217/USER`). The installer therefore uses the uid's existing name or
+      creates `master-downloads` (system, no login, no home). Ownership on disk
+      stays numeric.
+  - **Same account without a second copy on disk.** `/etc/master-stack` is
+    `0700 root`. `LoadCredential` gives the service its own copy of
+    `wg-panel.auth` at start. When the installer rewrites the account, the file
+    panel restarts.
+    - The PBKDF2 check and the lockout are duplicated from the WireGuard panel
+      (a few dozen lines) instead of refactoring the working panel. A bats test
+      signs in to the file panel with an account written by
+      `master-wg-panel account`, so the two cannot drift apart silently.
+  - **Root confinement in the server, not the page.** Every request names a
+    path relative to the root. The server walks it from a directory descriptor,
+    one `O_NOFOLLOW` open per step, and acts with `*at` calls on single names.
+    A symlink is shown but never followed, so a link to `/etc` or a swapped
+    directory cannot lead outside.
+  - **Nothing is overwritten.** Renames and moves use `renameat2` with
+    `RENAME_NOREPLACE` through `ctypes`. Where the file system lacks it (and
+    in the macOS tests), a check-then-rename under the panel lock is used.
+    Moves check every target first and refuse the whole request on a clash.
+  - **Trash on the same disk.** Delete renames the item into
+    `DOWNLOADS_PATH/.cop/<id>/`, with `<id>.json` holding the origin and time,
+    so deleting is instant and reversible.
+    - Restore goes back to the origin, or to the root when it is gone, with a
+      free numbered name.
+    - Permanent delete is fd-based and never follows a link. It works only on
+      trash entries, and emptying needs `onayla`.
+  - **Unpackerr and WebDAV must not see the trash.** Live test: Unpackerr
+    watches hidden folders too and extracted a zip inside `/downloads/.coptest`.
+    `UN_FOLDER_0_EXCLUDE_PATHS_0` did not stop it.
+    - An empty read-only tmpfs over `/downloads/.cop` in `unpackerr` and
+      `webdav` did: a zip placed in the trash stayed packed while a visible one
+      was extracted.
+    - Infuse sees an empty `.cop`, like `.unpackerr`. Stage 7 checks the mount
+      in both containers.
+  - **Text view on the server.** The server reads the first 1 MiB and refuses a
+    NUL in the first 8 KiB. It decodes with the guessed or chosen encoding:
+    UTF-8, else Windows-1254 for Turkish subtitles, CP437 for `.nfo`. The page
+    inserts the result as text nodes; a download is `application/octet-stream`
+    as an attachment.
+  - **CSRF for downloads.** API calls need `X-Files-Panel: 1`. A download is a
+    link and cannot send a header; it only reads, and it is still refused when
+    `Sec-Fetch-Site` says `cross-site` or `same-site`.
+- **Rejected:**
+  - Running as root with a path check: one missed case would expose the host.
+  - A copy of the hash owned by uid 1000: a second secret file to keep in sync.
+  - Dropping privileges inside Python, or `setpriv`: more code or a lost
+    credential, for what `User=` already does.
+  - A trash outside `/downloads`: not guaranteed to be on the same disk, so
+    delete would become a copy.
+  - Upload, copy, thumbnails and cross-disk moves in the first version:
+    FileBrowser already has them.
+- **Verified (2026-09-15):**
+  - bats 152 ok.
+    - Five new tests: login and gates; root confinement and no overwrite; the
+      trash round trip; text, encodings, the 1 MiB cut and downloads; installer
+      wiring.
+    - Ten mutations were caught: no `O_NOFOLLOW`, an overwriting fallback, the
+      trash reachable by path, empty without `onayla`, no cross-site check, no
+      header check, wrong host accepted, binary shown as text, the service as
+      root, and the WebDAV tmpfs missing.
+  - **Live on `nrm`** (v2-104 over v2-103, scratch inputs):
+    - The first run failed at stage 7 with `217/USER`. The account fix above,
+      a `getent` exit status under `pipefail`, and a start limit left by the
+      failed runs (`reset-failed`) followed.
+    - The third run passed stage 7 ("kök /downloads, çöpte 0 öge"). The service
+      runs as `master-downloads` (uid 1000); `systemd-analyze security` gives
+      3.0 OK.
+    - From the Mac over Tailscale and Caddy:
+      - A symlink to `/etc` was listed, and neither listing nor reading through
+        it worked.
+      - A rename onto an existing file was refused on ext4 (`renameat2`).
+      - Windows-1254 and CP437 files were decoded; the download worked.
+      - Move and mkdir worked, and a move into itself was refused.
+      - A folder with a zip and the `/etc` link went to the trash. Unpackerr
+        left the zip packed and both containers saw an empty `.cop`.
+      - Restore went to the origin. Purging the link left `/etc` intact, and
+        emptying needed `onayla`.
+    - After a reboot the panel and both tmpfs mounts came back, with 0 failed
+      units. The operator's accounts were restored and the file panel
+      restarted; the test account now gets 401 on both panels.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

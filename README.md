@@ -87,7 +87,8 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
-| WireGuard panel | loopback → Caddy `wg.<domain>` (tailnet only, login) | peers in the browser: add/remove, QR, profile, DNS, regenerate (**DD-133**) |
+| WireGuard panel | loopback → Caddy `wg.<domain>` (tailnet only, login) | peers in the browser: add/remove, QR, profile, DNS, regenerate; extra isolated networks wg1…wg9 (**DD-133**, **DD-136**) |
+| File panel | loopback → Caddy `dosya.<domain>` (tailnet only, WireGuard panel login) | downloads folder in the browser: browse, move, rename, trash, read text files, download (**DD-139**) |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound

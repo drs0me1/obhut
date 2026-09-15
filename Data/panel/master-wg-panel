@@ -4,7 +4,7 @@
 # aynı kilit, aynı "kopmadan uygula". Yalnız Python standart kütüphanesi.
 #
 #   master-wg-panel serve --listen 127.0.0.1:PORT --state FILE --auth FILE --web DIR
-#                         --master-wg PATH --backup-mark FILE [--allow-host HOST]
+#                         --master-wg PATH [--allow-host HOST]
 #   master-wg-panel account --auth FILE --user AD      parola stdin'den; "aynı" ya da "yazıldı"
 #   master-wg-panel check --url URL --host HOST --user AD   parola stdin'den; /api/state denetimi
 #
@@ -34,8 +34,14 @@ import urllib.request
 
 ITERATIONS = 600000
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+IFACE_RE = re.compile(r"^wg[0-9]$")
 USER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 AUTH_CACHE_SECONDS = 900
+# DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
+# canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
+ACTIVE_WINDOW = float(os.environ.get("PANEL_ACTIVE_WINDOW", "45"))
+SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
+HANDSHAKE_FRESH = 180
 FAIL_WINDOW_SECONDS = 900
 FAIL_LIMIT = 10
 MAX_BODY = 4096
@@ -135,9 +141,10 @@ def cmd_check(args):
         fail("panel HTTP %d verdi" % err.code)
     except (urllib.error.URLError, ValueError, OSError) as err:
         fail("panel yanıt vermedi (%s)" % err)
-    if not isinstance(data.get("peers"), list):
+    nets = data.get("networks")
+    if not isinstance(nets, list) or not nets or not all(isinstance(n.get("peers"), list) for n in nets):
         fail("panel yanıtı beklenen biçimde değil")
-    print("%d peer" % len(data["peers"]))
+    print("%d ağ, %d peer" % (len(nets), sum(len(n["peers"]) for n in nets)))
 
 
 # --------------------------------------------------------------- sunucu
@@ -177,6 +184,8 @@ class Panel:
         self.fail_lock = threading.Lock()
         self.verified = {}
         self.failures = {}
+        self.activity = {}
+        self.activity_lock = threading.Lock()
         self.account_mtime = None
         self.account = None
 
@@ -236,13 +245,13 @@ class Panel:
         return account[0]
 
     # -- master-wg
-    def run(self, *argv, binary=False):
+    def run(self, *argv, binary=False, net=None):
         env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
         if self.args.state_env:
             env["STATE_FILE"] = self.args.state
+        cmd = [self.args.master_wg] + (["--if", net] if net else []) + list(argv)
         try:
-            proc = subprocess.run([self.args.master_wg] + list(argv), capture_output=True,
-                                  timeout=90, env=env, stdin=subprocess.DEVNULL)
+            proc = subprocess.run(cmd, capture_output=True, timeout=120, env=env, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired) as err:
             return 1, b"" if binary else "", "master-wg çalıştırılamadı (%s)" % err.__class__.__name__
         err_lines = [l for l in proc.stderr.decode("utf-8", "replace").splitlines() if l.strip()]
@@ -252,66 +261,99 @@ class Panel:
         out = proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
         return proc.returncode, out, message
 
-    def state(self):
-        env = read_env(self.args.state)
-        rc, out, message = self.run("info")
+    def peers(self, net, seen=None):
+        rc, out, message = self.run("info", net=net)
         if rc != 0:
-            raise RuntimeError(message or "peer listesi okunamadı")
+            raise RuntimeError(message or "%s peer listesi okunamadı" % net)
         peers = []
+        now = time.time()
         for line in out.splitlines():
             f = line.split("\t")
             if len(f) != 10:
                 continue
-            def num(v):
-                return int(v) if v.isdigit() else 0
-            peers.append({
-                "name": f[0], "ipv4": f[1], "ipv6": f[2], "handshake": num(f[3]),
-                "rx": num(f[4]), "tx": num(f[5]), "profile": f[6] == "var",
+            peer = {
+                "name": f[0], "ipv4": f[1], "ipv6": f[2], "handshake": num_or(f[3], 0),
+                "rx": num_or(f[4], 0), "tx": num_or(f[5], 0), "profile": f[6] == "var",
                 "dns": f[7], "provider": dns_provider(f[7]) if f[7] else "",
-                "keepalive": num(f[8]), "mtu": num(f[9]),
+                "keepalive": num_or(f[8], 0), "mtu": num_or(f[9], 0),
+            }
+            peer["online"], peer["active_at"] = self.observe(net, peer, now, seen)
+            peers.append(peer)
+        return peers
+
+    def observe(self, net, peer, now, seen):
+        """DD-137: cihazdan gelen bayt (rx) son ACTIVE_WINDOW saniyede arttıysa bağlı.
+
+        WireGuard'da "bağlantı" yoktur; el sıkışma yalnız 2 dakikada bir yenilenir, bu
+        yüzden kapanan cihaz yalnız ona bakılınca 3 dakika bağlı görünürdü. Yeterince
+        izlenmemiş (servis yeni başlamış) bir peer için taze el sıkışmaya bakılır.
+        """
+        key = (net, peer["name"], peer["ipv4"])
+        if seen is not None:
+            seen.add(key)
+        fresh = peer["handshake"] > 0 and now - peer["handshake"] < HANDSHAKE_FRESH
+        with self.activity_lock:
+            rec = self.activity.get(key)
+            if rec is None or peer["rx"] < rec[0]:
+                rec = [peer["rx"], None, now]
+                self.activity[key] = rec
+            elif peer["rx"] > rec[0]:
+                rec[0], rec[1] = peer["rx"], now
+            if rec[1] is not None:
+                online = now - rec[1] <= ACTIVE_WINDOW
+            elif now - rec[2] >= ACTIVE_WINDOW:
+                online = False
+            else:
+                online = fresh
+            return online and fresh, (int(rec[1]) if rec[1] is not None else None)
+
+    def sample_forever(self):
+        while True:
+            try:
+                self.state()
+            except Exception as err:  # örnekleme durursa sayfa yine el sıkışmaya düşer
+                print("panel: sayaç okunamadı (%s)" % err, flush=True)
+            time.sleep(SAMPLE_SECONDS)
+
+    def state(self):
+        """DD-136: bütün ağlar (wg0 + panelde eklenenler), her biri kendi peer'larıyla."""
+        env = read_env(self.args.state)
+        rc, out, message = self.run("nets")
+        if rc != 0:
+            raise RuntimeError(message or "ağ listesi okunamadı")
+        networks = []
+        seen = set()
+        for line in out.splitlines():
+            f = line.split("\t")
+            if len(f) != 11 or not IFACE_RE.match(f[0]):
+                continue
+            networks.append({
+                "iface": f[0], "port": num_or(f[1], 0), "scope": f[2],
+                "server4": f[3], "subnet4": f[4], "server6": f[5], "subnet6": f[6],
+                "dns": f[7], "label": f[8], "active": f[9] == "1",
+                "peers": self.peers(f[0], seen),
             })
-        iface = env.get("WG_INTERFACE", "wg0")
-        active = None
-        try:
-            active = subprocess.run(["systemctl", "is-active", "--quiet", "wg-quick@%s.service" % iface],
-                                    timeout=10).returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        with self.activity_lock:
+            for key in [k for k in self.activity if k not in seen]:
+                del self.activity[key]
         return {
             "host": socket.gethostname().split(".")[0],
             "version": env.get("V2_VERSION", ""),
-            "interface": iface,
-            "active": active,
             "endpoint": env.get("WG_ENDPOINT_HOST", ""),
-            "port": num_or(env.get("WG_PUBLIC_PORT"), 0),
-            "server4": env.get("WG_SERVER_IPV4", ""),
-            "server6": env.get("WG_SERVER_IPV6", ""),
-            "subnet4": env.get("WG_SUBNET4", ""),
-            "subnet6": env.get("WG_SUBNET6", ""),
+            "max": num_or(env.get("WG_NETWORKS_MAX"), 9) + 1,
+            "reserved": sorted({num_or(env.get(k), 0) for k in (
+                "SSH_PUBLIC_PORT", "TORRENT_PUBLIC_PORT", "WEBDAV_PORT", "DOZZLE_UI_PORT",
+                "TORRENT_UI_PORT", "FILEBROWSER_UI_PORT", "TAILSCALE_UDP_PORT", "WG_PANEL_PORT",
+                "FILES_PANEL_PORT")} - {0} | {53, 80}),
             "defaults": {
                 "dns": os.environ.get("PANEL_DNS_DEFAULT", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"),
                 "keepalive": num_or(os.environ.get("PANEL_KEEPALIVE_DEFAULT"), 21),
                 "mtu": num_or(os.environ.get("PANEL_MTU_DEFAULT"), 1420),
             },
-            "backup": self.backup(env),
             "now": int(time.time()),
-            "peers": peers,
+            "active_window": int(ACTIVE_WINDOW),
+            "networks": networks,
         }
-
-    def backup(self, env):
-        """Mac yedeği sunucudaki son WireGuard değişikliğinden sonra mı alındı?"""
-        changed = 0
-        for path in (env.get("WG_CONF_FILE"), env.get("WG_CLIENTS_DIR")):
-            if path:
-                try:
-                    changed = max(changed, int(os.stat(path).st_mtime))
-                except OSError:
-                    pass
-        try:
-            at = int(os.stat(self.args.backup_mark).st_mtime)
-        except OSError:
-            at = None
-        return {"at": at, "changed": changed, "fresh": at is not None and at >= changed}
 
 
 def num_or(value, default):
@@ -442,28 +484,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except RuntimeError as err:
                 self.error(502, str(err))
             return
-        m = re.match(r"^/api/peers/([^/]+)/(profile|qr\.png)$", path)
+        m = re.match(r"^/api/nets/([^/]+)/peers/([^/]+)/(profile|qr\.png)$", path)
         if m:
-            name = urllib.parse.unquote(m.group(1))
-            if not NAME_RE.match(name):
-                self.error(400, "geçersiz peer adı")
+            net, name = self.net_and_name(m.group(1), m.group(2))
+            if net is None:
                 return
-            if m.group(2) == "qr.png":
-                rc, out, message = self.panel.run("png", name, binary=True)
-                self.audit(user, "qr", name, rc == 0)
+            if m.group(3) == "qr.png":
+                rc, out, message = self.panel.run("png", name, binary=True, net=net)
+                self.audit(user, "qr", "%s/%s" % (net, name), rc == 0)
                 if rc != 0 or not out.startswith(b"\x89PNG"):
                     self.error(404, message or "QR üretilemedi")
                     return
                 self.send(200, out, "image/png", {"Content-Disposition": 'attachment; filename="%s.png"' % name})
                 return
-            rc, out, message = self.panel.run("profile", name)
+            rc, out, message = self.panel.run("profile", name, net=net)
             if rc != 0:
                 self.error(404, message or "profil yok")
                 return
             if query.get("masked") == ["1"]:
                 self.send(200, mask_profile(out), "text/plain; charset=utf-8")
                 return
-            self.audit(user, "profil", name, True)
+            self.audit(user, "profil", "%s/%s" % (net, name), True)
             self.send(200, out, "text/plain; charset=utf-8",
                       {"Content-Disposition": 'attachment; filename="%s.conf"' % name})
             return
@@ -471,6 +512,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
+
+    def net_and_name(self, raw_net, raw_name=None):
+        net = urllib.parse.unquote(raw_net)
+        if not IFACE_RE.match(net):
+            self.error(400, "geçersiz arayüz")
+            return None, None
+        if raw_name is None:
+            return net, None
+        name = urllib.parse.unquote(raw_name)
+        if not NAME_RE.match(name):
+            self.error(400, "geçersiz peer adı")
+            return None, None
+        return net, name
+
+    def confirmed(self, data):
+        if str(data.get("confirm", "")).strip().lower() != CONFIRM_WORD:
+            self.error(400, "onay için %s yazın" % CONFIRM_WORD)
+            return False
+        return True
 
     def do_POST(self):
         user = self.gate()
@@ -481,7 +541,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
             return
-        if path == "/api/peers":
+        if path == "/api/nets":
+            port = str(data.get("port", "")).strip()
+            scope = str(data.get("scope", "")).strip()
+            dns = str(data.get("dns", "")).strip()
+            label = str(data.get("label", "")).strip()
+            if not port.isdigit() or scope not in ("inet", "ui") or not dns:
+                self.error(400, "port, erişim (inet | ui) ve DNS gerekli")
+                return
+            rc, out, message = self.panel.run("net-add", port, scope, dns, label)
+            parts = out.strip().split("\t")
+            self.audit(user, "ag-ekle", parts[0] if rc == 0 else port, rc == 0)
+            if rc != 0:
+                self.error(400, message or "ağ eklenemedi")
+                return
+            self.json(201, {"iface": parts[0], "port": num_or(parts[-1], 0)})
+            return
+        m = re.match(r"^/api/nets/([^/]+)/(remove|reset|peers)$", path)
+        if m:
+            net, _ = self.net_and_name(m.group(1))
+            if net is None:
+                return
+            if m.group(2) == "remove":
+                if not self.confirmed(data):
+                    return
+                rc, out, message = self.panel.run("net-remove", net, "--onay")
+                self.audit(user, "ag-kaldir", net, rc == 0)
+                if rc != 0:
+                    self.error(400, message or "ağ kaldırılamadı")
+                    return
+                parts = out.strip().split("\t")
+                self.json(200, {"iface": net, "peers": num_or(parts[-1], 0)})
+                return
+            if m.group(2) == "reset":
+                if not self.confirmed(data):
+                    return
+                rc, out, message = self.panel.run("reset", "--onay", net=net)
+                self.audit(user, "yeniden-uret", net, rc == 0)
+                if rc != 0:
+                    self.error(400, message or "%s yeniden üretilemedi" % net)
+                    return
+                parts = out.strip().split("\t")
+                self.json(200, {"peers": num_or(parts[0], 0), "profiles": num_or(parts[-1], 0)})
+                return
             name = str(data.get("name", ""))
             if not NAME_RE.match(name):
                 self.error(400, "geçersiz peer adı (harf, rakam, . _ -; en çok 32)")
@@ -492,41 +594,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not dns or not keepalive.isdigit() or not mtu.isdigit():
                 self.error(400, "DNS, keepalive ve MTU gerekli")
                 return
-            rc, out, message = self.panel.run("add", name, dns, keepalive, mtu)
-            self.audit(user, "ekle", name, rc == 0)
+            rc, out, message = self.panel.run("add", name, dns, keepalive, mtu, net=net)
+            self.audit(user, "ekle", "%s/%s" % (net, name), rc == 0)
             if rc != 0:
                 self.error(400, message or "peer eklenemedi")
                 return
             self.json(201, {"name": name, "ipv4": out.strip().split("\t")[-1]})
             return
-        if path == "/api/reset":
-            if str(data.get("confirm", "")).strip().lower() != CONFIRM_WORD:
-                self.error(400, "onay için %s yazın" % CONFIRM_WORD)
-                return
-            rc, out, message = self.panel.run("reset", "--onay")
-            self.audit(user, "wg0-yeniden-uret", "-", rc == 0)
-            if rc != 0:
-                self.error(400, message or "wg0 yeniden üretilemedi")
-                return
-            parts = out.strip().split("\t")
-            self.json(200, {"peers": num_or(parts[0], 0), "profiles": num_or(parts[-1], 0)})
-            return
-        m = re.match(r"^/api/peers/([^/]+)/(remove|dns)$", path)
+        m = re.match(r"^/api/nets/([^/]+)/peers/([^/]+)/(remove|dns)$", path)
         if m:
-            name = urllib.parse.unquote(m.group(1))
-            if not NAME_RE.match(name):
-                self.error(400, "geçersiz peer adı")
+            net, name = self.net_and_name(m.group(1), m.group(2))
+            if net is None:
                 return
-            if m.group(2) == "remove":
-                rc, out, message = self.panel.run("remove", name)
-                self.audit(user, "cikar", name, rc == 0)
+            if m.group(3) == "remove":
+                rc, out, message = self.panel.run("remove", name, net=net)
+                self.audit(user, "cikar", "%s/%s" % (net, name), rc == 0)
             else:
                 dns = str(data.get("dns", "")).strip()
                 if not dns:
                     self.error(400, "DNS gerekli")
                     return
-                rc, out, message = self.panel.run("dns", name, dns)
-                self.audit(user, "dns", name, rc == 0)
+                rc, out, message = self.panel.run("dns", name, dns, net=net)
+                self.audit(user, "dns", "%s/%s" % (net, name), rc == 0)
             if rc != 0:
                 self.error(400, message or "işlem yapılamadı")
                 return
@@ -546,6 +635,7 @@ def cmd_serve(args):
         fail("panel yalnız yerel adresi dinler (127.0.0.1:PORT)")
     Handler.panel = Panel(args)
     httpd = Server((host, int(port)), Handler)
+    threading.Thread(target=Handler.panel.sample_forever, name="sampler", daemon=True).start()
     print("panel: %s:%s dinleniyor" % (host, port), flush=True)
     try:
         httpd.serve_forever()
@@ -562,7 +652,6 @@ def main():
     s.add_argument("--auth", required=True)
     s.add_argument("--web", required=True)
     s.add_argument("--master-wg", dest="master_wg", required=True)
-    s.add_argument("--backup-mark", dest="backup_mark", required=True)
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     s.add_argument("--state-env", dest="state_env", action="store_true",
                    help="master-wg'ye STATE_FILE olarak --state verilir (test)")

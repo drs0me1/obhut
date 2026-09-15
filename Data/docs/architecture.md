@@ -73,7 +73,7 @@ later became a permanent drift alarm.
 | | `config.env` | `state.env` |
 |---|---|---|
 | **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
-| **Contains** | Choices: local domain, downloads path, timezone, `WG_PUBLIC_PORT`, WebDAV port | Detected facts: WAN interface, WAN IPv4, `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version; `WG_ENDPOINT_HOST` is a derived hint equal to current `WAN_IPV4` (not an operator prompt) |
+| **Contains** | Choices: local domain, downloads path, timezone, `WG_PUBLIC_PORT`, WebDAV port | Detected facts: WAN interface, WAN IPv4, WAN IPv6 (empty if none), `TAILSCALE_IPV4`, `TAILSCALE_IPV6`, install version; `WG_ENDPOINT_HOST` equals the current `WAN_IPV4` (not an operator prompt; no address is written by hand, **DD-138**) |
 | **Source** | `config/defaults.env` + the installer input file `kurulum/kurulum.env` (**DD-119**) | installer / `refresh-tailnet-config` at run time |
 | **Written by** | The installer, once per run | The installer, and `refresh-tailnet-config` when an address changes |
 | **Lifetime** | Persistent; every run rewrites it from the input file (an empty value takes `defaults.env`) | Regenerated freely; nothing in it is a decision |
@@ -110,8 +110,9 @@ re-detected, never as an expectation to be violated.
     ├── config/defaults.env            single source of truth for constants
     ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf, qBittorrent.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
-    ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg, master-wg-panel)
+    ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg@ template, master-wg-panel)
     ├── panel/                         WireGuard web panel: master-wg-panel (Python) + index.html, panel.css, panel.js
+    ├── files-panel/                   File panel for the downloads folder: master-files-panel (Python) + page files
     ├── app/<V2_VERSION>.command       every exported portable install app
     ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
     ├── docs/                          contract, architecture, design decisions
@@ -163,13 +164,15 @@ in §10, not resolved silently.
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
 | `templates/compose.yaml` | The five services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
-| `templates/Caddyfile` | Five HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
+| `templates/Caddyfile` | Seven HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
 | `panel/master-wg-panel` | Serve the WireGuard panel on loopback: HTTP Basic against a PBKDF2 hash, CSRF/Host gates, JSON API over `master-wg` (**DD-133**) | WireGuard files and tools — it only calls `master-wg` |
 | `panel/index.html`, `panel.css`, `panel.js` | The panel page; everything from its own origin | Keys — it asks for a QR or profile only when the operator does |
+| `files-panel/master-files-panel` | Serve the file panel on loopback as the downloads uid: same login as the WireGuard panel (hash via `LoadCredential`), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames, the `.cop` trash, text decoding (**DD-139**) | Anything outside `DOWNLOADS_PATH` |
+| `files-panel/index.html`, `panel.css`, `panel.js` | The file panel page: list/icon view, move dialog, trash, text viewer | File contents as HTML — names and text are inserted as text only |
 | `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
-| `templates/Caddyfile.wg` | The three UI ports on the WireGuard address, for `caddy-wg` (**DD-120**) | Tailscale, names, WebDAV |
-| `templates/dnsmasq.conf` | Five `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
+| `templates/Caddyfile.wg` | The three UI ports on `{$WG_BIND}`, shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
+| `templates/dnsmasq.conf` | Seven `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
 | `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
 | `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
@@ -206,15 +209,19 @@ error, not a warning.
 | `/etc/wireguard/clients/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
 | `/usr/local/sbin/master-wg-panel`, `/usr/local/share/master-stack/wg-panel/` | installer | WireGuard panel service and page, `0755` / `0644` (**DD-133**) |
-| `/etc/master-stack/wg-panel.auth` | installer | panel account: user and PBKDF2-SHA256 hash, `0600` |
-| `/etc/master-stack/wg-backup.at` | `wireguard.command` backup | empty marker; its time says when the Mac last pulled the WireGuard backup |
+| `/etc/master-stack/wg-panel.auth` | installer | panel account: user and PBKDF2-SHA256 hash, `0600`; also the file panel's account (**DD-139**) |
+| `/usr/local/sbin/master-files-panel`, `/usr/local/share/master-stack/files-panel/` | installer | file panel service and page, `0755` / `0644` (**DD-139**) |
+| `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); an empty tmpfs inside `unpackerr` and `webdav` |
+| `/etc/wireguard/networks` | `master-wg net-add`/`net-remove` | panel networks wg1…wg9: port, scope, addresses, default DNS, label (**DD-136**), `0600` |
+| `/etc/wireguard/wgN.conf`, `/etc/wireguard/clients-wgN/` | `master-wg` | a panel network's interface and profiles, `0600`/`0700` |
+| `/etc/wireguard/caddy-wg-<interface>.env` | installer (`wg0`), `master-wg` (`ui` networks) | `WG_BIND` for that `caddy-wg@` instance, `0644` |
 | `/etc/modules-load.d/master-stack-wireguard.conf` | installer | `wireguard`, `0644` |
-| `/etc/caddy/Caddyfile.wg` | installer | `caddy-wg`: three UI ports on `10.8.0.1`, `0644` |
+| `/etc/caddy/Caddyfile.wg` | installer | `caddy-wg@<interface>`: three UI ports on that network's server address, `0644` |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), `0644` |
-| `/etc/dnsmasq.d/local-services.conf` | installer | six records, `0644` |
-| `/etc/caddy/Caddyfile` | installer | six sites, `0644` |
+| `/etc/dnsmasq.d/local-services.conf` | installer | seven records, `0644` |
+| `/etc/caddy/Caddyfile` | installer | seven sites, `0644` |
 | `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,caddy-wg}.service` (+ `.timer`) | installer | `0644`; `wg-quick@wg0.service` comes from `wireguard-tools` |
+| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config}.service`, `caddy-wg@.service` (+ `.timer`) | installer | `0644`; `wg-quick@.service` comes from `wireguard-tools`; `master-wg` enables `wg-quick@wgN`/`caddy-wg@wgN` |
 | `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
 | `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
 | `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |
@@ -370,7 +377,7 @@ that could disagree.
 
 | Question | Single owner |
 |---|---|
-| What is the WAN interface / WAN IPv4 / Tailscale IPv4 / IPv6? | `install.sh` (write) / `refresh-tailnet-config` (update) |
+| What is the WAN interface / WAN IPv4 / WAN IPv6 / Tailscale IPv4 / IPv6? | `install.sh` (write) / `refresh-tailnet-config` (update) |
 | Is the firewall policy in force? | `scripts/firewall.sh` installed as `/usr/local/sbin/master-firewall --check` |
 | Has the Tailscale address changed? | `scripts/refresh-tailnet-config` |
 | Is a container healthy? | **Nobody.** Compose's restart policy handles crashes; there is no health arbiter |
