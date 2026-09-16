@@ -2,9 +2,9 @@ Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
   <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
-  wireguard.command          WireGuard peer menüsü: listele, ekle, çıkar, QR, yedek al, DNS, wg0 yeniden üret (kurulumdan sonra)
+  wireguard.command          WireGuard menüsü: ağ seç, listele, ekle, çıkar, QR, DNS, ağı yeniden üret (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
-  kurulum/wireguard/         cihaz profilleri (.conf) ve QR resimleri (.png); sunucu/wg0.conf = sunucu anahtarı + peer listesi (git dışı)
+  kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png); kurulum buraya bakmaz (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
@@ -16,7 +16,10 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
-WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
+WireGuard — kurulum ağ yaratmaz (v2-109). İlk ağı Konsol'dan kurun:
+  http://panel.ayc → WireGuard → Yapılandır (wg0, 10.8.0.0/24, UDP 61001 önerilir).
+  Sunucu yeniden kurulursa WireGuard boş gelir: ağı yeniden kurar, cihazları yeniden eklersiniz.
+  Peer'lar sunucuda üretilir; Konsol'dan ya da wireguard.command ile yönetilir:
   Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış 6) yedek al
              7) DNS değiştir 8) wg0 yeniden üret
   Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
@@ -34,9 +37,13 @@ WireGuard — peer'lar sunucuda üretilir, wireguard.command ile yönetilir:
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
 
-WireGuard paneli (tarayıcıdan; v2-99):
-  http://wg.ayc — yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
+Konsol (tarayıcıdan; v2-105):
+  http://panel.ayc — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
+  Eski adresler http://wg.ayc ve http://dosya.ayc buraya yönlenir; giriş bir kez sorulur.
   Giriş: kurulum.env'deki WG_PANEL_USER / WG_PANEL_PASS (tarayıcı kendi penceresinde sorar).
+  Genel bakış: işlemci ve bellek grafiği, disk (indirilenler / çöp / sistem), bağlı cihazlar,
+  son işlemler ve kullanımdaki portlar (internete açık olanlar ayrı grupta).
+  WireGuard sayfası:
   Peer listesi (bağlı/boşta, el sıkışma, trafik), ekle, çıkar, QR göster (60 sn sonra gizlenir),
   profil ve QR resmi indir, DNS değiştir, ağı yeniden üret (onayla yazınca).
   Arayüz ekle (v2-101): wg1…wg9 — her ağın sekmesi, anahtarı, UDP portu ve adresleri ayrı
@@ -45,16 +52,33 @@ WireGuard paneli (tarayıcıdan; v2-99):
   wireguard.command ayrı takip edilir ve yalnız wg0'ı yönetir; Mac yedeği de yalnız wg0'ı kapsar.
   10 hatalı parolada o cihaz 15 dakika bekletilir.
   Bağlı (v2-102): son 45 sn içinde cihazdan veri geldi; kapanan cihaz ~50 sn içinde Boşta olur.
+  Aç-kapa (v2-105): cihazın yanındaki düğme bağlantıyı keser; anahtarı, adresi ve profili durur,
+  açınca birkaç saniyede geri gelir. Ağ kartındaki dikey anahtar bütün ağı kapatır (sunucu yeniden
+  başlasa da kapalı kalır; wg0'ı kurulumu yeniden çalıştırmak da açar).
+  Düzenle (v2-105): üç noktadan DNS (Cloudflare, Aile, Quad9, AdGuard, Google ya da kendi adresiniz)
+  ve keepalive değişir; sonra cihazda yeni QR'ı okutun.
   Uç nokta (v2-103): sunucunun IPv4'ü (uç nokta) ve varsa IPv6'sı (kayıt) kurulumda sunucuda tespit edilir, elle yazılmaz.
   Sunucunun IP'si değişirse kurulumu yeniden çalıştırın ve cihazlara yeni profil verin.
 
-Dosya paneli (tarayıcıdan; v2-104):
-  http://dosya.ayc — /downloads klasörü; yalnız Tailscale'e bağlı cihazdan açılır.
-  Giriş: WireGuard paneliyle aynı kullanıcı adı ve parola (tarayıcı iki adres için ayrı sorar).
-  Klasöre gir, süz, sırala, liste ya da simge görünümü; yeni klasör, yeniden adlandır, taşı (sürükle-bırak da olur), indir.
+Paylaşım (v2-106, v2-108):
+  Sunucudaki tek WebDAV budur: indirme klasörünün tamamı artık hiçbir yerde yayımlanmıyor.
+  Infuse'u paylaşım adresiyle yeniden ekleyin (eski webdav.ayc kaydı çalışmaz).
+  Dosyalar sekmesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın; süreyi seçin
+  (1/7/30 gün ya da süresiz). Paylaşılanların hepsi http://paylas.ayc adresinde yan yana görünür.
+  Infuse adı çözemezse (ör. Apple TV) Konsol'daki "Infuse" satırındaki IP:port adresini kullanın.
+  Adres, kullanıcı adı ve parola bütün paylaşımlarda aynıdır (kurulum.env'deki SHARE_USER/SHARE_PASS);
+  Konsol bunları gösterir ve kopyalatır. Karşı taraf Infuse'a bu hesabı bir kez ekler, sonraki
+  paylaşımlar aynı yerde belirir. Salt okunur: izlenir ve indirilir, silinemez.
+  Parolayı verdiğiniz kişi o an paylaşımda olan her şeyi görür; tek tek kişi ayıramazsınız.
+  Süresi dolan paylaşım kendiliğinden kalkar; "Paylaşımdan çıkar" da yalnız paylaşımı kapatır,
+  dosyayı silmez. Yalnız Tailscale'e bağlı cihazlar açabilir.
+
+Konsol · Dosyalar sekmesi (v2-104, v2-105):
+  /downloads klasörü; aynı sayfada, aynı girişle.
+  Klasöre gir, yeni klasör, yeniden adlandır, taşı, indir.
   Sil: öge çöpe gider (aynı diskte, yer açmaz). Çöp sekmesinden geri yükle ya da kalıcı sil; çöpü boşaltmak için onayla yazın.
   Metin dosyaları (.txt .log .nfo .srt …) tıklayınca açılır; Türkçe altyazı bozuk görünürse Kodlama'dan Türkçe seçin.
-  Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz. Üstteki düğmeyle WireGuard paneline geçilir.
+  Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz.
   incomplete klasörü qBittorrent'in yarım indirmeleridir: oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
   FileBrowser (http://file.ayc) yerinde duruyor.
 

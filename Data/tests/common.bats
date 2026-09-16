@@ -153,7 +153,8 @@ EOF
     awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" | grep -qx '    WG_ENDPOINT_HOST="\$WAN_IPV4"'
     run grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-wg" \
         "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/config/defaults.env"
-    printf '%s\n' "$output" | grep -vE '10\.8\.|127\.0\.0\.|0\.0\.0\.0|1\.1\.1\.1|1\.0\.0\.1|100\.100\.100\.100|100\.64\.0\.0|255\.' >"$TMP/literals" || true
+    # DNS provider prefixes (DD-140 presets) are data, not addresses of this server.
+    printf '%s\n' "$output" | grep -vE '10\.8\.|127\.0\.0\.|0\.0\.0\.0|1\.1\.1\.|1\.0\.0\.|9\.9\.9\.|149\.112\.112\.|94\.140\.1[45]\.|8\.8\.[84]\.|45\.90\.[23]0\.|100\.100\.100\.100|100\.64\.0\.0|255\.' >"$TMP/literals" || true
     [ ! -s "$TMP/literals" ]
 }
 
@@ -225,7 +226,7 @@ EOF
     grep -q 'caddy validate --config "\$CADDYFILE"' "$V2_ROOT/install.sh"
     grep -q 'docker compose config -q' "$V2_ROOT/install.sh"
     # Caddy resolves env placeholders at runtime; validate with the real values.
-    grep -qF 'TAILSCALE_IPV4="$TAILSCALE_IPV4" WEBDAV_PORT="$WEBDAV_PORT"' \
+    grep -qF 'TAILSCALE_IPV4="$TAILSCALE_IPV4" SHARE_PORT="$SHARE_PORT"' \
         "$V2_ROOT/install.sh"
 }
 
@@ -437,11 +438,13 @@ EOF
 
 @test "firewall requires ports and chains from state" {
     grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'WG_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
+    # DD-143: WireGuard ağları state.env'den değil kayıttan gelir; boş kayıt geçerlidir.
+    run ! grep -qE 'WG_PUBLIC_PORT:\?|WG_INTERFACE:\?|WG_SERVER_IPV4:\?' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'WG_NETWORKS_FILE' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'TORRENT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
-    run ! grep -qE 'WG_PUBLIC_PORT:=61001|TORRENT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
+    run ! grep -qE 'TORRENT_PUBLIC_PORT:=61005|CHAIN_INPUT:=MASTER' \
         "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
@@ -710,8 +713,8 @@ EOF
     done
     run ! grep -qE '^(Session\\Port|Session\\SSL\\Port|WebUI\\Port|Connection\\PortRangeMin|MigrationVersion|Cookies|WebUI\\Username|WebUI\\Password_PBKDF2)=' "$tpl"
     # Input keys, stage wiring and the Caddy auth check.
-    grep -q 'TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS TS_AUTH_KEY' "$V2_ROOT/install.sh"
-    grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS"' "$V2_ROOT/install.sh"
+    grep -q 'TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY' "$V2_ROOT/install.sh"
+    grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS"' "$V2_ROOT/install.sh"
     grep -qx 'TORRENT_USER=' "$V2_ROOT/config/kurulum.env.example"
     grep -qx 'TORRENT_PASS=' "$V2_ROOT/config/kurulum.env.example"
     # The Transmission and Portainer transition aids are gone (v2-96).
@@ -1011,9 +1014,53 @@ EOF
     run ! grep -qE 'wg-easy|wg_easy|WG_BRIDGE|WG_UI_PORT|WG_EASY' <<<"$code"
     run ! grep -q '__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
     run ! grep -qE '^[[:space:]]+wg:$' "$V2_ROOT/templates/compose.yaml"
-    # The name wg. now belongs to the DD-133 panel, a loopback service behind Caddy.
-    grep -A1 '^http://wg.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$'
+    # The name wg. now redirects to the console (DD-140); the backend stays on loopback.
+    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'handle /api/wg/\* {$'
+    # DD-142: beş servis; tek rclone (paylaşım WebDAV'ı), indirme klasörünü yayımlayan servis yok.
     [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 5 ]
+}
+
+@test "every template placeholder is filled by its render_template call" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    run python3 -c '
+import re, sys
+root = sys.argv[1]
+lines = open(root + "/install.sh", encoding="utf-8").read().split("\n")
+calls, i = {}, 0
+while i < len(lines):
+    m = re.search(r"render_template \"\$V2_ROOT/([^\"]+)\"", lines[i])
+    if m:
+        block = [lines[i]]
+        while block[-1].rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            block.append(lines[i])
+        keys = set(re.findall(r"([A-Z][A-Z0-9_]*)=", " ".join(block)))
+        calls.setdefault(m.group(1), set()).update(keys)
+    i += 1
+assert calls, "render_template çağrısı bulunamadı"
+missing = []
+for name, keys in calls.items():
+    text = open(root + "/" + name, encoding="utf-8").read()
+    for ph in sorted(set(re.findall(r"__([A-Z][A-Z0-9_]*)__", text))):
+        if ph not in keys:
+            missing.append("%s: __%s__" % (name, ph))
+assert not missing, missing
+' "$V2_ROOT"
+    [ "$status" -eq 0 ]
+}
+
+@test "a config newer than its unit forces a restart even when the file did not change" {
+    # Bir önceki çalıştırma render ile restart arasında düşerse dosya "aynı" görünür
+    # ama servis eski ayarla çalışır (canlı görüldü: yeni dnsmasq adı çözülmedi).
+    grep -q 'config_newer_than_unit "\$DNSMASQ_CONF_FILE" dnsmasq.service' "$V2_ROOT/install.sh"
+    grep -q 'config_newer_than_unit "\$CADDYFILE" caddy.service' "$V2_ROOT/install.sh"
+    local body
+    body="$(awk '/^config_newer_than_unit\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'ActiveEnterTimestamp' <<<"$body"
+    grep -q 'stat -c %Y' <<<"$body"
+    # Birim hiç çalışmamışsa (zaman damgası boş) yeniden başlatılır.
+    grep -q '\[\[ -n "\$started" \]\] || return 0' <<<"$body"
 }
 
 @test "SERVICE_NAMES drives DNS check and matches edge templates" {
@@ -1103,8 +1150,8 @@ EOF
     pairs="$(awk '/^wan_allow_pairs\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
     [ "$(grep -n 'udp \$TAILSCALE_UDP_PORT' <<<"$pairs" | cut -d: -f1)" -lt \
         "$(grep -n 'v4' <<<"$pairs" | head -1 | cut -d: -f1)" ]
-    # The port must not be selectable as a stack port.
-    grep -q '"\$TAILSCALE_UDP_PORT")' "$V2_ROOT/install.sh"
+    # DD-143: port çakışması denetimi artık master-wg net-add'de (ağları o kurar).
+    grep -q '"tailscale:\${TAILSCALE_UDP_PORT:-}"' "$V2_ROOT/scripts/master-wg"
 }
 
 @test "refresh-tailnet warns when the tailnet is unusable" {
@@ -1260,58 +1307,58 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "webdav compose is loopback; Caddy exposes TS IP:WEBDAV_PORT" {
-    grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
+@test "the only WebDAV is the share: loopback compose, share root, Caddy name and TS IP:SHARE_PORT" {
+    # DD-142: indirme klasörünün tamamını yayımlayan servis kaldırıldı; tek rclone kaldı.
+    run ! grep -q 'container_name: webdav' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -qE 'WEBDAV_(PORT|USER|PASS|HTPASSWD_FILE|MIN_PASSWORD_LENGTH)' \
+        "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" \
+        "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf"
+    run ! grep -q 'webdav' "$V2_ROOT/templates/dnsmasq.conf"
+    grep -q 'container_name: paylasim' "$V2_ROOT/templates/compose.yaml"
     grep -q 'RCLONE_IMAGE=' "$V2_ROOT/config/defaults.env"
     grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
     grep -q '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml"
-    grep -q '127.0.0.1:__WEBDAV_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
-    run ! grep -q '__TAILSCALE_IPV4__:__WEBDAV_PORT__' "$V2_ROOT/templates/compose.yaml"
-    grep -q -- '--htpasswd=/run/secrets/webdav_htpasswd' "$V2_ROOT/templates/compose.yaml"
+    [ "$(grep -c '__RCLONE_IMAGE__' "$V2_ROOT/templates/compose.yaml")" -eq 1 ]
+    grep -q '127.0.0.1:__SHARE_PORT__:8080' "$V2_ROOT/templates/compose.yaml"
+    run ! grep -q '__TAILSCALE_IPV4__:__SHARE_PORT__' "$V2_ROOT/templates/compose.yaml"
+    grep -q -- '--htpasswd=/run/secrets/paylasim_htpasswd' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
     grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'reverse_proxy 127.0.0.1:{$WEBDAV_PORT}' "$V2_ROOT/templates/Caddyfile"
-    grep -q 'http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT}' \
+    grep -q 'reverse_proxy 127.0.0.1:__SHARE_PORT__' "$V2_ROOT/templates/Caddyfile"
+    grep -q 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$SHARE_PORT}' \
         "$V2_ROOT/templates/Caddyfile"
-    run ! grep -q '__WEBDAV_PORT__' "$V2_ROOT/templates/Caddyfile"
     run ! grep -qE 'http://\{\$TAILSCALE_IPV4\}[[:space:],}]' \
         "$V2_ROOT/templates/Caddyfile"
-    grep -q 'WEBDAV_PORT_CHANGED' "$V2_ROOT/install.sh"
     run ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
     run ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
     grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" \
         "$V2_ROOT/templates/compose.yaml"
     grep -q "grep -q '401'" "$V2_ROOT/templates/compose.yaml"
     awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /healthcheck:/ {found=1}
+      /^  paylasim:/ {in_svc=1; next}
+      in_svc && /^  [a-z]/ {in_svc=0}
+      in_svc && /healthcheck:/ {found=1}
       END {exit found ? 0 : 1}
     ' "$V2_ROOT/templates/compose.yaml"
     awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /mem_limit:|memory:|pids_limit:/ {bad=1}
+      /^  paylasim:/ {in_svc=1; next}
+      in_svc && /^  [a-z]/ {in_svc=0}
+      in_svc && /mem_limit:|memory:|pids_limit:/ {bad=1}
       END {exit bad ? 1 : 0}
     ' "$V2_ROOT/templates/compose.yaml"
-    grep -qE '^[[:space:]]*- webdav$' "$V2_ROOT/templates/compose.yaml"
+    grep -qE '^[[:space:]]*- paylasim$' "$V2_ROOT/templates/compose.yaml"
     awk '
       /^networks:/ {in_nets=1; next}
       in_nets && /^[a-z]/ {in_nets=0}
-      in_nets && /^  webdav:/ {found=1}
-      in_nets && found && /name: webdav/ {named=1}
+      in_nets && /^  paylasim:/ {found=1}
+      in_nets && found && /name: paylasim/ {named=1}
       in_nets && found && /internal: true/ {bad=1}
       END {exit (named && !bad) ? 0 : 1}
     ' "$V2_ROOT/templates/compose.yaml"
-    run ! awk '
-      /^  webdav:/ {in_webdav=1; next}
-      in_webdav && /^  [a-z]/ {in_webdav=0}
-      in_webdav && /networks:/ {in_nets=1; next}
-      in_webdav && in_nets && /^[[:space:]]+- wg$/ {bad=1}
-      END {exit bad ? 0 : 1}
-    ' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'wait_webdav_healthy' "$V2_ROOT/install.sh"
-    grep -q 'assert_webdav_network' "$V2_ROOT/install.sh"
+    grep -q 'wait_share_healthy' "$V2_ROOT/install.sh"
+    # Dosyadan çıkarılan servisin konteyneri ayakta kalmaz.
+    grep -q 'docker compose up -d --remove-orphans' "$V2_ROOT/install.sh"
+    grep -q 'assert_share_network' "$V2_ROOT/install.sh"
 }
 
 @test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
@@ -1643,21 +1690,20 @@ EOF
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
     grep -q 'for resolver in 127.0.0.1' "$V2_ROOT/install.sh"
-    grep -q 'Host: webdav.' "$V2_ROOT/install.sh"
-    grep -q 'WebDAV Caddy TS-IP:' "$V2_ROOT/install.sh"
-    grep -q 'http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
-    grep -q 'http://127.0.0.1:${WEBDAV_PORT}/' "$V2_ROOT/install.sh"
+    grep -q 'Host: paylas.' "$V2_ROOT/install.sh"
+    grep -q 'http://${TAILSCALE_IPV4}:${SHARE_PORT}/' "$V2_ROOT/install.sh"
+    grep -q 'http://127.0.0.1:${SHARE_PORT}/' "$V2_ROOT/install.sh"
     run ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
-    grep -q 'assert_webdav_readonly_runtime' "$V2_ROOT/install.sh"
+    grep -q 'assert_share_readonly_runtime' "$V2_ROOT/install.sh"
     grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
     grep -q '/downloads false' "$V2_ROOT/install.sh"
     run ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
-    webdav_runtime="$(awk '/^assert_webdav_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh")"
-    [ -n "$webdav_runtime" ]
-    run ! grep -qE '401\|403\|405' <<<"$webdav_runtime"
+    share_runtime="$(awk '/^assert_share_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh")"
+    [ -n "$share_runtime" ]
+    run ! grep -qE '401\|403\|405' <<<"$share_runtime"
     run ! grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
     grep -q 'docker port qbittorrent' "$V2_ROOT/install.sh"
-    grep -q 'docker port webdav' "$V2_ROOT/install.sh"
+    grep -q 'docker port paylasim' "$V2_ROOT/install.sh"
     grep -q 'UI publish yalnız loopback' "$V2_ROOT/install.sh"
     # Contract §14.13 / DD-88
     grep -q 'for ui_host in dozzle torrent file' "$V2_ROOT/install.sh"
@@ -1677,9 +1723,9 @@ EOF
         WEBDAV_READ_ONLY; do
         run ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
     done
-    # DNS_PORT and CADDY_HTTP_PORT exist and are now actually used.
-    grep -q '"\$DNS_PORT" | "\$CADDY_HTTP_PORT"' "$V2_ROOT/install.sh"
-    run ! grep -qE '^\s+53 \| 80 \|' "$V2_ROOT/install.sh"
+    # DNS_PORT and CADDY_HTTP_PORT exist and are read where ports are checked (DD-143: master-wg).
+    grep -q '"dns:53" "http:80"' "$V2_ROOT/scripts/master-wg"
+    grep -q 'CADDY_HTTP_PORT' "$V2_ROOT/install.sh"
 }
 
 @test "compose images use upstream stable tracks where published" {
@@ -1907,13 +1953,8 @@ EOF
         END { exit !(r && d && r < d) }'
     grep -q '^INPUT_DIR="/run/master-stack/kurulum"$' "$V2_ROOT/config/defaults.env"
     grep -q '^INPUT_FILE="/run/master-stack/kurulum/kurulum.env"$' "$V2_ROOT/config/defaults.env"
-    # DD-124: no peer definitions or hand-back path. The DD-128 snapshot is the
-    # only WireGuard input, taken before the input directory is removed.
-    grep -A8 '^    require_root$' <<<"$stage0" | awk '
-        /take_snapshot_input/ { t = NR }
-        /rm -rf -- "\$INPUT_DIR"/ { d = NR }
-        /validate_snapshot/ { v = NR }
-        END { exit !(t && d && v && t < d && d < v) }'
+    # DD-124/DD-143: girdi yalnız kurulum.env; WireGuard için hiçbir girdi yok.
+    run ! grep -qE 'take_snapshot_input|validate_snapshot' <<<"$stage0"
     run ! grep -qE 'INPUT_WG_DIR|OUTPUT_DIR|OUTPUT_WG_DIR|\bWG_PEERS\b' \
         "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/config/kurulum.env.example"
     # Every INPUT_* is dropped once mapped; secrets stay only in the *_NEW_* vars.
@@ -1948,35 +1989,36 @@ EOF
     grep -qx '/kurulum/' "$V2_ROOT/../.gitignore"
 }
 
-@test "ensure_webdav_htpasswd keeps a matching account and rewrites a changed one" {
+@test "ensure_share_account keeps a matching account, rewrites a changed one and stores both files" {
     command -v htpasswd >/dev/null || skip "htpasswd yok"
-    eval "$(awk '/^ensure_webdav_htpasswd\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    STATE_DIR="$TMP" WEBDAV_HTPASSWD_FILE="$TMP/webdav.htpasswd"
+    eval "$(awk '/^ensure_share_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    STATE_DIR="$TMP" SHARE_HTPASSWD_FILE="$TMP/paylasim.htpasswd" SHARE_CRED_FILE="$TMP/paylasim.cred"
     log() { :; }
     chown() { :; }
     docker() { printf '%s\n' "$*" >>"$TMP/docker-calls"; }
-    WEBDAV_NEW_USER=infuse WEBDAV_NEW_PASS='fixture pass $1'
-    run ensure_webdav_htpasswd
+    SHARE_NEW_USER=paylasim SHARE_NEW_PASS='fixture pass $1'
+    run ensure_share_account
     [ "$status" -eq 0 ]
-    printf '%s' 'fixture pass $1' | htpasswd -vi "$TMP/webdav.htpasswd" infuse 2>/dev/null
-    grep -q '^restart webdav$' "$TMP/docker-calls"
-    before="$(cat "$TMP/webdav.htpasswd")"
+    printf '%s' 'fixture pass $1' | htpasswd -vi "$TMP/paylasim.htpasswd" paylasim 2>/dev/null
+    # Konsol'un gösterdiği düz kopya da yazılır; ikisi aynı girdiden gelir.
+    [ "$(cat "$TMP/paylasim.cred")" = 'paylasim:fixture pass $1' ]
+    grep -q '^inspect paylasim$' "$TMP/docker-calls"
+    before="$(cat "$TMP/paylasim.htpasswd")"
     rm -f "$TMP/docker-calls"
-    run ensure_webdav_htpasswd
+    SHARE_NEW_USER=paylasim SHARE_NEW_PASS='fixture pass $1'
+    run ensure_share_account
     [ "$status" -eq 0 ]
-    [ "$(cat "$TMP/webdav.htpasswd")" = "$before" ]
+    [ "$(cat "$TMP/paylasim.htpasswd")" = "$before" ]
     [ ! -e "$TMP/docker-calls" ]
-    WEBDAV_NEW_USER=infuse WEBDAV_NEW_PASS='changed-pass-2'
-    run ensure_webdav_htpasswd
+    SHARE_NEW_USER=paylasim SHARE_NEW_PASS='changed-pass-2'
+    run ensure_share_account
     [ "$status" -eq 0 ]
-    printf '%s' 'changed-pass-2' | htpasswd -vi "$TMP/webdav.htpasswd" infuse 2>/dev/null
-    grep -q '^restart webdav$' "$TMP/docker-calls"
-    [ "$(wc -l <"$TMP/webdav.htpasswd")" -eq 1 ]
+    printf '%s' 'changed-pass-2' | htpasswd -vi "$TMP/paylasim.htpasswd" paylasim 2>/dev/null
+    [ "$(wc -l <"$TMP/paylasim.htpasswd")" -eq 1 ]
     run ! grep -q 'changed-pass-2' "$TMP/docker-calls"
-    awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
-        grep -q '^    ensure_webdav_htpasswd$'
+    awk '/^stage_1\(\)/,/^ensure_share_account\(\)/' "$V2_ROOT/install.sh" |
+        grep -q '^    ensure_share_account$'
 }
-
 @test "sync_filebrowser_account leaves a matching account alone and overwrites a changed one in place" {
     command -v htpasswd >/dev/null || skip "htpasswd yok"
     for f in filebrowser_cli filebrowser_account_fail filebrowser_target_id \
@@ -2062,18 +2104,16 @@ EOF
     grep -q 'INPUT_LOCAL_DIR="\$here/kurulum"' <<<"$body"
     grep -q 'INPUT_FILE_LOCAL="\$INPUT_LOCAL_DIR/kurulum.env"' <<<"$body"
     grep -q 'stat -f %Lp "\$INPUT_FILE_LOCAL"' <<<"$body"
-    # DD-128: kurulum.env plus the pulled settings when present, each named
-    # file mode 600; nothing is fetched back.
+    # DD-143: sunucuya yalnız kurulum.env gider, geri hiçbir şey alınmaz.
     grep -q 'send_files="kurulum.env"' <<<"$body"
     grep -q -- '--no-mac-metadata -cf - \$send_files |' <<<"$body"
-    grep -q 'send_files="\$send_files wireguard/sunucu/wg0.conf"' <<<"$body"
-    grep -qF '"${f##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}\.conf$' <<<"$body"
+    run ! grep -qE 'wireguard/sunucu|wireguard/\*' <<<"$body"
     run ! grep -qiE 'qbittorrent' <<<"$body"
     grep -q 'anahtar/parola içerdiği için 600 olmalı' <<<"$body"
     grep -q -- '--no-same-owner -xf -' <<<"$body"
     run ! grep -qE 'input_files|fetch_wireguard_output|OUTPUT_' <<<"$body"
-    awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q "'\$REMOTE_RESTORE_DIR'"
-    grep -q 'REMOTE_RESTORE_DIR="\$RESTORE_DIR"' "$exporter"
+    run ! grep -q 'REMOTE_RESTORE_DIR' <<<"$body"
+    run ! grep -q 'REMOTE_RESTORE_DIR' "$exporter"
     # Only SSH_HOST is read on the Mac; the rest is validated by the installer.
     grep -q 'index(\$0, "SSH_HOST=") == 1' <<<"$body"
     run ! grep -qE '_PASS|TS_AUTH_KEY' <<<"$body"
@@ -2141,405 +2181,56 @@ Endpoint = ${1:-203.0.113.7}:61001
 EOF
 }
 
-@test "wg_snapshot_check accepts master-stack files and rejects anything wg-quick could run" {
-    # DD-128: a restored wg0.conf is fed to wg-quick as root, so only the keys
-    # master-stack writes may appear; messages never echo a key.
-    eval "$(awk '/^wg_snapshot_check\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    source "$V2_ROOT/config/defaults.env"
-    snapshot_server_conf >"$TMP/wg0.conf"
-    [ "$(wg_snapshot_check "$TMP/wg0.conf" server)" = "ok 2" ]
-    snapshot_profile >"$TMP/p.conf"
-    [ "$(wg_snapshot_check "$TMP/p.conf" profile)" = "ok 1" ]
-    local variant out
-    while IFS='|' read -r variant expect; do
-        case "$variant" in
-            postup) sed 's/^MTU = 1420$/PostUp = iptables -F/' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            wide) sed 's#^AllowedIPs = 10.8.0.3/32.*#AllowedIPs = 0.0.0.0/0#' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            shortkey) sed "s#^PresharedKey = .*#PresharedKey = abc=#" "$TMP/wg0.conf" >"$TMP/bad" ;;
-            dupname) sed 's/^# peer: mac.book_1$/# peer: iph0/' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            badname) sed 's/^# peer: iph0$/# peer: ..\/evil/' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            nokey) grep -v '^PrivateKey' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            peerextra) sed 's/^PresharedKey = \(.*\)$/PresharedKey = \1\nEndpoint = 1.2.3.4:1/' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            word) sed 's#fdcc:ad94:bacf:61a4::3/128#fdcc:ad94:bacf:61a4::cafe:3/128#' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            group) sed 's#fdcc:ad94:bacf:61a4::3/128#fdcc:ad94:bacf:61a4::1:3/128#' "$TMP/wg0.conf" >"$TMP/bad" ;;
-            v4tail) sed 's#10.8.0.3/32#10.8.0.3.4/32#' "$TMP/wg0.conf" >"$TMP/bad" ;;
-        esac
-        out="$(wg_snapshot_check "$TMP/bad" server)"
-        case "$out" in *"$expect"*) ;; *) echo "$variant: $out"; false ;; esac
-        case "$out" in "ok "*) false ;; esac
-        run ! grep -qE 'AAAA|BBBB|CCCC|DDDD' <<<"$out"
-    done <<'EOF'
-postup|izin verilmeyen alan: PostUp
-wide|alt ağı dışında: 0.0.0.0/0
-shortkey|PresharedKey biçimi
-dupname|aynı peer adı
-badname|geçersiz peer adı
-nokey|PrivateKey yok
-peerextra|izin verilmeyen alan: Endpoint
-word|alt ağı dışında: fdcc:ad94:bacf:61a4::cafe:3/128
-group|alt ağı dışında: fdcc:ad94:bacf:61a4::1:3/128
-v4tail|alt ağı dışında: 10.8.0.3.4/32
-EOF
-    sed 's/^DNS = .*/&\nPostDown = rm -rf \//' "$TMP/p.conf" >"$TMP/bad"
-    case "$(wg_snapshot_check "$TMP/bad" profile)" in *"PostDown"*) ;; *) false ;; esac
-    { cat "$TMP/p.conf"; printf '\n[Peer]\nPublicKey = %s\n' "$K4"; } >"$TMP/bad"
-    case "$(wg_snapshot_check "$TMP/bad" profile)" in *"birden fazla [Peer]"*) ;; *) false ;; esac
-}
-
-@test "validate_snapshot allows only the expected files and counts what it found" {
-    eval "$(awk '/^wg_snapshot_check\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^validate_snapshot\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^snapshot_note\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    source "$V2_ROOT/config/defaults.env"
-    RESTORE_DIR="$TMP/restore"
-    mkdir -p "$RESTORE_DIR/wireguard/sunucu"
-    snapshot_server_conf >"$RESTORE_DIR/wireguard/sunucu/wg0.conf"
-    snapshot_profile >"$RESTORE_DIR/wireguard/iph0.conf"
-    snapshot_profile >"$RESTORE_DIR/wireguard/mac.book_1.conf"
-    SNAPSHOT_PEERS=0 SNAPSHOT_WG_PROFILES=0
-    validate_snapshot
-    [ "$SNAPSHOT_PEERS" = 2 ]
-    [ "$SNAPSHOT_WG_PROFILES" = 2 ]
-    [ "$(snapshot_note)" = "WireGuard sunucu anahtarı + 2 peer, 2 profil" ]
-    # Anything else stops the install before a change.
-    local extra
-    # qBittorrent is no longer pulled (DD-129): its file is refused too.
-    for extra in qbittorrent/qBittorrent.conf qbittorrent/evil.sh \
-        wireguard/sunucu/other.conf "wireguard/bad name.conf" wireguard/x/y.conf; do
-        mkdir -p "$(dirname "$RESTORE_DIR/$extra")"
-        printf 'x\n' >"$RESTORE_DIR/$extra"
-        run validate_snapshot
-        [ "$status" -ne 0 ]
-        case "$output" in *"hazır ayarlar"*) ;; *) false ;; esac
-        rm -f "$RESTORE_DIR/$extra"
+@test "the installer carries nothing from the Mac: no snapshot, no restore, no WireGuard upload" {
+    # DD-143: kurulum WireGuard ağı yaratmaz ve Mac'ten hiçbir dosya okumaz.
+    local key
+    for key in restore_wireguard_snapshot wg_snapshot_check validate_snapshot take_snapshot_input \
+        snapshot_note RESTORE_DIR SNAPSHOT_MAX_BYTES WG_RESTORED; do
+        run ! grep -q "$key" "$V2_ROOT/install.sh"
     done
-    ln -s /etc/passwd "$RESTORE_DIR/wireguard/linked.conf"
-    run validate_snapshot
-    [ "$status" -ne 0 ]
-    rm -f "$RESTORE_DIR/wireguard/linked.conf"
-    SNAPSHOT_MAX_BYTES=10
-    run validate_snapshot
-    case "$output" in *"çok büyük"*) ;; *) false ;; esac
-    SNAPSHOT_MAX_BYTES=1048576
-    # Profiles without the server file are dropped, not sent on.
-    rm -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf"
-    validate_snapshot
-    [ ! -e "$RESTORE_DIR/wireguard" ]
+    run ! grep -qE 'RESTORE_DIR|SNAPSHOT_MAX_BYTES' "$V2_ROOT/config/defaults.env"
+    run ! grep -q 'wireguard/sunucu' "$V2_ROOT/dev/export-installer.sh"
+    grep -q 'send_files="kurulum.env"' "$V2_ROOT/dev/export-installer.sh"
+    [ "$(grep -c 'send_files=' "$V2_ROOT/dev/export-installer.sh")" -eq 1 ]
+    # Girdi dosyasında WireGuard portu da yok: ağın portunu Konsol belirler.
+    run ! grep -q 'WG_PUBLIC_PORT' "$V2_ROOT/config/kurulum.env.example"
+    run ! grep -q 'INPUT_WG_PUBLIC_PORT' "$V2_ROOT/install.sh"
+    # Kurulum yalnız katmanı hazırlar ve kayıttaki ağları uygular.
+    grep -q '^ensure_wireguard_ready()' "$V2_ROOT/install.sh"
+    grep -q '^ensure_wg_networks_running()' "$V2_ROOT/install.sh"
+    run ! grep -q '^ensure_wireguard()' "$V2_ROOT/install.sh"
+    local ready
+    ready="$(awk '/^ensure_wireguard_ready\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    run ! grep -qE 'wg genkey|wg-quick|syncconf|PrivateKey' <<<"$ready"
+    grep -q 'wireguard-tools qrencode' <<<"$ready"
+    awk '/^stage_5\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'ensure_wg_networks_running'
 }
 
-@test "the WireGuard snapshot is restored only where the server has nothing" {
-    eval "$(awk '/^restore_wireguard_snapshot\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    log() { printf '%s %s\n' "$1" "$2" >>"$TMP/log"; }
-    install() {
-        local dir=0 a=()
-        while [ "$#" -gt 0 ]; do
-            case "$1" in -d) dir=1 ;; -m | -o | -g) shift ;; *) a+=("$1") ;; esac
-            shift
-        done
-        if [ "$dir" = 1 ]; then mkdir -p "${a[@]}"; else cp "${a[0]}" "${a[1]}"; fi
-    }
-    RESTORE_DIR="$TMP/restore" WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_CLIENTS_DIR="$TMP/etc/wireguard/clients"
-    WG_ENDPOINT_HOST=203.0.113.7 WG_PUBLIC_PORT=61001 SNAPSHOT_PEERS=2
-    mkdir -p "$RESTORE_DIR/wireguard/sunucu"
-    snapshot_server_conf >"$RESTORE_DIR/wireguard/sunucu/wg0.conf"
-    snapshot_profile >"$RESTORE_DIR/wireguard/iph0.conf"
-    snapshot_profile 203.0.113.9 >"$RESTORE_DIR/wireguard/old.conf"
-
-    # Fresh server: everything goes in as is.
-    restore_wireguard_snapshot
-    [ "$WG_RESTORED" = 1 ]
-    cmp "$RESTORE_DIR/wireguard/sunucu/wg0.conf" "$WG_CONF_FILE"
-    cmp "$RESTORE_DIR/wireguard/iph0.conf" "$WG_CLIENTS_DIR/iph0.conf"
-    grep -q '^WARN 1 cihaz profilinin Endpoint' "$TMP/log"
-
-    # Existing server config: the server is the truth, nothing is touched.
-    printf 'server-own\n' >"$WG_CONF_FILE"
-    restore_wireguard_snapshot
-    [ "$WG_RESTORED" = 0 ]
-    [ "$(cat "$WG_CONF_FILE")" = server-own ]
-    grep -q 'kurulum/wireguard kullanılmadı' "$TMP/log"
-}
-
-@test "snapshot restores are wired into the stages and the runtime copy is removed" {
-    stage5="$(awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh")"
-    awk '/restore_wireguard_snapshot$/ {a = NR} /^    ensure_wireguard$/ {b = NR}
-         END {exit !(a && b && a < b)}' <<<"$stage5"
-    main="$(awk '/^main\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    awk '/^    stage_5$/ {a = NR} /rm -rf -- "\$RESTORE_DIR"/ {b = NR} /^    stage_6$/ {c = NR}
-         END {exit !(a && b && c && a < b && b < c)}' <<<"$main"
-    grep -q '^RESTORE_DIR="/run/master-stack/restore"$' "$V2_ROOT/config/defaults.env"
-    grep -q 'Hazır ayarlar: \$(snapshot_note)' "$V2_ROOT/install.sh"
-}
-
-@test "wireguard.command option 6 mirrors the server's WireGuard files into kurulum/ without printing them" {
-    local repo="$TMP/repo" srv="$TMP/srv" ver
-    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
-    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$repo/kurulum/qbittorrent" \
-        "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
-    cp "$V2_ROOT/../wireguard.command" "$repo/"
-    cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
-    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
-    printf 'SSH_HOST=nrm\nWEBDAV_PASS=never-read\n' >"$repo/kurulum/kurulum.env"
-    touch "$srv/etc/master-stack/state.env"
-    snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
-    snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
-    printf '\211PNG\r\n\032\nIPH0' >"$srv/etc/wireguard/clients/iph0.png"
-    printf 'stale\n' >"$repo/kurulum/wireguard/gone.conf"
-    printf 'stale\n' >"$repo/kurulum/wireguard/gone.png"
-    # A v2-93 pull left a qBittorrent copy with a password hash: it is removed.
-    printf '[Preferences]\nWebUI\\Password_PBKDF2="@ByteArray(secret-hash)"\n' \
-        >"$repo/kurulum/qbittorrent/qBittorrent.conf"
-    # Fake ssh: master-wg version answers the local version; the backup script
-    # is kept for inspection and the fixture tree is sent relative to /.
-    cat >"$TMP/bin/ssh" <<EOF
-#!/bin/bash
-case "\$*" in
-    *" -O exit "*) exit 0 ;;
-    *"master-wg version"*) echo "$ver" ;;
-    *"bash -s"*) printf '%s\n' "\$*" >"$TMP/ssh-args"; cat >"$TMP/ssh-script"
-        cd "$srv" && tar -cf - \$(find etc -type f ! -name state.env | sort) ;;
-    *) exit 1 ;;
-esac
-EOF
-    chmod +x "$TMP/bin/ssh"
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
-    [ "$status" -eq 0 ]
-    cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
-    cmp "$srv/etc/wireguard/clients/iph0.conf" "$repo/kurulum/wireguard/iph0.conf"
-    cmp "$srv/etc/wireguard/clients/iph0.png" "$repo/kurulum/wireguard/iph0.png"
-    [ ! -e "$repo/kurulum/wireguard/gone.conf" ]
-    [ ! -e "$repo/kurulum/wireguard/gone.png" ]
-    [ ! -e "$repo/kurulum/qbittorrent" ]
-    for f in "$repo/kurulum/wireguard/sunucu/wg0.conf" "$repo/kurulum/wireguard/iph0.conf" "$repo/kurulum/wireguard/iph0.png"; do
-        [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
-    done
-    pulled="$output"
-    case "$pulled" in *"6) Yedek al"*) ;; *) false ;; esac
-    case "$pulled" in *"profil gone"*"silindi"*) ;; *) false ;; esac
-    case "$pulled" in *"QR resmi gone"*"silindi"*) ;; *) false ;; esac
-    case "$pulled" in *"eski qBittorrent kopyası"*"silindi"*) ;; *) false ;; esac
-    run ! grep -qE 'AAAA|BBBB|secret-hash|never-read' <<<"$pulled"
-    [ -z "$(find "$repo/kurulum" -name '.yedek.*')" ]
-    # A second backup reports unchanged files.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '6\n5\n\n')
-    case "$output" in *"profil iph0"*"aynı"*"QR resmi iph0"*"aynı"*) ;; *) false ;; esac
-    # The server side needs an install and a wg0.conf, tars only WireGuard files.
-    grep -qF 'tar -cf - "${args[@]}"' "$TMP/ssh-script"
-    grep -q 'sunucuda kurulum yok' "$TMP/ssh-script"
-    grep -q 'sunucuda WireGuard yapılandırması yok' "$TMP/ssh-script"
-    run ! grep -qiE 'qbittorrent|categories|feeds' "$TMP/ssh-script"
-    grep -q -- '-- /etc/master-stack/state.env /etc/wireguard/wg0.conf /etc/wireguard/clients /usr/local/sbin/master-wg$' "$TMP/ssh-args"
-    # The panel no longer points to the Mac backup (DD-136): the script leaves no marker.
-    run ! grep -q 'touch' "$TMP/ssh-script"
-    # The separate ayarlar.command is gone.
-    [ ! -e "$V2_ROOT/../ayarlar.command" ]
-}
-
-@test "wireguard.command backup script tars wg0.conf, profiles and server-made QR PNGs at the same relative paths" {
-    local cmd="$V2_ROOT/../wireguard.command" root="$TMP/root" tmpd="$TMP/tmpd"
-    awk "/<<'REMOTE'\$/ {f = 1; next} /^REMOTE\$/ {f = 0} f" "$cmd" >"$TMP/remote.sh"
-    mkdir -p "$root/etc/master-stack" "$root/etc/wireguard/clients" "$tmpd" "$TMP/x"
-    touch "$root/etc/master-stack/state.env"
-    printf '[Interface]\nPrivateKey = K\n' >"$root/etc/wireguard/wg0.conf"
-    printf 'profile-a\n' >"$root/etc/wireguard/clients/a.conf"
-    printf 'profile-b\n' >"$root/etc/wireguard/clients/b.conf"
-    printf 'not-a-profile\n' >"$root/etc/wireguard/clients/notes.txt"
-    # Fake master-wg: PNG signature plus the profile; "b" fails.
-    cat >"$TMP/master-wg" <<EOF
-#!/bin/bash
-[ "\$1" = png ] && [ "\$2" != b ] || exit 1
-printf '\211PNG\r\n\032\n'; cat "$root/etc/wireguard/clients/\$2.conf"
-EOF
-    chmod +x "$TMP/master-wg"
-    # The server runs GNU tar, which fails on a -C with no member after it
-    # (tar 1.35: "has no effect", exit 2); macOS tar does not, so mimic it.
-    mkdir -p "$TMP/strict"
-    cat >"$TMP/strict/tar" <<EOF
-#!/bin/bash
-n=\$#
-if [ "\$n" -ge 2 ] && [ "\${@:\$((n - 1)):1}" = -C ]; then echo "tar: -C has no effect" >&2; exit 2; fi
-exec $(command -v tar) "\$@"
-EOF
-    chmod +x "$TMP/strict/tar"
-    run env PATH="$TMP/strict:$PATH" bash -c 'tar -cf - -C / etc -C /tmp >/dev/null'
-    [ "$status" -eq 2 ]
-    PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
-        "$root/etc/wireguard/clients" "$TMP/master-wg" >"$TMP/out.tar" 2>"$TMP/err"
-    rel="${root#/}"
-    tar -tf "$TMP/out.tar" | sort >"$TMP/list"
-    [ "$(cat "$TMP/list")" = "$(printf '%s\n' "$rel/etc/wireguard/clients/a.conf" "$rel/etc/wireguard/clients/a.png" \
-        "$rel/etc/wireguard/clients/b.conf" "$rel/etc/wireguard/wg0.conf" | sort)" ]
-    tar -C "$TMP/x" -xf "$TMP/out.tar"
-    [ "$(tail -c +9 "$TMP/x/$rel/etc/wireguard/clients/a.png")" = profile-a ]
-    grep -q 'b için QR resmi üretilemedi' "$TMP/err"
-    # The temporary PNG directory is gone.
-    [ -z "$(ls -A "$tmpd")" ]
-    # No profiles at all (after "wg0 yeniden üret" or removing the last peer):
-    # only wg0.conf is sent, and GNU tar has nothing to reject.
-    rm -f "$root/etc/wireguard/clients"/*
-    run env PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" \
-        "$root/etc/wireguard/wg0.conf" "$root/etc/wireguard/clients" "$TMP/master-wg"
-    [ "$status" -eq 0 ]
-    PATH="$TMP/strict:$PATH" TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/etc/wireguard/wg0.conf" \
-        "$root/etc/wireguard/clients" "$TMP/master-wg" >"$TMP/empty.tar"
-    [ "$(tar -tf "$TMP/empty.tar")" = "$rel/etc/wireguard/wg0.conf" ]
-    [ -z "$(ls -A "$tmpd")" ]
-    # No install or no wg0.conf: refused before anything is sent.
-    run env TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/none" "$root/etc/wireguard/wg0.conf" "$root/etc/wireguard/clients" "$TMP/master-wg"
-    [ "$status" -eq 3 ]
-    run env TMPDIR="$tmpd" bash "$TMP/remote.sh" "$root/etc/master-stack/state.env" "$root/none" "$root/etc/wireguard/clients" "$TMP/master-wg"
-    [ "$status" -eq 4 ]
-    [ -z "$(ls -A "$tmpd")" ]
-}
-
-@test "wireguard.command options 7 and 8 change DNS with a new QR and regenerate wg0 only after onayla" {
-    local repo="$TMP/repo" srv="$TMP/srv" ver
-    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
-    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
-    cp "$V2_ROOT/../wireguard.command" "$repo/"
-    cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
-    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
-    printf 'SSH_HOST=nrm\n' >"$repo/kurulum/kurulum.env"
-    touch "$srv/etc/master-stack/state.env"
-    snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
-    snapshot_profile >"$srv/etc/wireguard/clients/iph0.conf"
-    snapshot_profile >"$repo/kurulum/wireguard/iph0.conf"
-    # Fake server: records master-wg calls and backups; after "reset" the server
-    # has no peers and no profiles.
-    cat >"$TMP/bin/ssh" <<EOF
-#!/bin/bash
-case "\$*" in
-    *" -O exit "*) exit 0 ;;
-    *"master-wg version"*) echo "$ver" ;;
-    *"master-wg list"*) [ -e "$TMP/reset-done" ] || printf 'iph0\t10.8.0.2\t0\t0\t0\tvar\n' ;;
-    *"master-wg profile iph0"*) printf '[Interface]\nPrivateKey = SECRETKEY\nDNS = 1.1.1.1\n' ;;
-    *"master-wg dns iph0 "*) echo "\$*" >>"$TMP/calls"; a="\${*% }"; last="\${a##* }"; printf 'iph0\t%s\n' "\$last" ;;
-    *"master-wg qr iph0"*) echo "QR-CODE" ;;
-    *"master-wg png iph0"*) echo "not a png" ;;
-    *"master-wg reset --onay"*) echo "\$*" >>"$TMP/calls"; touch "$TMP/reset-done"; printf '4\t4\n'
-        rm -f "$srv/etc/wireguard/clients/iph0.conf"
-        printf '[Interface]\nPrivateKey = NEWKEY\n' >"$srv/etc/wireguard/wg0.conf" ;;
-    *"bash -s"*) cat >/dev/null; echo backup >>"$TMP/backups"
-        cd "$srv" && tar -cf - \$(find etc/wireguard -type f | sort) ;;
-    *) exit 1 ;;
-esac
-EOF
-    chmod +x "$TMP/bin/ssh"
-    # 7 twice: Enter keeps the current DNS read from the profile, then a new one;
-    # 8 with a wrong word changes nothing.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" \
-        < <(printf '7\niph0\n\n7\niph0\n2a07:a8c0::df:877b\n8\nevet\n5\n\n')
-    [ "$status" -eq 0 ]
-    [ "$(sed -n 1p "$TMP/calls" | awk '{print $NF}')" = "1.1.1.1" ]
-    case "$output" in *"DNS değişti: iph0 → 2a07:a8c0::df:877b"*"QR-CODE"*) ;; *) false ;; esac
-    case "$output" in *"Vazgeçildi; hiçbir şey değişmedi."*) ;; *) false ;; esac
-    # A PNG answer without the PNG signature is not kept.
-    case "$output" in *"UYARI: QR resmi alınamadı"*) ;; *) false ;; esac
-    [ -z "$(find "$repo/kurulum/wireguard" -name '*.png*')" ]
-    # Each DNS change backed up on its own; the refused 8 did not.
-    case "$output" in *"Yedek güncelleniyor"*"profil iph0"*) ;; *) false ;; esac
-    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
-    grep -q 'master-wg dns iph0 2a07' "$TMP/calls"
-    run ! grep -q 'reset' "$TMP/calls"
-    run ! grep -q 'SECRETKEY' <<<"$output"
-    [ -f "$repo/kurulum/wireguard/iph0.conf" ]
-    # The old word no longer confirms; "onayla" in any case does, then the backup mirrors the clean server.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '8\nSIL\n5\n\n')
-    run ! grep -q 'reset' "$TMP/calls"
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '8\nOnayla\n5\n\n')
-    [ "$status" -eq 0 ]
-    grep -q 'master-wg reset --onay' "$TMP/calls"
-    case "$output" in *"4 peer ve 4 profil silindi"*) ;; *) false ;; esac
-    [ ! -e "$repo/kurulum/wireguard/iph0.conf" ]
-    grep -qx 'PrivateKey = NEWKEY' "$repo/kurulum/wireguard/sunucu/wg0.conf"
-    [ "$(wc -l <"$TMP/backups")" -eq 3 ]
-    case "$output" in *"8) wg0 yeniden üret"*) ;; *) false ;; esac
-}
-
-@test "wireguard.command options 2 and 3 back up kurulum/wireguard after a successful change only" {
-    local repo="$TMP/repo" srv="$TMP/srv" ver
-    ver="$(awk -F'"' '/^V2_VERSION=/{print $2; exit}' "$V2_ROOT/install.sh")"
-    mkdir -p "$repo/Data/config" "$repo/kurulum/wireguard" "$srv/etc/wireguard/clients" "$srv/etc/master-stack" "$TMP/bin"
-    cp "$V2_ROOT/../wireguard.command" "$repo/"
-    cp "$V2_ROOT/config/defaults.env" "$repo/Data/config/"
-    printf 'V2_VERSION="%s"\n' "$ver" >"$repo/Data/install.sh"
-    printf 'SSH_HOST=nrm\n' >"$repo/kurulum/kurulum.env"
-    touch "$srv/etc/master-stack/state.env"
-    snapshot_server_conf >"$srv/etc/wireguard/wg0.conf"
-    snapshot_profile >"$TMP/phone.conf"
-    # Fake server: add creates the profile, remove deletes it, a failing add
-    # changes nothing; every backup is counted.
-    cat >"$TMP/bin/ssh" <<EOF
-#!/bin/bash
-case "\$*" in
-    *" -O exit "*) exit 0 ;;
-    *"master-wg version"*) echo "$ver" ;;
-    *"master-wg list"*) [ ! -f "$srv/etc/wireguard/clients/phone.conf" ] || printf 'phone\t10.8.0.2\t0\t0\t0\tvar\n' ;;
-    *"master-wg add bad "*) echo "HATA: test" >&2; exit 1 ;;
-    *"master-wg add phone "*) printf '%s\n' "\${@: -1}" >"$TMP/add-cmd"
-        cp "$TMP/phone.conf" "$srv/etc/wireguard/clients/phone.conf"; printf 'phone\t10.8.0.2\n' ;;
-    *"master-wg profile phone"*) cat "$srv/etc/wireguard/clients/phone.conf" ;;
-    *"master-wg qr phone"*) echo "QR-CODE" ;;
-    *"master-wg png phone"*) printf '\211PNG\r\n\032\nPHONE' | tee "$srv/etc/wireguard/clients/phone.png" ;;
-    *"master-wg remove phone"*) rm -f "$srv/etc/wireguard/clients/phone.conf" "$srv/etc/wireguard/clients/phone.png" ;;
-    *"bash -s"*) cat >/dev/null; [ ! -e "$TMP/backup-fails" ] || exit 1; echo backup >>"$TMP/backups"
-        cd "$srv" && tar -cf - \$(find etc/wireguard -type f | sort) ;;
-    *) exit 1 ;;
-esac
-EOF
-    chmod +x "$TMP/bin/ssh"
-    # 2 with defaults, then an add the server refuses.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '2\nphone\n\n\n\n2\nbad\n\n\n\n5\n\n')
-    [ "$status" -eq 0 ]
-    [ "$(wc -l <"$TMP/backups")" -eq 1 ]
-    # Enter at every question sends the defaults.env values (DD-131 DNS first).
-    eval "set -- $(cat "$TMP/add-cmd")"
-    [ "$2 $3" = "add phone" ]
-    [ "$4" = "$(awk -F'"' '/^WG_CLIENT_DNS_DEFAULT=/{print $2; exit}' "$V2_ROOT/config/defaults.env")" ]
-    [ "$5 $6" = "$(awk -F'"' '/^WG_CLIENT_KEEPALIVE_DEFAULT=/{print $2} /^WG_MTU=/{m = $2} END {print m}' "$V2_ROOT/config/defaults.env" | paste -sd' ' -)" ]
-    cmp "$srv/etc/wireguard/wg0.conf" "$repo/kurulum/wireguard/sunucu/wg0.conf"
-    cmp "$srv/etc/wireguard/clients/phone.conf" "$repo/kurulum/wireguard/phone.conf"
-    cmp "$srv/etc/wireguard/clients/phone.png" "$repo/kurulum/wireguard/phone.png"
-    [ "$(stat -f %Lp "$repo/kurulum/wireguard/phone.png" 2>/dev/null || stat -c %a "$repo/kurulum/wireguard/phone.png")" = 600 ]
-    [ -z "$(find "$repo/kurulum/wireguard" -name '*.gelen')" ]
-    case "$output" in *"QR resmi alındı: kurulum/wireguard/phone.png"*"QR-CODE"*"Yedek güncelleniyor"*"profil phone"*"QR resmi phone"*) ;; *) false ;; esac
-    run ! grep -qE 'AAAA|BBBB' <<<"$output"
-    # 3: the removal is mirrored, including a stale local profile.
-    printf 'stale\n' >"$repo/kurulum/wireguard/old.conf"
-    chmod 600 "$repo/kurulum/wireguard/old.conf"
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nE\n5\n\n')
-    [ "$status" -eq 0 ]
-    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
-    [ ! -e "$repo/kurulum/wireguard/phone.conf" ]
-    [ ! -e "$repo/kurulum/wireguard/phone.png" ]
-    [ ! -e "$repo/kurulum/wireguard/old.conf" ]
-    # 3 answered "h" changes nothing and takes no backup.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nh\n5\n\n')
-    [ "$(wc -l <"$TMP/backups")" -eq 2 ]
-    # With the backup failing, 3 still drops the local profile and QR picture and warns.
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '2\nphone\n\n\n\n5\n\n')
-    [ -f "$repo/kurulum/wireguard/phone.png" ]
-    touch "$TMP/backup-fails"
-    run env PATH="$TMP/bin:$PATH" /bin/bash "$repo/wireguard.command" < <(printf '3\nphone\nE\n5\n\n')
-    [ "$status" -eq 0 ]
-    case "$output" in *"UYARI: yedek eşitlenemedi"*) ;; *) false ;; esac
-    [ ! -e "$repo/kurulum/wireguard/phone.conf" ]
-    [ ! -e "$repo/kurulum/wireguard/phone.png" ]
+@test "wireguard.command talks to the server only: picks a network, no backup, no upload" {
+    local cmd="$V2_ROOT/../wireguard.command"
+    # DD-143: Mac'te yedek yok; menüde "Ağ seç" var, "Yedek al" yok.
+    run ! grep -qE 'backup_settings|auto_backup|Yedek al' "$cmd"
+    grep -q 'select_net()' "$cmd"
+    grep -q 'Ağ seç' "$cmd"
+    grep -q 'Ağı yeniden üret' "$cmd"
+    grep -q 'master-wg ile --if' <<<"$(grep -A2 'NET=""' "$cmd" | head -5)" || grep -q '"$MASTER_WG" --if "$NET"' "$cmd"
+    # Ağ yoksa kullanıcı Konsol'a yönlendirilir.
+    grep -q 'Konsol' "$cmd"
+    grep -q 'Yapılandır' "$cmd"
+    # Sunucuya hiçbir dosya gönderilmez.
+    run ! grep -qE '\bscp\b|tar -x|put \$' "$cmd"
+    bash -n "$cmd"
 }
 
 panel_start() {
-    # The DD-133 panel against a fake master-wg that logs every call.
+    # Konsol'un WireGuard arka ucu, her çağrıyı günlükleyen sahte master-wg ile (DD-133, DD-143).
     PANEL="$V2_ROOT/panel/master-wg-panel"
-    mkdir -p "$TMP/web" "$TMP/pbin" "$TMP/clients"
-    printf '<!doctype html><title>panel</title>\n' >"$TMP/web/index.html"
-    printf 'body{}\n' >"$TMP/web/panel.css"
-    printf '/* js */\n' >"$TMP/web/panel.js"
+    mkdir -p "$TMP/pbin" "$TMP/clients"
     printf '[Interface]\n' >"$TMP/wg0.conf"
     touch -t 202001010000 "$TMP/wg0.conf" "$TMP/clients"
     cat >"$TMP/state.env" <<EOF
 V2_VERSION=2026.08.06-v2-test
 LOCAL_DOMAIN=ayc
-WG_INTERFACE=wg0
 WG_ENDPOINT_HOST=203.0.113.7
 WG_PUBLIC_PORT=61001
 WG_SERVER_IPV4=10.8.0.1
@@ -2552,18 +2243,21 @@ WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 EOF
     cat >"$TMP/pbin/master-wg" <<EOF
 #!/bin/bash
-net=wg0
+net=""
 [ "\$1" != --if ] || { net="\$2"; shift 2; }
-(IFS='|'; printf '%s|%s\n' "\$net" "\$*") >>"$TMP/mwg-calls"
+(IFS='|'; printf '%s|%s\n' "\${net:-yok}" "\$*") >>"$TMP/mwg-calls"
 case "\$1" in
-    nets) printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t\t\t1\t1\n'
+    nets) [ -e "$TMP/no-wg" ] && exit 0
+        printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\t1\t1\n'
         [ ! -e "$TMP/has-wg1" ] || printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\t1\t0\n' ;;
-    info) [ "\$net" != wg0 ] || printf 'iphone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t1700000000\t2048\t1024\tvar\t1.1.1.1, 1.0.0.1\t21\t1420\n' ;;
+    info) [ "\$net" != wg0 ] || printf 'iphone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t1700000000\t2048\t1024\tvar\t1.1.1.1, 1.0.0.1\t21\t1420\t1\n' ;;
     net-add) [ "\$2" != 61001 ] || { echo "HATA: UDP 61001 kullanılıyor (wg0); başka bir port seçin" >&2; exit 1; }
         touch "$TMP/has-wg1"; printf 'wg1\t%s\n' "\$2" ;;
     net-remove) rm -f "$TMP/has-wg1"; printf '%s\t0\n' "\$2" ;;
     add) [ "\$2" != dup ] || { echo "HATA: 'dup' adında bir peer zaten var" >&2; exit 1; }; printf '%s\t10.8.0.3\n' "\$2" ;;
-    remove | dns) exit 0 ;;
+    remove | dns | keepalive) exit 0 ;;
+    peer) printf '%s\t%s\n' "\$2" "\$3" ;;
+    net) [ "\$2" != kapat ] || { printf '%s\t0\n' "\$net"; exit 0; }; printf '%s\t1\n' "\$net" ;;
     reset) printf '4\t4\n' ;;
     profile) printf '[Interface]\nPrivateKey = SECRETPRIV\nAddress = 10.8.0.2/32\n\n[Peer]\nPresharedKey = SECRETPSK\nEndpoint = 203.0.113.7:61001\n' ;;
     png) printf '\211PNG\r\n\032\nQRDATA' ;;
@@ -2574,10 +2268,10 @@ EOF
     printf '%s' 'panel pass 1234' | python3 "$PANEL" account --auth "$TMP/auth" --user admin >/dev/null
     PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" --auth "$TMP/auth" \
-        --web "$TMP/web" --master-wg "$TMP/pbin/master-wg" >"$TMP/panel.log" 2>&1 &
+        --master-wg "$TMP/pbin/master-wg" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
-        curl -s -o /dev/null "http://127.0.0.1:$PORT/" && return 0
+        curl -s -o /dev/null "http://127.0.0.1:$PORT/api/wg/state" && return 0
         sleep 0.1
     done
     cat "$TMP/panel.log"
@@ -2588,29 +2282,30 @@ EOF
 pc() {
     local path="$1"
     shift
-    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: wg.ayc" "$@" "http://127.0.0.1:$PORT$path"
+    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" "$@" "http://127.0.0.1:$PORT$path"
 }
 
 @test "wg panel needs the account, a known host and the panel header before it runs master-wg" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
     [ "$(pc /)" = 401 ]
-    grep -qi '^WWW-Authenticate: Basic realm="WireGuard paneli"' "$TMP/head"
+    grep -qi '^WWW-Authenticate: Basic realm="Konsol"' "$TMP/head"
     [ "$(pc / -u admin:wrong)" = 401 ]
-    [ "$(pc / -u 'admin:panel pass 1234')" = 200 ]
-    grep -q '<title>panel</title>' "$TMP/body"
-    grep -qi "^Content-Security-Policy: default-src 'none'; script-src 'self'" "$TMP/head"
+    # Konsol sayfasını dosya arka ucu verir; burada kök 404'tür.
+    [ "$(pc / -u 'admin:panel pass 1234')" = 404 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1')" = 200 ]
+    grep -qi "^Content-Security-Policy: default-src 'none'; base-uri 'none'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
     # DNS rebinding: another Host name is refused even with the password.
     [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' -u 'admin:panel pass 1234' "http://127.0.0.1:$PORT/")" = 403 ]
     # CSRF: the API needs the panel header and a same-origin fetch.
-    [ "$(pc /api/state -u 'admin:panel pass 1234')" = 403 ]
-    [ "$(pc /api/state -u 'admin:panel pass 1234' -H 'X-WG-Panel: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234')" = 403 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
     # Only the background sampler's read-only calls (DD-137) may have run.
     touch "$TMP/mwg-calls"
-    run ! grep -qvE '^wg[0-9]\|(nets|info)$' "$TMP/mwg-calls"
-    [ "$(pc /api/state -u 'admin:panel pass 1234' -H 'X-WG-Panel: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
+    run ! grep -qvE '^(wg[0-9]|yok)\|(nets|info)$' "$TMP/mwg-calls"
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
     python3 - "$TMP/body" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -2625,76 +2320,99 @@ assert d["defaults"]["dns"] and d["defaults"]["keepalive"] == 21
 assert "backup" not in d
 PY
     # check (stage 7) with the password on stdin.
-    run bash -c "printf '%s' 'panel pass 1234' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/state --host wg.ayc --user admin"
+    run bash -c "printf '%s' 'panel pass 1234' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
     [ "$status" -eq 0 ]
     [ "$output" = "1 ağ, 1 peer" ]
-    run bash -c "printf '%s' 'nope' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/state --host wg.ayc --user admin"
+    # DD-143: temiz kurulumda ağ yoktur; check yine geçer.
+    touch "$TMP/no-wg"
+    run bash -c "printf '%s' 'panel pass 1234' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0 ağ, 0 peer" ]
+    rm -f "$TMP/no-wg"
+    run bash -c "printf '%s' 'nope' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
     [ "$status" -ne 0 ]
     case "$output" in *"HTTP 401"*) ;; *) false ;; esac
     # A new account is read without a restart.
     printf '%s' 'second pass 5678' | python3 "$PANEL" account --auth "$TMP/auth" --user admin >/dev/null
-    [ "$(pc / -u 'admin:panel pass 1234')" = 401 ]
-    [ "$(pc / -u 'admin:second pass 5678')" = 200 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1')" = 401 ]
+    [ "$(pc /api/wg/state -u 'admin:second pass 5678' -H 'X-Konsol: 1')" = 200 ]
 }
 
 @test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
-    local auth=(-u 'admin:panel pass 1234' -H 'X-WG-Panel: 1') json=(-H 'Content-Type: application/json')
-    [ "$(pc /api/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"phone","dns":"1.1.1.1, 1.0.0.1","keepalive":"21","mtu":"1420"}')" = 201 ]
+    local auth=(-u 'admin:panel pass 1234' -H 'X-Konsol: 1') json=(-H 'Content-Type: application/json')
+    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"phone","dns":"1.1.1.1, 1.0.0.1","keepalive":"21","mtu":"1420"}')" = 201 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"name": "phone", "ipv4": "10.8.0.3"}' "$TMP/body"
     grep -qx 'wg0|add|phone|1.1.1.1, 1.0.0.1|21|1420' "$TMP/mwg-calls"
     # Bad names, interfaces, bodies and confirmations never reach master-wg; its refusals come back as messages.
     : >"$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"../x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
-    [ "$(pc /api/nets/eth0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
-    [ "$(pc /api/nets/wg0/peers "${auth[@]}" -d 'name=phone')" = 400 ]
-    [ "$(pc '/api/nets/wg0/peers/..%2Fx/remove' "${auth[@]}" "${json[@]}" -d '{}')" = 400 ]
-    [ "$(pc /api/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"evet"}')" = 400 ]
-    [ "$(pc /api/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"SIL"}')" = 400 ]
-    [ "$(pc /api/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"all","dns":"9.9.9.9","label":""}')" = 400 ]
-    [ "$(pc /api/nets "${auth[@]}" "${json[@]}" -d '{"port":"abc","scope":"inet","dns":"9.9.9.9","label":""}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"../x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/wg/nets/eth0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" -d 'name=phone')" = 400 ]
+    [ "$(pc '/api/wg/nets/wg0/peers/..%2Fx/remove' "${auth[@]}" "${json[@]}" -d '{}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"evet"}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"SIL"}')" = 400 ]
+    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"all","dns":"9.9.9.9","label":""}')" = 400 ]
+    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"abc","scope":"inet","dns":"9.9.9.9","label":""}')" = 400 ]
     [ ! -s "$TMP/mwg-calls" ]
-    [ "$(pc /api/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"dup","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"dup","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
     grep -q "zaten var" "$TMP/body"
-    [ "$(pc /api/nets "${auth[@]}" "${json[@]}" -d '{"port":"61001","scope":"inet","dns":"9.9.9.9","label":"x"}')" = 400 ]
+    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61001","scope":"inet","dns":"9.9.9.9","label":"x"}')" = 400 ]
     grep -q "UDP 61001 kullanılıyor (wg0)" "$TMP/body"
     # A new network: master-wg net-add, then it is listed with its label and takes its own peers.
-    [ "$(pc /api/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"inet","dns":"9.9.9.9","label":"Misafir"}')" = 201 ]
+    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"inet","dns":"9.9.9.9","label":"Misafir"}')" = 201 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg1", "port": 61011}' "$TMP/body"
-    grep -qx 'wg0|net-add|61011|inet|9.9.9.9|Misafir' "$TMP/mwg-calls"
-    pc /api/state "${auth[@]}" >/dev/null
+    grep -qx 'yok|net-add|61011|inet|9.9.9.9|Misafir' "$TMP/mwg-calls"
+    pc /api/wg/state "${auth[@]}" >/dev/null
     python3 -c 'import json, sys; n = json.load(open(sys.argv[1]))["networks"][1]; assert (n["iface"], n["label"], n["scope"], n["dns"], n["peers"]) == ("wg1", "Misafir", "inet", "9.9.9.9", []), n' "$TMP/body"
     grep -qx 'wg1|info' "$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg1/peers "${auth[@]}" "${json[@]}" -d '{"name":"guest","dns":"9.9.9.9","keepalive":"0","mtu":"1420"}')" = 201 ]
+    [ "$(pc /api/wg/nets/wg1/peers "${auth[@]}" "${json[@]}" -d '{"name":"guest","dns":"9.9.9.9","keepalive":"0","mtu":"1420"}')" = 201 ]
     grep -qx 'wg1|add|guest|9.9.9.9|0|1420' "$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg1/peers/guest/dns "${auth[@]}" "${json[@]}" -d '{"dns":"1.1.1.1"}')" = 200 ]
+    [ "$(pc /api/wg/nets/wg1/peers/guest/dns "${auth[@]}" "${json[@]}" -d '{"dns":"1.1.1.1"}')" = 200 ]
     grep -qx 'wg1|dns|guest|1.1.1.1' "$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg1/peers/guest/remove "${auth[@]}" "${json[@]}" -d '{}')" = 200 ]
+    [ "$(pc /api/wg/nets/wg1/peers/guest/remove "${auth[@]}" "${json[@]}" -d '{}')" = 200 ]
     grep -qx 'wg1|remove|guest' "$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg1/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"Onayla"}')" = 200 ]
+    [ "$(pc /api/wg/nets/wg1/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"Onayla"}')" = 200 ]
     grep -qx 'wg1|reset|--onay' "$TMP/mwg-calls"
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"peers": 4, "profiles": 4}' "$TMP/body"
-    [ "$(pc /api/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
-    grep -qx 'wg0|net-remove|wg1|--onay' "$TMP/mwg-calls"
+    [ "$(pc /api/wg/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
+    grep -qx 'yok|net-remove|wg1|--onay' "$TMP/mwg-calls"
     # The masked preview carries no secret; the download and the QR only when asked.
-    [ "$(pc '/api/nets/wg0/peers/iphone/profile?masked=1' "${auth[@]}")" = 200 ]
+    [ "$(pc '/api/wg/nets/wg0/peers/iphone/profile?masked=1' "${auth[@]}")" = 200 ]
     grep -q '^PrivateKey = •' "$TMP/body"
     grep -q '^Endpoint = 203.0.113.7:61001$' "$TMP/body"
     run ! grep -qE 'SECRETPRIV|SECRETPSK' "$TMP/body"
     grep -qx 'wg0|profile|iphone' "$TMP/mwg-calls"
-    [ "$(pc /api/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
     grep -q 'SECRETPRIV' "$TMP/body"
     grep -qi '^Content-Disposition: attachment; filename="iphone.conf"' "$TMP/head"
-    [ "$(pc /api/nets/wg0/peers/iphone/qr.png "${auth[@]}")" = 200 ]
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/qr.png "${auth[@]}")" = 200 ]
     grep -qi '^Content-Type: image/png' "$TMP/head"
     [ "$(head -c 4 "$TMP/body" | od -An -tx1 | tr -d ' \n')" = 89504e47 ]
-    # The old single-network routes are gone.
+    # The old routes are gone: every WireGuard call now lives under /api/wg.
     [ "$(pc /api/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 404 ]
+    [ "$(pc /api/state "${auth[@]}")" = 404 ]
+    [ "$(pc /api/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 404 ]
+    # DD-140: peer and network switches and keepalive go to master-wg.
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
+    grep -qx 'wg0|peer|iphone|kapat' "$TMP/mwg-calls"
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
+    grep -qx 'wg0|peer|iphone|ac' "$TMP/mwg-calls"
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"25"}')" = 200 ]
+    grep -qx 'wg0|keepalive|iphone|25' "$TMP/mwg-calls"
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"x"}')" = 400 ]
+    [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
+    grep -qx 'wg0|net|kapat' "$TMP/mwg-calls"
+    python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg0", "active": False}' "$TMP/body"
+    [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
+    grep -qx 'wg0|net|ac' "$TMP/mwg-calls"
     # The audit log names the action, network and peer, never a password or key.
     grep -q 'admin 127.0.0.1 ekle wg0/phone -> ok' "$TMP/panel.log"
     grep -q 'admin 127.0.0.1 ag-ekle wg1 -> ok' "$TMP/panel.log"
     grep -q 'admin 127.0.0.1 ag-kaldir wg1 -> ok' "$TMP/panel.log"
+    grep -q 'admin 127.0.0.1 peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
+    grep -q 'admin 127.0.0.1 ag-durum wg0 kapat -> ok' "$TMP/panel.log"
     run ! grep -qE 'panel pass|SECRETPRIV|SECRETPSK|QRDATA' "$TMP/panel.log"
 }
 
@@ -2711,14 +2429,14 @@ PY
 [ "\$1" != --if ] || shift 2
 case "\$1" in
     nets) printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t\t\t1\t1\n' ;;
-    info) printf 'phone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t%s\t%s\t500\tvar\t1.1.1.1\t21\t1420\n' "\$(( \$(date +%s) - \$(cat "$TMP/hs-age") ))" "\$(cat "$TMP/rx")" ;;
+    info) printf 'phone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t%s\t%s\t500\tvar\t1.1.1.1\t21\t1420\t1\n' "\$(( \$(date +%s) - \$(cat "$TMP/hs-age") ))" "\$(cat "$TMP/rx")" ;;
     *) exit 1 ;;
 esac
 EOF
     chmod +x "$TMP/pbin/master-wg.new"
     mv -f "$TMP/pbin/master-wg.new" "$TMP/pbin/master-wg"
     online() {
-        pc /api/state -u 'admin:panel pass 1234' -H 'X-WG-Panel: 1' >/dev/null
+        pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' >/dev/null
         python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); p = d["networks"][0]["peers"][0]; print(p["online"], p["active_at"] is not None, d["active_window"])' "$TMP/body"
     }
     # Just seen, fresh handshake: connected until it has been watched for a whole window.
@@ -2747,8 +2465,8 @@ EOF
     sleep 0.8
     [ "$(online)" = "True False 2" ]
     # The page shows the server's verdict; the handshake only separates idle from never seen.
-    grep -q 'if (p.online) return { cls: "ok", label: "Bağlı" };' "$V2_ROOT/panel/panel.js"
-    run ! grep -q 'a < 180' "$V2_ROOT/panel/panel.js"
+    grep -q 'if (p.online) return "ok";' "$V2_ROOT/console/konsol.js"
+    run ! grep -q 'a < 180' "$V2_ROOT/console/konsol.js"
 }
 
 @test "wg panel locks a client out after ten wrong passwords" {
@@ -2757,10 +2475,10 @@ EOF
     for _ in $(seq 1 10); do
         [ "$(pc / -u admin:wrong -H 'X-Forwarded-For: 198.51.100.9')" = 401 ]
     done
-    [ "$(pc / -u 'admin:panel pass 1234' -H 'X-Forwarded-For: 198.51.100.9')" = 429 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'X-Forwarded-For: 198.51.100.9')" = 429 ]
     grep -qi '^Retry-After: 900' "$TMP/head"
     # Another client is not affected.
-    [ "$(pc / -u 'admin:panel pass 1234' -H 'X-Forwarded-For: 198.51.100.10')" = 200 ]
+    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'X-Forwarded-For: 198.51.100.10')" = 200 ]
 }
 
 @test "wg panel account keeps a matching hash, rewrites a changed one and stores no password" {
@@ -2802,50 +2520,58 @@ EOF
     grep -qx 'WG_PANEL_PASS=' "$V2_ROOT/config/kurulum.env.example"
     grep -q 'validate_account "WireGuard paneli" "\$WG_PANEL_NEW_USER" "\$WG_PANEL_NEW_PASS"' "$V2_ROOT/install.sh"
     # The panel port collides with nothing the stage 0 port checks know.
-    [ "$(grep -c '"\$WG_PANEL_PORT" |' "$V2_ROOT/install.sh")" -eq 2 ]
+    grep -q '"panel:\${WG_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
     body="$(awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -q 'printf .%s. "\$WG_PANEL_NEW_PASS" |' <<<"$body"
     grep -q 'account --auth "\$WG_PANEL_AUTH_FILE" --user "\$WG_PANEL_NEW_USER"' <<<"$body"
     grep -q 'chmod 0600 "\$WG_PANEL_AUTH_FILE"' <<<"$body"
-    for f in index.html panel.css panel.js; do grep -q "$f" <<<"$body"; [ -f "$V2_ROOT/panel/$f" ]; done
+    # DD-140: this backend serves no page files any more; the console pages come from the file backend.
+    run ! grep -q -- '--web' "$V2_ROOT/systemd/master-wg-panel.service"
+    run ! grep -qE 'index\.html|panel\.css|panel\.js' <<<"$body"
     s6="$(awk '/^stage_6\(\)/,/^ensure_caddy_wg\(\)/' "$V2_ROOT/install.sh")"
     grep -q '^    ensure_wg_panel "\$OS_CHANGED"$' <<<"$s6"
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'WireGuard paneli girişsiz yanıt' <<<"$s7"
+    grep -q 'Konsol girişsiz yanıt' <<<"$s7"
     grep -q 'master-wg-panel" check' <<<"$s7"
-    grep -q 'http://${WG_SERVER_IPV4}:${WG_PANEL_PORT}/' <<<"$s7"
+    grep -q 'http://${wg_first_addr}:${WG_PANEL_PORT}/' <<<"$s7"
     grep -q 'unset WG_PANEL_NEW_PASS' <<<"$s7"
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
     grep -q '"\$REPO_ROOT/panel"' "$V2_ROOT/dev/export-installer.sh"
     run ! grep -q 'WG_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
-    # The page loads nothing from elsewhere and runs no inline code.
-    run ! grep -qiE '<script>|<style|style=|onclick=|https?://' "$V2_ROOT/panel/index.html"
-    run ! grep -qE 'https?://' "$V2_ROOT/panel/panel.js" "$V2_ROOT/panel/panel.css"
-    grep -q "'X-WG-Panel': \"1\"\|\"X-WG-Panel\": \"1\"" "$V2_ROOT/panel/panel.js"
-    # DD-136: tabs and "Arayüz ekle" on the page; nothing points to the Mac backup any more.
-    grep -q 'id="menu-net"' "$V2_ROOT/panel/index.html"
-    grep -q 'id="net-dialog"' "$V2_ROOT/panel/index.html"
-    run ! grep -qiE 'yedek|backup' "$V2_ROOT/panel/index.html" "$V2_ROOT/panel/panel.js" "$V2_ROOT/panel/master-wg-panel" "$unit"
+    # The console page loads nothing from elsewhere and runs no inline code.
+    run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/index.html"
+    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css"
+    grep -q '"X-Konsol": "1"' "$V2_ROOT/console/konsol.js"
+    # DD-136/DD-140: network cards and "Arayüz ekle" as its own page.
+    grep -q 'id="wg-tabs"' "$V2_ROOT/console/index.html"
+    grep -q 'data-view="wgadd"' "$V2_ROOT/console/index.html"
+    grep -q 'id="na-create"' "$V2_ROOT/console/index.html"
+    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$V2_ROOT/panel/master-wg-panel" "$unit"
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
-    grep -q 'panelde eklenen WireGuard ağında ($net_iface) kullanılıyor' <<<"$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    # A periodic refresh with the same peers updates cells in place, so a click is never lost to a re-render.
-    grep -q 'if (next === shape && \$("sum-on")) { updateLive(); return; }' "$V2_ROOT/panel/panel.js"
+    # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
+    grep -q 'UDP $port kullanılıyor' "$V2_ROOT/scripts/master-wg"
+    # The console polls every ten seconds and skips the work while the tab is hidden.
+    grep -q 'if (document.hidden) return;' "$V2_ROOT/console/konsol.js"
 }
 
 files_panel_start() {
     # DD-139: the file panel on a scratch root, with an account written by the WireGuard panel.
     FPANEL="$V2_ROOT/files-panel/master-files-panel"
     mkdir -p "$TMP/fweb" "$TMP/root/Filmler/Kuzey" "$TMP/root/incomplete" "$TMP/outside"
-    printf '<!doctype html><title>dosya</title>\n' >"$TMP/fweb/index.html"
-    printf 'body{}\n' >"$TMP/fweb/panel.css"
-    printf '/* js */\n' >"$TMP/fweb/panel.js"
+    printf '<!doctype html><title>konsol</title>\n' >"$TMP/fweb/index.html"
+    printf 'body{}\n' >"$TMP/fweb/konsol.css"
+    printf '/* js */\n' >"$TMP/fweb/konsol.js"
     printf 'gizli\n' >"$TMP/outside/secret.txt"
     ln -s "$TMP/outside" "$TMP/root/kacis"
     printf 'merhaba dünya\n' >"$TMP/root/notlar.txt"
     printf '%s' 'panel pass 1234' | python3 "$V2_ROOT/panel/master-wg-panel" account --auth "$TMP/fauth" --user admin >/dev/null
+    # DD-141: paylaşım hesabı systemd kimlik bilgisi gibi verilir.
+    mkdir -p "$TMP/creds"
+    printf 'paylasim:paylas pass\n' >"$TMP/creds/paylasim-auth"
     FPORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" --web "$TMP/fweb" --auth "$TMP/fauth" \
+    CREDENTIALS_DIRECTORY="$TMP/creds" python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" --web "$TMP/fweb" --auth "$TMP/fauth" \
+        --share .pay --share-credential paylasim-auth \
         --domain ayc --version 2026.08.06-v2-test --temp-dir incomplete >"$TMP/fpanel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
@@ -2860,8 +2586,8 @@ files_panel_start() {
 fp() {
     local path="$1"
     shift
-    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: dosya.ayc" -u 'admin:panel pass 1234' \
-        -H 'X-Files-Panel: 1' "$@" "http://127.0.0.1:$FPORT$path"
+    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" -u 'admin:panel pass 1234' \
+        -H 'X-Konsol: 1' "$@" "http://127.0.0.1:$FPORT$path"
 }
 fpost() {
     fp "$1" -H 'Content-Type: application/json' --data "$2"
@@ -2871,11 +2597,11 @@ fpost() {
     command -v python3 >/dev/null || skip "python3 yok"
     files_panel_start
     local bare=(-s -o /dev/null -w '%{http_code}')
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' "http://127.0.0.1:$FPORT/")" = 401 ]
-    curl -s -D - -o /dev/null -H 'Host: dosya.ayc' "http://127.0.0.1:$FPORT/" | grep -qi '^WWW-Authenticate: Basic realm="Dosya paneli"'
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' -u admin:wrong "http://127.0.0.1:$FPORT/")" = 401 ]
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")" = 401 ]
+    curl -s -D - -o /dev/null -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/" | grep -qi '^WWW-Authenticate: Basic realm="Konsol"'
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u admin:wrong "http://127.0.0.1:$FPORT/")" = 401 ]
     [ "$(fp /)" = 200 ]
-    grep -q '<title>dosya</title>' "$TMP/body"
+    grep -q '<title>konsol</title>' "$TMP/body"
     grep -qi "^Content-Security-Policy: default-src 'none'; script-src 'self'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
@@ -2883,9 +2609,9 @@ fpost() {
     [ "$(curl "${bare[@]}" -H 'Host: evil.example' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/")" = 403 ]
     [ "$(curl "${bare[@]}" -H 'Host: wg.ayc' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/")" = 403 ]
     # CSRF: the API needs the panel header and a same-origin fetch; nothing changes without them.
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
     [ "$(fp /api/state -H 'Sec-Fetch-Site: cross-site')" = 403 ]
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' -u 'admin:panel pass 1234' -H 'Content-Type: application/json' \
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u 'admin:panel pass 1234' -H 'Content-Type: application/json' \
         --data '{"path":"","name":"x"}' "http://127.0.0.1:$FPORT/api/mkdir")" = 403 ]
     [ ! -e "$TMP/root/x" ]
     [ "$(fp /api/state -H 'Sec-Fetch-Site: same-origin')" = 200 ]
@@ -2896,10 +2622,10 @@ assert d["root"] == sys.argv[2] and d["writable"] and d["temp"] == "incomplete",
 assert d["trash"] == {"count": 0, "size": 0} and d["disk"]["total"] >= d["disk"]["free"] > 0, d
 PY
     # The stage 7 check with the password on stdin.
-    run bash -c "printf '%s' 'panel pass 1234' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host dosya.ayc --user admin"
+    run bash -c "printf '%s' 'panel pass 1234' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host panel.ayc --user admin"
     [ "$status" -eq 0 ]
     [ "$output" = "kök $TMP/root, çöpte 0 öge" ]
-    run bash -c "printf '%s' 'nope' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host dosya.ayc --user admin"
+    run bash -c "printf '%s' 'nope' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host panel.ayc --user admin"
     [ "$status" -ne 0 ]
     case "$output" in *"HTTP 401"*) ;; *) false ;; esac
     # A changed wg panel account is read without a restart, and ten wrong passwords lock a client out.
@@ -2907,12 +2633,12 @@ PY
     [ "$(fp /)" = 401 ]
     local i
     for i in 1 2 3 4 5 6 7 8 9 10; do
-        curl -s -o /dev/null -H 'Host: dosya.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u admin:wrong "http://127.0.0.1:$FPORT/" &
+        curl -s -o /dev/null -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u admin:wrong "http://127.0.0.1:$FPORT/" &
     done
     wait "${!}"
     sleep 1.2
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 429 ]
-    [ "$(curl "${bare[@]}" -H 'Host: dosya.ayc' -H 'X-Forwarded-For: 198.51.100.10' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 200 ]
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 429 ]
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.10' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 200 ]
     run ! grep -qE 'panel pass|second pass' "$TMP/fpanel.log"
 }
 
@@ -3042,14 +2768,129 @@ PY
     [ "$(fp '/api/text?path=Filmler')" = 400 ]
     [ "$(fp '/api/text?path=notlar.txt&enc=latin9')" = 400 ]
     # A download is an attachment, needs no panel header, and a cross-site request is refused.
-    [ "$(curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H 'Host: dosya.ayc' -u 'admin:panel pass 1234' \
+    [ "$(curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H 'Host: panel.ayc' -u 'admin:panel pass 1234' \
         "http://127.0.0.1:$FPORT/api/download?path=notlar.txt")" = 200 ]
     grep -qx 'merhaba dünya' "$TMP/body"
     grep -qi "^Content-Disposition: attachment; filename=\"notlar.txt\"; filename\*=UTF-8''notlar.txt" "$TMP/head"
     grep -qi '^Content-Type: application/octet-stream' "$TMP/head"
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: dosya.ayc' -u 'admin:panel pass 1234' -H 'Sec-Fetch-Site: cross-site' \
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' -u 'admin:panel pass 1234' -H 'Sec-Fetch-Site: cross-site' \
         "http://127.0.0.1:$FPORT/api/download?path=notlar.txt")" = 403 ]
     grep -q 'dosya: admin 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
+}
+
+@test "files panel shares a folder as a link in the share root, sweeps expired ones and keeps the rest of the root out" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    files_panel_start
+    # Paylaşımlar kendi köküne göreli bir bağlantı olarak girer; dosya kopyalanmaz.
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 201 ]
+    run python3 -c 'import json, sys
+item = json.load(open(sys.argv[1]))["item"]
+assert item["name"] == "Kuzey" and item["path"] == "Filmler/Kuzey" and item["type"] == "dir", item
+assert item["expires"] - item["created"] == 7 * 86400, item' "$TMP/body"
+    [ "$status" -eq 0 ]
+    [ "$(readlink "$TMP/root/.pay/w/Kuzey")" = "../../Filmler/Kuzey" ]
+    [ -d "$TMP/root/.pay/w/Kuzey" ]
+    [ "$(fp /api/paylas)" = 200 ]
+    run python3 -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["host"] == "http://paylas.ayc" and d["user"] == "paylasim" and d["pass"] == "paylas pass", d
+assert [i["name"] for i in d["items"]] == ["Kuzey"], d' "$TMP/body"
+    [ "$status" -eq 0 ]
+    # Aynı öge iki kez paylaşılmaz; ad çakışması numaralanır.
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":0}')" = 409 ]
+    mkdir -p "$TMP/root/Diziler/Kuzey"
+    [ "$(fpost /api/paylas '{"path":"Diziler/Kuzey","days":0}')" = 201 ]
+    python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["item"]["name"] == "Kuzey-2"' "$TMP/body"
+    # Kök, çöp ve paylaşım klasörünün kendisi paylaşılamaz; kökten çıkılamaz.
+    [ "$(fpost /api/paylas '{"path":"","days":0}')" = 400 ]
+    [ "$(fpost /api/paylas '{"path":".cop","days":0}')" = 403 ]
+    [ "$(fpost /api/paylas '{"path":".pay","days":0}')" = 403 ]
+    [ "$(fpost /api/paylas '{"path":"../etc","days":0}')" = 400 ]
+    [ "$(fpost /api/paylas '{"path":"yok-boyle","days":0}')" = 404 ]
+    [ "$(fpost /api/paylas '{"path":"Filmler","days":-3}')" = 400 ]
+    # Paylaşım klasörü dosya listesinde ve gezinmede görünmez.
+    [ "$(fp '/api/list?path=')" = 200 ]
+    run ! grep -q '"\.pay"' "$TMP/body"
+    [ "$(fp '/api/list?path=.pay')" = 403 ]
+    # Süresi dolan paylaşım listelemede düşer ve bağlantısı silinir.
+    python3 -c 'import json, sys, time
+path = sys.argv[1]
+data = json.load(open(path))
+data["items"][0]["expires"] = int(time.time()) - 10
+json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json"
+    [ "$(fp /api/paylas)" = 200 ]
+    python3 -c 'import json, sys; assert [i["name"] for i in json.load(open(sys.argv[1]))["items"]] == ["Kuzey-2"]' "$TMP/body"
+    [ ! -e "$TMP/root/.pay/w/Kuzey" ]
+    [ -d "$TMP/root/Filmler/Kuzey" ]
+    # Çıkarmak yalnız bağlantıyı siler.
+    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey-2"}')" = 200 ]
+    [ ! -e "$TMP/root/.pay/w/Kuzey-2" ]
+    [ -d "$TMP/root/Diziler/Kuzey" ]
+    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey-2"}')" = 404 ]
+    [ "$(fpost /api/paylas/kaldir '{"name":"../x"}')" = 400 ]
+    # Kayıtta olmayan bir bağlantı elle konsa da temizlenir.
+    ln -s ../../Filmler "$TMP/root/.pay/w/elle"
+    [ "$(fp /api/paylas)" = 200 ]
+    [ ! -e "$TMP/root/.pay/w/elle" ]
+    grep -q 'admin 127.0.0.1 paylas "Filmler/Kuzey -> Kuzey (7 gün)" -> ok' "$TMP/fpanel.log"
+    grep -q 'admin 127.0.0.1 paylas-kaldir "Kuzey-2" -> ok' "$TMP/fpanel.log"
+    run ! grep -q 'paylas pass' "$TMP/fpanel.log"
+}
+
+@test "installer wires the share WebDAV: read-only rclone on the share root, one account, tailnet name, hidden from Infuse" {
+    local compose="$V2_ROOT/templates/compose.yaml" unit="$V2_ROOT/systemd/master-files-panel.service" body s7 line
+    awk '/^  paylasim:$/,/^networks:$/' "$compose" >"$TMP/svc"
+    for line in '      - /downloads/__SHARE_DIR__/w' '      - --htpasswd=/run/secrets/paylasim_htpasswd' \
+        '      - --copy-links' '      - --read-only' '    read_only: true' \
+        '      - "127.0.0.1:__SHARE_PORT__:8080"' '      - __DOWNLOADS_PATH__:/downloads:ro'; do
+        grep -qx "$line" "$TMP/svc"
+    done
+    grep -q 'image: __RCLONE_IMAGE__' "$TMP/svc"
+    run ! grep -q 'cap_add' "$TMP/svc"
+    # Paylaşım klasörü Infuse'ta ve unpackerr'da boş görünür (aynı yöntem, çöp gibi).
+    # DD-142: yalnız unpackerr; indirme klasörünü yayımlayan WebDAV artık yok.
+    [ "$(grep -c '      - /downloads/__SHARE_DIR__:ro,size=16k,mode=0555$' "$compose")" -eq 1 ]
+    awk '/^  unpackerr:$/,/^  paylasim:$/' "$compose" | grep -q '/downloads/__SHARE_DIR__:ro'
+
+    # Paylaşım konteyneri çöpü ve paylaşım klasörünü tmpfs ile gizlemez: kökü zaten .pay/w.
+    [ "$(awk '/^  paylasim:$/,/^networks:$/' "$compose" | grep -c 'size=16k')" -eq 0 ]
+    # Tek hesap: htpasswd rclone için, düz kopya yalnız Konsol'un göstermesi için.
+    grep -qx 'SHARE_PORT="61010"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'SHARE_DIR=".pay"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'SHARE_USER=' "$V2_ROOT/config/kurulum.env.example"
+    grep -qx 'SHARE_PASS=' "$V2_ROOT/config/kurulum.env.example"
+    grep -q 'SHARE_USER SHARE_PASS' "$V2_ROOT/install.sh"
+    grep -q 'validate_account "Paylaşım"' "$V2_ROOT/install.sh"
+    body="$(awk '/^ensure_share_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -q 'htpasswd -i -B "\$tmp" "\$SHARE_NEW_USER"' <<<"$body"
+    grep -q 'unset SHARE_NEW_PASS' <<<"$body"
+    grep -q 'docker restart paylasim' <<<"$body"
+    # Dosya arka ucu paylaşımı yönetir ve hesabı yalnız kimlik bilgisi olarak görür.
+    grep -q -- '--share __SHARE_DIR__ --share-credential paylasim-auth' "$unit"
+    grep -qx 'LoadCredential=paylasim-auth:__SHARE_CRED_FILE__' "$unit"
+    # Tailnet adı ve portu; WireGuard kenarında yok.
+    # DD-141: ada ek olarak IP:port adresi (Infuse adı çözemez; DD-98'deki WebDAV ile aynı neden).
+    grep -q '^http://paylas.__LOCAL_DOMAIN__, http://{\$TAILSCALE_IPV4}:{\$SHARE_PORT} {$' "$V2_ROOT/templates/Caddyfile"
+    grep -A1 '^http://paylas.__LOCAL_DOMAIN__, http://{\$TAILSCALE_IPV4}:{\$SHARE_PORT} {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'reverse_proxy 127.0.0.1:__SHARE_PORT__$'
+    grep -q 'TAILSCALE_IPV4="\$TAILSCALE_IPV4" SHARE_PORT="\$SHARE_PORT"' "$V2_ROOT/install.sh"
+    grep -q '"share": {"port": num_or(env.get("SHARE_PORT"), 0)}' "$V2_ROOT/panel/master-wg-panel"
+    grep -q 'function shareIpUrl' "$V2_ROOT/console/konsol.js"
+    grep -q 'Paylaşım ${TAILSCALE_IPV4}:${SHARE_PORT} adresinde yanıt' "$V2_ROOT/install.sh"
+    grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
+    run ! grep -q 'SHARE_' "$V2_ROOT/templates/Caddyfile.wg"
+    grep -q '"paylasim:${SHARE_PORT:-}"' "$V2_ROOT/scripts/master-wg"
+    grep -q '"SHARE_PORT")}' "$V2_ROOT/panel/master-wg-panel"
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'SHARE_PORT=\$SHARE_PORT'
+    # Aşama 7: girişsiz 401, kök sahibi, salt okunurluk ve gizli klasör.
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -q "Paylaşım WebDAV'ı girişsiz yanıt" <<<"$s7"
+    grep -q 'Paylaşım kökü' <<<"$s7"
+    grep -q "/downloads/\${SHARE_DIR} tmpfs" <<<"$s7"
+    awk '/^assert_share_readonly_runtime\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker inspect paylasim'
+    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$DOWNLOADS_PATH/\$SHARE_DIR/w"'
+    # Konsol sayfası paylaşımı tek hesapla anlatır ve parolayı yalnız istenince gösterir.
+    grep -q '/api/paylas' "$V2_ROOT/console/konsol.js"
+    grep -q 'showPass' "$V2_ROOT/console/konsol.js"
 }
 
 @test "installer wires the files panel: downloads uid, sandbox, shared account, tailnet name, hidden trash, stage 7 proof" {
@@ -3078,43 +2919,50 @@ PY
     grep -q -- '--shell /usr/sbin/nologin "\$DOWNLOADS_ACCOUNT"' <<<"$body"
     grep -qx 'DOWNLOADS_ACCOUNT="master-downloads"' "$V2_ROOT/config/defaults.env"
     grep -q 'Session\\\\TempPath' <<<"$body"
-    for f in index.html panel.css panel.js; do grep -q "$f" <<<"$body"; [ -f "$V2_ROOT/files-panel/$f" ]; done
+    # DD-140: this backend serves the console pages.
+    for f in index.html konsol.css konsol.js; do grep -q "$f" <<<"$body"; [ -f "$V2_ROOT/console/$f" ]; done
+    grep -q 'CONSOLE_WEB_DIR="\$CONSOLE_WEB_DIR"' <<<"$body"
+    grep -qx 'CONSOLE_WEB_DIR="/usr/local/share/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
+    grep -q '"\$REPO_ROOT/console"' "$V2_ROOT/dev/export-installer.sh"
     awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'WG_PANEL_ACCOUNT_CHANGED=1'
     s6="$(awk '/^stage_6\(\)/,/^ensure_caddy_wg\(\)/' "$V2_ROOT/install.sh")"
     grep -q '^    ensure_files_panel "\$OS_CHANGED"$' <<<"$s6"
     # The port collides with nothing: stage 0, master-wg net-add and the wg panel know it.
-    [ "$(grep -c '"\$FILES_PANEL_PORT" | "\$TAILSCALE_UDP_PORT")' "$V2_ROOT/install.sh")" -eq 2 ]
+    grep -q '"dosya-paneli:\${FILES_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
     grep -q '"dosya-paneli:${FILES_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
-    grep -q '"FILES_PANEL_PORT")}' "$V2_ROOT/panel/master-wg-panel"
+    grep -q '"FILES_PANEL_PORT", "SHARE_PORT")}' "$V2_ROOT/panel/master-wg-panel"
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'FILES_PANEL_PORT=\$FILES_PANEL_PORT'
     # Tailnet only through Caddy; nothing on the WireGuard edge.
-    grep -A1 '^http://dosya.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$'
-    grep -qx 'interface-name=dosya.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
+    # DD-140: one address; /api/wg/* to the WireGuard backend, the rest (pages included) here.
+    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
+    grep -q 'handle /api/wg/\* {' "$TMP/site"
+    grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$' "$TMP/site"
+    grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
+    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    grep -q 'redir http://panel.__LOCAL_DOMAIN__{uri} 302' "$V2_ROOT/templates/Caddyfile"
+    grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
     run ! grep -q 'FILES_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
     # unpackerr and WebDAV see the trash as an empty read-only tmpfs; the folder exists before compose up.
-    [ "$(grep -c '      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555$' "$V2_ROOT/templates/compose.yaml")" -eq 2 ]
-    awk '/^  unpackerr:$/,/^  webdav:$/' "$V2_ROOT/templates/compose.yaml" | grep -q '/downloads/__FILES_PANEL_TRASH__:ro'
-    awk '/^  webdav:$/,/^networks:$/' "$V2_ROOT/templates/compose.yaml" | grep -q '/downloads/__FILES_PANEL_TRASH__:ro'
-    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$DOWNLOADS_PATH/\$FILES_PANEL_TRASH"; do'
+    # DD-142: çöpü gizlemesi gereken tek konteyner unpackerr kaldı.
+    [ "$(grep -c '      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555$' "$V2_ROOT/templates/compose.yaml")" -eq 1 ]
+    awk '/^  unpackerr:$/,/^  paylasim:$/' "$V2_ROOT/templates/compose.yaml" | grep -q '/downloads/__FILES_PANEL_TRASH__:ro'
+    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$DOWNLOADS_PATH/\$FILES_PANEL_TRASH" \\'
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'Dosya paneli girişsiz yanıt' <<<"$s7"
+    grep -q 'panele yönlenmedi' <<<"$s7"
     grep -q 'master-files-panel" check' <<<"$s7"
     grep -q 'ps -o uid= -p' <<<"$s7"
-    grep -q 'http://${WG_SERVER_IPV4}:${FILES_PANEL_PORT}/' <<<"$s7"
+    grep -q 'http://${wg_first_addr}:${FILES_PANEL_PORT}/' <<<"$s7"
     grep -q "/downloads/\${FILES_PANEL_TRASH} tmpfs" <<<"$s7"
     # The password is still in memory for the files check and gone right after it.
     [ "$(grep -n 'master-files-panel" check' <<<"$s7" | cut -d: -f1)" -lt "$(grep -n 'unset WG_PANEL_NEW_PASS' <<<"$s7" | cut -d: -f1)" ]
     grep -q '"\$REPO_ROOT/files-panel"' "$V2_ROOT/dev/export-installer.sh"
-    # The page loads nothing from elsewhere, runs no inline code and inserts names only as text.
-    run ! grep -qiE '<script>|<style|style=|onclick=|https?://' "$V2_ROOT/files-panel/index.html"
-    run ! grep -qE 'https?://' "$V2_ROOT/files-panel/panel.js" "$V2_ROOT/files-panel/panel.css"
-    grep -q '"X-Files-Panel": "1"' "$V2_ROOT/files-panel/panel.js"
-    [ "$(grep -c 'innerHTML' "$V2_ROOT/files-panel/panel.js")" -eq 1 ]
-    grep -q 't.innerHTML = .<svg' "$V2_ROOT/files-panel/panel.js"
-    # The two panels link to each other.
-    grep -q 'id="app-files"' "$V2_ROOT/panel/index.html"
-    grep -q '"//dosya."' "$V2_ROOT/panel/panel.js"
-    grep -q '//wg.' "$V2_ROOT/files-panel/panel.js"
+    # The console page inserts names only as text; the one innerHTML builds icons from a fixed table.
+    [ "$(grep -c 'innerHTML' "$V2_ROOT/console/konsol.js")" -eq 1 ]
+    grep -q 't.innerHTML = .<svg' "$V2_ROOT/console/konsol.js"
+    # One page, one login: both backends answer on panel.<domain> with the same realm.
+    grep -q 'REALM = "Konsol"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
+    grep -q 'API_HEADER = "X-Konsol"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
+    grep -q 'hosts.add("panel.%s"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
 }
 
 wg_mock_bin() {
@@ -3149,11 +2997,11 @@ EOF
     export MOCK_LOG="$TMP/calls" MOCK_DIR="$TMP"
 }
 
+# DD-143: ağlar kayıtta yaşar; fikstür wg0'ı kayda yazar (kurulum değil, master-wg kurar).
 wg_state_fixture() {
-    mkdir -p "$TMP/etc/wireguard/clients" "$TMP/run"
+    mkdir -p "$TMP/etc/wireguard/clients-wg0" "$TMP/run"
     cat >"$TMP/state.env" <<EOF
 V2_VERSION=2026.08.06-v2-test
-WG_INTERFACE=wg0
 WG_CONF_FILE=$TMP/etc/wireguard/wg0.conf
 WG_CLIENTS_DIR=$TMP/etc/wireguard/clients
 WG_SERVER_IPV4=10.8.0.1
@@ -3170,12 +3018,14 @@ WG_NETWORKS_MAX=9
 WG_PANEL_PORT=61008
 SSH_PUBLIC_PORT=22
 TORRENT_PUBLIC_PORT=61005
-WEBDAV_PORT=61003
+SHARE_PORT=61010
 DOZZLE_UI_PORT=61002
 TORRENT_UI_PORT=61006
 FILEBROWSER_UI_PORT=61007
 TAILSCALE_UDP_PORT=41641
 EOF
+    printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' \
+        >"$TMP/etc/wireguard/networks"
     export WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf"
     printf '# header\n[Interface]\nAddress = 10.8.0.1/24, fdcc:ad94:bacf:61a4::1/112\nListenPort = 61001\nMTU = 1420\nPrivateKey = SRVKEY%s=\n' \
         "$(printf 's%.0s' {1..37})" >"$WG_CONF_FILE"
@@ -3191,7 +3041,7 @@ master_wg() {
     run master_wg add iphone "9.9.9.9 , 149.112.112.112" 21 1380
     [ "$status" -eq 0 ]
     [ "$output" = $'iphone\t10.8.0.2' ]
-    profile="$TMP/etc/wireguard/clients/iphone.conf"
+    profile="$TMP/etc/wireguard/clients-wg0/iphone.conf"
     mode="$(stat -c %a "$profile" 2>/dev/null || stat -f %Lp "$profile")"
     [ "$mode" = 600 ]
     grep -qx 'PrivateKey = PRIV01kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk=' "$profile"
@@ -3245,7 +3095,7 @@ master_wg() {
         case "$output" in *"${args#*|}"*) ;; *) printf 'expected %s: %s\n' "${args#*|}" "$output"; false ;; esac
     done
     [ "$(cat "$WG_CONF_FILE")" = "$before" ]
-    [ "$(ls "$TMP/etc/wireguard/clients")" = iphone.conf ]
+    [ "$(ls "$TMP/etc/wireguard/clients-wg0")" = iphone.conf ]
     run master_wg remove nosuch
     [ "$status" -ne 0 ]
     run master_wg profile nosuch
@@ -3267,7 +3117,7 @@ EOF
     master_wg png iphone >"$TMP/out.png"
     grep -qx 'qrencode -t PNG -s 8 -o -' "$TMP/calls"
     [ "$(head -c 8 "$TMP/out.png" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]
-    tail -c +9 "$TMP/out.png" | cmp - "$TMP/etc/wireguard/clients/iphone.conf"
+    tail -c +9 "$TMP/out.png" | cmp - "$TMP/etc/wireguard/clients-wg0/iphone.conf"
     # Nothing is applied or changed.
     run ! grep -qE '^(wg|systemctl) ' "$TMP/calls"
     run master_wg png ghost
@@ -3288,18 +3138,18 @@ EOF
     master_wg add iphone "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001" 21 1420 >/dev/null
     master_wg add laptop 9.9.9.9 0 1380 >/dev/null
     master_wg add tablet 8.8.8.8 25 1400 >/dev/null
-    rm -f "$TMP/etc/wireguard/clients/tablet.conf"
+    rm -f "$TMP/etc/wireguard/clients-wg0/tablet.conf"
     # A profile without a keepalive line (hand-made or older) reads as 0.
-    grep -v '^PersistentKeepalive' "$TMP/etc/wireguard/clients/laptop.conf" >"$TMP/laptop.conf"
-    cat "$TMP/laptop.conf" >"$TMP/etc/wireguard/clients/laptop.conf"
+    grep -v '^PersistentKeepalive' "$TMP/etc/wireguard/clients-wg0/laptop.conf" >"$TMP/laptop.conf"
+    cat "$TMP/laptop.conf" >"$TMP/etc/wireguard/clients-wg0/laptop.conf"
     pub="$(awk -F' = ' '/^# peer: iphone$/ {f = 1} f && $1 == "PublicKey" {print $2; exit}' "$WG_CONF_FILE")"
     printf 'SERVERPRIV\tSERVERPUB\t61001\toff\n%s\t(none)\t198.51.100.4:5555\t10.8.0.2/32\t1700000000\t2048\t1024\t21\n' "$pub" >"$TMP/dump"
     run master_wg info
     [ "$status" -eq 0 ]
-    [ "$(sed -n 1p <<<"$output")" = $'iphone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t1700000000\t2048\t1024\tvar\t1.1.1.1, 1.0.0.1, 2606:4700:4700::1001\t21\t1420' ]
-    [ "$(sed -n 2p <<<"$output")" = $'laptop\t10.8.0.3\tfdcc:ad94:bacf:61a4::3\t0\t0\t0\tvar\t9.9.9.9\t0\t1380' ]
-    # A peer without a stored profile keeps ten fields with the profile ones empty.
-    [ "$(sed -n 3p <<<"$output")" = $'tablet\t10.8.0.4\tfdcc:ad94:bacf:61a4::4\t0\t0\t0\tyok\t\t\t' ]
+    [ "$(sed -n 1p <<<"$output")" = $'iphone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t1700000000\t2048\t1024\tvar\t1.1.1.1, 1.0.0.1, 2606:4700:4700::1001\t21\t1420\t1' ]
+    [ "$(sed -n 2p <<<"$output")" = $'laptop\t10.8.0.3\tfdcc:ad94:bacf:61a4::3\t0\t0\t0\tvar\t9.9.9.9\t0\t1380\t1' ]
+    # A peer without a stored profile keeps eleven fields with the profile ones empty.
+    [ "$(sed -n 3p <<<"$output")" = $'tablet\t10.8.0.4\tfdcc:ad94:bacf:61a4::4\t0\t0\t0\tyok\t\t\t\t1' ]
     run ! grep -qE 'PRIV|PSK|PUB' <<<"$output"
     # list keeps its six fields for wireguard.command.
     run master_wg list
@@ -3320,7 +3170,7 @@ EOF
     grep -q '^PrivateKey = PRIV' "$wgd/wg1.conf"
     [ "$(stat -f %Lp "$wgd/wg1.conf" 2>/dev/null || stat -c %a "$wgd/wg1.conf")" = 600 ]
     [ -d "$wgd/clients-wg1" ]
-    [ "$(cat "$wgd/networks")" = $'wg1\t61011\tui\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t1.1.1.1, 1.0.0.1\tİş ağı' ]
+    [ "$(sed -n 2p "$wgd/networks")" = $'wg1\t61011\tui\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t1.1.1.1, 1.0.0.1\tİş ağı' ]
     grep -qx 'WG_BIND=10.8.1.1' "$wgd/caddy-wg-wg1.env"
     # Firewall first (the port opens, forwarding and NAT exist), then the interface, then its Caddy.
     awk '/systemctl restart master-firewall.service/ {f = NR} /systemctl enable --now wg-quick@wg1.service/ {w = NR}
@@ -3331,7 +3181,7 @@ EOF
     [ "$output" = $'wg2\t61021' ]
     [ ! -e "$wgd/caddy-wg-wg2.env" ]
     run ! grep -q 'caddy-wg@wg2' "$TMP/calls"
-    [ "$(sed -n 2p "$wgd/networks")" = $'wg2\t61021\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t' ]
+    [ "$(sed -n 3p "$wgd/networks")" = $'wg2\t61021\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t' ]
     # Refusals change nothing: a port of wg0, of a panel network or of the stack, the range, scope, DNS, label.
     before="$(cat "$wgd/networks")"
     rm -f "$TMP/calls"
@@ -3373,7 +3223,7 @@ EOF
     printf 'WG_NETWORKS_MAX=2\n' >>"$TMP/state.env"
     run master_wg net-add 61031 inet 1.1.1.1 ""
     [ "$status" -ne 0 ]
-    case "$output" in *"en çok 2 ek ağ"*) ;; *) false ;; esac
+    case "$output" in *"en çok 3 ağ"*) ;; *) false ;; esac
 }
 
 @test "master-wg --if runs peer commands on a panel network, nets lists all and net-remove drops only that network" {
@@ -3393,10 +3243,14 @@ EOF
     [ ! -e "$wgd/clients/tel.conf" ]
     run master_wg --if wg1 info
     [ "$(cut -f1-3 <<<"$output")" = $'tel\t10.8.1.2\tfdcc:ad94:bacf:61a4::1:2' ]
-    master_wg add phone 1.1.1.1 21 1420 >/dev/null
+    # DD-143: birden çok ağ varken peer komutu ağ ister.
+    run master_wg add phone 1.1.1.1 21 1420
+    [ "$status" -ne 0 ]
+    case "$output" in *"birden çok ağ var"*) ;; *) false ;; esac
+    master_wg --if wg0 add phone 1.1.1.1 21 1420 >/dev/null
     run master_wg nets
     [ "$status" -eq 0 ]
-    [ "$(sed -n 1p <<<"$output")" = $'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t\t\t1\t1' ]
+    [ "$(sed -n 1p <<<"$output")" = $'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\t1\t1' ]
     [ "$(sed -n 2p <<<"$output")" = $'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\t1\t1' ]
     run master_wg --if wg7 list
     [ "$status" -ne 0 ]
@@ -3408,9 +3262,9 @@ EOF
     # net-remove needs --onay, never touches wg0, and removes only the network asked for.
     run master_wg net-remove wg1
     [ "$status" -ne 0 ]
-    run master_wg net-remove wg0 --onay
+    # DD-143: wg0 da sıradan bir ağ; kaldırılabilir ama onay ister.
+    run master_wg net-remove wg0
     [ "$status" -ne 0 ]
-    case "$output" in *"wg0 kurulumundur"*) ;; *) false ;; esac
     [ -f "$wgd/wg1.conf" ]
     export WG_ACTIVE=0
     rm -f "$TMP/calls"
@@ -3419,11 +3273,14 @@ EOF
     [ "$output" = $'wg1\t1' ]
     [ ! -e "$wgd/wg1.conf" ]
     [ ! -e "$wgd/clients-wg1" ]
-    [ ! -s "$wgd/networks" ]
+    [ "$(wc -l <"$wgd/networks" | tr -d " ")" = 1 ]
     grep -q 'systemctl disable --now wg-quick@wg1.service' "$TMP/calls"
     grep -q 'systemctl restart master-firewall.service' "$TMP/calls"
     grep -qx '# peer: phone' "$wgd/wg0.conf"
-    [ -f "$wgd/clients/phone.conf" ]
+    [ -f "$wgd/clients-wg0/phone.conf" ]
+    # Tek ağ kalınca peer komutu --if istemez.
+    run master_wg list
+    [ "$status" -eq 0 ]
     run master_wg net-remove wg1 --onay
     [ "$status" -ne 0 ]
 }
@@ -3432,7 +3289,7 @@ EOF
     wg_mock_bin
     wg_state_fixture
     master_wg add iphone 1.1.1.1 21 1420 >/dev/null
-    profile="$TMP/etc/wireguard/clients/iphone.conf"
+    profile="$TMP/etc/wireguard/clients-wg0/iphone.conf"
     rest_before="$(grep -v '^DNS = ' "$profile")"
     conf_before="$(shasum <"$WG_CONF_FILE")"
     rm -f "$TMP/calls"
@@ -3459,7 +3316,7 @@ EOF
     run master_wg dns iphone
     [ "$status" -ne 0 ]
     [ "$(shasum <"$profile")" = "$before" ]
-    [ -z "$(find "$TMP/etc/wireguard/clients" -name '.peer-*')" ]
+    [ -z "$(find "$TMP/etc/wireguard/clients-wg0" -name '.peer-*')" ]
     # The menu default (DD-131) is valid and written back exactly as defaults.env has it.
     default_dns="$(awk -F'"' '/^WG_CLIENT_DNS_DEFAULT=/{print $2; exit}' "$V2_ROOT/config/defaults.env")"
     run master_wg dns iphone "$default_dns"
@@ -3476,7 +3333,7 @@ EOF
     run master_wg reset
     [ "$status" -ne 0 ]
     [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
-    [ -f "$TMP/etc/wireguard/clients/iphone.conf" ]
+    [ -f "$TMP/etc/wireguard/clients-wg0/iphone.conf" ]
     rm -f "$TMP/calls"
     run master_wg reset --onay
     [ "$status" -eq 0 ]
@@ -3490,7 +3347,7 @@ EOF
     run ! grep -q 'SRVKEY' "$WG_CONF_FILE"
     [ "$(tail -n 1 "$WG_CONF_FILE" | cut -c1-13)" = "PrivateKey = " ]
     run ! grep -qE '^\[Peer\]$|^# peer: ' "$WG_CONF_FILE"
-    [ -z "$(ls -A "$TMP/etc/wireguard/clients")" ]
+    [ -z "$(ls -A "$TMP/etc/wireguard/clients-wg0")" ]
     # Applied live, with the new key and no peers.
     grep -q '^PrivateKey = PRIV' "$TMP/syncconf"
     run ! grep -q '^\[Peer\]' "$TMP/syncconf"
@@ -3502,7 +3359,7 @@ EOF
     unset SYNC_RC
     [ "$status" -ne 0 ]
     [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
-    [ -f "$TMP/etc/wireguard/clients/mac.conf" ]
+    [ -f "$TMP/etc/wireguard/clients-wg0/mac.conf" ]
     # Nothing but the interface section is ever written back: wg0.conf with no
     # [Interface] is refused.
     printf '[Peer]\nPublicKey = x\n' >"$WG_CONF_FILE"
@@ -3522,7 +3379,7 @@ EOF
     grep -qx '# peer: a' <<<"$conf"
     grep -qx '# peer: c' <<<"$conf"
     run ! grep -q '10.8.0.3/32' <<<"$conf"
-    [ ! -e "$TMP/etc/wireguard/clients/b.conf" ]
+    [ ! -e "$TMP/etc/wireguard/clients-wg0/b.conf" ]
     # No run of blank lines is left where the block was.
     awk 'NR > 1 && prev == "" && $0 == "" {bad = 1} {prev = $0} END {exit bad}' <<<"$conf"
     # The freed address is reused.
@@ -3533,7 +3390,7 @@ EOF
     SYNC_RC=1 run master_wg add e 1.1.1.1 21 1420
     [ "$status" -ne 0 ]
     [ "$(cat "$WG_CONF_FILE")" = "$before" ]
-    [ ! -e "$TMP/etc/wireguard/clients/e.conf" ]
+    [ ! -e "$TMP/etc/wireguard/clients-wg0/e.conf" ]
     # An empty `wg-quick strip` never reaches syncconf.
     printf '#!/bin/bash\nexit 0\n' >"$TMP/bin/wg-quick"
     rm -f "$TMP/calls"
@@ -3543,69 +3400,44 @@ EOF
     grep -qx '# peer: a' "$WG_CONF_FILE"
 }
 
-@test "ensure_wireguard manages only [Interface] and keeps every peer" {
-    eval "$(awk '/^wg_peer_section\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^ensure_wireguard\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    # shellcheck source=/dev/null
-    source "$V2_ROOT/config/defaults.env"
+@test "the installer prepares the WireGuard layer and applies the registry, never a network of its own" {
+    # DD-143: kurulum anahtar üretmez, conf yazmaz, arayüz açmaz.
+    eval "$(awk '/^ensure_wireguard_ready\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^ensure_wg_networks_running\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     wg_mock_bin
     wg_state_fixture
     PATH="$TMP/bin:$PATH"
-    WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_CLIENTS_DIR="$TMP/etc/wireguard/clients"
-    WG_MODULES_LOAD_FILE="$TMP/modules.conf" WG_PUBLIC_PORT=61001 APT_OPTS=() APT_LOCK_TIMEOUT=1
-    log() { [ "$1" != HATA ] || printf '%s\n' "$*"; }
+    WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
+    WG_NETWORKS_FILE="$TMP/etc/wireguard/networks" APT_OPTS=() APT_LOCK_TIMEOUT=1
+    log() { printf '%s %s\n' "$1" "${*:2}" >>"$TMP/log"; }
     retry() { printf 'retry %s\n' "$*" >>"$TMP/calls"; }
     modprobe() { :; }
+    atomic_write() { cat >"$1"; }
     install() { local a; for a in "$@"; do case "$a" in /*) mkdir -p "$a" ;; esac; done; }
-    # First install: no wg0.conf, a server key is generated, no peers.
-    rm -f "$WG_CONF_FILE"
-    run ensure_wireguard
-    [ "$status" -eq 0 ]
-    grep -qx 'PrivateKey = PRIV01kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk=' "$WG_CONF_FILE"
-    grep -qx 'ListenPort = 61001' "$WG_CONF_FILE"
-    run ! grep -q '\[Peer\]' "$WG_CONF_FILE"
-    grep -q 'no-install-recommends wireguard-tools qrencode' "$TMP/calls"
-    # Peers added by master-wg survive a re-run byte for byte, with no apply at all.
-    master_wg add iphone 1.1.1.1 21 1420 >/dev/null
-    master_wg add ipad 1.1.1.1 21 1420 >/dev/null
     before="$(cat "$WG_CONF_FILE")"
-    rm -f "$TMP/calls"
-    run ensure_wireguard
+    run ensure_wireguard_ready
     [ "$status" -eq 0 ]
+    grep -q 'no-install-recommends wireguard-tools qrencode' "$TMP/calls"
+    [ "$(cat "$TMP/modules.conf")" = wireguard ]
+    # Var olan yapılandırmaya dokunulmaz, yenisi yazılmaz.
     [ "$(cat "$WG_CONF_FILE")" = "$before" ]
-    run ! grep -qE 'syncconf|restart' "$TMP/calls"
-    # A port change keeps the key and the peers and is applied live.
-    WG_PUBLIC_PORT=61011
-    rm -f "$TMP/calls"
-    run ensure_wireguard
-    [ "$status" -eq 0 ]
-    grep -qx 'ListenPort = 61011' "$WG_CONF_FILE"
-    grep -qx 'PrivateKey = PRIV01kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk=' "$WG_CONF_FILE"
-    [ "$(grep -c '^# peer: ' "$WG_CONF_FILE")" -eq 2 ]
-    grep -q '^wg syncconf wg0 ' "$TMP/calls"
-    run ! grep -q 'restart' "$TMP/calls"
-    # An MTU change needs wg-quick: restart.
-    WG_MTU=1380
-    rm -f "$TMP/calls"
-    run ensure_wireguard
-    grep -q '^systemctl restart wg-quick@wg0.service$' "$TMP/calls"
-    [ "$(grep -c '^# peer: ' "$WG_CONF_FILE")" -eq 2 ]
-    # A wg0.conf without a server key stops instead of generating a new one.
-    printf '[Interface]\nListenPort = 1\n' >"$WG_CONF_FILE"
-    run ensure_wireguard
-    [ "$status" -ne 0 ]
-    case "$output" in *"sunucu anahtarı yok"*) ;; *) false ;; esac
-    # The installer installs the tool and records what it reads.
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -q 'atomic_write "\$SBIN_DIR/master-wg" 0755 <"\$V2_ROOT/scripts/master-wg"'
-    # state.env is sourced by master-wg and master-firewall: a value with a space
-    # must be quoted or the rest of the line runs as a command.
-    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'WG_CLIENT_ALLOWED_IPS="\$WG_CLIENT_ALLOWED_IPS"'
-    for v in $(grep -oE '^: "\$\{[A-Z0-9_]+:\?\}"' "$V2_ROOT/scripts/master-wg" | tr -dc 'A-Z0-9_\n'); do
-        awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v="
-    done
-}
+    run ! grep -q 'wg genkey' "$TMP/calls"
 
+    # Kayıttaki ağ uygulanır: birim etkinleştirilir, gerekiyorsa başlatılır.
+    rm -f "$TMP/calls"
+    WG_ACTIVE=0 run ensure_wg_networks_running
+    [ "$status" -eq 0 ]
+    grep -q 'systemctl enable --quiet wg-quick@wg0.service' "$TMP/calls"
+    grep -q 'systemctl restart wg-quick@wg0.service' "$TMP/calls"
+    grep -q 'systemctl enable --quiet caddy-wg@wg0.service' "$TMP/calls"
+
+    # Kayıt yoksa hiçbir şey açılmaz; kullanıcı Konsol'a yönlendirilir.
+    rm -f "$TMP/calls" "$TMP/log" "$TMP/etc/wireguard/networks"
+    run ensure_wg_networks_running
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/calls" ]
+    grep -q 'Yapılandır' "$TMP/log"
+}
 @test "wireguard.command generates on the server, sends no key and keeps to bash 3.2" {
     local cmd="$V2_ROOT/../wireguard.command"
     [ -x "$cmd" ]
@@ -3621,26 +3453,26 @@ EOF
     for sub in version list add remove profile qr dns 'reset --onay'; do
         grep -q "remote $sub" "$cmd"
     done
-    # Option 8 needs the typed word and re-syncs the backup afterwards (DD-130).
-    body="$(awk '/^regenerate_wg0\(\)/,/^}$/' "$cmd")"
+    # Option 8 needs the typed word (DD-130); DD-143: Mac'te yedek yok.
+    body="$(awk '/^regenerate_net\(\)/,/^}$/' "$cmd")"
     grep -q "tr '\[:upper:\]' '\[:lower:\]')\" in" <<<"$body"
     grep -q '^        onayla) ;;$' <<<"$body"
-    awk '/remote reset --onay/ {r = NR} /auto_backup/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
-    # Add, remove and DNS change back up after the server call succeeds.
+    grep -q 'remote reset --onay' <<<"$body"
     for fn in add_peer:add remove_peer:remove change_dns:dns; do
         body="$(awk -v f="^${fn%%:*}\\(\\)" '$0 ~ f, /^}$/' "$cmd")"
-        awk -v c="remote ${fn#*:} " 'index($0, c) {r = NR} /auto_backup/ {b = NR} END {exit !(r && b && r < b)}' <<<"$body"
+        awk -v c="remote ${fn#*:} " 'index($0, c) {r = NR} END {exit !r}' <<<"$body"
     done
-    grep -q "backup_settings || echo \"UYARI: yedek eşitlenemedi" "$cmd"
+    grep -q '6) select_net --ask || true ;;' "$cmd"
     grep -q '7) change_dns || true ;;' "$cmd"
-    grep -q '8) regenerate_wg0 || true ;;' "$cmd"
+    grep -q '8) regenerate_net || true ;;' "$cmd"
     # Reading the profile for the current DNS never exits the pipe early.
     grep -qF "awk -F' = ' '\$1 == \"DNS\" {v = \$2} END {print v}'" "$cmd"
     # Nothing local is sent to the server: no scp, no local tar archive, no
     # file redirected into ssh. The only stdin is the backup script heredoc,
     # whose body runs on the server.
-    outside="$(awk "/<<'REMOTE'\$/ {skip = 1; print; next} skip && /^REMOTE\$/ {skip = 0; next} !skip" "$cmd")"
-    [ "$(grep -c "<<'REMOTE'" "$cmd")" -eq 1 ]
+    # DD-143: sunucuda çalışan gömülü betik de kalktı; dosya baştan sona yerel.
+    outside="$(cat "$cmd")"
+    [ "$(grep -c "<<'REMOTE'" "$cmd")" -eq 0 ]
     run ! grep -qE '^[^#]*(scp |tar -c|tar [^|]*-cf|ssh [^|#]*< *["$/])' <<<"$outside"
     run ! grep -qE '^[^#]*\| *ssh' <<<"$outside"
     # The profile lands in kurulum/wireguard with mode 600 via a temporary file.
@@ -3665,7 +3497,7 @@ EOF
     grep -q '^load_wg_networks$' "$fw"
     awk '/^load_wg_networks$/ {l = NR} /^resolve_wan_interface$/ {r = NR} END { exit !(l && r && l < r) }' "$fw"
     # write_state carries what the firewall and master-wg need (DD-136).
-    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_PANEL_PORT WG_INTERFACE WG_SERVER_IPV4 WG_SUBNET4 WG_SUBNET6; do
+    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_PANEL_PORT WG_SERVER_IPV4 WG_SUBNET4 WG_SUBNET6; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v=\\\$$v$"
     done
     die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
@@ -3677,9 +3509,16 @@ EOF
     ip6tables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat6"; }
     WAN_INTERFACE=eth0 TAILSCALE_IF=tailscale0 TAILSCALE_UDP_PORT=41641 SSH_PUBLIC_PORT=22 TORRENT_PUBLIC_PORT=61005
     CHAIN_STAGING_PREFIX=MASTER-NEXT- DOZZLE_UI_PORT=61002 TORRENT_UI_PORT=61006 FILEBROWSER_UI_PORT=61007
-    WG_INTERFACE=wg0 WG_PUBLIC_PORT=61001 WG_SERVER_IPV4=10.8.0.1 WG_SUBNET4=10.8.0.0/24 WG_SUBNET6=fdcc:ad94:bacf:61a4::/112
     WG_NETWORKS_FILE="$TMP/networks"
-    printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\n' >"$WG_NETWORKS_FILE"
+    # DD-143: wg0 da kayıttan gelir; kayıt boşsa hiç WireGuard kuralı olmaz.
+    : >"$WG_NETWORKS_FILE"
+    load_wg_networks
+    [ "${#WG_IFACES[@]}" -eq 0 ]
+    apply_input4
+    run ! grep -q ' wg' "$TMP/in4"
+    rm -f "$TMP/in4" "$TMP/in6" "$TMP/nat4" "$TMP/nat6"
+    printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' >"$WG_NETWORKS_FILE"
+    printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\n' >>"$WG_NETWORKS_FILE"
     printf 'wg2\t61021\tui\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t1.1.1.1\t\n' >>"$WG_NETWORKS_FILE"
     load_wg_networks
     [ "${WG_IFACES[*]}" = "wg0 wg1 wg2" ]
@@ -3722,15 +3561,15 @@ EOF
     [ "$status" -ne 0 ]
     case "$output" in *"ağ kaydı bozuk"*"hiçbir kural değiştirilmedi"*) ;; *) false ;; esac
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\t\n' >"$WG_NETWORKS_FILE"
-    printf 'wg2\t61001\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t\n' >>"$WG_NETWORKS_FILE"
+    printf 'wg2\t61011\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t\n' >>"$WG_NETWORKS_FILE"
     run load_wg_networks
     [ "$status" -ne 0 ]
     case "$output" in *"tekrar eden"*) ;; *) false ;; esac
     [ ! -e "$TMP/in4" ]
-    # No registry: exactly the wg0 rules of before.
+    # DD-143: kayıt dosyası hiç yoksa ağ da yoktur.
     WG_NETWORKS_FILE="$TMP/none"
     load_wg_networks
-    [ "${WG_IFACES[*]}" = "wg0" ]
+    [ "${#WG_IFACES[@]}" -eq 0 ]
     # No wg-quick PostUp rules: the firewall script owns netfilter (DD-16/DD-17).
     run ! grep -q 'PostUp' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
     run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
@@ -3794,19 +3633,20 @@ EOF
     run ! grep -qi 'tailscale' "$u"
     body="$(awk '/^ensure_caddy_wg\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -q 'WG_BIND="$WG_SERVER_IPV4" caddy validate --config "$CADDY_WG_FILE"' <<<"$body"
-    grep -q 'atomic_write "${WG_CONF_FILE%/\*}/caddy-wg-${WG_INTERFACE}.env" 0644 <<<"WG_BIND=${WG_SERVER_IPV4}"' <<<"$body"
-    grep -q 'systemctl restart "caddy-wg@${WG_INTERFACE}.service"' <<<"$body"
-    # A changed shared file restarts the panel networks' instances too.
+    # DD-143: örnek birimleri ağlarla birlikte master-wg açar; kurulum yalnız şablonu tutar.
+    run ! grep -qE 'caddy-wg-\$\{WG_INTERFACE\}|caddy-wg@\$\{WG_INTERFACE\}' <<<"$body"
+    grep -q 'WG_BIND=%s' "$V2_ROOT/scripts/master-wg"
+    # A changed shared file restarts the networks' instances.
     grep -q 'systemctl try-restart "caddy-wg@${iface}.service"' <<<"$body"
     awk '/^stage_6\(\)/,/^assert_webdav_readonly_runtime\(\)/' "$V2_ROOT/install.sh" |
         grep -q '^    ensure_caddy_wg "\$OS_CHANGED"$'
-    # WireGuard comes up after the firewall has its rules, then caddy-wg in stage 6.
+    # Kayıttaki ağlar firewall kurallarından sonra uygulanır (DD-143).
     awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
-        awk '/restart master-firewall.service/ {f = NR} /^    ensure_wireguard$/ {w = NR}
+        awk '/restart master-firewall.service/ {f = NR} /^    ensure_wg_networks_running$/ {w = NR}
              END { exit !(f && w && f < w) }'
-    # Stage 7 proves the interface, the peer count and the three UI ports.
+    # Stage 7 proves each registry network's port, address and UI ports.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'wg show "$WG_INTERFACE" listen-port' <<<"$s7"
+    grep -q 'wg show "$wg_iface" listen-port' <<<"$s7"
     grep -q '"$SBIN_DIR/master-wg" version' <<<"$s7"
-    grep -q 'http://${WG_SERVER_IPV4}:${wg_ui_port}/' <<<"$s7"
+    grep -q 'http://${wg_s4}:${wg_ui_port}/' <<<"$s7"
 }

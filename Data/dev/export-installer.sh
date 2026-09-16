@@ -16,8 +16,6 @@ V2_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_R
 # DD-119: girdinin sunucudaki yeri tek kaynaktan (defaults.env) gelir.
 INPUT_DIR="$(awk -F= '/^INPUT_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
 [[ "$INPUT_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: INPUT_DIR /run altında değil: $INPUT_DIR" >&2; exit 1; }
-RESTORE_DIR="$(awk -F= '/^RESTORE_DIR=/{gsub(/"/,"",$2); print $2; exit}' "$REPO_ROOT/config/defaults.env")"
-[[ "$RESTORE_DIR" =~ ^/run/[A-Za-z0-9._/-]+$ ]] || { echo "HATA: RESTORE_DIR /run altında değil: $RESTORE_DIR" >&2; exit 1; }
 
 OUT_NAME="${V2_VERSION}.command"
 COPY_DESKTOP=0
@@ -75,6 +73,7 @@ rsync -a \
     "$REPO_ROOT/systemd" \
     "$REPO_ROOT/panel" \
     "$REPO_ROOT/files-panel" \
+    "$REPO_ROOT/console" \
     "$stage/installer/"
 xattr -cr "$stage" 2>/dev/null || true
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
@@ -120,7 +119,6 @@ PORTABLE_BUILT_AT="$built_at"
 PORTABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 ARCHIVE_MARKER="$MARKER"
 REMOTE_INPUT_DIR="$INPUT_DIR"
-REMOTE_RESTORE_DIR="$RESTORE_DIR"
 EOF
     cat <<'BODY_END'
 
@@ -155,7 +153,7 @@ cleanup_local() {
     rm -f "$tgz"
     if [[ "$remote_input_sent" -eq 1 ]]; then
         ssh "${ssh_base[@]}" "$HOST" \
-            "rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming' '$REMOTE_RESTORE_DIR'" >/dev/null 2>&1 || true
+            "rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming'" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup_local EXIT
@@ -167,9 +165,9 @@ printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
 # DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de. Burada
 # yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz, doğrulama
-# sunucuda kurulumun kendisindedir. WireGuard peer'ları sunucuda üretilir
-# (wireguard.command, DD-124); menünün "6) Yedek al" ile çektiği hazır ayarlar varsa
-# onlar da gider ve yalnız sunucuda karşılığı yoksa kullanılır (DD-128).
+# sunucuda kurulumun kendisindedir. DD-143: sunucuya yalnız bu dosya gider —
+# WireGuard ağları ve peer'ları sunucuda Konsol/master-wg ile kurulur, Mac'ten
+# hiçbir anahtar ya da profil taşınmaz.
 INPUT_LOCAL_DIR="$here/kurulum"
 INPUT_FILE_LOCAL="$INPUT_LOCAL_DIR/kurulum.env"
 if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
@@ -191,20 +189,8 @@ if [[ ! "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]]; then
 fi
 echo "Sunucu:  $HOST (kurulum/kurulum.env)"
 
-# DD-128: hazır WireGuard ayarları. Adlar burada da süzülür (boşluklu ad listeyi bozmasın);
-# biçim denetimi sunucuda kurulumdadır. Anahtar içerdikleri için izin 600 olmalı.
+# DD-143: sunucuya yalnız girdi dosyası gider.
 send_files="kurulum.env"
-snapshot_wg=0
-snapshot_profiles=0
-if [[ -f "$INPUT_LOCAL_DIR/wireguard/sunucu/wg0.conf" ]]; then
-    send_files="$send_files wireguard/sunucu/wg0.conf"
-    snapshot_wg=1
-    for f in "$INPUT_LOCAL_DIR"/wireguard/*.conf; do
-        [[ -f "$f" && "${f##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}\.conf$ ]] || continue
-        send_files="$send_files wireguard/${f##*/}"
-        snapshot_profiles=$((snapshot_profiles + 1))
-    done
-fi
 for rel in $send_files; do
     mode="$(stat -f %Lp "$INPUT_LOCAL_DIR/$rel")"
     if [[ "$mode" != 600 && "$mode" != 400 ]]; then
@@ -213,10 +199,6 @@ for rel in $send_files; do
         pause_exit 1
     fi
 done
-snapshot_desc="yok"
-[[ "$snapshot_wg" -eq 0 ]] || snapshot_desc="WireGuard (sunucu + $snapshot_profiles profil)"
-echo "Hazır ayarlar: $snapshot_desc (yalnız sunucuda karşılığı yoksa kullanılır)"
-
 echo "==> Gömülü arşiv açılıyor"
 marker_line="$(grep -n "^${ARCHIVE_MARKER}$" "$self" | head -n1 | cut -d: -f1 || true)"
 [[ -n "$marker_line" ]] || { echo "HATA: gömülü arşiv işareti yok" >&2; pause_exit 1; }

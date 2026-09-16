@@ -1,14 +1,12 @@
 #!/bin/bash
-# WireGuard peer menüsü (DD-124). Repo kökünde çift tıklanır; sunucudaki
-# master-wg'yi SSH ile çağırır. Sunucuya hiçbir anahtar ya da profil gönderilmez:
-# peer sunucuda üretilir, QR kodu terminale basılır, profil
-# kurulum/wireguard/<ad>.conf, QR resmi <ad>.png olarak alınır (DD-132). "Yedek al" sunucu yapılandırmasını
-# (wg0.conf) ve bütün profilleri kurulum/wireguard'a çeker; yeniden kurulumda
-# kurulum bunları, sunucuda karşılığı yoksa geri koyar (DD-128). "DNS değiştir"
-# yalnız profildeki DNS satırını, "wg0'ı yeniden üret" sunucu anahtarını ve
-# bütün peer'ları sıfırlar (DD-130). Ekle, çıkar, DNS değiştir ve wg0'ı yeniden
-# üret başarılı olunca yedek kendiliğinden alınır. Finder bu dosyayı macOS
-# /bin/bash 3.2 ile çalıştırır.
+# WireGuard peer menüsü (DD-124, DD-143). Repo kökünde çift tıklanır; sunucudaki
+# master-wg'yi SSH ile çağırır. Sunucuya hiçbir şey gönderilmez ve Mac'te hiçbir
+# şey saklanmaz: ağlar ve peer'lar sunucuda yaşar, QR kodu terminale basılır.
+# İstenirse profil kurulum/wireguard/<ad>.conf ve QR resmi <ad>.png olarak indirilir
+# (DD-132) — bu yalnız kolaylıktır, kurulum o klasöre bakmaz. "DNS değiştir" yalnız
+# profildeki DNS satırını, "Ağı yeniden üret" sunucu anahtarını ve o ağdaki bütün
+# peer'ları sıfırlar (DD-130). Ağları Konsol (panel.<alan>) ya da bu menü kurar.
+# Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
@@ -16,7 +14,6 @@ INPUT_FILE="$ROOT/kurulum/kurulum.env"
 DEFAULTS_FILE="$ROOT/Data/config/defaults.env"
 INSTALLER="$ROOT/Data/install.sh"
 WG_DIR="$ROOT/kurulum/wireguard"
-OLD_QB_DIR="$ROOT/kurulum/qbittorrent"
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
 
 pause_exit() {
@@ -57,18 +54,23 @@ ctl_dir="$(mktemp -d "${TMPDIR:-/tmp}/wg-menu.XXXXXX")"
 ssh_base=(-o BatchMode=yes -o ClearAllForwardings=yes -o ConnectTimeout=20
     -o ServerAliveInterval=15 -o ServerAliveCountMax=3
     -o ControlMaster=auto -o "ControlPath=$ctl_dir/c" -o ControlPersist=120)
-backup_work=""
 cleanup() {
     ssh "${ssh_base[@]}" -O exit "$HOST" >/dev/null 2>&1 || true
     rm -rf "$ctl_dir"
-    [[ -z "$backup_work" ]] || rm -rf "$backup_work"
 }
 trap cleanup EXIT
+
+# Seçili ağ (DD-143): sunucuda birden çok ağ olabilir; master-wg'ye --if ile gider.
+NET=""
 
 # Uzak komut: argümanlar %q ile tırnaklanır, sunucu kabuğu tek tek ayırır.
 remote() {
     local cmd
-    cmd="$(printf '%q ' "$MASTER_WG" "$@")"
+    if [[ -n "$NET" ]]; then
+        cmd="$(printf '%q ' "$MASTER_WG" --if "$NET" "$@")"
+    else
+        cmd="$(printf '%q ' "$MASTER_WG" "$@")"
+    fi
     # -n: master-wg stdin okumaz; ssh menü girdisini yutmasın.
     ssh -n "${ssh_base[@]}" "$HOST" "$cmd"
 }
@@ -134,7 +136,7 @@ fetch_profile() {
         echo "QR resmi alındı: kurulum/wireguard/$name.png"
     else
         rm -f "$tmp"
-        echo "UYARI: QR resmi alınamadı; '6) Yedek al' ile yeniden deneyin." >&2
+        echo "UYARI: QR resmi alınamadı; '4) QR göster' ile yeniden deneyin." >&2
     fi
 }
 
@@ -155,7 +157,6 @@ add_peer() {
     fetch_profile "$name" || echo "UYARI: profil alınamadı; menüden '4) QR göster' ile yeniden alabilirsiniz." >&2
     printf '\n%s — WireGuard uygulamasıyla okutun:\n' "$name"
     remote qr "$name" || true
-    auto_backup
 }
 
 remove_peer() {
@@ -169,32 +170,9 @@ remove_peer() {
     remote remove "$name" >/dev/null || return 1
     rm -f "$WG_DIR/$name.conf" "$WG_DIR/$name.png"
     echo "Kaldırıldı: $name"
-    auto_backup
 }
 
-# Değişti mi? Yalnız özetler karşılaştırılır.
-changed() {
-    [[ ! -f "$2" ]] && return 0
-    [[ "$(shasum -a 256 <"$1")" != "$(shasum -a 256 <"$2")" ]]
-}
-
-put() { # kaynak hedef etiket
-    local dir
-    dir="$(dirname -- "$2")"
-    mkdir -p "$dir"
-    chmod 700 "$dir"
-    if changed "$1" "$2"; then
-        cp -f "$1" "$2.gelen"
-        chmod 600 "$2.gelen"
-        mv -f "$2.gelen" "$2"
-        printf '  %-40s değişti\n' "$3"
-    else
-        chmod 600 "$2"
-        printf '  %-40s aynı\n' "$3"
-    fi
-}
-
-# DD-130: profildeki DNS satırını değiştirir; anahtarlar ve wg0.conf aynı kalır.
+# DD-130: profildeki DNS satırını değiştirir; anahtarlar ve ağın conf dosyası aynı kalır.
 # Cihaz yeni QR'ı (ya da kurulum/wireguard'daki dosyayı) içe aktarınca geçerli olur.
 change_dns() {
     local name current dns result
@@ -211,12 +189,11 @@ change_dns() {
     fetch_profile "$name" || echo "UYARI: profil alınamadı; menüden '4) QR göster' ile yeniden alabilirsiniz." >&2
     printf '\n%s — yeni profil; cihazda WireGuard uygulamasıyla okutun (eski tüneli silin):\n' "$name"
     remote qr "$name" || true
-    auto_backup
 }
 
 # DD-130: sunucuda yeni anahtar üretir, bütün peer kayıtlarını ve profilleri
 # siler; ardından kurulum/wireguard yedeğini bu temiz hale eşitler. Yazılı onay ister.
-regenerate_wg0() {
+regenerate_net() {
     local out confirm=""
     echo
     echo "UYARI: sunucuda yeni bir WireGuard anahtarı üretilir; bütün peer kayıtları ve profilleri silinir."
@@ -232,106 +209,40 @@ regenerate_wg0() {
         *) echo "Vazgeçildi; hiçbir şey değişmedi."; return 0 ;;
     esac
     out="$(remote reset --onay)" || return 1
-    printf '\nwg0 yeniden üretildi: %s peer ve %s profil silindi; yeni sunucu anahtarı etkin.\n' \
-        "${out%%$'\t'*}" "${out##*$'\t'}"
-    auto_backup
+    printf '\n%s yeniden üretildi: %s peer ve %s profil silindi; yeni sunucu anahtarı etkin.\n' \
+        "$NET" "${out%%$'\t'*}" "${out##*$'\t'}"
 }
 
-# DD-130: sunucuda değişiklik başarılı olunca kurulum/wireguard eşitlenir; yeniden
-# kurulum silinmiş bir peer'ı ya da eski anahtarı geri getirmez.
-auto_backup() {
-    echo
-    echo "Yedek güncelleniyor (kurulum/wireguard):"
-    backup_settings || echo "UYARI: yedek eşitlenemedi; '6) Yedek al' ile yeniden deneyin." >&2
-}
-
-# DD-128: sunucu yapılandırmasını (anahtar + peer listesi) ve bütün profilleri
-# kurulum/wireguard'a çeker; içerik ekrana yazılmaz. Profiller sunucunun aynası
-# olur. Yeniden kurulumda <sürüm>.command bunları gönderir ve kurulum, sunucuda
-# wg0.conf yoksa yerine koyar.
-backup_settings() {
-    local src_wg src_clients f name ext peers kept=" "
-    mkdir -p "$ROOT/kurulum"
-    chmod 700 "$ROOT/kurulum"
-    backup_work="$(mktemp -d "$ROOT/kurulum/.yedek.XXXXXX")"
-    # Sunucu yalnız var olan dosyaları, köke göre göreli yollarla tar olarak
-    # gönderir; bu Mac'te diske iner, ekrana değil.
-    if ! ssh "${ssh_base[@]}" "$HOST" bash -s -- \
-        "$REMOTE_STATE" "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$MASTER_WG" >"$backup_work/yedek.tar" <<'REMOTE'
-set -euo pipefail
-state="$1" wg_conf="$2" wg_clients="$3" master_wg="$4"
-[[ -f "$state" ]] || { echo "sunucuda kurulum yok ($state)" >&2; exit 3; }
-[[ -f "$wg_conf" ]] || { echo "sunucuda WireGuard yapılandırması yok" >&2; exit 4; }
-# QR resimleri (DD-132) root'a özel geçici dizinde, profille aynı göreli yolda üretilir.
-work="$(mktemp -d "${TMPDIR:-/run}/wg-yedek.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/${wg_clients#/}"
-list=("${wg_conf#/}") pngs=()
-for f in "$wg_clients"/*.conf; do
-    [[ -f "$f" ]] || continue
-    list+=("${f#/}")
-    name="${f##*/}"
-    name="${name%.conf}"
-    if "$master_wg" png "$name" >"$work/${wg_clients#/}/$name.png"; then
-        pngs+=("${wg_clients#/}/$name.png")
-    else
-        echo "UYARI: $name için QR resmi üretilemedi" >&2
-    fi
-done
-# Yollar köke göreli ("etc/..."), tire ile başlamaz. GNU tar, arkasından dosya
-# gelmeyen -C'yi hata sayar: peer yokken (wg0 yeniden üretilince) eklenmez.
-args=(-C / "${list[@]}")
-[[ "${#pngs[@]}" -eq 0 ]] || args+=(-C "$work" "${pngs[@]}")
-tar -cf - "${args[@]}"
-REMOTE
-    then
-        echo "HATA: yedek alınamadı (bağlantı ya da sunucu hatası; ayrıntı yukarıda)" >&2
-        rm -rf "$backup_work"
-        backup_work=""
+# DD-143: ağlar sunucuda yaşar. Tek ağ varsa o seçilir; birden çoksa sorulur.
+select_net() {
+    local ask_always="${1:-}" out lines i reply
+    NET=""
+    out="$(remote nets)" || return 1
+    if [[ -z "$out" ]]; then
+        echo
+        echo "Sunucuda WireGuard ağı yok."
+        echo "Konsol'u açın (http://panel.<alan adı>) → WireGuard → Yapılandır ile ilk ağı kurun."
         return 1
     fi
-    mkdir "$backup_work/x"
-    tar -C "$backup_work/x" -xf "$backup_work/yedek.tar"
-    src_wg="$backup_work/x${REMOTE_WG_CONF}"
-    src_clients="$backup_work/x${REMOTE_WG_CLIENTS}"
-    if ! grep -q '^PrivateKey = ' "$src_wg"; then
-        echo "HATA: sunucudaki wg0.conf'ta anahtar yok; yedek alınmadı" >&2
-        rm -rf "$backup_work"
-        backup_work=""
-        return 1
+    lines=""
+    i=0
+    while IFS=$'\t' read -r iface port scope s4 rest; do
+        [[ -n "$iface" ]] || continue
+        i=$((i + 1))
+        lines="$lines$i) $iface  UDP $port  $s4  $([[ "$scope" == ui ]] && echo "internet + local" || echo "yalnız internet")"$'\n'
+        eval "net_$i=\$iface"
+    done <<<"$out"
+    if [[ "$i" -eq 1 && "$ask_always" != "--ask" ]]; then
+        eval "NET=\$net_1"
+        return 0
     fi
-    peers="$(grep -c '^\[Peer\]$' "$src_wg" || true)"
     echo
-    put "$src_wg" "$WG_DIR/sunucu/wg0.conf" "sunucu (anahtar + $peers peer)"
-    for f in "$src_clients"/*.conf; do
-        [[ -f "$f" ]] || continue
-        name="${f##*/}"
-        name="${name%.conf}"
-        [[ "$name" =~ $NAME_RE ]] || { echo "  UYARI: geçersiz profil adı atlandı: $name" >&2; continue; }
-        put "$f" "$WG_DIR/$name.conf" "profil $name"
-        [[ ! -f "$src_clients/$name.png" ]] || put "$src_clients/$name.png" "$WG_DIR/$name.png" "QR resmi $name"
-        kept="$kept$name "
-    done
-    for f in "$WG_DIR"/*.conf "$WG_DIR"/*.png; do
-        [[ -f "$f" ]] || continue
-        name="${f##*/}"
-        ext="${name##*.}"
-        name="${name%.*}"
-        case "$kept" in
-            *" $name "*) ;;
-            *) rm -f "$f" && printf '  %-40s silindi (sunucuda yok)\n' "$([[ "$ext" == png ]] && echo "QR resmi" || echo profil) $name" ;;
-        esac
-    done
-    # v2-93'ün çektiği qBittorrent kopyası artık kullanılmıyor (DD-129); parola
-    # özeti taşıdığı için kaldırılır.
-    if [[ -f "$OLD_QB_DIR/qBittorrent.conf" ]]; then
-        rm -f "$OLD_QB_DIR/qBittorrent.conf"
-        rmdir "$OLD_QB_DIR" 2>/dev/null || true
-        printf '  %-40s silindi (artık kurulum.env + şablon)\n' "eski qBittorrent kopyası"
-    fi
-    rm -rf "$backup_work"
-    backup_work=""
-    echo "Yedek kurulum/wireguard altında (izin 600). Yeniden kurulumda <sürüm>.command bunları gönderir."
+    echo "Sunucudaki WireGuard ağları:"
+    printf '  %s' "$lines"
+    ask reply "Ağ numarası" "1"
+    [[ "$reply" =~ ^[0-9]+$ && "$reply" -ge 1 && "$reply" -le "$i" ]] || { echo "Geçersiz seçim."; return 1; }
+    eval "NET=\$net_$reply"
+    echo "Seçilen ağ: $NET"
 }
 
 show_qr() {
@@ -352,12 +263,14 @@ remote_version="$(remote version 2>/dev/null)" ||
 [[ "$remote_version" == "$LOCAL_VERSION" ]] ||
     fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce güncel kurulumu çalıştırın."
 
+select_net || pause_exit 1
+
 while true; do
-    printf '\n--- %s (%s) ---\n' "$HOST" "$LOCAL_VERSION"
+    printf '\n--- %s · %s (%s) ---\n' "$HOST" "$NET" "$LOCAL_VERSION"
     printf '  1) Peer listesi\n  2) Peer ekle\n  3) Peer çıkar\n  4) QR göster\n  5) Çıkış\n'
-    printf '  6) Yedek al (sunucu anahtarı + peer listesi + profiller → kurulum/wireguard)\n'
+    printf '  6) Ağ seç (sunucudaki WireGuard ağları)\n'
     printf '  7) DNS değiştir (anahtarlar aynı, yeni QR)\n'
-    printf '  8) wg0 yeniden üret (yeni anahtar, bütün peer%s silinir)\n' "'lar"
+    printf '  8) Ağı yeniden üret (yeni anahtar, bu ağdaki bütün peer%s silinir)\n' "'lar"
     choice=""
     read -r -p "Seçim: " choice || break
     case "$choice" in
@@ -366,9 +279,9 @@ while true; do
         3) remove_peer || true ;;
         4) show_qr || true ;;
         5 | q | Q) break ;;
-        6) backup_settings || true ;;
+        6) select_net --ask || true ;;
         7) change_dns || true ;;
-        8) regenerate_wg0 || true ;;
+        8) regenerate_net || true ;;
         "") ;;
         *) echo "1-8 arası seçin." ;;
     esac

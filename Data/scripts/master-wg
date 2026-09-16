@@ -14,13 +14,18 @@
 #   master-wg qr AD                       profilin QR kodu (terminal)
 #   master-wg png AD                      profilin QR kodu PNG olarak (stdout, dosyaya/boruya)
 #   master-wg dns AD DNS                  profildeki DNS satırı; anahtarlar aynı
+#   master-wg keepalive AD SANİYE         profildeki PersistentKeepalive (0 = kapalı)
+#   master-wg peer AD ac|kapat            peer'ı arayüzden düşürür ya da geri koyar
 #   master-wg reset --onay                yeni sunucu anahtarı, bütün peer'lar silinir
 #
-# Birden çok ağ (DD-136): peer komutları öntanımlı olarak wg0'da çalışır;
-# "master-wg --if wgN KOMUT …" panelde eklenen ağı seçer.
+# Ağlar (DD-136, DD-143): bütün ağlar kayıt dosyasında yaşar, kurulumun yarattığı
+# ayrıcalıklı bir ağ yoktur. Sunucu kurulduğunda hiç ağ olmaz; ilkini de Konsol
+# (ya da bu komut) oluşturur. Tek ağ varsa peer komutları onu seçer; birden çok
+# ağ varsa "--if wgN" gerekir.
 #   master-wg nets                        ağlar: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer
-#   master-wg net-add PORT ERİŞİM DNS ETİKET   yeni ağ (wg1-wg9); erişim: inet | ui
+#   master-wg net-add PORT ERİŞİM DNS ETİKET   yeni ağ (wg0-wg9); erişim: inet | ui
 #   master-wg net-remove wgN --onay       ağı, anahtarını ve bütün peer'larını siler
+#   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
 set -Eeuo pipefail
 umask 077
 
@@ -33,13 +38,10 @@ die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$STATE_FILE"
 : "${V2_VERSION:?}"
-: "${WG_INTERFACE:?}"
 : "${WG_CONF_FILE:?}"
 : "${WG_CLIENTS_DIR:?}"
 : "${WG_SERVER_IPV4:?}"
 : "${WG_SERVER_IPV6:?}"
-: "${WG_SUBNET4:?}"
-: "${WG_SUBNET6:?}"
 : "${WG_PUBLIC_PORT:?}"
 : "${WG_ENDPOINT_HOST:?}"
 : "${WG_CLIENT_ALLOWED_IPS:?}"
@@ -47,14 +49,21 @@ source "$STATE_FILE"
 
 KEY_RE='^[A-Za-z0-9+/]{43}=$'
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
-NET_RE='^wg[1-9]$'
-# wg0'ın değerleri; --if başka ağ seçince WG_* değişkenleri o ağınkilerle değişir.
-BASE_INTERFACE="$WG_INTERFACE"
+NET_RE='^wg[0-9]$'
+# Kapatılan peer (DD-140): bloğun satırları dosyada kalır, başlarına bu önek gelir.
+# Yorum satırını ne `wg-quick up` ne de `wg-quick strip` görür; peer arayüzden düşer
+# ve yeniden başlatmadan sonra da kapalı kalır. Adresi başkasına verilmez.
+OFF='#kapali#'
+# state.env'deki WG_* değerleri yalnız varsayılandır (adres tabanı; ilk ağın önerilen
+# portunu Konsol verir). Bir ağ seçilince WG_* o ağın kayıt satırından doldurulur.
 BASE_CONF_DIR="${WG_CONF_FILE%/*}"
 BASE_CLIENTS_DIR="$WG_CLIENTS_DIR"
 BASE_SERVER_IPV4="$WG_SERVER_IPV4"
 BASE_SERVER_IPV6="$WG_SERVER_IPV6"
 NETWORKS_FILE="${WG_NETWORKS_FILE:-}"
+WG_INTERFACE=""
+WG_CONF_FILE=""
+WG_CLIENTS_DIR=""
 
 valid_name() {
     [[ "$1" =~ $NAME_RE ]] || die "geçersiz peer adı '$1' (harf, rakam, . _ -; en çok 32)"
@@ -97,7 +106,6 @@ net_line() {
 
 select_net() {
     local iface="$1" line port scope s4 n4 s6 n6 rest
-    [[ "$iface" != "$BASE_INTERFACE" ]] || return 0
     [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
     line="$(net_line "$iface")" || die "'$iface' diye bir WireGuard ağı yok"
     IFS=$'\t' read -r _ port scope s4 n4 s6 n6 rest <<<"$line"
@@ -111,28 +119,45 @@ select_net() {
     WG_CLIENTS_DIR="$BASE_CLIENTS_DIR-${iface}"
 }
 
+net_names() {
+    [[ -n "$NETWORKS_FILE" && -f "$NETWORKS_FILE" ]] || return 0
+    awk -F'\t' '$1 ~ /^wg[0-9]$/ {print $1}' "$NETWORKS_FILE"
+}
+
+# Peer komutları ağ ister: tek ağ varsa o seçilir, yoksa --if beklenir.
+select_only_net() {
+    # mapfile bash 4 ister; testler macOS'ta bash 3.2 ile koşar (DD-126).
+    local name names=""
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        names="${names}${names:+ }$name"
+    done < <(net_names)
+    [[ -n "$names" ]] ||
+        die "sunucuda WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
+    [[ "$names" != *" "* ]] ||
+        die "birden çok ağ var ($names); ağı seçin: master-wg --if wgN KOMUT"
+    select_net "$names"
+}
+
 unit_active() {
     systemctl is-active --quiet "$1" 2>/dev/null && printf 1 || printf 0
 }
 
 peer_count() {
     local n
-    n="$(grep -c '^\[Peer\]$' "$1" 2>/dev/null || true)"
+    n="$(grep -c -e '^\[Peer\]$' -e "^${OFF}\[Peer\]\$" "$1" 2>/dev/null || true)"
     printf '%s' "${n:-0}"
 }
 
-# Satır: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer. wg0'ın DNS ve etiketi boştur.
+# Satır: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer. Kayıt boşsa çıktı da boştur
+# (DD-143: kurulum ağ yaratmaz; ilk ağı Konsol oluşturur).
 cmd_nets() {
     local iface line
-    printf '%s\t%s\tui\t%s\t%s\t%s\t%s\t\t\t%s\t%s\n' "$BASE_INTERFACE" "$WG_PUBLIC_PORT" \
-        "$WG_SERVER_IPV4" "$WG_SUBNET4" "$WG_SERVER_IPV6" "$WG_SUBNET6" \
-        "$(unit_active "wg-quick@${BASE_INTERFACE}.service")" "$(peer_count "$WG_CONF_FILE")"
-    [[ -n "$NETWORKS_FILE" && -f "$NETWORKS_FILE" ]] || return 0
     while IFS= read -r iface; do
         line="$(net_line "$iface")"
         printf '%s\t%s\t%s\n' "$line" "$(unit_active "wg-quick@${iface}.service")" \
             "$(peer_count "$BASE_CONF_DIR/${iface}.conf")"
-    done < <(awk -F'\t' '$1 ~ /^wg[1-9]$/ {print $1}' "$NETWORKS_FILE")
+    done < <(net_names)
 }
 
 registry_write() { # içerik stdin'den, atomik
@@ -174,18 +199,19 @@ cmd_net_add() {
     [[ -n "$NETWORKS_FILE" ]] || die "state.env'de WG_NETWORKS_FILE yok; önce güncel kurulumu çalıştırın"
 
     take_lock
-    for p in "$BASE_INTERFACE:$WG_PUBLIC_PORT" "ssh:${SSH_PUBLIC_PORT:-}" "torrent:${TORRENT_PUBLIC_PORT:-}" \
-        "webdav:${WEBDAV_PORT:-}" "dozzle:${DOZZLE_UI_PORT:-}" "qbittorrent:${TORRENT_UI_PORT:-}" \
+    for p in "ssh:${SSH_PUBLIC_PORT:-}" "torrent:${TORRENT_PUBLIC_PORT:-}" \
+        "dozzle:${DOZZLE_UI_PORT:-}" "qbittorrent:${TORRENT_UI_PORT:-}" \
         "filebrowser:${FILEBROWSER_UI_PORT:-}" "tailscale:${TAILSCALE_UDP_PORT:-}" "panel:${WG_PANEL_PORT:-}" \
         "dosya-paneli:${FILES_PANEL_PORT:-}" \
+        "paylasim:${SHARE_PORT:-}" \
         "dns:53" "http:80" $([[ ! -f "$NETWORKS_FILE" ]] || awk -F'\t' '{print $1 ":" $2}' "$NETWORKS_FILE"); do
         [[ "${p#*:}" != "$port" ]] || die "UDP $port kullanılıyor (${p%%:*}); başka bir port seçin"
     done
     ! ss -Hlun "sport = :$port" 2>/dev/null | grep -q . || die "UDP $port sunucuda başka bir program tarafından dinleniyor"
-    for p in $(seq 1 "${WG_NETWORKS_MAX:-9}"); do
+    for p in $(seq 0 "${WG_NETWORKS_MAX:-9}"); do
         net_line "wg$p" >/dev/null || [[ -e "$BASE_CONF_DIR/wg$p.conf" ]] || { id="$p"; break; }
     done
-    [[ -n "$id" ]] || die "en çok ${WG_NETWORKS_MAX:-9} ek ağ oluşturulabilir"
+    [[ -n "$id" ]] || die "en çok $((${WG_NETWORKS_MAX:-9} + 1)) ağ oluşturulabilir"
     iface="wg$id"
     base4="${BASE_SERVER_IPV4%.*.*}"
     base6="${BASE_SERVER_IPV6%:*}:"
@@ -225,7 +251,7 @@ cmd_net_add() {
 
 cmd_net_remove() {
     local iface="$1" peers
-    [[ "$iface" =~ $NET_RE ]] || die "yalnız panelde eklenen ağlar (wg1-wg9) kaldırılabilir; wg0 kurulumundur"
+    [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
     [[ "${2:-}" == "--onay" ]] || die "kullanım: master-wg net-remove $iface --onay (ağ, anahtarı ve bütün peer'ları silinir)"
     take_lock
     net_line "$iface" >/dev/null || die "'$iface' diye bir WireGuard ağı yok"
@@ -251,6 +277,8 @@ write_and_apply() {
     chmod 0600 "$tmp"
     mv -f -- "$tmp" "$WG_CONF_FILE"
     if ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
+        # Ağ Konsol'dan kapatıldıysa (birim devre dışı) dosya yazılır, arayüz açılmaz.
+        systemctl is-enabled --quiet "wg-quick@${WG_INTERFACE}.service" || return 0
         systemctl restart "wg-quick@${WG_INTERFACE}.service" && return 0
     else
         # Boş `wg-quick strip` syncconf'a verilirse anahtar ve bütün peer'lar
@@ -271,7 +299,7 @@ write_and_apply() {
 # list: ad, IPv4, el sıkışma, rx, tx, profil (wireguard.command bu altı alanı okur).
 # info (DD-133, panel): aynı alanlar + IPv6, DNS, keepalive, MTU; anahtar yok.
 cmd_list() {
-    local mode="${1:-list}" dump line name="" pub="" ips="" hs rx tx profile
+    local mode="${1:-list}" dump line name="" pub="" ips="" hs rx tx profile on=1
     dump="$(wg show "$WG_INTERFACE" dump 2>/dev/null | tail -n +2 || true)"
     # `line` döngünün değişkeni; burada ayrı değişken kullanılır.
     emit() {
@@ -295,14 +323,16 @@ cmd_list() {
             sec == "[Peer]" && $1 == "PersistentKeepalive" {k = $2}
             END {printf "%s\t%s\t%s", d, (k == "" ? 0 : k), m}' "$f")"
         [[ -n "$extra" ]] || extra=$'\t\t'
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$v6" "$hs" "$rx" "$tx" "$profile" "$extra"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$v6" "$hs" "$rx" "$tx" "$profile" "$extra" "$on"
     }
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            "# peer: "*) emit; name="${line#\# peer: }" pub="" ips="" ;;
-            "[Peer]") [[ -z "$pub" ]] || { emit; name=""; }; pub="" ips="" ;;
+            "# peer: "*) emit; name="${line#\# peer: }" pub="" ips="" on=1 ;;
+            "[Peer]") [[ -z "$pub" ]] || { emit; name="" on=1; }; pub="" ips="" ;;
             "PublicKey = "*) pub="${line#PublicKey = }" ;;
             "AllowedIPs = "*) ips="${line#AllowedIPs = }" ;;
+            "${OFF}PublicKey = "*) pub="${line#"${OFF}"PublicKey = }" on=0 ;;
+            "${OFF}AllowedIPs = "*) ips="${line#"${OFF}"AllowedIPs = }" on=0 ;;
         esac
     done <"$WG_CONF_FILE"
     emit
@@ -327,7 +357,7 @@ cmd_add() {
     spub="$(server_private | wg pubkey)" || die "sunucu public key'i türetilemedi"
 
     # Sıradaki boş adres: .2'den başlar; sunucu ve kullanılanlar atlanır.
-    used4=" $(awk -F' = ' '$1 == "AllowedIPs" {print $2}' "$WG_CONF_FILE" | tr ',' '\n' |
+    used4=" $(awk -F' = ' -v p="$OFF" '$1 == "AllowedIPs" || $1 == p "AllowedIPs" {print $2}' "$WG_CONF_FILE" | tr ',' '\n' |
         awk '{gsub(/ /, ""); sub(/\/.*/, ""); print}' | tr '\n' ' ')"
     prefix4="${WG_SERVER_IPV4%.*}"
     prefix6="${WG_SERVER_IPV6%:*}"
@@ -418,6 +448,78 @@ cmd_dns() {
     printf '%s\t%s\n' "$name" "$dns"
 }
 
+# Keepalive de DNS gibi yalnız istemci profilinin ayarıdır: sunucu tarafı ve
+# anahtarlar değişmez. Cihaz yeni profili içe aktarınca geçerli olur.
+cmd_keepalive() {
+    local name="$1" value="$2" profile tmp
+    valid_name "$name"
+    [[ "$value" =~ ^(0|[1-9][0-9]{0,4})$ && "$value" -le 65535 ]] ||
+        die "keepalive 0-65535 arasında bir sayı olmalı (0 = kapalı)"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    profile="$WG_CLIENTS_DIR/${name}.conf"
+    [[ -f "$profile" ]] || die "'$name' için sunucuda profil yok"
+    grep -q '^PersistentKeepalive = ' "$profile" || die "'$name' profilinde PersistentKeepalive satırı yok"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    awk -v v="$value" '/^\[/ {sec = $0}
+        sec == "[Peer]" && index($0, "PersistentKeepalive = ") == 1 {print "PersistentKeepalive = " v; next} {print}' \
+        "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$profile"
+    printf '%s\t%s\n' "$name" "$value"
+}
+
+# DD-140: peer'ı arayüzden düşürür (kapat) ya da geri koyar (ac). Blok dosyada
+# kalır, satırları yorumlanır: anahtar, PSK ve adres korunur, cihazın profili
+# değişmez. Kapalı peer yeniden başlatmadan sonra da kapalıdır.
+cmd_peer() {
+    local name="$1" want="$2" content
+    valid_name "$name"
+    [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg peer AD ac|kapat"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    if [[ "$want" == kapat ]]; then
+        content="$(awk -v t="# peer: $name" -v p="$OFF" '
+            $0 == t { blk = 1; head = 1; print; next }
+            blk && head && $0 == "[Peer]" { head = 0; print p $0; next }
+            blk && (/^# peer: / || $0 == "[Peer]") { blk = 0 }
+            blk && $0 != "" && index($0, p) != 1 { print p $0; next }
+            { print }
+        ' "$WG_CONF_FILE")"
+    else
+        content="$(awk -v t="# peer: $name" -v p="$OFF" '
+            $0 == t { blk = 1; print; next }
+            blk && index($0, p) == 1 { print substr($0, length(p) + 1); next }
+            blk && $0 != "" { blk = 0 }
+            { print }
+        ' "$WG_CONF_FILE")"
+    fi
+    write_and_apply "$content" || die "'$name' için durum değiştirilemedi; ${WG_INTERFACE}.conf geri alındı"
+    printf '%s\t%s\n' "$name" "$want"
+}
+
+# DD-140: ağın arayüzünü kapatır ya da açar; üzerindeki bütün peer'lar birlikte
+# düşer. Yapılandırma, kayıt ve anahtarlar durur: yalnız birim durumu değişir.
+# Güvenlik duvarındaki UDP portu açık kalır (dinleyen yoktur).
+cmd_net() {
+    local want="$1" unit="wg-quick@${WG_INTERFACE}.service" caddy="caddy-wg@${WG_INTERFACE}.service"
+    [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    if [[ "$want" == kapat ]]; then
+        systemctl disable --now "$caddy" >/dev/null 2>&1 || true
+        systemctl disable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE kapatılamadı"
+        [[ "$(unit_active "$unit")" == 0 ]] || die "$WG_INTERFACE hâlâ çalışıyor"
+    else
+        systemctl enable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE açılamadı"
+        [[ "$(unit_active "$unit")" == 1 ]] || die "$WG_INTERFACE açılamadı"
+        if [[ -f "$BASE_CONF_DIR/caddy-wg-${WG_INTERFACE}.env" ]]; then
+            systemctl enable --now "$caddy" >/dev/null 2>&1 ||
+                die "$WG_INTERFACE açıldı ama arayüz erişimi (caddy-wg) başlatılamadı"
+        fi
+    fi
+    printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
+}
+
 # wg0.conf'u temiz üretir: [Interface] satırları (Address, ListenPort, MTU) kalır,
 # yeni sunucu anahtarı yazılır, bütün [Peer] blokları ve istemci profilleri
 # silinir. Uygulama başarısızsa önceki wg0.conf geri konur, profiller silinmez.
@@ -475,14 +577,17 @@ if [[ "${1:-}" == "--if" ]]; then
     [[ "$#" -ge 3 ]] || die "kullanım: master-wg --if wgN KOMUT …"
     select_net "$2"
     shift 2
+elif [[ "${1:-}" != version && "${1:-}" != nets && "${1:-}" != net-add && "${1:-}" != net-remove ]]; then
+    # Ağ gerektiren komutlar: tek ağ varsa o kullanılır.
+    select_only_net
 fi
 
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
-    nets) [[ "$WG_INTERFACE" == "$BASE_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;
-    net-add) [[ "$#" -eq 5 && "$WG_INTERFACE" == "$BASE_INTERFACE" ]] || die "kullanım: master-wg net-add PORT ERİŞİM DNS ETİKET"
+    nets) [[ -z "$WG_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;
+    net-add) [[ "$#" -eq 5 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-add PORT ERİŞİM DNS ETİKET"
         cmd_net_add "$2" "$3" "$4" "$5" ;;
-    net-remove) [[ "$#" -le 3 && "$WG_INTERFACE" == "$BASE_INTERFACE" ]] || die "kullanım: master-wg net-remove wgN --onay"
+    net-remove) [[ "$#" -le 3 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-remove wgN --onay"
         cmd_net_remove "${2:-}" "${3:-}" ;;
     list) cmd_list list ;;
     info) cmd_list info ;;
@@ -492,6 +597,9 @@ case "${1:-}" in
     qr) [[ "$#" -eq 2 ]] || die "kullanım: master-wg qr AD"; cmd_qr "$2" ;;
     png) [[ "$#" -eq 2 ]] || die "kullanım: master-wg png AD"; cmd_png "$2" ;;
     dns) [[ "$#" -eq 3 ]] || die "kullanım: master-wg dns AD DNS"; cmd_dns "$2" "$3" ;;
+    keepalive) [[ "$#" -eq 3 ]] || die "kullanım: master-wg keepalive AD SANİYE"; cmd_keepalive "$2" "$3" ;;
+    peer) [[ "$#" -eq 3 ]] || die "kullanım: master-wg peer AD ac|kapat"; cmd_peer "$2" "$3" ;;
+    net) [[ "$#" -eq 2 ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"; cmd_net "$2" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
-    *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|reset|nets|net-add|net-remove" ;;
+    *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove" ;;
 esac

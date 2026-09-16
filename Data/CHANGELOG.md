@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-16 — The installer no longer creates WireGuard; Konsol does (v2-109)
+
+- **Changed** (**DD-143**): a fresh install leaves WireGuard empty. The
+  installer only prepares the layer (tools, kernel module, `/etc/wireguard`) and
+  applies whatever the registry already holds. The first network — like every
+  other — is created from Konsol: **WireGuard → Yapılandır**, which opens the
+  existing "Arayüz ekle" page (wg0, 10.8.0.0/24, UDP 61001 by default).
+  - `wg0` lost its special status: every network, including the first, lives in
+    `/etc/wireguard/networks`, is created by `master-wg net-add`, can be
+    switched off and removed, and keeps its profiles in `clients-wg<N>`.
+  - The firewall builds WireGuard rules from the registry only and is valid
+    with no networks at all.
+  - **Removed**: the Mac-side link. No snapshot of `wg0.conf` and profiles is
+    read from `kurulum/wireguard`, nothing is uploaded to the server, and
+    `WG_PUBLIC_PORT` is no longer an input key. The launcher sends only
+    `kurulum.env`.
+  - `wireguard.command` keeps managing peers over SSH: it now picks the network
+    (tek ağ varsa kendiliğinden), has no "Yedek al" and no auto-backup, and its
+    option 8 regenerates the selected network.
+  - **Rebuilding a server therefore starts with no WireGuard**: create the
+    network in Konsol and add the devices again.
+
+### 2026-09-16 — One rclone, and the downloads folder is no longer published (v2-108)
+
+- **Changed** (**DD-142**): the WebDAV that served all of `DOWNLOADS_PATH` is
+  gone. The only WebDAV left is the share (`paylas.<domain>`, port 61010): it
+  serves the share root, so nothing leaves the server unless it was shared from
+  Konsol. Infuse connects to that address with the share account.
+  - Removed: the `webdav` container, `webdav.<domain>`, port 61003, the
+    `WEBDAV_USER` / `WEBDAV_PASS` / `WEBDAV_PORT` input keys and
+    `webdav.htpasswd`. `kurulum.env` now carries one WebDAV account
+    (`SHARE_USER` / `SHARE_PASS`).
+  - `docker compose up` now runs with `--remove-orphans`, so a service removed
+    from the file does not stay up.
+  - **Manual step after upgrading:** re-add the source in Infuse — address
+    `http://paylas.<domain>` (or `http://<tailscale-ip>:61010`) with the share
+    account; the old `webdav.<domain>` entry stops working.
+
+### 2026-09-16 — The share also answers on IP:port, for Infuse (v2-107)
+
+- **Added** (**DD-141**): besides `http://paylas.<domain>`, the share answers on
+  `http://<tailscale-ip>:61010` — the same second address the Infuse WebDAV has
+  had since **DD-98**, for clients that cannot resolve the MagicDNS name (seen
+  live: an Apple TV). The console shows both, with a copy button each.
+
+### 2026-09-16 — Share links over one read-only WebDAV (v2-106)
+
+- **Added** (**DD-141**): a folder or a file can be shared from Konsol's
+  Dosyalar page. Everything shared appears side by side at
+  `http://paylas.<domain>` — one address, one account (`SHARE_USER` /
+  `SHARE_PASS` in `kurulum.env`), read-only, tailnet only.
+  - Sharing puts a relative symlink into the share root
+    (`DOWNLOADS_PATH/.pay/w`); nothing is copied, and a file that lands in a
+    shared folder later shows up by itself.
+  - Duration per share: 1, 7 or 30 days, or open-ended. An expired share drops
+    off the list and its link is removed; the files themselves are untouched.
+  - The console shows the address, user and password with a reveal and copy
+    button, and lists the active shares with when they were added and how long
+    they have left.
+  - A second rclone container (`paylasim`) serves it: `--read-only`,
+    `--copy-links`, the downloads folder mounted read-only, and the account as
+    a bcrypt htpasswd. Infuse and Unpackerr see the share folder as an empty
+    read-only tmpfs, like the trash.
+- **Fixed**: a service whose configuration file is newer than the service's own
+  start is restarted even when the file did not change in this run. A run that
+  died between rendering and restarting (seen live) otherwise left dnsmasq or
+  Caddy serving the previous configuration for good.
+
+### 2026-09-16 — Konsol: one admin console for WireGuard and files (v2-105)
+
+- **Added** (**DD-140**): `http://panel.<domain>` — a single console that
+  replaces the separate WireGuard and file pages. `wg.<domain>` and
+  `dosya.<domain>` redirect to it, and one browser login covers both.
+  - **Genel bakış**: a server card (CPU and memory graphs of the last two
+    minutes, a disk bar split into downloads, trash and system, plus system,
+    WAN and version), the connected WireGuard devices, the last actions, and a
+    card listing every port in use, grouped by where it can be reached.
+  - **WireGuard**: networks as cards with a lever switch, regenerate and
+    remove; peer rows with their own switch, QR, delete and an edit dialog for
+    DNS (Cloudflare, Cloudflare Aile, Quad9, AdGuard, Google or custom) and
+    keepalive; "Arayüz ekle" opens as its own page.
+  - **Dosyalar**: the downloads folder with a path bar, new folder, rename,
+    move, download, a text viewer and the trash (restore, permanent delete,
+    empty with `onayla`).
+  - **Günlük**: what the console changed, from both backends' audit lines.
+- **Added** (**DD-140**): a peer and a whole network can be switched off and on
+  from the console. `master-wg peer AD ac|kapat` comments the peer's block out
+  of the interface configuration (keys, address and profile stay, and it stays
+  off across a reboot); `master-wg [--if wgN] net ac|kapat` stops or starts the
+  interface. `master-wg keepalive AD SANİYE` changes the profile's
+  `PersistentKeepalive`.
+- **Changed**: the WireGuard backend serves no page any more and answers only
+  under `/api/wg/*`; the file backend serves the console pages. Both use the
+  `X-Konsol` header and the realm `Konsol`, and accept only the host
+  `panel.<domain>`. `master-wg info` gained an eleventh field: whether the peer
+  is switched on.
+
 ### 2026-09-15 — File panel for the downloads folder (v2-104)
 
 - **Added** (**DD-139**): `http://dosya.<domain>`, a file manager for

@@ -15,16 +15,24 @@ http://torrent.__LOCAL_DOMAIN__ {
 http://file.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
 }
-# WireGuard paneli (DD-133): yalnız tailnet'ten; giriş ve CSRF denetimi panelde.
-http://wg.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
+# Konsol (DD-140): tek adres, iki arka uç. /api/wg/* WireGuard ve sistem arka ucuna
+# (root), geri kalanı dosya arka ucuna (indirme klasörünün sahibi) gider; sayfayı da o
+# verir. Yalnız tailnet'ten; giriş, CSRF ve kök denetimi arka uçlarda.
+http://panel.__LOCAL_DOMAIN__ {
+	handle /api/wg/* {
+		reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
+	}
+	handle {
+		reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__
+	}
 }
-# Dosya paneli (DD-139): yalnız tailnet'ten; giriş, CSRF ve kök denetimi panelde.
-http://dosya.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__
+# Paylaşım WebDAV (DD-141): Konsol'dan paylaşılanlar; salt okunur, tek hesap.
+# İkinci adres Infuse içindir (DD-98'deki nedenle): MagicDNS adını çözemeyen
+# istemciler {$TAILSCALE_IPV4}:{$SHARE_PORT} ile bağlanır.
+http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$SHARE_PORT} {
+	reverse_proxy 127.0.0.1:__SHARE_PORT__
 }
-# MagicDNS: webdav.*:80. Infuse: {$TAILSCALE_IPV4}:{$WEBDAV_PORT} (state.env;
-# re-run'da port değişince Caddy EnvironmentFile ile güncellenir — DD-98).
-http://webdav.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$WEBDAV_PORT} {
-	reverse_proxy 127.0.0.1:{$WEBDAV_PORT}
+# Eski adresler panele yönlenir (yer imleri çalışmaya devam etsin).
+http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {
+	redir http://panel.__LOCAL_DOMAIN__{uri} 302
 }

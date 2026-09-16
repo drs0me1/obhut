@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Konsol</title>
+<link rel="stylesheet" href="/konsol.css">
+<script src="/konsol.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="side" aria-label="Sunucu konsolu">
+    <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
+    <nav class="nav" aria-label="Bölümler">
+      <a href="#/genel" data-route="genel" data-icon="gauge">Genel bakış</a>
+      <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard <span class="count" id="nav-wg"></span></a>
+      <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar <span class="count" id="nav-fs"></span></a>
+      <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
+    </nav>
+    <div class="side-group">
+      <span class="side-label">Diğer arayüzler</span>
+      <a id="link-dozzle" data-icon="terminal" hidden>Dozzle <svg class="ext" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7 3.5H3.5v11h11V11M10 3.5h4.5V8M14.5 3.5L8 10"/></svg></a>
+      <a id="link-torrent" data-icon="download" hidden>qBittorrent <svg class="ext" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7 3.5H3.5v11h11V11M10 3.5h4.5V8M14.5 3.5L8 10"/></svg></a>
+      <a id="link-file" data-icon="folder" hidden>FileBrowser <svg class="ext" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7 3.5H3.5v11h11V11M10 3.5h4.5V8M14.5 3.5L8 10"/></svg></a>
+    </div>
+    <div class="side-foot">
+      <span>Sürüm <span class="mono" id="foot-version">–</span></span>
+      <span>Tailscale <span class="mono" id="foot-ts">–</span></span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="mobile-brand"><span class="wordmark"><span id="brand-host-m">sunucu</span><span class="dot">.</span></span></div>
+      <header class="topbar">
+        <div><p class="eyebrow" id="eyebrow">–</p><h1 id="title">Genel bakış</h1></div>
+        <div class="top-actions" id="top-actions"></div>
+      </header>
+
+      <!-- GENEL BAKIŞ -->
+      <section data-view="genel">
+        <div class="grid">
+          <article class="card span-12">
+            <div class="card-head"><h2 data-icon="server">Sunucu</h2><div class="head-right"><span class="hm ok" id="sys-uptime">–</span></div></div>
+            <dl class="facts wide">
+              <div class="fact"><dt id="cpu-dt">İşlemci</dt><dd>
+                <span class="gval" id="cpu-val">–<small>şu an</small></span>
+                <div class="spark" id="cpu-spark" role="img" aria-label="Son 2 dakikanın işlemci kullanımı"><svg viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><line class="gl" x1="0" y1="20" x2="120" y2="20"/><line class="base" x1="0" y1="40" x2="120" y2="40"/><path class="area"/><path class="line"/></svg><span class="enddot"></span></div>
+                <span class="gsub"><span>2 dk önce</span><span>kesikli çizgi %50</span><span>şimdi</span></span>
+              </dd></div>
+              <div class="fact"><dt id="ram-dt">Bellek</dt><dd>
+                <span class="gval" id="ram-val">–<small></small></span>
+                <div class="spark ram" id="ram-spark" role="img" aria-label="Son 2 dakikanın bellek kullanımı"><svg viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><line class="gl" x1="0" y1="20" x2="120" y2="20"/><line class="base" x1="0" y1="40" x2="120" y2="40"/><path class="area"/><path class="line"/></svg><span class="enddot"></span></div>
+                <span class="gsub"><span>2 dk önce</span><span>kesikli çizgi %50</span><span>şimdi</span></span>
+              </dd></div>
+              <div class="fact"><dt id="disk-dt">Disk</dt><dd>
+                <span class="gval" id="disk-val">–<small></small></span>
+                <div class="dbox">
+                  <div class="dbar" id="disk-bar" role="img" aria-label="Disk kullanımı"></div>
+                  <div class="dleg" id="disk-leg"></div>
+                </div>
+                <span class="gsub" id="disk-sub"></span>
+              </dd></div>
+              <div class="fact info">
+                <dt>Sistem</dt><dd id="sys-os">–</dd>
+                <dt>WAN</dt><dd class="mono" id="sys-wan">–</dd>
+                <dt>Kurulum</dt><dd class="mono" id="sys-version">–</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="card span-7 eq">
+            <div class="card-head"><h2 data-icon="shield">WireGuard cihazları</h2><div class="head-right"><span class="hm ok" id="sum-wg"></span><button class="linkbtn" type="button" data-go="#/wireguard">Tümü <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M7 4.5l4.5 4.5L7 13.5"/></svg></button></div></div>
+            <div class="peers-mini" id="peers-mini"></div>
+            <div class="card-foot"><span id="wg-foot"></span></div>
+          </article>
+
+          <article class="card span-5 eq">
+            <div class="card-head"><h2 data-icon="list">Son işlemler</h2><div class="head-right"><span class="hm" id="feed-sum"></span><button class="linkbtn" type="button" data-go="#/gunluk">Günlük <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M7 4.5l4.5 4.5L7 13.5"/></svg></button></div></div>
+            <div class="feed" id="feed-mini"></div>
+          </article>
+
+          <article class="card span-12">
+            <div class="card-head"><h2 data-icon="lock">Kullanımdaki portlar</h2><div class="head-right"><span class="hm warn" id="ports-sum"></span></div></div>
+            <div class="portgrid" id="ports"></div>
+            <div class="card-foot"><span id="ports-foot"></span></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- WIREGUARD -->
+      <section data-view="wireguard" hidden>
+        <div class="wg-empty" id="wg-empty" hidden></div>
+        <div class="netwrap" id="wg-wrap">
+          <nav class="nettabs" id="wg-tabs" role="tablist" aria-label="WireGuard ağları"></nav>
+          <div class="netpanel first" id="wg-panel" role="tabpanel">
+            <div class="offbar" id="wg-offbar" hidden></div>
+            <dl class="summary" id="wg-summary"></dl>
+            <div class="table wg-t" id="wg-table"></div>
+            <button type="button" class="addrow" id="wg-add"></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ARAYÜZ EKLE -->
+      <section data-view="wgadd" hidden>
+        <div class="addpage">
+          <div class="addform">
+            <article class="card">
+              <div class="card-head"><h2 data-icon="shield">Ağ</h2><span class="hint-s">Sıradaki boş ağ kendiliğinden seçildi</span></div>
+              <div class="ident-row" id="na-ident"></div>
+              <div class="field">
+                <label for="na-label">Etiket</label>
+                <input type="text" id="na-label" maxlength="24" autocomplete="off" spellcheck="false" placeholder="ör. Misafir, İş, Çocuklar">
+                <small class="hint-s">Yalnız Konsol'da görünür; boş bırakılabilir.</small>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-head"><h2 data-icon="lock">Erişim</h2><span class="hint-s">İnternet erişimi her zaman açık</span></div>
+              <div class="toggle-row" id="na-local-row">
+                <div class="tr-text"><strong><span data-icon="server"></span>Local erişim</strong><small id="na-local-desc"></small></div>
+                <button type="button" class="vsw" id="na-local" role="switch" aria-checked="false" aria-describedby="na-local-desc" aria-label="Local erişim"></button>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-head"><h2 data-icon="stack">Port</h2><span class="hint-s">Sunucunun internete açtığı UDP portu</span></div>
+              <div class="field">
+                <label for="na-port">UDP portu</label>
+                <input type="number" id="na-port" min="1024" max="65535" autocomplete="off">
+                <small class="err-s" id="na-port-err" hidden></small>
+                <small class="hint-s" id="na-port-hint">1024–65535 arasında, kullanılmayan bir UDP portu. Kullanılan port reddedilir; sıradaki boş port yazılır.</small>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-head"><h2 data-icon="server">Varsayılan DNS</h2><span class="hint-s">Bu ağa eklenen cihazlara önerilir</span></div>
+              <div class="sugg" id="na-sugg" role="radiogroup" aria-label="Varsayılan DNS"></div>
+            </article>
+          </div>
+          <aside class="addside">
+            <article class="card">
+              <div class="card-head"><h2>Oluşturulacak ağ</h2></div>
+              <div id="na-preview"></div>
+              <ul class="will" id="na-will"></ul>
+              <div class="infoline-s" data-icon="info"><span>Ağlar birbirini görmez: bu ağdaki cihazlar diğer ağlara, tailnet'e ve SSH'a ulaşamaz.</span></div>
+              <div class="dlg-foot">
+                <button class="btn btn-quiet" type="button" data-go="#/wireguard">Vazgeç</button>
+                <button class="btn btn-primary" type="button" id="na-create" disabled>Arayüzü oluştur</button>
+              </div>
+            </article>
+          </aside>
+        </div>
+      </section>
+
+      <!-- DOSYALAR -->
+      <section data-view="dosyalar" hidden>
+        <div class="netwrap">
+          <nav class="nettabs" id="fs-tabs" role="tablist" aria-label="Klasörler"></nav>
+          <div class="netpanel first" id="fs-panel" role="tabpanel"><div id="fs-body" class="fs-body"></div></div>
+        </div>
+      </section>
+
+      <!-- GÜNLÜK -->
+      <section data-view="gunluk" hidden>
+        <div class="logwrap">
+          <div class="chipset" id="log-filter" role="group" aria-label="Süzgeç"></div>
+          <div class="table log-t" id="log-table"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<nav class="bottomnav" aria-label="Bölümler">
+  <a href="#/genel" data-route="genel" data-icon="gauge">Genel</a>
+  <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard</a>
+  <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
+  <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
+</nav>
+
+<!-- genel amaçlı pencere: peer ekle, QR, dosya görüntüleyici -->
+<dialog id="sh" aria-labelledby="sh-title"><div class="dlg" id="sh-body"></div></dialog>
+
+<dialog id="pe" aria-labelledby="pe-title">
+  <form class="dlg" id="pe-form" novalidate>
+    <div class="dlg-head">
+      <div><h3 id="pe-title">Düzenle</h3><p id="pe-sub"></p></div>
+      <button class="dlg-x" type="button" id="pe-x" aria-label="Kapat"></button>
+    </div>
+    <div class="field">
+      <span class="lbl" id="pe-dns-lbl">DNS sunucuları</span>
+      <div class="sugg" id="pe-sugg" role="radiogroup" aria-labelledby="pe-dns-lbl"></div>
+    </div>
+    <div class="field">
+      <label for="pe-ka">PersistentKeepalive (saniye)</label>
+      <div class="ka-row"><input type="number" id="pe-ka" min="0" max="65535" autocomplete="off"><div class="chips-s" id="pe-ka-chips"></div></div>
+      <small class="hint-s">Cihaz boştayken bağlantıyı açık tutmak için kaç saniyede bir paket yollasın. 0 = kapalı; mobil ağlarda 21 önerilir.</small>
+    </div>
+    <div class="infoline-s" data-icon="info"><span>Anahtar ve adres değişmez. Kaydedince cihazda yeni QR'ı okutun: eski tüneli silip yenisini ekleyin.</span></div>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" id="pe-cancel">Vazgeç</button>
+      <button class="btn btn-primary" type="submit" id="pe-save" disabled>Kaydet</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="cf" aria-labelledby="cf-title">
+  <form class="dlg" id="cf-form" novalidate>
+    <div class="dlg-head">
+      <div><h3 id="cf-title">Onay</h3><p id="cf-sub"></p></div>
+      <button class="dlg-x" type="button" id="cf-x" aria-label="Kapat"></button>
+    </div>
+    <ul class="conseq" id="cf-list"></ul>
+    <div class="confirm-row" id="cf-word-row">
+      <label for="cf-word">Onay için <strong>onayla</strong> yazın</label>
+      <input type="text" id="cf-word" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" id="cf-cancel">Vazgeç</button>
+      <button class="btn btn-danger" type="submit" id="cf-go" disabled>Tamam</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-104"
+V2_VERSION="2026.08.06-v2-109"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -33,8 +33,8 @@ APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
 # downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
 # tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH WG_PUBLIC_PORT WEBDAV_PORT WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS TS_AUTH_KEY"
-INPUT_NONEMPTY_KEYS="WEBDAV_USER WEBDAV_PASS DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS"
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY"
+INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS"
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -73,13 +73,11 @@ WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 TORRENT_PUBLIC_PORT=$TORRENT_PUBLIC_PORT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
-WEBDAV_PORT=$WEBDAV_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
 CHAIN_FORWARD=$CHAIN_FORWARD
 CHAIN_NAT=$CHAIN_NAT
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
-WG_INTERFACE=$WG_INTERFACE
 WG_SERVER_IPV4=$WG_SERVER_IPV4
 WG_SERVER_IPV6=$WG_SERVER_IPV6
 WG_SUBNET4=$WG_SUBNET4
@@ -91,6 +89,7 @@ WG_NETWORKS_FILE=$WG_NETWORKS_FILE
 WG_NETWORKS_MAX=$WG_NETWORKS_MAX
 WG_PANEL_PORT=$WG_PANEL_PORT
 FILES_PANEL_PORT=$FILES_PANEL_PORT
+SHARE_PORT=$SHARE_PORT
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 DOZZLE_UI_PORT=$DOZZLE_UI_PORT
@@ -128,7 +127,6 @@ write_config() {
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_PUBLIC_PORT=$WG_PUBLIC_PORT
-WEBDAV_PORT=$WEBDAV_PORT
 TIMEZONE=$TIMEZONE
 EOF
 }
@@ -275,94 +273,49 @@ tailscale_login_with_key() {
     return 1
 }
 
-# wg_peer_section DOSYA — ilk "# peer: " ya da [Peer] satırından sona kadar.
-# DD-128: sunucuda wg0.conf yoksa kurulum/wireguard'daki sunucu yapılandırması
-# ve cihaz profilleri konur: aynı anahtar, aynı peer'lar; cihazlara dokunulmaz.
-# [Interface] ardından ensure_wireguard'da kurulumun değerleriyle yazılır.
-restore_wireguard_snapshot() {
-    local src="$RESTORE_DIR/wireguard" f n=0 stale=0
-    WG_RESTORED=0
-    [[ -f "$src/sunucu/wg0.conf" ]] || return 0
-    if [[ -f "$WG_CONF_FILE" ]]; then
-        log INFO "WireGuard yapılandırması sunucuda var; kurulum/wireguard kullanılmadı (DD-128)"
-        return 0
-    fi
-    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}" "$WG_CLIENTS_DIR"
-    install -m 0600 -o root -g root "$src/sunucu/wg0.conf" "$WG_CONF_FILE"
-    for f in "$src"/*.conf; do
-        [[ -f "$f" ]] || continue
-        install -m 0600 -o root -g root "$f" "$WG_CLIENTS_DIR/${f##*/}"
-        n=$((n + 1))
-        grep -qxF "Endpoint = ${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT}" "$f" || stale=$((stale + 1))
-    done
-    WG_RESTORED=1
-    log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: sunucu anahtarı, $SNAPSHOT_PEERS peer, $n profil"
-    [[ "$stale" -eq 0 ]] ||
-        log WARN "$stale cihaz profilinin Endpoint'i ${WG_ENDPOINT_HOST}:${WG_PUBLIC_PORT} değil; o cihazlar yeni profil ister"
-}
-
-wg_peer_section() {
-    awk '/^# peer: / || /^\[Peer\]$/ {p = 1} p {print}' "$1"
-}
-
-# DD-124: WireGuard'ın kaynağı sunucudaki wg0.conf. Kurulum yalnız [Interface]
-# bölümünü yönetir: dosya yoksa sunucu anahtarını `wg genkey` ile üretir, varsa
-# anahtarı ve bütün [Peer] bloklarını olduğu gibi korur. Peer'ları master-wg
-# (Mac'te wireguard.command) ekler ve çıkarır. NAT ve FORWARD master-firewall'dadır
+# DD-124/DD-143: WireGuard'ın kaynağı sunucudaki kayıt ve wgN.conf dosyalarıdır.
+# Kurulum hiçbirini yaratmaz, silmez ya da içeriğine dokunmaz; ağları master-wg
+# (Konsol ya da wireguard.command) kurar. NAT ve FORWARD master-firewall'dadır
 # (DD-16/DD-17): PostUp yok. Firewall'dan sonra çağrılır.
-# DD-123: değişiklik `wg syncconf` ile canlı gider; arayüz yalnız adresi/MTU'su
-# değişince ya da ayakta değilken yeniden başlar.
-ensure_wireguard() {
-    local private="" peers="" content changed old_iface="" new_iface stripped
+# DD-143: kurulum WireGuard ağı yaratmaz. Yalnız katmanı hazırlar: araçlar, çekirdek
+# modülü ve /etc/wireguard. İlk ağı da sonrakileri de Konsol (master-wg net-add) kurar;
+# böylece tek bir yaratma yolu vardır ve kurulum hiçbir anahtara dokunmaz.
+ensure_wireguard_ready() {
     # Kernel modülü çekirdekte; öneriler wireguard-dkms çekebilirdi.
     retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         --no-install-recommends wireguard-tools qrencode
-    modprobe wireguard 2>/dev/null || log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa wg-quick başlamaz"
+    modprobe wireguard 2>/dev/null ||
+        log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa ağ açılmaz"
     atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<<"wireguard"
-    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}" "$WG_CLIENTS_DIR"
-    if [[ -f "$WG_CONF_FILE" ]]; then
-        private="$(awk -F' = ' '/^\[Peer\]$/ {exit} $1 == "PrivateKey" {print $2; exit}' "$WG_CONF_FILE")"
-        [[ "$private" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
-            die "$WG_CONF_FILE içinde sunucu anahtarı yok ya da bozuk; düzeltin ya da silin (silinirse yeni anahtar üretilir, bütün cihazlar yeniden eklenmeli)"
-        peers="$(wg_peer_section "$WG_CONF_FILE")"
-        old_iface="$(awk '/^# peer: / || /^\[Peer\]$/ {exit} /^(Address|MTU) = /' "$WG_CONF_FILE")"
-    else
-        private="$(wg genkey)" || die "WireGuard sunucu anahtarı üretilemedi"
-        log INFO "WireGuard sunucu anahtarı üretildi; peer eklemek için Mac'te wireguard.command"
-    fi
-    content="# master-stack — [Interface] kurulumundur; peer'ları master-wg (wireguard.command) yönetir (DD-124).
-[Interface]
-Address = ${WG_SERVER_IPV4}/${WG_SUBNET4#*/}, ${WG_SERVER_IPV6}/${WG_SUBNET6#*/}
-ListenPort = ${WG_PUBLIC_PORT}
-MTU = ${WG_MTU}
-PrivateKey = ${private}"
-    [[ -z "$peers" ]] || content+="
+    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}"
+}
 
-${peers}"
-    new_iface="$(awk '/^# peer: / || /^\[Peer\]$/ {exit} /^(Address|MTU) = /' <<<"$content")"
-    atomic_write "$WG_CONF_FILE" 0600 <<<"$content"
-    changed="$V2_LAST_ATOMIC_CHANGED"
-    content=""
-    private=""
-    systemctl enable --quiet "wg-quick@${WG_INTERFACE}.service"
-    if ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service" ||
-        [[ "$changed" -eq 1 && "$old_iface" != "$new_iface" ]]; then
-        systemctl restart "wg-quick@${WG_INTERFACE}.service"
-        log INFO "WireGuard ${WG_INTERFACE}: UDP ${WG_PUBLIC_PORT}"
-    elif [[ "$changed" -eq 1 ]]; then
-        # `wg-quick strip` boş dönerse syncconf anahtarı ve bütün peer'ları
-        # silerdi: çıktı önce denetlenir. Anahtar printf ile (builtin) gider.
-        stripped="$(wg-quick strip "$WG_INTERFACE" 2>/dev/null || true)"
-        if [[ "$stripped" == *"PrivateKey = "* ]] &&
-            wg syncconf "$WG_INTERFACE" <(printf '%s\n' "$stripped"); then
-            log INFO "WireGuard ${WG_INTERFACE}: değişiklik canlı uygulandı (yeniden başlatılmadı)"
-        else
-            log WARN "wg syncconf başarısız; ${WG_INTERFACE} yeniden başlatılıyor"
-            systemctl restart "wg-quick@${WG_INTERFACE}.service"
+# Kayıttaki ağlar açılışta ve her çalıştırmada ayakta olmalı; kurulum yalnız onları
+# uygular, hiçbirini yaratmaz ya da silmez.
+ensure_wg_networks_running() {
+    local iface scope rest count=0
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || {
+        log INFO "WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
+        return 0
+    }
+    while IFS=$'\t' read -r iface _ scope rest; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        count=$((count + 1))
+        systemctl enable --quiet "wg-quick@${iface}.service"
+        systemctl is-active --quiet "wg-quick@${iface}.service" ||
+            systemctl restart "wg-quick@${iface}.service" ||
+            log WARN "${iface} başlatılamadı"
+        if [[ "$scope" == ui ]]; then
+            systemctl enable --quiet "caddy-wg@${iface}.service"
+            systemctl is-active --quiet "caddy-wg@${iface}.service" ||
+                systemctl restart "caddy-wg@${iface}.service" ||
+                log WARN "caddy-wg@${iface} başlatılamadı"
         fi
-        stripped=""
+    done <"$WG_NETWORKS_FILE"
+    if [[ "$count" -eq 0 ]]; then
+        log INFO "WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
     else
-        log INFO "WireGuard yapılandırması aynı; yeniden başlatılmadı"
+        log INFO "WireGuard: kayıttaki $count ağ uygulandı"
     fi
 }
 
@@ -443,134 +396,13 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
-# DD-128: kurulum/ klasöründen gelen hazır ayarlar (wireguard.command → 6) Yedek al).
-# Girdi dizini silinmeden root'a özel RESTORE_DIR'e alınır; biçimi aşama 0'da,
-# hiçbir şey değişmeden doğrulanır. Yalnız sunucuda karşılığı yoksa (temiz
-# kurulum) yerine konur. Anahtar ve parola özeti hiçbir zaman loga yazılmaz.
-take_snapshot_input() {
-    SNAPSHOT_PEERS=0
-    SNAPSHOT_WG_PROFILES=0
-    rm -rf -- "$RESTORE_DIR"
-    [[ -e "$INPUT_DIR/wireguard" ]] || return 0
-    [[ -d "$INPUT_DIR/wireguard" && ! -L "$INPUT_DIR/wireguard" ]] ||
-        die "hazır ayarlar: kurulum/wireguard bir dizin değil"
-    install -d -m 0700 -o root -g root "$RESTORE_DIR"
-    mv -- "$INPUT_DIR/wireguard" "$RESTORE_DIR/wireguard"
-}
-
-# WireGuard dosyasında yalnız master-stack'in yazdığı alanlar olabilir. PostUp
-# gibi wg-quick'in root olarak çalıştırdığı satırlar ya da alt ağ dışı
-# AllowedIPs reddedilir. Çıktı "ok <peer sayısı>" ya da satır numaralı sebep;
-# hiçbir değer yazılmaz (AllowedIPs adresi dışında).
-wg_snapshot_check() {
-    local file="$1" kind="$2"
-    awk -v kind="$kind" -v v4p="${WG_SERVER_IPV4%.*}." -v v6p="${WG_SERVER_IPV6%:*}:" '
-        function fail(msg) { print "satır " NR ": " msg; bad = 1; exit }
-        function key_ok(v) { return length(v) == 44 && v ~ /^[A-Za-z0-9+\/]+=$/ }
-        /^[[:space:]]*$/ { next }
-        /^# peer: / {
-            name = substr($0, 9)
-            if (kind != "server" || length(name) > 32 || name !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-                fail("geçersiz peer adı satırı")
-            if (name in names) fail("aynı peer adı iki kez")
-            names[name] = 1
-            next
-        }
-        /^#/ { next }
-        $0 == "[Interface]" { if (ifaces++) fail("iki [Interface]"); sec = "i"; next }
-        $0 == "[Peer]" {
-            if (sec == "p" && pub == "") fail("[Peer] PublicKey yok")
-            if (kind == "profile" && peers) fail("profilde birden fazla [Peer]")
-            sec = "p"; pub = ""; peers++
-            next
-        }
-        {
-            eq = index($0, " = ")
-            if (!eq) fail("ALAN = değer biçiminde değil")
-            k = substr($0, 1, eq - 1); v = substr($0, eq + 3)
-            if (sec == "i") {
-                if (k == "PrivateKey") { if (!key_ok(v)) fail("PrivateKey biçimi"); priv = 1 }
-                else if (kind == "server" && (k == "Address" || k == "ListenPort" || k == "MTU")) {}
-                else if (kind == "profile" && (k == "Address" || k == "MTU" || k == "DNS")) {}
-                else fail("[Interface] içinde izin verilmeyen alan: " k)
-            } else if (sec == "p") {
-                if (k == "PublicKey" || k == "PresharedKey") {
-                    if (!key_ok(v)) fail(k " biçimi")
-                    if (k == "PublicKey") { if (v in keys) fail("aynı PublicKey iki kez"); keys[v] = 1; pub = v }
-                } else if (k == "AllowedIPs" && kind == "server") {
-                    n = split(v, a, /, /)
-                    # Önekten sonra yalnız host numarası: …::1:2 aynı önekle başlasa da
-                    # /112 alt ağının dışındadır (DD-135).
-                    for (i = 1; i <= n; i++)
-                        if (!((index(a[i], v4p) == 1 && substr(a[i], length(v4p) + 1) ~ /^[0-9]+\/32$/) ||
-                              (index(a[i], v6p) == 1 && substr(a[i], length(v6p) + 1) ~ /^[0-9a-f]+\/128$/)))
-                            fail("AllowedIPs WireGuard alt ağı dışında: " a[i])
-                } else if (kind == "profile" && (k == "AllowedIPs" || k == "PersistentKeepalive" || k == "Endpoint")) {
-                } else fail("[Peer] içinde izin verilmeyen alan: " k)
-            } else fail("bölüm başlığından önce alan")
-        }
-        END {
-            if (bad) exit 0
-            if (!ifaces || !priv) { print "[Interface] PrivateKey yok"; exit 0 }
-            if (sec == "p" && pub == "") { print "son [Peer] PublicKey yok"; exit 0 }
-            print "ok " peers + 0
-        }
-    ' "$file"
-}
-
-validate_snapshot() {
-    [[ -d "$RESTORE_DIR" ]] || return 0
-    local f rel res name
-    [[ -z "$(find "$RESTORE_DIR" -mindepth 1 ! -type f ! -type d)" ]] ||
-        die "hazır ayarlar: kurulum/ içinde bağlantı ya da özel dosya var"
-    while IFS= read -r f; do
-        rel="${f#"$RESTORE_DIR"/}"
-        [[ "$(wc -c <"$f")" -le "$SNAPSHOT_MAX_BYTES" ]] ||
-            die "hazır ayarlar: kurulum/$rel çok büyük"
-        case "$rel" in
-            wireguard/sunucu/wg0.conf) ;;
-            wireguard/*/*) die "hazır ayarlar: beklenmeyen dosya kurulum/$rel" ;;
-            wireguard/*.conf)
-                name="${rel#wireguard/}"
-                name="${name%.conf}"
-                [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] ||
-                    die "hazır ayarlar: geçersiz profil adı kurulum/$rel"
-                ;;
-            *) die "hazır ayarlar: beklenmeyen dosya kurulum/$rel" ;;
-        esac
-    done < <(find "$RESTORE_DIR" -type f)
-    if [[ -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf" ]]; then
-        res="$(wg_snapshot_check "$RESTORE_DIR/wireguard/sunucu/wg0.conf" server)"
-        [[ "$res" == "ok "* ]] || die "hazır ayarlar: kurulum/wireguard/sunucu/wg0.conf geçersiz ($res)"
-        SNAPSHOT_PEERS="${res#ok }"
-        for f in "$RESTORE_DIR"/wireguard/*.conf; do
-            [[ -f "$f" ]] || continue
-            res="$(wg_snapshot_check "$f" profile)"
-            [[ "$res" == "ok "* ]] || die "hazır ayarlar: kurulum/wireguard/${f##*/} geçersiz ($res)"
-            SNAPSHOT_WG_PROFILES=$((SNAPSHOT_WG_PROFILES + 1))
-        done
-    elif [[ -d "$RESTORE_DIR/wireguard" ]]; then
-        # Sunucu anahtarı olmadan cihaz kopyaları işe yaramaz; gönderilmez.
-        rm -rf -- "$RESTORE_DIR/wireguard"
-    fi
-}
-
-snapshot_note() {
-    local wg="yok"
-    [[ ! -f "$RESTORE_DIR/wireguard/sunucu/wg0.conf" ]] ||
-        wg="sunucu anahtarı + $SNAPSHOT_PEERS peer, $SNAPSHOT_WG_PROFILES profil"
-    printf 'WireGuard %s' "$wg"
-}
-
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
     # DD-119: girdi ilk iş okunur ve silinir; kapılardan biri düşse bile
     # parolalar /run'da kalmaz.
     read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
-    take_snapshot_input
     rm -rf -- "$INPUT_DIR"
-    validate_snapshot
     require_supported_os
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
@@ -594,20 +426,9 @@ stage_0() {
 
     # defaults.env değerleri config.env source edilmeden önce alınır.
     local def_domain="$DEFAULT_LOCAL_DOMAIN" def_dl="$DOWNLOADS_PATH_DEFAULT"
-    local def_webdav_port="$WEBDAV_PORT" def_wg_port="$WG_PUBLIC_PORT"
-    local prev_webdav_port="$WEBDAV_PORT" prev_wg_port="$WG_PUBLIC_PORT"
-    if [[ -r "$STATE_FILE" ]]; then
-        local state_wg
-        state_wg="$(awk -F= '/^WG_PUBLIC_PORT=/{print $2; exit}' "$STATE_FILE" || true)"
-        [[ "$state_wg" =~ ^[0-9]+$ ]] && prev_wg_port="$state_wg"
-    fi
     if [[ -r "$CONFIG_FILE" ]]; then
         # shellcheck source=/dev/null
         source "$CONFIG_FILE"
-        prev_webdav_port="${WEBDAV_PORT:-$prev_webdav_port}"
-        if grep -q '^WG_PUBLIC_PORT=' "$CONFIG_FILE"; then
-            prev_wg_port="${WG_PUBLIC_PORT:-$prev_wg_port}"
-        fi
     fi
 
     # DD-119: değerler girdi dosyasından; boş alan defaults.env varsayılanı.
@@ -623,46 +444,8 @@ stage_0() {
         die "downloads yolu '..' içeremez"
     assert_downloads_path_allowed "$DOWNLOADS_PATH"
 
-    WG_PUBLIC_PORT="${INPUT_WG_PUBLIC_PORT:-$def_wg_port}"
-    [[ "$WG_PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "WireGuard UDP portu sayı olmalı"
-    [[ "$WG_PUBLIC_PORT" -ge 1 && "$WG_PUBLIC_PORT" -le 65535 ]] ||
-        die "WireGuard UDP portu 1-65535 arasında olmalı"
-    case "$WG_PUBLIC_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | "$DOZZLE_UI_PORT" | \
-        "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$prev_webdav_port" | "$WG_PANEL_PORT" | \
-        "$FILES_PANEL_PORT" | "$TAILSCALE_UDP_PORT")
-            die "WireGuard UDP portu başka bir stack portuyla çakışıyor: $WG_PUBLIC_PORT"
-            ;;
-    esac
-    if [[ "$WG_PUBLIC_PORT" != "$prev_wg_port" ]]; then
-        log INFO "WireGuard UDP portu değişti: $prev_wg_port → $WG_PUBLIC_PORT (wg0.conf ve firewall yeniden yazılacak)"
-    fi
-
-    WEBDAV_PORT="${INPUT_WEBDAV_PORT:-$def_webdav_port}"
-    [[ "$WEBDAV_PORT" =~ ^[0-9]+$ ]] || die "WebDAV portu sayı olmalı"
-    [[ "$WEBDAV_PORT" -ge 1 && "$WEBDAV_PORT" -le 65535 ]] ||
-        die "WebDAV portu 1-65535 arasında olmalı"
-    case "$WEBDAV_PORT" in
-        "$DNS_PORT" | "$CADDY_HTTP_PORT" | "$SSH_PUBLIC_PORT" | "$WG_PUBLIC_PORT" | "$TORRENT_PUBLIC_PORT" | \
-        "$DOZZLE_UI_PORT" | "$FILEBROWSER_UI_PORT" | "$TORRENT_UI_PORT" | "$WG_PANEL_PORT" | \
-        "$FILES_PANEL_PORT" | "$TAILSCALE_UDP_PORT")
-            die "WebDAV portu başka bir stack portuyla çakışıyor: $WEBDAV_PORT"
-            ;;
-    esac
-    # DD-136: panelde eklenen WireGuard ağlarının portları da dolu sayılır.
-    if [[ -f "$WG_NETWORKS_FILE" ]]; then
-        local net_iface net_port
-        while IFS=$'\t' read -r net_iface net_port _; do
-            [[ "$net_iface" =~ ^wg[1-9]$ ]] || continue
-            [[ "$WG_PUBLIC_PORT" != "$net_port" && "$WEBDAV_PORT" != "$net_port" ]] ||
-                die "port $net_port panelde eklenen WireGuard ağında ($net_iface) kullanılıyor"
-        done <"$WG_NETWORKS_FILE"
-    fi
-    WEBDAV_PORT_CHANGED=0
-    if [[ "$WEBDAV_PORT" != "$prev_webdav_port" ]]; then
-        WEBDAV_PORT_CHANGED=1
-        log INFO "WebDAV portu değişti: $prev_webdav_port → $WEBDAV_PORT (compose + Caddy)"
-    fi
+    # DD-143: WireGuard portu artık girdi değil. state.env'deki değer yalnız Konsol'un
+    # ilk ağa önerdiği porttur; ağı ve portunu master-wg net-add doğrular.
 
     detect_wan
     WG_ENDPOINT_HOST="$WAN_IPV4"
@@ -670,10 +453,6 @@ stage_0() {
     # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
     # karşılaştırılır; farklıysa aşama 1 (WebDAV) ve 4 (Dozzle, FileBrowser,
     # qBittorrent) günceller. Parolalar yalnız bellekte durur.
-    WEBDAV_NEW_USER="$INPUT_WEBDAV_USER"
-    WEBDAV_NEW_PASS="$INPUT_WEBDAV_PASS"
-    validate_account WebDAV "$WEBDAV_NEW_USER" "$WEBDAV_NEW_PASS" \
-        '^[a-z][a-z0-9._-]{0,31}$' "$WEBDAV_MIN_PASSWORD_LENGTH"
     # DD-116: Dozzle parolası aşama 4'te imajın kendi aracına stdin'den gider.
     DOZZLE_NEW_USER="$INPUT_DOZZLE_USER"
     DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
@@ -695,6 +474,11 @@ stage_0() {
     WG_PANEL_NEW_PASS="$INPUT_WG_PANEL_PASS"
     validate_account "WireGuard paneli" "$WG_PANEL_NEW_USER" "$WG_PANEL_NEW_PASS" \
         '^[a-z][a-z0-9_-]{0,31}$' "$WG_PANEL_MIN_PASSWORD_LENGTH"
+    # DD-141: paylaşım WebDAV'ı; bütün paylaşımlar bu tek hesapla açılır.
+    SHARE_NEW_USER="$INPUT_SHARE_USER"
+    SHARE_NEW_PASS="$INPUT_SHARE_PASS"
+    validate_account "Paylaşım" "$SHARE_NEW_USER" "$SHARE_NEW_PASS" \
+        '^[a-z][a-z0-9._-]{0,31}$' "$SHARE_MIN_PASSWORD_LENGTH"
 
     # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
     # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
@@ -761,14 +545,11 @@ stage_0() {
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Downloads:     $DOWNLOADS_PATH
-  WireGuard:     UDP $WG_PUBLIC_PORT (peer'lar sunucuda; eklemek/çıkarmak: wireguard.command)
-  WebDAV portu:  $WEBDAV_PORT
-  Hesaplar:      WebDAV $WEBDAV_NEW_USER, Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER,
-                 WireGuard ve dosya paneli $WG_PANEL_NEW_USER
+  WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
+  Hesaplar:      Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER,
+                 Konsol $WG_PANEL_NEW_USER, paylaşım $SHARE_NEW_USER
                  (dosyadakinden farklı olan hesap güncellenir)
   Tailscale key: $ts_key_note
-  Hazır ayarlar: $(snapshot_note)
-                 (yalnız sunucuda karşılığı yoksa kullanılır)
   full-upgrade:  $yes_no_upgrade
   image pull:    $yes_no_pull
 
@@ -824,32 +605,42 @@ stage_1() {
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
 
-    ensure_webdav_htpasswd
+    ensure_share_account
 }
 
 # DD-119: htpasswd tek satırda dosyadaki hesabı taşıyorsa dokunulmaz; değilse
-# yeniden yazılır ve çalışan webdav yeniden başlatılır (secret bir bind mount:
+# yeniden yazılır ve çalışan konteyner yeniden başlatılır (secret bir bind mount:
 # `mv` sonrası konteyner eski dosyayı görür). Parola stdin'den gider.
-ensure_webdav_htpasswd() {
+# DD-141: paylaşım hesabı iki dosyaya yazılır: rclone'un okuduğu htpasswd (bcrypt) ve
+# Konsol'un gösterip kopyalattığı düz metin kopya (root'a özel, dosya arka ucuna yalnız
+# systemd kimlik bilgisi olarak açılır). İkisi de aynı girdiden gelir, ayrışamazlar.
+ensure_share_account() {
     local tmp
-    [[ -n "${WEBDAV_NEW_PASS:-}" ]] || return 0
-    if [[ -f "$WEBDAV_HTPASSWD_FILE" && "$(wc -l <"$WEBDAV_HTPASSWD_FILE")" -eq 1 ]] &&
-        printf '%s' "$WEBDAV_NEW_PASS" |
-        htpasswd -vi "$WEBDAV_HTPASSWD_FILE" "$WEBDAV_NEW_USER" >/dev/null 2>&1; then
-        log INFO "WebDAV hesabı girdi dosyasıyla aynı; dokunulmadı"
+    [[ -n "${SHARE_NEW_PASS:-}" ]] || return 0
+    if [[ -f "$SHARE_HTPASSWD_FILE" && "$(wc -l <"$SHARE_HTPASSWD_FILE")" -eq 1 ]] &&
+        printf '%s' "$SHARE_NEW_PASS" |
+        htpasswd -vi "$SHARE_HTPASSWD_FILE" "$SHARE_NEW_USER" >/dev/null 2>&1 &&
+        [[ -f "$SHARE_CRED_FILE" && "$(cat "$SHARE_CRED_FILE")" == "${SHARE_NEW_USER}:${SHARE_NEW_PASS}" ]]; then
+        log INFO "Paylaşım hesabı girdi dosyasıyla aynı; dokunulmadı"
     else
-        tmp="$(mktemp "$STATE_DIR/.htpasswd-XXXXXX")"
-        printf '%s' "$WEBDAV_NEW_PASS" | htpasswd -i -B "$tmp" "$WEBDAV_NEW_USER"
+        tmp="$(mktemp "$STATE_DIR/.paylasim-XXXXXX")"
+        printf '%s' "$SHARE_NEW_PASS" | htpasswd -i -B "$tmp" "$SHARE_NEW_USER"
         chmod 0600 "$tmp"
         chown root:root "$tmp"
-        mv -f "$tmp" "$WEBDAV_HTPASSWD_FILE"
-        log INFO "WebDAV hesabı yazıldı: $WEBDAV_HTPASSWD_FILE ($WEBDAV_NEW_USER)"
-        if docker inspect webdav >/dev/null 2>&1; then
-            docker restart webdav >/dev/null || log WARN "webdav yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
+        mv -f "$tmp" "$SHARE_HTPASSWD_FILE"
+        tmp="$(mktemp "$STATE_DIR/.paylasim-XXXXXX")"
+        printf '%s:%s\n' "$SHARE_NEW_USER" "$SHARE_NEW_PASS" >"$tmp"
+        chmod 0600 "$tmp"
+        chown root:root "$tmp"
+        mv -f "$tmp" "$SHARE_CRED_FILE"
+        log INFO "Paylaşım hesabı yazıldı: $SHARE_HTPASSWD_FILE ($SHARE_NEW_USER)"
+        SHARE_ACCOUNT_CHANGED=1
+        if docker inspect paylasim >/dev/null 2>&1; then
+            docker restart paylasim >/dev/null || log WARN "paylasim yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
         fi
     fi
-    unset WEBDAV_NEW_PASS
-    WEBDAV_NEW_USER=""
+    unset SHARE_NEW_PASS
+    SHARE_NEW_USER=""
 }
 
 apply_udp_netbuf_floor() {
@@ -1423,7 +1214,9 @@ stage_3() {
         "$DOWNLOADS_PATH/media/movies" \
         "$DOWNLOADS_PATH/media/series" \
         "$DOWNLOADS_PATH/.unpackerr" \
-        "$DOWNLOADS_PATH/$FILES_PANEL_TRASH"; do
+        "$DOWNLOADS_PATH/$FILES_PANEL_TRASH" \
+        "$DOWNLOADS_PATH/$SHARE_DIR" \
+        "$DOWNLOADS_PATH/$SHARE_DIR/w"; do
         mkdir -p "$d"
     done
     local fixed
@@ -1478,12 +1271,13 @@ stage_4() {
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        SHARE_DIR="$SHARE_DIR" \
+        SHARE_PORT="$SHARE_PORT" \
+        SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
-        WEBDAV_PORT="$WEBDAV_PORT" \
-        WEBDAV_HTPASSWD_FILE="$WEBDAV_HTPASSWD_FILE" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
@@ -1542,10 +1336,10 @@ stage_4() {
 }
 
 stage_5() {
-    log INFO "Aşama 5/7 — firewall (WebDAV Compose'ta)"
-    [[ -f "$WEBDAV_HTPASSWD_FILE" ]] || die "WebDAV htpasswd yok: $WEBDAV_HTPASSWD_FILE"
-    chown root:root "$WEBDAV_HTPASSWD_FILE"
-    chmod 0600 "$WEBDAV_HTPASSWD_FILE"
+    log INFO "Aşama 5/7 — firewall (paylaşım WebDAV'ı Compose'ta)"
+    [[ -f "$SHARE_HTPASSWD_FILE" ]] || die "Paylaşım htpasswd yok: $SHARE_HTPASSWD_FILE"
+    chown root:root "$SHARE_HTPASSWD_FILE" "$SHARE_CRED_FILE"
+    chmod 0600 "$SHARE_HTPASSWD_FILE" "$SHARE_CRED_FILE"
 
     systemctl enable master-firewall.service
     systemctl enable refresh-tailnet-config.service
@@ -1558,8 +1352,8 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
-    restore_wireguard_snapshot
-    ensure_wireguard
+    ensure_wireguard_ready
+    ensure_wg_networks_running
 }
 
 # retry fonksiyonu export -f + bash -c ile ayrı süreçte çalıştırır; diziler
@@ -1602,6 +1396,18 @@ report_resolved_stub_state() {
         sleep 1
     done
     log INFO "resolved stub'ı kapalı — DNSStubListener=no yürürlükte"
+}
+
+# Yapılandırma dosyası servisin başlangıcından yeniyse servis onu okumamıştır:
+# önceki çalıştırma render ile restart arasında düşmüş olabilir. O zaman "dosya
+# aynı" demek yetmez; birim yine de yeniden başlatılır.
+config_newer_than_unit() {
+    local file="$1" unit="$2" started file_ts unit_ts
+    started="$(systemctl show -p ActiveEnterTimestamp --value "$unit" 2>/dev/null || true)"
+    [[ -n "$started" ]] || return 0
+    unit_ts="$(date -d "$started" +%s 2>/dev/null || echo 0)"
+    file_ts="$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+    [[ "$unit_ts" -eq 0 || "$file_ts" -gt "$unit_ts" ]]
 }
 
 stage_6() {
@@ -1675,16 +1481,15 @@ EOF
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
-        FILES_PANEL_PORT="$FILES_PANEL_PORT"
+        FILES_PANEL_PORT="$FILES_PANEL_PORT" \
+        SHARE_PORT="$SHARE_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
-    # {$WEBDAV_PORT} Caddyfile'da sabit değil; state.env değişince yeniden başlat.
-    [[ "${WEBDAV_PORT_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
     # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
     # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
     # doğrula (DD-106). Çıktı normalde JSON log satırları; hata satırını süz,
     # bulunamazsa son satırı göster.
     if ! validate_out="$(
-        TAILSCALE_IPV4="$TAILSCALE_IPV4" WEBDAV_PORT="$WEBDAV_PORT" \
+        TAILSCALE_IPV4="$TAILSCALE_IPV4" SHARE_PORT="$SHARE_PORT" \
             caddy validate --config "$CADDYFILE" --adapter caddyfile 2>&1
     )"; then
         die "Caddyfile geçersiz ($CADDYFILE): $(
@@ -1734,12 +1539,14 @@ EOF
     systemctl daemon-reload
     systemctl unmask dnsmasq caddy 2>/dev/null || true
     systemctl enable dnsmasq caddy
-    if [[ "$dnsmasq_changed" -eq 1 ]] || ! systemctl is-active --quiet dnsmasq; then
+    if [[ "$dnsmasq_changed" -eq 1 ]] || ! systemctl is-active --quiet dnsmasq ||
+        config_newer_than_unit "$DNSMASQ_CONF_FILE" dnsmasq.service; then
         systemctl restart dnsmasq
     else
         log INFO "dnsmasq yapılandırması aynı; yeniden başlatılmadı"
     fi
-    if [[ "$caddy_changed" -eq 1 ]] || ! systemctl is-active --quiet caddy; then
+    if [[ "$caddy_changed" -eq 1 ]] || ! systemctl is-active --quiet caddy ||
+        config_newer_than_unit "$CADDYFILE" caddy.service; then
         systemctl restart caddy
     else
         log INFO "Caddy yapılandırması aynı; yeniden başlatılmadı"
@@ -1772,22 +1579,17 @@ ensure_caddy_wg() {
         WG_CONF_DIR="${WG_CONF_FILE%/*}" \
         CADDY_WG_FILE="$CADDY_WG_FILE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    local wg0_changed="$changed"
-    atomic_write "${WG_CONF_FILE%/*}/caddy-wg-${WG_INTERFACE}.env" 0644 <<<"WG_BIND=${WG_SERVER_IPV4}"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && wg0_changed=1
     systemctl daemon-reload
-    systemctl enable --quiet "caddy-wg@${WG_INTERFACE}.service"
-    if [[ "$wg0_changed" -eq 1 ]] || ! systemctl is-active --quiet "caddy-wg@${WG_INTERFACE}.service"; then
-        systemctl restart "caddy-wg@${WG_INTERFACE}.service"
-    else
-        log INFO "caddy-wg yapılandırması aynı; yeniden başlatılmadı"
-    fi
-    if [[ "$changed" -eq 1 && -f "$WG_NETWORKS_FILE" ]]; then
+    # DD-143: örnek birimleri ağlarla birlikte master-wg açar; kurulum yalnız şablonu
+    # günceller ve şablon değiştiyse ayakta olanları yeniler.
+    if [[ "$changed" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r iface _; do
-            [[ "$iface" =~ ^wg[1-9]$ ]] || continue
+            [[ "$iface" =~ ^wg[0-9]$ ]] || continue
             systemctl try-restart "caddy-wg@${iface}.service" ||
                 log WARN "caddy-wg@${iface} yeniden başlatılamadı"
         done <"$WG_NETWORKS_FILE"
+    else
+        log INFO "caddy-wg yapılandırması aynı; yeniden başlatılmadı"
     fi
 }
 
@@ -1799,10 +1601,6 @@ ensure_wg_panel() {
     local changed="${1:-0}" f out
     atomic_write "$SBIN_DIR/master-wg-panel" 0755 <"$V2_ROOT/panel/master-wg-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    install -d -m 0755 "$WG_PANEL_WEB_DIR"
-    for f in index.html panel.css panel.js; do
-        atomic_write "$WG_PANEL_WEB_DIR/$f" 0644 <"$V2_ROOT/panel/$f"
-    done
     if [[ -n "${WG_PANEL_NEW_PASS:-}" ]]; then
         out="$(printf '%s' "$WG_PANEL_NEW_PASS" |
             python3 "$SBIN_DIR/master-wg-panel" account --auth "$WG_PANEL_AUTH_FILE" --user "$WG_PANEL_NEW_USER")" ||
@@ -1819,12 +1617,10 @@ ensure_wg_panel() {
     chown root:root "$WG_PANEL_AUTH_FILE"
     chmod 0600 "$WG_PANEL_AUTH_FILE"
     render_template "$V2_ROOT/systemd/master-wg-panel.service" "$UNIT_DIR/master-wg-panel.service" 0644 \
-        WG_INTERFACE="$WG_INTERFACE" \
         SBIN_DIR="$SBIN_DIR" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         STATE_FILE="$STATE_FILE" \
         WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
-        WG_PANEL_WEB_DIR="$WG_PANEL_WEB_DIR" \
         WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
         WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
         WG_MTU="$WG_MTU"
@@ -1865,9 +1661,9 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    install -d -m 0755 "$FILES_PANEL_WEB_DIR"
-    for f in index.html panel.css panel.js; do
-        atomic_write "$FILES_PANEL_WEB_DIR/$f" 0644 <"$V2_ROOT/files-panel/$f"
+    install -d -m 0755 "$CONSOLE_WEB_DIR"
+    for f in index.html konsol.css konsol.js; do
+        atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
     temp_dir="$(awk -F= '$1 == "Session\\TempPath" {print $2; exit}' "$V2_ROOT/templates/qBittorrent.conf")"
     temp_dir="${temp_dir#/downloads/}"
@@ -1876,8 +1672,10 @@ ensure_files_panel() {
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
-        FILES_PANEL_WEB_DIR="$FILES_PANEL_WEB_DIR" \
+        CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        SHARE_DIR="$SHARE_DIR" \
+        SHARE_CRED_FILE="$SHARE_CRED_FILE" \
         WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         FILES_PANEL_USER="$user" \
@@ -1887,6 +1685,7 @@ ensure_files_panel() {
         QBITTORRENT_TEMP_DIR="$temp_dir"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "${WG_PANEL_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
+    [[ "${SHARE_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-files-panel.service
     if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-files-panel.service; then
@@ -1898,50 +1697,56 @@ ensure_files_panel() {
     fi
 }
 
-assert_webdav_readonly_runtime() {
-    local cmd rootfs mounts
-    cmd="$(docker inspect webdav --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
+# DD-142: sunucudaki tek WebDAV paylaşımdır; salt okunur ve kökü yalnız .pay/w.
+assert_share_readonly_runtime() {
+    local label="Paylaşım WebDAV'ı" cmd rootfs mounts
+    cmd="$(docker inspect paylasim --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
     [[ "$cmd" == *"--read-only"* ]] ||
-        die "WebDAV komutunda --read-only yok"
+        die "$label komutunda --read-only yok"
 
     rootfs="$(
-        docker inspect webdav --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true
+        docker inspect paylasim --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true
     )"
     [[ "$rootfs" == "true" ]] ||
-        die "WebDAV root filesystem read-only değil (ReadonlyRootfs=$rootfs)"
+        die "$label root filesystem read-only değil (ReadonlyRootfs=$rootfs)"
 
     mounts="$(
-        docker inspect webdav --format \
+        docker inspect paylasim --format \
             '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true
     )"
     grep -qx '/downloads false' <<<"$mounts" ||
-        die "WebDAV /downloads mount RW=false değil"
+        die "$label /downloads mount RW=false değil"
+    # Paylaşım yalnız paylaşım kökünü sunar: indirme klasörünün tamamı hiçbir yerde yayımlanmaz.
+    [[ "$cmd" == *"/downloads/${SHARE_DIR}/w"* ]] ||
+        die "Paylaşım WebDAV'ının kökü /downloads/${SHARE_DIR}/w değil"
+    [[ "$cmd" == *"--copy-links"* ]] ||
+        die "Paylaşım WebDAV'ında --copy-links yok (paylaşılan ögeler görünmez)"
 }
 
-assert_webdav_network() {
+assert_share_network() {
     local nets count
     nets="$(
-        docker inspect webdav --format \
+        docker inspect paylasim --format \
             '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' \
             2>/dev/null || true
     )"
-    grep -qx 'webdav' <<<"$nets" || die "webdav konteyneri webdav ağına bağlı değil"
+    grep -qx 'paylasim' <<<"$nets" || die "paylasim konteyneri paylasim ağına bağlı değil"
     count="$(grep -c . <<<"$nets" || true)"
-    [[ "$count" -eq 1 ]] || die "webdav beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
+    [[ "$count" -eq 1 ]] || die "paylasim beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
 }
 
-wait_webdav_healthy() {
+wait_share_healthy() {
     local attempt status
     for attempt in $(seq 1 36); do
         status="$(
-            docker inspect webdav --format \
+            docker inspect paylasim --format \
                 '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
                 2>/dev/null || echo missing
         )"
         [[ "$status" == "healthy" ]] && return 0
         sleep 2
     done
-    die "webdav healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
+    die "paylasim healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
 }
 
 stage_7() {
@@ -1961,7 +1766,9 @@ stage_7() {
         fi
     fi
     if [[ "$need_up" -eq 1 ]]; then
-        (cd "$COMPOSE_DIR" && docker compose up -d)
+        # --remove-orphans: compose dosyası tek doğruluk kaynağıdır; dosyadan çıkarılan
+        # bir servisin konteyneri ayakta kalmaz (DD-142'de kaldırılan webdav gibi).
+        (cd "$COMPOSE_DIR" && docker compose up -d --remove-orphans)
     else
         log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
     fi
@@ -1969,8 +1776,8 @@ stage_7() {
         log INFO "docker image prune (eski imaj katmanları temizleniyor)"
         docker image prune -f >/dev/null || log WARN "docker image prune başarısız (yok sayıldı)"
     fi
-    wait_webdav_healthy
-    assert_webdav_network
+    wait_share_healthy
+    assert_share_network
     "$SBIN_DIR/master-firewall" --check
 
     # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
@@ -2051,20 +1858,10 @@ stage_7() {
     unset TORRENT_NEW_PASS
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://127.0.0.1:${WEBDAV_PORT}/" || true)"
-    [[ "$code" == "401" ]] || die "WebDAV loopback kimlik doğrulamasız yanıt $code (beklenen 401)"
+        "http://127.0.0.1:${SHARE_PORT}/" || true)"
+    [[ "$code" == "401" ]] || die "Paylaşım loopback kimlik doğrulamasız yanıt $code (beklenen 401)"
 
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: webdav.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] ||
-        die "WebDAV Caddy üzerinden kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/" || true)"
-    [[ "$code" == "401" ]] ||
-        die "WebDAV Caddy TS-IP:${WEBDAV_PORT} kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    assert_webdav_readonly_runtime
+    assert_share_readonly_runtime
 
     (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
         grep -q "${TORRENT_PUBLIC_PORT}/tcp" ||
@@ -2073,16 +1870,16 @@ stage_7() {
         grep -q "${TORRENT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${TORRENT_PUBLIC_PORT} publish yok"
 
-    for svc in dozzle filebrowser webdav; do
+    for svc in dozzle filebrowser paylasim; do
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" ]] && continue
             [[ "$line" == *127.0.0.1:* ]] ||
                 die "UI publish yalnız loopback olmalı: $svc ($line)"
         done < <((cd "$COMPOSE_DIR" && docker port "$svc") 2>/dev/null || true)
     done
-    (cd "$COMPOSE_DIR" && docker port webdav) 2>/dev/null |
-        grep -q "127.0.0.1:${WEBDAV_PORT}" ||
-        die "webdav loopback publish ${WEBDAV_PORT} yok"
+    (cd "$COMPOSE_DIR" && docker port paylasim) 2>/dev/null |
+        grep -q "127.0.0.1:${SHARE_PORT}" ||
+        die "paylasim loopback publish ${SHARE_PORT} yok"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         [[ "$line" == *"${TORRENT_PUBLIC_PORT}/"* ]] && continue
@@ -2090,60 +1887,94 @@ stage_7() {
             die "qBittorrent UI publish yalnız loopback olmalı ($line)"
     done < <((cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null || true)
 
-    # DD-120: WireGuard ayakta, girdi profilleri kadar peer, arayüzler WireGuard
-    # adresinde caddy-wg'den non-5xx.
-    local wg_port wg_ui_port
-    wg_port="$(wg show "$WG_INTERFACE" listen-port 2>/dev/null || true)"
-    [[ "$wg_port" == "$WG_PUBLIC_PORT" ]] ||
-        die "WireGuard $WG_INTERFACE dinleme portu '${wg_port}' (beklenen $WG_PUBLIC_PORT)"
-    WG_PEER_COUNT="$(wg show "$WG_INTERFACE" peers 2>/dev/null | grep -c . || true)"
+    # DD-120/DD-143: WireGuard katmanı hazır; kayıtta ağ varsa her biri ayakta, portu
+    # kaydındaki port ve erişimi "ui" olanın arayüzleri caddy-wg'den non-5xx.
+    local wg_iface wg_scope wg_s4 wg_port wg_ui_port
     "$SBIN_DIR/master-wg" version >/dev/null ||
         die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
-    ip -4 -o addr show dev "$WG_INTERFACE" 2>/dev/null | grep -q " ${WG_SERVER_IPV4}/" ||
-        die "WireGuard $WG_INTERFACE üzerinde $WG_SERVER_IPV4 yok"
-    for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"; do
-        ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            "http://${WG_SERVER_IPV4}:${wg_ui_port}/" || true)"
-        [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
-            die "caddy-wg ${WG_SERVER_IPV4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
-    done
+    [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard modül dosyası yok: $WG_MODULES_LOAD_FILE"
+    WG_PEER_COUNT=0
+    WG_NET_COUNT=0
+    if [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
+        while IFS=$'\t' read -r wg_iface wg_port wg_scope wg_s4 _; do
+            [[ "$wg_iface" =~ ^wg[0-9]$ ]] || continue
+            WG_NET_COUNT=$((WG_NET_COUNT + 1))
+            [[ "$(wg show "$wg_iface" listen-port 2>/dev/null || true)" == "$wg_port" ]] ||
+                die "WireGuard $wg_iface dinleme portu kayıttaki $wg_port değil"
+            ip -4 -o addr show dev "$wg_iface" 2>/dev/null | grep -q " ${wg_s4}/" ||
+                die "WireGuard $wg_iface üzerinde $wg_s4 yok"
+            WG_PEER_COUNT=$((WG_PEER_COUNT + $(wg show "$wg_iface" peers 2>/dev/null | grep -c . || true)))
+            [[ "$wg_scope" == ui ]] || continue
+            for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"; do
+                ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                    "http://${wg_s4}:${wg_ui_port}/" || true)"
+                [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
+                    die "caddy-wg ${wg_s4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
+            done
+        done <"$WG_NETWORKS_FILE"
+    fi
 
-    # DD-133: panel tailnet'ten girişsiz 401 verir, kurulum.env hesabıyla peer listesini
-    # döndürür; WireGuard adresinde dinlenmez.
+    # DD-140: Konsol tailnet'ten girişsiz 401 verir, kurulum.env hesabıyla iki arka uca da
+    # ulaşır; eski adresler panele yönlenir ve panel WireGuard adresinde dinlenmez.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: wg.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] || die "WireGuard paneli girişsiz yanıt $code verdi (beklenen 401)"
+        -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+    [[ "$code" == "401" ]] || die "Konsol girişsiz yanıt $code verdi (beklenen 401)"
+    local redir
+    for redir in wg dosya; do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            -H "Host: ${redir}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+        [[ "$code" == "302" ]] || die "${redir}.${LOCAL_DOMAIN} panele yönlenmedi (HTTP $code)"
+    done
     local panel_out
     panel_out="$(printf '%s' "$WG_PANEL_NEW_PASS" | python3 "$SBIN_DIR/master-wg-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/state" --host "wg.${LOCAL_DOMAIN}" \
+        --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" \
         --user "$WG_PANEL_NEW_USER" 2>&1)" ||
         die "WireGuard paneli kurulum.env hesabıyla açılmadı: $panel_out"
-    log INFO "WireGuard paneli hesapla açıldı: http://wg.${LOCAL_DOMAIN} ($panel_out)"
-    # DD-139: dosya paneli girişsiz 401, aynı hesapla açılır, kök yazılabilir, root değil.
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: dosya.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] || die "Dosya paneli girişsiz yanıt $code verdi (beklenen 401)"
+    log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
+    # DD-139: dosya arka ucu aynı hesapla açılır, kök yazılabilir, root değil.
     local files_out files_uid svc
     files_out="$(printf '%s' "$WG_PANEL_NEW_PASS" | python3 "$SBIN_DIR/master-files-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/state" --host "dosya.${LOCAL_DOMAIN}" \
+        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" \
         --user "$WG_PANEL_NEW_USER" 2>&1)" ||
         die "Dosya paneli WireGuard paneli hesabıyla açılmadı: $files_out"
     unset WG_PANEL_NEW_PASS
-    log INFO "Dosya paneli hesapla açıldı: http://dosya.${LOCAL_DOMAIN} ($files_out)"
+    log INFO "Konsol dosya arka ucu açıldı: $files_out"
     files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
     [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
         die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
-        "http://${WG_SERVER_IPV4}:${FILES_PANEL_PORT}/" || true)"
-    [[ "$code" == "000" ]] || die "Dosya paneli WireGuard adresinde yanıt verdi (HTTP $code)"
+    # DD-143: ağ varsa Konsol o ağın sunucu adresinde dinlememeli (ağ yoksa denetim atlanır).
+    local wg_first_addr=""
+    [[ ! -f "${WG_NETWORKS_FILE:-}" ]] ||
+        wg_first_addr="$(awk -F'\t' '$1 ~ /^wg[0-9]$/ {print $4; exit}' "$WG_NETWORKS_FILE")"
+    if [[ -n "$wg_first_addr" ]]; then
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+            "http://${wg_first_addr}:${FILES_PANEL_PORT}/" || true)"
+        [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
+    fi
     # Çöp unpackerr'a ve WebDAV'a boş görünmeli: içindeki arşivler yeniden açılmaz, Infuse listelemez.
-    for svc in unpackerr webdav; do
-        docker exec "$svc" sh -c "grep -q ' /downloads/${FILES_PANEL_TRASH} tmpfs ' /proc/mounts" ||
-            die "$svc konteyneri çöp klasörünü (/downloads/${FILES_PANEL_TRASH}) boş tmpfs olarak görmüyor"
-    done
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
-        "http://${WG_SERVER_IPV4}:${WG_PANEL_PORT}/" || true)"
-    [[ "$code" == "000" ]] || die "WireGuard paneli WireGuard adresinde yanıt verdi (HTTP $code)"
+    # DD-141: paylaşım salt okunur ve girişsiz açılmaz; kök klasör indirme sahibinde.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: paylas.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
+    [[ "$code" == "401" ]] || die "Paylaşım WebDAV'ı girişsiz yanıt $code verdi (beklenen 401)"
+    # DD-141: Infuse adı çözemeyen istemciler için IP:port adresi de açık olmalı.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        "http://${TAILSCALE_IPV4}:${SHARE_PORT}/" || true)"
+    [[ "$code" == "401" ]] || die "Paylaşım ${TAILSCALE_IPV4}:${SHARE_PORT} adresinde yanıt $code verdi (beklenen 401)"
+    local share_owner
+    share_owner="$(stat -c '%u:%g' "$DOWNLOADS_PATH/$SHARE_DIR/w" 2>/dev/null || true)"
+    [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
+        die "Paylaşım kökü ${DOWNLOADS_PATH}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
+
+    # DD-139/DD-141: unpackerr çöpü ve paylaşım klasörünü boş görür (arşivler yeniden açılmasın).
+    docker exec unpackerr sh -c "grep -q ' /downloads/${FILES_PANEL_TRASH} tmpfs ' /proc/mounts" ||
+        die "unpackerr konteyneri çöp klasörünü (/downloads/${FILES_PANEL_TRASH}) boş tmpfs olarak görmüyor"
+    docker exec unpackerr sh -c "grep -q ' /downloads/${SHARE_DIR} tmpfs ' /proc/mounts" ||
+        die "unpackerr konteyneri paylaşım klasörünü (/downloads/${SHARE_DIR}) boş tmpfs olarak görmüyor"
+    if [[ -n "$wg_first_addr" ]]; then
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+            "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
+        [[ "$code" == "000" ]] || die "Konsol arka ucu WireGuard adresinde yanıt verdi (HTTP $code)"
+    fi
 
     log INFO "Temel doğrulamalar geçti"
 }
@@ -2151,15 +1982,13 @@ stage_7() {
 print_summary() {
     local qb_note="kurulum.env hesabı; ayarlar templates/qBittorrent.conf"
     log INFO "Kurulum tamam — v$V2_VERSION"
-    [[ "${WG_RESTORED:-0}" -ne 1 ]] ||
-        log INFO "WireGuard kurulum/wireguard'tan geri yüklendi: cihazlar mevcut profilleriyle bağlanır"
     cat <<EOF
 
 WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Downloads:    $DOWNLOADS_PATH
-WireGuard:    ${WG_INTERFACE} UDP ${WG_PUBLIC_PORT}, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST)
+WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; ağları Konsol kurar)
 Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
@@ -2170,16 +1999,15 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-WireGuard paneli: http://wg.${LOCAL_DOMAIN} (peer ekle/çıkar, QR, DNS; yalnız Tailscale, kurulum.env hesabı)
-Dosya paneli: http://dosya.${LOCAL_DOMAIN} (${DOWNLOADS_PATH}: gez, taşı, yeniden adlandır, çöp, metin oku; aynı hesap)
+Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${DOWNLOADS_PATH} dosya yöneticisi,
+  sunucu durumu ve günlük; yalnız Tailscale, kurulum.env hesabı. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
+Paylaşım: http://paylas.${LOCAL_DOMAIN} (Konsol'dan paylaşılanlar; salt okunur, tek hesap, yalnız Tailscale)
+  Infuse: http://${TAILSCALE_IPV4}:${SHARE_PORT}/ (ad çözemeyen istemciler için aynı paylaşım)
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
-WebDAV: http://webdav.${LOCAL_DOMAIN} (MagicDNS)
-  Infuse: http://${TAILSCALE_IPV4}:${WEBDAV_PORT}/ (Caddy → loopback; Compose'a IP yok)
-WireGuard üzerinden arayüzler (yalnız IP:port; tailnet ve WebDAV kapalı):
-  Dozzle http://${WG_SERVER_IPV4}:${DOZZLE_UI_PORT}  qBittorrent http://${WG_SERVER_IPV4}:${TORRENT_UI_PORT}  FileBrowser http://${WG_SERVER_IPV4}:${FILEBROWSER_UI_PORT}
-  Peer eklemek/çıkarmak, QR: Mac'te wireguard.command (peer sunucuda üretilir, profil kurulum/wireguard'a alınır)
-WireGuard yedeği (yeniden kurulumda geri yüklenir): Mac'te wireguard.command → 6) Yedek al
+WireGuard: ${WG_NET_COUNT:-0} ağ. Yoksa Konsol → WireGuard → Yapılandır ile ilk ağı kurun;
+  "Local erişim" açık ağlarda Dozzle/qBittorrent/FileBrowser o ağın sunucu adresinde açılır.
+  Peer eklemek/çıkarmak ve QR: Konsol ya da Mac'te wireguard.command (anahtarlar sunucuda üretilir).
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF
@@ -2194,7 +2022,6 @@ main() {
     stage_4
     stage_5
     # DD-128: hazır ayarların işi bitti; anahtarlar /run'da kalmaz.
-    rm -rf -- "$RESTORE_DIR"
     stage_6
     stage_7
     print_summary

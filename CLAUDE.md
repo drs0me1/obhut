@@ -93,13 +93,15 @@ state. Treat every change as production-infrastructure work.
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
-| `wireguard.command` (root) | WireGuard peer menu: list/add/remove/QR over SSH (**DD-124**); 6) Yedek al pulls `wg0.conf` and profiles into `kurulum/` without printing them (**DD-128**); 7) DNS change, 8) wg0 regenerate after typing `onayla`; 2, 3, 7 and 8 back up automatically (**DD-130**) |
+| `wireguard.command` (root) | WireGuard peer menu over SSH (**DD-124**, **DD-143**): pick a network, list/add/remove/QR, 7) DNS change, 8) regenerate the network after typing `onayla`. Nothing is uploaded and nothing is kept on the Mac |
 | `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
-| `kurulum/wireguard/` (root) | Device profiles and their QR pictures (`<name>.png`, **DD-132**), plus `sunucu/wg0.conf` (server key + peers), mode 600; only the `.conf` files are sent, for restore on a server without `wg0.conf` |
+| `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
-| `Data/panel/` | WireGuard web panel (`master-wg-panel`, Python stdlib, `127.0.0.1:61008` → Caddy `wg.<domain>`, tailnet only; page files) built on `master-wg`; tabs per network, "Arayüz ekle" creates wg1…wg9 (**DD-133**, **DD-136**) |
-| `Data/files-panel/` | File panel for the downloads folder (`master-files-panel`, Python stdlib, `127.0.0.1:61009` → Caddy `dosya.<domain>`, tailnet only, same account as the WireGuard panel, runs as the downloads uid; trash in `.cop`) (**DD-139**) |
+| `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only; `wg.` and `dosya.` redirect there (**DD-140**). Design mockups in `Data/docs/design/` |
+| WebDAV (`paylasim`) | The only rclone container: read-only, root `DOWNLOADS_PATH/.pay/w` (symlinks made by the file backend) at Caddy `paylas.<domain>` and `<tailscale-ip>:61010`; one account from `kurulum.env`. The downloads folder as a whole is not published (**DD-141**, **DD-142**) |
+| `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, `127.0.0.1:61008`, `/api/wg/*` only) built on `master-wg`; networks wg1…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
+| `Data/files-panel/` | Konsol's file backend and page server (`master-files-panel`, Python stdlib, `127.0.0.1:61009`, runs as the downloads uid, same account as the WireGuard backend; trash in `.cop`) (**DD-139**, **DD-140**) |
 | `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |

@@ -45,6 +45,63 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-16 — v2-109, the installer no longer creates WireGuard (DD-143):**
+- User's decision: cut the Mac link (no snapshot, no peer preservation, no upload) and let the panel create
+  interfaces and devices; `wireguard.command` keeps working over SSH.
+- Measured first on nrm: deleting `wg0.conf` left `master-wg list` failing with a raw error, the panel
+  logging "sayaç okunamadı" every 10 s and a phantom `wg0` card — the fragility was `wg0` being special.
+- Built: every network (including the first) lives in the registry and is created by `master-wg net-add`
+  (`wg0` allocatable, `clients-wg<N>` for all, `net-remove` allowed for any); the firewall reads only the
+  registry and is valid with zero networks; the installer only prepares the layer and applies the registry;
+  Konsol shows a "WireGuard yapılandırılmadı → Yapılandır" card; `wireguard.command` picks a network and
+  lost its backup; `WG_PUBLIC_PORT` and the whole snapshot/restore path are gone.
+- bats 150 ok. Live on nrm: WireGuard wiped, clean install (0 networks, firewall passes, module loaded),
+  first network created from the console (wg0 up with caddy-wg, peer added, profile in clients-wg0), second
+  network added and removed, off/on, installer re-run keeps the network, reboot brings everything back,
+  `wireguard.command` lists the peer through the selected network.
+
+**2026-09-16 — v2-107 and v2-108, the share is the only WebDAV (DD-141, DD-142):**
+- v2-107: the share also answers on `{$TAILSCALE_IPV4}:{$SHARE_PORT}`, like the Infuse WebDAV did (DD-98) —
+  an Apple TV could not resolve the MagicDNS name. The console shows both addresses; copy falls back to
+  `execCommand` because the console is plain HTTP.
+- v2-108 (user's decision): the WebDAV that served all of `DOWNLOADS_PATH` is gone. One rclone
+  (`paylasim`) serves only the share root, so nothing is published unless it was shared from Konsol.
+  Removed: the `webdav` service, `webdav.<domain>`, port 61003, `WEBDAV_USER/PASS/PORT` and
+  `webdav.htpasswd`. `docker compose up` now runs `--remove-orphans`.
+- bats 156 ok. Live on nrm: install, the retired container gone, 61003 closed, `webdav.ayc` no longer
+  resolving, share round trip on both addresses, non-shared paths 404. Leftovers the installer does not
+  touch (no migration code): `/etc/master-stack/webdav.htpasswd` and the `webdav` docker network — removed
+  by hand on nrm; the operator must do the same on their own server.
+
+**2026-09-16 — v2-106, share links (DD-141):**
+- The user's decision from the design round: one account for everything. Built
+  `paylas.<domain>`: a second rclone (`paylasim`), read-only, root
+  `DOWNLOADS_PATH/.pay/w`, `--copy-links`; the file backend creates a relative symlink per share and keeps
+  the registry (`.pay/kayit.json`) outside the served root. Expiry (1/7/30 days or open-ended) is swept on
+  every listing. `.pay` is an empty tmpfs in unpackerr and webdav, and hidden from the file panel.
+- Console: share icon per row, a chip on shared items, a Paylaşımlar card with the address/user/password
+  (reveal + copy, with an `execCommand` fallback because the console is plain HTTP) and the active list.
+- Two bugs found by the live runs, both fixed with a test: a template placeholder with no render variable
+  (the new `SHARE_PORT` in the Caddyfile) and a service left on the old configuration when an earlier run
+  died between render and restart (`config_newer_than_unit`).
+- bats 156 ok. Live on nrm: clean install of v2-105 on a wiped host, then v2-106; WebDAV listing, folder and
+  single-file shares, PROPFIND, download, refusal of non-shared paths and writes, expiry, removal, reboot.
+
+**2026-09-16 — v2-105, Konsol (DD-140):**
+- The user asked for the WireGuard and file panels to become one admin console; the design was iterated as a
+  mockup and frozen as `Data/docs/design/konsol-v01.html` ("Konsol v01").
+- Built: `Data/console/` (index.html, konsol.css, konsol.js) served by the file backend at
+  `http://panel.<domain>`; Caddy sends `/api/wg/*` to `master-wg-panel` (root, API only now) and the rest to
+  `master-files-panel`; `wg.` and `dosya.` redirect. Both backends: host `panel.<domain>`, header `X-Konsol`,
+  realm `Konsol`. New: system metrics and the ports card from config, the action log from journald, peer and
+  network switches (`master-wg peer|net ac|kapat`, the `#kapali#` marker) and `master-wg keepalive`.
+- bats 152 ok. Live on nrm: install, re-run, reboot; peer off/on (the peer leaves and rejoins the running
+  interface), network off/on/remove, keepalive and DNS, QR, and the whole file API including the trash; the
+  operator's accounts were restored afterwards.
+- Left for the operator: the old page directories `/usr/local/share/master-stack/{wg-panel,files-panel}` are
+  not removed by the installer (no migration code by design) — delete them by hand.
+- Next (designed, not built): share links over a single read-only WebDAV account (`paylas.<domain>`).
+
 **2026-09-15 — v2-104, file panel (DD-139):**
 - The user approved the design artifact (https://claude.ai/artifact/9EP7Z5awyKe2h5QizmaDqN) and decided:
   `/downloads` only, trash, the WireGuard panel's account, FileBrowser stays, no access over WireGuard.

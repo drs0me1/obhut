@@ -107,19 +107,25 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 ### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)
 
 - WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::1/112`, peer'lar `…::N`, UDP 61001).
-- Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wg0.conf`.
+- DD-143: kurulum WireGuard ağı yaratmaz; ağları (ilki dahil) Konsol → WireGuard → Yapılandır ya da `master-wg net-add` kurar ve hepsi `/etc/wireguard/networks` kaydında yaşar. Kurulum yalnız araçları/modülü hazırlar ve kayıttaki ağları uygular; Mac'ten hiçbir dosya okunmaz, sunucuya gönderilmez.
+- Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wgN.conf`.
 - `wireguard.command` → 6) Yedek al sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`) ve profilleri `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
 - `wireguard.command` → 7) DNS değiştir yalnız profilin `DNS =` satırını değiştirir (`master-wg dns`); 8) wg0 yeniden üret `onayla` onayıyla yeni anahtar üretir, bütün peer ve profilleri siler (`master-wg reset --onay`), ardından yedeği günceller.
 - Her profille birlikte QR resmi `kurulum/wireguard/<ad>.png` olarak iner (`master-wg png`, sunucu üretir; izin 600, sunucuya gönderilmez).
 - 2) ekle, 3) çıkar, 7) ve 8) başarılı olunca yedek kendiliğinden alınır (`auto_backup` → 6); vazgeçilen ya da başarısız değişiklikte yedek alınmaz.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
-- WireGuard paneli (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler, tailnet'e Caddy `wg.<alan>` ile açar; WireGuard'dan ve WAN'dan kapalı. Hesap `WG_PANEL_USER`/`WG_PANEL_PASS` (PBKDF2 özeti), `/api/*` için `X-WG-Panel` başlığı ve Host denetimi; her değişiklik `master-wg` ile. Sayfa dış kaynak yüklemez, satır içi kod yok.
+- Konsol'un WireGuard arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler ve yalnız `/api/wg/*` yanıtlar; sayfa sunmaz. Tailnet'e Caddy `panel.<alan>` ile açılır; WireGuard'dan ve WAN'dan kapalı. Hesap `WG_PANEL_USER`/`WG_PANEL_PASS` (PBKDF2 özeti), `/api/*` için `X-Konsol` başlığı ve Host denetimi; her değişiklik `master-wg` ile.
 - Panelden ek ağlar (DD-136): `master-wg net-add/net-remove` wg1…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını o ağda çalıştırır. Güvenlik duvarı kaydı okuyup her ağ için kural kurar ve bozuk kayıtta hiçbir zinciri değiştirmez; `caddy-wg@<arayüz>` şablon birimdir. wireguard.command ve Mac yedeği yalnız wg0'ı kapsar.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
-### Dosya paneli (DD-139)
+### Konsol ve dosya arka ucu (DD-139, DD-140)
 
-- `Data/files-panel/master-files-panel` yalnız `127.0.0.1:61009` dinler, tailnet'e Caddy `dosya.<alan>` ile açar; WireGuard'dan ve WAN'dan kapalı. Hesap WireGuard paneliyle aynı (`LoadCredential`), yeni girdi anahtarı yok.
+- Tek adres: `panel.<alan>`. Caddy `/api/wg/*` isteklerini WireGuard arka ucuna, kalanını (sayfa dosyaları dahil) dosya arka ucuna yollar; `wg.<alan>` ve `dosya.<alan>` 302 ile panele yönlenir. İki arka uç da yalnız bu Host'u kabul eder, aynı hesabı ve `Konsol` realm'ını kullanır.
+- Sayfalar `Data/console/` içindedir (`index.html`, `konsol.css`, `konsol.js`): dış kaynak yüklemez, satır içi kod ya da biçem yoktur, adlar yalnız metin olarak eklenir. Tasarım örnekleri `Data/docs/design/`.
+- Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
+- `Data/files-panel/master-files-panel` yalnız `127.0.0.1:61009` dinler; Konsol sayfalarını da bu servis verir. Hesap WireGuard arka ucuyla aynı (`LoadCredential`), yeni girdi anahtarı yok.
+- Sunucudaki tek WebDAV paylaşımdır (DD-142): indirme klasörünün tamamını yayımlayan `webdav` servisi, `webdav.<alan>` adı, 61003 portu ve `WEBDAV_*` girdi anahtarları kaldırıldı. Compose `--remove-orphans` ile çalışır.
+- Paylaşım (DD-141): Konsol'dan paylaşılan klasör/dosya `DOWNLOADS_PATH/.pay/w` içine göreli sembolik bağlantı olarak girer; kayıt `.pay/kayit.json` (sunulmaz). İkinci rclone konteyneri `paylasim` bu kökü `--read-only --copy-links` ile `paylas.<alan>` adresinde sunar, indirme klasörünü `:ro` bağlar. Hesap `SHARE_USER`/`SHARE_PASS`: rclone için bcrypt htpasswd, Konsol'un göstermesi için root'a özel düz kopya. `.pay` unpackerr ve webdav'da boş tmpfs'tir; dosya paneli listede göstermez.
 - Servis root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Yazabildiği tek yer `DOWNLOADS_PATH`.
 - Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
 - `unpackerr` ve `webdav` konteynerleri `.cop`'u boş tmpfs olarak görür (çöpteki arşivler yeniden açılmaz). Bu bağlantıyı kaldırma.

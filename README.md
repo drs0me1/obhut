@@ -87,8 +87,8 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
-| WireGuard panel | loopback → Caddy `wg.<domain>` (tailnet only, login) | peers in the browser: add/remove, QR, profile, DNS, regenerate; extra isolated networks wg1…wg9 (**DD-133**, **DD-136**) |
-| File panel | loopback → Caddy `dosya.<domain>` (tailnet only, WireGuard panel login) | downloads folder in the browser: browse, move, rename, trash, read text files, download (**DD-139**) |
+| WebDAV (shares only) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one account) | the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
+| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, one login; `wg.` and `dosya.` redirect) | one admin console: server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
 | WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound

@@ -1,14 +1,15 @@
 [Unit]
-Description=WireGuard web panel (master-stack, DD-133)
-# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar. Değişiklikleri master-wg yapar.
-After=network-online.target wg-quick@__WG_INTERFACE__.service
+Description=Konsol WireGuard and system backend (master-stack, DD-133, DD-140)
+# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (panel.<alan> altında /api/wg/*).
+# Sayfa dosyalarını dosya arka ucu sunar. Değişiklikleri master-wg yapar.
+After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
 StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen 127.0.0.1:__WG_PANEL_PORT__ --state __STATE_FILE__ --auth __WG_PANEL_AUTH_FILE__ --web __WG_PANEL_WEB_DIR__ --master-wg __SBIN_DIR__/master-wg
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen 127.0.0.1:__WG_PANEL_PORT__ --state __STATE_FILE__ --auth __WG_PANEL_AUTH_FILE__ --master-wg __SBIN_DIR__/master-wg
 Environment="PANEL_DNS_DEFAULT=__WG_CLIENT_DNS_DEFAULT__"
 Environment="PANEL_KEEPALIVE_DEFAULT=__WG_CLIENT_KEEPALIVE_DEFAULT__"
 Environment="PANEL_MTU_DEFAULT=__WG_MTU__"

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-# WireGuard web paneli (DD-133). Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar
-# (http://wg.<alan>). Bütün değişiklikler master-wg ile yapılır: aynı doğrulama,
-# aynı kilit, aynı "kopmadan uygula". Yalnız Python standart kütüphanesi.
+# Konsol'un WireGuard ve sistem arka ucu (DD-133, DD-140). Yalnız 127.0.0.1'i
+# dinler; tailnet'e Caddy açar: http://panel.<alan> altında yalnız /api/wg/*.
+# Sayfanın kendisini Konsol'un öbür arka ucu (master-files-panel) sunar; burası
+# root çalışır ve sayfa dosyası servis etmez. Bütün WireGuard değişiklikleri
+# master-wg ile yapılır: aynı doğrulama, aynı kilit, aynı "kopmadan uygula".
+# Yalnız Python standart kütüphanesi.
 #
-#   master-wg-panel serve --listen 127.0.0.1:PORT --state FILE --auth FILE --web DIR
+#   master-wg-panel serve --listen 127.0.0.1:PORT --state FILE --auth FILE
 #                         --master-wg PATH [--allow-host HOST]
 #   master-wg-panel account --auth FILE --user AD      parola stdin'den; "aynı" ya da "yazıldı"
-#   master-wg-panel check --url URL --host HOST --user AD   parola stdin'den; /api/state denetimi
+#   master-wg-panel check --url URL --host HOST --user AD   parola stdin'den; /api/wg/state denetimi
 #
 # Güvenlik: HTTP Basic (PBKDF2-SHA256, 600000 tur; doğrulanmış başlık 15 dk
 # bellekte), başarısız girişte 1 sn bekleme ve 15 dk'da 10 hatada kilit;
-# /api/* için X-WG-Panel başlığı ve aynı köken (CSRF), Host denetimi (DNS
+# /api/* için X-Konsol başlığı ve aynı köken (CSRF), Host denetimi (DNS
 # rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan yanıtlar (profil, QR)
 # yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
 import argparse
@@ -21,6 +24,7 @@ import hmac
 import http.server
 import json
 import os
+import platform
 import re
 import secrets
 import socket
@@ -47,14 +51,34 @@ FAIL_LIMIT = 10
 MAX_BODY = 4096
 # wg0'ı yeniden üretmek için yazılan kelime (panel ve wireguard.command aynı).
 CONFIRM_WORD = "onayla"
-STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/panel.css": ("panel.css", "text/css; charset=utf-8"),
-    "/panel.js": ("panel.js", "text/javascript; charset=utf-8"),
-}
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; "
-       "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+API_HEADER = "X-Konsol"
+REALM = "Konsol"
+CSP = ("default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 MASK = "•" * 44
+# Genel bakıştaki işlemci/bellek grafiği: SAMPLE_SECONDS'ta bir örnek, son 2 dakika.
+SYS_POINTS = 12
+# Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
+ACTIONS_CACHE_SECONDS = 15
+ACTIONS_LIMIT = 40
+ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
+# Genel bakıştaki "Kullanımdaki portlar" kartı: yapılandırmadan üretilir, tarama yok.
+# (state.env anahtarı, ad, protokol, kapsam, varsayılan)
+PORT_ROWS = (
+    ("TORRENT_PUBLIC_PORT", "qBittorrent eş trafiği", "tcp+udp", "internet", 0),
+    ("TAILSCALE_UDP_PORT", "Tailscale", "udp", "internet", 0),
+    ("SSH_PUBLIC_PORT", "SSH", "tcp", "internet", 0),
+    ("CADDY_HTTP_PORT", "Caddy — panel ve öbür adresler", "tcp", "tailscale", 80),
+    ("DNS_PORT", "dnsmasq — yerel adlar", "udp+tcp", "tailscale", 53),
+    ("SHARE_PORT", "Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tcp", "tailscale", 0),
+    ("DOZZLE_UI_PORT", "Dozzle", "tcp", "loopback", 0),
+    ("TORRENT_UI_PORT", "qBittorrent arayüzü", "tcp", "loopback", 0),
+    ("FILEBROWSER_UI_PORT", "FileBrowser", "tcp", "loopback", 0),
+    ("WG_PANEL_PORT", "Konsol · WireGuard arka ucu", "tcp", "loopback", 0),
+    ("FILES_PANEL_PORT", "Konsol · dosya arka ucu", "tcp", "loopback", 0),
+)
+# WireGuard istemcilerine açılan arayüzler (Caddyfile.wg): erişimi "ui" olan ağlarda.
+WG_UI_ROWS = (("DOZZLE_UI_PORT", "Dozzle"), ("TORRENT_UI_PORT", "qBittorrent arayüzü"),
+              ("FILEBROWSER_UI_PORT", "FileBrowser"))
 
 
 def fail(msg, code=1):
@@ -133,7 +157,7 @@ def cmd_check(args):
     password = sys.stdin.buffer.read()
     token = base64.b64encode(args.user.encode() + b":" + password).decode()
     req = urllib.request.Request(args.url, headers={
-        "Host": args.host, "Authorization": "Basic " + token, "X-WG-Panel": "1"})
+        "Host": args.host, "Authorization": "Basic " + token, API_HEADER: "1"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode())
@@ -142,7 +166,10 @@ def cmd_check(args):
     except (urllib.error.URLError, ValueError, OSError) as err:
         fail("panel yanıt vermedi (%s)" % err)
     nets = data.get("networks")
-    if not isinstance(nets, list) or not nets or not all(isinstance(n.get("peers"), list) for n in nets):
+    # DD-143: temiz kurulumda hiç ağ yoktur; boş liste de geçerli bir yanıttır.
+    if not isinstance(nets, list) or not all(isinstance(n.get("peers"), list) for n in nets):
+        fail("panel yanıtı beklenen biçimde değil")
+    if not isinstance(data.get("defaults"), dict):
         fail("panel yanıtı beklenen biçimde değil")
     print("%d ağ, %d peer" % (len(nets), sum(len(n["peers"]) for n in nets)))
 
@@ -166,7 +193,10 @@ def read_env(path):
 def dns_provider(dns):
     tokens = [t.strip() for t in dns.split(",") if t.strip()]
     known = (
+        # Aile sürümü Cloudflare'in önekiyle de eşleşir; önce o denenir.
+        ("Cloudflare Aile", ("1.1.1.3", "1.0.0.3", "2606:4700:4700::1113", "2606:4700:4700::1003")),
         ("Cloudflare", ("1.1.1.", "1.0.0.", "2606:4700:4700::")),
+        ("AdGuard", ("94.140.14.", "94.140.15.", "2a10:50c0::ad")),
         ("Google", ("8.8.8.", "8.8.4.", "2001:4860:4860::")),
         ("Quad9", ("9.9.9.", "149.112.112.", "2620:fe::")),
         ("NextDNS", ("45.90.28.", "45.90.30.", "2a07:a8c0:", "2a07:a8c1:")),
@@ -186,6 +216,10 @@ class Panel:
         self.failures = {}
         self.activity = {}
         self.activity_lock = threading.Lock()
+        self.sys_lock = threading.Lock()
+        self.samples = []
+        self.cpu_prev = None
+        self.actions_cache = (0.0, [])
         self.account_mtime = None
         self.account = None
 
@@ -269,15 +303,16 @@ class Panel:
         now = time.time()
         for line in out.splitlines():
             f = line.split("\t")
-            if len(f) != 10:
+            if len(f) != 11:
                 continue
             peer = {
                 "name": f[0], "ipv4": f[1], "ipv6": f[2], "handshake": num_or(f[3], 0),
                 "rx": num_or(f[4], 0), "tx": num_or(f[5], 0), "profile": f[6] == "var",
                 "dns": f[7], "provider": dns_provider(f[7]) if f[7] else "",
-                "keepalive": num_or(f[8], 0), "mtu": num_or(f[9], 0),
+                "keepalive": num_or(f[8], 0), "mtu": num_or(f[9], 0), "enabled": f[10] != "0",
             }
             peer["online"], peer["active_at"] = self.observe(net, peer, now, seen)
+            peer["online"] = peer["online"] and peer["enabled"]
             peers.append(peer)
         return peers
 
@@ -313,26 +348,170 @@ class Panel:
                 self.state()
             except Exception as err:  # örnekleme durursa sayfa yine el sıkışmaya düşer
                 print("panel: sayaç okunamadı (%s)" % err, flush=True)
+            try:
+                self.sample_system()
+            except Exception as err:
+                print("panel: sistem ölçülemedi (%s)" % err, flush=True)
             time.sleep(SAMPLE_SECONDS)
 
-    def state(self):
-        """DD-136: bütün ağlar (wg0 + panelde eklenenler), her biri kendi peer'larıyla."""
+    # -- sistem
+    def sample_system(self):
+        """İşlemci ve bellek kullanımı; grafiğe son SYS_POINTS örnek girer."""
+        try:
+            with open("/proc/stat", "rb") as fh:
+                fields = [int(x) for x in fh.readline().split()[1:]]
+        except (OSError, ValueError, IndexError):
+            return
+        total = sum(fields)
+        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+        previous, self.cpu_prev = self.cpu_prev, (total, idle)
+        if previous is None:
+            return
+        span, span_idle = total - previous[0], idle - previous[1]
+        if span <= 0:
+            return
+        cpu = max(0.0, min(100.0, 100.0 * (span - span_idle) / span))
+        mem_total, mem_used = self.meminfo()
+        mem = round(100.0 * mem_used / mem_total, 1) if mem_total else 0.0
+        with self.sys_lock:
+            self.samples.append({"t": int(time.time()), "cpu": round(cpu, 1), "mem": mem})
+            del self.samples[:-SYS_POINTS]
+
+    def meminfo(self):
+        info = {}
+        try:
+            with open("/proc/meminfo", "rb") as fh:
+                for line in fh:
+                    key, _, rest = line.decode("utf-8", "replace").partition(":")
+                    parts = rest.split()
+                    if parts and parts[0].isdigit():
+                        info[key] = int(parts[0]) * 1024
+        except OSError:
+            return 0, 0
+        total = info.get("MemTotal", 0)
+        return total, max(0, total - info.get("MemAvailable", 0))
+
+    def os_name(self):
+        try:
+            with open("/etc/os-release", encoding="utf-8") as fh:
+                for line in fh:
+                    key, _, value = line.rstrip("\n").partition("=")
+                    if key == "PRETTY_NAME":
+                        return value.strip('"')
+        except OSError:
+            pass
+        return "Linux"
+
+    def ports(self, env, networks):
+        """Kullanımdaki portlar: state.env ve ağ kaydından; hiçbir yeri taramaz."""
+        rows = []
+        for net in networks:
+            rows.append({"port": net["port"], "proto": "udp", "scope": "internet",
+                         "name": "WireGuard %s%s" % (net["iface"], " · %s" % net["label"] if net["label"] else "")})
+        for key, name, proto, scope, default in PORT_ROWS:
+            port = num_or(env.get(key), default)
+            if port:
+                rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
+        if any(net["scope"] == "ui" and net["active"] for net in networks):
+            for key, name in WG_UI_ROWS:
+                port = num_or(env.get(key), 0)
+                if port:
+                    rows.append({"port": port, "proto": "tcp", "scope": "wireguard", "name": name})
+        return rows
+
+    def system(self, networks):
         env = read_env(self.args.state)
+        with self.sys_lock:
+            samples = list(self.samples)
+        mem_total, mem_used = self.meminfo()
+        try:
+            with open("/proc/uptime", "rb") as fh:
+                uptime = int(float(fh.read().split()[0]))
+        except (OSError, ValueError, IndexError):
+            uptime = 0
+        return {
+            "host": socket.gethostname().split(".")[0],
+            "version": env.get("V2_VERSION", ""),
+            "domain": env.get("LOCAL_DOMAIN", ""),
+            "os": self.os_name(),
+            "kernel": platform.release(),
+            "uptime": uptime,
+            "cores": os.cpu_count() or 1,
+            "interval": int(SAMPLE_SECONDS),
+            "cpu": [s["cpu"] for s in samples],
+            "mem": {"total": mem_total, "used": mem_used, "graph": [s["mem"] for s in samples]},
+            "net": {
+                "wan": env.get("WAN_IPV4", ""), "wan6": env.get("WAN_IPV6", ""),
+                "iface": env.get("WAN_INTERFACE", ""), "tailscale": env.get("TAILSCALE_IPV4", ""),
+                "tailscale6": env.get("TAILSCALE_IPV6", ""), "endpoint": env.get("WG_ENDPOINT_HOST", ""),
+            },
+            "ports": self.ports(env, networks),
+            # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar.
+            "share": {"port": num_or(env.get("SHARE_PORT"), 0)},
+        }
+
+    def actions(self):
+        """Son işlemler: iki arka ucun audit satırları (journald), yeniden eskiye."""
+        now = time.time()
+        stamp, rows = self.actions_cache
+        if now - stamp < ACTIONS_CACHE_SECONDS:
+            return rows
+        cmd = ["journalctl", "-u", "master-wg-panel.service", "-u", "master-files-panel.service",
+               "--since", "-7 days", "-n", "400", "-o", "short-unix", "--no-pager"]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=15, stdin=subprocess.DEVNULL,
+                                  env={"PATH": "/usr/bin:/bin", "LC_ALL": "C.UTF-8"})
+            lines = proc.stdout.decode("utf-8", "replace").splitlines() if proc.returncode == 0 else []
+        except (OSError, subprocess.SubprocessError):
+            lines = []
+        rows = []
+        for line in lines:
+            stamp_text, _, rest = line.partition(" ")
+            body = rest.partition(": ")[2]
+            m = ACTION_RE.match(body.strip())
+            if not m:
+                continue
+            try:
+                when = int(float(stamp_text))
+            except ValueError:
+                continue
+            # Dosya arka ucu ayrıntıyı JSON olarak yazar; sayfada tırnaksız görünsün.
+            detail = m.group(5)
+            if detail.startswith('"') and detail.endswith('"'):
+                try:
+                    detail = json.loads(detail)
+                except ValueError:
+                    pass
+            rows.append({"at": when, "source": m.group(1), "user": m.group(2), "client": m.group(3),
+                         "action": m.group(4), "detail": detail[:200], "ok": m.group(6) == "ok"})
+        rows = rows[-ACTIONS_LIMIT:][::-1]
+        self.actions_cache = (now, rows)
+        return rows
+
+    def net_rows(self):
+        """master-wg nets satırları (peer listesi olmadan); state ve portlar aynı kaynağı okur."""
         rc, out, message = self.run("nets")
         if rc != 0:
             raise RuntimeError(message or "ağ listesi okunamadı")
-        networks = []
-        seen = set()
+        rows = []
         for line in out.splitlines():
             f = line.split("\t")
             if len(f) != 11 or not IFACE_RE.match(f[0]):
                 continue
-            networks.append({
+            rows.append({
                 "iface": f[0], "port": num_or(f[1], 0), "scope": f[2],
                 "server4": f[3], "subnet4": f[4], "server6": f[5], "subnet6": f[6],
-                "dns": f[7], "label": f[8], "active": f[9] == "1",
-                "peers": self.peers(f[0], seen),
+                "dns": f[7], "label": f[8], "active": f[9] == "1", "count": num_or(f[10], 0),
             })
+        return rows
+
+    def state(self):
+        """DD-136: bütün ağlar (wg0 + panelde eklenenler), her biri kendi peer'larıyla."""
+        env = read_env(self.args.state)
+        networks = self.net_rows()
+        seen = set()
+        for net in networks:
+            net["peers"] = self.peers(net["iface"], seen)
         with self.activity_lock:
             for key in [k for k in self.activity if k not in seen]:
                 del self.activity[key]
@@ -342,13 +521,15 @@ class Panel:
             "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             "max": num_or(env.get("WG_NETWORKS_MAX"), 9) + 1,
             "reserved": sorted({num_or(env.get(k), 0) for k in (
-                "SSH_PUBLIC_PORT", "TORRENT_PUBLIC_PORT", "WEBDAV_PORT", "DOZZLE_UI_PORT",
+                "SSH_PUBLIC_PORT", "TORRENT_PUBLIC_PORT", "DOZZLE_UI_PORT",
                 "TORRENT_UI_PORT", "FILEBROWSER_UI_PORT", "TAILSCALE_UDP_PORT", "WG_PANEL_PORT",
-                "FILES_PANEL_PORT")} - {0} | {53, 80}),
+                "FILES_PANEL_PORT", "SHARE_PORT")} - {0} | {53, 80}),
             "defaults": {
                 "dns": os.environ.get("PANEL_DNS_DEFAULT", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"),
                 "keepalive": num_or(os.environ.get("PANEL_KEEPALIVE_DEFAULT"), 21),
                 "mtu": num_or(os.environ.get("PANEL_MTU_DEFAULT"), 1420),
+                # DD-143: ilk ağa önerilen UDP portu; sonrakiler 61020'den sıralanır.
+                "port": num_or(env.get("WG_PUBLIC_PORT"), 61001),
             },
             "now": int(time.time()),
             "active_window": int(ACTIVE_WINDOW),
@@ -430,11 +611,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 time.sleep(1)
                 print("panel: %s giriş başarısız" % client, flush=True)
             self.send(401, json.dumps({"error": "giriş gerekli"}),
-                      extra={"WWW-Authenticate": 'Basic realm="WireGuard paneli", charset="UTF-8"'})
+                      extra={"WWW-Authenticate": 'Basic realm="%s", charset="UTF-8"' % REALM})
             return None
         if self.path.startswith("/api/"):
             site = self.headers.get("Sec-Fetch-Site")
-            if self.headers.get("X-WG-Panel") != "1" or (site and site not in ("same-origin", "none")):
+            if self.headers.get(API_HEADER) != "1" or (site and site not in ("same-origin", "none")):
                 self.error(403, "istek reddedildi (yalnız panel sayfasından)")
                 return None
         return user
@@ -444,7 +625,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         port = self.server.server_address[1]
         hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
         if env.get("LOCAL_DOMAIN"):
-            hosts.add("wg.%s" % env["LOCAL_DOMAIN"].lower())
+            hosts.add("panel.%s" % env["LOCAL_DOMAIN"].lower())
         hosts.update(h.lower() for h in self.panel.args.allow_host)
         return hosts
 
@@ -470,21 +651,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlsplit(self.path).path
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        if path in STATIC:
-            name, ctype = STATIC[path]
-            try:
-                with open(os.path.join(self.panel.args.web, name), "rb") as fh:
-                    self.send(200, fh.read(), ctype)
-            except OSError:
-                self.error(500, "panel dosyası yok: %s" % name)
-            return
-        if path == "/api/state":
+        if path == "/api/wg/state":
             try:
                 self.json(200, self.panel.state())
             except RuntimeError as err:
                 self.error(502, str(err))
             return
-        m = re.match(r"^/api/nets/([^/]+)/peers/([^/]+)/(profile|qr\.png)$", path)
+        if path == "/api/wg/sistem":
+            try:
+                self.json(200, self.panel.system(self.panel.net_rows()))
+            except RuntimeError as err:
+                self.error(502, str(err))
+            return
+        if path == "/api/wg/islemler":
+            self.json(200, {"items": self.panel.actions()})
+            return
+        m = re.match(r"^/api/wg/nets/([^/]+)/peers/([^/]+)/(profile|qr\.png)$", path)
         if m:
             net, name = self.net_and_name(m.group(1), m.group(2))
             if net is None:
@@ -541,7 +723,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
             return
-        if path == "/api/nets":
+        if path == "/api/wg/nets":
             port = str(data.get("port", "")).strip()
             scope = str(data.get("scope", "")).strip()
             dns = str(data.get("dns", "")).strip()
@@ -557,7 +739,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.json(201, {"iface": parts[0], "port": num_or(parts[-1], 0)})
             return
-        m = re.match(r"^/api/nets/([^/]+)/(remove|reset|peers)$", path)
+        m = re.match(r"^/api/wg/nets/([^/]+)/(remove|reset|peers|durum)$", path)
         if m:
             net, _ = self.net_and_name(m.group(1))
             if net is None:
@@ -572,6 +754,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 parts = out.strip().split("\t")
                 self.json(200, {"iface": net, "peers": num_or(parts[-1], 0)})
+                return
+            if m.group(2) == "durum":
+                want = "ac" if data.get("on") else "kapat"
+                rc, out, message = self.panel.run("net", want, net=net)
+                self.audit(user, "ag-durum", "%s %s" % (net, want), rc == 0)
+                if rc != 0:
+                    self.error(400, message or "ağ durumu değiştirilemedi")
+                    return
+                self.json(200, {"iface": net, "active": out.strip().split("\t")[-1] == "1"})
                 return
             if m.group(2) == "reset":
                 if not self.confirmed(data):
@@ -601,7 +792,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.json(201, {"name": name, "ipv4": out.strip().split("\t")[-1]})
             return
-        m = re.match(r"^/api/nets/([^/]+)/peers/([^/]+)/(remove|dns)$", path)
+        m = re.match(r"^/api/wg/nets/([^/]+)/peers/([^/]+)/(remove|dns|keepalive|durum)$", path)
         if m:
             net, name = self.net_and_name(m.group(1), m.group(2))
             if net is None:
@@ -609,6 +800,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if m.group(3) == "remove":
                 rc, out, message = self.panel.run("remove", name, net=net)
                 self.audit(user, "cikar", "%s/%s" % (net, name), rc == 0)
+            elif m.group(3) == "durum":
+                want = "ac" if data.get("on") else "kapat"
+                rc, out, message = self.panel.run("peer", name, want, net=net)
+                self.audit(user, "peer-durum", "%s/%s %s" % (net, name, want), rc == 0)
+            elif m.group(3) == "keepalive":
+                keepalive = str(data.get("keepalive", "")).strip()
+                if not keepalive.isdigit():
+                    self.error(400, "keepalive saniye olarak gerekli (0 = kapalı)")
+                    return
+                rc, out, message = self.panel.run("keepalive", name, keepalive, net=net)
+                self.audit(user, "keepalive", "%s/%s %s" % (net, name, keepalive), rc == 0)
             else:
                 dns = str(data.get("dns", "")).strip()
                 if not dns:
@@ -650,7 +852,6 @@ def main():
     s.add_argument("--listen", required=True)
     s.add_argument("--state", required=True)
     s.add_argument("--auth", required=True)
-    s.add_argument("--web", required=True)
     s.add_argument("--master-wg", dest="master_wg", required=True)
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     s.add_argument("--state-env", dest="state_env", action="store_true",

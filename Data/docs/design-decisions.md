@@ -6804,6 +6804,177 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-143: The installer prepares WireGuard; Konsol creates it (2026-09-16)
+
+- **Context:** the user asked to cut the Mac-side link — no reading of
+  `kurulum/wireguard`, no peer preservation, no upload — so that every install
+  leaves a clean WireGuard, with interfaces and devices created from the panel.
+  They approved the shape below, including "a re-run must not wipe the networks
+  the panel created".
+- **Decision:**
+  - **No privileged `wg0`.** Every network lives in `/etc/wireguard/networks`
+    and is created by `master-wg net-add`, which already ordered the steps
+    correctly (files and registry → firewall → `wg-quick@wgN` → `caddy-wg@wgN`,
+    with a full teardown when a step fails). Allocation now starts at `wg0`;
+    profiles live in `clients-wg<N>` for every network.
+    - `state.env`'s `WG_SERVER_IPV4`, `WG_SUBNET*` and `WG_PUBLIC_PORT` are now
+      *defaults* (address base, suggested first port), not "the wg0 network".
+      `WG_INTERFACE` is gone.
+  - **The installer prepares, never creates.** `ensure_wireguard_ready`
+    installs `wireguard-tools`/`qrencode`, loads the module and creates
+    `/etc/wireguard`; `ensure_wg_networks_running` enables and starts what the
+    registry holds. No key is generated, no `.conf` written, no interface
+    started by the installer — so a re-run cannot overwrite or resurrect
+    anything, and a fresh server simply has no WireGuard.
+  - **The firewall is registry-only and valid with zero networks.** Empty
+    arrays are guarded for bash 3.2 (the tests run there), and the NAT chain is
+    created empty rather than skipped.
+  - **The panel's empty state is the entry point.** With no networks the
+    WireGuard page shows one card — what will happen, then **Yapılandır** —
+    which routes to the same "Arayüz ekle" page. One creation path, no second
+    bootstrap code.
+  - **`wireguard.command` stays an SSH client.** It picks the network (asks
+    only when there is more than one), and lost "Yedek al", the auto-backup and
+    the embedded server-side tar script.
+- **Why:** the old flow had two ways to get a network (installer for `wg0`,
+  panel for the rest), kept server keys on the Mac, and made a rebuild silently
+  restore old peers. Measured before the change (live on `nrm`): deleting
+  `wg0.conf` left `master-wg list` failing with a raw shell error and the panel
+  logging "sayaç okunamadı" every 10 s, while the panel still showed a phantom
+  `wg0` card that could not be switched on — the fragility came from `wg0`
+  being special, not from the panel.
+- **Cost:** rebuilding a server means creating the network and re-adding the
+  devices from Konsol. Accepted by the user; nothing on the Mac holds a server
+  key any more.
+
+### DD-142: One rclone; the downloads folder is never published (2026-09-16)
+
+- **Context:** with shares working, the user asked to drop the full-folder
+  WebDAV and keep a single rclone: "kullanıcı panelden paylaşılacakları seçerek
+  ayarlasın, paylaşım için altyapı hazır olsun sadece". They chose to keep the
+  share's name and account (`paylas.<domain>`, `SHARE_USER`) and to retire
+  `webdav.<domain>`, port 61003 and the `infuse` account.
+- **Decision:** the `webdav` service, its name, port, htpasswd and the three
+  input keys are removed. What used to be the "share" WebDAV is now simply *the*
+  WebDAV: `paylasim`, read-only, rooted at `DOWNLOADS_PATH/.pay/w`.
+  - The blast radius of the WebDAV account drops from "every download" to "what
+    the operator picked in Konsol", and there is one account, one port and one
+    name instead of two of each.
+  - `docker compose up -d --remove-orphans` keeps the file the single source of
+    truth: the retired container is removed on the next run instead of lingering
+    with the old, wide-open root.
+  - `unpackerr` still needs the trash and the share folder hidden; the WebDAV
+    that needed the same tmpfs is gone with the service.
+- **Cost:** devices configured against `webdav.<domain>` must be re-added once
+  with the share address and account. Accepted by the user; it is a one-time
+  step per device and the reason the whole-folder endpoint existed (Infuse) is
+  served by the share.
+
+### DD-141: Share links over one read-only WebDAV, built from symlinks (2026-09-16)
+
+- **Context:** the user asked for a share link for files, served by WebDAV so
+  Infuse can open it. Their decision after the design round: **one account for
+  everything** — the address, user, password and port stay the same for every
+  share, and the duration options (1/7/30 days, open-ended) stay.
+- **Decision:**
+  - **A second rclone, not the existing WebDAV.** The Infuse WebDAV serves the
+    whole downloads folder with the operator's own account; a guest must see
+    only what was shared. `paylasim` runs the same image with `--read-only`,
+    the downloads folder mounted `:ro`, and its root at
+    `DOWNLOADS_PATH/.pay/w`.
+  - **Sharing is a symlink, not a copy or a mount.** The panel (uid 1000)
+    creates `.pay/w/<name> -> ../../<path>` and rclone follows it with
+    `--copy-links`. No data is copied, a file that lands in a shared folder
+    later appears by itself, and unsharing is one `unlink`.
+    - Per-share bind mounts would need root and mount propagation into the
+      container; per-share Docker volumes would mean recreating the container
+      for every share, which would give the panel Docker access — that is root.
+      The user's own question ("can we add more volumes?") is answered by one
+      fixed mount plus links.
+    - The registry (`.pay/kayit.json`) lives one level above the served root,
+      so it is never served. A link with no registry entry is swept away, and
+      so is an expired one; the sweep runs on every listing.
+  - **One account, held twice on purpose.** rclone reads a bcrypt htpasswd;
+    the console shows and copies the password, so the installer also writes a
+    root-only plaintext copy that reaches the file backend as a systemd
+    credential. Both come from `kurulum.env` in the same step, so they cannot
+    drift. The trade-off is deliberate: the share password protects read access
+    to files the operator chose to share, and being able to hand it out (or see
+    what it is) is the point of the feature.
+  - **What the account holder sees.** Everything currently shared, and nothing
+    else: the share root holds only the links. The cost of one account is that
+    the password cannot separate one guest from another — stated in the console
+    before the share is created.
+  - **Hidden from the rest of the stack.** `.pay` is an empty read-only tmpfs
+    in `unpackerr` and `webdav` (the trash trick from DD-139), so Infuse does
+    not list the same film twice and Unpackerr does not extract an archive a
+    second time through a link. The file panel hides `.pay` from listings and
+    refuses to walk into it.
+- **Second address (v2-107):** Infuse on an Apple TV could not resolve
+  `paylas.<domain>` (mobile clients could). The share therefore answers on
+  `{$TAILSCALE_IPV4}:{$SHARE_PORT}` as well, exactly as the Infuse WebDAV does
+  for the same reason (**DD-98**); the console shows both addresses.
+- **Why not Tailscale Funnel or node sharing:** both need changes in the
+  Tailscale admin console, which is outside what the installer touches.
+- **Known limit:** a malicious symlink *inside* shared content is followed like
+  any other (that is what `--copy-links` means); the container only has the
+  downloads folder, read-only, so the blast radius is the operator's own
+  downloads.
+- **Verified (2026-09-16):** bats 154 ok, including the sweep, the refusals
+  (root, trash, share folder, escape) and the installer wiring.
+
+### DD-140: One console (Konsol) instead of two panels, and switchable peers (2026-09-16)
+
+- **Context:** after the file panel the user asked for the WireGuard and file
+  pages to become one server-administration tool. The design was iterated as a
+  mockup until they approved it (frozen in `docs/design/konsol-v01.html`).
+  Their decisions: the address is `panel.<domain>` with `wg.` and `dosya.`
+  redirecting, the browser's own login prompt is enough, no services page or
+  status collector anywhere, and a network turned off in the console comes back
+  with an installer re-run.
+- **Decision:**
+  - **One page, two backends.** The privileges that made two services necessary
+    (DD-139) do not change: `master-wg-panel` stays root because `master-wg`
+    needs it, and `master-files-panel` stays the downloads uid. Caddy sends
+    `/api/wg/*` to the first and everything else — the pages included — to the
+    second, so the console is one origin with one login.
+    - The WireGuard backend no longer serves files: its `--web` argument and
+      the old page files are gone, and every route moved under `/api/wg/`.
+    - Both backends answer only to the host `panel.<domain>`, use the header
+      `X-Konsol` for CSRF and the realm `Konsol`, so the browser reuses the
+      same credentials for both.
+  - **Switching a peer off keeps everything.** `master-wg peer AD kapat`
+    prefixes the peer's block in `wgN.conf` with `#kapali#`. `wg-quick` and
+    `wg-quick strip` ignore comments, so the peer leaves the running interface
+    at once and stays off after a reboot, while its key, preshared key, address
+    and client profile stay untouched. `master-wg info` reports the state as an
+    eleventh field, `cmd_add` skips a disabled peer's address when it hands out
+    the next one, and `peer_count` counts it.
+    - `write_and_apply` no longer starts an interface that is switched off: it
+      writes the file and returns when the unit is disabled.
+  - **Switching a network off is the unit.** `master-wg [--if wgN] net kapat`
+    disables `wg-quick@wgN` (and `caddy-wg@wgN`); the registry, keys and
+    profiles stay. The firewall keeps the UDP port open — nothing listens on
+    it — instead of a second, drifting source of truth for "which port is
+    open".
+  - **The overview reads the server, not the containers.** The root backend
+    samples `/proc/stat` and `/proc/meminfo` every 10 s and keeps the last two
+    minutes, reads `/proc/uptime` and `/etc/os-release`, and builds the ports
+    card from `state.env` plus the network registry — no scanning, no container
+    status collector (the user rejected one). "Son işlemler" parses the two
+    services' own audit lines out of the journal, cached for 15 s.
+    - The disk bar needs a size the root backend cannot cheaply get, so the
+      file backend walks the downloads tree at most every 5 minutes (the same
+      budget as a listing) and reports `null` when the budget is exceeded; the
+      console then shows a single "Kullanılan" segment.
+- **Why:** two pages meant two logins, two looks and no place for anything that
+  belongs to the server rather than to one of them (load, disk, ports, log).
+  One console also makes the switches possible: they are the first controls
+  that touch both a unit and a configuration file.
+- **Verified (2026-09-16):** bats 152 ok. The page was exercised against a mock
+  backend (all four pages, the move, peer-add and confirm dialogs, no console
+  errors) before the live run.
+
 ### DD-96: The installer owns its own files and nothing else (2026-08-09)
 
 - **Cleanup (v2-96, 2026-09-14):** with the only host freshly rebuilt on v2-95,

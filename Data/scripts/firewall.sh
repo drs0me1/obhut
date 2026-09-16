@@ -38,16 +38,11 @@ fi
 : "${CHAIN_INPUT:?}"
 : "${CHAIN_DOCKER:?}"
 : "${CHAIN_STAGING_PREFIX:?}"
-: "${WG_PUBLIC_PORT:?}"
 : "${TORRENT_PUBLIC_PORT:?}"
 : "${SSH_PUBLIC_PORT:?}"
 : "${TAILSCALE_UDP_PORT:?}"
 : "${CHAIN_FORWARD:?}"
 : "${CHAIN_NAT:?}"
-: "${WG_INTERFACE:?}"
-: "${WG_SERVER_IPV4:?}"
-: "${WG_SUBNET4:?}"
-: "${WG_SUBNET6:?}"
 : "${DOZZLE_UI_PORT:?}"
 : "${TORRENT_UI_PORT:?}"
 : "${FILEBROWSER_UI_PORT:?}"
@@ -63,19 +58,19 @@ wg_ui_ports() {
     printf '%s,%s,%s\n' "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"
 }
 
-# DD-136: WireGuard ağları — wg0 (state.env) ve panelde eklenenler (WG_NETWORKS_FILE).
-# Her şey uygulanmadan önce okunur ve doğrulanır: bozuk bir kayıt hiçbir zinciri
-# değiştirmeden durdurur. Diziler: arayüz, UDP portu, erişim (ui | inet), sunucu
+# DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun
+# yarattığı ayrıcalıklı bir ağ yoktur ve kayıt boş olabilir (sunucu kurulur, ağı Konsol
+# oluşturur). Her şey uygulanmadan önce okunur ve doğrulanır: bozuk bir kayıt hiçbir
+# zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, erişim (ui | inet), sunucu
 # IPv4, alt ağ IPv4, alt ağ IPv6.
 WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
 load_wg_networks() {
     local iface port scope s4 n4 s6 n6 rest i j
-    WG_IFACES=("$WG_INTERFACE") WG_PORTS=("$WG_PUBLIC_PORT") WG_SCOPES=(ui)
-    WG_ADDR4=("$WG_SERVER_IPV4") WG_NET4=("$WG_SUBNET4") WG_NET6=("$WG_SUBNET6")
+    WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
     if [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r iface port scope s4 n4 s6 n6 rest; do
             [[ -n "$iface" ]] || continue
-            [[ "$iface" =~ ^wg[1-9]$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
+            [[ "$iface" =~ ^wg[0-9]$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
                 ( "$scope" == ui || "$scope" == inet ) &&
                 "$s4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/24$ &&
                 "$s6" =~ ^[0-9a-f:]+$ && "$n6" =~ ^[0-9a-f:]+/112$ ]] ||
@@ -503,7 +498,8 @@ check_chain_shape() {
 wan_allow_pairs() {
     printf '%s\n' "udp $TAILSCALE_UDP_PORT" "tcp $SSH_PUBLIC_PORT"
     [[ "$1" == v4 ]] || return 0
-    printf 'udp %s\n' "${WG_PORTS[@]}"
+    # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
+    [[ "${#WG_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${WG_PORTS[@]}"
     printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT"
 }
 
@@ -651,8 +647,8 @@ if [[ "$MODE" == check ]]; then
     fi
     check_forward_chain iptables
     check_forward_chain ip6tables
-    check_nat_chain iptables_nat "${WG_NET4[@]}"
-    check_nat_chain ip6tables_nat "${WG_NET6[@]}"
+    check_nat_chain iptables_nat ${WG_NET4[@]+"${WG_NET4[@]}"}
+    check_nat_chain ip6tables_nat ${WG_NET6[@]+"${WG_NET6[@]}"}
     printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi
@@ -664,8 +660,8 @@ apply_input6
 ensure_ts_input_precedence ip6tables
 apply_forward iptables "${CHAIN_STAGING_PREFIX}FW-"
 apply_forward ip6tables "${CHAIN_STAGING_PREFIX}FW6-"
-apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" "${WG_NET4[@]}"
-apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" "${WG_NET6[@]}"
+apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" ${WG_NET4[@]+"${WG_NET4[@]}"}
+apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" ${WG_NET6[@]+"${WG_NET6[@]}"}
 apply_docker4
 apply_docker6
 purge_staging_leftovers iptables

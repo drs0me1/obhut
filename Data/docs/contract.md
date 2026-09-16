@@ -112,33 +112,11 @@ the ones agreed on 2026-08-05:
   - Stage 0 validates every value, prints them without passwords and asks for
     one confirmation before `config.env` is written. Re-runs still ask about
     full-upgrade and image pull; an interactive TTY stays required.
-- **Pulled WireGuard settings are restored only where the server has none (DD-128).**
-  - `wireguard.command` option 6 "Yedek al" (repository root, macOS) copies the server's WireGuard
-    settings into `kurulum/`, mode `600`, printing no content:
-    - `wg0.conf` into `wireguard/sunucu/`;
-    - the device profiles into `wireguard/<name>.conf`, mirrored, so a local
-      profile the server no longer has is removed;
-    - a QR picture of each profile into `wireguard/<name>.png`, made on the
-      server by `master-wg png` in a root-only temporary directory under
-      `/run` that is removed afterwards, and mirrored the same way
-      (**DD-132**).
-    - qBittorrent is not pulled (**DD-129**). A `kurulum/qbittorrent/` copy
-      left by v2-93 is deleted.
-  - The launcher sends those files with `kurulum.env` (each must be mode
-    `600`). The `.png` pictures are never sent.
-  - Stage 0 moves them into the root-only `RESTORE_DIR` in `/run` before the
-    input directory is deleted, then validates them before any change:
-    - Only those names are allowed, each at most `SNAPSHOT_MAX_BYTES`, with
-      no links or special files.
-    - `wg0.conf` may hold only `Address`/`ListenPort`/`MTU`/`PrivateKey` in
-      `[Interface]`, and `PublicKey`/`PresharedKey`/`AllowedIPs` inside the
-      WireGuard subnets in each `[Peer]`, with valid, unique peer names. Any
-      `PostUp`-style line stops the install.
-    - Profiles are checked the same way.
-  - Stage 5 places `wg0.conf` and the profiles only if `wg0.conf` is absent,
-    and warns about profiles whose `Endpoint` is not this server.
-  - Otherwise the server's own files win and are not touched.
-  - `RESTORE_DIR` is removed after stage 5, and by the launcher on exit.
+- **Nothing but `kurulum.env` reaches the server (DD-143).** The launcher sends
+  that one file; no WireGuard configuration, key or profile is read from
+  `kurulum/` or uploaded, and nothing is fetched back. `wireguard.command` may
+  download a profile and its QR picture on request (**DD-132**), for the
+  operator only.
 
 ### 1.2 Tailscale
 
@@ -275,16 +253,20 @@ Preserved in full as a core feature. Contract in §5–§7.
 
 ### 1.9 WireGuard (DD-120, DD-124)
 
-- `wg-quick@wg0` in the host kernel: `10.8.0.1/24` and
-  `fdcc:ad94:bacf:61a4::1/112` (peers `…::N`, the hex of the IPv4 host number; **DD-135**), UDP `${WG_PUBLIC_PORT}`, MTU 1420.
-- **The server is the source of truth.** `/etc/wireguard/wg0.conf` (`0600`)
-  holds the server key and one `# peer: <name>` + `[Peer]` block per device.
-  The only WireGuard files sent from the workstation are the pulled copies,
-  and only for a server that has no `wg0.conf` (§1.1, **DD-128**).
-- **The installer manages `[Interface]` only.** A first install generates the
-  server key with `wg genkey`; later runs keep the key and every `[Peer]` block
-  byte for byte. It installs `wireguard-tools` and `qrencode`
-  (`--no-install-recommends`), `master-wg`, and writes no `PostUp`.
+- **A fresh install has no WireGuard (DD-143).** The installer installs
+  `wireguard-tools` and `qrencode` (`--no-install-recommends`), loads the kernel
+  module, creates `/etc/wireguard` and `master-wg`, and starts whatever networks
+  the registry already holds. It generates no key, writes no `.conf` and brings
+  up no interface; it also never removes a network.
+- **Networks are created from Konsol** (WireGuard → Yapılandır → Arayüz ekle) or
+  with `master-wg net-add`. The first one defaults to `wg0`, `10.8.0.0/24`,
+  `fdcc:ad94:bacf:61a4::/112` (peers `…::N`, the hex of the IPv4 host number;
+  **DD-135**), UDP `${WG_PUBLIC_PORT}`, MTU `${WG_MTU}`; later ones take the next
+  free `wgN` and a port from 61020 upward.
+- **The server is the source of truth.** `/etc/wireguard/wgN.conf` (`0600`)
+  holds that network's key and one `# peer: <name>` + `[Peer]` block per device;
+  the registry holds the network's parameters. Nothing is restored from the
+  workstation (§1.1).
 - **Peers are managed with `master-wg`** (`/usr/local/sbin`, root), driven from
   the workstation by `wireguard.command`:
   - `add NAME DNS KEEPALIVE MTU` runs `wg genkey`, `wg pubkey` and `wg genpsk`,
@@ -404,16 +386,49 @@ Preserved in full as a core feature. Contract in §5–§7.
     `net-remove wgN --onay` stops its units, deletes its files, key, peers and
     registry line and re-applies the firewall. `wg0` cannot be removed.
   - The panel confirms regenerating or removing a network with `onayla`.
+  - **Switches (DD-140).** `master-wg [--if wgN] net ac|kapat` stops or starts
+    `wg-quick@wgN` (and `caddy-wg@wgN`); the registry, keys and profiles stay
+    and the UDP port stays open with nothing listening. `master-wg peer AD
+    ac|kapat` comments the peer's block out of the interface configuration, so
+    it leaves the running interface at once and stays off across a reboot with
+    its key, address and profile intact. `master-wg keepalive AD SANİYE`
+    rewrites only the profile's `PersistentKeepalive`.
   - Networks and their units survive reboots and installer re-runs; the
     installer manages only `wg0` and refuses a `wg0` or WebDAV port that a
     panel network uses. The Mac backup and the restore cover `wg0` only.
 
-### 1.10 File panel (DD-139)
+### 1.10 Konsol and the file backend (DD-139, DD-140)
 
-- `master-files-panel.service` serves a file manager for `DOWNLOADS_PATH` at
-  `http://dosya.${LOCAL_DOMAIN}`: browse, filter, sort, list or icon view, new
-  folder, rename, move (also by drag and drop), move to trash, restore, delete
-  from the trash, empty the trash, read a text file and download a file.
+- **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
+  administration page. Caddy sends `/api/wg/*` to `master-wg-panel` and
+  everything else, the page files included, to `master-files-panel`;
+  `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}` answer with a 302 to it.
+  Both backends accept only that host, require the header `X-Konsol` on
+  `/api/*`, and use the realm `Konsol`, so one browser login covers both.
+  - Pages: Genel bakış (server card with CPU, memory and disk, WireGuard
+    devices, last actions, ports in use), WireGuard, Dosyalar and Günlük.
+  - The ports card is built from `state.env` and the network registry; nothing
+    is scanned and no container status is collected.
+  - A peer or a whole network can be switched off and on (§1.9).
+- **Share links (DD-141).** A folder or file in `DOWNLOADS_PATH` can be shared
+  from the console. Every share appears in one read-only WebDAV root at
+  `http://paylas.${LOCAL_DOMAIN}` (loopback `61010` behind Caddy, tailnet
+  only), with one account for all of them (`SHARE_USER` / `SHARE_PASS`).
+  - Sharing creates a relative symlink in `DOWNLOADS_PATH/SHARE_DIR/w`; the
+    registry next to it (not served) holds the path, the creation time and the
+    expiry. Nothing is copied.
+  - A share lasts 1, 7 or 30 days or until it is removed. Expired shares and
+    links with no registry entry are swept on every listing; files are never
+    deleted.
+  - The root itself, the trash and the share folder cannot be shared, and the
+    file panel hides the share folder from listings.
+  - The container runs `--read-only` with `--copy-links` and mounts
+    `DOWNLOADS_PATH` read-only; `unpackerr` and `webdav` see the share folder
+    as an empty read-only tmpfs.
+- `master-files-panel.service` serves the console pages and a file manager for
+  `DOWNLOADS_PATH`: browse, filter, sort, new folder, rename, move, move to
+  trash, restore, delete from the trash, empty the trash, read a text file and
+  download a file.
   - It runs Python 3's standard library only and listens on
     `127.0.0.1:61009`. Caddy exposes it on the tailnet; nothing exposes it on
     WireGuard or the WAN.
@@ -531,8 +546,9 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | FileBrowser (classic) | `127.0.0.1` | 61007 |
 | qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
 | WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
-| WireGuard panel (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**) |
-| File panel (`master-files-panel`) | `127.0.0.1` | 61009 (**DD-139**) |
+| Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
+| Konsol file backend and pages (`master-files-panel`) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**) |
+| WebDAV — shares only (`paylasim`) | `127.0.0.1` | 61010 (**DD-141**, **DD-142**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 `webdav.*:80` and `${TS_IPV4}:${WEBDAV_PORT}`. Compose never names the

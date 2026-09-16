@@ -48,7 +48,7 @@ fact and one owner per decision.
         │            │                │              │
         ▼            ▼                ▼              ▼
    6 containers   dnsmasq         caddy         MASTER-INPUT
-   (incl. webdav  .service        .service      MASTER-DOCKER
+   (incl. paylasim .service        .service      MASTER-DOCKER
     on loopback)
 ```
 
@@ -111,8 +111,9 @@ re-detected, never as an expectation to be violated.
     ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf, qBittorrent.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
     ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg@ template, master-wg-panel)
-    ├── panel/                         WireGuard web panel: master-wg-panel (Python) + index.html, panel.css, panel.js
-    ├── files-panel/                   File panel for the downloads folder: master-files-panel (Python) + page files
+    ├── panel/                         Konsol WireGuard and system backend: master-wg-panel (Python), API only
+    ├── files-panel/                   Konsol file backend: master-files-panel (Python), also serves the pages
+    ├── console/                       Konsol pages: index.html, konsol.css, konsol.js (one origin, no external loads)
     ├── app/<V2_VERSION>.command       every exported portable install app
     ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
     ├── docs/                          contract, architecture, design decisions
@@ -163,13 +164,12 @@ in §10, not resolved silently.
 | `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
-| `templates/compose.yaml` | The five services (incl. loopback WebDAV), volumes, port publications | Where it is written, which addresses are current |
+| `templates/compose.yaml` | The six services (two loopback rclone servers: the Infuse WebDAV and the share WebDAV), volumes, port publications | Where it is written, which addresses are current |
 | `templates/Caddyfile` | Seven HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
-| `panel/master-wg-panel` | Serve the WireGuard panel on loopback: HTTP Basic against a PBKDF2 hash, CSRF/Host gates, JSON API over `master-wg` (**DD-133**) | WireGuard files and tools — it only calls `master-wg` |
-| `panel/index.html`, `panel.css`, `panel.js` | The panel page; everything from its own origin | Keys — it asks for a QR or profile only when the operator does |
-| `files-panel/master-files-panel` | Serve the file panel on loopback as the downloads uid: same login as the WireGuard panel (hash via `LoadCredential`), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames, the `.cop` trash, text decoding (**DD-139**) | Anything outside `DOWNLOADS_PATH` |
-| `files-panel/index.html`, `panel.css`, `panel.js` | The file panel page: list/icon view, move dialog, trash, text viewer | File contents as HTML — names and text are inserted as text only |
+| `panel/master-wg-panel` | Serve `/api/wg/*` on loopback as root: HTTP Basic against a PBKDF2 hash, CSRF/Host gates, JSON API over `master-wg`, plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; page files — it serves none |
+| `files-panel/master-files-panel` | Serve the console pages and the file API on loopback as the downloads uid: same login as the WireGuard backend (hash via `LoadCredential`), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames, the `.cop` trash, text decoding (**DD-139**, **DD-140**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
+| `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files and log, everything from its own origin (**DD-140**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
 | `templates/Caddyfile.wg` | The three UI ports on `{$WG_BIND}`, shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
 | `templates/dnsmasq.conf` | Seven `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
@@ -177,7 +177,7 @@ in §10, not resolved silently.
 | `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
 | `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
 | *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
-| *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by Compose `webdav` on loopback (**DD-77**) |
+| *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by a Compose rclone on loopback (**DD-77**); since **DD-142** the only one serves the share root |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
 | `dev/export-installer.sh` | Write `app/<V2_VERSION>.command` and replace the repository-root copy of the current version | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
@@ -202,7 +202,7 @@ error, not a warning.
 |---|---|---|
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
-| `/etc/master-stack/webdav.htpasswd` | installer, once | bcrypt hash, `0600`; mounted into Compose `webdav` |
+| `/etc/master-stack/paylasim.htpasswd` | installer | bcrypt hash of the share account, `0600`; mounted into Compose `paylasim` (**DD-142**) |
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB, created once with the stage-0 account (**DD-118**), + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | five services, `0600` |
 | `/etc/wireguard/wg0.conf` | installer (`[Interface]`), `master-wg` (`[Peer]` blocks) | server key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
@@ -210,8 +210,10 @@ error, not a warning.
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
 | `/usr/local/sbin/master-wg-panel`, `/usr/local/share/master-stack/wg-panel/` | installer | WireGuard panel service and page, `0755` / `0644` (**DD-133**) |
 | `/etc/master-stack/wg-panel.auth` | installer | panel account: user and PBKDF2-SHA256 hash, `0600`; also the file panel's account (**DD-139**) |
-| `/usr/local/sbin/master-files-panel`, `/usr/local/share/master-stack/files-panel/` | installer | file panel service and page, `0755` / `0644` (**DD-139**) |
-| `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); an empty tmpfs inside `unpackerr` and `webdav` |
+| `/usr/local/sbin/master-files-panel`, `/usr/local/share/master-stack/konsol/` | installer | file backend and the console pages, `0755` / `0644` (**DD-139**, **DD-140**) |
+| `/etc/master-stack/paylasim.htpasswd`, `paylasim.cred` | installer | share account: bcrypt for rclone, plaintext for the console to show, `0600 root` (**DD-141**) |
+| `DOWNLOADS_PATH/.pay/` | file backend | share root `w/` (symlinks) and the registry beside it, uid 1000 (**DD-141**) |
+| `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); an empty tmpfs inside `unpackerr` |
 | `/etc/wireguard/networks` | `master-wg net-add`/`net-remove` | panel networks wg1…wg9: port, scope, addresses, default DNS, label (**DD-136**), `0600` |
 | `/etc/wireguard/wgN.conf`, `/etc/wireguard/clients-wgN/` | `master-wg` | a panel network's interface and profiles, `0600`/`0700` |
 | `/etc/wireguard/caddy-wg-<interface>.env` | installer (`wg0`), `master-wg` (`ui` networks) | `WG_BIND` for that `caddy-wg@` instance, `0644` |
@@ -255,17 +257,17 @@ as long as it takes to hash it.**
 operator types password (echo off, twice, compared)
         │
         ▼
-htpasswd -i -B  ──►  /etc/master-stack/webdav.htpasswd   root:root 0600
+htpasswd -i -B  ──►  /etc/master-stack/paylasim.htpasswd  root:root 0600
         │                     │
         ▼                     │
    variable unset             │
                               ▼
               Compose volume mount (read-only)
-              → /run/secrets/webdav_htpasswd
+              → /run/secrets/paylasim_htpasswd
                               │
                               ▼
                     rclone serve webdav --htpasswd=…
-                    (Compose service `webdav`, loopback)
+                    (Compose service `paylasim`, loopback, share root)
 ```
 
 ### 4.1 The decision, stated as properties
@@ -275,13 +277,14 @@ contract form, is `contract.md` §6.2. **DD-77** replaced the former
 systemd `LoadCredential=` path.
 
 1. Credentials live in a **separate, root-owned credential file**:
-   `/etc/master-stack/webdav.htpasswd`.
+   `/etc/master-stack/paylasim.htpasswd` (plus the plaintext copy the console
+   shows, `paylasim.cred`, same owner and mode — **DD-141**).
 2. Its mode is **at most `0600`**, owner `root:root`, verified after writing.
-3. Compose mounts the file at **`/run/secrets/webdav_htpasswd`** (read-only).
+3. Compose mounts the file at **`/run/secrets/paylasim_htpasswd`** (read-only).
 4. rclone is pointed at that **path** only (`--htpasswd=…`).
 5. The password is **not in Compose YAML or systemd unit content**.
 6. The password is **not in any environment file**: not `config.env`, not
-   `state.env`, not `config/defaults.env`. There is no `webdav.env`.
+   `state.env`, not `config/defaults.env`. There is no `paylasim.env`.
 7. The password **does not appear on a command line**.
 8. The password is **not written to logs**.
 9. Exposure checks against the running container assert items 7–8 (§4.3).
@@ -289,10 +292,10 @@ systemd `LoadCredential=` path.
 ### 4.2 Where the username lives, and why
 
 **The username is managed with the credential, not with the
-configuration.** It lives inside `webdav.htpasswd`, because the htpasswd
+configuration.** It lives inside `paylasim.htpasswd`, because the htpasswd
 format is already `user:hash`.
 
-The alternative — `WEBDAV_USER` in `config.env` — was rejected: the name
+The alternative — `SHARE_USER` in `config.env` — was rejected: the name
 would then exist in two places and could drift from the hash. One file, one
 pair.
 
