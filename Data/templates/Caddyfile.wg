@@ -13,6 +13,3 @@ http://:__DOZZLE_UI_PORT__ {
 http://:__TORRENT_UI_PORT__ {
 	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
 }
-http://:__FILEBROWSER_UI_PORT__ {
-	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
-}

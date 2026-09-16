@@ -44,7 +44,7 @@ state. Treat every change as production-infrastructure work.
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
   `admin` / `12345test` for Dozzle and qBittorrent (`TORRENT_USER`/`TORRENT_PASS`); `admin` / `12345test1234`
-  for FileBrowser and the WireGuard panel (`WG_PANEL_USER`/`WG_PANEL_PASS`; 12-character minimum); an empty `TS_AUTH_KEY`. Add and
+  (Konsol has no account, **DD-147**). Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the
   re-run questions with their defaults and `E` at the confirmation, and report
@@ -52,10 +52,10 @@ state. Treat every change as production-infrastructure work.
   account that differs from it, so save and restore a real credential on
   `nrm` around a test — the operator's WebDAV htpasswd is real (Infuse).
   Non-default config values still need the user.
-- **Never ask for, read, store or type a Tailscale auth key.** Only the
-  operator puts one in `kurulum/kurulum.env` (**DD-115**, **DD-119**); never
-  open, print or copy that file. Running the launcher with the operator's
-  folder is allowed only when the user asks for it in chat.
+- **Never open, print or copy `kurulum/kurulum.env`** — it holds the
+  operator's service passwords. There is no Tailscale auth key any more
+  (**DD-147**): the node joins through the login link. Running the launcher
+  with the operator's folder is allowed only when the user asks for it in chat.
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
   and wait; it expires if left unused.
 - That authorization does **not** cover: local Mac outside this repo;

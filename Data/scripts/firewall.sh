@@ -45,7 +45,6 @@ fi
 : "${CHAIN_NAT:?}"
 : "${DOZZLE_UI_PORT:?}"
 : "${TORRENT_UI_PORT:?}"
-: "${FILEBROWSER_UI_PORT:?}"
 
 # nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
 # seçimi bu sarmalayıcılardadır.
@@ -55,7 +54,7 @@ ip6tables_nat() { ip6tables -t nat "$@"; }
 # DD-120: WireGuard istemcilerinin host'ta ulaşabildiği tek yer: caddy-wg'nin
 # WireGuard adresindeki arayüz portları.
 wg_ui_ports() {
-    printf '%s,%s,%s\n' "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"
+    printf '%s,%s\n' "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT"
 }
 
 # DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun

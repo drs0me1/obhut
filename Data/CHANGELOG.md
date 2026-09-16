@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### 2026-09-16 — FileBrowser is gone, Konsol needs no password, Tailscale joins by link only (v2-114)
+
+- **Removed** (**DD-146**): the `filebrowser` container. Konsol's Dosyalar page
+  now uploads, selects many items and searches (v2-113), which were the last
+  things FileBrowser was installed for.
+  - Gone with it: the `FILEBROWSER_USER` / `FILEBROWSER_PASS` input keys, port
+    61007, the image, the Bolt database and its account create/sync code
+    (~150 lines of the installer), and four tests.
+  - `file.<domain>` stays as a name and redirects to the console, like `wg.`
+    and `dosya.`.
+  - WireGuard networks with "Local erişim" now reach Dozzle and qBittorrent
+    only. Files are not reachable over WireGuard: Konsol stays tailnet-only.
+  - Compose has four services. A re-run on a host that still runs the old
+    container removes it (`--remove-orphans`); `/etc/master-stack/filebrowser-data`
+    is left for the operator to delete.
+- **Removed** (**DD-147**): the Konsol password. Access is tailnet-only and that
+  is the boundary; narrowing it is a Tailscale ACL matter.
+  - Gone: `WG_PANEL_USER` / `WG_PANEL_PASS`, the PBKDF2 account file
+    (`/etc/master-stack/wg-panel.auth`), HTTP Basic, the 10-failure lockout,
+    `master-wg-panel account`, and the `LoadCredential` that fed the file backend.
+  - Kept and now load-bearing: the `Host` allowlist (DNS rebinding) and the
+    `X-Konsol` header + same-origin check on `/api/*` (CSRF). Stage 7 proves
+    both gates on both backends; the old "401 without the account" check is gone.
+  - The audit log records the actor as `konsol` plus the client address.
+- **Removed** (**DD-147**): the Tailscale auth key. `TS_AUTH_KEY`, the key file
+  under `/run`, `--auth-key`, the fallback path and `TS_AUTHKEY_LOGIN_SECONDS`
+  are gone; stage 2 always prints the login link and waits.
+- **Fixed** (**DD-145**): an upload refused before its body was read (existing
+  name, trash or share folder, missing folder) reached the browser as `502`
+  through Caddy: the backend closed the connection with the body unread. It now
+  drains the body (up to 256 MB) before answering `409`/`403`/`404`, and the
+  console does not send a file whose name is already in the folder. Verified on
+  `nrm` with 20 MB bodies through Caddy, three times each.
+- **Operator step:** delete the `FILEBROWSER_USER=`, `FILEBROWSER_PASS=`,
+  `WG_PANEL_USER=`, `WG_PANEL_PASS=` and `TS_AUTH_KEY=` lines from
+  `kurulum/kurulum.env`; the installer stops on an unknown key before changing
+  anything.
+- **Fixed:** the `## [Unreleased]` heading above the v2-112/v2-113 entry, lost
+  in the previous commit.
+
 ### 2026-09-16 — The user area is /srv and the console uploads into the list (v2-112, v2-113)
 
 - **Changed** (**DD-144**, v2-112): the downloads path is no longer asked. The

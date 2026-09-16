@@ -41,7 +41,7 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), qBittorrent (replaced Transmission again, **DD-127**), FileBrowser (classic), Unpackerr and loopback WebDAV (rclone) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), qBittorrent (replaced Transmission again, **DD-127**), Unpackerr and the share WebDAV (rclone). FileBrowser was retired; Konsol manages the files (**DD-146**) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (qBittorrent) peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
@@ -121,13 +121,9 @@ the ones agreed on 2026-08-05:
 ### 1.2 Tailscale
 
 - Official Tailscale repository and package (**R3**).
-- The optional Tailscale auth key is `TS_AUTH_KEY` in the input file, and
-  is ignored when the node is already online. With a key, stage 2 runs
-  `tailscale up --auth-key=file:<root-only tmpfs file> --advertise-exit-node
-  --ssh` and skips the browser step. The key is never written to
-  `config.env`, `state.env`, the log or a command line. An empty value, or a
-  key that is rejected or times out, uses the interactive login below
-  (**DD-115**, **DD-119**).
+- There is no auth key input (**DD-147**): the node always joins through the
+  login link that stage 2 prints, and the operator approves it in a browser.
+  Nothing Tailscale-related is typed into or stored by the installer.
 - `tailscale up --advertise-exit-node --ssh`, then `tailscale set` to hold
   exit-node, SSH, stateful filtering, netfilter mode and subnet-route SNAT
   (**R4**, **R5**).
@@ -148,9 +144,9 @@ the ones agreed on 2026-08-05:
   `apparmor` and `pigz` (**R9**, **DD-125**).
 - The installer's own apt downloads are not kept in `/var/cache/apt/archives`
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
-- One Compose file with exactly five services: `dozzle`, `filebrowser`,
-  `qbittorrent`, `unpackerr`, `webdav` (**R10**, **DD-77**, **DD-116**,
-  **DD-127**, **DD-120**).
+- One Compose file with exactly four services: `dozzle`, `qbittorrent`,
+  `unpackerr`, `paylasim` (**R10**, **DD-116**, **DD-127**, **DD-142**,
+  **DD-146**).
 - qBittorrent (LinuxServer image) keeps `/config` on
   `/etc/master-stack/qbittorrent`, and its settings come from the installer
   (**DD-129**):
@@ -185,22 +181,11 @@ the ones agreed on 2026-08-05:
   with the password on stdin and the `actions` role. It is regenerated, with
   a Dozzle restart, only when it no longer holds exactly that account
   (**DD-119**).
-- FileBrowser's account comes from the input file (user name, and a
-  password of at least `FILEBROWSER_MIN_PASSWORD_LENGTH`, 12, FileBrowser's
-  own minimum). Before Compose starts, the installer builds the Bolt database
-  in a temporary directory with the image's CLI in a network-less one-shot
-  container — `config init` with the settings the image's first start would
-  choose, then `users import` of an admin whose bcrypt hash `htpasswd` made
-  from stdin — verifies it holds exactly that admin, and moves it into
-  `/etc/master-stack/filebrowser-data`. The password never reaches argv, a log
-  or a plaintext file, and no first-start random admin password is ever
-  created (**DD-118**). An existing `filebrowser.db` is compared with the
-  input file on a copy, so a running container is not touched. If the account
-  differs, the container is stopped, `users import --overwrite` writes the
-  name and hash into a fresh copy under the same id, and the verified copy is
-  moved in before the container starts again. A password changed in
-  FileBrowser's UI therefore returns to the file's value on the next run;
-  other users are left alone (**DD-119**).
+- There is no FileBrowser (**DD-146**): no container, no account in the input
+  file, no port and no database. Files are managed in Konsol (§1.10);
+  `file.${LOCAL_DOMAIN}` redirects there. A re-run on a host that still has
+  the old container removes it through `docker compose up --remove-orphans`;
+  `/etc/master-stack/filebrowser-data` is left for the operator to delete.
 - Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
 - Containers survive a reboot through the Compose **restart policy**
   (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`
@@ -215,9 +200,9 @@ the ones agreed on 2026-08-05:
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
-  (no full-tree rewrite). qBittorrent, FileBrowser and Unpackerr share
-  read/write that way. WebDAV remains read-only via the Compose service
-  (`:ro` mount + `--read-only`).
+  (no full-tree rewrite). qBittorrent, Unpackerr and Konsol's file backend
+  share read/write that way. The share WebDAV remains read-only (`:ro` mount +
+  `--read-only`).
 
 ### 1.5 DNS and Caddy
 
@@ -313,8 +298,9 @@ Preserved in full as a core feature. Contract in §5–§7.
     (**DD-143**): it never uploads, and a reinstall cannot bring back a removed
     peer, a removed network or an old key.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
-  Dozzle, qBittorrent and FileBrowser UIs at `http://<that network's server
-  address>:<port>` when its scope is `ui`.
+  Dozzle and qBittorrent UIs at `http://<that network's server address>:<port>`
+  when its scope is `ui`. Files are not reachable over WireGuard: Konsol is
+  tailnet-only and FileBrowser is gone (**DD-146**).
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
   other peers (§9).
 - The UIs are served by `caddy-wg@wgN.service` (`/etc/caddy/Caddyfile.wg`, admin
@@ -332,18 +318,14 @@ Preserved in full as a core feature. Contract in §5–§7.
   - Every change goes through `master-wg` (`info`, `add`, `remove`, `dns`,
     `reset --onay`, `profile`, `png`): same validation, lock and live apply as
     `wireguard.command`.
-  - The account is `WG_PANEL_USER`/`WG_PANEL_PASS` from `kurulum.env` (user
-    `^[a-z][a-z0-9_-]{0,31}$`, password at least 12 characters). The installer
-    stores only a PBKDF2-SHA256 hash (600000 rounds) in
-    `/etc/master-stack/wg-panel.auth` (`0600`). It keeps the hash while it
-    verifies and rewrites it when the file differs; the panel re-reads it
-    without a restart.
-  - The browser signs in with HTTP Basic. After 10 wrong passwords in
-    15 minutes a client is refused for 15 minutes, and each wrong attempt waits
-    one second.
-  - Requests with another `Host` than `wg.${LOCAL_DOMAIN}` (or the loopback
-    port) are refused. `/api/*` needs the `X-WG-Panel: 1` header and a
-    same-origin fetch. Adds, removes, DNS changes and regenerations need a
+  - **No password** (**DD-147**): Konsol opens for any device on the tailnet;
+    narrowing that is a Tailscale ACL matter. There is no account, no login
+    prompt and no lockout.
+  - Because nothing else guards it, two gates are mandatory and stage 7 proves
+    both on both backends: a request with another `Host` than
+    `panel.${LOCAL_DOMAIN}` (or the loopback port) is refused (DNS rebinding),
+    and `/api/*` needs the `X-Konsol: 1` header and a same-origin fetch, which a
+    page on another site cannot send (CSRF). Adds, removes, DNS changes and regenerations need a
     JSON body; regeneration also needs `confirm` `onayla` (any case, **DD-134**).
   - Responses carry `Cache-Control: no-store`, a CSP with only `'self'` sources
     (plus `blob:` images), `X-Frame-Options: DENY` and no referrer. The page
@@ -370,7 +352,7 @@ Preserved in full as a core feature. Contract in §5–§7.
     and `…::N:H` (H in hex). Profiles live in `/etc/wireguard/clients-wgN`;
     the interface in `/etc/wireguard/wgN.conf`.
   - Scope per network: `inet` reaches only the internet; `ui` also reaches
-    Dozzle, qBittorrent and FileBrowser on its own server address through
+    Dozzle and qBittorrent on its own server address through
     `caddy-wg@wgN`. Every network pings its own server address; nothing
     reaches another network, the tailnet, SSH, DNS, WebDAV or the panel.
   - The registry `/etc/wireguard/networks` (one tab-separated line per
@@ -452,13 +434,11 @@ Preserved in full as a core feature. Contract in §5–§7.
     - The unit has no capabilities and `ProtectSystem=strict` with only
       `DOWNLOADS_PATH` writable, plus `ProtectHome`, `PrivateTmp`,
       `PrivateDevices` and `NoNewPrivileges`.
-  - The account is the WireGuard panel's (no new input keys). systemd hands
-    the root-only hash file to the service with `LoadCredential`. The service
-    restarts when the installer rewrites the account.
-  - Authentication, lockout, `Host` check, CSP, `no-store` and the audit log
-    match the WireGuard panel. `/api/*` needs the `X-Files-Panel: 1` header and
-    a same-origin fetch; only a download, opened as a link, needs no header, and
-    a cross-site download is still refused.
+  - No password, like the WireGuard backend (**DD-147**). `Host` check, CSP,
+    `no-store` and the audit log match it (the actor is logged as `konsol` with
+    the client address). `/api/*` needs the `X-Konsol: 1` header and a
+    same-origin fetch; only a download, opened as a link, needs no header, and a
+    cross-site download is still refused.
 - The file panel never leaves its root and never overwrites.
   - Every path step is opened from a directory descriptor with `O_NOFOLLOW`. A
     symbolic link is listed but never followed, and `..` and `/` are refused.
@@ -484,8 +464,8 @@ Preserved in full as a core feature. Contract in §5–§7.
 - The page marks qBittorrent's temporary folder (`Session\TempPath` from
   `templates/qBittorrent.conf`) and warns before moving or deleting there.
 - A switch at the top links `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}`.
-- FileBrowser is still installed; the console's own file manager now covers
-  the same ground (upload included), so it is the next thing to retire.
+- It replaced FileBrowser (**DD-146**): `file.${LOCAL_DOMAIN}` redirects to
+  the console.
 
 ---
 
@@ -502,7 +482,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
 | **Image-digest-based recovery** | digest recording + final cross-check | Digests are still *recorded* for identification; nothing acts on a mismatch. |
 | **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
-| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: since v2-84 the installer creates the account, since v2-85 from the input file, and no first-boot password exists (**DD-118**, **DD-119**). |
+| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: FileBrowser itself was retired in v2-114 (**DD-146**). |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release. Compose restart policy covers reboot; nothing else needed a unit. |
 | **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No container binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart the Compose stack.** |
 | **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**). The installer never installs them; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
@@ -557,9 +537,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
-| FileBrowser (classic) | `127.0.0.1` | 61007 |
 | qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
-| WebDAV (Compose rclone) | `127.0.0.1` | `${WEBDAV_PORT}` (61003) |
 | Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
 | Konsol file backend and pages (`master-files-panel`) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**) |
 | WebDAV — shares only (`paylasim`) | `127.0.0.1` | 61010 (**DD-141**, **DD-142**) |
@@ -578,7 +556,7 @@ state file by substitution. A port literal appearing twice is a bug.
 
 | Service | Listen address | Port |
 |---|---|---|
-| caddy-wg@wg0 → Dozzle, qBittorrent, FileBrowser | `10.8.0.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+| caddy-wg@wgN → Dozzle, qBittorrent (`ui` networks) | that network's server address | 61002, 61006 (TCP, HTTP only) |
 | caddy-wg@wgN (panel networks with scope `ui`) | `10.8.N.1` | 61002, 61006, 61007 (TCP, HTTP only) |
 
 No names, no WebDAV, no dnsmasq on any WireGuard network (**DD-120**,

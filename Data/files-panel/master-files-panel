@@ -3,27 +3,22 @@
 # tarayıcıdan yönetir: gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle /
 # kalıcı sil, metin dosyasını oku, indir. Konsol'un sayfa dosyalarını da bu servis verir;
 # /api/wg/* isteklerini Caddy öbür arka uca (master-wg-panel) yollar.
-# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (http://panel.<alan>). Hesap WireGuard
-# arka ucuyla aynıdır: özet dosyası systemd kimlik bilgisi olarak okunur. Servis root değil,
-# indirme klasörünün sahibi olarak çalışır. Yalnız Python standart kütüphanesi.
+# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (http://panel.<alan>). Parola yoktur
+# (DD-147): erişim sınırı Tailscale. Servis root değil, kullanıcı alanının sahibi olarak
+# çalışır. Yalnız Python standart kütüphanesi.
 #
-#   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN --web DİZİN
-#                            (--auth DOSYA | --auth-credential AD) [--trash AD]
+#   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN --web DİZİN [--trash AD]
 #                            [--domain ALAN] [--version SÜRÜM] [--temp-dir AD] [--allow-host HOST]
-#   master-files-panel check --url URL --host HOST --user AD      parola stdin'den
+#   master-files-panel check --url URL --host HOST
 #
 # Güvenlik: kökten çıkılamaz (her yol adımı bir dizin tanıtıcısından O_NOFOLLOW ile
 # açılır, sembolik bağlantı izlenmez); hiçbir işlem üzerine yazmaz (renameat2
 # RENAME_NOREPLACE); silinen öge kökteki çöpe taşınır, kalıcı silme yalnız çöpten ve
-# çöpü boşaltmak "onayla" ister. Kimlik (PBKDF2, kilit), CSRF (X-Files-Panel + aynı
-# köken), Host denetimi, sıkı CSP ve no-store WireGuard paneliyle aynıdır.
+# çöpü boşaltmak "onayla" ister. CSRF (X-Konsol + aynı köken), Host denetimi, sıkı CSP ve
+# no-store öbür arka uçla aynıdır; parola olmadığı için asıl korumalar bunlardır.
 import argparse
-import base64
-import binascii
 import ctypes
 import errno
-import hashlib
-import hmac
 import http.server
 import json
 import os
@@ -38,7 +33,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-USER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 # DD-141: paylaşım klasörü. <kök>/.pay sunulmaz; yalnız içindeki w/ paylaşım WebDAV'ının
 # köküdür ve kayıt (kayit.json) onun dışında durur. Paylaşılan öge w/ içine göreli bir
@@ -49,14 +43,14 @@ MAX_SHARES = 100
 MAX_SHARE_DAYS = 3650
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-AUTH_CACHE_SECONDS = 900
-FAIL_WINDOW_SECONDS = 900
-FAIL_LIMIT = 10
 MAX_BODY = 262144
 # Yükleme (DD-145): gövde diske akıtılır, belleğe alınmaz. Sınır disk boşluğuyla değil
 # kabalıkla ilgili: bir istek en çok bu kadar sürebilir/olabilir.
 UPLOAD_MAX_BYTES = 64 * 1024 * 1024 * 1024
 UPLOAD_CHUNK = 1024 * 1024
+# Gövde okunmadan hata dönülürse bağlantı sıfırlanır ve Caddy bunu 502'ye çevirir; o yüzden
+# en çok bu kadarı okunup atılır, sonra anlamlı hata gider. Daha büyüğünde bağlantı kapanır.
+UPLOAD_DRAIN_MAX = 256 * 1024 * 1024
 MAX_NAMES = 1000
 MAX_DEPTH = 64
 TEXT_LIMIT = 1024 * 1024
@@ -65,7 +59,8 @@ SNIFF_BYTES = 8192
 WALK_BUDGET = 200000
 CONFIRM_WORD = "onayla"
 API_HEADER = "X-Konsol"
-REALM = "Konsol"
+# Günlükte işlemi yapan: hesap yok, istek Konsol'dan gelir (adres ayrıca yazılır).
+ACTOR = "konsol"
 # Disk kartındaki "indirilenler" toplamı: kök ağacının yürüyüşü pahalıdır, önbelleğe alınır.
 USAGE_CACHE_SECONDS = 300
 ENCODINGS = {"utf-8": "utf-8-sig", "cp1254": "cp1254", "cp437": "cp437"}
@@ -93,46 +88,8 @@ class PanelError(Exception):
         self.message = message
 
 
-# ----------------------------------------------------------------- hesap
-# WireGuard panelinin yazdığı "kullanıcı:pbkdf2_sha256$tur$tuz$özet" satırı (master-wg-panel
-# account). Biçim değişirse iki panel birlikte değişir; bats bunu birlikte sınar.
-def parse_account(line):
-    user, sep, rest = line.strip().partition(":")
-    parts = rest.split("$")
-    if not sep or not USER_RE.match(user) or len(parts) != 4 or parts[0] != "pbkdf2_sha256":
-        return None
-    try:
-        iterations = int(parts[1])
-        salt = base64.b64decode(parts[2], validate=True)
-        want = base64.b64decode(parts[3], validate=True)
-    except (ValueError, binascii.Error):
-        return None
-    if iterations < 1 or not salt or len(want) < 16:
-        return None
-    return user, iterations, salt, want
-
-
-def account_matches(account, user, password):
-    if account is None:
-        return False
-    got = hashlib.pbkdf2_hmac("sha256", password, account[2], account[1], len(account[3]))
-    return hmac.compare_digest(got, account[3]) and hmac.compare_digest(user.encode(), account[0].encode())
-
-
-def read_account_file(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            lines = [l for l in fh.read().splitlines() if l.strip()]
-    except OSError:
-        return None
-    return parse_account(lines[0]) if len(lines) == 1 else None
-
-
 def cmd_check(args):
-    password = sys.stdin.buffer.read()
-    token = base64.b64encode(args.user.encode() + b":" + password).decode()
-    req = urllib.request.Request(args.url, headers={
-        "Host": args.host, "Authorization": "Basic " + token, API_HEADER: "1"})
+    req = urllib.request.Request(args.url, headers={"Host": args.host, API_HEADER: "1"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode())
@@ -632,19 +589,23 @@ class Files:
                 moved.append(name)
         return moved
 
-    def upload(self, parts, name, stream, length):
-        """Akışı <parts>/<name> olarak yazar. Geçici ada yazılır, bitince atomik taşınır:
-        yarım kalan dosya listeye hiç girmez, var olanın üzerine yazılmaz (DD-145)."""
+    def upload_check(self, parts, name):
+        """Gövde okunmadan önceki denetimler: geçerli ad, var olan klasör, boş hedef."""
         self.check_new_name(parts, name)
-        tmp = ".yukleniyor-%s" % secrets.token_hex(6)
-        written = 0
         with DirFd(self.open_dir(parts)) as fd:
             try:
                 os.stat(name, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
-                pass
-            else:
-                raise PanelError(409, "“%s” zaten var; üzerine yazılmaz" % name)
+                return
+        raise PanelError(409, "“%s” zaten var; üzerine yazılmaz" % name)
+
+    def upload(self, parts, name, stream, length):
+        """Akışı <parts>/<name> olarak yazar. Geçici ada yazılır, bitince atomik taşınır:
+        yarım kalan dosya listeye hiç girmez, var olanın üzerine yazılmaz (DD-145)."""
+        self.upload_check(parts, name)
+        tmp = ".yukleniyor-%s" % secrets.token_hex(6)
+        written = 0
+        with DirFd(self.open_dir(parts)) as fd:
             handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664, dir_fd=fd)
             try:
                 # umask ne olursa olsun ağacın kuralı: dosya 0664 (qBittorrent ve
@@ -797,66 +758,8 @@ class Panel:
     def __init__(self, args):
         self.args = args
         self.lock = threading.Lock()
-        self.fail_lock = threading.Lock()
-        self.verified = {}
-        self.failures = {}
-        self.account_mtime = None
-        self.account = None
         self.usage_cache = (0.0, None)
         self.files = Files(args.root, args.trash, args.share)
-
-    def current_account(self):
-        try:
-            mtime = os.stat(self.args.auth).st_mtime_ns
-        except OSError:
-            self.account, self.account_mtime = None, None
-            return None
-        if mtime != self.account_mtime:
-            self.account = read_account_file(self.args.auth)
-            self.account_mtime = mtime
-            with self.lock:
-                self.verified.clear()
-        return self.account
-
-    def locked_out(self, client):
-        now = time.time()
-        with self.fail_lock:
-            recent = [t for t in self.failures.get(client, []) if now - t < FAIL_WINDOW_SECONDS]
-            self.failures[client] = recent
-            return len(recent) >= FAIL_LIMIT
-
-    def record_failure(self, client):
-        with self.fail_lock:
-            self.failures.setdefault(client, []).append(time.time())
-
-    def authenticate(self, header):
-        account = self.current_account()
-        if account is None or not header or not header.startswith("Basic "):
-            return None
-        key = hashlib.sha256(("%s|%s" % (self.account_mtime, header)).encode()).hexdigest()
-        now = time.time()
-        with self.lock:
-            until = self.verified.get(key)
-            if until and until > now:
-                return account[0]
-        try:
-            raw = base64.b64decode(header[6:].strip(), validate=True)
-        except (ValueError, binascii.Error):
-            return None
-        user, sep, password = raw.partition(b":")
-        if not sep:
-            return None
-        try:
-            user_text = user.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-        if not account_matches(account, user_text, password):
-            return None
-        with self.lock:
-            if len(self.verified) > 64:
-                self.verified.clear()
-            self.verified[key] = now + AUTH_CACHE_SECONDS
-        return account[0]
 
     def used(self):
         """İndirilenlerin toplamı; ağaç yürüyüşü USAGE_CACHE_SECONDS boyunca önbellekte."""
@@ -960,24 +863,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return hosts
 
     def gate(self, route):
-        """Host, kimlik ve API için köken denetimi. Kullanıcı adı ya da None (yanıt gönderildi)."""
+        """Host ve API için köken denetimi. İşlemi yapanın günlük adı ya da None (yanıt gönderildi).
+        DD-147: parola yok; erişim sınırı Tailscale. Bu iki denetim o yüzden kalır."""
         host = (self.headers.get("Host") or "").lower()
         if host not in self.allowed_hosts():
             self.error(403, "bu adresten erişilemez")
-            return None
-        client = self.client()
-        if self.panel.locked_out(client):
-            self.send(429, json.dumps({"error": "çok fazla hatalı giriş; 15 dakika sonra yeniden deneyin"}),
-                      extra={"Retry-After": "900"})
-            return None
-        user = self.panel.authenticate(self.headers.get("Authorization"))
-        if user is None:
-            if self.headers.get("Authorization"):
-                self.panel.record_failure(client)
-                time.sleep(1)
-                print("dosya: %s giriş başarısız" % client, flush=True)
-            self.send(401, json.dumps({"error": "giriş gerekli"}),
-                      extra={"WWW-Authenticate": 'Basic realm="%s", charset="UTF-8"' % REALM})
             return None
         if route.startswith("/api/"):
             site = self.headers.get("Sec-Fetch-Site")
@@ -987,7 +877,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not header_ok or (site and site not in ("same-origin", "none")):
                 self.error(403, "istek reddedildi (yalnız panel sayfasından)")
                 return None
-        return user
+        return ACTOR
 
     def body_json(self):
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
@@ -1107,13 +997,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.error(413, "dosya çok büyük (en çok %d GB)" % (UPLOAD_MAX_BYTES // (1024 ** 3)))
             return
         files = self.panel.files
+        try:
+            parts = files.split(raw_path)
+            files.upload_check(parts, name)
+        except (PanelError, OSError) as err:
+            # Yanıt gövde okunmadan giderse bağlantı sıfırlanır ve istemci 502 görür.
+            self.drain(length)
+            code, message = (err.code, err.message) if isinstance(err, PanelError) else (status_for(err), os_message(err))
+            self.audit(user, "yükle", "%s: %s" % (name, message), False)
+            self.error(code, message)
+            return
 
         def put():
-            parts = files.split(raw_path)
             written = files.upload(parts, name, self.rfile, length)
             return 201, {"name": name, "size": written}, "/".join(parts + [name])
 
         self.run(user, "yükle", put, lock=False, hint=name)
+
+    def drain(self, length):
+        """İstek gövdesini okuyup atar (en çok UPLOAD_DRAIN_MAX); daha büyüğü bağlantıyı kapatır."""
+        if length > UPLOAD_DRAIN_MAX:
+            return
+        left = length
+        try:
+            while left > 0:
+                chunk = self.rfile.read(min(UPLOAD_CHUNK, left))
+                if not chunk:
+                    break
+                left -= len(chunk)
+        except OSError:
+            pass
 
     def download(self, user, raw):
         files = self.panel.files
@@ -1248,13 +1161,6 @@ def cmd_serve(args):
     host, _, port = args.listen.rpartition(":")
     if host != "127.0.0.1" or not port.isdigit():
         fail("panel yalnız yerel adresi dinler (127.0.0.1:PORT)")
-    if args.auth_credential:
-        directory = os.environ.get("CREDENTIALS_DIRECTORY")
-        if not directory or args.auth:
-            fail("--auth-credential yalnız systemd LoadCredential ile ve --auth olmadan kullanılır")
-        args.auth = os.path.join(directory, args.auth_credential)
-    if not args.auth:
-        fail("--auth ya da --auth-credential gerekli")
     if not os.path.isabs(args.root) or not TRASH_RE.match(args.trash):
         fail("kök mutlak yol, çöp adı noktayla başlayan küçük harfli bir ad olmalı")
     if args.share and (not TRASH_RE.match(args.share) or args.share == args.trash):
@@ -1289,8 +1195,6 @@ def main():
     s.add_argument("--listen", required=True)
     s.add_argument("--root", required=True)
     s.add_argument("--web", required=True)
-    s.add_argument("--auth", default="")
-    s.add_argument("--auth-credential", dest="auth_credential", default="")
     s.add_argument("--trash", default=".cop")
     s.add_argument("--share", default="")
     s.add_argument("--share-credential", dest="share_credential", default="")
@@ -1301,7 +1205,6 @@ def main():
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)
     c.add_argument("--host", required=True)
-    c.add_argument("--user", required=True)
     args = parser.parse_args()
     if args.cmd == "serve":
         cmd_serve(args)

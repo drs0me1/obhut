@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-113"
+V2_VERSION="2026.08.06-v2-114"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -31,10 +31,10 @@ OS_CHANGED=0
 APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # DD-119: kurulum girdi dosyasının alanları (şablon: config/kurulum.env.example).
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı
-# defaults.env varsayılanını alır; boş TS_AUTH_KEY tarayıcıdan giriş demektir.
+# defaults.env varsayılanını alır. Tailscale'e her zaman giriş bağlantısıyla katılınır (DD-147).
 # SSH_HOST'u yalnız launcher okur. Kullanıcı alanı sorulmaz: SERVER_ROOT sabittir (DD-144).
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY"
-INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS"
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"
+INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -93,7 +93,6 @@ WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 DOZZLE_UI_PORT=$DOZZLE_UI_PORT
 TORRENT_UI_PORT=$TORRENT_UI_PORT
-FILEBROWSER_UI_PORT=$FILEBROWSER_UI_PORT
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -243,31 +242,6 @@ tailscale_login() {
     done
     rm -f "$out"
     die "Tailscale girişi tamamlanamadı"
-}
-
-# DD-115: auth key ile giriş. Anahtar argv'ye (ps), loga ve kalıcı diske girmez:
-# root'a özel tmpfs'teki dosyadan `--auth-key=file:` ile okunur, komut döner
-# dönmez (ya da betik yarıda kalırsa çıkışta) silinir. Anahtar reddedilir veya
-# süre dolarsa 1 döner; çağıran tarayıcı akışına geçer.
-tailscale_login_with_key() {
-    local keyfile="$RUNTIME_DIR/tailscale-authkey" rc=0
-    log INFO "Tailscale: auth key ile giriş"
-    trap 'rm -f -- "$RUNTIME_DIR/tailscale-authkey"' EXIT
-    (umask 077 && printf '%s' "$TS_AUTH_KEY" >"$keyfile")
-    # Çıkış kodu tee'nin değil tailscale'in: pipefail ayarından bağımsız okunur.
-    set +e
-    timeout "$TS_AUTHKEY_LOGIN_SECONDS" \
-        tailscale up --auth-key="file:$keyfile" --advertise-exit-node --ssh 2>&1 |
-        tee -a "$V2_LOG_FILE"
-    rc=${PIPESTATUS[0]}
-    set -e
-    rm -f -- "$keyfile"
-    trap - EXIT
-    # rc 0: aşama 2'nin çevrimiçi bekleme döngüsü sonrasını bekler (cihaz onayı dahil).
-    [[ "$rc" -ne 0 ]] || return 0
-    [[ "$(tailscale_login_state)" != "complete" ]] || return 0
-    log WARN "Tailscale auth key ile giriş olmadı (çıkış $rc: anahtar geçersiz, süresi dolmuş ya da tek kullanımlık ve kullanılmış olabilir); tarayıcıdan girişe geçiliyor"
-    return 1
 }
 
 # DD-124/DD-143: WireGuard'ın kaynağı sunucudaki kayıt ve wgN.conf dosyalarıdır.
@@ -448,8 +422,8 @@ stage_0() {
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
     # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
-    # karşılaştırılır; farklıysa aşama 1 (WebDAV) ve 4 (Dozzle, FileBrowser,
-    # qBittorrent) günceller. Parolalar yalnız bellekte durur.
+    # karşılaştırılır; farklıysa aşama 1 (paylaşım) ve 4 (Dozzle, qBittorrent)
+    # günceller. Parolalar yalnız bellekte durur.
     # DD-116: Dozzle parolası aşama 4'te imajın kendi aracına stdin'den gider.
     DOZZLE_NEW_USER="$INPUT_DOZZLE_USER"
     DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
@@ -461,38 +435,17 @@ stage_0() {
     TORRENT_NEW_PASS="$INPUT_TORRENT_PASS"
     validate_account qBittorrent "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" \
         '^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$' "$TORRENT_MIN_PASSWORD_LENGTH"
-    # DD-118: FileBrowser hesabı; arayüzden değiştirilen parola dosyadakine döner.
-    FILEBROWSER_NEW_USER="$INPUT_FILEBROWSER_USER"
-    FILEBROWSER_NEW_PASS="$INPUT_FILEBROWSER_PASS"
-    validate_account FileBrowser "$FILEBROWSER_NEW_USER" "$FILEBROWSER_NEW_PASS" \
-        '^[a-z][a-z0-9_-]{0,31}$' "$FILEBROWSER_MIN_PASSWORD_LENGTH"
-    # DD-133: WireGuard paneli hesabı; parola sunucuya yalnız PBKDF2 özeti olarak gider.
-    WG_PANEL_NEW_USER="$INPUT_WG_PANEL_USER"
-    WG_PANEL_NEW_PASS="$INPUT_WG_PANEL_PASS"
-    validate_account "WireGuard paneli" "$WG_PANEL_NEW_USER" "$WG_PANEL_NEW_PASS" \
-        '^[a-z][a-z0-9_-]{0,31}$' "$WG_PANEL_MIN_PASSWORD_LENGTH"
     # DD-141: paylaşım WebDAV'ı; bütün paylaşımlar bu tek hesapla açılır.
     SHARE_NEW_USER="$INPUT_SHARE_USER"
     SHARE_NEW_PASS="$INPUT_SHARE_PASS"
     validate_account "Paylaşım" "$SHARE_NEW_USER" "$SHARE_NEW_PASS" \
         '^[a-z][a-z0-9._-]{0,31}$' "$SHARE_MIN_PASSWORD_LENGTH"
 
-    # DD-115: auth key verilirse aşama 2'de tarayıcı adımı atlanır; boş = login
-    # URL. Anahtar yalnız bellekte durur: config/state'e yazılmaz, dışa aktarılmaz.
-    TS_AUTH_KEY="$INPUT_TS_AUTH_KEY"
-    if [[ -n "$TS_AUTH_KEY" ]]; then
-        [[ "$TS_AUTH_KEY" != tskey-client-* ]] ||
-            die "girdi dosyası: TS_AUTH_KEY bir OAuth istemci sırrı; admin panelinden bir auth key (tskey-auth-…) oluşturun ya da boş bırakın"
-        [[ "$TS_AUTH_KEY" =~ ^tskey-[A-Za-z0-9-]+$ ]] ||
-            die "girdi dosyası: TS_AUTH_KEY 'tskey-' ile başlamalı ve yalnız harf, rakam, '-' içermeli; tarayıcıdan giriş için boş bırakın"
-    fi
-    local ts_key_note="yok (tarayıcıdan giriş)"
+    # DD-147: Tailscale'e yalnız giriş bağlantısıyla katılınır; auth key girdisi yok.
+    local ts_note="aşama 2'de giriş bağlantısı gösterilir; tarayıcıda onaylayın"
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 &&
         [[ "$(tailscale_login_state)" == "complete" ]]; then
-        TS_AUTH_KEY=""
-        ts_key_note="kullanılmayacak (Tailscale zaten online)"
-    elif [[ -n "$TS_AUTH_KEY" ]]; then
-        ts_key_note="var (aşama 2'de tarayıcı adımı atlanacak)"
+        ts_note="zaten online"
     fi
     local input_key
     for input_key in $INPUT_KEYS; do
@@ -543,10 +496,10 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Hesaplar:      Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER,
-                 Konsol $WG_PANEL_NEW_USER, paylaşım $SHARE_NEW_USER
+  Hesaplar:      Dozzle $DOZZLE_NEW_USER, qBittorrent $TORRENT_NEW_USER, paylaşım $SHARE_NEW_USER
+  Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
                  (dosyadakinden farklı olan hesap güncellenir)
-  Tailscale key: $ts_key_note
+  Tailscale:     $ts_note
   full-upgrade:  $yes_no_upgrade
   image pull:    $yes_no_pull
 
@@ -719,13 +672,10 @@ EOF
         log WARN "tailscale-udp-gro başlatılamadı"
 
     if [[ "$(tailscale_login_state)" != "complete" ]]; then
-        if [[ -z "${TS_AUTH_KEY:-}" ]] || ! tailscale_login_with_key; then
-            tailscale_login
-        fi
+        tailscale_login
     else
         log INFO "Tailscale zaten online"
     fi
-    unset TS_AUTH_KEY
     tailscale set --advertise-exit-node --ssh=true \
         --stateful-filtering=true --netfilter-mode=on --snat-subnet-routes=true
 
@@ -776,160 +726,6 @@ assert_downloads_path_allowed() {
             die "kullanıcı alanı allowlist dışı (/srv, /data): $p"
             ;;
     esac
-}
-
-# Klasik FileBrowser Bolt DB + image VOLUME /config — anonim volume oluşmasın.
-ensure_filebrowser_data_dir() {
-    mkdir -p "$FILEBROWSER_DATA_DIR/config"
-    chown -R "${DOWNLOADS_UID}:${DOWNLOADS_GID}" "$FILEBROWSER_DATA_DIR"
-    chmod 0750 "$FILEBROWSER_DATA_DIR" "$FILEBROWSER_DATA_DIR/config"
-}
-
-# DD-118: FileBrowser CLI'ı ağsız, tek seferlik konteynerde, yalnız geçici
-# dizin bağlı çalışır. stdout (`config init` ayar dökümü, anahtar dahil)
-# atılır; stderr hata ayıklama için geçici dizine yazılır.
-filebrowser_cli() {
-    local work="$1"
-    shift
-    docker run --rm --network none --user "$DOWNLOADS_UID:$DOWNLOADS_GID" \
-        -w /database -v "$work:/database" --entrypoint filebrowser "$FILEBROWSER_IMAGE" \
-        "$@" --database /database/filebrowser.db >/dev/null 2>>"$work/cli.log"
-}
-
-filebrowser_account_fail() {
-    local work="$1" msg="$2"
-    [[ -s "$work/cli.log" ]] && tail -n 5 -- "$work/cli.log" >&2
-    rm -rf -- "$work"
-    die "$msg"
-}
-
-# DD-118/DD-119: hesap girdi dosyasından gelir. Veritabanı yoksa kurulur,
-# varsa dosyadakiyle eşitlenir. Parola argv'ye, loga, diske düz metin girmez.
-ensure_filebrowser_account() {
-    [[ -n "${FILEBROWSER_NEW_PASS:-}" ]] || return 0
-    if [[ -f "$FILEBROWSER_DB_FILE" ]]; then
-        sync_filebrowser_account
-    else
-        create_filebrowser_account
-    fi
-    unset FILEBROWSER_NEW_PASS
-    FILEBROWSER_NEW_USER=""
-}
-
-# DD-118: ilk açılışın log'a yazdığı rastgele admin parolası hiç oluşmaz.
-# Veritabanı geçici dizinde kurulur: `config init` bayrakları upstream'in ilk
-# açılış ayarlarıyla aynıdır (ölçüldü, key hariç fark yok). Kullanıcı, bcrypt
-# özeti htpasswd'e stdin'den giden bir JSON dosyasından içe aktarılır.
-# Doğrulanan veritabanı tek `mv` ile yerine konur.
-create_filebrowser_account() {
-    local work hash
-    work="$(mktemp -d "$FILEBROWSER_DATA_DIR/.init-XXXXXX")"
-    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work"
-    if ! filebrowser_cli "$work" config init --address 0.0.0.0 --port 80 --root /srv \
-        --viewMode mosaic --sorting.by '' --redirectAfterCopyMove --hideLoginButton \
-        --minimumPasswordLength "$FILEBROWSER_MIN_PASSWORD_LENGTH" ||
-        ! filebrowser_cli "$work" config export /database/settings.json; then
-        filebrowser_account_fail "$work" "FileBrowser veritabanı başlatılamadı"
-    fi
-    hash="$(printf '%s' "$FILEBROWSER_NEW_PASS" | htpasswd -niB -C 10 "$FILEBROWSER_NEW_USER" | cut -d: -f2-)"
-    if [[ ! "$hash" =~ ^\$2[aby]\$10\$ ]] ||
-        ! jq --arg u "$FILEBROWSER_NEW_USER" --arg h "$hash" \
-            '[.settings.defaults + {id: 1, username: $u, password: $h, lockPassword: false, rules: []} |
-              .perm.admin = true]' "$work/settings.json" >"$work/users.json"; then
-        filebrowser_account_fail "$work" "FileBrowser kullanıcı kaydı hazırlanamadı"
-    fi
-    rm -f -- "$work/settings.json"
-    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work/users.json"
-    if ! filebrowser_cli "$work" users import /database/users.json ||
-        ! filebrowser_cli "$work" users export /database/users.json ||
-        ! jq -e --arg u "$FILEBROWSER_NEW_USER" \
-            'length == 1 and .[0].username == $u and .[0].perm.admin == true and
-             (.[0].password | test("^\\$2[aby]\\$"))' "$work/users.json" >/dev/null; then
-        filebrowser_account_fail "$work" "FileBrowser hesabı oluşturulamadı"
-    fi
-    mv -f -- "$work/filebrowser.db" "$FILEBROWSER_DB_FILE"
-    rm -rf -- "$work"
-    log INFO "FileBrowser hesabı oluşturuldu: $FILEBROWSER_DB_FILE"
-    # Veritabanı silinip yeniden oluşturulduysa çalışan konteyner eskisini tutar.
-    if docker inspect filebrowser >/dev/null 2>&1; then
-        docker restart filebrowser >/dev/null || log WARN "filebrowser yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
-    fi
-}
-
-# Hedef kayıt: dosyadaki adı taşıyan kullanıcı, yoksa en küçük id'li yönetici.
-filebrowser_target_id() {
-    jq -r --arg u "$FILEBROWSER_NEW_USER" \
-        '(map(select(.username == $u)) + (map(select(.perm.admin == true)) | sort_by(.id))) | .[0].id // empty' \
-        "$1"
-}
-
-# USERS_JSON ID: o id dosyadaki adı ve parolayı taşıyorsa 0.
-filebrowser_user_matches() {
-    local hash
-    hash="$(jq -r --argjson id "$2" --arg u "$FILEBROWSER_NEW_USER" \
-        '.[] | select(.id == $id and .username == $u) | .password' "$1")" || return 1
-    bcrypt_matches "$FILEBROWSER_NEW_USER" "$hash" "$FILEBROWSER_NEW_PASS"
-}
-
-filebrowser_sync_fail() {
-    local work="$1" was_running="$2" msg="$3"
-    if [[ "$was_running" -eq 1 ]]; then
-        docker start filebrowser >/dev/null || true
-    fi
-    filebrowser_account_fail "$work" "$msg"
-}
-
-# DD-119: çalışan FileBrowser Bolt dosyasını kilitler (CLI zaman aşımına düşer
-# — ölçüldü), bu yüzden karşılaştırma bir kopyada yapılır ve hesap aynıysa
-# konteynere dokunulmaz. Fark varsa konteyner durdurulur, taze kopyada
-# `users import --overwrite` aynı id'ye adı ve özeti yazar (diğer alanlar ve
-# ayarlar korunur; `--replace` "sole admin" hatası verir — ölçüldü), sonuç
-# doğrulanır ve tek `mv` ile yerine konur. Başka kullanıcılara dokunulmaz.
-sync_filebrowser_account() {
-    local work id hash was_running=0
-    work="$(mktemp -d "$FILEBROWSER_DATA_DIR/.sync-XXXXXX")"
-    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work"
-    cp -p -- "$FILEBROWSER_DB_FILE" "$work/filebrowser.db"
-    filebrowser_cli "$work" users export /database/users.json ||
-        filebrowser_account_fail "$work" "FileBrowser kullanıcıları okunamadı"
-    id="$(filebrowser_target_id "$work/users.json" || true)"
-    [[ "$id" =~ ^[0-9]+$ ]] ||
-        filebrowser_account_fail "$work" "FileBrowser veritabanında yönetici hesabı yok"
-    if filebrowser_user_matches "$work/users.json" "$id"; then
-        rm -rf -- "$work"
-        log INFO "FileBrowser hesabı girdi dosyasıyla aynı; dokunulmadı"
-        return 0
-    fi
-    if [[ "$(docker inspect -f '{{.State.Running}}' filebrowser 2>/dev/null)" == true ]]; then
-        docker stop filebrowser >/dev/null ||
-            filebrowser_account_fail "$work" "filebrowser durdurulamadı; hesap güncellenmedi"
-        was_running=1
-    fi
-    # Durdurmadan önceki son yazımlar da gelsin: kopya yeniden alınır.
-    cp -p -- "$FILEBROWSER_DB_FILE" "$work/filebrowser.db"
-    rm -f -- "$work/users.json"
-    hash="$(printf '%s' "$FILEBROWSER_NEW_PASS" | htpasswd -niB -C 10 "$FILEBROWSER_NEW_USER" | cut -d: -f2-)"
-    if ! filebrowser_cli "$work" users export /database/users.json ||
-        [[ ! "$hash" =~ ^\$2[aby]\$10\$ ]] ||
-        ! jq --argjson id "$id" --arg u "$FILEBROWSER_NEW_USER" --arg h "$hash" \
-            'map(select(.id == $id) | .username = $u | .password = $h)' \
-            "$work/users.json" >"$work/import.json" ||
-        ! jq -e 'length == 1' "$work/import.json" >/dev/null; then
-        filebrowser_sync_fail "$work" "$was_running" "FileBrowser kullanıcı kaydı hazırlanamadı"
-    fi
-    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$work/import.json"
-    rm -f -- "$work/users.json"
-    if ! filebrowser_cli "$work" users import --overwrite /database/import.json ||
-        ! filebrowser_cli "$work" users export /database/users.json ||
-        ! filebrowser_user_matches "$work/users.json" "$id"; then
-        filebrowser_sync_fail "$work" "$was_running" "FileBrowser hesabı güncellenemedi"
-    fi
-    mv -f -- "$work/filebrowser.db" "$FILEBROWSER_DB_FILE"
-    rm -rf -- "$work"
-    log INFO "FileBrowser hesabı girdi dosyasıyla eşitlendi: $FILEBROWSER_NEW_USER"
-    if [[ "$was_running" -eq 1 ]]; then
-        docker start filebrowser >/dev/null || log WARN "filebrowser başlatılamadı"
-    fi
 }
 
 # DD-119: users.yml tek kullanıcı taşıyor, adı dosyadaki ve özeti parolayla
@@ -1223,7 +1019,7 @@ stage_3() {
     local fixed
     fixed="$(ensure_downloads_tree "$SERVER_ROOT" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
     if [[ "$fixed" -gt 0 ]]; then
-        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/FileBrowser/Unpackerr R/W)"
+        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/Unpackerr/Konsol R/W)"
     else
         log INFO "Downloads sahipliği ve izinleri yerinde (${DOWNLOADS_UID}:${DOWNLOADS_GID})"
     fi
@@ -1267,7 +1063,6 @@ stage_4() {
     COMPOSE_NEEDS_UP=0
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         DOZZLE_IMAGE="$DOZZLE_IMAGE" \
-        FILEBROWSER_IMAGE="$FILEBROWSER_IMAGE" \
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
@@ -1276,14 +1071,12 @@ stage_4() {
         SHARE_PORT="$SHARE_PORT" \
         SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
         SERVER_ROOT="$SERVER_ROOT" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
-        FILEBROWSER_DATA_DIR="$FILEBROWSER_DATA_DIR" \
         DOZZLE_DATA_DIR="$DOZZLE_DATA_DIR" \
         QBITTORRENT_DATA_DIR="$QBITTORRENT_DATA_DIR" \
         DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
@@ -1311,9 +1104,6 @@ stage_4() {
         (cd "$COMPOSE_DIR" && docker compose pull) || die "docker compose pull başarısız"
         COMPOSE_NEEDS_UP=1
     fi
-
-    ensure_filebrowser_data_dir
-    ensure_filebrowser_account
 
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
@@ -1481,7 +1271,6 @@ EOF
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         SHARE_PORT="$SHARE_PORT"
@@ -1569,8 +1358,7 @@ ensure_caddy_wg() {
     local changed="${1:-0}" validate_out iface
     render_template "$V2_ROOT/templates/Caddyfile.wg" "$CADDY_WG_FILE" 0644 \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
-        FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
+        TORRENT_UI_PORT="$TORRENT_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     # Ağ yokken sunucu adresi de yok; doğrulama yalnız sözdizimi için yer tutucu bağlar.
     if ! validate_out="$(WG_BIND="127.0.0.1" caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
@@ -1596,34 +1384,17 @@ ensure_caddy_wg() {
     fi
 }
 
-# DD-133: WireGuard web paneli. 127.0.0.1:WG_PANEL_PORT dinler; tailnet'e Caddy
-# açar (wg.LOCAL_DOMAIN). Hesap kurulum.env'den: özet root'a özel dosyada, panel
-# dosya değişince kendisi yeniden okur. Sayfa dosyaları her istekte diskten okunur;
-# yalnız betik ya da unit değişince servis yeniden başlar.
+# DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. 127.0.0.1:WG_PANEL_PORT dinler;
+# tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/*). DD-147: parola yok, erişim
+# sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
     atomic_write "$SBIN_DIR/master-wg-panel" 0755 <"$V2_ROOT/panel/master-wg-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    if [[ -n "${WG_PANEL_NEW_PASS:-}" ]]; then
-        out="$(printf '%s' "$WG_PANEL_NEW_PASS" |
-            python3 "$SBIN_DIR/master-wg-panel" account --auth "$WG_PANEL_AUTH_FILE" --user "$WG_PANEL_NEW_USER")" ||
-            die "WireGuard paneli hesabı yazılamadı ($WG_PANEL_AUTH_FILE)"
-        if [[ "$out" == "aynı" ]]; then
-            log INFO "WireGuard paneli hesabı girdi dosyasıyla aynı; dokunulmadı"
-        else
-            log INFO "WireGuard paneli hesabı yazıldı: $WG_PANEL_AUTH_FILE ($WG_PANEL_NEW_USER)"
-            # DD-139: dosya paneli hesabın kopyasını başlarken alır; yeniden başlaması gerekir.
-            WG_PANEL_ACCOUNT_CHANGED=1
-        fi
-    fi
-    [[ -f "$WG_PANEL_AUTH_FILE" ]] || die "WireGuard paneli hesabı yok: $WG_PANEL_AUTH_FILE"
-    chown root:root "$WG_PANEL_AUTH_FILE"
-    chmod 0600 "$WG_PANEL_AUTH_FILE"
     render_template "$V2_ROOT/systemd/master-wg-panel.service" "$UNIT_DIR/master-wg-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         STATE_FILE="$STATE_FILE" \
-        WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
         WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
         WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
         WG_MTU="$WG_MTU"
@@ -1685,7 +1456,6 @@ ensure_files_panel() {
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_CRED_FILE="$SHARE_CRED_FILE" \
-        WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
         SERVER_ROOT="$SERVER_ROOT" \
         FILES_PANEL_USER="$user" \
         FILES_PANEL_GROUP="$group" \
@@ -1693,7 +1463,6 @@ ensure_files_panel() {
         V2_VERSION="$V2_VERSION" \
         QBITTORRENT_TEMP_DIR="$temp_dir"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ "${WG_PANEL_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "${SHARE_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-files-panel.service
@@ -1879,7 +1648,7 @@ stage_7() {
         grep -q "${TORRENT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${TORRENT_PUBLIC_PORT} publish yok"
 
-    for svc in dozzle filebrowser paylasim; do
+    for svc in dozzle paylasim; do
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" ]] && continue
             [[ "$line" == *127.0.0.1:* ]] ||
@@ -1914,7 +1683,7 @@ stage_7() {
                 die "WireGuard $wg_iface üzerinde $wg_s4 yok"
             WG_PEER_COUNT=$((WG_PEER_COUNT + $(wg show "$wg_iface" peers 2>/dev/null | grep -c . || true)))
             [[ "$wg_scope" == ui ]] || continue
-            for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT" "$FILEBROWSER_UI_PORT"; do
+            for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT"; do
                 ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                     "http://${wg_s4}:${wg_ui_port}/" || true)"
                 [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
@@ -1923,30 +1692,40 @@ stage_7() {
         done <"$WG_NETWORKS_FILE"
     fi
 
-    # DD-140: Konsol tailnet'ten girişsiz 401 verir, kurulum.env hesabıyla iki arka uca da
-    # ulaşır; eski adresler panele yönlenir ve panel WireGuard adresinde dinlenmez.
+    # DD-140, DD-147: Konsol tailnet'ten parolasız açılır. Parola olmadığı için asıl korumalar
+    # sınanır: X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı
+    # istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Eski adresler
+    # panele yönlenir ve panel WireGuard adresinde dinlenmez.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] || die "Konsol girişsiz yanıt $code verdi (beklenen 401)"
+    [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
+    local gate_port gate_path
+    for gate_port in "$FILES_PANEL_PORT:/api/state" "$WG_PANEL_PORT:/api/wg/state"; do
+        gate_path="${gate_port#*:}"
+        gate_port="${gate_port%%:*}"
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            -H "Host: panel.${LOCAL_DOMAIN}" "http://127.0.0.1:${gate_port}${gate_path}" || true)"
+        [[ "$code" == "403" ]] || die "Konsol ${gate_path}: X-Konsol başlığı olmadan HTTP $code (beklenen 403)"
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'X-Konsol: 1' \
+            -H "Host: baska.ornek" "http://127.0.0.1:${gate_port}${gate_path}" || true)"
+        [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
+    done
     local redir
-    for redir in wg dosya; do
+    for redir in wg dosya file; do
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
             -H "Host: ${redir}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
         [[ "$code" == "302" ]] || die "${redir}.${LOCAL_DOMAIN} panele yönlenmedi (HTTP $code)"
     done
     local panel_out
-    panel_out="$(printf '%s' "$WG_PANEL_NEW_PASS" | python3 "$SBIN_DIR/master-wg-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" \
-        --user "$WG_PANEL_NEW_USER" 2>&1)" ||
-        die "WireGuard paneli kurulum.env hesabıyla açılmadı: $panel_out"
+    panel_out="$(python3 "$SBIN_DIR/master-wg-panel" check \
+        --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+        die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
-    # DD-139: dosya arka ucu aynı hesapla açılır, kök yazılabilir, root değil.
+    # DD-139: dosya arka ucu açılır, kök yazılabilir, root değil.
     local files_out files_uid svc
-    files_out="$(printf '%s' "$WG_PANEL_NEW_PASS" | python3 "$SBIN_DIR/master-files-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" \
-        --user "$WG_PANEL_NEW_USER" 2>&1)" ||
-        die "Dosya paneli WireGuard paneli hesabıyla açılmadı: $files_out"
-    unset WG_PANEL_NEW_PASS
+    files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
+        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+        die "Konsol dosya arka ucu yanıt vermedi: $files_out"
     log INFO "Konsol dosya arka ucu açıldı: $files_out"
     files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
     [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
@@ -2012,13 +1791,13 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${SERVER_ROOT} dosya yöneticisi,
-  sunucu durumu ve günlük; yalnız Tailscale, kurulum.env hesabı. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
+  sunucu durumu ve günlük; parolasız, yalnız Tailscale. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
 Paylaşım: http://paylas.${LOCAL_DOMAIN} (Konsol'dan paylaşılanlar; salt okunur, tek hesap, yalnız Tailscale)
   Infuse: http://${TAILSCALE_IPV4}:${SHARE_PORT}/ (ad çözemeyen istemciler için aynı paylaşım)
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
 WireGuard: ${WG_NET_COUNT:-0} ağ. Yoksa Konsol → WireGuard → Yapılandır ile ilk ağı kurun;
-  "Local erişim" açık ağlarda Dozzle/qBittorrent/FileBrowser o ağın sunucu adresinde açılır.
+  "Local erişim" açık ağlarda Dozzle ve qBittorrent o ağın sunucu adresinde açılır.
   Peer eklemek/çıkarmak ve QR: Konsol ya da Mac'te wireguard.command (anahtarlar sunucuda üretilir).
 Tailscale IP: refresh-tailnet-config → Caddy
 

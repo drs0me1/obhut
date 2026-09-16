@@ -223,8 +223,8 @@ read_input_file() {
 
 # bcrypt_matches KULLANICI ÖZET PAROLA — özet dosyadakiyle eşleşirse 0.
 # Parola htpasswd'e stdin'den gider (argv'ye girmez); özet geçici bir 0600
-# dosyada durur. `htpasswd -vi` $2y$ (htpasswd) ve $2a$ (Go bcrypt: Dozzle,
-# FileBrowser arayüzü) özetlerini doğrular — ölçüldü, apache2-utils 2.4.68.
+# dosyada durur. `htpasswd -vi` $2y$ (htpasswd) ve $2a$ (Go bcrypt: Dozzle)
+# özetlerini doğrular — ölçüldü, apache2-utils 2.4.68.
 bcrypt_matches() {
     local user="$1" hash="$2" pass="$3" tmp rc=0
     [[ "$hash" =~ ^\$2[aby]\$ ]] || return 1

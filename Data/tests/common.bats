@@ -452,13 +452,12 @@ EOF
 @test "qbittorrent and unpackerr use DOWNLOADS_UID/GID tokens" {
     grep -q 'PUID: "__DOWNLOADS_UID__"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
-    grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
-        "$V2_ROOT/templates/compose.yaml" | grep -q '^[2-9]'
+    [ "$(grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml")" -eq 1 ]
     run ! grep -qE 'PUID: "1000"|PGID: "1000"|user: "1000:1000"' \
         "$V2_ROOT/templates/compose.yaml"
 }
 
-@test "downloads tree is chown 1000 for qbittorrent filebrowser unpackerr" {
+@test "downloads tree is chown 1000 for qbittorrent, unpackerr and the console" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
@@ -597,7 +596,7 @@ EOF
 
 @test "compose runs dozzle behind a login with actions, no shell, loopback only" {
     # DD-116: docker.sock is root-equivalent, so loopback + Caddy + users.yml.
-    block="$(awk '/^  dozzle:$/,/^  filebrowser:$/' "$V2_ROOT/templates/compose.yaml")"
+    block="$(awk '/^  dozzle:$/,/^  qbittorrent:$/' "$V2_ROOT/templates/compose.yaml")"
     [ -n "$block" ]
     grep -q '"127.0.0.1:__DOZZLE_UI_PORT__:8080"' <<<"$block"
     grep -q 'DOZZLE_AUTH_PROVIDER: simple' <<<"$block"
@@ -720,8 +719,8 @@ EOF
     done
     run ! grep -qE '^(Session\\Port|Session\\SSL\\Port|WebUI\\Port|Connection\\PortRangeMin|MigrationVersion|Cookies|WebUI\\Username|WebUI\\Password_PBKDF2)=' "$tpl"
     # Input keys, stage wiring and the Caddy auth check.
-    grep -q 'TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY' "$V2_ROOT/install.sh"
-    grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS"' "$V2_ROOT/install.sh"
+    grep -q 'TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"$' <<<"$(grep '^INPUT_KEYS=' "$V2_ROOT/install.sh")"
+    grep -q 'INPUT_NONEMPTY_KEYS=.*TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"' "$V2_ROOT/install.sh"
     grep -qx 'TORRENT_USER=' "$V2_ROOT/config/kurulum.env.example"
     grep -qx 'TORRENT_PASS=' "$V2_ROOT/config/kurulum.env.example"
     # The Transmission and Portainer transition aids are gone (v2-96).
@@ -736,7 +735,7 @@ EOF
     stage7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q '/api/v2/app/version' <<<"$stage7"
     grep -q '"\$code" == "403"' <<<"$stage7"
-    awk '/"\$code" == "403"/ {a = NR} /^    qbit_login_check$/ {b = NR} /^    unset TORRENT_NEW_PASS$/ {c = NR}
+    awk '/"\$code" == "403"/ && !a {a = NR} /^    qbit_login_check$/ {b = NR} /^    unset TORRENT_NEW_PASS$/ {c = NR}
          END {exit !(a && b && c && a < b && b < c)}' <<<"$stage7"
     # No file-pull or restore path for qBittorrent is left (DD-128 narrowed).
     run ! grep -qE 'restore_qbittorrent_snapshot|kurulum/qbittorrent|SNAPSHOT_QB' "$V2_ROOT/install.sh"
@@ -894,123 +893,6 @@ EOF
     grep -q 'rm -f -- "\$jar"' <<<"$body"
 }
 
-@test "filebrowser classic serves the user area at /srv with disableExec" {
-    grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__SERVER_ROOT__:/srv' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
-    grep -q -- '--disableExec' "$V2_ROOT/templates/compose.yaml"
-    # The template comment names the deprecated flag; only uncommented lines count.
-    compose="$(grep -v '^[[:space:]]*#' "$V2_ROOT/templates/compose.yaml")"
-    [ -n "$compose" ]
-    run ! grep -q -- '--disable-exec' <<<"$compose"
-    grep -q 'no-new-privileges=true' "$V2_ROOT/templates/compose.yaml"
-    run ! grep -q 'no-new-privileges:true' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'filebrowser/filebrowser:v2' "$V2_ROOT/config/defaults.env"
-    grep -q 'FILEBROWSER_DATA_DIR="/etc/master-stack/filebrowser-data"' \
-        "$V2_ROOT/config/defaults.env"
-    grep -q 'ensure_filebrowser_data_dir' "$V2_ROOT/install.sh"
-    grep -q 'FILEBROWSER_DATA_DIR/config' "$V2_ROOT/install.sh"
-    # Old operator hints about default or logged passwords are gone. The DD-118
-    # comment still names the random admin password, so only code lines count.
-    install_code="$(grep -v '^[[:space:]]*#' "$V2_ROOT/install.sh")"
-    [ -n "$install_code" ]
-    run ! grep -q 'FileBrowser varsayılan: admin / admin' <<<"$install_code"
-    run ! grep -q 'rastgele admin parolası' <<<"$install_code"
-    run ! grep -q 'qBittorrent varsayılan WebUI' <<<"$install_code"
-    run ! grep -q 'docker logs filebrowser' <<<"$install_code"
-    run ! grep -q 'ilk yönetici hesabını sen kur' <<<"$install_code"
-    run ! grep -q 'QUANTUM_CONFIG_FILE' "$V2_ROOT/config/defaults.env"
-    run ! grep -q 'gtsteffaniak/filebrowser' "$V2_ROOT/config/defaults.env"
-    run ! grep -q 'filebrowser_data:' "$V2_ROOT/templates/compose.yaml"
-}
-
-@test "filebrowser account comes from the input file and never reaches argv" {
-    # DD-118: no first-boot random admin; the installer creates the account.
-    # DD-119: an existing database is synced to the input file, not kept.
-    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'FILEBROWSER_NEW_PASS="\$INPUT_FILEBROWSER_PASS"' <<<"$stage0"
-    grep -q 'validate_account FileBrowser' <<<"$stage0"
-    grep -q '"\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$stage0"
-    ensure="$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'if \[\[ -f "\$FILEBROWSER_DB_FILE" \]\]' <<<"$ensure"
-    grep -q 'sync_filebrowser_account' <<<"$ensure"
-    grep -q 'create_filebrowser_account' <<<"$ensure"
-    grep -q 'unset FILEBROWSER_NEW_PASS' <<<"$ensure"
-    body="$(awk '/^create_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    [ "$(grep -c '^}$' <<<"$body")" -eq 1 ]
-    grep -q 'htpasswd -niB -C 10' <<<"$body"
-    grep -q -- '--minimumPasswordLength "\$FILEBROWSER_MIN_PASSWORD_LENGTH"' <<<"$body"
-    run ! grep -qE -- '--password|users (add|update)' <<<"$body"
-    sync="$(awk '/^sync_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'users import --overwrite' <<<"$sync"
-    run ! grep -qE -- '--replace|--password|users (add|update)' <<<"$sync"
-    run ! grep -q 'FILEBROWSER_NEW_PASS' <<<"$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker run --rm --network none'
-    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
-    grep -A1 '^    ensure_filebrowser_data_dir$' <<<"$stage4" | grep -q '^    ensure_filebrowser_account$'
-    grep -q '^FILEBROWSER_DB_FILE="/etc/master-stack/filebrowser-data/filebrowser.db"' "$V2_ROOT/config/defaults.env"
-    grep -q '^FILEBROWSER_MIN_PASSWORD_LENGTH=12$' "$V2_ROOT/config/defaults.env"
-}
-
-@test "ensure_filebrowser_account installs a verified database and leaves nothing on failure" {
-    eval "$(awk '/^filebrowser_cli\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^filebrowser_account_fail\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^create_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^ensure_filebrowser_account\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    sync_filebrowser_account() { printf 'sync\n' >>"$TMP/docker-calls"; }
-    FILEBROWSER_DATA_DIR="$TMP/fb" FILEBROWSER_DB_FILE="$TMP/fb/filebrowser.db" FILEBROWSER_IMAGE=fixture
-    FILEBROWSER_MIN_PASSWORD_LENGTH=12 DOWNLOADS_UID=1000 DOWNLOADS_GID=1000
-    mkdir -p "$TMP/fb"
-    log() { :; }
-    chown() { :; }
-    htpasswd() {
-        IFS= read -r pw || true
-        printf '%s' "$pw" >"$TMP/htpasswd-stdin"
-        printf '%s\n' "$*" >"$TMP/htpasswd-argv"
-        printf '%s:$2y$10$%s\n\n' "${!#}" "$(printf 'a%.0s' {1..53})"
-    }
-    docker() {
-        local a w=""
-        printf '%s\n' "$*" >>"$TMP/docker-calls"
-        case "$1" in
-            inspect) return "${FB_CONTAINER_RC:-1}" ;;
-            run) ;;
-            *) return 0 ;;
-        esac
-        for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
-        case "$*" in
-            *" config init "*) printf 'db\n' >"$w/filebrowser.db" ;;
-            *" config export "*) printf '{"settings":{"key":"k","defaults":{"scope":".","viewMode":"mosaic","perm":{"admin":false,"create":true}}}}\n' >"$w/settings.json" ;;
-            *" users import "*) [ -z "${FB_IMPORT_FAIL:-}" ] || return 1; cp "$w/users.json" "$w/imported.json" ;;
-            *" users export "*) cp "$w/imported.json" "$w/users.json" ;;
-        esac
-    }
-    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-123'
-    run ensure_filebrowser_account
-    [ "$status" -eq 0 ]
-    [ "$(cat "$TMP/fb/filebrowser.db")" = db ]
-    [ "$(cat "$TMP/htpasswd-stdin")" = 'fixture-password-123' ]
-    run ! grep -q 'fixture-password-123' "$TMP/docker-calls" "$TMP/htpasswd-argv"
-    grep -q 'config init .*--viewMode mosaic' "$TMP/docker-calls"
-    grep -q -- '--minimumPasswordLength 12' "$TMP/docker-calls"
-    run ! grep -q '^restart' "$TMP/docker-calls"
-    [ -z "$(find "$TMP/fb" -name '.init-*')" ]
-    # A database deleted under a running container: rebuilt, then restarted.
-    rm -f "$TMP/fb/filebrowser.db" "$TMP/docker-calls"
-    FB_CONTAINER_RC=0 FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-456'
-    run ensure_filebrowser_account
-    [ "$status" -eq 0 ]
-    grep -q '^restart filebrowser$' "$TMP/docker-calls"
-    # A failed import installs nothing and cleans up after itself.
-    rm -f "$TMP/fb/filebrowser.db"
-    FB_IMPORT_FAIL=1 FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-789'
-    run ensure_filebrowser_account
-    [ "$status" -ne 0 ]
-    [ ! -e "$TMP/fb/filebrowser.db" ]
-    [ -z "$(ls -A "$TMP/fb")" ]
-}
-
 @test "wg-easy is gone from compose, defaults and the tailnet edge" {
     # DD-120: WireGuard runs in the host kernel; nothing of wg-easy remains.
     # Comments may name wg-easy as the origin of the profile format; code may not.
@@ -1022,10 +904,10 @@ EOF
     run ! grep -q '__WG_PUBLIC_PORT__' "$V2_ROOT/templates/compose.yaml"
     run ! grep -qE '^[[:space:]]+wg:$' "$V2_ROOT/templates/compose.yaml"
     # The name wg. now redirects to the console (DD-140); the backend stays on loopback.
-    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
     grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'handle /api/wg/\* {$'
-    # DD-142: beş servis; tek rclone (paylaşım WebDAV'ı), indirme klasörünü yayımlayan servis yok.
-    [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 5 ]
+    # DD-142, DD-146: dört servis; tek rclone (paylaşım WebDAV'ı), FileBrowser yok.
+    [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 4 ]
 }
 
 @test "every template placeholder is filled by its render_template call" {
@@ -1735,11 +1617,27 @@ EOF
     grep -q 'CADDY_HTTP_PORT' "$V2_ROOT/install.sh"
 }
 
+@test "FileBrowser is gone: no container, account, port or database; file. redirects to the console" {
+    # DD-146: Konsol's own file manager (upload, multi-select, search) replaced it.
+    local code
+    code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/config/defaults.env" \
+        "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/Caddyfile.wg" "$V2_ROOT/templates/dnsmasq.conf" \
+        "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/scripts/firewall.sh" "$V2_ROOT/scripts/master-wg" \
+        "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/index.html" \
+        "$V2_ROOT/config/kurulum.env.example")"
+    run ! grep -qi 'filebrowser' <<<"$code"
+    run ! grep -q '61007' <<<"$code"
+    run ! grep -qE '^INPUT_KEYS=.*FILEBROWSER' "$V2_ROOT/install.sh"
+    # The old name keeps working as a bookmark: it lands on the console.
+    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    grep -qx 'interface-name=file.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
+    # WireGuard "ui" networks reach Dozzle and qBittorrent only.
+    [ "$(grep -c '^http://' "$V2_ROOT/templates/Caddyfile.wg")" -eq 2 ]
+}
+
 @test "compose images use upstream stable tracks where published" {
     # DD-97: prefer the vendor's stable track over a frozen patch@digest.
     grep -qE '^DOZZLE_IMAGE="amir20/dozzle:v11"' \
-        "$V2_ROOT/config/defaults.env"
-    grep -qE '^FILEBROWSER_IMAGE="filebrowser/filebrowser:v2"' \
         "$V2_ROOT/config/defaults.env"
     grep -qE '^QBITTORRENT_IMAGE="lscr\.io/linuxserver/qbittorrent:latest"' \
         "$V2_ROOT/config/defaults.env"
@@ -1828,65 +1726,16 @@ EOF
     [ ! -e "$V2_ROOT/app/latest.command" ]
 }
 
-@test "tailscale auth key is optional, read from the input file, and never persisted" {
-    # DD-115/DD-119: the key comes from the input file, is dropped when the node
-    # is already online, never written to config/state and never placed on a
-    # command line.
-    body="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'TS_AUTH_KEY="\$INPUT_TS_AUTH_KEY"' <<<"$body"
-    grep -q 'kullanılmayacak (Tailscale zaten online)' <<<"$body"
-    grep -A1 'tailscale_login_state)" == "complete"' <<<"$body" | grep -q 'TS_AUTH_KEY=""'
-    grep -q 'tskey-client-' <<<"$body"
-    run ! grep -qE 'prompt_optional_secret|read -r -s' "$V2_ROOT/install.sh"
-    state_writers="$(awk '/^write_(state|config)\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    [ -n "$state_writers" ]
-    run ! grep -q 'TS_AUTH_KEY' <<<"$state_writers"
-    run ! grep -nE -- '--auth-?key[= ]"?\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
-    run ! grep -nE 'export +TS_AUTH_KEY|log [A-Z]+ .*\$\{?TS_AUTH_KEY' "$V2_ROOT/install.sh"
-    stage2="$(awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh")"
-    grep -q '! tailscale_login_with_key' <<<"$stage2"
-    grep -q 'unset TS_AUTH_KEY' <<<"$stage2"
-    grep -q '^TS_AUTHKEY_LOGIN_SECONDS=' "$V2_ROOT/config/defaults.env"
-}
-
-@test "tailscale auth key reaches tailscale up only through a private file" {
-    eval "$(awk '/^tailscale_login_with_key\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    RUNTIME_DIR="$TMP" V2_LOG_FILE="$TMP/install.log" TS_AUTHKEY_LOGIN_SECONDS=5
-    TS_AUTH_KEY="tskey-auth-kFIXTURE1CNTRL-notarealsecret0123"
-    log() { printf '%s\n' "$*" >>"$TMP/install.log"; }
-    timeout() { shift; "$@"; }
-    tailscale_login_state() { printf 'pending\n'; }
-    tailscale() {
-        [ "$1" = up ] || return 0
-        printf '%s\n' "$*" >"$TMP/argv"
-        local file="${2#--auth-key=file:}"
-        stat -c %a "$file" >"$TMP/mode" 2>/dev/null || stat -f %Lp "$file" >"$TMP/mode"
-        cat "$file" >"$TMP/seen"
-        printf 'Success.\n'
-    }
-    run tailscale_login_with_key
-    [ "$status" -eq 0 ]
-    [ "$(cat "$TMP/seen")" = "$TS_AUTH_KEY" ]
-    [ "$(cat "$TMP/mode")" = 600 ]
-    grep -q -- '--auth-key=file:' "$TMP/argv"
-    run ! grep -qF "$TS_AUTH_KEY" "$TMP/argv"
-    run ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
-    [ ! -e "$TMP/tailscale-authkey" ]
-}
-
-@test "a rejected tailscale auth key falls back to the browser login" {
-    eval "$(awk '/^tailscale_login_with_key\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    RUNTIME_DIR="$TMP" V2_LOG_FILE="$TMP/install.log" TS_AUTHKEY_LOGIN_SECONDS=5
-    TS_AUTH_KEY="tskey-auth-kFIXTURE1CNTRL-notarealsecret0123"
-    log() { printf '%s\n' "$*" >>"$TMP/install.log"; }
-    timeout() { shift; "$@"; }
-    tailscale_login_state() { printf 'pending\n'; }
-    tailscale() { [ "$1" = up ] && { printf 'backend error: invalid key\n'; return 1; }; }
-    run tailscale_login_with_key
-    [ "$status" -eq 1 ]
-    grep -q 'tarayıcıdan girişe geçiliyor' "$TMP/install.log"
-    run ! grep -qF "$TS_AUTH_KEY" "$TMP/install.log"
-    [ ! -e "$TMP/tailscale-authkey" ]
+@test "tailscale joins only through the login link: no auth key input, file or flag" {
+    # DD-147: the operator approves the link shown during the install; nothing is typed or stored.
+    run ! grep -q 'TS_AUTH_KEY' "$V2_ROOT/install.sh" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/config/defaults.env"
+    run ! grep -qE -- '--auth-key|tailscale-authkey|TS_AUTHKEY_LOGIN_SECONDS|tailscale_login_with_key' \
+        "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env"
+    run ! grep -qE '^INPUT_KEYS=.*TS_' "$V2_ROOT/install.sh"
+    stage2="$(awk '/^stage_2\(\)/,/^stage_3\(\)/' "$V2_ROOT/install.sh")"
+    grep -q 'if \[\[ "\$(tailscale_login_state)" != "complete" \]\]; then' <<<"$stage2"
+    grep -qx '        tailscale_login' <<<"$stage2"
+    grep -q 'giriş bağlantısı gösterilir' "$V2_ROOT/install.sh"
 }
 
 @test "read_input_file takes values literally and deletes the file" {
@@ -2026,84 +1875,6 @@ EOF
     awk '/^stage_1\(\)/,/^ensure_share_account\(\)/' "$V2_ROOT/install.sh" |
         grep -q '^    ensure_share_account$'
 }
-@test "sync_filebrowser_account leaves a matching account alone and overwrites a changed one in place" {
-    command -v htpasswd >/dev/null || skip "htpasswd yok"
-    for f in filebrowser_cli filebrowser_account_fail filebrowser_target_id \
-        filebrowser_user_matches filebrowser_sync_fail sync_filebrowser_account; do
-        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
-    done
-    FILEBROWSER_DATA_DIR="$TMP/fb" FILEBROWSER_DB_FILE="$TMP/fb/filebrowser.db" FILEBROWSER_IMAGE=fixture
-    DOWNLOADS_UID=1000 DOWNLOADS_GID=1000 RUNTIME_DIR="$TMP"
-    mkdir -p "$TMP/fb"
-    printf 'db-v1\n' >"$TMP/fb/filebrowser.db"
-    log() { :; }
-    chown() { :; }
-    old="$(printf '%s' 'fixture-password-123' | htpasswd -niB -C 4 murat | cut -d: -f2-)"
-    jq -n --arg h "$old" '[{id: 1, username: "murat", password: $h, perm: {admin: true}, viewMode: "list"},
-        {id: 2, username: "guest", password: $h, perm: {admin: false}}]' >"$TMP/store.json"
-    docker() {
-        local a w=""
-        printf '%s\n' "$*" >>"$TMP/docker-calls"
-        case "$1" in
-            inspect) printf 'true\n'; return 0 ;;
-            stop | start) return 0 ;;
-            run) ;;
-            *) return 0 ;;
-        esac
-        for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
-        case "$*" in
-            *" users export "*) cp "$TMP/store.json" "$w/users.json" ;;
-            *" users import --overwrite "*)
-                jq -s '.[1][0] as $n | .[0] | map(if .id == $n.id then $n else . end)' \
-                    "$TMP/store.json" "$w/import.json" >"$TMP/store.new" && mv "$TMP/store.new" "$TMP/store.json"
-                printf 'db-v2\n' >"$w/filebrowser.db" ;;
-            *) return 1 ;;
-        esac
-    }
-    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='fixture-password-123'
-    run sync_filebrowser_account
-    [ "$status" -eq 0 ]
-    run ! grep -qE '^(stop|start) ' "$TMP/docker-calls"
-    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v1 ]
-    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
-    # A changed password: container stopped, same id overwritten, other fields
-    # and other users kept, verified database moved in, container started.
-    rm -f "$TMP/docker-calls"
-    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='changed-password-456'
-    run sync_filebrowser_account
-    [ "$status" -eq 0 ]
-    grep -q '^stop filebrowser$' "$TMP/docker-calls"
-    grep -q '^start filebrowser$' "$TMP/docker-calls"
-    grep -q 'users import --overwrite /database/import.json' "$TMP/docker-calls"
-    run ! grep -q 'changed-password-456' "$TMP/docker-calls"
-    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v2 ]
-    jq -e 'length == 2 and (.[] | select(.id == 1) | .viewMode == "list" and .username == "murat")' \
-        "$TMP/store.json" >/dev/null
-    jq -r '.[] | select(.id == 1) | "murat:" + .password' "$TMP/store.json" >"$TMP/ht"
-    printf '%s' 'changed-password-456' | htpasswd -vi "$TMP/ht" murat 2>/dev/null
-    jq -e --arg h "$old" '.[] | select(.id == 2) | .password == $h' "$TMP/store.json" >/dev/null
-    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
-    # A failed import restarts the container on the untouched database.
-    rm -f "$TMP/docker-calls"
-    printf 'db-v2\n' >"$TMP/fb/filebrowser.db"
-    docker() {
-        printf '%s\n' "$*" >>"$TMP/docker-calls"
-        case "$*" in
-            inspect*) printf 'true\n' ;;
-            *" users export "*) local a w=""; for a in "$@"; do case "$a" in *:/database) w="${a%:/database}" ;; esac; done
-                cp "$TMP/store.json" "$w/users.json" ;;
-            *" users import "*) return 1 ;;
-        esac
-        return 0
-    }
-    FILEBROWSER_NEW_USER=murat FILEBROWSER_NEW_PASS='third-password-789'
-    run sync_filebrowser_account
-    [ "$status" -ne 0 ]
-    grep -q '^start filebrowser$' "$TMP/docker-calls"
-    [ "$(cat "$TMP/fb/filebrowser.db")" = db-v2 ]
-    [ -z "$(find "$TMP/fb" -name '.sync-*')" ]
-}
-
 @test "portable launcher reads kurulum/ beside it and sends it only to tmpfs" {
     local exporter="$V2_ROOT/dev/export-installer.sh" body
     body="$(awk "/cat <<'BODY_END'/,/^BODY_END\$/" "$exporter")"
@@ -2130,6 +1901,11 @@ EOF
     grep -q '= tmpfs \]' <<<"$body"
     grep -q 'remote_input_sent=1' <<<"$body"
     awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q "rm -rf '\$REMOTE_INPUT_DIR'"
+    # A literal temp name would survive an interrupted run and break every later one
+    # (BSD mktemp only replaces trailing X's): the archive lives in a fresh private dir.
+    grep -q 'tgz_dir="$(mktemp -d "${TMPDIR:-/tmp}/dsi-embed.XXXXXX")"' <<<"$body"
+    run ! grep -qE '^[^#]*mktemp [^#]*X{6}\.[a-z]' "$V2_ROOT/dev/export-installer.sh"
+    awk '/^cleanup_local\(\)/,/^}$/' <<<"$body" | grep -q 'rm -rf -- "\$tgz_dir"'
     # The server-side path has one source: defaults.env.
     grep -q "awk -F= '/^INPUT_DIR=/" "$exporter"
     grep -q 'REMOTE_INPUT_DIR="\$INPUT_DIR"' "$exporter"
@@ -2270,9 +2046,8 @@ case "\$1" in
 esac
 EOF
     chmod +x "$TMP/pbin/master-wg"
-    printf '%s' 'panel pass 1234' | python3 "$PANEL" account --auth "$TMP/auth" --user admin >/dev/null
     PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" --auth "$TMP/auth" \
+    python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" \
         --master-wg "$TMP/pbin/master-wg" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
@@ -2290,27 +2065,26 @@ pc() {
     curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" "$@" "http://127.0.0.1:$PORT$path"
 }
 
-@test "wg panel needs the account, a known host and the panel header before it runs master-wg" {
+@test "wg panel needs no password but a known host and the panel header before it runs master-wg" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
-    [ "$(pc /)" = 401 ]
-    grep -qi '^WWW-Authenticate: Basic realm="Konsol"' "$TMP/head"
-    [ "$(pc / -u admin:wrong)" = 401 ]
+    # DD-147: no password and no login prompt; Tailscale is the boundary.
     # Konsol sayfasını dosya arka ucu verir; burada kök 404'tür.
-    [ "$(pc / -u 'admin:panel pass 1234')" = 404 ]
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1')" = 200 ]
+    [ "$(pc /)" = 404 ]
+    run ! grep -qi '^WWW-Authenticate' "$TMP/head"
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
     grep -qi "^Content-Security-Policy: default-src 'none'; base-uri 'none'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
     # DNS rebinding: another Host name is refused even with the password.
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' -u 'admin:panel pass 1234' "http://127.0.0.1:$PORT/")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "http://127.0.0.1:$PORT/")" = 403 ]
     # CSRF: the API needs the panel header and a same-origin fetch.
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234')" = 403 ]
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
+    [ "$(pc /api/wg/state)" = 403 ]
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
     # Only the background sampler's read-only calls (DD-137) may have run.
     touch "$TMP/mwg-calls"
     run ! grep -qvE '^(wg[0-9]|yok)\|(nets|info)$' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
     python3 - "$TMP/body" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -2324,29 +2098,28 @@ assert d["defaults"]["dns"] and d["defaults"]["keepalive"] == 21
 # DD-136: the panel does not track the Mac backup.
 assert "backup" not in d
 PY
-    # check (stage 7) with the password on stdin.
-    run bash -c "printf '%s' 'panel pass 1234' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
+    # check (stage 7): no password.
+    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host panel.ayc
     [ "$status" -eq 0 ]
     [ "$output" = "1 ağ, 1 peer" ]
     # DD-143: temiz kurulumda ağ yoktur; check yine geçer.
     touch "$TMP/no-wg"
-    run bash -c "printf '%s' 'panel pass 1234' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
+    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host panel.ayc
     [ "$status" -eq 0 ]
     [ "$output" = "0 ağ, 0 peer" ]
     rm -f "$TMP/no-wg"
-    run bash -c "printf '%s' 'nope' | python3 '$PANEL' check --url http://127.0.0.1:$PORT/api/wg/state --host panel.ayc --user admin"
+    # A foreign name fails the check (the Host gate stays).
+    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host evil.example
     [ "$status" -ne 0 ]
-    case "$output" in *"HTTP 401"*) ;; *) false ;; esac
-    # A new account is read without a restart.
-    printf '%s' 'second pass 5678' | python3 "$PANEL" account --auth "$TMP/auth" --user admin >/dev/null
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1')" = 401 ]
-    [ "$(pc /api/wg/state -u 'admin:second pass 5678' -H 'X-Konsol: 1')" = 200 ]
+    case "$output" in *"HTTP 403"*) ;; *) false ;; esac
+    # The account machinery is gone for good.
+    run ! grep -qE 'pbkdf2|WWW-Authenticate|def cmd_account|locked_out|FAIL_LIMIT' "$PANEL"
 }
 
 @test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
-    local auth=(-u 'admin:panel pass 1234' -H 'X-Konsol: 1') json=(-H 'Content-Type: application/json')
+    local auth=(-H 'X-Konsol: 1') json=(-H 'Content-Type: application/json')
     [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"phone","dns":"1.1.1.1, 1.0.0.1","keepalive":"21","mtu":"1420"}')" = 201 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"name": "phone", "ipv4": "10.8.0.3"}' "$TMP/body"
     grep -qx 'wg0|add|phone|1.1.1.1, 1.0.0.1|21|1420' "$TMP/mwg-calls"
@@ -2413,11 +2186,11 @@ PY
     [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
     grep -qx 'wg0|net|ac' "$TMP/mwg-calls"
     # The audit log names the action, network and peer, never a password or key.
-    grep -q 'admin 127.0.0.1 ekle wg0/phone -> ok' "$TMP/panel.log"
-    grep -q 'admin 127.0.0.1 ag-ekle wg1 -> ok' "$TMP/panel.log"
-    grep -q 'admin 127.0.0.1 ag-kaldir wg1 -> ok' "$TMP/panel.log"
-    grep -q 'admin 127.0.0.1 peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
-    grep -q 'admin 127.0.0.1 ag-durum wg0 kapat -> ok' "$TMP/panel.log"
+    grep -q 'konsol 127.0.0.1 ekle wg0/phone -> ok' "$TMP/panel.log"
+    grep -q 'konsol 127.0.0.1 ag-ekle wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol 127.0.0.1 ag-kaldir wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol 127.0.0.1 peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
+    grep -q 'konsol 127.0.0.1 ag-durum wg0 kapat -> ok' "$TMP/panel.log"
     run ! grep -qE 'panel pass|SECRETPRIV|SECRETPSK|QRDATA' "$TMP/panel.log"
 }
 
@@ -2441,7 +2214,7 @@ EOF
     chmod +x "$TMP/pbin/master-wg.new"
     mv -f "$TMP/pbin/master-wg.new" "$TMP/pbin/master-wg"
     online() {
-        pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' >/dev/null
+        pc /api/wg/state -H 'X-Konsol: 1' >/dev/null
         python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); p = d["networks"][0]["peers"][0]; print(p["online"], p["active_at"] is not None, d["active_window"])' "$TMP/body"
     }
     # Just seen, fresh handshake: connected until it has been watched for a whole window.
@@ -2474,44 +2247,7 @@ EOF
     run ! grep -q 'a < 180' "$V2_ROOT/console/konsol.js"
 }
 
-@test "wg panel locks a client out after ten wrong passwords" {
-    command -v python3 >/dev/null || skip "python3 yok"
-    panel_start
-    for _ in $(seq 1 10); do
-        [ "$(pc / -u admin:wrong -H 'X-Forwarded-For: 198.51.100.9')" = 401 ]
-    done
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'X-Forwarded-For: 198.51.100.9')" = 429 ]
-    grep -qi '^Retry-After: 900' "$TMP/head"
-    # Another client is not affected.
-    [ "$(pc /api/wg/state -u 'admin:panel pass 1234' -H 'X-Konsol: 1' -H 'X-Forwarded-For: 198.51.100.10')" = 200 ]
-}
-
-@test "wg panel account keeps a matching hash, rewrites a changed one and stores no password" {
-    command -v python3 >/dev/null || skip "python3 yok"
-    local panel="$V2_ROOT/panel/master-wg-panel"
-    run bash -c "printf '%s' 'first pass 1234' | python3 '$panel' account --auth '$TMP/auth' --user admin"
-    [ "$status" -eq 0 ]
-    [ "$output" = "yazıldı" ]
-    [ "$(stat -f %Lp "$TMP/auth" 2>/dev/null || stat -c %a "$TMP/auth")" = 600 ]
-    grep -qE '^admin:pbkdf2_sha256\$600000\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$' "$TMP/auth"
-    run ! grep -q 'first pass' "$TMP/auth"
-    before="$(shasum <"$TMP/auth")"
-    run bash -c "printf '%s' 'first pass 1234' | python3 '$panel' account --auth '$TMP/auth' --user admin"
-    [ "$output" = "aynı" ]
-    [ "$(shasum <"$TMP/auth")" = "$before" ]
-    run bash -c "printf '%s' 'other pass 1234' | python3 '$panel' account --auth '$TMP/auth' --user admin"
-    [ "$output" = "yazıldı" ]
-    run bash -c "printf '%s' 'other pass 1234' | python3 '$panel' account --auth '$TMP/auth' --user root2"
-    [ "$output" = "yazıldı" ]
-    grep -q '^root2:' "$TMP/auth"
-    run bash -c "printf '%s' 'x' | python3 '$panel' account --auth '$TMP/auth' --user 'Bad User'"
-    [ "$status" -ne 0 ]
-    run bash -c "python3 '$panel' account --auth '$TMP/auth' --user admin </dev/null"
-    [ "$status" -ne 0 ]
-    [ -z "$(find "$TMP" -name '.wg-panel-auth-*')" ]
-}
-
-@test "installer wires the wg panel: loopback unit, tailnet name, account from kurulum.env, stage 7 proof" {
+@test "installer wires the wg panel: loopback unit, tailnet name, no password, stage 7 gate proof" {
     local unit="$V2_ROOT/systemd/master-wg-panel.service" body s6 s7
     grep -q -- '--listen 127.0.0.1:__WG_PANEL_PORT__' "$unit"
     grep -q -- '--master-wg __SBIN_DIR__/master-wg' "$unit"
@@ -2520,26 +2256,26 @@ EOF
         grep -qx "$line" "$unit"
     done
     grep -qx 'WG_PANEL_PORT="61008"' "$V2_ROOT/config/defaults.env"
-    grep -qx 'WG_PANEL_MIN_PASSWORD_LENGTH=12' "$V2_ROOT/config/defaults.env"
-    grep -qx 'WG_PANEL_USER=' "$V2_ROOT/config/kurulum.env.example"
-    grep -qx 'WG_PANEL_PASS=' "$V2_ROOT/config/kurulum.env.example"
-    grep -q 'validate_account "WireGuard paneli" "\$WG_PANEL_NEW_USER" "\$WG_PANEL_NEW_PASS"' "$V2_ROOT/install.sh"
+    # DD-147: no account anywhere — not in the input, the defaults, the unit or the installer.
+    run ! grep -qE 'WG_PANEL_(USER|PASS|AUTH_FILE|MIN_PASSWORD_LENGTH|NEW_|ACCOUNT)' \
+        "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" "$unit"
+    run ! grep -q -- '--auth' "$unit"
     # The panel port collides with nothing the stage 0 port checks know.
     grep -q '"panel:\${WG_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
     body="$(awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'printf .%s. "\$WG_PANEL_NEW_PASS" |' <<<"$body"
-    grep -q 'account --auth "\$WG_PANEL_AUTH_FILE" --user "\$WG_PANEL_NEW_USER"' <<<"$body"
-    grep -q 'chmod 0600 "\$WG_PANEL_AUTH_FILE"' <<<"$body"
     # DD-140: this backend serves no page files any more; the console pages come from the file backend.
     run ! grep -q -- '--web' "$V2_ROOT/systemd/master-wg-panel.service"
     run ! grep -qE 'index\.html|panel\.css|panel\.js' <<<"$body"
     s6="$(awk '/^stage_6\(\)/,/^ensure_caddy_wg\(\)/' "$V2_ROOT/install.sh")"
     grep -q '^    ensure_wg_panel "\$OS_CHANGED"$' <<<"$s6"
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'Konsol girişsiz yanıt' <<<"$s7"
+    # Without a password the gates are the protection: stage 7 proves both on both backends.
+    grep -q 'X-Konsol başlığı olmadan HTTP' <<<"$s7"
+    grep -q 'yabancı Host ile HTTP' <<<"$s7"
+    grep -q 'for gate_port in "\$FILES_PANEL_PORT:/api/state" "\$WG_PANEL_PORT:/api/wg/state"; do' <<<"$s7"
+    grep -q 'Konsol sayfası tailnet.ten açılmadı' <<<"$s7"
     grep -q 'master-wg-panel" check' <<<"$s7"
     grep -q 'http://${wg_first_addr}:${WG_PANEL_PORT}/' <<<"$s7"
-    grep -q 'unset WG_PANEL_NEW_PASS' <<<"$s7"
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
     grep -q '"\$REPO_ROOT/panel"' "$V2_ROOT/dev/export-installer.sh"
     run ! grep -q 'WG_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
@@ -2574,12 +2310,11 @@ files_panel_start() {
     printf 'gizli\n' >"$TMP/outside/secret.txt"
     ln -s "$TMP/outside" "$TMP/root/kacis"
     printf 'merhaba dünya\n' >"$TMP/root/notlar.txt"
-    printf '%s' 'panel pass 1234' | python3 "$V2_ROOT/panel/master-wg-panel" account --auth "$TMP/fauth" --user admin >/dev/null
     # DD-141: paylaşım hesabı systemd kimlik bilgisi gibi verilir.
     mkdir -p "$TMP/creds"
     printf 'paylasim:paylas pass\n' >"$TMP/creds/paylasim-auth"
     FPORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    CREDENTIALS_DIRECTORY="$TMP/creds" python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" --web "$TMP/fweb" --auth "$TMP/fauth" \
+    CREDENTIALS_DIRECTORY="$TMP/creds" python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" --web "$TMP/fweb" \
         --share .pay --share-credential paylasim-auth \
         --domain ayc --version 2026.08.06-v2-test --temp-dir incomplete >"$TMP/fpanel.log" 2>&1 &
     PANEL_PID=$!
@@ -2591,36 +2326,36 @@ files_panel_start() {
     return 1
 }
 
-# fp PATH [curl args...] → HTTP code; body in $TMP/body, headers in $TMP/head (signed in, panel header).
+# fp PATH [curl args...] → HTTP code; body in $TMP/body, headers in $TMP/head (panel header; no password, DD-147).
 fp() {
     local path="$1"
     shift
-    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" -u 'admin:panel pass 1234' \
+    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" \
         -H 'X-Konsol: 1' "$@" "http://127.0.0.1:$FPORT$path"
 }
 fpost() {
     fp "$1" -H 'Content-Type: application/json' --data "$2"
 }
 
-@test "files panel opens with the wg panel account on its own name and refuses everything else" {
+@test "files panel opens without a password on its own name and refuses everything else" {
     command -v python3 >/dev/null || skip "python3 yok"
     files_panel_start
     local bare=(-s -o /dev/null -w '%{http_code}')
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")" = 401 ]
-    curl -s -D - -o /dev/null -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/" | grep -qi '^WWW-Authenticate: Basic realm="Konsol"'
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u admin:wrong "http://127.0.0.1:$FPORT/")" = 401 ]
+    # DD-147: the page opens without a password or a login prompt.
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")" = 200 ]
+    run ! grep -qi '^WWW-Authenticate' <<<"$(curl -s -D - -o /dev/null -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")"
     [ "$(fp /)" = 200 ]
     grep -q '<title>konsol</title>' "$TMP/body"
     grep -qi "^Content-Security-Policy: default-src 'none'; script-src 'self'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
     # DNS rebinding and the WireGuard panel's own name are refused.
-    [ "$(curl "${bare[@]}" -H 'Host: evil.example' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/")" = 403 ]
-    [ "$(curl "${bare[@]}" -H 'Host: wg.ayc' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: evil.example' "http://127.0.0.1:$FPORT/")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: wg.ayc' "http://127.0.0.1:$FPORT/")" = 403 ]
     # CSRF: the API needs the panel header and a same-origin fetch; nothing changes without them.
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u 'admin:panel pass 1234' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
     [ "$(fp /api/state -H 'Sec-Fetch-Site: cross-site')" = 403 ]
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -u 'admin:panel pass 1234' -H 'Content-Type: application/json' \
+    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -H 'Content-Type: application/json' \
         --data '{"path":"","name":"x"}' "http://127.0.0.1:$FPORT/api/mkdir")" = 403 ]
     [ ! -e "$TMP/root/x" ]
     [ "$(fp /api/state -H 'Sec-Fetch-Site: same-origin')" = 200 ]
@@ -2630,25 +2365,14 @@ d = json.load(open(sys.argv[1]))
 assert d["root"] == sys.argv[2] and d["writable"] and d["temp"] == "incomplete", d
 assert d["trash"] == {"count": 0, "size": 0} and d["disk"]["total"] >= d["disk"]["free"] > 0, d
 PY
-    # The stage 7 check with the password on stdin.
-    run bash -c "printf '%s' 'panel pass 1234' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host panel.ayc --user admin"
+    # The stage 7 check: no password.
+    run python3 "$FPANEL" check --url "http://127.0.0.1:$FPORT/api/state" --host panel.ayc
     [ "$status" -eq 0 ]
     [ "$output" = "kök $TMP/root, çöpte 0 öge" ]
-    run bash -c "printf '%s' 'nope' | python3 '$FPANEL' check --url http://127.0.0.1:$FPORT/api/state --host panel.ayc --user admin"
+    run python3 "$FPANEL" check --url "http://127.0.0.1:$FPORT/api/state" --host evil.example
     [ "$status" -ne 0 ]
-    case "$output" in *"HTTP 401"*) ;; *) false ;; esac
-    # A changed wg panel account is read without a restart, and ten wrong passwords lock a client out.
-    printf '%s' 'second pass 5678' | python3 "$V2_ROOT/panel/master-wg-panel" account --auth "$TMP/fauth" --user admin >/dev/null
-    [ "$(fp /)" = 401 ]
-    local i
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-        curl -s -o /dev/null -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u admin:wrong "http://127.0.0.1:$FPORT/" &
-    done
-    wait "${!}"
-    sleep 1.2
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.9' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 429 ]
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' -H 'X-Forwarded-For: 198.51.100.10' -u 'admin:second pass 5678' "http://127.0.0.1:$FPORT/")" = 200 ]
-    run ! grep -qE 'panel pass|second pass' "$TMP/fpanel.log"
+    case "$output" in *"HTTP 403"*) ;; *) false ;; esac
+    run ! grep -qE 'pbkdf2|WWW-Authenticate|auth-credential|locked_out|FAIL_LIMIT' "$FPANEL"
 }
 
 @test "files panel stays inside its root and never overwrites or moves a folder into itself" {
@@ -2690,7 +2414,7 @@ PY
     [ -f "$TMP/root/Filmler/Kuzey/notlar.txt" ]
     [ -d "$TMP/root/Filmler/Kuzey/.cop2" ]
     [ -f "$TMP/root/Filmler/eski.txt" ]
-    grep -q 'dosya: admin 127.0.0.1 tasi ' "$TMP/fpanel.log"
+    grep -q 'dosya: konsol 127.0.0.1 tasi ' "$TMP/fpanel.log"
     grep -q 'hedefte zaten var; üzerine yazılmaz" -> hata' "$TMP/fpanel.log"
 }
 
@@ -2743,7 +2467,7 @@ PY
     [ -n "$(ls -A "$TMP/root/.cop")" ]
     [ "$(fpost /api/trash/empty '{"confirm":" ONAYLA "}')" = 200 ]
     [ -z "$(ls -A "$TMP/root/.cop")" ]
-    grep -q 'dosya: admin 127.0.0.1 cop-bosalt 1 -> ok' "$TMP/fpanel.log"
+    grep -q 'dosya: konsol 127.0.0.1 cop-bosalt 1 -> ok' "$TMP/fpanel.log"
 }
 
 @test "files panel shows text in its encoding, only the first megabyte and never a binary; downloads stay same-origin" {
@@ -2777,14 +2501,14 @@ PY
     [ "$(fp '/api/text?path=Filmler')" = 400 ]
     [ "$(fp '/api/text?path=notlar.txt&enc=latin9')" = 400 ]
     # A download is an attachment, needs no panel header, and a cross-site request is refused.
-    [ "$(curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H 'Host: panel.ayc' -u 'admin:panel pass 1234' \
+    [ "$(curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H 'Host: panel.ayc' \
         "http://127.0.0.1:$FPORT/api/download?path=notlar.txt")" = 200 ]
     grep -qx 'merhaba dünya' "$TMP/body"
     grep -qi "^Content-Disposition: attachment; filename=\"notlar.txt\"; filename\*=UTF-8''notlar.txt" "$TMP/head"
     grep -qi '^Content-Type: application/octet-stream' "$TMP/head"
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' -u 'admin:panel pass 1234' -H 'Sec-Fetch-Site: cross-site' \
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' -H 'Sec-Fetch-Site: cross-site' \
         "http://127.0.0.1:$FPORT/api/download?path=notlar.txt")" = 403 ]
-    grep -q 'dosya: admin 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
+    grep -q 'dosya: konsol 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
 }
 
 @test "files panel shares a folder as a link in the share root, sweeps expired ones and keeps the rest of the root out" {
@@ -2841,8 +2565,8 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     ln -s ../../Filmler "$TMP/root/.pay/w/elle"
     [ "$(fp /api/paylas)" = 200 ]
     [ ! -e "$TMP/root/.pay/w/elle" ]
-    grep -q 'admin 127.0.0.1 paylas "Filmler/Kuzey -> Kuzey (7 gün)" -> ok' "$TMP/fpanel.log"
-    grep -q 'admin 127.0.0.1 paylas-kaldir "Kuzey-2" -> ok' "$TMP/fpanel.log"
+    grep -q 'konsol 127.0.0.1 paylas "Filmler/Kuzey -> Kuzey (7 gün)" -> ok' "$TMP/fpanel.log"
+    grep -q 'konsol 127.0.0.1 paylas-kaldir "Kuzey-2" -> ok' "$TMP/fpanel.log"
     run ! grep -q 'paylas pass' "$TMP/fpanel.log"
 }
 
@@ -2853,7 +2577,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/payload.bin")" = 201 ]
     cmp -s "$TMP/payload.bin" "$TMP/root/Filmler/arsiv.bin"
     [ "$(stat -f '%Lp' "$TMP/root/Filmler/arsiv.bin" 2>/dev/null || stat -c '%a' "$TMP/root/Filmler/arsiv.bin")" = 664 ]
-    grep -q 'admin 127.0.0.1 yükle "Filmler/arsiv.bin" -> ok' "$TMP/fpanel.log"
+    grep -q 'konsol 127.0.0.1 yükle "Filmler/arsiv.bin" -> ok' "$TMP/fpanel.log"
     # Aynı ad ikinci kez: üzerine yazılmaz, dosya bozulmaz.
     printf 'baska icerik' >"$TMP/other.bin"
     [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/other.bin")" = 409 ]
@@ -2865,6 +2589,16 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     [ "$(fp "/api/upload?path=Filmler&name=bos.bin" -X POST -H 'Content-Length: 0')" = 411 ]
     [ "$(fp "/api/upload?path=.cop&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
     [ "$(fp "/api/upload?path=.pay&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
+    # A refusal decided before the body is read still reads (drains) the body first, so a
+    # proxy sees the real answer instead of a reset connection (Caddy turned that into 502).
+    head -c 8388608 /dev/zero >"$TMP/big.bin"
+    [ "$(fp "/api/upload?path=.cop&name=x.bin" --data-binary "@$TMP/big.bin")" = 403 ]
+    [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/big.bin")" = 409 ]
+    grep -q '“arsiv.bin” zaten var' "$TMP/body"
+    grep -q 'self.drain(length)' "$V2_ROOT/files-panel/master-files-panel"
+    grep -q 'UPLOAD_DRAIN_MAX = ' "$V2_ROOT/files-panel/master-files-panel"
+    # The console does not even send a file whose name is already in the folder.
+    grep -q 'state: clash ? "err" : "wait", error: clash ? "zaten var; üzerine yazılmaz" : ""' "$V2_ROOT/console/konsol.js"
     # Yükleme kilidi bütün akış boyunca tutulmaz: yalnız son taşıma kilitli.
     grep -q 'self.run(user, "yükle", put, lock=False' "$V2_ROOT/files-panel/master-files-panel"
     grep -q 'with self.lock:' "$V2_ROOT/files-panel/master-files-panel"
@@ -2952,25 +2686,24 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'showPass' "$V2_ROOT/console/konsol.js"
 }
 
-@test "installer wires the files panel: downloads uid, sandbox, shared account, tailnet name, hidden trash, stage 7 proof" {
+@test "installer wires the files panel: downloads uid, sandbox, no password, tailnet name, hidden trash, stage 7 proof" {
     local unit="$V2_ROOT/systemd/master-files-panel.service" body s6 s7 line
     for line in 'User=__FILES_PANEL_USER__' 'Group=__FILES_PANEL_GROUP__' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
         'ProtectSystem=strict' 'ReadWritePaths=__SERVER_ROOT__' 'ProtectHome=true' 'PrivateTmp=true' 'PrivateDevices=true' \
-        'LoadCredential=panel-auth:__WG_PANEL_AUTH_FILE__' 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' 'UMask=0002'; do
+        'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' 'UMask=0002'; do
         grep -qx "$line" "$unit"
     done
     grep -q -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__' "$unit"
-    grep -q -- '--auth-credential panel-auth --trash __FILES_PANEL_TRASH__' "$unit"
+    grep -q -- '--web __CONSOLE_WEB_DIR__ --trash __FILES_PANEL_TRASH__' "$unit"
+    run ! grep -qE 'panel-auth|--auth' "$unit"
     [ "$(grep -c '^ReadWritePaths=' "$unit")" -eq 1 ]
     run ! grep -qE '^User=(root|0)$|AF_NETLINK|/etc/wireguard' "$unit"
     grep -qx 'FILES_PANEL_PORT="61009"' "$V2_ROOT/config/defaults.env"
     grep -qx 'FILES_PANEL_TRASH=".cop"' "$V2_ROOT/config/defaults.env"
-    # No new account: the wg panel's hash file, and a changed account restarts the file panel.
+    # No account at all (DD-147).
     run ! grep -q 'FILES_PANEL\|DOSYA' "$V2_ROOT/config/kurulum.env.example"
     run ! grep -qE '^INPUT_KEYS=.*(FILES|DOSYA)' "$V2_ROOT/install.sh"
     body="$(awk '/^ensure_files_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'WG_PANEL_AUTH_FILE="\$WG_PANEL_AUTH_FILE"' <<<"$body"
-    grep -q 'WG_PANEL_ACCOUNT_CHANGED:-0' <<<"$body"
     # systemd needs a user entry for the downloads uid: an existing name, else a system account without login.
     grep -q 'getent passwd "\$DOWNLOADS_UID"' <<<"$body"
     grep -q 'getent group "\$DOWNLOADS_GID"' <<<"$body"
@@ -2983,7 +2716,6 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'CONSOLE_WEB_DIR="\$CONSOLE_WEB_DIR"' <<<"$body"
     grep -qx 'CONSOLE_WEB_DIR="/usr/local/share/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
     grep -q '"\$REPO_ROOT/console"' "$V2_ROOT/dev/export-installer.sh"
-    awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'WG_PANEL_ACCOUNT_CHANGED=1'
     s6="$(awk '/^stage_6\(\)/,/^ensure_caddy_wg\(\)/' "$V2_ROOT/install.sh")"
     grep -q '^    ensure_files_panel "\$OS_CHANGED"$' <<<"$s6"
     # The port collides with nothing: stage 0, master-wg net-add and the wg panel know it.
@@ -2997,7 +2729,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'handle /api/wg/\* {' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
-    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
     grep -q 'redir http://panel.__LOCAL_DOMAIN__{uri} 302' "$V2_ROOT/templates/Caddyfile"
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
     run ! grep -q 'FILES_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
@@ -3012,14 +2744,13 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'ps -o uid= -p' <<<"$s7"
     grep -q 'http://${wg_first_addr}:${FILES_PANEL_PORT}/' <<<"$s7"
     grep -q 'test ! -e /downloads/\${FILES_PANEL_TRASH}' <<<"$s7"
-    # The password is still in memory for the files check and gone right after it.
-    [ "$(grep -n 'master-files-panel" check' <<<"$s7" | cut -d: -f1)" -lt "$(grep -n 'unset WG_PANEL_NEW_PASS' <<<"$s7" | cut -d: -f1)" ]
     grep -q '"\$REPO_ROOT/files-panel"' "$V2_ROOT/dev/export-installer.sh"
     # The console page inserts names only as text; the one innerHTML builds icons from a fixed table.
     [ "$(grep -c 'innerHTML' "$V2_ROOT/console/konsol.js")" -eq 1 ]
     grep -q 't.innerHTML = .<svg' "$V2_ROOT/console/konsol.js"
-    # One page, one login: both backends answer on panel.<domain> with the same realm.
-    grep -q 'REALM = "Konsol"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
+    # One page, no login: both backends answer only on panel.<domain> and log the same actor.
+    grep -q 'ACTOR = "konsol"' "$V2_ROOT/files-panel/master-files-panel"
+    grep -q 'ACTOR = "konsol"' "$V2_ROOT/panel/master-wg-panel"
     grep -q 'API_HEADER = "X-Konsol"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
     grep -q 'hosts.add("panel.%s"' "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master-wg-panel"
 }
@@ -3078,7 +2809,6 @@ TORRENT_PUBLIC_PORT=61005
 SHARE_PORT=61010
 DOZZLE_UI_PORT=61002
 TORRENT_UI_PORT=61006
-FILEBROWSER_UI_PORT=61007
 TAILSCALE_UDP_PORT=41641
 EOF
     printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' \
@@ -3581,7 +3311,7 @@ EOF
     iptables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat4"; }
     ip6tables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat6"; }
     WAN_INTERFACE=eth0 TAILSCALE_IF=tailscale0 TAILSCALE_UDP_PORT=41641 SSH_PUBLIC_PORT=22 TORRENT_PUBLIC_PORT=61005
-    CHAIN_STAGING_PREFIX=MASTER-NEXT- DOZZLE_UI_PORT=61002 TORRENT_UI_PORT=61006 FILEBROWSER_UI_PORT=61007
+    CHAIN_STAGING_PREFIX=MASTER-NEXT- DOZZLE_UI_PORT=61002 TORRENT_UI_PORT=61006
     WG_NETWORKS_FILE="$TMP/networks"
     # DD-143: wg0 da kayıttan gelir; kayıt boşsa hiç WireGuard kuralı olmaz.
     : >"$WG_NETWORKS_FILE"
@@ -3607,8 +3337,8 @@ EOF
     [ "$(wan_allow_pairs v4 | grep -c '^udp 610[0-2]1$')" -eq 3 ]
     awk '/--dport 61021 -j ACCEPT/ {a = NR} /-i eth0 -j DROP/ {d = NR} END { exit !(a && d && a < d) }' "$TMP/in4"
     # UI ports only on the "ui" networks' own addresses; ping and a DROP for each network.
-    grep -qx -- '-A MASTER-NEXT-IN- -i wg0 -d 10.8.0.1 -p tcp -m multiport --dports 61002,61006,61007 -j ACCEPT' "$TMP/in4"
-    grep -qx -- '-A MASTER-NEXT-IN- -i wg2 -d 10.8.2.1 -p tcp -m multiport --dports 61002,61006,61007 -j ACCEPT' "$TMP/in4"
+    grep -qx -- '-A MASTER-NEXT-IN- -i wg0 -d 10.8.0.1 -p tcp -m multiport --dports 61002,61006 -j ACCEPT' "$TMP/in4"
+    grep -qx -- '-A MASTER-NEXT-IN- -i wg2 -d 10.8.2.1 -p tcp -m multiport --dports 61002,61006 -j ACCEPT' "$TMP/in4"
     run ! grep -q -- '-i wg1 -d 10.8.1.1 -p tcp' "$TMP/in4"
     for w in wg0 wg1 wg2; do
         grep -qx -- "-A MASTER-NEXT-IN- -i $w -j DROP" "$TMP/in4"
@@ -3691,11 +3421,11 @@ EOF
     grep -q '^	auto_https off$' "$t"
     # DD-136: one Caddyfile, one instance per interface; the address comes from the instance's env file.
     grep -q '^	default_bind {$WG_BIND}$' "$t"
-    for p in DOZZLE_UI_PORT TORRENT_UI_PORT FILEBROWSER_UI_PORT; do
+    for p in DOZZLE_UI_PORT TORRENT_UI_PORT; do
         grep -q "^http://:__${p}__ {\$" "$t"
         grep -q "reverse_proxy 127.0.0.1:__${p}__\$" "$t"
     done
-    [ "$(grep -c '^http://' "$t")" -eq 3 ]
+    [ "$(grep -c '^http://' "$t")" -eq 2 ]
     run ! grep -qiE 'webdav|TAILSCALE|LOCAL_DOMAIN' <<<"$(grep -v '^#' "$t")"
     [ ! -e "$V2_ROOT/systemd/caddy-wg.service" ]
     grep -q '^Requires=wg-quick@%i.service$' "$u"

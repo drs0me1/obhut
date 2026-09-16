@@ -167,7 +167,7 @@ in §10, not resolved silently.
 | `templates/compose.yaml` | The six services (two loopback rclone servers: the Infuse WebDAV and the share WebDAV), volumes, port publications | Where it is written, which addresses are current |
 | `templates/Caddyfile` | Seven HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
-| `panel/master-wg-panel` | Serve `/api/wg/*` on loopback as root: HTTP Basic against a PBKDF2 hash, CSRF/Host gates, JSON API over `master-wg`, plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; page files — it serves none |
+| `panel/master-wg-panel` | Serve `/api/wg/*` on loopback as root: no password (tailnet boundary, **DD-147**), CSRF/Host gates, JSON API over `master-wg`, plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; page files — it serves none |
 | `files-panel/master-files-panel` | Serve the console pages and the file API on loopback as the downloads uid: same login as the WireGuard backend (hash via `LoadCredential`), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames, the `.cop` trash, text decoding (**DD-139**, **DD-140**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
 | `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files and log, everything from its own origin (**DD-140**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
@@ -203,13 +203,11 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/paylasim.htpasswd` | installer | bcrypt hash of the share account, `0600`; mounted into Compose `paylasim` (**DD-142**) |
-| `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB, created once with the stage-0 account (**DD-118**), + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | five services, `0600` |
 | `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
 | `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
 | `/usr/local/sbin/master-wg-panel`, `/usr/local/share/master-stack/wg-panel/` | installer | WireGuard panel service and page, `0755` / `0644` (**DD-133**) |
-| `/etc/master-stack/wg-panel.auth` | installer | panel account: user and PBKDF2-SHA256 hash, `0600`; also the file panel's account (**DD-139**) |
 | `/usr/local/sbin/master-files-panel`, `/usr/local/share/master-stack/konsol/` | installer | file backend and the console pages, `0755` / `0644` (**DD-139**, **DD-140**) |
 | `/etc/master-stack/paylasim.htpasswd`, `paylasim.cred` | installer | share account: bcrypt for rclone, plaintext for the console to show, `0600 root` (**DD-141**) |
 | `DOWNLOADS_PATH/.pay/` | file backend | share root `w/` (symlinks) and the registry beside it, uid 1000 (**DD-141**) |
@@ -400,14 +398,14 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain, downloads path, ports and the WebDAV/Dozzle/FileBrowser/qBittorrent/WireGuard panel accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain and the share/Dozzle/qBittorrent/Konsol accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); the share htpasswd and credential file when they differ from the input file (**DD-142**); timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; sync the Dozzle and FileBrowser accounts to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker; sync the Dozzle account to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` (`--remove-orphans` retires dropped services such as FileBrowser, **DD-146**); remove host WebDAV leftovers; install scripts and units | templates |
 | 5 | share credential ownership/mode; apply `master-firewall` (WireGuard rules come from the registry, none when it is empty); enable refresh timer; prepare the WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`) and start the networks the registry already holds — no key, no `.conf`, no interface of its own (**DD-120**, **DD-143**) | firewall, WireGuard |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed (or the config is newer than the running unit); `caddy-wg@` template for the UIs over WireGuard; Konsol backends, pages and account (**DD-133**, **DD-140**) | DNS/HTTP |
-| 7 | Compose `up --remove-orphans` if needed; cheap contract checks (share read-only + Caddy, `master-wg` and each registry network's units, Konsol 401 without the account, nothing on a WireGuard address) | verification |
+| 7 | Compose `up --remove-orphans` if needed; cheap contract checks (share read-only + Caddy, `master-wg` and each registry network's units, Konsol page 200 on the tailnet and 403 on both backends without `X-Konsol` or with a foreign `Host`, without the account, nothing on a WireGuard address) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,

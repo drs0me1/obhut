@@ -12,9 +12,6 @@ http://dozzle.__LOCAL_DOMAIN__ {
 http://torrent.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
 }
-http://file.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__FILEBROWSER_UI_PORT__
-}
 # Konsol (DD-140): tek adres, iki arka uç. /api/wg/* WireGuard ve sistem arka ucuna
 # (root), geri kalanı dosya arka ucuna (indirme klasörünün sahibi) gider; sayfayı da o
 # verir. Yalnız tailnet'ten; giriş, CSRF ve kök denetimi arka uçlarda.
@@ -32,7 +29,8 @@ http://panel.__LOCAL_DOMAIN__ {
 http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$SHARE_PORT} {
 	reverse_proxy 127.0.0.1:__SHARE_PORT__
 }
-# Eski adresler panele yönlenir (yer imleri çalışmaya devam etsin).
-http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__ {
+# Eski adresler panele yönlenir (yer imleri çalışmaya devam etsin). file. FileBrowser'ındı;
+# dosyaları artık Konsol yönetir (DD-146).
+http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {
 	redir http://panel.__LOCAL_DOMAIN__{uri} 302
 }

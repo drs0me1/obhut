@@ -3,16 +3,16 @@ Master Stack — kullanım (yalnız macOS)
 Repo kökünde yalnız çift tıklanan dosyalar durur:
   <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
   wireguard.command          WireGuard menüsü: ağ seç, listele, ekle, çıkar, QR, DNS, ağı yeniden üret (kurulumdan sonra)
-  kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, portlar, hesaplar, Tailscale auth key (git dışı)
+  kurulum/kurulum.env        kurulum girdileri: sunucu, alan adı, servis hesapları (git dışı)
   kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png); kurulum buraya bakmaz (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
   chmod 600 kurulum/kurulum.env
-  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (FileBrowser ve WireGuard paneli parolası en az 12 karakter).
+  Dosyayı doldurun: SSH_HOST, hesapların kullanıcı/parolası (Konsol parolası en az 12 karakter).
   Alan adı, downloads yolu ve portlar boş kalırsa varsayılan kullanılır.
-  TS_AUTH_KEY: ephemeral olmayan, tek kullanımlık bir anahtar; boş bırakırsanız tarayıcıdan giriş URL'si.
+  Tailscale: kurulum sırasında giriş bağlantısı gösterilir; tarayıcıda açıp onaylayın (auth key yok, v2-114).
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
@@ -33,15 +33,15 @@ WireGuard — kurulum ağ yaratmaz (v2-109). İlk ağı Konsol'dan kurun:
   8) ağı yeniden üret: seçili ağa yeni sunucu anahtarı; o ağdaki bütün peer'lar ve profiller silinir, geri alınamaz.
      onayla yazınca çalışır (büyük/küçük harf fark etmez); cihazları 2) ekle ile yeniden ekleyin.
   WireGuard'dayken arayüzler (ağ "İnternet + arayüzler" ise): http://10.8.N.1:61002 Dozzle,
-  :61006 qBittorrent, :61007 FileBrowser (wg0 için 10.8.0.1)
+  :61006 qBittorrent (wg0 için 10.8.0.1). Dosyalar WireGuard'dan açılmaz; Konsol yalnız Tailscale'den
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
 
 Konsol (tarayıcıdan; v2-105):
   http://panel.ayc — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
-  Eski adresler http://wg.ayc ve http://dosya.ayc buraya yönlenir; giriş bir kez sorulur.
-  Giriş: kurulum.env'deki WG_PANEL_USER / WG_PANEL_PASS (tarayıcı kendi penceresinde sorar).
+  Eski adresler http://wg.ayc, http://dosya.ayc ve http://file.ayc buraya yönlenir.
+  Parola sorulmaz (v2-114): yalnız Tailscale'deki cihazlar açabilir; erişimi daraltmak Tailscale ACL'iyle.
   Genel bakış: işlemci ve bellek grafiği, disk (indirilenler / çöp / sistem), bağlı cihazlar,
   son işlemler ve kullanımdaki portlar (internete açık olanlar ayrı grupta).
   WireGuard sayfası:
@@ -52,7 +52,6 @@ Konsol (tarayıcıdan; v2-105):
   Her ağ kaldırılabilir (onayla), wg0 dahil (v2-110): ağ kartındaki çöp kutusu düğmesi. Son ağ da
   kaldırılınca sayfa "Yapılandır"a döner, altyapı durur, istediğinizde yeni ağ kurarsınız.
   wireguard.command da aynı ağlarla çalışır: 6) ağ seç ile hangisini yöneteceğinizi seçersiniz.
-  10 hatalı parolada o cihaz 15 dakika bekletilir.
   Bağlı (v2-102): son 45 sn içinde cihazdan veri geldi; kapanan cihaz ~50 sn içinde Boşta olur.
   Aç-kapa (v2-105): cihazın yanındaki düğme bağlantıyı keser; anahtarı, adresi ve profili durur,
   açınca birkaç saniyede geri gelir. Ağ kartındaki dikey anahtar bütün ağı kapatır (sunucu yeniden
@@ -82,7 +81,7 @@ Konsol · Dosyalar sekmesi (v2-104, v2-105):
   Metin dosyaları (.txt .log .nfo .srt …) tıklayınca açılır; Türkçe altyazı bozuk görünürse Kodlama'dan Türkçe seçin.
   Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz.
   incomplete klasörü qBittorrent'in yarım indirmeleridir: oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
-  FileBrowser (http://file.ayc) yerinde duruyor.
+  FileBrowser kaldırıldı (v2-114): dosyaları Konsol yönetir; http://file.ayc Konsol'a yönlenir.
 
 A) İlk kurulum
   0. Terminal: ssh-keygen -R nrm
@@ -90,8 +89,10 @@ A) İlk kurulum
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
   3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun (Mac'te WireGuard kapalıyken)
      Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
-  (Dozzle, FileBrowser ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
+  (Dozzle ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-114'e geçerken: kurulum.env'den FILEBROWSER_USER, FILEBROWSER_PASS, WG_PANEL_USER,
+  WG_PANEL_PASS ve TS_AUTH_KEY satırlarını silin; yoksa kurulum hiçbir şeye dokunmadan durur
   v2-100'e geçerken: WireGuard IPv6 adresleri değişti (fdcc:ad94:bacf:61a4::2 …; eski …::cafe:2 değil).
   Eski yedek kullanılamaz: kurulum/wireguard klasörünü silin, sunucuyu sıfırlayıp kurun, cihazları yeniden ekleyin
   v2-99'a geçerken: kurulum.env'e WG_PANEL_USER= ve WG_PANEL_PASS= satırlarını ekleyin
@@ -103,7 +104,7 @@ A) İlk kurulum
 B) Sıfırlama → yeniden kurulum
   0. Sıfırlamadan önce: wireguard.command → 6) yedek al (son hali kurulum/'da olsun)
      Terminal: ssh-keygen -R nrm ; Tailscale panelinde eski nrm düğümünü silin
-  1. <sürüm>.command               aynı kurulum/ klasörü; TS_AUTH_KEY'e yeni bir anahtar ya da boş → URL
+  1. <sürüm>.command               aynı kurulum/ klasörü; Tailscale giriş bağlantısını tarayıcıda onaylayın
      Özette "Hazır ayarlar: WireGuard sunucu anahtarı + … peer" görünür → E
      Kurulum WireGuard anahtarını ve peer'ları geri koyar (cihazlara dokunmanız gerekmez);
      qBittorrent şablondaki ayarlar ve kurulum.env hesabıyla hazır gelir

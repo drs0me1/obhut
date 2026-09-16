@@ -6804,6 +6804,48 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-147: Konsol without a password; Tailscale joins by link only (2026-09-16)
+
+- **Context:** the user is turning Konsol into the place where modules are
+  installed with one click and service accounts live (Hesaplar design v03). A
+  Konsol account in `kurulum.env` was one more secret on the Mac, and Konsol is
+  reachable only from the tailnet anyway. The Tailscale auth key was the other
+  secret in that file, used only to skip one browser click.
+- **Decision (user):** Konsol has no password — "erişim sadece tailscale olacağı
+  için katman yeterince güvenli". Tailscale always joins through the login link
+  shown during the install; the auth key input is removed.
+- **What keeps it safe:** Caddy serves `panel.<domain>` on the Tailscale address
+  only, so who can open Konsol is decided by tailnet membership and ACLs. Two
+  gates remain and become load-bearing: the backends refuse any `Host` but
+  `panel.<domain>` (a DNS-rebinding page cannot reach them), and `/api/*`
+  requires the `X-Konsol` header with a same-origin fetch (a page on another
+  site cannot send it, so it cannot drive Konsol through the operator's
+  browser). Stage 7 proves both on both backends.
+- **Accepted trade-off:** every member of the tailnet — and any device shared
+  into it that ACLs allow to reach the server — gets full Konsol rights. For a
+  single-owner tailnet that is the operator; for more, restrict with ACLs.
+- **Removed with it:** PBKDF2 account file, HTTP Basic, lockout, the account CLI,
+  `LoadCredential` for the file backend, the auth-key file and fallback path.
+
+### DD-146: Retire FileBrowser; Konsol is the file manager (2026-09-16)
+
+- **Context:** FileBrowser (classic) was kept beside the console's file
+  manager (**DD-139**) because it could still upload, select many items and
+  search. **DD-145** added all three to Konsol. The image is maintenance-only
+  with an archive risk already recorded in **DD-92**, and it carried its own
+  account, port, name, Bolt database and ~150 lines of account code.
+- **Decision:** remove it. The input keys, port 61007, the image, the database
+  handling and the WireGuard edge entry go; `file.<domain>` keeps resolving and
+  redirects to `panel.<domain>` so bookmarks still work.
+- **Trade-off, accepted:** FileBrowser was also reachable on a WireGuard network
+  with `ui` scope. Konsol is tailnet-only by design (**DD-140**: it manages
+  WireGuard itself), so after this change a device that is only on WireGuard
+  has no file manager. Exposing the file backend on WireGuard would put the
+  account that can create tunnels on that edge; not done.
+- **No migration code** (fresh-install rule): a re-run drops the container
+  through `docker compose up --remove-orphans`; the old data directory is left
+  in place and named in the changelog.
+
 ### DD-145: The console uploads into the list; no separate upload area (2026-09-16)
 
 - **Context:** the file panel could do everything FileBrowser could except

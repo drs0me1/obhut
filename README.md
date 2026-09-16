@@ -23,7 +23,7 @@ Earlier reviews (historical, v2-27 and v2-73):
 ## Quick start
 
 ```bash
-# Once: installer inputs (domain, ports, accounts, optional Tailscale auth key)
+# Once: installer inputs (SSH host, domain, service accounts)
 mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
 chmod 600 kurulum/kurulum.env   # then fill it in
 
@@ -59,7 +59,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 ├── <version>.command      # current portable installer (double-click)
 ├── wireguard.command      # WireGuard peer menu (double-click)
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
-│   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
+│   ├── kurulum.env        #   SSH host, domain, service accounts
 │   └── wireguard/         #   only the profiles + QR pictures you downloaded (DD-143)
 ├── versiyon/              # copies of verified working versions, each with OKUBENI.txt
 ├── README.md, CLAUDE.md   # entry points
@@ -83,7 +83,6 @@ only the runtime files and their archive SHA-256. It uploads them to
 | Service | Exposure | Role |
 |---------|----------|------|
 | Dozzle | loopback → Caddy (login) | container state, live logs, start/stop/remove |
-| FileBrowser | loopback → Caddy (login) | media tree UI |
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Unpackerr | none | archive extraction |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |

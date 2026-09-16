@@ -145,12 +145,16 @@ here="$(cd -- "$(dirname -- "$0")" && pwd)"
 self="$here/$(basename -- "$0")"
 [[ -f "$self" ]] || { echo "HATA: betik yolu bulunamadı: $self" >&2; pause_exit 1; }
 
-tgz="$(mktemp "${TMPDIR:-/tmp}/dsi-embed.XXXXXX.tgz")"
+# macOS mktemp X'leri yalnız şablonun sonundaysa değiştirir: "dsi-embed.XXXXXX.tgz"
+# birebir o adla açılır ve yarıda kalan bir çalıştırmadan sonra bütün çalıştırmalar
+# "File exists" ile düşer. Arşiv her seferinde yeni, özel bir dizinde durur.
+tgz_dir="$(mktemp -d "${TMPDIR:-/tmp}/dsi-embed.XXXXXX")"
+tgz="$tgz_dir/installer.tgz"
 remote_input_sent=0
 # Kurulum girdileri okur okumaz siler; bu yalnız yarıda kalan bir oturumdan
 # artakalanı temizler.
 cleanup_local() {
-    rm -f "$tgz"
+    rm -rf -- "$tgz_dir"
     if [[ "$remote_input_sent" -eq 1 ]]; then
         ssh "${ssh_base[@]}" "$HOST" \
             "rm -rf '$REMOTE_INPUT_DIR' '$REMOTE_INPUT_DIR.incoming'" >/dev/null 2>&1 || true

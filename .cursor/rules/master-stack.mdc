@@ -100,7 +100,6 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Compose içerisinde şu servisler yer alacak:
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
   - qBittorrent (Transmission'dan geri dönüldü, DD-127; yönetilen ayarlar `templates/qBittorrent.conf`, hesap `TORRENT_USER`/`TORRENT_PASS`, parola yalnız PBKDF2 özeti, DD-129; giriş zorunlu)
-  - Filebrowser (classic; hesap kurulum girdi dosyasından gelir ve her kurulumda ona eşitlenir, parola argv/log'a girmez, DD-118/DD-119)
   - Unpackerr
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
@@ -114,7 +113,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Her profille birlikte QR resmi `kurulum/wireguard/<ad>.png` olarak iner (`master-wg png`, sunucu üretir; izin 600, sunucuya gönderilmez).
 - 2) ekle, 3) çıkar, 7) ve 8) başarılı olunca yedek kendiliğinden alınır (`auto_backup` → 6); vazgeçilen ya da başarısız değişiklikte yedek alınmaz.
 - WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH, dnsmasq ve Docker ağları kapalıdır.
-- Konsol'un WireGuard arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler ve yalnız `/api/wg/*` yanıtlar; sayfa sunmaz. Tailnet'e Caddy `panel.<alan>` ile açılır; WireGuard'dan ve WAN'dan kapalı. Hesap `WG_PANEL_USER`/`WG_PANEL_PASS` (PBKDF2 özeti), `/api/*` için `X-Konsol` başlığı ve Host denetimi; her değişiklik `master-wg` ile.
+- Konsol'un WireGuard arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler ve yalnız `/api/wg/*` yanıtlar; sayfa sunmaz. Tailnet'e Caddy `panel.<alan>` ile açılır; WireGuard'dan ve WAN'dan kapalı. Parola yok (DD-147): erişim sınırı Tailscale; bu yüzden `/api/*` için `X-Konsol` başlığı ve Host denetimi zorunlu; her değişiklik `master-wg` ile.
 - Panelden ek ağlar (DD-136): `master-wg net-add/net-remove` wg1…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını o ağda çalıştırır. Güvenlik duvarı kaydı okuyup her ağ için kural kurar ve bozuk kayıtta hiçbir zinciri değiştirmez; `caddy-wg@<arayüz>` şablon birimdir. wireguard.command ve Mac yedeği yalnız wg0'ı kapsar.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
@@ -136,7 +135,6 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Örnek:
   - Dozzle: `127.0.0.1:61002`
   - qBittorrent web arayüzü: `127.0.0.1:61006`
-  - Filebrowser (classic): `127.0.0.1:61007`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - WireGuard (host çekirdeği, wg-quick@wg0; DD-120): yalnız UDP

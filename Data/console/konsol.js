@@ -84,7 +84,6 @@
       init.body = JSON.stringify(opts.body);
     }
     return fetch(path, init).then((res) => {
-      if (res.status === 401) { location.reload(); throw new Error("giriş gerekli"); }
       if (opts.blob) {
         if (!res.ok) return res.json().catch(() => ({})).then((j) => { throw new Error(j.error || `HTTP ${res.status}`); });
         return res.blob();
@@ -263,7 +262,7 @@
     $("ram-val").replaceChildren(bytes(s.mem.used), h("small", null, `%${Math.round(mem)}`));
     drawSpark("ram-spark", s.mem.graph.length ? s.mem.graph : [0]);
     if (s.domain) {
-      [["dozzle", "dozzle"], ["torrent", "torrent"], ["file", "file"]].forEach(([id, sub]) => {
+      [["dozzle", "dozzle"], ["torrent", "torrent"]].forEach(([id, sub]) => {
         const a = $(`link-${id}`);
         a.href = `${location.protocol}//${sub}.${s.domain}`;
         a.target = "_blank";
@@ -498,7 +497,7 @@
         h("p", null, "Sunucu kurulumu WireGuard ağı oluşturmaz. İlk ağı burada kurarsınız: anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur."),
         h("ul", { class: "conseq calm" },
           h("li", null, svg("shield"), h("span", null, "wg0 · 10.8.0.0/24 · sunucu 10.8.0.1")),
-          h("li", null, svg("lock"), h("span", null, "Local erişim kapalıysa cihazlar yalnız internete çıkar; açıksa Dozzle, qBittorrent ve FileBrowser ağın sunucu adresinden açılır.")),
+          h("li", null, svg("lock"), h("span", null, "Local erişim kapalıysa cihazlar yalnız internete çıkar; açıksa Dozzle ve qBittorrent ağın sunucu adresinden açılır.")),
           h("li", null, svg("plus"), h("span", null, "Kurduktan sonra bu sayfadan cihaz (peer) eklersiniz; QR hemen hazır olur."))),
         h("button", { type: "button", class: "btn btn-primary", onclick: () => { location.hash = "#/wireguard/ekle"; } },
           svg("plus"), "Yapılandır")));
@@ -882,7 +881,7 @@
     $("na-local").setAttribute("aria-checked", String(NA.local));
     $("na-local-row").classList.toggle("on", NA.local);
     $("na-local-desc").textContent = NA.local
-      ? `Açık: internet + Dozzle, qBittorrent ve FileBrowser bu ağın sunucu adresinden (10.8.${d.i}.1) açılır.`
+      ? `Açık: internet + Dozzle ve qBittorrent bu ağın sunucu adresinden (10.8.${d.i}.1) açılır.`
       : "Kapalı: cihazlar yalnız internete çıkar; sunucudaki arayüzler bu ağa kapalı.";
     $("na-port-err").textContent = d.portErr;
     $("na-port-err").hidden = !d.portErr;
@@ -895,7 +894,7 @@
     const will = [
       "Yeni sunucu anahtarı üretilir.",
       `UDP ${Number.isNaN(d.port) ? "…" : d.port} internete açılır; güvenlik duvarı kuralları kurulur.`,
-      d.scope === "ui" ? `Dozzle, qBittorrent ve FileBrowser 10.8.${d.i}.1 adresinde açılır.` : "Sunucudaki arayüzler bu ağa kapalı kalır.",
+      d.scope === "ui" ? `Dozzle ve qBittorrent 10.8.${d.i}.1 adresinde açılır.` : "Sunucudaki arayüzler bu ağa kapalı kalır.",
       `Yeni cihazlara ${d.dns ? providerOf(d.dns) : "seçilen"} DNS önerilir.`,
     ];
     $("na-will").replaceChildren(...will.map((text) => h("li", null, svg("check"), h("span", null, text))));
@@ -1177,7 +1176,15 @@
     const here = pathText(fsPath);
     const files = Array.from(list || []);
     if (!files.length) return;
-    for (const f of files) fsUps.push({ id: ++upSeq, name: f.name, size: f.size, sent: 0, state: "wait", file: f, path: here });
+    // Aynı adlı öge zaten varsa dosya hiç gönderilmez: sunucu üzerine yazmaz, boşuna aktarım olmaz.
+    const taken = new Set((fsList && fsList.path === here ? fsList.entries : []).map((e) => e.name));
+    fsUps.filter((u) => u.path === here && u.state !== "err").forEach((u) => taken.add(u.name));
+    for (const f of files) {
+      const clash = taken.has(f.name);
+      taken.add(f.name);
+      fsUps.push({ id: ++upSeq, name: f.name, size: f.size, sent: 0, file: f, path: here,
+        state: clash ? "err" : "wait", error: clash ? "zaten var; üzerine yazılmaz" : "" });
+    }
     renderRows();
     pumpUp();
   }
