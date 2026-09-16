@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-16 — Nothing the installer writes describes a preset WireGuard network (v2-111)
+
+- **Changed** (**DD-143**): the settings the installer writes carry only the
+  layer, never a network. `state.env` had kept `wg0`'s own values from the era
+  when the installer created it.
+  - `WG_CONF_FILE=/etc/wireguard/wg0.conf` became `WG_CONF_DIR=/etc/wireguard`:
+    a network's file name is derived per network by `master-wg`, not stored.
+  - `WG_SERVER_IPV4` / `WG_SERVER_IPV6` / `WG_SUBNET4` / `WG_SUBNET6` became
+    `WG_ADDR_BASE4="10.8"` and `WG_ADDR_BASE6="fdcc:ad94:bacf:61a4"`. The two
+    subnet keys were dead: a selected network always overwrote them from its
+    registry line. A network's addresses exist only in the registry.
+  - `WG_PUBLIC_PORT` became `WG_PORT_DEFAULT`, and it is no longer written to
+    `config.env`, where a port saved by an older run silently became the next
+    run's suggestion.
+  - `caddy-wg@.service` said the installer writes `caddy-wg-wg0.env`; only
+    `master-wg` writes it, when the network is created.
+  - `wireguard.command` no longer reads the server's config paths from
+    `defaults.env` — nothing on the Mac has used them since the backup went.
+  - Removing a network already left nothing behind (checked on `nrm`: no
+    interface, conf, profile directory, unit link, firewall rule or route);
+    this makes the same true of the settings files.
+- **Docs**: the contract, architecture, README and `OKUBENI.txt` still described
+  the installer creating `wg0`, restoring it from the Mac and refusing to remove
+  it. They now describe the layer-only install, per-network files and the
+  backup-free menu.
+
 ### 2026-09-16 — Every network card can be removed, wg0 included (v2-110)
 
 - **Changed** (**DD-143**): the console's WireGuard cards all carry the same two

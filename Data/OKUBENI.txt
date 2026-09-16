@@ -20,19 +20,20 @@ WireGuard — kurulum ağ yaratmaz (v2-109). İlk ağı Konsol'dan kurun:
   http://panel.ayc → WireGuard → Yapılandır (wg0, 10.8.0.0/24, UDP 61001 önerilir).
   Sunucu yeniden kurulursa WireGuard boş gelir: ağı yeniden kurar, cihazları yeniden eklersiniz.
   Peer'lar sunucuda üretilir; Konsol'dan ya da wireguard.command ile yönetilir:
-  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış 6) yedek al
-             7) DNS değiştir 8) wg0 yeniden üret
+  Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış
+             6) ağ seç 7) DNS değiştir 8) ağı yeniden üret
   Ekle: ad, DNS, keepalive, MTU sorulur (köşeli parantezdeki varsayılan için Enter).
   Sunucu anahtarı ve IP'yi üretir, bağlantılar kopmadan uygular, QR kodu terminale basar,
   profil kurulum/wireguard/<ad>.conf, QR resmi <ad>.png olarak Mac'e iner (cihaza dosyayı ya da QR'ı aktarın).
   QR resmi de profil gibi gizli anahtarı taşır: kimseyle paylaşmayın.
-  6) yedek al: sunucu anahtarı, peer listesi, profiller ve QR resimleri kurulum/wireguard'a iner (içerik ekrana yazılmaz);
-  yeniden kurulumda aynı anahtar ve peer'lar gelir. 2) ekle, 3) çıkar, 7) ve 8) yedeği kendiliğinden
-  günceller; 6) elle yedek içindir.
+  6) ağ seç: sunucudaki ağlardan birini seçersiniz; sonraki işlemler o ağa uygulanır (v2-109).
+  Mac'te yedek tutulmaz: sunucu anahtarı ve peer listesi yalnız sunucuda yaşar; yeniden kurulumda
+  WireGuard boş gelir.
   7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).
-  8) wg0 yeniden üret: yeni sunucu anahtarı; bütün peer'lar ve profiller silinir, geri alınamaz.
+  8) ağı yeniden üret: seçili ağa yeni sunucu anahtarı; o ağdaki bütün peer'lar ve profiller silinir, geri alınamaz.
      onayla yazınca çalışır (büyük/küçük harf fark etmez); cihazları 2) ekle ile yeniden ekleyin.
-  WireGuard'dayken arayüzler: http://10.8.0.1:61002 Dozzle, :61006 qBittorrent, :61007 FileBrowser
+  WireGuard'dayken arayüzler (ağ "İnternet + arayüzler" ise): http://10.8.N.1:61002 Dozzle,
+  :61006 qBittorrent, :61007 FileBrowser (wg0 için 10.8.0.1)
   (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
@@ -48,13 +49,14 @@ Konsol (tarayıcıdan; v2-105):
   profil ve QR resmi indir, DNS değiştir, ağı yeniden üret (onayla yazınca).
   Arayüz ekle (v2-101): wg1…wg9 — her ağın sekmesi, anahtarı, UDP portu ve adresleri ayrı
   (wg1: 10.8.1.x). "Yalnız internet" ya da "İnternet + arayüzler" seçilir; ağlar birbirini görmez.
-  Ek ağ kaldırılabilir (onayla); wg0 kaldırılamaz. Ek ağlar yalnız panelden yönetilir.
-  wireguard.command ayrı takip edilir ve yalnız wg0'ı yönetir; Mac yedeği de yalnız wg0'ı kapsar.
+  Her ağ kaldırılabilir (onayla), wg0 dahil (v2-110): ağ kartındaki çöp kutusu düğmesi. Son ağ da
+  kaldırılınca sayfa "Yapılandır"a döner, altyapı durur, istediğinizde yeni ağ kurarsınız.
+  wireguard.command da aynı ağlarla çalışır: 6) ağ seç ile hangisini yöneteceğinizi seçersiniz.
   10 hatalı parolada o cihaz 15 dakika bekletilir.
   Bağlı (v2-102): son 45 sn içinde cihazdan veri geldi; kapanan cihaz ~50 sn içinde Boşta olur.
   Aç-kapa (v2-105): cihazın yanındaki düğme bağlantıyı keser; anahtarı, adresi ve profili durur,
   açınca birkaç saniyede geri gelir. Ağ kartındaki dikey anahtar bütün ağı kapatır (sunucu yeniden
-  başlasa da kapalı kalır; wg0'ı kurulumu yeniden çalıştırmak da açar).
+  başlasa da kapalı kalır; kapalı ağı kurulumu yeniden çalıştırmak da açar).
   Düzenle (v2-105): üç noktadan DNS (Cloudflare, Aile, Quad9, AdGuard, Google ya da kendi adresiniz)
   ve keepalive değişir; sonra cihazda yeni QR'ı okutun.
   Uç nokta (v2-103): sunucunun IPv4'ü (uç nokta) ve varsa IPv6'sı (kayıt) kurulumda sunucuda tespit edilir, elle yazılmaz.

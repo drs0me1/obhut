@@ -6846,6 +6846,13 @@ failure with an early, named one.
 - **Cost:** rebuilding a server means creating the network and re-adding the
   devices from Konsol. Accepted by the user; nothing on the Mac holds a server
   key any more.
+- **Follow-up (v2-111):** the settings files kept describing `wg0` after the
+  installer stopped creating it — `WG_CONF_FILE=/etc/wireguard/wg0.conf`, the
+  first network's server addresses and subnets, and a `WG_PUBLIC_PORT` in
+  `config.env` that an older run could still impose. They are a base only now
+  (`WG_CONF_DIR`, `WG_ADDR_BASE4`, `WG_ADDR_BASE6`, `WG_PORT_DEFAULT`), so the
+  host carries no preset network anywhere: not on disk, not in `state.env`, not
+  in `config.env`. A bats test holds the line.
 
 ### DD-142: One rclone; the downloads folder is never published (2026-09-16)
 

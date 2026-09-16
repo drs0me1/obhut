@@ -261,8 +261,11 @@ Preserved in full as a core feature. Contract in §5–§7.
 - **Networks are created from Konsol** (WireGuard → Yapılandır → Arayüz ekle) or
   with `master-wg net-add`. The first one defaults to `wg0`, `10.8.0.0/24`,
   `fdcc:ad94:bacf:61a4::/112` (peers `…::N`, the hex of the IPv4 host number;
-  **DD-135**), UDP `${WG_PUBLIC_PORT}`, MTU `${WG_MTU}`; later ones take the next
-  free `wgN` and a port from 61020 upward.
+  **DD-135**), UDP `${WG_PORT_DEFAULT}`, MTU `${WG_MTU}`; later ones take the next
+  free `wgN` and a port from 61020 upward. No setting describes an installed
+  network: `defaults.env` and `state.env` carry only the address base
+  (`WG_ADDR_BASE4`, `WG_ADDR_BASE6`), the suggested first port and the peer
+  profile defaults.
 - **The server is the source of truth.** `/etc/wireguard/wgN.conf` (`0600`)
   holds that network's key and one `# peer: <name>` + `[Peer]` block per device;
   the registry holds the network's parameters. Nothing is restored from the
@@ -271,27 +274,27 @@ Preserved in full as a core feature. Contract in §5–§7.
   the workstation by `wireguard.command`:
   - `add NAME DNS KEEPALIVE MTU` runs `wg genkey`, `wg pubkey` and `wg genpsk`,
     takes the next free address (IPv4 from `.2`, IPv6 with the same host
-    number in hex), stores the device profile in `/etc/wireguard/clients/`
+    number in hex), stores the device profile in `/etc/wireguard/clients-wgN/`
     (`0600`) and appends the `[Peer]` block. It validates the name, DNS list,
     keepalive (0–65535) and MTU (1280–1500) before any change.
   - `remove NAME` deletes the block and the stored profile.
   - `dns NAME DNS` rewrites only the `DNS =` line in the `[Interface]` part of
-    the stored profile. Keys, address and `wg0.conf` stay the same and
+    the stored profile. Keys, address and the network's `.conf` stay the same and
     nothing is applied on the server: DNS is a client setting, so the device
     imports the new profile (**DD-130**).
   - `reset --onay` issues a new server key and drops every `[Peer]` block and
     every stored profile. The other `[Interface]` lines are kept. It applies
-    like any change; a failed apply restores the previous `wg0.conf` and
-    keeps the profiles. Without `--onay` it changes nothing (**DD-130**).
+    like any change; a failed apply restores the network's previous `.conf`
+    and keeps the profiles. Without `--onay` it changes nothing (**DD-130**).
   - `list` prints name, address, last handshake, transfer and whether a
     profile is stored; `profile NAME` and `qr NAME` print the stored profile
     or its QR code.
   - `png NAME` writes the profile's QR code as a PNG (8 pixels per module) to
     standard output, and refuses when that output is a terminal (**DD-132**).
-  - It takes the installer's lock, so the two never write `wg0.conf` at once.
-  - A failed apply restores the previous `wg0.conf` and removes a new profile.
+  - It takes the installer's lock, so the two never write a `.conf` at once.
+  - A failed apply restores the previous `.conf` and removes a new profile.
 - **Changes reach a running interface with `wg syncconf`** (no restart;
-  connected devices stay up). `wg-quick@wg0` restarts only when it is not
+  connected devices stay up). `wg-quick@wgN` restarts only when it is not
   running, when `Address`/`MTU` changed, or when `syncconf` fails; an empty
   `wg-quick strip` output is never passed on (**DD-123**).
 - **`wireguard.command`** (repository root, macOS) reads only `SSH_HOST` from
@@ -303,30 +306,29 @@ Preserved in full as a core feature. Contract in §5–§7.
   menu warns and the profile stays.
   - Option 7 "DNS değiştir" offers the peer's current DNS as the default,
     then prints the new QR code and saves the new profile.
-  - Option 8 "wg0 yeniden üret" lists the peers that will be lost and runs
+  - Option 8 "Ağı yeniden üret" lists the peers of the selected network that
+    will be lost and runs
     `reset --onay` only after the operator types `onayla`, in any case (**DD-130**, **DD-134**).
-  - After a successful add (2), remove (3), DNS change (7) or regenerate (8)
-    the menu runs option 6 itself, so `kurulum/` always matches the server
-    and a reinstall cannot bring back a removed peer or an old key. A refused
-    or failed change takes no backup; a failed backup prints a warning and
-    points to option 6.
-- **A reinstall keeps the same server key and peers when the pulled settings
-  are in `kurulum/`** (`wireguard.command` → 6, **DD-128**), and devices reconnect
-  unchanged. Without them it generates a new key, starts with no peers, and
-  devices are added again with `wireguard.command`.
+  - The menu keeps nothing on the Mac beyond a profile the operator asked for
+    (**DD-143**): it never uploads, and a reinstall cannot bring back a removed
+    peer, a removed network or an old key.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
-  Dozzle, qBittorrent and FileBrowser UIs at `http://10.8.0.1:<port>`.
+  Dozzle, qBittorrent and FileBrowser UIs at `http://<that network's server
+  address>:<port>` when its scope is `ui`.
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
   other peers (§9).
-- The UIs are served by `caddy-wg@wg0.service` (`/etc/caddy/Caddyfile.wg`, admin
-  API off, address from `/etc/wireguard/caddy-wg-wg0.env`). It binds only `10.8.0.1`, follows `wg-quick@wg0` and has no
-  Tailscale dependency, so the path survives a Tailscale outage.
+- The UIs are served by `caddy-wg@wgN.service` (`/etc/caddy/Caddyfile.wg`, admin
+  API off, address from `/etc/wireguard/caddy-wg-wgN.env`, written by `master-wg`
+  when the network is created). Each instance binds only its own network's server
+  address, follows its `wg-quick@wgN` and has no Tailscale dependency, so the
+  path survives a Tailscale outage.
 - **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
-  `http://wg.${LOCAL_DOMAIN}` to list, add and remove peers, show a peer's QR
-  code, download its profile or picture, change its DNS and regenerate `wg0`.
+  `http://panel.${LOCAL_DOMAIN}` (**DD-140**; `wg.${LOCAL_DOMAIN}` redirects
+  there) to list, add and remove peers, show a peer's QR code, download its
+  profile or picture, change its DNS and regenerate a network.
   - It runs Python 3's standard library only and listens on
     `127.0.0.1:61008`. Caddy exposes it on the tailnet; nothing exposes it on
-    `wg0` or the WAN.
+    a WireGuard network or the WAN.
   - Every change goes through `master-wg` (`info`, `add`, `remove`, `dns`,
     `reset --onay`, `profile`, `png`): same validation, lock and live apply as
     `wireguard.command`.
@@ -358,8 +360,8 @@ Preserved in full as a core feature. Contract in §5–§7.
     background sampler reads every network every 10 s (**DD-137**).
   - The header shows the endpoint `WG_ENDPOINT_HOST`, the IPv4 the installer
     detected on the server; no address is written by hand (**DD-138**).
-  - The panel does not track or mention the Mac backup (**DD-136**);
-    `wireguard.command` is managed on its own and covers `wg0` only.
+  - Nothing on the Mac is tracked (**DD-143**); `wireguard.command` is managed
+    on its own and asks which network to work on.
 - **More WireGuard networks from the panel (DD-136).** "Arayüz ekle" creates
   `wg1`…`wg9` at run time with `master-wg net-add PORT SCOPE DNS LABEL`; each
   network has its own tab, server key, UDP port and addresses.
@@ -376,15 +378,17 @@ Preserved in full as a core feature. Contract in §5–§7.
     DNS, label) is written only by `master-wg`, and read by `master-firewall`
     and the panel. A malformed or clashing registry stops the firewall
     before any chain changes.
-  - A new network's port may not be a stack port, wg0's port, another
-    network's port or a UDP port already listened on; the next free number is
-    taken (at most `WG_NETWORKS_MAX`, 9).
+  - A new network's port may not be a stack port, another network's port or a
+    UDP port already listened on; the next free number is taken (from `wg0`, at
+    most `WG_NETWORKS_MAX`, 9).
   - Order when adding: files and registry, `master-firewall` restart, then
     `wg-quick@wgN`, then `caddy-wg@wgN` for `ui`. A failing step removes
     every trace of the network and restores the firewall.
   - `master-wg --if wgN` runs any peer command on that network;
     `net-remove wgN --onay` stops its units, deletes its files, key, peers and
-    registry line and re-applies the firewall. `wg0` cannot be removed.
+    registry line and re-applies the firewall. Every network can be removed,
+    `wg0` included (**DD-143**); removing the last one leaves the layer ready
+    and Konsol back at "Yapılandır".
   - The panel confirms regenerating or removing a network with `onayla`.
   - **Switches (DD-140).** `master-wg [--if wgN] net ac|kapat` stops or starts
     `wg-quick@wgN` (and `caddy-wg@wgN`); the registry, keys and profiles stay
@@ -949,9 +953,8 @@ Invariants:
   before and after a second run.
 - Existing state that must survive a re-run: the WebDAV credential file,
   the container volumes, qBittorrent's `/config` apart from the managed keys,
-  `wg0.conf` (its key and every `[Peer]` block are kept; only `[Interface]`
-  follows the installer), `/etc/wireguard/clients/`, the operator's chosen
-  local domain.
+  every `wgN.conf` and `clients-wgN/` with the networks registry (the installer
+  reads them, writes none — **DD-143**), the operator's chosen local domain.
 - Firewall application is idempotent by construction: the chain is rebuilt
   from scratch and swapped in, and the `DOCKER-USER` jump is inserted only
   when absent.

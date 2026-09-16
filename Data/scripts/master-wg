@@ -38,11 +38,10 @@ die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$STATE_FILE"
 : "${V2_VERSION:?}"
-: "${WG_CONF_FILE:?}"
+: "${WG_CONF_DIR:?}"
 : "${WG_CLIENTS_DIR:?}"
-: "${WG_SERVER_IPV4:?}"
-: "${WG_SERVER_IPV6:?}"
-: "${WG_PUBLIC_PORT:?}"
+: "${WG_ADDR_BASE4:?}"
+: "${WG_ADDR_BASE6:?}"
 : "${WG_ENDPOINT_HOST:?}"
 : "${WG_CLIENT_ALLOWED_IPS:?}"
 : "${RUNTIME_DIR:?}"
@@ -56,10 +55,8 @@ NET_RE='^wg[0-9]$'
 OFF='#kapali#'
 # state.env'deki WG_* değerleri yalnız varsayılandır (adres tabanı; ilk ağın önerilen
 # portunu Konsol verir). Bir ağ seçilince WG_* o ağın kayıt satırından doldurulur.
-BASE_CONF_DIR="${WG_CONF_FILE%/*}"
+BASE_CONF_DIR="$WG_CONF_DIR"
 BASE_CLIENTS_DIR="$WG_CLIENTS_DIR"
-BASE_SERVER_IPV4="$WG_SERVER_IPV4"
-BASE_SERVER_IPV6="$WG_SERVER_IPV6"
 NETWORKS_FILE="${WG_NETWORKS_FILE:-}"
 WG_INTERFACE=""
 WG_CONF_FILE=""
@@ -213,8 +210,8 @@ cmd_net_add() {
     done
     [[ -n "$id" ]] || die "en çok $((${WG_NETWORKS_MAX:-9} + 1)) ağ oluşturulabilir"
     iface="wg$id"
-    base4="${BASE_SERVER_IPV4%.*.*}"
-    base6="${BASE_SERVER_IPV6%:*}:"
+    base4="$WG_ADDR_BASE4"
+    base6="$WG_ADDR_BASE6::"
     s4="$base4.$id.1" n4="$base4.$id.0/24"
     s6="$base6$id:1" n6="$base6$id:0/112"
 

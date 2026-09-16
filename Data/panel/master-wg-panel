@@ -529,7 +529,7 @@ class Panel:
                 "keepalive": num_or(os.environ.get("PANEL_KEEPALIVE_DEFAULT"), 21),
                 "mtu": num_or(os.environ.get("PANEL_MTU_DEFAULT"), 1420),
                 # DD-143: ilk ağa önerilen UDP portu; sonrakiler 61020'den sıralanır.
-                "port": num_or(env.get("WG_PUBLIC_PORT"), 61001),
+                "port": num_or(env.get("WG_PORT_DEFAULT"), 61001),
             },
             "now": int(time.time()),
             "active_window": int(ACTIVE_WINDOW),

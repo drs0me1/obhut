@@ -29,9 +29,9 @@ chmod 600 kurulum/kurulum.env   # then fill it in
 
 # Install: double-click the current <version>.command at the repository root
 # WireGuard peers (after the install): double-click wireguard.command
-# Change a peer's DNS: 7) DNS değiştir; new server key, all peers removed: 8) wg0 yeniden üret
-# Options 2, 3, 7 and 8 back up the WireGuard key, peers and profiles into kurulum/ themselves
-# (manual backup: 6) Yedek al); each profile also comes with its QR code as <name>.png
+# Pick the network: 6) Ağ seç; change a peer's DNS: 7) DNS değiştir
+# New server key, all its peers removed: 8) Ağı yeniden üret
+# Nothing is kept on the Mac but a profile you download, with its QR code as <name>.png
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)
@@ -60,7 +60,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 ├── wireguard.command      # WireGuard peer menu (double-click)
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
 │   ├── kurulum.env        #   domain, ports, accounts, Tailscale auth key
-│   └── wireguard/         #   device profiles; sunucu/wg0.conf = server key + peers
+│   └── wireguard/         #   only the profiles + QR pictures you downloaded (DD-143)
 ├── versiyon/              # copies of verified working versions, each with OKUBENI.txt
 ├── README.md, CLAUDE.md   # entry points
 └── Data/
@@ -101,10 +101,9 @@ There is no container backup tool. A host is rebuilt from `kurulum/` alone:
 - Every login comes from `kurulum/kurulum.env`, qBittorrent's included.
 - qBittorrent's settings come from `Data/templates/qBittorrent.conf`
   (**DD-129**).
-- `wireguard.command` → 6) Yedek al pulls the WireGuard server key, peers and profiles into
-  `kurulum/`. A fresh install restores them only where the server has none
-  (**DD-128**), and devices reconnect unchanged.
-- Pull again after changing peers.
+- WireGuard is not part of that: a fresh install has no network, no key and no
+  peers (**DD-143**). You create the first network in Konsol → WireGuard →
+  Yapılandır and add the devices again.
 Keep that folder safe.
 
 ## Verify (workstation)

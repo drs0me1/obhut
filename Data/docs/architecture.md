@@ -100,7 +100,7 @@ re-detected, never as an expectation to be violated.
 .
 ├── <V2_VERSION>.command               current portable installer (double-click; copied by the exporter)
 ├── wireguard.command                  WireGuard peer menu (double-click; calls master-wg over SSH)
-├── kurulum/                           installer inputs: kurulum.env; wireguard/ (profiles + QR .png + sunucu/wg0.conf) pulled by wireguard.command → 6) Yedek al (Git-ignored)
+├── kurulum/                           installer inputs: kurulum.env; wireguard/ (only profiles + QR .png that wireguard.command was asked to download; DD-143) (Git-ignored)
 ├── versiyon/                          frozen copies of verified working versions (<V2_VERSION>/ + OKUBENI.txt; no kurulum/, no Data/app)
 ├── README.md, CLAUDE.md               entry points
 ├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
@@ -205,8 +205,8 @@ error, not a warning.
 | `/etc/master-stack/paylasim.htpasswd` | installer | bcrypt hash of the share account, `0600`; mounted into Compose `paylasim` (**DD-142**) |
 | `/etc/master-stack/filebrowser-data/` | installer | Classic FileBrowser Bolt DB, created once with the stage-0 account (**DD-118**), + `config/` bind (`0750`, DOWNLOADS_UID) |
 | `/root/docker/compose.yaml` | installer | five services, `0600` |
-| `/etc/wireguard/wg0.conf` | installer (`[Interface]`), `master-wg` (`[Peer]` blocks) | server key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
-| `/etc/wireguard/clients/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
+| `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
+| `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
 | `/usr/local/sbin/master-wg-panel`, `/usr/local/share/master-stack/wg-panel/` | installer | WireGuard panel service and page, `0755` / `0644` (**DD-133**) |
 | `/etc/master-stack/wg-panel.auth` | installer | panel account: user and PBKDF2-SHA256 hash, `0600`; also the file panel's account (**DD-139**) |
@@ -216,7 +216,7 @@ error, not a warning.
 | `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); an empty tmpfs inside `unpackerr` |
 | `/etc/wireguard/networks` | `master-wg net-add`/`net-remove` | panel networks wg1…wg9: port, scope, addresses, default DNS, label (**DD-136**), `0600` |
 | `/etc/wireguard/wgN.conf`, `/etc/wireguard/clients-wgN/` | `master-wg` | a panel network's interface and profiles, `0600`/`0700` |
-| `/etc/wireguard/caddy-wg-<interface>.env` | installer (`wg0`), `master-wg` (`ui` networks) | `WG_BIND` for that `caddy-wg@` instance, `0644` |
+| `/etc/wireguard/caddy-wg-<interface>.env` | `master-wg` (`ui` networks) | `WG_BIND` for that `caddy-wg@` instance, `0644` |
 | `/etc/modules-load.d/master-stack-wireguard.conf` | installer | `wireguard`, `0644` |
 | `/etc/caddy/Caddyfile.wg` | installer | `caddy-wg@<interface>`: three UI ports on that network's server address, `0644` |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), `0644` |
@@ -401,13 +401,13 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | Stage | Work | Owns |
 |---|---|---|
 | 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain, downloads path, ports and the WebDAV/Dozzle/FileBrowser/qBittorrent/WireGuard panel accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); WebDAV htpasswd when it differs from the input file; timezone | `apt` |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); the share htpasswd and credential file when they differ from the input file (**DD-142**); timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
 | 4 | Docker; sync the Dozzle and FileBrowser accounts to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` / FileBrowser config; remove host WebDAV leftovers; install scripts and units | templates |
-| 5 | apply `master-firewall` (incl. WireGuard INPUT/FORWARD/NAT); enable refresh timer; then restore a pulled `wg0.conf` + profiles if absent (**DD-128**), `wireguard-tools`, `[Interface]` of `wg0.conf` (key generated once, peers kept) and `wg-quick@wg0` (**DD-120**, **DD-124**) | firewall, WireGuard |
-| 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed; `caddy-wg` for the UIs over WireGuard; WireGuard panel service, page and account (**DD-133**) | DNS/HTTP |
-| 7 | Compose `up` if needed; cheap contract checks (incl. WebDAV loopback + Caddy, WireGuard port/`master-wg`/`caddy-wg`, panel 401 without and `/api/state` with the input account, nothing on `10.8.0.1:61008`) | verification |
+| 5 | share credential ownership/mode; apply `master-firewall` (WireGuard rules come from the registry, none when it is empty); enable refresh timer; prepare the WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`) and start the networks the registry already holds — no key, no `.conf`, no interface of its own (**DD-120**, **DD-143**) | firewall, WireGuard |
+| 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed (or the config is newer than the running unit); `caddy-wg@` template for the UIs over WireGuard; Konsol backends, pages and account (**DD-133**, **DD-140**) | DNS/HTTP |
+| 7 | Compose `up --remove-orphans` if needed; cheap contract checks (share read-only + Caddy, `master-wg` and each registry network's units, Konsol 401 without the account, nothing on a WireGuard address) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,

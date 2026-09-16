@@ -42,12 +42,6 @@ MASTER_WG="$(default_of SBIN_DIR)/master-wg"
 DEFAULT_DNS="$(default_of WG_CLIENT_DNS_DEFAULT)"
 DEFAULT_KEEPALIVE="$(default_of WG_CLIENT_KEEPALIVE_DEFAULT)"
 DEFAULT_MTU="$(default_of WG_MTU)"
-REMOTE_WG_CONF="$(default_of WG_CONF_FILE)"
-REMOTE_WG_CLIENTS="$(default_of WG_CLIENTS_DIR)"
-REMOTE_STATE="$(default_of STATE_FILE)"
-for p in "$REMOTE_WG_CONF" "$REMOTE_WG_CLIENTS" "$REMOTE_STATE"; do
-    [[ "$p" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "defaults.env yolu beklenmeyen biçimde: $p"
-done
 
 ctl_dir="$(mktemp -d "${TMPDIR:-/tmp}/wg-menu.XXXXXX")"
 # ServerAlive: sunucu kaybolursa açık bağlantı dakikalarca asılı kalmasın.

@@ -439,7 +439,7 @@ EOF
 @test "firewall requires ports and chains from state" {
     grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
     # DD-143: WireGuard ağları state.env'den değil kayıttan gelir; boş kayıt geçerlidir.
-    run ! grep -qE 'WG_PUBLIC_PORT:\?|WG_INTERFACE:\?|WG_SERVER_IPV4:\?' "$V2_ROOT/scripts/firewall.sh"
+    run ! grep -qE 'WG_PORT_DEFAULT:\?|WG_INTERFACE:\?|WG_ADDR_BASE4:\?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_NETWORKS_FILE' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'TORRENT_PUBLIC_PORT:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
@@ -2232,12 +2232,10 @@ panel_start() {
 V2_VERSION=2026.08.06-v2-test
 LOCAL_DOMAIN=ayc
 WG_ENDPOINT_HOST=203.0.113.7
-WG_PUBLIC_PORT=61001
-WG_SERVER_IPV4=10.8.0.1
-WG_SERVER_IPV6=fdcc:ad94:bacf:61a4::1
-WG_SUBNET4=10.8.0.0/24
-WG_SUBNET6=fdcc:ad94:bacf:61a4::/112
-WG_CONF_FILE=$TMP/wg0.conf
+WG_PORT_DEFAULT=61001
+WG_ADDR_BASE4=10.8
+WG_ADDR_BASE6=fdcc:ad94:bacf:61a4
+WG_CONF_DIR=$TMP
 WG_CLIENTS_DIR=$TMP/clients
 WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 EOF
@@ -2987,7 +2985,7 @@ esac
 EOF
     cat >"$TMP/bin/wg-quick" <<'EOF'
 #!/bin/bash
-[ "$1" = strip ] && grep -vE '^(Address|MTU) = |^#' "${WG_CONF_FILE%/*}/$2.conf"
+[ "$1" = strip ] && grep -vE '^(Address|MTU) = |^#' "${WG0_CONF%/*}/$2.conf"
 EOF
     cat >"$TMP/bin/systemctl" <<'EOF'
 #!/bin/bash
@@ -3006,13 +3004,11 @@ wg_state_fixture() {
     mkdir -p "$TMP/etc/wireguard/clients-wg0" "$TMP/run"
     cat >"$TMP/state.env" <<EOF
 V2_VERSION=2026.08.06-v2-test
-WG_CONF_FILE=$TMP/etc/wireguard/wg0.conf
+WG_CONF_DIR=$TMP/etc/wireguard
 WG_CLIENTS_DIR=$TMP/etc/wireguard/clients
-WG_SERVER_IPV4=10.8.0.1
-WG_SERVER_IPV6=fdcc:ad94:bacf:61a4::1
-WG_SUBNET4=10.8.0.0/24
-WG_SUBNET6=fdcc:ad94:bacf:61a4::/112
-WG_PUBLIC_PORT=61001
+WG_ADDR_BASE4=10.8
+WG_ADDR_BASE6=fdcc:ad94:bacf:61a4
+WG_PORT_DEFAULT=61001
 WG_ENDPOINT_HOST=203.0.113.7
 WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 RUNTIME_DIR=$TMP/run
@@ -3030,9 +3026,9 @@ TAILSCALE_UDP_PORT=41641
 EOF
     printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' \
         >"$TMP/etc/wireguard/networks"
-    export WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf"
+    export WG0_CONF="$TMP/etc/wireguard/wg0.conf"
     printf '# header\n[Interface]\nAddress = 10.8.0.1/24, fdcc:ad94:bacf:61a4::1/112\nListenPort = 61001\nMTU = 1420\nPrivateKey = SRVKEY%s=\n' \
-        "$(printf 's%.0s' {1..37})" >"$WG_CONF_FILE"
+        "$(printf 's%.0s' {1..37})" >"$WG0_CONF"
 }
 
 master_wg() {
@@ -3057,7 +3053,7 @@ master_wg() {
     grep -qx 'AllowedIPs = 0.0.0.0/0, ::/0' "$profile"
     # The server key's public half is in the profile; the client key is not in wg0.conf.
     grep -q '^PublicKey = PUBFEIXRL' "$profile"
-    conf="$(cat "$WG_CONF_FILE")"
+    conf="$(cat "$WG0_CONF")"
     grep -qx '# peer: iphone' <<<"$conf"
     grep -qx 'AllowedIPs = 10.8.0.2/32, fdcc:ad94:bacf:61a4::2/128' <<<"$conf"
     run ! grep -q 'PRIV01' <<<"$conf"
@@ -3075,7 +3071,7 @@ master_wg() {
     run master_wg qr ipad
     case "$output" in "QR:[Interface]"*) ;; *) false ;; esac
     # list: name, address, handshake, rx, tx, stored profile.
-    pub="$(awk -F' = ' '/^# peer: ipad$/ {f = 1} f && $1 == "PublicKey" {print $2; exit}' "$WG_CONF_FILE")"
+    pub="$(awk -F' = ' '/^# peer: ipad$/ {f = 1} f && $1 == "PublicKey" {print $2; exit}' "$WG0_CONF")"
     printf 'srv\tx\t61001\toff\n%s\t(none)\t198.51.100.4:5000\t10.8.0.3/32\t1789000000\t500\t900\t21\n' "$pub" >"$TMP/dump"
     run master_wg list
     [ "$status" -eq 0 ]
@@ -3089,7 +3085,7 @@ master_wg() {
     wg_mock_bin
     wg_state_fixture
     master_wg add iphone 1.1.1.1 21 1420 >/dev/null
-    before="$(cat "$WG_CONF_FILE")"
+    before="$(cat "$WG0_CONF")"
     for args in "iphone 1.1.1.1 21 1420|zaten var" "bad/name 1.1.1.1 21 1420|geçersiz peer adı" \
         "x not-an-ip 21 1420|DNS virgülle" "x 1.1.1.1 70000 1420|keepalive" "x 1.1.1.1 abc 1420|keepalive" \
         "x 1.1.1.1 21 1600|MTU" "x 1.1.1.1 21 900|MTU" "x , 21 1420|en az bir DNS"; do
@@ -3098,7 +3094,7 @@ master_wg() {
         [ "$status" -ne 0 ]
         case "$output" in *"${args#*|}"*) ;; *) printf 'expected %s: %s\n' "${args#*|}" "$output"; false ;; esac
     done
-    [ "$(cat "$WG_CONF_FILE")" = "$before" ]
+    [ "$(cat "$WG0_CONF")" = "$before" ]
     [ "$(ls "$TMP/etc/wireguard/clients-wg0")" = iphone.conf ]
     run master_wg remove nosuch
     [ "$status" -ne 0 ]
@@ -3146,7 +3142,7 @@ EOF
     # A profile without a keepalive line (hand-made or older) reads as 0.
     grep -v '^PersistentKeepalive' "$TMP/etc/wireguard/clients-wg0/laptop.conf" >"$TMP/laptop.conf"
     cat "$TMP/laptop.conf" >"$TMP/etc/wireguard/clients-wg0/laptop.conf"
-    pub="$(awk -F' = ' '/^# peer: iphone$/ {f = 1} f && $1 == "PublicKey" {print $2; exit}' "$WG_CONF_FILE")"
+    pub="$(awk -F' = ' '/^# peer: iphone$/ {f = 1} f && $1 == "PublicKey" {print $2; exit}' "$WG0_CONF")"
     printf 'SERVERPRIV\tSERVERPUB\t61001\toff\n%s\t(none)\t198.51.100.4:5555\t10.8.0.2/32\t1700000000\t2048\t1024\t21\n' "$pub" >"$TMP/dump"
     run master_wg info
     [ "$status" -eq 0 ]
@@ -3295,7 +3291,7 @@ EOF
     master_wg add iphone 1.1.1.1 21 1420 >/dev/null
     profile="$TMP/etc/wireguard/clients-wg0/iphone.conf"
     rest_before="$(grep -v '^DNS = ' "$profile")"
-    conf_before="$(shasum <"$WG_CONF_FILE")"
+    conf_before="$(shasum <"$WG0_CONF")"
     rm -f "$TMP/calls"
     run master_wg dns iphone "2a07:a8c0::df:877b , 2a07:a8c1::df:877b"
     [ "$status" -eq 0 ]
@@ -3303,7 +3299,7 @@ EOF
     grep -qx 'DNS = 2a07:a8c0::df:877b, 2a07:a8c1::df:877b' "$profile"
     [ "$(grep -c '^DNS = ' "$profile")" = 1 ]
     [ "$(grep -v '^DNS = ' "$profile")" = "$rest_before" ]
-    [ "$(shasum <"$WG_CONF_FILE")" = "$conf_before" ]
+    [ "$(shasum <"$WG0_CONF")" = "$conf_before" ]
     mode="$(stat -c %a "$profile" 2>/dev/null || stat -f %Lp "$profile")"
     [ "$mode" = 600 ]
     # DNS is client-side only: nothing is applied to the interface.
@@ -3333,40 +3329,40 @@ EOF
     wg_state_fixture
     master_wg add iphone 1.1.1.1 21 1420 >/dev/null
     master_wg add ipad 1.1.1.1 21 1420 >/dev/null
-    conf_before="$(cat "$WG_CONF_FILE")"
+    conf_before="$(cat "$WG0_CONF")"
     run master_wg reset
     [ "$status" -ne 0 ]
-    [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
+    [ "$(cat "$WG0_CONF")" = "$conf_before" ]
     [ -f "$TMP/etc/wireguard/clients-wg0/iphone.conf" ]
     rm -f "$TMP/calls"
     run master_wg reset --onay
     [ "$status" -eq 0 ]
     [ "$output" = $'2\t2' ]
     # [Interface] lines and the header stay, the key is new, no peer is left.
-    grep -qx '# header' "$WG_CONF_FILE"
-    grep -qx 'Address = 10.8.0.1/24, fdcc:ad94:bacf:61a4::1/112' "$WG_CONF_FILE"
-    grep -qx 'ListenPort = 61001' "$WG_CONF_FILE"
-    grep -qx 'MTU = 1420' "$WG_CONF_FILE"
-    [ "$(grep -c '^PrivateKey = ' "$WG_CONF_FILE")" = 1 ]
-    run ! grep -q 'SRVKEY' "$WG_CONF_FILE"
-    [ "$(tail -n 1 "$WG_CONF_FILE" | cut -c1-13)" = "PrivateKey = " ]
-    run ! grep -qE '^\[Peer\]$|^# peer: ' "$WG_CONF_FILE"
+    grep -qx '# header' "$WG0_CONF"
+    grep -qx 'Address = 10.8.0.1/24, fdcc:ad94:bacf:61a4::1/112' "$WG0_CONF"
+    grep -qx 'ListenPort = 61001' "$WG0_CONF"
+    grep -qx 'MTU = 1420' "$WG0_CONF"
+    [ "$(grep -c '^PrivateKey = ' "$WG0_CONF")" = 1 ]
+    run ! grep -q 'SRVKEY' "$WG0_CONF"
+    [ "$(tail -n 1 "$WG0_CONF" | cut -c1-13)" = "PrivateKey = " ]
+    run ! grep -qE '^\[Peer\]$|^# peer: ' "$WG0_CONF"
     [ -z "$(ls -A "$TMP/etc/wireguard/clients-wg0")" ]
     # Applied live, with the new key and no peers.
     grep -q '^PrivateKey = PRIV' "$TMP/syncconf"
     run ! grep -q '^\[Peer\]' "$TMP/syncconf"
     # A failed apply restores wg0.conf and keeps the profiles.
     master_wg add mac 1.1.1.1 21 1420 >/dev/null
-    conf_before="$(cat "$WG_CONF_FILE")"
+    conf_before="$(cat "$WG0_CONF")"
     export SYNC_RC=1
     run master_wg reset --onay
     unset SYNC_RC
     [ "$status" -ne 0 ]
-    [ "$(cat "$WG_CONF_FILE")" = "$conf_before" ]
+    [ "$(cat "$WG0_CONF")" = "$conf_before" ]
     [ -f "$TMP/etc/wireguard/clients-wg0/mac.conf" ]
     # Nothing but the interface section is ever written back: wg0.conf with no
     # [Interface] is refused.
-    printf '[Peer]\nPublicKey = x\n' >"$WG_CONF_FILE"
+    printf '[Peer]\nPublicKey = x\n' >"$WG0_CONF"
     run master_wg reset --onay
     [ "$status" -ne 0 ]
 }
@@ -3377,7 +3373,7 @@ EOF
     for n in a b c; do master_wg add "$n" 1.1.1.1 21 1420 >/dev/null; done
     run master_wg remove b
     [ "$status" -eq 0 ]
-    conf="$(cat "$WG_CONF_FILE")"
+    conf="$(cat "$WG0_CONF")"
     [ "$(grep -c '^\[Peer\]$' <<<"$conf")" -eq 2 ]
     run ! grep -q '# peer: b' <<<"$conf"
     grep -qx '# peer: a' <<<"$conf"
@@ -3390,10 +3386,10 @@ EOF
     run master_wg add d 1.1.1.1 21 1420
     [ "$output" = $'d\t10.8.0.3' ]
     # A failed syncconf restores wg0.conf and removes the new profile.
-    before="$(cat "$WG_CONF_FILE")"
+    before="$(cat "$WG0_CONF")"
     SYNC_RC=1 run master_wg add e 1.1.1.1 21 1420
     [ "$status" -ne 0 ]
-    [ "$(cat "$WG_CONF_FILE")" = "$before" ]
+    [ "$(cat "$WG0_CONF")" = "$before" ]
     [ ! -e "$TMP/etc/wireguard/clients-wg0/e.conf" ]
     # An empty `wg-quick strip` never reaches syncconf.
     printf '#!/bin/bash\nexit 0\n' >"$TMP/bin/wg-quick"
@@ -3401,7 +3397,7 @@ EOF
     run master_wg remove a
     [ "$status" -ne 0 ]
     run ! grep -q 'syncconf' "$TMP/calls"
-    grep -qx '# peer: a' "$WG_CONF_FILE"
+    grep -qx '# peer: a' "$WG0_CONF"
 }
 
 @test "the installer prepares the WireGuard layer and applies the registry, never a network of its own" {
@@ -3411,20 +3407,20 @@ EOF
     wg_mock_bin
     wg_state_fixture
     PATH="$TMP/bin:$PATH"
-    WG_CONF_FILE="$TMP/etc/wireguard/wg0.conf" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
+    WG_CONF_DIR="$TMP/etc/wireguard" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
     WG_NETWORKS_FILE="$TMP/etc/wireguard/networks" APT_OPTS=() APT_LOCK_TIMEOUT=1
     log() { printf '%s %s\n' "$1" "${*:2}" >>"$TMP/log"; }
     retry() { printf 'retry %s\n' "$*" >>"$TMP/calls"; }
     modprobe() { :; }
     atomic_write() { cat >"$1"; }
     install() { local a; for a in "$@"; do case "$a" in /*) mkdir -p "$a" ;; esac; done; }
-    before="$(cat "$WG_CONF_FILE")"
+    before="$(cat "$WG0_CONF")"
     run ensure_wireguard_ready
     [ "$status" -eq 0 ]
     grep -q 'no-install-recommends wireguard-tools qrencode' "$TMP/calls"
     [ "$(cat "$TMP/modules.conf")" = wireguard ]
     # Var olan yapılandırmaya dokunulmaz, yenisi yazılmaz.
-    [ "$(cat "$WG_CONF_FILE")" = "$before" ]
+    [ "$(cat "$WG0_CONF")" = "$before" ]
     run ! grep -q 'wg genkey' "$TMP/calls"
 
     # Kayıttaki ağ uygulanır: birim etkinleştirilir, gerekiyorsa başlatılır.
@@ -3493,6 +3489,22 @@ EOF
     grep -q '^WG_CLIENTS_DIR="/etc/wireguard/clients"$' "$V2_ROOT/config/defaults.env"
 }
 
+@test "no setting names a single WireGuard network: the paths are bases only" {
+    # DD-143: wg0 is one registry row like any other, so no default, state key or
+    # script may hard-code its config path.
+    grep -q '^WG_CONF_DIR="/etc/wireguard"$' "$V2_ROOT/config/defaults.env"
+    # The state file the installer writes carries the base directory, not a network.
+    grep -q '^WG_CONF_DIR=\$WG_CONF_DIR$' "$V2_ROOT/install.sh"
+    run ! grep -rn 'WG_CONF_FILE' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" \
+        "$V2_ROOT/panel" "$V2_ROOT/files-panel" "$V2_ROOT/../wireguard.command"
+    run ! grep -qE '^[^#]*wg0\.conf' "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env"
+    # master-wg keeps WG_CONF_FILE as the selected network's path, derived from the
+    # base; it must not inherit one from the environment.
+    grep -q ': "${WG_CONF_DIR:?}"' "$V2_ROOT/scripts/master-wg"
+    grep -q '^BASE_CONF_DIR="\$WG_CONF_DIR"$' "$V2_ROOT/scripts/master-wg"
+    grep -q '^WG_CONF_FILE=""$' "$V2_ROOT/scripts/master-wg"
+}
+
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
     local fw="$V2_ROOT/scripts/firewall.sh" f
     for f in wg_ui_ports load_wg_networks apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
@@ -3501,7 +3513,7 @@ EOF
     grep -q '^load_wg_networks$' "$fw"
     awk '/^load_wg_networks$/ {l = NR} /^resolve_wan_interface$/ {r = NR} END { exit !(l && r && l < r) }' "$fw"
     # write_state carries what the firewall and master-wg need (DD-136).
-    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_PANEL_PORT WG_SERVER_IPV4 WG_SUBNET4 WG_SUBNET6; do
+    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_PANEL_PORT WG_ADDR_BASE4 WG_ADDR_BASE6; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v=\\\$$v$"
     done
     die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
@@ -3636,7 +3648,7 @@ EOF
     grep -q -- '--config __CADDY_WG_FILE__ --adapter caddyfile' "$u"
     run ! grep -qi 'tailscale' "$u"
     body="$(awk '/^ensure_caddy_wg\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'WG_BIND="$WG_SERVER_IPV4" caddy validate --config "$CADDY_WG_FILE"' <<<"$body"
+    grep -q 'WG_BIND="127.0.0.1" caddy validate --config "$CADDY_WG_FILE"' <<<"$body"
     # DD-143: örnek birimleri ağlarla birlikte master-wg açar; kurulum yalnız şablonu tutar.
     run ! grep -qE 'caddy-wg-\$\{WG_INTERFACE\}|caddy-wg@\$\{WG_INTERFACE\}' <<<"$body"
     grep -q 'WG_BIND=%s' "$V2_ROOT/scripts/master-wg"

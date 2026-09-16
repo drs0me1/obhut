@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-110"
+V2_VERSION="2026.08.06-v2-111"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -70,7 +70,7 @@ TAILSCALE_IPV6=$TAILSCALE_IPV6
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
-WG_PUBLIC_PORT=$WG_PUBLIC_PORT
+WG_PORT_DEFAULT=$WG_PORT_DEFAULT
 TORRENT_PUBLIC_PORT=$TORRENT_PUBLIC_PORT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 CHAIN_INPUT=$CHAIN_INPUT
@@ -78,11 +78,9 @@ CHAIN_DOCKER=$CHAIN_DOCKER
 CHAIN_FORWARD=$CHAIN_FORWARD
 CHAIN_NAT=$CHAIN_NAT
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
-WG_SERVER_IPV4=$WG_SERVER_IPV4
-WG_SERVER_IPV6=$WG_SERVER_IPV6
-WG_SUBNET4=$WG_SUBNET4
-WG_SUBNET6=$WG_SUBNET6
-WG_CONF_FILE=$WG_CONF_FILE
+WG_ADDR_BASE4=$WG_ADDR_BASE4
+WG_ADDR_BASE6=$WG_ADDR_BASE6
+WG_CONF_DIR=$WG_CONF_DIR
 WG_CLIENTS_DIR=$WG_CLIENTS_DIR
 WG_MTU=$WG_MTU
 WG_NETWORKS_FILE=$WG_NETWORKS_FILE
@@ -126,7 +124,6 @@ write_config() {
     atomic_write "$CONFIG_FILE" 0600 <<EOF
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 DOWNLOADS_PATH=$DOWNLOADS_PATH
-WG_PUBLIC_PORT=$WG_PUBLIC_PORT
 TIMEZONE=$TIMEZONE
 EOF
 }
@@ -287,7 +284,7 @@ ensure_wireguard_ready() {
     modprobe wireguard 2>/dev/null ||
         log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa ağ açılmaz"
     atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<<"wireguard"
-    install -d -m 0700 -o root -g root "${WG_CONF_FILE%/*}"
+    install -d -m 0700 -o root -g root "$WG_CONF_DIR"
 }
 
 # Kayıttaki ağlar açılışta ve her çalıştırmada ayakta olmalı; kurulum yalnız onları
@@ -1570,13 +1567,14 @@ ensure_caddy_wg() {
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    if ! validate_out="$(WG_BIND="$WG_SERVER_IPV4" caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
+    # Ağ yokken sunucu adresi de yok; doğrulama yalnız sözdizimi için yer tutucu bağlar.
+    if ! validate_out="$(WG_BIND="127.0.0.1" caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
         die "Caddyfile.wg geçersiz ($CADDY_WG_FILE): $(
             grep -i -m1 'error' <<<"$validate_out" || tail -n1 <<<"$validate_out"
         )"
     fi
     render_template "$V2_ROOT/systemd/caddy-wg@.service" "$UNIT_DIR/caddy-wg@.service" 0644 \
-        WG_CONF_DIR="${WG_CONF_FILE%/*}" \
+        WG_CONF_DIR="$WG_CONF_DIR" \
         CADDY_WG_FILE="$CADDY_WG_FILE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
