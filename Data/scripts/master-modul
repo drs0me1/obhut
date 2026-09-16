@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# Konsol modül yöneticisi (DD-148). Temiz kurulum yalnız temeli kurar; modülleri Konsol
+# buradan kurar, başlatır, durdurur ve kaldırır. Konsol'un root arka ucu bu betiği
+# `systemd-run` ile ayrı bir birim olarak çalıştırır: işlem sayfa kapansa da sürer ve
+# ilerleme RUNTIME_DIR/modul-<id>.ilerleme dosyasından okunur. Aynı anda tek modül
+# işlemi yapılır (kilit). /srv altındaki kullanıcı dosyalarına hiçbir işlem dokunmaz.
+#
+#   master-modul liste                  id runtime kayıt canlı eylem adım toplam metin (sekmeyle)
+#   master-modul kur ID
+#   master-modul baslat ID
+#   master-modul durdur ID
+#   master-modul kaldir ID [--veri]     --veri: modülün ayar/günlük verisi de silinir
+#   master-modul gunluk ID [SATIR]
+set -Eeuo pipefail
+umask 022
+
+STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+[[ -r "$STATE_FILE" ]] ||
+    die "state.env okunamıyor ($STATE_FILE): kurulum yapılmamış ya da root değilsiniz"
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+: "${MODULES_FILE:?}"
+: "${MODULES_DIR:?}"
+: "${RUNTIME_DIR:?}"
+: "${DOWNLOADS_PATH:?}"
+
+# Katalog: Konsol'daki sıra. Her modülün çalışma yeri (docker | host | konsol) ve adımları
+# aşağıdaki case bloklarında tanımlıdır.
+CATALOG="unpackerr"
+ID_RE='^[a-z]{2,16}$'
+
+runtime_of() {
+    case "$1" in
+        unpackerr) printf 'docker\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_id() {
+    [[ "$1" =~ $ID_RE ]] && [[ " $CATALOG " == *" $1 "* ]] || die "bilinmeyen modül: '$1'"
+}
+
+# -- kayıt: satır başına "id<TAB>durum" (calisiyor | durduruldu); yoksa kurulu değil
+registry_get() {
+    [[ -f "$MODULES_FILE" ]] || return 1
+    awk -F'\t' -v i="$1" '$1 == i {print $2; f = 1; exit} END {exit !f}' "$MODULES_FILE"
+}
+registry_set() { # ID DURUM (boş durum = kayıttan sil)
+    local tmp
+    mkdir -p -- "$(dirname -- "$MODULES_FILE")"
+    tmp="$(mktemp "$MODULES_FILE.XXXXXX")"
+    {
+        [[ ! -f "$MODULES_FILE" ]] || awk -F'\t' -v i="$1" '$1 != i' "$MODULES_FILE"
+        [[ -z "$2" ]] || printf '%s\t%s\n' "$1" "$2"
+    } >"$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$MODULES_FILE"
+}
+
+# -- ilerleme: tek satır "eylem<TAB>adım<TAB>toplam<TAB>metin"; bitince adım "bitti" ya da "hata"
+progress_file() { printf '%s/modul-%s.ilerleme\n' "$RUNTIME_DIR" "$1"; }
+progress() { # ID EYLEM ADIM TOPLAM METİN
+    local f
+    f="$(progress_file "$1")"
+    mkdir -p -- "$RUNTIME_DIR"
+    printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" >"$f.tmp"
+    mv -f -- "$f.tmp" "$f"
+    command -v logger >/dev/null 2>&1 && logger -t master-modul -- "$1 $2: $5" || true
+}
+
+CUR_ID="" CUR_ACTION=""
+on_error() {
+    local rc=$?
+    [[ -z "$CUR_ID" ]] || progress "$CUR_ID" "$CUR_ACTION" hata 0 "${LAST_ERROR:-işlem başarısız (çıkış $rc)}"
+    exit "$rc"
+}
+trap on_error ERR
+
+fail_step() { # METİN — ilerlemeye yazar ve çıkar
+    LAST_ERROR="$1"
+    [[ -z "$CUR_ID" ]] || progress "$CUR_ID" "$CUR_ACTION" hata 0 "$1"
+    trap - ERR
+    die "$1"
+}
+
+take_lock() {
+    mkdir -p -- "$RUNTIME_DIR"
+    exec 8>"$RUNTIME_DIR/modul.lock"
+    flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
+}
+
+compose() { # ID ARGÜMANLAR…
+    local id="$1"
+    shift
+    docker compose -p "$id" -f "$MODULES_DIR/$id/compose.yaml" "$@"
+}
+
+container_state() {
+    # Konteyner yoksa docker inspect boş bir satır basıp hata verir; liste satırı bölünmesin.
+    local s
+    if s="$(docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null)" && [[ "$s" =~ ^[a-z]+$ ]]; then
+        printf '%s\n' "$s"
+    else
+        printf 'yok\n'
+    fi
+}
+
+wait_running() { # KONTEYNER SANİYE
+    local _
+    for _ in $(seq 1 "$2"); do
+        [[ "$(container_state "$1")" == running ]] && return 0
+        sleep 1
+    done
+    return 1
+}
+
+need_docker() {
+    command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
+    docker info >/dev/null 2>&1 || fail_step "Docker motoru çalışmıyor"
+    [[ -f "$MODULES_DIR/$1/compose.yaml" ]] ||
+        fail_step "modül dosyası yok ($MODULES_DIR/$1/compose.yaml); kurulumu yeniden çalıştırın"
+}
+
+# ------------------------------------------------------------------- komutlar
+cmd_liste() {
+    local id rt reg live action step total text
+    for id in $CATALOG; do
+        rt="$(runtime_of "$id")"
+        reg="$(registry_get "$id" || printf 'yok')"
+        live="-"
+        case "$rt" in
+            docker) live="$(container_state "$id")" ;;
+        esac
+        action="-" step="-" total="-" text="-"
+        if [[ -f "$(progress_file "$id")" ]]; then
+            IFS=$'\t' read -r action step total text <"$(progress_file "$id")" || true
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$rt" "$reg" "$live" \
+            "${action:--}" "${step:--}" "${total:--}" "${text:--}"
+    done
+}
+
+cmd_kur() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=kur
+    take_lock
+    ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
+    case "$id" in
+        unpackerr)
+            need_docker "$id"
+            progress "$id" kur 1 2 "İmaj indiriliyor"
+            LAST_ERROR="imaj indirilemedi"
+            compose "$id" pull --quiet
+            progress "$id" kur 2 2 "Konteyner başlatılıyor"
+            LAST_ERROR="konteyner başlatılamadı"
+            compose "$id" up -d --remove-orphans
+            wait_running unpackerr 20 || { compose "$id" down >/dev/null 2>&1 || true; fail_step "konteyner çalışır duruma gelmedi"; }
+            # DD-144: çöp ve paylaşım kökü indirme bağlamasının dışında kalmalı.
+            docker exec unpackerr sh -c 'test ! -e /downloads/.cop && test ! -e /downloads/.pay' ||
+                { compose "$id" down >/dev/null 2>&1 || true; fail_step "konteyner çöp ya da paylaşım klasörünü görüyor"; }
+            ;;
+    esac
+    registry_set "$id" calisiyor
+    progress "$id" kur bitti 0 "kuruldu"
+    printf '%s\tcalisiyor\n' "$id"
+}
+
+cmd_baslat() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=baslat
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    progress "$id" baslat 1 1 "Başlatılıyor"
+    case "$(runtime_of "$id")" in
+        docker)
+            need_docker "$id"
+            LAST_ERROR="başlatılamadı"
+            compose "$id" up -d
+            wait_running "$id" 20 || fail_step "çalışır duruma gelmedi"
+            ;;
+    esac
+    registry_set "$id" calisiyor
+    progress "$id" baslat bitti 0 "başladı"
+    printf '%s\tcalisiyor\n' "$id"
+}
+
+cmd_durdur() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=durdur
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    progress "$id" durdur 1 1 "Durduruluyor"
+    case "$(runtime_of "$id")" in
+        docker)
+            need_docker "$id"
+            LAST_ERROR="durdurulamadı"
+            # "unless-stopped": elle durdurulan konteyner açılışta da kapalı kalır.
+            compose "$id" stop
+            ;;
+    esac
+    registry_set "$id" durduruldu
+    progress "$id" durdur bitti 0 "durduruldu"
+    printf '%s\tdurduruldu\n' "$id"
+}
+
+cmd_kaldir() {
+    local id="$1" data="$2"
+    CUR_ID="$id" CUR_ACTION=kaldir
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    progress "$id" kaldir 1 1 "Kaldırılıyor"
+    case "$(runtime_of "$id")" in
+        docker)
+            command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
+            LAST_ERROR="kaldırılamadı"
+            if [[ -f "$MODULES_DIR/$id/compose.yaml" ]]; then
+                compose "$id" down --rmi all --remove-orphans
+            else
+                docker rm -f "$id" >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+    if [[ "$data" == 1 ]]; then
+        case "$id" in
+            # Yalnız modülün kendi günlüğü; indirilen ve açılan dosyalara dokunulmaz. Klasör
+            # (kurulumun açtığı, uid 1000) kalır: yeniden kurulan modül günlüğünü oraya yazar.
+            unpackerr) [[ ! -d "${DOWNLOADS_PATH:?}/.unpackerr" ]] ||
+                find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete ;;
+        esac
+    fi
+    registry_set "$id" ""
+    progress "$id" kaldir bitti 0 "kaldırıldı"
+    printf '%s\tyok\n' "$id"
+}
+
+cmd_gunluk() {
+    local id="$1" lines="${2:-60}"
+    [[ "$lines" =~ ^[0-9]{1,4}$ ]] || die "satır sayısı geçersiz"
+    case "$(runtime_of "$id")" in
+        docker) docker logs --tail "$lines" "$id" 2>&1 || printf '(günlük yok)\n' ;;
+    esac
+}
+
+main() {
+    local cmd="${1:-}"
+    case "$cmd" in
+        liste) cmd_liste ;;
+        kur | baslat | durdur | gunluk | kaldir)
+            [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
+            valid_id "$2"
+            case "$cmd" in
+                kur) cmd_kur "$2" ;;
+                baslat) cmd_baslat "$2" ;;
+                durdur) cmd_durdur "$2" ;;
+                gunluk) cmd_gunluk "$2" "${3:-60}" ;;
+                kaldir)
+                    [[ "${3:-}" == "" || "${3:-}" == --veri ]] || die "kullanım: master-modul kaldir ID [--veri]"
+                    cmd_kaldir "$2" "$([[ "${3:-}" == --veri ]] && echo 1 || echo 0)"
+                    ;;
+            esac
+            ;;
+        *) die "kullanım: master-modul liste | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR]" ;;
+    esac
+}
+
+main "$@"

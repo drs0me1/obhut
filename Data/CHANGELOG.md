@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-16 — Konsol installs modules; the archive extractor is the first (v2-115)
+
+- **Added** (**DD-148**): Konsol → **Modüller**. A clean install now brings
+  the base only, and optional parts are installed, started, stopped and removed
+  from this page with one click. This release lays the groundwork and moves the
+  first module; Paylaşım, Dosya yöneticisi, WireGuard and qBittorrent follow.
+  - `master-modul` (root helper, `/usr/local/sbin`) knows a fixed catalogue and
+    four verbs: `kur`, `baslat`, `durdur`, `kaldir [--veri]`, plus `liste` and
+    `gunluk`. Nothing else is accepted.
+  - The root backend starts each operation with `systemd-run` as its own unit
+    (`master-modul-<id>.service`): closing the page does not stop it, and a
+    second request for the same module gets `409` while it runs. Progress is
+    one line in `/run/master-stack/modul-<id>.ilerleme`; the page follows it.
+  - Installed modules live in `/etc/master-stack/moduller` (`id`, `calisiyor` or
+    `durduruldu`). The installer writes module files to
+    `/usr/local/share/master-stack/moduller/<id>/` and an empty registry; it
+    never installs a module. On a re-run a changed module file restarts that
+    module only if it is running.
+  - A card shows the module's state, its steps while installing, a **Günlük**
+    panel (last 80 lines) and, on removal, an option to delete the module's own
+    data too. User files are never part of that.
+- **Changed** (**DD-148**): **Arşiv açıcı** (Unpackerr) is a module. It left the
+  base Compose file, which now has three services, and runs as its own Compose
+  project `unpackerr` with the same image, mounts and hardening. Stage 7 no
+  longer checks it; `kur` checks that the container sees neither the trash nor
+  the share folder. Removing it with data empties `/srv/downloads/.unpackerr`.
+  A re-run on a host with the old container removes it (`--remove-orphans`);
+  install it again from Konsol if wanted.
+- **Changed:** Caddy serves the Konsol pages itself (`file_server` from
+  `/usr/local/share/master-stack/konsol`, with the CSP, `no-store`, `nosniff`,
+  `X-Frame-Options` and referrer headers). The file backend serves only
+  `/api/*`; `/api/wg/*` and `/api/konsol/*` go to the root backend.
+
 ### 2026-09-16 — FileBrowser is gone, Konsol needs no password, Tailscale joins by link only (v2-114)
 
 - **Removed** (**DD-146**): the `filebrowser` container. Konsol's Dosyalar page

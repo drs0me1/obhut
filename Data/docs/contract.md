@@ -41,7 +41,7 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), qBittorrent (replaced Transmission again, **DD-127**), Unpackerr and the share WebDAV (rclone). FileBrowser was retired; Konsol manages the files (**DD-146**) |
+| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**), qBittorrent (replaced Transmission again, **DD-127**) and the share WebDAV (rclone). FileBrowser was retired; Konsol manages the files (**DD-146**). Unpackerr is a Konsol module (**DD-148**) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (qBittorrent) peer port (TCP+UDP) |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
@@ -144,9 +144,10 @@ the ones agreed on 2026-08-05:
   `apparmor` and `pigz` (**R9**, **DD-125**).
 - The installer's own apt downloads are not kept in `/var/cache/apt/archives`
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
-- One Compose file with exactly four services: `dozzle`, `qbittorrent`,
-  `unpackerr`, `paylasim` (**R10**, **DD-116**, **DD-127**, **DD-142**,
-  **DD-146**).
+- One Compose file with exactly three services: `dozzle`, `qbittorrent`,
+  `paylasim` (**R10**, **DD-116**, **DD-127**, **DD-142**, **DD-146**).
+  Unpackerr is not part of it: it is a module installed from Konsol, in its
+  own Compose project (§1.11, **DD-148**).
 - qBittorrent (LinuxServer image) keeps `/config` on
   `/etc/master-stack/qbittorrent`, and its settings come from the installer
   (**DD-129**):
@@ -386,13 +387,15 @@ Preserved in full as a core feature. Contract in §5–§7.
 ### 1.10 Konsol and the file backend (DD-139, DD-140)
 
 - **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
-  administration page. Caddy sends `/api/wg/*` to `master-wg-panel` and
-  everything else, the page files included, to `master-files-panel`;
-  `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}` answer with a 302 to it.
-  Both backends accept only that host, require the header `X-Konsol` on
-  `/api/*`, and use the realm `Konsol`, so one browser login covers both.
+  administration page. Caddy serves the page files itself from
+  `CONSOLE_WEB_DIR` (CSP, `no-store`, `nosniff`, `X-Frame-Options: DENY`, no
+  referrer), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
+  every other `/api/*` to `master-files-panel`; `wg.`, `dosya.` and
+  `file.${LOCAL_DOMAIN}` answer with a 302 to it. Both backends accept only
+  that host and require the header `X-Konsol` on `/api/*` (**DD-147**).
   - Pages: Genel bakış (server card with CPU, memory and disk, WireGuard
-    devices, last actions, ports in use), WireGuard, Dosyalar and Günlük.
+    devices, last actions, ports in use), WireGuard, Dosyalar, Modüller
+    (§1.11) and Günlük.
   - The ports card is built from `state.env` and the network registry; nothing
     is scanned and no container status is collected.
   - A peer or a whole network can be switched off and on (§1.9).
@@ -412,7 +415,7 @@ Preserved in full as a core feature. Contract in §5–§7.
     `SERVER_ROOT` read-only; `qbittorrent` and `unpackerr` mount only
     `SERVER_ROOT/downloads`, so the share folder and the trash are outside what
     they can see (**DD-144**).
-- `master-files-panel.service` serves the console pages and a file manager for
+- `master-files-panel.service` serves a file manager API for
   `SERVER_ROOT`: browse, search the current folder, select many items, new
   folder, rename, move, move to trash, restore, delete from the trash, empty
   the trash, read a text file, download a file and **upload** files
@@ -453,9 +456,9 @@ Preserved in full as a core feature. Contract in §5–§7.
   - Deleting permanently works only from the trash; emptying it needs
     `onayla`. The trash is not reachable through any path, and the root listing
     hides it.
-  - The installer creates the folder. The `unpackerr` and `webdav` containers
-    mount an empty read-only tmpfs over `/downloads/.cop`, so archives in the
-    trash are not extracted again and WebDAV lists only an empty folder.
+  - The installer creates the folder. It lies outside `SERVER_ROOT/downloads`,
+    so Arşiv açıcı never sees it and archives in the trash are not extracted
+    again (**DD-144**); the share WebDAV serves only the share root.
 - Text view: the first 1 MiB of a regular file.
   - A file with a NUL in the first 8 KiB is refused as binary.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
@@ -466,6 +469,52 @@ Preserved in full as a core feature. Contract in §5–§7.
 - A switch at the top links `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}`.
 - It replaced FileBrowser (**DD-146**): `file.${LOCAL_DOMAIN}` redirects to
   the console.
+
+### 1.11 Modules (DD-148)
+
+- A clean install brings the base only; optional parts are **modules**,
+  installed, started, stopped and removed from Konsol → Modüller.
+  - Catalogue (v2-115): `unpackerr` (Arşiv açıcı, Docker). Paylaşım, Dosya
+    yöneticisi, WireGuard and qBittorrent move here in later releases.
+- The installer, on every run:
+  - installs `/usr/local/sbin/master-modul` and renders each module's files to
+    `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`);
+  - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent;
+  - never installs, stops or removes a module. When a rendered file changed
+    and the module is registered as `calisiyor`, stage 7 runs
+    `master-modul baslat <id>` after the base Compose project is up. A
+    stopped module stays stopped.
+- `master-modul` (root):
+  - `liste` prints, per catalogued module, `id runtime registry live action
+    step total text` separated by tabs; `registry` is `yok`, `calisiyor` or
+    `durduruldu`.
+  - `kur ID`, `baslat ID`, `durdur ID`, `kaldir ID [--veri]`, `gunluk ID
+    [LINES]`. Any other id, verb or argument is refused before anything runs.
+  - Changes take `RUNTIME_DIR/modul.lock`; a second operation waits up to 5 s
+    and then fails.
+  - Progress is one line in `RUNTIME_DIR/modul-<id>.ilerleme`:
+    `action step total text`, ending with step `bitti` or `hata` and the
+    reason. Each step is also written to the journal (`master-modul`).
+  - A Docker module runs as Compose project `<id>` from
+    `MODULES_DIR/<id>/compose.yaml`. `kur` pulls, starts, waits up to 20 s for
+    `running` and registers it; on failure it takes the project down and
+    registers nothing. `durdur` stops it (it stays stopped after a reboot);
+    `kaldir` runs `down --rmi all --remove-orphans`.
+  - `--veri` deletes only the module's own data; for Arşiv açıcı that is the
+    contents of `SERVER_ROOT/downloads/.unpackerr`. User files are never
+    module data.
+  - Arşiv açıcı: `kur` also checks that the container sees neither the trash
+    nor the share folder, and takes it down if it does (**DD-144**).
+- The root backend (`master-wg-panel`):
+  - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
+    live, busy, progress}]}`.
+  - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir)`, JSON body,
+    `{"veri": true}` honoured for `kaldir` only. The id must be in `liste`
+    (else `404`). It starts `systemd-run --unit=master-modul-<id>.service
+    --collect master-modul <verb> <id>` and answers `202`; while that unit is
+    active the answer is `409`. The audit line is `modul-<verb>`.
+  - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
+  - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
 
 ---
 

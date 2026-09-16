@@ -12,15 +12,28 @@ http://dozzle.__LOCAL_DOMAIN__ {
 http://torrent.__LOCAL_DOMAIN__ {
 	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
 }
-# Konsol (DD-140): tek adres, iki arka uç. /api/wg/* WireGuard ve sistem arka ucuna
-# (root), geri kalanı dosya arka ucuna (indirme klasörünün sahibi) gider; sayfayı da o
-# verir. Yalnız tailnet'ten; giriş, CSRF ve kök denetimi arka uçlarda.
+# Konsol (DD-140, DD-148): tek adres. /api/wg/* ve /api/konsol/* root arka uca (WireGuard,
+# sistem, modüller), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:
+# dosya yöneticisi bir modüldür ve kaldırılabilir, Konsol'un kendisi kalmalıdır. Yalnız
+# tailnet'ten; CSRF ve Host denetimi arka uçlarda (DD-147), başlıklar burada.
 http://panel.__LOCAL_DOMAIN__ {
-	handle /api/wg/* {
+	@kok path /api/wg/* /api/konsol/*
+	handle @kok {
 		reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
 	}
-	handle {
+	handle /api/* {
 		reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__
+	}
+	handle {
+		root * __CONSOLE_WEB_DIR__
+		header {
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "no-referrer"
+		}
+		file_server
 	}
 }
 # Paylaşım WebDAV (DD-141): Konsol'dan paylaşılanlar; salt okunur, tek hesap.

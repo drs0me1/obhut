@@ -452,9 +452,10 @@ EOF
 @test "qbittorrent and unpackerr use DOWNLOADS_UID/GID tokens" {
     grep -q 'PUID: "__DOWNLOADS_UID__"' "$V2_ROOT/templates/compose.yaml"
     grep -q 'PGID: "__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml"
-    [ "$(grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' "$V2_ROOT/templates/compose.yaml")" -eq 1 ]
+    # DD-148: unpackerr is a module with its own compose file.
+    [ "$(grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' "$V2_ROOT/modules/unpackerr/compose.yaml")" -eq 1 ]
     run ! grep -qE 'PUID: "1000"|PGID: "1000"|user: "1000:1000"' \
-        "$V2_ROOT/templates/compose.yaml"
+        "$V2_ROOT/templates/compose.yaml" "$V2_ROOT/modules/unpackerr/compose.yaml"
 }
 
 @test "downloads tree is chown 1000 for qbittorrent, unpackerr and the console" {
@@ -476,7 +477,7 @@ EOF
     [ "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -c 'find "\$root"')" -eq 1 ]
     grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
-        "$V2_ROOT/templates/compose.yaml"
+        "$V2_ROOT/modules/unpackerr/compose.yaml"
 }
 
 @test "ensure_downloads_tree single pass fixes deviant modes and keeps compliant ones" {
@@ -686,17 +687,20 @@ EOF
 }
 
 @test "unpackerr watches folders, not a torrent client API" {
-    grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/templates/compose.yaml"
-    grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/templates/compose.yaml"
-    run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    # DD-148: no network at all, and never part of the base compose file.
+    grep -qx '    network_mode: none' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    run ! grep -q 'unpackerr' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "qbittorrent is synced from its template and the input account, ports stay on the command line" {
     # DD-129: managed keys live in templates/qBittorrent.conf; the account comes
     # from TORRENT_USER/TORRENT_PASS; the image passes --webui-port and
     # --torrenting-port on every start, so ports are not template keys.
-    block="$(awk '/^  qbittorrent:$/,/^  unpackerr:$/' "$V2_ROOT/templates/compose.yaml")"
+    block="$(awk '/^  qbittorrent:$/,/^  paylasim:$/' "$V2_ROOT/templates/compose.yaml" | sed '/^  # DD-141/,$d')"
     [ -n "$block" ]
     grep -q 'image: __QBITTORRENT_IMAGE__' <<<"$block"
     grep -q '"127.0.0.1:__TORRENT_UI_PORT__:__TORRENT_UI_PORT__"' <<<"$block"
@@ -905,9 +909,9 @@ EOF
     run ! grep -qE '^[[:space:]]+wg:$' "$V2_ROOT/templates/compose.yaml"
     # The name wg. now redirects to the console (DD-140); the backend stays on loopback.
     grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
-    grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q 'handle /api/wg/\* {$'
-    # DD-142, DD-146: dört servis; tek rclone (paylaşım WebDAV'ı), FileBrowser yok.
-    [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 4 ]
+    grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
+    # DD-142, DD-146, DD-148: üç temel servis; unpackerr modül oldu, FileBrowser yok.
+    [ "$(grep -c '^  [a-z][a-z-]*:$' <<<"$(awk '/^services:/,/^networks:/' "$V2_ROOT/templates/compose.yaml")")" -eq 3 ]
 }
 
 @test "every template placeholder is filled by its render_template call" {
@@ -2046,9 +2050,28 @@ case "\$1" in
 esac
 EOF
     chmod +x "$TMP/pbin/master-wg"
+    # DD-148: sahte modül yardımcısı ve systemd araçları (çağrıları günlükler).
+    cat >"$TMP/pbin/master-modul" <<EOF
+#!/bin/bash
+case "\$1" in
+    liste) printf 'unpackerr\tdocker\t%s\t%s\t-\t-\t-\t-\n' "\$(cat "$TMP/mod-state" 2>/dev/null || echo yok)" "\$([ -e "$TMP/mod-running" ] && echo running || echo yok)" ;;
+    gunluk) printf '[INFO] Klasör izleniyor: /downloads\n' ;;
+    *) echo "HATA: beklenmeyen çağrı \$*" >&2; exit 1 ;;
+esac
+EOF
+    cat >"$TMP/pbin/systemd-run" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/sdrun-calls"
+EOF
+    cat >"$TMP/pbin/systemctl" <<EOF
+#!/bin/bash
+[ "\$1" = is-active ] && [ -e "$TMP/busy-\${3%.service}" ] && exit 0
+exit 3
+EOF
+    chmod +x "$TMP/pbin/master-modul" "$TMP/pbin/systemd-run" "$TMP/pbin/systemctl"
     PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" \
-        --master-wg "$TMP/pbin/master-wg" >"$TMP/panel.log" 2>&1 &
+    python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" --state-env \
+        --master-wg "$TMP/pbin/master-wg" --master-modul "$TMP/pbin/master-modul" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
         curl -s -o /dev/null "http://127.0.0.1:$PORT/api/wg/state" && return 0
@@ -2114,6 +2137,162 @@ PY
     case "$output" in *"HTTP 403"*) ;; *) false ;; esac
     # The account machinery is gone for good.
     run ! grep -qE 'pbkdf2|WWW-Authenticate|def cmd_account|locked_out|FAIL_LIMIT' "$PANEL"
+}
+
+modul_fixture() {
+    # DD-148: master-modul with a fake docker, flock and logger.
+    mkdir -p "$TMP/mbin" "$TMP/mods/unpackerr" "$TMP/run" "$TMP/dl/.unpackerr"
+    printf 'services: {}\n' >"$TMP/mods/unpackerr/compose.yaml"
+    cat >"$TMP/mstate.env" <<EOF
+MODULES_FILE=$TMP/moduller
+MODULES_DIR=$TMP/mods
+RUNTIME_DIR=$TMP/run
+DOWNLOADS_PATH=$TMP/dl
+EOF
+    cat >"$TMP/mbin/docker" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/docker-calls"
+case "\$1" in
+    info | exec | rm) exit 0 ;;
+    compose)
+        case "\$6" in
+            pull) [ ! -e "$TMP/pull-fail" ] || exit 1 ;;
+            up) touch "$TMP/running"; rm -f "$TMP/stopped" ;;
+            stop) rm -f "$TMP/running"; touch "$TMP/stopped" ;;
+            down) rm -f "$TMP/running" "$TMP/stopped" ;;
+        esac ;;
+    inspect)
+        if [ -e "$TMP/running" ]; then echo running
+        elif [ -e "$TMP/stopped" ]; then echo exited
+        else echo; echo "Error: No such object: \$3" >&2; exit 1
+        fi ;;
+    logs) echo "[INFO] Klasör izleniyor: /downloads" ;;
+esac
+EOF
+    printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/flock"
+    printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/logger"
+    chmod +x "$TMP/mbin"/*
+}
+
+mm() {
+    PATH="$TMP/mbin:$PATH" STATE_FILE="$TMP/mstate.env" bash "$V2_ROOT/scripts/master-modul" "$@"
+}
+
+@test "master-modul installs, stops, starts and removes a docker module and records every step" {
+    modul_fixture
+    run mm liste
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'unpackerr\tdocker\tyok\tyok\t-\t-\t-\t-')" ]
+    run mm kur unpackerr
+    [ "$status" -eq 0 ]
+    grep -qx "$(printf 'unpackerr\tcalisiyor')" "$TMP/moduller"
+    [ "$(cat "$TMP/run/modul-unpackerr.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
+    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml pull --quiet" "$TMP/docker-calls"
+    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml up -d --remove-orphans" "$TMP/docker-calls"
+    run mm liste
+    [ "$output" = "$(printf 'unpackerr\tdocker\tcalisiyor\trunning\tkur\tbitti\t0\tkuruldu')" ]
+    # Already installed: refused.
+    run mm kur unpackerr
+    [ "$status" -ne 0 ]
+    case "$output" in *"zaten kurulu"*) ;; *) false ;; esac
+    run mm durdur unpackerr
+    [ "$status" -eq 0 ]
+    grep -qx "$(printf 'unpackerr\tdurduruldu')" "$TMP/moduller"
+    run mm liste
+    [ "$output" = "$(printf 'unpackerr\tdocker\tdurduruldu\texited\tdurdur\tbitti\t0\tdurduruldu')" ]
+    run mm baslat unpackerr
+    [ "$status" -eq 0 ]
+    grep -qx "$(printf 'unpackerr\tcalisiyor')" "$TMP/moduller"
+    run mm gunluk unpackerr 20
+    [ "$output" = "[INFO] Klasör izleniyor: /downloads" ]
+    run mm gunluk unpackerr 20000
+    [ "$status" -ne 0 ]
+    # Removing with --veri drops only the module's own log folder, never the downloads.
+    touch "$TMP/dl/film.mkv"
+    touch "$TMP/dl/.unpackerr/unpackerr.log"
+    run mm kaldir unpackerr --veri
+    [ "$status" -eq 0 ]
+    [ "$(grep -c unpackerr "$TMP/moduller")" -eq 0 ]
+    [ -d "$TMP/dl/.unpackerr" ]
+    [ -z "$(ls -A "$TMP/dl/.unpackerr")" ]
+    [ -f "$TMP/dl/film.mkv" ]
+    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml down --rmi all --remove-orphans" "$TMP/docker-calls"
+    run mm liste
+    [ "$output" = "$(printf 'unpackerr\tdocker\tyok\tyok\tkaldir\tbitti\t0\tkaldırıldı')" ]
+    run mm kaldir unpackerr
+    [ "$status" -ne 0 ]
+    case "$output" in *"kurulu değil"*) ;; *) false ;; esac
+    # Only catalogued ids and known commands are accepted.
+    run mm kur ../etc
+    [ "$status" -ne 0 ]
+    case "$output" in *"bilinmeyen modül"*) ;; *) false ;; esac
+    run mm kur filebrowser
+    [ "$status" -ne 0 ]
+    run mm kaldir unpackerr --hepsi
+    [ "$status" -ne 0 ]
+    run mm sil unpackerr
+    [ "$status" -ne 0 ]
+}
+
+@test "master-modul reports a failed install in its progress file and registers nothing" {
+    modul_fixture
+    touch "$TMP/pull-fail"
+    run mm kur unpackerr
+    [ "$status" -ne 0 ]
+    [ "$(cat "$TMP/run/modul-unpackerr.ilerleme")" = "$(printf 'kur\thata\t0\timaj indirilemedi')" ]
+    [ ! -s "$TMP/moduller" ]
+    [ "$(grep -c ' up -d' "$TMP/docker-calls")" -eq 0 ]
+    # Every change runs under the one module lock; the only deletion is the module's own log folder.
+    [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
+    grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
+    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 1 ]
+    grep -qF 'find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete' "$V2_ROOT/scripts/master-modul"
+}
+
+@test "wg panel lists modules and starts module work as its own systemd unit" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    panel_start
+    [ "$(pc /api/konsol/moduller)" = 403 ]
+    [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
+    python3 -c '
+import json, sys
+m = json.load(open(sys.argv[1]))["items"][0]
+assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("unpackerr", "docker", False, "", False, None), m
+' "$TMP/body"
+    local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
+    [ "$(pc /api/konsol/moduller/unpackerr/kur "${json[@]}" --data '{}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-unpackerr.service --collect --quiet '
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kur unpackerr$"
+    [ "$(pc /api/konsol/moduller/unpackerr/kaldir "${json[@]}" --data '{"veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kaldir unpackerr --veri$"
+    [ "$(pc /api/konsol/moduller/unpackerr/durdur "${json[@]}" --data '{"veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul durdur unpackerr$"
+    printf 'calisiyor\n' >"$TMP/mod-state"
+    touch "$TMP/mod-running"
+    [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
+    grep -q '"installed": true, "state": "calisiyor", "live": "running"' "$TMP/body"
+    # One operation at a time per module.
+    touch "$TMP/busy-master-modul-unpackerr"
+    local before
+    before="$(wc -l <"$TMP/sdrun-calls")"
+    [ "$(pc /api/konsol/moduller/unpackerr/baslat "${json[@]}" --data '{}')" = 409 ]
+    [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
+    grep -q '"busy": true' "$TMP/body"
+    rm -f "$TMP/busy-master-modul-unpackerr"
+    # Unknown modules, unknown actions and requests without the panel header never reach systemd-run.
+    [ "$(pc /api/konsol/moduller/yok/kur "${json[@]}" --data '{}')" = 404 ]
+    [ "$(pc /api/konsol/moduller/unpackerr/sil "${json[@]}" --data '{}')" = 404 ]
+    [ "$(pc /api/konsol/moduller/unpackerr/kur -H 'Content-Type: application/json' --data '{}')" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
+        "http://127.0.0.1:$PORT/api/konsol/moduller/unpackerr/kur")" = 403 ]
+    [ "$(wc -l <"$TMP/sdrun-calls")" = "$before" ]
+    [ "$(pc /api/konsol/moduller/unpackerr/gunluk -H 'X-Konsol: 1')" = 200 ]
+    grep -qi '^Content-Type: text/plain' "$TMP/head"
+    grep -q 'Klasör izleniyor' "$TMP/body"
+    grep -q 'panel: konsol 127.0.0.1 modul-kur unpackerr -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-kaldir unpackerr +veri -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-durdur unpackerr -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-baslat unpackerr -> hata' "$TMP/panel.log"
 }
 
 @test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
@@ -2314,7 +2493,7 @@ files_panel_start() {
     mkdir -p "$TMP/creds"
     printf 'paylasim:paylas pass\n' >"$TMP/creds/paylasim-auth"
     FPORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    CREDENTIALS_DIRECTORY="$TMP/creds" python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" --web "$TMP/fweb" \
+    CREDENTIALS_DIRECTORY="$TMP/creds" python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" \
         --share .pay --share-credential paylasim-auth \
         --domain ayc --version 2026.08.06-v2-test --temp-dir incomplete >"$TMP/fpanel.log" 2>&1 &
     PANEL_PID=$!
@@ -2341,17 +2520,22 @@ fpost() {
     command -v python3 >/dev/null || skip "python3 yok"
     files_panel_start
     local bare=(-s -o /dev/null -w '%{http_code}')
-    # DD-147: the page opens without a password or a login prompt.
-    [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")" = 200 ]
-    run ! grep -qi '^WWW-Authenticate' <<<"$(curl -s -D - -o /dev/null -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/")"
-    [ "$(fp /)" = 200 ]
-    grep -q '<title>konsol</title>' "$TMP/body"
-    grep -qi "^Content-Security-Policy: default-src 'none'; script-src 'self'" "$TMP/head"
+    # DD-147: no password or login prompt. DD-148: the pages are Caddy's, not this backend's.
+    [ "$(fp /)" = 404 ]
+    run ! grep -qi '^WWW-Authenticate' "$TMP/head"
+    [ "$(fp /api/state)" = 200 ]
+    grep -qi "^Content-Security-Policy: default-src 'none'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
+    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
+    grep -q 'root \* __CONSOLE_WEB_DIR__' "$TMP/site"
+    grep -qx '		file_server' "$TMP/site"
+    grep -q "Content-Security-Policy \"default-src 'none'; script-src 'self'" "$TMP/site"
+    grep -q 'X-Frame-Options "DENY"' "$TMP/site"
+    run ! grep -q 'STATIC = ' "$FPANEL"
     # DNS rebinding and the WireGuard panel's own name are refused.
-    [ "$(curl "${bare[@]}" -H 'Host: evil.example' "http://127.0.0.1:$FPORT/")" = 403 ]
-    [ "$(curl "${bare[@]}" -H 'Host: wg.ayc' "http://127.0.0.1:$FPORT/")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: evil.example' -H 'X-Konsol: 1' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
+    [ "$(curl "${bare[@]}" -H 'Host: wg.ayc' -H 'X-Konsol: 1' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
     # CSRF: the API needs the panel header and a same-origin fetch; nothing changes without them.
     [ "$(curl "${bare[@]}" -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
     [ "$(fp /api/state -H 'Sec-Fetch-Site: cross-site')" = 403 ]
@@ -2631,6 +2815,69 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qx '          <nav class="fsrail" id="fs-rail" aria-label="Klasörler"></nav>' "$V2_ROOT/console/index.html"
 }
 
+@test "installer lays out modules without installing any, and reapplies only running ones" {
+    # DD-148: the installer writes module files and an empty registry; Konsol installs.
+    grep -qx 'MODULES_FILE="/etc/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'MODULES_DIR="/usr/local/share/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'MODULES_FILE=\$MODULES_FILE'
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'MODULES_DIR=\$MODULES_DIR'
+    grep -qF '"$REPO_ROOT/modules"' "$V2_ROOT/dev/export-installer.sh"
+    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
+    grep -qF 'atomic_write "$SBIN_DIR/master-modul" 0755' <<<"$stage4"
+    grep -qx '    ensure_module_files' <<<"$stage4"
+    body="$(awk '/^ensure_module_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644' <<<"$body"
+    grep -qF 'atomic_write "$MODULES_FILE" 0644 </dev/null' <<<"$body"
+    # The installer never installs, stops or removes a module on its own.
+    [ "$(grep -cE 'master-modul" (kur|kaldir|durdur)' "$V2_ROOT/install.sh")" -eq 0 ]
+    # reapply_modules: a changed module file restarts a running module only.
+    eval "$(awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    mkdir -p "$TMP/sbin"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/calls"\n' "$TMP" >"$TMP/sbin/master-modul"
+    chmod +x "$TMP/sbin/master-modul"
+    log() { :; }
+    SBIN_DIR="$TMP/sbin"
+    MODULES_FILE="$TMP/reg"
+    MODULES_CHANGED=" unpackerr"
+    printf 'unpackerr\tcalisiyor\n' >"$TMP/reg"
+    reapply_modules
+    grep -qx 'baslat unpackerr' "$TMP/calls"
+    rm -f "$TMP/calls"
+    printf 'unpackerr\tdurduruldu\n' >"$TMP/reg"
+    reapply_modules
+    [ ! -e "$TMP/calls" ]
+    : >"$TMP/reg"
+    reapply_modules
+    [ ! -e "$TMP/calls" ]
+    MODULES_CHANGED=""
+    printf 'unpackerr\tcalisiyor\n' >"$TMP/reg"
+    reapply_modules
+    [ ! -e "$TMP/calls" ]
+    awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" |
+        awk '/docker compose up -d --remove-orphans/ {a = NR} /^    reapply_modules$/ {b = NR} END {exit !(a && b && a < b)}'
+    # The root backend runs module work; its unit knows the helper.
+    grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-wg-panel.service"
+}
+
+@test "console shows the Modüller page from the module API" {
+    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
+    # Side navigation and the phone's bottom bar both link the page.
+    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 2 ]
+    grep -q 'grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed;' "$V2_ROOT/console/konsol.css"
+    grep -q '<section data-view="moduller"' "$html"
+    grep -q 'id="mod-grid"' "$html"
+    grep -q 'id="cf-extra"' "$html"
+    grep -qF 'api("/api/konsol/moduller")' "$js"
+    grep -qF 'post(`/api/konsol/moduller/${enc(m.id)}/${action}`, { veri: !!veri })' "$js"
+    grep -qF 'if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);' "$js"
+    # Until the unit writes its first step, the card shows the requested action, not the previous one.
+    grep -qF 'if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };' "$js"
+    grep -qF 'moduller: { title: "Modüller"' "$js"
+    grep -qF 'unpackerr: { name: "Arşiv açıcı"' "$js"
+    grep -q '^\.base-list' "$V2_ROOT/console/konsol.css"
+    grep -q '^\.rt-chip' "$V2_ROOT/console/konsol.css"
+}
+
 @test "installer wires the share WebDAV: read-only rclone on the share root, one account, tailnet name, hidden from Infuse" {
     local compose="$V2_ROOT/templates/compose.yaml" unit="$V2_ROOT/systemd/master-files-panel.service" body s7 line
     awk '/^  paylasim:$/,/^networks:$/' "$compose" >"$TMP/svc"
@@ -2644,9 +2891,10 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     # DD-144: the trash and the share root sit outside the downloads folder, so the
     # containers that mount only downloads cannot see them; no tmpfs curtain is left.
     run ! grep -q 'size=16k' "$compose"
-    awk '/^  unpackerr:$/,/^  paylasim:$/' "$compose" | grep -qx '      - __DOWNLOADS_PATH__:/downloads'
-    awk '/^  qbittorrent:$/,/^  unpackerr:$/' "$compose" | grep -qx '      - __DOWNLOADS_PATH__:/downloads'
+    grep -qx '      - __DOWNLOADS_PATH__:/downloads' "$V2_ROOT/modules/unpackerr/compose.yaml"
+    awk '/^  qbittorrent:$/,/^  paylasim:$/' "$compose" | grep -qx '      - __DOWNLOADS_PATH__:/downloads'
     grep -q 'test ! -e /downloads/\${FILES_PANEL_TRASH} && test ! -e /downloads/\${SHARE_DIR}' "$V2_ROOT/install.sh"
+    grep -q "test ! -e /downloads/.cop && test ! -e /downloads/.pay" "$V2_ROOT/scripts/master-modul"
     # Tek hesap: htpasswd rclone için, düz kopya yalnız Konsol'un göstermesi için.
     grep -qx 'SHARE_PORT="61010"' "$V2_ROOT/config/defaults.env"
     grep -qx 'SHARE_DIR=".pay"' "$V2_ROOT/config/defaults.env"
@@ -2694,7 +2942,8 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
         grep -qx "$line" "$unit"
     done
     grep -q -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__' "$unit"
-    grep -q -- '--web __CONSOLE_WEB_DIR__ --trash __FILES_PANEL_TRASH__' "$unit"
+    grep -q -- '--root __SERVER_ROOT__ --trash __FILES_PANEL_TRASH__' "$unit"
+    run ! grep -q -- '--web' "$unit"
     run ! grep -qE 'panel-auth|--auth' "$unit"
     [ "$(grep -c '^ReadWritePaths=' "$unit")" -eq 1 ]
     run ! grep -qE '^User=(root|0)$|AF_NETLINK|/etc/wireguard' "$unit"
@@ -2712,8 +2961,10 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qx 'DOWNLOADS_ACCOUNT="master-downloads"' "$V2_ROOT/config/defaults.env"
     grep -q 'Session\\\\TempPath' <<<"$body"
     # DD-140: this backend serves the console pages.
-    for f in index.html konsol.css konsol.js; do grep -q "$f" <<<"$body"; [ -f "$V2_ROOT/console/$f" ]; done
-    grep -q 'CONSOLE_WEB_DIR="\$CONSOLE_WEB_DIR"' <<<"$body"
+    pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    for f in index.html konsol.css konsol.js; do grep -q "$f" <<<"$pages"; [ -f "$V2_ROOT/console/$f" ]; done
+    run ! grep -q 'index.html' <<<"$body"
+    grep -q 'CONSOLE_WEB_DIR="\$CONSOLE_WEB_DIR"' <<<"$(awk '/^stage_6\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qx 'CONSOLE_WEB_DIR="/usr/local/share/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
     grep -q '"\$REPO_ROOT/console"' "$V2_ROOT/dev/export-installer.sh"
     s6="$(awk '/^stage_6\(\)/,/^ensure_caddy_wg\(\)/' "$V2_ROOT/install.sh")"
@@ -2726,7 +2977,9 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     # Tailnet only through Caddy; nothing on the WireGuard edge.
     # DD-140: one address; /api/wg/* to the WireGuard backend, the rest (pages included) here.
     awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
-    grep -q 'handle /api/wg/\* {' "$TMP/site"
+    grep -q '@kok path /api/wg/\* /api/konsol/\*' "$TMP/site"
+    grep -q 'handle @kok {' "$TMP/site"
+    grep -q 'handle /api/\* {' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
     grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"

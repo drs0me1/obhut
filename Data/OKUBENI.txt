@@ -74,6 +74,12 @@ Paylaşım (v2-106, v2-108):
   Süresi dolan paylaşım kendiliğinden kalkar; "Paylaşımdan çıkar" da yalnız paylaşımı kapatır,
   dosyayı silmez. Yalnız Tailscale'e bağlı cihazlar açabilir.
 
+Konsol · Modüller sekmesi (v2-115):
+  Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı, boş Docker).
+  Ek parçalar buradan tek tıkla kurulur, durdurulur, başlatılır, kaldırılır; sayfa kapansa da işlem sürer.
+  Şimdilik: Arşiv açıcı (Unpackerr). Kaldırırken "verisini de sil" yalnız onun günlüğünü siler;
+  indirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
+
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
   /downloads klasörü; aynı sayfada, aynı girişle.
   Klasöre gir, yeni klasör, yeniden adlandır, taşı, indir.

@@ -17,6 +17,7 @@
       <a href="#/genel" data-route="genel" data-icon="gauge">Genel bakış</a>
       <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard <span class="count" id="nav-wg"></span></a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar <span class="count" id="nav-fs"></span></a>
+      <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller <span class="count" id="nav-mods"></span></a>
       <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
     </nav>
     <div class="side-group">
@@ -161,6 +162,16 @@
         </div>
       </section>
 
+      <!-- MODÜLLER (DD-148) -->
+      <section data-view="moduller" hidden>
+        <article class="card span-12">
+          <div class="card-head"><h2 data-icon="server">Temel</h2><div class="head-right"><span class="hm ok">kurulumla gelir · kaldırılmaz</span></div></div>
+          <div class="base-list" id="mod-base"></div>
+        </article>
+        <div class="sec-title"><h2>Modüller</h2><span id="mod-sum"></span></div>
+        <div class="grid" id="mod-grid"></div>
+      </section>
+
       <!-- GÜNLÜK -->
       <section data-view="gunluk" hidden>
         <div class="logwrap">
@@ -176,6 +187,7 @@
   <a href="#/genel" data-route="genel" data-icon="gauge">Genel</a>
   <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard</a>
   <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
+  <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller</a>
   <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
 </nav>
 
@@ -212,6 +224,7 @@
       <button class="dlg-x" type="button" id="cf-x" aria-label="Kapat"></button>
     </div>
     <ul class="conseq" id="cf-list"></ul>
+    <div id="cf-extra"></div>
     <div class="confirm-row" id="cf-word-row">
       <label for="cf-word">Onay için <strong>onayla</strong> yazın</label>
       <input type="text" id="cf-word" autocomplete="off" spellcheck="false">

@@ -9,7 +9,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen 127.0.0.1:__WG_PANEL_PORT__ --state __STATE_FILE__ --master-wg __SBIN_DIR__/master-wg
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen 127.0.0.1:__WG_PANEL_PORT__ --state __STATE_FILE__ --master-wg __SBIN_DIR__/master-wg --master-modul __SBIN_DIR__/master-modul
 Environment="PANEL_DNS_DEFAULT=__WG_CLIENT_DNS_DEFAULT__"
 Environment="PANEL_KEEPALIVE_DEFAULT=__WG_CLIENT_KEEPALIVE_DEFAULT__"
 Environment="PANEL_MTU_DEFAULT=__WG_MTU__"

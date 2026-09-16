@@ -6804,6 +6804,72 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-148: A clean install is the base; Konsol installs modules (2026-09-16)
+
+- **Context:** the installer shipped a fixed bundle. The user wants the server
+  to come up with the base only and to add parts from Konsol with one click,
+  as an administrator would — "temiz kurulumda sadece docker hazır olarak
+  gelsin kalan kontainer yapıyı panelden ayarlalım". The model was tried in
+  mockups first (`docs/design/konsol-moduller-v04…v06.html`, v06 approved).
+- **Decision (user):**
+  - **Base (installer):** Konsol, Tailscale by login link, dnsmasq + Caddy,
+    the firewall and an empty Docker engine.
+  - **Modules (Konsol → Modüller):** Dosya yöneticisi and WireGuard (Konsol
+    pages), qBittorrent (on the host, Debian's `qbittorrent-nox`, no settings
+    sync), Paylaşım (rclone, needs Dosya yöneticisi) and Arşiv açıcı
+    (Unpackerr, its own module). Dozzle goes; each module card has a
+    **Günlük** panel instead.
+  - Delivered in stages, each verified on `nrm`: (1) the module mechanism and
+    Arşiv açıcı (v2-115); (2) Paylaşım; (3) Dosya yöneticisi and WireGuard;
+    (4) qBittorrent on the host and Dozzle's removal.
+- **Mechanism:**
+  - **The installer renders, Konsol runs.** Module files are templates with
+    installer-only values (image pins, uid, paths, log limits), and
+    `render_template` refuses leftovers. So the installer renders every
+    module's files to `MODULES_DIR/<id>/` on each run and Konsol never renders
+    anything; `config/defaults.env` stays the single source.
+  - **One root helper, a fixed vocabulary.** `master-modul` accepts a
+    catalogued id and `liste`, `kur`, `baslat`, `durdur`, `kaldir [--veri]`,
+    `gunluk`. The root backend validates the id against `liste` before
+    calling it, so a request can name a module but never a path or an
+    argument.
+  - **Operations outlive the request.** The backend runs
+    `systemd-run --unit=master-modul-<id>.service --collect`. The unit is
+    outside the backend's sandbox (an image pull or a package install needs
+    more than the backend may do), keeps running when the page closes, and its
+    name doubles as the busy check (`systemctl is-active` → `409`). Tried on
+    `nrm` before writing it.
+  - **State the page can read.** `/etc/master-stack/moduller` holds only
+    installed modules and whether the operator left them running or stopped;
+    a missing line means "not installed". Progress is one tab-separated line
+    in `RUNTIME_DIR/modul-<id>.ilerleme`, ending in `bitti` or `hata` with the
+    reason. Changes run under one `flock`, so two modules never pull or
+    install at the same time.
+  - **Each Docker module is its own Compose project** (`-p <id>`): the base
+    project's `--remove-orphans` never touches a module, and removing a module
+    (`down --rmi all`) never touches the base.
+  - **Re-runs respect the operator's choice.** A module whose rendered file
+    changed is restarted only if it is registered as running; a stopped module
+    stays stopped and an absent one stays absent. The installer never runs
+    `kur`, `durdur` or `kaldir`.
+  - **Removal keeps user files.** `kaldir --veri` deletes only what the module
+    owns (for Arşiv açıcı, the contents of `downloads/.unpackerr`); files under
+    `SERVER_ROOT` are never part of a module's data.
+- **Checks move with the module.** Stage 7 no longer checks Unpackerr; `kur`
+  checks that the container cannot see the trash or the share folder
+  (**DD-144**) and takes the container down if it can.
+- **Trade-off:** anyone who can open Konsol can now start root operations —
+  bounded to the catalogue and verbs above. That follows from **DD-147**
+  (tailnet membership is the boundary) and is why the Host and `X-Konsol` gates
+  cover `/api/konsol/*` too.
+- **Not doing:** a plugin system, remote catalogues or module versions chosen
+  at runtime. The catalogue lives in this repository and changes with a
+  release, like everything else.
+- **Pages:** Caddy now serves the Konsol pages itself (`file_server`, same
+  security headers). A page that must show modules the file backend may not
+  exist any more once Dosya yöneticisi becomes a module, so pages cannot
+  depend on that backend.
+
 ### DD-147: Konsol without a password; Tailscale joins by link only (2026-09-16)
 
 - **Context:** the user is turning Konsol into the place where modules are

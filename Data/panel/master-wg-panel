@@ -31,6 +31,9 @@ import urllib.parse
 import urllib.request
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+# DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
+MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
+MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir")
 IFACE_RE = re.compile(r"^wg[0-9]$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
@@ -152,6 +155,74 @@ class Panel:
             message = message[6:]
         out = proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
         return proc.returncode, out, message
+
+    # -- modüller (DD-148)
+    def env(self):
+        env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
+        if self.args.state_env:
+            env["STATE_FILE"] = self.args.state
+            # Test: sahte systemd-run/systemctl master-modul ile aynı dizinde durur.
+            env["PATH"] = os.path.dirname(os.path.abspath(self.args.master_modul)) + ":" + env["PATH"]
+        return env
+
+    def modul(self, *argv, timeout=30):
+        try:
+            proc = subprocess.run([self.args.master_modul] + list(argv), capture_output=True, timeout=timeout,
+                                  env=self.env(), stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            return 1, "", "master-modul çalıştırılamadı (%s)" % err.__class__.__name__
+        err_lines = [l for l in proc.stderr.decode("utf-8", "replace").splitlines() if l.strip()]
+        message = err_lines[-1][6:] if err_lines and err_lines[-1].startswith("HATA: ") else (err_lines[-1] if err_lines else "")
+        return proc.returncode, proc.stdout.decode("utf-8", "replace"), message
+
+    @staticmethod
+    def module_unit(mid):
+        return "master-modul-%s.service" % mid
+
+    def module_busy(self, mid):
+        try:
+            proc = subprocess.run(["systemctl", "is-active", "--quiet", self.module_unit(mid)],
+                                  timeout=10, env=self.env(), stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return proc.returncode == 0
+
+    def modules(self):
+        rc, out, message = self.modul("liste")
+        if rc != 0:
+            raise RuntimeError(message or "modül listesi okunamadı")
+        items = []
+        for line in out.splitlines():
+            f = line.split("\t")
+            if len(f) != 8 or not MODULE_ID_RE.match(f[0]):
+                continue
+            mid, runtime, reg, live, action, step, total, text = f
+            progress = None
+            if action != "-":
+                progress = {"action": action, "step": step, "total": num_or(total, 0), "text": "" if text == "-" else text}
+            items.append({"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
+                          "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
+                          "busy": self.module_busy(mid), "progress": progress})
+        return items
+
+    def module_spawn(self, mid, action, with_data):
+        """master-modul'ü ayrı bir systemd birimi olarak başlatır: işlem sayfa kapansa da sürer."""
+        if self.module_busy(mid):
+            return 409, "bu modülde bir işlem sürüyor"
+        argv = ["systemd-run", "--unit=" + self.module_unit(mid), "--collect", "--quiet",
+                "--description=Konsol modül işlemi: %s %s" % (mid, action)]
+        if self.args.state_env:
+            argv.append("--setenv=STATE_FILE=%s" % self.args.state)
+        argv += [self.args.master_modul, action, mid] + (["--veri"] if action == "kaldir" and with_data else [])
+        try:
+            proc = subprocess.run(argv, capture_output=True, timeout=20, env=self.env(), stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            return 502, "işlem başlatılamadı (%s)" % err.__class__.__name__
+        if proc.returncode != 0:
+            lines = [l for l in proc.stderr.decode("utf-8", "replace").splitlines() if l.strip()]
+            return 502, "işlem başlatılamadı: %s" % (lines[-1] if lines else "systemd-run %d" % proc.returncode)
+        return 202, ""
 
     def peers(self, net, seen=None):
         rc, out, message = self.run("info", net=net)
@@ -508,6 +579,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except RuntimeError as err:
                 self.error(502, str(err))
             return
+        if path == "/api/konsol/moduller":
+            try:
+                self.json(200, {"items": self.panel.modules()})
+            except RuntimeError as err:
+                self.error(502, str(err))
+            return
+        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/gunluk$", path)
+        if m:
+            rc, out, message = self.panel.modul("gunluk", m.group(1), "80")
+            if rc != 0:
+                self.error(404 if "bilinmeyen modül" in message else 502, message or "günlük okunamadı")
+                return
+            self.send(200, out.encode("utf-8"), "text/plain; charset=utf-8")
+            return
         if path == "/api/wg/islemler":
             self.json(200, {"items": self.panel.actions()})
             return
@@ -567,6 +652,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         data = self.body_json()
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
+            return
+        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(kur|baslat|durdur|kaldir)$", path)
+        if m:
+            mid, action = m.group(1), m.group(2)
+            known = [i["id"] for i in self.panel.modules()] if MODULE_ID_RE.match(mid) else []
+            if mid not in known:
+                self.error(404, "bilinmeyen modül")
+                return
+            code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
+            self.audit(user, "modul-" + action, mid + (" +veri" if action == "kaldir" and data.get("veri") else ""), code == 202)
+            if code != 202:
+                self.error(code, message)
+                return
+            self.json(202, {"id": mid, "action": action})
             return
         if path == "/api/wg/nets":
             port = str(data.get("port", "")).strip()
@@ -697,6 +796,7 @@ def main():
     s.add_argument("--listen", required=True)
     s.add_argument("--state", required=True)
     s.add_argument("--master-wg", dest="master_wg", required=True)
+    s.add_argument("--master-modul", dest="master_modul", required=True)
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     s.add_argument("--state-env", dest="state_env", action="store_true",
                    help="master-wg'ye STATE_FILE olarak --state verilir (test)")

@@ -12,8 +12,9 @@ operator double-clicks — the current portable installer (`<V2_VERSION>.command
 
 The installer turns a fresh Debian 13
 (trixie) or Ubuntu 24.04/26.04 LTS host
-into a Tailscale exit-node with a fixed Docker Compose bundle, host
-dnsmasq + Caddy on the tailnet, and a persistent firewall. There is no
+into a Tailscale exit-node with a base Docker Compose bundle, host
+dnsmasq + Caddy on the tailnet, and a persistent firewall; optional parts
+are modules installed from Konsol (**DD-148**). There is no
 reconcile / self-healing engine by design.
 
 Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
@@ -98,6 +99,7 @@ state. Treat every change as production-infrastructure work.
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
+| `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller` (**DD-148**) |
 | `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only; `wg.` and `dosya.` redirect there (**DD-140**). Design mockups in `Data/docs/design/` |
 | WebDAV (`paylasim`) | The only rclone container: read-only, root `DOWNLOADS_PATH/.pay/w` (symlinks made by the file backend) at Caddy `paylas.<domain>` and `<tailscale-ip>:61010`; one account from `kurulum.env`. The downloads folder as a whole is not published (**DD-141**, **DD-142**) |
 | `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, `127.0.0.1:61008`, `/api/wg/*` only) built on `master-wg`; networks wg1…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
@@ -124,6 +126,8 @@ state. Treat every change as production-infrastructure work.
 - Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)
   only (**DD-102**). Noble live-verified 2026-08-29; resolute
   live-verified 2026-08-30, including re-run, service restarts and reboot.
-- Fixed service bundle — no installation profiles.
+- The installer lays down a fixed base; it never installs modules. Modules
+  are a fixed catalogue in `Data/modules/` + `master-modul`, installed from
+  Konsol → Modüller (**DD-148**). No installation profiles.
 - Do not delete or recreate Docker-owned iptables chains; manage only
   project chains and jumps into `DOCKER-USER`.

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-114"
+V2_VERSION="2026.08.06-v2-115"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -87,6 +87,8 @@ WG_MTU=$WG_MTU
 WG_NETWORKS_FILE=$WG_NETWORKS_FILE
 WG_NETWORKS_MAX=$WG_NETWORKS_MAX
 WG_PANEL_PORT=$WG_PANEL_PORT
+MODULES_FILE=$MODULES_FILE
+MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
@@ -728,6 +730,43 @@ assert_downloads_path_allowed() {
     esac
 }
 
+# DD-148: modüllerin dosyaları. Kurulum her modülün şablonunu yer tutucuları doldurarak
+# MODULES_DIR/<id>/ altına yazar ve kayıt dosyasını (yoksa boş) oluşturur; hiçbir modülü
+# kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Değişen dosyayı kayıtta "calisiyor"
+# olan bir modül için aşama 7 yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
+MODULES_CHANGED=""
+ensure_module_files() {
+    install -d -m 0755 -o root -g root "$MODULES_DIR"
+    install -d -m 0755 -o root -g root "$MODULES_DIR/unpackerr"
+    render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644 \
+        UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
+        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        DOWNLOADS_UID="$DOWNLOADS_UID" \
+        DOWNLOADS_GID="$DOWNLOADS_GID" \
+        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
+        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
+        TIMEZONE="$TIMEZONE"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && MODULES_CHANGED="$MODULES_CHANGED unpackerr"
+    if [[ ! -f "$MODULES_FILE" ]]; then
+        atomic_write "$MODULES_FILE" 0644 </dev/null
+    fi
+    chown root:root "$MODULES_FILE"
+    chmod 0644 "$MODULES_FILE"
+}
+
+# DD-148: dosyası değişen ve kayıtta çalışan modül yeniden uygulanır; durdurulmuş ya da
+# kurulmamış modüle dokunulmaz. Kurulum hiçbir modülü kaldırmaz.
+reapply_modules() {
+    local id state
+    for id in $MODULES_CHANGED; do
+        state="$(awk -F'\t' -v i="$id" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true)"
+        [[ "$state" == calisiyor ]] || continue
+        log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
+        "$SBIN_DIR/master-modul" baslat "$id" >/dev/null ||
+            log WARN "Modül $id yeniden başlatılamadı; Konsol → Modüller'den bakın"
+    done
+}
+
 # DD-119: users.yml tek kullanıcı taşıyor, adı dosyadaki ve özeti parolayla
 # eşleşiyorsa 0. Kullanıcılar 4, alanları 8 boşluk girintili (generate çıktısı).
 dozzle_users_match() {
@@ -1064,7 +1103,6 @@ stage_4() {
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         DOZZLE_IMAGE="$DOZZLE_IMAGE" \
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
-        UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
         RCLONE_IMAGE="$RCLONE_IMAGE" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
@@ -1106,6 +1144,8 @@ stage_4() {
     fi
 
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
+    atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
+    ensure_module_files
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
     atomic_write "$SBIN_DIR/refresh-tailnet-config" 0755 \
@@ -1273,8 +1313,10 @@ EOF
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
+        CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
         SHARE_PORT="$SHARE_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
+    ensure_console_pages
     # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
     # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
     # doğrula (DD-106). Çıktı normalde JSON log satırları; hata satırını süz,
@@ -1413,6 +1455,15 @@ ensure_wg_panel() {
 # aynıdır: root'a özel özet dosyası LoadCredential ile servisin kendi kopyasına gelir, bu
 # yüzden hesap değişince panel yeniden başlar. qBittorrent'in yarım indirme klasörü
 # şablondan okunur; panel orada taşıma/silme için uyarır.
+# DD-148: Konsol sayfaları temeldir; Caddy doğrudan sunar (dosya yöneticisi modüldür).
+ensure_console_pages() {
+    local f
+    install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
+    for f in index.html konsol.css konsol.js; do
+        atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
+    done
+}
+
 ensure_files_panel() {
     local changed="${1:-0}" f temp_dir user group
     # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
@@ -1435,10 +1486,6 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    install -d -m 0755 "$CONSOLE_WEB_DIR"
-    for f in index.html konsol.css konsol.js; do
-        atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
-    done
     # qBittorrent'in geçici klasörü konteyner yoluyla yazılıdır; panel onu kullanıcı
     # alanının köküne göre bilir (DD-144): <indirme klasörü>/<geçici>.
     temp_dir="$(awk -F= '$1 == "Session\\TempPath" {print $2; exit}' "$V2_ROOT/templates/qBittorrent.conf")"
@@ -1452,7 +1499,6 @@ ensure_files_panel() {
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
-        CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_CRED_FILE="$SHARE_CRED_FILE" \
@@ -1550,6 +1596,7 @@ stage_7() {
     else
         log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
     fi
+    reapply_modules
     if [[ "$PULL_IMAGES" -eq 1 ]]; then
         log INFO "docker image prune (eski imaj katmanları temizleniyor)"
         docker image prune -f >/dev/null || log WARN "docker image prune başarısız (yok sayıldı)"
@@ -1739,7 +1786,6 @@ stage_7() {
             "http://${wg_first_addr}:${FILES_PANEL_PORT}/" || true)"
         [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
     fi
-    # Çöp unpackerr'a ve WebDAV'a boş görünmeli: içindeki arşivler yeniden açılmaz, Infuse listelemez.
     # DD-141: paylaşım salt okunur ve girişsiz açılmaz; kök klasör indirme sahibinde.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: paylas.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
@@ -1753,11 +1799,8 @@ stage_7() {
     [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
         die "Paylaşım kökü ${SERVER_ROOT}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
 
-    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; unpackerr ve qBittorrent
-    # yalnız indirme klasörünü bağlar, o yüzden ikisini de göremez (tmpfs perdesi gerekmez).
-    docker exec unpackerr sh -c \
-        "test ! -e /downloads/${FILES_PANEL_TRASH} && test ! -e /downloads/${SHARE_DIR}" ||
-        die "unpackerr konteyneri çöp ya da paylaşım klasörünü görüyor; indirme klasörünün dışında olmalılar"
+    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; qBittorrent yalnız indirme
+    # klasörünü bağlar, o yüzden ikisini de göremez. Arşiv açıcı modülünü master-modul sınar (DD-148).
     docker exec qbittorrent sh -c \
         "test ! -e /downloads/${FILES_PANEL_TRASH} && test ! -e /downloads/${SHARE_DIR}" ||
         die "qBittorrent konteyneri çöp ya da paylaşım klasörünü görüyor"

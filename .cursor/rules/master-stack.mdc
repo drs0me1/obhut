@@ -100,7 +100,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Compose içerisinde şu servisler yer alacak:
   - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
   - qBittorrent (Transmission'dan geri dönüldü, DD-127; yönetilen ayarlar `templates/qBittorrent.conf`, hesap `TORRENT_USER`/`TORRENT_PASS`, parola yalnız PBKDF2 özeti, DD-129; giriş zorunlu)
-  - Unpackerr
+  - Unpackerr artık temel değil: Konsol → Modüller'den kurulan modül (DD-148; ayrı Compose projesi `unpackerr`, dosyası `Data/modules/unpackerr/compose.yaml`)
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
 ### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)
@@ -127,7 +127,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Paylaşım (DD-141): Konsol'dan paylaşılan klasör/dosya `DOWNLOADS_PATH/.pay/w` içine göreli sembolik bağlantı olarak girer; kayıt `.pay/kayit.json` (sunulmaz). İkinci rclone konteyneri `paylasim` bu kökü `--read-only --copy-links` ile `paylas.<alan>` adresinde sunar, indirme klasörünü `:ro` bağlar. Hesap `SHARE_USER`/`SHARE_PASS`: rclone için bcrypt htpasswd, Konsol'un göstermesi için root'a özel düz kopya. `.pay` unpackerr ve webdav'da boş tmpfs'tir; dosya paneli listede göstermez.
 - Servis root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Yazabildiği tek yer `DOWNLOADS_PATH`.
 - Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
-- `unpackerr` ve `webdav` konteynerleri `.cop`'u boş tmpfs olarak görür (çöpteki arşivler yeniden açılmaz). Bu bağlantıyı kaldırma.
+- Çöp (`.cop`) ve paylaşım kökü `/srv/downloads` dışındadır; Arşiv açıcı modülü onları görmez (DD-144). `master-modul kur` bunu sınar; indirme bağlamasını genişletme.
 
 ### Port yayın politikası
 
@@ -285,3 +285,10 @@ Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 4. `--desktop` ile Masaüstü'ne `<V2_VERSION>.command` kopyala.
 5. Ayrı upload/sync betiği kullanma; tek dağıtım birimi bu app dosyasıdır.
 6. Gömülü tarball `app`, `dev`, `tests`, `.cursor` ve `docs` içermez.
+
+## Modüller (DD-148)
+
+- Temiz kurulum yalnız temeli kurar; modüller Konsol → Modüller'den kurulur. Kurulum hiçbir modülü kurmaz, durdurmaz, kaldırmaz; yalnız dosyalarını `MODULES_DIR/<id>/` altına işler ve değişen dosyası olan, `calisiyor` kayıtlı modülü yeniden başlatır.
+- Katalog `Data/scripts/master-modul` içindedir (sabit id + fiiller). Serbest argüman ekleme; kök arka uç id'yi `liste` ile doğrular.
+- İşlem `systemd-run --unit=master-modul-<id>.service` ile ayrı birimde çalışır; birim etkinken aynı modüle istek 409 alır. İlerleme `RUNTIME_DIR/modul-<id>.ilerleme`.
+- Docker modülleri ayrı Compose projesidir (`-p <id>`). `kaldir --veri` yalnız modülün kendi verisini siler; `/srv` altındaki kullanıcı dosyaları hiçbir modülün verisi değildir.

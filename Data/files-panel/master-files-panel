@@ -7,7 +7,7 @@
 # (DD-147): erişim sınırı Tailscale. Servis root değil, kullanıcı alanının sahibi olarak
 # çalışır. Yalnız Python standart kütüphanesi.
 #
-#   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN --web DİZİN [--trash AD]
+#   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN [--trash AD]
 #                            [--domain ALAN] [--version SÜRÜM] [--temp-dir AD] [--allow-host HOST]
 #   master-files-panel check --url URL --host HOST
 #
@@ -64,11 +64,6 @@ ACTOR = "konsol"
 # Disk kartındaki "indirilenler" toplamı: kök ağacının yürüyüşü pahalıdır, önbelleğe alınır.
 USAGE_CACHE_SECONDS = 300
 ENCODINGS = {"utf-8": "utf-8-sig", "cp1254": "cp1254", "cp437": "cp437"}
-STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/konsol.css": ("konsol.css", "text/css; charset=utf-8"),
-    "/konsol.js": ("konsol.js", "text/javascript; charset=utf-8"),
-}
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; "
        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
@@ -940,14 +935,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(split.query, keep_blank_values=True)
         arg = lambda key: (query.get(key) or [""])[0]
         files = self.panel.files
-        if route in STATIC:
-            name, ctype = STATIC[route]
-            try:
-                with open(os.path.join(self.panel.args.web, name), "rb") as fh:
-                    self.send(200, fh.read(), ctype)
-            except OSError:
-                self.error(500, "panel dosyası yok: %s" % name)
-            return
         if route == "/api/state":
             self.run(user, None, lambda: (200, self.panel.state(), None), lock=False)
         elif route == "/api/list":
@@ -1194,7 +1181,6 @@ def main():
     s = sub.add_parser("serve")
     s.add_argument("--listen", required=True)
     s.add_argument("--root", required=True)
-    s.add_argument("--web", required=True)
     s.add_argument("--trash", default=".cop")
     s.add_argument("--share", default="")
     s.add_argument("--share-credential", dest="share_credential", default="")

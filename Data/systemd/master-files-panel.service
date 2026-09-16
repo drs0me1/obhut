@@ -13,7 +13,7 @@ Type=simple
 # DOWNLOADS_UID/GID'nin adı (kurulum bulur ya da girişsiz sistem hesabı açar).
 User=__FILES_PANEL_USER__
 Group=__FILES_PANEL_GROUP__
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-files-panel serve --listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__ --web __CONSOLE_WEB_DIR__ --trash __FILES_PANEL_TRASH__ --share __SHARE_DIR__ --share-credential paylasim-auth --domain=__LOCAL_DOMAIN__ --version=__V2_VERSION__ --temp-dir=__QBITTORRENT_TEMP_DIR__
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-files-panel serve --listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__ --trash __FILES_PANEL_TRASH__ --share __SHARE_DIR__ --share-credential paylasim-auth --domain=__LOCAL_DOMAIN__ --version=__V2_VERSION__ --temp-dir=__QBITTORRENT_TEMP_DIR__
 # Hesap WireGuard paneliyle aynı: root'a özel özet dosyasının kopyası yalnız bu servise açılır.
 # DD-141: paylaşım hesabının düz kopyası; Konsol adres/kullanıcı/parolayı gösterir.
 LoadCredential=paylasim-auth:__SHARE_CRED_FILE__

@@ -35,6 +35,9 @@
     share: '<circle cx="4.8" cy="9" r="2"/><circle cx="13.2" cy="4.6" r="2"/><circle cx="13.2" cy="13.4" r="2"/><path d="M6.6 8.1l4.8-2.6M6.6 9.9l4.8 2.6"/>',
     eye: '<path d="M1.8 9S4.4 4.2 9 4.2 16.2 9 16.2 9 13.6 13.8 9 13.8 1.8 9 1.8 9z"/><circle cx="9" cy="9" r="2.2"/>',
     upload: '<path d="M9 11.6V3.2M5.6 6.6L9 3.2l3.4 3.4M3.2 14.6h11.6"/>',
+    box: '<path d="M2.8 5.4L9 2.4l6.2 3v7.2L9 15.6l-6.2-3z"/><path d="M2.8 5.4L9 8.4l6.2-3M9 8.4v7.2"/>',
+    play: '<path d="M5.6 3.6v10.8L14.2 9z"/>',
+    pause: '<path d="M6 3.8v10.4M12 3.8v10.4"/>',
     search: '<circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.4 15.4"/>',
     close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
   };
@@ -926,6 +929,7 @@
     $("cf-sub").textContent = o.sub || "";
     $("cf-list").replaceChildren(...o.items.map(([ic, text]) => h("li", null, svg(ic), h("span", null, text))));
     $("cf-list").classList.toggle("calm", !!o.calm);
+    $("cf-extra").replaceChildren(...(o.extra ? [o.extra] : []));
     $("cf-word-row").hidden = !o.word;
     $("cf-word").value = "";
     const go = $("cf-go");
@@ -1632,6 +1636,129 @@
       : [h("div", { class: "empty-row" }, h("strong", null, "Kayıt yok"), h("span", null, "Konsol'dan yapılan değişiklikler burada görünür."))]));
   }
 
+  /* ---------- Modüller (DD-148) ---------- */
+  // Katalog sunucudan gelir (master-modul liste); burada yalnız görünüm bilgisi durur.
+  const MOD_META = {
+    unpackerr: { name: "Arşiv açıcı", sub: "Unpackerr · indirilen arşivleri açar", icon: "box", tone: "t-text",
+      desc: "İndirme klasöründeki .rar ve .zip arşivlerini kendi yerinde açar.",
+      will: [["box", "unpackerr konteyneri (~15 MB)"], ["folder", "Yalnız indirme klasörünü görür; çöp ve paylaşım görünmez"], ["lock", "Port, ad, arayüz ve ağ yok"]],
+      facts: ["unpackerr · konteyner", "port yok"],
+      steps: ["İmaj indiriliyor", "Konteyner başlatılıyor"],
+      removeWhat: [["box", "Konteyner ve imaj kaldırılır."]],
+      removeKeep: "günlüğü kalır, yeniden kurulunca devam eder.", removeDrop: "Modülün günlüğü silinir.",
+      stopNote: "Yeni arşivler açılmaz; açılmış olanlar yerinde kalır." },
+  };
+  const RUNTIME = { docker: ["docker", "box", "Docker"], host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
+  let MODS = null, modTimer = null;
+  const modLogs = {};
+  // İstek kabul edilince birim başlar ama ilerleme dosyasında bir an önceki işlemin satırı durur;
+  // o arada istenen işlem gösterilir.
+  const modPending = {};
+  function loadModules() {
+    return api("/api/konsol/moduller").then((r) => {
+      MODS = r.items || [];
+      MODS.forEach((m) => {
+        const want = modPending[m.id];
+        if (!want) return;
+        if (!m.busy) { delete modPending[m.id]; return; }
+        const p = m.progress;
+        if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
+      });
+      const n = MODS.filter((m) => m.installed).length;
+      $("nav-mods").textContent = MODS.length ? `${n}/${MODS.length}` : "";
+      if (current === "moduller") renderModules();
+      clearTimeout(modTimer);
+      if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
+    }).catch(fail);
+  }
+  function modAct(m, action, veri) {
+    return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, { veri: !!veri })
+      .then(() => { modPending[m.id] = action; m.busy = true; m.progress = { action, step: "0", total: 0, text: "" }; renderModules(); return loadModules(); }).catch(fail);
+  }
+  function modPill(m) {
+    if (m.busy) {
+      const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor" }[m.progress && m.progress.action] || "İşleniyor";
+      return h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), label);
+    }
+    if (!m.installed) return h("span", { class: "hm" }, "Kurulu değil");
+    if (m.state === "durduruldu") return h("span", { class: "hm idle" }, "Durduruldu");
+    if (m.runtime === "docker" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
+    return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
+  }
+  function modCard(m) {
+    const meta = MOD_META[m.id] || { name: m.id, sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
+    const [rtCls, rtIcon, rtLabel] = RUNTIME[m.runtime] || RUNTIME.docker;
+    const kids = [h("div", { class: "card-head" },
+      h("div", { class: "mod-who" }, h("span", { class: `svc-ico ${meta.tone}` }, svg(meta.icon)),
+        h("div", null, h("h2", null, meta.name, h("span", { class: `rt-chip ${rtCls}` }, svg(rtIcon), rtLabel)), h("small", null, meta.sub))),
+      h("div", { class: "head-right" }, modPill(m)))];
+    const p = m.progress;
+    if (m.busy && p && p.action === "kur") {
+      const at = Number(p.step) || 1;
+      kids.push(h("p", { class: "mod-desc" }, meta.desc),
+        h("ol", { class: "steps", "aria-live": "polite" }, meta.steps.map((t, i) => h("li", { class: "step" + (i + 1 < at ? " done" : i + 1 === at ? " now" : "") },
+          h("span", { class: "mark" }, i + 1 < at ? svg("check") : i + 1 === at ? h("span", { class: "spin" }) : null), h("span", null, t)))),
+        h("div", { class: "card-foot" }, h("span", { class: "hint-s" }, "Sayfadan çıkabilirsiniz; işlem sunucuda sürer.")));
+    } else if (!m.installed) {
+      const failed = p && p.step === "hata" && !m.busy ? p : null;
+      kids.push(h("p", { class: "mod-desc" }, meta.desc),
+        h("div", { class: "acct-box" }, h("div", { class: "acct-head" }, h("span", null, "Kurunca")),
+          h("ul", { class: "will" }, meta.will.map(([ic, t]) => h("li", null, svg(ic), h("span", null, t))))),
+        failed ? h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))) : null,
+        h("div", { class: "card-foot" },
+          h("button", { type: "button", class: "btn btn-sm btn-primary", disabled: m.busy, onclick: () => modAct(m, "kur") }, svg("plus"), "Kur"),
+          h("span", { class: "mod-facts grow" }, meta.facts.map((t) => h("span", null, t)))));
+    } else {
+      const failed = p && p.step === "hata" && !m.busy ? p : null;
+      const body = [h("p", { class: "mod-desc" }, meta.desc)];
+      if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
+      if (modLogs[m.id] != null) {
+        body.push(h("div", { class: "logbox" },
+          h("div", { class: "acct-head" }, h("span", null, "Günlük"), h("span", { class: "src" }, m.runtime === "docker" ? `docker logs ${m.id}` : m.id)),
+          h("pre", { tabindex: "0" }, modLogs[m.id] || "(boş)")));
+      }
+      const running = m.state === "calisiyor";
+      kids.push(h("div", { class: "mod-facts" }, meta.facts.map((t) => h("span", null, t))), h("div", { class: "acct-box" }, body),
+        h("div", { class: "card-foot" },
+          running
+            ? h("button", { type: "button", class: "btn btn-sm btn-quiet", disabled: m.busy, onclick: () => ask({
+                title: `${meta.name} durdurulsun mu?`, sub: "Kurulu kalır; istediğinizde başlatırsınız", calm: true, go: "Durdur",
+                items: [["pause", meta.stopNote], ["info", "Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]],
+                onOk: () => modAct(m, "durdur") }) }, svg("pause"), "Durdur")
+            : h("button", { type: "button", class: "btn btn-sm btn-primary", disabled: m.busy, onclick: () => modAct(m, "baslat") }, svg("play"), "Başlat"),
+          h("button", { type: "button", class: "btn btn-sm btn-quiet", "aria-expanded": String(modLogs[m.id] != null), onclick: () => {
+            if (modLogs[m.id] != null) { delete modLogs[m.id]; renderModules(); return; }
+            fetch(`/api/konsol/moduller/${enc(m.id)}/gunluk`, { headers: { "X-Konsol": "1" }, cache: "no-store" })
+              .then((r) => r.text()).then((txt) => { modLogs[m.id] = txt; renderModules(); }).catch(fail);
+          } }, svg("list"), modLogs[m.id] != null ? "Günlüğü gizle" : "Günlük"),
+          h("button", { type: "button", class: "btn btn-sm btn-quiet danger-text grow", disabled: m.busy, onclick: () => {
+            const box = h("input", { type: "checkbox", id: "mod-veri" });
+            ask({ title: `${meta.name} kaldırılsın mı?`, sub: "Modül ve açtığı her şey kalkar", go: "Kaldır", danger: true,
+              items: [...meta.removeWhat, ["folder", "Kullanıcı alanındaki dosyalarınıza dokunulmaz."]],
+              extra: h("label", { class: "opt", for: "mod-veri" }, box, h("span", null, "Modülün verisini de sil", h("small", null, `${meta.removeDrop} İşaretlemezseniz: ${meta.removeKeep}`))),
+              onOk: () => modAct(m, "kaldir", box.checked) });
+          } }, svg("trash"), "Kaldır")));
+    }
+    return h("article", { class: "card span-6 mod" + (m.installed || m.busy ? "" : " absent"), "aria-busy": String(!!m.busy) }, kids);
+  }
+  function renderModules() {
+    const sys = S.sys || {};
+    const base = [
+      ["gauge", "Konsol çekirdeği", "sayfalar, modül yöneticisi, günlük · parolasız, yalnız Tailscale"],
+      ["globe", "Tailscale", sys.net && sys.net.tailscale ? `bağlı · ${sys.net.tailscale}` : "bağlı"],
+      ["server", "Ad çözümleme + Caddy", "panel adresi; modüller kendi adlarını ekler"],
+      ["shield", "Güvenlik duvarı", "modüller kural ekler, kaldırılınca kural kalkar"],
+      ["box", "Docker motoru", "konteyner modülleri burada çalışır"],
+    ];
+    $("mod-base").replaceChildren(...base.map(([ic, name, sub]) => h("div", { class: "base-item" },
+      h("span", { class: "svc-ico t-dir" }, svg(ic)),
+      h("div", null, h("strong", null, h("span", { class: "dotmark", "aria-hidden": "true" }), name), h("small", null, sub)))));
+    if (!MODS) { $("mod-grid").replaceChildren(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
+    const n = MODS.filter((m) => m.installed).length;
+    $("mod-sum").textContent = `${n} kurulu · ${MODS.length - n} kurulabilir`;
+    $("mod-grid").replaceChildren(...MODS.map(modCard));
+  }
+
   /* ---------- yönlendirme ---------- */
   const ROUTES = {
     genel: { title: "Genel bakış", eyebrow: "Sunucu durumu",
@@ -1639,6 +1766,7 @@
     wireguard: { title: "WireGuard", eyebrow: "Cihazlar ve ağlar", actions: () => [], render: renderWg },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı, paylaşımlar ve çöp", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (!fsList) loadFs(); } },
+    moduller: { title: "Modüller", eyebrow: "Temiz kurulumda yalnız temel · gerisi buradan", actions: () => [], render: () => { renderModules(); loadModules(); } },
     gunluk: { title: "Günlük", eyebrow: "Konsol'dan yapılan işlemler", actions: () => [], render: () => { renderLog(); loadActions(); } },
   };
   const ADD_ROUTE = { title: "Arayüz ekle", eyebrow: "WireGuard · yeni ağ", first: true,
@@ -1672,12 +1800,13 @@
   function refreshAll() {
     return Promise.all([loadWg(), loadSystem(), loadFsState(), loadActions()]);
   }
-  refreshAll().then(() => { route(); loadFs(); });
+  refreshAll().then(() => { route(); loadFs(); loadModules(); });
   setInterval(() => {
     if (document.hidden) return;
     loadWg();
     loadSystem();
     if (current === "genel" || current === "gunluk") loadActions();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
+    if (current === "moduller" && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
 })();
