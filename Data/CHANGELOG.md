@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-16 — Every network card can be removed, wg0 included (v2-110)
+
+- **Changed** (**DD-143**): the console's WireGuard cards all carry the same two
+  actions — regenerate (↻) and remove (🗑). `wg0` was the last place where the
+  installer's old ownership showed; it is a network like any other now. Removing
+  the last one asks for `onayla`, says so in the confirm list, and leaves the
+  page on "WireGuard yapılandırılmadı → Yapılandır".
+
 ### 2026-09-16 — The installer no longer creates WireGuard; Konsol does (v2-109)
 
 - **Changed** (**DD-143**): a fresh install leaves WireGuard empty. The

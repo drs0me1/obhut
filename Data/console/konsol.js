@@ -415,7 +415,7 @@
     tabs.textContent = "";
     nets().forEach((n) => {
       const online = n.peers.filter((p) => effState(Object.assign({ net: n }, p)) === "ok").length;
-      const sel = wgNet === n.iface, base = n.iface === "wg0";
+      const sel = wgNet === n.iface;
       tabs.append(h("div", { class: "nettab" + (sel ? " sel" : "") + (n.active ? "" : " off") },
         h("button", { type: "button", class: "nt-main", role: "tab", "aria-selected": sel, onclick: () => selectNet(n.iface) },
           h("span", { class: "nt-top" }, h("span", { class: "nt-if" }, n.iface), h("span", { class: "nt-lab" }, labelOf(n))),
@@ -424,7 +424,8 @@
             n.active ? `${online}/${n.peers.length} bağlı` : "Kapalı")),
         h("span", { class: "nt-actions" },
           h("button", { type: "button", class: "nt-act", title: `${n.iface} yeniden üret`, "aria-label": `${n.iface} arayüzünü yeniden üret`, onclick: () => askRegen(n) }, svg("refresh")),
-          base ? null : h("button", { type: "button", class: "nt-act del", title: `${n.iface} arayüzünü kaldır`, "aria-label": `${n.iface} arayüzünü kaldır`, onclick: () => askDeleteNet(n) }, svg("trash")),
+          // DD-143: her ağ eşittir; wg0 da kaldırılabilir (son ağ kalkınca sayfa Yapılandır'a döner).
+          h("button", { type: "button", class: "nt-act del", title: `${n.iface} arayüzünü kaldır`, "aria-label": `${n.iface} arayüzünü kaldır`, onclick: () => askDeleteNet(n) }, svg("trash")),
           h("button", { type: "button", class: "vsw", role: "switch", "aria-checked": n.active, title: n.active ? "Arayüzü kapat" : "Arayüzü aç",
             "aria-label": `${n.iface} arayüzü`, onclick: () => toggleNet(n) }))));
     });
@@ -549,16 +550,18 @@
 
   function askDeleteNet(n) {
     const names = n.peers.map((p) => p.name);
+    const last = nets().length === 1;
     ask({
       title: `${n.iface} · ${labelOf(n)} kaldırılsın mı?`, sub: `UDP ${n.port} · ${n.subnet4} · ${scopeText(n)}`, word: true, danger: true,
       items: [
         ["shield", names.length ? `${names.length} cihazın bağlantısı kesilir; profilleri ve QR kodları silinir (${names.join(", ")}).` : "Bu ağda cihaz yok."],
         ["lock", `UDP ${n.port} kapanır; bu ağın güvenlik duvarı kuralları kaldırılır.`],
         ["trash", "Sunucu anahtarı silinir. Geri alınamaz; aynı ağ yeniden eklenirse cihazlara yeni profil gerekir."],
-      ],
+        last ? ["plus", "Bu son ağ: kaldırınca WireGuard yapılandırılmamış duruma döner, yeni ağı Yapılandır ile kurarsınız."] : null,
+      ].filter(Boolean),
       go: "Arayüzü kaldır",
       onOk: () => post(netPath(n.iface, "/remove"), { confirm: "onayla" }).then((r) => {
-        if (wgNet === n.iface) wgNet = "wg0";
+        if (wgNet === n.iface) wgNet = "";
         return loadWg().then(() => toast(`${n.iface} kaldırıldı: ${r.peers} cihaz silindi, UDP ${n.port} kapandı.`));
       }).catch(fail),
     });

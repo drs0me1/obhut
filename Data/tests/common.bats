@@ -2546,6 +2546,10 @@ EOF
     grep -q 'id="wg-tabs"' "$V2_ROOT/console/index.html"
     grep -q 'data-view="wgadd"' "$V2_ROOT/console/index.html"
     grep -q 'id="na-create"' "$V2_ROOT/console/index.html"
+    # DD-143: her ağ kartında kaldırma var; wg0 ayrıcalıklı değil.
+    run ! grep -q 'base ? null' "$V2_ROOT/console/konsol.js"
+    grep -q 'arayüzünü kaldır' "$V2_ROOT/console/konsol.js"
+    grep -q 'Bu son ağ' "$V2_ROOT/console/konsol.js"
     run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$V2_ROOT/panel/master-wg-panel" "$unit"
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.

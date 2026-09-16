@@ -45,6 +45,12 @@ settings identical, Portainer admin present, host fully healthy. Recorded in
 version-agnostic and was exercised at v2-79). Open question raised by the user:
 whether WebDAV/Infuse state belongs in the backup — analysis in the session
 reply; no code change yet.
+**2026-09-16 — v2-110, every network card can be removed (DD-143):**
+- The console's wg0 card now carries the same actions as the others: ↻ regenerate and 🗑 remove. Removing
+  the last network warns that the page returns to "Yapılandır".
+- Live on nrm: wg0 removed from the console (interface gone, registry empty, units disabled, firewall clean,
+  0 networks in the console), then re-created with Yapılandır and up again. bats 150 ok.
+
 **2026-09-16 — v2-109, the installer no longer creates WireGuard (DD-143):**
 - User's decision: cut the Mac link (no snapshot, no peer preservation, no upload) and let the panel create
   interfaces and devices; `wireguard.command` keeps working over SSH.
