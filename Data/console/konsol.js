@@ -34,6 +34,9 @@
     restore: '<path d="M3.6 8.8a5.4 5.4 0 1 0 1.6-3.9"/><path d="M3.4 2.6v3.2h3.2"/>',
     share: '<circle cx="4.8" cy="9" r="2"/><circle cx="13.2" cy="4.6" r="2"/><circle cx="13.2" cy="13.4" r="2"/><path d="M6.6 8.1l4.8-2.6M6.6 9.9l4.8 2.6"/>',
     eye: '<path d="M1.8 9S4.4 4.2 9 4.2 16.2 9 16.2 9 13.6 13.8 9 13.8 1.8 9 1.8 9z"/><circle cx="9" cy="9" r="2.2"/>',
+    upload: '<path d="M9 11.6V3.2M5.6 6.6L9 3.2l3.4 3.4M3.2 14.6h11.6"/>',
+    search: '<circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.4 15.4"/>',
+    close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
   };
   const svg = (name) => {
     const t = document.createElement("template");
@@ -271,7 +274,7 @@
     renderPorts();
   }
 
-  /* disk: indirilenler, çöp ve sistem; boyutlar dosya arka ucundan */
+  /* disk: kullanıcı alanı, çöp ve sistem; boyutlar dosya arka ucundan */
   function renderDisk() {
     const fs = S.fs;
     if (!fs) return;
@@ -292,7 +295,7 @@
     } else {
       bar.replaceChildren(seg("seg-dl", downloads), seg("seg-cop", trash), seg("seg-sys", other));
       $("disk-leg").replaceChildren(
-        h("span", null, h("i", { class: "seg-dl" }), `İndirilenler ${bytes(downloads)}`),
+        h("span", null, h("i", { class: "seg-dl" }), `Sunucu ${bytes(downloads)}`),
         h("span", null, h("i", { class: "seg-cop" }), `Çöp ${bytes(trash)}`),
         h("span", null, h("i", { class: "seg-sys" }), `Sistem ${bytes(other)}`));
     }
@@ -607,7 +610,11 @@
     rowMenu.querySelector("button").focus();
   }
   document.addEventListener("click", (e) => { if (!e.target.closest("#rowmenu") && !e.target.closest(".more-btn")) closeRowMenu(); }, true);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRowMenu(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    closeRowMenu();
+    if (current === "dosyalar" && fsSel.size && !document.querySelector("dialog[open]")) clearSel();
+  });
   window.addEventListener("resize", closeRowMenu);
   window.addEventListener("scroll", closeRowMenu, true);
 
@@ -944,15 +951,34 @@
 
   /* ---------- Dosyalar ---------- */
   let fsPath = [], fsView = "files", fsList = null, fsTrash = null, fsAdding = false, fsRename = null;
-  const fsHere = () => ["/downloads", ...fsPath].join("/") || "/";
+  /* DD-145: kısayol sütunu, arama, çoklu seçim ve listenin içine bırakarak yükleme. */
+  let fsRootDirs = null, fsQuery = "", fsSel = new Set(), fsLast = "", fsUps = [], upSeq = 0, upBusy = false, dragDepth = 0;
+  /* DD-144: kök kullanıcı alanı (/srv); adı arka uçtan gelir, hiçbir yerde sabit yazılmaz. */
+  const fsRoot = () => (S.fs && S.fs.root) || "/srv";
+  const fsHere = () => [fsRoot(), ...fsPath].join("/") || "/";
   const pathText = (parts) => parts.join("/");
+  /* qBittorrent'in geçici klasörü köke göre verilir (ör. downloads/incomplete). */
+  const tempRel = () => (S.fs && S.fs.temp) || "";
+  const inTemp = (rel) => { const t = tempRel(); return !!t && (rel === t || rel.startsWith(t + "/")); };
   const kindOf = (item) => (item.type === "dir" ? "dir" : /\.(txt|log|nfo|srt|sub|md|json|conf|ini|csv|yml|yaml)$/i.test(item.name) ? "text"
     : /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i.test(item.name) ? "video" : "file");
   const isText = (item) => kindOf(item) === "text";
 
   function loadFs() {
-    return api(`/api/list?path=${enc(pathText(fsPath))}`).then((r) => { fsList = r; renderFs(); })
-      .catch((e) => { fail(e); if (fsPath.length) { fsPath = []; loadFs(); } });
+    return api(`/api/list?path=${enc(pathText(fsPath))}`).then((r) => {
+      fsList = r;
+      fsSel.forEach((n) => { if (!r.entries.some((e) => e.name === n)) fsSel.delete(n); });
+      if (!fsPath.length) fsRootDirs = r.entries.filter((e) => e.type === "dir").map((e) => ({ name: e.name, count: e.count }));
+      renderFs();
+      if (fsRootDirs == null) loadRootDirs();
+    }).catch((e) => { fail(e); if (fsPath.length) { fsPath = []; loadFs(); } });
+  }
+  /* Alt klasörden açılan sayfada da kısayol sütunu dolsun. */
+  function loadRootDirs() {
+    return api("/api/list?path=&dirs=1").then((r) => {
+      fsRootDirs = r.entries.map((e) => ({ name: e.name, count: e.count }));
+      renderRail();
+    }).catch(() => { fsRootDirs = []; });
   }
   function loadTrash() {
     return api("/api/trash").then((r) => { fsTrash = r.items || []; renderFs(); }).catch(fail);
@@ -962,6 +988,8 @@
     fsAdding = false;
     fsRename = null;
     fsList = null;
+    fsSel.clear();
+    fsQuery = "";
     renderFs();
     loadFs();
   }
@@ -974,72 +1002,247 @@
     else if (!fsList) loadFs();
   }
 
-  function fsCard(o) {
-    return h("div", { class: "nettab fs" + (o.sel ? " sel" : "") },
-      h("button", { type: "button", class: "nt-main", role: "tab", "aria-selected": o.sel, onclick: o.onSelect },
-        h("span", { class: "nt-top" }, h("span", { class: `fs-ico ${o.tone}` }, svg(o.icon)), h("span", { class: "nt-title" }, o.title)),
-        h("small", null, h("span", { class: "mono" }, o.path), ` · ${o.detail}`),
-        h("span", { class: "nt-pills" }, ...o.pills.map(([text, cls]) => h("span", { class: "nt-cnt" + (cls ? ` ${cls}` : "") }, text))),
-        o.meter != null ? h("span", { class: "nt-meter", title: `Disk %${o.meter} dolu` }, h("i", { style: { width: `${o.meter}%` } })) : null),
-      h("span", { class: "nt-actions" }, o.action));
+  /* ---- kısayol sütunu: kök, üst klasörler, paylaşımlar, çöp, disk ---- */
+  function railBtn(o) {
+    return h("button", { type: "button", class: "rl" + (o.cur ? " cur" : ""), "aria-current": o.cur ? "true" : "false", title: o.title, onclick: o.onclick },
+      h("span", { class: `rl-ico ${o.tone}` }, svg(o.icon)),
+      h("span", { class: "rl-nm" }, o.title),
+      o.count ? h("span", { class: "rl-c" }, String(o.count)) : null);
   }
-  function miniCard(o) {
-    return h("div", { class: "nettab trashcard" + (o.sel ? " sel" : "") },
-      h("button", { type: "button", class: "nt-main", role: "tab", "aria-selected": o.sel, title: o.title, "aria-label": `${o.title}, ${o.value}`, onclick: o.onSelect },
-        h("span", { class: `fs-ico ${o.tone}` }, svg(o.icon)), h("span", { class: "tsize" }, o.value)));
+  function renderRail() {
+    const fs = S.fs;
+    const total = fs ? fs.disk.total : 0, free = fs ? fs.disk.free : 0;
+    const trashCount = fs ? fs.trash.count : 0;
+    const shareCount = S.share ? S.share.items.length : (fs && fs.share ? fs.share.count : 0);
+    const dirs = fsRootDirs || [];
+    const out = [
+      h("p", { class: "rl-t" }, "Kullanıcı alanı"),
+      railBtn({ cur: fsView === "files" && !fsPath.length, icon: "server", tone: "t-dir", title: "Sunucu",
+        count: dirs.length, onclick: () => fsOpen([]) }),
+      ...dirs.map((d) => railBtn({ cur: fsView === "files" && fsPath[0] === d.name, icon: "folder", tone: "t-dir",
+        title: d.name, count: d.count, onclick: () => fsOpen([d.name]) })),
+      h("p", { class: "rl-t" }, "Yönetim"),
+      railBtn({ cur: fsView === "shares", icon: "share", tone: "t-share", title: "Paylaşımlar", count: shareCount, onclick: () => fsSetView("shares") }),
+      railBtn({ cur: fsView === "trash", icon: "trash", tone: "t-warn", title: "Çöp", count: trashCount, onclick: () => fsSetView("trash") }),
+    ];
+    if (total) {
+      const pct = Math.round((100 * (total - free)) / total);
+      out.push(h("div", { class: "rl-disk" },
+        h("div", { class: "rl-dl" }, h("span", null, "Disk"), h("span", null, `%${pct}`)),
+        h("div", { class: "rl-bar" }, h("i", { style: { width: `${pct}%` } })),
+        h("div", { class: "rl-dl" }, h("span", null, `${bytes(free)} boş`), h("span", { class: "mono" }, fsRoot()))));
+    }
+    $("fs-rail").replaceChildren(...out);
+  }
+  function fsOpen(parts) {
+    if (fsView !== "files") { fsView = "files"; location.hash = "#/dosyalar"; }
+    fsGo(parts);
+  }
+
+  /* ---- liste: arama + sıralama ---- */
+  function fsShown() {
+    const q = fsQuery.trim().toLocaleLowerCase("tr");
+    const all = fsList.entries.slice().sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, "tr") : a.type === "dir" ? -1 : 1));
+    return q ? all.filter((e) => e.name.toLocaleLowerCase("tr").includes(q)) : all;
+  }
+  const selItems = () => fsShown().filter((e) => fsSel.has(e.name));
+  function clearSel() { if (!fsSel.size) return; fsSel.clear(); renderBar(); renderRows(); }
+  function toggleSel(name, range) {
+    const names = fsShown().map((e) => e.name);
+    if (range && fsSel.size) {
+      const last = names.indexOf(fsLast), now = names.indexOf(name);
+      if (last >= 0 && now >= 0) {
+        for (let i = Math.min(last, now); i <= Math.max(last, now); i++) fsSel.add(names[i]);
+        fsLast = name; renderBar(); renderRows(); return;
+      }
+    }
+    if (fsSel.has(name)) fsSel.delete(name); else fsSel.add(name);
+    fsSel.forEach((n) => { if (inTemp(pathText(fsPath.concat(n)))) fsSel.delete(n); });
+    fsLast = name;
+    renderBar();
+    renderRows();
   }
 
   function renderFs() {
-    const fs = S.fs;
-    const total = fs ? fs.disk.total : 0, free = fs ? fs.disk.free : 0;
-    const meter = total ? Math.round((100 * (total - free)) / total) : null;
-    const trashSize = fs ? fs.trash.size : 0, trashCount = fs ? fs.trash.count : 0;
-    const shareCount = S.share ? S.share.items.length : (fs && fs.share ? fs.share.count : 0);
-    $("fs-tabs").replaceChildren(
-      fsCard({ sel: fsView === "files", icon: "folder", tone: "t-dir", title: "İndirilenler", path: fs ? fs.root : "/downloads",
-        detail: total ? `${bytes(total)} disk` : "—",
-        pills: [[fs && fs.disk.used != null ? bytes(fs.disk.used) : "—"], [`${bytes(free)} boş`, "on"]],
-        meter, onSelect: () => fsSetView("files"),
-        action: h("button", { type: "button", class: "nt-act", title: "Listeyi yenile", "aria-label": "Listeyi yenile",
-          onclick: () => { loadFsState(); (fsView === "trash" ? loadTrash() : loadFs()).then(() => toast("Liste yenilendi.")); } }, svg("refresh")) }),
-      miniCard({ sel: fsView === "shares", icon: "share", tone: "t-share", title: "Paylaşımlar",
-        value: shareCount ? `${shareCount} aktif` : "yok", onSelect: () => fsSetView("shares") }),
-      miniCard({ sel: fsView === "trash", icon: "trash", tone: "t-warn", title: "Çöp", value: trashCount ? bytes(trashSize) : "boş", onSelect: () => fsSetView("trash") }));
-    $("fs-panel").classList.toggle("first", fsView === "files");
-    $("fs-panel").classList.toggle("last", fsView === "trash");
+    renderRail();
     const body = $("fs-body");
     body.textContent = "";
     if (fsView === "trash") { renderTrashList(body); return; }
     if (fsView === "shares") { renderShareList(body); return; }
     if (!fsList) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
+    body.append(h("div", { id: "fs-bar" }), h("div", { id: "fs-rows" }));
+    initDrop();
+    renderBar();
+    renderRows();
+  }
 
+  function renderBar() {
+    const bar = $("fs-bar");
+    if (!bar) return;
+    const shown = fsShown(), sel = selItems();
+    if (sel.length) {
+      const size = sel.reduce((tot, i) => tot + (i.size || 0), 0);
+      const one = sel.length === 1 ? sel[0] : null;
+      bar.replaceChildren(h("div", { class: "pathfield selbar" },
+        h("button", { type: "button", class: "pf-btn", title: "Seçimi bırak", "aria-label": "Seçimi bırak", onclick: clearSel }, svg("close")),
+        h("span", { class: "sel-cnt" }, `${sel.length} öge seçildi · ${bytes(size)}`),
+        h("span", { class: "pf-sep" }),
+        h("button", { type: "button", class: "btn btn-sm", onclick: () => sel.forEach((i) => i.type !== "dir" && download(i)) }, svg("download"), "İndir"),
+        h("button", { type: "button", class: "btn btn-sm", onclick: () => openMove(sel) }, svg("move"), "Taşı"),
+        h("button", { type: "button", class: "btn btn-sm", disabled: !one || inTemp(pathText(fsPath.concat(one.name))),
+          title: one ? "" : "Paylaşım tek tek verilir", onclick: () => one && openShareCreate(one, pathText(fsPath.concat(one.name))) }, svg("share"), "Paylaş"),
+        h("button", { type: "button", class: "btn btn-sm btn-danger", onclick: () => askTrash(sel) }, svg("trash"), "Çöpe at"),
+        h("span", { class: "pf-meta" }, `${shown.length} ögenin ${sel.length} tanesi`)));
+      return;
+    }
     const crumbs = h("ol", { class: "crumbs" },
-      h("li", null, h("button", { type: "button", class: "crumb root" + (fsPath.length ? "" : " cur"), onclick: () => fsGo([]) }, fs ? fs.root : "/downloads")),
+      h("li", null, h("button", { type: "button", class: "crumb root" + (fsPath.length ? "" : " cur"), onclick: () => fsGo([]) }, fsRoot())),
       ...fsPath.map((part, i) => h("li", null, h("button", { type: "button", class: "crumb" + (i === fsPath.length - 1 ? " cur" : ""),
         onclick: () => fsGo(fsPath.slice(0, i + 1)) }, part))));
-    const shown = fsList.entries.slice().sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, "tr") : a.type === "dir" ? -1 : 1));
-    const sum = shown.reduce((t, e) => t + (e.size || 0), 0);
-    body.append(h("div", { class: "pathfield" },
+    const sum = shown.reduce((tot, e) => tot + (e.size || 0), 0);
+    const picker = h("input", { type: "file", id: "fs-file", multiple: true, class: "vis-hidden",
+      onchange: (e) => { uploadFiles(e.target.files); e.target.value = ""; } });
+    bar.replaceChildren(h("div", { class: "pathfield" },
       h("button", { type: "button", class: "pf-btn", title: "Üst klasör", "aria-label": "Üst klasör", disabled: !fsPath.length, onclick: () => fsGo(fsPath.slice(0, -1)) }, svg("up")),
-      h("button", { type: "button", class: "pf-btn", title: "İndirilenler kökü", "aria-label": "İndirilenler kökü", disabled: !fsPath.length, onclick: () => fsGo([]) }, svg("home")),
+      h("button", { type: "button", class: "pf-btn", title: "Sunucu kökü", "aria-label": "Sunucu kökü", disabled: !fsPath.length, onclick: () => fsGo([]) }, svg("home")),
       h("span", { class: "pf-sep" }),
       h("nav", { class: "pf-crumbs", "aria-label": "Konum" }, crumbs),
-      h("span", { class: "pf-meta" }, `${shown.length} öge · ${bytes(sum)}`)));
-    if (fsPath[0] === (fs && fs.temp ? fs.temp : "incomplete")) {
-      body.append(h("div", { class: "offbar" }, h("div", null, h("strong", null, "qBittorrent bu klasöre yazıyor. "),
+      h("span", { class: "fs-search" }, svg("search"),
+        h("input", { type: "search", id: "fs-q", value: fsQuery, placeholder: "Bu klasörde ara", "aria-label": "Bu klasörde ara",
+          autocomplete: "off", spellcheck: "false",
+          oninput: (e) => { fsQuery = e.target.value; renderRows(); updateMeta(); },
+          onkeydown: (e) => { if (e.key === "Escape") { fsQuery = ""; e.target.value = ""; renderRows(); updateMeta(); } } })),
+      picker,
+      h("button", { type: "button", class: "btn btn-sm", onclick: () => $("fs-file").click() }, svg("upload"), "Yükle"),
+      h("button", { type: "button", class: "pf-btn", title: "Yeni klasör", "aria-label": "Yeni klasör",
+        onclick: () => { fsAdding = true; renderRows(); const i = $("nf-name"); if (i) i.focus(); } }, svg("plus")),
+      h("span", { class: "pf-meta", id: "fs-meta" }, `${shown.length} öge · ${bytes(sum)}`)));
+  }
+  function updateMeta() {
+    const meta = $("fs-meta");
+    if (!meta) return;
+    const shown = fsShown();
+    meta.textContent = fsQuery.trim()
+      ? `${shown.length} sonuç`
+      : `${shown.length} öge · ${bytes(shown.reduce((tot, e) => tot + (e.size || 0), 0))}`;
+  }
+
+  function renderRows() {
+    const box = $("fs-rows");
+    if (!box) return;
+    const shown = fsShown();
+    const kids = [];
+    if (inTemp(pathText(fsPath))) {
+      kids.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "qBittorrent bu klasöre yazıyor. "),
         h("span", null, "Buradaki dosyaları taşımak ya da silmek süren indirmeyi bozar."))));
     }
-    const rows = shown.map((item) => fsRow(item));
-    const table = h("div", { class: "table fs-t" },
-      h("div", { class: "tr head" }, h("span", null, "Ad"), h("span", { class: "c-size" }, "Boyut"), h("span", { class: "c-date" }, "Değiştirilme"), h("span", null, "")),
-      ...rows);
+    const table = h("div", { class: "table fs-t" + (dragDepth ? " dragging" : ""), id: "fs-table" },
+      dragDepth ? h("div", { class: "droptip" }, svg("upload"), h("span", null, "Bırakın — "), h("b", null, fsHere()), h("span", null, " içine yüklenir")) : null,
+      h("div", { class: "tr head" }, h("span", null, ""), h("span", null, "Ad"), h("span", { class: "c-size" }, "Boyut"),
+        h("span", { class: "c-date" }, "Değiştirilme"), h("span", null, "")),
+      ...fsUps.filter((u) => u.path === pathText(fsPath)).map(upRow),
+      ...shown.map(fsRow));
     if (fsAdding) table.append(newFolderRow());
-    if (!rows.length && !fsAdding) table.append(h("div", { class: "empty-row" }, h("strong", null, "Bu klasör boş"), h("span", null, "Aşağıdaki Yeni klasör ile klasör açabilirsiniz.")));
-    body.append(table);
-    if (fsList.skipped) body.append(h("p", { class: "hint-s" }, `${fsList.skipped} öge gösterilmedi (adı geçersiz).`));
-    body.append(h("button", { type: "button", class: "addrow", onclick: () => { fsAdding = true; renderFs(); const i = $("nf-name"); if (i) i.focus(); } },
-      h("span", { class: "plus" }, svg("plus")),
-      h("span", null, h("strong", null, "Yeni klasör"), h("small", null, `${fsHere()} içine; adını yazıp Enter`))));
+    if (!shown.length && !fsAdding && !fsUps.length) {
+      table.append(h("div", { class: "empty-row" },
+        h("strong", null, fsQuery.trim() ? "Eşleşen öge yok" : "Bu klasör boş"),
+        h("span", null, fsQuery.trim() ? "Aramayı değiştirin ya da Esc ile temizleyin." : "Dosyaları buraya sürükleyin ya da Yükle ile seçin.")));
+    }
+    kids.push(table);
+    if (fsList.skipped) kids.push(h("p", { class: "hint-s" }, `${fsList.skipped} öge gösterilmedi (adı geçersiz).`));
+    box.replaceChildren(...kids);
+  }
+
+  /* ---- yükleme: hedef listenin kendisi, ilerleme satırın içinde (DD-145) ---- */
+  function upRow(u) {
+    const pct = u.size ? Math.min(100, Math.round((100 * u.sent) / u.size)) : 0;
+    return h("div", { class: "tr up" + (u.state === "wait" ? " wait" : "") + (u.state === "err" ? " err" : ""), id: `up-${u.id}` },
+      h("span", { class: "c-sel" }),
+      h("span", { class: "fname" }, h("span", { class: "ticon t-file" }, svg("upload")),
+        h("span", null, h("strong", null, u.name),
+          h("span", { class: "uprog" }, h("i", { id: `upb-${u.id}`, style: { width: `${pct}%` } })))),
+      h("span", { class: "c-size" }, bytes(u.size)),
+      h("span", { class: "c-date", id: `upm-${u.id}` }, upText(u, pct)),
+      h("span", { class: "acts" }, h("button", { type: "button", class: "ib del", title: "İptal", "aria-label": "Yüklemeyi iptal et",
+        onclick: () => cancelUp(u) }, svg("close"))));
+  }
+  const upText = (u, pct) => (u.state === "err" ? u.error || "yüklenemedi" : u.state === "wait" ? "sırada" : `%${pct}`);
+  function upTick(u) {
+    const bar = $(`upb-${u.id}`), meta = $(`upm-${u.id}`);
+    const pct = u.size ? Math.min(100, Math.round((100 * u.sent) / u.size)) : 0;
+    if (bar) bar.style.width = `${pct}%`;
+    if (meta) meta.textContent = upText(u, pct);
+  }
+  function uploadFiles(list) {
+    const here = pathText(fsPath);
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    for (const f of files) fsUps.push({ id: ++upSeq, name: f.name, size: f.size, sent: 0, state: "wait", file: f, path: here });
+    renderRows();
+    pumpUp();
+  }
+  function pumpUp() {
+    if (upBusy) return;
+    const u = fsUps.find((x) => x.state === "wait");
+    if (!u) return;
+    upBusy = true;
+    u.state = "up";
+    upTick(u);
+    const xhr = new XMLHttpRequest();
+    u.xhr = xhr;
+    xhr.open("POST", `/api/upload?path=${enc(u.path)}&name=${enc(u.name)}`);
+    xhr.setRequestHeader("X-Konsol", "1");
+    xhr.upload.addEventListener("progress", (e) => { u.sent = e.loaded; upTick(u); });
+    xhr.addEventListener("load", () => {
+      upBusy = false;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        fsUps = fsUps.filter((x) => x !== u);
+        if (u.path === pathText(fsPath)) loadFs().then(() => toast(`“${u.name}” yüklendi.`));
+        else toast(`“${u.name}” yüklendi.`);
+      } else {
+        let message = `sunucu ${xhr.status}`;
+        try { message = JSON.parse(xhr.responseText).error || message; } catch (err) { /* düz metin */ }
+        u.state = "err";
+        u.error = message;
+        upTick(u);
+      }
+      pumpUp();
+    });
+    xhr.addEventListener("error", () => { upBusy = false; u.state = "err"; u.error = "bağlantı koptu"; upTick(u); pumpUp(); });
+    xhr.addEventListener("abort", () => { upBusy = false; pumpUp(); });
+    xhr.send(u.file);
+  }
+  function cancelUp(u) {
+    if (u.xhr && u.state === "up") u.xhr.abort();
+    fsUps = fsUps.filter((x) => x !== u);
+    renderRows();
+  }
+  let dropReady = false;
+  function initDrop() {
+    if (dropReady) return;
+    dropReady = true;
+    const panel = $("fs-panel");
+    const hasFiles = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes("Files");
+    const setDrag = (on) => { const tb = $("fs-table"); if (tb) tb.classList.toggle("dragging", on); if (!on !== !dragDepth) renderRows(); };
+    panel.addEventListener("dragenter", (e) => {
+      if (fsView !== "files" || !hasFiles(e)) return;
+      e.preventDefault(); dragDepth++; if (dragDepth === 1) renderRows();
+    });
+    panel.addEventListener("dragover", (e) => {
+      if (fsView !== "files" || !hasFiles(e)) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+    });
+    panel.addEventListener("dragleave", (e) => {
+      if (fsView !== "files" || !hasFiles(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) renderRows();
+    });
+    panel.addEventListener("drop", (e) => {
+      if (fsView !== "files" || !hasFiles(e)) return;
+      e.preventDefault(); dragDepth = 0; renderRows(); uploadFiles(e.dataTransfer.files);
+    });
+    for (const type of ["dragover", "drop"]) {
+      document.addEventListener(type, (e) => { if (hasFiles(e)) e.preventDefault(); });
+    }
   }
 
   const shareOf = (path) => (S.share && S.share.items || []).find((x) => x.path === path);
@@ -1071,12 +1274,18 @@
         h("span", null, h("strong", null, item.name, shareChip(pathText(fsPath.concat(item.name)))),
           h("small", null, dir ? `${item.count == null ? "?" : item.count} öge` : isText(item) ? "metin dosyası" : "")));
     const here = pathText(fsPath.concat(item.name));
-    const temp = S.fs && S.fs.temp ? S.fs.temp : "incomplete";
-    return h("div", { class: "tr" }, name,
+    const on = fsSel.has(item.name);
+    // qBittorrent'in yazdığı klasör seçilmez, paylaşılmaz: süren indirme bozulmasın.
+    const locked = inTemp(here) || inTemp(pathText(fsPath));
+    return h("div", { class: "tr" + (on ? " on" : "") },
+      h("span", { class: "c-sel" },
+        locked ? null : h("button", { type: "button", class: "chk" + (on ? " on" : ""), role: "checkbox", "aria-checked": on ? "true" : "false",
+          "aria-label": `${item.name} seç`, onclick: (e) => toggleSel(item.name, e.shiftKey) }, on ? svg("check") : null)),
+      name,
       h("span", { class: "c-size" }, bytes(item.size)),
       h("span", { class: "c-date" }, since(item.mtime)),
       h("span", { class: "acts" },
-        fsPath[0] === temp || (!fsPath.length && item.name === temp) ? null : shareBtn(item, here),
+        inTemp(here) || inTemp(pathText(fsPath)) ? null : shareBtn(item, here),
         dir ? null : h("button", { type: "button", class: "ib", "aria-label": "İndir", title: "İndir", onclick: () => download(item) }, svg("download")),
         h("button", { type: "button", class: "ib", "aria-label": "Yeniden adlandır", title: "Yeniden adlandır", onclick: () => { fsRename = item.name; renderFs(); const i = $("rn-name"); if (i) { i.focus(); i.select(); } } }, svg("pencil")),
         h("button", { type: "button", class: "ib", "aria-label": "Taşı", title: "Taşı", onclick: () => openMove(item) }, svg("move")),
@@ -1091,6 +1300,7 @@
         if (e.key === "Enter") { e.preventDefault(); createFolder(e.target.value.trim()); }
       } });
     return h("div", { class: "tr" },
+      h("span", { class: "c-sel" }),
       h("span", { class: "fname" }, h("span", { class: "ticon t-dir" }, svg("folder")), input),
       h("span", { class: "c-size" }, "—"), h("span", { class: "c-date" }, "—"),
       h("span", { class: "acts" }, h("button", { type: "button", class: "btn btn-quiet btn-sm", onclick: () => { fsAdding = false; renderFs(); } }, "Vazgeç")));
@@ -1115,24 +1325,30 @@
     a.click();
     a.remove();
   }
-  function askTrash(item) {
+  /* Tek satırdan da seçim çubuğundan da çağrılır (DD-145). */
+  const asList = (x) => (Array.isArray(x) ? x : [x]);
+  const listLabel = (items) => (items.length === 1 ? `“${items[0].name}”` : `${items.length} öge`);
+  function askTrash(what) {
+    const items = asList(what);
+    const size = items.reduce((tot, i) => tot + (i.size || 0), 0);
     ask({
-      title: `“${item.name}” çöpe taşınsın mı?`, sub: `${fsHere()} · ${bytes(item.size)}`, calm: true,
+      title: `${listLabel(items)} çöpe taşınsın mı?`, sub: `${fsHere()} · ${bytes(size)}`, calm: true,
       items: [
-        ["trash", "Öge kökteki çöp klasörüne taşınır; disk alanı boşalmaz."],
+        ["trash", items.length === 1 ? "Öge kökteki çöp klasörüne taşınır; disk alanı boşalmaz."
+          : `${items.length} öge kökteki çöp klasörüne taşınır; disk alanı boşalmaz.`],
         ["restore", "Çöp sekmesinden geri yüklenebilir."],
       ],
       go: "Çöpe taşı",
-      onOk: () => post("/api/trash", { path: pathText(fsPath), names: [item.name] })
-        .then(() => Promise.all([loadFs(), loadFsState()]))
-        .then(() => toast(`“${item.name}” çöpe taşındı.`)).catch(fail),
+      onOk: () => post("/api/trash", { path: pathText(fsPath), names: items.map((i) => i.name) })
+        .then(() => { fsSel.clear(); return Promise.all([loadFs(), loadFsState()]); })
+        .then(() => toast(`${listLabel(items)} çöpe taşındı.`)).catch(fail),
     });
   }
 
   /* taşıma penceresi: hedef klasör ağacı */
   let MV = null;
-  function openMove(item) {
-    MV = { item, dest: [], dirs: null };
+  function openMove(what) {
+    MV = { items: asList(what), dest: [], dirs: null };
     renderMove();
     $("sh").showModal();
     loadMoveDirs([]);
@@ -1144,13 +1360,14 @@
     }).catch(fail);
   }
   function renderMove() {
-    const it = MV.item, same = pathText(MV.dest) === pathText(fsPath);
+    const items = MV.items, same = pathText(MV.dest) === pathText(fsPath);
+    const size = items.reduce((tot, i) => tot + (i.size || 0), 0);
     const crumbs = h("ol", { class: "crumbs" },
-      h("li", null, h("button", { type: "button", class: "crumb root" + (MV.dest.length ? "" : " cur"), onclick: () => { MV.dest = []; MV.dirs = null; renderMove(); loadMoveDirs([]); } }, "/downloads")),
+      h("li", null, h("button", { type: "button", class: "crumb root" + (MV.dest.length ? "" : " cur"), onclick: () => { MV.dest = []; MV.dirs = null; renderMove(); loadMoveDirs([]); } }, fsRoot())),
       ...MV.dest.map((part, i) => h("li", null, h("button", { type: "button", class: "crumb" + (i === MV.dest.length - 1 ? " cur" : ""),
         onclick: () => { MV.dest = MV.dest.slice(0, i + 1); MV.dirs = null; renderMove(); loadMoveDirs(MV.dest); } }, part))));
     $("sh-body").replaceChildren(
-      shHead(`“${it.name}” taşı`, `${fsHere()} · ${bytes(it.size)}`, "move"),
+      shHead(`${listLabel(items)} taşı`, `${fsHere()} · ${bytes(size)}`, "move"),
       h("div", { class: "pathfield" },
         h("button", { type: "button", class: "pf-btn", title: "Üst klasör", "aria-label": "Üst klasör", disabled: !MV.dest.length,
           onclick: () => { MV.dest = MV.dest.slice(0, -1); MV.dirs = null; renderMove(); loadMoveDirs(MV.dest); } }, svg("up")),
@@ -1165,13 +1382,13 @@
       h("div", { class: "dlg-foot" },
         h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç"),
         h("button", { type: "button", class: "btn btn-primary", disabled: same, onclick: doMove },
-          `Buraya taşı: ${["/downloads", ...MV.dest].join("/")}`)));
+          `Buraya taşı: ${[fsRoot(), ...MV.dest].join("/")}`)));
   }
   function doMove() {
-    const it = MV.item, dest = MV.dest;
-    post("/api/move", { path: pathText(fsPath), names: [it.name], to: pathText(dest) })
-      .then(() => { shClose(); return loadFs(); })
-      .then(() => toast(`“${it.name}” taşındı → ${["/downloads", ...dest].join("/")}`))
+    const items = MV.items, dest = MV.dest;
+    post("/api/move", { path: pathText(fsPath), names: items.map((i) => i.name), to: pathText(dest) })
+      .then(() => { shClose(); fsSel.clear(); return loadFs(); })
+      .then(() => toast(`${listLabel(items)} taşındı → ${[fsRoot(), ...dest].join("/")}`))
       .catch(fail);
   }
 
@@ -1251,7 +1468,7 @@
     body.append(credBlock(() => renderFs(), "row3"));
     if (!S.share.items.length) {
       body.append(h("div", { class: "table" }, h("div", { class: "empty-row" }, h("strong", null, "Paylaşım yok"),
-        h("span", null, "İndirilenler listesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın."))));
+        h("span", null, "Dosyalar listesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın."))));
       return;
     }
     body.append(h("div", { class: "table fs-t share-t" },
@@ -1259,7 +1476,7 @@
         h("span", { class: "c-exp" }, "Süre"), h("span", null, "")),
       ...S.share.items.map((sh) => h("div", { class: "tr" },
         h("span", { class: "fname plain" }, h("span", { class: `ticon t-${sh.type === "dir" ? "dir" : "file"}` }, svg(sh.type === "dir" ? "folder" : "file")),
-          h("span", null, h("strong", null, sh.name), h("small", null, `/downloads/${sh.path}`))),
+          h("span", null, h("strong", null, sh.name), h("small", null, `${fsRoot()}/${sh.path}`))),
         h("span", { class: "c-user" }, shortDay(sh.created)),
         h("span", { class: "c-exp" }, leftText(sh.expires)),
         h("span", { class: "acts" },
@@ -1278,7 +1495,7 @@
   function renderShareCreate() {
     const it = SH.item, count = S.share.items.length;
     $("sh-body").replaceChildren(
-      shHead(`“${it.name}” paylaş`, `/downloads/${SH.path} · ${bytes(it.size)}`, "share"),
+      shHead(`“${it.name}” paylaş`, `${fsRoot()}/${SH.path} · ${bytes(it.size)}`, "share"),
       h("ul", { class: "conseq calm" },
         h("li", null, svg("share"), h("span", null, count
           ? `${S.share.host} adresine eklenir; paylaşımdaki diğer ${count} ögeyle aynı kullanıcı ve parolayla açılır.`
@@ -1316,7 +1533,7 @@
   function renderShareInfo() {
     const sh = SH.share;
     $("sh-body").replaceChildren(
-      shHead(SH.fresh ? "Paylaşıma eklendi" : `“${sh.name}” paylaşımda`, `/downloads/${sh.path}`, SH.fresh ? "check" : "share"),
+      shHead(SH.fresh ? "Paylaşıma eklendi" : `“${sh.name}” paylaşımda`, `${fsRoot()}/${sh.path}`, SH.fresh ? "check" : "share"),
       h("div", { class: "cred" }, credRow("Süre", sh.expires
         ? `${leftText(sh.expires)} · ${dayText(sh.expires)}` : "Süresiz; siz çıkarana kadar", [], true)),
       h("div", { class: "field" }, h("span", { class: "lbl" }, `Bağlantı bilgileri · ${S.share.items.length} paylaşımın hepsinde aynı`),
@@ -1413,7 +1630,7 @@
     genel: { title: "Genel bakış", eyebrow: "Sunucu durumu",
       actions: () => [h("button", { type: "button", class: "btn btn-quiet", onclick: () => refreshAll().then(() => toast("Durum yenilendi.")) }, svg("refresh"), "Yenile")] },
     wireguard: { title: "WireGuard", eyebrow: "Cihazlar ve ağlar", actions: () => [], render: renderWg },
-    dosyalar: { title: "Dosyalar", eyebrow: "İndirilenler, paylaşımlar ve çöp", actions: () => [],
+    dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı, paylaşımlar ve çöp", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (!fsList) loadFs(); } },
     gunluk: { title: "Günlük", eyebrow: "Konsol'dan yapılan işlemler", actions: () => [], render: () => { renderLog(); loadActions(); } },
   };

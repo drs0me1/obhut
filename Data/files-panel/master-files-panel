@@ -53,6 +53,10 @@ AUTH_CACHE_SECONDS = 900
 FAIL_WINDOW_SECONDS = 900
 FAIL_LIMIT = 10
 MAX_BODY = 262144
+# Yükleme (DD-145): gövde diske akıtılır, belleğe alınmaz. Sınır disk boşluğuyla değil
+# kabalıkla ilgili: bir istek en çok bu kadar sürebilir/olabilir.
+UPLOAD_MAX_BYTES = 64 * 1024 * 1024 * 1024
+UPLOAD_CHUNK = 1024 * 1024
 MAX_NAMES = 1000
 MAX_DEPTH = 64
 TEXT_LIMIT = 1024 * 1024
@@ -628,6 +632,52 @@ class Files:
                 moved.append(name)
         return moved
 
+    def upload(self, parts, name, stream, length):
+        """Akışı <parts>/<name> olarak yazar. Geçici ada yazılır, bitince atomik taşınır:
+        yarım kalan dosya listeye hiç girmez, var olanın üzerine yazılmaz (DD-145)."""
+        self.check_new_name(parts, name)
+        tmp = ".yukleniyor-%s" % secrets.token_hex(6)
+        written = 0
+        with DirFd(self.open_dir(parts)) as fd:
+            try:
+                os.stat(name, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise PanelError(409, "“%s” zaten var; üzerine yazılmaz" % name)
+            handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664, dir_fd=fd)
+            try:
+                # umask ne olursa olsun ağacın kuralı: dosya 0664 (qBittorrent ve
+                # unpackerr aynı grupla yazar; ensure_downloads_tree de bunu bekler).
+                os.fchmod(handle, 0o664)
+                while written < length:
+                    chunk = stream.read(min(UPLOAD_CHUNK, length - written))
+                    if not chunk:
+                        raise PanelError(400, "yükleme yarıda kesildi")
+                    os.write(handle, chunk)
+                    written += len(chunk)
+                os.fsync(handle)
+            except BaseException:
+                os.close(handle)
+                try:
+                    os.unlink(tmp, dir_fd=fd)
+                except OSError:
+                    pass
+                raise
+            os.close(handle)
+            try:
+                # Akış kilitsiz sürer (saatlerce sürebilir); yalnız son adım kilitli:
+                # ad çakışmasına bakan yedek rename yolu için yeterli.
+                with self.lock:
+                    rename_noreplace(fd, tmp, fd, name)
+            except BaseException:
+                try:
+                    os.unlink(tmp, dir_fd=fd)
+                except OSError:
+                    pass
+                raise
+        return written
+
     def to_trash(self, parts, names):
         ids = []
         with DirFd(self.open_dir(parts)) as sfd, DirFd(self.trash_dir(create=True)) as cop:
@@ -1041,6 +1091,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "items": panel.files.shares(),
         }
 
+    def upload(self, user):
+        """POST /api/upload?path=<klasör>&name=<ad> — gövde dosyanın kendisidir (DD-145)."""
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        raw_path = (query.get("path") or [""])[0]
+        name = (query.get("name") or [""])[0]
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length <= 0:
+            self.error(411, "yükleme için Content-Length gerekir")
+            return
+        if length > UPLOAD_MAX_BYTES:
+            self.error(413, "dosya çok büyük (en çok %d GB)" % (UPLOAD_MAX_BYTES // (1024 ** 3)))
+            return
+        files = self.panel.files
+
+        def put():
+            parts = files.split(raw_path)
+            written = files.upload(parts, name, self.rfile, length)
+            return 201, {"name": name, "size": written}, "/".join(parts + [name])
+
+        self.run(user, "yükle", put, lock=False, hint=name)
+
     def download(self, user, raw):
         files = self.panel.files
         try:
@@ -1083,6 +1157,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         user = self.gate(route)
         if user is None:
             self.close_connection = True
+            return
+        if route == "/api/upload":
+            self.upload(user)
             return
         data = self.body_json()
         if data is None:
@@ -1188,7 +1265,9 @@ def cmd_serve(args):
         if not directory:
             fail("--share-credential yalnız systemd LoadCredential ile kullanılır")
         args.share_auth = os.path.join(directory, args.share_credential)
-    if args.temp_dir and not valid_name(args.temp_dir):
+    # DD-144: geçici klasör kullanıcı alanının kökünde değil, indirme klasörünün
+    # altındadır; yol köke göre verilir (ör. downloads/incomplete).
+    if args.temp_dir and not all(valid_name(p) for p in args.temp_dir.split("/")):
         fail("geçersiz --temp-dir")
     try:
         os.close(Files(args.root, args.trash, args.share).open_dir([]))

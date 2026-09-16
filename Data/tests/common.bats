@@ -575,11 +575,18 @@ EOF
     run ! grep -q 'die "tcp_congestion_control' <<<"$block"
 }
 
-@test "downloads path rejects unsafe characters and compose needs no .env" {
-    grep -q 'downloads yolu yalnızca' "$V2_ROOT/install.sh"
-    grep -q "downloads yolu '..' içeremez" "$V2_ROOT/install.sh"
-    grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
-    grep -q 'sistem dizinine izin vermez' "$V2_ROOT/install.sh"
+@test "the user area is a fixed root under /srv and compose needs no .env" {
+    # DD-144: the operator is not asked for a path; the constant is still checked.
+    grep -qx 'SERVER_ROOT="/srv"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'DOWNLOADS_SUBDIR="downloads"' "$V2_ROOT/config/defaults.env"
+    run ! grep -qE '^INPUT_KEYS=.*DOWNLOADS_PATH' "$V2_ROOT/install.sh"
+    run ! grep -q 'DOWNLOADS_PATH' "$V2_ROOT/config/kurulum.env.example"
+    grep -q 'DOWNLOADS_PATH="\$SERVER_ROOT/\$DOWNLOADS_SUBDIR"' "$V2_ROOT/install.sh"
+    grep -q 'assert_downloads_path_allowed "\$SERVER_ROOT"' "$V2_ROOT/install.sh"
+    grep -q 'kullanıcı alanı sistem dizininde olamaz' "$V2_ROOT/install.sh"
+    grep -q 'kullanıcı alanı allowlist dışı' "$V2_ROOT/install.sh"
+    # config.env no longer carries a path the operator could have chosen.
+    run ! grep -q 'DOWNLOADS_PATH=\$DOWNLOADS_PATH' <<<"$(awk '/^write_config\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
     [ -n "$stage4" ]
     run ! grep -q 'atomic_write "$COMPOSE_DIR/.env"' <<<"$stage4"
@@ -887,9 +894,9 @@ EOF
     grep -q 'rm -f -- "\$jar"' <<<"$body"
 }
 
-@test "filebrowser classic serves downloads at /srv with disableExec" {
+@test "filebrowser classic serves the user area at /srv with disableExec" {
     grep -q 'container_name: filebrowser' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__DOWNLOADS_PATH__:/srv' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__SERVER_ROOT__:/srv' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__:/database' "$V2_ROOT/templates/compose.yaml"
     grep -q '__FILEBROWSER_DATA_DIR__/config:/config' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--disableExec' "$V2_ROOT/templates/compose.yaml"
@@ -1323,7 +1330,7 @@ EOF
     run ! grep -q '__TAILSCALE_IPV4__:__SHARE_PORT__' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--htpasswd=/run/secrets/paylasim_htpasswd' "$V2_ROOT/templates/compose.yaml"
     grep -q -- '--read-only' "$V2_ROOT/templates/compose.yaml"
-    grep -q '__DOWNLOADS_PATH__:/downloads:ro' "$V2_ROOT/templates/compose.yaml"
+    grep -q '__SERVER_ROOT__:__SERVER_ROOT__:ro' "$V2_ROOT/templates/compose.yaml"
     grep -q 'reverse_proxy 127.0.0.1:__SHARE_PORT__' "$V2_ROOT/templates/Caddyfile"
     grep -q 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:{$SHARE_PORT}' \
         "$V2_ROOT/templates/Caddyfile"
@@ -1696,7 +1703,7 @@ EOF
     run ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
     grep -q 'assert_share_readonly_runtime' "$V2_ROOT/install.sh"
     grep -q 'ReadonlyRootfs' "$V2_ROOT/install.sh"
-    grep -q '/downloads false' "$V2_ROOT/install.sh"
+    grep -q '"\${SERVER_ROOT} false"' "$V2_ROOT/install.sh"
     run ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
     share_runtime="$(awk '/^assert_share_readonly_runtime/,/^stage_7/' "$V2_ROOT/install.sh")"
     [ -n "$share_runtime" ]
@@ -2839,23 +2846,73 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     run ! grep -q 'paylas pass' "$TMP/fpanel.log"
 }
 
+@test "files panel takes an upload into the folder, never over an existing name and leaves no half file" {
+    # DD-145: the body is the file itself; it is written under a temp name and renamed.
+    files_panel_start
+    printf 'yuk %s' "$(seq 1 200 | tr -d '\n')" >"$TMP/payload.bin"
+    [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/payload.bin")" = 201 ]
+    cmp -s "$TMP/payload.bin" "$TMP/root/Filmler/arsiv.bin"
+    [ "$(stat -f '%Lp' "$TMP/root/Filmler/arsiv.bin" 2>/dev/null || stat -c '%a' "$TMP/root/Filmler/arsiv.bin")" = 664 ]
+    grep -q 'admin 127.0.0.1 yükle "Filmler/arsiv.bin" -> ok' "$TMP/fpanel.log"
+    # Aynı ad ikinci kez: üzerine yazılmaz, dosya bozulmaz.
+    printf 'baska icerik' >"$TMP/other.bin"
+    [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/other.bin")" = 409 ]
+    cmp -s "$TMP/payload.bin" "$TMP/root/Filmler/arsiv.bin"
+    # Geçici ad kalmaz.
+    [ "$(ls -A "$TMP/root/Filmler" | grep -c '^\.yukleniyor-')" = 0 ]
+    # Geçersiz ad ve gövdesiz istek reddedilir; çöp ve paylaşım klasörü hedef olamaz.
+    [ "$(fp "/api/upload?path=Filmler&name=..%2Fkacak" --data-binary "@$TMP/other.bin")" = 400 ]
+    [ "$(fp "/api/upload?path=Filmler&name=bos.bin" -X POST -H 'Content-Length: 0')" = 411 ]
+    [ "$(fp "/api/upload?path=.cop&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
+    [ "$(fp "/api/upload?path=.pay&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
+    # Yükleme kilidi bütün akış boyunca tutulmaz: yalnız son taşıma kilitli.
+    grep -q 'self.run(user, "yükle", put, lock=False' "$V2_ROOT/files-panel/master-files-panel"
+    grep -q 'with self.lock:' "$V2_ROOT/files-panel/master-files-panel"
+}
+
+@test "console uploads into the list itself, selects many rows and searches the folder" {
+    # DD-145: ayrı yükleme alanı yok; hedef liste, ilerleme satırın içinde.
+    local js="$V2_ROOT/console/konsol.js" css="$V2_ROOT/console/konsol.css"
+    grep -q 'xhr.open("POST", `/api/upload?path=${enc(u.path)}&name=${enc(u.name)}`)' "$js"
+    grep -q 'xhr.setRequestHeader("X-Konsol", "1")' "$js"
+    grep -q 'xhr.upload.addEventListener("progress"' "$js"
+    # Bırakma hedefi liste; perde ya da ayrı kuyruk kartı yok.
+    grep -q 'panel.addEventListener("drop"' "$js"
+    grep -q '"tr up"' "$js" || grep -q 'class: "tr up' "$js"
+    grep -q '\.fs-t\.dragging' "$css"
+    grep -q '\.droptip' "$css"
+    run ! grep -qi 'dropveil\|queue-card' "$js" "$css"
+    # Çoklu seçim tek istekte çöpe/taşımaya gider.
+    grep -q 'names: items.map((i) => i.name)' "$js"
+    [ "$(grep -c 'names: items.map((i) => i.name)' "$js")" -ge 2 ]
+    # Arama yalnız satırları yeniler; klasör değişince seçim ve arama sıfırlanır.
+    grep -q 'oninput: (e) => { fsQuery = e.target.value; renderRows(); updateMeta(); }' "$js"
+    grep -q 'fsSel.clear();' "$js"
+    # qBittorrent'in yazdığı klasör seçilemez.
+    grep -q 'const locked = inTemp(here) || inTemp(pathText(fsPath));' "$js"
+    grep -q 'locked ? null : h("button", { type: "button", class: "chk"' "$js"
+    # Kısayol sütunu kökü ve üst klasörleri arka uçtan alır.
+    grep -q 'fsRootDirs = r.entries.filter((e) => e.type === "dir")' "$js"
+    grep -q '\.fsrail' "$css"
+    grep -qx '          <nav class="fsrail" id="fs-rail" aria-label="Klasörler"></nav>' "$V2_ROOT/console/index.html"
+}
+
 @test "installer wires the share WebDAV: read-only rclone on the share root, one account, tailnet name, hidden from Infuse" {
     local compose="$V2_ROOT/templates/compose.yaml" unit="$V2_ROOT/systemd/master-files-panel.service" body s7 line
     awk '/^  paylasim:$/,/^networks:$/' "$compose" >"$TMP/svc"
-    for line in '      - /downloads/__SHARE_DIR__/w' '      - --htpasswd=/run/secrets/paylasim_htpasswd' \
+    for line in '      - __SERVER_ROOT__/__SHARE_DIR__/w' '      - --htpasswd=/run/secrets/paylasim_htpasswd' \
         '      - --copy-links' '      - --read-only' '    read_only: true' \
-        '      - "127.0.0.1:__SHARE_PORT__:8080"' '      - __DOWNLOADS_PATH__:/downloads:ro'; do
+        '      - "127.0.0.1:__SHARE_PORT__:8080"' '      - __SERVER_ROOT__:__SERVER_ROOT__:ro'; do
         grep -qx "$line" "$TMP/svc"
     done
     grep -q 'image: __RCLONE_IMAGE__' "$TMP/svc"
     run ! grep -q 'cap_add' "$TMP/svc"
-    # Paylaşım klasörü Infuse'ta ve unpackerr'da boş görünür (aynı yöntem, çöp gibi).
-    # DD-142: yalnız unpackerr; indirme klasörünü yayımlayan WebDAV artık yok.
-    [ "$(grep -c '      - /downloads/__SHARE_DIR__:ro,size=16k,mode=0555$' "$compose")" -eq 1 ]
-    awk '/^  unpackerr:$/,/^  paylasim:$/' "$compose" | grep -q '/downloads/__SHARE_DIR__:ro'
-
-    # Paylaşım konteyneri çöpü ve paylaşım klasörünü tmpfs ile gizlemez: kökü zaten .pay/w.
-    [ "$(awk '/^  paylasim:$/,/^networks:$/' "$compose" | grep -c 'size=16k')" -eq 0 ]
+    # DD-144: the trash and the share root sit outside the downloads folder, so the
+    # containers that mount only downloads cannot see them; no tmpfs curtain is left.
+    run ! grep -q 'size=16k' "$compose"
+    awk '/^  unpackerr:$/,/^  paylasim:$/' "$compose" | grep -qx '      - __DOWNLOADS_PATH__:/downloads'
+    awk '/^  qbittorrent:$/,/^  unpackerr:$/' "$compose" | grep -qx '      - __DOWNLOADS_PATH__:/downloads'
+    grep -q 'test ! -e /downloads/\${FILES_PANEL_TRASH} && test ! -e /downloads/\${SHARE_DIR}' "$V2_ROOT/install.sh"
     # Tek hesap: htpasswd rclone için, düz kopya yalnız Konsol'un göstermesi için.
     grep -qx 'SHARE_PORT="61010"' "$V2_ROOT/config/defaults.env"
     grep -qx 'SHARE_DIR=".pay"' "$V2_ROOT/config/defaults.env"
@@ -2887,9 +2944,9 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q "Paylaşım WebDAV'ı girişsiz yanıt" <<<"$s7"
     grep -q 'Paylaşım kökü' <<<"$s7"
-    grep -q "/downloads/\${SHARE_DIR} tmpfs" <<<"$s7"
+    grep -q 'test ! -e /downloads/\${SHARE_DIR}' <<<"$s7"
     awk '/^assert_share_readonly_runtime\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'docker inspect paylasim'
-    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$DOWNLOADS_PATH/\$SHARE_DIR/w"'
+    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$SERVER_ROOT/\$SHARE_DIR/w"'
     # Konsol sayfası paylaşımı tek hesapla anlatır ve parolayı yalnız istenince gösterir.
     grep -q '/api/paylas' "$V2_ROOT/console/konsol.js"
     grep -q 'showPass' "$V2_ROOT/console/konsol.js"
@@ -2898,11 +2955,11 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
 @test "installer wires the files panel: downloads uid, sandbox, shared account, tailnet name, hidden trash, stage 7 proof" {
     local unit="$V2_ROOT/systemd/master-files-panel.service" body s6 s7 line
     for line in 'User=__FILES_PANEL_USER__' 'Group=__FILES_PANEL_GROUP__' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
-        'ProtectSystem=strict' 'ReadWritePaths=__DOWNLOADS_PATH__' 'ProtectHome=true' 'PrivateTmp=true' 'PrivateDevices=true' \
+        'ProtectSystem=strict' 'ReadWritePaths=__SERVER_ROOT__' 'ProtectHome=true' 'PrivateTmp=true' 'PrivateDevices=true' \
         'LoadCredential=panel-auth:__WG_PANEL_AUTH_FILE__' 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' 'UMask=0002'; do
         grep -qx "$line" "$unit"
     done
-    grep -q -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ --root __DOWNLOADS_PATH__' "$unit"
+    grep -q -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__' "$unit"
     grep -q -- '--auth-credential panel-auth --trash __FILES_PANEL_TRASH__' "$unit"
     [ "$(grep -c '^ReadWritePaths=' "$unit")" -eq 1 ]
     run ! grep -qE '^User=(root|0)$|AF_NETLINK|/etc/wireguard' "$unit"
@@ -2944,17 +3001,17 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'redir http://panel.__LOCAL_DOMAIN__{uri} 302' "$V2_ROOT/templates/Caddyfile"
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
     run ! grep -q 'FILES_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
-    # unpackerr and WebDAV see the trash as an empty read-only tmpfs; the folder exists before compose up.
-    # DD-142: çöpü gizlemesi gereken tek konteyner unpackerr kaldı.
-    [ "$(grep -c '      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555$' "$V2_ROOT/templates/compose.yaml")" -eq 1 ]
-    awk '/^  unpackerr:$/,/^  paylasim:$/' "$V2_ROOT/templates/compose.yaml" | grep -q '/downloads/__FILES_PANEL_TRASH__:ro'
-    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$DOWNLOADS_PATH/\$FILES_PANEL_TRASH" \\'
+    # DD-144: the trash sits beside the downloads folder, not inside it, so no container
+    # that mounts downloads can reach it and the tmpfs curtain is gone.
+    run ! grep -q '__FILES_PANEL_TRASH__:ro,size=16k' "$V2_ROOT/templates/compose.yaml"
+    grep -q 'test ! -e /downloads/\${FILES_PANEL_TRASH}' "$V2_ROOT/install.sh"
+    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$SERVER_ROOT/\$FILES_PANEL_TRASH" \\'
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q 'panele yönlenmedi' <<<"$s7"
     grep -q 'master-files-panel" check' <<<"$s7"
     grep -q 'ps -o uid= -p' <<<"$s7"
     grep -q 'http://${wg_first_addr}:${FILES_PANEL_PORT}/' <<<"$s7"
-    grep -q "/downloads/\${FILES_PANEL_TRASH} tmpfs" <<<"$s7"
+    grep -q 'test ! -e /downloads/\${FILES_PANEL_TRASH}' <<<"$s7"
     # The password is still in memory for the files check and gone right after it.
     [ "$(grep -n 'master-files-panel" check' <<<"$s7" | cut -d: -f1)" -lt "$(grep -n 'unset WG_PANEL_NEW_PASS' <<<"$s7" | cut -d: -f1)" ]
     grep -q '"\$REPO_ROOT/files-panel"' "$V2_ROOT/dev/export-installer.sh"

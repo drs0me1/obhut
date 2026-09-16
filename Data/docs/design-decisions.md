@@ -6804,6 +6804,53 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-145: The console uploads into the list; no separate upload area (2026-09-16)
+
+- **Context:** the file panel could do everything FileBrowser could except
+  upload, select many items and search — the three reasons the container was
+  still installed. The user asked for the upload to live *inside* the file list
+  ("yükleme alanını ayrıca alta almak yerine dosyalar alanının içerisine
+  sürükle bırak"), not as a panel at the bottom.
+- **Decision:** the list is the drop target. While files are dragged over it the
+  list draws a dashed frame and a target strip; on drop each file becomes a row
+  at the top of that list with its progress bar inside the row, and turns into
+  an ordinary row when it finishes. The only permanent chrome is a small summary
+  in the toolbar. Selection turns the same toolbar into an action bar rather
+  than adding a second bar. The dashed frame is drawn only during `dragover`.
+- **Mechanics:** `POST /api/upload?path=&name=` takes the file as the body
+  (`XMLHttpRequest`, so the row can show progress). The panel writes
+  `.yukleniyor-<rastgele>` in the target folder, `fsync`s, then
+  `renameat2(RENAME_NOREPLACE)`s it into place: a half file is never listed and
+  an existing name is never overwritten. The stream runs without the panel
+  lock — a multi-gigabyte upload must not freeze listing, rename or trash — and
+  only the rename takes it. Uploads run one at a time, in order.
+- **Why not multipart:** the body-is-the-file form needs no parser in the panel
+  (stdlib only, **DD-139**) and streams straight to disk.
+- **Cost:** the frontend grew a selection model and an upload queue; the backend
+  gained one endpoint. In return FileBrowser, its account, its port and its name
+  can be retired next.
+
+### DD-144: The user area is a fixed /srv, not an asked-for path (2026-09-16)
+
+- **Context:** `DOWNLOADS_PATH` was an input key with an allowlist
+  (`/downloads`, `/data`, `/srv/downloads`). The user wanted one fixed area
+  "completely outside the system" and asked whether `/srv` is what that is.
+- **Decision:** it is. FHS 3.0 defines `/srv` as "site-specific data which is
+  served by this system" and Debian Policy reserves it for the local
+  administrator — no package writes there. `SERVER_ROOT=/srv` is a constant in
+  `defaults.env`, the question is gone from `kurulum.env`, and `config.env` no
+  longer stores a path the operator could have chosen.
+- **Layout:** `downloads/` (torrents, with `incomplete/` and `.unpackerr/`),
+  `media/{movies,series}`, `.cop` (trash) and `.pay/w` (share root) are
+  siblings under the root.
+- **Consequence that removed code:** the torrent client and unpackerr mount
+  only `/srv/downloads`, so the trash and the share root are outside their
+  mount. The `ro,size=16k` tmpfs curtain that used to hide those folders from
+  unpackerr is deleted, and stage 7 asserts the containers cannot see them.
+- **Cost:** a rebuild starts with an empty `/srv`; data under an old
+  `/downloads` is moved by hand (fresh-install rule). The operator must delete
+  the `DOWNLOADS_PATH` line from `kurulum/kurulum.env`.
+
 ### DD-143: The installer prepares WireGuard; Konsol creates it (2026-09-16)
 
 - **Context:** the user asked to cut the Mac-side link — no reading of

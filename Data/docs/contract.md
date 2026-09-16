@@ -427,12 +427,21 @@ Preserved in full as a core feature. Contract in §5–§7.
   - The root itself, the trash and the share folder cannot be shared, and the
     file panel hides the share folder from listings.
   - The container runs `--read-only` with `--copy-links` and mounts
-    `DOWNLOADS_PATH` read-only; `unpackerr` and `webdav` see the share folder
-    as an empty read-only tmpfs.
+    `SERVER_ROOT` read-only; `qbittorrent` and `unpackerr` mount only
+    `SERVER_ROOT/downloads`, so the share folder and the trash are outside what
+    they can see (**DD-144**).
 - `master-files-panel.service` serves the console pages and a file manager for
-  `DOWNLOADS_PATH`: browse, filter, sort, new folder, rename, move, move to
-  trash, restore, delete from the trash, empty the trash, read a text file and
-  download a file.
+  `SERVER_ROOT`: browse, search the current folder, select many items, new
+  folder, rename, move, move to trash, restore, delete from the trash, empty
+  the trash, read a text file, download a file and **upload** files
+  (**DD-145**).
+  - Upload is `POST /api/upload?path=&name=`, the body being the file itself.
+    It writes a temp name in the target folder, `fsync`s, then renames into
+    place, so a half-written file never appears in the listing and an existing
+    name is never overwritten (409). The stream runs without the panel lock;
+    only the final rename takes it. The file lands `0664`.
+  - The console has no separate upload area: files are dropped onto the list
+    itself, appear there as rows and show their progress in the row.
   - It runs Python 3's standard library only and listens on
     `127.0.0.1:61009`. Caddy exposes it on the tailnet; nothing exposes it on
     WireGuard or the WAN.
@@ -475,7 +484,8 @@ Preserved in full as a core feature. Contract in §5–§7.
 - The page marks qBittorrent's temporary folder (`Session\TempPath` from
   `templates/qBittorrent.conf`) and warns before moving or deleting there.
 - A switch at the top links `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}`.
-- FileBrowser stays as it is (**DD-139** keeps both).
+- FileBrowser is still installed; the console's own file manager now covers
+  the same ground (upload included), so it is the next thing to retire.
 
 ---
 

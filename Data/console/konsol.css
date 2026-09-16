@@ -488,7 +488,67 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .crumb:hover { background: var(--surface-2); color: var(--ink); }
 .crumb.cur { color: var(--ink); font-weight: 600; cursor: default; background: none; }
 .crumb.root { font-family: var(--f-mono); font-size: 14px; }
-.fs-t .tr { grid-template-columns: minmax(0, 1fr) 6.5rem 9rem 7rem; padding-block: 8px; }
+.fs-t .tr { grid-template-columns: 26px minmax(0, 1fr) 6.5rem 9rem 7rem; padding-block: 8px; }
+.movelist .tr { grid-template-columns: minmax(0, 1fr); }
+
+/* Dosyalar (DD-145): solda kısayol sütunu, sağda liste. */
+.fswrap { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 16px; align-items: start; }
+.fsrail { display: grid; align-content: start; gap: 3px; padding: 12px 10px; background: var(--tint); border: 1px solid var(--tint-line); border-radius: 12px; }
+.rl-t { margin: 6px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.rl-t:first-child { margin-top: 0; }
+.rl { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.rl:hover { background: var(--surface); }
+.rl.cur { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.rl-ico { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex: none; }
+.rl-ico svg { width: 15px; height: 15px; }
+.rl-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-c { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rl.cur .rl-c { color: var(--accent); }
+.rl-disk { margin: 14px 8px 2px; display: grid; gap: 6px; }
+.rl-dl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.rl-dl .mono { font-family: var(--f-mono); font-size: 11.5px; }
+.rl-bar { height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.rl-bar i { display: block; height: 100%; background: var(--accent); }
+.fspanel { background: var(--tint); border: 1px solid var(--tint-line); border-radius: 12px; padding: 18px; display: grid; gap: 16px; min-width: 0; }
+.fspanel .fs-body { display: grid; gap: 14px; }
+
+/* araç çubuğu: arama ve yükleme */
+.fs-search { display: flex; align-items: center; gap: 6px; min-width: 9rem; flex: 0 1 15rem; margin-left: 6px; padding: 5px 9px; border: 1px solid transparent; border-radius: 8px; background: var(--surface-2); }
+.fs-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); }
+.fs-search svg { width: 15px; height: 15px; color: var(--muted); flex: none; }
+.fs-search input { width: 100%; min-width: 0; border: 0; background: none; outline: none; font: inherit; font-size: 14px; color: var(--ink); }
+.vis-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.pathfield .btn { margin-left: 6px; }
+
+/* seçim */
+.selbar { background: var(--accent-soft); border-color: var(--accent); gap: 6px; }
+.selbar .pf-btn, .selbar .btn { color: var(--accent); }
+.selbar .btn { background: transparent; border-color: transparent; }
+.selbar .btn:hover:not(:disabled) { background: var(--surface); }
+.selbar .btn:disabled { opacity: .5; }
+.selbar .btn-danger { background: transparent; color: var(--danger); }
+.selbar .btn-danger:hover { background: var(--danger-soft); }
+.selbar .sel-cnt { font-weight: 600; font-size: 14px; color: var(--accent); padding-left: 4px; }
+.c-sel { display: grid; place-items: center; }
+.chk { width: 17px; height: 17px; padding: 0; border: 1.5px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--accent-ink); display: grid; place-items: center; cursor: pointer; }
+.chk:hover { border-color: var(--accent); }
+.chk.on { background: var(--accent); border-color: var(--accent); }
+.chk svg { width: 11px; height: 11px; stroke-width: 2.6; }
+.fs-t .tr.on { background: var(--accent-soft); }
+
+/* sürükle-bırak: hedef listenin kendisi */
+.fs-t.dragging { outline: 2px dashed var(--accent); outline-offset: -5px; background: var(--accent-soft); }
+.droptip { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 12px 14px 0; padding: 9px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 13.5px; }
+.droptip svg { width: 15px; height: 15px; }
+.droptip b { font-family: var(--f-mono); font-size: 13px; }
+
+/* yükleme satırı */
+.tr.up { background: var(--accent-soft); }
+.tr.up.wait { opacity: .7; }
+.tr.up.err { background: var(--danger-soft); }
+.tr.up.err .c-date { color: var(--danger); }
+.uprog { display: block; max-width: 320px; height: 4px; margin-top: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.uprog i { display: block; height: 100%; background: var(--accent); }
 .fname { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: center; background: none; border: 0; padding: 2px 0; text-align: left; cursor: pointer; }
 .fname:hover strong { color: var(--accent); }
 .fname strong { font-weight: 500; overflow-wrap: anywhere; }
@@ -597,7 +657,11 @@ dialog::backdrop { background: rgba(10, 14, 12, .5); }
   .bottomnav a svg { width: 20px; height: 20px; }
   .bottomnav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
   .toast { bottom: 84px; }
-  .fs-t .tr, .trash-t .tr { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .fswrap { grid-template-columns: minmax(0, 1fr); }
+  .fsrail { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+  .rl-t, .rl-disk { display: none; }
+  .fs-t .tr, .trash-t .tr { grid-template-columns: 26px minmax(0, 1fr) auto; }
+  .trash-t .tr { grid-template-columns: minmax(0, 1fr) auto auto; }
   .fs-t .c-date, .fs-t .head { display: none; }
   .log-t .ev { grid-template-columns: 3.6rem 28px minmax(0, 1fr); }
   .log-t .who { display: none; }

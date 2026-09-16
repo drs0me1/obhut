@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-111"
+V2_VERSION="2026.08.06-v2-113"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -30,10 +30,10 @@ OS_CHANGED=0
 # (~300 MB; DD-125). Başkasının önbelleğe koyduğu dosyaya dokunulmaz.
 APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # DD-119: kurulum girdi dosyasının alanları (şablon: config/kurulum.env.example).
-# Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı,
-# downloads yolu ya da port defaults.env varsayılanını alır; boş TS_AUTH_KEY
-# tarayıcıdan giriş demektir. SSH_HOST'u yalnız launcher okur.
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOWNLOADS_PATH DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY"
+# Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı
+# defaults.env varsayılanını alır; boş TS_AUTH_KEY tarayıcıdan giriş demektir.
+# SSH_HOST'u yalnız launcher okur. Kullanıcı alanı sorulmaz: SERVER_ROOT sabittir (DD-144).
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS TS_AUTH_KEY"
 INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS FILEBROWSER_USER FILEBROWSER_PASS TORRENT_USER TORRENT_PASS WG_PANEL_USER WG_PANEL_PASS SHARE_USER SHARE_PASS"
 
 prompt() {
@@ -68,6 +68,7 @@ TAILSCALE_UDP_PORT=$TAILSCALE_UDP_PORT
 TAILSCALE_IPV4=$TAILSCALE_IPV4
 TAILSCALE_IPV6=$TAILSCALE_IPV6
 LOCAL_DOMAIN=$LOCAL_DOMAIN
+SERVER_ROOT=$SERVER_ROOT
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PORT_DEFAULT=$WG_PORT_DEFAULT
@@ -123,7 +124,6 @@ detect_os_change() {
 write_config() {
     atomic_write "$CONFIG_FILE" 0600 <<EOF
 LOCAL_DOMAIN=$LOCAL_DOMAIN
-DOWNLOADS_PATH=$DOWNLOADS_PATH
 TIMEZONE=$TIMEZONE
 EOF
 }
@@ -422,7 +422,7 @@ stage_0() {
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
 
     # defaults.env değerleri config.env source edilmeden önce alınır.
-    local def_domain="$DEFAULT_LOCAL_DOMAIN" def_dl="$DOWNLOADS_PATH_DEFAULT"
+    local def_domain="$DEFAULT_LOCAL_DOMAIN"
     if [[ -r "$CONFIG_FILE" ]]; then
         # shellcheck source=/dev/null
         source "$CONFIG_FILE"
@@ -432,14 +432,14 @@ stage_0() {
     LOCAL_DOMAIN="${INPUT_LOCAL_DOMAIN:-$def_domain}"
     [[ "$LOCAL_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
         die "geçersiz alan adı: $LOCAL_DOMAIN"
-    DOWNLOADS_PATH="${INPUT_DOWNLOADS_PATH:-$def_dl}"
-    [[ "$DOWNLOADS_PATH" == /* ]] || die "downloads yolu mutlak olmalı"
-    [[ "$DOWNLOADS_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
-        die "downloads yolu yalnızca [A-Za-z0-9._/-] içerebilir"
-    [[ "$DOWNLOADS_PATH" != *//* ]] || die "downloads yolu '//' içeremez"
-    [[ "$DOWNLOADS_PATH" =~ (^|/)\.\.(/|$) ]] &&
-        die "downloads yolu '..' içeremez"
-    assert_downloads_path_allowed "$DOWNLOADS_PATH"
+    # DD-144: kullanıcı alanı sorulmaz. Kök defaults.env'de sabittir; indirme klasörü
+    # ve kütüphane onun altındadır. Sabit yanlış düzenlenirse allowlist durdurur.
+    [[ "$SERVER_ROOT" == /* && "$SERVER_ROOT" != */ ]] ||
+        die "SERVER_ROOT mutlak ve sonu '/' olmayan bir yol olmalı: $SERVER_ROOT"
+    [[ "$DOWNLOADS_SUBDIR" =~ ^[A-Za-z0-9._-]+$ && "$MEDIA_SUBDIR" =~ ^[A-Za-z0-9._-]+$ ]] ||
+        die "DOWNLOADS_SUBDIR ve MEDIA_SUBDIR tek bir klasör adı olmalı"
+    assert_downloads_path_allowed "$SERVER_ROOT"
+    DOWNLOADS_PATH="$SERVER_ROOT/$DOWNLOADS_SUBDIR"
 
     # DD-143: WireGuard portu artık girdi değil. state.env'deki değer yalnız Konsol'un
     # ilk ağa önerdiği porttur; ağı ve portunu master-wg net-add doğrular.
@@ -541,7 +541,7 @@ stage_0() {
 
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
-  Downloads:     $DOWNLOADS_PATH
+  Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
   Hesaplar:      Dozzle $DOZZLE_NEW_USER, FileBrowser $FILEBROWSER_NEW_USER, qBittorrent $TORRENT_NEW_USER,
                  Konsol $WG_PANEL_NEW_USER, paylaşım $SHARE_NEW_USER
@@ -762,17 +762,18 @@ assert_downloads_path_allowed() {
         /boot | /boot/* | /dev | /dev/* | /proc | /proc/* | /sys | /sys/* | \
         /run | /run/* | /root | /root/* | /var | /var/* | /tmp | /tmp/* | \
         /home | /home/* | /lib | /lib/* | /lib64 | /lib64/* | /opt | /opt/* | \
-        /srv | /media | /media/* | /mnt | /mnt/* )
-            die "downloads yolu sistem dizinine izin vermez: $p"
+        /media | /media/* | /mnt | /mnt/* )
+            die "kullanıcı alanı sistem dizininde olamaz: $p"
             ;;
     esac
+    # DD-144: /srv FHS'te zaten "bu sistemin sunduğu veri" dizini ve Debian paketleri
+    # oraya dosya koyamaz; kullanıcı alanının yeri orası.
     case "$p" in
-        /downloads | /downloads/* | /data | /data/* | \
-        /srv/downloads | /srv/downloads/* )
+        /srv | /srv/* | /data | /data/* )
             return 0
             ;;
         *)
-            die "downloads yolu allowlist dışı (/downloads, /data, /srv/downloads): $p"
+            die "kullanıcı alanı allowlist dışı (/srv, /data): $p"
             ;;
     esac
 }
@@ -1205,19 +1206,22 @@ stage_3() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
 
     local d
+    # DD-144: kök kullanıcı alanı; indirme klasörü, kütüphane, çöp ve paylaşım kökü
+    # kardeştir. Torrent istemcisi yalnız indirme klasörünü görür.
     for d in \
+        "$SERVER_ROOT" \
         "$DOWNLOADS_PATH" \
-        "$DOWNLOADS_PATH/media" \
-        "$DOWNLOADS_PATH/media/movies" \
-        "$DOWNLOADS_PATH/media/series" \
         "$DOWNLOADS_PATH/.unpackerr" \
-        "$DOWNLOADS_PATH/$FILES_PANEL_TRASH" \
-        "$DOWNLOADS_PATH/$SHARE_DIR" \
-        "$DOWNLOADS_PATH/$SHARE_DIR/w"; do
+        "$SERVER_ROOT/$MEDIA_SUBDIR" \
+        "$SERVER_ROOT/$MEDIA_SUBDIR/movies" \
+        "$SERVER_ROOT/$MEDIA_SUBDIR/series" \
+        "$SERVER_ROOT/$FILES_PANEL_TRASH" \
+        "$SERVER_ROOT/$SHARE_DIR" \
+        "$SERVER_ROOT/$SHARE_DIR/w"; do
         mkdir -p "$d"
     done
     local fixed
-    fixed="$(ensure_downloads_tree "$DOWNLOADS_PATH" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
+    fixed="$(ensure_downloads_tree "$SERVER_ROOT" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
     if [[ "$fixed" -gt 0 ]]; then
         log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/FileBrowser/Unpackerr R/W)"
     else
@@ -1275,6 +1279,7 @@ stage_4() {
         FILEBROWSER_UI_PORT="$FILEBROWSER_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
+        SERVER_ROOT="$SERVER_ROOT" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID" \
@@ -1633,7 +1638,7 @@ ensure_wg_panel() {
 }
 
 # DD-139: dosya paneli. 127.0.0.1:FILES_PANEL_PORT dinler; tailnet'e Caddy açar. Servis
-# DOWNLOADS_UID olarak çalışır ve yalnız DOWNLOADS_PATH'e yazar. Hesap WireGuard paneliyle
+# DOWNLOADS_UID olarak çalışır ve yalnız SERVER_ROOT'a yazar. Hesap WireGuard paneliyle
 # aynıdır: root'a özel özet dosyası LoadCredential ile servisin kendi kopyasına gelir, bu
 # yüzden hesap değişince panel yeniden başlar. qBittorrent'in yarım indirme klasörü
 # şablondan okunur; panel orada taşıma/silme için uyarır.
@@ -1663,10 +1668,16 @@ ensure_files_panel() {
     for f in index.html konsol.css konsol.js; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
+    # qBittorrent'in geçici klasörü konteyner yoluyla yazılıdır; panel onu kullanıcı
+    # alanının köküne göre bilir (DD-144): <indirme klasörü>/<geçici>.
     temp_dir="$(awk -F= '$1 == "Session\\TempPath" {print $2; exit}' "$V2_ROOT/templates/qBittorrent.conf")"
     temp_dir="${temp_dir#/downloads/}"
     temp_dir="${temp_dir%/}"
-    [[ "$temp_dir" =~ ^[A-Za-z0-9._-]+$ ]] || temp_dir=""
+    if [[ "$temp_dir" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        temp_dir="$DOWNLOADS_SUBDIR/$temp_dir"
+    else
+        temp_dir=""
+    fi
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
@@ -1675,7 +1686,7 @@ ensure_files_panel() {
         SHARE_DIR="$SHARE_DIR" \
         SHARE_CRED_FILE="$SHARE_CRED_FILE" \
         WG_PANEL_AUTH_FILE="$WG_PANEL_AUTH_FILE" \
-        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        SERVER_ROOT="$SERVER_ROOT" \
         FILES_PANEL_USER="$user" \
         FILES_PANEL_GROUP="$group" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
@@ -1712,11 +1723,11 @@ assert_share_readonly_runtime() {
         docker inspect paylasim --format \
             '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true
     )"
-    grep -qx '/downloads false' <<<"$mounts" ||
-        die "$label /downloads mount RW=false değil"
-    # Paylaşım yalnız paylaşım kökünü sunar: indirme klasörünün tamamı hiçbir yerde yayımlanmaz.
-    [[ "$cmd" == *"/downloads/${SHARE_DIR}/w"* ]] ||
-        die "Paylaşım WebDAV'ının kökü /downloads/${SHARE_DIR}/w değil"
+    grep -qx "${SERVER_ROOT} false" <<<"$mounts" ||
+        die "$label ${SERVER_ROOT} mount RW=false değil"
+    # Paylaşım yalnız paylaşım kökünü sunar: kullanıcı alanının tamamı hiçbir yerde yayımlanmaz.
+    [[ "$cmd" == *"${SERVER_ROOT}/${SHARE_DIR}/w"* ]] ||
+        die "Paylaşım WebDAV'ının kökü ${SERVER_ROOT}/${SHARE_DIR}/w değil"
     [[ "$cmd" == *"--copy-links"* ]] ||
         die "Paylaşım WebDAV'ında --copy-links yok (paylaşılan ögeler görünmez)"
 }
@@ -1959,15 +1970,18 @@ stage_7() {
         "http://${TAILSCALE_IPV4}:${SHARE_PORT}/" || true)"
     [[ "$code" == "401" ]] || die "Paylaşım ${TAILSCALE_IPV4}:${SHARE_PORT} adresinde yanıt $code verdi (beklenen 401)"
     local share_owner
-    share_owner="$(stat -c '%u:%g' "$DOWNLOADS_PATH/$SHARE_DIR/w" 2>/dev/null || true)"
+    share_owner="$(stat -c '%u:%g' "$SERVER_ROOT/$SHARE_DIR/w" 2>/dev/null || true)"
     [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
-        die "Paylaşım kökü ${DOWNLOADS_PATH}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
+        die "Paylaşım kökü ${SERVER_ROOT}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
 
-    # DD-139/DD-141: unpackerr çöpü ve paylaşım klasörünü boş görür (arşivler yeniden açılmasın).
-    docker exec unpackerr sh -c "grep -q ' /downloads/${FILES_PANEL_TRASH} tmpfs ' /proc/mounts" ||
-        die "unpackerr konteyneri çöp klasörünü (/downloads/${FILES_PANEL_TRASH}) boş tmpfs olarak görmüyor"
-    docker exec unpackerr sh -c "grep -q ' /downloads/${SHARE_DIR} tmpfs ' /proc/mounts" ||
-        die "unpackerr konteyneri paylaşım klasörünü (/downloads/${SHARE_DIR}) boş tmpfs olarak görmüyor"
+    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; unpackerr ve qBittorrent
+    # yalnız indirme klasörünü bağlar, o yüzden ikisini de göremez (tmpfs perdesi gerekmez).
+    docker exec unpackerr sh -c \
+        "test ! -e /downloads/${FILES_PANEL_TRASH} && test ! -e /downloads/${SHARE_DIR}" ||
+        die "unpackerr konteyneri çöp ya da paylaşım klasörünü görüyor; indirme klasörünün dışında olmalılar"
+    docker exec qbittorrent sh -c \
+        "test ! -e /downloads/${FILES_PANEL_TRASH} && test ! -e /downloads/${SHARE_DIR}" ||
+        die "qBittorrent konteyneri çöp ya da paylaşım klasörünü görüyor"
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
             "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
@@ -1985,7 +1999,7 @@ print_summary() {
 WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
-Downloads:    $DOWNLOADS_PATH
+Kullanıcı alanı: $SERVER_ROOT (indirmeler $DOWNLOADS_PATH, kütüphane $SERVER_ROOT/$MEDIA_SUBDIR)
 WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; ağları Konsol kurar)
 Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
@@ -1997,7 +2011,7 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${DOWNLOADS_PATH} dosya yöneticisi,
+Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${SERVER_ROOT} dosya yöneticisi,
   sunucu durumu ve günlük; yalnız Tailscale, kurulum.env hesabı. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
 Paylaşım: http://paylas.${LOCAL_DOMAIN} (Konsol'dan paylaşılanlar; salt okunur, tek hesap, yalnız Tailscale)
   Infuse: http://${TAILSCALE_IPV4}:${SHARE_PORT}/ (ad çözemeyen istemciler için aynı paylaşım)

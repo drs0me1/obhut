@@ -69,7 +69,7 @@ services:
     ports:
       - "127.0.0.1:__FILEBROWSER_UI_PORT__:80"
     volumes:
-      - __DOWNLOADS_PATH__:/srv
+      - __SERVER_ROOT__:/srv
       - __FILEBROWSER_DATA_DIR__:/database
       # Image VOLUME /config — anonim volume oluşmasın (DD-92 hijyen).
       - __FILEBROWSER_DATA_DIR__/config:/config
@@ -96,6 +96,8 @@ services:
       WEBUI_PORT: "__TORRENT_UI_PORT__"
       TORRENTING_PORT: "__TORRENT_PUBLIC_PORT__"
     volumes:
+      # DD-144: istemci yalnız indirme klasörünü görür; kütüphane, çöp ve paylaşım
+      # kökü kullanıcı alanının üst seviyesinde, bu bağlamanın dışında kalır.
       - __QBITTORRENT_DATA_DIR__:/config
       - __DOWNLOADS_PATH__:/downloads
     stop_grace_period: 30s
@@ -106,7 +108,7 @@ services:
     user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"
     restart: unless-stopped
     logging: *default-logging
-    # Torrent istemcisinin API'si kullanılmaz: parola/port gerekmez. Yalnız /downloads ağacını
+    # Torrent istemcisinin API'si kullanılmaz: parola/port gerekmez. Yalnız indirme ağacını
     # periyodik tarar; arşivleri bulunduğu yere çıkarır (MOVE_BACK).
     security_opt:
       - no-new-privileges=true
@@ -129,18 +131,17 @@ services:
       UN_FOLDER_0_MOVE_BACK: "true"
       UN_FOLDER_0_EXTRACT_ISOS: "false"
     volumes:
+      # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında olduğu için bu bağlamaya
+      # hiç girmez; eskiden gereken tmpfs perdesi kalktı.
       - __DOWNLOADS_PATH__:/downloads
     tmpfs:
       - /tmp
-      # DD-139: dosya panelinin çöpü burada boş görünür; çöpe atılan arşivler yeniden açılmaz.
-      - /downloads/__FILES_PANEL_TRASH__:ro,size=16k,mode=0555
-      # DD-141: paylaşım klasörü de boş görünür; aynı arşiv bağlantı üzerinden ikinci kez açılmaz.
-      - /downloads/__SHARE_DIR__:ro,size=16k,mode=0555
     stop_grace_period: 30s
 
   # DD-141/DD-142: tek WebDAV. Kökü yalnız .pay/w: dışarıya yalnız Konsol'dan
-  # paylaşılanlar açılır, indirme klasörünün tamamı hiç yayımlanmaz. Bağlantılar
-  # izlenir (--copy-links), indirme klasörü salt okunur bağlıdır, hesap htpasswd'de.
+  # paylaşılanlar açılır, kullanıcı alanının tamamı hiç yayımlanmaz. Bağlantılar
+  # izlenir (--copy-links) — bu yüzden alan aynı yolla salt okunur bağlıdır, yoksa
+  # göreli bağlantılar kökün dışına düşerdi. Hesap htpasswd'de (DD-144).
   paylasim:
     image: __RCLONE_IMAGE__
     container_name: paylasim
@@ -150,7 +151,7 @@ services:
     command:
       - serve
       - webdav
-      - /downloads/__SHARE_DIR__/w
+      - __SERVER_ROOT__/__SHARE_DIR__/w
       - --config=/dev/null
       - --addr=:8080
       - --htpasswd=/run/secrets/paylasim_htpasswd
@@ -169,7 +170,7 @@ services:
     ports:
       - "127.0.0.1:__SHARE_PORT__:8080"
     volumes:
-      - __DOWNLOADS_PATH__:/downloads:ro
+      - __SERVER_ROOT__:__SERVER_ROOT__:ro
       - __SHARE_HTPASSWD_FILE__:/run/secrets/paylasim_htpasswd:ro
     read_only: true
     tmpfs:

@@ -4,7 +4,38 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+### 2026-09-16 — The user area is /srv and the console uploads into the list (v2-112, v2-113)
+
+- **Changed** (**DD-144**, v2-112): the downloads path is no longer asked. The
+  user area is the fixed `SERVER_ROOT=/srv` — FHS calls `/srv` the place for
+  "site-specific data which is served by this system", and Debian Policy keeps
+  packages out of it, which is exactly what this folder is.
+  - Layout: `/srv/downloads` (qBittorrent writes here, with `incomplete/` and
+    `.unpackerr/`), `/srv/media/{movies,series}`, `/srv/.cop` (trash),
+    `/srv/.pay/w` (share root).
+  - `qbittorrent` and `unpackerr` mount only `/srv/downloads`; FileBrowser and
+    the share mount `/srv`. Because the trash and the share root are now
+    *outside* the downloads folder, the tmpfs curtain that used to hide them
+    from unpackerr is gone — stage 7 checks the containers cannot see them.
+  - **Removed**: the `DOWNLOADS_PATH` input key. Delete that line from
+    `kurulum/kurulum.env`; the installer stops on an unknown key before
+    changing anything.
+- **Added** (**DD-145**, v2-113): the console's Dosyalar page does what
+  FileBrowser was there for.
+  - **Upload**: drop files onto the list itself — there is no separate upload
+    area. They appear as rows with progress in the row, and settle into the
+    listing when done. `POST /api/upload` writes a temp name and renames it
+    into place; an existing name is refused, a half file never appears.
+  - **Multi-select**: row checkboxes (Shift for a range) turn the toolbar into
+    an action bar — download, move, share, move to trash. Move and trash go in
+    one request. `Esc` clears the selection.
+  - **Search** filters the current folder as you type; the counter shows the
+    number of matches.
+  - A left rail replaces the old cards: the root, the top-level folders
+    (`downloads`, `media`), Paylaşımlar, Çöp and the disk meter.
+  - qBittorrent's own folder (`downloads/incomplete`) cannot be selected or
+    shared, and still warns before a move or delete.
+  - Design: `docs/design/konsol-dosyalar-v02.html`.
 
 ### 2026-09-16 — Nothing the installer writes describes a preset WireGuard network (v2-111)
 
