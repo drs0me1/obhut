@@ -33,7 +33,9 @@ import urllib.request
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
-MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir")
+MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir", "parola")
+# DD-149: hesabı olan modüller (Konsol hesabı gösterir, "Yeni parola" üretir).
+ACCOUNT_MODULES = ("paylasim",)
 IFACE_RE = re.compile(r"^wg[0-9]$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
@@ -331,13 +333,33 @@ class Panel:
             pass
         return "Linux"
 
+    def module_state(self, mid, env=None):
+        """Modül kaydındaki durum (calisiyor | durduruldu); kurulu değilse ""."""
+        env = env if env is not None else read_env(self.args.state)
+        path = env.get("MODULES_FILE", "")
+        if not path:
+            return ""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    f = line.rstrip("\n").split("\t")
+                    if len(f) == 2 and f[0] == mid and f[1] in ("calisiyor", "durduruldu"):
+                        return f[1]
+        except OSError:
+            pass
+        return ""
+
     def ports(self, env, networks):
         """Kullanımdaki portlar: state.env ve ağ kaydından; hiçbir yeri taramaz."""
         rows = []
+        share_on = bool(self.module_state("paylasim", env))
         for net in networks:
             rows.append({"port": net["port"], "proto": "udp", "scope": "internet",
                          "name": "WireGuard %s%s" % (net["iface"], " · %s" % net["label"] if net["label"] else "")})
         for key, name, proto, scope, default in PORT_ROWS:
+            # DD-149: paylaşım portu yalnız Paylaşım modülü kuruluyken dinlenir.
+            if key == "SHARE_PORT" and not share_on:
+                continue
             port = num_or(env.get(key), default)
             if port:
                 rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
@@ -375,8 +397,9 @@ class Panel:
                 "tailscale6": env.get("TAILSCALE_IPV6", ""), "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             },
             "ports": self.ports(env, networks),
-            # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar.
-            "share": {"port": num_or(env.get("SHARE_PORT"), 0)},
+            # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
+            # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
+            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env))},
         }
 
     def actions(self):
@@ -593,6 +616,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.send(200, out.encode("utf-8"), "text/plain; charset=utf-8")
             return
+        # DD-149: modül hesabı (root'a özel dosyadan). Parola yalnız ?parola=1 ile, açıkça
+        # istenince döner ve günlüğe yalnız "gösterildi" olarak geçer; değer hiçbir yere yazılmaz.
+        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/hesap$", path)
+        if m:
+            mid = m.group(1)
+            if mid not in ACCOUNT_MODULES or not self.panel.module_state(mid):
+                self.error(404, "bu modülde hesap yok")
+                return
+            reveal = query.get("parola") == ["1"]
+            rc, out, message = self.panel.modul("hesap", mid, *(["--parola"] if reveal else []))
+            fields = out.rstrip("\n").split("\t") if rc == 0 else []
+            if len(fields) != (3 if reveal else 2):
+                self.error(404, message or "hesap yok")
+                return
+            env = read_env(self.panel.args.state)
+            ts, port = env.get("TAILSCALE_IPV4", ""), num_or(env.get("SHARE_PORT"), 0)
+            body = {"user": fields[0], "changed": num_or(fields[1], 0),
+                    "host": "paylas.%s" % env["LOCAL_DOMAIN"] if env.get("LOCAL_DOMAIN") else "",
+                    "infuse": "http://%s:%d/" % (ts, port) if ts and port else ""}
+            if reveal:
+                body["pass"] = fields[2]
+                self.audit(user, "modul-hesap", mid, True)
+            self.json(200, body)
+            return
         if path == "/api/wg/islemler":
             self.json(200, {"items": self.panel.actions()})
             return
@@ -653,13 +700,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
             return
-        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(kur|baslat|durdur|kaldir)$", path)
+        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)
         if m:
             mid, action = m.group(1), m.group(2)
             known = [i["id"] for i in self.panel.modules()] if MODULE_ID_RE.match(mid) else []
             if mid not in known:
                 self.error(404, "bilinmeyen modül")
                 return
+            if action == "parola":
+                if mid not in ACCOUNT_MODULES:
+                    self.error(404, "bu modülde parola yok")
+                    return
+                if not self.panel.module_state(mid):
+                    self.error(409, "modül kurulu değil")
+                    return
             code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
             self.audit(user, "modul-" + action, mid + (" +veri" if action == "kaldir" and data.get("veri") else ""), code == 202)
             if code != 202:

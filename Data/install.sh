@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-115"
+V2_VERSION="2026.08.06-v2-116"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -33,8 +33,8 @@ APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı
 # defaults.env varsayılanını alır. Tailscale'e her zaman giriş bağlantısıyla katılınır (DD-147).
 # SSH_HOST'u yalnız launcher okur. Kullanıcı alanı sorulmaz: SERVER_ROOT sabittir (DD-144).
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"
-INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS SHARE_USER SHARE_PASS"
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS"
+INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS"
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -91,6 +91,15 @@ MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
+SHARE_DIR=$SHARE_DIR
+SHARE_HTPASSWD_FILE=$SHARE_HTPASSWD_FILE
+SHARE_CRED_FILE=$SHARE_CRED_FILE
+SHARE_ACCOUNT=$SHARE_ACCOUNT
+SHARE_PASSWORD_LENGTH=$SHARE_PASSWORD_LENGTH
+STATE_DIR=$STATE_DIR
+CADDYFILE=$CADDYFILE
+CADDY_MODULES_DIR=$CADDY_MODULES_DIR
+DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 DOZZLE_UI_PORT=$DOZZLE_UI_PORT
@@ -424,8 +433,8 @@ stage_0() {
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
     # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
-    # karşılaştırılır; farklıysa aşama 1 (paylaşım) ve 4 (Dozzle, qBittorrent)
-    # günceller. Parolalar yalnız bellekte durur.
+    # karşılaştırılır; farklıysa aşama 4 (Dozzle, qBittorrent) günceller. Parolalar
+    # yalnız bellekte durur. Paylaşım hesabını Paylaşım modülü üretir (DD-149).
     # DD-116: Dozzle parolası aşama 4'te imajın kendi aracına stdin'den gider.
     DOZZLE_NEW_USER="$INPUT_DOZZLE_USER"
     DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
@@ -437,11 +446,6 @@ stage_0() {
     TORRENT_NEW_PASS="$INPUT_TORRENT_PASS"
     validate_account qBittorrent "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" \
         '^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$' "$TORRENT_MIN_PASSWORD_LENGTH"
-    # DD-141: paylaşım WebDAV'ı; bütün paylaşımlar bu tek hesapla açılır.
-    SHARE_NEW_USER="$INPUT_SHARE_USER"
-    SHARE_NEW_PASS="$INPUT_SHARE_PASS"
-    validate_account "Paylaşım" "$SHARE_NEW_USER" "$SHARE_NEW_PASS" \
-        '^[a-z][a-z0-9._-]{0,31}$' "$SHARE_MIN_PASSWORD_LENGTH"
 
     # DD-147: Tailscale'e yalnız giriş bağlantısıyla katılınır; auth key girdisi yok.
     local ts_note="aşama 2'de giriş bağlantısı gösterilir; tarayıcıda onaylayın"
@@ -498,7 +502,8 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Hesaplar:      Dozzle $DOZZLE_NEW_USER, qBittorrent $TORRENT_NEW_USER, paylaşım $SHARE_NEW_USER
+  Hesaplar:      Dozzle $DOZZLE_NEW_USER, qBittorrent $TORRENT_NEW_USER
+  Paylaşım:      Konsol → Modüller'den kurulur; hesabı orada üretilir (DD-149)
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
                  (dosyadakinden farklı olan hesap güncellenir)
   Tailscale:     $ts_note
@@ -556,43 +561,6 @@ stage_1() {
     check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
-
-    ensure_share_account
-}
-
-# DD-119: htpasswd tek satırda dosyadaki hesabı taşıyorsa dokunulmaz; değilse
-# yeniden yazılır ve çalışan konteyner yeniden başlatılır (secret bir bind mount:
-# `mv` sonrası konteyner eski dosyayı görür). Parola stdin'den gider.
-# DD-141: paylaşım hesabı iki dosyaya yazılır: rclone'un okuduğu htpasswd (bcrypt) ve
-# Konsol'un gösterip kopyalattığı düz metin kopya (root'a özel, dosya arka ucuna yalnız
-# systemd kimlik bilgisi olarak açılır). İkisi de aynı girdiden gelir, ayrışamazlar.
-ensure_share_account() {
-    local tmp
-    [[ -n "${SHARE_NEW_PASS:-}" ]] || return 0
-    if [[ -f "$SHARE_HTPASSWD_FILE" && "$(wc -l <"$SHARE_HTPASSWD_FILE")" -eq 1 ]] &&
-        printf '%s' "$SHARE_NEW_PASS" |
-        htpasswd -vi "$SHARE_HTPASSWD_FILE" "$SHARE_NEW_USER" >/dev/null 2>&1 &&
-        [[ -f "$SHARE_CRED_FILE" && "$(cat "$SHARE_CRED_FILE")" == "${SHARE_NEW_USER}:${SHARE_NEW_PASS}" ]]; then
-        log INFO "Paylaşım hesabı girdi dosyasıyla aynı; dokunulmadı"
-    else
-        tmp="$(mktemp "$STATE_DIR/.paylasim-XXXXXX")"
-        printf '%s' "$SHARE_NEW_PASS" | htpasswd -i -B "$tmp" "$SHARE_NEW_USER"
-        chmod 0600 "$tmp"
-        chown root:root "$tmp"
-        mv -f "$tmp" "$SHARE_HTPASSWD_FILE"
-        tmp="$(mktemp "$STATE_DIR/.paylasim-XXXXXX")"
-        printf '%s:%s\n' "$SHARE_NEW_USER" "$SHARE_NEW_PASS" >"$tmp"
-        chmod 0600 "$tmp"
-        chown root:root "$tmp"
-        mv -f "$tmp" "$SHARE_CRED_FILE"
-        log INFO "Paylaşım hesabı yazıldı: $SHARE_HTPASSWD_FILE ($SHARE_NEW_USER)"
-        SHARE_ACCOUNT_CHANGED=1
-        if docker inspect paylasim >/dev/null 2>&1; then
-            docker restart paylasim >/dev/null || log WARN "paylasim yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
-        fi
-    fi
-    unset SHARE_NEW_PASS
-    SHARE_NEW_USER=""
 }
 
 apply_udp_netbuf_floor() {
@@ -732,11 +700,32 @@ assert_downloads_path_allowed() {
 
 # DD-148: modüllerin dosyaları. Kurulum her modülün şablonunu yer tutucuları doldurarak
 # MODULES_DIR/<id>/ altına yazar ve kayıt dosyasını (yoksa boş) oluşturur; hiçbir modülü
-# kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Değişen dosyayı kayıtta "calisiyor"
-# olan bir modül için aşama 7 yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
+# kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Dosyası değişen kurulu modülü aşama 7
+# yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
 MODULES_CHANGED=""
 ensure_module_files() {
+    local changed=0
     install -d -m 0755 -o root -g root "$MODULES_DIR"
+    # DD-149: Paylaşım — compose, Caddy sitesi ve dnsmasq adı. Canlı kopyaları master-modul koyar.
+    install -d -m 0755 -o root -g root "$MODULES_DIR/paylasim"
+    render_template "$V2_ROOT/modules/paylasim/compose.yaml" "$MODULES_DIR/paylasim/compose.yaml" 0644 \
+        RCLONE_IMAGE="$RCLONE_IMAGE" \
+        SERVER_ROOT="$SERVER_ROOT" \
+        SHARE_DIR="$SHARE_DIR" \
+        SHARE_PORT="$SHARE_PORT" \
+        SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
+        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
+        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    render_template "$V2_ROOT/modules/paylasim/paylasim.caddy" "$MODULES_DIR/paylasim/paylasim.caddy" 0644 \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        SHARE_PORT="$SHARE_PORT"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    render_template "$V2_ROOT/modules/paylasim/dnsmasq.conf" "$MODULES_DIR/paylasim/dnsmasq.conf" 0644 \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        TAILSCALE_IF="$TAILSCALE_IF"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
     install -d -m 0755 -o root -g root "$MODULES_DIR/unpackerr"
     render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644 \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
@@ -754,16 +743,16 @@ ensure_module_files() {
     chmod 0644 "$MODULES_FILE"
 }
 
-# DD-148: dosyası değişen ve kayıtta çalışan modül yeniden uygulanır; durdurulmuş ya da
-# kurulmamış modüle dokunulmaz. Kurulum hiçbir modülü kaldırmaz.
+# DD-148/DD-149: dosyası değişen kurulu modül yeniden uygulanır (adları, hesabı; çalışıyorsa
+# konteyneri). Durdurulmuş modül durur, kurulmamış modüle dokunulmaz, hiçbiri kaldırılmaz.
 reapply_modules() {
     local id state
     for id in $MODULES_CHANGED; do
         state="$(awk -F'\t' -v i="$id" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true)"
-        [[ "$state" == calisiyor ]] || continue
+        [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
         log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
-        "$SBIN_DIR/master-modul" baslat "$id" >/dev/null ||
-            log WARN "Modül $id yeniden başlatılamadı; Konsol → Modüller'den bakın"
+        "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
+            log WARN "Modül $id yeniden uygulanamadı; Konsol → Modüller'den bakın"
     done
 }
 
@@ -1103,11 +1092,6 @@ stage_4() {
     render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
         DOZZLE_IMAGE="$DOZZLE_IMAGE" \
         QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
-        RCLONE_IMAGE="$RCLONE_IMAGE" \
-        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
-        SHARE_DIR="$SHARE_DIR" \
-        SHARE_PORT="$SHARE_PORT" \
-        SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
         DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
@@ -1168,10 +1152,7 @@ stage_4() {
 }
 
 stage_5() {
-    log INFO "Aşama 5/7 — firewall (paylaşım WebDAV'ı Compose'ta)"
-    [[ -f "$SHARE_HTPASSWD_FILE" ]] || die "Paylaşım htpasswd yok: $SHARE_HTPASSWD_FILE"
-    chown root:root "$SHARE_HTPASSWD_FILE" "$SHARE_CRED_FILE"
-    chmod 0600 "$SHARE_HTPASSWD_FILE" "$SHARE_CRED_FILE"
+    log INFO "Aşama 5/7 — firewall"
 
     systemctl enable master-firewall.service
     systemctl enable refresh-tailnet-config.service
@@ -1314,15 +1295,17 @@ EOF
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
-        SHARE_PORT="$SHARE_PORT"
+        CADDY_MODULES_DIR="$CADDY_MODULES_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
+    # DD-149: modüllerin site dosyaları bu dizinden içe aktarılır; boş dizin geçerlidir.
+    install -d -m 0755 -o root -g root "$CADDY_MODULES_DIR"
     ensure_console_pages
     # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
     # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
     # doğrula (DD-106). Çıktı normalde JSON log satırları; hata satırını süz,
     # bulunamazsa son satırı göster.
     if ! validate_out="$(
-        TAILSCALE_IPV4="$TAILSCALE_IPV4" SHARE_PORT="$SHARE_PORT" \
+        TAILSCALE_IPV4="$TAILSCALE_IPV4" \
             caddy validate --config "$CADDYFILE" --adapter caddyfile 2>&1
     )"; then
         die "Caddyfile geçersiz ($CADDYFILE): $(
@@ -1501,7 +1484,6 @@ ensure_files_panel() {
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
-        SHARE_CRED_FILE="$SHARE_CRED_FILE" \
         SERVER_ROOT="$SERVER_ROOT" \
         FILES_PANEL_USER="$user" \
         FILES_PANEL_GROUP="$group" \
@@ -1509,7 +1491,6 @@ ensure_files_panel() {
         V2_VERSION="$V2_VERSION" \
         QBITTORRENT_TEMP_DIR="$temp_dir"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ "${SHARE_ACCOUNT_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-files-panel.service
     if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-files-panel.service; then
@@ -1519,58 +1500,6 @@ ensure_files_panel() {
     else
         log INFO "Dosya paneli aynı; yeniden başlatılmadı"
     fi
-}
-
-# DD-142: sunucudaki tek WebDAV paylaşımdır; salt okunur ve kökü yalnız .pay/w.
-assert_share_readonly_runtime() {
-    local label="Paylaşım WebDAV'ı" cmd rootfs mounts
-    cmd="$(docker inspect paylasim --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
-    [[ "$cmd" == *"--read-only"* ]] ||
-        die "$label komutunda --read-only yok"
-
-    rootfs="$(
-        docker inspect paylasim --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true
-    )"
-    [[ "$rootfs" == "true" ]] ||
-        die "$label root filesystem read-only değil (ReadonlyRootfs=$rootfs)"
-
-    mounts="$(
-        docker inspect paylasim --format \
-            '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true
-    )"
-    grep -qx "${SERVER_ROOT} false" <<<"$mounts" ||
-        die "$label ${SERVER_ROOT} mount RW=false değil"
-    # Paylaşım yalnız paylaşım kökünü sunar: kullanıcı alanının tamamı hiçbir yerde yayımlanmaz.
-    [[ "$cmd" == *"${SERVER_ROOT}/${SHARE_DIR}/w"* ]] ||
-        die "Paylaşım WebDAV'ının kökü ${SERVER_ROOT}/${SHARE_DIR}/w değil"
-    [[ "$cmd" == *"--copy-links"* ]] ||
-        die "Paylaşım WebDAV'ında --copy-links yok (paylaşılan ögeler görünmez)"
-}
-
-assert_share_network() {
-    local nets count
-    nets="$(
-        docker inspect paylasim --format \
-            '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' \
-            2>/dev/null || true
-    )"
-    grep -qx 'paylasim' <<<"$nets" || die "paylasim konteyneri paylasim ağına bağlı değil"
-    count="$(grep -c . <<<"$nets" || true)"
-    [[ "$count" -eq 1 ]] || die "paylasim beklenmeyen ağlar: $(tr '\n' ' ' <<<"$nets")"
-}
-
-wait_share_healthy() {
-    local attempt status
-    for attempt in $(seq 1 36); do
-        status="$(
-            docker inspect paylasim --format \
-                '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-                2>/dev/null || echo missing
-        )"
-        [[ "$status" == "healthy" ]] && return 0
-        sleep 2
-    done
-    die "paylasim healthcheck hazır değil (son durum: ${status:-unknown}; deneme=${attempt:-0})"
 }
 
 stage_7() {
@@ -1601,8 +1530,6 @@ stage_7() {
         log INFO "docker image prune (eski imaj katmanları temizleniyor)"
         docker image prune -f >/dev/null || log WARN "docker image prune başarısız (yok sayıldı)"
     fi
-    wait_share_healthy
-    assert_share_network
     "$SBIN_DIR/master-firewall" --check
 
     # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
@@ -1635,7 +1562,7 @@ stage_7() {
         log WARN "otomatik güvenlik güncellemeleri etkin değil (APT::Periodic::Unattended-Upgrade=${periodic:-yok}; $APT_PERIODIC_FILE eziliyor olabilir)"
     fi
 
-    local name resolver ans dig_out code health line svc
+    local name resolver ans dig_out code health line
     # shellcheck disable=SC2086
     for name in $SERVICE_NAMES; do
         for resolver in 127.0.0.1 "$TAILSCALE_IPV4"; do
@@ -1682,11 +1609,6 @@ stage_7() {
     qbit_login_check
     unset TORRENT_NEW_PASS
 
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://127.0.0.1:${SHARE_PORT}/" || true)"
-    [[ "$code" == "401" ]] || die "Paylaşım loopback kimlik doğrulamasız yanıt $code (beklenen 401)"
-
-    assert_share_readonly_runtime
 
     (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
         grep -q "${TORRENT_PUBLIC_PORT}/tcp" ||
@@ -1695,16 +1617,12 @@ stage_7() {
         grep -q "${TORRENT_PUBLIC_PORT}/udp" ||
         die "qbittorrent public UDP ${TORRENT_PUBLIC_PORT} publish yok"
 
-    for svc in dozzle paylasim; do
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ -z "$line" ]] && continue
-            [[ "$line" == *127.0.0.1:* ]] ||
-                die "UI publish yalnız loopback olmalı: $svc ($line)"
-        done < <((cd "$COMPOSE_DIR" && docker port "$svc") 2>/dev/null || true)
-    done
-    (cd "$COMPOSE_DIR" && docker port paylasim) 2>/dev/null |
-        grep -q "127.0.0.1:${SHARE_PORT}" ||
-        die "paylasim loopback publish ${SHARE_PORT} yok"
+    # Paylaşım modülünün yayınını master-modul sınar (DD-149).
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" == *127.0.0.1:* ]] ||
+            die "UI publish yalnız loopback olmalı: dozzle ($line)"
+    done < <((cd "$COMPOSE_DIR" && docker port dozzle) 2>/dev/null || true)
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         [[ "$line" == *"${TORRENT_PUBLIC_PORT}/"* ]] && continue
@@ -1769,7 +1687,7 @@ stage_7() {
         die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
     # DD-139: dosya arka ucu açılır, kök yazılabilir, root değil.
-    local files_out files_uid svc
+    local files_out files_uid
     files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
         --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
         die "Konsol dosya arka ucu yanıt vermedi: $files_out"
@@ -1786,14 +1704,8 @@ stage_7() {
             "http://${wg_first_addr}:${FILES_PANEL_PORT}/" || true)"
         [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
     fi
-    # DD-141: paylaşım salt okunur ve girişsiz açılmaz; kök klasör indirme sahibinde.
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: paylas.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "401" ]] || die "Paylaşım WebDAV'ı girişsiz yanıt $code verdi (beklenen 401)"
-    # DD-141: Infuse adı çözemeyen istemciler için IP:port adresi de açık olmalı.
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        "http://${TAILSCALE_IPV4}:${SHARE_PORT}/" || true)"
-    [[ "$code" == "401" ]] || die "Paylaşım ${TAILSCALE_IPV4}:${SHARE_PORT} adresinde yanıt $code verdi (beklenen 401)"
+    # DD-141: paylaşım kökü indirme sahibinde (dosya servisi bağlantıları oraya yazar). WebDAV'ı
+    # (401, ad ve Infuse adresi) Paylaşım modülü kurulurken master-modul sınar (DD-149).
     local share_owner
     share_owner="$(stat -c '%u:%g' "$SERVER_ROOT/$SHARE_DIR/w" 2>/dev/null || true)"
     [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
@@ -1835,8 +1747,7 @@ Manuel Tailscale Admin:
 
 Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${SERVER_ROOT} dosya yöneticisi,
   sunucu durumu ve günlük; parolasız, yalnız Tailscale. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
-Paylaşım: http://paylas.${LOCAL_DOMAIN} (Konsol'dan paylaşılanlar; salt okunur, tek hesap, yalnız Tailscale)
-  Infuse: http://${TAILSCALE_IPV4}:${SHARE_PORT}/ (ad çözemeyen istemciler için aynı paylaşım)
+Paylaşım: Konsol → Modüller'den kurulur (paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı orada)
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
 WireGuard: ${WG_NET_COUNT:-0} ağ. Yoksa Konsol → WireGuard → Yapılandır ile ilk ağı kurun;

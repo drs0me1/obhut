@@ -164,13 +164,13 @@ in §10, not resolved silently.
 | `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
-| `templates/compose.yaml` | The six services (two loopback rclone servers: the Infuse WebDAV and the share WebDAV), volumes, port publications | Where it is written, which addresses are current |
-| `templates/Caddyfile` | Seven HTTP sites and their loopback upstreams | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start) |
+| `templates/compose.yaml` | The two base services (Dozzle, qBittorrent), volumes, port publications | Where it is written, which addresses are current; modules (their own Compose projects) |
+| `templates/Caddyfile` | The base HTTP sites and their loopback upstreams, plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
 | `panel/master-wg-panel` | Serve `/api/wg/*` and `/api/konsol/*` on loopback as root: no password (tailnet boundary, **DD-147**), CSRF/Host gates, JSON API over `master-wg`, module operations started as `systemd-run` units of `master-modul` (**DD-148**), plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; how a module is installed — it only calls `master-modul`; page files — Caddy serves them |
-| `scripts/master-modul` | Install, start, stop and remove catalogued modules; registry, progress file, one lock; `gunluk` for the card's log (**DD-148**) | Templates and inputs — module files are rendered by the installer; user files |
-| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/` (`unpackerr/compose.yaml`) (**DD-148**) | Whether the module is installed |
-| `files-panel/master-files-panel` | Serve the file API on loopback as the downloads uid: no password and the same gates as the root backend (**DD-147**), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames and uploads, the `.cop` trash, text decoding (**DD-139**, **DD-140**, **DD-145**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
+| `scripts/master-modul` | Install, start, stop, remove and re-apply (`uygula`) catalogued modules; registry, progress file, one lock; `gunluk` for the card's log; Paylaşım's generated account (`parola`, read-only `hesap`), its checks, Caddy site, dnsmasq name and `acik` marker (**DD-148**, **DD-149**) | Templates and inputs — module files are rendered by the installer; user files (the share's `--veri` removes only its links) |
+| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `unpackerr/compose.yaml`; `paylasim/compose.yaml`, `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**) | Whether the module is installed |
+| `files-panel/master-files-panel` | Serve the file API on loopback as the downloads uid: no password and the same gates as the root backend (**DD-147**), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames and uploads, the `.cop` trash, text decoding, share links while the `.pay/acik` marker exists (**DD-139**, **DD-140**, **DD-145**, **DD-149**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
 | `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files, modules and log, served by Caddy from `CONSOLE_WEB_DIR`, everything from its own origin (**DD-140**, **DD-148**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
 | `templates/Caddyfile.wg` | The three UI ports on `{$WG_BIND}`, shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
@@ -204,8 +204,8 @@ error, not a warning.
 |---|---|---|
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
-| `/etc/master-stack/paylasim.htpasswd` | installer | bcrypt hash of the share account, `0600`; mounted into Compose `paylasim` (**DD-142**) |
-| `/root/docker/compose.yaml` | installer | three base services, `0600`; modules are separate projects (**DD-148**) |
+| `/etc/master-stack/paylasim.htpasswd` | `master-modul` (Paylaşım) | bcrypt hash of the generated share account, `0600`; mounted into the module's Compose project (**DD-142**, **DD-149**) |
+| `/root/docker/compose.yaml` | installer | two base services, `0600`; modules are separate projects (**DD-148**, **DD-149**) |
 | `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
 | `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
@@ -214,8 +214,10 @@ error, not a warning.
 | `/usr/local/sbin/master-modul`, `/usr/local/share/master-stack/moduller/<id>/` | installer | module helper and rendered module files, `0755` / `0644` (**DD-148**) |
 | `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor|durduruldu`, `0644` (**DD-148**) |
 | `/run/master-stack/modul-<id>.ilerleme`, `modul.lock` | `master-modul` | the last operation's progress line; the module lock (**DD-148**) |
-| `/etc/master-stack/paylasim.htpasswd`, `paylasim.cred` | installer | share account: bcrypt for rclone, plaintext for the console to show, `0600 root` (**DD-141**) |
-| `DOWNLOADS_PATH/.pay/` | file backend | share root `w/` (symlinks) and the registry beside it, uid 1000 (**DD-141**) |
+| `/etc/master-stack/paylasim.cred` | `master-modul` (Paylaşım) | `paylasim:<password>`, the account's source of truth; read only by root (Konsol's root backend through `master-modul hesap`), `0600 root` (**DD-149**) |
+| `SERVER_ROOT/.pay/` | installer (folders), file backend (links, registry), `master-modul` (`acik`) | share root `w/` (symlinks), the registry `kayit.json` beside it and the `acik` marker while Paylaşım is installed, uid 1000 (**DD-141**, **DD-149**) |
+| `/etc/caddy/moduller/<id>.caddy` | installer (folder), `master-modul` (files) | module sites imported by the base Caddyfile; Paylaşım: `paylas.<domain>` and `<ts-ip>:61010` (**DD-149**) |
+| `/etc/dnsmasq.d/modul-<id>.conf` | `master-modul` | module names; Paylaşım: `interface-name=paylas.<domain>,tailscale0` (**DD-149**) |
 | `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); outside `downloads/`, so Arşiv açıcı never sees it (**DD-144**) |
 | `/etc/wireguard/networks` | `master-wg net-add`/`net-remove` | panel networks wg1…wg9: port, scope, addresses, default DNS, label (**DD-136**), `0600` |
 | `/etc/wireguard/wgN.conf`, `/etc/wireguard/clients-wgN/` | `master-wg` | a panel network's interface and profiles, `0600`/`0700` |
@@ -253,12 +255,14 @@ the two public peer ports bind the WAN address via Docker publish.
 
 ## 4. WebDAV credential design
 
-**Rule: the plaintext password exists only inside the installer process, for
-as long as it takes to hash it.**
+**Rule: the password is generated on the server and exists only in the two
+root-only account files and, briefly, in `master-modul`'s memory** (**DD-149**;
+before v2-116 it came from `kurulum.env`).
 
 ```
-operator types password (echo off, twice, compared)
+master-modul kur | parola  (python3 secrets, 20 characters)
         │
+        ├──►  /etc/master-stack/paylasim.cred      root:root 0600  (source of truth; Konsol reads it via the root backend)
         ▼
 htpasswd -i -B  ──►  /etc/master-stack/paylasim.htpasswd  root:root 0600
         │                     │
@@ -281,7 +285,8 @@ systemd `LoadCredential=` path.
 
 1. Credentials live in a **separate, root-owned credential file**:
    `/etc/master-stack/paylasim.htpasswd` (plus the plaintext copy the console
-   shows, `paylasim.cred`, same owner and mode — **DD-141**).
+   shows, `paylasim.cred`, same owner and mode — **DD-141**; both written by
+   the Paylaşım module since **DD-149**).
 2. Its mode is **at most `0600`**, owner `root:root`, verified after writing.
 3. Compose mounts the file at **`/run/secrets/paylasim_htpasswd`** (read-only).
 4. rclone is pointed at that **path** only (`--htpasswd=…`).
@@ -294,25 +299,25 @@ systemd `LoadCredential=` path.
 
 ### 4.2 Where the username lives, and why
 
-**The username is managed with the credential, not with the
-configuration.** It lives inside `paylasim.htpasswd`, because the htpasswd
-format is already `user:hash`.
+**The account lives with the credential files.** Since **DD-149** the name
+is a fixed constant (`SHARE_ACCOUNT="paylasim"` in `defaults.env`) that the
+Paylaşım module uses when it generates an account; the pair itself exists
+only in `paylasim.cred` (`user:password`, the source of truth) and
+`paylasim.htpasswd` (`user:hash`, derived from it). An existing account whose
+name differs from the constant is not adopted: `kur` generates a new one.
 
-The alternative — `SHARE_USER` in `config.env` — was rejected: the name
-would then exist in two places and could drift from the hash. One file, one
-pair.
-
-Consequence: `WEBDAV_USER` does not appear in configuration files, and
-`defaults.env` names it in its forbidden-keys list alongside
-`WEBDAV_PASSWORD`, `WEBDAV_PASSWORD_HASH` and `WEBDAV_USER_PASSWORD`.
+There is no operator input for the account any more: `SHARE_USER` stays in
+the forbidden-keys list of `defaults.env`, alongside the password keys, so
+nothing reintroduces it as configuration.
 
 ### 4.3 Verified at implementation time, not assumed
 
 rclone must take credentials from a *file*. If it could only take
 `--user`/`--pass`, the secret would land on the command line.
 
-Stage 7 and the live checklist assert: no password or username in container
-args / environ; host htpasswd remains `0600` `root:root`.
+`master-modul` and the live checklist assert: no password in container args /
+environ or in any `master-modul` argv; both account files remain `0600`
+`root:root` (**DD-149**).
 
 ### 4.4 Tunables (no `webdav.env`)
 
@@ -403,14 +408,14 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain and the share/Dozzle/qBittorrent/Konsol accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); the share htpasswd and credential file when they differ from the input file (**DD-142**); timezone | `apt` |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain and the Dozzle/qBittorrent accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
 | 4 | Docker; sync the Dozzle account to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` (`--remove-orphans` retires dropped services such as FileBrowser, **DD-146**); remove host WebDAV leftovers; install scripts and units | templates |
-| 5 | share credential ownership/mode; apply `master-firewall` (WireGuard rules come from the registry, none when it is empty); enable refresh timer; prepare the WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`) and start the networks the registry already holds — no key, no `.conf`, no interface of its own (**DD-120**, **DD-143**) | firewall, WireGuard |
+| 5 | Apply `master-firewall` (WireGuard rules come from the registry, none when it is empty); enable refresh timer; prepare the WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`) and start the networks the registry already holds — no key, no `.conf`, no interface of its own (**DD-120**, **DD-143**) | firewall, WireGuard |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed (or the config is newer than the running unit); `caddy-wg@` template for the UIs over WireGuard; Konsol backends, pages and account (**DD-133**, **DD-140**) | DNS/HTTP |
-| 7 | Compose `up --remove-orphans` if needed; cheap contract checks (share read-only + Caddy, `master-wg` and each registry network's units, Konsol page 200 on the tailnet and 403 on both backends without `X-Konsol` or with a foreign `Host`, without the account, nothing on a WireGuard address) | verification |
+| 7 | Compose `up --remove-orphans` if needed; `master-modul uygula` for installed modules whose files changed (**DD-149**); cheap contract checks (share root owner + Caddy, `master-wg` and each registry network's units, Konsol page 200 on the tailnet and 403 on both backends without `X-Konsol` or with a foreign `Host`, without the account, nothing on a WireGuard address) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,

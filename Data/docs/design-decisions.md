@@ -6804,6 +6804,79 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-149: Paylaşım is a module with a generated account (2026-09-18)
+
+- **Context:** stage 2 of **DD-148**. The share WebDAV (rclone, `paylas.<domain>`,
+  `<ts-ip>:61010` for Infuse) was wired into every installer stage and took
+  its account from `SHARE_USER`/`SHARE_PASS` in `kurulum.env`. The approved
+  design (`docs/design/konsol-moduller-v06.html`) makes it a Konsol module
+  that generates a strong account and offers "Yeni parola".
+- **Decision:**
+  - The base Compose file keeps Dozzle and qBittorrent. `modules/paylasim/`
+    holds the rclone service (unchanged hardening), a Caddy site and a dnsmasq
+    name; the installer renders them and never installs the module.
+  - The account is generated on the server: user `SHARE_ACCOUNT` (`paylasim`),
+    `SHARE_PASSWORD_LENGTH` (20) characters from an alphabet without
+    `0 O 1 l I` (it is typed on a TV remote), from Python's `secrets`. The
+    plain `paylasim.cred` is the source of truth and the bcrypt
+    `paylasim.htpasswd` is derived from it; both are `0600 root`. The password
+    goes through stdin only (`htpasswd -i`, curl `-K -`): never an argv, the
+    progress file, the journal, `state.env` or Caddy's environment (Caddy
+    runs with `--environ`, which logs its environment).
+  - bcrypt keeps htpasswd's default cost: the password is random with about
+    117 bits, and rclone checks Basic auth on every Infuse request.
+  - **DD-119** ("the input file is the truth") no longer covers the share:
+    there is no input. A valid existing account is reused on `kur`, so a
+    reinstall keeps Infuse working; `kaldir --veri` or "Yeni parola" changes it.
+- **Why the root backend shows the account:** the file backend used
+  `LoadCredential=` with an absolute path. systemd refuses to start a unit
+  whose credential file is missing, so without the module (or after
+  `kaldir --veri`) the whole file API would be down, and the copy it held
+  would go stale after "Yeni parola". The root backend reads the file through
+  `master-modul hesap` inside its read-only sandbox; the password is returned
+  only on `?parola=1`, audited without the value, and hidden again in the
+  page after 30 s. The file backend never sees the account.
+- **Why a marker file:** `/etc/master-stack` is `0700`, so the file backend
+  (uid 1000) cannot read the module registry. `master-modul` writes
+  `SERVER_ROOT/.pay/acik` on `kur` and removes it on `kaldir`; without it the
+  backend refuses new shares (`409`) and Konsol hides the share controls. It
+  is created with `mktemp` and renamed, because `.pay` belongs to uid 1000.
+- **Names come and go with the module:** the base Caddyfile imports
+  `CADDY_MODULES_DIR/*.caddy` (after the global options; an empty glob is
+  valid), and the name is a drop-in in `/etc/dnsmasq.d`. Temporary files
+  start with a dot, which Caddy's glob and dnsmasq's directory scan skip. Each
+  change is validated first (Caddy with the real address; the whole dnsmasq
+  configuration, not only the base file) and taken back if it fails. Caddy
+  is reloaded, never restarted: it also serves Konsol, whose page is polling
+  the progress, and a failed reload keeps the old configuration. dnsmasq is
+  restarted, because SIGHUP does not re-read `interface-name`.
+  - The port is written into the site literally. An unset `{$SHARE_PORT}`
+    would silently fold the site onto port 80. The address stays
+    `{$TAILSCALE_IPV4}`, which `refresh-tailnet-config` keeps current.
+  - The names follow the *installed* state: they stay while the module is
+    stopped (the name answers 502) and go on `kaldir`, before the container.
+    The container is started and checked before the names are published.
+- **Checks move with the module:** stage 7's share checks (health, single
+  network, read-only runtime, loopback-only publish, `401`, the name and the
+  Infuse address) run in `master-modul`, plus a `207` with the account. A
+  failed `kur` takes back the names, the marker and the container. Stage 7
+  keeps the share-root owner and the qBittorrent-cannot-see-`.pay` checks.
+- **Re-runs:** `master-modul uygula` re-applies an installed module whose
+  rendered files changed (a new domain, a new image) and starts it only if it
+  is registered as running; it writes no progress line.
+- **Removal:** `kaldir` keeps the account, the registry and the links, so a
+  reinstall restores the same links and login. `--veri` deletes the account
+  files, `.pay/kayit.json` and the symbolic links in `.pay/w` with
+  `find -maxdepth 1 -type l -delete`; link targets and anything else in that
+  folder stay. **DD-148**'s "files under `SERVER_ROOT` are never module data"
+  now reads "user files are never module data".
+- **Network name:** the module uses its project's default network
+  (`paylasim_default`), so it never collides with the `paylasim` network the
+  old base project left on an upgraded host. Per the fresh-install rule there
+  is no migration code; the leftover network is harmless.
+- **Not doing:** a periodic sweep of expired shares (they are still swept
+  when Konsol lists them) and account changes other than a new password.
+
 ### DD-148: A clean install is the base; Konsol installs modules (2026-09-16)
 
 - **Context:** the installer shipped a fixed bundle. The user wants the server

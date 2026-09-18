@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-18 — Paylaşım is a Konsol module with a generated account (v2-116)
+
+- **Changed** (**DD-149**): the share WebDAV left the base install. Konsol →
+  Modüller → Paylaşım installs it in four steps (image, account, container,
+  name and address) and removes it with its name and port.
+  - Base Compose has two services (Dozzle, qBittorrent). The module's files are
+    `modules/paylasim/compose.yaml`, `paylasim.caddy` and `dnsmasq.conf`.
+  - The account is generated on the server: user `paylasim` and a 20-character
+    random password. The card shows the address, the Infuse address and the
+    user. The password appears only on request and hides again after 30 s.
+    **Yeni parola** makes a new one and restarts the share.
+  - Removing keeps the account and the share links (a reinstall brings them
+    back unchanged). "Hesabı ve paylaşım kayıtlarını da sil" removes the
+    account, the registry and the links, never the shared files.
+  - The name is a module file: `/etc/caddy/moduller/paylasim.caddy` (the base
+    Caddyfile imports that folder) and `/etc/dnsmasq.d/modul-paylasim.conf`.
+    Both are validated before Caddy reloads and dnsmasq restarts.
+  - Stage 7's WebDAV checks moved into `master-modul`, which also proves the
+    account with a `PROPFIND` (207) and takes a failed install back.
+  - Dosyalar shows the share controls only while the module is installed, and
+    warns when it is stopped. The file backend refuses a new share without the
+    module and no longer holds the account (`LoadCredential` removed).
+- **Fixed:** the share dialog retried forever when the share list could not
+  be loaded; the list stayed on screen after the share went away; the
+  unshare dialog showed `/downloads/…` instead of the real path.
+- **Added:** Günlük names module actions and has a **Modüller** filter.
+- **Operator steps:** delete the `SHARE_USER=` and `SHARE_PASS=` lines from
+  `kurulum/kurulum.env` (the installer stops on an unknown key before
+  changing anything); after the install, add Paylaşım from Konsol and enter
+  its new account in Infuse.
+
 ### 2026-09-16 — Konsol installs modules; the archive extractor is the first (v2-115)
 
 - **Added** (**DD-148**): Konsol → **Modüller**. A clean install now brings

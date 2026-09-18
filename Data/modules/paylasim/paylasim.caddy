@@ -1,0 +1,7 @@
+# Modül: Paylaşım (DD-149). master-modul bunu CADDY_MODULES_DIR/paylasim.caddy olarak koyar;
+# temel Caddyfile o dizini içe aktarır. Konsol'dan paylaşılanlar; salt okunur, tek hesap.
+# İkinci adres Infuse içindir (DD-98): ad çözemeyen istemciler Tailscale IP:port ile bağlanır.
+# Port yazılı gelir; {$TAILSCALE_IPV4} ortam değişkeni kalır (refresh-tailnet-config onu günceller).
+http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {
+	reverse_proxy 127.0.0.1:__SHARE_PORT__
+}

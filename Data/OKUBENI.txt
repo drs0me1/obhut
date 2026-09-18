@@ -61,13 +61,17 @@ Konsol (tarayıcıdan; v2-105):
   Uç nokta (v2-103): sunucunun IPv4'ü (uç nokta) ve varsa IPv6'sı (kayıt) kurulumda sunucuda tespit edilir, elle yazılmaz.
   Sunucunun IP'si değişirse kurulumu yeniden çalıştırın ve cihazlara yeni profil verin.
 
-Paylaşım (v2-106, v2-108):
+Paylaşım (v2-106, v2-108; v2-116'dan beri Konsol → Modüller'den kurulur):
   Sunucudaki tek WebDAV budur: indirme klasörünün tamamı artık hiçbir yerde yayımlanmıyor.
+  Temiz kurulumda yoktur: Konsol → Modüller → Paylaşım → Kur. Kurulunca hesap üretilir (kullanıcı
+  paylasim, 20 karakterlik parola) ve kartta bir kez gösterilir; parola sonra göz simgesiyle 30 sn
+  görünür. "Yeni parola" yenisini üretir (Infuse'a yenisini girin). Kaldırırken hesap ve bağlantılar
+  korunur; "Hesabı ve paylaşım kayıtlarını da sil" işaretlenirse silinir (paylaşılan dosyalar değil).
   Infuse'u paylaşım adresiyle yeniden ekleyin (eski webdav.ayc kaydı çalışmaz).
   Dosyalar sekmesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın; süreyi seçin
   (1/7/30 gün ya da süresiz). Paylaşılanların hepsi http://paylas.ayc adresinde yan yana görünür.
   Infuse adı çözemezse (ör. Apple TV) Konsol'daki "Infuse" satırındaki IP:port adresini kullanın.
-  Adres, kullanıcı adı ve parola bütün paylaşımlarda aynıdır (kurulum.env'deki SHARE_USER/SHARE_PASS);
+  Adres, kullanıcı adı ve parola bütün paylaşımlarda aynıdır (Paylaşım modülünün hesabı);
   Konsol bunları gösterir ve kopyalatır. Karşı taraf Infuse'a bu hesabı bir kez ekler, sonraki
   paylaşımlar aynı yerde belirir. Salt okunur: izlenir ve indirilir, silinemez.
   Parolayı verdiğiniz kişi o an paylaşımda olan her şeyi görür; tek tek kişi ayıramazsınız.
@@ -77,7 +81,7 @@ Paylaşım (v2-106, v2-108):
 Konsol · Modüller sekmesi (v2-115):
   Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı, boş Docker).
   Ek parçalar buradan tek tıkla kurulur, durdurulur, başlatılır, kaldırılır; sayfa kapansa da işlem sürer.
-  Şimdilik: Arşiv açıcı (Unpackerr). Kaldırırken "verisini de sil" yalnız onun günlüğünü siler;
+  Şimdilik: Paylaşım (WebDAV) ve Arşiv açıcı (Unpackerr). Arşiv açıcıda "verisini de sil" yalnız günlüğünü siler;
   indirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
 
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
@@ -97,6 +101,9 @@ A) İlk kurulum
      Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
   (Dozzle ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-116'ya geçerken: kurulum.env'den SHARE_USER ve SHARE_PASS satırlarını silin (yoksa kurulum
+  hiçbir şeye dokunmadan durur); kurulumdan sonra Paylaşım'ı Konsol → Modüller'den kurun ve Infuse'a
+  yeni hesabı girin
   v2-114'e geçerken: kurulum.env'den FILEBROWSER_USER, FILEBROWSER_PASS, WG_PANEL_USER,
   WG_PANEL_PASS ve TS_AUTH_KEY satırlarını silin; yoksa kurulum hiçbir şeye dokunmadan durur
   v2-100'e geçerken: WireGuard IPv6 adresleri değişti (fdcc:ad94:bacf:61a4::2 …; eski …::cafe:2 değil).

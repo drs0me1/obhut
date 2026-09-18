@@ -40,6 +40,8 @@
     pause: '<path d="M6 3.8v10.4M12 3.8v10.4"/>',
     search: '<circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.4 15.4"/>',
     close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
+    key: '<circle cx="5.8" cy="12" r="3.2"/><path d="M8.1 9.7l6.5-6.5M12.4 5.4l1.9 1.9M10.6 7.2l1.5 1.5"/>',
+    restart: '<path d="M3.6 8.8a5.4 5.4 0 1 0 1.6-3.9"/><path d="M3.4 2.6v3.2h3.2"/>',
   };
   const svg = (name) => {
     const t = document.createElement("template");
@@ -217,8 +219,11 @@
   function loadFsState() {
     return api("/api/state").then((s) => { S.fs = s; paintFsState(); }).catch(fail);
   }
+  // DD-149: paylaşım bir modüldür; kurulu değilken liste istenmez ve eski liste ekranda kalmaz.
   function loadShares() {
-    return api("/api/paylas").then((s) => { S.share = s; if (current === "dosyalar") renderFs(); }).catch(fail);
+    if (!shareOn()) { S.share = null; return Promise.resolve(); }
+    return api("/api/paylas").then((s) => { S.share = s; if (current === "dosyalar") renderFs(); })
+      .catch((e) => { S.share = null; fail(e); });
   }
   const paintWg = () => { renderPeersMini(); if (view() === "wireguard") renderWg(); renderNavCounts(); };
   const paintActions = () => { renderFeedMini(); if (view() === "gunluk") renderLog(); };
@@ -343,10 +348,16 @@
     tasi: (e) => `Taşındı: ${e.detail}`, cope: (e) => `Çöpe taşındı: ${e.detail}`,
     "geri-yukle": (e) => `Çöpten geri yüklendi: ${e.detail}`, "kalici-sil": (e) => `Kalıcı silindi: ${e.detail}`,
     "cop-bosalt": (e) => `Çöp boşaltıldı (${e.detail} öge)`, indir: (e) => `İndirildi: ${e.detail}`,
+    paylas: (e) => `Paylaşıldı: ${e.detail}`, "paylas-kaldir": (e) => `Paylaşımdan çıkarıldı: ${e.detail}`,
+    "modul-kur": (e) => `${modName(e.detail)} kurulumu başlatıldı`, "modul-baslat": (e) => `${modName(e.detail)} başlatıldı`,
+    "modul-durdur": (e) => `${modName(e.detail)} durduruldu`,
+    "modul-kaldir": (e) => `${modName(e.detail)} kaldırıldı${e.detail.endsWith("+veri") ? " · verisiyle" : ""}`,
+    "modul-parola": (e) => `${modName(e.detail)} için yeni parola üretildi`,
+    "modul-hesap": (e) => `${modName(e.detail)} parolası görüntülendi`,
   };
-  const evKind = (e) => (e.source === "panel" ? "wg" : "fs");
-  const EVICON = { wg: "shield", fs: "folder", sec: "lock" };
-  const EVLABEL = { wg: "WireGuard", fs: "Dosyalar", sec: "Giriş" };
+  const evKind = (e) => (e.action.startsWith("modul-") ? "mod" : e.source === "panel" ? "wg" : "fs");
+  const EVICON = { wg: "shield", fs: "folder", sec: "lock", mod: "stack" };
+  const EVLABEL = { wg: "WireGuard", fs: "Dosyalar", sec: "Giriş", mod: "Modüller" };
   function evText(e) {
     const fn = ACTION_TEXT[e.action];
     const text = fn ? fn(e) : `${e.action} ${e.detail}`;
@@ -1025,7 +1036,7 @@
       ...dirs.map((d) => railBtn({ cur: fsView === "files" && fsPath[0] === d.name, icon: "folder", tone: "t-dir",
         title: d.name, count: d.count, onclick: () => fsOpen([d.name]) })),
       h("p", { class: "rl-t" }, "Yönetim"),
-      railBtn({ cur: fsView === "shares", icon: "share", tone: "t-share", title: "Paylaşımlar", count: shareCount, onclick: () => fsSetView("shares") }),
+      shareOn() ? railBtn({ cur: fsView === "shares", icon: "share", tone: "t-share", title: "Paylaşımlar", count: shareCount, onclick: () => fsSetView("shares") }) : null,
       railBtn({ cur: fsView === "trash", icon: "trash", tone: "t-warn", title: "Çöp", count: trashCount, onclick: () => fsSetView("trash") }),
     ];
     if (total) {
@@ -1035,7 +1046,7 @@
         h("div", { class: "rl-bar" }, h("i", { style: { width: `${pct}%` } })),
         h("div", { class: "rl-dl" }, h("span", null, `${bytes(free)} boş`), h("span", { class: "mono" }, fsRoot()))));
     }
-    $("fs-rail").replaceChildren(...out);
+    $("fs-rail").replaceChildren(...out.filter(Boolean));
   }
   function fsOpen(parts) {
     if (fsView !== "files") { fsView = "files"; location.hash = "#/dosyalar"; }
@@ -1071,6 +1082,10 @@
     const body = $("fs-body");
     body.textContent = "";
     if (fsView === "trash") { renderTrashList(body); return; }
+    if (fsView === "shares" && !shareOn()) {
+      fsView = "files";
+      history.replaceState(null, "", "#/dosyalar");
+    }
     if (fsView === "shares") { renderShareList(body); return; }
     if (!fsList) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
     body.append(h("div", { id: "fs-bar" }), h("div", { id: "fs-rows" }));
@@ -1092,8 +1107,8 @@
         h("span", { class: "pf-sep" }),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => sel.forEach((i) => i.type !== "dir" && download(i)) }, svg("download"), "İndir"),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => openMove(sel) }, svg("move"), "Taşı"),
-        h("button", { type: "button", class: "btn btn-sm", disabled: !one || inTemp(pathText(fsPath.concat(one.name))),
-          title: one ? "" : "Paylaşım tek tek verilir", onclick: () => one && openShareCreate(one, pathText(fsPath.concat(one.name))) }, svg("share"), "Paylaş"),
+        shareOn() ? h("button", { type: "button", class: "btn btn-sm", disabled: !one || inTemp(pathText(fsPath.concat(one.name))),
+          title: one ? "" : "Paylaşım tek tek verilir", onclick: () => one && openShareCreate(one, pathText(fsPath.concat(one.name))) }, svg("share"), "Paylaş") : null,
         h("button", { type: "button", class: "btn btn-sm btn-danger", onclick: () => askTrash(sel) }, svg("trash"), "Çöpe at"),
         h("span", { class: "pf-meta" }, `${shown.length} ögenin ${sel.length} tanesi`)));
       return;
@@ -1296,7 +1311,7 @@
       h("span", { class: "c-size" }, bytes(item.size)),
       h("span", { class: "c-date" }, since(item.mtime)),
       h("span", { class: "acts" },
-        inTemp(here) || inTemp(pathText(fsPath)) ? null : shareBtn(item, here),
+        inTemp(here) || inTemp(pathText(fsPath)) || !shareOn() ? null : shareBtn(item, here),
         dir ? null : h("button", { type: "button", class: "ib", "aria-label": "İndir", title: "İndir", onclick: () => download(item) }, svg("download")),
         h("button", { type: "button", class: "ib", "aria-label": "Yeniden adlandır", title: "Yeniden adlandır", onclick: () => { fsRename = item.name; renderFs(); const i = $("rn-name"); if (i) { i.focus(); i.select(); } } }, svg("pencil")),
         h("button", { type: "button", class: "ib", "aria-label": "Taşı", title: "Taşı", onclick: () => openMove(item) }, svg("move")),
@@ -1424,9 +1439,8 @@
   }
 
   /* paylaşımlar (DD-141): tek adres, tek hesap; hepsi aynı kökte görünür */
-  const credRow = (k, v, acts, plain) => h("div", { class: "cred-row" }, h("span", { class: "k" }, k),
+  const credRow = (k, v, acts, plain, cls) => h("div", { class: "cred-row" + (cls ? ` ${cls}` : "") }, h("span", { class: "k" }, k),
     h("span", { class: "v" + (plain ? " plain" : "") }, v), h("span", { class: "cred-acts" }, acts));
-  let showPass = false;
   // Konsol düz HTTP'den açılır: navigator.clipboard orada çalışmaz, eski yöntemle kopyalanır.
   async function copyText(text) {
     try {
@@ -1457,26 +1471,102 @@
   // Infuse ve benzeri istemciler .ayc adını çözemeyebilir; aynı paylaşım IP:port ile de açılır.
   function shareIpUrl() {
     const sys = S.sys;
-    if (!sys || !sys.net.tailscale || !sys.share || !sys.share.port) return "";
+    if (!sys || !sys.net.tailscale || !sys.share || !sys.share.port || !sys.share.on) return "";
     return `${location.protocol}//${sys.net.tailscale}:${sys.share.port}`;
   }
-  function credBlock(rerender, cls) {
-    const sh = S.share, ip = shareIpUrl();
-    return h("div", { class: "cred" + (cls ? ` ${cls}` : "") },
-      credRow("Adres", sh.host, [copyButton(sh.host, "Adres")]),
-      ip ? credRow("Infuse", ip, [copyButton(ip, "Infuse adresi")]) : null,
-      credRow("Kullanıcı", sh.user, [copyButton(sh.user, "Kullanıcı")]),
-      credRow("Parola", showPass ? sh.pass : "•".repeat(12), [
-        h("button", { type: "button", class: "ib", title: showPass ? "Gizle" : "Göster",
-          "aria-label": showPass ? "Parolayı gizle" : "Parolayı göster",
-          onclick: () => { showPass = !showPass; rerender(); } }, svg("eye")),
-        copyButton(sh.pass, "Parola")]));
+
+  /* modül hesabı (DD-149): root arka ucundan okunur; parola yalnız göz ya da kopyala ile,
+     açıkça istenince gelir, 30 sn sonra (sekme gizlenince hemen) ekrandan kalkar, hiç yoklanmaz. */
+  const ACCT = {}, REVEAL = {}, acctLoading = new Set(), acctFailed = new Set();
+  const REVEAL_SECONDS = 30;
+  const acctUrl = (id, withPass) => `/api/konsol/moduller/${enc(id)}/hesap${withPass ? "?parola=1" : ""}`;
+  function loadAccount(id) {
+    if (acctLoading.has(id)) return Promise.resolve(ACCT[id]);
+    acctLoading.add(id);
+    return api(acctUrl(id, false)).then((a) => { ACCT[id] = a; acctFailed.delete(id); paintAccount(id); return a; })
+      .catch(() => { delete ACCT[id]; acctFailed.add(id); paintAccount(id); }).finally(() => acctLoading.delete(id));
+  }
+  function forgetAccount(id) { hidePass(id); delete ACCT[id]; acctFailed.delete(id); }
+  function revealPass(id, fresh) {
+    return api(acctUrl(id, true)).then((a) => {
+      ACCT[id] = { user: a.user, changed: a.changed, host: a.host, infuse: a.infuse };
+      hidePass(id);
+      const r = REVEAL[id] = { pass: a.pass, left: REVEAL_SECONDS, fresh: fresh || "" };
+      r.timer = setInterval(() => {
+        r.left -= 1;
+        if (r.left <= 0) { hidePass(id); return; }
+        document.querySelectorAll(`[data-acct-left="${id}"]`).forEach((el) => { el.textContent = `${r.left} sn sonra gizlenir`; });
+      }, 1000);
+      paintAccount(id);
+    }).catch(fail);
+  }
+  function hidePass(id) {
+    const r = REVEAL[id];
+    if (!r) return;
+    clearInterval(r.timer);
+    delete REVEAL[id];
+    paintAccount(id);
+  }
+  const hideAllPass = () => Object.keys(REVEAL).forEach(hidePass);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) hideAllPass(); });
+  function copyPassButton(id) {
+    const b = h("button", { type: "button", class: "ib", title: "Parola kopyala", "aria-label": "Parola kopyala", onclick: async () => {
+      let pass = REVEAL[id] && REVEAL[id].pass;
+      if (!pass) {
+        try { pass = (await api(acctUrl(id, true))).pass; } catch (e) { fail(e); return; }
+      }
+      const ok = await copyText(pass);
+      pass = "";
+      if (!ok) { toast("Pano kullanılamadı; parolayı gösterip seçerek kopyalayın."); return; }
+      b.replaceChildren(svg("check"));
+      setTimeout(() => b.replaceChildren(svg("copy")), 1200);
+    } }, svg("copy"));
+    return b;
+  }
+  // Hesap satırları; "card" modül kartında süre ve değişiklik satırını da taşır. paintAccount
+  // yalnız bu öğeleri yeniler (sayfanın geri kalanı ve odak yerinde kalır).
+  function accountBlock(id, variant) {
+    const a = ACCT[id], r = REVEAL[id];
+    const cred = h("div", { class: "cred" + (variant === "row3" ? " row3" : "") });
+    if (!a && acctFailed.has(id)) {
+      cred.append(h("p", { class: "hint-s" }, "Hesap okunamadı; Modüller'den Yeni parola ile yeniden üretebilirsiniz."));
+    } else if (!a) {
+      cred.append(h("p", { class: "hint-s" }, "Hesap okunuyor…"));
+      loadAccount(id);
+    } else {
+      cred.append(...[
+        a.host ? credRow("Adres", a.host, [copyButton(a.host, "Adres")]) : null,
+        a.infuse ? credRow("Infuse", a.infuse, [copyButton(a.infuse, "Infuse adresi")]) : null,
+        credRow("Kullanıcı", a.user, [copyButton(a.user, "Kullanıcı")]),
+        credRow("Parola", r ? r.pass : "•".repeat(12), [
+          h("button", { type: "button", class: "ib", title: r ? "Gizle" : "Göster", "aria-label": r ? "Parolayı gizle" : "Parolayı göster",
+            onclick: () => (REVEAL[id] ? hidePass(id) : revealPass(id)) }, svg("eye")),
+          copyPassButton(id)], false, (r && r.fresh ? "fresh" : "") + (r ? "" : " masked-row"))].filter(Boolean));
+    }
+    if (variant !== "card") {
+      cred.dataset.acct = id;
+      cred.dataset.variant = variant || "";
+      return cred;
+    }
+    return h("div", { class: "acct-inner", "data-acct": id, "data-variant": "card" }, cred,
+      h("div", { class: "acct-meta" },
+        r && r.fresh ? h("span", { class: "fresh-msg" }, r.fresh) : h("span", null, a && a.changed ? `Son değişiklik: ${since(a.changed)}` : ""),
+        r ? h("span", { "data-acct-left": id }, `${r.left} sn sonra gizlenir`) : null));
+  }
+  function paintAccount(id) {
+    document.querySelectorAll(`[data-acct="${id}"]`).forEach((el) => el.replaceWith(accountBlock(id, el.dataset.variant)));
   }
   function renderShareList(body) {
     if (!S.share) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
+    const mod = shareMod();
+    if (mod && mod.state === "durduruldu") {
+      body.append(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Paylaşım durduruldu. "),
+        h("span", null, "Infuse ve öbür istemciler bağlanamaz; paylaşım kayıtları duruyor.")),
+        h("button", { type: "button", class: "btn btn-quiet btn-sm", "data-go": "#/moduller" }, svg("stack"), "Modüller")));
+    }
     body.append(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Tek adres, tek hesap. "),
       h("span", null, "Paylaşılan her klasör ve dosya aşağıdaki adreste yan yana görünür · yalnız Tailscale'deki cihazlardan · salt okunur · Infuse adı çözemezse IP:port satırını kullanın"))));
-    body.append(credBlock(() => renderFs(), "row3"));
+    body.append(accountBlock("paylasim", "row3"));
     if (!S.share.items.length) {
       body.append(h("div", { class: "table" }, h("div", { class: "empty-row" }, h("strong", null, "Paylaşım yok"),
         h("span", null, "Dosyalar listesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın."))));
@@ -1498,7 +1588,8 @@
 
   let SH = null;
   function openShareCreate(item, path) {
-    if (!S.share) { loadShares().then(() => openShareCreate(item, path)); return; }
+    if (!shareOn()) return;
+    if (!S.share) { loadShares().then(() => { if (S.share) openShareCreate(item, path); }); return; }
     SH = { item, path, days: 7 };
     renderShareCreate();
     $("sh").showModal();
@@ -1548,9 +1639,9 @@
       h("div", { class: "cred" }, credRow("Süre", sh.expires
         ? `${leftText(sh.expires)} · ${dayText(sh.expires)}` : "Süresiz; siz çıkarana kadar", [], true)),
       h("div", { class: "field" }, h("span", { class: "lbl" }, `Bağlantı bilgileri · ${S.share.items.length} paylaşımın hepsinde aynı`),
-        credBlock(renderShareInfo)),
+        accountBlock("paylasim")),
       h("div", { class: "infoline-s" }, svg("info"), h("span", null,
-        "Infuse: Ekle › Paylaşım › WebDAV; \"Infuse\" satırındaki adresi (IP:port), kullanıcıyı ve parolayı yazın. Adı çözemeyen istemcilerde ayc adresi çalışmaz. Bu hesabı bir kez ekleyen kişi sonraki paylaşımları da aynı yerde görür.")),
+        `Infuse: Ekle › Paylaşım › WebDAV; "Infuse" satırındaki adresi (IP:port), kullanıcıyı ve parolayı yazın. Adı çözemeyen istemcilerde paylas.${(S.sys && S.sys.domain) || "…"} adresi çalışmaz. Bu hesabı bir kez ekleyen kişi sonraki paylaşımları da aynı yerde görür.`)),
       h("div", { class: "dlg-foot" },
         h("button", { type: "button", class: "btn btn-quiet danger-text", onclick: () => askUnshare(sh) }, "Paylaşımdan çıkar"),
         h("button", { type: "button", class: "btn btn-primary", onclick: shClose }, "Tamam")));
@@ -1558,7 +1649,7 @@
   function askUnshare(sh) {
     if ($("sh").open) shClose();
     ask({
-      title: `“${sh.name}” paylaşımdan çıkarılsın mı?`, sub: `/downloads/${sh.path}`, danger: true,
+      title: `“${sh.name}” paylaşımdan çıkarılsın mı?`, sub: `${fsRoot()}/${sh.path}`, danger: true,
       items: [
         ["share", "Paylaşım adresinden kalkar; bağlı cihazlar bunu artık göremez."],
         ["lock", "Kullanıcı ve parola değişmez; diğer paylaşımlar açık kalır."],
@@ -1629,7 +1720,7 @@
   /* ---------- Günlük ---------- */
   let logFilter = "all";
   function renderLog() {
-    $("log-filter").replaceChildren(...[["all", "Tümü"], ["wg", "WireGuard"], ["fs", "Dosyalar"]].map(([k, label]) =>
+    $("log-filter").replaceChildren(...[["all", "Tümü"], ["wg", "WireGuard"], ["fs", "Dosyalar"], ["mod", "Modüller"]].map(([k, label]) =>
       h("button", { type: "button", class: "fchip", "aria-pressed": logFilter === k, onclick: () => { logFilter = k; renderLog(); } }, label)));
     const list = S.actions.filter((e) => logFilter === "all" || evKind(e) === logFilter);
     $("log-table").replaceChildren(...(list.length ? list.map((e) => evRow(e, true))
@@ -1637,8 +1728,22 @@
   }
 
   /* ---------- Modüller (DD-148) ---------- */
-  // Katalog sunucudan gelir (master-modul liste); burada yalnız görünüm bilgisi durur.
+  // Katalog sunucudan gelir (master-modul liste); burada yalnız görünüm bilgisi durur. Adres ve
+  // port gibi değerler sunucudan (S.sys) gelir, burada yazılı değildir.
   const MOD_META = {
+    paylasim: () => {
+      const sys = S.sys || {}, d = sys.domain || "…", port = (sys.share && sys.share.port) || "…";
+      return { name: "Paylaşım", sub: "WebDAV · Infuse ve Finder", icon: "share", tone: "t-share", account: true,
+        desc: "Dosyalar sayfasında paylaştıklarınızı tek adres ve tek hesapla, salt okunur sunar.",
+        will: [["box", "rclone konteyneri (~25 MB)"], ["globe", `paylas.${d} adı; Infuse için Tailscale IP:${port}`], ["key", "Güçlü bir hesap üretilir"]],
+        facts: ["rclone · konteyner", `${port} · yalnız Tailscale`],
+        steps: [["İmaj indiriliyor", "~25 MB"], ["Hesap üretiliyor", ""], ["Konteyner başlatılıyor", ""], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],
+        removeWhat: [["box", "Konteyner ve imaj kaldırılır."], ["shield", `paylas.${d} adı ve ${port} kapanır.`]],
+        removeLabel: "Hesabı ve paylaşım kayıtlarını da sil",
+        removeKeep: "paylaşım kayıtları ve hesap korunur; yeniden kurunca aynı bağlantılar geri gelir.",
+        removeDrop: "Hesap ve paylaşım kayıtları da silinir. Paylaşılan dosyalara dokunulmaz.",
+        stopNote: "Infuse bağlantısı kesilir; paylaşım kayıtları durur." };
+    },
     unpackerr: { name: "Arşiv açıcı", sub: "Unpackerr · indirilen arşivleri açar", icon: "box", tone: "t-text",
       desc: "İndirme klasöründeki .rar ve .zip arşivlerini kendi yerinde açar.",
       will: [["box", "unpackerr konteyneri (~15 MB)"], ["folder", "Yalnız indirme klasörünü görür; çöp ve paylaşım görünmez"], ["lock", "Port, ad, arayüz ve ağ yok"]],
@@ -1648,22 +1753,51 @@
       removeKeep: "günlüğü kalır, yeniden kurulunca devam eder.", removeDrop: "Modülün günlüğü silinir.",
       stopNote: "Yeni arşivler açılmaz; açılmış olanlar yerinde kalır." },
   };
+  const META_FALLBACK = { sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
+  function metaOf(id) {
+    const m = MOD_META[id];
+    return Object.assign({ name: id }, META_FALLBACK, typeof m === "function" ? m() : m || {});
+  }
+  const modName = (detail) => metaOf(String(detail || "").split(" ")[0]).name;
   const RUNTIME = { docker: ["docker", "box", "Docker"], host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
   let MODS = null, modTimer = null;
+  const shareMod = () => (MODS || []).find((m) => m.id === "paylasim");
+  // Modül listesi gelmeden önce dosya arka ucunun işaretine bakılır (.pay/acik, DD-149).
+  const shareOn = () => (MODS ? !!(shareMod() || {}).installed : !!(S.fs && S.fs.share && S.fs.share.enabled));
   const modLogs = {};
   // İstek kabul edilince birim başlar ama ilerleme dosyasında bir an önceki işlemin satırı durur;
   // o arada istenen işlem gösterilir.
   const modPending = {};
+  // Sayfanın başlattığı işlem bitince sonucu söyler; hesabı olan modülde yeni parolayı bir kez gösterir.
+  function modDone(m, want) {
+    const meta = metaOf(m.id), p = m.progress || {};
+    if (p.step === "hata") { toast(`${meta.name}: ${p.text || "işlem başarısız"}`); return; }
+    if (p.step !== "bitti") return;
+    if (want === "kur") toast(`${meta.name} kuruldu.`);
+    else if (want === "parola") toast(`${meta.name}: yeni parola hazır.`);
+    else if (want === "kaldir") toast(`${meta.name} kaldırıldı.`);
+    if (meta.account && (want === "kur" || want === "parola")) {
+      acctFailed.delete(m.id);
+      revealPass(m.id, want === "kur" ? "Yeni hesap — şimdi kopyalayın" : "Yeni parola — şimdi kopyalayın");
+    }
+  }
   function loadModules() {
     return api("/api/konsol/moduller").then((r) => {
+      const wasShare = shareOn();
       MODS = r.items || [];
       MODS.forEach((m) => {
+        if (!m.installed) forgetAccount(m.id);
         const want = modPending[m.id];
         if (!want) return;
-        if (!m.busy) { delete modPending[m.id]; return; }
+        if (!m.busy) { delete modPending[m.id]; modDone(m, want); return; }
         const p = m.progress;
         if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
       });
+      // Paylaşım kaldırılınca Dosyalar'daki eski liste, çipler ve düğmeler de gider.
+      if (wasShare !== shareOn()) {
+        if (!shareOn()) S.share = null;
+        if (current === "dosyalar") { if (shareOn()) loadShares(); else renderFs(); }
+      }
       const n = MODS.filter((m) => m.installed).length;
       $("nav-mods").textContent = MODS.length ? `${n}/${MODS.length}` : "";
       if (current === "moduller") renderModules();
@@ -1677,7 +1811,7 @@
   }
   function modPill(m) {
     if (m.busy) {
-      const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor" }[m.progress && m.progress.action] || "İşleniyor";
+      const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor", parola: "Uygulanıyor" }[m.progress && m.progress.action] || "İşleniyor";
       return h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), label);
     }
     if (!m.installed) return h("span", { class: "hm" }, "Kurulu değil");
@@ -1685,8 +1819,16 @@
     if (m.runtime === "docker" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
     return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
   }
+  function askNewPass(m, meta) {
+    const user = (ACCT[m.id] || {}).user;
+    ask({ title: `${meta.name} için yeni parola üretilsin mi?`, sub: user ? `Kullanıcı ${user} aynı kalır` : "Kullanıcı adı aynı kalır",
+      calm: true, go: "Yeni parola üret",
+      items: [["key", "Eski parola hemen geçersiz olur; Infuse ve öbür istemcilere yenisini girmeniz gerekir."],
+        ["restart", `${meta.name} birkaç saniye yeniden başlar.`]],
+      onOk: () => { hidePass(m.id); modAct(m, "parola"); } });
+  }
   function modCard(m) {
-    const meta = MOD_META[m.id] || { name: m.id, sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
+    const meta = metaOf(m.id);
     const [rtCls, rtIcon, rtLabel] = RUNTIME[m.runtime] || RUNTIME.docker;
     const kids = [h("div", { class: "card-head" },
       h("div", { class: "mod-who" }, h("span", { class: `svc-ico ${meta.tone}` }, svg(meta.icon)),
@@ -1696,8 +1838,12 @@
     if (m.busy && p && p.action === "kur") {
       const at = Number(p.step) || 1;
       kids.push(h("p", { class: "mod-desc" }, meta.desc),
-        h("ol", { class: "steps", "aria-live": "polite" }, meta.steps.map((t, i) => h("li", { class: "step" + (i + 1 < at ? " done" : i + 1 === at ? " now" : "") },
-          h("span", { class: "mark" }, i + 1 < at ? svg("check") : i + 1 === at ? h("span", { class: "spin" }) : null), h("span", null, t)))),
+        h("ol", { class: "steps", "aria-live": "polite" }, meta.steps.map((st, i) => {
+          const [label, sub] = Array.isArray(st) ? st : [st, ""];
+          return h("li", { class: "step" + (i + 1 < at ? " done" : i + 1 === at ? " now" : "") },
+            h("span", { class: "mark" }, i + 1 < at ? svg("check") : i + 1 === at ? h("span", { class: "spin" }) : null),
+            h("span", null, label), sub ? h("small", null, sub) : null);
+        })),
         h("div", { class: "card-foot" }, h("span", { class: "hint-s" }, "Sayfadan çıkabilirsiniz; işlem sunucuda sürer.")));
     } else if (!m.installed) {
       const failed = p && p.step === "hata" && !m.busy ? p : null;
@@ -1710,7 +1856,12 @@
           h("span", { class: "mod-facts grow" }, meta.facts.map((t) => h("span", null, t)))));
     } else {
       const failed = p && p.step === "hata" && !m.busy ? p : null;
-      const body = [h("p", { class: "mod-desc" }, meta.desc)];
+      // Hesabı olan modülde açıklamanın yerini hesap alır (v06).
+      const body = meta.account
+        ? [h("div", { class: "acct-head" }, h("span", null, "Hesap"),
+            h("button", { type: "button", class: "linkbtn", disabled: m.busy, onclick: () => askNewPass(m, meta) }, "Yeni parola")),
+          accountBlock(m.id, "card")]
+        : [h("p", { class: "mod-desc" }, meta.desc)];
       if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
       if (modLogs[m.id] != null) {
         body.push(h("div", { class: "logbox" },
@@ -1735,11 +1886,11 @@
             const box = h("input", { type: "checkbox", id: "mod-veri" });
             ask({ title: `${meta.name} kaldırılsın mı?`, sub: "Modül ve açtığı her şey kalkar", go: "Kaldır", danger: true,
               items: [...meta.removeWhat, ["folder", "Kullanıcı alanındaki dosyalarınıza dokunulmaz."]],
-              extra: h("label", { class: "opt", for: "mod-veri" }, box, h("span", null, "Modülün verisini de sil", h("small", null, `${meta.removeDrop} İşaretlemezseniz: ${meta.removeKeep}`))),
+              extra: h("label", { class: "opt", for: "mod-veri" }, box, h("span", null, meta.removeLabel || "Modülün verisini de sil", h("small", null, `${meta.removeDrop} İşaretlemezseniz: ${meta.removeKeep}`))),
               onOk: () => modAct(m, "kaldir", box.checked) });
           } }, svg("trash"), "Kaldır")));
     }
-    return h("article", { class: "card span-6 mod" + (m.installed || m.busy ? "" : " absent"), "aria-busy": String(!!m.busy) }, kids);
+    return h("article", { class: "card span-6 mod" + (m.installed || m.busy ? "" : " absent"), id: `modc-${m.id}`, "aria-busy": String(!!m.busy) }, kids);
   }
   function renderModules() {
     const sys = S.sys || {};
@@ -1779,6 +1930,7 @@
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     const v = key === "wireguard" && raw[1] === "ekle" ? "wgadd" : key;
     const r = v === "wgadd" ? ADD_ROUTE : ROUTES[key];
+    if (key !== current) hideAllPass();
     current = key;
     document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== v; });
     document.querySelectorAll("[data-route]").forEach((a) => {

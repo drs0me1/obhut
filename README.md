@@ -2,7 +2,7 @@
 
 Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 (noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, fixed
-Docker Compose bundle (including loopback WebDAV), host dnsmasq + Caddy on the
+Docker Compose bundle, host dnsmasq + Caddy on the
 tailnet, and a persistent firewall. No reconcile engine.
 
 **Current version:** `2026.08.06-v2-96` (see `Data/install.sh`).
@@ -86,9 +86,8 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Arşiv açıcı (Unpackerr) | none; a module, installed from Konsol → Modüller (**DD-148**) | archive extraction in the downloads folder |
 | WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
-| WebDAV (shares only) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one account) | the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
+| Paylaşım — WebDAV, shares only (module, **DD-149**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
 | Konsol | loopback → Caddy `panel.<domain>` (tailnet only, one login; `wg.` and `dosya.` redirect) | one admin console: server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
-| WebDAV (rclone) | loopback → Caddy | read-only media for Infuse etc. |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT

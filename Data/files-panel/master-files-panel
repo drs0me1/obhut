@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Konsol'un dosya arka ucu ve sayfa sunucusu (DD-139, DD-140, DD-141). İndirme klasörünü
-# tarayıcıdan yönetir: gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle /
-# kalıcı sil, metin dosyasını oku, indir. Konsol'un sayfa dosyalarını da bu servis verir;
-# /api/wg/* isteklerini Caddy öbür arka uca (master-wg-panel) yollar.
+# Konsol'un dosya arka ucu (DD-139, DD-140, DD-141). Kullanıcı alanını tarayıcıdan yönetir:
+# gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
+# oku, indir, yükle, paylaş. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri öbür
+# arka uca (master-wg-panel) gider. Paylaşım hesabı bu servise hiç açılmaz (DD-149).
 # Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (http://panel.<alan>). Parola yoktur
 # (DD-147): erişim sınırı Tailscale. Servis root değil, kullanıcı alanının sahibi olarak
 # çalışır. Yalnız Python standart kütüphanesi.
@@ -39,6 +39,9 @@ TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 # sembolik bağlantı olarak konur: kopya yok, klasöre sonradan inen dosya kendiliğinden görünür.
 SHARE_SERVED = "w"
 SHARE_REGISTRY = "kayit.json"
+# DD-149: Paylaşım modülü kuruluyken .pay içinde durur (master-modul koyar ve kaldırır).
+# Modül kaydı bu servise kapalıdır (/etc/master-stack 0700); yeni paylaşım yalnız işaret varken açılır.
+SHARE_ENABLED = "acik"
 MAX_SHARES = 100
 MAX_SHARE_DAYS = 3650
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
@@ -362,6 +365,18 @@ class Files:
                 raise
         return fd
 
+    def share_enabled(self):
+        """Paylaşım modülü kurulu mu: .pay/acik düz bir dosya olarak duruyor mu (bağlantı izlenmez)."""
+        if not self.share:
+            return False
+        try:
+            with DirFd(self.open_dir([])) as root:
+                with DirFd(os.open(self.share, O_DIR, dir_fd=root)) as fd:
+                    st = os.stat(SHARE_ENABLED, dir_fd=fd, follow_symlinks=False)
+        except OSError:
+            return False
+        return stat.S_ISREG(st.st_mode)
+
     def shares(self):
         """Paylaşım listesi; süresi dolanları ve kayıtta olmayan bağlantıları temizler."""
         if not self.share:
@@ -418,6 +433,8 @@ class Files:
         raise PanelError(400, "paylaşım için boş ad bulunamadı")
 
     def share_add(self, parts, days):
+        if not self.share_enabled():
+            raise PanelError(409, "Paylaşım modülü kurulu değil")
         if not parts:
             raise PanelError(400, "kökün tamamı paylaşılamaz")
         with DirFd(self.open_dir(parts[:-1])) as pfd:
@@ -769,18 +786,11 @@ class Panel:
         self.usage_cache = (now, value)
         return value
 
-    def share_account(self):
-        """Paylaşım WebDAV hesabı (kullanıcı, parola); systemd kimlik bilgisinden okunur."""
-        path = self.args.share_auth
-        if not path:
-            return None
-        try:
-            with open(path, encoding="utf-8") as fh:
-                line = fh.read().strip()
-        except OSError:
-            return None
-        user, sep, password = line.partition(":")
-        return (user, password) if sep and user and password else None
+    def share_summary(self):
+        enabled = self.files.share_enabled()
+        return {"enabled": enabled,
+                "host": "paylas.%s" % self.args.domain if enabled and self.args.domain else "",
+                "count": len(self.files.shares()) if self.args.share else 0}
 
     def state(self):
         vfs = os.statvfs(self.args.root)
@@ -795,8 +805,7 @@ class Panel:
             "disk": {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize,
                      "used": self.used(), "mount": os.path.ismount(self.args.root)},
             "trash": {"count": len(items), "size": sum(i["size"] or 0 for i in items)},
-            "share": {"host": "paylas.%s" % self.args.domain if self.args.domain and self.args.share else "",
-                      "count": len(self.files.shares()) if self.args.share else 0},
+            "share": self.share_summary(),
             "textLimit": TEXT_LIMIT,
         }
 
@@ -956,15 +965,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.do_GET()
 
     def share_state(self):
-        """Paylaşım listesi ve bütün paylaşımların ortak adresi, kullanıcısı, parolası."""
+        """Paylaşım listesi ve ortak adres. Hesap burada yok: Konsol onu root arka ucundan okur (DD-149)."""
         panel = self.panel
         if not panel.args.share:
             raise PanelError(404, "paylaşım kapalı")
-        account = panel.share_account()
+        enabled = panel.files.share_enabled()
         return {
-            "host": "http://paylas.%s" % panel.args.domain if panel.args.domain else "",
-            "user": account[0] if account else "",
-            "pass": account[1] if account else "",
+            "enabled": enabled,
+            "host": "http://paylas.%s" % panel.args.domain if enabled and panel.args.domain else "",
             "items": panel.files.shares(),
         }
 
@@ -1152,12 +1160,6 @@ def cmd_serve(args):
         fail("kök mutlak yol, çöp adı noktayla başlayan küçük harfli bir ad olmalı")
     if args.share and (not TRASH_RE.match(args.share) or args.share == args.trash):
         fail("paylaşım klasörü adı noktayla başlayan küçük harfli ve çöpten farklı olmalı")
-    args.share_auth = ""
-    if args.share_credential:
-        directory = os.environ.get("CREDENTIALS_DIRECTORY")
-        if not directory:
-            fail("--share-credential yalnız systemd LoadCredential ile kullanılır")
-        args.share_auth = os.path.join(directory, args.share_credential)
     # DD-144: geçici klasör kullanıcı alanının kökünde değil, indirme klasörünün
     # altındadır; yol köke göre verilir (ör. downloads/incomplete).
     if args.temp_dir and not all(valid_name(p) for p in args.temp_dir.split("/")):
@@ -1183,7 +1185,6 @@ def main():
     s.add_argument("--root", required=True)
     s.add_argument("--trash", default=".cop")
     s.add_argument("--share", default="")
-    s.add_argument("--share-credential", dest="share_credential", default="")
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
     s.add_argument("--temp-dir", dest="temp_dir", default="")

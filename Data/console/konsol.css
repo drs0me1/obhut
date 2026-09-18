@@ -115,6 +115,7 @@ h1 { margin: 0; font: 700 28px/1.1 var(--f-display); letter-spacing: -.025em; te
 .btn-sm { padding: 6px 10px; font-size: 13px; border-radius: 6px; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 500; font-size: 13.5px; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
 .linkbtn:hover { color: var(--accent-hover); text-decoration: underline; }
+.linkbtn:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
 .linkbtn svg { width: 14px; height: 14px; }
 
 /* ---- genel bakış ---- */
@@ -530,8 +531,16 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .will svg { width: 15px; height: 15px; color: var(--accent); margin-top: 2px; }
 .acct-box { display: grid; gap: 6px; align-content: start; }
 .acct-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.acct-head .linkbtn { font-size: 12.5px; text-transform: none; letter-spacing: 0; }
+/* DD-149: modül hesabı — parola yalnız istenince görünür, 30 sn sonra gizlenir */
+.acct-inner { display: grid; gap: 6px; }
+.cred-row.fresh { border-color: var(--ok); background: var(--ok-soft); }
+.cred-row.masked-row .v { letter-spacing: .08em; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.acct-meta { display: flex; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.acct-meta .fresh-msg { color: var(--ok); font-weight: 500; }
 .steps { list-style: none; margin: 0; padding: 10px 12px; display: grid; gap: 7px; border: 1px solid var(--tint-line); background: var(--tint); border-radius: 10px; }
-.step { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: center; font-size: 13.5px; color: var(--muted); }
+.step { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 9px; align-items: center; font-size: 13.5px; color: var(--muted); }
+.step small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .step .mark { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line); display: grid; place-items: center; }
 .step.done { color: var(--ink); }
 .step.done .mark { background: var(--ok); border-color: var(--ok); color: var(--surface); }
@@ -676,9 +685,9 @@ dialog::backdrop { background: rgba(10, 14, 12, .5); }
 .nettab.preview { min-width: 0; margin: 0; border-bottom: 1px solid var(--tint-line); border-radius: 12px; }
 .nettab.preview .nt-main { cursor: default; }
 .nettab.preview .nt-top { padding-right: 0; }
-.will { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.will li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; font-size: 13.5px; }
-.will svg { width: 16px; height: 16px; color: var(--ok); margin-top: 2px; }
+.addside .will { gap: 8px; }
+.addside .will li { grid-template-columns: 18px minmax(0, 1fr); gap: 10px; font-size: 13.5px; }
+.addside .will svg { width: 16px; height: 16px; color: var(--ok); }
 
 @media (max-width: 1060px) {
   .facts.wide { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 14px; }
