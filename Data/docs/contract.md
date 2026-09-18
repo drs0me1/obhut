@@ -239,11 +239,20 @@ Preserved in full as a core feature. Contract in §5–§7.
 
 ### 1.9 WireGuard (DD-120, DD-124)
 
-- **A fresh install has no WireGuard (DD-143).** The installer installs
-  `wireguard-tools` and `qrencode` (`--no-install-recommends`), loads the kernel
-  module, creates `/etc/wireguard` and `master-wg`, and starts whatever networks
-  the registry already holds. It generates no key, writes no `.conf` and brings
-  up no interface; it also never removes a network.
+- **A fresh install has no WireGuard (DD-143, DD-150).** WireGuard is a Konsol
+  module (§1.11). The installer only puts `master-wg`, the `caddy-wg@` template
+  and `Caddyfile.wg` in place. Installing the module installs `wireguard-tools`
+  and `qrencode` (`--no-install-recommends`), loads the kernel module (and
+  writes `WG_MODULES_LOAD_FILE`), creates `/etc/wireguard`, re-applies the
+  firewall and starts whatever networks the registry already holds. Nothing
+  generates a key, writes a `.conf` or brings up an interface of its own.
+- Without the module `master-firewall` ignores the network registry (no
+  WireGuard port or rule), `master-wg` refuses every command but `version`,
+  and the root backend answers `/api/wg/state` with `installed: false` and
+  refuses changes with `409`. Removing the module closes every network
+  (`wg-quick@`/`caddy-wg@` disabled) and keeps `/etc/wireguard`, so a
+  reinstall brings the networks back; `--veri` also deletes the keys, the
+  device profiles and the registry.
 - **Networks are created from Konsol** (WireGuard → Yapılandır → Arayüz ekle) or
   with `master-wg net-add`. The first one defaults to `wg0`, `10.8.0.0/24`,
   `fdcc:ad94:bacf:61a4::/112` (peers `…::N`, the hex of the IPv4 host number;
@@ -384,7 +393,14 @@ Preserved in full as a core feature. Contract in §5–§7.
     installer manages only `wg0` and refuses a `wg0` or WebDAV port that a
     panel network uses. The Mac backup and the restore cover `wg0` only.
 
-### 1.10 Konsol and the file backend (DD-139, DD-140)
+### 1.10 Konsol and the file backend (DD-139, DD-140, DD-150)
+
+- The file backend belongs to the **Dosya yöneticisi** module (§1.11). The
+  installer installs `master-files-panel`, the downloads account and the
+  `SERVER_ROOT` tree, and renders the unit to `MODULES_DIR/dosya/`; the module
+  puts it in `UNIT_DIR`, starts and checks it. Without the module Konsol shows
+  no Dosyalar page, asks the file backend nothing, and takes the disk card
+  from the root backend (`/api/wg/sistem` → `root`, `disk`).
 
 - **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
   administration page. Caddy serves the page files itself from
@@ -481,20 +497,30 @@ Preserved in full as a core feature. Contract in §5–§7.
 
 - A clean install brings the base only; optional parts are **modules**,
   installed, started, stopped and removed from Konsol → Modüller.
-  - Catalogue (v2-116), in Konsol's order: `paylasim` (Paylaşım, the share
-    WebDAV, Docker) and `unpackerr` (Arşiv açıcı, Docker). Dosya yöneticisi,
-    WireGuard and qBittorrent move here in later releases.
+  - Catalogue (v2-117), in Konsol's order: `dosya` (Dosya yöneticisi,
+    Konsol), `wireguard` (WireGuard, Konsol), `paylasim` (Paylaşım, the share
+    WebDAV, Docker; needs `dosya`) and `unpackerr` (Arşiv açıcı, Docker).
+    qBittorrent moves here in a later release.
+  - Konsol modules (`dosya`, `wireguard`) are installed or removed, never
+    stopped or started (`baslat`/`durdur` refuse). A module another one depends
+    on cannot be removed first: `kaldir dosya` refuses while `paylasim` is
+    installed, and `kur paylasim` refuses without `dosya`; Konsol queues the
+    pair (install together, remove the dependent first).
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders each module's files to
     `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for
     Paylaşım `compose.yaml`, `paylasim.caddy` and `dnsmasq.conf`;
   - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent,
     and `CADDY_MODULES_DIR` (`/etc/caddy/moduller`), which the base Caddyfile
-    imports (`import …/*.caddy`, after the global options);
+    imports (`import …/*.caddy`, after the global options); the file backend's
+    unit goes to `MODULES_DIR/dosya/` only;
   - never installs, starts, stops or removes a module. When a rendered file
-    changed and the module is registered (`calisiyor` or `durduruldu`), stage
-    7 runs `master-modul uygula <id>` after the base Compose project is up; a
-    failure is a warning, not a stop.
+    (or the file backend's script) changed and the module is registered
+    (`calisiyor` or `durduruldu`), stage 7 runs `master-modul uygula <id>`
+    after the base Compose project is up; WireGuard is re-applied on every
+    run while installed. A failure is a warning, not a stop.
+  - checks the file backend and the WireGuard networks in stage 7 only while
+    their modules are installed.
 - `master-modul` (root):
   - `liste` prints, per catalogued module, `id runtime registry live action
     step total text` separated by tabs; `registry` is `yok`, `calisiyor` or
@@ -520,6 +546,20 @@ Preserved in full as a core feature. Contract in §5–§7.
   - Arşiv açıcı: `kur` also checks that the container sees neither the trash
     nor the share folder, and takes it down if it does (**DD-144**). Its data
     is the contents of `SERVER_ROOT/downloads/.unpackerr`.
+- Dosya yöneticisi (`dosya`, **DD-150**): `kur` copies
+  `MODULES_DIR/dosya/master-files-panel.service` to `UNIT_DIR`, enables and
+  starts it, and checks that it runs as `DOWNLOADS_UID`, answers through Caddy
+  (`master-files-panel check`) and refuses a request without `X-Konsol` (403);
+  on failure it is stopped and removed. `kaldir` stops it and removes the
+  unit; `--veri` also empties `SERVER_ROOT/FILES_PANEL_TRASH` (the folder
+  stays). `uygula` re-copies the unit and restarts the service.
+- WireGuard (`wireguard`, **DD-150**): `kur` in four steps — packages, kernel
+  module, firewall hook (the module is registered, then `master-firewall` is
+  restarted), networks from the registry. `kaldir` closes the networks,
+  unregisters the module, re-applies the firewall and removes
+  `WG_MODULES_LOAD_FILE`; `--veri` also empties `WG_CONF_DIR`. `uygula`
+  (every installer run while installed) makes sure of the packages, the kernel
+  module and the networks. `gunluk` reads `journalctl -u wg-quick@*`.
 - Paylaşım (`paylasim`, **DD-149**):
   - `kur` in four steps: pull the rclone image; prepare the account; start
     the container and check it; publish the names. The account is user
@@ -649,7 +689,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
 | qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
 | Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
-| Konsol file backend and pages (`master-files-panel`) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**) |
+| Konsol file backend (`master-files-panel`; Dosya yöneticisi module only) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**, **DD-150**) |
 | WebDAV — shares only (`paylasim` module; only while installed) | `127.0.0.1` | 61010 (**DD-141**, **DD-142**, **DD-149**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):

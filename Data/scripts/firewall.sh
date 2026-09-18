@@ -63,10 +63,16 @@ wg_ui_ports() {
 # zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, erişim (ui | inet), sunucu
 # IPv4, alt ağ IPv4, alt ağ IPv6.
 WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
+# DD-150: WireGuard bir Konsol modülüdür. Modül kayıtta yoksa ağ kaydı (anahtarlarla birlikte
+# korunmuş olabilir) yok sayılır: hiçbir WireGuard portu ya da kuralı açılmaz.
+wg_module_on() {
+    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] || return 0
+    awk -F'\t' '$1 == "wireguard" && $2 == "calisiyor" {f = 1} END {exit !f}' "$MODULES_FILE"
+}
 load_wg_networks() {
     local iface port scope s4 n4 s6 n6 rest i j
     WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
-    if [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
+    if wg_module_on && [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r iface port scope s4 n4 s6 n6 rest; do
             [[ -n "$iface" ]] || continue
             [[ "$iface" =~ ^wg[0-9]$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&

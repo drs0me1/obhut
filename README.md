@@ -85,9 +85,9 @@ only the runtime files and their archive SHA-256. It uploads them to
 | Dozzle | loopback → Caddy (login) | container state, live logs, start/stop/remove |
 | qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
 | Arşiv açıcı (Unpackerr) | none; a module, installed from Konsol → Modüller (**DD-148**) | archive extraction in the downloads folder |
-| WireGuard (host kernel) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | VPN; peers generated on the server with `wireguard.command` |
+| WireGuard (host kernel; module, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → Modüller; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Paylaşım — WebDAV, shares only (module, **DD-149**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
-| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, one login; `wg.` and `dosya.` redirect) | one admin console: server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
+| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, one login; `wg.` and `dosya.` redirect) | one admin console (the Dosyalar and WireGuard pages come with their modules, **DD-150**): server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT
@@ -99,9 +99,9 @@ There is no container backup tool. A host is rebuilt from `kurulum/` alone:
 - Every login comes from `kurulum/kurulum.env`, qBittorrent's included.
 - qBittorrent's settings come from `Data/templates/qBittorrent.conf`
   (**DD-129**).
-- WireGuard is not part of that: a fresh install has no network, no key and no
-  peers (**DD-143**). You create the first network in Konsol → WireGuard →
-  Yapılandır and add the devices again.
+- WireGuard is not part of that: a fresh install has no WireGuard at all
+  (**DD-143**, **DD-150**). Install it from Konsol → Modüller → WireGuard, create
+  the first network in WireGuard → Yapılandır and add the devices again.
 Keep that folder safe.
 
 ## Verify (workstation)

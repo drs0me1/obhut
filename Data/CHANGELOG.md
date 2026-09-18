@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-18 — Dosya yöneticisi and WireGuard are Konsol modules (v2-117)
+
+- **Changed** (**DD-150**): a clean install now brings only Konsol, Tailscale,
+  names, the firewall and Docker. Konsol → Modüller installs **Dosya
+  yöneticisi** (the file backend, in three steps) and **WireGuard** (packages,
+  kernel module, firewall hook, the registry's networks — four steps).
+  - The Dosyalar and WireGuard pages and menu items appear with their modules;
+    a bookmark to a missing page opens Modüller. The disk card works without
+    the file manager (total and free from the root backend).
+  - Both are installed or removed, never stopped. Removing WireGuard closes
+    every network and keeps the keys and profiles (a reinstall brings the
+    networks back); its data option also deletes them. Removing the file
+    manager keeps the trash; its data option empties it.
+  - Paylaşım needs the file manager: "Dosya yöneticisi ile birlikte kur"
+    installs both in order, and removing the file manager removes Paylaşım
+    first ("Birlikte kaldır", keeping its account and links).
+  - Without the WireGuard module the firewall opens no WireGuard port, even if
+    a network registry was kept; `master-wg` and wireguard.command say the
+    module is missing.
+  - The installer renders the file backend's unit to the module folder and
+    checks the file backend and WireGuard in stage 7 only while installed.
+- **Operator step:** reset the server and install v2-117 fresh (a host from an
+  earlier version runs the file backend and WireGuard outside the module
+  registry); then install the modules you want from Konsol.
+
 ### 2026-09-18 — Paylaşım is a Konsol module with a generated account (v2-116)
 
 - **Changed** (**DD-149**): the share WebDAV left the base install. Konsol →

@@ -16,8 +16,10 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   Dosya tek doğru kaynaktır: bir parolayı burada değiştirip kurulumu yeniden çalıştırın,
   sunucudaki hesap da değişir (arayüzden değiştirilen parola kurulumda dosyadakine döner).
 
-WireGuard — kurulum ağ yaratmaz (v2-109). İlk ağı Konsol'dan kurun:
-  http://panel.ayc → WireGuard → Yapılandır (wg0, 10.8.0.0/24, UDP 61001 önerilir).
+WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın kendisini de kurmaz:
+  http://panel.ayc → Modüller → WireGuard → Kur (paketler, çekirdek modülü, güvenlik duvarı);
+  sonra WireGuard → Yapılandır (wg0, 10.8.0.0/24, UDP 61001 önerilir).
+  Modülü kaldırmak bütün ağları kapatır; anahtarlar ve profiller kalır, yeniden kurunca ağlar geri gelir.
   Sunucu yeniden kurulursa WireGuard boş gelir: ağı yeniden kurar, cihazları yeniden eklersiniz.
   Peer'lar sunucuda üretilir; Konsol'dan ya da wireguard.command ile yönetilir:
   Çift tık → 1) liste (son el sıkışma, trafik) 2) ekle 3) çıkar 4) QR göster 5) çıkış
@@ -81,7 +83,10 @@ Paylaşım (v2-106, v2-108; v2-116'dan beri Konsol → Modüller'den kurulur):
 Konsol · Modüller sekmesi (v2-115):
   Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı, boş Docker).
   Ek parçalar buradan tek tıkla kurulur, durdurulur, başlatılır, kaldırılır; sayfa kapansa da işlem sürer.
-  Şimdilik: Paylaşım (WebDAV) ve Arşiv açıcı (Unpackerr). Arşiv açıcıda "verisini de sil" yalnız günlüğünü siler;
+  Şimdilik: Dosya yöneticisi, WireGuard, Paylaşım (WebDAV) ve Arşiv açıcı (Unpackerr).
+  Dosyalar ve WireGuard sayfaları modülleriyle birlikte menüye gelir. Paylaşım Dosya yöneticisine bağlıdır:
+  "Dosya yöneticisi ile birlikte kur" ikisini sırayla kurar; Dosya yöneticisi kaldırılırken önce Paylaşım kalkar.
+  Arşiv açıcıda "verisini de sil" yalnız günlüğünü siler;
   indirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
 
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
@@ -101,6 +106,8 @@ A) İlk kurulum
      Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
   (Dozzle ve qBittorrent girişleri kurulum.env'den; qBittorrent ayarları
    Data/templates/qBittorrent.conf'tan — arayüzden değiştirilen o ayarlar kurulumda şablona döner)
+  v2-117'ye geçerken: sunucuyu sıfırlayıp temiz kurun (eski kurulumun WireGuard katmanı ve dosya servisi
+  artık modüldür); sonra Konsol → Modüller'den Dosya yöneticisi ve WireGuard'ı kurun
   v2-116'ya geçerken: kurulum.env'den SHARE_USER ve SHARE_PASS satırlarını silin (yoksa kurulum
   hiçbir şeye dokunmadan durur); kurulumdan sonra Paylaşım'ı Konsol → Modüller'den kurun ve Infuse'a
   yeni hesabı girin

@@ -713,7 +713,7 @@ dialog::backdrop { background: rgba(10, 14, 12, .5); }
   .mobile-brand { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .mobile-brand .wordmark { font-size: 26px; }
   .bottomnav {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
     background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   }
   .bottomnav a { display: grid; justify-items: center; gap: 2px; padding: 6px 2px; border-radius: 8px; font-size: 11px; color: var(--muted); text-decoration: none; }

@@ -102,7 +102,10 @@ EOF
     [ "$status" -ne 0 ]
     # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 9 ]
+    # DD-150: the WireGuard packages are installed by the WireGuard module, not here.
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 8 ]
+    grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
+    grep -qF -- '-o DPkg::Lock::Timeout=300 $WG_PACKAGES' "$V2_ROOT/scripts/master-modul"
     # retry runs a function in a child bash that does not inherit arrays, so
     # the masked-quiet installs take APT_OPTS as arguments (DD-125).
     [ "$(grep -cF 'apt_get_install_masked_quiet "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 2 ]
@@ -1949,15 +1952,14 @@ EOF
     # Girdi dosyasında WireGuard portu da yok: ağın portunu Konsol belirler.
     run ! grep -q 'WG_PUBLIC_PORT' "$V2_ROOT/config/kurulum.env.example"
     run ! grep -q 'INPUT_WG_PUBLIC_PORT' "$V2_ROOT/install.sh"
-    # Kurulum yalnız katmanı hazırlar ve kayıttaki ağları uygular.
-    grep -q '^ensure_wireguard_ready()' "$V2_ROOT/install.sh"
-    grep -q '^ensure_wg_networks_running()' "$V2_ROOT/install.sh"
-    run ! grep -q '^ensure_wireguard()' "$V2_ROOT/install.sh"
+    # DD-150: the installer prepares nothing of WireGuard any more; the module does, and it
+    # never makes a key or a network of its own either.
+    [ "$(grep -cE '^ensure_wireguard(_ready)?\(\)|^ensure_wg_networks_running\(\)' "$V2_ROOT/install.sh")" -eq 0 ]
     local ready
-    ready="$(awk '/^ensure_wireguard_ready\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    run ! grep -qE 'wg genkey|wg-quick|syncconf|PrivateKey' <<<"$ready"
-    grep -q 'wireguard-tools qrencode' <<<"$ready"
-    awk '/^stage_5\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'ensure_wg_networks_running'
+    ready="$(awk '/^wg_packages\(\)/,/^firewall_apply\(\)/' "$V2_ROOT/scripts/master-modul")"
+    [ -n "$ready" ]
+    run ! grep -qE 'wg genkey|syncconf|PrivateKey' <<<"$ready"
+    grep -qx 'WG_PACKAGES="wireguard-tools qrencode"' "$V2_ROOT/scripts/master-modul"
 }
 
 @test "wireguard.command talks to the server only: picks a network, no backup, no upload" {
@@ -1995,7 +1997,10 @@ WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 MODULES_FILE=$TMP/moduller
 SHARE_PORT=61010
 TAILSCALE_IPV4=100.64.0.7
+SERVER_ROOT=$TMP
 EOF
+    # DD-150: WireGuard is a module; these tests run with it installed.
+    printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/master-wg" <<EOF
 #!/bin/bash
 net=""
@@ -2155,8 +2160,8 @@ mm() {
     modul_fixture
     run mm liste
     [ "$status" -eq 0 ]
-    # Catalogue order is Konsol's order: Paylaşım first (DD-149).
-    [ "$(sed -n 1p <<<"$output" | cut -f1)" = paylasim ]
+    # Catalogue order is Konsol's order (DD-149, DD-150).
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'dosya wireguard paylasim unpackerr ' ]
     [ "$(grep '^unpackerr' <<<"$output")" = "$(printf 'unpackerr\tdocker\tyok\tyok\t-\t-\t-\t-')" ]
     run mm kur unpackerr
     [ "$status" -eq 0 ]
@@ -2220,8 +2225,11 @@ mm() {
     # Every change runs under the one module lock (kur, baslat, durdur, kaldir, parola, uygula).
     [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 6 ]
     grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
-    # The only deletions: unpackerr's own log folder, and the share's links (never followed).
-    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 2 ]
+    # The only deletions: unpackerr's own log folder, the share's links (never followed),
+    # and with --veri the trash contents and the WireGuard keys (DD-150).
+    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
+    grep -qF 'find "$cop" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
+    grep -qF 'find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$pay/$SHARE_SERVED" -mindepth 1 -maxdepth 1 -type l -delete' "$V2_ROOT/scripts/master-modul"
     [ "$(grep -c 'find -L' "$V2_ROOT/scripts/master-modul")" -eq 0 ]
@@ -2302,6 +2310,8 @@ EOF
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/systemctl-calls"\nprintf "systemctl %%s\\n" "$*" >>"%s/order"\n' "$TMP" "$TMP" >"$TMP/mbin/systemctl"
     printf '#!/bin/bash\necho 100.64.0.7\n' >"$TMP/mbin/dig"
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/chown"
+    # DD-150: Paylaşım needs the Dosya yöneticisi module.
+    printf 'dosya\tcalisiyor\n' >"$TMP/moduller"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/logger-calls"\n' "$TMP" >"$TMP/mbin/logger"
     chmod +x "$TMP/mbin"/*
 }
@@ -2422,7 +2432,7 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     run mm kur paylasim
     [ "$status" -ne 0 ]
     [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\tdnsmasq yapılandırması doğrulanmadı (paylas.ayc)')" ]
-    [ ! -s "$TMP/moduller" ]
+    [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
     [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
     [ ! -e "$TMP/dnsmasq.d/modul-paylasim.conf" ]
     [ ! -e "$TMP/srv/.pay/acik" ]
@@ -2554,6 +2564,57 @@ assert [r["scope"] for r in d["ports"] if r["port"] == 61010] == ["tailscale"], 
     rm -f "$TMP/pay-cred"
     [ "$(pc /api/konsol/moduller/paylasim/hesap -H 'X-Konsol: 1')" = 404 ]
     grep -q 'hesap yok' "$TMP/body"
+}
+
+@test "wg panel answers without the WireGuard module and never runs master-wg for it" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    panel_start
+    local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json') before
+    # DD-150: WireGuard is a module; without it the page gets an empty, marked state.
+    : >"$TMP/moduller"
+    before="$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')"
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["installed"] is False and d["networks"] == [], d' "$TMP/body"
+    [ "$(pc /api/wg/nets "${json[@]}" --data '{"port":"61011","scope":"inet","dns":"1.1.1.1","label":""}')" = 409 ]
+    grep -q 'WireGuard modülü kurulu değil' "$TMP/body"
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/add "${json[@]}" --data '{}')" = 409 ]
+    [ "$(pc /api/wg/nets/wg0/peers/iphone/profile -H 'X-Konsol: 1')" = 404 ]
+    [ "$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')" = "$before" ]
+    # The disk card no longer needs the file backend: the root backend measures the user area.
+    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
+    python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["root"] == sys.argv[2] and d["disk"]["total"] > 0 and d["disk"]["free"] >= 0, d
+assert not [r for r in d["ports"] if r["scope"] == "wireguard" or r["name"].startswith("WireGuard")], d["ports"]
+' "$TMP/body" "$TMP"
+    # With the module back, the same requests reach master-wg again.
+    printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["installed"] is True and d["networks"], d' "$TMP/body"
+}
+
+@test "console shows the Dosyalar and WireGuard pages only with their modules and installs Paylaşım together with its dependency" {
+    local js="$V2_ROOT/console/konsol.js"
+    grep -qF 'const fsOn = () => modOn("dosya");' "$js"
+    grep -qF 'const wgOn = () => modOn("wireguard");' "$js"
+    grep -qF 'document.querySelectorAll('"'"'[data-route="dosyalar"]'"'"').forEach((a) => { a.hidden = !fsOn(); });' "$js"
+    grep -qF 'document.querySelectorAll('"'"'[data-route="wireguard"]'"'"').forEach((a) => { a.hidden = !wgOn(); });' "$js"
+    # A page whose module is absent is not opened; the backends are not asked.
+    grep -qF 'if (MODS && ((key === "dosyalar" && !fsOn()) || (key === "wireguard" && !wgOn()))) {' "$js"
+    grep -qF 'return Promise.all([wgOn() ? loadWg() : null, loadSystem(), fsOn() ? loadFsState() : null, loadActions()]);' "$js"
+    grep -qF 'loadModules().then(refreshAll).then(() => { route(); if (fsOn()) loadFs(); });' "$js"
+    # Dependencies: Paylaşım needs Dosya yöneticisi; install together, remove the dependent first.
+    grep -qF 'requires: "dosya",' "$js"
+    grep -qF 'modQueue.push([m.id, "kur", false]);' "$js"
+    grep -qF 'modQueue.push([m.id, "kaldir", box.checked]);' "$js"
+    grep -qF 'if (p.step === "hata") { modQueue.length = 0;' "$js"
+    # Konsol modules are not stopped; their card links the page instead.
+    grep -qF 'dosya: () => {' "$js"
+    grep -qF 'wireguard: { name: "WireGuard"' "$js"
+    grep -qF '? h("button", { type: "button", class: "btn btn-sm btn-primary", "data-go": meta.page[0] }, svg(meta.page[1]), meta.page[2])' "$js"
+    # The disk card falls back to the root backend.
+    grep -qF 'const sysDisk = S.sys && S.sys.disk;' "$js"
 }
 
 @test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
@@ -2712,7 +2773,10 @@ EOF
     # Without a password the gates are the protection: stage 7 proves both on both backends.
     grep -q 'X-Konsol başlığı olmadan HTTP' <<<"$s7"
     grep -q 'yabancı Host ile HTTP' <<<"$s7"
-    grep -q 'for gate_port in "\$FILES_PANEL_PORT:/api/state" "\$WG_PANEL_PORT:/api/wg/state"; do' <<<"$s7"
+    # DD-150: the file backend is checked only while the Dosya yöneticisi module is installed.
+    grep -qF 'local gate_port gate_path gates="$WG_PANEL_PORT:/api/wg/state"' <<<"$s7"
+    grep -qF '[[ "$files_on" -eq 0 ]] || gates="$FILES_PANEL_PORT:/api/state $gates"' <<<"$s7"
+    grep -q 'for gate_port in \$gates; do' <<<"$s7"
     grep -q 'Konsol sayfası tailnet.ten açılmadı' <<<"$s7"
     grep -q 'master-wg-panel" check' <<<"$s7"
     grep -q 'http://${wg_first_addr}:${WG_PANEL_PORT}/' <<<"$s7"
@@ -3118,6 +3182,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     done
     # reapply_modules: a changed module file is applied to an installed module in either state.
     eval "$(awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^module_state\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     mkdir -p "$TMP/sbin"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/calls"\n' "$TMP" >"$TMP/sbin/master-modul"
     chmod +x "$TMP/sbin/master-modul"
@@ -3150,7 +3215,8 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
     # Side navigation and the phone's bottom bar both link the page.
     [ "$(grep -c 'data-route="moduller"' "$html")" -eq 2 ]
-    grep -q 'grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed;' "$V2_ROOT/console/konsol.css"
+    # DD-150: items come and go with their modules, so the bar sizes to what is shown.
+    grep -q 'grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); position: fixed;' "$V2_ROOT/console/konsol.css"
     grep -q '<section data-view="moduller"' "$html"
     grep -q 'id="mod-grid"' "$html"
     grep -q 'id="cf-extra"' "$html"
@@ -3168,7 +3234,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
 @test "console offers sharing only while the share module is installed and renews its password from the card" {
     local js="$V2_ROOT/console/konsol.js" css="$V2_ROOT/console/konsol.css"
     # Dosyalar: the rail entry, the row button and the selection-bar button follow the module.
-    grep -qF 'const shareOn = () => (MODS ? !!(shareMod() || {}).installed : !!(S.fs && S.fs.share && S.fs.share.enabled));' "$js"
+    grep -qF 'const shareOn = () => fsOn() && !!(shareMod() || {}).installed;' "$js"
     grep -qF 'shareOn() ? railBtn({ cur: fsView === "shares"' "$js"
     grep -qF 'inTemp(here) || inTemp(pathText(fsPath)) || !shareOn() ? null : shareBtn(item, here),' "$js"
     grep -qF 'shareOn() ? h("button", { type: "button", class: "btn btn-sm", disabled: !one' "$js"
@@ -3751,44 +3817,138 @@ EOF
     grep -qx '# peer: a' "$WG0_CONF"
 }
 
-@test "the installer prepares the WireGuard layer and applies the registry, never a network of its own" {
-    # DD-143: kurulum anahtar üretmez, conf yazmaz, arayüz açmaz.
-    eval "$(awk '/^ensure_wireguard_ready\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    eval "$(awk '/^ensure_wg_networks_running\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    wg_mock_bin
-    wg_state_fixture
-    PATH="$TMP/bin:$PATH"
-    WG_CONF_DIR="$TMP/etc/wireguard" WG_MODULES_LOAD_FILE="$TMP/modules.conf"
-    WG_NETWORKS_FILE="$TMP/etc/wireguard/networks" APT_OPTS=() APT_LOCK_TIMEOUT=1
-    log() { printf '%s %s\n' "$1" "${*:2}" >>"$TMP/log"; }
-    retry() { printf 'retry %s\n' "$*" >>"$TMP/calls"; }
-    modprobe() { :; }
-    atomic_write() { cat >"$1"; }
-    install() { local a; for a in "$@"; do case "$a" in /*) mkdir -p "$a" ;; esac; done; }
-    before="$(cat "$WG0_CONF")"
-    run ensure_wireguard_ready
-    [ "$status" -eq 0 ]
-    grep -q 'no-install-recommends wireguard-tools qrencode' "$TMP/calls"
-    [ "$(cat "$TMP/modules.conf")" = wireguard ]
-    # Var olan yapılandırmaya dokunulmaz, yenisi yazılmaz.
-    [ "$(cat "$WG0_CONF")" = "$before" ]
-    run ! grep -q 'wg genkey' "$TMP/calls"
-
-    # Kayıttaki ağ uygulanır: birim etkinleştirilir, gerekiyorsa başlatılır.
-    rm -f "$TMP/calls"
-    WG_ACTIVE=0 run ensure_wg_networks_running
-    [ "$status" -eq 0 ]
-    grep -q 'systemctl enable --quiet wg-quick@wg0.service' "$TMP/calls"
-    grep -q 'systemctl restart wg-quick@wg0.service' "$TMP/calls"
-    grep -q 'systemctl enable --quiet caddy-wg@wg0.service' "$TMP/calls"
-
-    # Kayıt yoksa hiçbir şey açılmaz; kullanıcı Konsol'a yönlendirilir.
-    rm -f "$TMP/calls" "$TMP/log" "$TMP/etc/wireguard/networks"
-    run ensure_wg_networks_running
-    [ "$status" -eq 0 ]
-    [ ! -e "$TMP/calls" ]
-    grep -q 'Yapılandır' "$TMP/log"
+konsol_fixture() {
+    # DD-150: the Konsol modules (Dosya yöneticisi, WireGuard) against fakes.
+    modul_fixture
+    mkdir -p "$TMP/mods/dosya" "$TMP/units" "$TMP/sbin" "$TMP/srv/.cop" "$TMP/etc/wireguard" "$TMP/modload"
+    printf '[Service]\nExecStart=/bin/true\n' >"$TMP/mods/dosya/master-files-panel.service"
+    printf 'import sys, os\nsys.exit(1 if os.path.exists("%s/check-fail") else 0)\n' "$TMP" >"$TMP/sbin/master-files-panel"
+    cat >>"$TMP/mstate.env" <<EOF
+SERVER_ROOT=$TMP/srv
+FILES_PANEL_PORT=61009
+FILES_PANEL_TRASH=.cop
+UNIT_DIR=$TMP/units
+SBIN_DIR=$TMP/sbin
+DOWNLOADS_UID=1000
+LOCAL_DOMAIN=ayc
+TAILSCALE_IPV4=100.64.0.7
+WG_CONF_DIR=$TMP/etc/wireguard
+WG_NETWORKS_FILE=$TMP/etc/wireguard/networks
+WG_MODULES_LOAD_FILE=$TMP/modload/master-stack-wireguard.conf
+EOF
+    cat >"$TMP/mbin/systemctl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/systemctl-calls"
+case "\$*" in
+    "restart master-firewall.service")
+        if grep -q '^wireguard' "$TMP/moduller" 2>/dev/null; then echo firewall-wg >>"$TMP/order"; else echo firewall-nowg >>"$TMP/order"; fi ;;
+    "enable --now master-files-panel.service") touch "$TMP/files-active" ;;
+    "disable --now master-files-panel.service") rm -f "$TMP/files-active" ;;
+    "is-active --quiet master-files-panel.service") [ -e "$TMP/files-active" ] ;;
+    "show -p MainPID --value master-files-panel.service") echo 4242 ;;
+    "enable --now --quiet wg-quick@"*) echo "up \${4%.service}" >>"$TMP/order" ;;
+    list-unit-files*) [ ! -e "$TMP/wg-units" ] || cat "$TMP/wg-units" ;;
+esac
+exit 0
+EOF
+    printf '#!/bin/bash\n[ "$1 $2" = "-o uid=" ] && echo "  1000"\n' >"$TMP/mbin/ps"
+    printf '#!/bin/bash\nprintf 403\n' >"$TMP/mbin/curl"
+    printf '#!/bin/bash\n[ -e "%s/pkgs" ]\n' "$TMP" >"$TMP/mbin/dpkg"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/apt-calls"\ntouch "%s/pkgs"\n' "$TMP" "$TMP" >"$TMP/mbin/apt-get"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/modprobe-calls"\n' "$TMP" >"$TMP/mbin/modprobe"
+    printf '#!/bin/bash\nfor a; do :; done\nmkdir -p "$a"\n' >"$TMP/mbin/install"
+    chmod +x "$TMP/mbin"/*
 }
+
+@test "master-modul installs the file manager as a checked service and removes it before nothing else depends on it" {
+    konsol_fixture
+    run mm kur dosya
+    [ "$status" -eq 0 ]
+    grep -qx "$(printf 'dosya\tcalisiyor')" "$TMP/moduller"
+    [ "$(cat "$TMP/run/modul-dosya.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
+    cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
+    [ "$(ls -A "$TMP/units")" = master-files-panel.service ]
+    grep -qx 'enable --now master-files-panel.service' "$TMP/systemctl-calls"
+    run mm liste
+    [ "$(grep '^dosya' <<<"$output" | cut -f2-4)" = "$(printf 'konsol\tcalisiyor\trunning')" ]
+    # Konsol modules are installed or removed, never stopped.
+    run mm durdur dosya
+    [ "$status" -ne 0 ]
+    case "$output" in *"durdurulup başlatılmaz"*) ;; *) false ;; esac
+    # Paylaşım depends on it: it goes first.
+    printf 'paylasim\tcalisiyor\n' >>"$TMP/moduller"
+    run mm kaldir dosya
+    [ "$status" -ne 0 ]
+    case "$output" in *"önce Paylaşım kaldırılmalı"*) ;; *) false ;; esac
+    [ -e "$TMP/units/master-files-panel.service" ]
+    printf 'dosya\tcalisiyor\n' >"$TMP/moduller"
+    # --veri empties the trash; the trash folder and everything outside it stay.
+    mkdir -p "$TMP/srv/.cop/1789000000000-abcd1234" "$TMP/srv/downloads"
+    printf 'x\n' >"$TMP/srv/.cop/1789000000000-abcd1234/film.mkv"
+    printf '{}\n' >"$TMP/srv/.cop/1789000000000-abcd1234.json"
+    printf 'y\n' >"$TMP/srv/downloads/kalsin.mkv"
+    run mm kaldir dosya --veri
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/units/master-files-panel.service" ]
+    grep -qx 'disable --now master-files-panel.service' "$TMP/systemctl-calls"
+    [ -d "$TMP/srv/.cop" ]
+    [ -z "$(ls -A "$TMP/srv/.cop")" ]
+    [ -f "$TMP/srv/downloads/kalsin.mkv" ]
+    [ "$(grep -c dosya "$TMP/moduller")" -eq 0 ]
+    # A service that does not answer is taken back and nothing is registered.
+    touch "$TMP/check-fail"
+    run mm kur dosya
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/units/master-files-panel.service" ]
+    [ ! -e "$TMP/files-active" ]
+    [ "$(grep -c dosya "$TMP/moduller")" -eq 0 ]
+}
+
+@test "master-modul installs WireGuard, opens the kept networks after the firewall and closes them on removal" {
+    konsol_fixture
+    printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc::1\tfdcc::/112\t1.1.1.1\tAna\n' >"$TMP/etc/wireguard/networks"
+    printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc::1:1\tfdcc::1:0/112\t9.9.9.9\t\n' >>"$TMP/etc/wireguard/networks"
+    printf '[Interface]\n' >"$TMP/etc/wireguard/wg0.conf"
+    run mm kur wireguard
+    [ "$status" -eq 0 ]
+    grep -qx "$(printf 'wireguard\tcalisiyor')" "$TMP/moduller"
+    grep -q -- 'install -y --no-install-recommends -o DPkg::Lock::Timeout=300 wireguard-tools qrencode' "$TMP/apt-calls"
+    grep -qx 'wireguard' "$TMP/modprobe-calls"
+    [ "$(cat "$TMP/modload/master-stack-wireguard.conf")" = wireguard ]
+    # The firewall is applied with the module registered, then the registry's networks come up.
+    [ "$(tr '\n' ' ' <"$TMP/order")" = 'firewall-wg up wg-quick@wg0 up wg-quick@wg1 ' ]
+    grep -qx 'enable --now --quiet caddy-wg@wg0.service' "$TMP/systemctl-calls"
+    [ "$(grep -c 'caddy-wg@wg1' "$TMP/systemctl-calls")" -eq 0 ]
+    # Existing keys and networks are applied, never made.
+    [ "$(cat "$TMP/etc/wireguard/wg0.conf")" = '[Interface]' ]
+    run mm durdur wireguard
+    [ "$status" -ne 0 ]
+    # Removal: networks close, the module leaves the registry before the firewall is re-applied,
+    # the keys stay; a reinstall brings the networks back.
+    printf 'wg-quick@wg0.service enabled enabled\ncaddy-wg@wg0.service enabled enabled\n' >"$TMP/wg-units"
+    : >"$TMP/order"
+    run mm kaldir wireguard
+    [ "$status" -eq 0 ]
+    grep -qx 'disable --now --quiet wg-quick@wg0.service' "$TMP/systemctl-calls"
+    grep -qx 'disable --now --quiet caddy-wg@wg0.service' "$TMP/systemctl-calls"
+    grep -qx 'disable --now --quiet wg-quick@wg1.service' "$TMP/systemctl-calls"
+    [ "$(cat "$TMP/order")" = firewall-nowg ]
+    [ ! -e "$TMP/modload/master-stack-wireguard.conf" ]
+    [ -f "$TMP/etc/wireguard/wg0.conf" ]
+    [ "$(grep -c wireguard "$TMP/moduller")" -eq 0 ]
+    : >"$TMP/apt-calls"
+    run mm kur wireguard
+    [ "$status" -eq 0 ]
+    [ ! -s "$TMP/apt-calls" ]
+    # --veri: keys, profiles and the registry go; the folder stays.
+    run mm kaldir wireguard --veri
+    [ "$status" -eq 0 ]
+    [ -d "$TMP/etc/wireguard" ]
+    [ -z "$(ls -A "$TMP/etc/wireguard")" ]
+    # master-wg says so instead of touching anything while the module is absent.
+    grep -qF 'die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"' "$V2_ROOT/scripts/master-wg"
+}
+
 @test "wireguard.command generates on the server, sends no key and keeps to bash 3.2" {
     local cmd="$V2_ROOT/../wireguard.command"
     [ -x "$cmd" ]
@@ -3858,7 +4018,7 @@ EOF
 
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
     local fw="$V2_ROOT/scripts/firewall.sh" f
-    for f in wg_ui_ports load_wg_networks apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
+    for f in wg_ui_ports wg_module_on load_wg_networks apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
         eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
     done
     grep -q '^load_wg_networks$' "$fw"
@@ -3887,6 +4047,14 @@ EOF
     printf 'wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' >"$WG_NETWORKS_FILE"
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\n' >>"$WG_NETWORKS_FILE"
     printf 'wg2\t61021\tui\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t1.1.1.1\t\n' >>"$WG_NETWORKS_FILE"
+    load_wg_networks
+    [ "${WG_IFACES[*]}" = "wg0 wg1 wg2" ]
+    # DD-150: without the WireGuard module the kept registry opens nothing.
+    MODULES_FILE="$TMP/moduller"
+    printf 'dosya\tcalisiyor\n' >"$MODULES_FILE"
+    load_wg_networks
+    [ "${#WG_IFACES[@]}" -eq 0 ]
+    printf 'wireguard\tcalisiyor\n' >>"$MODULES_FILE"
     load_wg_networks
     [ "${WG_IFACES[*]}" = "wg0 wg1 wg2" ]
     apply_input4
@@ -4007,10 +4175,11 @@ EOF
     grep -q 'systemctl try-restart "caddy-wg@${iface}.service"' <<<"$body"
     awk '/^stage_6\(\)/,/^assert_webdav_readonly_runtime\(\)/' "$V2_ROOT/install.sh" |
         grep -q '^    ensure_caddy_wg "\$OS_CHANGED"$'
-    # Kayıttaki ağlar firewall kurallarından sonra uygulanır (DD-143).
-    awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
-        awk '/restart master-firewall.service/ {f = NR} /^    ensure_wg_networks_running$/ {w = NR}
-             END { exit !(f && w && f < w) }'
+    # Kayıttaki ağlar firewall kurallarından sonra uygulanır (DD-143); DD-150'den beri WireGuard
+    # modülünün kurulumunda: kayıt, güvenlik duvarı, sonra ağlar.
+    awk '/^cmd_kur\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul" |
+        awk '/registry_set "\$id" calisiyor$/ && !r {r = NR} /firewall_apply \|\|/ {f = NR} /wg_networks_up >/ {w = NR}
+             END { exit !(r && f && w && r < f && f < w) }'
     # Stage 7 proves each registry network's port, address and UI ports.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -q 'wg show "$wg_iface" listen-port' <<<"$s7"

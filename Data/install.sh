@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-116"
+V2_VERSION="2026.08.06-v2-117"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -97,6 +97,11 @@ SHARE_CRED_FILE=$SHARE_CRED_FILE
 SHARE_ACCOUNT=$SHARE_ACCOUNT
 SHARE_PASSWORD_LENGTH=$SHARE_PASSWORD_LENGTH
 STATE_DIR=$STATE_DIR
+SBIN_DIR=$SBIN_DIR
+UNIT_DIR=$UNIT_DIR
+DOWNLOADS_UID=$DOWNLOADS_UID
+FILES_PANEL_TRASH=$FILES_PANEL_TRASH
+WG_MODULES_LOAD_FILE=$WG_MODULES_LOAD_FILE
 CADDYFILE=$CADDYFILE
 CADDY_MODULES_DIR=$CADDY_MODULES_DIR
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
@@ -256,51 +261,6 @@ tailscale_login() {
 }
 
 # DD-124/DD-143: WireGuard'ın kaynağı sunucudaki kayıt ve wgN.conf dosyalarıdır.
-# Kurulum hiçbirini yaratmaz, silmez ya da içeriğine dokunmaz; ağları master-wg
-# (Konsol ya da wireguard.command) kurar. NAT ve FORWARD master-firewall'dadır
-# (DD-16/DD-17): PostUp yok. Firewall'dan sonra çağrılır.
-# DD-143: kurulum WireGuard ağı yaratmaz. Yalnız katmanı hazırlar: araçlar, çekirdek
-# modülü ve /etc/wireguard. İlk ağı da sonrakileri de Konsol (master-wg net-add) kurar;
-# böylece tek bir yaratma yolu vardır ve kurulum hiçbir anahtara dokunmaz.
-ensure_wireguard_ready() {
-    # Kernel modülü çekirdekte; öneriler wireguard-dkms çekebilirdi.
-    retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        --no-install-recommends wireguard-tools qrencode
-    modprobe wireguard 2>/dev/null ||
-        log WARN "modprobe wireguard başarısız; çekirdek desteği yoksa ağ açılmaz"
-    atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<<"wireguard"
-    install -d -m 0700 -o root -g root "$WG_CONF_DIR"
-}
-
-# Kayıttaki ağlar açılışta ve her çalıştırmada ayakta olmalı; kurulum yalnız onları
-# uygular, hiçbirini yaratmaz ya da silmez.
-ensure_wg_networks_running() {
-    local iface scope rest count=0
-    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || {
-        log INFO "WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
-        return 0
-    }
-    while IFS=$'\t' read -r iface _ scope rest; do
-        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
-        count=$((count + 1))
-        systemctl enable --quiet "wg-quick@${iface}.service"
-        systemctl is-active --quiet "wg-quick@${iface}.service" ||
-            systemctl restart "wg-quick@${iface}.service" ||
-            log WARN "${iface} başlatılamadı"
-        if [[ "$scope" == ui ]]; then
-            systemctl enable --quiet "caddy-wg@${iface}.service"
-            systemctl is-active --quiet "caddy-wg@${iface}.service" ||
-                systemctl restart "caddy-wg@${iface}.service" ||
-                log WARN "caddy-wg@${iface} başlatılamadı"
-        fi
-    done <"$WG_NETWORKS_FILE"
-    if [[ "$count" -eq 0 ]]; then
-        log INFO "WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
-    else
-        log INFO "WireGuard: kayıttaki $count ağ uygulandı"
-    fi
-}
-
 # Yayıncı bu ID/codename için gerçekten bir suite yayınlamış mı? Yayınlamadıysa
 # hata `apt-get update`in içinde, 3 deneme x APT_LOCK_TIMEOUT sonra ve sebebi
 # gizleyen bir mesajla çıkardı. Ağ dalgalanmasında yanlış ölmemek için 3 deneme
@@ -703,6 +663,9 @@ assert_downloads_path_allowed() {
 # kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Dosyası değişen kurulu modülü aşama 7
 # yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
 MODULES_CHANGED=""
+module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
+    awk -F'\t' -v i="$1" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true
+}
 ensure_module_files() {
     local changed=0
     install -d -m 0755 -o root -g root "$MODULES_DIR"
@@ -726,6 +689,9 @@ ensure_module_files() {
         TAILSCALE_IF="$TAILSCALE_IF"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    # DD-150: WireGuard'ın işlenen dosyası yok; kuruluysa her çalıştırmada uygulanır (paketler
+    # bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
+    MODULES_CHANGED="$MODULES_CHANGED wireguard"
     install -d -m 0755 -o root -g root "$MODULES_DIR/unpackerr"
     render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644 \
         UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
@@ -748,7 +714,7 @@ ensure_module_files() {
 reapply_modules() {
     local id state
     for id in $MODULES_CHANGED; do
-        state="$(awk -F'\t' -v i="$id" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true)"
+        state="$(module_state "$id")"
         [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
         log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
         "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
@@ -1165,8 +1131,8 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
-    ensure_wireguard_ready
-    ensure_wg_networks_running
+    # DD-150: WireGuard katmanı (paketler, çekirdek modülü, ağların açılması) WireGuard
+    # modülündedir; kurulu değilse güvenlik duvarı hiçbir WireGuard portu açmaz.
 }
 
 # retry fonksiyonu export -f + bash -c ile ayrı süreçte çalıştırır; diziler
@@ -1434,10 +1400,10 @@ ensure_wg_panel() {
 }
 
 # DD-139: dosya paneli. 127.0.0.1:FILES_PANEL_PORT dinler; tailnet'e Caddy açar. Servis
-# DOWNLOADS_UID olarak çalışır ve yalnız SERVER_ROOT'a yazar. Hesap WireGuard paneliyle
-# aynıdır: root'a özel özet dosyası LoadCredential ile servisin kendi kopyasına gelir, bu
-# yüzden hesap değişince panel yeniden başlar. qBittorrent'in yarım indirme klasörü
-# şablondan okunur; panel orada taşıma/silme için uyarır.
+# DOWNLOADS_UID olarak çalışır ve yalnız SERVER_ROOT'a yazar. qBittorrent'in yarım indirme
+# klasörü şablondan okunur; panel orada taşıma/silme için uyarır. DD-150: Dosya yöneticisi bir
+# Konsol modülüdür: kurulum betiği ve servis birimini (MODULES_DIR/dosya/) hazırlar, servisi
+# modül açar. Betik ya da birim değişirse kurulu modül aşama 7'de yeniden uygulanır.
 # DD-148: Konsol sayfaları temeldir; Caddy doğrudan sunar (dosya yöneticisi modüldür).
 ensure_console_pages() {
     local f
@@ -1448,7 +1414,7 @@ ensure_console_pages() {
 }
 
 ensure_files_panel() {
-    local changed="${1:-0}" f temp_dir user group
+    local changed="${1:-0}" temp_dir user group
     # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
     # yoksa girişsiz, ev dizinsiz bir sistem hesabı; dosya sahipliği sayısal kaldığı için değişmez.
     # getent bulamayınca 2 döner; pipefail altında kurulumu düşürmesin.
@@ -1479,7 +1445,8 @@ ensure_files_panel() {
     else
         temp_dir=""
     fi
-    render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
+    install -d -m 0755 -o root -g root "$MODULES_DIR/dosya"
+    render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
@@ -1491,15 +1458,7 @@ ensure_files_panel() {
         V2_VERSION="$V2_VERSION" \
         QBITTORRENT_TEMP_DIR="$temp_dir"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    systemctl daemon-reload
-    systemctl enable --quiet master-files-panel.service
-    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-files-panel.service; then
-        # Önceki bir çalıştırmada başlama sınırına takıldıysa yeniden denemeyi engellemesin.
-        systemctl reset-failed master-files-panel.service 2>/dev/null || true
-        systemctl restart master-files-panel.service
-    else
-        log INFO "Dosya paneli aynı; yeniden başlatılmadı"
-    fi
+    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED dosya"
 }
 
 stage_7() {
@@ -1635,10 +1594,16 @@ stage_7() {
     local wg_iface wg_scope wg_s4 wg_port wg_ui_port
     "$SBIN_DIR/master-wg" version >/dev/null ||
         die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
-    [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard modül dosyası yok: $WG_MODULES_LOAD_FILE"
     WG_PEER_COUNT=0
     WG_NET_COUNT=0
-    if [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
+    # DD-150: ağlar ve çekirdek modülü yalnız WireGuard modülü kuruluyken denetlenir.
+    local wg_on=0 files_on=0
+    [[ -z "$(module_state wireguard)" ]] || wg_on=1
+    [[ -z "$(module_state dosya)" ]] || files_on=1
+    if [[ "$wg_on" -eq 1 ]]; then
+        [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard modül dosyası yok: $WG_MODULES_LOAD_FILE"
+    fi
+    if [[ "$wg_on" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r wg_iface wg_port wg_scope wg_s4 _; do
             [[ "$wg_iface" =~ ^wg[0-9]$ ]] || continue
             WG_NET_COUNT=$((WG_NET_COUNT + 1))
@@ -1664,8 +1629,9 @@ stage_7() {
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
     [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
-    local gate_port gate_path
-    for gate_port in "$FILES_PANEL_PORT:/api/state" "$WG_PANEL_PORT:/api/wg/state"; do
+    local gate_port gate_path gates="$WG_PANEL_PORT:/api/wg/state"
+    [[ "$files_on" -eq 0 ]] || gates="$FILES_PANEL_PORT:/api/state $gates"
+    for gate_port in $gates; do
         gate_path="${gate_port#*:}"
         gate_port="${gate_port%%:*}"
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -1686,18 +1652,22 @@ stage_7() {
         --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
         die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
-    # DD-139: dosya arka ucu açılır, kök yazılabilir, root değil.
+    # DD-139: dosya arka ucu açılır, kök yazılabilir, root değil (DD-150: modül kuruluysa).
     local files_out files_uid
-    files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
-        die "Konsol dosya arka ucu yanıt vermedi: $files_out"
-    log INFO "Konsol dosya arka ucu açıldı: $files_out"
-    files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
-    [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
-        die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
+    if [[ "$files_on" -eq 1 ]]; then
+        files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
+            --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+            die "Konsol dosya arka ucu yanıt vermedi: $files_out"
+        log INFO "Konsol dosya arka ucu açıldı: $files_out"
+        files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
+        [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
+            die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
+    else
+        log INFO "Dosya yöneticisi kurulu değil; Konsol → Modüller'den kurulur"
+    fi
     # DD-143: ağ varsa Konsol o ağın sunucu adresinde dinlememeli (ağ yoksa denetim atlanır).
     local wg_first_addr=""
-    [[ ! -f "${WG_NETWORKS_FILE:-}" ]] ||
+    [[ "$wg_on" -eq 0 || ! -f "${WG_NETWORKS_FILE:-}" ]] ||
         wg_first_addr="$(awk -F'\t' '$1 ~ /^wg[0-9]$/ {print $4; exit}' "$WG_NETWORKS_FILE")"
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
@@ -1734,7 +1704,7 @@ WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Kullanıcı alanı: $SERVER_ROOT (indirmeler $DOWNLOADS_PATH, kütüphane $SERVER_ROOT/$MEDIA_SUBDIR)
-WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; ağları Konsol kurar)
+WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; modül ve ağlar Konsol'dan)
 Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
 Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
@@ -1745,12 +1715,13 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (WireGuard peer/ağ yönetimi, ${SERVER_ROOT} dosya yöneticisi,
-  sunucu durumu ve günlük; parolasız, yalnız Tailscale. wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
+Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale.
+  wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir). Dosya yöneticisi (${SERVER_ROOT}), WireGuard,
+  Paylaşım ve Arşiv açıcı Konsol → Modüller'den kurulur (DD-148, DD-150)
 Paylaşım: Konsol → Modüller'den kurulur (paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı orada)
 Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
 qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
-WireGuard: ${WG_NET_COUNT:-0} ağ. Yoksa Konsol → WireGuard → Yapılandır ile ilk ağı kurun;
+WireGuard: ${WG_NET_COUNT:-0} ağ. Önce Konsol → Modüller → WireGuard, sonra WireGuard → Yapılandır ile ilk ağ;
   "Local erişim" açık ağlarda Dozzle ve qBittorrent o ağın sunucu adresinde açılır.
   Peer eklemek/çıkarmak ve QR: Konsol ya da Mac'te wireguard.command (anahtarlar sunucuda üretilir).
 Tailscale IP: refresh-tailnet-config → Caddy

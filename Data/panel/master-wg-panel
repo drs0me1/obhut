@@ -370,6 +370,16 @@ class Panel:
                     rows.append({"port": port, "proto": "tcp", "scope": "wireguard", "name": name})
         return rows
 
+    @staticmethod
+    def disk(root):
+        if not root:
+            return None
+        try:
+            vfs = os.statvfs(root)
+        except OSError:
+            return None
+        return {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize}
+
     def system(self, networks):
         env = read_env(self.args.state)
         with self.sys_lock:
@@ -397,6 +407,9 @@ class Panel:
                 "tailscale6": env.get("TAILSCALE_IPV6", ""), "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             },
             "ports": self.ports(env, networks),
+            # DD-150: disk kartı Dosya yöneticisi kurulu değilken de dolsun (kullanıcı alanının diski).
+            "root": env.get("SERVER_ROOT", ""),
+            "disk": self.disk(env.get("SERVER_ROOT", "")),
             # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
             # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
             "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env))},
@@ -440,8 +453,14 @@ class Panel:
         self.actions_cache = (now, rows)
         return rows
 
+    def wg_on(self, env=None):
+        """DD-150: WireGuard bir Konsol modülüdür; kurulu değilken master-wg hiç çağrılmaz."""
+        return self.module_state("wireguard", env) == "calisiyor"
+
     def net_rows(self):
         """master-wg nets satırları (peer listesi olmadan); state ve portlar aynı kaynağı okur."""
+        if not self.wg_on():
+            return []
         rc, out, message = self.run("nets")
         if rc != 0:
             raise RuntimeError(message or "ağ listesi okunamadı")
@@ -485,6 +504,7 @@ class Panel:
             },
             "now": int(time.time()),
             "active_window": int(ACTIVE_WINDOW),
+            "installed": self.wg_on(env),
             "networks": networks,
         }
 
@@ -644,6 +664,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.json(200, {"items": self.panel.actions()})
             return
         m = re.match(r"^/api/wg/nets/([^/]+)/peers/([^/]+)/(profile|qr\.png)$", path)
+        if m and not self.panel.wg_on():
+            self.error(404, "WireGuard modülü kurulu değil")
+            return
         if m:
             net, name = self.net_and_name(m.group(1), m.group(2))
             if net is None:
@@ -720,6 +743,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.error(code, message)
                 return
             self.json(202, {"id": mid, "action": action})
+            return
+        # DD-150: WireGuard modülü kurulu değilken hiçbir ağ işlemi master-wg'ye gitmez.
+        if path.startswith("/api/wg/") and not self.panel.wg_on():
+            self.error(409, "WireGuard modülü kurulu değil; Konsol → Modüller'den kurun")
             return
         if path == "/api/wg/nets":
             port = str(data.get("port", "")).strip()

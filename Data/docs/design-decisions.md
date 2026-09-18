@@ -6804,6 +6804,61 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-150: Dosya yöneticisi and WireGuard are Konsol modules (2026-09-18)
+
+- **Context:** stage 3 of **DD-148**. The file backend and the WireGuard layer
+  were part of every install; the approved design (v06) lists both as
+  one-click Konsol modules, with Paylaşım depending on the file manager.
+- **Decision:**
+  - `dosya` (Dosya yöneticisi) and `wireguard` (WireGuard) join the catalogue
+    as Konsol modules. They are installed or removed, never stopped: a
+    stopped file manager or WireGuard layer would only be a broken page.
+  - The installer still installs the tools (`master-files-panel`, `master-wg`),
+    the downloads account, the `SERVER_ROOT` tree, the `caddy-wg@` template and
+    `Caddyfile.wg`. It renders the file backend's unit to `MODULES_DIR/dosya/`
+    instead of `UNIT_DIR`, and no longer installs WireGuard packages, loads the
+    kernel module or starts networks.
+  - `master-modul kur dosya` places the unit, starts it and proves what stage 7
+    used to prove (runs as `DOWNLOADS_UID`, answers through Caddy, `403`
+    without `X-Konsol`); a failed start is taken back. `kaldir` removes the
+    unit; `--veri` empties the trash, which the operator had already deleted.
+  - `master-modul kur wireguard` installs the packages, loads the kernel module,
+    registers itself, re-applies the firewall and starts the registry's
+    networks. `kaldir` closes every `wg-quick@`/`caddy-wg@` unit, unregisters,
+    re-applies the firewall and keeps `/etc/wireguard` (a reinstall brings the
+    networks back); `--veri` deletes the keys, profiles and registry. The
+    packages stay installed: removing them buys nothing and a reinstall
+    would only fetch them again.
+- **Firewall hook:** `master-firewall` reads the module registry and ignores
+  the network registry unless `wireguard` is registered, so a kept registry
+  never opens ports after removal. It checks the registry, not a running unit:
+  the firewall must be right at boot, before any unit starts. The module is
+  registered before the firewall is re-applied on install and unregistered
+  before it is re-applied on removal.
+- **Other consumers:** `master-wg` refuses every command but `version` without
+  the module (wireguard.command then shows why). The root backend never runs
+  `master-wg` without it: `/api/wg/state` answers `installed: false` with no
+  networks, changes get `409`, profiles `404`.
+- **Dependencies:** `kur paylasim` needs `dosya`, `kaldir dosya` refuses while
+  `paylasim` is installed. Konsol queues the pair: "… ile birlikte kur"
+  installs the dependency first; "Birlikte kaldır" removes the dependent
+  first (keeping its data). The queue lives in the page; if the page closes
+  mid-way the operator clicks again.
+- **Konsol without the modules:** the Dosyalar and WireGuard pages and menu
+  items appear with their modules; a bookmark to a missing page opens Modüller.
+  The page never asks a backend that is not there (the file backend is behind
+  Caddy, which would answer 502). The disk card takes total and free from the
+  root backend (`/api/wg/sistem` → `root`, `disk`) and shows the
+  downloads/trash breakdown only with the file manager.
+- **Re-runs:** a changed unit or script re-applies an installed file manager
+  (restart and checks); WireGuard is re-applied on every run while installed
+  (packages after an OS upgrade, kernel module, networks). Stage 7 checks each
+  only while its module is installed.
+- **Upgrading a host installed before v2-117:** its file backend and WireGuard
+  layer were started by the installer and are not in the module registry.
+  Per the fresh-install rule there is no adoption code; reset the host and
+  install the modules from Konsol.
+
 ### DD-149: Paylaşım is a module with a generated account (2026-09-18)
 
 - **Context:** stage 2 of **DD-148**. The share WebDAV (rclone, `paylas.<domain>`,

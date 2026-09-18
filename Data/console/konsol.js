@@ -231,8 +231,8 @@
 
   function renderNavCounts() {
     const online = allPeers().filter((p) => effState(p) === "ok").length;
-    $("nav-wg").textContent = S.wg ? `${online} bağlı` : "";
-    if (S.fs && S.fs.disk.total) {
+    $("nav-wg").textContent = S.wg && wgOn() ? `${online} bağlı` : "";
+    if (S.fs && fsOn() && S.fs.disk.total) {
       $("nav-fs").textContent = `%${Math.round(100 * (S.fs.disk.total - S.fs.disk.free) / S.fs.disk.total)}`;
     }
   }
@@ -279,11 +279,15 @@
       });
     }
     renderPorts();
+    if (!fsOn()) renderDisk();
   }
 
   /* disk: kullanıcı alanı, çöp ve sistem; boyutlar dosya arka ucundan */
   function renderDisk() {
-    const fs = S.fs;
+    // DD-150: Dosya yöneticisi kurulu değilken disk root arka ucundan gelir (döküm yok).
+    const sysDisk = S.sys && S.sys.disk;
+    const fs = S.fs && fsOn() ? S.fs
+      : sysDisk ? { disk: { total: sysDisk.total, free: sysDisk.free, used: null }, trash: { size: 0 }, root: S.sys.root, bare: true } : null;
     if (!fs) return;
     const total = fs.disk.total, free = fs.disk.free, used = Math.max(0, total - free);
     const trash = fs.trash.size || 0;
@@ -298,7 +302,7 @@
     if (downloads == null) {
       bar.replaceChildren(seg("seg-dl", used));
       $("disk-leg").replaceChildren(h("span", null, h("i", { class: "seg-dl" }), `Kullanılan ${bytes(used)}`),
-        h("span", null, h("i", { class: "seg-cop" }), `Çöp ${bytes(trash)}`));
+        fs.bare ? h("span", null, "Döküm için Dosya yöneticisi") : h("span", null, h("i", { class: "seg-cop" }), `Çöp ${bytes(trash)}`));
     } else {
       bar.replaceChildren(seg("seg-dl", downloads), seg("seg-cop", trash), seg("seg-sys", other));
       $("disk-leg").replaceChildren(
@@ -322,7 +326,10 @@
           ? h("div", { class: "rate" }, h("span", null, h("i", null, "↓"), rate(p.down)), h("span", null, h("i", null, "↑"), rate(p.up)))
           : h("div", { class: "rate" }, h("span", null, h("i", null, "toplam"), bytes(p.rx))));
     }));
-    if (!list.length) {
+    if (!wgOn()) {
+      box.replaceChildren(h("div", { class: "empty-row" }, h("strong", null, "WireGuard kurulu değil"),
+        h("span", null, "Konsol → Modüller → WireGuard ile kurulur; ağları sonra WireGuard sayfasında yapılandırırsınız.")));
+    } else if (!list.length) {
       box.replaceChildren(h("div", { class: "empty-row" },
         h("strong", null, nets().length ? "Cihaz yok" : "WireGuard yapılandırılmadı"),
         h("span", null, nets().length ? "WireGuard sayfasından ilk cihazı ekleyin."
@@ -332,7 +339,7 @@
     $("sum-wg").replaceChildren(h("span", { class: "dotmark" }), `${online}/${list.length} bağlı`);
     $("wg-foot").textContent = nets().length
       ? nets().map((n) => `${n.iface} UDP ${n.port}${n.active ? "" : " (kapalı)"}`).join(" · ")
-      : "Ağ yok · Konsol → WireGuard → Yapılandır";
+      : wgOn() ? "Ağ yok · Konsol → WireGuard → Yapılandır" : "Modül yok · Konsol → Modüller";
   }
 
   /* ---------- Genel bakış: son işlemler ---------- */
@@ -1731,9 +1738,31 @@
   // Katalog sunucudan gelir (master-modul liste); burada yalnız görünüm bilgisi durur. Adres ve
   // port gibi değerler sunucudan (S.sys) gelir, burada yazılı değildir.
   const MOD_META = {
+    dosya: () => {
+      const root = (S.sys && S.sys.root) || "/srv";
+      return { name: "Dosya yöneticisi", sub: `${root} içinde gez, yükle, taşı, çöp`, icon: "folder", tone: "t-dir", noStop: true,
+        desc: `Konsol'a Dosyalar sayfasını ekler: ${root} kullanıcı alanında gezinme, yükleme, çoklu seçim, arama ve çöp.`,
+        will: [["folder", "Dosyalar sayfası açılır"], ["lock", `Yalnız ${root}'ye yazar; root değil (uid 1000)`], ["info", "Paylaşım modülü buna bağlıdır"]],
+        facts: ["Konsol modülü · systemd", "yalnız sunucu içi"],
+        steps: [["Servis kuruluyor", "master-files-panel"], [`${root} kökü bağlanıyor`, "uid 1000"], ["Dosyalar sayfası açılıyor", ""]],
+        page: ["#/dosyalar", "folder", "Dosyalar sayfasına git"], logSrc: "journalctl -u master-files-panel",
+        removeWhat: [["folder", "Dosyalar sayfası kalkar, servis durur."]],
+        removeLabel: "Çöpü de boşalt",
+        removeKeep: `çöpteki ögeler ${root}/.cop'ta kalır.`, removeDrop: "Çöpteki ögeler kalıcı silinir." };
+    },
+    wireguard: { name: "WireGuard", sub: "Cihazların sunucu üzerinden internete çıkışı", icon: "shield", tone: "t-dir", noStop: true,
+      desc: "Çekirdek WireGuard katmanını kurar ve Konsol'a WireGuard sayfasını ekler. Ağları ve cihazları o sayfadan kurarsınız.",
+      will: [["box", "Paketler: wireguard-tools, qrencode · çekirdek modülü"], ["shield", "Güvenlik duvarına WireGuard kancası eklenir"], ["shield", "WireGuard sayfası açılır (ilk ağ: Yapılandır)"]],
+      facts: ["Debian paketleri + Konsol modülü", "port ağ kurulunca açılır"],
+      steps: [["Paketler kuruluyor", "apt · wireguard-tools, qrencode"], ["Çekirdek modülü", "modprobe wireguard"], ["Güvenlik duvarı kancası", ""], ["WireGuard sayfası açılıyor", ""]],
+      page: ["#/wireguard", "shield", "WireGuard sayfasına git"], logSrc: "journalctl -u wg-quick@*",
+      removeWhat: [["shield", "Bütün ağlar kapanır, UDP portları ve kurallar kalkar."], ["folder", "WireGuard sayfası kalkar."]],
+      removeLabel: "Ağ anahtarlarını ve profilleri de sil",
+      removeKeep: "ağ anahtarları ve cihaz profilleri /etc/wireguard'da korunur; yeniden kurunca ağlar geri gelir.",
+      removeDrop: "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir." },
     paylasim: () => {
       const sys = S.sys || {}, d = sys.domain || "…", port = (sys.share && sys.share.port) || "…";
-      return { name: "Paylaşım", sub: "WebDAV · Infuse ve Finder", icon: "share", tone: "t-share", account: true,
+      return { name: "Paylaşım", sub: "WebDAV · Infuse ve Finder", icon: "share", tone: "t-share", account: true, requires: "dosya",
         desc: "Dosyalar sayfasında paylaştıklarınızı tek adres ve tek hesapla, salt okunur sunar.",
         will: [["box", "rclone konteyneri (~25 MB)"], ["globe", `paylas.${d} adı; Infuse için Tailscale IP:${port}`], ["key", "Güçlü bir hesap üretilir"]],
         facts: ["rclone · konteyner", `${port} · yalnız Tailscale`],
@@ -1762,8 +1791,24 @@
   const RUNTIME = { docker: ["docker", "box", "Docker"], host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
   let MODS = null, modTimer = null;
   const shareMod = () => (MODS || []).find((m) => m.id === "paylasim");
-  // Modül listesi gelmeden önce dosya arka ucunun işaretine bakılır (.pay/acik, DD-149).
-  const shareOn = () => (MODS ? !!(shareMod() || {}).installed : !!(S.fs && S.fs.share && S.fs.share.enabled));
+  const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
+  // DD-150: Dosyalar ve WireGuard sayfaları modülleriyle gelir. Liste gelmeden hiçbiri açık sayılmaz.
+  const fsOn = () => modOn("dosya");
+  const wgOn = () => modOn("wireguard");
+  const shareOn = () => fsOn() && !!(shareMod() || {}).installed;
+  // Sayfanın sıraya koyduğu işlemler (bağlı modül önce kurulur, en son kaldırılır).
+  const modQueue = [];
+  function queueRun() {
+    if (!modQueue.length || (MODS || []).some((m) => m.busy)) return;
+    const [id, action, veri] = modQueue.shift();
+    const m = (MODS || []).find((x) => x.id === id);
+    if (m) modAct(m, action, veri);
+  }
+  // Menüdeki Dosyalar ve WireGuard bağlantıları modül kuruluyken görünür.
+  function paintNav() {
+    document.querySelectorAll('[data-route="dosyalar"]').forEach((a) => { a.hidden = !fsOn(); });
+    document.querySelectorAll('[data-route="wireguard"]').forEach((a) => { a.hidden = !wgOn(); });
+  }
   const modLogs = {};
   // İstek kabul edilince birim başlar ama ilerleme dosyasında bir an önceki işlemin satırı durur;
   // o arada istenen işlem gösterilir.
@@ -1771,8 +1816,9 @@
   // Sayfanın başlattığı işlem bitince sonucu söyler; hesabı olan modülde yeni parolayı bir kez gösterir.
   function modDone(m, want) {
     const meta = metaOf(m.id), p = m.progress || {};
-    if (p.step === "hata") { toast(`${meta.name}: ${p.text || "işlem başarısız"}`); return; }
+    if (p.step === "hata") { modQueue.length = 0; toast(`${meta.name}: ${p.text || "işlem başarısız"}`); return; }
     if (p.step !== "bitti") return;
+    setTimeout(queueRun, 0);
     if (want === "kur") toast(`${meta.name} kuruldu.`);
     else if (want === "parola") toast(`${meta.name}: yeni parola hazır.`);
     else if (want === "kaldir") toast(`${meta.name} kaldırıldı.`);
@@ -1793,6 +1839,14 @@
         const p = m.progress;
         if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
       });
+      paintNav();
+      // Kaldırılan modülün sayfasında kalınmaz; Genel bakış kartları yeniden çizilir.
+      if ((current === "dosyalar" && !fsOn()) || (current === "wireguard" && !wgOn())) location.hash = "#/moduller";
+      if (!wgOn()) S.wg = null;
+      if (!fsOn()) S.fs = null;
+      renderPeersMini();
+      renderDisk();
+      renderNavCounts();
       // Paylaşım kaldırılınca Dosyalar'daki eski liste, çipler ve düğmeler de gider.
       if (wasShare !== shareOn()) {
         if (!shareOn()) S.share = null;
@@ -1814,8 +1868,11 @@
       const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor", parola: "Uygulanıyor" }[m.progress && m.progress.action] || "İşleniyor";
       return h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), label);
     }
+    if (modQueue.some(([id]) => id === m.id)) return h("span", { class: "hm warn" }, "Sırada");
     if (!m.installed) return h("span", { class: "hm" }, "Kurulu değil");
     if (m.state === "durduruldu") return h("span", { class: "hm idle" }, "Durduruldu");
+    if (m.runtime === "konsol") return m.live === "exited" ? h("span", { class: "hm warn" }, "Çalışmıyor")
+      : h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Kurulu");
     if (m.runtime === "docker" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
     return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
   }
@@ -1847,12 +1904,20 @@
         h("div", { class: "card-foot" }, h("span", { class: "hint-s" }, "Sayfadan çıkabilirsiniz; işlem sunucuda sürer.")));
     } else if (!m.installed) {
       const failed = p && p.step === "hata" && !m.busy ? p : null;
+      const need = meta.requires && !modOn(meta.requires) ? (MODS || []).find((x) => x.id === meta.requires) : null;
+      const queued = modQueue.some(([id]) => id === m.id);
       kids.push(h("p", { class: "mod-desc" }, meta.desc),
         h("div", { class: "acct-box" }, h("div", { class: "acct-head" }, h("span", null, "Kurunca")),
-          h("ul", { class: "will" }, meta.will.map(([ic, t]) => h("li", null, svg(ic), h("span", null, t))))),
+          h("ul", { class: "will" }, meta.will.map(([ic, t]) => h("li", null, svg(ic), h("span", null, t)))),
+          need ? h("div", { class: "acct-wg" }, svg("info"), h("span", null, `${metaOf(need.id).name} modülüne bağlıdır; birlikte kurulur.`)) : null),
         failed ? h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))) : null,
         h("div", { class: "card-foot" },
-          h("button", { type: "button", class: "btn btn-sm btn-primary", disabled: m.busy, onclick: () => modAct(m, "kur") }, svg("plus"), "Kur"),
+          queued ? h("span", { class: "hint-s" }, "Önce bağlı modül kuruluyor…")
+            : h("button", { type: "button", class: "btn btn-sm btn-primary", disabled: m.busy || (need && need.busy), onclick: () => {
+              if (!need) { modAct(m, "kur"); return; }
+              modQueue.push([m.id, "kur", false]);
+              modAct(need, "kur");
+            } }, svg("plus"), need ? `${metaOf(need.id).name} ile birlikte kur` : "Kur"),
           h("span", { class: "mod-facts grow" }, meta.facts.map((t) => h("span", null, t)))));
     } else {
       const failed = p && p.step === "hata" && !m.busy ? p : null;
@@ -1865,13 +1930,16 @@
       if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
       if (modLogs[m.id] != null) {
         body.push(h("div", { class: "logbox" },
-          h("div", { class: "acct-head" }, h("span", null, "Günlük"), h("span", { class: "src" }, m.runtime === "docker" ? `docker logs ${m.id}` : m.id)),
+          h("div", { class: "acct-head" }, h("span", null, "Günlük"), h("span", { class: "src" }, m.runtime === "docker" ? `docker logs ${m.id}` : meta.logSrc || m.id)),
           h("pre", { tabindex: "0" }, modLogs[m.id] || "(boş)")));
       }
       const running = m.state === "calisiyor";
+      const dependents = (MODS || []).filter((x) => x.installed && metaOf(x.id).requires === m.id);
       kids.push(h("div", { class: "mod-facts" }, meta.facts.map((t) => h("span", null, t))), h("div", { class: "acct-box" }, body),
         h("div", { class: "card-foot" },
-          running
+          meta.noStop
+            ? h("button", { type: "button", class: "btn btn-sm btn-primary", "data-go": meta.page[0] }, svg(meta.page[1]), meta.page[2])
+            : running
             ? h("button", { type: "button", class: "btn btn-sm btn-quiet", disabled: m.busy, onclick: () => ask({
                 title: `${meta.name} durdurulsun mu?`, sub: "Kurulu kalır; istediğinizde başlatırsınız", calm: true, go: "Durdur",
                 items: [["pause", meta.stopNote], ["info", "Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]],
@@ -1882,12 +1950,23 @@
             fetch(`/api/konsol/moduller/${enc(m.id)}/gunluk`, { headers: { "X-Konsol": "1" }, cache: "no-store" })
               .then((r) => r.text()).then((txt) => { modLogs[m.id] = txt; renderModules(); }).catch(fail);
           } }, svg("list"), modLogs[m.id] != null ? "Günlüğü gizle" : "Günlük"),
-          h("button", { type: "button", class: "btn btn-sm btn-quiet danger-text grow", disabled: m.busy, onclick: () => {
+          h("button", { type: "button", class: "btn btn-sm btn-quiet danger-text grow", disabled: m.busy || dependents.some((d) => d.busy), onclick: () => {
             const box = h("input", { type: "checkbox", id: "mod-veri" });
-            ask({ title: `${meta.name} kaldırılsın mı?`, sub: "Modül ve açtığı her şey kalkar", go: "Kaldır", danger: true,
-              items: [...meta.removeWhat, ["folder", "Kullanıcı alanındaki dosyalarınıza dokunulmaz."]],
+            const names = dependents.map((d) => metaOf(d.id).name).join(", ");
+            // Türkçe ek uyumu: son ünlüye göre "da" / "de".
+            const daDe = (w) => (/[aıou][^aeıioöuü]*$/i.test(w) ? "da" : "de");
+            ask({ title: `${meta.name} kaldırılsın mı?`,
+              sub: dependents.length ? `${names} ${daDe(names)} kaldırılır (buna bağlı)` : "Modül ve açtığı her şey kalkar",
+              go: dependents.length ? "Birlikte kaldır" : "Kaldır", danger: true,
+              items: [...meta.removeWhat, ...dependents.map((d) => [metaOf(d.id).icon, `${metaOf(d.id).name} buna bağlı olduğu için önce o kaldırılır; hesabı ve kayıtları korunur.`]),
+                ["folder", "Kullanıcı alanındaki dosyalarınıza dokunulmaz."]],
               extra: h("label", { class: "opt", for: "mod-veri" }, box, h("span", null, meta.removeLabel || "Modülün verisini de sil", h("small", null, `${meta.removeDrop} İşaretlemezseniz: ${meta.removeKeep}`))),
-              onOk: () => modAct(m, "kaldir", box.checked) });
+              onOk: () => {
+                if (!dependents.length) { modAct(m, "kaldir", box.checked); return; }
+                dependents.slice(1).forEach((d) => modQueue.push([d.id, "kaldir", false]));
+                modQueue.push([m.id, "kaldir", box.checked]);
+                modAct(dependents[0], "kaldir", false);
+              } });
           } }, svg("trash"), "Kaldır")));
     }
     return h("article", { class: "card span-6 mod" + (m.installed || m.busy ? "" : " absent"), id: `modc-${m.id}`, "aria-busy": String(!!m.busy) }, kids);
@@ -1926,7 +2005,12 @@
   const view = () => current;
   function route() {
     const raw = location.hash.replace(/^#\/?/, "").split("/");
-    const key = ROUTES[raw[0]] ? raw[0] : "genel";
+    let key = ROUTES[raw[0]] ? raw[0] : "genel";
+    // DD-150: modülü kurulu olmayan sayfa açılmaz; Modüller'e gidilir.
+    if (MODS && ((key === "dosyalar" && !fsOn()) || (key === "wireguard" && !wgOn()))) {
+      history.replaceState(null, "", "#/moduller");
+      key = "moduller";
+    }
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     const v = key === "wireguard" && raw[1] === "ekle" ? "wgadd" : key;
     const r = v === "wgadd" ? ADD_ROUTE : ROUTES[key];
@@ -1949,16 +2033,17 @@
   });
 
   /* ---------- canlı ---------- */
+  // DD-150: WireGuard ve dosya arka ucu yalnız modülleri kuruluyken sorulur.
   function refreshAll() {
-    return Promise.all([loadWg(), loadSystem(), loadFsState(), loadActions()]);
+    return Promise.all([wgOn() ? loadWg() : null, loadSystem(), fsOn() ? loadFsState() : null, loadActions()]);
   }
-  refreshAll().then(() => { route(); loadFs(); loadModules(); });
+  loadModules().then(refreshAll).then(() => { route(); if (fsOn()) loadFs(); });
   setInterval(() => {
     if (document.hidden) return;
-    loadWg();
+    if (wgOn()) loadWg();
     loadSystem();
     if (current === "genel" || current === "gunluk") loadActions();
-    if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
+    if (current === "dosyalar" && fsOn()) { loadFsState(); if (fsView === "shares") loadShares(); }
     if (current === "moduller" && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
 })();

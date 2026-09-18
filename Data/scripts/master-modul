@@ -13,6 +13,9 @@
 #   master-modul kaldir ID [--veri]     --veri: modülün ayar/günlük verisi de silinir
 #   master-modul gunluk ID [SATIR]
 #   master-modul parola ID              yalnız paylasim: yeni parola üretir (DD-149)
+#
+# Konsol modülleri (dosya, wireguard; DD-150) durdurulup başlatılmaz: kurulur ya da kaldırılır.
+# Paylaşım Dosya yöneticisine bağlıdır: önce o kurulur, en son o kaldırılır.
 #   master-modul hesap ID [--parola]    yalnız paylasim: "kullanıcı<TAB>değişim" (+ <TAB>parola)
 #   master-modul uygula ID              kurulumun yeniden çalışması: kurulu modülün dosyalarını uygular
 set -Eeuo pipefail
@@ -33,11 +36,12 @@ source "$STATE_FILE"
 
 # Katalog: Konsol'daki sıra. Her modülün çalışma yeri (docker | host | konsol) ve adımları
 # aşağıdaki case bloklarında tanımlıdır.
-CATALOG="paylasim unpackerr"
+CATALOG="dosya wireguard paylasim unpackerr"
 ID_RE='^[a-z]{2,16}$'
 
 runtime_of() {
     case "$1" in
+        dosya | wireguard) printf 'konsol\n' ;;
         paylasim | unpackerr) printf 'docker\n' ;;
         *) return 1 ;;
     esac
@@ -382,6 +386,147 @@ share_rollback() { # başarısız kurulum: adlar, işaret ve konteyner geri alı
     compose paylasim down >/dev/null 2>&1 || true
 }
 
+# -------------------------------------------------------- dosya yöneticisi (DD-150)
+# Servis birimini kurulum MODULES_DIR/dosya/ altına yazar; modül onu UNIT_DIR'e koyar ve açar.
+FILES_UNIT="master-files-panel.service"
+FAIL=""
+
+need_keys() { # ANAHTAR…
+    local k
+    for k in "$@"; do
+        [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
+    done
+}
+
+files_need() {
+    need_keys SERVER_ROOT FILES_PANEL_PORT FILES_PANEL_TRASH UNIT_DIR SBIN_DIR DOWNLOADS_UID LOCAL_DOMAIN TAILSCALE_IPV4
+}
+
+files_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
+    local src="$MODULES_DIR/dosya/$FILES_UNIT" dst="$UNIT_DIR/$FILES_UNIT" tmp
+    [[ -f "$src" ]] || fail_step "modül dosyası yok ($src); kurulumu yeniden çalıştırın"
+    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 1; fi
+    tmp="$(mktemp "$UNIT_DIR/.$FILES_UNIT.XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dst"
+    systemctl daemon-reload
+}
+
+# Servis ayakta, kullanıcı alanının sahibi olarak (root değil) çalışıyor ve Caddy üzerinden
+# yanıt veriyor; başlıksız istek 403 alıyor. Kurulumun eski aşama 7 denetimleri (DD-139).
+files_verify() {
+    local _ uid ok=0 code
+    FAIL=""
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$FILES_UNIT" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$FILES_UNIT" || { FAIL="dosya servisi başlamadı"; return 1; }
+    uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$FILES_UNIT")" 2>/dev/null | tr -d ' ' || true)"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="dosya servisi uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    for _ in $(seq 1 10); do
+        if python3 "$SBIN_DIR/master-files-panel" check --url "http://$TAILSCALE_IPV4/api/state" \
+            --host "panel.$LOCAL_DOMAIN" >/dev/null 2>&1; then
+            ok=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || { FAIL="dosya servisi Konsol adresinde yanıt vermedi"; return 1; }
+    code="$(http_code -H "Host: panel.$LOCAL_DOMAIN" "http://127.0.0.1:$FILES_PANEL_PORT/api/state")"
+    [[ "$code" == 403 ]] || { FAIL="dosya servisi başlıksız isteğe $code verdi (beklenen 403)"; return 1; }
+}
+
+files_off() { # servis durur, birim kalkar; hata vermez
+    systemctl disable --now "$FILES_UNIT" >/dev/null 2>&1 || true
+    rm -f -- "$UNIT_DIR/$FILES_UNIT"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+# --veri: çöp boşaltılır (kullanıcı onları zaten silmişti). Çöp klasörü kalır.
+files_drop_data() {
+    local cop="$SERVER_ROOT/$FILES_PANEL_TRASH"
+    [[ -d "$cop" && ! -L "$cop" ]] || return 0
+    find "$cop" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+# ---------------------------------------------------------------- WireGuard (DD-150)
+# Kurulum yalnız aracı (master-wg), birim şablonlarını ve güvenlik duvarını koyar; paketler,
+# çekirdek modülü ve ağların açılması bu modüldedir. Güvenlik duvarı ağları yalnız modül
+# kuruluyken açar (master-firewall kayda bakar).
+WG_PACKAGES="wireguard-tools qrencode"
+
+wg_need() {
+    need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE
+}
+
+wg_packages() {
+    local out pkg missing=0
+    for pkg in $WG_PACKAGES; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || missing=1
+    done
+    [[ "$missing" == 1 ]] || return 0
+    # shellcheck disable=SC2086
+    if ! out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        -o DPkg::Lock::Timeout=300 $WG_PACKAGES 2>&1)"; then
+        # Liste eskimiş olabilir: bir kez güncellenip yeniden denenir.
+        # shellcheck disable=SC2086
+        out="$(apt-get -o DPkg::Lock::Timeout=300 update 2>&1 &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                -o DPkg::Lock::Timeout=300 $WG_PACKAGES 2>&1)" ||
+            { FAIL="paketler kurulamadı: $(tail -n 1 <<<"$out")"; return 1; }
+    fi
+}
+
+wg_layer() {
+    local tmp
+    modprobe wireguard >/dev/null 2>&1 || { FAIL="çekirdek WireGuard modülü yüklenemedi"; return 1; }
+    tmp="$(mktemp "$(dirname -- "$WG_MODULES_LOAD_FILE")/.wireguard.XXXXXX")"
+    printf 'wireguard\n' >"$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$WG_MODULES_LOAD_FILE"
+    install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
+}
+
+# Kayıttaki ağlar açılır (anahtarlar ve profiller /etc/wireguard'da durur); açılamayan uyarıdır.
+wg_networks_up() {
+    local iface scope count=0
+    [[ -f "$WG_NETWORKS_FILE" ]] || { printf '0\n'; return 0; }
+    while IFS=$'\t' read -r iface _ scope _; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        count=$((count + 1))
+        systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1 || warn "$iface açılamadı"
+        if [[ "$scope" == ui ]]; then
+            systemctl enable --now --quiet "caddy-wg@$iface.service" >/dev/null 2>&1 || warn "caddy-wg@$iface açılamadı"
+        fi
+    done <"$WG_NETWORKS_FILE"
+    printf '%s\n' "$count"
+}
+
+wg_networks_down() {
+    local unit
+    while IFS= read -r unit; do
+        [[ "$unit" =~ ^(wg-quick|caddy-wg)@wg[0-9]\.service$ ]] || continue
+        systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
+    done < <(
+        systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 'caddy-wg@wg*.service' 2>/dev/null | awk '{print $1}'
+        systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 'caddy-wg@wg*.service' 2>/dev/null | awk '{print $1}'
+        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"; print "caddy-wg@" $1 ".service"}' "$WG_NETWORKS_FILE"
+    )
+}
+
+firewall_apply() {
+    systemctl reset-failed master-firewall.service >/dev/null 2>&1 || true
+    systemctl restart master-firewall.service >/dev/null 2>&1
+}
+
+# --veri: ağ anahtarları, cihaz profilleri ve ağ kaydı. Klasör kalır.
+wg_drop_data() {
+    [[ -d "$WG_CONF_DIR" && ! -L "$WG_CONF_DIR" ]] || return 0
+    find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
 # ------------------------------------------------------------------- komutlar
 cmd_liste() {
     local id rt reg live action step total text
@@ -392,6 +537,9 @@ cmd_liste() {
         case "$rt" in
             docker) live="$(container_state "$id")" ;;
         esac
+        if [[ "$id" == dosya && "$reg" != yok ]]; then
+            if systemctl is-active --quiet master-files-panel.service 2>/dev/null; then live=running; else live=exited; fi
+        fi
         action="-" step="-" total="-" text="-"
         if [[ -f "$(progress_file "$id")" ]]; then
             IFS=$'\t' read -r action step total text <"$(progress_file "$id")" || true
@@ -420,7 +568,30 @@ cmd_kur() {
             docker exec unpackerr sh -c 'test ! -e /downloads/.cop && test ! -e /downloads/.pay' ||
                 { compose "$id" down >/dev/null 2>&1 || true; fail_step "konteyner çöp ya da paylaşım klasörünü görüyor"; }
             ;;
+        dosya)
+            files_need
+            progress "$id" kur 1 3 "Servis kuruluyor"
+            files_place_unit || true
+            progress "$id" kur 2 3 "$SERVER_ROOT kökü bağlanıyor"
+            systemctl enable --now "$FILES_UNIT" >/dev/null 2>&1 || { files_off; fail_step "dosya servisi başlatılamadı"; }
+            files_verify || { files_off; fail_step "$FAIL"; }
+            progress "$id" kur 3 3 "Dosyalar sayfası açılıyor"
+            ;;
+        wireguard)
+            wg_need
+            progress "$id" kur 1 4 "Paketler kuruluyor"
+            wg_packages || fail_step "$FAIL"
+            progress "$id" kur 2 4 "Çekirdek modülü"
+            wg_layer || fail_step "$FAIL"
+            progress "$id" kur 3 4 "Güvenlik duvarı kancası"
+            # Güvenlik duvarı ağları kayda bakarak açar: kayıt önce yazılır.
+            registry_set "$id" calisiyor
+            firewall_apply || { registry_set "$id" ""; firewall_apply || true; fail_step "güvenlik duvarı uygulanamadı"; }
+            progress "$id" kur 4 4 "WireGuard sayfası açılıyor"
+            wg_networks_up >/dev/null
+            ;;
         paylasim)
+            registry_get dosya >/dev/null || fail_step "önce Dosya yöneticisi kurulmalı (Paylaşım ona bağlı)"
             share_need
             need_docker "$id"
             progress "$id" kur 1 4 "İmaj indiriliyor"
@@ -449,6 +620,7 @@ cmd_baslat() {
     CUR_ID="$id" CUR_ACTION=baslat
     take_lock
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     progress "$id" baslat 1 1 "Başlatılıyor"
     case "$(runtime_of "$id")" in
         docker)
@@ -477,6 +649,7 @@ cmd_durdur() {
     CUR_ID="$id" CUR_ACTION=durdur
     take_lock
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     progress "$id" durdur 1 1 "Durduruluyor"
     case "$(runtime_of "$id")" in
         docker)
@@ -496,7 +669,23 @@ cmd_kaldir() {
     CUR_ID="$id" CUR_ACTION=kaldir
     take_lock
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    [[ "$id" != dosya ]] || ! registry_get paylasim >/dev/null ||
+        fail_step "önce Paylaşım kaldırılmalı (Dosya yöneticisine bağlı)"
     progress "$id" kaldir 1 1 "Kaldırılıyor"
+    case "$id" in
+        dosya)
+            files_need
+            files_off
+            ;;
+        wireguard)
+            wg_need
+            wg_networks_down
+            rm -f -- "$WG_MODULES_LOAD_FILE"
+            # Kayıt önce silinir: güvenlik duvarı WireGuard portlarını ve kurallarını kaldırır.
+            registry_set "$id" ""
+            firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
+            ;;
+    esac
     case "$(runtime_of "$id")" in
         docker)
             command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
@@ -520,6 +709,8 @@ cmd_kaldir() {
             unpackerr) [[ ! -d "${DOWNLOADS_PATH:?}/.unpackerr" ]] ||
                 find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete ;;
             paylasim) share_drop_data ;;
+            dosya) files_drop_data ;;
+            wireguard) wg_drop_data ;;
         esac
     fi
     registry_set "$id" ""
@@ -530,8 +721,10 @@ cmd_kaldir() {
 cmd_gunluk() {
     local id="$1" lines="${2:-60}"
     [[ "$lines" =~ ^[0-9]{1,4}$ ]] || die "satır sayısı geçersiz"
-    case "$(runtime_of "$id")" in
-        docker) docker logs --tail "$lines" "$id" 2>&1 || printf '(günlük yok)\n' ;;
+    case "$id" in
+        dosya) journalctl -u "$FILES_UNIT" -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
+        wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
+        *) docker logs --tail "$lines" "$id" 2>&1 || printf '(günlük yok)\n' ;;
     esac
 }
 
@@ -578,12 +771,32 @@ cmd_uygula() {
         printf '%s\tyok\n' "$id"
         return 0
     fi
-    if [[ "$id" == paylasim ]]; then
-        share_need
-        share_prepare
-        share_names_on || fail_step "$SHARE_FAIL"
-        share_marker on || fail_step "$SHARE_FAIL"
-    fi
+    case "$id" in
+        dosya)
+            files_need
+            files_place_unit || true
+            systemctl enable --quiet "$FILES_UNIT" >/dev/null 2>&1 || true
+            systemctl reset-failed "$FILES_UNIT" >/dev/null 2>&1 || true
+            systemctl restart "$FILES_UNIT" >/dev/null 2>&1 || fail_step "dosya servisi yeniden başlatılamadı"
+            files_verify || fail_step "$FAIL"
+            printf '%s\t%s\n' "$id" "$state"
+            return 0
+            ;;
+        wireguard)
+            wg_need
+            wg_packages || fail_step "$FAIL"
+            wg_layer || fail_step "$FAIL"
+            wg_networks_up >/dev/null
+            printf '%s\t%s\n' "$id" "$state"
+            return 0
+            ;;
+        paylasim)
+            share_need
+            share_prepare
+            share_names_on || fail_step "$SHARE_FAIL"
+            share_marker on || fail_step "$SHARE_FAIL"
+            ;;
+    esac
     if [[ "$state" == calisiyor ]]; then
         need_docker "$id"
         compose "$id" up -d >/dev/null

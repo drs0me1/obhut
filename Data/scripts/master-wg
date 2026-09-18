@@ -579,6 +579,12 @@ elif [[ "${1:-}" != version && "${1:-}" != nets && "${1:-}" != net-add && "${1:-
     select_only_net
 fi
 
+# DD-150: WireGuard bir Konsol modülüdür; kurulu değilken araç yalnız sürümünü söyler.
+if [[ "${1:-}" != version && -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] &&
+    ! awk -F'\t' '$1 == "wireguard" {f = 1} END {exit !f}' "$MODULES_FILE"; then
+    die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"
+fi
+
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
     nets) [[ -z "$WG_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;
