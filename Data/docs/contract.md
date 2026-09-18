@@ -20,7 +20,7 @@ extends them. Settled disagreements with early rule drafts — dnsmasq
 listening scope, chain name, refresh helper scope, Portainer upstream
 scheme — are recorded as **DD-59** through **DD-62** in
 `design-decisions.md`. Portainer itself was replaced by Dozzle in v2-82
-(**DD-116**).
+(**DD-116**), and Dozzle was dropped in v2-118 (**DD-151**).
 
 The single active rule source is `.cursor/rules/master-stack.mdc`. The
 original RTF is archived unchanged at
@@ -41,9 +41,9 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create `/downloads` and `/downloads/media` |
 | R9 | Install Docker Engine and the Compose plugin |
-| R10 | Generate a Compose file for Dozzle (replaced Portainer, **DD-116**) and qBittorrent (replaced Transmission again, **DD-127**). FileBrowser was retired; Konsol manages the files (**DD-146**). Unpackerr and the share WebDAV (rclone) are Konsol modules (**DD-148**, **DD-149**) |
+| R10 | No base Compose file since v2-118 (**DD-151**): Dozzle is gone, qBittorrent is a host module; Unpackerr and the share WebDAV (rclone) are Docker modules (**DD-148**, **DD-149**). FileBrowser was retired; Konsol manages the files (**DD-146**) |
 | R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly the WireGuard UDP port (host kernel since v2-86, **DD-120**; formerly wg-easy) and the torrent (qBittorrent) peer port (TCP+UDP) |
+| R12 | Publish publicly the WireGuard UDP port of each network (host kernel since v2-86, **DD-120**; formerly wg-easy). The torrent peer port is no longer opened (**DD-151**): qBittorrent makes outgoing connections only |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
@@ -144,53 +144,21 @@ the ones agreed on 2026-08-05:
   `apparmor` and `pigz` (**R9**, **DD-125**).
 - The installer's own apt downloads are not kept in `/var/cache/apt/archives`
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
-- One Compose file with exactly two services: `dozzle` and `qbittorrent`
-  (**R10**, **DD-116**, **DD-127**, **DD-146**). Unpackerr and the share
-  WebDAV are not part of it: they are modules installed from Konsol, each in
-  its own Compose project (§1.11, **DD-148**, **DD-149**).
-- qBittorrent (LinuxServer image) keeps `/config` on
-  `/etc/master-stack/qbittorrent`, and its settings come from the installer
-  (**DD-129**):
-  - `templates/qBittorrent.conf` lists the managed keys: the operator's
-    settings, derived from a clean-file diff, plus
-    `WebUI\LocalHostAuth=true` and `WebUI\AuthSubnetWhitelistEnabled=false`.
-    `TORRENT_USER`/`TORRENT_PASS` supply `WebUI\Username` and
-    `WebUI\Password_PBKDF2`.
-  - Stage 4 compares those keys with `QBITTORRENT_CONF_FILE` on every run.
-    - Nothing differs: nothing is written and the container is not touched.
-    - Something differs: qBittorrent is stopped (it rewrites its file on
-      exit), only the differing keys are set in place or added, and it is
-      started again.
-    - No file: it is created from the template.
-    - Keys qBittorrent adds itself are kept.
-  - The password is stored only as qBittorrent's PBKDF2-SHA512 hash (100000
-    iterations, 16-byte salt), computed by `python3` from stdin. An existing
-    hash is kept when it verifies against `TORRENT_PASS`.
-  - A setting changed in the UI for a managed key returns to the template on
-    the next run; unmanaged settings stay.
-  - Stage 7 logs in with the input account (password on stdin; success is
-    `204`/`200` plus a `SID` cookie). It stops on the first refusal, because
-    qBittorrent bans an IP after repeated failures. It then requires the
-    username and both authentication bypasses off.
-  - The web UI and peer ports come from `WEBUI_PORT`/`TORRENTING_PORT`, which
-    the image passes on the command line at every start, so the config file
-    cannot move them.
-- Dozzle runs with `DOZZLE_AUTH_PROVIDER=simple` and actions enabled (start,
-  stop, restart, remove, update), no shell, read-only root, all capabilities
-  dropped and `no-new-privileges`. Its `users.yml` is written by the
-  installer from the input file, using the image's own `generate` command
-  with the password on stdin and the `actions` role. It is regenerated, with
-  a Dozzle restart, only when it no longer holds exactly that account
-  (**DD-119**).
+- **No base Compose project (DD-151).** The installer installs the Docker
+  engine and the Compose plugin for the Docker modules (Paylaşım, Arşiv açıcı),
+  each of which is its own Compose project (§1.11). Dozzle is gone: every
+  module card has a Günlük panel. There is no image-pull question on re-runs;
+  module images are pinned and fetched by `master-modul` when needed.
+- **qBittorrent is a host module (DD-151)**, installed from Konsol (§1.11): the
+  distribution's `qbittorrent-nox` runs on the server as the downloads account.
+  The installer holds no qBittorrent account, settings template or peer port;
+  `TORRENT_USER`/`TORRENT_PASS` are gone with DD-129's settings sync.
 - There is no FileBrowser (**DD-146**): no container, no account in the input
   file, no port and no database. Files are managed in Konsol (§1.10);
-  `file.${LOCAL_DOMAIN}` redirects there. A re-run on a host that still has
-  the old container removes it through `docker compose up --remove-orphans`;
-  `/etc/master-stack/filebrowser-data` is left for the operator to delete.
-- Every web interface and WebDAV published on `127.0.0.1` only (**R11**).
-- Containers survive a reboot through the Compose **restart policy**
-  (`restart: unless-stopped`), not through a systemd unit. `master-compose.service`
-  does not exist in the first v2 release.
+  `file.${LOCAL_DOMAIN}` redirects there.
+- Every web interface and WebDAV listens on `127.0.0.1` only (**R11**).
+- Module containers survive a reboot through the Compose **restart policy**
+  (`restart: unless-stopped`), not through a systemd unit.
 
 ### 1.4 Directories
 
@@ -240,8 +208,9 @@ Preserved in full as a core feature. Contract in §5–§7.
 ### 1.9 WireGuard (DD-120, DD-124)
 
 - **A fresh install has no WireGuard (DD-143, DD-150).** WireGuard is a Konsol
-  module (§1.11). The installer only puts `master-wg`, the `caddy-wg@` template
-  and `Caddyfile.wg` in place. Installing the module installs `wireguard-tools`
+  module (§1.11). The installer only puts `master-wg`, the `caddy-wg@` template,
+  `Caddyfile.wg` and an empty `/etc/wireguard` (`0700`, the root backend's only
+  writable path, v2-119) in place. Installing the module installs `wireguard-tools`
   and `qrencode` (`--no-install-recommends`), loads the kernel module (and
   writes `WG_MODULES_LOAD_FILE`), creates `/etc/wireguard`, re-applies the
   firewall and starts whatever networks the registry already holds. Nothing
@@ -308,8 +277,8 @@ Preserved in full as a core feature. Contract in §5–§7.
     (**DD-143**): it never uploads, and a reinstall cannot bring back a removed
     peer, a removed network or an old key.
 - **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
-  Dozzle and qBittorrent UIs at `http://<that network's server address>:<port>`
-  when its scope is `ui`. Files are not reachable over WireGuard: Konsol is
+  qBittorrent UI at `http://<that network's server address>:${TORRENT_UI_PORT}`
+  when its scope is `ui` and the qBittorrent module is installed (**DD-151**). Files are not reachable over WireGuard: Konsol is
   tailnet-only and FileBrowser is gone (**DD-146**).
   Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, Docker networks or
   other peers (§9).
@@ -345,7 +314,8 @@ Preserved in full as a core feature. Contract in §5–§7.
     returned only on an explicit request, and the audit line in the journal
     names the user, client, action and peer, never the content.
   - The unit runs with `NoNewPrivileges`, `ProtectSystem=full` with
-    `/etc/wireguard` writable, `ProtectHome`, `PrivateTmp`, the kernel
+    `/etc/wireguard` writable (optional: a missing folder never keeps Konsol
+    down), `ProtectHome`, `PrivateTmp`, the kernel
     protections and `AF_UNIX`/`AF_INET`/`AF_INET6`/`AF_NETLINK` only.
   - A peer shows "Bağlı" only while data arrives from it: its received bytes
     grew within the last 45 s and its handshake is under 3 minutes old. A
@@ -362,7 +332,7 @@ Preserved in full as a core feature. Contract in §5–§7.
     and `…::N:H` (H in hex). Profiles live in `/etc/wireguard/clients-wgN`;
     the interface in `/etc/wireguard/wgN.conf`.
   - Scope per network: `inet` reaches only the internet; `ui` also reaches
-    Dozzle and qBittorrent on its own server address through
+    qBittorrent (module) on its own server address through
     `caddy-wg@wgN`. Every network pings its own server address; nothing
     reaches another network, the tailnet, SSH, DNS, WebDAV or the panel.
   - The registry `/etc/wireguard/networks` (one tab-separated line per
@@ -487,8 +457,9 @@ Preserved in full as a core feature. Contract in §5–§7.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
     by the operator, and decoded on the server.
   - The page inserts the text as text nodes only.
-- The page marks qBittorrent's temporary folder (`Session\TempPath` from
-  `templates/qBittorrent.conf`) and warns before moving or deleting there.
+- The page marks qBittorrent's temporary folder (`DOWNLOADS_SUBDIR/TORRENT_TEMP_DIR`,
+  the one the module's first settings name) and warns before moving or
+  deleting there.
 - A switch at the top links `wg.${LOCAL_DOMAIN}` and `dosya.${LOCAL_DOMAIN}`.
 - It replaced FileBrowser (**DD-146**): `file.${LOCAL_DOMAIN}` redirects to
   the console.
@@ -497,10 +468,10 @@ Preserved in full as a core feature. Contract in §5–§7.
 
 - A clean install brings the base only; optional parts are **modules**,
   installed, started, stopped and removed from Konsol → Modüller.
-  - Catalogue (v2-117), in Konsol's order: `dosya` (Dosya yöneticisi,
-    Konsol), `wireguard` (WireGuard, Konsol), `paylasim` (Paylaşım, the share
-    WebDAV, Docker; needs `dosya`) and `unpackerr` (Arşiv açıcı, Docker).
-    qBittorrent moves here in a later release.
+  - Catalogue (v2-118), in Konsol's order: `dosya` (Dosya yöneticisi,
+    Konsol), `wireguard` (WireGuard, Konsol), `torrent` (qBittorrent, host),
+    `paylasim` (Paylaşım, the share WebDAV, Docker; needs `dosya`) and
+    `unpackerr` (Arşiv açıcı, Docker).
   - Konsol modules (`dosya`, `wireguard`) are installed or removed, never
     stopped or started (`baslat`/`durdur` refuse). A module another one depends
     on cannot be removed first: `kaldir dosya` refuses while `paylasim` is
@@ -509,7 +480,9 @@ Preserved in full as a core feature. Contract in §5–§7.
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders each module's files to
     `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for
-    Paylaşım `compose.yaml`, `paylasim.caddy` and `dnsmasq.conf`;
+    Paylaşım `compose.yaml`, `paylasim.caddy` and `dnsmasq.conf`; for
+    qBittorrent `qBittorrent.conf` (the first settings), `master-stack.conf`
+    (the unit drop-in), `torrent.caddy` and `dnsmasq.conf`;
   - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent,
     and `CADDY_MODULES_DIR` (`/etc/caddy/moduller`), which the base Caddyfile
     imports (`import …/*.caddy`, after the global options); the file backend's
@@ -560,6 +533,39 @@ Preserved in full as a core feature. Contract in §5–§7.
   `WG_MODULES_LOAD_FILE`; `--veri` also empties `WG_CONF_DIR`. `uygula`
   (every installer run while installed) makes sure of the packages, the kernel
   module and the networks. `gunluk` reads `journalctl -u wg-quick@*`.
+- qBittorrent (`torrent`, **DD-151**): `kur` in four steps — package
+  (`qbittorrent-nox`), service unit, service start, name.
+  - It runs as `qbittorrent-nox@<downloads account>.service`, the package's
+    template unit plus the drop-in `UNIT_DIR/qbittorrent-nox@.service.d/master-stack.conf`:
+    profile in `TORRENT_PROFILE_DIR` (`/var/lib/qbittorrent`), `UMask=0002`,
+    `ProtectSystem=strict` with only the profile and `DOWNLOADS_PATH`
+    writable, the trash and the share root inaccessible, no new privileges.
+  - Its settings are written once, when the profile has none: save path
+    `DOWNLOADS_PATH`, temporary folder `DOWNLOADS_PATH/TORRENT_TEMP_DIR`, web UI
+    on `127.0.0.1:TORRENT_UI_PORT` with local authentication, UPnP, port
+    forwarding and Local Peer Discovery off (v2-120), the legal notice
+    accepted. After that nothing touches them; changes made in qBittorrent
+    stay.
+  - `kur` checks that it runs as `DOWNLOADS_UID`, that the trash and share root
+    are inaccessible to it, that its API answers `403` without a login on
+    `127.0.0.1:TORRENT_UI_PORT` and through `torrent.${LOCAL_DOMAIN}`, and that
+    the name resolves; a failed install is taken back.
+  - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name, like
+    Paylaşım's). On WireGuard networks with local access `caddy-wg` serves the
+    same interface on the network's server address.
+  - No inbound peer port: the firewall opens nothing for it. qBittorrent
+    still listens on its own random peer port on every interface; new WAN
+    traffic to it is dropped in both families, the tailnet and the Docker
+    bridge can reach it.
+  - The account is not Konsol's: qBittorrent prints a temporary password to
+    its journal on each start until one is set in its UI. `hesap torrent`
+    reads this run's journal (`_SYSTEMD_INVOCATION_ID`) and prints
+    `user<TAB>gecici|ayarli` (with `--parola` also the temporary password);
+    `gunluk` masks that line.
+  - `durdur` disables and stops the unit (the name stays); `kaldir` removes the
+    names and the drop-in and stops the unit but leaves the package installed;
+    `--veri` deletes the profile (settings and torrent list) — only under
+    `/var/lib` — never a downloaded file.
 - Paylaşım (`paylasim`, **DD-149**):
   - `kur` in four steps: pull the rclone image; prepare the account; start
     the container and check it; publish the names. The account is user
@@ -595,7 +601,9 @@ Preserved in full as a core feature. Contract in §5–§7.
     targets and nothing else in that folder.
 - The root backend (`master-wg-panel`):
   - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
-    live, busy, progress}]}`.
+    live, busy, progress}]}`. `busy` is a running `master-modul-<id>.service`,
+    read with `systemctl list-units` (v2-120: `is-active` on a collected
+    transient unit wrote two journal lines per query).
   - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir|parola)`, JSON
     body, `{"veri": true}` honoured for `kaldir` only; `parola` only for
     `paylasim` (else `404`) and only while installed (else `409`). The id
@@ -608,8 +616,10 @@ Preserved in full as a core feature. Contract in §5–§7.
     the value. `404` when the module is not installed or has no account.
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
   - The `SHARE_PORT` row of the ports card and `share.on` in
-    `/api/wg/sistem` follow the Paylaşım module; the port stays reserved for
-    WireGuard networks either way.
+    `/api/wg/sistem` follow the Paylaşım module, the `TORRENT_UI_PORT` rows
+    the qBittorrent module and the `FILES_PANEL_PORT` row the Dosya yöneticisi
+    module (v2-120); the ports stay reserved for WireGuard networks either
+    way.
   - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
 - Konsol shows the Paylaşım account on the module card (address, Infuse
   address, user, password masked). The password is fetched only when the
@@ -648,11 +658,11 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 
 Three exposure classes, and nothing may straddle them.
 
-### 3.1 Public (WAN IPv4) — Compose publications
+### 3.1 Public (WAN IPv4)
 
-| Service | Listen address | Port | Protocol |
-|---|---|---|---|
-| qBittorrent (peer) | `0.0.0.0` (IPv4-only; firewall scopes WAN) | `${TORRENT_PUBLIC_PORT}` (61005) | **TCP + UDP** |
+No container publishes a port on the WAN. The torrent peer port (61005) is
+gone since v2-118 (**DD-151**): qBittorrent is a host module that makes
+outgoing connections only.
 
 **WireGuard is a host listener, not a Compose publication (DD-120):** the
 kernel's `wg0` socket on UDP `${WG_PUBLIC_PORT}` (61001) is admitted by
@@ -686,8 +696,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 
 | Service | Listen address | Port |
 |---|---|---|
-| Dozzle | `127.0.0.1` | 61002 (**DD-116**) |
-| qBittorrent WebUI | `127.0.0.1` | 61006 (**DD-127**) |
+| qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
 | Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
 | Konsol file backend (`master-files-panel`; Dosya yöneticisi module only) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**, **DD-150**) |
 | WebDAV — shares only (`paylasim` module; only while installed) | `127.0.0.1` | 61010 (**DD-141**, **DD-142**, **DD-149**) |
@@ -699,15 +708,14 @@ Tailscale address. No WAN / `0.0.0.0` publish.
 ### 3.4 Single source of truth
 
 Every number above is declared exactly once, in `config/defaults.env`,
-and reaches the Compose file, the Caddyfile, the firewall script and the
+and reaches the module templates, the Caddyfile, the firewall script and the
 state file by substitution. A port literal appearing twice is a bug.
 
 ### 3.5 WireGuard (`wg0`) — reachable only by WireGuard clients
 
 | Service | Listen address | Port |
 |---|---|---|
-| caddy-wg@wgN → Dozzle, qBittorrent (`ui` networks) | that network's server address | 61002, 61006 (TCP, HTTP only) |
-| caddy-wg@wgN (panel networks with scope `ui`) | `10.8.N.1` | 61002, 61006, 61007 (TCP, HTTP only) |
+| caddy-wg@wgN → qBittorrent (`ui` networks; module only) | that network's server address | 61006 (TCP, HTTP only) |
 
 No names, no WebDAV, no dnsmasq on any WireGuard network (**DD-120**,
 **DD-136**). Each network's UDP port is open on the WAN in `MASTER-INPUT`.
@@ -721,8 +729,7 @@ an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
-| `dozzle.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://dozzle.…` | `127.0.0.1:61002` (**DD-116**) |
-| `torrent.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**) |
+| `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
 | `file.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://file.…` | `127.0.0.1:61007` |
 | `paylas.${LOCAL_DOMAIN}` (Paylaşım module only) | `${TS_IPV4}` | `http://paylas.…` and `http://${TS_IPV4}:61010` | `127.0.0.1:61010` (**DD-149**) |
 | `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
@@ -947,11 +954,10 @@ Accepted:
    gets an individual rule.
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
-6. New inbound TCP and UDP on the WAN interface to `${TORRENT_PUBLIC_PORT}`.
 
 Dropped:
 
-7. Every other new inbound connection arriving on the WAN interface.
+6. Every other new inbound connection arriving on the WAN interface.
 
 Rules:
 
@@ -997,12 +1003,14 @@ and IPv6 — separate tables mean no collision — and both are declared in
 - Inside `MASTER-DOCKER`:
   - `ESTABLISHED,RELATED` returns early.
   - Container traffic arriving over `tailscale0` is accepted.
-  - New WAN traffic to the public peer publications is accepted
-    (qBittorrent TCP+UDP `${TORRENT_PUBLIC_PORT}`; WireGuard is a host
-    listener admitted by `MASTER-INPUT`, **DD-120**).
+  - No WAN publication is accepted: the torrent peer port is gone
+    (**DD-151**) and WireGuard is a host listener admitted by `MASTER-INPUT`
+    (**DD-120**).
 - WireGuard (**DD-120**), all interface-based and in both families:
-  - `MASTER-INPUT` accepts from `wg0` only TCP to `10.8.0.1` on the three UI
-    ports and ping (IPv4), and drops everything else from `wg0`.
+  - `MASTER-INPUT` accepts from `wg0` only TCP to `10.8.0.1` on the
+    qBittorrent UI port (open whether or not the module is installed;
+    `caddy-wg` answers `502` without it) and ping (IPv4), and drops
+    everything else from `wg0`.
   - `MASTER-FORWARD`, jumped at the top of `FORWARD`, accepts `wg0` → WAN
     and its replies and drops all other traffic to or from `wg0` (tailnet,
     Docker networks, other peers).
@@ -1175,11 +1183,10 @@ An installer run is successful when every one of these holds on the target host.
 
 ### Ports
 
-5. `docker port` shows public publications for qBittorrent TCP+UDP
-   `${TORRENT_PUBLIC_PORT}` (IPv4 `0.0.0.0` 1:1 publish; not a specific WAN
-   IP; no `[::]` peer publish). `wg show wg0 listen-port` is
+5. No container publishes a WAN port (**DD-151**). `wg show wg0 listen-port` is
    `${WG_PUBLIC_PORT}`, `10.8.0.1` is on `wg0`, `master-wg version` runs, and
-   `caddy-wg` answers non-5xx on its three ports (**DD-120**, **DD-124**).
+   with the qBittorrent module installed `caddy-wg` answers non-5xx on its
+   port (**DD-120**, **DD-124**, **DD-151**).
 6. No container web interface is published on a non-loopback address.
 7. The five container web interfaces (incl. WebDAV) listen on `127.0.0.1`
    only.
@@ -1196,12 +1203,11 @@ An installer run is successful when every one of these holds on the target host.
     `REFUSED`.
 12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
     `ok`.
-13. Each of `dozzle`, `torrent` and `file` returns a non-5xx status
-    through Caddy (`Host:` + `${TS_IPV4}`). Without a login, Dozzle's
-    `/api/events/stream` answers `401` and qBittorrent's
-    `/api/v2/app/version` answers `403`. A `200` there means a localhost or
-    subnet authentication bypass is on (**DD-127**). A login with the input
-    account succeeds (**DD-129**).
+13. `file` returns a non-5xx status through Caddy (`Host:` + `${TS_IPV4}`).
+    With the qBittorrent module installed, `master-modul kur torrent` checks
+    that `/api/v2/app/version` answers `403` without a login on loopback and
+    through `torrent.${LOCAL_DOMAIN}`; a `200` means a localhost or subnet
+    authentication bypass is on (**DD-127**, **DD-151**).
 14. `docker port webdav` shows only `127.0.0.1:${WEBDAV_PORT}`; nothing
     listens on `${TS_IPV4}:${WEBDAV_PORT}` in Docker (Caddy owns that
     socket), nor on `0.0.0.0`, WAN, or LAN.
@@ -1230,25 +1236,22 @@ An installer run is successful when every one of these holds on the target host.
 ### Firewall
 
 24. `MASTER-INPUT` accepts loopback, `ESTABLISHED,RELATED`, all
-    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH), WAN
-    UDP `${WG_PUBLIC_PORT}`, and WAN TCP+UDP `${TORRENT_PUBLIC_PORT}`; it
-    drops other new WAN inbound.
+    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH) and WAN
+    UDP `${WG_PUBLIC_PORT}`; it drops other new WAN inbound.
 25. `DOCKER-USER` contains exactly one jump to `MASTER-DOCKER`, as its
     first rule.
 26. A third-party rule planted in `DOCKER-USER` before the run is still
     present after it.
 27. Docker's own chains are unchanged in name, count and order.
-28. `MASTER-DOCKER` permits NEW WAN TCP and UDP to `${TORRENT_PUBLIC_PORT}`
-    and NEW WAN UDP to `${WG_PUBLIC_PORT}`.
+28. `MASTER-DOCKER` permits no NEW WAN traffic (**DD-151**).
 29. The active SSH session survives policy application.
 
 ### Lifecycle
 
-30. `systemctl restart tailscaled` leaves all six containers running.
+30. `systemctl restart tailscaled` leaves every installed module running.
 31. `systemctl restart docker` results in a re-applied firewall policy.
-32. After a full reboot: six containers running, all six names resolving,
-    public wg UDP + torrent peer TCP/UDP published, WebDAV answering `401` via
-    Caddy.
+32. After a full reboot: every module marked `calisiyor` running, every name resolving,
+    public wg UDP published, WebDAV answering `401` via Caddy.
 33. `systemctl --failed` is empty.
 
 ### Idempotency

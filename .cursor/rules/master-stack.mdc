@@ -96,10 +96,9 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 ### Docker
 
 - Docker Engine, Docker Compose plugin ve gerekli bileşenler resmî Docker Debian deposundan kurulacak.
-- Compose projesi `/root/docker` altında tutulacak.
-- Compose içerisinde şu servisler yer alacak:
-  - Dozzle (Portainer yerine, DD-116; giriş zorunlu, işlemler açık, shell kapalı)
-  - qBittorrent (Transmission'dan geri dönüldü, DD-127; yönetilen ayarlar `templates/qBittorrent.conf`, hesap `TORRENT_USER`/`TORRENT_PASS`, parola yalnız PBKDF2 özeti, DD-129; giriş zorunlu)
+- DD-151: temel Compose projesi yok; Docker motoru yalnız Docker modülleri içindir. Dozzle kaldırıldı (modül kartlarında Günlük var).
+- qBittorrent bir host modülüdür (`torrent`, DD-151): Debian `qbittorrent-nox`, indirme hesabıyla `qbittorrent-nox@<kullanıcı>.service` + `master-stack.conf` drop-in'i; profil `/var/lib/qbittorrent`. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/modules/torrent/qBittorrent.conf`), sonra dokunulmaz. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca paket kalır; `--veri` profili siler.
+- Docker modülleri:
   - Unpackerr artık temel değil: Konsol → Modüller'den kurulan modül (DD-148; ayrı Compose projesi `unpackerr`, dosyası `Data/modules/unpackerr/compose.yaml`)
   - WebDAV (`rclone`, yalnız `127.0.0.1`, Caddy üzerinden Infuse)
 
@@ -134,13 +133,11 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 - Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
 - Örnek:
-  - Dozzle: `127.0.0.1:61002`
-  - qBittorrent web arayüzü: `127.0.0.1:61006`
+  - qBittorrent web arayüzü (modül): `127.0.0.1:61006`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - WireGuard (host çekirdeği, wg-quick@wg0; DD-120): yalnız UDP
-  - qBittorrent peer: TCP + UDP (aynı `TORRENT_PUBLIC_PORT`; 2026-08-06, R12 revize)
-- Torrent peer protokolünü sessizce daraltma; değişiklik açık karar ister.
+  - Torrent eş portu yok (DD-151): qBittorrent yalnız dışa bağlanır. Yeniden açmak açık karar ister.
 - Unpackerr web arayüzü gerektirmiyorsa port yayınlama.
 - Container isimleri, host portları, container portları ve volume yolları tek bir yapılandırma kaynağından yönetilmeli.
 
@@ -161,8 +158,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
   üzerinde kontrollü biçimde dinleyecek.
 - Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
-  - `dozzle.${LOCAL_DOMAIN}`
-  - `torrent.${LOCAL_DOMAIN}`
+  - `torrent.${LOCAL_DOMAIN}` (qBittorrent modülü kuruluysa; ad modülle gelir)
   - `file.${LOCAL_DOMAIN}`
   - `webdav.${LOCAL_DOMAIN}`
   - `health.${LOCAL_DOMAIN}`
@@ -188,15 +184,14 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - İlk sürüm HTTP-only olacak.
 - Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
 - Örnek:
-  - `http://dozzle.${LOCAL_DOMAIN}`
-  - `http://torrent.${LOCAL_DOMAIN}`
+  - `http://torrent.${LOCAL_DOMAIN}` (modül; `CADDY_MODULES_DIR/torrent.caddy`)
   - `http://file.${LOCAL_DOMAIN}`
   - `http://webdav.${LOCAL_DOMAIN}` (+ isteğe bağlı bare Tailscale IPv4 alias, DD-78)
   - `http://health.${LOCAL_DOMAIN}`
 - Her site yalnız kendi loopback upstream’ine proxy yapacak (health hariç:
   sabit `ok` yanıtı).
 - Örnek:
-  - `dozzle.${LOCAL_DOMAIN}` → `127.0.0.1:61002`
+  - `torrent.${LOCAL_DOMAIN}` → `127.0.0.1:61006`
 - Tüm upstream'ler loopback üzerinde düz HTTP'dir; tek HTTPS upstream (Portainer, DD-62) Portainer'la birlikte kaldırıldı (DD-116).
 
 ### Firewall

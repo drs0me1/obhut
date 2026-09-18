@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-19 — First fixes from the live module trial (v2-120)
+
+- **Changed** (**DD-151**): qBittorrent's first settings turn Local Peer
+  Discovery off; it announced what the server downloads on the provider's
+  local network. Only a new profile gets it: remove qBittorrent with its data
+  and install it again to apply it on an existing server.
+- **Fixed:**
+  - Konsol's ports card listed the file backend's port without the Dosya
+    yöneticisi module.
+  - While a module operation ran, every status query wrote two "Failed to open
+    /run/systemd/transient/…" lines to the system journal; the root backend
+    now reads running operations with `systemctl list-units`. One such line
+    per started operation remains: systemd writes it when `systemd-run`
+    reuses the unit name.
+  - The installer's summary said "Konsol → Modüller'den kurulur" for modules
+    that were already installed; it now lists each module's state and, when
+    installed, its address.
+  - A re-run said WireGuard's "file changed"; it now says WireGuard is
+    re-applied on every run.
+
+### 2026-09-19 — Konsol starts on a fresh install again (v2-119)
+
+- **Fixed** (**DD-150**): on a fresh v2-118 install Konsol's root backend did
+  not start (`/etc/wireguard` missing, now that WireGuard is a module) and the
+  installer stopped in stage 7. The installer now creates the folder before
+  starting the backend, and the backend no longer refuses to start without it.
+- **Operator step:** run the installer again; no reset is needed.
+
+### 2026-09-18 — qBittorrent is a Konsol module; Dozzle and the base Compose project go (v2-118)
+
+- **Changed** (**DD-151**): qBittorrent left the base install. Konsol →
+  Modüller → qBittorrent installs the distribution's `qbittorrent-nox` in four
+  steps (package, service unit, start, name) and runs it as the downloads
+  account at `http://torrent.<domain>` (tailnet only).
+  - Its settings are written once, at the first install: save path, the
+    `incomplete` temporary folder, web UI on loopback, UPnP off. After that the
+    installer never touches them; what you change in qBittorrent stays.
+  - The login is qBittorrent's own. The card shows the user and, until you set
+    a password in qBittorrent, the temporary password from its log (on
+    request, hidden after 30 s). The log panel masks it.
+  - No inbound peer port: 61005 is closed and qBittorrent only connects out.
+  - Removing stops and disables the service and keeps the package; the data
+    option also deletes the profile (settings and torrent list). Downloaded
+    files are never deleted.
+  - The service is sandboxed: it can write only its profile and the downloads
+    folder, and cannot see the trash or the share root.
+- **Removed:** Dozzle (every module card has a log), the base Compose project
+  (`/root/docker/compose.yaml`), the image-pull question on re-runs, and the
+  `DOZZLE_USER`, `DOZZLE_PASS`, `TORRENT_USER` and `TORRENT_PASS` inputs. The
+  input file now holds only `SSH_HOST` and `LOCAL_DOMAIN`.
+- **Operator steps:**
+  - Delete the four account lines from the input file; otherwise the installer
+    stops before changing anything:
+
+    ```bash
+    sed -i '' -E '/^(DOZZLE|TORRENT)_(USER|PASS)=/d' kurulum/kurulum.env
+    ```
+
+  - Reset the server and install v2-118 fresh; the old containers and
+    qBittorrent data are not carried over.
+  - Install qBittorrent from Konsol → Modüller, log in with the temporary
+    password shown on its card and set your own in qBittorrent (Tools →
+    Options → Web UI).
+
 ### 2026-09-18 — Dosya yöneticisi and WireGuard are Konsol modules (v2-117)
 
 - **Changed** (**DD-150**): a clean install now brings only Konsol, Tailscale,

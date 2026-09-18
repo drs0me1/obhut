@@ -12,9 +12,9 @@ operator double-clicks — the current portable installer (`<V2_VERSION>.command
 
 The installer turns a fresh Debian 13
 (trixie) or Ubuntu 24.04/26.04 LTS host
-into a Tailscale exit-node with a base Docker Compose bundle, host
-dnsmasq + Caddy on the tailnet, and a persistent firewall; optional parts
-are modules installed from Konsol (**DD-148**). There is no
+into a Tailscale exit-node with host dnsmasq + Caddy on the tailnet, the
+Docker engine and a persistent firewall; everything optional (qBittorrent
+included, **DD-151**) is a module installed from Konsol (**DD-148**). There is no
 reconcile / self-healing engine by design.
 
 Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
@@ -43,9 +43,9 @@ state. Treat every change as production-infrastructure work.
   only: run the installer, `sudo`, mutating `systemctl`/`docker`, firewall
   changes, wipes, and reboots without per-turn approval. Drive the installer
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
-  empty domain, path and ports (defaults); WebDAV `infuse` / `12345test`;
-  `admin` / `12345test` for Dozzle and qBittorrent (`TORRENT_USER`/`TORRENT_PASS`); `admin` / `12345test1234`
-  (Konsol has no account, **DD-147**). Add and
+  empty domain, path and ports (defaults). The input file holds no accounts:
+  Konsol has none (**DD-147**), Paylaşım generates its own and qBittorrent's
+  first login is a temporary password from its journal (**DD-151**). Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the
   re-run questions with their defaults and `E` at the confirmation, and report
@@ -97,7 +97,6 @@ state. Treat every change as production-infrastructure work.
 | `wireguard.command` (root) | WireGuard peer menu over SSH (**DD-124**, **DD-143**): pick a network, list/add/remove/QR, 7) DNS change, 8) regenerate the network after typing `onayla`. Nothing is uploaded and nothing is kept on the Mac |
 | `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
-| `Data/templates/qBittorrent.conf` | qBittorrent keys the installer keeps in sync; the account comes from `TORRENT_USER`/`TORRENT_PASS` (**DD-129**) |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, for `paylasim` also `parola`/`hesap`) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller` (**DD-148**, **DD-149**) |
 | `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only; `wg.` and `dosya.` redirect there (**DD-140**). Design mockups in `Data/docs/design/` |

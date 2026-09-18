@@ -269,15 +269,7 @@
     $("ram-dt").textContent = `Bellek · ${bytes(s.mem.total)}`;
     $("ram-val").replaceChildren(bytes(s.mem.used), h("small", null, `%${Math.round(mem)}`));
     drawSpark("ram-spark", s.mem.graph.length ? s.mem.graph : [0]);
-    if (s.domain) {
-      [["dozzle", "dozzle"], ["torrent", "torrent"]].forEach(([id, sub]) => {
-        const a = $(`link-${id}`);
-        a.href = `${location.protocol}//${sub}.${s.domain}`;
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.hidden = false;
-      });
-    }
+    paintOtherLinks();
     renderPorts();
     if (!fsOn()) renderDisk();
   }
@@ -518,7 +510,7 @@
         h("p", null, "Sunucu kurulumu WireGuard ağı oluşturmaz. İlk ağı burada kurarsınız: anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur."),
         h("ul", { class: "conseq calm" },
           h("li", null, svg("shield"), h("span", null, "wg0 · 10.8.0.0/24 · sunucu 10.8.0.1")),
-          h("li", null, svg("lock"), h("span", null, "Local erişim kapalıysa cihazlar yalnız internete çıkar; açıksa Dozzle ve qBittorrent ağın sunucu adresinden açılır.")),
+          h("li", null, svg("lock"), h("span", null, "Local erişim kapalıysa cihazlar yalnız internete çıkar; açıksa qBittorrent arayüzü ağın sunucu adresinden açılır.")),
           h("li", null, svg("plus"), h("span", null, "Kurduktan sonra bu sayfadan cihaz (peer) eklersiniz; QR hemen hazır olur."))),
         h("button", { type: "button", class: "btn btn-primary", onclick: () => { location.hash = "#/wireguard/ekle"; } },
           svg("plus"), "Yapılandır")));
@@ -902,7 +894,7 @@
     $("na-local").setAttribute("aria-checked", String(NA.local));
     $("na-local-row").classList.toggle("on", NA.local);
     $("na-local-desc").textContent = NA.local
-      ? `Açık: internet + Dozzle ve qBittorrent bu ağın sunucu adresinden (10.8.${d.i}.1) açılır.`
+      ? `Açık: internet + qBittorrent arayüzü bu ağın sunucu adresinden (10.8.${d.i}.1) açılır.`
       : "Kapalı: cihazlar yalnız internete çıkar; sunucudaki arayüzler bu ağa kapalı.";
     $("na-port-err").textContent = d.portErr;
     $("na-port-err").hidden = !d.portErr;
@@ -915,7 +907,7 @@
     const will = [
       "Yeni sunucu anahtarı üretilir.",
       `UDP ${Number.isNaN(d.port) ? "…" : d.port} internete açılır; güvenlik duvarı kuralları kurulur.`,
-      d.scope === "ui" ? `Dozzle ve qBittorrent 10.8.${d.i}.1 adresinde açılır.` : "Sunucudaki arayüzler bu ağa kapalı kalır.",
+      d.scope === "ui" ? `qBittorrent arayüzü 10.8.${d.i}.1 adresinde açılır (modül kuruluysa).` : "Sunucudaki arayüzler bu ağa kapalı kalır.",
       `Yeni cihazlara ${d.dns ? providerOf(d.dns) : "seçilen"} DNS önerilir.`,
     ];
     $("na-will").replaceChildren(...will.map((text) => h("li", null, svg("check"), h("span", null, text))));
@@ -1496,7 +1488,8 @@
   function forgetAccount(id) { hidePass(id); delete ACCT[id]; acctFailed.delete(id); }
   function revealPass(id, fresh) {
     return api(acctUrl(id, true)).then((a) => {
-      ACCT[id] = { user: a.user, changed: a.changed, host: a.host, infuse: a.infuse };
+      ACCT[id] = Object.assign({}, a);
+      delete ACCT[id].pass;
       hidePass(id);
       const r = REVEAL[id] = { pass: a.pass, left: REVEAL_SECONDS, fresh: fresh || "" };
       r.timer = setInterval(() => {
@@ -1540,6 +1533,18 @@
     } else if (!a) {
       cred.append(h("p", { class: "hint-s" }, "Hesap okunuyor…"));
       loadAccount(id);
+    } else if (id === "torrent") {
+      // DD-151: qBittorrent'in geçici parolası yalnız bu açılışın günlüğündedir.
+      cred.append(...[
+        a.host ? credRow("Adres", a.host, [copyButton(a.host, "Adres")]) : null,
+        credRow("Kullanıcı", a.user, [copyButton(a.user, "Kullanıcı")]),
+        a.temp ? credRow("Geçici", r ? r.pass : "•".repeat(9), [
+          h("button", { type: "button", class: "ib", title: r ? "Gizle" : "Günlükten göster", "aria-label": r ? "Geçici parolayı gizle" : "Geçici parolayı göster",
+            onclick: () => (REVEAL[id] ? hidePass(id) : revealPass(id)) }, svg("eye")),
+          copyPassButton(id)], false, r ? "" : "masked-row") : null,
+        h("div", { class: "acct-wg" }, svg("info"), h("span", null, a.temp
+          ? "qBittorrent ilk açılışta geçici parolayı günlüğüne yazar; Konsol onu oradan okur ve her yeniden başlatmada değişir. Girişten sonra parolayı qBittorrent arayüzünden (Tools → Options → WebUI) koyun."
+          : "Parola qBittorrent arayüzünde ayarlanmış; Konsol onu bilmez. Unuttuysanız profildeki ayarı qBittorrent'in belgelerine göre sıfırlayın."))].filter(Boolean));
     } else {
       cred.append(...[
         a.host ? credRow("Adres", a.host, [copyButton(a.host, "Adres")]) : null,
@@ -1750,6 +1755,22 @@
         removeLabel: "Çöpü de boşalt",
         removeKeep: `çöpteki ögeler ${root}/.cop'ta kalır.`, removeDrop: "Çöpteki ögeler kalıcı silinir." };
     },
+    torrent: () => {
+      const sys = S.sys || {}, d = sys.domain || "…", root = sys.root || "/srv";
+      const prof = (sys.torrent && sys.torrent.profile) || "…";
+      return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true, recommends: "unpackerr",
+        desc: "Debian paketiyle sunucunun kendisinde çalışır. İlk kurulumda en az ayarı bir kez yazar; sonra ayarlarına dokunmaz.",
+        will: [["box", "Debian paketi qbittorrent-nox; apt güncellemeleriyle yenilenir"], ["globe", `torrent.${d} adı eklenir (arayüz yalnız sunucuda dinler)`],
+          ["folder", `İndirme yeri ${root}/downloads, profil ${prof}`], ["info", "İnternete eş portu açılmaz; yalnız giden bağlantılar"]],
+        facts: ["qbittorrent-nox · Debian", "arayüz yalnız sunucu"],
+        steps: [["Paket kuruluyor", "apt · qbittorrent-nox"], ["Servis birimi", `profil ${prof} · indirmeler ${root}/downloads`], ["Servis başlatılıyor", "systemd"], ["Ad", `torrent.${d}`]],
+        link: `torrent.${d}`, logSrc: "journalctl -u qbittorrent-nox@…",
+        removeWhat: [["box", "Servis durur ve açılışta başlamaz; paket sunucuda kalır."], ["globe", `torrent.${d} adı kalkar.`]],
+        removeLabel: "Profili ve torrent listesini de sil",
+        removeKeep: `indirilenler ${root}/downloads'ta kalır; profil ve torrent listesi korunur.`,
+        removeDrop: "Profil ve torrent listesi de silinir. İndirilen dosyalara dokunulmaz.",
+        stopNote: "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder." };
+    },
     wireguard: { name: "WireGuard", sub: "Cihazların sunucu üzerinden internete çıkışı", icon: "shield", tone: "t-dir", noStop: true,
       desc: "Çekirdek WireGuard katmanını kurar ve Konsol'a WireGuard sayfasını ekler. Ağları ve cihazları o sayfadan kurarsınız.",
       will: [["box", "Paketler: wireguard-tools, qrencode · çekirdek modülü"], ["shield", "Güvenlik duvarına WireGuard kancası eklenir"], ["shield", "WireGuard sayfası açılır (ilk ağ: Yapılandır)"]],
@@ -1804,6 +1825,17 @@
     const m = (MODS || []).find((x) => x.id === id);
     if (m) modAct(m, action, veri);
   }
+  // "Diğer arayüzler": qBittorrent'in kendi arayüzü, modülü kuruluyken (DD-151).
+  function paintOtherLinks() {
+    const s = S.sys, on = !!(modOn("torrent") && s && s.domain), a = $("link-torrent");
+    if (on) {
+      a.href = `${location.protocol}//torrent.${s.domain}`;
+      a.target = "_blank";
+      a.rel = "noopener";
+    }
+    a.hidden = !on;
+    $("side-other").hidden = !on;
+  }
   // Menüdeki Dosyalar ve WireGuard bağlantıları modül kuruluyken görünür.
   function paintNav() {
     document.querySelectorAll('[data-route="dosyalar"]').forEach((a) => { a.hidden = !fsOn(); });
@@ -1840,6 +1872,7 @@
         if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
       });
       paintNav();
+      paintOtherLinks();
       // Kaldırılan modülün sayfasında kalınmaz; Genel bakış kartları yeniden çizilir.
       if ((current === "dosyalar" && !fsOn()) || (current === "wireguard" && !wgOn())) location.hash = "#/moduller";
       if (!wgOn()) S.wg = null;
@@ -1873,7 +1906,7 @@
     if (m.state === "durduruldu") return h("span", { class: "hm idle" }, "Durduruldu");
     if (m.runtime === "konsol") return m.live === "exited" ? h("span", { class: "hm warn" }, "Çalışmıyor")
       : h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Kurulu");
-    if (m.runtime === "docker" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
+    if ((m.runtime === "docker" || m.runtime === "host") && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
     return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
   }
   function askNewPass(m, meta) {
@@ -1921,12 +1954,18 @@
           h("span", { class: "mod-facts grow" }, meta.facts.map((t) => h("span", null, t)))));
     } else {
       const failed = p && p.step === "hata" && !m.busy ? p : null;
-      // Hesabı olan modülde açıklamanın yerini hesap alır (v06).
+      // Hesabı olan modülde açıklamanın yerini hesap alır (v06); qBittorrent'te ilk giriş.
       const body = meta.account
         ? [h("div", { class: "acct-head" }, h("span", null, "Hesap"),
             h("button", { type: "button", class: "linkbtn", disabled: m.busy, onclick: () => askNewPass(m, meta) }, "Yeni parola")),
           accountBlock(m.id, "card")]
-        : [h("p", { class: "mod-desc" }, meta.desc)];
+        : meta.firstLogin
+          ? [h("div", { class: "acct-head" }, h("span", null, "İlk giriş"), h("span", { class: "src" }, "Konsol bu hesabı yönetmez")),
+            accountBlock(m.id, "card")]
+          : [h("p", { class: "mod-desc" }, meta.desc)];
+      if (meta.recommends && !modOn(meta.recommends)) {
+        body.push(h("div", { class: "acct-wg" }, svg("plus"), h("span", null, `${metaOf(meta.recommends).name} ile birlikte önerilir.`)));
+      }
       if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
       if (modLogs[m.id] != null) {
         body.push(h("div", { class: "logbox" },
@@ -1945,6 +1984,9 @@
                 items: [["pause", meta.stopNote], ["info", "Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]],
                 onOk: () => modAct(m, "durdur") }) }, svg("pause"), "Durdur")
             : h("button", { type: "button", class: "btn btn-sm btn-primary", disabled: m.busy, onclick: () => modAct(m, "baslat") }, svg("play"), "Başlat"),
+          meta.link && running && S.sys && S.sys.domain
+            ? h("a", { class: "btn btn-sm btn-quiet", href: `${location.protocol}//${meta.link}`, target: "_blank", rel: "noopener" }, svg(meta.icon), meta.name)
+            : null,
           h("button", { type: "button", class: "btn btn-sm btn-quiet", "aria-expanded": String(modLogs[m.id] != null), onclick: () => {
             if (modLogs[m.id] != null) { delete modLogs[m.id]; renderModules(); return; }
             fetch(`/api/konsol/moduller/${enc(m.id)}/gunluk`, { headers: { "X-Konsol": "1" }, cache: "no-store" })

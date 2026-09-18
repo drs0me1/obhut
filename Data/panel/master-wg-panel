@@ -34,8 +34,10 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
 MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir", "parola")
-# DD-149: hesabı olan modüller (Konsol hesabı gösterir, "Yeni parola" üretir).
-ACCOUNT_MODULES = ("paylasim",)
+# DD-149, DD-151: hesabı Konsol'da görünen modüller; "Yeni parola" yalnız Paylaşım'da (qBittorrent'in
+# ilk girişi günlüğündeki geçici paroladır, hesabını Konsol yönetmez).
+ACCOUNT_MODULES = ("paylasim", "torrent")
+PASSWORD_MODULES = ("paylasim",)
 IFACE_RE = re.compile(r"^wg[0-9]$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
@@ -59,19 +61,19 @@ ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
 # Genel bakıştaki "Kullanımdaki portlar" kartı: yapılandırmadan üretilir, tarama yok.
 # (state.env anahtarı, ad, protokol, kapsam, varsayılan)
 PORT_ROWS = (
-    ("TORRENT_PUBLIC_PORT", "qBittorrent eş trafiği", "tcp+udp", "internet", 0),
     ("TAILSCALE_UDP_PORT", "Tailscale", "udp", "internet", 0),
     ("SSH_PUBLIC_PORT", "SSH", "tcp", "internet", 0),
     ("CADDY_HTTP_PORT", "Caddy — panel ve öbür adresler", "tcp", "tailscale", 80),
     ("DNS_PORT", "dnsmasq — yerel adlar", "udp+tcp", "tailscale", 53),
     ("SHARE_PORT", "Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tcp", "tailscale", 0),
-    ("DOZZLE_UI_PORT", "Dozzle", "tcp", "loopback", 0),
     ("TORRENT_UI_PORT", "qBittorrent arayüzü", "tcp", "loopback", 0),
     ("WG_PANEL_PORT", "Konsol · WireGuard arka ucu", "tcp", "loopback", 0),
     ("FILES_PANEL_PORT", "Konsol · dosya arka ucu", "tcp", "loopback", 0),
 )
 # WireGuard istemcilerine açılan arayüzler (Caddyfile.wg): erişimi "ui" olan ağlarda.
-WG_UI_ROWS = (("DOZZLE_UI_PORT", "Dozzle"), ("TORRENT_UI_PORT", "qBittorrent arayüzü"))
+WG_UI_ROWS = (("TORRENT_UI_PORT", "qBittorrent arayüzü"),)
+# Satırı bir modülle gelen portlar: modül kurulu değilse o port dinlenmez (DD-149, DD-150, DD-151).
+PORT_MODULES = {"SHARE_PORT": "paylasim", "TORRENT_UI_PORT": "torrent", "FILES_PANEL_PORT": "dosya"}
 
 
 def fail(msg, code=1):
@@ -181,20 +183,29 @@ class Panel:
     def module_unit(mid):
         return "master-modul-%s.service" % mid
 
-    def module_busy(self, mid):
+    def busy_units(self):
+        """Süren modül işlemlerinin birimleri. `is-active` bitmiş (toplanmış) geçici birimi
+        yüklemeye çalışır ve her sorguda systemd günlüğüne "Failed to open
+        /run/systemd/transient/…" yazdırır; list-units yalnız bellekteki birimlere bakar (v2-120)."""
         try:
-            proc = subprocess.run(["systemctl", "is-active", "--quiet", self.module_unit(mid)],
+            proc = subprocess.run(["systemctl", "list-units", "--plain", "--no-legend", "--no-pager",
+                                   "--state=active,activating,deactivating,reloading",
+                                   self.module_unit("*")],
                                   timeout=10, env=self.env(), stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
-            return False
-        return proc.returncode == 0
+            return set()
+        return {line.split()[0] for line in proc.stdout.decode("utf-8", "replace").splitlines() if line.split()}
+
+    def module_busy(self, mid, busy=None):
+        return self.module_unit(mid) in (self.busy_units() if busy is None else busy)
 
     def modules(self):
         rc, out, message = self.modul("liste")
         if rc != 0:
             raise RuntimeError(message or "modül listesi okunamadı")
         items = []
+        busy = self.busy_units()
         for line in out.splitlines():
             f = line.split("\t")
             if len(f) != 8 or not MODULE_ID_RE.match(f[0]):
@@ -205,7 +216,7 @@ class Panel:
                 progress = {"action": action, "step": step, "total": num_or(total, 0), "text": "" if text == "-" else text}
             items.append({"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
                           "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
-                          "busy": self.module_busy(mid), "progress": progress})
+                          "busy": self.module_busy(mid, busy), "progress": progress})
         return items
 
     def module_spawn(self, mid, action, with_data):
@@ -352,18 +363,17 @@ class Panel:
     def ports(self, env, networks):
         """Kullanımdaki portlar: state.env ve ağ kaydından; hiçbir yeri taramaz."""
         rows = []
-        share_on = bool(self.module_state("paylasim", env))
+        on = {key: bool(self.module_state(mid, env)) for key, mid in PORT_MODULES.items()}
         for net in networks:
             rows.append({"port": net["port"], "proto": "udp", "scope": "internet",
                          "name": "WireGuard %s%s" % (net["iface"], " · %s" % net["label"] if net["label"] else "")})
         for key, name, proto, scope, default in PORT_ROWS:
-            # DD-149: paylaşım portu yalnız Paylaşım modülü kuruluyken dinlenir.
-            if key == "SHARE_PORT" and not share_on:
+            if key in on and not on[key]:
                 continue
             port = num_or(env.get(key), default)
             if port:
                 rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
-        if any(net["scope"] == "ui" and net["active"] for net in networks):
+        if on["TORRENT_UI_PORT"] and any(net["scope"] == "ui" and net["active"] for net in networks):
             for key, name in WG_UI_ROWS:
                 port = num_or(env.get(key), 0)
                 if port:
@@ -409,6 +419,8 @@ class Panel:
             "ports": self.ports(env, networks),
             # DD-150: disk kartı Dosya yöneticisi kurulu değilken de dolsun (kullanıcı alanının diski).
             "root": env.get("SERVER_ROOT", ""),
+            # DD-151: qBittorrent modülünün kartı için (yol ve port sabit yazılmasın).
+            "torrent": {"port": num_or(env.get("TORRENT_UI_PORT"), 0), "profile": env.get("TORRENT_PROFILE_DIR", "")},
             "disk": self.disk(env.get("SERVER_ROOT", "")),
             # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
             # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
@@ -492,8 +504,7 @@ class Panel:
             "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             "max": num_or(env.get("WG_NETWORKS_MAX"), 9) + 1,
             "reserved": sorted({num_or(env.get(k), 0) for k in (
-                "SSH_PUBLIC_PORT", "TORRENT_PUBLIC_PORT", "DOZZLE_UI_PORT",
-                "TORRENT_UI_PORT", "TAILSCALE_UDP_PORT", "WG_PANEL_PORT",
+                "SSH_PUBLIC_PORT", "TORRENT_UI_PORT", "TAILSCALE_UDP_PORT", "WG_PANEL_PORT",
                 "FILES_PANEL_PORT", "SHARE_PORT")} - {0} | {53, 80}),
             "defaults": {
                 "dns": os.environ.get("PANEL_DNS_DEFAULT", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"),
@@ -647,13 +658,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             reveal = query.get("parola") == ["1"]
             rc, out, message = self.panel.modul("hesap", mid, *(["--parola"] if reveal else []))
             fields = out.rstrip("\n").split("\t") if rc == 0 else []
+            env = read_env(self.panel.args.state)
+            domain = env.get("LOCAL_DOMAIN", "")
+            if mid == "torrent":
+                # kullanıcı, gecici|ayarli [, geçici parola]: parola arayüzde ayarlandıysa yoktur.
+                temp = len(fields) >= 2 and fields[1] == "gecici"
+                if len(fields) not in (2, 3) or (reveal and temp and len(fields) != 3):
+                    self.error(404, message or "hesap yok")
+                    return
+                body = {"user": fields[0], "temp": temp, "host": "torrent.%s" % domain if domain else ""}
+                if reveal and temp:
+                    body["pass"] = fields[2]
+                    self.audit(user, "modul-hesap", mid, True)
+                self.json(200, body)
+                return
             if len(fields) != (3 if reveal else 2):
                 self.error(404, message or "hesap yok")
                 return
-            env = read_env(self.panel.args.state)
             ts, port = env.get("TAILSCALE_IPV4", ""), num_or(env.get("SHARE_PORT"), 0)
             body = {"user": fields[0], "changed": num_or(fields[1], 0),
-                    "host": "paylas.%s" % env["LOCAL_DOMAIN"] if env.get("LOCAL_DOMAIN") else "",
+                    "host": "paylas.%s" % domain if domain else "",
                     "infuse": "http://%s:%d/" % (ts, port) if ts and port else ""}
             if reveal:
                 body["pass"] = fields[2]
@@ -731,7 +755,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.error(404, "bilinmeyen modül")
                 return
             if action == "parola":
-                if mid not in ACCOUNT_MODULES:
+                if mid not in PASSWORD_MODULES:
                     self.error(404, "bu modülde parola yok")
                     return
                 if not self.panel.module_state(mid):

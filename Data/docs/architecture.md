@@ -42,13 +42,13 @@ fact and one owner per decision.
                              │
         ┌────────────┬───────┴────────┬──────────────┐
         ▼            ▼                ▼              ▼
-    compose.yaml  dnsmasq conf     Caddyfile     firewall
+    modules/<id>  dnsmasq conf     Caddyfile     firewall
                   (lo +          (TAILSCALE_    (in memory)
                    tailscale0)    IPV4:80)
         │            │                │              │
         ▼            ▼                ▼              ▼
-   6 containers   dnsmasq         caddy         MASTER-INPUT
-   (incl. paylasim .service        .service      MASTER-DOCKER
+   master-modul   dnsmasq         caddy         MASTER-INPUT
+   (from Konsol;   .service        .service      MASTER-DOCKER
     on loopback)
 ```
 
@@ -108,7 +108,7 @@ re-detected, never as an expectation to be violated.
     ├── install.sh                     orchestration
     ├── common.sh                      logging, guards, file writing, rendering
     ├── config/defaults.env            single source of truth for constants
-    ├── templates/                     compose.yaml, Caddyfile, Caddyfile.wg, dnsmasq.conf, qBittorrent.conf
+    ├── templates/                     Caddyfile, Caddyfile.wg, dnsmasq.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
     ├── systemd/                       units (firewall, GRO, refresh timer, caddy-wg@ template, master-wg-panel)
     ├── panel/                         Konsol WireGuard and system backend: master-wg-panel (Python), API only
@@ -164,17 +164,15 @@ in §10, not resolved silently.
 | `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
-| `templates/compose.yaml` | The two base services (Dozzle, qBittorrent), volumes, port publications | Where it is written, which addresses are current; modules (their own Compose projects) |
 | `templates/Caddyfile` | The base HTTP sites and their loopback upstreams, plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
 | `panel/master-wg-panel` | Serve `/api/wg/*` and `/api/konsol/*` on loopback as root: no password (tailnet boundary, **DD-147**), CSRF/Host gates, JSON API over `master-wg`, module operations started as `systemd-run` units of `master-modul` (**DD-148**), plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; how a module is installed — it only calls `master-modul`; page files — Caddy serves them |
-| `scripts/master-modul` | Install, start, stop, remove and re-apply (`uygula`) catalogued modules — the Konsol modules Dosya yöneticisi (the file backend's unit) and WireGuard (packages, kernel module, firewall hook, networks) since **DD-150**; registry, progress file, one lock; `gunluk` for the card's log; Paylaşım's generated account (`parola`, read-only `hesap`), its checks, Caddy site, dnsmasq name and `acik` marker (**DD-148**, **DD-149**) | Templates and inputs — module files are rendered by the installer; user files (the share's `--veri` removes only its links) |
-| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `unpackerr/compose.yaml`; `paylasim/compose.yaml`, `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**) | Whether the module is installed |
+| `scripts/master-modul` | Install, start, stop, remove and re-apply (`uygula`) catalogued modules — the Konsol modules Dosya yöneticisi (the file backend's unit) and WireGuard (packages, kernel module, firewall hook, networks) since **DD-150**; the host module qBittorrent (Debian `qbittorrent-nox`, unit drop-in, first settings, first-login read from the journal, **DD-151**); registry, progress file, one lock; `gunluk` for the card's log; Paylaşım's generated account (`parola`, read-only `hesap`), its checks, Caddy site, dnsmasq name and `acik` marker (**DD-148**, **DD-149**) | Templates and inputs — module files are rendered by the installer; user files (the share's `--veri` removes only its links) |
+| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `unpackerr/compose.yaml`; `paylasim/compose.yaml`, `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
 | `files-panel/master-files-panel` | Serve the file API on loopback as the downloads uid: no password and the same gates as the root backend (**DD-147**), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames and uploads, the `.cop` trash, text decoding, share links while the `.pay/acik` marker exists (**DD-139**, **DD-140**, **DD-145**, **DD-149**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
 | `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files, modules and log, served by Caddy from `CONSOLE_WEB_DIR`, everything from its own origin (**DD-140**, **DD-148**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
-| `templates/qBittorrent.conf` | qBittorrent keys the installer manages; the account is added from the input file (**DD-129**) | ports, generated keys, account |
-| `templates/Caddyfile.wg` | The three UI ports on `{$WG_BIND}`, shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
-| `templates/dnsmasq.conf` | Seven `interface-name` records and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
+| `templates/Caddyfile.wg` | The qBittorrent UI port on `{$WG_BIND}` (**DD-151**), shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
+| `templates/dnsmasq.conf` | Five base `interface-name` records (modules add their own files) and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
 | `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
 | `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
@@ -205,7 +203,8 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
 | `/etc/master-stack/paylasim.htpasswd` | `master-modul` (Paylaşım) | bcrypt hash of the generated share account, `0600`; mounted into the module's Compose project (**DD-142**, **DD-149**) |
-| `/root/docker/compose.yaml` | installer | two base services, `0600`; modules are separate projects (**DD-148**, **DD-149**) |
+| `/var/lib/qbittorrent/` | qBittorrent (module) | its profile: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**) |
+| `/etc/systemd/system/qbittorrent-nox@.service.d/master-stack.conf` | `master-modul` (qBittorrent) | the unit drop-in: profile, `UMask`, sandbox (**DD-151**) |
 | `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
 | `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
@@ -409,14 +408,14 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 
 | Stage | Work | Owns |
 |---|---|---|
-| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate domain and the Dozzle/qBittorrent accounts, one confirmation (**DD-119**); `config.env`; full-upgrade and image-pull questions on re-run | operator input |
+| 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate the domain, one confirmation (**DD-119**); `config.env`; full-upgrade question on re-run | operator input |
 | 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker; sync the Dozzle account to the input file (**DD-119**); sync `qBittorrent.conf` to `templates/qBittorrent.conf` and the input account, stopping the client only to change it (**DD-129**); render `compose.yaml` (`--remove-orphans` retires dropped services such as FileBrowser, **DD-146**); remove host WebDAV leftovers; install scripts and units | templates |
+| 4 | Docker engine for the Docker modules (no base Compose project, **DD-151**); install scripts, render module files and units | templates |
 | 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed (or the config is newer than the running unit); `caddy-wg@` template for the UIs over WireGuard; Konsol root backend and pages; the file backend's script and unit (rendered to `MODULES_DIR/dosya/`, started only by the Dosya yöneticisi module, **DD-150**) (**DD-133**, **DD-140**) | DNS/HTTP |
-| 7 | Compose `up --remove-orphans` if needed; `master-modul uygula` for installed modules whose files changed, and for WireGuard on every run (**DD-149**, **DD-150**); cheap contract checks (share root owner + Caddy, `master-wg`, and — only with their modules — each registry network's units and the file backend; Konsol page 200 on the tailnet and 403 without `X-Konsol` or with a foreign `Host`, nothing on a WireGuard address) | verification |
+| 7 | `master-modul uygula` for installed modules whose files changed, and for WireGuard on every run (**DD-149**, **DD-150**); cheap contract checks (share root owner + Caddy, `master-wg`, and — only with their modules — each registry network's units and the file backend; Konsol page 200 on the tailnet and 403 without `X-Konsol` or with a foreign `Host`, nothing on a WireGuard address) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 Note the ordering change from v1: **addresses are detected once, in stage 3,
@@ -497,7 +496,7 @@ alone:
 | `bash -n` | Root `*.sh`, `scripts/*` and the exporter | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
 | `bats tests/` | Unit suites (repo convention, not from the rules file) | **yes** |
-| `docker compose config -q` | The rendered `compose.yaml` | **no** — runs on the target, in stage 4 (**DD-106**) |
+| `docker compose up` | A Docker module's rendered `compose.yaml` | **no** — an invalid file fails `master-modul kur` on the target (**DD-106**, **DD-151**) |
 | `caddy validate` | The rendered `Caddyfile` | **no** — runs on the target, in stage 6, with the real env (**DD-106**) |
 | `dnsmasq --test -C` | The rendered dnsmasq config | **no** — runs on the target, in stage 6 (**DD-106**) |
 | `systemd-analyze verify` | Every generated unit and drop-in | **no** — not run; the units are static tree files, covered by bats |

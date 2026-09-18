@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-117"
+V2_VERSION="2026.08.06-v2-120"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -18,9 +18,7 @@ V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 # retry fonksiyonları ayrı bash'te çalıştırır; apt çıktısı loga oradan da yazılsın.
 export V2_LOG_FILE
 RUN_FULL_UPGRADE=0
-COMPOSE_NEEDS_UP=1
 FIREWALL_NEEDS_RESTART=0
-PULL_IMAGES=0
 # state.env'de kayıtlı OS kimliği canlı os-release ile uyuşmuyorsa 1 olur;
 # OS'a bağlı adımlar dosya içeriği aynı kalsa bile yeniden uygulanır (DD-104).
 OS_CHANGED=0
@@ -30,11 +28,12 @@ OS_CHANGED=0
 # (~300 MB; DD-125). Başkasının önbelleğe koyduğu dosyaya dokunulmaz.
 APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)
 # DD-119: kurulum girdi dosyasının alanları (şablon: config/kurulum.env.example).
-# Hepsi dosyada yazılı olmalı; INPUT_NONEMPTY_KEYS boş da olamaz. Boş alan adı
-# defaults.env varsayılanını alır. Tailscale'e her zaman giriş bağlantısıyla katılınır (DD-147).
-# SSH_HOST'u yalnız launcher okur. Kullanıcı alanı sorulmaz: SERVER_ROOT sabittir (DD-144).
-INPUT_KEYS="SSH_HOST LOCAL_DOMAIN DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS"
-INPUT_NONEMPTY_KEYS="DOZZLE_USER DOZZLE_PASS TORRENT_USER TORRENT_PASS"
+# Hepsi dosyada yazılı olmalı. Boş alan adı defaults.env varsayılanını alır. Tailscale'e
+# her zaman giriş bağlantısıyla katılınır (DD-147). SSH_HOST'u yalnız launcher okur.
+# Kullanıcı alanı sorulmaz: SERVER_ROOT sabittir (DD-144). Servis hesabı girdisi yok: her
+# modül kendi hesabını Konsol'da gösterir (DD-148, DD-149, DD-151).
+INPUT_KEYS="SSH_HOST LOCAL_DOMAIN"
+INPUT_NONEMPTY_KEYS=""
 
 prompt() {
     local var="$1" msg="$2" default="${3:-}"
@@ -47,14 +46,6 @@ prompt() {
     fi
     [[ -n "$reply" ]] || die "değer boş olamaz: $msg"
     printf -v "$var" '%s' "$reply"
-}
-
-# DD-119: girdi dosyasındaki bir hesabı eski soruların kurallarıyla doğrular.
-# Mesaj değeri yazmaz.
-validate_account() {
-    local label="$1" user="$2" pass="$3" user_re="$4" min="$5"
-    [[ "$user" =~ $user_re ]] || die "girdi dosyası: geçersiz $label kullanıcı adı"
-    [[ "${#pass}" -ge "$min" ]] || die "girdi dosyası: $label parolası en az $min karakter olmalı"
 }
 
 write_state() {
@@ -72,7 +63,6 @@ SERVER_ROOT=$SERVER_ROOT
 DOWNLOADS_PATH=$DOWNLOADS_PATH
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PORT_DEFAULT=$WG_PORT_DEFAULT
-TORRENT_PUBLIC_PORT=$TORRENT_PUBLIC_PORT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_DOCKER=$CHAIN_DOCKER
@@ -100,6 +90,7 @@ STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
+DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
 WG_MODULES_LOAD_FILE=$WG_MODULES_LOAD_FILE
 CADDYFILE=$CADDYFILE
@@ -107,8 +98,8 @@ CADDY_MODULES_DIR=$CADDY_MODULES_DIR
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
-DOZZLE_UI_PORT=$DOZZLE_UI_PORT
 TORRENT_UI_PORT=$TORRENT_UI_PORT
+TORRENT_PROFILE_DIR=$TORRENT_PROFILE_DIR
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -392,21 +383,6 @@ stage_0() {
     detect_wan
     WG_ENDPOINT_HOST="$WAN_IPV4"
 
-    # DD-119: dosya tek doğru kaynak. Hesaplar her çalıştırmada kayıtlı olanla
-    # karşılaştırılır; farklıysa aşama 4 (Dozzle, qBittorrent) günceller. Parolalar
-    # yalnız bellekte durur. Paylaşım hesabını Paylaşım modülü üretir (DD-149).
-    # DD-116: Dozzle parolası aşama 4'te imajın kendi aracına stdin'den gider.
-    DOZZLE_NEW_USER="$INPUT_DOZZLE_USER"
-    DOZZLE_NEW_PASS="$INPUT_DOZZLE_PASS"
-    validate_account Dozzle "$DOZZLE_NEW_USER" "$DOZZLE_NEW_PASS" \
-        '^[a-z][a-z0-9_-]{0,31}$' "$DOZZLE_MIN_PASSWORD_LENGTH"
-    # DD-129: qBittorrent hesabı; parola sunucuya yalnız qBittorrent'in PBKDF2
-    # özeti olarak gider.
-    TORRENT_NEW_USER="$INPUT_TORRENT_USER"
-    TORRENT_NEW_PASS="$INPUT_TORRENT_PASS"
-    validate_account qBittorrent "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" \
-        '^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$' "$TORRENT_MIN_PASSWORD_LENGTH"
-
     # DD-147: Tailscale'e yalnız giriş bağlantısıyla katılınır; auth key girdisi yok.
     local ts_note="aşama 2'de giriş bağlantısı gösterilir; tarayıcıda onaylayın"
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 &&
@@ -435,40 +411,21 @@ stage_0() {
         fi
     fi
 
-    PULL_IMAGES=0
-    if [[ "${V2_PULL_IMAGES:-}" == "1" ]]; then
-        PULL_IMAGES=1
-        log INFO "image pull: V2_PULL_IMAGES=1"
-    elif [[ ! -r "$STATE_FILE" ]]; then
-        log INFO "image pull: ilk kurulum (compose up zaten güncel imajları çeker)"
-    else
-        local pull_ans="h"
-        prompt pull_ans "Konteyner imajları güncel sürüme çekilsin mi? (pull + eski imajlar silinir)" "h"
-        if [[ "$pull_ans" =~ ^[EeYy]$ ]]; then
-            PULL_IMAGES=1
-        else
-            log INFO "image pull atlandı"
-        fi
-    fi
-
     # DD-119: dosyadan gelen her şey tek ekranda, parolasız; ilk yazımdan
     # (config.env) önce tek onay.
-    local yes_no_upgrade="hayır" yes_no_pull="hayır" confirm_ans="h"
+    local yes_no_upgrade="hayır" confirm_ans="h"
     [[ "$RUN_FULL_UPGRADE" -eq 1 ]] && yes_no_upgrade="evet"
-    [[ "$PULL_IMAGES" -eq 1 ]] && yes_no_pull="evet"
     cat <<EOF
 
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Hesaplar:      Dozzle $DOZZLE_NEW_USER, qBittorrent $TORRENT_NEW_USER
-  Paylaşım:      Konsol → Modüller'den kurulur; hesabı orada üretilir (DD-149)
+  Modüller:      Dosya yöneticisi, WireGuard, qBittorrent, Paylaşım, Arşiv açıcı
+                 Konsol → Modüller'den kurulur; hesaplarını Konsol gösterir (DD-148)
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
-                 (dosyadakinden farklı olan hesap güncellenir)
   Tailscale:     $ts_note
   full-upgrade:  $yes_no_upgrade
-  image pull:    $yes_no_pull
 
 EOF
     prompt confirm_ans "Bu değerlerle kurulum başlasın mı? (E/h)" "h"
@@ -689,6 +646,29 @@ ensure_module_files() {
         TAILSCALE_IF="$TAILSCALE_IF"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    # DD-151: qBittorrent — ilk ayar (profil boşken bir kez), servis eki, Caddy sitesi, dnsmasq adı.
+    changed=0
+    install -d -m 0755 -o root -g root "$MODULES_DIR/torrent"
+    render_template "$V2_ROOT/modules/torrent/qBittorrent.conf" "$MODULES_DIR/torrent/qBittorrent.conf" 0644 \
+        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        TORRENT_TEMP_DIR="$TORRENT_TEMP_DIR" \
+        TORRENT_UI_PORT="$TORRENT_UI_PORT"
+    render_template "$V2_ROOT/modules/torrent/master-stack.conf" "$MODULES_DIR/torrent/master-stack.conf" 0644 \
+        TORRENT_PROFILE_DIR="$TORRENT_PROFILE_DIR" \
+        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
+        SERVER_ROOT="$SERVER_ROOT" \
+        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        SHARE_DIR="$SHARE_DIR"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    render_template "$V2_ROOT/modules/torrent/torrent.caddy" "$MODULES_DIR/torrent/torrent.caddy" 0644 \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        TORRENT_UI_PORT="$TORRENT_UI_PORT"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    render_template "$V2_ROOT/modules/torrent/dnsmasq.conf" "$MODULES_DIR/torrent/dnsmasq.conf" 0644 \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        TAILSCALE_IF="$TAILSCALE_IF"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED torrent"
     # DD-150: WireGuard'ın işlenen dosyası yok; kuruluysa her çalıştırmada uygulanır (paketler
     # bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
     MODULES_CHANGED="$MODULES_CHANGED wireguard"
@@ -716,252 +696,14 @@ reapply_modules() {
     for id in $MODULES_CHANGED; do
         state="$(module_state "$id")"
         [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
-        log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
+        if [[ "$id" == wireguard ]]; then
+            log INFO "Modül wireguard: yeniden uygulanıyor (her kurulumda: paketler, çekirdek modülü, ağlar)"
+        else
+            log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
+        fi
         "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
             log WARN "Modül $id yeniden uygulanamadı; Konsol → Modüller'den bakın"
     done
-}
-
-# DD-119: users.yml tek kullanıcı taşıyor, adı dosyadaki ve özeti parolayla
-# eşleşiyorsa 0. Kullanıcılar 4, alanları 8 boşluk girintili (generate çıktısı).
-dozzle_users_match() {
-    local hash
-    [[ -f "$DOZZLE_USERS_FILE" ]] || return 1
-    [[ "$(awk '/^    [^ #][^:]*:[[:space:]]*$/ {n++} END {print n+0}' "$DOZZLE_USERS_FILE")" -eq 1 ]] ||
-        return 1
-    hash="$(awk -v u="$DOZZLE_NEW_USER" '/^    [^ ]/ {in_user = ($1 == u ":")}
-        in_user && $1 == "password:" {print $2}' "$DOZZLE_USERS_FILE")"
-    bcrypt_matches "$DOZZLE_NEW_USER" "$hash" "$DOZZLE_NEW_PASS"
-}
-
-# DD-116: users.yml imajın kendi `generate` aracıyla üretilir (bcrypt; biçim
-# upstream'in). Parola stdin'den gider — argv'ye, loga, diske düz metin girmez;
-# konteyner ağsız. Rol `actions`: başlat/durdur/sil, shell yok.
-ensure_dozzle_users() {
-    local tmp
-    install -d -m 0700 -o root -g root "$DOZZLE_DATA_DIR"
-    [[ -n "${DOZZLE_NEW_PASS:-}" ]] || return 0
-    if dozzle_users_match; then
-        log INFO "Dozzle hesabı girdi dosyasıyla aynı; dokunulmadı"
-        unset DOZZLE_NEW_PASS
-        DOZZLE_NEW_USER=""
-        return 0
-    fi
-    tmp="$(mktemp "$DOZZLE_DATA_DIR/.users-XXXXXX")"
-    if ! printf '%s\n' "$DOZZLE_NEW_PASS" |
-        docker run -i --rm --network none "$DOZZLE_IMAGE" \
-            generate --user-roles actions "$DOZZLE_NEW_USER" >"$tmp"; then
-        rm -f -- "$tmp"
-        die "Dozzle kullanıcı dosyası üretilemedi"
-    fi
-    if ! awk -v u="$DOZZLE_NEW_USER" '$1 == u ":" {user=1} $1 == "password:" && $2 ~ /^\$2[aby]\$/ {hash=1}
-        END {exit !(user && hash)}' "$tmp"; then
-        rm -f -- "$tmp"
-        die "Dozzle kullanıcı dosyası beklenen biçimde değil"
-    fi
-    chmod 0600 "$tmp"
-    chown root:root "$tmp"
-    mv -f -- "$tmp" "$DOZZLE_USERS_FILE"
-    unset DOZZLE_NEW_PASS
-    DOZZLE_NEW_USER=""
-    log INFO "Dozzle kullanıcı dosyası yazıldı: $DOZZLE_USERS_FILE"
-    # Çalışan bir Dozzle yeni hesabı ancak yeniden açılışta okur.
-    if docker inspect dozzle >/dev/null 2>&1; then
-        docker restart dozzle >/dev/null || log WARN "dozzle yeniden başlatılamadı; yeni hesap bir sonraki açılışta geçerli"
-    fi
-}
-
-# DD-129: /config bind. qBittorrent.conf, templates/qBittorrent.conf'taki
-# anahtarlar ve kurulum.env hesabıyla eşitlenir; qBittorrent'in kendi eklediği
-# anahtarlar olduğu gibi kalır. Portları imaj her açılışta komut satırından verir.
-ensure_qbittorrent_dir() {
-    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$QBITTORRENT_DATA_DIR"
-}
-
-# qBittorrent'in WebUI parola özeti: PBKDF2-HMAC-SHA512, 100000 tur, 16 bayt
-# tuz, 64 bayt özet, "@ByteArray(tuz:özet)" (base64, tırnaklı). Parola stdin'den
-# okunur. Argüman verilirse o özeti doğrular (0 eşleşir, 1 eşleşmez, 2 biçim
-# bozuk); özet python'a ortamdan gider, argv'de görünmez. Argümansız yeni özet
-# yazar.
-qbit_pbkdf2() {
-    QB_EXISTING="${1:-}" python3 -c '
-import base64, binascii, hashlib, hmac, os, sys
-pw = sys.stdin.buffer.read()
-cur = os.environ.get("QB_EXISTING", "")
-if cur:
-    inner = cur[1:-1] if len(cur) > 1 and cur[0] == cur[-1] == "\"" else cur
-    if not (inner.startswith("@ByteArray(") and inner.endswith(")")):
-        sys.exit(2)
-    salt, sep, want = inner[len("@ByteArray("):-1].partition(":")
-    try:
-        salt = base64.b64decode(salt, validate=True)
-        want = base64.b64decode(want, validate=True)
-    except (binascii.Error, ValueError):
-        sys.exit(2)
-    if not sep or not salt or not want:
-        sys.exit(2)
-    got = hashlib.pbkdf2_hmac("sha512", pw, salt, 100000, len(want))
-    sys.exit(0 if hmac.compare_digest(got, want) else 1)
-salt = os.urandom(16)
-key = hashlib.pbkdf2_hmac("sha512", pw, salt, 100000, 64)
-sys.stdout.write("\"@ByteArray(%s:%s)\"\n" % (base64.b64encode(salt).decode(), base64.b64encode(key).decode()))
-'
-}
-
-# INI → "[bölüm]<TAB>anahtar=değer". qBittorrent anahtarları ters eğik çizgi
-# içerir, değerler '=' içerebilir: yalnız ilk '=' ayırır. Yorum ve boş satır atlanır.
-qbit_conf_flatten() {
-    awk '/^\[[^]]*\]$/ {s = $0; next} /^[^#;]/ && index($0, "=") > 1 {print s "\t" $0}' "$@"
-}
-
-# stdin: istenen düz liste; $1: canlı dosya. Değeri farklı ya da eksik olan
-# anahtarları "[bölüm] anahtar" olarak yazar (değer yazmaz).
-qbit_conf_diff() {
-    awk -F'\t' '
-        FNR == NR { k = $1 "\t" substr($2, 1, index($2, "=") - 1); want[k] = $2; order[++n] = k; next }
-        /^\[[^]]*\]$/ { s = $0; next }
-        index($0, "=") > 1 {
-            k = s "\t" substr($0, 1, index($0, "=") - 1)
-            if ((k in want) && !(k in have)) have[k] = $0
-        }
-        END {
-            for (i = 1; i <= n; i++)
-                if (have[order[i]] != want[order[i]]) { split(order[i], p, "\t"); print p[1] " " p[2] }
-        }
-    ' - "$1"
-}
-
-# stdin: istenen düz liste; $1: canlı dosya (yoksa /dev/null). Çıktı: istenen
-# anahtarları kendi bölümünde yerinde değiştirilmiş, eksikleri bölüm sonuna,
-# eksik bölümleri dosya sonuna eklenmiş dosya. Diğer satırlar aynen kalır;
-# yönetilen bir anahtarın ikinci kopyası atılır.
-qbit_conf_merge() {
-    awk -F'\t' '
-        function flush(sec,   list, m, i) {
-            m = split(keys[sec], list, SUBSEP)
-            for (i = 2; i <= m; i++)
-                if (!(list[i] in done)) { print substr(want[list[i]], 1); done[list[i]] = 1 }
-        }
-        FNR == NR {
-            k = $1 "\t" substr($2, 1, index($2, "=") - 1)
-            if (!(k in want)) {
-                want[k] = $2
-                keys[$1] = keys[$1] SUBSEP k
-                if (!($1 in known)) { known[$1] = 1; secs[++ns] = $1 }
-            }
-            next
-        }
-        /^[[:space:]]*$/ { blanks++; next }
-        /^\[[^]]*\]$/ {
-            if (s != "") flush(s)
-            for (; blanks > 0; blanks--) print ""
-            s = $0; present[s] = 1; print; next
-        }
-        {
-            for (; blanks > 0; blanks--) print ""
-            if (index($0, "=") > 1) {
-                k = s "\t" substr($0, 1, index($0, "=") - 1)
-                if (k in want) {
-                    if (!(k in done)) { print want[k]; done[k] = 1 }
-                    next
-                }
-            }
-            print
-        }
-        END {
-            if (s != "") flush(s)
-            for (i = 1; i <= ns; i++) {
-                if (secs[i] in present) continue
-                if (printed++ || s != "") print ""
-                print secs[i]
-                flush(secs[i])
-            }
-        }
-    ' - "$1"
-}
-
-# DD-129: qBittorrent.conf'u şablon + kurulum.env hesabıyla eşitler. Değişiklik
-# yoksa dosyaya ve konteynere dokunulmaz. Parola özeti, mevcut özet aynı parolayı
-# doğruluyorsa korunur (her çalıştırmada yeni tuz = sahte değişiklik olurdu).
-# qBittorrent kapanırken dosyasını yazdığından değişiklik konteyner durunca yapılır.
-sync_qbittorrent_config() {
-    local conf="$QBITTORRENT_CONF_FILE" cur="" hash desired diff running merged rc=0
-    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$QBITTORRENT_DATA_DIR" "${conf%/*}"
-    if [[ -f "$conf" ]]; then
-        cur="$(awk 'index($0, "WebUI\\Password_PBKDF2=") == 1 {print substr($0, 23); exit}' "$conf")"
-    fi
-    if [[ -n "$cur" ]]; then
-        printf '%s' "$TORRENT_NEW_PASS" | qbit_pbkdf2 "$cur" || rc=$?
-    else
-        rc=1
-    fi
-    if [[ "$rc" -eq 0 ]]; then
-        hash="$cur"
-    else
-        hash="$(printf '%s' "$TORRENT_NEW_PASS" | qbit_pbkdf2)" ||
-            die "qBittorrent parola özeti hesaplanamadı (python3)"
-    fi
-    desired="$(
-        qbit_conf_flatten "$V2_ROOT/templates/qBittorrent.conf"
-        printf '[Preferences]\tWebUI\\Username=%s\n' "$TORRENT_NEW_USER"
-        printf '[Preferences]\tWebUI\\Password_PBKDF2=%s\n' "$hash"
-    )"
-    if [[ -f "$conf" ]]; then
-        diff="$(qbit_conf_diff "$conf" <<<"$desired")"
-        if [[ -z "$diff" ]]; then
-            log INFO "qBittorrent ayarları ve hesabı şablonla aynı; dokunulmadı"
-            hash="" desired="" cur=""
-            return 0
-        fi
-    else
-        diff="(yeni dosya)"
-    fi
-    running="$(docker inspect -f '{{.State.Running}}' qbittorrent 2>/dev/null || true)"
-    [[ "$running" != "true" ]] || docker stop qbittorrent >/dev/null
-    # Durunca qBittorrent dosyasını yeniden yazmış olabilir: birleştirme sonra.
-    if [[ -f "$conf" ]]; then
-        merged="$(qbit_conf_merge "$conf" <<<"$desired")"
-    else
-        merged="$(qbit_conf_merge /dev/null <<<"$desired")"
-    fi
-    atomic_write "$conf" 0600 <<<"$merged"
-    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$conf"
-    log INFO "qBittorrent ayarları eşitlendi: $(paste -sd, - <<<"$diff" | sed 's/,/, /g')"
-    [[ "$running" != "true" ]] || docker start qbittorrent >/dev/null
-    hash="" desired="" cur="" merged=""
-}
-
-# DD-129: kurulum.env hesabıyla gerçekten giriş yapılabildiğini ve girişin
-# atlanamadığını doğrular. Parola urlencode için python3'e, oradan curl'e
-# stdin'den gider (argv'de görünmez). qBittorrent başarısız girişte istemci
-# IP'sini yasakladığından yalnız "hazır değil" (000/5xx) beklenir; 401'de durulur.
-qbit_login_check() {
-    local jar code n=0 prefs
-    jar="$(mktemp "$RUNTIME_DIR/qbit-cookie.XXXXXX")"
-    while :; do
-        code="$(printf '%s\n%s' "$TORRENT_NEW_USER" "$TORRENT_NEW_PASS" |
-            python3 -c 'import sys, urllib.parse; u, p = sys.stdin.read().split("\n", 1); sys.stdout.write(urllib.parse.urlencode({"username": u, "password": p}))' |
-            curl -s -o /dev/null -w '%{http_code}' --max-time 5 -c "$jar" --data @- \
-                -H "Referer: http://127.0.0.1:${TORRENT_UI_PORT}" \
-                "http://127.0.0.1:${TORRENT_UI_PORT}/api/v2/auth/login" || true)"
-        case "$code" in 000 | 5??) ;; *) break ;; esac
-        n=$((n + 1))
-        [[ "$n" -lt 30 ]] || break
-        sleep 1
-    done
-    # qBittorrent 5.2 başarılı girişte 204 döner (eskiler 200 "Ok."); asıl kanıt
-    # oturum çerezidir.
-    if [[ "$code" != "200" && "$code" != "204" ]] || ! grep -q 'SID' "$jar"; then
-        rm -f -- "$jar"
-        die "qBittorrent girişi kurulum.env hesabıyla başarısız (HTTP ${code})"
-    fi
-    prefs="$(curl -s --max-time 5 -b "$jar" "http://127.0.0.1:${TORRENT_UI_PORT}/api/v2/app/preferences" || true)"
-    rm -f -- "$jar"
-    jq -e --arg u "$TORRENT_NEW_USER" \
-        '.web_ui_username == $u and .bypass_local_auth == false and .bypass_auth_subnet_whitelist_enabled == false' \
-        >/dev/null <<<"$prefs" ||
-        die "qBittorrent tercihleri beklenen gibi değil (kullanıcı adı ya da giriş atlama)"
-    log INFO "qBittorrent girişi kurulum.env hesabıyla doğrulandı"
 }
 
 # DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
@@ -1049,49 +791,7 @@ stage_4() {
         --no-install-recommends \
         docker-ce docker-ce-cli containerd.io docker-compose-plugin apparmor pigz
     systemctl enable --now docker
-    ensure_dozzle_users
-    ensure_qbittorrent_dir
-    sync_qbittorrent_config
-
-    mkdir -p "$COMPOSE_DIR"
-    COMPOSE_NEEDS_UP=0
-    render_template "$V2_ROOT/templates/compose.yaml" "$COMPOSE_DIR/compose.yaml" 0600 \
-        DOZZLE_IMAGE="$DOZZLE_IMAGE" \
-        QBITTORRENT_IMAGE="$QBITTORRENT_IMAGE" \
-        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
-        TORRENT_PUBLIC_PORT="$TORRENT_PUBLIC_PORT" \
-        SERVER_ROOT="$SERVER_ROOT" \
-        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
-        DOWNLOADS_UID="$DOWNLOADS_UID" \
-        DOWNLOADS_GID="$DOWNLOADS_GID" \
-        DOZZLE_DATA_DIR="$DOZZLE_DATA_DIR" \
-        QBITTORRENT_DATA_DIR="$QBITTORRENT_DATA_DIR" \
-        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
-        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
-        TIMEZONE="$TIMEZONE"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && COMPOSE_NEEDS_UP=1
-    # Render'ı aktifleştirmeden önce doğrula (DD-106): şema hatası pull/up
-    # yerine burada, kendi mesajıyla düşsün. Aşama 7'deki `config --services`
-    # zaten örtük doğrulardı ama iki aşama sonra ve pull'dan sonraydı.
-    (cd "$COMPOSE_DIR" && docker compose config -q) ||
-        die "compose.yaml doğrulanamadı: $COMPOSE_DIR/compose.yaml"
-
-    if [[ "$PULL_IMAGES" -eq 1 ]]; then
-        # Fail-closed disk kapısı (DD-101): yarıda kalan bir pull disk-dolu
-        # durumunda çalışan konteynerleri de etkileyebilir; eşik altındaysa
-        # hiç başlama. Ölçüm imajların yaşadığı dosya sisteminden alınır.
-        local pull_free_kb pull_min_kb
-        pull_free_kb="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print $4}')"
-        [[ "$pull_free_kb" =~ ^[0-9]+$ ]] ||
-            die "disk boş alanı okunamadı (/var/lib/docker)"
-        pull_min_kb=$((PULL_MIN_FREE_GB * 1024 * 1024))
-        [[ "$pull_free_kb" -ge "$pull_min_kb" ]] ||
-            die "imaj pull için boş alan yetersiz: $((pull_free_kb / 1024 / 1024)) GiB < ${PULL_MIN_FREE_GB} GiB (/var/lib/docker)"
-        log INFO "docker compose pull (imajlar güncelleniyor; boş alan $((pull_free_kb / 1024 / 1024)) GiB)"
-        (cd "$COMPOSE_DIR" && docker compose pull) || die "docker compose pull başarısız"
-        COMPOSE_NEEDS_UP=1
-    fi
+    # DD-151: temel Compose projesi yok; Docker motoru yalnız Docker modülleri içindir.
 
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
@@ -1256,8 +956,6 @@ EOF
     render_template "$V2_ROOT/templates/Caddyfile" "$CADDYFILE" 0644 \
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
@@ -1348,7 +1046,6 @@ EOF
 ensure_caddy_wg() {
     local changed="${1:-0}" validate_out iface
     render_template "$V2_ROOT/templates/Caddyfile.wg" "$CADDY_WG_FILE" 0644 \
-        DOZZLE_UI_PORT="$DOZZLE_UI_PORT" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     # Ağ yokken sunucu adresi de yok; doğrulama yalnız sözdizimi için yer tutucu bağlar.
@@ -1380,6 +1077,9 @@ ensure_caddy_wg() {
 # sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
+    # Arka ucun yazabildiği tek kalıcı yer. DD-150'den beri WireGuard modülü (paketiyle
+    # birlikte) sonradan kurulur; klasör burada açılmazsa arka uç başlamaz (v2-119).
+    install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
     atomic_write "$SBIN_DIR/master-wg-panel" 0755 <"$V2_ROOT/panel/master-wg-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     render_template "$V2_ROOT/systemd/master-wg-panel.service" "$UNIT_DIR/master-wg-panel.service" 0644 \
@@ -1435,16 +1135,9 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    # qBittorrent'in geçici klasörü konteyner yoluyla yazılıdır; panel onu kullanıcı
-    # alanının köküne göre bilir (DD-144): <indirme klasörü>/<geçici>.
-    temp_dir="$(awk -F= '$1 == "Session\\TempPath" {print $2; exit}' "$V2_ROOT/templates/qBittorrent.conf")"
-    temp_dir="${temp_dir#/downloads/}"
-    temp_dir="${temp_dir%/}"
-    if [[ "$temp_dir" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        temp_dir="$DOWNLOADS_SUBDIR/$temp_dir"
-    else
-        temp_dir=""
-    fi
+    # DD-144, DD-151: qBittorrent modülünün ilk ayarındaki yarım indirme klasörü; panel onu
+    # kullanıcı alanının köküne göre bilir (<indirme klasörü>/<geçici>) ve orada uyarır.
+    temp_dir="$DOWNLOADS_SUBDIR/$TORRENT_TEMP_DIR"
     install -d -m 0755 -o root -g root "$MODULES_DIR/dosya"
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
@@ -1463,32 +1156,9 @@ ensure_files_panel() {
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    local need_up="$COMPOSE_NEEDS_UP" running=0 expected
-    expected="$(
-        (cd "$COMPOSE_DIR" && docker compose config --services) | grep -c .
-    )" || die "compose servis sayısı okunamadı"
-    if [[ "$need_up" -eq 0 ]]; then
-        running="$(
-            (cd "$COMPOSE_DIR" && docker compose ps --status running -q 2>/dev/null || true) |
-                wc -l | tr -d ' '
-        )"
-        [[ "$running" =~ ^[0-9]+$ ]] || running=0
-        if [[ "$running" -lt "$expected" ]]; then
-            need_up=1
-        fi
-    fi
-    if [[ "$need_up" -eq 1 ]]; then
-        # --remove-orphans: compose dosyası tek doğruluk kaynağıdır; dosyadan çıkarılan
-        # bir servisin konteyneri ayakta kalmaz (DD-142'de kaldırılan webdav gibi).
-        (cd "$COMPOSE_DIR" && docker compose up -d --remove-orphans)
-    else
-        log INFO "Compose dosyası aynı ve konteynerler ayakta; up atlandı"
-    fi
+    # DD-151: temel Compose projesi yok; konteynerler Docker modüllerinindir ve kurulu olanlar
+    # dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
-    if [[ "$PULL_IMAGES" -eq 1 ]]; then
-        log INFO "docker image prune (eski imaj katmanları temizleniyor)"
-        docker image prune -f >/dev/null || log WARN "docker image prune başarısız (yok sayıldı)"
-    fi
     "$SBIN_DIR/master-firewall" --check
 
     # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
@@ -1544,54 +1214,9 @@ stage_7() {
     health="$(curl -fsS --max-time 5 "http://${TAILSCALE_IPV4}/" -H "Host: health.${LOCAL_DOMAIN}" || true)"
     [[ "$health" == "ok" ]] || die "Caddy health yanıtı beklenen gibi değil"
 
-    # Contract §14.13 — dört UI sitesi Caddy üzerinden non-5xx (DD-88).
-    local ui_host ui_code
-    for ui_host in dozzle torrent file; do
-        ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            -H "Host: ${ui_host}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-        [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
-            die "Caddy ${ui_host}.${LOCAL_DOMAIN}: HTTP '${ui_code}' (non-5xx beklenir)"
-    done
-
-    # DD-116: Dozzle docker.sock'a erişir; giriş zorunlu olmalı (fail-closed).
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: dozzle.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/api/events/stream" || true)"
-    [[ "$code" == "401" ]] ||
-        die "Dozzle API girişsiz yanıt $code verdi (beklenen 401)"
-    # DD-127: qBittorrent API'si girişsiz 403 vermeli. Arayüzde "yerel istemcide
-    # girişi atla" ya da bir alt ağ beyaz listesi açılırsa Caddy'den gelen herkes
-    # parolasız girerdi (istekler konteynere Docker ağ geçidinden ulaşır).
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: torrent.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/api/v2/app/version" || true)"
-    [[ "$code" == "403" ]] ||
-        die "qBittorrent API girişsiz yanıt $code verdi (beklenen 403; arayüzde giriş atlama/beyaz liste açık olabilir)"
-    qbit_login_check
-    unset TORRENT_NEW_PASS
-
-
-    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
-        grep -q "${TORRENT_PUBLIC_PORT}/tcp" ||
-        die "qbittorrent public TCP ${TORRENT_PUBLIC_PORT} publish yok"
-    (cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null |
-        grep -q "${TORRENT_PUBLIC_PORT}/udp" ||
-        die "qbittorrent public UDP ${TORRENT_PUBLIC_PORT} publish yok"
-
-    # Paylaşım modülünün yayınını master-modul sınar (DD-149).
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" == *127.0.0.1:* ]] ||
-            die "UI publish yalnız loopback olmalı: dozzle ($line)"
-    done < <((cd "$COMPOSE_DIR" && docker port dozzle) 2>/dev/null || true)
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" == *"${TORRENT_PUBLIC_PORT}/"* ]] && continue
-        [[ "$line" == *127.0.0.1:* ]] ||
-            die "qBittorrent UI publish yalnız loopback olmalı ($line)"
-    done < <((cd "$COMPOSE_DIR" && docker port qbittorrent) 2>/dev/null || true)
-
     # DD-120/DD-143: WireGuard katmanı hazır; kayıtta ağ varsa her biri ayakta, portu
     # kaydındaki port ve erişimi "ui" olanın arayüzleri caddy-wg'den non-5xx.
-    local wg_iface wg_scope wg_s4 wg_port wg_ui_port
+    local wg_iface wg_scope wg_s4 wg_port wg_ui_port ui_code
     "$SBIN_DIR/master-wg" version >/dev/null ||
         die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
     WG_PEER_COUNT=0
@@ -1612,13 +1237,13 @@ stage_7() {
             ip -4 -o addr show dev "$wg_iface" 2>/dev/null | grep -q " ${wg_s4}/" ||
                 die "WireGuard $wg_iface üzerinde $wg_s4 yok"
             WG_PEER_COUNT=$((WG_PEER_COUNT + $(wg show "$wg_iface" peers 2>/dev/null | grep -c . || true)))
-            [[ "$wg_scope" == ui ]] || continue
-            for wg_ui_port in "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT"; do
-                ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-                    "http://${wg_s4}:${wg_ui_port}/" || true)"
-                [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
-                    die "caddy-wg ${wg_s4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
-            done
+            # DD-151: WireGuard'dan açılan arayüz qBittorrent'inkidir; modül kuruluysa sınanır.
+            [[ "$wg_scope" == ui && -n "$(module_state torrent)" ]] || continue
+            wg_ui_port="$TORRENT_UI_PORT"
+            ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                "http://${wg_s4}:${wg_ui_port}/" || true)"
+            [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
+                die "caddy-wg ${wg_s4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
         done <"$WG_NETWORKS_FILE"
     fi
 
@@ -1681,11 +1306,8 @@ stage_7() {
     [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
         die "Paylaşım kökü ${SERVER_ROOT}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
 
-    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; qBittorrent yalnız indirme
-    # klasörünü bağlar, o yüzden ikisini de göremez. Arşiv açıcı modülünü master-modul sınar (DD-148).
-    docker exec qbittorrent sh -c \
-        "test ! -e /downloads/${FILES_PANEL_TRASH} && test ! -e /downloads/${SHARE_DIR}" ||
-        die "qBittorrent konteyneri çöp ya da paylaşım klasörünü görüyor"
+    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; Arşiv açıcı ve qBittorrent
+    # modülleri onları göremez — ikisini de kurulurken master-modul sınar (DD-148, DD-151).
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
             "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
@@ -1695,8 +1317,28 @@ stage_7() {
     log INFO "Temel doğrulamalar geçti"
 }
 
+# Özet: her modülün durumu; kurulu olanın adresi (DD-148). v2-120'ye dek kurulu modül için de
+# "Konsol → Modüller'den kurulur" yazılıyordu.
+summary_modules() {
+    local id name info st
+    for id in dosya wireguard torrent paylasim unpackerr; do
+        case "$id" in
+            dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
+            wireguard) name="WireGuard"; info="${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer" ;;
+            torrent) name="qBittorrent"; info="http://torrent.${LOCAL_DOMAIN}; ilk giriş bilgisi kartında" ;;
+            paylasim) name="Paylaşım"; info="http://paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı kartında" ;;
+            unpackerr) name="Arşiv açıcı"; info="indirme klasöründeki arşivleri açar" ;;
+        esac
+        case "$(module_state "$id")" in
+            calisiyor) st="kurulu" ;;
+            durduruldu) st="kurulu, durduruldu" ;;
+            *) st="kurulu değil"; info="" ;;
+        esac
+        printf '  %s: %s%s\n' "$name" "$st" "${info:+ — $info}"
+    done
+}
+
 print_summary() {
-    local qb_note="kurulum.env hesabı; ayarlar templates/qBittorrent.conf"
     log INFO "Kurulum tamam — v$V2_VERSION"
     cat <<EOF
 
@@ -1705,8 +1347,6 @@ Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Kullanıcı alanı: $SERVER_ROOT (indirmeler $DOWNLOADS_PATH, kütüphane $SERVER_ROOT/$MEDIA_SUBDIR)
 WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; modül ve ağlar Konsol'dan)
-Torrent peer: ${TORRENT_PUBLIC_PORT}/tcp+udp
-Compose:      $COMPOSE_DIR/compose.yaml
 State:        $STATE_FILE
 Log:          $V2_LOG_FILE
 
@@ -1716,14 +1356,11 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale.
-  wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir). Dosya yöneticisi (${SERVER_ROOT}), WireGuard,
-  Paylaşım ve Arşiv açıcı Konsol → Modüller'den kurulur (DD-148, DD-150)
-Paylaşım: Konsol → Modüller'den kurulur (paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı orada)
-Dozzle: http://dozzle.${LOCAL_DOMAIN} (durum, loglar, başlat/durdur/sil)
-qBittorrent: http://torrent.${LOCAL_DOMAIN} ($qb_note)
-WireGuard: ${WG_NET_COUNT:-0} ağ. Önce Konsol → Modüller → WireGuard, sonra WireGuard → Yapılandır ile ilk ağ;
-  "Local erişim" açık ağlarda Dozzle ve qBittorrent o ağın sunucu adresinde açılır.
-  Peer eklemek/çıkarmak ve QR: Konsol ya da Mac'te wireguard.command (anahtarlar sunucuda üretilir).
+  wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
+Modüller (Konsol → Modüller'den kurulur, durdurulur, kaldırılır; DD-148, DD-150, DD-151):
+$(summary_modules)
+  WireGuard ağları WireGuard → Yapılandır'dan; "Local erişim" açık ağlarda qBittorrent arayüzü
+  o ağın sunucu adresinde açılır. Peer ve QR: Konsol ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF

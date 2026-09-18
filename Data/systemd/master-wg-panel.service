@@ -16,12 +16,13 @@ Environment="PANEL_MTU_DEFAULT=__WG_MTU__"
 Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0077
 # master-wg root ister (wg syncconf, /etc/wireguard). Yazabildiği tek kalıcı yer
-# /etc/wireguard; /run (kilit) ProtectSystem=full altında yazılabilir kalır.
+# /etc/wireguard; /run (kilit) ProtectSystem=full altında yazılabilir kalır. Klasörü kurulum
+# açar (DD-150: WireGuard modülü sonradan kurulur); yine de yoksa Konsol açılır ('-').
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/etc/wireguard
+ReadWritePaths=-/etc/wireguard
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

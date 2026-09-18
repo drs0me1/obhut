@@ -16,7 +16,8 @@
 #
 # Konsol modülleri (dosya, wireguard; DD-150) durdurulup başlatılmaz: kurulur ya da kaldırılır.
 # Paylaşım Dosya yöneticisine bağlıdır: önce o kurulur, en son o kaldırılır.
-#   master-modul hesap ID [--parola]    yalnız paylasim: "kullanıcı<TAB>değişim" (+ <TAB>parola)
+#   master-modul hesap ID [--parola]    paylasim: "kullanıcı<TAB>değişim" (+ <TAB>parola)
+#                                       torrent: "kullanıcı<TAB>gecici|ayarli" (+ <TAB>geçici parola)
 #   master-modul uygula ID              kurulumun yeniden çalışması: kurulu modülün dosyalarını uygular
 set -Eeuo pipefail
 umask 022
@@ -36,12 +37,13 @@ source "$STATE_FILE"
 
 # Katalog: Konsol'daki sıra. Her modülün çalışma yeri (docker | host | konsol) ve adımları
 # aşağıdaki case bloklarında tanımlıdır.
-CATALOG="dosya wireguard paylasim unpackerr"
+CATALOG="dosya wireguard torrent paylasim unpackerr"
 ID_RE='^[a-z]{2,16}$'
 
 runtime_of() {
     case "$1" in
         dosya | wireguard) printf 'konsol\n' ;;
+        torrent) printf 'host\n' ;;
         paylasim | unpackerr) printf 'docker\n' ;;
         *) return 1 ;;
     esac
@@ -302,38 +304,40 @@ swap_out() { # HEDEF DOĞRULAYICI → 0 kaldırıldı, 1 zaten yok, 2 kaldırıl
     "$2" || return 2
 }
 
-share_names_on() {
-    local rc=0
-    SHARE_FAIL=""
-    swap_in "$MODULES_DIR/paylasim/paylasim.caddy" "$CADDY_MODULES_DIR/paylasim.caddy" caddy_validate || rc=$?
+# Bir modülün adları: MODULES_DIR/<id>/<id>.caddy → CADDY_MODULES_DIR/<id>.caddy ve
+# MODULES_DIR/<id>/dnsmasq.conf → DNSMASQ_CONF_DIR/modul-<id>.conf. Hata: FAIL.
+names_on() { # ID
+    local id="$1" rc=0
+    FAIL=""
+    swap_in "$MODULES_DIR/$id/$id.caddy" "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
     case "$rc" in
-        0) systemctl reload caddy >/dev/null 2>&1 || { SHARE_FAIL="Caddy yeniden yüklenemedi"; return 1; } ;;
+        0) systemctl reload caddy >/dev/null 2>&1 || { FAIL="Caddy yeniden yüklenemedi"; return 1; } ;;
         1) ;;
-        2) SHARE_FAIL="Caddy yapılandırması doğrulanmadı (paylas.$LOCAL_DOMAIN)"; return 1 ;;
-        *) SHARE_FAIL="modül dosyası yok ($MODULES_DIR/paylasim/paylasim.caddy); kurulumu yeniden çalıştırın"; return 1 ;;
+        2) FAIL="Caddy yapılandırması doğrulanmadı ($id)"; return 1 ;;
+        *) FAIL="modül dosyası yok ($MODULES_DIR/$id/$id.caddy); kurulumu yeniden çalıştırın"; return 1 ;;
     esac
     rc=0
-    swap_in "$MODULES_DIR/paylasim/dnsmasq.conf" "$DNSMASQ_CONF_DIR/modul-paylasim.conf" dnsmasq_check || rc=$?
+    swap_in "$MODULES_DIR/$id/dnsmasq.conf" "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
     case "$rc" in
-        0) systemctl restart dnsmasq >/dev/null 2>&1 || { SHARE_FAIL="dnsmasq yeniden başlatılamadı"; return 1; } ;;
+        0) systemctl restart dnsmasq >/dev/null 2>&1 || { FAIL="dnsmasq yeniden başlatılamadı"; return 1; } ;;
         1) ;;
-        2) SHARE_FAIL="dnsmasq yapılandırması doğrulanmadı (paylas.$LOCAL_DOMAIN)"; return 1 ;;
-        *) SHARE_FAIL="modül dosyası yok ($MODULES_DIR/paylasim/dnsmasq.conf); kurulumu yeniden çalıştırın"; return 1 ;;
+        2) FAIL="dnsmasq yapılandırması doğrulanmadı ($id)"; return 1 ;;
+        *) FAIL="modül dosyası yok ($MODULES_DIR/$id/dnsmasq.conf); kurulumu yeniden çalıştırın"; return 1 ;;
     esac
 }
 
-share_names_off() { # kaldırmayı durdurmaz; yalnız uyarır
-    local rc=0
-    swap_out "$CADDY_MODULES_DIR/paylasim.caddy" caddy_validate || rc=$?
+names_off() { # ID — kaldırmayı durdurmaz; yalnız uyarır
+    local id="$1" rc=0
+    swap_out "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
     case "$rc" in
         0) systemctl reload caddy >/dev/null 2>&1 || warn "Caddy yeniden yüklenemedi" ;;
-        2) warn "paylaşım sitesi kaldırıldı ama Caddy yapılandırması doğrulanmıyor" ;;
+        2) warn "$id sitesi kaldırıldı ama Caddy yapılandırması doğrulanmıyor" ;;
     esac
     rc=0
-    swap_out "$DNSMASQ_CONF_DIR/modul-paylasim.conf" dnsmasq_check || rc=$?
+    swap_out "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
     case "$rc" in
         0) systemctl restart dnsmasq >/dev/null 2>&1 || warn "dnsmasq yeniden başlatılamadı" ;;
-        2) warn "paylaşım adı kaldırıldı ama dnsmasq yapılandırması doğrulanmıyor" ;;
+        2) warn "$id adı kaldırıldı ama dnsmasq yapılandırması doğrulanmıyor" ;;
     esac
 }
 
@@ -381,7 +385,7 @@ share_drop_data() {
 }
 
 share_rollback() { # başarısız kurulum: adlar, işaret ve konteyner geri alınır; hesap kalır
-    share_names_off
+    names_off paylasim
     share_marker off || true
     compose paylasim down >/dev/null 2>&1 || true
 }
@@ -461,22 +465,26 @@ wg_need() {
     need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE
 }
 
-wg_packages() {
+# Eksik Debian paketlerini önerileri olmadan kurar; kurulu olanlara dokunmaz. Hata: FAIL.
+apt_install() { # PAKET…
     local out pkg missing=0
-    for pkg in $WG_PACKAGES; do
+    for pkg in "$@"; do
         dpkg -s "$pkg" >/dev/null 2>&1 || missing=1
     done
     [[ "$missing" == 1 ]] || return 0
-    # shellcheck disable=SC2086
     if ! out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        -o DPkg::Lock::Timeout=300 $WG_PACKAGES 2>&1)"; then
+        -o DPkg::Lock::Timeout=300 "$@" 2>&1)"; then
         # Liste eskimiş olabilir: bir kez güncellenip yeniden denenir.
-        # shellcheck disable=SC2086
         out="$(apt-get -o DPkg::Lock::Timeout=300 update 2>&1 &&
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                -o DPkg::Lock::Timeout=300 $WG_PACKAGES 2>&1)" ||
+                -o DPkg::Lock::Timeout=300 "$@" 2>&1)" ||
             { FAIL="paketler kurulamadı: $(tail -n 1 <<<"$out")"; return 1; }
     fi
+}
+
+wg_packages() {
+    # shellcheck disable=SC2086
+    apt_install $WG_PACKAGES
 }
 
 wg_layer() {
@@ -527,6 +535,129 @@ wg_drop_data() {
     find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 }
 
+# ------------------------------------------------------------------ qBittorrent (DD-151)
+# Debian paketi (qbittorrent-nox) sunucunun kendisinde, indirme klasörünün sahibi olarak
+# çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
+# yeri, yarım indirmeler, arayüz 127.0.0.1:TORRENT_UI_PORT); sonra hiç dokunulmaz. Konsol
+# hesabı yönetmez: qBittorrent ilk açılışta geçici parolayı günlüğüne yazar. İnternete eş
+# portu açılmaz; paket kaldırılınca bile sunucuda kalır (yalnız servis kapanır).
+TORRENT_DROPIN_DIR="qbittorrent-nox@.service.d"
+
+torrent_need() {
+    need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR UNIT_DIR \
+        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
+    torrent_unit_name >/dev/null || fail_step "uid $DOWNLOADS_UID için kullanıcı yok; kurulumu yeniden çalıştırın"
+}
+
+torrent_unit_name() { # örnek adı, indirme klasörünün sahibinin kullanıcı adıdır
+    local user
+    user="$(getent passwd "$DOWNLOADS_UID" 2>/dev/null | cut -d: -f1 || true)"
+    [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+    printf 'qbittorrent-nox@%s.service\n' "$user"
+}
+
+torrent_dropin() { # 0: yeni yazıldı, 1: aynıydı
+    local src="$MODULES_DIR/torrent/master-stack.conf" dir="$UNIT_DIR/$TORRENT_DROPIN_DIR" tmp
+    [[ -f "$src" ]] || fail_step "modül dosyası yok ($src); kurulumu yeniden çalıştırın"
+    if [[ -f "$dir/master-stack.conf" ]] && cmp -s -- "$src" "$dir/master-stack.conf"; then return 1; fi
+    install -d -m 0755 -- "$dir"
+    tmp="$(mktemp "$dir/.master-stack.conf.XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dir/master-stack.conf"
+    systemctl daemon-reload
+}
+
+# Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır.
+torrent_profile() {
+    local conf_dir="$TORRENT_PROFILE_DIR/qBittorrent" tmp
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" -- "$TORRENT_PROFILE_DIR" "$conf_dir"
+    [[ ! -e "$conf_dir/qBittorrent.conf" ]] || return 0
+    [[ -f "$MODULES_DIR/torrent/qBittorrent.conf" ]] ||
+        fail_step "modül dosyası yok ($MODULES_DIR/torrent/qBittorrent.conf); kurulumu yeniden çalıştırın"
+    tmp="$(mktemp "$conf_dir/.qBittorrent.conf.XXXXXX")"
+    cp -- "$MODULES_DIR/torrent/qBittorrent.conf" "$tmp"
+    chmod 0640 "$tmp"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$tmp"
+    mv -f -- "$tmp" "$conf_dir/qBittorrent.conf"
+}
+
+# Servis ayakta, root değil indirme sahibi olarak çalışıyor, çöp ve paylaşım kökü ona kapalı.
+# --ilk: yeni kurulumda arayüz de sınanır (127.0.0.1'de girişsiz 403; sonra ayarlar kullanıcının).
+torrent_verify() { # [--ilk]
+    local unit _ uid code paths ok=0
+    FAIL=""
+    unit="$(torrent_unit_name)"
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$unit" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$unit" || { FAIL="qBittorrent servisi başlamadı"; return 1; }
+    uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$unit")" 2>/dev/null | tr -d ' ' || true)"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    paths="$(systemctl show -p InaccessiblePaths --value "$unit" 2>/dev/null || true)"
+    [[ "$paths" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* && "$paths" == *"$SERVER_ROOT/$SHARE_DIR"* ]] ||
+        { FAIL="qBittorrent çöp ve paylaşım klasörünü görebiliyor"; return 1; }
+    [[ "${1:-}" == --ilk ]] || return 0
+    for _ in $(seq 1 20); do
+        code="$(http_code "http://127.0.0.1:$TORRENT_UI_PORT/api/v2/app/version")"
+        if [[ "$code" == 403 ]]; then ok=1; break; fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta girişsiz 403 vermedi ($code)"; return 1; }
+}
+
+torrent_verify_names() {
+    local _ code="" ans=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        code="$(http_code -H "Host: torrent.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/api/v2/app/version")"
+        ans="$(dig +short +time=2 +tries=1 "torrent.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        [[ "$code" == 403 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        sleep 1
+    done
+    FAIL="torrent.$LOCAL_DOMAIN açılmadı (arayüz $code, DNS '$ans')"
+    return 1
+}
+
+torrent_off() { # servis durur ve açılışta başlamaz
+    local unit
+    unit="$(torrent_unit_name)" || return 0
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+}
+
+torrent_rollback() {
+    names_off torrent
+    torrent_off
+    rm -f -- "$UNIT_DIR/$TORRENT_DROPIN_DIR/master-stack.conf"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+# --veri: profil (ayarlar ve torrent listesi). İndirilen dosyalara dokunulmaz.
+torrent_drop_data() {
+    [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
+    rm -rf -- "$TORRENT_PROFILE_DIR"
+}
+
+# Geçici parola qBittorrent'in bu açılıştaki günlüğündedir; parola arayüzde ayarlandıysa yoktur.
+torrent_first_login() { # [--parola]
+    local unit inv log user temp
+    unit="$(torrent_unit_name)" || die "hesap yok"
+    systemctl is-active --quiet "$unit" || die "qBittorrent çalışmıyor"
+    inv="$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)"
+    [[ "$inv" =~ ^[0-9a-f]{32}$ ]] || die "qBittorrent günlüğü okunamadı"
+    log="$(journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" 2>/dev/null || true)"
+    user="$(sed -n 's/.*WebUI administrator username is: *//p' <<<"$log" | tail -n 1)"
+    temp="$(sed -n 's/.*temporary password is provided for this session: *//p' <<<"$log" | tail -n 1)"
+    [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || user="admin"
+    if [[ ! "$temp" =~ ^[A-Za-z0-9]{6,64}$ ]]; then
+        printf '%s\tayarli\n' "$user"
+    elif [[ "${1:-}" == --parola ]]; then
+        printf '%s\tgecici\t%s\n' "$user" "$temp"
+    else
+        printf '%s\tgecici\n' "$user"
+    fi
+}
+
 # ------------------------------------------------------------------- komutlar
 cmd_liste() {
     local id rt reg live action step total text
@@ -539,6 +670,13 @@ cmd_liste() {
         esac
         if [[ "$id" == dosya && "$reg" != yok ]]; then
             if systemctl is-active --quiet master-files-panel.service 2>/dev/null; then live=running; else live=exited; fi
+        fi
+        if [[ "$id" == torrent && "$reg" != yok ]]; then
+            if torrent_unit_name >/dev/null 2>&1 && systemctl is-active --quiet "$(torrent_unit_name)" 2>/dev/null; then
+                live=running
+            else
+                live=exited
+            fi
         fi
         action="-" step="-" total="-" text="-"
         if [[ -f "$(progress_file "$id")" ]]; then
@@ -590,6 +728,21 @@ cmd_kur() {
             progress "$id" kur 4 4 "WireGuard sayfası açılıyor"
             wg_networks_up >/dev/null
             ;;
+        torrent)
+            torrent_need
+            progress "$id" kur 1 4 "Paket kuruluyor"
+            apt_install qbittorrent-nox || fail_step "$FAIL"
+            progress "$id" kur 2 4 "Servis birimi"
+            torrent_dropin || true
+            torrent_profile
+            progress "$id" kur 3 4 "Servis başlatılıyor"
+            systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 ||
+                { torrent_rollback; fail_step "qBittorrent başlatılamadı"; }
+            torrent_verify --ilk || { torrent_rollback; fail_step "$FAIL"; }
+            progress "$id" kur 4 4 "Ad"
+            names_on torrent || { torrent_rollback; fail_step "$FAIL"; }
+            torrent_verify_names || { torrent_rollback; fail_step "$FAIL"; }
+            ;;
         paylasim)
             registry_get dosya >/dev/null || fail_step "önce Dosya yöneticisi kurulmalı (Paylaşım ona bağlı)"
             share_need
@@ -604,7 +757,7 @@ cmd_kur() {
                 { share_rollback; fail_step "konteyner başlatılamadı"; }
             share_verify_container "$SHARE_PW" || { share_rollback; fail_step "$SHARE_FAIL"; }
             progress "$id" kur 4 4 "Ad ve adres açılıyor"
-            share_names_on || { share_rollback; fail_step "$SHARE_FAIL"; }
+            names_on paylasim || { share_rollback; fail_step "$FAIL"; }
             share_verify_names || { share_rollback; fail_step "$SHARE_FAIL"; }
             share_marker on || { share_rollback; fail_step "$SHARE_FAIL"; }
             SHARE_PW=""
@@ -623,6 +776,13 @@ cmd_baslat() {
     [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     progress "$id" baslat 1 1 "Başlatılıyor"
     case "$(runtime_of "$id")" in
+        host)
+            torrent_need
+            torrent_dropin || true
+            systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+            torrent_verify || fail_step "$FAIL"
+            names_on torrent || fail_step "$FAIL"
+            ;;
         docker)
             need_docker "$id"
             [[ "$id" != paylasim ]] || { share_need; share_prepare; }
@@ -635,7 +795,7 @@ cmd_baslat() {
         # Dosya bağlaması eski inode'u tutar: htpasswd yeniden yazıldıysa konteyner yeniden başlar.
         [[ "$SHARE_REWROTE" != 1 ]] || docker restart paylasim >/dev/null
         share_verify_container "$SHARE_PW" || fail_step "$SHARE_FAIL"
-        share_names_on || fail_step "$SHARE_FAIL"
+        names_on paylasim || fail_step "$FAIL"
         share_marker on || fail_step "$SHARE_FAIL"
         SHARE_PW=""
     fi
@@ -652,6 +812,11 @@ cmd_durdur() {
     [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     progress "$id" durdur 1 1 "Durduruluyor"
     case "$(runtime_of "$id")" in
+        host)
+            torrent_need
+            # Açılışta da kapalı kalır; ad kalır (arayüz başlatılınca geri gelir).
+            torrent_off
+            ;;
         docker)
             need_docker "$id"
             LAST_ERROR="durdurulamadı"
@@ -677,6 +842,10 @@ cmd_kaldir() {
             files_need
             files_off
             ;;
+        torrent)
+            torrent_need
+            torrent_rollback
+            ;;
         wireguard)
             wg_need
             wg_networks_down
@@ -691,7 +860,7 @@ cmd_kaldir() {
             command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
             if [[ "$id" == paylasim ]]; then
                 share_need
-                share_names_off
+                names_off paylasim
                 share_marker off
             fi
             LAST_ERROR="kaldırılamadı"
@@ -711,6 +880,7 @@ cmd_kaldir() {
             paylasim) share_drop_data ;;
             dosya) files_drop_data ;;
             wireguard) wg_drop_data ;;
+            torrent) torrent_drop_data ;;
         esac
     fi
     registry_set "$id" ""
@@ -724,6 +894,12 @@ cmd_gunluk() {
     case "$id" in
         dosya) journalctl -u "$FILES_UNIT" -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
         wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
+        torrent)
+            torrent_unit_name >/dev/null || { printf '(günlük yok)\n'; return 0; }
+            # Geçici parola satırı gösterilmez: Konsol onu yalnız istenince, ayrıca verir.
+            journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>&1 |
+                sed 's/\(temporary password is provided for this session:\).*/\1 ••••/' || printf '(günlük yok)\n'
+            ;;
         *) docker logs --tail "$lines" "$id" 2>&1 || printf '(günlük yok)\n' ;;
     esac
 }
@@ -751,6 +927,11 @@ cmd_parola() {
 # Salt okunur: Konsol'un root arka ucu kendi korumalı alanında çalıştırır (kilit ve ilerleme yok).
 cmd_hesap() {
     local id="$1" with="$2" pw changed
+    if [[ "$id" == torrent ]]; then
+        torrent_need
+        if [[ "$with" == 1 ]]; then torrent_first_login --parola; else torrent_first_login; fi
+        return 0
+    fi
     share_need
     pw="$(share_cred_password)" || die "hesap yok"
     changed="$(stat -c %Y -- "$SHARE_CRED_FILE" 2>/dev/null || stat -f %m -- "$SHARE_CRED_FILE")"
@@ -790,10 +971,21 @@ cmd_uygula() {
             printf '%s\t%s\n' "$id" "$state"
             return 0
             ;;
+        torrent)
+            torrent_need
+            torrent_dropin && systemctl try-restart "$(torrent_unit_name)" >/dev/null 2>&1 || true
+            names_on torrent || fail_step "$FAIL"
+            if [[ "$state" == calisiyor ]]; then
+                systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+                torrent_verify || fail_step "$FAIL"
+            fi
+            printf '%s\t%s\n' "$id" "$state"
+            return 0
+            ;;
         paylasim)
             share_need
             share_prepare
-            share_names_on || fail_step "$SHARE_FAIL"
+            names_on paylasim || fail_step "$FAIL"
             share_marker on || fail_step "$SHARE_FAIL"
             ;;
     esac
@@ -819,7 +1011,8 @@ main() {
             [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
             valid_id "$2"
             case "$cmd" in
-                parola | hesap) [[ "$2" == paylasim ]] || die "bu modülde hesap yok: '$2'" ;;
+                parola) [[ "$2" == paylasim ]] || die "bu modülde parola yok: '$2'" ;;
+                hesap) [[ "$2" == paylasim || "$2" == torrent ]] || die "bu modülde hesap yok: '$2'" ;;
             esac
             case "$cmd" in
                 kur) cmd_kur "$2" ;;

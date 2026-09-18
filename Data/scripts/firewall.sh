@@ -38,12 +38,10 @@ fi
 : "${CHAIN_INPUT:?}"
 : "${CHAIN_DOCKER:?}"
 : "${CHAIN_STAGING_PREFIX:?}"
-: "${TORRENT_PUBLIC_PORT:?}"
 : "${SSH_PUBLIC_PORT:?}"
 : "${TAILSCALE_UDP_PORT:?}"
 : "${CHAIN_FORWARD:?}"
 : "${CHAIN_NAT:?}"
-: "${DOZZLE_UI_PORT:?}"
 : "${TORRENT_UI_PORT:?}"
 
 # nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
@@ -54,7 +52,7 @@ ip6tables_nat() { ip6tables -t nat "$@"; }
 # DD-120: WireGuard istemcilerinin host'ta ulaşabildiği tek yer: caddy-wg'nin
 # WireGuard adresindeki arayüz portları.
 wg_ui_ports() {
-    printf '%s,%s\n' "$DOZZLE_UI_PORT" "$TORRENT_UI_PORT"
+    printf '%s\n' "$TORRENT_UI_PORT"
 }
 
 # DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun
@@ -244,8 +242,6 @@ apply_input4() {
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
         "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${WG_PORTS[i]}" -j ACCEPT
     done
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "$TORRENT_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     # DD-120/DD-136: WireGuard istemcisi host'ta yalnız kendi ağının sunucu
     # adresindeki arayüz portlarına (erişimi "ui" ise) ve ping'e ulaşır; SSH, DNS,
@@ -303,11 +299,7 @@ apply_docker4() {
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
-    # WAN IP adresi gömülmez; arayüz + orijinal hedef port yeterli.
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp \
-        -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
-        -m conntrack --ctstate NEW --ctorigdstport "$TORRENT_PUBLIC_PORT" -j RETURN
+    # DD-151: WAN'dan hiçbir konteyner yayını kabul edilmez (qBittorrent sunucuda, eş portu yok).
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
@@ -505,14 +497,14 @@ wan_allow_pairs() {
     [[ "$1" == v4 ]] || return 0
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
     [[ "${#WG_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${WG_PORTS[@]}"
-    printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT"
+    # DD-151: qBittorrent'e gelen eş portu açılmaz.
+    return 0
 }
 
-# MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok).
-# WireGuard Docker'da değil (DD-120): portu yalnız INPUT'ta.
+# MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok). DD-151'den beri yok:
+# Docker modüllerinin hiçbiri internete yayın yapmaz. WireGuard Docker'da değil (DD-120).
 docker_return_pairs() {
-    [[ "$1" == v4 ]] || return 0
-    printf '%s\n' "tcp $TORRENT_PUBLIC_PORT" "udp $TORRENT_PUBLIC_PORT"
+    return 0
 }
 
 # Tek tek desen kontrolü "eksik kural" bulur, "fazladan kural" bulamaz:

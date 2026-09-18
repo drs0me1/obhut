@@ -3405,6 +3405,9 @@ separate document with its own numbering.
 
 ### DD-63: qBittorrent peer port is TCP+UDP (2026-08-06)
 
+- **Superseded by DD-151 (2026-09-18):** no torrent peer port is opened any
+  more; qBittorrent is a host module that only connects out.
+
 - **Decision:** Compose publishes `${QBIT_PUBLIC_PORT}` for **both** TCP and
   UDP (1:1 host map, no WAN IP embed). `master-firewall` allows the matching
   NEW WAN rules in `MASTER-INPUT` and `MASTER-DOCKER`. wg-easy remains
@@ -4790,6 +4793,9 @@ failure with an early, named one.
 
 ### DD-116: Dozzle replaces Portainer (2026-09-13)
 
+- **Superseded by DD-151 (2026-09-18):** Dozzle was removed; each Konsol
+  module card has its own log.
+
 - **Decision:** the Compose `portainer` service becomes `dozzle`
   (`amir20/dozzle:v11`, loopback `127.0.0.1:61002` → 8080, site
   `dozzle.${LOCAL_DOMAIN}`).
@@ -6017,6 +6023,10 @@ failure with an early, named one.
 
 ### DD-129: The installer writes qBittorrent's settings from a template and the account from kurulum.env (2026-09-14)
 
+- **Superseded by DD-151 (2026-09-18):** qBittorrent is a host module; its
+  settings are seeded once and never rewritten, and the input file holds no
+  qBittorrent account.
+
 - **Context:** after DD-128 the user preferred no file pulling for
   qBittorrent: its settings should be part of the installer, the password in
   `kurulum.env`.
@@ -6804,6 +6814,90 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-151: qBittorrent is a host module; Dozzle and the base Compose project go (2026-09-18)
+
+- **Context:** stage 4 of **DD-148**. qBittorrent (LinuxServer image) and
+  Dozzle were the base Compose project, the input file held both accounts and
+  **DD-129** rewrote qBittorrent's settings on every run. The approved design
+  lists qBittorrent as a Konsol module. The operator chose (2026-09-18): the
+  settings are written once, no peer port is opened, the package stays on
+  removal.
+- **Decision — qBittorrent:**
+  - It becomes the `torrent` module with runtime `host`: the distribution's
+    `qbittorrent-nox`, run through the package's template unit as
+    `qbittorrent-nox@<downloads account>.service`. Its files keep the owner
+    Konsol and Arşiv açıcı use. No image, no container, no bind mounts; its log
+    is the unit's journal.
+  - The drop-in `qbittorrent-nox@.service.d/master-stack.conf` does what the
+    container's mount list did: profile in `TORRENT_PROFILE_DIR`
+    (`/var/lib/qbittorrent`, `HOME` and `XDG_*`), `UMask=0002`,
+    `ProtectSystem=strict` and `ProtectHome` with only the profile and
+    `DOWNLOADS_PATH` writable, the trash and the share root inaccessible (the
+    **DD-144** promise), no new privileges, kernel and clock protections,
+    address families limited to UNIX, IPv4, IPv6 and netlink.
+  - **Settings once (reverses DD-129):** when the profile has no
+    `qBittorrent.conf`, `master-modul` seeds a minimal one — save and
+    temporary paths, web UI on `127.0.0.1:TORRENT_UI_PORT` with localhost
+    authentication on, UPnP and port forwarding off, the legal notice
+    accepted. Nothing rewrites it afterwards; `uygula` refreshes only the
+    drop-in and the names. What the operator changes in qBittorrent stays.
+  - **No account in the installer:** `TORRENT_USER`/`TORRENT_PASS` and
+    `DOZZLE_USER`/`DOZZLE_PASS` leave the input file, which now holds only
+    `SSH_HOST` and `LOCAL_DOMAIN`. Until a password is set in its UI,
+    qBittorrent prints a temporary one to its journal on every start.
+    `master-modul hesap torrent` reads only the current start's journal
+    (`_SYSTEMD_INVOCATION_ID`), so an old password is never shown. Konsol's
+    card shows the user and whether the password is temporary. The temporary
+    password itself appears only on request, for 30 s, and is audited like
+    Paylaşım's. `gunluk` masks that line.
+  - **No inbound peer port (reverses DD-63's publication and the torrent half
+    of R12):** qBittorrent only connects out. `TORRENT_PUBLIC_PORT`, the WAN
+    `ACCEPT` in `MASTER-INPUT`, the `RETURN` in `MASTER-DOCKER` and the port
+    rows go. Trade-off, accepted: fewer peers on poorly seeded torrents, and
+    nothing of the torrent client listens on the WAN.
+  - **Names:** `torrent.<domain>` comes and goes with the module (a Caddy
+    import and a dnsmasq file, as for Paylaşım). `caddy-wg` keeps serving only
+    the qBittorrent port on `ui` networks; without the module it answers `502`.
+  - **Install checks:** the unit is active, runs as `DOWNLOADS_UID` and
+    carries the two inaccessible paths; the API answers `403` without a login
+    on loopback and through `torrent.<domain>`; the name resolves. A failed
+    install is taken back.
+  - **Removal:** `kaldir` removes the names and the drop-in and disables the
+    unit; the package stays, as WireGuard's do (**DD-150**). `--veri` deletes
+    the profile (settings and torrent list), only under `/var/lib`. A
+    downloaded file is never deleted.
+- **Why host and not the container:** one image fewer to follow and pin, a
+  sandbox that says what the mounts said, the first-login password in a
+  journal Konsol already reads, and the same start/stop path as the other host
+  units.
+- **Dozzle goes:** every module card has a Günlük panel (**DD-148**) and the
+  only containers left belong to modules. Dozzle was the last input-file
+  account and an image to follow.
+- **No base Compose project:** the installer still installs the Docker engine
+  and the Compose plugin for the Docker modules, but renders no
+  `/root/docker/compose.yaml`, pulls no image and asks no pull question on
+  re-runs. Stage 7 no longer checks containers.
+- **Upgrading a v2-117 host:** per the fresh-install rule there is no clean-up
+  or adoption code: the old containers, `/root/docker` and the old qBittorrent
+  data stay until the host is reset. The four account lines must leave
+  `kurulum/kurulum.env`, or the unknown-field gate stops the run before any
+  change.
+- **Verified:** bats (module lifecycle with fakes, first-login parsing, the
+  root backend's account route, Konsol's card) and the Konsol page against a
+  mock backend; live on `nrm` (Debian 13, `qbittorrent-nox` 5.1.0) on
+  2026-09-18 with v2-119: install, stop/start, remove and reinstall (settings
+  file unchanged), `--veri` (profile gone, new temporary password), reboot.
+  Inside the unit's mount namespace the trash and the share root are
+  unreadable and only `DOWNLOADS_PATH` and the profile are writable.
+- **Local Peer Discovery off (v2-120):** the live run showed qBittorrent
+  announcing on UDP 6771 on every interface, the provider's LAN included —
+  it multicasts the info-hashes of what the server downloads to that
+  segment, and there are no local peers to find on a server. The first
+  settings now carry `Session\LSDEnabled=false`. The random peer port itself
+  still listens on every interface; binding it to the WAN interface was
+  rejected because a renamed interface would stall every torrent without a
+  clear error, and the firewall already drops new WAN traffic to it.
+
 ### DD-150: Dosya yöneticisi and WireGuard are Konsol modules (2026-09-18)
 
 - **Context:** stage 3 of **DD-148**. The file backend and the WireGuard layer
@@ -6854,6 +6948,16 @@ failure with an early, named one.
   (restart and checks); WireGuard is re-applied on every run while installed
   (packages after an OS upgrade, kernel module, networks). Stage 7 checks each
   only while its module is installed.
+- **Fixed in v2-119:** the root backend's sandbox makes `/etc/wireguard`
+  writable, and systemd refuses to start a unit whose `ReadWritePaths=` is
+  missing. Before DD-150 `wireguard-tools` created the folder during the
+  install; after it, a fresh v2-118 install stopped in stage 7 with Konsol
+  down. The installer now creates the folder (`0700`) before starting the
+  backend, and the unit marks the path optional (`-`), so a folder deleted by
+  hand degrades WireGuard changes instead of taking Konsol down. The folder is
+  created in the base rather than by the module because the backend's mount
+  namespace is fixed at its start: a folder that appears later is read-only
+  inside it until a restart.
 - **Upgrading a host installed before v2-117:** its file backend and WireGuard
   layer were started by the installer and are not in the module registry.
   Per the fresh-install rule there is no adoption code; reset the host and

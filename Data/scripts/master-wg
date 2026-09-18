@@ -196,8 +196,7 @@ cmd_net_add() {
     [[ -n "$NETWORKS_FILE" ]] || die "state.env'de WG_NETWORKS_FILE yok; önce güncel kurulumu çalıştırın"
 
     take_lock
-    for p in "ssh:${SSH_PUBLIC_PORT:-}" "torrent:${TORRENT_PUBLIC_PORT:-}" \
-        "dozzle:${DOZZLE_UI_PORT:-}" "qbittorrent:${TORRENT_UI_PORT:-}" \
+    for p in "ssh:${SSH_PUBLIC_PORT:-}" "qbittorrent:${TORRENT_UI_PORT:-}" \
         "tailscale:${TAILSCALE_UDP_PORT:-}" "panel:${WG_PANEL_PORT:-}" \
         "dosya-paneli:${FILES_PANEL_PORT:-}" \
         "paylasim:${SHARE_PORT:-}" \

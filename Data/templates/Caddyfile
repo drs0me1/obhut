@@ -6,12 +6,6 @@
 http://health.__LOCAL_DOMAIN__ {
 	respond "ok" 200
 }
-http://dozzle.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__DOZZLE_UI_PORT__
-}
-http://torrent.__LOCAL_DOMAIN__ {
-	reverse_proxy 127.0.0.1:__TORRENT_UI_PORT__
-}
 # Konsol (DD-140, DD-148): tek adres. /api/wg/* ve /api/konsol/* root arka uca (WireGuard,
 # sistem, modüller), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:
 # dosya yöneticisi bir modüldür ve kaldırılabilir, Konsol'un kendisi kalmalıdır. Yalnız

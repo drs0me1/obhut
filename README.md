@@ -59,7 +59,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 ├── <version>.command      # current portable installer (double-click)
 ├── wireguard.command      # WireGuard peer menu (double-click)
 ├── kurulum/               # installer inputs, mode 600 (Git-ignored)
-│   ├── kurulum.env        #   SSH host, domain, service accounts
+│   ├── kurulum.env        #   SSH host and domain
 │   └── wireguard/         #   only the profiles + QR pictures you downloaded (DD-143)
 ├── versiyon/              # copies of verified working versions, each with OKUBENI.txt
 ├── README.md, CLAUDE.md   # entry points
@@ -67,7 +67,8 @@ only the runtime files and their archive SHA-256. It uploads them to
     ├── install.sh          # orchestrator
     ├── common.sh           # shared helpers
     ├── config/defaults.env # single source of truth for ports/images/paths
-    ├── templates/          # compose.yaml, Caddyfile, dnsmasq.conf
+    ├── templates/          # Caddyfile, Caddyfile.wg, dnsmasq.conf
+    ├── modules/            # module templates (Konsol → Modüller)
     ├── scripts/            # firewall, refresh-tailnet, GRO, wait helpers
     ├── systemd/            # units and drop-ins
     ├── tests/              # bats critical-behaviour suite
@@ -82,8 +83,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 | Service | Exposure | Role |
 |---------|----------|------|
-| Dozzle | loopback → Caddy (login) | container state, live logs, start/stop/remove |
-| qBittorrent | loopback → Caddy (login) + public peer TCP/UDP | torrent downloads |
+| qBittorrent (host module, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → Modüller; torrent downloads. The first login's temporary password is shown on its card |
 | Arşiv açıcı (Unpackerr) | none; a module, installed from Konsol → Modüller (**DD-148**) | archive extraction in the downloads folder |
 | WireGuard (host kernel; module, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → Modüller; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Paylaşım — WebDAV, shares only (module, **DD-149**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
@@ -91,14 +91,15 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT
-chains) for Tailscale, WireGuard, the torrent peer port and WAN SSH.
+chains) for Tailscale, WireGuard and WAN SSH.
 
 ## Backups
 
 There is no container backup tool. A host is rebuilt from `kurulum/` alone:
-- Every login comes from `kurulum/kurulum.env`, qBittorrent's included.
-- qBittorrent's settings come from `Data/templates/qBittorrent.conf`
-  (**DD-129**).
+- `kurulum/kurulum.env` holds only the SSH host and the domain; Konsol has
+  no account (**DD-147**) and the modules make or show their own.
+- qBittorrent keeps its settings and torrent list on the server only; a
+  fresh install starts it with minimal settings and a new login (**DD-151**).
 - WireGuard is not part of that: a fresh install has no WireGuard at all
   (**DD-143**, **DD-150**). Install it from Konsol → Modüller → WireGuard, create
   the first network in WireGuard → Yapılandır and add the devices again.
