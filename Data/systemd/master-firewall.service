@@ -1,10 +1,9 @@
 [Unit]
 Description=Master stack firewall
-# Docker'a ordering/pull bağı yok: host INPUT en erken anda otursun (DD-94).
-# MASTER-DOCKER'ı docker.service.d drop-in'i tetikler; PartOf yedek kalır.
+# Host INPUT en erken anda otursun (DD-94). Docker yok (DD-152); tailscaled yeniden
+# başlayınca politika yeniden uygulanır (ts-input sırası).
 After=network-online.target tailscaled.service
 Wants=network-online.target
-PartOf=docker.service
 PartOf=tailscaled.service
 StartLimitIntervalSec=300
 StartLimitBurst=12

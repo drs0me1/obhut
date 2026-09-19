@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-19 — One console name, one current export (v2-124)
+
+- **Removed** (**DD-154**): the old addresses `wg.`, `dosya.` and
+  `file.<domain>`, which only redirected to Konsol. Use `http://panel.<domain>`.
+- **Changed:** the exporter keeps only the current installer in `Data/app/`
+  (older ones are in Git history), like the repository root.
+- **Operator step:** update bookmarks to `panel.<domain>` and run the installer
+  again.
+
+### 2026-09-19 — The base installs only what it uses (v2-123)
+
+- **Removed** (**DD-153**) from the base packages:
+  - `gnupg` and about 15 packages it pulled in: Caddy's repository key is
+    stored armored (`.asc`) and apt reads it directly.
+  - `gawk`, left from the first installer: the system's `mawk` is enough.
+  - `apache2-utils`: Paylaşım installs it when it needs `htpasswd`.
+- **Operator step:** none for a fresh install; an existing server keeps the
+  packages.
+
+### 2026-09-19 — Fixes from the first host Paylaşım trial (v2-122)
+
+- **Fixed** (**DD-152**):
+  - "Yeni parola" changed the password but reported "uid 0": the check read
+    the new process before systemd had switched it to the service account.
+    The Paylaşım unit is now `Type=exec` (a start returns only once rclone
+    runs), and every module check reads the process owner a few times
+    before it judges it. The same latent race is closed for the Dosya
+    yöneticisi and qBittorrent checks.
+  - A stopped Paylaşım showed as failed: rclone exits with 143 on SIGTERM,
+    which the unit now counts as a clean stop.
+- **Operator step:** run the installer again.
+
+### 2026-09-19 — No Docker: Paylaşım runs on the host, Arşiv açıcı is gone (v2-121)
+
+- **Removed** (**DD-152**): Docker. The installer adds no Docker repository,
+  packages, `daemon.json` or unit drop-in, and the firewall has no
+  `MASTER-DOCKER` chain and never touches `DOCKER-USER`. This saves the
+  engine's memory (about 110–150 MB on `nrm`) and a whole layer of settings.
+- **Removed:** Arşiv açıcı (Unpackerr), with its module files, Konsol card and
+  the `.unpackerr` folder. Nothing replaces it.
+- **Changed:** Paylaşım (the share WebDAV for Infuse) runs on the server as
+  `master-paylasim.service`, using rclone's official release (1.75.1). The
+  version and one SHA256 per architecture are pinned in `defaults.env`, and
+  the archive is checked before it is unpacked. The distribution's rclone
+  (1.60.1 from 2022, with open security issues) is not used.
+  - Same address, port, account and share links as before; Infuse sees no
+    difference.
+  - Konsol → Modüller → Paylaşım installs it in four steps: download rclone,
+    generate the account, start the service, open the name and address.
+  - The service runs as the downloads account, can write nothing, cannot
+    connect out, gets its account as a systemd credential and sees the trash
+    as an empty folder (a link into the trash disappears alone instead of
+    breaking the whole list).
+  - Removing it keeps the rclone program; a new pinned version is installed
+    by the next installer run.
+- **Operator step:** reset the server and install v2-121 fresh (a host from an
+  earlier version keeps Docker and its containers). Then install Paylaşım from
+  Konsol and enter its new account in Infuse.
+
 ### 2026-09-19 — First fixes from the live module trial (v2-120)
 
 - **Changed** (**DD-151**): qBittorrent's first settings turn Local Peer

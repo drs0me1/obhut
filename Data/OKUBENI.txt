@@ -41,7 +41,7 @@ WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın ken
 
 Konsol (tarayıcıdan; v2-105):
   http://panel.ayc — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
-  Eski adresler http://wg.ayc, http://dosya.ayc ve http://file.ayc buraya yönlenir.
+  Eski adresler (wg.ayc, dosya.ayc, file.ayc) v2-124'ten beri yok; yer imlerini panel.ayc yapın.
   Parola sorulmaz (v2-114): yalnız Tailscale'deki cihazlar açabilir; erişimi daraltmak Tailscale ACL'iyle.
   Genel bakış: işlemci ve bellek grafiği, disk (indirilenler / çöp / sistem), bağlı cihazlar,
   son işlemler ve kullanımdaki portlar (internete açık olanlar ayrı grupta).
@@ -80,13 +80,12 @@ Paylaşım (v2-106, v2-108; v2-116'dan beri Konsol → Modüller'den kurulur):
   dosyayı silmez. Yalnız Tailscale'e bağlı cihazlar açabilir.
 
 Konsol · Modüller sekmesi (v2-115):
-  Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı, boş Docker).
+  Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı). Docker yok (v2-121).
   Ek parçalar buradan tek tıkla kurulur, durdurulur, başlatılır, kaldırılır; sayfa kapansa da işlem sürer.
-  Şimdilik: Dosya yöneticisi, WireGuard, Paylaşım (WebDAV) ve Arşiv açıcı (Unpackerr).
+  Modüller: Dosya yöneticisi, WireGuard, qBittorrent ve Paylaşım (WebDAV). Arşiv açıcı kaldırıldı (v2-121).
   Dosyalar ve WireGuard sayfaları modülleriyle birlikte menüye gelir. Paylaşım Dosya yöneticisine bağlıdır:
   "Dosya yöneticisi ile birlikte kur" ikisini sırayla kurar; Dosya yöneticisi kaldırılırken önce Paylaşım kalkar.
-  Arşiv açıcıda "verisini de sil" yalnız günlüğünü siler;
-  indirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
+  İndirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
 
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
   /downloads klasörü; aynı sayfada, aynı girişle.
@@ -95,7 +94,7 @@ Konsol · Dosyalar sekmesi (v2-104, v2-105):
   Metin dosyaları (.txt .log .nfo .srt …) tıklayınca açılır; Türkçe altyazı bozuk görünürse Kodlama'dan Türkçe seçin.
   Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz.
   incomplete klasörü qBittorrent'in yarım indirmeleridir: oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
-  FileBrowser kaldırıldı (v2-114): dosyaları Konsol yönetir; http://file.ayc Konsol'a yönlenir.
+  FileBrowser kaldırıldı (v2-114): dosyaları Konsol yönetir.
 
 qBittorrent (v2-118; modül, sunucuda Debian paketi):
   Konsol → Modüller → qBittorrent → Kur. Arayüz: http://torrent.ayc (yalnız Tailscale'den).
@@ -116,6 +115,8 @@ A) İlk kurulum
   2. Tailscale paneli: exit-node onayı, nameserver ve "ayc" → yeni TS IP; Infuse adresi
   3. wireguard.command → 2) ekle   her cihaz için; QR'ı okutun (Mac'te WireGuard kapalıyken)
      Her eklemeden sonra WireGuard ayarları kendiliğinden kurulum/'a iner (yedek)
+  v2-121'e geçerken: sunucuyu sıfırlayıp temiz kurun (Docker, Arşiv açıcı ve Paylaşım kabı kalkar;
+  Paylaşım artık sunucuda rclone servisi). Paylaşım'ı Konsol'dan yeniden kurun, Infuse'a yeni hesabı girin
   v2-118'e geçerken: kurulum.env'den DOZZLE_USER, DOZZLE_PASS, TORRENT_USER ve TORRENT_PASS
   satırlarını silin (yoksa kurulum hiçbir şeye dokunmadan durur); sunucuyu sıfırlayıp temiz kurun;
   qBittorrent'i Konsol → Modüller'den kurun (eski torrent listesi ve ayarlar gelmez)
@@ -144,5 +145,5 @@ B) Sıfırlama → yeniden kurulum
   2. Tailscale paneli + Infuse adresi
   (kurulum/'da hazır ayar yoksa: yeni WireGuard anahtarı → wireguard.command ile cihazları yeniden ekleyin)
 
-Konteyner yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + wireguard.command yedeği).
+Yedek aracı yoktur: sunucu kurulum/ klasöründen yeniden kurulur (kurulum.env + wireguard.command yedeği).
 Bu klasörü güvende tutun.

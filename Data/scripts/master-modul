@@ -35,16 +35,15 @@ source "$STATE_FILE"
 : "${RUNTIME_DIR:?}"
 : "${DOWNLOADS_PATH:?}"
 
-# Katalog: Konsol'daki sıra. Her modülün çalışma yeri (docker | host | konsol) ve adımları
-# aşağıdaki case bloklarında tanımlıdır.
-CATALOG="dosya wireguard torrent paylasim unpackerr"
+# Katalog: Konsol'daki sıra. Her modülün çalışma yeri (host | konsol) ve adımları aşağıdaki
+# case bloklarında tanımlıdır. Docker yok (DD-152): her modül sunucuda bir systemd servisidir.
+CATALOG="dosya wireguard torrent paylasim"
 ID_RE='^[a-z]{2,16}$'
 
 runtime_of() {
     case "$1" in
         dosya | wireguard) printf 'konsol\n' ;;
-        torrent) printf 'host\n' ;;
-        paylasim | unpackerr) printf 'docker\n' ;;
+        torrent | paylasim) printf 'host\n' ;;
         *) return 1 ;;
     esac
 }
@@ -109,67 +108,39 @@ take_lock() {
     flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
 }
 
-compose() { # ID ARGÜMANLAR…
-    local id="$1"
-    shift
-    docker compose -p "$id" -f "$MODULES_DIR/$id/compose.yaml" "$@"
-}
-
-container_state() {
-    # Konteyner yoksa docker inspect boş bir satır basıp hata verir; liste satırı bölünmesin.
-    local s
-    s="$(docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || true)"
-    if [[ "$s" =~ ^[a-z]+$ ]]; then
-        printf '%s\n' "$s"
-    else
-        printf 'yok\n'
-    fi
-}
-
-wait_running() { # KONTEYNER SANİYE
-    local _
-    for _ in $(seq 1 "$2"); do
-        [[ "$(container_state "$1")" == running ]] && return 0
-        sleep 1
+# Birim "active" olur olmaz işlem henüz root olabilir: systemd User='a exec'ten hemen önce geçer.
+# uid, beklenen uid'ye dönene dek birkaç kez okunur (en çok ~5 sn); son okunan yazılır.
+unit_uid() { # BİRİM
+    local _ uid=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)" 2>/dev/null | tr -d ' ' || true)"
+        [[ "$uid" != "$DOWNLOADS_UID" ]] || break
+        sleep 0.5
     done
-    return 1
-}
-
-wait_healthy() { # KONTEYNER DENEME (2 sn arayla)
-    local _ s
-    for _ in $(seq 1 "$2"); do
-        s="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$1" 2>/dev/null || true)"
-        [[ "$s" == healthy ]] && return 0
-        sleep 2
-    done
-    return 1
+    printf '%s\n' "$uid"
 }
 
 http_code() { # URL ya da curl argümanları; yanıt yoksa 000
     curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" 2>/dev/null || true
 }
 
-need_docker() {
-    command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
-    docker info >/dev/null 2>&1 || fail_step "Docker motoru çalışmıyor"
-    [[ -f "$MODULES_DIR/$1/compose.yaml" ]] ||
-        fail_step "modül dosyası yok ($MODULES_DIR/$1/compose.yaml); kurulumu yeniden çalıştırın"
-}
-
-# ------------------------------------------------------------ paylaşım (DD-149)
-# Paylaşım kökünün alt adları master-files-panel ve kurulumla aynıdır (bats eşitliği sınar).
+# ------------------------------------------------------- paylaşım (DD-149, DD-152)
+# rclone'un resmi sürümü sunucuda, SHARE_UNIT servisi olarak (birimi kurulum MODULES_DIR/paylasim/
+# altına yazar). Paylaşım kökünün alt adları master-files-panel ve kurulumla aynıdır (bats sınar).
 SHARE_SERVED="w"
 SHARE_REGISTRY="kayit.json"
 SHARE_ENABLED="acik"
 # Parola TV kumandasıyla da yazılır: karışan harfler (0/O, 1/l/I) yok.
 SHARE_ALPHABET="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-SHARE_FAIL="" SHARE_PW="" SHARE_REWROTE=0
+SHARE_UNIT="master-paylasim.service"
+SHARE_FAIL="" SHARE_PW="" SHARE_REWROTE=0 SHARE_RCLONE_NEW=0
 
 share_need() {
     local k
     for k in SERVER_ROOT SHARE_DIR SHARE_PORT SHARE_HTPASSWD_FILE SHARE_CRED_FILE SHARE_ACCOUNT \
         SHARE_PASSWORD_LENGTH STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN \
-        TAILSCALE_IPV4; do
+        TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID FILES_PANEL_TRASH RCLONE_VERSION RCLONE_SHA256_AMD64 \
+        RCLONE_SHA256_ARM64 RCLONE_DOWNLOAD_URL RCLONE_BIN; do
         [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
     done
 }
@@ -213,7 +184,8 @@ share_write_account() { # PAROLA
 
 # Hesabı hazırlar: geçerli kayıt varsa aynen kullanılır (Infuse girişi değişmez), htpasswd
 # uymuyorsa kayıttan yeniden yazılır, kayıt yoksa ya da başka kullanıcıya aitse yenisi üretilir.
-# Sonuç: SHARE_PW (parola), SHARE_REWROTE=1 (htpasswd değişti; çalışan konteyner yeniden başlamalı).
+# Sonuç: SHARE_PW (parola), SHARE_REWROTE=1 (htpasswd değişti; çalışan servis yeniden başlamalı:
+# hesap dosyasını systemd açılışta kopyalar).
 share_prepare() {
     SHARE_REWROTE=0
     if SHARE_PW="$(share_cred_password)"; then
@@ -231,35 +203,103 @@ share_auth_code() { # PAROLA URL — kimlik bilgisi curl'e stdin'deki ayarla gid
         true
 }
 
-# Kurulumun eski aşama 7 denetimleri (DD-142): sağlık, tek ağ, salt okunur çalışma, yalnız
-# loopback yayını, girişsiz 401 ve hesapla 207. Başarısızsa nedeni SHARE_FAIL'e yazar.
-share_verify_container() { # PAROLA
-    local cmd rootfs mounts nets line code published=0
+# rclone: resmi sürüm, sabit sürüm numarası ve SHA256 (DD-152). Aynı sürüm kuruluysa inmez.
+# Arşiv özet tutmadan açılmaz; ikili yanına yazılıp yerine taşınır. Yeni indiyse SHARE_RCLONE_NEW=1.
+share_rclone() {
+    local arch sum url tmp have
+    SHARE_RCLONE_NEW=0
+    have="$("$RCLONE_BIN" version 2>/dev/null | head -n 1 || true)"
+    [[ "$have" != "rclone v$RCLONE_VERSION" ]] || return 0
+    arch="$(dpkg --print-architecture 2>/dev/null || true)"
+    case "$arch" in
+        amd64) sum="$RCLONE_SHA256_AMD64" ;;
+        arm64) sum="$RCLONE_SHA256_ARM64" ;;
+        *) SHARE_FAIL="rclone bu işlemci için sabitlenmedi ($arch)"; return 1 ;;
+    esac
+    url="$RCLONE_DOWNLOAD_URL/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$arch.zip"
+    tmp="$(mktemp -d)"
+    if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --max-time 300 -o "$tmp/rclone.zip" "$url"; then
+        rm -rf -- "$tmp"
+        SHARE_FAIL="rclone indirilemedi ($url)"
+        return 1
+    fi
+    if ! printf '%s  %s\n' "$sum" "$tmp/rclone.zip" | sha256sum -c --quiet >/dev/null 2>&1; then
+        rm -rf -- "$tmp"
+        SHARE_FAIL="rclone arşivinin SHA256 özeti tutmadı; kurulmadı"
+        return 1
+    fi
+    if ! python3 - "$tmp/rclone.zip" "$tmp/rclone" <<'PY'
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = [n for n in z.namelist() if n.count("/") == 1 and n.endswith("/rclone")]
+if len(names) != 1:
+    sys.exit(1)
+with open(sys.argv[2], "wb") as fh:
+    fh.write(z.read(names[0]))
+PY
+    then
+        rm -rf -- "$tmp"
+        SHARE_FAIL="rclone arşivi açılamadı"
+        return 1
+    fi
+    install -d -m 0755 -o root -g root -- "$(dirname -- "$RCLONE_BIN")"
+    install -m 0755 -o root -g root -- "$tmp/rclone" "$RCLONE_BIN.yeni"
+    mv -f -- "$RCLONE_BIN.yeni" "$RCLONE_BIN"
+    rm -rf -- "$tmp"
+    have="$("$RCLONE_BIN" version 2>/dev/null | head -n 1 || true)"
+    [[ "$have" == "rclone v$RCLONE_VERSION" ]] || { SHARE_FAIL="rclone çalışmadı ('$have')"; return 1; }
+    SHARE_RCLONE_NEW=1
+}
+
+# htpasswd (apache2-utils) yalnız Paylaşım'ın hesabı içindir; temel kurulum getirmez (DD-153).
+share_tools() {
+    apt_install apache2-utils || { SHARE_FAIL="$FAIL"; return 1; }
+}
+
+share_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
+    place_unit "$MODULES_DIR/paylasim/$SHARE_UNIT" "$SHARE_UNIT"
+}
+
+# Servis ayakta, indirme sahibi olarak (root değil) çalışıyor; kökü yalnız .pay/w ve salt okunur;
+# çöp onun için boş; yalnız 127.0.0.1:SHARE_PORT dinleniyor; girişsiz 401, hesapla 207.
+# Başarısızsa nedeni SHARE_FAIL'e yazar.
+share_verify() { # PAROLA
+    local _ pid uid cmd code="" socks
     SHARE_FAIL=""
-    wait_healthy paylasim 36 || { SHARE_FAIL="paylaşım konteyneri sağlıklı duruma gelmedi"; return 1; }
-    nets="$(docker inspect paylasim --format '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' 2>/dev/null || true)"
-    nets="$(sed '/^$/d' <<<"$nets")"
-    [[ "$nets" == "paylasim_default" ]] ||
-        { SHARE_FAIL="paylaşım beklenmeyen ağlarda: $(tr '\n' ' ' <<<"$nets")"; return 1; }
-    cmd="$(docker inspect paylasim --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
-    rootfs="$(docker inspect paylasim --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null || true)"
-    mounts="$(docker inspect paylasim --format '{{range .Mounts}}{{println .Destination .RW}}{{end}}' 2>/dev/null || true)"
-    if ! [[ "$cmd" == *"--read-only"* && "$cmd" == *"--copy-links"* && "$rootfs" == "true" &&
-        "$cmd" == *"$SERVER_ROOT/$SHARE_DIR/$SHARE_SERVED"* ]] || ! grep -qx "$SERVER_ROOT false" <<<"$mounts"; then
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$SHARE_UNIT" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$SHARE_UNIT" || { SHARE_FAIL="paylaşım servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$SHARE_UNIT")"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] ||
+        { SHARE_FAIL="paylaşım uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    pid="$(systemctl show -p MainPID --value "$SHARE_UNIT" 2>/dev/null || true)"
+    cmd=" $(ps -o args= -p "$pid" 2>/dev/null || true) "
+    if ! [[ "$cmd" == *" serve webdav $SERVER_ROOT/$SHARE_DIR/$SHARE_SERVED "* && "$cmd" == *" --read-only "* &&
+        "$cmd" == *" --copy-links "* && "$cmd" == *" --addr=127.0.0.1:$SHARE_PORT "* ]]; then
         SHARE_FAIL="paylaşım salt okunur değil ya da kökü $SERVER_ROOT/$SHARE_DIR/$SHARE_SERVED değil"
         return 1
     fi
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        [[ "$line" == *"-> 127.0.0.1:$SHARE_PORT" ]] ||
-            { SHARE_FAIL="paylaşım yalnız 127.0.0.1:$SHARE_PORT'ta yayımlanmalı ($line)"; return 1; }
-        published=1
-    done < <(docker port paylasim 2>/dev/null || true)
-    [[ "$published" == 1 ]] || { SHARE_FAIL="paylaşım 127.0.0.1:$SHARE_PORT'ta yayımlanmıyor"; return 1; }
-    code="$(http_code "http://127.0.0.1:$SHARE_PORT/")"
+    [[ "$(systemctl show -p TemporaryFileSystem --value "$SHARE_UNIT" 2>/dev/null || true)" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* ]] ||
+        { SHARE_FAIL="paylaşım çöpü görebiliyor"; return 1; }
+    for _ in $(seq 1 10); do
+        code="$(http_code "http://127.0.0.1:$SHARE_PORT/")"
+        [[ "$code" != 401 ]] || break
+        sleep 1
+    done
     [[ "$code" == 401 ]] || { SHARE_FAIL="paylaşım girişsiz yanıt $code verdi (beklenen 401)"; return 1; }
+    socks="$(ss -Hltnp 2>/dev/null | awk -v p="pid=$pid," 'index($0, p) {print $4}' | sort -u || true)"
+    [[ "$socks" == "127.0.0.1:$SHARE_PORT" ]] ||
+        { SHARE_FAIL="paylaşım yalnız 127.0.0.1:$SHARE_PORT'ta dinlemeli ($(tr '\n' ' ' <<<"$socks"))"; return 1; }
     code="$(share_auth_code "$1" "http://127.0.0.1:$SHARE_PORT/")"
     [[ "$code" == 207 ]] || { SHARE_FAIL="paylaşım hesabı kabul edilmedi (PROPFIND $code)"; return 1; }
+}
+
+share_off() { # servis durur, birim kalkar; hata vermez
+    systemctl disable --now "$SHARE_UNIT" >/dev/null 2>&1 || true
+    rm -f -- "$UNIT_DIR/$SHARE_UNIT"
+    systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 # -- adlar: Caddy sitesi ve dnsmasq adı. Geçici dosyalar noktayla başlar: Caddy'nin içe aktarma
@@ -384,10 +424,10 @@ share_drop_data() {
     find "$pay/$SHARE_SERVED" -mindepth 1 -maxdepth 1 -type l -delete
 }
 
-share_rollback() { # başarısız kurulum: adlar, işaret ve konteyner geri alınır; hesap kalır
+share_rollback() { # başarısız kurulum: adlar, işaret ve servis geri alınır; hesap ve rclone kalır
     names_off paylasim
     share_marker off || true
-    compose paylasim down >/dev/null 2>&1 || true
+    share_off
 }
 
 # -------------------------------------------------------- dosya yöneticisi (DD-150)
@@ -406,15 +446,20 @@ files_need() {
     need_keys SERVER_ROOT FILES_PANEL_PORT FILES_PANEL_TRASH UNIT_DIR SBIN_DIR DOWNLOADS_UID LOCAL_DOMAIN TAILSCALE_IPV4
 }
 
-files_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
-    local src="$MODULES_DIR/dosya/$FILES_UNIT" dst="$UNIT_DIR/$FILES_UNIT" tmp
+# Kurulumun işlediği birim UNIT_DIR'e konur. 0: yeni yazıldı (daemon-reload yapıldı), 1: aynıydı.
+place_unit() { # KAYNAK BİRİM
+    local src="$1" dst="$UNIT_DIR/$2" tmp
     [[ -f "$src" ]] || fail_step "modül dosyası yok ($src); kurulumu yeniden çalıştırın"
     if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 1; fi
-    tmp="$(mktemp "$UNIT_DIR/.$FILES_UNIT.XXXXXX")"
+    tmp="$(mktemp "$UNIT_DIR/.$2.XXXXXX")"
     cp -- "$src" "$tmp"
     chmod 0644 "$tmp"
     mv -f -- "$tmp" "$dst"
     systemctl daemon-reload
+}
+
+files_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
+    place_unit "$MODULES_DIR/dosya/$FILES_UNIT" "$FILES_UNIT"
 }
 
 # Servis ayakta, kullanıcı alanının sahibi olarak (root değil) çalışıyor ve Caddy üzerinden
@@ -427,7 +472,7 @@ files_verify() {
         sleep 1
     done
     systemctl is-active --quiet "$FILES_UNIT" || { FAIL="dosya servisi başlamadı"; return 1; }
-    uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$FILES_UNIT")" 2>/dev/null | tr -d ' ' || true)"
+    uid="$(unit_uid "$FILES_UNIT")"
     [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="dosya servisi uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
     for _ in $(seq 1 10); do
         if python3 "$SBIN_DIR/master-files-panel" check --url "http://$TAILSCALE_IPV4/api/state" \
@@ -593,7 +638,7 @@ torrent_verify() { # [--ilk]
         sleep 1
     done
     systemctl is-active --quiet "$unit" || { FAIL="qBittorrent servisi başlamadı"; return 1; }
-    uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$unit")" 2>/dev/null | tr -d ' ' || true)"
+    uid="$(unit_uid "$unit")"
     [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
     paths="$(systemctl show -p InaccessiblePaths --value "$unit" 2>/dev/null || true)"
     [[ "$paths" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* && "$paths" == *"$SERVER_ROOT/$SHARE_DIR"* ]] ||
@@ -660,22 +705,20 @@ torrent_first_login() { # [--parola]
 
 # ------------------------------------------------------------------- komutlar
 cmd_liste() {
-    local id rt reg live action step total text
+    local id rt reg live unit action step total text
     for id in $CATALOG; do
         rt="$(runtime_of "$id")"
         reg="$(registry_get "$id" || printf 'yok')"
         live="-"
-        case "$rt" in
-            docker) live="$(container_state "$id")" ;;
-        esac
-        if [[ "$id" == dosya && "$reg" != yok ]]; then
-            if systemctl is-active --quiet master-files-panel.service 2>/dev/null; then live=running; else live=exited; fi
-        fi
-        if [[ "$id" == torrent && "$reg" != yok ]]; then
-            if torrent_unit_name >/dev/null 2>&1 && systemctl is-active --quiet "$(torrent_unit_name)" 2>/dev/null; then
-                live=running
-            else
-                live=exited
+        if [[ "$reg" != yok ]]; then
+            unit=""
+            case "$id" in
+                dosya) unit="$FILES_UNIT" ;;
+                paylasim) unit="$SHARE_UNIT" ;;
+                torrent) unit="$(torrent_unit_name 2>/dev/null || true)" ;;
+            esac
+            if [[ -n "$unit" ]]; then
+                if systemctl is-active --quiet "$unit" 2>/dev/null; then live=running; else live=exited; fi
             fi
         fi
         action="-" step="-" total="-" text="-"
@@ -693,19 +736,6 @@ cmd_kur() {
     take_lock
     ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
     case "$id" in
-        unpackerr)
-            need_docker "$id"
-            progress "$id" kur 1 2 "İmaj indiriliyor"
-            LAST_ERROR="imaj indirilemedi"
-            compose "$id" pull --quiet
-            progress "$id" kur 2 2 "Konteyner başlatılıyor"
-            LAST_ERROR="konteyner başlatılamadı"
-            compose "$id" up -d --remove-orphans
-            wait_running unpackerr 20 || { compose "$id" down >/dev/null 2>&1 || true; fail_step "konteyner çalışır duruma gelmedi"; }
-            # DD-144: çöp ve paylaşım kökü indirme bağlamasının dışında kalmalı.
-            docker exec unpackerr sh -c 'test ! -e /downloads/.cop && test ! -e /downloads/.pay' ||
-                { compose "$id" down >/dev/null 2>&1 || true; fail_step "konteyner çöp ya da paylaşım klasörünü görüyor"; }
-            ;;
         dosya)
             files_need
             progress "$id" kur 1 3 "Servis kuruluyor"
@@ -746,16 +776,16 @@ cmd_kur() {
         paylasim)
             registry_get dosya >/dev/null || fail_step "önce Dosya yöneticisi kurulmalı (Paylaşım ona bağlı)"
             share_need
-            need_docker "$id"
-            progress "$id" kur 1 4 "İmaj indiriliyor"
-            LAST_ERROR="imaj indirilemedi"
-            compose "$id" pull --quiet
+            progress "$id" kur 1 4 "rclone indiriliyor"
+            share_tools || fail_step "$SHARE_FAIL"
+            share_rclone || fail_step "$SHARE_FAIL"
             progress "$id" kur 2 4 "Hesap üretiliyor"
             share_prepare
-            progress "$id" kur 3 4 "Konteyner başlatılıyor"
-            compose "$id" up -d --remove-orphans >/dev/null 2>&1 ||
-                { share_rollback; fail_step "konteyner başlatılamadı"; }
-            share_verify_container "$SHARE_PW" || { share_rollback; fail_step "$SHARE_FAIL"; }
+            progress "$id" kur 3 4 "Servis başlatılıyor"
+            share_place_unit || true
+            { systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
+                { share_rollback; fail_step "paylaşım servisi başlatılamadı"; }
+            share_verify "$SHARE_PW" || { share_rollback; fail_step "$SHARE_FAIL"; }
             progress "$id" kur 4 4 "Ad ve adres açılıyor"
             names_on paylasim || { share_rollback; fail_step "$FAIL"; }
             share_verify_names || { share_rollback; fail_step "$SHARE_FAIL"; }
@@ -777,28 +807,30 @@ cmd_baslat() {
     progress "$id" baslat 1 1 "Başlatılıyor"
     case "$(runtime_of "$id")" in
         host)
-            torrent_need
-            torrent_dropin || true
-            systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
-            torrent_verify || fail_step "$FAIL"
-            names_on torrent || fail_step "$FAIL"
-            ;;
-        docker)
-            need_docker "$id"
-            [[ "$id" != paylasim ]] || { share_need; share_prepare; }
-            LAST_ERROR="başlatılamadı"
-            compose "$id" up -d
-            wait_running "$id" 20 || fail_step "çalışır duruma gelmedi"
+            case "$id" in
+                torrent)
+                    torrent_need
+                    torrent_dropin || true
+                    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+                    torrent_verify || fail_step "$FAIL"
+                    names_on torrent || fail_step "$FAIL"
+                    ;;
+                paylasim)
+                    share_need
+                    share_tools || fail_step "$SHARE_FAIL"
+                    share_rclone || fail_step "$SHARE_FAIL"
+                    share_prepare
+                    share_place_unit || true
+                    { systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
+                        fail_step "paylaşım servisi başlatılamadı"
+                    share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
+                    names_on paylasim || fail_step "$FAIL"
+                    share_marker on || fail_step "$SHARE_FAIL"
+                    SHARE_PW=""
+                    ;;
+            esac
             ;;
     esac
-    if [[ "$id" == paylasim ]]; then
-        # Dosya bağlaması eski inode'u tutar: htpasswd yeniden yazıldıysa konteyner yeniden başlar.
-        [[ "$SHARE_REWROTE" != 1 ]] || docker restart paylasim >/dev/null
-        share_verify_container "$SHARE_PW" || fail_step "$SHARE_FAIL"
-        names_on paylasim || fail_step "$FAIL"
-        share_marker on || fail_step "$SHARE_FAIL"
-        SHARE_PW=""
-    fi
     registry_set "$id" calisiyor
     progress "$id" baslat bitti 0 "başladı"
     printf '%s\tcalisiyor\n' "$id"
@@ -813,15 +845,14 @@ cmd_durdur() {
     progress "$id" durdur 1 1 "Durduruluyor"
     case "$(runtime_of "$id")" in
         host)
-            torrent_need
-            # Açılışta da kapalı kalır; ad kalır (arayüz başlatılınca geri gelir).
-            torrent_off
-            ;;
-        docker)
-            need_docker "$id"
-            LAST_ERROR="durdurulamadı"
-            # "unless-stopped": elle durdurulan konteyner açılışta da kapalı kalır.
-            compose "$id" stop
+            # Açılışta da kapalı kalır; ad kalır (başlatılınca geri gelir).
+            case "$id" in
+                torrent) torrent_need; torrent_off ;;
+                paylasim)
+                    share_need
+                    systemctl disable --now "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım durdurulamadı"
+                    ;;
+            esac
             ;;
     esac
     registry_set "$id" durduruldu
@@ -854,29 +885,16 @@ cmd_kaldir() {
             registry_set "$id" ""
             firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
             ;;
-    esac
-    case "$(runtime_of "$id")" in
-        docker)
-            command -v docker >/dev/null 2>&1 || fail_step "Docker kurulu değil"
-            if [[ "$id" == paylasim ]]; then
-                share_need
-                names_off paylasim
-                share_marker off
-            fi
-            LAST_ERROR="kaldırılamadı"
-            if [[ -f "$MODULES_DIR/$id/compose.yaml" ]]; then
-                compose "$id" down --rmi all --remove-orphans
-            else
-                docker rm -f "$id" >/dev/null 2>&1 || true
-            fi
+        paylasim)
+            # rclone ikilisi kalır (qBittorrent'in paketi gibi); yeniden kurulumda inmez.
+            share_need
+            names_off paylasim
+            share_marker off
+            share_off
             ;;
     esac
     if [[ "$data" == 1 ]]; then
         case "$id" in
-            # Yalnız modülün kendi günlüğü; indirilen ve açılan dosyalara dokunulmaz. Klasör
-            # (kurulumun açtığı, uid 1000) kalır: yeniden kurulan modül günlüğünü oraya yazar.
-            unpackerr) [[ ! -d "${DOWNLOADS_PATH:?}/.unpackerr" ]] ||
-                find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete ;;
             paylasim) share_drop_data ;;
             dosya) files_drop_data ;;
             wireguard) wg_drop_data ;;
@@ -900,7 +918,7 @@ cmd_gunluk() {
             journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>&1 |
                 sed 's/\(temporary password is provided for this session:\).*/\1 ••••/' || printf '(günlük yok)\n'
             ;;
-        *) docker logs --tail "$lines" "$id" 2>&1 || printf '(günlük yok)\n' ;;
+        paylasim) journalctl -u "$SHARE_UNIT" -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
     esac
 }
 
@@ -910,14 +928,15 @@ cmd_parola() {
     take_lock
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
     share_need
+    share_tools || fail_step "$SHARE_FAIL"
     progress "$id" parola 1 2 "Parola üretiliyor"
     SHARE_PW="$(share_new_password)" || fail_step "parola üretilemedi"
     share_write_account "$SHARE_PW" || fail_step "hesap yazılamadı"
     progress "$id" parola 2 2 "Paylaşım yeniden başlıyor"
-    if [[ "$(container_state paylasim)" == running ]]; then
-        LAST_ERROR="paylaşım yeniden başlatılamadı"
-        docker restart paylasim >/dev/null
-        share_verify_container "$SHARE_PW" || fail_step "$SHARE_FAIL"
+    # Hesap dosyasını systemd açılışta kopyalar: çalışan servis yeniden başlar.
+    if systemctl is-active --quiet "$SHARE_UNIT"; then
+        systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım yeniden başlatılamadı"
+        share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
     fi
     SHARE_PW=""
     progress "$id" parola bitti 0 "parola değişti"
@@ -983,22 +1002,27 @@ cmd_uygula() {
             return 0
             ;;
         paylasim)
+            # Yeni rclone, yeni birim ya da yeniden yazılan hesap servisi yeniden başlatır.
+            local restart=0
             share_need
+            share_tools || fail_step "$SHARE_FAIL"
+            share_rclone || fail_step "$SHARE_FAIL"
+            [[ "$SHARE_RCLONE_NEW" != 1 ]] || restart=1
             share_prepare
+            [[ "$SHARE_REWROTE" != 1 ]] || restart=1
+            ! share_place_unit || restart=1
             names_on paylasim || fail_step "$FAIL"
             share_marker on || fail_step "$SHARE_FAIL"
+            if [[ "$state" == calisiyor ]]; then
+                systemctl enable --quiet "$SHARE_UNIT" >/dev/null 2>&1 || true
+                if [[ "$restart" == 1 ]] || ! systemctl is-active --quiet "$SHARE_UNIT"; then
+                    systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım servisi başlatılamadı"
+                fi
+                share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
+            fi
+            SHARE_PW=""
             ;;
     esac
-    if [[ "$state" == calisiyor ]]; then
-        need_docker "$id"
-        compose "$id" up -d >/dev/null
-        wait_running "$id" 20 || fail_step "$id çalışır duruma gelmedi"
-        if [[ "$id" == paylasim ]]; then
-            [[ "$SHARE_REWROTE" != 1 ]] || docker restart paylasim >/dev/null
-            share_verify_container "$SHARE_PW" || fail_step "$SHARE_FAIL"
-        fi
-    fi
-    SHARE_PW=""
     command -v logger >/dev/null 2>&1 && logger -t master-modul -- "$id uygula: $state" || true
     printf '%s\t%s\n' "$id" "$state"
 }

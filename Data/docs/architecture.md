@@ -48,7 +48,7 @@ fact and one owner per decision.
         │            │                │              │
         ▼            ▼                ▼              ▼
    master-modul   dnsmasq         caddy         MASTER-INPUT
-   (from Konsol;   .service        .service      MASTER-DOCKER
+   (from Konsol;   .service        .service      MASTER-FORWARD
     on loopback)
 ```
 
@@ -114,7 +114,7 @@ re-detected, never as an expectation to be violated.
     ├── panel/                         Konsol WireGuard and system backend: master-wg-panel (Python), API only
     ├── files-panel/                   Konsol file backend: master-files-panel (Python), also serves the pages
     ├── console/                       Konsol pages: index.html, konsol.css, konsol.js (one origin, no external loads)
-    ├── app/<V2_VERSION>.command       every exported portable install app
+    ├── app/<V2_VERSION>.command       the current portable install app (older ones in Git)
     ├── dev/export-installer.sh        build the portable install app (+ .command wrapper)
     ├── docs/                          contract, architecture, design decisions
     └── tests/                         bats suites (not on host)
@@ -163,21 +163,21 @@ in §10, not resolved silently.
 | `.cursor/rules/master-stack.mdc` | Carry the working rules for any AI assistant editing this tree — the single active, editable rule source | Anything about runtime behaviour — it is never installed to the host and never read by the installer |
 | `install.sh` | Read the operator's input file, call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
-| `config/defaults.env` | Declare every constant exactly once: ports, container names, image references, paths, chain names, interface name | How any of them is used |
+| `config/defaults.env` | Declare every constant exactly once: ports, paths, chain names, interface name, the pinned rclone version and checksums | How any of them is used |
 | `templates/Caddyfile` | The base HTTP sites and their loopback upstreams, plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
 | `scripts/master-wg` | WireGuard peers on the server: list/info, add, remove, profile, QR, PNG, DNS, reset (**DD-124**, **DD-130**, **DD-132**) | The firewall, the installer's inputs |
 | `panel/master-wg-panel` | Serve `/api/wg/*` and `/api/konsol/*` on loopback as root: no password (tailnet boundary, **DD-147**), CSRF/Host gates, JSON API over `master-wg`, module operations started as `systemd-run` units of `master-modul` (**DD-148**), plus the server's own numbers (CPU, memory, uptime, ports, audit lines) (**DD-133**, **DD-140**) | WireGuard files and tools — it only calls `master-wg`; how a module is installed — it only calls `master-modul`; page files — Caddy serves them |
 | `scripts/master-modul` | Install, start, stop, remove and re-apply (`uygula`) catalogued modules — the Konsol modules Dosya yöneticisi (the file backend's unit) and WireGuard (packages, kernel module, firewall hook, networks) since **DD-150**; the host module qBittorrent (Debian `qbittorrent-nox`, unit drop-in, first settings, first-login read from the journal, **DD-151**); registry, progress file, one lock; `gunluk` for the card's log; Paylaşım's generated account (`parola`, read-only `hesap`), its checks, Caddy site, dnsmasq name and `acik` marker (**DD-148**, **DD-149**) | Templates and inputs — module files are rendered by the installer; user files (the share's `--veri` removes only its links) |
-| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `unpackerr/compose.yaml`; `paylasim/compose.yaml`, `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
+| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the rclone unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**, **DD-152**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
 | `files-panel/master-files-panel` | Serve the file API on loopback as the downloads uid: no password and the same gates as the root backend (**DD-147**), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames and uploads, the `.cop` trash, text decoding, share links while the `.pay/acik` marker exists (**DD-139**, **DD-140**, **DD-145**, **DD-149**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
 | `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files, modules and log, served by Caddy from `CONSOLE_WEB_DIR`, everything from its own origin (**DD-140**, **DD-148**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/Caddyfile.wg` | The qBittorrent UI port on `{$WG_BIND}` (**DD-151**), shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
 | `templates/dnsmasq.conf` | Five base `interface-name` records (modules add their own files) and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
-| `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT` and `MASTER-DOCKER`; `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Containers, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
-| `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Container health, file drift, disk space, dnsmasq, the firewall, WebDAV |
+| `scripts/firewall.sh` → `master-firewall` | Build and atomically install `MASTER-INPUT`, `MASTER-FORWARD` and `MASTER-NAT` (no Docker chain, **DD-152**); `--check` verifies jumps, `ts-input` order, and a short IPv4 ACCEPT/DROP set | Modules, DNS, WebDAV, and the Tailscale *address* — it matches the interface |
+| `scripts/refresh-tailnet-config` | Detect a Tailscale address change, update `state.env`, restart Caddy — nothing else | Module health, file drift, disk space, dnsmasq, the firewall, WebDAV |
 | *(removed v2-26)* `watch-tailnet-addr` | — | Replaced by timer + `WantedBy=tailscaled` only |
-| *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by a Compose rclone on loopback (**DD-77**); since **DD-142** the only one serves the share root |
+| *(removed v2-36)* `scripts/webdav.sh` / `master-webdav` | — | Replaced by a Compose rclone on loopback (**DD-77**); since **DD-142** the only one serves the share root, since **DD-152** as the host unit `master-paylasim.service` |
 | `systemd/*.service` (+ timer) | Ordering, coupling and restart policy | The contents of the scripts they start |
 | `dev/export-installer.sh` | Write `app/<V2_VERSION>.command` and replace the repository-root copy of the current version | Host runtime |
 | `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
@@ -185,8 +185,8 @@ in §10, not resolved silently.
 ### 3.3 Placeholder convention
 
 Templates use `__NAME__` tokens, not `${NAME}` and not `{$NAME}`. Both of
-those already have meanings in the generated files: Compose expands
-`${…}` from Compose `.env` at container start, and Caddy expands
+those already have meanings in the generated files: systemd expands
+`${…}` in unit command lines, and Caddy expands
 `{$TAILSCALE_IPV4}` from `state.env` at daemon start. A distinct install-time
 token makes it impossible to confuse "substituted once, by the installer"
 with "expanded later, by the consumer".
@@ -202,7 +202,8 @@ error, not a warning.
 |---|---|---|
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config` | detected addresses and identification, `0600` |
-| `/etc/master-stack/paylasim.htpasswd` | `master-modul` (Paylaşım) | bcrypt hash of the generated share account, `0600`; mounted into the module's Compose project (**DD-142**, **DD-149**) |
+| `/etc/master-stack/paylasim.htpasswd` | `master-modul` (Paylaşım) | bcrypt hash of the generated share account, `0600`; handed to `master-paylasim.service` as a systemd credential (**DD-142**, **DD-149**, **DD-152**) |
+| `/usr/local/lib/master-stack/rclone` | `master-modul` (Paylaşım) | rclone's official release binary, pinned version, SHA256-checked before it is unpacked (**DD-152**) |
 | `/var/lib/qbittorrent/` | qBittorrent (module) | its profile: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**) |
 | `/etc/systemd/system/qbittorrent-nox@.service.d/master-stack.conf` | `master-modul` (qBittorrent) | the unit drop-in: profile, `UMask`, sandbox (**DD-151**) |
 | `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
@@ -217,7 +218,7 @@ error, not a warning.
 | `SERVER_ROOT/.pay/` | installer (folders), file backend (links, registry), `master-modul` (`acik`) | share root `w/` (symlinks), the registry `kayit.json` beside it and the `acik` marker while Paylaşım is installed, uid 1000 (**DD-141**, **DD-149**) |
 | `/etc/caddy/moduller/<id>.caddy` | installer (folder), `master-modul` (files) | module sites imported by the base Caddyfile; Paylaşım: `paylas.<domain>` and `<ts-ip>:61010` (**DD-149**) |
 | `/etc/dnsmasq.d/modul-<id>.conf` | `master-modul` | module names; Paylaşım: `interface-name=paylas.<domain>,tailscale0` (**DD-149**) |
-| `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); outside `downloads/`, so Arşiv açıcı never sees it (**DD-144**) |
+| `DOWNLOADS_PATH/.cop/` | installer (folder), file panel (contents) | the file panel's trash: `<id>/<item>` plus `<id>.json` (origin, time); outside `downloads/`, so qBittorrent never sees it and Paylaşım sees it empty (**DD-144**, **DD-152**) |
 | `/etc/wireguard/networks` | `master-wg net-add`/`net-remove` | panel networks wg1…wg9: port, scope, addresses, default DNS, label (**DD-136**), `0600` |
 | `/etc/wireguard/wgN.conf`, `/etc/wireguard/clients-wgN/` | `master-wg` | a panel network's interface and profiles, `0600`/`0700` |
 | `/etc/wireguard/caddy-wg-<interface>.env` | `master-wg` (`ui` networks) | `WG_BIND` for that `caddy-wg@` instance, `0644` |
@@ -247,9 +248,9 @@ systemd's `EnvironmentFile=`, which means plain `KEY=value` lines with no
 quoting, no spaces around `=`, and no shell expansion. That constraint is
 the writer's job to enforce, and the test suite asserts it.
 
-**Compose's `.env` is not written.** No container needs a Compose env file
-for Tailscale or WAN facts (**DD-76**). Web UIs and WebDAV bind loopback;
-the two public peer ports bind the WAN address via Docker publish.
+**No module needs Tailscale or WAN facts in its own files** (**DD-76**). Web
+UIs and WebDAV bind loopback; there is no Docker and no public peer port
+(**DD-151**, **DD-152**).
 
 ---
 
@@ -269,33 +270,35 @@ htpasswd -i -B  ──►  /etc/master-stack/paylasim.htpasswd  root:root 0600
         ▼                     │
    variable unset             │
                               ▼
-              Compose volume mount (read-only)
-              → /run/secrets/paylasim_htpasswd
+              systemd LoadCredential= (copied at start)
+              → $CREDENTIALS_DIRECTORY/htpasswd
                               │
                               ▼
-                    rclone serve webdav --htpasswd=…
-                    (Compose service `paylasim`, loopback, share root)
+                    rclone serve webdav --htpasswd=%d/htpasswd
+                    (master-paylasim.service, loopback, share root)
 ```
 
 ### 4.1 The decision, stated as properties
 
 Recorded so that a later phase cannot quietly weaken it. The same list, in
-contract form, is `contract.md` §6.2. **DD-77** replaced the former
-systemd `LoadCredential=` path.
+contract form, is `contract.md` §6.2. **DD-77** replaced the first
+systemd `LoadCredential=` path with a Compose mount; **DD-152** brought
+`LoadCredential=` back with the host service.
 
 1. Credentials live in a **separate, root-owned credential file**:
    `/etc/master-stack/paylasim.htpasswd` (plus the plaintext copy the console
    shows, `paylasim.cred`, same owner and mode — **DD-141**; both written by
    the Paylaşım module since **DD-149**).
 2. Its mode is **at most `0600`**, owner `root:root`, verified after writing.
-3. Compose mounts the file at **`/run/secrets/paylasim_htpasswd`** (read-only).
-4. rclone is pointed at that **path** only (`--htpasswd=…`).
-5. The password is **not in Compose YAML or systemd unit content**.
+3. systemd copies the file into the unit's credentials directory at start
+   (`LoadCredential=htpasswd:…`); the service never reads `/etc/master-stack`.
+4. rclone is pointed at that **path** only (`--htpasswd=%d/htpasswd`).
+5. The password is **not in the unit file or any other systemd content**.
 6. The password is **not in any environment file**: not `config.env`, not
    `state.env`, not `config/defaults.env`. There is no `paylasim.env`.
 7. The password **does not appear on a command line**.
 8. The password is **not written to logs**.
-9. Exposure checks against the running container assert items 7–8 (§4.3).
+9. Exposure checks against the running service assert items 7–8 (§4.3).
 
 ### 4.2 Where the username lives, and why
 
@@ -315,15 +318,15 @@ nothing reintroduces it as configuration.
 rclone must take credentials from a *file*. If it could only take
 `--user`/`--pass`, the secret would land on the command line.
 
-`master-modul` and the live checklist assert: no password in container args /
-environ or in any `master-modul` argv; both account files remain `0600`
-`root:root` (**DD-149**).
+`master-modul` and the live checklist assert: no password in the service's
+command line or in any `master-modul` argv; both account files remain `0600`
+`root:root` (**DD-149**, **DD-152**).
 
 ### 4.4 Tunables (no `webdav.env`)
 
-Port, image pin, and read-only posture live in `defaults.env` + the Compose
-template. There is no separate `webdav.env`; Stage 4 deletes a leftover file
-from older revisions.
+Port, the rclone pin and the read-only posture live in `defaults.env` + the
+unit template `modules/paylasim/master-paylasim.service`. There is no
+separate `webdav.env`.
 
 ### 4.5 Re-run behaviour
 
@@ -345,14 +348,14 @@ according to what it actually binds:
 | dnsmasq | `lo` and `tailscale0` **by name** | Nothing — `interface-name` + `bind-dynamic` follow the interface, and the config is never regenerated |
 | Caddy | `{$TAILSCALE_IPV4}` read from `state.env` | Restarted after `state.env` is updated |
 | WebDAV | `127.0.0.1` only | Nothing — loopback publish does not track Tailscale |
-| Compose containers | no Tailscale bind | Nothing — no container binds a Tailscale address |
+| Module services | no Tailscale bind | Nothing — no module binds a Tailscale address |
 | Firewall | `tailscale0` **by name**; WAN peer ports from config/state | Nothing — no Tailscale rule names an address |
 
 `refresh-tailnet-config` owns the Tailscale side of this table, and its
 scope is exactly that: read the current IPv4 and IPv6, compare with
 `state.env`, exit successfully without touching a service if they match,
 and otherwise update `state.env` atomically and restart Caddy. It has no
-opinion about container health, file contents, disk space or image digests,
+opinion about module health, file contents, disk space or binary versions,
 and it holds no cooldown stamps, drift flags or recovery logic. **DD-61**
 (narrowed by **DD-77**) states the scope exhaustively.
 
@@ -362,17 +365,16 @@ written against the *interface name* rather than the address it currently
 carries, so the address can change — or `tailscale0` can be destroyed and
 recreated — with no file to regenerate and no rule to reinstall.
 
-**A Tailscale address change never restarts the Compose stack.** This is
-the single most important lifecycle difference from v1, where
-`master-compose.service` carried `PartOf=tailscaled.service` and therefore
-made every `systemctl restart tailscaled` bounce the whole Compose set
-(five containers then; six with WebDAV now).
+**A Tailscale address change never restarts a module.** This is the single
+most important lifecycle difference from v1, where `master-compose.service`
+carried `PartOf=tailscaled.service` and therefore made every
+`systemctl restart tailscaled` bounce the whole Compose set. There is no
+Compose set any more (**DD-152**).
 
-**Public IPv4 change — settled.** Compose publishes the peer ports on
-`0.0.0.0` (not a WAN address baked into the file), so a new public IPv4
-does **not** require re-rendering Compose or recreating containers for
-DNAT/publish. `master-firewall` re-applies on boot / Docker / Tailscale
-restart and reads current WAN facts from `state.env` / the interface.
+**Public IPv4 change — settled.** Nothing publishes on a WAN address, so a new
+public IPv4 needs no re-render. `master-firewall` re-applies on boot and on
+a Tailscale restart and reads current WAN facts from `state.env` / the
+interface.
 `WG_ENDPOINT_HOST` in `state.env` is an operator hint only; WireGuard client
 profiles that baked an old endpoint still need manual client updates
 (**DD-76**). There is no Compose `.env` path and no
@@ -391,7 +393,7 @@ that could disagree.
 | What is the WAN interface / WAN IPv4 / WAN IPv6 / Tailscale IPv4 / IPv6? | `install.sh` (write) / `refresh-tailnet-config` (update) |
 | Is the firewall policy in force? | `scripts/firewall.sh` installed as `/usr/local/sbin/master-firewall --check` |
 | Has the Tailscale address changed? | `scripts/refresh-tailnet-config` |
-| Is a container healthy? | **Nobody.** Compose's restart policy handles crashes; there is no health arbiter |
+| Is a module healthy? | **Nobody.** systemd's `Restart=` handles crashes; `master-modul` checks only when it installs, starts or re-applies |
 | Has a managed file drifted? | **Nobody.** Re-running the installer is the repair |
 | Is the stack working end to end? | The final verification stage, once |
 | Is a port number correct? | `config/defaults.env` |
@@ -409,10 +411,10 @@ exists. Stage 4 in v1 was 2396 lines; here it is a rendering pass.
 | Stage | Work | Owns |
 |---|---|---|
 | 0 | Gates (root, tty, supported OS — Debian 13 / Ubuntu 24.04 / 26.04, nft `iptables` backend, ufw inactive, lock, inhibit); record the OS identity and detect a release change (**DD-104**); read and delete the input file, move and validate pulled settings (**DD-128**), validate the domain, one confirmation (**DD-119**); `config.env`; full-upgrade question on re-run | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages (`apache2-utils` for htpasswd); timezone | `apt` |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages — only what the base uses (**DD-153**: no gnupg, gawk or apache2-utils); timezone | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Docker engine for the Docker modules (no base Compose project, **DD-151**); install scripts, render module files and units | templates |
+| 4 | Install scripts, render module files and units; no Docker (**DD-152**) | templates |
 | 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
 | 6 | dnsmasq/Caddy: mask+apt only if packages missing; render; restart only if config changed (or the config is newer than the running unit); `caddy-wg@` template for the UIs over WireGuard; Konsol root backend and pages; the file backend's script and unit (rendered to `MODULES_DIR/dosya/`, started only by the Dosya yöneticisi module, **DD-150**) (**DD-133**, **DD-140**) | DNS/HTTP |
 | 7 | `master-modul uygula` for installed modules whose files changed, and for WireGuard on every run (**DD-149**, **DD-150**); cheap contract checks (share root owner + Caddy, `master-wg`, and — only with their modules — each registry network's units and the file backend; Konsol page 200 on the tailnet and 403 without `X-Konsol` or with a foreign `Host`, nothing on a WireGuard address) | verification |
@@ -448,7 +450,6 @@ forked into per-distribution paths.
 | Slug | Kind | Affects | What differs | DD |
 |---|---|---|---|---|
 | `tailscale-repo-suite` | identity-derived | both | apt suite and keyring URL come from `OS_ID`/`OS_CODENAME`; both vendors publish the same URL shape | DD-102 |
-| `docker-repo-suite` | identity-derived | both | `URIs`/`Suites` from `OS_ID`/`OS_CODENAME` | DD-102 |
 | `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
 | `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
 | `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |
@@ -496,7 +497,6 @@ alone:
 | `bash -n` | Root `*.sh`, `scripts/*` and the exporter | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
 | `bats tests/` | Unit suites (repo convention, not from the rules file) | **yes** |
-| `docker compose up` | A Docker module's rendered `compose.yaml` | **no** — an invalid file fails `master-modul kur` on the target (**DD-106**, **DD-151**) |
 | `caddy validate` | The rendered `Caddyfile` | **no** — runs on the target, in stage 6, with the real env (**DD-106**) |
 | `dnsmasq --test -C` | The rendered dnsmasq config | **no** — runs on the target, in stage 6 (**DD-106**) |
 | `systemd-analyze verify` | Every generated unit and drop-in | **no** — not run; the units are static tree files, covered by bats |
@@ -535,11 +535,11 @@ one-line versions:
 | # | Question | Answer |
 |---|---|---|
 | **DD-58** | Does the single-file model survive into v2? | No. DD-9 is superseded; v2 ships as a repository tree. |
-| **DD-59** | Chain names | `MASTER-INPUT` and `MASTER-DOCKER`, declared only in `config/defaults.env`. `MASTER-DOCKER-FILTER` is not used. |
+| **DD-59** | Chain names | `MASTER-INPUT` (plus `MASTER-FORWARD`/`MASTER-NAT` for WireGuard), declared only in `config/defaults.env`. `MASTER-DOCKER` went with Docker (**DD-152**). |
 | **DD-60** | Does dnsmasq listen on loopback? | Yes — `lo` and `tailscale0`, `bind-dynamic`, nothing else, no DHCP. |
 | **DD-61** | Does the refresh helper re-render configs? | No. It updates `state.env` and restarts Caddy (WebDAV was dropped from the set by **DD-77**). dnsmasq, the firewall and the stack are untouched. |
-| **DD-77** | Where does WebDAV run? | Compose on `127.0.0.1`, Caddy reverse_proxy; host unit removed. |
-| **DD-98** | Apple TV without MagicDNS? | Caddy listens on `${TS_IPV4}:${WEBDAV_PORT}` → loopback WebDAV; Compose has no TS IP. |
+| **DD-77** | Where does WebDAV run? | Was Compose on `127.0.0.1`; since **DD-152** the host unit `master-paylasim.service` on `127.0.0.1`, Caddy reverse_proxy. |
+| **DD-98** | Apple TV without MagicDNS? | Caddy listens on `${TS_IPV4}:${SHARE_PORT}` → loopback WebDAV; the service has no TS IP. |
 | **DD-62** | Portainer's upstream | Superseded by **DD-116**: Portainer was replaced by Dozzle on plain loopback HTTP `127.0.0.1:61002`. |
 
 **DD-59 removed a chain that was never decided on.** `defaults.env`
@@ -554,13 +554,12 @@ decision with a new name, not a constant that survives by inertia.
 1. **Public IPv4 change handling** (§5) — extend the refresh helper, or
    document a manual re-run. Note that **DD-61** closes the door on
    solving this inside `refresh-tailnet-config` as currently scoped: doing
-   so would mean recreating containers, which that helper must not do.
+   so would mean restarting modules, which that helper must not do.
 2. **Comment policy.** Settled for `install.sh` (DD-44: no
    editorial comments; rationale in `docs/design-decisions.md`). Helper
    scripts under `scripts/` may keep short operational comments.
-3. **Whether `master-compose.service` returns in a later phase.** It is out
-   of the first release; if a public IPv4 change is to be handled
-   automatically, it may need to come back in a much smaller form.
+3. **Whether `master-compose.service` returns in a later phase.** Closed by
+   **DD-152**: there is no Docker and no Compose at all.
 4. **`systemd-resolved` vs dnsmasq on `127.0.0.1:53`.** Stage 6 writes
    `DNSStubListener=no` when resolved is active. Confirmed on noble and
    resolute: dnsmasq owns loopback/Tailscale DNS, host DNS survives, and on

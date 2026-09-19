@@ -30,11 +30,6 @@ http://panel.__LOCAL_DOMAIN__ {
 		file_server
 	}
 }
-# Eski adresler panele yönlenir (yer imleri çalışmaya devam etsin). file. FileBrowser'ındı;
-# dosyaları artık Konsol yönetir (DD-146).
-http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {
-	redir http://panel.__LOCAL_DOMAIN__{uri} 302
-}
 # Modüllerin siteleri (DD-149): master-modul buraya <id>.caddy koyar ve kaldırır (ör. Paylaşım:
 # paylas. adı ve Infuse için Tailscale IP:port). Eşleşmeyen kalıp geçerlidir; nokta ile başlayan
 # geçici dosyalar okunmaz. Genel seçenek bloğundan sonra gelmeli.

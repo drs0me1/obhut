@@ -424,7 +424,8 @@ class Panel:
             "disk": self.disk(env.get("SERVER_ROOT", "")),
             # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
             # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
-            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env))},
+            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env)),
+                      "rclone": env.get("RCLONE_VERSION", "")},
         }
 
     def actions(self):

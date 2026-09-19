@@ -1,0 +1,50 @@
+# Modül: Paylaşım (DD-141, DD-149, DD-152). master-modul bunu UNIT_DIR'e koyar ve açar.
+# rclone'un resmi sürümü (RCLONE_VERSION, SHA256 doğrulanmış) sunucuda, indirme klasörünün
+# sahibi olarak ve salt okunur çalışır: kökü yalnız .pay/w, yani Konsol'dan paylaşılanlar.
+# Bağlantılar izlenir (--copy-links). Çöp boş bir tmpfs'in altında kalır: ona giden bağlantı
+# "yok" olur ve yalnız o öge görünmez (erişilemez yapılan bir yol bütün listeyi düşürüyordu,
+# ölçüldü). Yalnız 127.0.0.1'i dinler, dışarı bağlanamaz; tailnet'e Caddy açar. Hesap dosyası
+# root'a özel kalır, servise systemd kimlik bilgisi olarak verilir.
+[Unit]
+Description=Paylaşım WebDAV (rclone __RCLONE_VERSION__; master-stack, DD-152)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# exec: systemctl start/restart ancak rclone başladıktan (yetkisini düşürdükten) sonra döner.
+Type=exec
+User=__DOWNLOADS_UID__
+Group=__DOWNLOADS_GID__
+LoadCredential=htpasswd:__SHARE_HTPASSWD_FILE__
+Environment=HOME=/tmp
+ExecStart=__RCLONE_BIN__ serve webdav __SERVER_ROOT__/__SHARE_DIR__/w --config=/dev/null --addr=127.0.0.1:__SHARE_PORT__ --htpasswd=%d/htpasswd --dir-cache-time=10s --copy-links --read-only
+Restart=on-failure
+RestartSec=3s
+# rclone SIGTERM'de 143 ile çıkar; durdurmak hata sayılmasın.
+SuccessExitStatus=143
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+TemporaryFileSystem=__SERVER_ROOT__/__FILES_PANEL_TRASH__:ro
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1758,7 +1758,7 @@
     torrent: () => {
       const sys = S.sys || {}, d = sys.domain || "…", root = sys.root || "/srv";
       const prof = (sys.torrent && sys.torrent.profile) || "…";
-      return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true, recommends: "unpackerr",
+      return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true,
         desc: "Debian paketiyle sunucunun kendisinde çalışır. İlk kurulumda en az ayarı bir kez yazar; sonra ayarlarına dokunmaz.",
         will: [["box", "Debian paketi qbittorrent-nox; apt güncellemeleriyle yenilenir"], ["globe", `torrent.${d} adı eklenir (arayüz yalnız sunucuda dinler)`],
           ["folder", `İndirme yeri ${root}/downloads, profil ${prof}`], ["info", "İnternete eş portu açılmaz; yalnız giden bağlantılar"]],
@@ -1783,25 +1783,20 @@
       removeDrop: "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir." },
     paylasim: () => {
       const sys = S.sys || {}, d = sys.domain || "…", port = (sys.share && sys.share.port) || "…";
+      const rc = (sys.share && sys.share.rclone) ? `rclone ${sys.share.rclone}` : "rclone";
       return { name: "Paylaşım", sub: "WebDAV · Infuse ve Finder", icon: "share", tone: "t-share", account: true, requires: "dosya",
         desc: "Dosyalar sayfasında paylaştıklarınızı tek adres ve tek hesapla, salt okunur sunar.",
-        will: [["box", "rclone konteyneri (~25 MB)"], ["globe", `paylas.${d} adı; Infuse için Tailscale IP:${port}`], ["key", "Güçlü bir hesap üretilir"]],
-        facts: ["rclone · konteyner", `${port} · yalnız Tailscale`],
-        steps: [["İmaj indiriliyor", "~25 MB"], ["Hesap üretiliyor", ""], ["Konteyner başlatılıyor", ""], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],
-        removeWhat: [["box", "Konteyner ve imaj kaldırılır."], ["shield", `paylas.${d} adı ve ${port} kapanır.`]],
+        will: [["box", `${rc}: resmi sürüm, SHA256 doğrulanarak sunucuya iner (~30 MB)`], ["globe", `paylas.${d} adı; Infuse için Tailscale IP:${port}`],
+          ["key", "Güçlü bir hesap üretilir"], ["lock", "Salt okunur; çöpü göremez, dışarı bağlanamaz"]],
+        facts: [`${rc} · sunucu servisi`, `${port} · yalnız Tailscale`],
+        steps: [["rclone indiriliyor", "resmi sürüm · SHA256"], ["Hesap üretiliyor", ""], ["Servis başlatılıyor", "systemd"], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],
+        logSrc: "journalctl -u master-paylasim",
+        removeWhat: [["box", "Servis durur ve kalkar; rclone programı sunucuda kalır."], ["shield", `paylas.${d} adı ve ${port} kapanır.`]],
         removeLabel: "Hesabı ve paylaşım kayıtlarını da sil",
         removeKeep: "paylaşım kayıtları ve hesap korunur; yeniden kurunca aynı bağlantılar geri gelir.",
         removeDrop: "Hesap ve paylaşım kayıtları da silinir. Paylaşılan dosyalara dokunulmaz.",
         stopNote: "Infuse bağlantısı kesilir; paylaşım kayıtları durur." };
     },
-    unpackerr: { name: "Arşiv açıcı", sub: "Unpackerr · indirilen arşivleri açar", icon: "box", tone: "t-text",
-      desc: "İndirme klasöründeki .rar ve .zip arşivlerini kendi yerinde açar.",
-      will: [["box", "unpackerr konteyneri (~15 MB)"], ["folder", "Yalnız indirme klasörünü görür; çöp ve paylaşım görünmez"], ["lock", "Port, ad, arayüz ve ağ yok"]],
-      facts: ["unpackerr · konteyner", "port yok"],
-      steps: ["İmaj indiriliyor", "Konteyner başlatılıyor"],
-      removeWhat: [["box", "Konteyner ve imaj kaldırılır."]],
-      removeKeep: "günlüğü kalır, yeniden kurulunca devam eder.", removeDrop: "Modülün günlüğü silinir.",
-      stopNote: "Yeni arşivler açılmaz; açılmış olanlar yerinde kalır." },
   };
   const META_FALLBACK = { sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
   function metaOf(id) {
@@ -1809,7 +1804,7 @@
     return Object.assign({ name: id }, META_FALLBACK, typeof m === "function" ? m() : m || {});
   }
   const modName = (detail) => metaOf(String(detail || "").split(" ")[0]).name;
-  const RUNTIME = { docker: ["docker", "box", "Docker"], host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
+  const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
   let MODS = null, modTimer = null;
   const shareMod = () => (MODS || []).find((m) => m.id === "paylasim");
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
@@ -1906,7 +1901,7 @@
     if (m.state === "durduruldu") return h("span", { class: "hm idle" }, "Durduruldu");
     if (m.runtime === "konsol") return m.live === "exited" ? h("span", { class: "hm warn" }, "Çalışmıyor")
       : h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Kurulu");
-    if ((m.runtime === "docker" || m.runtime === "host") && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
+    if (m.runtime === "host" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
     return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
   }
   function askNewPass(m, meta) {
@@ -1919,7 +1914,7 @@
   }
   function modCard(m) {
     const meta = metaOf(m.id);
-    const [rtCls, rtIcon, rtLabel] = RUNTIME[m.runtime] || RUNTIME.docker;
+    const [rtCls, rtIcon, rtLabel] = RUNTIME[m.runtime] || RUNTIME.host;
     const kids = [h("div", { class: "card-head" },
       h("div", { class: "mod-who" }, h("span", { class: `svc-ico ${meta.tone}` }, svg(meta.icon)),
         h("div", null, h("h2", null, meta.name, h("span", { class: `rt-chip ${rtCls}` }, svg(rtIcon), rtLabel)), h("small", null, meta.sub))),
@@ -1963,13 +1958,10 @@
           ? [h("div", { class: "acct-head" }, h("span", null, "İlk giriş"), h("span", { class: "src" }, "Konsol bu hesabı yönetmez")),
             accountBlock(m.id, "card")]
           : [h("p", { class: "mod-desc" }, meta.desc)];
-      if (meta.recommends && !modOn(meta.recommends)) {
-        body.push(h("div", { class: "acct-wg" }, svg("plus"), h("span", null, `${metaOf(meta.recommends).name} ile birlikte önerilir.`)));
-      }
       if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
       if (modLogs[m.id] != null) {
         body.push(h("div", { class: "logbox" },
-          h("div", { class: "acct-head" }, h("span", null, "Günlük"), h("span", { class: "src" }, m.runtime === "docker" ? `docker logs ${m.id}` : meta.logSrc || m.id)),
+          h("div", { class: "acct-head" }, h("span", null, "Günlük"), h("span", { class: "src" }, meta.logSrc || m.id)),
           h("pre", { tabindex: "0" }, modLogs[m.id] || "(boş)")));
       }
       const running = m.state === "calisiyor";
@@ -2020,7 +2012,6 @@
       ["globe", "Tailscale", sys.net && sys.net.tailscale ? `bağlı · ${sys.net.tailscale}` : "bağlı"],
       ["server", "Ad çözümleme + Caddy", "panel adresi; modüller kendi adlarını ekler"],
       ["shield", "Güvenlik duvarı", "modüller kural ekler, kaldırılınca kural kalkar"],
-      ["box", "Docker motoru", "konteyner modülleri burada çalışır"],
     ];
     $("mod-base").replaceChildren(...base.map(([ic, name, sub]) => h("div", { class: "base-item" },
       h("span", { class: "svc-ico t-dir" }, svg(ic)),

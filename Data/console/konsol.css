@@ -519,7 +519,6 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .rt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .rt-chip svg { width: 12px; height: 12px; }
 .rt-chip.host { color: var(--ok); }
-.rt-chip.docker { color: var(--accent); border-color: var(--tint-line); }
 .rt-chip.konsol { color: var(--video); }
 .hm .spin, .step .spin { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .step .spin { width: 14px; height: 14px; border-color: var(--accent); border-right-color: transparent; }

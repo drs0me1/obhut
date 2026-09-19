@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Kurulum çalışma dosyalarını gömülü tek bir macOS .command dosyasına paketler.
-# Her export: Data/app/<V2_VERSION>.command (sürüm arşivi) + repo kökünde
-# güncel sürümün kopyası (çift tıklanan dosya).
+# Her export: Data/app/<V2_VERSION>.command + repo kökünde güncel sürümün kopyası
+# (çift tıklanan dosya). İkisinde de yalnız güncel sürüm durur; eskiler Git geçmişinde (DD-154).
 set -Eeuo pipefail
 
 DEV_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -324,11 +324,12 @@ bytes="$(wc -c <"$OUT_PATH" | tr -d ' ')"
 echo "==> Yazıldı: $OUT_PATH ($bytes bayt)"
 echo "==> SHA256 (gömülü arşiv): $ARCHIVE_SHA256"
 
-# Repo kökünde yalnız güncel sürüm durur; önceki sürümlerin kopyası kalkar,
-# arşivleri Data/app/ altında kalır.
+# Repo kökünde ve Data/app/'ta yalnız güncel sürüm durur; önceki sürümler kalkar (Git
+# geçmişinde kalırlar, DD-154).
 if [[ "$(cd -- "$(dirname -- "$OUT_PATH")" && pwd)" == "$(cd -- "$APP_DIR" && pwd)" ]]; then
-    for old in "$TOP_DIR"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command; do
-        if [[ -f "$old" && "$old" != "$TOP_DIR/$OUT_NAME" ]]; then rm -f -- "$old"; fi
+    for old in "$TOP_DIR"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command \
+        "$APP_DIR"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command; do
+        if [[ -f "$old" && "$(basename -- "$old")" != "$OUT_NAME" ]]; then rm -f -- "$old"; fi
     done
     cp -f "$OUT_PATH" "$TOP_DIR/$OUT_NAME"
     chmod 0755 "$TOP_DIR/$OUT_NAME"

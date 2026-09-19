@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Host INPUT + DOCKER-USER + WireGuard FORWARD/NAT politikası. Staging zincir,
-# atomik swap.
-# Üçüncü taraf DOCKER-USER kuralları silinmez. Docker zincirleri silinmez.
+# Host INPUT + WireGuard FORWARD/NAT politikası. Staging zincir, atomik swap.
+# Üçüncü taraf kurallar silinmez. Docker yoktur (DD-152): DOCKER-USER'a dokunulmaz.
 set -Eeuo pipefail
 
 STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
@@ -36,7 +35,6 @@ fi
 # (resolve_wan_interface). Diğer değerler state'ten zorunlu (DD-66).
 : "${TAILSCALE_IF:?}"
 : "${CHAIN_INPUT:?}"
-: "${CHAIN_DOCKER:?}"
 : "${CHAIN_STAGING_PREFIX:?}"
 : "${SSH_PUBLIC_PORT:?}"
 : "${TAILSCALE_UDP_PORT:?}"
@@ -207,7 +205,7 @@ create_staging() {
 
 activate_named() {
     # Staging önce parent'a bağlanır; sonra eski final kaldırılır ve rename yapılır.
-    # DOCKER-USER / INPUT içindeki diğer (üçüncü taraf) kurallar silinmez.
+    # INPUT / FORWARD / POSTROUTING içindeki diğer (üçüncü taraf) kurallar silinmez.
     # INPUT'ta staging, varsa ts-input'un hemen arkasına girer (gölgelememek için).
     local bin="$1" parent="$2" staging="$3" final="$4" pos=1
     if [[ "$parent" == "INPUT" ]]; then
@@ -259,52 +257,6 @@ apply_input4() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-docker_service_active() {
-    systemctl is-active --quiet docker.service 2>/dev/null
-}
-
-docker_user_present() {
-    local bin="$1"
-    "$bin" -w 5 -L DOCKER-USER -n >/dev/null 2>&1
-}
-
-wait_for_docker_user() {
-    local bin="$1"
-    local wait_s=0 deadline
-    if docker_user_present "$bin"; then
-        return 0
-    fi
-    if ! docker_service_active; then
-        return 1
-    fi
-    wait_s="${DOCKER_USER_WAIT_SECONDS:-10}"
-    deadline=$((SECONDS + wait_s))
-    while true; do
-        if docker_user_present "$bin"; then
-            return 0
-        fi
-        if [[ "$SECONDS" -ge "$deadline" ]]; then
-            die "$bin: DOCKER-USER yok; Docker çalışıyor ama zincir yok (${wait_s}s)"
-        fi
-        sleep 1
-    done
-}
-
-apply_docker4() {
-    local bin=iptables staging
-    if ! wait_for_docker_user "$bin"; then
-        printf 'firewall: UYARI: Docker yok/hazır değil; IPv4 MASTER-DOCKER atlandı (docker start → drop-in restart)\n'
-        return 0
-    fi
-    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK-")"
-    "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-    "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
-    # DD-151: WAN'dan hiçbir konteyner yayını kabul edilmez (qBittorrent sunucuda, eş portu yok).
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
-    "$bin" -w 5 -A "$staging" -j RETURN
-    activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
-}
-
 apply_input6() {
     local bin=ip6tables staging i
     command -v "$bin" >/dev/null || die "ip6tables gerekli"
@@ -336,8 +288,8 @@ apply_input6() {
 }
 
 # DD-120: WireGuard istemcileri yalnız internete çıkar ve dönüşünü alır;
-# tailnet, Docker ağları ve istemciler arası trafik kapalı. Zincir FORWARD'ın
-# başına bağlanır; Docker ya da tailscaled yeniden başlayınca drop-in ve PartOf
+# tailnet ve istemciler arası trafik kapalı. Zincir FORWARD'ın
+# başına bağlanır; tailscaled yeniden başlayınca PartOf
 # politikayı yeniden uygular. Arada altta kalsa bile ts-forward tailnet'e yeni
 # bağlantıyı zaten düşürür.
 # DD-136: her ağ için aynı dört kural; wg1'den wg0'a (ya da tersi) giden paket
@@ -367,23 +319,6 @@ apply_nat() {
     done
     "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" POSTROUTING "$staging" "$CHAIN_NAT"
-}
-
-apply_docker6() {
-    # IPv4 ile aynı şekil: yalnız WAN'dan GELEN düşer, köprü çıkışı RETURN ile
-    # DOCKER-FORWARD'a devam eder. Koşulsuz DROP köprü IPv6 çıkışını da keserdi
-    # (DD-71). Public IPv6 publish yok; bu yüzden WAN öncesi ACCEPT de yok.
-    local bin=ip6tables staging
-    if ! wait_for_docker_user "$bin"; then
-        printf 'firewall: UYARI: Docker yok/hazır değil; IPv6 MASTER-DOCKER atlandı (docker start → drop-in restart)\n'
-        return 0
-    fi
-    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}DK6-")"
-    "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-    "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j RETURN
-    "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
-    "$bin" -w 5 -A "$staging" -j RETURN
-    activate_named "$bin" DOCKER-USER "$staging" "$CHAIN_DOCKER"
 }
 
 check_jump_exactly_one() {
@@ -501,12 +436,6 @@ wan_allow_pairs() {
     return 0
 }
 
-# MASTER-DOCKER'da WAN'dan RETURN alan publish'ler (IPv6 publish yok). DD-151'den beri yok:
-# Docker modüllerinin hiçbiri internete yayın yapmaz. WireGuard Docker'da değil (DD-120).
-docker_return_pairs() {
-    return 0
-}
-
 # Tek tek desen kontrolü "eksik kural" bulur, "fazladan kural" bulamaz:
 # '-i WAN -j ACCEPT' gibi port nitelemesi olmayan bir geçiş, beklenen
 # kuralların hepsi yerinde olduğu için denetimden sağ çıkardı. Sayı birebir
@@ -597,24 +526,6 @@ check_nat_chain() {
     check_no_staging_artifacts "$bin"
 }
 
-check_docker_chain() {
-    local bin="$1" family="$2" n=0 proto port
-    check_jump_exactly_one "$bin" DOCKER-USER "$CHAIN_DOCKER"
-    check_rule "$bin" "$CHAIN_DOCKER" \
-        -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-    check_rule "$bin" "$CHAIN_DOCKER" -i "$TAILSCALE_IF" -j RETURN
-    while read -r proto port; do
-        [[ -n "$proto" ]] || continue
-        check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -p "$proto" \
-            -m conntrack --ctstate NEW --ctorigdstport "$port" -j RETURN
-        n=$((n + 1))
-    done < <(docker_return_pairs "$family")
-    check_rule "$bin" "$CHAIN_DOCKER" -i "$WAN_INTERFACE" -j DROP
-    check_rule "$bin" "$CHAIN_DOCKER" -j RETURN
-    check_wan_allow_count "$bin" "$CHAIN_DOCKER" RETURN "$n"
-    check_chain_shape "$bin" "$CHAIN_DOCKER" RETURN
-}
-
 load_wg_networks
 
 if [[ "$MODE" == check ]]; then
@@ -627,21 +538,6 @@ if [[ "$MODE" == check ]]; then
         -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
     check_rule ip6tables "$CHAIN_INPUT" \
         -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
-
-    if docker_user_present iptables; then
-        check_docker_chain iptables v4
-    elif docker_service_active; then
-        die "iptables: Docker aktif ama DOCKER-USER yok"
-    else
-        printf 'firewall: Docker yok; IPv4 MASTER-DOCKER denetimi atlandı\n'
-    fi
-    if docker_user_present ip6tables; then
-        check_docker_chain ip6tables v6
-    elif docker_service_active; then
-        die "ip6tables: Docker aktif ama DOCKER-USER yok"
-    else
-        printf 'firewall: Docker yok; IPv6 MASTER-DOCKER denetimi atlandı\n'
-    fi
     check_forward_chain iptables
     check_forward_chain ip6tables
     check_nat_chain iptables_nat ${WG_NET4[@]+"${WG_NET4[@]}"}
@@ -659,8 +555,6 @@ apply_forward iptables "${CHAIN_STAGING_PREFIX}FW-"
 apply_forward ip6tables "${CHAIN_STAGING_PREFIX}FW6-"
 apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" ${WG_NET4[@]+"${WG_NET4[@]}"}
 apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" ${WG_NET6[@]+"${WG_NET6[@]}"}
-apply_docker4
-apply_docker6
 purge_staging_leftovers iptables
 purge_staging_leftovers ip6tables
 purge_staging_leftovers iptables_nat

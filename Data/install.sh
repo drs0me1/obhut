@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-120"
+V2_VERSION="2026.08.06-v2-124"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -65,7 +65,6 @@ WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PORT_DEFAULT=$WG_PORT_DEFAULT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 CHAIN_INPUT=$CHAIN_INPUT
-CHAIN_DOCKER=$CHAIN_DOCKER
 CHAIN_FORWARD=$CHAIN_FORWARD
 CHAIN_NAT=$CHAIN_NAT
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
@@ -100,6 +99,11 @@ WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 TORRENT_UI_PORT=$TORRENT_UI_PORT
 TORRENT_PROFILE_DIR=$TORRENT_PROFILE_DIR
+RCLONE_VERSION=$RCLONE_VERSION
+RCLONE_SHA256_AMD64=$RCLONE_SHA256_AMD64
+RCLONE_SHA256_ARM64=$RCLONE_SHA256_ARM64
+RCLONE_DOWNLOAD_URL=$RCLONE_DOWNLOAD_URL
+RCLONE_BIN=$RCLONE_BIN
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -267,7 +271,7 @@ assert_repo_suite() {
 }
 
 # Depo suite'i os-release'ten (require_supported_os → OS_ID/OS_CODENAME);
-# hem Tailscale hem Docker debian/ubuntu için aynı URL kalıbını yayınlar.
+# Tailscale debian/ubuntu için aynı URL kalıbını yayınlar.
 install_tailscale_repo() {
     # OS-DIVERGENCE: tailscale-repo-suite (debian+ubuntu) — depo suite'i ve
     # keyring URL'i os-release'ten türer; iki yayıncı da aynı kalıbı kullanır [DD-102]
@@ -286,28 +290,10 @@ deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.t
 EOF
 }
 
-install_docker_repo() {
-    # OS-DIVERGENCE: docker-repo-suite (debian+ubuntu) — URIs/Suites os-release'ten
-    # türer; linux/debian ve linux/ubuntu aynı URL kalıbını yayınlar [DD-102]
-    assert_repo_suite "Docker" \
-        "https://download.docker.com/linux/${OS_ID}/dists/${OS_CODENAME}/Release"
-    install -m 0755 -d /etc/apt/keyrings
-    retry "docker-gpg" 3 60 -- \
-        curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
-    atomic_write /etc/apt/sources.list.d/docker.sources 0644 <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/$OS_ID
-Suites: $OS_CODENAME
-Components: stable
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-}
-
-# firewall.sh ve Docker aynı netfilter arka ucunu kullanmak zorunda. Alternatif
-# legacy'ye alınmışsa Docker nft tablosuna yazar, betik legacy'yi okur ve
-# DOCKER-USER "yok" görünür — semptomu bildiren, sebebi gizleyen bir ölüm.
-# Kapıyı koyup gerçek çareyi söylüyoruz (DD-106).
+# firewall.sh ve tailscaled aynı netfilter arka ucunu kullanmak zorunda: betik kendi
+# zincirini INPUT'ta ts-input'un arkasına sıralar. Alternatif legacy'ye alınmışsa betik
+# başka bir tabloyu okur ve ts-input "yok" görünür — semptomu bildiren, sebebi gizleyen
+# bir ölüm. Kapıyı koyup gerçek çareyi söylüyoruz (DD-106; Docker DD-152 ile gitti).
 #
 # İki çağrı yeri (DD-108): Ubuntu iptables'ı önyüklü getirir, Debian minimal
 # getirmez — paketi aşama 1 kurar. Aşama 0'da binary yoksa denetlenecek bir
@@ -321,7 +307,7 @@ check_nft_iptables() {
             continue
         fi
         [[ "$ver" == *"nf_tables"* ]] ||
-            die "$bin arka ucu nft değil ($ver); Docker nft kullanır. Çare: update-alternatives --set $bin /usr/sbin/${bin}-nft"
+            die "$bin arka ucu nft değil ($ver); Tailscale ve güvenlik duvarı nft kullanır. Çare: update-alternatives --set $bin /usr/sbin/${bin}-nft"
     done
     [[ "$missing" -eq 1 ]] || return 0
     [[ "$required" != "required" ]] ||
@@ -421,7 +407,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Modüller:      Dosya yöneticisi, WireGuard, qBittorrent, Paylaşım, Arşiv açıcı
+  Modüller:      Dosya yöneticisi, WireGuard, qBittorrent, Paylaşım
                  Konsol → Modüller'den kurulur; hesaplarını Konsol gösterir (DD-148)
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
   Tailscale:     $ts_note
@@ -436,7 +422,7 @@ EOF
 
 # DD-113: dağıtımın güvenlik güncellemeleri kendiliğinden insin. Kaynak
 # süzgeci paketin dağıtım varsayılanı (Debian: stable + security; Ubuntu:
-# security); Docker/Tailscale/Caddy depoları eşleşmez, onları yalnız yeniden
+# security); Tailscale/Caddy depoları eşleşmez, onları yalnız yeniden
 # çalıştırma günceller. Reboot kararı operatörde; Ubuntu'da unattended-upgrades
 # paketi imajla gelir, dosyalar oradakiyle aynı içeriğe yazılır (no-op).
 apply_unattended_upgrades() {
@@ -459,8 +445,8 @@ stage_1() {
     # paket kurulu olmadığı için no-op [DD-103]
     # Ubuntu'da needrestart apt kancasıyla gelir ve "Ubuntu modunda" restart
     # kipini OTOMATİK'e ayarlar ($nrconf{restart}='a'); DEBIAN_FRONTEND bunu
-    # kapatmaz. Kütüphane güncellemesinden sonra sshd/docker/containerd/
-    # tailscaled/caddy/dnsmasq'ı aşamaların ortasında yeniden başlatır —
+    # kapatmaz. Kütüphane güncellemesinden sonra sshd/tailscaled/caddy/
+    # dnsmasq'ı aşamaların ortasında yeniden başlatır —
     # ufw kapısının reddettiği "tek şeyin iki sahibi" sınıfının aynısı.
     # SUSPEND apt kancasınca okunur; Debian'da needrestart kurulu değil, no-op.
     export NEEDRESTART_SUSPEND=1
@@ -470,10 +456,12 @@ stage_1() {
             apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
                 -o Dpkg::Options::=--force-confold full-upgrade
     fi
+    # DD-153: yalnız temelin kullandıkları. gnupg (Caddy anahtarı artık .asc), gawk (v1'den
+    # kalma; awk sistemin mawk'ı) ve apache2-utils (htpasswd yalnız Paylaşım'ın) temelde yok.
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        ca-certificates curl gnupg ethtool iproute2 gawk procps kmod \
+        ca-certificates curl ethtool iproute2 procps kmod \
         iptables coreutils util-linux diffutils jq \
-        apache2-utils dnsutils unattended-upgrades python3
+        dnsutils unattended-upgrades python3
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
@@ -626,16 +614,20 @@ module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
 ensure_module_files() {
     local changed=0
     install -d -m 0755 -o root -g root "$MODULES_DIR"
-    # DD-149: Paylaşım — compose, Caddy sitesi ve dnsmasq adı. Canlı kopyaları master-modul koyar.
+    # DD-149, DD-152: Paylaşım — servis birimi (rclone sunucuda), Caddy sitesi ve dnsmasq adı.
+    # Canlı kopyaları master-modul koyar. Birim rclone sürümünü taşır: sürüm yükselince kurulu
+    # Paylaşım yeniden uygulanır ve yeni sürüme geçer.
     install -d -m 0755 -o root -g root "$MODULES_DIR/paylasim"
-    render_template "$V2_ROOT/modules/paylasim/compose.yaml" "$MODULES_DIR/paylasim/compose.yaml" 0644 \
-        RCLONE_IMAGE="$RCLONE_IMAGE" \
+    render_template "$V2_ROOT/modules/paylasim/master-paylasim.service" "$MODULES_DIR/paylasim/master-paylasim.service" 0644 \
+        RCLONE_VERSION="$RCLONE_VERSION" \
+        RCLONE_BIN="$RCLONE_BIN" \
         SERVER_ROOT="$SERVER_ROOT" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_PORT="$SHARE_PORT" \
         SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
-        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
-        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE"
+        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        DOWNLOADS_UID="$DOWNLOADS_UID" \
+        DOWNLOADS_GID="$DOWNLOADS_GID"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     render_template "$V2_ROOT/modules/paylasim/paylasim.caddy" "$MODULES_DIR/paylasim/paylasim.caddy" 0644 \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
@@ -672,16 +664,6 @@ ensure_module_files() {
     # DD-150: WireGuard'ın işlenen dosyası yok; kuruluysa her çalıştırmada uygulanır (paketler
     # bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
     MODULES_CHANGED="$MODULES_CHANGED wireguard"
-    install -d -m 0755 -o root -g root "$MODULES_DIR/unpackerr"
-    render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644 \
-        UNPACKERR_IMAGE="$UNPACKERR_IMAGE" \
-        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
-        DOWNLOADS_UID="$DOWNLOADS_UID" \
-        DOWNLOADS_GID="$DOWNLOADS_GID" \
-        DOCKER_LOG_MAX_SIZE="$DOCKER_LOG_MAX_SIZE" \
-        DOCKER_LOG_MAX_FILE="$DOCKER_LOG_MAX_FILE" \
-        TIMEZONE="$TIMEZONE"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && MODULES_CHANGED="$MODULES_CHANGED unpackerr"
     if [[ ! -f "$MODULES_FILE" ]]; then
         atomic_write "$MODULES_FILE" 0644 </dev/null
     fi
@@ -690,7 +672,7 @@ ensure_module_files() {
 }
 
 # DD-148/DD-149: dosyası değişen kurulu modül yeniden uygulanır (adları, hesabı; çalışıyorsa
-# konteyneri). Durdurulmuş modül durur, kurulmamış modüle dokunulmaz, hiçbiri kaldırılmaz.
+# servisi). Durdurulmuş modül durur, kurulmamış modüle dokunulmaz, hiçbiri kaldırılmaz.
 reapply_modules() {
     local id state
     for id in $MODULES_CHANGED; do
@@ -706,30 +688,6 @@ reapply_modules() {
     done
 }
 
-# DD-8: yalnız bilinen anahtarları yaz; diğer daemon.json ayarlarını koru.
-# log-opts yalnız sürücü json-file iken (varsayılan) dokunulur — operatör
-# başka bir sürücü seçtiyse onun ayarı ezilmez (DD-107). Yürürlüğe girmesi
-# docker restart + konteynerlerin yeniden yaratılmasını bekler; bu yüzden
-# burada disruptif bir restart yapılmaz.
-merge_docker_daemon_config() {
-    local existing='{}' merged
-    command -v jq >/dev/null 2>&1 || die "jq gerekli (daemon.json merge)"
-    if [[ -f /etc/docker/daemon.json ]]; then
-        existing="$(cat /etc/docker/daemon.json)"
-        [[ -n "${existing//[[:space:]]/}" ]] || existing='{}'
-    fi
-    merged="$(
-        jq --arg sz "$DOCKER_LOG_MAX_SIZE" --arg n "$DOCKER_LOG_MAX_FILE" '
-            .dns = ["1.1.1.1", "1.0.0.1"]
-            | if ((."log-driver" // "json-file") == "json-file")
-              then ."log-opts" = ((."log-opts" // {}) +
-                                  {"max-size": $sz, "max-file": $n})
-              else . end
-        ' <<<"$existing"
-    )" || die "daemon.json jq merge başarısız (geçersiz JSON?)"
-    atomic_write /etc/docker/daemon.json 0644 <<<"$merged"
-}
-
 stage_3() {
     log INFO "Aşama 3/7 — adresler ve dizinler"
     detect_wan
@@ -743,7 +701,6 @@ stage_3() {
     for d in \
         "$SERVER_ROOT" \
         "$DOWNLOADS_PATH" \
-        "$DOWNLOADS_PATH/.unpackerr" \
         "$SERVER_ROOT/$MEDIA_SUBDIR" \
         "$SERVER_ROOT/$MEDIA_SUBDIR/movies" \
         "$SERVER_ROOT/$MEDIA_SUBDIR/series" \
@@ -755,44 +712,15 @@ stage_3() {
     local fixed
     fixed="$(ensure_downloads_tree "$SERVER_ROOT" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
     if [[ "$fixed" -gt 0 ]]; then
-        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/Unpackerr/Konsol R/W)"
+        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/Konsol R/W)"
     else
         log INFO "Downloads sahipliği ve izinleri yerinde (${DOWNLOADS_UID}:${DOWNLOADS_GID})"
     fi
 }
 
 stage_4() {
-    log INFO "Aşama 4/7 — Docker ve şablonlar"
-    install_docker_repo
-    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 || "$OS_CHANGED" -eq 1 ]]; then
-        retry "apt-update-docker" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
-    else
-        log INFO "docker.sources aynı; apt-get update atlandı (stage_1 zaten günceldi)"
-    fi
-    # daemon.json paket kurulumundan ÖNCE (DD-110): docker-ce'nin postinst'i
-    # dockerd'yi hemen başlatır. Sonra yazılan ayar bir sonraki restart'a kadar
-    # okunmaz — sıfırdan kurulumda aşama 7'nin konteynerleri dns/log ayarını
-    # hiç almıyordu (ölçüldü: dockerd 23:09:43, daemon.json 23:09:45). DD-18'deki
-    # Tailscale netbuf tabanıyla aynı kalıp; hiçbir docker paketi bu dosyayı
-    # sahiplenmez, dolayısıyla kurulum onu ezmez.
-    local docker_was_active=0
-    systemctl is-active --quiet docker 2>/dev/null && docker_was_active=1
-    mkdir -p /etc/docker
-    merge_docker_daemon_config
-    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 && "$docker_was_active" -eq 1 ]]; then
-        log INFO "daemon.json değişti ama dockerd zaten çalışıyor; daemon düzeyindeki ayarlar bir sonraki docker yeniden başlatmasında okunur (proje konteynerlerinin log ayarı compose'ta — DD-110)"
-    fi
-    # Önerilen paketler olmadan (DD-125): stack imaj derlemez ve rootless
-    # çalışmaz; buildx, git (+perl) ve rootless-extras ~200 MB yer tutuyordu.
-    # docker-ce'nin önerilerinden çalışma zamanının kullandığı ikisi açıkça
-    # yazılır: apparmor (çekirdekte AppArmor açıkken docker-default profili
-    # için gerekir) ve pigz (katman açma).
-    retry "apt-docker" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
-        --no-install-recommends \
-        docker-ce docker-ce-cli containerd.io docker-compose-plugin apparmor pigz
-    systemctl enable --now docker
-    # DD-151: temel Compose projesi yok; Docker motoru yalnız Docker modülleri içindir.
-
+    log INFO "Aşama 4/7 — betikler ve şablonlar"
+    # DD-152: Docker yok; modüller sunucuda systemd servisi olarak çalışır.
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
     ensure_module_files
@@ -805,10 +733,6 @@ stage_4() {
 
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
-    mkdir -p "$UNIT_DIR/docker.service.d"
-    atomic_write "$UNIT_DIR/docker.service.d/master-stack.conf" 0644 \
-        <"$V2_ROOT/systemd/docker.service.d/master-stack.conf"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
     atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.service"
@@ -902,13 +826,16 @@ stage_6() {
         # cloudsmith keyring'iyle (signed-by) doğrulanır.
         retry "apt-dns-caddy" 2 "$APT_LOCK_TIMEOUT" -- \
             apt_get_install_masked_quiet "${APT_OPTS[@]}" dnsmasq
-        if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]]; then
-            retry "caddy-gpg" 3 60 -- curl -1sLf \
-                'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-                gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-            chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        if [[ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.asc ]]; then
+            # DD-153: apt zırhlı anahtarı kendisi okur (signed-by *.asc); gnupg gerekmez.
+            local caddy_key
+            caddy_key="$(mktemp)"
+            retry "caddy-key" 3 60 -- curl -1sLf \
+                'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' -o "$caddy_key"
+            install -m 0644 "$caddy_key" /usr/share/keyrings/caddy-stable-archive-keyring.asc
+            rm -f "$caddy_key"
             atomic_write /etc/apt/sources.list.d/caddy-stable.list 0644 <<'EOF'
-deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.asc] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
 EOF
             retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
         fi
@@ -1156,8 +1083,7 @@ ensure_files_panel() {
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    # DD-151: temel Compose projesi yok; konteynerler Docker modüllerinindir ve kurulu olanlar
-    # dosyaları değiştiyse master-modul ile yeniden uygulanır.
+    # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
     "$SBIN_DIR/master-firewall" --check
 
@@ -1249,8 +1175,8 @@ stage_7() {
 
     # DD-140, DD-147: Konsol tailnet'ten parolasız açılır. Parola olmadığı için asıl korumalar
     # sınanır: X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı
-    # istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Eski adresler
-    # panele yönlenir ve panel WireGuard adresinde dinlenmez.
+    # istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel WireGuard
+    # adresinde dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
     [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
@@ -1265,12 +1191,6 @@ stage_7() {
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'X-Konsol: 1' \
             -H "Host: baska.ornek" "http://127.0.0.1:${gate_port}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
-    done
-    local redir
-    for redir in wg dosya file; do
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            -H "Host: ${redir}.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-        [[ "$code" == "302" ]] || die "${redir}.${LOCAL_DOMAIN} panele yönlenmedi (HTTP $code)"
     done
     local panel_out
     panel_out="$(python3 "$SBIN_DIR/master-wg-panel" check \
@@ -1306,8 +1226,8 @@ stage_7() {
     [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
         die "Paylaşım kökü ${SERVER_ROOT}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
 
-    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; Arşiv açıcı ve qBittorrent
-    # modülleri onları göremez — ikisini de kurulurken master-modul sınar (DD-148, DD-151).
+    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; qBittorrent onları göremez,
+    # Paylaşım çöpü göremez — kurulurken master-modul sınar (DD-151, DD-152).
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
             "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
@@ -1321,13 +1241,12 @@ stage_7() {
 # "Konsol → Modüller'den kurulur" yazılıyordu.
 summary_modules() {
     local id name info st
-    for id in dosya wireguard torrent paylasim unpackerr; do
+    for id in dosya wireguard torrent paylasim; do
         case "$id" in
             dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
             wireguard) name="WireGuard"; info="${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer" ;;
             torrent) name="qBittorrent"; info="http://torrent.${LOCAL_DOMAIN}; ilk giriş bilgisi kartında" ;;
             paylasim) name="Paylaşım"; info="http://paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı kartında" ;;
-            unpackerr) name="Arşiv açıcı"; info="indirme klasöründeki arşivleri açar" ;;
         esac
         case "$(module_state "$id")" in
             calisiyor) st="kurulu" ;;
@@ -1355,8 +1274,7 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale.
-  wg.${LOCAL_DOMAIN} ve dosya.${LOCAL_DOMAIN} buraya yönlenir)
+Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale)
 Modüller (Konsol → Modüller'den kurulur, durdurulur, kaldırılır; DD-148, DD-150, DD-151):
 $(summary_modules)
   WireGuard ağları WireGuard → Yapılandır'dan; "Local erişim" açık ağlarda qBittorrent arayüzü

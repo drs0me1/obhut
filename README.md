@@ -1,11 +1,11 @@
 # Debian / Ubuntu Server Installer
 
 Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
-(noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, fixed
-Docker Compose bundle, host dnsmasq + Caddy on the
-tailnet, and a persistent firewall. No reconcile engine.
+(noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, host
+dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
+the optional modules are installed. No Docker (**DD-152**), no reconcile engine.
 
-**Current version:** `2026.08.06-v2-96` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-121` (see `Data/install.sh`).
 
 The repository root holds only what is double-clicked: the current portable
 installer (`<version>.command`), `wireguard.command` (WireGuard peers and
@@ -73,7 +73,7 @@ only the runtime files and their archive SHA-256. It uploads them to
     ├── systemd/            # units and drop-ins
     ├── tests/              # bats critical-behaviour suite
     ├── dev/                # installer exporter, backup worker
-    ├── app/                # every exported <version>.command
+    ├── app/                # the current exported <version>.command (older ones in Git)
     ├── docs/               # contract, architecture and design rationale
     ├── OKUBENI.txt         # Turkish click order
     └── CHANGELOG.md, SESSION.md
@@ -84,18 +84,17 @@ only the runtime files and their archive SHA-256. It uploads them to
 | Service | Exposure | Role |
 |---------|----------|------|
 | qBittorrent (host module, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → Modüller; torrent downloads. The first login's temporary password is shown on its card |
-| Arşiv açıcı (Unpackerr) | none; a module, installed from Konsol → Modüller (**DD-148**) | archive extraction in the downloads folder |
 | WireGuard (host kernel; module, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → Modüller; VPN; peers generated on the server with Konsol or `wireguard.command` |
-| Paylaşım — WebDAV, shares only (module, **DD-149**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
-| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, one login; `wg.` and `dosya.` redirect) | one admin console (the Dosyalar and WireGuard pages come with their modules, **DD-150**): server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
+| Paylaşım — WebDAV, shares only (host module: rclone's pinned official release, **DD-149**, **DD-152**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
+| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one admin console (the Dosyalar and WireGuard pages come with their modules, **DD-150**): server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
-to the WireGuard address; firewall (`DOCKER-USER` + custom INPUT/FORWARD/NAT
-chains) for Tailscale, WireGuard and WAN SSH.
+to the WireGuard address; firewall (custom INPUT/FORWARD/NAT chains) for
+Tailscale, WireGuard and WAN SSH.
 
 ## Backups
 
-There is no container backup tool. A host is rebuilt from `kurulum/` alone:
+There is no backup tool. A host is rebuilt from `kurulum/` alone:
 - `kurulum/kurulum.env` holds only the SSH host and the domain; Konsol has
   no account (**DD-147**) and the modules make or show their own.
 - qBittorrent keeps its settings and torrent list on the server only; a

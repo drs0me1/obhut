@@ -620,8 +620,8 @@ class Files:
         with DirFd(self.open_dir(parts)) as fd:
             handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664, dir_fd=fd)
             try:
-                # umask ne olursa olsun ağacın kuralı: dosya 0664 (qBittorrent ve
-                # unpackerr aynı grupla yazar; ensure_downloads_tree de bunu bekler).
+                # umask ne olursa olsun ağacın kuralı: dosya 0664 (qBittorrent aynı grupla
+                # yazar; Paylaşım aynı hesapla okur; ensure_downloads_tree de bunu bekler).
                 os.fchmod(handle, 0o664)
                 while written < length:
                     chunk = stream.read(min(UPLOAD_CHUNK, length - written))

@@ -82,8 +82,8 @@ EOF
     # Repo suite comes from OS_ID/OS_CODENAME — no hardcoded distro remains.
     grep -qF 'https://pkgs.tailscale.com/stable/$OS_ID $OS_CODENAME main' \
         "$V2_ROOT/install.sh"
-    grep -qF 'https://download.docker.com/linux/$OS_ID' "$V2_ROOT/install.sh"
-    grep -qF 'Suites: $OS_CODENAME' "$V2_ROOT/install.sh"
+    # DD-152: no Docker repository any more.
+    run ! grep -q 'download.docker.com' "$V2_ROOT/install.sh"
     run ! grep -q 'trixie' "$V2_ROOT/install.sh"
     # Caddy repo stays distro-agnostic (any-version) — same line on ubuntu.
     grep -q 'caddy/stable/deb/debian any-version main' "$V2_ROOT/install.sh"
@@ -96,14 +96,17 @@ EOF
         "$V2_ROOT/install.sh"
     # The Caddy repo is verified by its signed-by keyring; debian-keyring is
     # not installed on any OS (DD-125).
-    grep -q 'signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg' \
+    # DD-153: apt reads the armored key itself; no gnupg, no dearmor.
+    run ! grep -q 'gpg --dearmor' "$V2_ROOT/install.sh"
+    grep -q 'signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.asc' \
         "$V2_ROOT/install.sh"
     run grep -q 'dns_pkgs+=(debian-keyring)' "$V2_ROOT/install.sh"
     [ "$status" -ne 0 ]
     # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
-    # DD-150: the WireGuard packages are installed by the WireGuard module, not here.
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 8 ]
+    # DD-150: the WireGuard packages are installed by the WireGuard module, not here;
+    # DD-152: no Docker repository update or packages either.
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 6 ]
     grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
     grep -qF -- '-o DPkg::Lock::Timeout=300 "$@"' "$V2_ROOT/scripts/master-modul"
     grep -qx 'WG_PACKAGES="wireguard-tools qrencode"' "$V2_ROOT/scripts/master-modul"
@@ -208,7 +211,7 @@ EOF
 }
 
 @test "fail-early gates: nft backend, repo suite, rendered configs" {
-    # Docker and firewall.sh must share one netfilter backend (DD-106), and
+    # tailscaled and firewall.sh must share one netfilter backend (DD-106), and
     # both families are checked because each has its own alternatives link.
     awk '/^check_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'nf_tables'
     awk '/^check_nft_iptables\(\)/,/^}$/' "$V2_ROOT/install.sh" |
@@ -225,7 +228,7 @@ EOF
     # A suite the vendor has not published is named, not timed out on.
     awk '/^assert_repo_suite\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'curl'
     grep -q 'assert_repo_suite "Tailscale"' "$V2_ROOT/install.sh"
-    grep -q 'assert_repo_suite "Docker"' "$V2_ROOT/install.sh"
+    run ! grep -q 'assert_repo_suite "Docker"' "$V2_ROOT/install.sh"
     # Every render is validated before the unit that consumes it is restarted.
     grep -q 'dnsmasq --test -C "\$DNSMASQ_CONF_FILE"' "$V2_ROOT/install.sh"
     grep -q 'caddy validate --config "\$CADDYFILE"' "$V2_ROOT/install.sh"
@@ -235,18 +238,15 @@ EOF
     [ "$(grep -c 'SHARE_PORT="\$SHARE_PORT" \\$' <<<"$(awk '/caddy validate --config/{print prev} {prev=$0}' "$V2_ROOT/install.sh")")" -eq 0 ]
 }
 
-@test "apt keeps no downloaded packages and Docker skips its recommends" {
-    # DD-125: the installer's own .deb downloads are not left in the cache,
-    # and Docker comes without buildx, git/perl or rootless-extras.
+@test "apt keeps no downloaded packages and installs no Docker" {
+    # DD-125: the installer's own .deb downloads are not left in the cache.
     grep -qF 'APT_OPTS=(-o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=false)' \
         "$V2_ROOT/install.sh"
-    docker_install="$(awk '/retry "apt-docker"/{p=1} p{print} p && !/\\$/{exit}' \
-        "$V2_ROOT/install.sh")"
-    grep -q -- '--no-install-recommends' <<<"$docker_install"
-    grep -q 'docker-ce docker-ce-cli containerd.io docker-compose-plugin apparmor pigz' \
-        <<<"$docker_install"
-    run grep -qE 'docker-buildx-plugin|docker-ce-rootless-extras' "$V2_ROOT/install.sh"
-    [ "$status" -ne 0 ]
+    # DD-152: no Docker engine, repository, daemon settings or unit drop-in at all.
+    run ! grep -qE 'docker-ce|containerd|docker-compose-plugin|download\.docker\.com|daemon\.json|docker\.service' \
+        "$V2_ROOT/install.sh"
+    [ ! -e "$V2_ROOT/systemd/docker.service.d/master-stack.conf" ]
+    run ! grep -qE 'DOCKER_LOG_MAX_(SIZE|FILE)=|_IMAGE=' "$V2_ROOT/config/defaults.env"
 }
 
 @test "OS-divergence inventory: code markers and the doc table agree" {
@@ -262,8 +262,9 @@ EOF
     # make the comparison below pass for the wrong reason.
     [ -n "$code" ]
     [ -n "$doc" ]
-    grep -qx 'docker-repo-suite' <<<"$code"
-    grep -qx 'docker-repo-suite' <<<"$doc"
+    grep -qx 'tailscale-repo-suite' <<<"$code"
+    grep -qx 'tailscale-repo-suite' <<<"$doc"
+    run ! grep -qx 'docker-repo-suite' <<<"$code$doc"
 
     [ "$code" = "$doc" ]
 
@@ -426,15 +427,15 @@ EOF
     case "$output" in *"ok:hi"*) ;; *) false ;; esac
 }
 
-@test "firewall opens no torrent peer port and accepts no container publish from WAN" {
+@test "firewall opens no torrent peer port and has no Docker chain" {
     # DD-151: qBittorrent runs on the host and makes outgoing connections only.
     local fw="$V2_ROOT/scripts/firewall.sh"
     [ "$(cat "$fw" "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/scripts/master-wg" \
         "$V2_ROOT/panel/master-wg-panel" | grep -c 'TORRENT_PUBLIC_PORT')" -eq 0 ]
-    [ "$(awk '/^apply_docker4\(\)/,/^}$/' "$fw" | grep -c 'ctorigdstport')" -eq 0 ]
-    eval "$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
-    [ -z "$(docker_return_pairs v4)" ]
-    [ -z "$(docker_return_pairs v6)" ]
+    # DD-152: no Docker — no MASTER-DOCKER chain, no DOCKER-USER jump, no wait for dockerd.
+    [ "$(grep -vE '^[[:space:]]*#' "$fw" | grep -ciE 'docker')" -eq 0 ]
+    run ! grep -q 'CHAIN_DOCKER' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh"
+    run ! grep -qi 'docker' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/systemd/master-firewall.service")"
 }
 
 @test "firewall requires ports and chains from state" {
@@ -450,16 +451,17 @@ EOF
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "unpackerr and qBittorrent run as the downloads uid" {
-    [ "$(grep -c 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' "$V2_ROOT/modules/unpackerr/compose.yaml")" -eq 1 ]
-    run ! grep -qE 'user: "1000:1000"' "$V2_ROOT/modules/unpackerr/compose.yaml"
+@test "qBittorrent and Paylaşım run as the downloads uid" {
     # DD-151: the package's template unit runs as the downloads account's own name.
     body="$(awk '/^torrent_unit_name\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
     grep -qF 'getent passwd "$DOWNLOADS_UID"' <<<"$body"
     grep -qF "printf 'qbittorrent-nox@%s.service\n'" <<<"$body"
+    # DD-152: the share service reads the shared files as their owner, never as root.
+    grep -qx 'User=__DOWNLOADS_UID__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qx 'Group=__DOWNLOADS_GID__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
 }
 
-@test "downloads tree is chown 1000 for qbittorrent, unpackerr and the console" {
+@test "downloads tree is chown 1000 for qbittorrent, the share and the console" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
@@ -477,8 +479,6 @@ EOF
     # three separate passes over the whole downloads tree.
     [ "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
         grep -c 'find "\$root"')" -eq 1 ]
-    grep -q 'user: "__DOWNLOADS_UID__:__DOWNLOADS_GID__"' \
-        "$V2_ROOT/modules/unpackerr/compose.yaml"
 }
 
 @test "ensure_downloads_tree single pass fixes deviant modes and keeps compliant ones" {
@@ -503,57 +503,6 @@ EOF
     case "$output" in *"die: downloads dizini yok"*) ;; *) false ;; esac
 }
 
-@test "docker daemon.json merges dns and log rotation via jq" {
-    grep -q 'merge_docker_daemon_config' "$V2_ROOT/install.sh"
-    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'jq'
-    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q '\.dns = \["1.1.1.1", "1.0.0.1"\]'
-    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
-    [ -n "$stage4" ]
-    run ! grep -q 'atomic_write /etc/docker/daemon.json' <<<"$stage4"
-}
-
-@test "container log rotation is merged only for the json-file driver" {
-    grep -q 'DOCKER_LOG_MAX_SIZE=' "$V2_ROOT/config/defaults.env"
-    grep -q 'DOCKER_LOG_MAX_FILE=' "$V2_ROOT/config/defaults.env"
-    # The merge must be conditional: an operator-selected driver is preserved.
-    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'log-driver" // "json-file"'
-    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'max-size'
-    # Existing keys survive: log-opts is added to, not replaced.
-    awk '/^merge_docker_daemon_config\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -q 'log-opts" // {}'
-}
-
-@test "docker daemon config is in place before the package starts dockerd" {
-    # docker-ce's postinst starts dockerd at once; a daemon.json written after
-    # that is not read until the next restart, so the containers stage 7
-    # creates got neither dns nor log options (DD-110). Same pattern as DD-18.
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        awk '/^    merge_docker_daemon_config$/{m=NR} /retry "apt-docker"/{a=NR}
-             END { exit !(m && a && m < a) }'
-    # A daemon.json change on an already-running dockerd is reported, not assumed.
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" | grep -q 'docker_was_active'
-}
-
-@test "container log rotation is part of each module's compose definition" {
-    # daemon.json log-opts are read only at container creation and never reach
-    # existing containers; in compose they are a diff and trigger a recreate.
-    local f
-    for f in "$V2_ROOT/modules/paylasim/compose.yaml" "$V2_ROOT/modules/unpackerr/compose.yaml"; do
-        grep -q '^x-logging: &default-logging$' "$f"
-        grep -q 'max-size: "__DOCKER_LOG_MAX_SIZE__"' "$f"
-        grep -q 'max-file: "__DOCKER_LOG_MAX_FILE__"' "$f"
-        [ "$(grep -c '^    container_name:' "$f")" -gt 0 ]
-        [ "$(grep -c '^    container_name:' "$f")" -eq "$(grep -c '^    logging: \*default-logging$' "$f")" ]
-    done
-    body="$(awk '/^ensure_module_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -q 'DOCKER_LOG_MAX_SIZE="\$DOCKER_LOG_MAX_SIZE"' <<<"$body"
-    grep -q 'DOCKER_LOG_MAX_FILE="\$DOCKER_LOG_MAX_FILE"' <<<"$body"
-}
-
 @test "tcp congestion control is applied only when the host can load it" {
     # DD-111: measured on TCP that terminates on the host. A kernel without the
     # module must not stop the install (DD-108); the result is read back (DD-109).
@@ -576,7 +525,7 @@ EOF
     run ! grep -q 'die "tcp_congestion_control' <<<"$block"
 }
 
-@test "the user area is a fixed root under /srv and compose needs no .env" {
+@test "the user area is a fixed root under /srv" {
     # DD-144: the operator is not asked for a path; the constant is still checked.
     grep -qx 'SERVER_ROOT="/srv"' "$V2_ROOT/config/defaults.env"
     grep -qx 'DOWNLOADS_SUBDIR="downloads"' "$V2_ROOT/config/defaults.env"
@@ -588,22 +537,6 @@ EOF
     grep -q 'kullanıcı alanı allowlist dışı' "$V2_ROOT/install.sh"
     # config.env no longer carries a path the operator could have chosen.
     run ! grep -q 'DOWNLOADS_PATH=\$DOWNLOADS_PATH' <<<"$(awk '/^write_config\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
-    [ -n "$stage4" ]
-    run ! grep -q 'atomic_write "$COMPOSE_DIR/.env"' <<<"$stage4"
-    # Every value is rendered into the file, so no interpolation is left for
-    # Compose to resolve and a stray .env cannot change the stack.
-    run ! grep -q '\${' "$V2_ROOT/templates/compose.yaml"
-}
-
-@test "unpackerr watches folders, not a torrent client API" {
-    grep -q 'UN_FOLDER_0_PATH: "/downloads"' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    grep -q 'UN_FOLDER_0_MOVE_BACK: "true"' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    grep -q 'UN_FOLDER_0_DELETE_ORIGINAL: "false"' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    run ! grep -qE 'UN_(QBITTORRENT|TRANSMISSION)_' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    # DD-148: no network at all, and never part of the base compose file.
-    grep -qx '    network_mode: none' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    run ! grep -q 'unpackerr' "$V2_ROOT/templates/compose.yaml"
 }
 
 @test "wg-easy is gone from compose, defaults and the tailnet edge" {
@@ -614,8 +547,9 @@ EOF
         "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf" \
         "$V2_ROOT/install.sh" "$V2_ROOT/scripts/firewall.sh")"
     run ! grep -qE 'wg-easy|wg_easy|WG_BRIDGE|WG_UI_PORT|WG_EASY|__WG_PUBLIC_PORT__' <<<"$code"
-    # The name wg. now redirects to the console (DD-140); the backend stays on loopback.
-    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
+    # DD-154: the old names wg., dosya. and file. are gone; the console is panel. only.
+    run ! grep -qE '^http://(wg|dosya|file)\.' "$V2_ROOT/templates/Caddyfile"
+    run ! grep -qE 'interface-name=(wg|dosya|file)\.' "$V2_ROOT/templates/dnsmasq.conf"
     grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
     # DD-151: no base Compose project at all; every container belongs to a module.
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
@@ -894,68 +828,45 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "the only WebDAV is the share module: loopback compose, share root, Caddy name and TS IP:SHARE_PORT" {
-    # DD-142: the service that published the whole downloads folder is gone; one rclone is left,
-    # and since DD-149 it is the Paylaşım module, not part of the base Compose file.
-    local mc="$V2_ROOT/modules/paylasim/compose.yaml" caddy="$V2_ROOT/modules/paylasim/paylasim.caddy"
+@test "the only WebDAV is the share module: a sandboxed host rclone, share root, Caddy name and TS IP:SHARE_PORT" {
+    # DD-142: one rclone; DD-149: the Paylaşım module; DD-152: a host service, no container.
+    local unit="$V2_ROOT/modules/paylasim/master-paylasim.service" caddy="$V2_ROOT/modules/paylasim/paylasim.caddy" line
     run ! grep -qE 'WEBDAV_(PORT|USER|PASS|HTPASSWD_FILE|MIN_PASSWORD_LENGTH)' \
         "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" \
         "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf"
     run ! grep -q 'webdav' "$V2_ROOT/templates/dnsmasq.conf"
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
+    [ ! -e "$V2_ROOT/modules/paylasim/compose.yaml" ]
     run ! grep -q 'paylas\.' "$V2_ROOT/templates/dnsmasq.conf"
     [ "$(grep -c '^http://paylas' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
-    grep -q 'container_name: paylasim' "$mc"
-    grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
-    [ "$(grep -c '__RCLONE_IMAGE__' "$mc")" -eq 1 ]
-    grep -q '127.0.0.1:__SHARE_PORT__:8080' "$mc"
-    run ! grep -q '__TAILSCALE_IPV4__:__SHARE_PORT__' "$mc"
-    grep -q -- '--htpasswd=/run/secrets/paylasim_htpasswd' "$mc"
-    grep -q -- '--read-only' "$mc"
-    grep -q -- '--copy-links' "$mc"
-    grep -q -- '- __SERVER_ROOT__/__SHARE_DIR__/w$' "$mc"
-    grep -q '__SERVER_ROOT__:__SERVER_ROOT__:ro' "$mc"
-    # A missing account file fails the start instead of Docker creating a directory there.
-    grep -q 'source: __SHARE_HTPASSWD_FILE__' "$mc"
-    grep -q 'create_host_path: false' "$mc"
-    # The project's own default network (paylasim_default): no clash with the old base network.
-    [ "$(grep -c '^networks:' "$mc")" -eq 0 ]
-    grep -q "wget -q -S -O /dev/null http://127.0.0.1:8080/" "$mc"
-    grep -q "grep -q '401'" "$mc"
-    run ! grep -qE 'mem_limit:|memory:|pids_limit:' "$mc"
+    # Serves only the share root, read-only, on loopback, with the account as a systemd credential.
+    grep -qxF 'ExecStart=__RCLONE_BIN__ serve webdav __SERVER_ROOT__/__SHARE_DIR__/w --config=/dev/null --addr=127.0.0.1:__SHARE_PORT__ --htpasswd=%d/htpasswd --dir-cache-time=10s --copy-links --read-only' "$unit"
+    grep -qx 'LoadCredential=htpasswd:__SHARE_HTPASSWD_FILE__' "$unit"
+    for line in 'ProtectSystem=strict' 'ProtectHome=true' 'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
+        'IPAddressDeny=any' 'IPAddressAllow=localhost' 'TemporaryFileSystem=__SERVER_ROOT__/__FILES_PANEL_TRASH__:ro'; do
+        grep -qx "$line" "$unit"
+    done
+    # Start returns only once rclone runs as the service user; a stop (143) is not a failure.
+    grep -qx 'Type=exec' "$unit"
+    grep -qx 'SuccessExitStatus=143' "$unit"
+    # An inaccessible path fails the whole listing (measured); nothing is writable.
+    run ! grep -qE '^(InaccessiblePaths|ReadWritePaths)=' "$unit"
+    # The unit names the rclone version: a version bump changes it and re-applies the share.
+    grep -q '^Description=.*rclone __RCLONE_VERSION__' "$unit"
     # Caddy: the name and the Infuse address; the port is literal, the address stays the env placeholder.
     grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$caddy"
     grep -q 'reverse_proxy 127.0.0.1:__SHARE_PORT__' "$caddy"
     run ! grep -q '{$SHARE_PORT}' "$caddy"
     grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/modules/paylasim/dnsmasq.conf"
     run ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
-    run ! grep -qE 'apt-get install -y[^\n]*\brclone\b' "$V2_ROOT/install.sh"
     # The installer's old share checks moved into master-modul.
     [ "$(grep -cE 'wait_share_healthy|assert_share_network|assert_share_readonly_runtime' "$V2_ROOT/install.sh")" -eq 0 ]
 }
 
-@test "IPv6 MASTER-DOCKER drops WAN only, not bridge egress" {
-    # An unconditional DROP here also kills wg-easy peer IPv6 egress.
-    local body
-    body="$(awk '/^apply_docker6\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
-    [ -n "$body" ]
-    run ! grep -qE '\-A "\$staging" -j DROP$' <<<"$body"
-    grep -q -- '-i "$WAN_INTERFACE" -j DROP' <<<"$body"
-    grep -qE '\-A "\$staging" -j RETURN$' <<<"$body"
-    # --check must assert the WAN-scoped shape so the regression cannot return.
-    grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
-    awk '/^check_docker_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
-        grep -q -- '-i "$WAN_INTERFACE" -j DROP'
+@test "IPv6 INPUT is checked with the same WAN-scoped shape" {
     grep -q 'check_input_chain ip6tables v6' "$V2_ROOT/scripts/firewall.sh"
     awk '/^check_input_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
         grep -q -- '-i "$WAN_INTERFACE" -j DROP'
-    # No container publishes to WAN (DD-151), so no WAN RETURN is allowed at all.
-    eval "$(awk '/^docker_return_pairs\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh")"
-    [ -z "$(docker_return_pairs v6)" ]
-}
-
-@test "firewall script does not flush DOCKER-USER" {
-    run ! grep -qE 'DOCKER-USER.*-F|-F DOCKER-USER' "$V2_ROOT/scripts/firewall.sh"
 }
 
 @test "WAN allow count is derived from one list and rejects extra passes" {
@@ -969,9 +880,7 @@ EOF
     grep -q 'expected' <<<"$body"
     # Both the check_rule calls and the count come from the same list.
     grep -q 'wan_allow_pairs "\$family"' "$script"
-    grep -q 'docker_return_pairs "\$family"' "$script"
     grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_INPUT" ACCEPT "\$n"' "$script"
-    grep -q 'check_wan_allow_count "\$bin" "\$CHAIN_DOCKER" RETURN "\$n"' "$script"
     # Ports must not be restated next to the loop.
     run ! grep -q 'check_rule iptables "\$CHAIN_INPUT" -i "\$WAN_INTERFACE" \\' "$script"
 }
@@ -997,7 +906,7 @@ EOF
     grep -q -- '-X "\$chain"' <<<"$body"
     # It must run after the policy is in place, never before.
     [ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -gt \
-        "$(awk '/^apply_docker6$/ { print NR; exit }' "$script")" ]
+        "$(awk '/^apply_nat ip6tables_nat / { print NR; exit }' "$script")" ]
     [ "$(awk '/^purge_staging_leftovers iptables$/ { print NR; exit }' "$script")" -lt \
         "$(awk '/^check_no_staging_artifacts iptables$/ { print NR; exit }' "$script")" ]
 }
@@ -1010,16 +919,11 @@ EOF
     run ! grep -qE 'while .*-D INPUT -j "\$CHAIN_INPUT"' <<<"$ts_precedence"
 }
 
-@test "master-firewall converges without ordering on docker" {
+@test "master-firewall converges on its own and follows tailscaled" {
     local unit="$V2_ROOT/systemd/master-firewall.service"
-    # Host INPUT must not wait on Docker; the drop-in adds MASTER-DOCKER later.
-    run ! grep -q 'After=.*docker.service' "$unit"
-    run ! grep -q 'Wants=.*docker.service' "$unit"
-    run ! grep -q 'Requires=docker.service' "$unit"
-    run ! grep -q 'WantedBy=docker.service' "$unit"
+    # DD-94: host INPUT sits as early as possible; DD-152: there is no Docker to wait for.
+    run ! grep -qi 'docker' <<<"$(grep -vE '^[[:space:]]*#' "$unit")"
     grep -q 'Wants=network-online.target' "$unit"
-    # PartOf stays as the belt-and-braces trigger next to the drop-in.
-    grep -q 'PartOf=docker.service' "$unit"
     grep -q 'PartOf=tailscaled.service' "$unit"
     grep -q 'WantedBy=tailscaled.service' "$unit"
     grep -q 'After=.*tailscaled.service' "$unit"
@@ -1028,12 +932,9 @@ EOF
     grep -q 'StartLimitIntervalSec=300' "$unit"
     grep -q 'StartLimitBurst=12' "$unit"
     grep -q 'master-firewall.service' "$V2_ROOT/install.sh"
-    # Compose must not be PartOf/Requires-coupled to the firewall unit.
     run ! grep -qiE 'compose|master-compose' "$unit"
-    # Docker start re-applies firewall even when RemainAfterExit left it active.
-    grep -q 'docker.service.d/master-stack.conf' "$V2_ROOT/install.sh"
-    grep -q 'ExecStartPost=-/bin/systemctl --no-block restart master-firewall.service' \
-        "$V2_ROOT/systemd/docker.service.d/master-stack.conf"
+    [ ! -e "$V2_ROOT/systemd/docker.service.d/master-stack.conf" ]
+    run ! grep -q 'docker.service.d' "$V2_ROOT/install.sh"
 }
 
 @test "install carries no migration cleanup for older revisions" {
@@ -1057,33 +958,14 @@ EOF
     run ! grep -q 'rm -f "\$COMPOSE_DIR/.env"' "$s"
 }
 
-@test "firewall waits for DOCKER-USER only when Docker is active" {
-    grep -q 'wait_for_docker_user' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'DOCKER_USER_WAIT_SECONDS' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'docker_service_active' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'MASTER-DOCKER atlandı' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'MASTER-DOCKER denetimi atlandı' "$V2_ROOT/scripts/firewall.sh"
-    # Host INPUT must be applied before Docker stages.
-    awk '
-        /^apply_input4$/ { i4=NR }
-        /^apply_input6$/ { i6=NR }
-        /^apply_docker4$/ { d4=NR }
-        /^apply_docker6$/ { d6=NR }
-        END {
-            exit !(i4 && i6 && d4 && d6 && i4 < i6 && i6 < d4 && d4 < d6)
-        }
-    ' "$V2_ROOT/scripts/firewall.sh"
-}
-
 @test "firewall --check asserts critical IPv4 ACCEPT/DROP rules" {
     grep -q 'check_rule()' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'kritik politikalar yerinde' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_input_chain iptables v4' "$V2_ROOT/scripts/firewall.sh"
     awk '/^check_input_chain\(\)/,/^}$/' "$V2_ROOT/scripts/firewall.sh" |
         grep -q -- '-i "$WAN_INTERFACE" -j DROP'
-    grep -q 'check_docker_chain' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'check_chain_shape' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'ESTABLISHED,RELATED -j RETURN' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'ESTABLISHED,RELATED -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     # DD-120: WireGuard is not a Docker publish any more; the port lives in INPUT.
     run ! grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
     grep -qF -- '--dport "${WG_PORTS[i]}" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
@@ -1190,18 +1072,18 @@ EOF
     awk '/^stage_2\(\)/,/^ensure_downloads_tree\(\)/' "$V2_ROOT/install.sh" |
         grep -A4 'install_tailscale_repo$' | grep -q 'V2_LAST_ATOMIC_CHANGED.*-eq 1'
     grep -q 'tailscale.list aynı; apt-get update atlandı' "$V2_ROOT/install.sh"
-    # stage_4: same gate for the docker repo write.
-    awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh" |
-        grep -A4 'install_docker_repo$' | grep -q 'V2_LAST_ATOMIC_CHANGED.*-eq 1'
-    grep -q 'docker.sources aynı; apt-get update atlandı' "$V2_ROOT/install.sh"
-    # First install still updates: install_tailscale_repo/install_docker_repo
-    # write via atomic_write, which sets V2_LAST_ATOMIC_CHANGED=1 for a new file.
+    # First install still updates: install_tailscale_repo writes via atomic_write,
+    # which sets V2_LAST_ATOMIC_CHANGED=1 for a new file.
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
 }
 
-@test "base packages include htpasswd helpers" {
-    grep -q 'apache2-utils dnsutils' "$V2_ROOT/install.sh"
-    run ! grep -qE 'apache2-utils dnsutils acl' "$V2_ROOT/install.sh"
+@test "base packages are only what the base uses; htpasswd comes with Paylaşım" {
+    # DD-153: no gnupg (armored Caddy key), no gawk (mawk is enough), no apache2-utils in the base.
+    base="$(awk '/retry "apt-base"/{p=1} p{print} p && !/\\$/{exit}' "$V2_ROOT/install.sh")"
+    grep -q 'dnsutils unattended-upgrades python3' <<<"$base"
+    run ! grep -qwE 'gnupg|gawk|apache2-utils' <<<"$base"
+    [ "$(grep -c 'share_tools || fail_step' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
+    grep -qF 'apt_install apache2-utils' "$V2_ROOT/scripts/master-modul"
     # acl may be installed only as a migration helper inside the purge path.
     stage1="$(awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh")"
     [ -n "$stage1" ]
@@ -1236,10 +1118,11 @@ EOF
     [ "$(grep -c 'docker port' "$V2_ROOT/install.sh")" -eq 0 ]
     # DD-149: the share's publish surface is checked by master-modul when the module is installed.
     [ "$(grep -cE 'docker port paylasim|Host: paylas\.|:\$\{SHARE_PORT\}/' "$V2_ROOT/install.sh")" -eq 0 ]
-    body="$(awk '/^share_verify_container\(\)/,/^}$/' "$mm")"
-    grep -q 'ReadonlyRootfs' <<<"$body"
-    grep -qF 'grep -qx "$SERVER_ROOT false"' <<<"$body"
-    grep -qF '[[ "$line" == *"-> 127.0.0.1:$SHARE_PORT" ]]' <<<"$body"
+    body="$(awk '/^share_verify\(\)/,/^}$/' "$mm")"
+    grep -qF '[[ "$uid" == "$DOWNLOADS_UID" ]]' <<<"$body"
+    grep -qF '"$cmd" == *" --read-only "*' <<<"$body"
+    grep -qF 'systemctl show -p TemporaryFileSystem --value "$SHARE_UNIT"' <<<"$body"
+    grep -qF '[[ "$socks" == "127.0.0.1:$SHARE_PORT" ]]' <<<"$body"
     grep -qF 'http_code "http://127.0.0.1:$SHARE_PORT/"' <<<"$body"
     grep -qF '[[ "$code" == 207 ]]' <<<"$body"
     names="$(awk '/^share_verify_names\(\)/,/^}$/' "$mm")"
@@ -1268,7 +1151,7 @@ EOF
     grep -q 'CADDY_HTTP_PORT' "$V2_ROOT/install.sh"
 }
 
-@test "FileBrowser is gone: no container, account, port or database; file. redirects to the console" {
+@test "FileBrowser is gone: no container, account, port, database or file. name" {
     # DD-146: Konsol's own file manager (upload, multi-select, search) replaced it.
     local code
     code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/config/defaults.env" \
@@ -1279,21 +1162,31 @@ EOF
     run ! grep -qi 'filebrowser' <<<"$code"
     run ! grep -q '61007' <<<"$code"
     run ! grep -qE '^INPUT_KEYS=.*FILEBROWSER' "$V2_ROOT/install.sh"
-    # The old name keeps working as a bookmark: it lands on the console.
-    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
-    grep -qx 'interface-name=file.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
+    # DD-154: the old name is gone too (it only redirected to the console).
+    run ! grep -q 'file\.__LOCAL_DOMAIN__' "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf"
     # WireGuard "ui" networks reach the qBittorrent module's interface only (DD-151).
     [ "$(grep -c '^http://' "$V2_ROOT/templates/Caddyfile.wg")" -eq 1 ]
 }
 
-@test "module images use upstream stable tracks where published" {
-    # DD-97: prefer the vendor's stable track over a frozen patch@digest; DD-151: the
-    # Dozzle and LinuxServer qBittorrent images are gone with their containers.
-    grep -qE '^UNPACKERR_IMAGE="ghcr.io/unpackerr/unpackerr:0\.15"' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_IMAGE="rclone/rclone:1\.75"' "$V2_ROOT/config/defaults.env"
-    [ "$(grep -cE '^(DOZZLE|QBITTORRENT)_IMAGE=' "$V2_ROOT/config/defaults.env")" -eq 0 ]
-    run ! grep -qE '_(IMAGE)="[^"]*:(stable|sts|edge|nightly|latest)(@|")' "$V2_ROOT/config/defaults.env"
-    run ! grep -qE '_IMAGE="[^"]*@sha256:' "$V2_ROOT/config/defaults.env"
+@test "the share's rclone is pinned by version and checksum and verified before it runs" {
+    # DD-152: no images at all; rclone comes from its official release, checked against defaults.env.
+    run ! grep -qE '_IMAGE=' "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_SHA256_AMD64="[0-9a-f]{64}"$' "$V2_ROOT/config/defaults.env"
+    grep -qE '^RCLONE_SHA256_ARM64="[0-9a-f]{64}"$' "$V2_ROOT/config/defaults.env"
+    grep -qx 'RCLONE_DOWNLOAD_URL="https://downloads.rclone.org"' "$V2_ROOT/config/defaults.env"
+    for k in RCLONE_VERSION RCLONE_SHA256_AMD64 RCLONE_SHA256_ARM64 RCLONE_DOWNLOAD_URL RCLONE_BIN; do
+        awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\\\$$k"
+    done
+    body="$(awk '/^share_rclone\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
+    grep -qF "curl -fsSL --proto '=https' --tlsv1.2" <<<"$body"
+    grep -qF 'sha256sum -c --quiet' <<<"$body"
+    # The archive is opened only after its checksum matched, and the binary is swapped in whole.
+    awk '/sha256sum -c --quiet/ {s = NR} /python3 - "\$tmp\/rclone.zip"/ {z = NR} END {exit !(s && z && s < z)}' <<<"$body"
+    grep -qF '[[ "$have" != "rclone v$RCLONE_VERSION" ]] || return 0' <<<"$body"
+    grep -qF 'mv -f -- "$RCLONE_BIN.yeni" "$RCLONE_BIN"' <<<"$body"
+    # The distribution's old rclone package is never used.
+    run ! grep -qE 'apt_install .*rclone|apt-get install .*rclone' "$V2_ROOT/scripts/master-modul" "$V2_ROOT/install.sh"
 }
 
 @test "refresh timer has no no-op Persistent key" {
@@ -1353,6 +1246,11 @@ EOF
     [ "${#copies[@]}" -eq 1 ]
     [ -f "${copies[0]}" ]
     cmp "${copies[0]}" "$V2_ROOT/app/$(basename "${copies[0]}")"
+    # DD-154: Data/app keeps only the current export too; older ones live in Git.
+    local apps
+    apps=( "$V2_ROOT"/app/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command )
+    [ "${#apps[@]}" -eq 1 ]
+    grep -qF '"$APP_DIR"/20[0-9][0-9].[0-9][0-9].[0-9][0-9]-v2-*.command; do' "$V2_ROOT/dev/export-installer.sh"
     # DD-122: the backup tool is retired; nothing of it may come back.
     [ ! -e "$top/container-backup.command" ]
     [ ! -e "$V2_ROOT/dev/container-backup-remote.sh" ]
@@ -1615,6 +1513,7 @@ WG_CLIENTS_DIR=$TMP/clients
 WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 MODULES_FILE=$TMP/moduller
 SHARE_PORT=61010
+RCLONE_VERSION=1.75.1
 TAILSCALE_IPV4=100.64.0.7
 SERVER_ROOT=$TMP
 EOF
@@ -1648,9 +1547,9 @@ EOF
     cat >"$TMP/pbin/master-modul" <<EOF
 #!/bin/bash
 case "\$1" in
-    liste) printf 'paylasim\tdocker\t%s\tyok\t-\t-\t-\t-\n' "\$(cat "$TMP/pay-state" 2>/dev/null || echo yok)"
-        printf 'unpackerr\tdocker\t%s\t%s\t-\t-\t-\t-\n' "\$(cat "$TMP/mod-state" 2>/dev/null || echo yok)" "\$([ -e "$TMP/mod-running" ] && echo running || echo yok)" ;;
-    gunluk) printf '[INFO] Klasör izleniyor: /downloads\n' ;;
+    liste) printf 'paylasim\thost\t%s\t-\t-\t-\t-\t-\n' "\$(cat "$TMP/pay-state" 2>/dev/null || echo yok)"
+        printf 'torrent\thost\t%s\t%s\t-\t-\t-\t-\n' "\$(cat "$TMP/mod-state" 2>/dev/null || echo yok)" "\$([ -e "$TMP/mod-running" ] && echo running || echo -)" ;;
+    gunluk) printf 'WebUI will be started shortly\n' ;;
     hesap) [ -e "$TMP/pay-cred" ] || { echo "HATA: hesap yok" >&2; exit 1; }
         if [ "\$3" = --parola ]; then printf 'paylasim\t1700000000\tQm7vRt2kWx9pLc4nHs8e\n'; else printf 'paylasim\t1700000000\n'; fi ;;
     *) echo "HATA: beklenmeyen çağrı \$*" >&2; exit 1 ;;
@@ -1743,34 +1642,13 @@ PY
 }
 
 modul_fixture() {
-    # DD-148: master-modul with a fake docker, flock and logger.
-    mkdir -p "$TMP/mbin" "$TMP/mods/unpackerr" "$TMP/run" "$TMP/dl/.unpackerr"
-    printf 'services: {}\n' >"$TMP/mods/unpackerr/compose.yaml"
+    # DD-148: master-modul with a fake flock and logger.
+    mkdir -p "$TMP/mbin" "$TMP/mods" "$TMP/run" "$TMP/dl"
     cat >"$TMP/mstate.env" <<EOF
 MODULES_FILE=$TMP/moduller
 MODULES_DIR=$TMP/mods
 RUNTIME_DIR=$TMP/run
 DOWNLOADS_PATH=$TMP/dl
-EOF
-    cat >"$TMP/mbin/docker" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >>"$TMP/docker-calls"
-case "\$1" in
-    info | exec | rm) exit 0 ;;
-    compose)
-        case "\$6" in
-            pull) [ ! -e "$TMP/pull-fail" ] || exit 1 ;;
-            up) touch "$TMP/running"; rm -f "$TMP/stopped" ;;
-            stop) rm -f "$TMP/running"; touch "$TMP/stopped" ;;
-            down) rm -f "$TMP/running" "$TMP/stopped" ;;
-        esac ;;
-    inspect)
-        if [ -e "$TMP/running" ]; then echo running
-        elif [ -e "$TMP/stopped" ]; then echo exited
-        else echo; echo "Error: No such object: \$3" >&2; exit 1
-        fi ;;
-    logs) echo "[INFO] Klasör izleniyor: /downloads" ;;
-esac
 EOF
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/flock"
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/logger"
@@ -1781,98 +1659,73 @@ mm() {
     PATH="$TMP/mbin:$PATH" STATE_FILE="$TMP/mstate.env" bash "$V2_ROOT/scripts/master-modul" "$@"
 }
 
-@test "master-modul installs, stops, starts and removes a docker module and records every step" {
+@test "master-modul lists the catalogue in Konsol's order and accepts only known modules and verbs" {
     modul_fixture
     run mm liste
     [ "$status" -eq 0 ]
-    # Catalogue order is Konsol's order (DD-149, DD-150).
-    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'dosya wireguard torrent paylasim unpackerr ' ]
-    [ "$(grep '^unpackerr' <<<"$output")" = "$(printf 'unpackerr\tdocker\tyok\tyok\t-\t-\t-\t-')" ]
-    run mm kur unpackerr
-    [ "$status" -eq 0 ]
-    grep -qx "$(printf 'unpackerr\tcalisiyor')" "$TMP/moduller"
-    [ "$(cat "$TMP/run/modul-unpackerr.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
-    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml pull --quiet" "$TMP/docker-calls"
-    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml up -d --remove-orphans" "$TMP/docker-calls"
-    run mm liste
-    [ "$(grep '^unpackerr' <<<"$output")" = "$(printf 'unpackerr\tdocker\tcalisiyor\trunning\tkur\tbitti\t0\tkuruldu')" ]
-    # Already installed: refused.
-    run mm kur unpackerr
-    [ "$status" -ne 0 ]
-    case "$output" in *"zaten kurulu"*) ;; *) false ;; esac
-    run mm durdur unpackerr
-    [ "$status" -eq 0 ]
-    grep -qx "$(printf 'unpackerr\tdurduruldu')" "$TMP/moduller"
-    run mm liste
-    [ "$(grep '^unpackerr' <<<"$output")" = "$(printf 'unpackerr\tdocker\tdurduruldu\texited\tdurdur\tbitti\t0\tdurduruldu')" ]
-    run mm baslat unpackerr
-    [ "$status" -eq 0 ]
-    grep -qx "$(printf 'unpackerr\tcalisiyor')" "$TMP/moduller"
-    run mm gunluk unpackerr 20
-    [ "$output" = "[INFO] Klasör izleniyor: /downloads" ]
-    run mm gunluk unpackerr 20000
-    [ "$status" -ne 0 ]
-    # Removing with --veri drops only the module's own log folder, never the downloads.
-    touch "$TMP/dl/film.mkv"
-    touch "$TMP/dl/.unpackerr/unpackerr.log"
-    run mm kaldir unpackerr --veri
-    [ "$status" -eq 0 ]
-    [ "$(grep -c unpackerr "$TMP/moduller")" -eq 0 ]
-    [ -d "$TMP/dl/.unpackerr" ]
-    [ -z "$(ls -A "$TMP/dl/.unpackerr")" ]
-    [ -f "$TMP/dl/film.mkv" ]
-    grep -qx "compose -p unpackerr -f $TMP/mods/unpackerr/compose.yaml down --rmi all --remove-orphans" "$TMP/docker-calls"
-    run mm liste
-    [ "$(grep '^unpackerr' <<<"$output")" = "$(printf 'unpackerr\tdocker\tyok\tyok\tkaldir\tbitti\t0\tkaldırıldı')" ]
-    run mm kaldir unpackerr
+    # Catalogue order is Konsol's order (DD-149, DD-150); DD-152: no Docker runtime, no Arşiv açıcı.
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'dosya wireguard torrent paylasim ' ]
+    [ "$(cut -f2 <<<"$output" | tr '\n' ' ')" = 'konsol konsol host host ' ]
+    [ "$(grep '^paylasim' <<<"$output")" = "$(printf 'paylasim\thost\tyok\t-\t-\t-\t-\t-')" ]
+    run mm kaldir paylasim
     [ "$status" -ne 0 ]
     case "$output" in *"kurulu değil"*) ;; *) false ;; esac
+    run mm baslat torrent
+    [ "$status" -ne 0 ]
     # Only catalogued ids and known commands are accepted.
-    run mm kur ../etc
+    for id in unpackerr ../etc filebrowser; do
+        run mm kur "$id"
+        [ "$status" -ne 0 ]
+        case "$output" in *"bilinmeyen modül"*) ;; *) false ;; esac
+    done
+    run mm kaldir paylasim --hepsi
     [ "$status" -ne 0 ]
-    case "$output" in *"bilinmeyen modül"*) ;; *) false ;; esac
-    run mm kur filebrowser
+    run mm sil paylasim
     [ "$status" -ne 0 ]
-    run mm kaldir unpackerr --hepsi
+    run mm gunluk paylasim 20000
     [ "$status" -ne 0 ]
-    run mm sil unpackerr
-    [ "$status" -ne 0 ]
+    [ "$(grep -vE '^[[:space:]]*#' "$V2_ROOT/scripts/master-modul" | grep -ciE 'docker|compose|container|unpackerr')" -eq 0 ]
 }
 
-@test "master-modul reports a failed install in its progress file and registers nothing" {
-    modul_fixture
-    touch "$TMP/pull-fail"
-    run mm kur unpackerr
-    [ "$status" -ne 0 ]
-    [ "$(cat "$TMP/run/modul-unpackerr.ilerleme")" = "$(printf 'kur\thata\t0\timaj indirilemedi')" ]
-    [ ! -s "$TMP/moduller" ]
-    [ "$(grep -c ' up -d' "$TMP/docker-calls")" -eq 0 ]
+@test "master-modul keeps every change under one lock and deletes only what it owns" {
     # Every change runs under the one module lock (kur, baslat, durdur, kaldir, parola, uygula).
     [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 6 ]
     grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
-    # The only deletions: unpackerr's own log folder, the share's links (never followed),
-    # and with --veri the trash contents, the WireGuard keys (DD-150) and qBittorrent's profile (DD-151).
-    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 5 ]
+    # The only deletions: rclone's own download folder (DD-152), the share's links (never
+    # followed), and with --veri the trash contents, the WireGuard keys (DD-150) and
+    # qBittorrent's profile (DD-151).
+    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 8 ]
+    [ "$(grep -c 'rm -rf -- "$tmp"' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
+    grep -qF 'tmp="$(mktemp -d)"' "$V2_ROOT/scripts/master-modul"
     grep -qF '[[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$cop" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
-    grep -qF 'find "$DOWNLOADS_PATH/.unpackerr" -mindepth 1 -delete' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$pay/$SHARE_SERVED" -mindepth 1 -maxdepth 1 -type l -delete' "$V2_ROOT/scripts/master-modul"
     [ "$(grep -c 'find -L' "$V2_ROOT/scripts/master-modul")" -eq 0 ]
 }
 
 share_fixture() {
-    # DD-149: master-modul's Paylaşım module against fakes: docker, caddy, dnsmasq, systemctl,
-    # curl and dig; real htpasswd and python3. Every fake logs its argv so the tests can prove
-    # the password never reaches a command line.
+    # DD-149, DD-152: master-modul's Paylaşım module against fakes: systemctl, ps, ss, caddy,
+    # dnsmasq, curl (also the rclone download), dig, dpkg, install and sha256sum; real htpasswd,
+    # python3 and a real release-style zip whose SHA256 is pinned in the state file. Every fake
+    # logs its argv so the tests can prove the password never reaches a command line.
     command -v htpasswd >/dev/null || skip "htpasswd yok"
     modul_fixture
-    mkdir -p "$TMP/mods/paylasim" "$TMP/etc" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" \
+    mkdir -p "$TMP/mods/paylasim" "$TMP/etc" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/units" "$TMP/lib" \
         "$TMP/srv/.pay/w" "$TMP/srv/downloads"
-    printf 'services: {}\n' >"$TMP/mods/paylasim/compose.yaml"
+    printf '[Service]\nExecStart=%s/lib/rclone serve webdav\n' "$TMP" >"$TMP/mods/paylasim/master-paylasim.service"
     printf 'http://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\treverse_proxy 127.0.0.1:61010\n}\n' >"$TMP/mods/paylasim/paylasim.caddy"
     printf 'interface-name=paylas.ayc,tailscale0\n' >"$TMP/mods/paylasim/dnsmasq.conf"
     : >"$TMP/caddy/Caddyfile"
+    # A release archive like rclone's: one folder holding the binary and its papers.
+    python3 - "$TMP/rclone.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("rclone-v1.75.1-linux-amd64/rclone", '#!/bin/bash\n[ "$1" != version ] || echo "rclone v1.75.1"\n')
+    z.writestr("rclone-v1.75.1-linux-amd64/README.txt", "rclone\n")
+PY
+    local sum
+    sum="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TMP/rclone.zip")"
     cat >>"$TMP/mstate.env" <<EOF
 SERVER_ROOT=$TMP/srv
 SHARE_DIR=.pay
@@ -1887,43 +1740,26 @@ CADDY_MODULES_DIR=$TMP/caddy/moduller
 DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
 LOCAL_DOMAIN=ayc
 TAILSCALE_IPV4=100.64.0.7
-EOF
-    cat >"$TMP/mbin/docker" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >>"$TMP/docker-calls"
-printf 'docker %s\n' "\$*" >>"$TMP/order"
-case "\$1" in
-    info | exec | rm) exit 0 ;;
-    restart) exit 0 ;;
-    compose)
-        case "\$6" in
-            pull) [ ! -e "$TMP/pull-fail" ] || exit 1 ;;
-            up) touch "$TMP/running"; rm -f "$TMP/stopped" ;;
-            stop) rm -f "$TMP/running"; touch "$TMP/stopped" ;;
-            down) rm -f "$TMP/running" "$TMP/stopped" ;;
-        esac ;;
-    port) echo "8080/tcp -> 127.0.0.1:61010" ;;
-    inspect)
-        case "\$*" in
-            *NetworkSettings*) echo paylasim_default ;;
-            *Config.Cmd*) echo '["serve","webdav","$TMP/srv/.pay/w","--copy-links","--read-only"]' ;;
-            *ReadonlyRootfs*) echo true ;;
-            *Mounts*) echo "$TMP/srv false" ;;
-            *Health*) echo healthy ;;
-            *)
-                if [ -e "$TMP/running" ]; then echo running
-                elif [ -e "$TMP/stopped" ]; then echo exited
-                else echo; exit 1
-                fi ;;
-        esac ;;
-    logs) echo "NOTICE: WebDAV sunucusu" ;;
-esac
+UNIT_DIR=$TMP/units
+DOWNLOADS_UID=1000
+FILES_PANEL_TRASH=.cop
+RCLONE_VERSION=1.75.1
+RCLONE_SHA256_AMD64=$sum
+RCLONE_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
+RCLONE_DOWNLOAD_URL=https://downloads.rclone.org
+RCLONE_BIN=$TMP/lib/rclone
 EOF
     cat >"$TMP/mbin/curl" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/curl-calls"
 printf 'curl %s\n' "\$*" >>"$TMP/order"
 case " \$* " in
+    *" -fsSL "*)
+        [ ! -e "$TMP/download-fail" ] || exit 22
+        out=""
+        prev=""
+        for a in "\$@"; do [ "\$prev" != -o ] || out="\$a"; prev="\$a"; done
+        if [ -e "$TMP/bad-archive" ]; then printf 'bozuk\n' >"\$out"; else cp "$TMP/rclone.zip" "\$out"; fi ;;
     *" -K - "*)
         IFS= read -r line
         pw="\$(sed -n 's/^paylasim://p' "$TMP/etc/paylasim.cred")"
@@ -1931,9 +1767,61 @@ case " \$* " in
     *) printf 401 ;;
 esac
 EOF
+    cat >"$TMP/mbin/systemctl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/systemctl-calls"
+printf 'systemctl %s\n' "\$*" >>"$TMP/order"
+case "\$*" in
+    "is-active --quiet master-paylasim.service") [ -e "$TMP/share-up" ] ;;
+    "restart master-paylasim.service") [ ! -e "$TMP/start-fail" ] && touch "$TMP/share-up" && rm -f "$TMP/uid-seen" ;;
+    "disable --now master-paylasim.service") rm -f "$TMP/share-up" ;;
+    "show -p MainPID --value master-paylasim.service") echo 4242 ;;
+    "show -p TemporaryFileSystem --value master-paylasim.service") echo "$TMP/srv/.cop:ro" ;;
+    *) exit 0 ;;
+esac
+EOF
+    # Right after a restart the main process is still root (systemd drops to User= at exec):
+    # the first uid read of every start answers 0, as measured on nrm.
+    cat >"$TMP/mbin/ps" <<EOF
+#!/bin/bash
+case "\$2" in
+    uid=)
+        if [ -e "$TMP/uid-seen" ]; then echo " 1000"; else touch "$TMP/uid-seen"; echo " 0"; fi ;;
+    args=) echo "$TMP/lib/rclone serve webdav $TMP/srv/.pay/w --config=/dev/null --addr=127.0.0.1:61010 --htpasswd=/run/credentials/master-paylasim.service/htpasswd --dir-cache-time=10s --copy-links --read-only" ;;
+esac
+EOF
+    # Caddy owns the Infuse address; only the share process's own sockets count.
+    cat >"$TMP/mbin/ss" <<EOF
+#!/bin/bash
+echo 'LISTEN 0 4096 127.0.0.1:61010 0.0.0.0:* users:(("rclone",pid=4242,fd=8))'
+echo 'LISTEN 0 4096 100.64.0.7:61010 0.0.0.0:* users:(("caddy",pid=77,fd=9))'
+EOF
+    cat >"$TMP/mbin/install" <<'EOF'
+#!/bin/bash
+# The test runs unprivileged: owners are dropped, everything else goes to the real install.
+args=()
+skip=0
+for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in -o | -g) skip=1 ;; *) args+=("$a") ;; esac
+done
+exec /usr/bin/install "${args[@]}"
+EOF
+    cat >"$TMP/mbin/sha256sum" <<'EOF'
+#!/bin/bash
+# GNU "sha256sum -c --quiet" over "HASH  FILE" lines from stdin.
+[ "$1" = -c ] || exit 2
+python3 -c '
+import hashlib, sys
+ok = True
+for line in sys.stdin:
+    h, f = line.rstrip("\n").split("  ", 1)
+    ok = ok and hashlib.sha256(open(f, "rb").read()).hexdigest() == h
+sys.exit(0 if ok else 1)'
+EOF
+    printf '#!/bin/bash\necho amd64\n' >"$TMP/mbin/dpkg"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/caddy-calls"\n[ ! -e "%s/caddy-bad" ]\n' "$TMP" "$TMP" >"$TMP/mbin/caddy"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/dnsmasq-calls"\n[ ! -e "%s/dnsmasq-bad" ]\n' "$TMP" "$TMP" >"$TMP/mbin/dnsmasq"
-    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/systemctl-calls"\nprintf "systemctl %%s\\n" "$*" >>"%s/order"\n' "$TMP" "$TMP" >"$TMP/mbin/systemctl"
     printf '#!/bin/bash\necho 100.64.0.7\n' >"$TMP/mbin/dig"
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/chown"
     # DD-150: Paylaşım needs the Dosya yöneticisi module.
@@ -1951,6 +1839,12 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$status" -eq 0 ]
     grep -qx "$(printf 'paylasim\tcalisiyor')" "$TMP/moduller"
     [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
+    # DD-152: rclone came from its release URL, passed its checksum and was put in place whole.
+    grep -q -- "-fsSL --proto =https --tlsv1.2 --retry 3 --max-time 300 -o .* https://downloads.rclone.org/v1.75.1/rclone-v1.75.1-linux-amd64.zip" "$TMP/curl-calls"
+    [ "$("$TMP/lib/rclone" version)" = "rclone v1.75.1" ]
+    [ ! -e "$TMP/lib/rclone.yeni" ]
+    cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
+    [ "$(liste_live paylasim)" = running ]
     # One account: user paylasim, 20 characters from the alphabet without 0/O/1/l/I, both files 0600.
     [ "$(wc -l <"$TMP/etc/paylasim.cred" | tr -d ' ')" = 1 ]
     pw="$(share_pw)"
@@ -1960,7 +1854,7 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$(file_mode "$TMP/etc/paylasim.cred")" = 0o600 ]
     [ "$(file_mode "$TMP/etc/paylasim.htpasswd")" = 0o600 ]
     # The password never reaches an argv, the progress file, the journal or the output.
-    for f in docker-calls curl-calls caddy-calls dnsmasq-calls systemctl-calls logger-calls run/modul-paylasim.ilerleme; do
+    for f in curl-calls caddy-calls dnsmasq-calls systemctl-calls logger-calls run/modul-paylasim.ilerleme; do
         [ "$(grep -c -- "$pw" "$TMP/$f")" -eq 0 ]
     done
     [ "$(grep -c -- "$pw" <<<"$output")" -eq 0 ]
@@ -1976,9 +1870,9 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$(grep -c 'restart caddy' "$TMP/systemctl-calls")" -eq 0 ]
     grep -q "validate --config $TMP/caddy/Caddyfile --adapter caddyfile" "$TMP/caddy-calls"
     grep -q -- "--test --conf-dir=$TMP/dnsmasq.d,.dpkg-dist,.dpkg-old,.dpkg-new" "$TMP/dnsmasq-calls"
-    # The container is started and checked before the name is published.
-    awk '/^docker compose .* up -d --remove-orphans$/ {a = NR} /^curl .*-K - -X PROPFIND/ {b = NR} /^systemctl reload caddy$/ {c = NR}
-        END {exit !(a && b && c && a < b && b < c)}' "$TMP/order"
+    # The download comes first; the service is started and checked before the name is published.
+    awk '/^curl -fsSL/ {d = NR} /^systemctl restart master-paylasim.service$/ {a = NR} /^curl .*-K - -X PROPFIND/ {b = NR} /^systemctl reload caddy$/ {c = NR}
+        END {exit !(d && a && b && c && d < a && a < b && b < c)}' "$TMP/order"
     # The file backend learns the module state from the marker.
     [ "$(cat "$TMP/srv/.pay/acik")" = paylasim ]
     # hesap: the name and when it changed; the password only with --parola.
@@ -1989,12 +1883,43 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$(awk -F'\t' '{print NF}' <<<"$output")" -eq 2 ]
     run mm hesap paylasim --parola
     [ "$(cut -f3 <<<"$output")" = "$pw" ]
-    run mm hesap unpackerr
+    run mm hesap dosya
     [ "$status" -ne 0 ]
-    run mm parola unpackerr
+    run mm parola dosya
     [ "$status" -ne 0 ]
     run mm kur paylasim
     [ "$status" -ne 0 ]
+}
+
+liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
+
+@test "master-modul refuses an rclone archive whose checksum does not match, and a failed download" {
+    share_fixture
+    touch "$TMP/bad-archive"
+    run mm kur paylasim
+    [ "$status" -ne 0 ]
+    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\trclone arşivinin SHA256 özeti tutmadı; kurulmadı')" ]
+    [ ! -e "$TMP/lib/rclone" ]
+    [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
+    [ ! -e "$TMP/units/master-paylasim.service" ]
+    [ ! -e "$TMP/etc/paylasim.cred" ]
+    rm -f "$TMP/bad-archive"
+    touch "$TMP/download-fail"
+    run mm kur paylasim
+    [ "$status" -ne 0 ]
+    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\trclone indirilemedi (https://downloads.rclone.org/v1.75.1/rclone-v1.75.1-linux-amd64.zip)')" ]
+    [ ! -e "$TMP/lib/rclone" ]
+    # An installed binary of the pinned version is not downloaded again.
+    rm -f "$TMP/download-fail"
+    run mm kur paylasim
+    [ "$status" -eq 0 ]
+    run mm kaldir paylasim
+    [ "$status" -eq 0 ]
+    [ -x "$TMP/lib/rclone" ]
+    : >"$TMP/curl-calls"
+    run mm kur paylasim
+    [ "$status" -eq 0 ]
+    [ "$(grep -c -- '-fsSL' "$TMP/curl-calls")" -eq 0 ]
 }
 
 @test "master-modul keeps the share account across removal, renews it on parola and drops only links with --veri" {
@@ -2002,40 +1927,49 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     run mm kur paylasim
     [ "$status" -eq 0 ]
     first="$(share_pw)"
-    # durdur stops the container; the names and the marker stay.
+    # durdur stops the service; the names and the marker stay.
     run mm durdur paylasim
     [ "$status" -eq 0 ]
+    grep -qx 'disable --now master-paylasim.service' "$TMP/systemctl-calls"
+    [ "$(liste_live paylasim)" = exited ]
     [ -e "$TMP/caddy/moduller/paylasim.caddy" ]
     [ -e "$TMP/srv/.pay/acik" ]
-    # kaldir without --veri: names and marker go, the account and the links stay.
+    run mm baslat paylasim
+    [ "$status" -eq 0 ]
+    [ "$(liste_live paylasim)" = running ]
+    # kaldir without --veri: names, marker and the unit go; the account, the links and rclone stay.
     printf 'film\n' >"$TMP/srv/downloads/film.mkv"
     ln -s ../../downloads/film.mkv "$TMP/srv/.pay/w/film.mkv"
     printf 'elle\n' >"$TMP/srv/.pay/w/elle.txt"
     printf '{"items": []}\n' >"$TMP/srv/.pay/kayit.json"
     : >"$TMP/systemctl-calls"
+    : >"$TMP/order"
     run mm kaldir paylasim
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
     [ ! -e "$TMP/dnsmasq.d/modul-paylasim.conf" ]
     [ ! -e "$TMP/srv/.pay/acik" ]
+    [ ! -e "$TMP/units/master-paylasim.service" ]
+    [ -x "$TMP/lib/rclone" ]
     grep -qx 'reload caddy' "$TMP/systemctl-calls"
     grep -qx 'restart dnsmasq' "$TMP/systemctl-calls"
     [ -L "$TMP/srv/.pay/w/film.mkv" ]
     [ "$(share_pw)" = "$first" ]
-    # The names go before the container.
-    awk '/^systemctl reload caddy$/ {a = NR} /^docker compose .* down --rmi all --remove-orphans$/ {b = NR} END {exit !(a && b && a < b)}' "$TMP/order"
+    # The names go before the service.
+    awk '/^systemctl reload caddy$/ {a = NR} /^systemctl disable --now master-paylasim.service$/ {b = NR} END {exit !(a && b && a < b)}' "$TMP/order"
     # A reinstall reuses the same account: Infuse keeps working.
     run mm kur paylasim
     [ "$status" -eq 0 ]
     [ "$(share_pw)" = "$first" ]
-    # parola: a new password, the running container restarts and is checked with it.
-    : >"$TMP/docker-calls"
+    # parola: a new password; the running service restarts (systemd copies the credential at
+    # start) and is checked with it.
+    : >"$TMP/systemctl-calls"
     run mm parola paylasim
     [ "$status" -eq 0 ]
     second="$(share_pw)"
     [ "$second" != "$first" ]
     printf '%s' "$second" | htpasswd -vi "$TMP/etc/paylasim.htpasswd" paylasim >/dev/null 2>&1
-    grep -qx 'restart paylasim' "$TMP/docker-calls"
+    grep -qx 'restart master-paylasim.service' "$TMP/systemctl-calls"
     [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'parola\tbitti\t0\tparola değişti')" ]
     [ "$(grep -c -- "$second" "$TMP/logger-calls")" -eq 0 ]
     # kaldir --veri: account, registry and the links go; link targets and other files stay.
@@ -2053,7 +1987,7 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
 
 @test "master-modul rolls a failed share install back and uygula leaves an uninstalled module alone" {
     share_fixture
-    # The name step fails: the Caddy site already placed is taken back, the container goes down.
+    # The name step fails: the Caddy site already placed is taken back, the service goes down.
     touch "$TMP/dnsmasq-bad"
     run mm kur paylasim
     [ "$status" -ne 0 ]
@@ -2063,25 +1997,47 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ ! -e "$TMP/dnsmasq.d/modul-paylasim.conf" ]
     [ ! -e "$TMP/srv/.pay/acik" ]
     [ "$(grep -c '^reload caddy$' "$TMP/systemctl-calls")" -eq 2 ]
-    grep -qx "compose -p paylasim -f $TMP/mods/paylasim/compose.yaml down" "$TMP/docker-calls"
+    grep -qx 'disable --now master-paylasim.service' "$TMP/systemctl-calls"
+    [ ! -e "$TMP/units/master-paylasim.service" ]
+    [ ! -e "$TMP/share-up" ]
     rm -f "$TMP/dnsmasq-bad"
+    # A service that does not start is taken back the same way.
+    touch "$TMP/start-fail"
+    run mm kur paylasim
+    [ "$status" -ne 0 ]
+    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\tpaylaşım servisi başlatılamadı')" ]
+    [ ! -e "$TMP/units/master-paylasim.service" ]
+    [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
+    rm -f "$TMP/start-fail"
     # uygula (installer re-run) touches nothing for a module that is not installed.
-    : >"$TMP/docker-calls"
     : >"$TMP/systemctl-calls"
+    : >"$TMP/curl-calls"
     run mm uygula paylasim
     [ "$status" -eq 0 ]
     [ "$output" = "$(printf 'paylasim\tyok')" ]
-    [ ! -s "$TMP/docker-calls" ]
     [ ! -s "$TMP/systemctl-calls" ]
-    # For a stopped module it refreshes the names but does not start the container, and it
-    # leaves Konsol's last result alone.
+    [ ! -s "$TMP/curl-calls" ]
+    # For a stopped module it refreshes the unit and the names but does not start the service,
+    # and it leaves Konsol's last result alone.
     printf 'paylasim\tdurduruldu\n' >"$TMP/moduller"
     last="$(cat "$TMP/run/modul-paylasim.ilerleme")"
     run mm uygula paylasim
     [ "$status" -eq 0 ]
     [ -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    [ "$(grep -c ' up -d' "$TMP/docker-calls")" -eq 0 ]
+    cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
+    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 0 ]
     [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$last" ]
+    # Running: a unit that changed (here: a new rclone version in it) restarts the service once.
+    printf 'paylasim\tcalisiyor\n' >"$TMP/moduller"
+    touch "$TMP/share-up"
+    : >"$TMP/systemctl-calls"
+    run mm uygula paylasim
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 0 ]
+    printf '# rclone 1.75.2\n' >>"$TMP/mods/paylasim/master-paylasim.service"
+    run mm uygula paylasim
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 1 ]
 }
 
 @test "the share's sub-names agree between master-modul, the file backend and the installer" {
@@ -2102,46 +2058,46 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
     python3 -c '
 import json, sys
-m = [i for i in json.load(open(sys.argv[1]))["items"] if i["id"] == "unpackerr"][0]
-assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("unpackerr", "docker", False, "", False, None), m
+m = [i for i in json.load(open(sys.argv[1]))["items"] if i["id"] == "torrent"][0]
+assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("torrent", "host", False, "", False, None), m
 ' "$TMP/body"
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
-    [ "$(pc /api/konsol/moduller/unpackerr/kur "${json[@]}" --data '{}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-unpackerr.service --collect --quiet '
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kur unpackerr$"
-    [ "$(pc /api/konsol/moduller/unpackerr/kaldir "${json[@]}" --data '{"veri":true}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kaldir unpackerr --veri$"
-    [ "$(pc /api/konsol/moduller/unpackerr/durdur "${json[@]}" --data '{"veri":true}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul durdur unpackerr$"
+    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-torrent.service --collect --quiet '
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kur torrent$"
+    [ "$(pc /api/konsol/moduller/torrent/kaldir "${json[@]}" --data '{"veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kaldir torrent --veri$"
+    [ "$(pc /api/konsol/moduller/torrent/durdur "${json[@]}" --data '{"veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul durdur torrent$"
     printf 'calisiyor\n' >"$TMP/mod-state"
     touch "$TMP/mod-running"
     [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
     grep -q '"installed": true, "state": "calisiyor", "live": "running"' "$TMP/body"
     # One operation at a time per module.
-    touch "$TMP/busy-master-modul-unpackerr"
+    touch "$TMP/busy-master-modul-torrent"
     local before
     before="$(wc -l <"$TMP/sdrun-calls")"
-    [ "$(pc /api/konsol/moduller/unpackerr/baslat "${json[@]}" --data '{}')" = 409 ]
+    [ "$(pc /api/konsol/moduller/torrent/baslat "${json[@]}" --data '{}')" = 409 ]
     [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
     grep -q '"busy": true' "$TMP/body"
-    rm -f "$TMP/busy-master-modul-unpackerr"
+    rm -f "$TMP/busy-master-modul-torrent"
     # v2-120: busy comes from list-units; is-active on a collected transient unit spams the journal.
     grep -q '^list-units --plain --no-legend --no-pager --state=active,activating,deactivating,reloading master-modul-\*\.service$' "$TMP/systemctl-calls"
     run ! grep -q '^is-active' "$TMP/systemctl-calls"
     # Unknown modules, unknown actions and requests without the panel header never reach systemd-run.
     [ "$(pc /api/konsol/moduller/yok/kur "${json[@]}" --data '{}')" = 404 ]
-    [ "$(pc /api/konsol/moduller/unpackerr/sil "${json[@]}" --data '{}')" = 404 ]
-    [ "$(pc /api/konsol/moduller/unpackerr/kur -H 'Content-Type: application/json' --data '{}')" = 403 ]
+    [ "$(pc /api/konsol/moduller/torrent/sil "${json[@]}" --data '{}')" = 404 ]
+    [ "$(pc /api/konsol/moduller/torrent/kur -H 'Content-Type: application/json' --data '{}')" = 403 ]
     [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
-        "http://127.0.0.1:$PORT/api/konsol/moduller/unpackerr/kur")" = 403 ]
+        "http://127.0.0.1:$PORT/api/konsol/moduller/torrent/kur")" = 403 ]
     [ "$(wc -l <"$TMP/sdrun-calls")" = "$before" ]
-    [ "$(pc /api/konsol/moduller/unpackerr/gunluk -H 'X-Konsol: 1')" = 200 ]
+    [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 200 ]
     grep -qi '^Content-Type: text/plain' "$TMP/head"
-    grep -q 'Klasör izleniyor' "$TMP/body"
-    grep -q 'panel: konsol 127.0.0.1 modul-kur unpackerr -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-kaldir unpackerr +veri -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-durdur unpackerr -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-baslat unpackerr -> hata' "$TMP/panel.log"
+    grep -q 'WebUI will be started shortly' "$TMP/body"
+    grep -q 'panel: konsol 127.0.0.1 modul-kur torrent -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-kaldir torrent +veri -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-durdur torrent -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol 127.0.0.1 modul-baslat torrent -> hata' "$TMP/panel.log"
 }
 
 @test "wg panel shows the share account only on request and renews its password as module work" {
@@ -2151,13 +2107,13 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     # Not installed: no account, no password renewal, no port row, no Infuse address.
     [ "$(pc /api/konsol/moduller/paylasim/hesap -H 'X-Konsol: 1')" = 404 ]
     [ "$(pc /api/konsol/moduller/paylasim/parola "${json[@]}" --data '{}')" = 409 ]
-    [ "$(pc /api/konsol/moduller/unpackerr/parola "${json[@]}" --data '{}')" = 404 ]
+    [ "$(pc /api/konsol/moduller/torrent/parola "${json[@]}" --data '{}')" = 404 ]
     [ "$(pc /api/konsol/moduller/unpackerr/hesap -H 'X-Konsol: 1')" = 404 ]
     [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
     python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["share"] == {"port": 61010, "on": False}, d["share"]
+assert d["share"] == {"port": 61010, "on": False, "rclone": "1.75.1"}, d["share"]
 assert not [r for r in d["ports"] if r["port"] == 61010], d["ports"]
 ' "$TMP/body"
     [ ! -e "$TMP/sdrun-calls" ]
@@ -2188,7 +2144,7 @@ assert d == {"user": "paylasim", "changed": 1700000000, "host": "paylas.ayc", "i
     python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["share"] == {"port": 61010, "on": True}, d["share"]
+assert d["share"] == {"port": 61010, "on": True, "rclone": "1.75.1"}, d["share"]
 assert [r["scope"] for r in d["ports"] if r["port"] == 61010] == ["tailscale"], d["ports"]
 ' "$TMP/body"
     # A missing account file reads as "no account", not as an error page.
@@ -2826,7 +2782,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
 }
 
 @test "the base install has no Compose project, no Dozzle and no service account in the input file" {
-    # DD-151: the installer brings Konsol, Tailscale, names, the firewall and an empty Docker engine.
+    # DD-151, DD-152: the installer brings Konsol, Tailscale, names and the firewall; no Docker.
     [ "$(grep '^INPUT_KEYS=' "$V2_ROOT/install.sh")" = 'INPUT_KEYS="SSH_HOST LOCAL_DOMAIN"' ]
     [ "$(grep '^INPUT_NONEMPTY_KEYS=' "$V2_ROOT/install.sh")" = 'INPUT_NONEMPTY_KEYS=""' ]
     [ "$(grep -E '^[A-Z_]+=' "$V2_ROOT/config/kurulum.env.example" | cut -d= -f1 | tr '\n' ' ')" = 'SSH_HOST LOCAL_DOMAIN ' ]
@@ -2836,9 +2792,8 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
         "$V2_ROOT/templates/Caddyfile.wg" "$V2_ROOT/templates/dnsmasq.conf" "$V2_ROOT/scripts/firewall.sh" \
         "$V2_ROOT/scripts/master-wg" "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" \
         "$V2_ROOT/console/index.html" | grep -ciE 'dozzle|COMPOSE_DIR|QBITTORRENT_(IMAGE|DATA_DIR|CONF_FILE)|PULL_IMAGES|bcrypt_matches|validate_account')" -eq 0 ]
-    grep -qx 'SERVICE_NAMES="file health panel wg dosya"' "$V2_ROOT/config/defaults.env"
-    # The Docker engine stays for the Docker modules.
-    grep -q 'docker-ce docker-ce-cli containerd.io docker-compose-plugin' "$V2_ROOT/install.sh"
+    grep -qx 'SERVICE_NAMES="health panel"' "$V2_ROOT/config/defaults.env"
+    run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
     for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf; do
         grep -qF "render_template \"\$V2_ROOT/modules/torrent/$f\" \"\$MODULES_DIR/torrent/$f\" 0644" "$V2_ROOT/install.sh"
@@ -2852,9 +2807,11 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qx 'TORRENT_PROFILE_DIR="/var/lib/qbittorrent"' "$V2_ROOT/config/defaults.env"
 }
 
-@test "console shows qBittorrent's first login, its interface link and the Arşiv açıcı hint" {
+@test "console shows qBittorrent's first login and its interface link" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    grep -qF 'return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true, recommends: "unpackerr",' "$js"
+    grep -qF 'return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true,' "$js"
+    # DD-152: Arşiv açıcı is gone, and with it the "recommended together" hint.
+    run ! grep -qE 'recommends|unpackerr|Arşiv açıcı' "$js"
     grep -qF '? [h("div", { class: "acct-head" }, h("span", null, "İlk giriş"), h("span", { class: "src" }, "Konsol bu hesabı yönetmez")),' "$js"
     grep -qF '} else if (id === "torrent") {' "$js"
     grep -qF 'const s = S.sys, on = !!(modOn("torrent") && s && s.domain), a = $("link-torrent");' "$js"
@@ -2874,9 +2831,9 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qF 'atomic_write "$SBIN_DIR/master-modul" 0755' <<<"$stage4"
     grep -qx '    ensure_module_files' <<<"$stage4"
     body="$(awk '/^ensure_module_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -qF 'render_template "$V2_ROOT/modules/unpackerr/compose.yaml" "$MODULES_DIR/unpackerr/compose.yaml" 0644' <<<"$body"
-    # DD-149: the share module's compose, Caddy site and dnsmasq name; one change marks it once.
-    for f in compose.yaml paylasim.caddy dnsmasq.conf; do
+    run ! grep -q 'unpackerr' <<<"$body"
+    # DD-149, DD-152: the share module's unit, Caddy site and dnsmasq name; one change marks it once.
+    for f in master-paylasim.service paylasim.caddy dnsmasq.conf; do
         grep -qF "render_template \"\$V2_ROOT/modules/paylasim/$f\" \"\$MODULES_DIR/paylasim/$f\" 0644" <<<"$body"
     done
     grep -qF '[[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"' <<<"$body"
@@ -2899,20 +2856,20 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     log() { :; }
     SBIN_DIR="$TMP/sbin"
     MODULES_FILE="$TMP/reg"
-    MODULES_CHANGED=" unpackerr"
-    printf 'unpackerr\tcalisiyor\n' >"$TMP/reg"
+    MODULES_CHANGED=" paylasim"
+    printf 'paylasim\tcalisiyor\n' >"$TMP/reg"
     reapply_modules
-    grep -qx 'uygula unpackerr' "$TMP/calls"
+    grep -qx 'uygula paylasim' "$TMP/calls"
     rm -f "$TMP/calls"
-    printf 'unpackerr\tdurduruldu\n' >"$TMP/reg"
+    printf 'paylasim\tdurduruldu\n' >"$TMP/reg"
     reapply_modules
-    grep -qx 'uygula unpackerr' "$TMP/calls"
+    grep -qx 'uygula paylasim' "$TMP/calls"
     rm -f "$TMP/calls"
     : >"$TMP/reg"
     reapply_modules
     [ ! -e "$TMP/calls" ]
     MODULES_CHANGED=""
-    printf 'unpackerr\tcalisiyor\n' >"$TMP/reg"
+    printf 'paylasim\tcalisiyor\n' >"$TMP/reg"
     reapply_modules
     [ ! -e "$TMP/calls" ]
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" | grep -qx '    reapply_modules'
@@ -2935,7 +2892,10 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     # Until the unit writes its first step, the card shows the requested action, not the previous one.
     grep -qF 'if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };' "$js"
     grep -qF 'moduller: { title: "Modüller"' "$js"
-    grep -qF 'unpackerr: { name: "Arşiv açıcı"' "$js"
+    run ! grep -qF 'unpackerr' "$js"
+    # DD-152: every module runs on the host or in Konsol; there is no Docker runtime chip.
+    grep -qF 'const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };' "$js"
+    run ! grep -q 'rt-chip.docker' "$V2_ROOT/console/konsol.css"
     grep -q '^\.base-list' "$V2_ROOT/console/konsol.css"
     grep -q '^\.rt-chip' "$V2_ROOT/console/konsol.css"
 }
@@ -2951,7 +2911,9 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     # A failed load no longer retries the share dialog forever.
     grep -qF 'if (!S.share) { loadShares().then(() => { if (S.share) openShareCreate(item, path); }); return; }' "$js"
     # Modüller: the Paylaşım card, its four steps in master-modul's order and the Yeni parola action.
-    grep -qF 'steps: [["İmaj indiriliyor", "~25 MB"], ["Hesap üretiliyor", ""], ["Konteyner başlatılıyor", ""], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],' "$js"
+    grep -qF 'steps: [["rclone indiriliyor", "resmi sürüm · SHA256"], ["Hesap üretiliyor", ""], ["Servis başlatılıyor", "systemd"], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],' "$js"
+    grep -qF 'progress "$id" kur 1 4 "rclone indiriliyor"' "$V2_ROOT/scripts/master-modul"
+    grep -qF 'progress "$id" kur 3 4 "Servis başlatılıyor"' "$V2_ROOT/scripts/master-modul"
     grep -qF 'progress "$id" kur 4 4 "Ad ve adres açılıyor"' "$V2_ROOT/scripts/master-modul"
     grep -qF 'onOk: () => { hidePass(m.id); modAct(m, "parola"); } });' "$js"
     grep -qF 'parola: "Uygulanıyor"' "$js"
@@ -2970,18 +2932,10 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
 }
 
 @test "installer wires the share module: generated account, names that come and go with it, hidden from the rest" {
-    local mc="$V2_ROOT/modules/paylasim/compose.yaml" unit="$V2_ROOT/systemd/master-files-panel.service" mm="$V2_ROOT/scripts/master-modul" s7 line
-    for line in '      - __SERVER_ROOT__/__SHARE_DIR__/w' '      - --htpasswd=/run/secrets/paylasim_htpasswd' \
-        '      - --copy-links' '      - --read-only' '    read_only: true' \
-        '      - "127.0.0.1:__SHARE_PORT__:8080"' '      - __SERVER_ROOT__:__SERVER_ROOT__:ro'; do
-        grep -qx "$line" "$mc"
-    done
-    grep -q 'image: __RCLONE_IMAGE__' "$mc"
-    run ! grep -q 'cap_add' "$mc"
-    # DD-144: the trash and the share root sit outside the downloads folder, so the
-    # containers that mount only downloads cannot see them; no tmpfs curtain is left.
-    grep -qx '      - __DOWNLOADS_PATH__:/downloads' "$V2_ROOT/modules/unpackerr/compose.yaml"
-    grep -q "test ! -e /downloads/.cop && test ! -e /downloads/.pay" "$mm"
+    local unit="$V2_ROOT/systemd/master-files-panel.service" mm="$V2_ROOT/scripts/master-modul" s7
+    # DD-152: the share service gets its account as a credential and never sees the trash.
+    grep -qx 'LoadCredential=htpasswd:__SHARE_HTPASSWD_FILE__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qx 'TemporaryFileSystem=__SERVER_ROOT__/__FILES_PANEL_TRASH__:ro' "$V2_ROOT/modules/paylasim/master-paylasim.service"
     # DD-151: qBittorrent on the host writes only the downloads folder; systemd hides the rest.
     grep -qx 'ReadWritePaths=__TORRENT_PROFILE_DIR__ __DOWNLOADS_PATH__' "$V2_ROOT/modules/torrent/master-stack.conf"
     grep -qx 'InaccessiblePaths=-__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__' "$V2_ROOT/modules/torrent/master-stack.conf"
@@ -2996,7 +2950,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qF 'printf '"'"'%s'"'"' "$1" | htpasswd -i -B "$th" "$SHARE_ACCOUNT"' <<<"$body"
     grep -qF 'chmod 0600 "$th" "$tc"' <<<"$body"
     grep -qF 'umask 077 && mktemp "$STATE_DIR/.paylasim-XXXXXX"' <<<"$body"
-    # The file backend never gets the account (no LoadCredential: a missing file would stop the unit).
+    # The file backend never gets the account (no LoadCredential there: a missing file would stop the unit).
     grep -q -- '--share __SHARE_DIR__ --domain' "$unit"
     [ "$(cat "$unit" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|share-credential|SHARE_CRED_FILE')" -eq 0 ]
     # Names come from the module files: the base templates import the Caddy directory only.
@@ -3067,15 +3021,14 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q 'handle /api/\* {' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
-    grep -q '^http://wg.__LOCAL_DOMAIN__, http://dosya.__LOCAL_DOMAIN__, http://file.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile"
-    grep -q 'redir http://panel.__LOCAL_DOMAIN__{uri} 302' "$V2_ROOT/templates/Caddyfile"
+    run ! grep -q 'redir ' "$V2_ROOT/templates/Caddyfile"
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
     run ! grep -q 'FILES_PANEL' "$V2_ROOT/templates/Caddyfile.wg"
     # DD-144: the trash sits beside the downloads folder, not inside it, so no container
     # that mounts downloads can reach it and the tmpfs curtain is gone.
     awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$SERVER_ROOT/\$FILES_PANEL_TRASH" \\'
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'panele yönlenmedi' <<<"$s7"
+    run ! grep -q 'panele yönlenmedi' <<<"$s7"
     grep -q 'master-files-panel" check' <<<"$s7"
     grep -q 'ps -o uid= -p' <<<"$s7"
     grep -q 'http://${wg_first_addr}:${FILES_PANEL_PORT}/' <<<"$s7"
@@ -4001,12 +3954,11 @@ EOF
     SERVER_ROOT=/srv LOCAL_DOMAIN=ayc TAILSCALE_IPV4=100.64.0.7 SHARE_PORT=61010 WG_NET_COUNT=1 WG_PEER_COUNT=2
     run summary_modules
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 5 ]
+    [ "${#lines[@]}" -eq 4 ]
     [ "${lines[0]}" = "  Dosya yöneticisi: kurulu değil" ]
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
     [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — http://paylas.ayc, Infuse için 100.64.0.7:61010; hesabı kartında" ]
-    [ "${lines[4]}" = "  Arşiv açıcı: kurulu değil" ]
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
     awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'

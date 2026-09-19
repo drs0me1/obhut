@@ -635,6 +635,8 @@ playback remain untested.
 
 ### DD-15: Docker's chain layout is assumed, and Docker itself is deliberately not pinned (2026-07-28)
 
+- **Superseded by DD-152 (2026-09-19):** Docker is no longer installed.
+
 - **Decision:** `docker-ce`/`containerd.io`/`tailscale`/`caddy` stay
   unpinned even though container images are pinned to exact tags, and the
   firewall helper keeps assuming Docker's internal chain layout
@@ -3431,6 +3433,8 @@ separate document with its own numbering.
 
 ### DD-71: IPv6 `MASTER-DOCKER` drops WAN only, like IPv4 (2026-08-07)
 
+- **Superseded by DD-152 (2026-09-19):** there is no `MASTER-DOCKER` chain.
+
 - **Decision:** `apply_docker6` ends with `-i $WAN_INTERFACE -j DROP`
   followed by `-j RETURN`, the same shape as `apply_docker4`, instead of an
   unconditional `-j DROP`. `--check` gains two IPv6 assertions
@@ -3642,6 +3646,8 @@ separate document with its own numbering.
 
 ### DD-82: WebDAV healthcheck and isolated `webdav` network (2026-08-09)
 
+- **Superseded by DD-152 (2026-09-19):** the share WebDAV is a host service; systemd restarts it.
+
 - **Decision:** Compose `webdav` gets a Docker healthcheck that treats an
   unauthenticated local `401` as healthy, and attaches only to a named
   bridge `webdav` (not `internal`). It does **not** join `wg` or the
@@ -3661,6 +3667,8 @@ separate document with its own numbering.
   declined for this pass).
 
 ### DD-81: Stage 7 proves WebDAV read-only via inspect, not PUT 401 (2026-08-09)
+
+- **Superseded by DD-152 (2026-09-19):** `master-modul` checks the service's command line and sandbox.
 
 - **Decision:** `assert_webdav_readonly_runtime` checks the running
   `webdav` container: `Config.Cmd` contains `--read-only`,
@@ -3732,6 +3740,8 @@ separate document with its own numbering.
   address is `${TS_IPV4}:${WEBDAV_PORT}` rather than bare `:80`.
 
 ### DD-77: WebDAV runs in Compose on loopback, not as a host unit (2026-08-09)
+
+- **Superseded by DD-152 (2026-09-19):** the share WebDAV runs on the host as `master-paylasim.service`.
 
 - **Decision:** Replace host `master-webdav` (systemd + distro rclone +
   dedicated user) with a Compose service using `rclone/rclone`, published
@@ -3910,6 +3920,8 @@ separate document with its own numbering.
   public-IP change, or watchdog coverage of anything but the firewall unit.
 
 ### DD-97: Prefer upstream stable tracks over patch@digest pins (2026-08-09)
+
+- **Superseded by DD-152 (2026-09-19):** no images remain; rclone is pinned by version and SHA256.
 
 - **Decision:** Where the vendor publishes a stable track tag, Compose uses
   that tag with **no** `@sha256`. Where it does not, the digest pin stays.
@@ -4231,6 +4243,8 @@ failure with an early, named one.
 
 ### DD-107: Container logs are rotated (2026-09-08)
 
+- **Superseded by DD-152 (2026-09-19):** no containers remain; every module logs to the journal.
+
 - **Decision:** `merge_docker_daemon_dns` becomes
   `merge_docker_daemon_config` and additionally merges
   `log-opts.max-size`/`max-file` (`defaults.env`) — but **only** when
@@ -4332,6 +4346,8 @@ failure with an early, named one.
   no gain.
 
 ### DD-110: Daemon config before the daemon; log policy in the service definition (2026-09-11)
+
+- **Superseded by DD-152 (2026-09-19):** Docker and its `daemon.json` are gone.
 
 - **Decision:** two changes.
   1. `stage_4` writes `/etc/docker/daemon.json` **before** installing the
@@ -5653,6 +5669,8 @@ failure with an early, named one.
 
 ### DD-125: A smaller footprint — no Docker recommends, no kept apt downloads, no debian-keyring (2026-09-14)
 
+- **Docker part superseded by DD-152 (2026-09-19):** Docker is not installed at all.
+
 - **Context:** after a fresh v2-89 install the operator saw disk use grow by
   about 1.7 GB.
   - Measured on `nrm`: 672 MB of new packages, 421 MB of images and a 303 MB
@@ -6813,6 +6831,126 @@ failure with an early, named one.
     - After a reboot the panel and both tmpfs mounts came back, with 0 failed
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
+
+### DD-154: One console name, one current export (2026-09-19)
+
+- **Context:** simplifying after **DD-152**/**DD-153**. The Caddyfile still
+  redirected `wg.`, `dosya.` and `file.${LOCAL_DOMAIN}` to Konsol (the old
+  WireGuard panel, file panel and FileBrowser names, **DD-140**, **DD-146**),
+  each with a dnsmasq name and a stage 7 check. `Data/app/` held every
+  exported installer since v2-96.
+- **Decision (the user agreed to both, 2026-09-19):**
+  - The three old names are gone: no Caddy site, no dnsmasq record, no check.
+    `SERVICE_NAMES` is `health panel`. Bookmarks must use `panel.<domain>`.
+    The backends already accepted only `panel.<domain>` as Host.
+  - The exporter keeps only the current version in `Data/app/`, as it already
+    did in the repository root; older exports live in Git history.
+
+### DD-153: The base installs only what the base uses (2026-09-19)
+
+- **Context:** after **DD-152** the user asked to clean the services' old
+  dependencies before simplifying further. A fresh v2-122 install on `nrm`
+  pulled 51 packages. Checked one by one against the code: every
+  `defaults.env` and `state.env` key has a reader, every shell function is
+  called and no unit names a removed service — but three base packages
+  served nothing the base does.
+- **Decision:**
+  - `gnupg` goes. It was there for one `gpg --dearmor` of Caddy's repository
+    key and brought about 15 packages (dirmngr, gpg-agent, gpgsm, pinentry…).
+    The armored key is now stored as `caddy-stable-archive-keyring.asc` and
+    named in `signed-by=`; apt reads armored keys itself (apt 1.4+, measured
+    with apt 3.0.3 on `nrm`: `InRelease` verified). Tailscale's key is already
+    a binary `.gpg` download.
+  - `gawk` goes. It came with the v1 installer; no script uses a gawk-only
+    feature (no regex intervals, `gensub`, `strftime`, `asort`, `IGNORECASE`,
+    `PROCINFO`), and the code already avoided intervals for mawk. `awk` is the
+    distribution's `mawk` (1.3.4 on Debian 13).
+  - `apache2-utils` leaves the base: only Paylaşım's account uses `htpasswd`,
+    so `master-modul` installs it (`share_tools`) before every step that
+    writes or checks the account (`kur`, `baslat`, `parola`, `uygula`).
+    `hesap` only reads the plain account file and never needs it.
+- **Kept on purpose:** `jq` (Tailscale login state), `dnsutils` (`dig` in the
+  name checks), `python3` (Konsol and `master-modul`), `ethtool` (UDP GRO),
+  `unattended-upgrades` (**DD-113**) and the essential tools listed for
+  clarity (`coreutils`, `util-linux`, `diffutils`).
+- **Upgrading:** a host installed earlier keeps the packages; nothing removes
+  them (fresh-install rule).
+
+### DD-152: No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped (2026-09-19)
+
+- **Context:** after **DD-151** only two modules used Docker: Paylaşım (rclone)
+  and Arşiv açıcı (unpackerr). For them the installer kept a whole layer:
+  Docker's apt repository and packages, `daemon.json`, a `docker.service`
+  drop-in, the `MASTER-DOCKER` chain behind a `DOCKER-USER` jump, and the
+  engine itself (dockerd, containerd, shims and port proxies: about 110–150 MB
+  of memory measured on `nrm`). On 2026-09-19 the user decided to remove the
+  Docker dependency completely, to drop Arşiv açıcı, and to run the share
+  WebDAV on the host.
+- **Decision:**
+  - The installer installs no Docker: no repository, packages, daemon
+    settings or drop-in. The firewall has no `MASTER-DOCKER` chain and never
+    touches `DOCKER-USER`; `CHAIN_DOCKER` is gone from the defaults and the
+    state file; `master-firewall.service` is `PartOf=tailscaled.service` only.
+    The nft backend gate (**DD-106**) stays: the firewall still orders its
+    chain behind tailscaled's `ts-input`.
+  - Arşiv açıcı (unpackerr) leaves the catalogue, the templates, Konsol and
+    the downloads tree (`.unpackerr`). Nothing replaces it.
+  - Paylaşım becomes `master-paylasim.service` with the container's exact
+    command: `rclone serve webdav SERVER_ROOT/SHARE_DIR/w --copy-links
+    --read-only --dir-cache-time=10s` with the htpasswd account, on
+    `127.0.0.1:SHARE_PORT`. Caddy, the names, the account (**DD-149**) and the
+    share links (**DD-141**) are unchanged, so Infuse sees no difference.
+- **Which rclone (the user chose among three):**
+  - Chosen: rclone's official release binary. `RCLONE_VERSION` (1.75.1) and one
+    SHA256 per architecture are pinned in `defaults.env`, taken from rclone's
+    signed `SHA256SUMS` (key `FBF7 37EC E9F8 AB18 604B D2AC 9393 5E02 FF3B 54FA`,
+    good signature checked on `nrm`); downloads.rclone.org and the GitHub
+    release list the same values. This is the program the container ran.
+  - Rejected: the distribution package. Debian 13, Ubuntu 24.04 and 26.04 ship
+    1.60.1 (2022); Debian's security tracker lists about 25 open CVEs for it in
+    trixie, one of them (CVE-2026-88015, a Range-header panic) in HTTP/WebDAV
+    serving itself.
+  - Rejected: nginx with the WebDAV module — a second web server next to Caddy,
+    a new configuration never tried with Infuse, and on Ubuntu the module
+    lives in universe.
+- **Getting rclone:** `master-modul` downloads only when the installed binary's
+  `rclone version` is not the pinned one: HTTPS only, the checksum before the
+  archive is opened (Python's `zipfile`, no `unzip` package), the binary
+  written next to `RCLONE_BIN` (`/usr/local/lib/master-stack/rclone`) and
+  moved over it. `kaldir` keeps it, as qBittorrent's package stays
+  (**DD-151**). The unit's description carries the version, so a new pin
+  changes the rendered unit and the next installer run re-applies an
+  installed share: download, then restart.
+- **Sandbox:** the service runs as `DOWNLOADS_UID` (it reads what qBittorrent
+  and Konsol write, never as root), with `ProtectSystem=strict` and nothing
+  writable, `ProtectHome`, private `/tmp` and devices, no new privileges, an
+  empty capability set, `IPAddressDeny=any` with `IPAddressAllow=localhost`
+  (it cannot connect out), the kernel protections and
+  `MemoryDenyWriteExecute`. The account file stays root-only on disk and
+  reaches the service as a systemd credential (`LoadCredential=`); systemd
+  copies it at start, so "Yeni parola" restarts the service.
+- **The trash is an empty tmpfs, not an inaccessible path:** measured on
+  `nrm`, a single share link pointing into an `InaccessiblePaths=` directory
+  makes rclone's whole listing fail (`EACCES`, HTTP 500, every share gone),
+  while a dangling link (`ENOENT`) is only skipped.
+  `TemporaryFileSystem=SERVER_ROOT/.cop:ro` turns a link into the trash into a
+  dangling one. The container, which mounted all of `/srv`, could see the
+  trash; the service cannot.
+- **Checks (`kur`, `baslat`, `uygula`, `parola`):** the unit is active, runs as
+  `DOWNLOADS_UID` with the expected command line, has the trash tmpfs, its
+  own sockets are only `127.0.0.1:SHARE_PORT`, an unauthenticated request gets
+  `401` and the account `207`; then the name and the Infuse address as
+  before. A failed install is taken back (names, marker, unit).
+- **Upgrading:** per the fresh-install rule there is no clean-up code: a host
+  from an earlier version keeps Docker, its containers and images until it
+  is reset. Reset and install fresh; Paylaşım generates a new account.
+- **Found in the live trial (v2-122):** right after `systemctl restart` a
+  `Type=simple` unit is "active" while its process is still root (systemd
+  switches to `User=` just before exec), so an immediate owner check failed
+  once ("Yeni parola"). The unit is `Type=exec` now, and `master-modul` reads
+  the owner of every module's main process until it matches (about 5 s at
+  most). rclone exits with 143 on SIGTERM; `SuccessExitStatus=143` keeps a
+  stopped share from showing as failed.
 
 ### DD-151: qBittorrent is a host module; Dozzle and the base Compose project go (2026-09-18)
 
