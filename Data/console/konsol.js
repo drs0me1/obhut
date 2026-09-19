@@ -42,6 +42,10 @@
     close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
     key: '<circle cx="5.8" cy="12" r="3.2"/><path d="M8.1 9.7l6.5-6.5M12.4 5.4l1.9 1.9M10.6 7.2l1.5 1.5"/>',
     restart: '<path d="M3.6 8.8a5.4 5.4 0 1 0 1.6-3.9"/><path d="M3.4 2.6v3.2h3.2"/>',
+    sliders: '<path d="M3 5h7M13.5 5H15M3 13h2.5M9 13h6"/><circle cx="11.8" cy="5" r="1.8"/><circle cx="7.2" cy="13" r="1.8"/>',
+    route: '<circle cx="4.4" cy="13.6" r="1.8"/><circle cx="13.6" cy="4.4" r="1.8"/><path d="M6.2 13.6h4.2a2.6 2.6 0 0 0 0-5.2H7.6a2.6 2.6 0 0 1 0-5.2h4.2"/>',
+    chev: '<path d="M7 4.5L11.5 9 7 13.5"/>',
+    arrow: '<path d="M3.4 9h11.2M10.6 5l4 4-4 4"/>',
   };
   const svg = (name) => {
     const t = document.createElement("template");
@@ -2022,6 +2026,201 @@
     $("mod-grid").replaceChildren(...MODS.map(modCard));
   }
 
+  /* ---------- Ayarlar (DD-155): sunucunun şu anki yapılandırması, salt okunur ---------- */
+  let CFG = null, cfgFam = "v4", cfgBusy = false;
+  const nfTr = new Intl.NumberFormat("tr-TR");
+  const pkt = (n) => `${nfTr.format(n || 0)} pkt`;
+  const hhmm = (sec) => new Date(sec * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  // replaceChildren boş öğeyi "null" metni olarak basar: yalnız gerçek öğeler konur.
+  const fill = (id, ...kids) => $(id).replaceChildren(...kids.flat(Infinity).filter(Boolean));
+  function loadSettings(fresh) {
+    if (cfgBusy) return;
+    cfgBusy = true;
+    api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar").then((d) => { CFG = d; renderSettings(); }).catch(fail).finally(() => { cfgBusy = false; });
+  }
+  const srcTag = (source) => source === "base" ? h("span", { class: "tag base first" }, "Temel")
+    : source === "wireguard" ? h("span", { class: "tag wgt first" }, "WireGuard")
+      : h("span", { class: "tag mod first" }, metaOf(source).name);
+  function rawBox(title, src, text) {
+    return h("details", { class: "raw" },
+      h("summary", null, svg("chev"), title, h("span", { class: "src" }, src)),
+      h("div", { class: "logbox" },
+        h("div", { class: "rawhead" }, h("button", { type: "button", class: "btn btn-sm btn-quiet",
+          onclick: async () => toast((await copyText(text)) ? "Kopyalandı." : "Pano kullanılamadı; metni seçip kopyalayın.") },
+        svg("copy"), "Kopyala")),
+        h("pre", { tabindex: "0" }, text || "(boş)")));
+  }
+  const pnum = (port, proto) => h("span", { class: "pnum" }, String(port), proto ? h("span", { class: "pproto" }, proto) : null);
+  const psym = (s) => h("span", { class: "pnum sym" }, s);
+  function fwRow(num, name, count, small, cls) {
+    return h("div", { class: "prow" + (cls ? ` ${cls}` : "") }, num, h("span", { class: "pname" }, name),
+      count == null ? h("span") : h("span", { class: "cnt" + (cls === "deny" && count > 0 ? " hot" : "") }, pkt(count)),
+      small ? h("small", null, small) : null);
+  }
+  const fwGroup = (dot, title, iface, desc, rows) => h("section", { class: "pgroup", "aria-label": title },
+    h("div", { class: "pg-head" }, h("span", { class: `pdot ${dot}` }), h("strong", null, title), iface ? h("span", { class: "pg-n" }, iface) : null),
+    h("p", { class: "pg-desc" }, desc), rows);
+  const sum = (list) => list.reduce((n, e) => n + (e.pkts || 0), 0);
+  function fwGroups() {
+    const fam = CFG.firewall[cfgFam] || { entries: [] }, v4 = (CFG.firewall.v4 || { entries: [] }).entries;
+    const by = (g) => fam.entries.filter((e) => e.group === g);
+    const wanOrder = { ssh: 0, tailscale: 1, wireguard: 2, drop: 9 };
+    const wanRows = by("wan").sort((a, b) => (wanOrder[a.kind] ?? 5) - (wanOrder[b.kind] ?? 5)).map((e) =>
+      e.kind === "ssh" ? fwRow(pnum(e.port, e.proto), "SSH", e.pkts, srcTag("base"))
+        : e.kind === "tailscale" ? fwRow(pnum(e.port, e.proto), "Tailscale", e.pkts, [srcTag("base"), " doğrudan bağlantılar için"])
+          : e.kind === "wireguard" ? fwRow(pnum(e.port, e.proto), `WireGuard · ${e.label || e.iface}`, e.pkts, [srcTag("wireguard"), " ağ başına bir port"])
+            : fwRow(psym("✕"), "Gerisi düşer", e.pkts, "tarama ve istenmeyen bağlantılar", "deny"));
+    if (cfgFam === "v6" && v4.some((e) => e.kind === "wireguard")) {
+      wanRows.splice(wanRows.length - 1, 0, fwRow(psym("—"), "WireGuard", null, "IPv6'da açılmaz; uç nokta IPv4"));
+    }
+    const groups = [fwGroup("wan", "İnternet", CFG.wan.iface, "Yalnız bunlar açık", wanRows)];
+    const ts = by("ts");
+    if (ts.length) {
+      groups.push(fwGroup("ts", "Tailscale", CFG.ts_if, "Tailnet'teki cihazlar",
+        fwRow(psym("hepsi"), "Konsol, adlar ve modüller", sum(ts), "Sınırlamak Tailscale ACL'leriyle yapılır")));
+    }
+    const wgIfs = [...new Set(fam.entries.filter((e) => e.group.startsWith("wg:")).map((e) => e.group.slice(3)))].sort();
+    for (const iface of wgIfs) {
+      const es = by("wg:" + iface), label = (v4.find((e) => e.kind === "wireguard" && e.iface === iface) || {}).label || "";
+      const nat = es.find((e) => e.kind === "nat");
+      const rows = [];
+      for (const e of es.filter((x) => x.kind === "ui")) {
+        const names = e.ports.map((pp) => (pp.name === "qbittorrent" ? "qBittorrent arayüzü" : "Arayüz"));
+        rows.push(fwRow(pnum(e.ports.map((pp) => pp.port).join(","), e.proto), names.join(", "), e.pkts, `yalnız ${e.addr} adresinde`));
+      }
+      for (const e of es.filter((x) => x.kind === "ping")) rows.push(fwRow(psym("ping"), "Sunucu adresi", e.pkts, e.addr));
+      const egress = es.filter((x) => x.kind === "egress");
+      if (egress.length) {
+        rows.push(fwRow(psym("→"), "İnternete çıkış", sum(egress),
+          nat ? `${nat.subnet} ${CFG.wan.iface} üzerinden maskelenir` : "maskeleme kuralı yok"));
+      }
+      const drops = es.filter((x) => ["drop", "fwd-drop", "fwd-in-drop"].includes(x.kind));
+      if (drops.length) rows.push(fwRow(psym("✕"), "Gerisi düşer", sum(drops), "tailnet, SSH ve öbür ağlar kapalı", "deny"));
+      const ui = es.some((x) => x.kind === "ui");
+      groups.push(fwGroup("wg", "WireGuard", iface, `${label ? label + " · " : ""}${ui ? "internet + arayüzler" : "yalnız internet"}`, rows));
+    }
+    const self = by("self"), icmp = self.filter((e) => e.kind === "icmp6");
+    const selfRows = self.filter((e) => e.kind !== "icmp6").map((e) => e.kind === "lo"
+      ? fwRow(psym("lo"), "Yerel servisler", e.pkts, "127.0.0.1'deki arka uçlar")
+      : fwRow(psym("↩"), "Kurulmuş bağlantıların dönüşü", e.pkts));
+    if (icmp.length) selfRows.push(fwRow(psym("icmp6"), "Komşu bulma, ping", sum(icmp), "IPv6'nın çalışması için gerekli"));
+    groups.push(fwGroup("lo", "Sunucunun kendisi", "lo", "Her zaman açık", selfRows));
+    const other = by("other");
+    if (other.length) {
+      groups.push(fwGroup("wan", "Tanımsız kurallar", "", "Konsol bu kuralları tanımıyor: elle eklenmiş ya da eski olabilir",
+        other.map((e) => fwRow(psym("?"), h("code", null, e.spec), e.pkts, null, "deny"))));
+    }
+    return groups;
+  }
+  function paintFirewall() {
+    const fw = CFG.firewall, fam = fw[cfgFam] || { entries: [], raw: "", readable: false };
+    const seg = h("span", { class: "seg", role: "group", "aria-label": "Adres ailesi" },
+      ["v4", "v6"].map((f) => h("button", { type: "button", "aria-pressed": String(cfgFam === f),
+        onclick: () => { cfgFam = f; paintFirewall(); } }, f === "v4" ? "IPv4" : "IPv6")));
+    fill("cfg-fw", 
+      h("div", { class: "card-head" }, h("h2", null, svg("shield"), "Güvenlik duvarı"),
+        h("div", { class: "head-right" },
+          fw.ok ? h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Politika yerinde")
+            : h("span", { class: "hm warn", title: fw.check }, "Denetim uyardı"), seg)),
+      h("p", { class: "lede" }, "Sunucuya gelen bağlantılar geldiği arayüze göre ayrılır. Aşağıdakiler açık; listede olmayan her yeni bağlantı düşer. Sayılar açılıştan beri kurala takılan paketlerdir."),
+      fw.ok ? null : h("div", { class: "warnline" }, svg("info"), h("span", null, fw.check || "Denetim başarısız.")),
+      fam.readable ? null : h("div", { class: "warnline" }, svg("info"), h("span", null, "Kuralların bir kısmı okunamadı.")),
+      h("div", { class: "portgrid rules" }, fwGroups()),
+      rawBox("Ham kurallar", cfgFam === "v4" ? "iptables -S" : "ip6tables -S", fam.raw),
+      h("div", { class: "card-foot" }, h("span", null, "Kuralları ", h("span", { class: "mono" }, "master-firewall"), " yazar; Konsol yalnız okur."),
+        h("span", null, "Değişir: SSH portu kurulumla · WireGuard portları WireGuard sayfasından")));
+  }
+  const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
+  function webDesc(e) {
+    if (e.source === "wireguard") return `WireGuard'dan · ${e.label || e.iface}`;
+    const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
+    if (e.source === "base") return (e.address.startsWith("panel.") ? "Konsol" : e.address.startsWith("health.") ? "kurulum denetimi" : "") + extra;
+    return metaOf(e.source).name + extra;
+  }
+  function webHop(r, many) {
+    const arrow = svg("arrow");
+    const path = r.path ? h("code", null, r.path) : many ? h("span", { class: "muted" }, "diğer") : null;
+    const what = r.kind === "proxy" ? h("code", null, r.to) : r.kind === "files" ? "sayfa dosyaları"
+      : r.kind === "respond" ? `sabit yanıt “${r.to}”` : h("span", null, "→ ", h("code", null, r.to));
+    return h("span", { class: "hop" }, path ? [path, arrow] : null, what);
+  }
+  function paintWeb() {
+    const w = CFG.web, names = w.entries.filter((e) => !isIpPort(e.address)).length;
+    const rows = w.entries.map((e) => h("div", { class: "tr" },
+      h("span", { class: "a" }, e.address, h("small", null, webDesc(e))),
+      h("span", { class: "to" }, e.routes.map((r) => webHop(r, e.routes.length > 1))),
+      h("span", { class: "who" }, srcTag(e.source), h("span", { class: "tag" }, e.access === "wireguard" ? `WireGuard · ${e.label || e.iface}` : "Tailscale"))));
+    fill("cfg-web", 
+      h("div", { class: "card-head" }, h("h2", null, svg("globe"), "Web adresleri"),
+        h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
+      h("div", { class: "table addr-t" }, h("div", { class: "tr head" }, h("span", null, "Adres"), h("span", null, "Nereye gider"), h("span", null, "Kaynak · erişim")), rows),
+      rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy · Caddyfile.wg", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
+      h("div", { class: "card-foot" }, h("span", null, "Caddy yalnız Tailscale adresinde ve WireGuard sunucu adreslerinde dinler; HTTPS yok, iki tünel de zaten şifreli.")));
+  }
+  function paintDns() {
+    const d = CFG.dns;
+    fill("cfg-dns", 
+      h("div", { class: "card-head" }, h("h2", null, svg("route"), "Ad çözümü"), h("div", { class: "head-right" }, h("span", { class: "hm" }, "dnsmasq"))),
+      h("dl", { class: "facts" },
+        h("dt", null, "Dinler"), h("dd", null, h("span", { class: "mono" }, d.listen.join(", ") || "—"), " · 53 udp+tcp"),
+        h("dt", null, "Yanıtlar"), h("dd", null, d.domains.length ? ["yalnız ", h("span", { class: "mono" }, d.domains.map((x) => "." + x).join(", ")), "; başka her ada ", h("span", { class: "mono" }, "REFUSED")] : "—"),
+        h("dt", null, "DHCP"), h("dd", null, d.dhcp ? "açık" : "yok")),
+      h("div", { class: "dnsl" }, d.names.map((n) => h("div", { class: "dn" }, h("b", null, n.name), h("span", null, n.address || n.iface),
+        h("small", null, srcTag(n.source), n.source === "base" ? null : " modülle gelir, modülle gider")))),
+      h("div", { class: "infoline-s" }, svg("info"), h("span", null, `Adlar ${CFG.ts_if} adresini kendiliğinden izler. Cihazların çözmesi için Tailscale yönetici panelinde: DNS → Nameserver `,
+        h("span", { class: "mono" }, CFG.tailscale || "—"), `, yalnız ${CFG.domain} alanı için.`)),
+      rawBox("Ham yapılandırma", "dnsmasq.d", d.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")));
+  }
+  function paintTorrent() {
+    const t = CFG.torrent || { installed: false };
+    const head = (pill) => h("div", { class: "card-head" }, h("h2", null, svg("download"), "qBittorrent"), h("div", { class: "head-right" }, pill));
+    if (!t.installed) {
+      fill("cfg-qb", head(h("span", { class: "hm" }, "Kurulu değil")),
+        h("p", { class: "lede" }, "qBittorrent kurulu değil. Modüller'den kurulunca indirme yeri ve portları burada görünür."),
+        h("div", null, h("button", { type: "button", class: "btn btn-sm", "data-go": "#/moduller" }, svg("stack"), "Modüller")));
+      return;
+    }
+    if (t.error) {
+      fill("cfg-qb", head(h("span", { class: "hm warn" }, "Okunamadı")), h("div", { class: "warnline" }, svg("info"), h("span", null, t.error)));
+      return;
+    }
+    const bad = !t.save_inside || (t.temp_on && !t.temp_inside);
+    const mark = (ok) => ok ? h("span", { class: "path-ok" }, "✓ Dosyalar sayfasındaki klasör") : h("span", { class: "path-bad" }, "✕ qBittorrent buraya yazamaz");
+    fill("cfg-qb", 
+      head(bad ? h("span", { class: "hm warn" }, "İndirme yeri yazılamıyor") : h("span", { class: "hm ok" }, "İndirme yeri Dosyalar'da görünüyor")),
+      h("dl", { class: "facts" },
+        h("dt", null, "İndirme yeri"), h("dd", null, h("span", { class: "mono" }, t.save || "—"), " ", mark(t.save_inside)),
+        h("dt", null, "Yarım indirmeler"), h("dd", null, t.temp_on ? [h("span", { class: "mono" }, t.temp), t.temp_inside ? null : [" ", mark(false)]] : "kapalı (indirme yerinde)"),
+        h("dt", null, "Profil"), h("dd", { class: "mono" }, t.profile),
+        h("dt", null, "Arayüz"), h("dd", null, h("span", { class: "mono" }, t.ui), " → ", h("span", { class: "mono" }, `torrent.${CFG.domain}`)),
+        h("dt", null, "Eş portu"), h("dd", null, h("span", { class: "mono" }, String(t.peer_port || "—")), h("span", { class: "muted" }, " · internetten kapalı; qBittorrent yalnız dışa bağlanır"))),
+      bad ? h("div", { class: "warnline" }, svg("info"), h("span", null, "qBittorrent yalnız ", h("span", { class: "mono" }, t.downloads),
+        " altına yazabilir (kum havuzu). Bu klasöre inen torrentler hata verir ve Dosyalar'da görünmez. qBittorrent → Tools → Options → Downloads'tan düzeltin.")) : null,
+      h("div", { class: "card-foot" }, h("span", null, "Kaynak: ", h("span", { class: "mono" }, "qBittorrent.conf"), " — yalnız yol ve port satırları okunur, parola asla."),
+        h("span", null, "Ayarlar qBittorrent'indir; kurulum dokunmaz.")));
+  }
+  function renderSettings() {
+    const stamp = $("cfg-stamp");
+    if (stamp) stamp.textContent = CFG ? `Son okuma ${hhmm(CFG.read_at)}` : "Okunuyor…";
+    if (!CFG) {
+      for (const id of ["cfg-fw", "cfg-web", "cfg-dns", "cfg-qb"]) $(id).replaceChildren(h("p", { class: "hint-s" }, "Okunuyor…"));
+      return;
+    }
+    fill("cfg-sum", 
+      h("div", null, h("dt", null, "Alan adı"), h("dd", null, CFG.domain), h("small", null, "kurulum.env")),
+      h("div", null, h("dt", { lang: "en" }, "Tailscale"), h("dd", null, CFG.tailscale || "—"), h("small", null, CFG.ts_if)),
+      h("div", null, h("dt", null, "İnternet"), h("dd", null, CFG.wan.ipv4 || "—"), h("small", null, CFG.wan.iface)),
+      h("div", null, h("dt", null, "Kurulum"), h("dd", null, (CFG.version.match(/v2-\d+$/) || [CFG.version])[0]), h("small", null, CFG.version)));
+    paintFirewall();
+    paintWeb();
+    paintDns();
+    paintTorrent();
+  }
+  document.addEventListener("click", (e) => {
+    const j = e.target.closest("[data-jump]");
+    if (j && $(j.dataset.jump)) $(j.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   /* ---------- yönlendirme ---------- */
   const ROUTES = {
     genel: { title: "Genel bakış", eyebrow: "Sunucu durumu",
@@ -2031,6 +2230,10 @@
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (!fsList) loadFs(); } },
     moduller: { title: "Modüller", eyebrow: "Temiz kurulumda yalnız temel · gerisi buradan", actions: () => [], render: () => { renderModules(); loadModules(); } },
     gunluk: { title: "Günlük", eyebrow: "Konsol'dan yapılan işlemler", actions: () => [], render: () => { renderLog(); loadActions(); } },
+    ayarlar: { title: "Ayarlar", eyebrow: "Sunucunun şu anki yapılandırması · salt okunur",
+      actions: () => [h("span", { class: "hm", id: "cfg-stamp" }, "Okunuyor…"),
+        h("button", { type: "button", class: "btn btn-quiet", onclick: () => loadSettings(true) }, svg("refresh"), "Yenile")],
+      render: () => { renderSettings(); loadSettings(); } },
   };
   const ADD_ROUTE = { title: "Arayüz ekle", eyebrow: "WireGuard · yeni ağ", first: true,
     actions: () => [h("button", { type: "button", class: "btn btn-quiet", "data-go": "#/wireguard" }, svg("back"), "WireGuard")], render: renderAddNet };

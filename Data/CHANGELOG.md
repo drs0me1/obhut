@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-19 — Konsol · Ayarlar: the server's settings, read-only (v2-125)
+
+- **Added** (**DD-155**): an Ayarlar page in Konsol showing the server's
+  current configuration without changing anything:
+  - the firewall rules grouped by where traffic comes from (internet,
+    Tailscale, each WireGuard network, the server itself), with how many
+    packets each rule caught, an IPv4/IPv6 switch and the raw rules in a
+    closed box; a rule Konsol does not recognise is listed as such;
+  - the web addresses Caddy serves and where each one goes, with its module
+    and who can reach it;
+  - dnsmasq's names and policy;
+  - qBittorrent's download and temporary folders, with a warning when they
+    are outside the downloads folder (qBittorrent cannot write there).
+- **Operator step:** run the installer again.
+
 ### 2026-09-19 — One console name, one current export (v2-124)
 
 - **Removed** (**DD-154**): the old addresses `wg.`, `dosya.` and

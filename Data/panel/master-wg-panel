@@ -17,6 +17,7 @@
 # yanıtlar (profil, QR) yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
 import argparse
 import http.server
+import ipaddress
 import json
 import os
 import platform
@@ -57,6 +58,13 @@ SYS_POINTS = 12
 # Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
 ACTIONS_LIMIT = 40
+# DD-155: Ayarlar sayfası salt okunurdur; aynı anda gelen yenilemeler iptables'ı yormasın.
+SETTINGS_CACHE_SECONDS = 5
+SETTINGS_TEXT_LIMIT = 65536
+IPT_COUNTER_RE = re.compile(r" -c (\d+) (\d+)")
+# qBittorrent.conf'tan okunan tek anahtarlar: yollar ve portlar. Parola özeti ve öbür her şey okunmaz.
+TORRENT_KEYS = ("Session\\DefaultSavePath", "Session\\TempPath", "Session\\TempPathEnabled", "Session\\Port",
+                "Downloads\\SavePath", "Downloads\\TempPath", "WebUI\\Address", "WebUI\\Port")
 ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
 # Genel bakıştaki "Kullanımdaki portlar" kartı: yapılandırmadan üretilir, tarama yok.
 # (state.env anahtarı, ad, protokol, kapsam, varsayılan)
@@ -132,6 +140,193 @@ def dns_provider(dns):
     return "Özel"
 
 
+# ------------------------------------------------------- ayarlar (DD-155)
+def read_text(path):
+    """Yapılandırma dosyası: yalnız metin, sınırlı boy; okunamazsa None."""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(SETTINGS_TEXT_LIMIT)
+    except OSError:
+        return None
+
+
+def rule_opts(spec):
+    """iptables -S kuralının seçenekleri: {"-i": "eth0", "--dport": "22", "-j": "ACCEPT", ...}."""
+    opts, tokens = {}, spec.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("-") and i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+            if tok != "-m":
+                opts[tok] = tokens[i + 1]
+            i += 2
+        else:
+            i += 1
+    return opts
+
+
+def same_net(a, b):
+    """İki yazım aynı ağ mı: kayıt "…::0:0/112" yazar, ip6tables "…::/112" gösterir."""
+    try:
+        return bool(a and b) and ipaddress.ip_network(a, strict=False) == ipaddress.ip_network(b, strict=False)
+    except ValueError:
+        return False
+
+
+def classify_rules(chain_kind, rules, env, networks):
+    """Projenin zincirlerindeki kuralları sayfanın gruplarına ayırır. Tanınmayan kural "other"
+    grubuna düşer (elle eklenmiş ya da kaymış): Konsol onu gizlemez, uyarıyla gösterir."""
+    wan = env.get("WAN_INTERFACE", "")
+    ts_if = env.get("TAILSCALE_IF", "tailscale0")
+    ssh = str(env.get("SSH_PUBLIC_PORT", ""))
+    ts_port = str(env.get("TAILSCALE_UDP_PORT", ""))
+    by_iface = {n["iface"]: n for n in networks}
+    by_port = {str(n["port"]): n for n in networks}
+    ui_names = {str(env.get("TORRENT_UI_PORT", "")): "qbittorrent"}
+    out = []
+    for rule in rules:
+        o, spec, pkts = rule_opts(rule["spec"]), rule["spec"], rule["pkts"]
+        j, i_if, o_if = o.get("-j", ""), o.get("-i", ""), o.get("-o", "")
+        e = {"pkts": pkts, "spec": spec}
+        if j == "RETURN" and not i_if and not o_if:
+            continue
+        if chain_kind == "input":
+            if i_if == "lo" and j == "ACCEPT":
+                e.update(group="self", kind="lo")
+            elif "ESTABLISHED" in o.get("--ctstate", "") and not i_if and j == "ACCEPT":
+                e.update(group="self", kind="established")
+            elif o.get("-p") == "ipv6-icmp" and j == "ACCEPT":
+                e.update(group="self", kind="icmp6")
+            elif i_if == ts_if and j == "ACCEPT" and "-p" not in o:
+                e.update(group="ts", kind="all")
+            elif i_if == wan and j == "DROP" and "-p" not in o:
+                e.update(group="wan", kind="drop")
+            elif i_if == wan and j == "ACCEPT" and o.get("--dport"):
+                port, proto = o["--dport"], o.get("-p", "")
+                if port == ssh and proto == "tcp":
+                    e.update(group="wan", kind="ssh", port=int(port), proto=proto)
+                elif port == ts_port and proto == "udp":
+                    e.update(group="wan", kind="tailscale", port=int(port), proto=proto)
+                elif port in by_port and proto == "udp":
+                    net = by_port[port]
+                    e.update(group="wan", kind="wireguard", port=int(port), proto=proto,
+                             iface=net["iface"], label=net["label"])
+                else:
+                    e.update(group="other", kind="unknown")
+            elif i_if in by_iface and j == "ACCEPT" and o.get("--dports"):
+                ports = [p for p in o["--dports"].split(",") if p]
+                e.update(group="wg:" + i_if, kind="ui", proto=o.get("-p", ""), addr=o.get("-d", "").split("/")[0],
+                         ports=[{"port": int(p) if p.isdigit() else p, "name": ui_names.get(p, "")} for p in ports])
+            elif i_if in by_iface and j == "ACCEPT" and o.get("-p") == "icmp":
+                e.update(group="wg:" + i_if, kind="ping", addr=o.get("-d", "").split("/")[0])
+            elif i_if in by_iface and j == "DROP":
+                e.update(group="wg:" + i_if, kind="drop")
+            else:
+                e.update(group="other", kind="unknown")
+        elif chain_kind == "forward":
+            if i_if in by_iface and o_if == wan and j == "ACCEPT":
+                e.update(group="wg:" + i_if, kind="egress")
+            elif i_if in by_iface and j == "DROP":
+                e.update(group="wg:" + i_if, kind="fwd-drop")
+            elif o_if in by_iface and j == "ACCEPT" and "ESTABLISHED" in o.get("--ctstate", ""):
+                e.update(group="wg:" + o_if, kind="fwd-return")
+            elif o_if in by_iface and j == "DROP":
+                e.update(group="wg:" + o_if, kind="fwd-in-drop")
+            else:
+                e.update(group="other", kind="unknown")
+        else:  # nat
+            src = o.get("-s", "")
+            net = next((n for n in networks if same_net(src, n.get("subnet4")) or same_net(src, n.get("subnet6"))), None)
+            if net and o_if == wan and j == "MASQUERADE":
+                e.update(group="wg:" + net["iface"], kind="nat", subnet=src)
+            else:
+                e.update(group="other", kind="unknown")
+        out.append(e)
+    return out
+
+
+def parse_caddy(text, ts_ip, source):
+    """Kurulumun işlediği Caddy dosyalarından siteler: adresler ve her yolun nereye gittiği.
+    Genel bir Caddyfile ayrıştırıcısı değildir; şablonlarımızın biçimini okur."""
+    sites, cur, depth, ctx, matchers = [], None, 0, [""], {}
+    for raw in (text or "").splitlines():
+        line = raw.split("#", 1)[0].strip() if raw.lstrip().startswith("#") else raw.strip()
+        if not line:
+            continue
+        if depth == 0 and line.endswith("{") and line.startswith("http://"):
+            addrs = [a.strip().replace("http://", "").replace("{$TAILSCALE_IPV4}", ts_ip)
+                     for a in line[:-1].split(",") if a.strip()]
+            cur = {"addresses": addrs, "routes": [], "source": source}
+            sites.append(cur)
+            depth, ctx, matchers = 1, [""], {}
+            continue
+        if line.endswith("{"):
+            head = line[:-1].strip()
+            if cur is not None and head.startswith("handle"):
+                arg = head[len("handle"):].strip()
+                ctx.append(matchers.get(arg[1:], arg) if arg.startswith("@") else arg)
+            else:
+                ctx.append(ctx[-1])
+            depth += 1
+            continue
+        if line == "}":
+            depth = max(0, depth - 1)
+            if len(ctx) > 1:
+                ctx.pop()
+            if depth == 0:
+                cur = None
+            continue
+        if cur is None:
+            continue
+        tokens = line.split()
+        if tokens[0].startswith("@") and len(tokens) >= 3 and tokens[1] == "path":
+            matchers[tokens[0][1:]] = " ".join(tokens[2:])
+        elif tokens[0] == "reverse_proxy" and len(tokens) >= 2:
+            cur["routes"].append({"path": ctx[-1], "kind": "proxy", "to": tokens[1]})
+        elif tokens[0] == "file_server":
+            cur["routes"].append({"path": ctx[-1], "kind": "files", "to": ""})
+        elif tokens[0] == "respond":
+            cur["routes"].append({"path": ctx[-1], "kind": "respond", "to": " ".join(tokens[1:]).split('"')[1] if '"' in line else ""})
+        elif tokens[0] == "redir" and len(tokens) >= 2:
+            cur["routes"].append({"path": ctx[-1], "kind": "redirect", "to": tokens[1]})
+    return sites
+
+
+def parse_dnsmasq(text, source):
+    """dnsmasq ayarlarından yalnız sayfanın gösterdikleri: dinlenen arayüzler, alan, adlar, DHCP."""
+    got = {"listen": [], "domains": [], "names": [], "dhcp": False}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key == "interface":
+            got["listen"].append(value)
+        elif key == "local" and value.startswith("/") and value.endswith("/"):
+            got["domains"].append(value.strip("/"))
+        elif key == "interface-name" and "," in value:
+            name, _, iface = value.partition(",")
+            got["names"].append({"name": name, "iface": iface, "source": source})
+        elif key == "dhcp-range":
+            got["dhcp"] = True
+    return got
+
+
+def read_torrent_conf(path):
+    """qBittorrent.conf'tan yalnız TORRENT_KEYS; bölüm başlıkları ve öbür anahtarlar atlanır."""
+    text = read_text(path)
+    if text is None:
+        return None
+    got = {}
+    for raw in text.splitlines():
+        key, sep, value = raw.strip().partition("=")
+        if sep and key in TORRENT_KEYS:
+            got[key] = value
+    return got
+
+
 class Panel:
     def __init__(self, args):
         self.args = args
@@ -142,6 +337,7 @@ class Panel:
         self.samples = []
         self.cpu_prev = None
         self.actions_cache = (0.0, [])
+        self.settings_cache = (0.0, None)
 
     # -- master-wg
     def run(self, *argv, binary=False, net=None):
@@ -428,6 +624,152 @@ class Panel:
                       "rclone": env.get("RCLONE_VERSION", "")},
         }
 
+    # -- ayarlar (DD-155): salt okunur; hiçbir şeyi değiştirmez, yalnız istenince okur
+    def iptables_chain(self, binary, chain, table=None):
+        """Projenin bir zinciri, sayaçlarıyla: (kurallar, ham -S metni); okunamazsa (None, "")."""
+        cmd = [binary, "-w", "5"] + (["-t", table] if table else []) + ["-v", "-S", chain]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=15, env=self.env(), stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            return None, ""
+        if proc.returncode != 0:
+            return None, ""
+        rules, raw = [], []
+        for line in proc.stdout.decode("utf-8", "replace").splitlines():
+            m = IPT_COUNTER_RE.search(line)
+            plain = IPT_COUNTER_RE.sub("", line)
+            raw.append(plain)
+            prefix = "-A %s " % chain
+            if plain.startswith(prefix):
+                rules.append({"spec": plain[len(prefix):], "pkts": int(m.group(1)) if m else 0})
+        return rules, "\n".join(raw)
+
+    def firewall_view(self, env, networks):
+        chains = (("input", env.get("CHAIN_INPUT", ""), None), ("forward", env.get("CHAIN_FORWARD", ""), None),
+                  ("nat", env.get("CHAIN_NAT", ""), "nat"))
+        view = {}
+        for fam, binary in (("v4", "iptables"), ("v6", "ip6tables")):
+            entries, raws, readable = [], [], True
+            for kind, chain, table in chains:
+                if not chain:
+                    continue
+                rules, raw = self.iptables_chain(binary, chain, table)
+                if rules is None:
+                    readable = False
+                    continue
+                entries += classify_rules(kind, rules, env, networks)
+                raws.append("# %s%s -S %s\n%s" % (binary, " -t nat" if table else "", chain, raw))
+            view[fam] = {"readable": readable, "entries": entries, "raw": "\n\n".join(raws)}
+        try:
+            proc = subprocess.run(["master-firewall", "--check"], capture_output=True, timeout=30,
+                                  env=self.env(), stdin=subprocess.DEVNULL)
+            lines = [l for l in (proc.stdout + proc.stderr).decode("utf-8", "replace").splitlines() if l.strip()]
+            view["ok"], view["check"] = proc.returncode == 0, (lines[-1] if lines else "")
+        except (OSError, subprocess.TimeoutExpired):
+            view["ok"], view["check"] = False, "denetim çalıştırılamadı"
+        return view
+
+    def web_view(self, env, networks):
+        ts_ip = env.get("TAILSCALE_IPV4", "")
+        files = [(env.get("CADDYFILE", ""), "base")]
+        mod_dir = env.get("CADDY_MODULES_DIR", "")
+        if mod_dir and os.path.isdir(mod_dir):
+            files += [(os.path.join(mod_dir, n), n[:-len(".caddy")]) for n in sorted(os.listdir(mod_dir))
+                      if n.endswith(".caddy") and not n.startswith(".")]
+        entries, raws = [], []
+        for path, source in files:
+            text = read_text(path)
+            if text is None:
+                continue
+            raws.append({"file": path, "text": text})
+            for site in parse_caddy(text, ts_ip, source):
+                for addr in site["addresses"]:
+                    entries.append({"address": addr, "routes": site["routes"], "source": source,
+                                    "access": "tailscale"})
+        wg_text = read_text(env.get("CADDY_WG_FILE", ""))
+        if wg_text is not None:
+            raws.append({"file": env.get("CADDY_WG_FILE", ""), "text": wg_text})
+            for site in parse_caddy(wg_text, ts_ip, "wireguard"):
+                for addr in site["addresses"]:
+                    port = addr.rpartition(":")[2]
+                    for net in networks:
+                        if net["scope"] == "ui" and net["active"]:
+                            entries.append({"address": "%s:%s" % (net["server4"], port), "routes": site["routes"],
+                                            "source": "wireguard", "access": "wireguard",
+                                            "iface": net["iface"], "label": net["label"]})
+        return {"entries": entries, "raw": raws}
+
+    def dns_view(self, env):
+        conf_dir = env.get("DNSMASQ_CONF_DIR", "")
+        view = {"listen": [], "domains": [], "names": [], "dhcp": False, "raw": []}
+        names = sorted(os.listdir(conf_dir)) if conf_dir and os.path.isdir(conf_dir) else []
+        for name in names:
+            if not name.endswith(".conf") or name.startswith("."):
+                continue
+            path = os.path.join(conf_dir, name)
+            text = read_text(path)
+            if text is None:
+                continue
+            source = name[len("modul-"):-len(".conf")] if name.startswith("modul-") else "base"
+            got = parse_dnsmasq(text, source)
+            view["raw"].append({"file": path, "text": text})
+            view["listen"] += [x for x in got["listen"] if x not in view["listen"]]
+            view["domains"] += [x for x in got["domains"] if x not in view["domains"]]
+            view["names"] += got["names"]
+            view["dhcp"] = view["dhcp"] or got["dhcp"]
+        ts_if, ts_ip = env.get("TAILSCALE_IF", "tailscale0"), env.get("TAILSCALE_IPV4", "")
+        for n in view["names"]:
+            n["address"] = ts_ip if n["iface"] == ts_if else ""
+        return view
+
+    def torrent_view(self, env):
+        if not self.module_state("torrent", env):
+            return {"installed": False}
+        profile = env.get("TORRENT_PROFILE_DIR", "")
+        conf = read_torrent_conf(os.path.join(profile, "qBittorrent", "qBittorrent.conf")) if profile else None
+        if conf is None:
+            return {"installed": True, "error": "qBittorrent'in ayar dosyası okunamadı", "profile": profile}
+        save = conf.get("Session\\DefaultSavePath") or conf.get("Downloads\\SavePath", "")
+        temp = conf.get("Session\\TempPath") or conf.get("Downloads\\TempPath", "")
+        downloads = env.get("DOWNLOADS_PATH", "")
+
+        def inside(path):
+            if not path or not downloads:
+                return False
+            real, root = os.path.realpath(path), os.path.realpath(downloads)
+            return real == root or real.startswith(root.rstrip("/") + "/")
+
+        return {"installed": True, "save": save, "save_inside": inside(save), "temp": temp,
+                "temp_on": conf.get("Session\\TempPathEnabled", "").lower() == "true",
+                "temp_inside": inside(temp), "downloads": downloads, "profile": profile,
+                "ui": "%s:%s" % (conf.get("WebUI\\Address", ""), conf.get("WebUI\\Port", "")),
+                "peer_port": num_or(conf.get("Session\\Port"), 0)}
+
+    def settings(self, fresh=False):
+        """DD-155: Ayarlar sayfası. Salt okunur: kurallar canlı (sayaçlarıyla), yapılandırma dosyaları
+        olduğu gibi; hesap, parola ya da anahtar taşıyan hiçbir dosya okunmaz. "Yenile" önbelleği atlar."""
+        now = time.time()
+        stamp, data = self.settings_cache
+        if not fresh and data is not None and now - stamp < SETTINGS_CACHE_SECONDS:
+            return data
+        env = read_env(self.args.state)
+        try:
+            networks = self.net_rows()
+        except RuntimeError:
+            networks = []
+        data = {
+            "read_at": int(now), "version": env.get("V2_VERSION", ""), "domain": env.get("LOCAL_DOMAIN", ""),
+            "tailscale": env.get("TAILSCALE_IPV4", ""), "tailscale6": env.get("TAILSCALE_IPV6", ""),
+            "ts_if": env.get("TAILSCALE_IF", ""),
+            "wan": {"iface": env.get("WAN_INTERFACE", ""), "ipv4": env.get("WAN_IPV4", ""), "ipv6": env.get("WAN_IPV6", "")},
+            "firewall": self.firewall_view(env, networks),
+            "web": self.web_view(env, networks),
+            "dns": self.dns_view(env),
+            "torrent": self.torrent_view(env),
+        }
+        self.settings_cache = (now, data)
+        return data
+
     def actions(self):
         """Son işlemler: iki arka ucun audit satırları (journald), yeniden eskiye."""
         now = time.time()
@@ -633,6 +975,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.json(200, self.panel.system(self.panel.net_rows()))
             except RuntimeError as err:
                 self.error(502, str(err))
+            return
+        if path == "/api/konsol/ayarlar":
+            self.json(200, self.panel.settings(fresh="yenile" in query))
             return
         if path == "/api/konsol/moduller":
             try:

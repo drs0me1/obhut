@@ -115,7 +115,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### Konsol ve dosya arka ucu (DD-139, DD-140)
 
-- Tek adres: `panel.<alan>`. Caddy `/api/wg/*` isteklerini WireGuard arka ucuna, kalanını (sayfa dosyaları dahil) dosya arka ucuna yollar; eski adlar (`wg.`, `dosya.`, `file.`) yoktur (DD-154). İki arka uç da yalnız bu Host'u kabul eder, aynı hesabı ve `Konsol` realm'ını kullanır.
+- Tek adres: `panel.<alan>`. Caddy `/api/wg/*` isteklerini WireGuard arka ucuna, kalanını (sayfa dosyaları dahil) dosya arka ucuna yollar; eski adlar (`wg.`, `dosya.`, `file.`) yoktur (DD-154). Ayarlar sayfası (DD-155) salt okunurdur: `GET /api/konsol/ayarlar` kuralları, Caddy/dnsmasq dosyalarını ve qBittorrent'in yalnız yol/port anahtarlarını okur; hiçbir şey yazmaz, parola/anahtar dosyası okumaz. İki arka uç da yalnız bu Host'u kabul eder, aynı hesabı ve `Konsol` realm'ını kullanır.
 - Sayfalar `Data/console/` içindedir (`index.html`, `konsol.css`, `konsol.js`): dış kaynak yüklemez, satır içi kod ya da biçem yoktur, adlar yalnız metin olarak eklenir. Tasarım örnekleri `Data/docs/design/`.
 - Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
 - `Data/files-panel/master-files-panel` Dosya yöneticisi modülüdür (`dosya`, DD-150): kurulum birimini `MODULES_DIR/dosya/`'ya yazar, servisi `master-modul` açar. Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur (DD-147); paylaşım hesabını hiç görmez (`LoadCredential` yok, DD-149).

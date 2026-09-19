@@ -43,6 +43,9 @@ Konsol (tarayıcıdan; v2-105):
   http://panel.ayc — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
   Eski adresler (wg.ayc, dosya.ayc, file.ayc) v2-124'ten beri yok; yer imlerini panel.ayc yapın.
   Parola sorulmaz (v2-114): yalnız Tailscale'deki cihazlar açabilir; erişimi daraltmak Tailscale ACL'iyle.
+  Ayarlar (v2-125): sunucunun şu anki yapılandırması, salt okunur — güvenlik duvarı kuralları (paket
+  sayaçlarıyla, IPv4/IPv6), web adresleri (Caddy), ad çözümü (dnsmasq) ve qBittorrent'in indirme yeri.
+  Hiçbir şeyi değiştirmez; her satır değerin nereden değiştiğini söyler.
   Genel bakış: işlemci ve bellek grafiği, disk (indirilenler / çöp / sistem), bağlı cihazlar,
   son işlemler ve kullanımdaki portlar (internete açık olanlar ayrı grupta).
   WireGuard sayfası:

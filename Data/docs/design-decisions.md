@@ -6832,6 +6832,46 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-155: Konsol shows the server's settings, read-only (2026-09-19)
+
+- **Context:** the user wanted to see, in Konsol, the firewall rules, the
+  Caddy addresses, qBittorrent's download path and dnsmasq's names. The
+  design (`docs/design/konsol-ayarlar-v07.html`, values read from `nrm`) was
+  accepted with three choices the user confirmed: read-only, raw views kept
+  in closed boxes, packet counters shown.
+- **Decision:**
+  - A new page, Ayarlar, fed by one `GET /api/konsol/ayarlar` on the root
+    backend (it already runs as root and behind the Host and `X-Konsol`
+    gates). It reads only when the page asks; a 5 s cache absorbs repeated
+    loads and "Yenile" (`?yenile=1`) skips it.
+  - **Read-only on purpose.** Every value already has one owner: the
+    installer (`kurulum.env` and the defaults), a module, or qBittorrent
+    itself (**DD-151**). Writing from Konsol would open a second source of
+    truth that the next install reverts, and move towards the reconcile
+    engine the project refuses. Each row says where its value is changed.
+  - **Firewall from the live rules, not from the intent.** The backend runs
+    `iptables`/`ip6tables -v -S` on the three project chains and classifies
+    each rule by interface using the same `state.env` and network registry
+    the ports card reads. A rule it does not recognise (added by hand, or
+    drift) is listed under "Tanımsız kurallar" instead of being hidden.
+    `master-firewall --check` gives the status. Counters show what each rule
+    caught since boot (on `nrm`: over 1600 packets dropped on the WAN within
+    hours).
+  - **Caddy and dnsmasq from their files.** A small parser reads the
+    installer's own templates as rendered (site lines, `@matcher path`,
+    `handle`, `reverse_proxy`, `file_server`, `respond`), not Caddy's full
+    grammar. Module files are attributed to their module; `Caddyfile.wg`
+    is expanded per `ui` WireGuard network. `CADDY_WG_FILE` joins
+    `state.env` for this.
+  - **qBittorrent: paths only.** Only the path and port keys of
+    `qBittorrent.conf` are read (`TORRENT_KEYS`); the password hash never is.
+    The page warns when the save or temporary path leaves `DOWNLOADS_PATH`:
+    the unit's sandbox (**DD-151**) refuses writes there, so downloads would
+    fail and never show in Dosyalar.
+- **Found on `nrm`:** the WireGuard registry writes an IPv6 subnet as
+  `…::0:0/112` while `ip6tables` prints `…::/112`; subnets are compared as
+  networks (`ipaddress`), not as text.
+
 ### DD-154: One console name, one current export (2026-09-19)
 
 - **Context:** simplifying after **DD-152**/**DD-153**. The Caddyfile still

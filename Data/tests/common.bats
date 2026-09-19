@@ -3963,3 +3963,162 @@ EOF
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
     awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'
 }
+
+settings_fixture() {
+    # DD-155: the Ayarlar backend against the real templates (rendered here), fake iptables
+    # with counters and a qBittorrent profile that also holds a password hash.
+    mkdir -p "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/qb/qBittorrent" "$TMP/srv/downloads"
+    cat >>"$TMP/state.env" <<EOF
+WAN_INTERFACE=eth0
+WAN_IPV4=203.0.113.7
+TAILSCALE_IF=tailscale0
+SSH_PUBLIC_PORT=22
+TAILSCALE_UDP_PORT=41641
+TORRENT_UI_PORT=61006
+CHAIN_INPUT=MASTER-INPUT
+CHAIN_FORWARD=MASTER-FORWARD
+CHAIN_NAT=MASTER-NAT
+CADDYFILE=$TMP/caddy/Caddyfile
+CADDY_MODULES_DIR=$TMP/caddy/moduller
+CADDY_WG_FILE=$TMP/caddy/Caddyfile.wg
+DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
+TORRENT_PROFILE_DIR=$TMP/qb
+DOWNLOADS_PATH=$TMP/srv/downloads
+EOF
+    rend() {
+        sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e 's/__WG_PANEL_PORT__/61008/g' -e 's/__FILES_PANEL_PORT__/61009/g' \
+            -e 's/__CADDY_HTTP_PORT__/80/g' -e "s#__CONSOLE_WEB_DIR__#$TMP/web#g" -e "s#__CADDY_MODULES_DIR__#$TMP/caddy/moduller#g" \
+            -e 's/__SHARE_PORT__/61010/g' -e 's/__TORRENT_UI_PORT__/61006/g' -e 's/__TAILSCALE_IF__/tailscale0/g' \
+            -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_TEMP_DIR__/incomplete/g' "$1"
+    }
+    rend "$V2_ROOT/templates/Caddyfile" >"$TMP/caddy/Caddyfile"
+    rend "$V2_ROOT/templates/Caddyfile.wg" >"$TMP/caddy/Caddyfile.wg"
+    rend "$V2_ROOT/modules/paylasim/paylasim.caddy" >"$TMP/caddy/moduller/paylasim.caddy"
+    rend "$V2_ROOT/modules/torrent/torrent.caddy" >"$TMP/caddy/moduller/torrent.caddy"
+    rend "$V2_ROOT/templates/dnsmasq.conf" >"$TMP/dnsmasq.d/local-services.conf"
+    rend "$V2_ROOT/modules/paylasim/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-paylasim.conf"
+    rend "$V2_ROOT/modules/torrent/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-torrent.conf"
+    rend "$V2_ROOT/modules/torrent/qBittorrent.conf" >"$TMP/qb/qBittorrent/qBittorrent.conf"
+    printf 'Session\\Port=45410\nWebUI\\Username=admin\nWebUI\\Password_PBKDF2="@ByteArray(GIZLIOZET:GIZLITUZ)"\n' >>"$TMP/qb/qBittorrent/qBittorrent.conf"
+    printf 'dosya\tcalisiyor\nwireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n' >"$TMP/moduller"
+    cat >"$TMP/pbin/iptables" <<'EOF'
+#!/bin/bash
+case "$*" in
+    *"-S MASTER-INPUT") printf '%s\n' '-N MASTER-INPUT' '-A MASTER-INPUT -i lo -c 157 20446 -j ACCEPT' \
+        '-A MASTER-INPUT -m conntrack --ctstate RELATED,ESTABLISHED -c 687 118737 -j ACCEPT' \
+        '-A MASTER-INPUT -i tailscale0 -c 4 240 -j ACCEPT' '-A MASTER-INPUT -i eth0 -p udp -m udp --dport 41641 -c 0 0 -j ACCEPT' \
+        '-A MASTER-INPUT -i eth0 -p tcp -m tcp --dport 22 -c 23 1412 -j ACCEPT' '-A MASTER-INPUT -i eth0 -p udp -m udp --dport 61001 -c 5 300 -j ACCEPT' \
+        '-A MASTER-INPUT -i eth0 -p tcp -m tcp --dport 8080 -c 3 180 -j ACCEPT' \
+        '-A MASTER-INPUT -i eth0 -c 1631 190422 -j DROP' '-A MASTER-INPUT -d 10.8.0.1/32 -i wg0 -p tcp -m multiport --dports 61006 -c 2 120 -j ACCEPT' \
+        '-A MASTER-INPUT -d 10.8.0.1/32 -i wg0 -p icmp -m icmp --icmp-type 8 -c 0 0 -j ACCEPT' '-A MASTER-INPUT -i wg0 -c 7 420 -j DROP' \
+        '-A MASTER-INPUT -c 0 0 -j RETURN' ;;
+    *"-S MASTER-FORWARD") printf '%s\n' '-N MASTER-FORWARD' '-A MASTER-FORWARD -i wg0 -o eth0 -c 9 900 -j ACCEPT' \
+        '-A MASTER-FORWARD -i wg0 -c 1 60 -j DROP' '-A MASTER-FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -c 9 900 -j ACCEPT' \
+        '-A MASTER-FORWARD -o wg0 -c 0 0 -j DROP' '-A MASTER-FORWARD -c 0 0 -j RETURN' ;;
+    *"-t nat -v -S MASTER-NAT") printf '%s\n' '-N MASTER-NAT' '-A MASTER-NAT -s 10.8.0.0/24 -o eth0 -c 9 900 -j MASQUERADE' '-A MASTER-NAT -c 1 1 -j RETURN' ;;
+    *) exit 1 ;;
+esac
+EOF
+    cat >"$TMP/pbin/ip6tables" <<'EOF'
+#!/bin/bash
+case "$*" in
+    *"-S MASTER-INPUT") printf '%s\n' '-N MASTER-INPUT' '-A MASTER-INPUT -i lo -c 1 1 -j ACCEPT' \
+        '-A MASTER-INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 135 -c 6 6 -j ACCEPT' '-A MASTER-INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 136 -c 4 4 -j ACCEPT' \
+        '-A MASTER-INPUT -i eth0 -c 111 17452 -j DROP' '-A MASTER-INPUT -c 0 0 -j RETURN' ;;
+    *"-S MASTER-FORWARD") printf '%s\n' '-N MASTER-FORWARD' ;;
+    # The registry and ip6tables write the same network differently.
+    *"-S MASTER-NAT") printf '%s\n' '-N MASTER-NAT' '-A MASTER-NAT -s fdcc:ad94:bacf:61a4:0:0:0:0/112 -o eth0 -c 2 2 -j MASQUERADE' ;;
+    *) exit 1 ;;
+esac
+EOF
+    printf '#!/bin/bash\necho "firewall: kritik politikalar yerinde"\n' >"$TMP/pbin/master-firewall"
+    chmod +x "$TMP/pbin/iptables" "$TMP/pbin/ip6tables" "$TMP/pbin/master-firewall"
+}
+
+@test "wg panel shows the server's settings read-only: rules with counters, sites, names and qBittorrent paths" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    panel_start
+    settings_fixture
+    [ "$(pc /api/konsol/ayarlar)" = 403 ]
+    [ "$(pc /api/konsol/ayarlar -H 'X-Konsol: 1')" = 200 ]
+    # Nothing secret leaves: qBittorrent's password hash and user are never read.
+    run ! grep -qE 'GIZLI|Password|Username' "$TMP/body"
+    python3 - "$TMP/body" "$TMP" <<'PY'
+import json, sys
+d, tmp = json.load(open(sys.argv[1])), sys.argv[2]
+fw = d["firewall"]
+assert fw["ok"] and fw["check"] == "firewall: kritik politikalar yerinde", fw
+v4 = fw["v4"]["entries"]
+k = lambda g, kind: [e for e in v4 if e["group"] == g and e["kind"] == kind]
+assert k("wan", "ssh")[0]["pkts"] == 23 and k("wan", "ssh")[0]["port"] == 22, v4
+assert k("wan", "drop")[0]["pkts"] == 1631
+wgp = k("wan", "wireguard")[0]
+assert (wgp["iface"], wgp["port"], wgp["label"]) == ("wg0", 61001, "Ana ağ"), wgp
+assert k("wg:wg0", "ui")[0]["ports"] == [{"port": 61006, "name": "qbittorrent"}]
+assert k("wg:wg0", "nat")[0]["subnet"] == "10.8.0.0/24" and k("wg:wg0", "egress")[0]["pkts"] == 9
+assert k("ts", "all")[0]["pkts"] == 4 and k("self", "lo")[0]["pkts"] == 157
+# A rule Konsol does not know is shown, not hidden; RETURN is not a rule to show.
+other = [e for e in v4 if e["group"] == "other"]
+assert len(other) == 1 and "--dport 8080" in other[0]["spec"], other
+assert not [e for e in v4 if e["spec"] == "-j RETURN"]
+raw = fw["v4"]["raw"]
+assert "# iptables -S MASTER-INPUT" in raw and "# iptables -t nat -S MASTER-NAT" in raw and " -c " not in raw, raw
+v6 = fw["v6"]["entries"]
+assert sum(e["pkts"] for e in v6 if e["kind"] == "icmp6") == 10 and [e["pkts"] for e in v6 if e["kind"] == "drop"] == [111], v6
+assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e for e in v6 if e["group"] == "other"], v6
+# Web: every address with where it goes, its source and who reaches it.
+web = {e["address"]: e for e in d["web"]["entries"]}
+assert [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]] == [
+    ("/api/wg/* /api/konsol/*", "proxy", "127.0.0.1:61008"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
+assert web["health.ayc"]["routes"] == [{"path": "", "kind": "respond", "to": "ok"}]
+assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
+assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"
+assert (web["10.8.0.1:61006"]["access"], web["10.8.0.1:61006"]["iface"]) == ("wireguard", "wg0"), web
+assert not [a for a in web if a.startswith(("wg.", "dosya.", "file."))]
+assert len(d["web"]["raw"]) == 4
+# Names: the base's and each module's, all on the Tailscale address.
+names = {n["name"]: n for n in d["dns"]["names"]}
+assert set(names) == {"health.ayc", "panel.ayc", "paylas.ayc", "torrent.ayc"}, names
+assert names["panel.ayc"]["source"] == "base" and names["paylas.ayc"]["source"] == "paylasim"
+assert all(n["address"] == "100.64.0.7" for n in names.values())
+assert d["dns"]["listen"] == ["lo", "tailscale0"] and d["dns"]["domains"] == ["ayc"] and d["dns"]["dhcp"] is False
+t = d["torrent"]
+assert t["save"] == tmp + "/srv/downloads/" and t["save_inside"] and t["temp_on"] and t["temp_inside"], t
+assert t["peer_port"] == 45410 and t["ui"] == "127.0.0.1:61006"
+PY
+    # A save path outside the downloads folder is flagged (the sandbox would refuse the writes);
+    # "Yenile" skips the short cache.
+    sed -i.bak 's#^Session\\DefaultSavePath=.*#Session\\DefaultSavePath=/root/indirilenler/#' "$TMP/qb/qBittorrent/qBittorrent.conf"
+    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; t = json.load(open(sys.argv[1]))["torrent"]; assert t["save"] == "/root/indirilenler/" and not t["save_inside"], t' "$TMP/body"
+    printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
+    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["torrent"] == {"installed": False}' "$TMP/body"
+    # Read-only: the page's GET never starts module work.
+    [ ! -e "$TMP/sdrun-calls" ]
+}
+
+@test "console shows the Ayarlar page read-only from the settings API" {
+    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/konsol.css"
+    # Side navigation and the phone's bottom bar both link the page.
+    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 2 ]
+    grep -q '<section data-view="ayarlar" hidden>' "$html"
+    for id in cfg-sum cfg-fw cfg-web cfg-dns cfg-qb; do grep -q "id=\"$id\"" "$html"; done
+    # In-page jumps scroll; a #fragment would be taken for a route.
+    [ "$(grep -c 'data-jump="cfg-' "$html")" -eq 4 ]
+    run ! grep -q 'href="#cfg-' "$html"
+    grep -qF 'api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar")' "$js"
+    grep -qF 'ayarlar: { title: "Ayarlar"' "$js"
+    # Read-only: the page posts nothing.
+    body="$(awk '/Ayarlar \(DD-155\)/,/yönlendirme ----------/' "$js")"
+    [ -n "$body" ]
+    run ! grep -qE 'method: "POST"|post\(' <<<"$body"
+    # Icons the page uses exist (svg() silently falls back to the file icon).
+    for icon in sliders route chev arrow; do grep -qE "^    ${icon}: '" "$js"; done
+    grep -q '^\.cfgsum {' "$css"
+    grep -q '^\.portgrid\.rules {' "$css"
+    grep -q '^\.addr-t \.tr {' "$css"
+    # CSP: no inline style in the markup.
+    run ! grep -q ' style="' "$html"
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'CADDY_WG_FILE=\$CADDY_WG_FILE'
+}

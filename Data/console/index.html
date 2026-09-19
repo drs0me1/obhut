@@ -19,6 +19,7 @@
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar <span class="count" id="nav-fs"></span></a>
       <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller <span class="count" id="nav-mods"></span></a>
       <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
+      <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
     </nav>
     <div class="side-group" id="side-other" hidden>
       <span class="side-label">Diğer arayüzler</span>
@@ -178,6 +179,27 @@
           <div class="table log-t" id="log-table"></div>
         </div>
       </section>
+
+      <!-- AYARLAR (DD-155): sunucunun şu anki yapılandırması, salt okunur -->
+      <section data-view="ayarlar" hidden>
+        <dl class="cfgsum" id="cfg-sum"></dl>
+        <div class="jump" role="group" aria-label="Bu sayfada">
+          <button type="button" data-jump="cfg-fw" data-icon="shield">Güvenlik duvarı</button>
+          <button type="button" data-jump="cfg-web" data-icon="globe">Web adresleri</button>
+          <button type="button" data-jump="cfg-dns" data-icon="route">Ad çözümü</button>
+          <button type="button" data-jump="cfg-qb" data-icon="download">qBittorrent</button>
+        </div>
+        <div class="grid">
+          <article class="card span-12" id="cfg-fw"></article>
+          <article class="card span-7" id="cfg-web"></article>
+          <article class="card span-5" id="cfg-dns"></article>
+          <article class="card span-7" id="cfg-qb"></article>
+          <article class="card span-5">
+            <div class="card-head"><h2 data-icon="lock">Neden salt okunur?</h2></div>
+            <p class="lede">Bu sayfa değer yazmaz. Her ayarın tek bir sahibi vardır: kurulum (kurulum.env ve varsayılanlar), ilgili modül ya da qBittorrent'in kendisi. Konsol'dan değiştirmek ikinci bir doğru kaynak açar ve yeniden kurulumda geri döner. Her satır değerin nereden değiştiğini söyler.</p>
+          </article>
+        </div>
+      </section>
     </div>
   </main>
 </div>
@@ -188,6 +210,7 @@
   <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
   <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller</a>
   <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
+  <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
 </nav>
 
 <!-- genel amaçlı pencere: peer ekle, QR, dosya görüntüleyici -->

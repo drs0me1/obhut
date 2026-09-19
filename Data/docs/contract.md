@@ -391,7 +391,23 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
   (**DD-147**).
   - Pages: Genel bakış (server card with CPU, memory and disk, WireGuard
     devices, last actions, ports in use), WireGuard, Dosyalar, Modüller
-    (§1.11) and Günlük.
+    (§1.11), Günlük and Ayarlar.
+  - Ayarlar (**DD-155**) is read-only and writes nothing. `GET
+    /api/konsol/ayarlar` (same gates; `?yenile=1` skips a 5 s cache) returns:
+    - the project's firewall chains read live with `iptables`/`ip6tables
+      -v -S` (`MASTER-INPUT`, `MASTER-FORWARD`, `MASTER-NAT`), classified by
+      interface with their packet counters, a rule the backend does not
+      recognise listed as such, and the `master-firewall --check` result;
+    - the Caddy sites from `CADDYFILE`, `CADDY_MODULES_DIR/*.caddy` and
+      `CADDY_WG_FILE` (per `ui` WireGuard network) with where each path goes;
+    - the dnsmasq files in `DNSMASQ_CONF_DIR`: listening interfaces, the
+      local domain, the names and their source;
+    - with the qBittorrent module, only the path and port keys of its
+      `qBittorrent.conf` (never the password hash), and whether the save and
+      temporary paths lie inside `DOWNLOADS_PATH` (outside it the unit's
+      sandbox refuses the writes).
+    The raw texts of those rules and files go along; no account, password or
+    key file is read.
   - The ports card is built from `state.env`, the module registry and the
     network registry; nothing is scanned.
   - A peer or a whole network can be switched off and on (§1.9).
