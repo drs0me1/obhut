@@ -226,7 +226,7 @@
   // DD-149: paylaşım bir modüldür; kurulu değilken liste istenmez ve eski liste ekranda kalmaz.
   function loadShares() {
     if (!shareOn()) { S.share = null; return Promise.resolve(); }
-    return api("/api/paylas").then((s) => { S.share = s; if (current === "dosyalar") renderFs(); })
+    return api("/api/konsol/paylasim").then((s) => { S.share = s; if (current === "dosyalar") renderFs(); })
       .catch((e) => { S.share = null; fail(e); });
   }
   const paintWg = () => { renderPeersMini(); if (view() === "wireguard") renderWg(); renderNavCounts(); };
@@ -383,7 +383,7 @@
 
   /* ---------- Genel bakış: portlar ---------- */
   const PGROUPS = [
-    ["internet", "İnternet", "Dışarıdan erişilebilir"],
+    ["internet", "İnternet", "Servis portları · izin politikası Ayarlar'da"],
     ["tailscale", "Tailscale", "Yalnız tailnet'teki cihazlar"],
     ["wireguard", "WireGuard", "Local erişimi açık ağların sunucu adresinden"],
     ["loopback", "Yalnız sunucu içi", "127.0.0.1; dışarıdan erişilemez"],
@@ -412,8 +412,8 @@
         h("span", { class: "pname" }, it.name, h("span", { class: "pproto" }, it.proto.toUpperCase())),
         h("small", null, it.note))))));
     const open = groups[0].items.filter((it) => !it.off).length;
-    $("ports-sum").textContent = `internete açık ${open} port`;
-    $("ports-foot").textContent = `İnternete yalnız ${open} port açık. Web arayüzleri internete kapalı; Tailscale'den ya da local erişimi açık WireGuard ağlarından açılır.`;
+    $("ports-sum").textContent = `${open} WAN servis portu`;
+    $("ports-foot").textContent = "Bu liste servis yapılandırmasıdır; erişim testi değildir. Güncel izinler, dinlenen adresler ve firewall kuralları Ayarlar'da gösterilir.";
   }
 
   /* ---------- WireGuard ---------- */
@@ -968,6 +968,8 @@
 
   /* ---------- Dosyalar ---------- */
   let fsPath = [], fsView = "files", fsList = null, fsTrash = null, fsAdding = false, fsRename = null;
+  let fsFocus = "", fsLayout = "list";
+  try { fsLayout = localStorage.getItem("konsol-files-view") === "cards" ? "cards" : "list"; } catch (e) { /* özel pencere */ }
   /* DD-145: kısayol sütunu, arama, çoklu seçim ve listenin içine bırakarak yükleme. */
   let fsRootDirs = null, fsQuery = "", fsSel = new Set(), fsLast = "", fsUps = [], upSeq = 0, upBusy = false, dragDepth = 0;
   /* DD-144: kök kullanıcı alanı (/srv); adı arka uçtan gelir, hiçbir yerde sabit yazılmaz. */
@@ -1002,6 +1004,7 @@
   }
   function fsGo(parts) {
     fsPath = parts;
+    fsFocus = "";
     fsAdding = false;
     fsRename = null;
     fsList = null;
@@ -1082,8 +1085,13 @@
 
   function renderFs() {
     renderRail();
+    $("fs-tabs").replaceChildren(...[["files", "Klasörler"], ["shares", "Paylaşımlar"], ["trash", "Çöp"]].map(([id, label]) =>
+      h("button", { type: "button", "aria-pressed": fsView === id, onclick: () => fsSetView(id) }, label)));
     const body = $("fs-body");
     body.textContent = "";
+    const archiveBox = h("div", {id:"archive-jobs"});
+    body.append(archiveBox);
+    archiveTools.mount(archiveBox);
     if (fsView === "trash") { renderTrashList(body); return; }
     if (fsView === "shares" && !shareOn()) {
       fsView = "files";
@@ -1091,10 +1099,13 @@
     }
     if (fsView === "shares") { renderShareList(body); return; }
     if (!fsList) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
-    body.append(h("div", { id: "fs-bar" }), h("div", { id: "fs-rows" }));
+    if (!fsList.entries.some((x) => x.name === fsFocus)) fsFocus = (fsList.entries.find((x) => x.type === "dir") || fsList.entries[0] || {}).name || "";
+    body.append(h("div", { id: "fs-bar" }), h("div", { class: "fs09-layout " + fsLayout },
+      h("div", { id: "fs-rows" }), h("aside", { id: "fs-detail", class: "fs09-detail", "aria-label": "Öge ayrıntıları" })));
     initDrop();
     renderBar();
     renderRows();
+    renderDetail();
   }
 
   function renderBar() {
@@ -1110,7 +1121,9 @@
         h("span", { class: "pf-sep" }),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => sel.forEach((i) => i.type !== "dir" && download(i)) }, svg("download"), "İndir"),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => openMove(sel) }, svg("move"), "Taşı"),
-        shareOn() ? h("button", { type: "button", class: "btn btn-sm", disabled: !one || inTemp(pathText(fsPath.concat(one.name))),
+        h("button", { type: "button", class: "btn btn-sm", onclick: () => archiveTools.open("zip", pathText(fsPath), sel) }, svg("box"), "ZIP oluştur"),
+        one && one.type !== "dir" && /\.zip$/i.test(one.name) ? h("button", { type: "button", class: "btn btn-sm", onclick: () => archiveTools.open("unzip", pathText(fsPath), sel) }, svg("box"), "ZIP aç") : null,
+        shareOn() ? h("button", { type: "button", class: "btn btn-sm", disabled: !one || one.type !== "dir" || inTemp(pathText(fsPath.concat(one.name))),
           title: one ? "" : "Paylaşım tek tek verilir", onclick: () => one && openShareCreate(one, pathText(fsPath.concat(one.name))) }, svg("share"), "Paylaş") : null,
         h("button", { type: "button", class: "btn btn-sm btn-danger", onclick: () => askTrash(sel) }, svg("trash"), "Çöpe at"),
         h("span", { class: "pf-meta" }, `${shown.length} ögenin ${sel.length} tanesi`)));
@@ -1133,6 +1146,10 @@
           autocomplete: "off", spellcheck: "false",
           oninput: (e) => { fsQuery = e.target.value; renderRows(); updateMeta(); },
           onkeydown: (e) => { if (e.key === "Escape") { fsQuery = ""; e.target.value = ""; renderRows(); updateMeta(); } } })),
+      h("div", { class: "fs09-view", "aria-label": "Görünüm" }, ...[["list", "Liste"], ["cards", "Kartlar"]].map(([id, label]) =>
+        h("button", { type: "button", "aria-pressed": fsLayout === id, onclick: () => {
+          fsLayout = id; try { localStorage.setItem("konsol-files-view", id); } catch (e) { /* özel pencere */ } renderFs();
+        } }, label))),
       picker,
       h("button", { type: "button", class: "btn btn-sm", onclick: () => $("fs-file").click() }, svg("upload"), "Yükle"),
       h("button", { type: "button", class: "pf-btn", title: "Yeni klasör", "aria-label": "Yeni klasör",
@@ -1284,7 +1301,7 @@
   }
   function shareChip(path) {
     const sh = shareOf(path);
-    return sh ? h("span", { class: "shchip", title: `Paylaşımda · ${S.share.host}` }, svg("share"), leftText(sh.expires)) : null;
+    return sh ? h("span", { class: "shchip", title: sh.url }, svg("share"), sharesPage.stateText(sh)) : null;
   }
 
   function fsRow(item) {
@@ -1306,7 +1323,7 @@
     const on = fsSel.has(item.name);
     // qBittorrent'in yazdığı klasör seçilmez, paylaşılmaz: süren indirme bozulmasın.
     const locked = inTemp(here) || inTemp(pathText(fsPath));
-    return h("div", { class: "tr" + (on ? " on" : "") },
+    return h("div", { class: "tr" + (on ? " on" : "") + (fsFocus === item.name ? " focused" : "") },
       h("span", { class: "c-sel" },
         locked ? null : h("button", { type: "button", class: "chk" + (on ? " on" : ""), role: "checkbox", "aria-checked": on ? "true" : "false",
           "aria-label": `${item.name} seç`, onclick: (e) => toggleSel(item.name, e.shiftKey) }, on ? svg("check") : null)),
@@ -1314,6 +1331,8 @@
       h("span", { class: "c-size" }, bytes(item.size)),
       h("span", { class: "c-date" }, since(item.mtime)),
       h("span", { class: "acts" },
+        h("button", { type: "button", class: "btn btn-sm btn-quiet fs09-info", "aria-label": `${item.name} ayrıntıları`,
+          onclick: () => { fsFocus = item.name; renderRows(); renderDetail(); } }, "Ayrıntılar"),
         inTemp(here) || inTemp(pathText(fsPath)) || !shareOn() ? null : shareBtn(item, here),
         dir ? null : h("button", { type: "button", class: "ib", "aria-label": "İndir", title: "İndir", onclick: () => download(item) }, svg("download")),
         h("button", { type: "button", class: "ib", "aria-label": "Yeniden adlandır", title: "Yeniden adlandır", onclick: () => { fsRename = item.name; renderFs(); const i = $("rn-name"); if (i) { i.focus(); i.select(); } } }, svg("pencil")),
@@ -1548,7 +1567,7 @@
           copyPassButton(id)], false, r ? "" : "masked-row") : null,
         h("div", { class: "acct-wg" }, svg("info"), h("span", null, a.temp
           ? "qBittorrent ilk açılışta geçici parolayı günlüğüne yazar; Konsol onu oradan okur ve her yeniden başlatmada değişir. Girişten sonra parolayı qBittorrent arayüzünden (Tools → Options → WebUI) koyun."
-          : "Parola qBittorrent arayüzünde ayarlanmış; Konsol onu bilmez. Unuttuysanız profildeki ayarı qBittorrent'in belgelerine göre sıfırlayın."))].filter(Boolean));
+          : "Parola kayıtlı; Konsol mevcut parolayı göstermez. Ayarlar → qBittorrent'ten yeni kullanıcı adı veya parola belirleyebilirsiniz."))].filter(Boolean));
     } else {
       cred.append(...[
         a.host ? credRow("Adres", a.host, [copyButton(a.host, "Adres")]) : null,
@@ -1572,109 +1591,51 @@
   function paintAccount(id) {
     document.querySelectorAll(`[data-acct="${id}"]`).forEach((el) => el.replaceWith(accountBlock(id, el.dataset.variant)));
   }
-  function renderShareList(body) {
-    if (!S.share) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
-    const mod = shareMod();
-    if (mod && mod.state === "durduruldu") {
-      body.append(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Paylaşım durduruldu. "),
-        h("span", null, "Infuse ve öbür istemciler bağlanamaz; paylaşım kayıtları duruyor.")),
-        h("button", { type: "button", class: "btn btn-quiet btn-sm", "data-go": "#/moduller" }, svg("stack"), "Modüller")));
-    }
-    body.append(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Tek adres, tek hesap. "),
-      h("span", null, "Paylaşılan her klasör ve dosya aşağıdaki adreste yan yana görünür · yalnız Tailscale'deki cihazlardan · salt okunur · Infuse adı çözemezse IP:port satırını kullanın"))));
-    body.append(accountBlock("paylasim", "row3"));
-    if (!S.share.items.length) {
-      body.append(h("div", { class: "table" }, h("div", { class: "empty-row" }, h("strong", null, "Paylaşım yok"),
-        h("span", null, "Dosyalar listesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın."))));
+  const sharesPage = window.createSharesPage({
+    h, svg, post, toast, fail, copyButton, root: fsRoot, getShares: () => S.share,
+    setShares: (data) => { S.share = data; renderFs(); },
+    showDialog: (title, content) => { $("sh-body").replaceChildren(shHead(title, "Klasör başına ayrı hesap · yalnız Tailscale", "share"), content); if (!$("sh").open) $("sh").showModal(); },
+    closeDialog: shClose, ask,
+  });
+  $("sh").addEventListener("close", () => { const pw = $("dav-password"); if (pw) pw.value = ""; });
+  const archiveTools = window.createArchiveTools({h, api, post, toast, fail, bytes, root:fsRoot,
+    refresh:() => { loadFsState(); if (current === "dosyalar" && fsView === "files") loadFs(); },
+    openFolder:(path) => fsOpen(path ? path.split("/") : []),
+    showDialog:(title, content) => { $("sh-body").replaceChildren(shHead(title, "Dosyalar · yerleşik arşiv aracı", "box"), content); if (!$("sh").open) $("sh").showModal(); },
+    closeDialog:shClose});
+  const renderShareList = (body) => sharesPage.list(body);
+  const openShareCreate = (item, path) => sharesPage.create(item, path);
+  const openShareInfo = (sh) => sharesPage.edit(sh);
+  function renderDetail() {
+    const box = $("fs-detail");
+    if (!box) return;
+    const item = fsList && fsList.entries.find((x) => x.name === fsFocus);
+    if (!item) {
+      box.replaceChildren(h("div", { class: "dav-empty" }, svg("folder"), h("h3", null, "Bir öge seçin"), h("p", null, "Ayrıntılar ile bilgileri ve paylaşım ayarlarını açın.")));
       return;
     }
-    body.append(h("div", { class: "table fs-t share-t" },
-      h("div", { class: "tr head" }, h("span", null, "Paylaşılan"), h("span", { class: "c-user" }, "Eklendi"),
-        h("span", { class: "c-exp" }, "Süre"), h("span", null, "")),
-      ...S.share.items.map((sh) => h("div", { class: "tr" },
-        h("span", { class: "fname plain" }, h("span", { class: `ticon t-${sh.type === "dir" ? "dir" : "file"}` }, svg(sh.type === "dir" ? "folder" : "file")),
-          h("span", null, h("strong", null, sh.name), h("small", null, `${fsRoot()}/${sh.path}`))),
-        h("span", { class: "c-user" }, shortDay(sh.created)),
-        h("span", { class: "c-exp" }, leftText(sh.expires)),
-        h("span", { class: "acts" },
-          h("button", { type: "button", class: "btn btn-quiet btn-sm", onclick: () => openShareInfo(sh, false) }, svg("eye"), "Bilgiler"),
-          h("button", { type: "button", class: "ib del", title: "Paylaşımdan çıkar",
-            "aria-label": `${sh.name} ögesini paylaşımdan çıkar`, onclick: () => askUnshare(sh) }, svg("trash")))))));
-  }
-
-  let SH = null;
-  function openShareCreate(item, path) {
-    if (!shareOn()) return;
-    if (!S.share) { loadShares().then(() => { if (S.share) openShareCreate(item, path); }); return; }
-    SH = { item, path, days: 7 };
-    renderShareCreate();
-    $("sh").showModal();
-  }
-  function renderShareCreate() {
-    const it = SH.item, count = S.share.items.length;
-    $("sh-body").replaceChildren(
-      shHead(`“${it.name}” paylaş`, `${fsRoot()}/${SH.path} · ${bytes(it.size)}`, "share"),
-      h("ul", { class: "conseq calm" },
-        h("li", null, svg("share"), h("span", null, count
-          ? `${S.share.host} adresine eklenir; paylaşımdaki diğer ${count} ögeyle aynı kullanıcı ve parolayla açılır.`
-          : `${S.share.host} adresinde açılır; adres, kullanıcı ve parola bütün paylaşımlarda aynıdır.`)),
-        h("li", null, svg("folder"), h("span", null, it.type === "dir"
-          ? "Yalnız bu klasör ve alt klasörleri görünür; üst klasörler ve paylaşılmayan indirmeler görünmez. Sonradan içine inen dosyalar kendiliğinden görünür."
-          : "Yalnız bu dosya görünür; bulunduğu klasörün geri kalanı görünmez.")),
-        h("li", null, svg("lock"), h("span", null, "Salt okunur: izlenir ve indirilir; silme, taşıma ya da yükleme yapılamaz.")),
-        h("li", null, svg("globe"), h("span", null, `Yalnız Tailscale'e bağlı cihazlar açabilir; Infuse, VLC ya da Finder WebDAV olarak bağlanır${shareIpUrl() ? ` (Infuse için ${shareIpUrl()})` : ""}.`))),
-      h("div", { class: "field" }, h("span", { class: "lbl" }, "Süre"),
-        h("div", { class: "chips-s" }, ...DURATIONS.map(([d, label]) =>
-          h("button", { type: "button", "aria-pressed": SH.days === d, onclick: () => { SH.days = d; renderShareCreate(); } }, label))),
-        h("small", { class: "hint-s" }, SH.days
-          ? `${dayText(now() + SH.days * 86400)} tarihinde kendiliğinden kapanır.`
-          : "Siz paylaşımdan çıkarana kadar açık kalır.")),
-      h("div", { class: "dlg-foot" },
-        h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç"),
-        h("button", { type: "button", class: "btn btn-primary", id: "sh-go", onclick: createShare }, svg("share"), "Paylaşıma ekle")));
-  }
-  function createShare() {
-    $("sh-go").disabled = true;
-    post("/api/paylas", { path: SH.path, days: SH.days })
-      .then((r) => loadShares().then(() => {
-        openShareInfo(r.item, true);
-        renderFs();
-        toast(`“${r.item.name}” paylaşıma eklendi.`);
-      }))
-      .catch((e) => { fail(e); const go = $("sh-go"); if (go) go.disabled = false; });
-  }
-  function openShareInfo(sh, fresh) {
-    SH = { share: sh, fresh };
-    renderShareInfo();
-    if (!$("sh").open) $("sh").showModal();
-  }
-  function renderShareInfo() {
-    const sh = SH.share;
-    $("sh-body").replaceChildren(
-      shHead(SH.fresh ? "Paylaşıma eklendi" : `“${sh.name}” paylaşımda`, `${fsRoot()}/${sh.path}`, SH.fresh ? "check" : "share"),
-      h("div", { class: "cred" }, credRow("Süre", sh.expires
-        ? `${leftText(sh.expires)} · ${dayText(sh.expires)}` : "Süresiz; siz çıkarana kadar", [], true)),
-      h("div", { class: "field" }, h("span", { class: "lbl" }, `Bağlantı bilgileri · ${S.share.items.length} paylaşımın hepsinde aynı`),
-        accountBlock("paylasim")),
-      h("div", { class: "infoline-s" }, svg("info"), h("span", null,
-        `Infuse: Ekle › Paylaşım › WebDAV; "Infuse" satırındaki adresi (IP:port), kullanıcıyı ve parolayı yazın. Adı çözemeyen istemcilerde paylas.${(S.sys && S.sys.domain) || "…"} adresi çalışmaz. Bu hesabı bir kez ekleyen kişi sonraki paylaşımları da aynı yerde görür.`)),
-      h("div", { class: "dlg-foot" },
-        h("button", { type: "button", class: "btn btn-quiet danger-text", onclick: () => askUnshare(sh) }, "Paylaşımdan çıkar"),
-        h("button", { type: "button", class: "btn btn-primary", onclick: shClose }, "Tamam")));
-  }
-  function askUnshare(sh) {
-    if ($("sh").open) shClose();
-    ask({
-      title: `“${sh.name}” paylaşımdan çıkarılsın mı?`, sub: `${fsRoot()}/${sh.path}`, danger: true,
-      items: [
-        ["share", "Paylaşım adresinden kalkar; bağlı cihazlar bunu artık göremez."],
-        ["lock", "Kullanıcı ve parola değişmez; diğer paylaşımlar açık kalır."],
-        ["folder", "Dosyalar silinmez; yalnız paylaşımdan çıkar."],
-      ],
-      go: "Paylaşımdan çıkar",
-      onOk: () => post("/api/paylas/kaldir", { name: sh.name })
-        .then(() => loadShares()).then(() => { renderFs(); toast(`“${sh.name}” paylaşımdan çıkarıldı.`); }).catch(fail),
-    });
+    const path = pathText(fsPath.concat(item.name)), sh = shareOf(path), directory = item.type === "dir";
+    const eligible = directory && !inTemp(path) && !(tempRel() && tempRel().startsWith(path + "/")) && !path.split("/").some((p) => p.startsWith("."));
+    const action = (label, icon, fn) => h("button", { type: "button", class: "btn btn-sm btn-quiet", onclick: fn }, svg(icon), label);
+    box.replaceChildren(h("div", { class: "fs09-detail-head" }, h("span", { class: "ticon t-dir" }, svg(directory ? "folder" : "file")),
+      h("div", null, h("h2", null, item.name), h("small", null, `${fsRoot()}/${path}`))),
+      h("div", { class: "fs09-detail-body" },
+        h("div", { class: "dav-pair" }, h("small", null, directory ? "Klasör" : "Dosya"),
+          h("span", null, `${bytes(item.size)} · ${directory ? (item.count ?? "?") + " öge" : "Son değişiklik " + since(item.mtime)}`)),
+        h("div", { class: "dav-actions" },
+          directory ? action("Klasörü aç", "folder", () => fsGo(fsPath.concat(item.name))) : action("İndir", "download", () => download(item)),
+          action("Adlandır", "pencil", () => { fsRename = item.name; renderFs(); const inp = $("rn-name"); if (inp) { inp.focus(); inp.select(); } }),
+          action("Taşı", "move", () => openMove(item)), action("Çöpe taşı", "trash", () => askTrash(item))),
+        !inTemp(path) ? h("div", {class:"dav-actions"},
+          action("ZIP oluştur", "box", () => archiveTools.open("zip", pathText(fsPath), [item])),
+          !directory && /\.zip$/i.test(item.name) ? action("ZIP aç", "box", () => archiveTools.open("unzip", pathText(fsPath), [item])) : null) : null,
+        sh ? sharesPage.info(sh) : !shareOn()
+          ? h("p", { class: "hint-s" }, "Klasör hesabı oluşturmak için Modüller → Paylaşım'ı kurun.")
+          : eligible ? h("div", { class: "dav-summary" },
+            h("p", { class: "hint-s" }, "Bu klasör paylaşılmıyor. Bağımsız kullanıcı ve parolayla yalnız bu klasörü açabilirsiniz."),
+            h("button", { type: "button", class: "btn btn-primary", onclick: () => openShareCreate(item, path) }, svg("share"), "WebDAV ile paylaş"))
+          : h("p", { class: "hint-s" }, directory ? "Geçici/iç alan içeren klasör paylaşılmaz. Bir alt klasör seçin." : "WebDAV paylaşımı klasörlere verilir; dosyayı bir klasöre yerleştirin."),
+        sharesPage.warning()));
   }
 
   /* çöp */
@@ -1787,19 +1748,18 @@
       removeDrop: "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir." },
     paylasim: () => {
       const sys = S.sys || {}, d = sys.domain || "…", port = (sys.share && sys.share.port) || "…";
-      const rc = (sys.share && sys.share.rclone) ? `rclone ${sys.share.rclone}` : "rclone";
-      return { name: "Paylaşım", sub: "WebDAV · Infuse ve Finder", icon: "share", tone: "t-share", account: true, requires: "dosya",
-        desc: "Dosyalar sayfasında paylaştıklarınızı tek adres ve tek hesapla, salt okunur sunar.",
-        will: [["box", `${rc}: resmi sürüm, SHA256 doğrulanarak sunucuya iner (~30 MB)`], ["globe", `paylas.${d} adı; Infuse için Tailscale IP:${port}`],
-          ["key", "Güçlü bir hesap üretilir"], ["lock", "Salt okunur; çöpü göremez, dışarı bağlanamaz"]],
-        facts: [`${rc} · sunucu servisi`, `${port} · yalnız Tailscale`],
-        steps: [["rclone indiriliyor", "resmi sürüm · SHA256"], ["Hesap üretiliyor", ""], ["Servis başlatılıyor", "systemd"], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],
+      return { name: "Paylaşım", sub: "Klasör başına WebDAV hesabı", icon: "share", tone: "t-share", requires: "dosya",
+        desc: "Her klasör ayrı kullanıcı, parola, süre ve okuma/yazma izniyle paylaşılır. Yönetim Dosyalar → WebDAV bölümündedir.",
+        will: [["folder", "Her hesap yalnız kendi klasörünü açar"], ["globe", `Tailscale IP:${port}/s/<kimlik>/`],
+          ["key", "Parolaların yalnız özeti saklanır"], ["lock", "Varsayılan salt okunur; yazma izni silmeyi de kapsar"]],
+        facts: ["WebDAV · klasör hesabı", `${port} · yalnız Tailscale`],
+        steps: [["Paylaşım altyapısı", "Python stdlib"], ["Klasör kaydı hazırlanıyor", "root'a özel"], ["Servis başlatılıyor", "systemd"], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],
         logSrc: "journalctl -u master-paylasim",
-        removeWhat: [["box", "Servis durur ve kalkar; rclone programı sunucuda kalır."], ["shield", `paylas.${d} adı ve ${port} kapanır.`]],
-        removeLabel: "Hesabı ve paylaşım kayıtlarını da sil",
-        removeKeep: "paylaşım kayıtları ve hesap korunur; yeniden kurunca aynı bağlantılar geri gelir.",
-        removeDrop: "Hesap ve paylaşım kayıtları da silinir. Paylaşılan dosyalara dokunulmaz.",
-        stopNote: "Infuse bağlantısı kesilir; paylaşım kayıtları durur." };
+        removeWhat: [["box", "Servis durur ve kaldırılır."], ["shield", `paylas.${d} adı ve ${port} kapanır.`]],
+        removeLabel: "Hesapları ve paylaşım kayıtlarını da sil",
+        removeKeep: "klasör hesapları korunur; yeniden kurunca bağlantılar geri gelir.",
+        removeDrop: "Hesaplar ve paylaşım kayıtları silinir. Paylaşılan dosyalara dokunulmaz.",
+        stopNote: "WebDAV aktarımları kesilir; klasör hesapları korunur." };
     },
   };
   const META_FALLBACK = { sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
@@ -1813,9 +1773,9 @@
   const shareMod = () => (MODS || []).find((m) => m.id === "paylasim");
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
   // DD-150: Dosyalar ve WireGuard sayfaları modülleriyle gelir. Liste gelmeden hiçbiri açık sayılmaz.
-  const fsOn = () => modOn("dosya");
+  const fsOn = () => true;
   const wgOn = () => modOn("wireguard");
-  const shareOn = () => fsOn() && !!(shareMod() || {}).installed;
+  const shareOn = () => true;
   // Sayfanın sıraya koyduğu işlemler (bağlı modül önce kurulur, en son kaldırılır).
   const modQueue = [];
   function queueRun() {
@@ -1872,6 +1832,7 @@
       });
       paintNav();
       paintOtherLinks();
+      if (current === "uygulamalar") renderApps();
       // Kaldırılan modülün sayfasında kalınmaz; Genel bakış kartları yeniden çizilir.
       if ((current === "dosyalar" && !fsOn()) || (current === "wireguard" && !wgOn())) location.hash = "#/moduller";
       if (!wgOn()) S.wg = null;
@@ -1959,7 +1920,7 @@
             h("button", { type: "button", class: "linkbtn", disabled: m.busy, onclick: () => askNewPass(m, meta) }, "Yeni parola")),
           accountBlock(m.id, "card")]
         : meta.firstLogin
-          ? [h("div", { class: "acct-head" }, h("span", null, "İlk giriş"), h("span", { class: "src" }, "Konsol bu hesabı yönetmez")),
+          ? [h("div", { class: "acct-head" }, h("span", null, "Hesap"), h("span", { class: "src" }, "Düzenle: Ayarlar → qBittorrent")),
             accountBlock(m.id, "card")]
           : [h("p", { class: "mod-desc" }, meta.desc)];
       if (failed) body.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "Son işlem başarısız: "), h("span", null, failed.text))));
@@ -2012,9 +1973,9 @@
   function renderModules() {
     const sys = S.sys || {};
     const base = [
-      ["gauge", "Konsol çekirdeği", "sayfalar, modül yöneticisi, günlük · parolasız, yalnız Tailscale"],
+      ["folder", "Dosyalar", "WebDAV paylaşımları, ZIP oluşturma/açma ve çöp · yerleşik"],
       ["globe", "Tailscale", sys.net && sys.net.tailscale ? `bağlı · ${sys.net.tailscale}` : "bağlı"],
-      ["server", "Ad çözümleme + Caddy", "panel adresi; modüller kendi adlarını ekler"],
+      ["server", "Dnsmasq + Caddy", "Yerleşik · Ayarlar’dan yönetilir; kaldırılamaz"],
       ["shield", "Güvenlik duvarı", "modüller kural ekler, kaldırılınca kural kalkar"],
     ];
     $("mod-base").replaceChildren(...base.map(([ic, name, sub]) => h("div", { class: "base-item" },
@@ -2026,10 +1987,8 @@
     $("mod-grid").replaceChildren(...MODS.map(modCard));
   }
 
-  /* ---------- Ayarlar (DD-155): sunucunun şu anki yapılandırması, salt okunur ---------- */
-  let CFG = null, cfgFam = "v4", cfgBusy = false;
-  const nfTr = new Intl.NumberFormat("tr-TR");
-  const pkt = (n) => `${nfTr.format(n || 0)} pkt`;
+  /* ---------- Ayarlar (DD-156) ---------- */
+  let CFG = null, cfgBusy = false;
   const hhmm = (sec) => new Date(sec * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
   // replaceChildren boş öğeyi "null" metni olarak basar: yalnız gerçek öğeler konur.
   const fill = (id, ...kids) => $(id).replaceChildren(...kids.flat(Infinity).filter(Boolean));
@@ -2050,91 +2009,12 @@
         svg("copy"), "Kopyala")),
         h("pre", { tabindex: "0" }, text || "(boş)")));
   }
-  const pnum = (port, proto) => h("span", { class: "pnum" }, String(port), proto ? h("span", { class: "pproto" }, proto) : null);
-  const psym = (s) => h("span", { class: "pnum sym" }, s);
-  function fwRow(num, name, count, small, cls) {
-    return h("div", { class: "prow" + (cls ? ` ${cls}` : "") }, num, h("span", { class: "pname" }, name),
-      count == null ? h("span") : h("span", { class: "cnt" + (cls === "deny" && count > 0 ? " hot" : "") }, pkt(count)),
-      small ? h("small", null, small) : null);
-  }
-  const fwGroup = (dot, title, iface, desc, rows) => h("section", { class: "pgroup", "aria-label": title },
-    h("div", { class: "pg-head" }, h("span", { class: `pdot ${dot}` }), h("strong", null, title), iface ? h("span", { class: "pg-n" }, iface) : null),
-    h("p", { class: "pg-desc" }, desc), rows);
-  const sum = (list) => list.reduce((n, e) => n + (e.pkts || 0), 0);
-  function fwGroups() {
-    const fam = CFG.firewall[cfgFam] || { entries: [] }, v4 = (CFG.firewall.v4 || { entries: [] }).entries;
-    const by = (g) => fam.entries.filter((e) => e.group === g);
-    const wanOrder = { ssh: 0, tailscale: 1, wireguard: 2, drop: 9 };
-    const wanRows = by("wan").sort((a, b) => (wanOrder[a.kind] ?? 5) - (wanOrder[b.kind] ?? 5)).map((e) =>
-      e.kind === "ssh" ? fwRow(pnum(e.port, e.proto), "SSH", e.pkts, srcTag("base"))
-        : e.kind === "tailscale" ? fwRow(pnum(e.port, e.proto), "Tailscale", e.pkts, [srcTag("base"), " doğrudan bağlantılar için"])
-          : e.kind === "wireguard" ? fwRow(pnum(e.port, e.proto), `WireGuard · ${e.label || e.iface}`, e.pkts, [srcTag("wireguard"), " ağ başına bir port"])
-            : fwRow(psym("✕"), "Gerisi düşer", e.pkts, "tarama ve istenmeyen bağlantılar", "deny"));
-    if (cfgFam === "v6" && v4.some((e) => e.kind === "wireguard")) {
-      wanRows.splice(wanRows.length - 1, 0, fwRow(psym("—"), "WireGuard", null, "IPv6'da açılmaz; uç nokta IPv4"));
-    }
-    const groups = [fwGroup("wan", "İnternet", CFG.wan.iface, "Yalnız bunlar açık", wanRows)];
-    const ts = by("ts");
-    if (ts.length) {
-      groups.push(fwGroup("ts", "Tailscale", CFG.ts_if, "Tailnet'teki cihazlar",
-        fwRow(psym("hepsi"), "Konsol, adlar ve modüller", sum(ts), "Sınırlamak Tailscale ACL'leriyle yapılır")));
-    }
-    const wgIfs = [...new Set(fam.entries.filter((e) => e.group.startsWith("wg:")).map((e) => e.group.slice(3)))].sort();
-    for (const iface of wgIfs) {
-      const es = by("wg:" + iface), label = (v4.find((e) => e.kind === "wireguard" && e.iface === iface) || {}).label || "";
-      const nat = es.find((e) => e.kind === "nat");
-      const rows = [];
-      for (const e of es.filter((x) => x.kind === "ui")) {
-        const names = e.ports.map((pp) => (pp.name === "qbittorrent" ? "qBittorrent arayüzü" : "Arayüz"));
-        rows.push(fwRow(pnum(e.ports.map((pp) => pp.port).join(","), e.proto), names.join(", "), e.pkts, `yalnız ${e.addr} adresinde`));
-      }
-      for (const e of es.filter((x) => x.kind === "ping")) rows.push(fwRow(psym("ping"), "Sunucu adresi", e.pkts, e.addr));
-      const egress = es.filter((x) => x.kind === "egress");
-      if (egress.length) {
-        rows.push(fwRow(psym("→"), "İnternete çıkış", sum(egress),
-          nat ? `${nat.subnet} ${CFG.wan.iface} üzerinden maskelenir` : "maskeleme kuralı yok"));
-      }
-      const drops = es.filter((x) => ["drop", "fwd-drop", "fwd-in-drop"].includes(x.kind));
-      if (drops.length) rows.push(fwRow(psym("✕"), "Gerisi düşer", sum(drops), "tailnet, SSH ve öbür ağlar kapalı", "deny"));
-      const ui = es.some((x) => x.kind === "ui");
-      groups.push(fwGroup("wg", "WireGuard", iface, `${label ? label + " · " : ""}${ui ? "internet + arayüzler" : "yalnız internet"}`, rows));
-    }
-    const self = by("self"), icmp = self.filter((e) => e.kind === "icmp6");
-    const selfRows = self.filter((e) => e.kind !== "icmp6").map((e) => e.kind === "lo"
-      ? fwRow(psym("lo"), "Yerel servisler", e.pkts, "127.0.0.1'deki arka uçlar")
-      : fwRow(psym("↩"), "Kurulmuş bağlantıların dönüşü", e.pkts));
-    if (icmp.length) selfRows.push(fwRow(psym("icmp6"), "Komşu bulma, ping", sum(icmp), "IPv6'nın çalışması için gerekli"));
-    groups.push(fwGroup("lo", "Sunucunun kendisi", "lo", "Her zaman açık", selfRows));
-    const other = by("other");
-    if (other.length) {
-      groups.push(fwGroup("wan", "Tanımsız kurallar", "", "Konsol bu kuralları tanımıyor: elle eklenmiş ya da eski olabilir",
-        other.map((e) => fwRow(psym("?"), h("code", null, e.spec), e.pkts, null, "deny"))));
-    }
-    return groups;
-  }
-  function paintFirewall() {
-    const fw = CFG.firewall, fam = fw[cfgFam] || { entries: [], raw: "", readable: false };
-    const seg = h("span", { class: "seg", role: "group", "aria-label": "Adres ailesi" },
-      ["v4", "v6"].map((f) => h("button", { type: "button", "aria-pressed": String(cfgFam === f),
-        onclick: () => { cfgFam = f; paintFirewall(); } }, f === "v4" ? "IPv4" : "IPv6")));
-    fill("cfg-fw", 
-      h("div", { class: "card-head" }, h("h2", null, svg("shield"), "Güvenlik duvarı"),
-        h("div", { class: "head-right" },
-          fw.ok ? h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Politika yerinde")
-            : h("span", { class: "hm warn", title: fw.check }, "Denetim uyardı"), seg)),
-      h("p", { class: "lede" }, "Sunucuya gelen bağlantılar geldiği arayüze göre ayrılır. Aşağıdakiler açık; listede olmayan her yeni bağlantı düşer. Sayılar açılıştan beri kurala takılan paketlerdir."),
-      fw.ok ? null : h("div", { class: "warnline" }, svg("info"), h("span", null, fw.check || "Denetim başarısız.")),
-      fam.readable ? null : h("div", { class: "warnline" }, svg("info"), h("span", null, "Kuralların bir kısmı okunamadı.")),
-      h("div", { class: "portgrid rules" }, fwGroups()),
-      rawBox("Ham kurallar", cfgFam === "v4" ? "iptables -S" : "ip6tables -S", fam.raw),
-      h("div", { class: "card-foot" }, h("span", null, "Kuralları ", h("span", { class: "mono" }, "master-firewall"), " yazar; Konsol yalnız okur."),
-        h("span", null, "Değişir: SSH portu kurulumla · WireGuard portları WireGuard sayfasından")));
-  }
+
   const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
   function webDesc(e) {
     if (e.source === "wireguard") return `WireGuard'dan · ${e.label || e.iface}`;
     const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
-    if (e.source === "base") return (e.address.startsWith("panel.") ? "Konsol" : e.address.startsWith("health.") ? "kurulum denetimi" : "") + extra;
+    if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
     return metaOf(e.source).name + extra;
   }
   function webHop(r, many) {
@@ -2155,82 +2035,38 @@
         h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
       h("div", { class: "table addr-t" }, h("div", { class: "tr head" }, h("span", null, "Adres"), h("span", null, "Nereye gider"), h("span", null, "Kaynak · erişim")), rows),
       rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy · Caddyfile.wg", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
-      h("div", { class: "card-foot" }, h("span", null, "Caddy yalnız Tailscale adresinde ve WireGuard sunucu adreslerinde dinler; HTTPS yok, iki tünel de zaten şifreli.")));
+      h("div", { class: "card-foot" }, h("span", null, "Bu adresler internete doğrudan açık değildir. Caddy, Tailscale ve izin verilen WireGuard ağlarında çalışır. HTTP kullanılır; ağ tünelleri trafiği şifreler.")));
   }
-  function paintDns() {
-    const d = CFG.dns;
-    fill("cfg-dns", 
-      h("div", { class: "card-head" }, h("h2", null, svg("route"), "Ad çözümü"), h("div", { class: "head-right" }, h("span", { class: "hm" }, "dnsmasq"))),
-      h("dl", { class: "facts" },
-        h("dt", null, "Dinler"), h("dd", null, h("span", { class: "mono" }, d.listen.join(", ") || "—"), " · 53 udp+tcp"),
-        h("dt", null, "Yanıtlar"), h("dd", null, d.domains.length ? ["yalnız ", h("span", { class: "mono" }, d.domains.map((x) => "." + x).join(", ")), "; başka her ada ", h("span", { class: "mono" }, "REFUSED")] : "—"),
-        h("dt", null, "DHCP"), h("dd", null, d.dhcp ? "açık" : "yok")),
-      h("div", { class: "dnsl" }, d.names.map((n) => h("div", { class: "dn" }, h("b", null, n.name), h("span", null, n.address || n.iface),
-        h("small", null, srcTag(n.source), n.source === "base" ? null : " modülle gelir, modülle gider")))),
-      h("div", { class: "infoline-s" }, svg("info"), h("span", null, `Adlar ${CFG.ts_if} adresini kendiliğinden izler. Cihazların çözmesi için Tailscale yönetici panelinde: DNS → Nameserver `,
-        h("span", { class: "mono" }, CFG.tailscale || "—"), `, yalnız ${CFG.domain} alanı için.`)),
-      rawBox("Ham yapılandırma", "dnsmasq.d", d.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")));
-  }
-  function paintTorrent() {
-    const t = CFG.torrent || { installed: false };
-    const head = (pill) => h("div", { class: "card-head" }, h("h2", null, svg("download"), "qBittorrent"), h("div", { class: "head-right" }, pill));
-    if (!t.installed) {
-      fill("cfg-qb", head(h("span", { class: "hm" }, "Kurulu değil")),
-        h("p", { class: "lede" }, "qBittorrent kurulu değil. Modüller'den kurulunca indirme yeri ve portları burada görünür."),
-        h("div", null, h("button", { type: "button", class: "btn btn-sm", "data-go": "#/moduller" }, svg("stack"), "Modüller")));
-      return;
-    }
-    if (t.error) {
-      fill("cfg-qb", head(h("span", { class: "hm warn" }, "Okunamadı")), h("div", { class: "warnline" }, svg("info"), h("span", null, t.error)));
-      return;
-    }
-    const bad = !t.save_inside || (t.temp_on && !t.temp_inside);
-    const mark = (ok) => ok ? h("span", { class: "path-ok" }, "✓ Dosyalar sayfasındaki klasör") : h("span", { class: "path-bad" }, "✕ qBittorrent buraya yazamaz");
-    fill("cfg-qb", 
-      head(bad ? h("span", { class: "hm warn" }, "İndirme yeri yazılamıyor") : h("span", { class: "hm ok" }, "İndirme yeri Dosyalar'da görünüyor")),
-      h("dl", { class: "facts" },
-        h("dt", null, "İndirme yeri"), h("dd", null, h("span", { class: "mono" }, t.save || "—"), " ", mark(t.save_inside)),
-        h("dt", null, "Yarım indirmeler"), h("dd", null, t.temp_on ? [h("span", { class: "mono" }, t.temp), t.temp_inside ? null : [" ", mark(false)]] : "kapalı (indirme yerinde)"),
-        h("dt", null, "Profil"), h("dd", { class: "mono" }, t.profile),
-        h("dt", null, "Arayüz"), h("dd", null, h("span", { class: "mono" }, t.ui), " → ", h("span", { class: "mono" }, `torrent.${CFG.domain}`)),
-        h("dt", null, "Eş portu"), h("dd", null, h("span", { class: "mono" }, String(t.peer_port || "—")), h("span", { class: "muted" }, " · internetten kapalı; qBittorrent yalnız dışa bağlanır"))),
-      bad ? h("div", { class: "warnline" }, svg("info"), h("span", null, "qBittorrent yalnız ", h("span", { class: "mono" }, t.downloads),
-        " altına yazabilir (kum havuzu). Bu klasöre inen torrentler hata verir ve Dosyalar'da görünmez. qBittorrent → Tools → Options → Downloads'tan düzeltin.")) : null,
-      h("div", { class: "card-foot" }, h("span", null, "Kaynak: ", h("span", { class: "mono" }, "qBittorrent.conf"), " — yalnız yol ve port satırları okunur, parola asla."),
-        h("span", null, "Ayarlar qBittorrent'indir; kurulum dokunmaz.")));
-  }
+  const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings });
   function renderSettings() {
     const stamp = $("cfg-stamp");
     if (stamp) stamp.textContent = CFG ? `Son okuma ${hhmm(CFG.read_at)}` : "Okunuyor…";
-    if (!CFG) {
-      for (const id of ["cfg-fw", "cfg-web", "cfg-dns", "cfg-qb"]) $(id).replaceChildren(h("p", { class: "hint-s" }, "Okunuyor…"));
-      return;
-    }
-    fill("cfg-sum", 
-      h("div", null, h("dt", null, "Alan adı"), h("dd", null, CFG.domain), h("small", null, "kurulum.env")),
-      h("div", null, h("dt", { lang: "en" }, "Tailscale"), h("dd", null, CFG.tailscale || "—"), h("small", null, CFG.ts_if)),
-      h("div", null, h("dt", null, "İnternet"), h("dd", null, CFG.wan.ipv4 || "—"), h("small", null, CFG.wan.iface)),
-      h("div", null, h("dt", null, "Kurulum"), h("dd", null, (CFG.version.match(/v2-\d+$/) || [CFG.version])[0]), h("small", null, CFG.version)));
-    paintFirewall();
-    paintWeb();
-    paintDns();
-    paintTorrent();
+    settingsPage.render(CFG);
   }
-  document.addEventListener("click", (e) => {
-    const j = e.target.closest("[data-jump]");
-    if (j && $(j.dataset.jump)) $(j.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" });
-  });
 
   /* ---------- yönlendirme ---------- */
+  function renderApps() {
+    const apps = [["Dosyalar","folder","#/dosyalar","Paylaşım · ZIP · çöp"], ["App Store","stack","#/moduller","Uygulama kur ve yönet"],
+      ["Ayarlar","sliders","#/ayarlar","Firewall · Caddy · DNS"], ["Sunucu","server","#/genel","Kaynaklar ve durum"], ["Günlük","list","#/gunluk","Yapılan işlemler"]];
+    if (wgOn()) apps.push(["WireGuard","shield","#/wireguard","Cihazlar ve ağlar"]);
+    if (modOn("torrent") && S.sys?.domain) apps.push(["qBittorrent","download",`${location.protocol}//torrent.${S.sys.domain}`,"Torrent istemcisi"]);
+    $("desktop-apps").replaceChildren(...apps.map(([name,icon,href,sub]) => h("a", {class:"desktop-app",href,...(href.startsWith("#") ? {} : {target:"_blank",rel:"noopener"})},
+      h("span", null, svg(icon)), h("strong", null, name), h("small", null, sub))));
+  }
+  $("window-home").addEventListener("click", () => { location.hash = "#/uygulamalar"; });
+  $("window-min").addEventListener("click", () => { hideAllPass(); document.body.classList.add("desktop-minimized"); });
+  $("window-max").addEventListener("click", (e) => { const wide = document.body.classList.toggle("desktop-wide"); e.currentTarget.setAttribute("aria-pressed", String(wide)); });
+  document.querySelector(".desktop-dock").addEventListener("click", () => document.body.classList.remove("desktop-minimized"));
   const ROUTES = {
+    uygulamalar: {title:"Uygulamalar", eyebrow:"Konsol Desktop", actions:() => [], render:renderApps},
     genel: { title: "Genel bakış", eyebrow: "Sunucu durumu",
       actions: () => [h("button", { type: "button", class: "btn btn-quiet", onclick: () => refreshAll().then(() => toast("Durum yenilendi.")) }, svg("refresh"), "Yenile")] },
     wireguard: { title: "WireGuard", eyebrow: "Cihazlar ve ağlar", actions: () => [], render: renderWg },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı, paylaşımlar ve çöp", actions: () => [],
-      render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (!fsList) loadFs(); } },
-    moduller: { title: "Modüller", eyebrow: "Temiz kurulumda yalnız temel · gerisi buradan", actions: () => [], render: () => { renderModules(); loadModules(); } },
+      render: () => { renderFs(); if (fsView === "trash") loadTrash(); else { if (shareOn()) loadShares(); if (fsView === "files" && !fsList) loadFs(); } } },
+    moduller: { title: "App Store", eyebrow: "İsteğe bağlı uygulamalar · yerleşik yetenekler daima hazır", actions: () => [], render: () => { renderModules(); loadModules(); } },
     gunluk: { title: "Günlük", eyebrow: "Konsol'dan yapılan işlemler", actions: () => [], render: () => { renderLog(); loadActions(); } },
-    ayarlar: { title: "Ayarlar", eyebrow: "Sunucunun şu anki yapılandırması · salt okunur",
+    ayarlar: { title: "Ayarlar", eyebrow: "Sunucu yapılandırması · kontrollü yönetim",
       actions: () => [h("span", { class: "hm", id: "cfg-stamp" }, "Okunuyor…"),
         h("button", { type: "button", class: "btn btn-quiet", onclick: () => loadSettings(true) }, svg("refresh"), "Yenile")],
       render: () => { renderSettings(); loadSettings(); } },
@@ -2241,7 +2077,8 @@
   const view = () => current;
   function route() {
     const raw = location.hash.replace(/^#\/?/, "").split("/");
-    let key = ROUTES[raw[0]] ? raw[0] : "genel";
+    let key = ROUTES[raw[0]] ? raw[0] : "dosyalar";
+    document.body.classList.remove("desktop-minimized");
     // DD-150: modülü kurulu olmayan sayfa açılmaz; Modüller'e gidilir.
     if (MODS && ((key === "dosyalar" && !fsOn()) || (key === "wireguard" && !wgOn()))) {
       history.replaceState(null, "", "#/moduller");

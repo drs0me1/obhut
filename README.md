@@ -3,9 +3,10 @@
 Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 (noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, host
 dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
-the optional modules are installed. No Docker (**DD-152**), no reconcile engine.
+the optional applications are installed. Files, folder WebDAV and ZIP tools
+are built in (**DD-159**). No Docker (**DD-152**), no reconcile engine.
 
-**Current version:** `2026.08.06-v2-121` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-129` (see `Data/install.sh`).
 
 The repository root holds only what is double-clicked: the current portable
 installer (`<version>.command`), `wireguard.command` (WireGuard peers and
@@ -46,8 +47,9 @@ Root, interactive TTY (one confirmation), Debian 13 or Ubuntu 24.04/26.04 LTS
 only. Re-runs are supported.
 
 The installer asks nothing it configures: every input comes from
-`kurulum/kurulum.env`, which is also the truth on re-runs — an account that
-differs from the file is updated (**DD-119**). The portable `.command` embeds
+`kurulum/kurulum.env`. A domain subsequently confirmed in Konsol takes
+precedence on re-runs (**DD-157**); no account is read from this file.
+The portable `.command` embeds
 only the runtime files and their archive SHA-256. It uploads them to
 `/root/debian-server-installer`, sends the input file to `/run/master-stack`
 (`tmpfs`, deleted by the installer as it reads it), then starts `install.sh`.
@@ -68,10 +70,10 @@ only the runtime files and their archive SHA-256. It uploads them to
     ├── common.sh           # shared helpers
     ├── config/defaults.env # single source of truth for ports/images/paths
     ├── templates/          # Caddyfile, Caddyfile.wg, dnsmasq.conf
-    ├── modules/            # module templates (Konsol → Modüller)
+    ├── modules/            # app and built-in service templates
     ├── scripts/            # firewall, refresh-tailnet, GRO, wait helpers
     ├── systemd/            # units and drop-ins
-    ├── tests/              # bats critical-behaviour suite
+    ├── tests/              # Bats, settings worker, browser and isolated Linux tests
     ├── dev/                # installer exporter, backup worker
     ├── app/                # the current exported <version>.command (older ones in Git)
     ├── docs/               # contract, architecture and design rationale
@@ -83,14 +85,40 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 | Service | Exposure | Role |
 |---------|----------|------|
-| qBittorrent (host module, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → Modüller; torrent downloads. The first login's temporary password is shown on its card |
-| WireGuard (host kernel; module, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → Modüller; VPN; peers generated on the server with Konsol or `wireguard.command` |
-| Paylaşım — WebDAV, shares only (host module: rclone's pinned official release, **DD-149**, **DD-152**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010` (tailnet only, one generated account) | installed from Konsol → Modüller; the server's only WebDAV: folders and files shared from Konsol, read-only, with an optional expiry. The downloads folder as a whole is never published (**DD-141**, **DD-142**) |
-| Konsol | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one admin console (the Dosyalar and WireGuard pages come with their modules, **DD-150**): server overview (CPU, memory, disk, ports), WireGuard peers and networks (add/remove, QR, DNS, keepalive, on/off switches), the downloads folder (browse, move, rename, trash, text viewer, download) and a log (**DD-133**, **DD-136**, **DD-139**, **DD-140**) |
+| qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. The first login's temporary password is shown on its card |
+| WireGuard (host kernel; app, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
+| Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010/s/<id>/` | Separate account per folder, RO/RW, expiry and pause. Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
+| Konsol Desktop (**DD-159**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | launcher, dock and a single workspace: Files (browse, upload, move, trash, text, ZIP/nested unzip), Settings, server overview, App Store and installed WireGuard; qBittorrent opens its own UI |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (custom INPUT/FORWARD/NAT chains) for
 Tailscale, WireGuard and WAN SSH.
+
+Konsol → Ayarlar (**DD-156**) manages firewall port overrides, local DNS
+names/upstreams and qBittorrent's account/new-download folder in separate
+tabs. Firewall addresses include short listening-scope explanations.
+Caddy shows routes and offers a local-domain suffix change (**DD-157**).
+Review ordinary changes, apply, then confirm within
+60 seconds; an independent server-side timer rolls unconfirmed changes back.
+Domain changes are separate: configure the new restricted domain in Tailscale
+Admin DNS first, then update in Caddy and confirm from the new panel address
+within five minutes. Old DNS mapping should stay until confirmation. Service
+names, custom DNS records, disabled states and module renderings move together;
+IP-based share links do not change. The redundant `health.<domain>` site and
+DNS record are removed; installation still checks the real panel and APIs.
+Confirmed firewall/DNS/domain choices survive installer re-runs. No settings
+backup is embedded in the installer.
+
+Files v09 adds list/cards and a right-hand details pane (below on mobile).
+See [folder WebDAV boundaries and migration](Data/docs/folder-shares.md) before
+sharing with other people: recipients must not reach passwordless Konsol/SSH.
+The v128 upgrade retires old shared-account URLs; create new folder accounts.
+Native Finder/Infuse compatibility and fresh Ubuntu acceptance are separate tests.
+
+Desktop v10 is implemented in v129, not a KDE session. Files/WebDAV are always
+installed; existing folder accounts survive the upgrade. ZIP jobs run on the
+server after the page closes, with cancellation and bounded nested extraction.
+See [desktop, archives and upgrade boundaries](Data/docs/desktop-and-archives.md).
 
 ## Backups
 
@@ -100,7 +128,7 @@ There is no backup tool. A host is rebuilt from `kurulum/` alone:
 - qBittorrent keeps its settings and torrent list on the server only; a
   fresh install starts it with minimal settings and a new login (**DD-151**).
 - WireGuard is not part of that: a fresh install has no WireGuard at all
-  (**DD-143**, **DD-150**). Install it from Konsol → Modüller → WireGuard, create
+  (**DD-143**, **DD-150**). Install it from Konsol → App Store → WireGuard, create
   the first network in WireGuard → Yapılandır and add the devices again.
 Keep that folder safe.
 
@@ -110,6 +138,12 @@ Keep that folder safe.
 bats Data/tests
 bash -n Data/install.sh Data/common.sh Data/scripts/* Data/dev/export-installer.sh
 shellcheck -x -s bash Data/install.sh Data/common.sh Data/scripts/* Data/dev/export-installer.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_*.py'
+# Browser: PLAYWRIGHT_MODULE=<module path> PLAYWRIGHT_CHROMIUM=<binary> node Data/tests/settings-ui.cjs
+# Linux root, disposable network namespace (existing services are not touched):
+# unshare --net --fork python3 Data/tests/settings-linux.py
+# unshare --net --fork python3 Data/tests/settings-domain-linux.py
+# python3 Data/tests/settings-systemd.py
 ```
 
 ## Working conventions

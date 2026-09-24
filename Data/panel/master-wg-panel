@@ -31,21 +31,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import master_settings
+import master_shares
+
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
 MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir", "parola")
 # DD-149, DD-151: hesabı Konsol'da görünen modüller; "Yeni parola" yalnız Paylaşım'da (qBittorrent'in
-# ilk girişi günlüğündeki geçici paroladır, hesabını Konsol yönetmez).
-ACCOUNT_MODULES = ("paylasim", "torrent")
-PASSWORD_MODULES = ("paylasim",)
+# ilk girişi günlüğündeki geçici paroladır; DD-156 hesap düzenleme Ayarlar'dadır).
+ACCOUNT_MODULES = ("torrent",)
+PASSWORD_MODULES = ()
 IFACE_RE = re.compile(r"^wg[0-9]$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
 ACTIVE_WINDOW = float(os.environ.get("PANEL_ACTIVE_WINDOW", "45"))
 SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
 HANDSHAKE_FRESH = 180
-MAX_BODY = 4096
+MAX_BODY = 65536
 # wg0'ı yeniden üretmek için yazılan kelime (panel ve wireguard.command aynı).
 CONFIRM_WORD = "onayla"
 API_HEADER = "X-Konsol"
@@ -58,7 +62,7 @@ SYS_POINTS = 12
 # Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
 ACTIONS_LIMIT = 40
-# DD-155: Ayarlar sayfası salt okunurdur; aynı anda gelen yenilemeler iptables'ı yormasın.
+# Ayarlar okuması: aynı anda gelen yenilemeler iptables'ı yormasın (DD-155, DD-156).
 SETTINGS_CACHE_SECONDS = 5
 SETTINGS_TEXT_LIMIT = 65536
 IPT_COUNTER_RE = re.compile(r" -c (\d+) (\d+)")
@@ -620,8 +624,7 @@ class Panel:
             "disk": self.disk(env.get("SERVER_ROOT", "")),
             # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
             # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
-            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env)),
-                      "rclone": env.get("RCLONE_VERSION", "")},
+            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env))},
         }
 
     # -- ayarlar (DD-155): salt okunur; hiçbir şeyi değiştirmez, yalnız istenince okur
@@ -767,8 +770,108 @@ class Panel:
             "dns": self.dns_view(env),
             "torrent": self.torrent_view(env),
         }
+        if env.get("SETTINGS_FILE"):
+            try:
+                data["manage"] = master_settings.Manager(self.args.state).status()
+                data["firewall"]["rules"] = self.all_firewall_rules(env)
+                data["firewall"]["listeners"] = self.listeners()
+                data["firewall"]["ports"] = self.settings_ports(env, networks, data["firewall"]["listeners"])
+            except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
+                data["manage"] = {"error": str(err) if isinstance(err, master_settings.SettingsError) else "Ayar yönetimi okunamadı; kurulumu yenileyin."}
         self.settings_cache = (now, data)
         return data
+
+    def all_firewall_rules(self, env):
+        rows, errors = [], []
+        ours = {env.get(k) for k in ("CHAIN_INPUT", "CHAIN_FORWARD", "CHAIN_NAT", "CHAIN_SETTINGS")}
+        for family, binary in ((4, "iptables-save"), (6, "ip6tables-save")):
+            try:
+                p = subprocess.run([binary, "-c"], capture_output=True, timeout=10, env=self.env())
+                if p.returncode:
+                    raise OSError()
+                table, seq = "", {}
+                for line in p.stdout.decode("utf-8", "replace").splitlines():
+                    if line.startswith("*"):
+                        table = line[1:]
+                        continue
+                    policy = re.fullmatch(r":(\S+) (\S+) \[(\d+):(\d+)\]", line)
+                    if policy:
+                        chain, action, packets, size = policy.groups()
+                        rows.append({"family": family, "table": table, "chain": chain, "position": "—",
+                                     "packets": int(packets), "bytes": int(size), "spec": "Politika: " + action if action != "-" else "Özel zincir",
+                                     "owner": "Tailscale" if chain.startswith("ts-") else "Konsol" if chain in ours else "Sistem / üçüncü taraf"})
+                        continue
+                    match = re.match(r"\[(\d+):(\d+)\] -A (\S+) (.*)", line)
+                    if match:
+                        packets, size, chain, spec = match.groups()
+                        seq[(table, chain)] = seq.get((table, chain), 0) + 1
+                        rows.append({"family": family, "table": table, "chain": chain, "position": seq[(table, chain)],
+                                     "packets": int(packets), "bytes": int(size), "spec": spec,
+                                     "owner": "Tailscale" if chain.startswith("ts-") else "Konsol" if chain in ours else "Sistem / üçüncü taraf"})
+            except (OSError, subprocess.TimeoutExpired):
+                errors.append("IPv%d kuralları okunamadı" % family)
+        return {"rows": rows, "errors": errors}
+
+    def listeners(self):
+        rows = []
+        for family in (4, 6):
+            try:
+                p = subprocess.run(["ss", "-H", "-lntu", "-" + str(family)], capture_output=True, timeout=10, env=self.env())
+                if p.returncode:
+                    return None
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            for line in p.stdout.decode().splitlines():
+                f = line.split()
+                if len(f) < 5 or f[0] not in ("tcp", "udp"):
+                    continue
+                addr, _, port = f[4].rpartition(":")
+                if port.isdigit():
+                    rows.append({"proto": f[0], "family": family, "port": int(port), "address": addr.strip("[]")})
+        return rows
+
+    def settings_ports(self, env, networks, listeners=None):
+        rows = []
+        for p in self.ports(env, networks):
+            if p["scope"] == "wireguard":
+                continue
+            scope = {"internet": "wan", "tailscale": "tail", "loopback": "lo"}[p["scope"]]
+            for family in (4, 6):
+                for proto in p["proto"].split("+"):
+                    rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"], "scope": scope,
+                                 "baseline": not (family == 6 and p["name"].startswith("WireGuard "))})
+                    if scope in ("tail", "lo"):
+                        rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"], "scope": "wan", "baseline": False})
+        for net in networks:
+            for family in (4, 6):
+                rows.append({"name": "qBittorrent arayüzü", "family": family, "proto": "tcp", "port": int(env["TORRENT_UI_PORT"]),
+                             "scope": net["iface"], "baseline": family == 4 and net["scope"] == "ui"})
+        seen = {(r["family"], r["proto"], r["port"], r["scope"]) for r in rows}
+        for listener in listeners or []:
+            for scope in ("wan", "tail", "lo"):
+                key = (listener["family"], listener["proto"], listener["port"], scope)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({"name": "Diğer dinleyici", "family": listener["family"], "proto": listener["proto"],
+                             "port": listener["port"], "scope": scope, "baseline": scope != "wan"})
+        return rows
+
+    def settings_run(self, action, data, shares=False):
+        """stdin is private; no password in argv, environment, journal or response."""
+        helper = os.path.join(os.path.dirname(self.args.master_modul), "master_shares.py" if shares else "master_settings.py")
+        argv = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+                "--property=UMask=0077", "--property=RuntimeMaxSec=150",
+                "--setenv=PYTHONDONTWRITEBYTECODE=1", "/usr/bin/python3", helper, "--state", self.args.state, action]
+        try:
+            p = subprocess.run(argv, input=json.dumps(data), capture_output=True, text=True, timeout=155, env=self.env())
+            result = json.loads(p.stdout)
+            self.settings_cache = (0, None)
+            return (400 if p.returncode else 200), result
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            if shares:
+                return 502, {"error": "İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin."}
+            return 502, {"error": "İşlem sonucu alınamadı. Ayarlar sayfasını yenileyin; onaysız işlem sunucuda geri alınır."}
 
     def actions(self):
         """Son işlemler: iki arka ucun audit satırları (journald), yeniden eskiye."""
@@ -964,6 +1067,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlsplit(self.path).path
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if path == "/api/konsol/paylasim":
+            try:
+                self.json(200, master_shares.Manager(self.panel.args.state).public())
+            except (master_shares.ShareError, OSError, ValueError, KeyError):
+                self.error(503, "Paylaşım kaydı okunamadı; kurulumu kontrol edin.")
+            return
         if path == "/api/wg/state":
             try:
                 self.json(200, self.panel.state())
@@ -978,6 +1087,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/konsol/ayarlar":
             self.json(200, self.panel.settings(fresh="yenile" in query))
+            return
+        if path in ("/api/konsol/ayarlar/durum", "/api/konsol/ayarlar/klasorler"):
+            try:
+                manager = master_settings.Manager(self.panel.args.state)
+                self.json(200, {"items": manager.folders(query.get("path", [None])[0])} if path.endswith("klasorler") else manager.status())
+            except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
+                self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
             return
         if path == "/api/konsol/moduller":
             try:
@@ -1018,18 +1134,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.audit(user, "modul-hesap", mid, True)
                 self.json(200, body)
                 return
-            if len(fields) != (3 if reveal else 2):
-                self.error(404, message or "hesap yok")
-                return
-            ts, port = env.get("TAILSCALE_IPV4", ""), num_or(env.get("SHARE_PORT"), 0)
-            body = {"user": fields[0], "changed": num_or(fields[1], 0),
-                    "host": "paylas.%s" % domain if domain else "",
-                    "infuse": "http://%s:%d/" % (ts, port) if ts and port else ""}
-            if reveal:
-                body["pass"] = fields[2]
-                self.audit(user, "modul-hesap", mid, True)
-            self.json(200, body)
-            return
         if path == "/api/wg/islemler":
             self.json(200, {"items": self.panel.actions()})
             return
@@ -1092,6 +1196,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         data = self.body_json()
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
+            return
+        share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
+        if path in {"/api/konsol/paylasim/" + name for name in share_actions}:
+            code, result = self.panel.settings_run(share_actions[path.rsplit("/", 1)[-1]], data, shares=True)
+            self.audit(user, "paylasim-" + share_actions[path.rsplit("/", 1)[-1]], "klasör paylaşımı", code == 200)
+            self.close_connection = True
+            self.json(code, result)
+            return
+        actions = {"uygula": "apply", "onayla": "confirm", "geri-al": "rollback"}
+        if path in {"/api/konsol/ayarlar/" + name for name in actions}:
+            action = actions[path.rsplit("/", 1)[-1]]
+            if action == "confirm":
+                data["client"] = self.client()
+                data["host"] = self.headers.get("Host", "").lower()
+            code, result = self.panel.settings_run(action, data)
+            self.audit(user, "ayar-" + action, "ayarlar", code == 200)
+            self.close_connection = True
+            self.json(code, result)
             return
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)
         if m:

@@ -3,9 +3,6 @@
 	http_port __CADDY_HTTP_PORT__
 	auto_https off
 }
-http://health.__LOCAL_DOMAIN__ {
-	respond "ok" 200
-}
 # Konsol (DD-140, DD-148): tek adres. /api/wg/* ve /api/konsol/* root arka uca (WireGuard,
 # sistem, modüller), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:
 # dosya yöneticisi bir modüldür ve kaldırılabilir, Konsol'un kendisi kalmalıdır. Yalnız

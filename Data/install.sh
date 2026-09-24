@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-125"
+V2_VERSION="2026.08.06-v2-129"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -61,12 +61,20 @@ TAILSCALE_IPV6=$TAILSCALE_IPV6
 LOCAL_DOMAIN=$LOCAL_DOMAIN
 SERVER_ROOT=$SERVER_ROOT
 DOWNLOADS_PATH=$DOWNLOADS_PATH
+MEDIA_SUBDIR=$MEDIA_SUBDIR
+DNS_PORT=$DNS_PORT
+CADDY_HTTP_PORT=$CADDY_HTTP_PORT
+DNSMASQ_CONF_FILE=$DNSMASQ_CONF_FILE
+SETTINGS_FILE=$SETTINGS_FILE
+SETTINGS_PENDING_FILE=$SETTINGS_PENDING_FILE
+SETTINGS_DNS_FILE=$SETTINGS_DNS_FILE
 WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST
 WG_PORT_DEFAULT=$WG_PORT_DEFAULT
 SSH_PUBLIC_PORT=$SSH_PUBLIC_PORT
 CHAIN_INPUT=$CHAIN_INPUT
 CHAIN_FORWARD=$CHAIN_FORWARD
 CHAIN_NAT=$CHAIN_NAT
+CHAIN_SETTINGS=$CHAIN_SETTINGS
 CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
 WG_ADDR_BASE4=$WG_ADDR_BASE4
 WG_ADDR_BASE6=$WG_ADDR_BASE6
@@ -80,17 +88,18 @@ MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
+SHARE_STATE_FILE=$SHARE_STATE_FILE
+TORRENT_TEMP_DIR=$TORRENT_TEMP_DIR
 SHARE_DIR=$SHARE_DIR
 SHARE_HTPASSWD_FILE=$SHARE_HTPASSWD_FILE
 SHARE_CRED_FILE=$SHARE_CRED_FILE
-SHARE_ACCOUNT=$SHARE_ACCOUNT
-SHARE_PASSWORD_LENGTH=$SHARE_PASSWORD_LENGTH
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
+FILES_ARCHIVE_DIR=$FILES_ARCHIVE_DIR
 WG_MODULES_LOAD_FILE=$WG_MODULES_LOAD_FILE
 CADDYFILE=$CADDYFILE
 CADDY_MODULES_DIR=$CADDY_MODULES_DIR
@@ -100,11 +109,6 @@ WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
 TORRENT_UI_PORT=$TORRENT_UI_PORT
 TORRENT_PROFILE_DIR=$TORRENT_PROFILE_DIR
-RCLONE_VERSION=$RCLONE_VERSION
-RCLONE_SHA256_AMD64=$RCLONE_SHA256_AMD64
-RCLONE_SHA256_ARM64=$RCLONE_SHA256_ARM64
-RCLONE_DOWNLOAD_URL=$RCLONE_DOWNLOAD_URL
-RCLONE_BIN=$RCLONE_BIN
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -343,6 +347,7 @@ stage_0() {
         die "ufw aktif: INPUT politikası iki elden yönetilemez. Önce 'ufw disable' çalıştırın"
     fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
+    [[ ! -f "$SETTINGS_PENDING_FILE" ]] || die "Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın"
 
     # defaults.env değerleri config.env source edilmeden önce alınır.
     local def_domain="$DEFAULT_LOCAL_DOMAIN"
@@ -353,6 +358,14 @@ stage_0() {
 
     # DD-119: değerler girdi dosyasından; boş alan defaults.env varsayılanı.
     LOCAL_DOMAIN="${INPUT_LOCAL_DOMAIN:-$def_domain}"
+    # DD-157: Konsol'da onaylanmış ad, eski kurulum girdisinin önüne geçer.
+    # İlk kurulumda dosya yoktur; henüz Python kurulmuş olması gerekmez.
+    if [[ -f "$SETTINGS_FILE" ]]; then
+        local saved_domain
+        saved_domain="$(python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$SETTINGS_FILE")" ||
+            die "Konsol'daki alan adı kaydı okunamadı"
+        [[ -z "$saved_domain" ]] || LOCAL_DOMAIN="$saved_domain"
+    fi
     [[ "$LOCAL_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
         die "geçersiz alan adı: $LOCAL_DOMAIN"
     # DD-144: kullanıcı alanı sorulmaz. Kök defaults.env'de sabittir; indirme klasörü
@@ -408,8 +421,8 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Modüller:      Dosya yöneticisi, WireGuard, qBittorrent, Paylaşım
-                 Konsol → Modüller'den kurulur; hesaplarını Konsol gösterir (DD-148)
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve ZIP aracı
+  App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
   Tailscale:     $ts_note
   full-upgrade:  $yes_no_upgrade
@@ -572,7 +585,7 @@ ensure_downloads_tree() {
     # hedef modlarda suid/sgid olmadığından exec sırası sonucu değiştirmez.
     # -print düzeltilen girdiyi yazar; aynı girdi hem sahip hem mod için
     # görünebilir, sayı tekilleştirilir. Çıktı: düzeltilen girdi sayısı.
-    find "$root" \
+    find "$root" \( -path "$root/${FILES_ARCHIVE_DIR:-.arsiv}" -prune \) -o \
         \( \( ! -uid "$uid" -o ! -gid "$gid" \) \
         -print -exec chown -h "${uid}:${gid}" {} + -false \) -o \
         \( -type d ! -perm 0775 -print -exec chmod 0775 {} + -false \) -o \
@@ -609,23 +622,22 @@ assert_downloads_path_allowed() {
 # kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Dosyası değişen kurulu modülü aşama 7
 # yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
 MODULES_CHANGED=""
+PANEL_HELPERS_CHANGED=0
 module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
     awk -F'\t' -v i="$1" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true
 }
 ensure_module_files() {
     local changed=0
     install -d -m 0755 -o root -g root "$MODULES_DIR"
-    # DD-149, DD-152: Paylaşım — servis birimi (rclone sunucuda), Caddy sitesi ve dnsmasq adı.
-    # Canlı kopyaları master-modul koyar. Birim rclone sürümünü taşır: sürüm yükselince kurulu
-    # Paylaşım yeniden uygulanır ve yeni sürüme geçer.
+    # DD-158: klasör WebDAV birimi, Caddy sitesi ve dnsmasq adı.
+    # Canlı kopyaları master-modul koyar; kullanıcı kayıtları yeniden üretilmez.
     install -d -m 0755 -o root -g root "$MODULES_DIR/paylasim"
     render_template "$V2_ROOT/modules/paylasim/master-paylasim.service" "$MODULES_DIR/paylasim/master-paylasim.service" 0644 \
-        RCLONE_VERSION="$RCLONE_VERSION" \
-        RCLONE_BIN="$RCLONE_BIN" \
         SERVER_ROOT="$SERVER_ROOT" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_PORT="$SHARE_PORT" \
-        SHARE_HTPASSWD_FILE="$SHARE_HTPASSWD_FILE" \
+        SHARE_STATE_FILE="$SHARE_STATE_FILE" \
+        SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID"
@@ -677,6 +689,7 @@ ensure_module_files() {
 reapply_modules() {
     local id state
     for id in $MODULES_CHANGED; do
+        [[ "$id" != dosya && "$id" != paylasim ]] || continue
         state="$(module_state "$id")"
         [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
         if [[ "$id" == wireguard ]]; then
@@ -724,6 +737,15 @@ stage_4() {
     # DD-152: Docker yok; modüller sunucuda systemd servisi olarak çalışır.
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
+    atomic_write "$SBIN_DIR/master_settings.py" 0755 <"$V2_ROOT/panel/master_settings.py"
+    atomic_write "$SBIN_DIR/master_shares.py" 0755 <"$V2_ROOT/panel/master_shares.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
+    atomic_write "$UNIT_DIR/master-settings-guard.timer" 0644 <"$V2_ROOT/systemd/master-settings-guard.timer"
     ensure_module_files
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
@@ -740,6 +762,7 @@ stage_4() {
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl daemon-reload
+    systemctl enable --now master-settings-guard.timer
 }
 
 stage_5() {
@@ -844,11 +867,17 @@ EOF
     fi
 
     mkdir -p /etc/dnsmasq.d
-    local dnsmasq_changed=0 caddy_changed=0
-    render_template "$V2_ROOT/templates/dnsmasq.conf" "$DNSMASQ_CONF_FILE" 0644 \
+    local dnsmasq_changed=0 caddy_changed=0 dns_tmp
+    dns_tmp="$(mktemp "$RUNTIME_DIR/.dns-XXXXXX")"
+    render_template "$V2_ROOT/templates/dnsmasq.conf" "$dns_tmp" 0644 \
         TAILSCALE_IF="$TAILSCALE_IF" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN"
+    python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp"
+    atomic_write "$DNSMASQ_CONF_FILE" 0644 <"$dns_tmp"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
+    rm -f -- "$dns_tmp"
+    # DD-156: rendered defaults consume confirmed operator choices on every re-run.
+    python3 "$SBIN_DIR/master_settings.py" project-dns
     # OS/paket sürümü değişince kaybolan bir direktif, aksi hâlde ilk belirtisini
     # "systemctl restart dnsmasq başarısız" olarak verirdi. --test satır numarası
     # ve direktif adı söyler (DD-106).
@@ -1005,6 +1034,7 @@ ensure_caddy_wg() {
 # sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
+    [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
     # Arka ucun yazabildiği tek kalıcı yer. DD-150'den beri WireGuard modülü (paketiyle
     # birlikte) sonradan kurulur; klasör burada açılmazsa arka uç başlamaz (v2-119).
     install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
@@ -1036,7 +1066,7 @@ ensure_wg_panel() {
 ensure_console_pages() {
     local f
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
-    for f in index.html konsol.css konsol.js; do
+    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js desktop.css arsiv.js; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
 }
@@ -1063,6 +1093,10 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    atomic_write "$SBIN_DIR/master_archives.py" 0644 <"$V2_ROOT/files-panel/master_archives.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    [[ ! -L "$SERVER_ROOT/$FILES_ARCHIVE_DIR" ]] || die "arşiv çalışma alanı bağlantı olamaz"
+    install -d -m 0700 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$SERVER_ROOT/$FILES_ARCHIVE_DIR"
     # DD-144, DD-151: qBittorrent modülünün ilk ayarındaki yarım indirme klasörü; panel onu
     # kullanıcı alanının köküne göre bilir (<indirme klasörü>/<geçici>) ve orada uyarır.
     temp_dir="$DOWNLOADS_SUBDIR/$TORRENT_TEMP_DIR"
@@ -1070,6 +1104,7 @@ ensure_files_panel() {
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
+        FILES_ARCHIVE_DIR="$FILES_ARCHIVE_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
         SERVER_ROOT="$SERVER_ROOT" \
@@ -1084,9 +1119,13 @@ ensure_files_panel() {
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
+    # Built-in capabilities keep the existing storage/registry paths (DD-159).
+    "$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
     "$SBIN_DIR/master-firewall" --check
+    systemctl is-active --quiet master-settings-guard.timer || die "Konsol ayar geri alma zamanlayıcısı etkin değil"
+    python3 "$SBIN_DIR/master_settings.py" status >/dev/null || die "Konsol ayar durumu okunamadı"
 
     # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
     # dosya onu ezebilir; belirleyici olan ÇALIŞMA ANINDAKİ değer (DD-105).
@@ -1118,9 +1157,13 @@ stage_7() {
         log WARN "otomatik güvenlik güncellemeleri etkin değil (APT::Periodic::Unattended-Upgrade=${periodic:-yok}; $APT_PERIODIC_FILE eziliyor olabilir)"
     fi
 
-    local name resolver ans dig_out code health line
+    local name resolver ans dig_out code line
     # shellcheck disable=SC2086
     for name in $SERVICE_NAMES; do
+        if ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "${name}.${LOCAL_DOMAIN}"; then
+            log INFO "DNS: ${name}.${LOCAL_DOMAIN} Konsol tercihiyle kapalı"
+            continue
+        fi
         for resolver in 127.0.0.1 "$TAILSCALE_IPV4"; do
             ans="$(
                 dig +short +time=2 +tries=1 "${name}.${LOCAL_DOMAIN}" @"$resolver" |
@@ -1135,11 +1178,10 @@ stage_7() {
         dig +time=2 +tries=1 +noall +comments "not-in-${LOCAL_DOMAIN}.example" \
             @"$TAILSCALE_IPV4" 2>/dev/null || true
     )"
-    [[ "$dig_out" == *"status: REFUSED"* ]] ||
-        die "DNS: alan dışı sorgu REFUSED değil (Tailscale DNS)"
-
-    health="$(curl -fsS --max-time 5 "http://${TAILSCALE_IPV4}/" -H "Host: health.${LOCAL_DOMAIN}" || true)"
-    [[ "$health" == "ok" ]] || die "Caddy health yanıtı beklenen gibi değil"
+    if ! python3 "$SBIN_DIR/master_settings.py" dns-forward; then
+        [[ "$dig_out" == *"status: REFUSED"* ]] ||
+            die "DNS: alan dışı sorgu REFUSED değil (Tailscale DNS)"
+    fi
 
     # DD-120/DD-143: WireGuard katmanı hazır; kayıtta ağ varsa her biri ayakta, portu
     # kaydındaki port ve erişimi "ui" olanın arayüzleri caddy-wg'den non-5xx.
@@ -1247,7 +1289,7 @@ summary_modules() {
             dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
             wireguard) name="WireGuard"; info="${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer" ;;
             torrent) name="qBittorrent"; info="http://torrent.${LOCAL_DOMAIN}; ilk giriş bilgisi kartında" ;;
-            paylasim) name="Paylaşım"; info="http://paylas.${LOCAL_DOMAIN}, Infuse için ${TAILSCALE_IPV4}:${SHARE_PORT}; hesabı kartında" ;;
+            paylasim) name="Paylaşım"; info="Dosyalar → WebDAV: klasör başına adres, kullanıcı ve erişim izni" ;;
         esac
         case "$(module_state "$id")" in
             calisiyor) st="kurulu" ;;
@@ -1276,7 +1318,7 @@ Manuel Tailscale Admin:
   3) Exit node olarak bu makineyi onayla
 
 Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale)
-Modüller (Konsol → Modüller'den kurulur, durdurulur, kaldırılır; DD-148, DD-150, DD-151):
+Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
 $(summary_modules)
   WireGuard ağları WireGuard → Yapılandır'dan; "Local erişim" açık ağlarda qBittorrent arayüzü
   o ağın sunucu adresinde açılır. Peer ve QR: Konsol ya da Mac'te wireguard.command.

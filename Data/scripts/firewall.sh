@@ -526,7 +526,72 @@ check_nat_chain() {
     check_no_staging_artifacts "$bin"
 }
 
+# DD-156: structured operator rules are separate from the fixed baseline and
+# precede ts-input (whose blanket tailnet ACCEPT would otherwise bypass denies).
+# No Tailscale-owned chain is edited. Values are emitted by the validated helper;
+# no eval, shell commands or arbitrary match expressions are accepted.
+SETTINGS4="" SETTINGS6=""
+load_settings_rules() {
+    [[ -n "${SETTINGS_FILE:-}" ]] || return 0
+    SETTINGS4="$(python3 "$SBIN_DIR/master_settings.py" rules 4 "$WAN_INTERFACE")" || die "Konsol IPv4 kuralları okunamadı"
+    SETTINGS6="$(python3 "$SBIN_DIR/master_settings.py" rules 6 "$WAN_INTERFACE")" || die "Konsol IPv6 kuralları okunamadı"
+}
+apply_settings_rules() {
+    local bin="$1" rules="$2" staging line
+    local -a args
+    [[ -n "${SETTINGS_FILE:-}" ]] || return 0
+    staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}USER-")"
+    "$bin" -w 5 -A "$staging" -i lo -j RETURN
+    "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        read -r -a args <<<"$line"
+        "$bin" -w 5 -A "$staging" "${args[@]}"
+    done <<<"$rules"
+    "$bin" -w 5 -A "$staging" -j RETURN
+    "$bin" -w 5 -I INPUT 1 -j "$staging"
+    while "$bin" -w 5 -C INPUT -j "$CHAIN_SETTINGS" 2>/dev/null; do
+        "$bin" -w 5 -D INPUT -j "$CHAIN_SETTINGS"
+    done
+    if "$bin" -w 5 -L "$CHAIN_SETTINGS" -n >/dev/null 2>&1; then
+        "$bin" -w 5 -F "$CHAIN_SETTINGS"
+        "$bin" -w 5 -X "$CHAIN_SETTINGS"
+    fi
+    "$bin" -w 5 -E "$staging" "$CHAIN_SETTINGS"
+}
+check_settings_rules() {
+    local bin="$1" rules="$2" line expected=3 actual listing ids="" actual_ids
+    local -a args
+    [[ -n "${SETTINGS_FILE:-}" ]] || return 0
+    check_jump_exactly_one "$bin" INPUT "$CHAIN_SETTINGS"
+    [[ "$(input_line "$bin" "$CHAIN_SETTINGS")" == 1 ]] || die "$bin: Konsol kuralları INPUT başında değil"
+    check_rule "$bin" "$CHAIN_SETTINGS" -i lo -j RETURN
+    check_rule "$bin" "$CHAIN_SETTINGS" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        read -r -a args <<<"$line"
+        check_rule "$bin" "$CHAIN_SETTINGS" "${args[@]}"
+        ids="$ids$(sed -n 's/.*--comment \(konsol:[a-zA-Z0-9_-]*\).*/\1/p' <<<"$line") "
+        expected=$((expected + 1))
+    done <<<"$rules"
+    listing="$("$bin" -w 5 -S "$CHAIN_SETTINGS" | grep "^-A $CHAIN_SETTINGS " || true)"
+    actual="$(grep -c . <<<"$listing" || true)"
+    [[ "$actual" -eq "$expected" ]] || die "$bin: Konsol zincirinde beklenmeyen kural var"
+    [[ "$(head -n 1 <<<"$listing")" == "-A $CHAIN_SETTINGS -i lo -j RETURN" &&
+        "$(sed -n 2p <<<"$listing")" == "-A $CHAIN_SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" &&
+        "$(tail -n 1 <<<"$listing")" == "-A $CHAIN_SETTINGS -j RETURN" ]] || die "$bin: Konsol koruma kurallarının sırası bozuk"
+    actual_ids="$(sed -n 's/.*--comment "\{0,1\}\(konsol:[a-zA-Z0-9_-]*\)"\{0,1\}.*/\1/p' <<<"$listing" | tr '\n' ' ')"
+    [[ "$actual_ids" == "$ids" ]] || die "$bin: Konsol kullanıcı kurallarının sırası bozuk"
+}
+
+if [[ -n "${RUNTIME_DIR:-}" ]]; then
+    mkdir -p "$RUNTIME_DIR"
+    exec 7>"$RUNTIME_DIR/firewall.lock"
+    flock -w 5 7 || die "başka bir firewall işlemi sürüyor"
+fi
 load_wg_networks
+resolve_wan_interface
+load_settings_rules
 
 if [[ "$MODE" == check ]]; then
     resolve_wan_interface
@@ -542,6 +607,8 @@ if [[ "$MODE" == check ]]; then
     check_forward_chain ip6tables
     check_nat_chain iptables_nat ${WG_NET4[@]+"${WG_NET4[@]}"}
     check_nat_chain ip6tables_nat ${WG_NET6[@]+"${WG_NET6[@]}"}
+    check_settings_rules iptables "$SETTINGS4"
+    check_settings_rules ip6tables "$SETTINGS6"
     printf 'firewall: kritik politikalar yerinde\n'
     exit 0
 fi
@@ -555,6 +622,8 @@ apply_forward iptables "${CHAIN_STAGING_PREFIX}FW-"
 apply_forward ip6tables "${CHAIN_STAGING_PREFIX}FW6-"
 apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" ${WG_NET4[@]+"${WG_NET4[@]}"}
 apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" ${WG_NET6[@]+"${WG_NET6[@]}"}
+apply_settings_rules iptables "$SETTINGS4"
+apply_settings_rules ip6tables "$SETTINGS6"
 purge_staging_leftovers iptables
 purge_staging_leftovers ip6tables
 purge_staging_leftovers iptables_nat

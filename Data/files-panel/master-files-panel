@@ -33,12 +33,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from master_archives import Archives, ArchiveError
+
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 # DD-141: paylaşım klasörü. <kök>/.pay sunulmaz; yalnız içindeki w/ paylaşım WebDAV'ının
 # köküdür ve kayıt (kayit.json) onun dışında durur. Paylaşılan öge w/ içine göreli bir
 # sembolik bağlantı olarak konur: kopya yok, klasöre sonradan inen dosya kendiliğinden görünür.
-SHARE_SERVED = "w"
-SHARE_REGISTRY = "kayit.json"
 # DD-149: Paylaşım modülü kuruluyken .pay içinde durur (master-modul koyar ve kaldırır).
 # Modül kaydı bu servise kapalıdır (/etc/master-stack 0700); yeni paylaşım yalnız işaret varken açılır.
 SHARE_ENABLED = "acik"
@@ -253,10 +254,11 @@ def guess_encoding(data, name, truncated):
 class Files:
     """Kök altındaki bütün işlemler. Yollar parça listesidir; kök []."""
 
-    def __init__(self, root, trash, share=""):
+    def __init__(self, root, trash, share="", archive=""):
         self.root = root
         self.trash = trash
         self.share = share
+        self.archive = archive
         self.lock = threading.Lock()
 
     # -- yollar
@@ -273,12 +275,14 @@ class Files:
             raise PanelError(403, "çöpe yalnız Çöp sekmesinden erişilir")
         if self.share and parts[0] == self.share:
             raise PanelError(403, "paylaşım klasörüne yalnız Paylaşımlar sekmesinden erişilir")
+        if self.archive and parts[0] == self.archive:
+            raise PanelError(403, "arşiv çalışma alanına erişilemez")
         return parts
 
     def check_new_name(self, parts, name):
         if not valid_name(name) or CONTROL_RE.search(name) or name != name.strip():
             raise PanelError(400, "geçersiz ad (boş olamaz, / içeremez, en çok 255 bayt)")
-        if not parts and name in (self.trash, self.share):
+        if not parts and name in (self.trash, self.share, self.archive):
             raise PanelError(400, "bu ad çöp ve paylaşım klasörü için ayrılmış")
 
     def open_dir(self, parts):
@@ -332,7 +336,7 @@ class Files:
             with os.scandir(fd) as it:
                 names = [e.name for e in it]
             for name in names:
-                if not parts and name in (self.trash, self.share):
+                if not parts and name in (self.trash, self.share, self.archive):
                     continue
                 if not valid_name(name):
                     skipped += 1
@@ -346,25 +350,6 @@ class Files:
         return {"path": "/".join(parts), "entries": entries, "skipped": skipped}
 
     # -- paylaşım (DD-141)
-    def share_dir(self, create):
-        """<kök>/.pay tanıtıcısı; create ise .pay ve .pay/w oluşturulur."""
-        with DirFd(self.open_dir([])) as root:
-            if create:
-                try:
-                    os.mkdir(self.share, 0o755, dir_fd=root)
-                except FileExistsError:
-                    pass
-            fd = os.open(self.share, O_DIR, dir_fd=root)
-        if create:
-            try:
-                os.mkdir(SHARE_SERVED, 0o755, dir_fd=fd)
-            except FileExistsError:
-                pass
-            except BaseException:
-                os.close(fd)
-                raise
-        return fd
-
     def share_enabled(self):
         """Paylaşım modülü kurulu mu: .pay/acik düz bir dosya olarak duruyor mu (bağlantı izlenmez)."""
         if not self.share:
@@ -378,107 +363,14 @@ class Files:
         return stat.S_ISREG(st.st_mode)
 
     def shares(self):
-        """Paylaşım listesi; süresi dolanları ve kayıtta olmayan bağlantıları temizler."""
-        if not self.share:
-            return []
-        try:
-            pay = self.share_dir(create=False)
-        except FileNotFoundError:
-            return []
-        now = int(time.time())
-        keep, changed = [], False
-        with DirFd(pay) as fd:
-            data = read_json_at(fd, SHARE_REGISTRY) or {}
-            items = data.get("items")
-            items = items if isinstance(items, list) else []
-            try:
-                wfd = os.open(SHARE_SERVED, O_DIR, dir_fd=fd)
-            except FileNotFoundError:
-                return []
-            with DirFd(wfd):
-                names = set(os.listdir(wfd))
-                for item in items:
-                    name, path = item.get("name"), item.get("path")
-                    if not isinstance(name, str) or not isinstance(path, str) or name not in names:
-                        changed = True
-                        continue
-                    expires = item.get("expires")
-                    if isinstance(expires, int) and expires <= now:
-                        try:
-                            os.unlink(name, dir_fd=wfd)
-                        except OSError:
-                            pass
-                        changed = True
-                        continue
-                    keep.append(item)
-                for extra in names - {i["name"] for i in keep}:
-                    try:
-                        os.unlink(extra, dir_fd=wfd)
-                    except OSError:
-                        pass
-                    changed = True
-            if changed:
-                write_json_at(fd, SHARE_REGISTRY, {"items": keep})
-        return keep
-
-    def free_share_name(self, base, used):
-        name = base if valid_name(base) else "paylasim"
-        if name not in used:
-            return name
-        stem, dot, ext = name.partition(".")
-        for i in range(2, 200):
-            candidate = "%s-%d%s%s" % (stem, i, dot, ext)
-            if candidate not in used and valid_name(candidate):
-                return candidate
-        raise PanelError(400, "paylaşım için boş ad bulunamadı")
+        """Legacy API: credentials and shares now belong to the root manager."""
+        return []
 
     def share_add(self, parts, days):
-        if not self.share_enabled():
-            raise PanelError(409, "Paylaşım modülü kurulu değil")
-        if not parts:
-            raise PanelError(400, "kökün tamamı paylaşılamaz")
-        with DirFd(self.open_dir(parts[:-1])) as pfd:
-            st = os.stat(parts[-1], dir_fd=pfd, follow_symlinks=False)
-        if not (stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode)):
-            raise PanelError(400, "yalnız klasör ya da dosya paylaşılabilir")
-        items = self.shares()
-        if len(items) >= MAX_SHARES:
-            raise PanelError(400, "en çok %d paylaşım olabilir" % MAX_SHARES)
-        path = "/".join(parts)
-        if any(item.get("path") == path for item in items):
-            raise PanelError(409, "bu öge zaten paylaşımda")
-        name = self.free_share_name(parts[-1], {i["name"] for i in items})
-        now = int(time.time())
-        item = {"name": name, "path": path, "type": "dir" if stat.S_ISDIR(st.st_mode) else "file",
-                "created": now, "expires": (now + days * 86400) if days else None}
-        with DirFd(self.share_dir(create=True)) as fd:
-            with DirFd(os.open(SHARE_SERVED, O_DIR, dir_fd=fd)) as wfd:
-                # .pay/w/<ad> → ../../<yol>: hedef kökün içinde kalır, kopya yapılmaz.
-                os.symlink("/".join([".."] * 2 + parts), name, dir_fd=wfd)
-            try:
-                write_json_at(fd, SHARE_REGISTRY, {"items": items + [item]})
-            except BaseException:
-                with DirFd(os.open(SHARE_SERVED, O_DIR, dir_fd=fd)) as wfd:
-                    try:
-                        os.unlink(name, dir_fd=wfd)
-                    except OSError:
-                        pass
-                raise
-        return item
+        raise PanelError(410, "Klasör paylaşımı Konsol WebDAV bölümüne taşındı.")
 
     def share_remove(self, name):
-        items = self.shares()
-        keep = [i for i in items if i.get("name") != name]
-        if len(keep) == len(items):
-            raise PanelError(404, "böyle bir paylaşım yok")
-        with DirFd(self.share_dir(create=False)) as fd:
-            with DirFd(os.open(SHARE_SERVED, O_DIR, dir_fd=fd)) as wfd:
-                try:
-                    os.unlink(name, dir_fd=wfd)
-                except FileNotFoundError:
-                    pass
-            write_json_at(fd, SHARE_REGISTRY, {"items": keep})
-        return keep
+        raise PanelError(410, "Klasör paylaşımı Konsol WebDAV bölümüne taşındı.")
 
     def used(self):
         """Kökün toplam boyutu (çöp hariç); bütçe aşılırsa None."""
@@ -487,7 +379,7 @@ class Files:
             with os.scandir(fd) as it:
                 names = [e.name for e in it]
             for name in names:
-                if name in (self.trash, self.share) or not valid_name(name):
+                if name in (self.trash, self.share, self.archive) or not valid_name(name):
                     continue
                 try:
                     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -771,7 +663,8 @@ class Panel:
         self.args = args
         self.lock = threading.Lock()
         self.usage_cache = (0.0, None)
-        self.files = Files(args.root, args.trash, args.share)
+        self.files = Files(args.root, args.trash, args.share, getattr(args, "archive_dir", ""))
+        self.archives = Archives(self.files, self.files.archive, rename_noreplace, rmtree_at) if self.files.archive else None
 
     def used(self):
         """İndirilenlerin toplamı; ağaç yürüyüşü USAGE_CACHE_SECONDS boyunca önbellekte."""
@@ -920,7 +813,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     code, result, detail = fn()
             else:
                 code, result, detail = fn()
-        except PanelError as err:
+        except (PanelError, ArchiveError) as err:
             if action:
                 self.audit(user, action, "%s: %s" % (hint, err.message), False)
             self.error(err.code, err.message)
@@ -946,6 +839,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         files = self.panel.files
         if route == "/api/state":
             self.run(user, None, lambda: (200, self.panel.state(), None), lock=False)
+        elif route == "/api/archives" and self.panel.archives:
+            self.run(user, None, lambda: (200, self.panel.archives.status(), None), lock=False)
         elif route == "/api/list":
             self.run(user, None, lambda: (200, files.listing(files.split(arg("path")), arg("dirs") == "1"), None),
                      lock=False)
@@ -1075,6 +970,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         files = self.panel.files
 
+        if route in ("/api/archives", "/api/archives/cancel") and self.panel.archives:
+            def archive_action():
+                manager = self.panel.archives
+                job = manager.submit(data) if route == "/api/archives" else manager.cancel(data.get("id"))
+                return 202, {"job": job}, job["id"]
+            self.run(user, "arsiv", archive_action, lock=False)
+            return
+
         def mkdir():
             parts, name = files.split(data.get("path")), data.get("name")
             files.mkdir(parts, name)
@@ -1160,6 +1063,8 @@ def cmd_serve(args):
         fail("kök mutlak yol, çöp adı noktayla başlayan küçük harfli bir ad olmalı")
     if args.share and (not TRASH_RE.match(args.share) or args.share == args.trash):
         fail("paylaşım klasörü adı noktayla başlayan küçük harfli ve çöpten farklı olmalı")
+    if args.archive_dir and (not TRASH_RE.fullmatch(args.archive_dir) or args.archive_dir in (args.share, args.trash)):
+        fail("arşiv çalışma klasörü noktayla başlayan küçük harfli ve diğer iç alanlardan farklı olmalı")
     # DD-144: geçici klasör kullanıcı alanının kökünde değil, indirme klasörünün
     # altındadır; yol köke göre verilir (ör. downloads/incomplete).
     if args.temp_dir and not all(valid_name(p) for p in args.temp_dir.split("/")):
@@ -1185,6 +1090,7 @@ def main():
     s.add_argument("--root", required=True)
     s.add_argument("--trash", default=".cop")
     s.add_argument("--share", default="")
+    s.add_argument("--archive-dir", default="")
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
     s.add_argument("--temp-dir", dest="temp_dir", default="")

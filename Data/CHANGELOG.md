@@ -6,6 +6,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-25 — Konsol Desktop, built-in sharing and ZIP (v2-129)
+
+- **Added (DD-159):** the approved desktop shell, application launcher, dock
+  and workspace controls; existing live Settings and file operations remain.
+- **Changed:** Files and folder WebDAV are installer-owned built-ins, not
+  installable/removable apps. Files → Paylaşımlar lists all folder accounts.
+  The App Store catalogue is WireGuard and qBittorrent; infrastructure is protected.
+- **Added:** background ZIP creation/extraction, optional nested ZIP expansion,
+  cancellation, result links and restart-persistent 20-job history. Source files
+  are preserved; malformed/unsafe archives and bounded resource overruns fail
+  without publishing partial results. Details: `docs/desktop-and-archives.md`.
+- Upgrade enables both built-ins without resetting existing folder accounts.
+  Same-version reruns preserve history/accounts and avoid unnecessary restarts.
+- **Verified on disposable nrm (Debian 13.7):** portable install, rerun, reboot,
+  real ZIP/DAV requests and browser qBittorrent install/stop/start/remove. Unit,
+  Bats and browser regressions passed; fresh Ubuntu/native clients not certified.
+
+### 2026-09-25 — Files v09 and independent folder WebDAV (v2-128)
+
+- **Added (DD-158):** list/cards, selected-folder details and a WebDAV shares
+  tab. Each folder has its own account, stable URL, RO/RW permission, expiry
+  and pause switch. RW requires explicit deletion/overwrite acknowledgement.
+- Passwords are stored only as salted scrypt hashes in a root-owned registry;
+  a credential-loaded unprivileged server checks each account's folder boundary.
+- **Breaking:** the shared rclone account/root is retired. Existing files stay;
+  recreate folder accounts and update client URLs. Removing a share never deletes
+  its files. Saving accounts interrupts current WebDAV transfers.
+- Protocol/client limits and manual recipient ACL prerequisites are documented
+  in `docs/folder-shares.md`. No Tailscale account policy is changed.
+- User explicitly authorized deployment to disposable `nrm`; verification
+  outcomes are recorded in `SESSION.md`. No fresh Ubuntu/native-client claim.
+
+### 2026-09-25 — Clearer settings and transactional local-domain changes (v2-127)
+
+- **Changed:** firewall listening addresses have short explanations; settings
+  descriptions distinguish permissions, listeners, local names and upstream DNS.
+- **Removed:** the redundant `health.<domain>` Caddy site, DNS name and stage-7
+  probe. Real Konsol static-page and backend/gate checks remain.
+- **Added** (**DD-157**): Caddy's local-domain field and Update action. DNS,
+  Caddy sites, backend Host configuration and staged module templates move
+  together; custom records retain their targets and enabled/disabled state.
+  Passwords, files, VPN profiles and IP-based share links are not changed.
+- A domain-only transaction requires confirmation through the new panel Host
+  within five minutes, otherwise the existing independent guard restores it.
+  An active file backend briefly restarts; stopped modules remain stopped.
+  Tailscale Admin DNS changes are manual and explained before applying.
+- The confirmed domain survives installer re-runs even with an older input
+  file. Tailnet IP refresh and settings writes share a state lock; rollback
+  restores only the domain field, not obsolete IP addresses.
+- **Operator step:** run the v127 installer. No live host upgrade is performed
+  by creating this release; no fresh Ubuntu acceptance run for this revision.
+- **Verification:** 28 worker unit tests, 144 Bats passes (3 macOS skips),
+  production-page browser checks, real Caddy/DNS/both-backend domain round trips
+  in an isolated Debian network namespace, and real scratch systemd recovery.
+
+### 2026-09-24 — Konsol · transactional settings management (v2-126)
+
+- **Added** (**DD-156**): the approved v08 layout is now the live Ayarlar page:
+  Güvenlik Duvarı, read-only Caddy, Dnsmasq and qBittorrent tabs.
+- Firewall port switches and structured IPv4/IPv6 rules operate before
+  Tailscale's general accept. Actual rules, counters and listening sockets
+  are visible; third-party chains are not edited. No raw shell rule input.
+- DNS names can be switched off or added within the private domain. Optional
+  public upstreams resolve other names; missing/disabled private names never
+  go upstream. Installer and module re-runs retain these choices.
+- qBittorrent username, optional password and the default folder for new
+  downloads can be changed. The service is stopped before updating its
+  profile; existing torrents, unrelated settings and files are preserved.
+  A narrow systemd write permission is added for the chosen folder.
+- Changes are reviewed together and need confirmation within 60 seconds.
+  A server-side systemd timer restores unconfirmed settings, even after a
+  browser disconnect or host reboot. Stale edits and concurrent installer/
+  module operations are rejected. Passwords never enter argv or logs.
+- **Verification:** worker unit tests, production-page browser interactions
+  and responsive layouts; real IPv4/IPv6 firewall, dnsmasq and qBittorrent
+  transactions in an isolated network namespace on Debian 13; independent
+  systemd worker/timer checks. No fresh Ubuntu install tested for this revision.
+- **Operator step:** run the v126 installer. This change does not itself
+  deploy to the running server. The frozen v08 HTML remains a reference only.
+
 ### 2026-09-19 — Konsol · Ayarlar: the server's settings, read-only (v2-125)
 
 - **Added** (**DD-155**): an Ayarlar page in Konsol showing the server's

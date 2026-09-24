@@ -4,6 +4,128 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-25 — v2-129, Konsol Desktop and built-in ZIP deployed to nrm (DD-159):**
+- User explicitly requested implementation, deployment and tests, superseding
+  the previous mockup-only restriction. No commit/push requested. Preserved the
+  pre-existing dirty v126–128 work; no frozen version or operator input accessed.
+- Desktop launcher/dock/window controls wrap the existing live pages. Files,
+  folder WebDAV and ZIP are built-ins; only WireGuard/qBittorrent are installable
+  App Store apps. All accounts are visible under Files → Paylaşımlar.
+- Added `master_archives.py` and `arsiv.js`: bounded background ZIP/nested ZIP,
+  cancel/status/result links, atomic no-replace publication, private staging and
+  20-job history. Exact limits/recovery: `docs/desktop-and-archives.md`.
+- Installer uses `master-modul yerlesik`; preserves internal IDs/templates for
+  existing settings/domain/firewall consumers. Public module verbs refuse both
+  built-ins. Rerun does not bounce unchanged healthy services or reset data.
+- Deployed twice through the exported portable launcher using scratch
+  SSH_HOST=nrm, LOCAL_DOMAIN blank, full-upgrade default no, confirmation E.
+  Both completed exit 0. Canonical server tree and installed runtime are v129.
+  `nrm` is Debian 13.7, kernel 6.12.107+deb13-amd64, tailnet 100.91.157.4, ayc.
+- Verification: 59 Python tests pass; 15 archive tests also pass against the
+  installed Debian Python 3.13 backend. Bats: 147 cases, 144 pass, 3 macOS
+  skips for missing timeout. Bash/ShellCheck/JS syntax and diff checks pass.
+- Fixture browser regressions pass Files forms/list/cards and four-tab Settings.
+  Real browser tests pass ZIP create/extract, failed-target correction, shares,
+  launcher/dock/window controls, Settings, five widths and dark mode. Real App
+  Store qBittorrent install → stop → start → remove passed. It was absent before
+  and remains unregistered afterward; package/profile retained, no data deletion.
+  WireGuard was absent and not installed by this task.
+- Live ZIP checks pass round trip, nested on/off/depth, collision policies,
+  malformed/path attacks, atomic rollback and cancellation. Existing v128 test
+  DAV accounts retained IDs/hashes/policies/pause through upgrade, rerun and
+  reboot; active reader works, paused writer is denied.
+- Same-version rerun retained both service InvocationIDs and byte-identical
+  archive history/share registry. Real reboot changed boot ID; all five core/
+  data services returned active, zero failed units, firewall check passed and
+  both persistence suites passed. No Tailscale account/ACL changes.
+- Removed only generated DAV/archive test trees, accounts and private manifests;
+  synthetic files are not recoverable, ordinary archive history is retained.
+  No user's files were removed. Built-in shares are running with an empty registry.
+- Portable archive SHA256:
+  `bbf1d46a3fe1b803e80e8a17e363042eb2f2b39e2ada42ece7303a3896522d66`.
+  Root and Data/app exports match. Prior untracked v128 export was copied to
+  `/tmp/konsol-v129-deploy.3JVo6X/previous-v128.command` before normal exporter
+  pruning. Scratch deployment inputs remain there without service credentials.
+- Fresh Ubuntu install, native Finder/Infuse clients, recipient ACL acceptance
+  and a live interrupted-job reboot are not claimed (job recovery has unit tests).
+
+**2026-09-25 — v2-128, Files v09 and folder WebDAV deployed to nrm (DD-158):**
+- User requested implementation/server update and reaffirmed disposable-test
+  authorization: data loss on `nrm` is acceptable until explicitly revoked.
+  Recorded in `CLAUDE.md`; other hosts and Tailscale account policies remain out
+  of scope. No commit/push requested. Existing dirty v126/v127 work preserved.
+- Files defaults to a list with selected-item details, optional cards and a
+  separate WebDAV tab. Existing upload/text/move/rename/trash actions remain.
+- Root worker owns per-folder usernames, hash-only passwords, stable IDs,
+  RO/RW, expiry and pause; unprivileged descriptor-based Python WebDAV serves
+  them on the existing Caddy tailnet port. Legacy shared rclone accounts/URLs
+  are retired. Actual boundaries and protocol/client limits: `docs/folder-shares.md`.
+- Live discovery: Debian 13.7, kernel 6.12.107+deb13-amd64, Tailscale
+  100.91.157.4, domain ayc; v127 and only the file-manager module were present.
+  Installed v128 and the Paylaşım module. WireGuard/qBittorrent were not installed
+  by this task. Operator `kurulum/kurulum.env` was never accessed: scratch input
+  SSH_HOST=nrm, blank LOCAL_DOMAIN (defaults), full-upgrade default no, E to confirm.
+- Live rapid-update test exposed systemd start-limit-hit: explicit account
+  renewals now reset its counter, wait for HTTP 401 readiness and roll back on
+  failure. A crashed registered-running service is recovered; module-stopped
+  services stay stopped. Corrected v128 was re-exported and redeployed.
+- Verification: 44 Python tests passed on macOS/OpenSSL Python and real Debian
+  Python 3.13; Bats 147 cases (144 passed, 3 macOS timeout skips); Bash/ShellCheck/
+  JS syntax and diff whitespace clean. Production UI fixtures passed settings
+  and Files forms/list/cards/5 widths/dark mode. Real browser on panel.ayc passed
+  create → edit RW → pause → remove, without modifying media files.
+- Real Caddy + systemd worker tests passed separate credentials, RO refusal,
+  RW mkdir/upload/overwrite/file-copy/move/delete, Unicode, ranges, cross-account/
+  Destination/traversal/symlink refusal, rotation, pause and API gates. Registry
+  remained 0600 root; test passwords absent from registry/env/argv/service logs.
+- Corrected installer rerun and a cold reboot passed: byte-identical share
+  registry (IDs/hashes/policies/expiry/paused state), active reader works, paused
+  writer denied; all five core/data services active, firewall check passes,
+  zero failed units. The canonical `/root/debian-server-installer` tree is v128.
+- Temporary test accounts, private test manifests and `dav-test-*` folders were
+  removed after verification. Paylaşım remains enabled/running with an empty
+  registry, ready for the user's folders; the live panel returns HTTP 200.
+- Portable archive SHA256:
+  `035560de5838809dc4e39a2db15a95c9ecbd28df4f10a521063388e3867ad733`.
+  Root and Data/app exports are identical. No embedded account/data backup.
+- No fresh Ubuntu install, Finder/Infuse native-client or recipient ACL
+  certification in this turn. No Tailscale policy changes. The old prototype
+  is frozen; production is a limited DAV subset, not full conformance.
+
+**2026-09-25 — v2-127, settings copy and local-domain update (DD-157):**
+- Firewall listener-address explanations and clearer settings copy. Removed
+  the redundant health site/name/probe; real panel/API checks stay.
+- Caddy local-suffix form updates DNS, custom/disabled names, active/staged
+  Caddy/module files and both backend Host configurations. Five-minute new-Host
+  confirmation; independent rollback on disconnect/timeout/reboot. Shared state
+  lock prevents tailnet refresh races; rollback preserves current tailnet IPs.
+- Confirmed domain overrides stale installer input on re-runs. No passwords,
+  VPN profiles, files or IP-based share URLs changed. Tailscale Admin DNS is a
+  manual prerequisite; the UI explains it and retains old/new recovery links.
+- Workstation unit/browser/Bats verification and isolated Debian Caddy/DNS/API
+  tests; no host deployment, no fresh Ubuntu acceptance and no commit requested.
+- Results: 28 worker tests passed; all 147 Bats cases checked (144 passed,
+  3 skipped because macOS lacks `timeout`); shellcheck, Bash/JS syntax and
+  production-page desktop/mobile browser checks passed. Real isolated Caddy
+  reload + dnsmasq + both backend Host/header gates passed, as did real transient
+  systemd worker/timer recovery. Test processes and scratch units were cleaned.
+
+**2026-09-24 — v2-126, approved v08 settings implemented (DD-156):**
+- Four live Ayarlar tabs; port overrides/all rules+listeners, local DNS
+  records and optional upstreams, qBittorrent account/default folder. Caddy
+  remains read-only. Root helper owns validated transactions; an independent
+  systemd timer restores unconfirmed changes. Installer/module re-runs consume
+  confirmed preferences. No portable backup or embedded credentials added.
+- Verified real firewall IPv4/IPv6/order/Tailscale preservation, DNS forwarding
+  and private-zone isolation, qBittorrent login/hash/path/rollback in a private
+  network namespace with scratch profiles on Debian 13 `nrm`. Real systemd
+  worker and timer tested separately against scratch transaction files.
+  Existing host services and operator settings were not changed; v126 is not
+  deployed. Ubuntu fresh-install acceptance remains outstanding.
+- Workstation: settings unit tests, HTTP gate/secret handling regression tests,
+  production UI Playwright flow and responsive/dark layouts. Frozen v08 HTML
+  remains sample-only. User requested implementation/version, not a commit.
+
 **2026-09-08 — v2-74, OS-aware install (live-verified on `nrm`):**
 Full OS-awareness + optimisation review written to
 [`docs/os-aware-review.md`](docs/os-aware-review.md), based on source review

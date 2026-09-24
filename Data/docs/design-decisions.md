@@ -6832,6 +6832,142 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-159: Desktop shell with protected Files, sharing and bounded ZIP (2026-09-25)
+
+- **Decision (v2-129):** implement the approved desktop prototype after explicit
+  authorization to deploy/test on `nrm`. A lightweight single-workspace web shell,
+  not KDE; existing Settings and backend authority boundaries are retained.
+- Files and folder WebDAV are permanent panel capabilities. ZIP is part of Files,
+  not a separately installed unpacker. Only WireGuard/qBittorrent remain in the
+  public App Store catalogue; infrastructure cannot be removed from its UI/API.
+- Retain the internal `dosya`/`paylasim` template paths and registry rows so
+  domain renaming, status and firewall consumers remain compatible. The installer
+  activates/checks both; unchanged reruns do not bounce healthy services or
+  rewrite account/history data. Older stopped instances become enabled built-ins.
+  This supersedes DD-148/150/158's optional Files/WebDAV lifecycle only.
+- Use a stdlib ZIP worker inside the unprivileged file service, with one job at
+  a time, global byte/entry/depth/deadline limits, early central-directory checks
+  and descriptor-safe access. Atomic no-replace publication avoids half-extracted
+  visible results; errors/cancellation discard private staging. This is bounded
+  ZIP support, not an arbitrary-format archive daemon or a filesystem snapshot.
+- `/srv/.arsiv` is private staging and bounded history, not a backup. Installer
+  permission repair excludes it. Restart records interruption rather than claiming
+  to resume work. Source ZIPs remain, including nested ZIPs; unsafe duplicates,
+  links and cross-device paths fail closed.
+- Exact limits, API and recovery caveats: `desktop-and-archives.md`.
+
+### DD-158: Independent folder accounts and descriptor-safe WebDAV (2026-09-25)
+
+- **Decision (v2-128):** implement Files v09 and replace the single shared
+  account with a bounded folder registry, separate users, RO/RW and stable IDs.
+  The user authorized implementation and deployment to disposable `nrm`.
+- **Implementation choice:** reuse the existing Python stdlib backend approach
+  with a descriptor-based DAV handler, not the proposal's tentative per-share
+  rclone processes. A single credential-loaded service avoids per-share ports,
+  Caddy configuration and process lifecycle. Root management and unprivileged
+  data access stay separate; hashes never go to the file-manager API/browser.
+- **Trade-off:** filesystem isolation between shares is application-level,
+  not one OS sandbox per account. The supported DAV subset deliberately lacks
+  locks, PROPPATCH and directory COPY; native-client acceptance is still required.
+  No claim of full WebDAV compliance. See `folder-shares.md` for exact limits.
+- Per-request root birth-time/inode checks fail closed on a replaced folder;
+  explicit path editing keeps the share ID. Parent/child grants are rejected.
+  Expiry runs on access/transfer chunks. Registry mutation restarts the active
+  server and cuts existing transfers; stopped modules stay stopped.
+- Passwordless Konsol remains an administrator interface. Recipient access must
+  be restricted to WebDAV by manually reviewed Tailscale policy; the installer
+  does not edit policy. Legacy broad accounts/URLs are not kept as a bypass.
+- Supersedes DD-141/149/152's common-account, writable-symlink-root and rclone
+  details, not their Tailscale-only publication or module lifecycle boundaries.
+
+### DD-157: Rename the local domain as a confirmed transaction (2026-09-25)
+
+- **Request:** explain firewall addresses, remove the unnecessary health site,
+  and let the operator rename `ayc` from the Caddy tab. The static v08 mockup
+  remains frozen; this extends the production implementation only.
+- **Health:** the standalone `ok` response duplicates stage 7's real Konsol
+  page and backend checks. Remove its site, DNS record and dedicated probe;
+  retain the stronger page/API/Host/header checks. An unmatched Host may receive
+  an empty Caddy response; HTTP status alone is not evidence of a health route.
+- **Scope:** a single validated local suffix, not an arbitrary Caddy editor or
+  public-domain/HTTPS workflow. All installer-owned active and staged names move
+  together. Custom DNS targets and disabled state survive; account/profile/data
+  files and IP-based share links are not part of the write set.
+- **Transaction:** use DD-156's worker, durable snapshots and independent guard,
+  but prohibit combining a domain change with other settings. Give five minutes
+  for a new-address connection. Only the HTTP Host supplied by the server, not
+  one in the client's JSON body, proves the new panel name at confirmation.
+  No retained aliases. The root backend reads state dynamically and is not
+  restarted; Caddy reloads gracefully. Restart the file backend only if active,
+  since its allowed Host is a startup argument. Warn about active file transfers.
+- **Persistence:** `SETTINGS_FILE.domain` becomes authoritative only on commit,
+  and overrides stale installer input on re-runs. The portable installer never
+  copies or rewrites the operator's input file. Module renderings are included
+  so reinstalling a module cannot reintroduce the old suffix.
+- **Concurrency/recovery:** settings and tailnet refresh share `state.lock`;
+  refresh skips a busy cycle. Rollback replaces only `LOCAL_DOMAIN`, preserving
+  any newly detected Tailscale addresses. File snapshots and commit-marker crash
+  recovery retain DD-156's behavior. A stopped file module is never started.
+- **Manual boundary:** the user must first add the new restricted DNS suffix in
+  Tailscale Admin and retain the old mapping until successful confirmation.
+  The UI shows both URLs even if the old request disconnects. No Tailscale
+  account/ACL writes are attempted. See [Tailscale DNS reference](https://tailscale.com/docs/reference/dns-in-tailscale)
+  and [Caddy reload](https://caddyserver.com/docs/command-line#caddy-reload).
+
+### DD-156: Transactional settings management in Konsol (2026-09-24)
+
+- **Context:** the operator approved the four-tab v08 prototype and then
+  requested implementation and a version bump. This supersedes DD-155's
+  read-only restriction for firewall, DNS and the selected qBittorrent fields;
+  Caddy and third-party firewall chains remain read-only.
+- **One persistent owner:** `SETTINGS_FILE` holds confirmed firewall overrides
+  and DNS choices. The installer, module DNS rendering and firewall refresh
+  consume it, rather than resetting it. qBittorrent's own profile remains
+  its account/path source; no duplicate account store or backup exporter.
+- **Safety transaction:** a separate systemd worker consumes JSON on stdin,
+  under install/module/settings locks. Before any mutation, root-only
+  `SETTINGS_PENDING_FILE` records the previous affected files, service state,
+  candidate policy, boot ID and monotonic deadline. A permanent systemd timer
+  recovers abandoned work (180 s apply deadline, then 60 s to confirm).
+  Failed rollback remains pending for retry. A commit marker makes recovery
+  safe across a crash between writing the confirmed file and deleting pending.
+- **Confirmation:** trusted proxy client information must identify a tailnet
+  address. An existing TCP connection alone is not proof that the next one
+  will work: effective denies of the confirming client's Caddy/DNS ports, or
+  disabling the console's own DNS name, cannot be committed. This is not an
+  external port scan or a test of Tailscale ACLs. The UI separates permissions
+  and listeners, and warns before applying exposure changes.
+- **Firewall:** a dedicated `CHAIN_SETTINGS`, before `ts-input`, holds only
+  validated TCP/UDP port rules (family, scope, optional source CIDR, action).
+  Loopback/established flows return to the baseline; ICMPv6 is not editable.
+  No Tailscale/third-party chain is rewritten. All live table rules/counters
+  are visible; only operator port overrides are editable. Ordering and exact
+  membership are verified. The existing refresh mechanism consumes overrides.
+- **DNS:** base/module interface-name entries retain their owner and get a
+  reversible disabled marker; custom exact records and upstream IPs have a
+  separate file. Only names inside `LOCAL_DOMAIN` may be added. Base/module
+  name collisions, non-public upstreams and configured self-addresses are
+  rejected. `no-resolv` and `local=/DOMAIN/` stay; forwarding never leaks
+  disabled/missing private names or changes Tailscale Admin DNS. DNS is
+  syntax-checked before restart. No public listener is added.
+- **qBittorrent:** stop, snapshot the flushed profile, change only requested
+  keys, restart if it was running. New passwords use qBittorrent's PBKDF2
+  format; absent password means preserve. UI/API/logs never return a hash or
+  new password. Snapshot files contain only existing profile data, mode 0600.
+  Descriptor-relative no-follow file access protects the user-owned profile
+  path. Download targets must exist, be canonical and non-hidden, and lie
+  under downloads/media; a write probe runs as the service UID, with no
+  recursive ownership changes. A dedicated unit drop-in grants that path.
+  Existing torrent data and incomplete locations are never migrated.
+- **Scope:** new HTTP APIs retain Host, `X-Konsol`, same-origin and no-store
+  protections. Drafts are browser-memory-only. No new dependency, Docker,
+  reconciliation engine, automatic deployment or server backup is introduced.
+- **Verification:** isolated real-binary Debian 13 tests, including actual
+  qBittorrent login with the new hash, DNS forwarding/private-zone separation,
+  firewall order/tailscale preservation and rollback; real systemd timer/worker;
+  Python/Bats tests and Playwright on the production page at desktop/mobile
+  widths. Ubuntu was not freshly provisioned for this revision.
+
 ### DD-155: Konsol shows the server's settings, read-only (2026-09-19)
 
 - **Context:** the user wanted to see, in Konsol, the firewall rules, the

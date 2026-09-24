@@ -451,7 +451,7 @@ EOF
     grep -q 'CHAIN_STAGING_PREFIX}IN-' "$V2_ROOT/scripts/firewall.sh"
 }
 
-@test "qBittorrent and Paylaşım run as the downloads uid" {
+@test "qBittorrent and WebDAV run as the downloads uid" {
     # DD-151: the package's template unit runs as the downloads account's own name.
     body="$(awk '/^torrent_unit_name\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
     grep -qF 'getent passwd "$DOWNLOADS_UID"' <<<"$body"
@@ -828,39 +828,20 @@ EOF
     grep -q 'bind-dynamic' "$V2_ROOT/templates/dnsmasq.conf"
 }
 
-@test "the only WebDAV is the share module: a sandboxed host rclone, share root, Caddy name and TS IP:SHARE_PORT" {
-    # DD-142: one rclone; DD-149: the Paylaşım module; DD-152: a host service, no container.
-    local unit="$V2_ROOT/modules/paylasim/master-paylasim.service" caddy="$V2_ROOT/modules/paylasim/paylasim.caddy" line
-    run ! grep -qE 'WEBDAV_(PORT|USER|PASS|HTPASSWD_FILE|MIN_PASSWORD_LENGTH)' \
-        "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" \
-        "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf"
-    run ! grep -q 'webdav' "$V2_ROOT/templates/dnsmasq.conf"
-    [ ! -e "$V2_ROOT/templates/compose.yaml" ]
-    [ ! -e "$V2_ROOT/modules/paylasim/compose.yaml" ]
-    run ! grep -q 'paylas\.' "$V2_ROOT/templates/dnsmasq.conf"
-    [ "$(grep -c '^http://paylas' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
-    # Serves only the share root, read-only, on loopback, with the account as a systemd credential.
-    grep -qxF 'ExecStart=__RCLONE_BIN__ serve webdav __SERVER_ROOT__/__SHARE_DIR__/w --config=/dev/null --addr=127.0.0.1:__SHARE_PORT__ --htpasswd=%d/htpasswd --dir-cache-time=10s --copy-links --read-only' "$unit"
-    grep -qx 'LoadCredential=htpasswd:__SHARE_HTPASSWD_FILE__' "$unit"
-    for line in 'ProtectSystem=strict' 'ProtectHome=true' 'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
-        'IPAddressDeny=any' 'IPAddressAllow=localhost' 'TemporaryFileSystem=__SERVER_ROOT__/__FILES_PANEL_TRASH__:ro'; do
-        grep -qx "$line" "$unit"
+@test "the only WebDAV is a credential-loaded unprivileged host service behind Caddy" {
+    local unit="$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qxF 'ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__' "$unit"
+    for line in 'LoadCredential=registry:__SHARE_STATE_FILE__' 'User=__DOWNLOADS_UID__' \
+        'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
+        'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
+        'IPAddressDeny=any' 'IPAddressAllow=localhost' 'ReadWritePaths=__SERVER_ROOT__' \
+        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __SERVER_ROOT__/__SHARE_DIR__'; do
+        grep -qxF "$line" "$unit"
     done
-    # Start returns only once rclone runs as the service user; a stop (143) is not a failure.
-    grep -qx 'Type=exec' "$unit"
-    grep -qx 'SuccessExitStatus=143' "$unit"
-    # An inaccessible path fails the whole listing (measured); nothing is writable.
-    run ! grep -qE '^(InaccessiblePaths|ReadWritePaths)=' "$unit"
-    # The unit names the rclone version: a version bump changes it and re-applies the share.
-    grep -q '^Description=.*rclone __RCLONE_VERSION__' "$unit"
-    # Caddy: the name and the Infuse address; the port is literal, the address stays the env placeholder.
-    grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$caddy"
-    grep -q 'reverse_proxy 127.0.0.1:__SHARE_PORT__' "$caddy"
-    run ! grep -q '{$SHARE_PORT}' "$caddy"
+    grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$V2_ROOT/modules/paylasim/paylasim.caddy"
     grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/modules/paylasim/dnsmasq.conf"
-    run ! grep -q 'master-webdav' "$V2_ROOT/install.sh"
-    # The installer's old share checks moved into master-modul.
-    [ "$(grep -cE 'wait_share_healthy|assert_share_network|assert_share_readonly_runtime' "$V2_ROOT/install.sh")" -eq 0 ]
+    [ "$(grep -c '^http://paylas' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
+    [ ! -e "$V2_ROOT/modules/paylasim/compose.yaml" ]
 }
 
 @test "IPv6 INPUT is checked with the same WAN-scoped shape" {
@@ -1077,17 +1058,11 @@ EOF
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
 }
 
-@test "base packages are only what the base uses; htpasswd comes with Paylaşım" {
-    # DD-153: no gnupg (armored Caddy key), no gawk (mawk is enough), no apache2-utils in the base.
+@test "base packages include the Python runtime used by WebDAV without htpasswd" {
     base="$(awk '/retry "apt-base"/{p=1} p{print} p && !/\\$/{exit}' "$V2_ROOT/install.sh")"
     grep -q 'dnsutils unattended-upgrades python3' <<<"$base"
     run ! grep -qwE 'gnupg|gawk|apache2-utils' <<<"$base"
-    [ "$(grep -c 'share_tools || fail_step' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
-    grep -qF 'apt_install apache2-utils' "$V2_ROOT/scripts/master-modul"
-    # acl may be installed only as a migration helper inside the purge path.
-    stage1="$(awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh")"
-    [ -n "$stage1" ]
-    run ! grep -qE '\bacl\b' <<<"$stage1"
+    run ! grep -q 'share_tools' "$V2_ROOT/scripts/master-modul"
 }
 
 @test "exporter embeds archive sha256 and stages root-level runtime" {
@@ -1119,12 +1094,8 @@ EOF
     # DD-149: the share's publish surface is checked by master-modul when the module is installed.
     [ "$(grep -cE 'docker port paylasim|Host: paylas\.|:\$\{SHARE_PORT\}/' "$V2_ROOT/install.sh")" -eq 0 ]
     body="$(awk '/^share_verify\(\)/,/^}$/' "$mm")"
-    grep -qF '[[ "$uid" == "$DOWNLOADS_UID" ]]' <<<"$body"
-    grep -qF '"$cmd" == *" --read-only "*' <<<"$body"
-    grep -qF 'systemctl show -p TemporaryFileSystem --value "$SHARE_UNIT"' <<<"$body"
-    grep -qF '[[ "$socks" == "127.0.0.1:$SHARE_PORT" ]]' <<<"$body"
+    grep -qF '[[ "$uid" == "$DOWNLOADS_UID" && "$code" == 401 ]]' <<<"$body"
     grep -qF 'http_code "http://127.0.0.1:$SHARE_PORT/"' <<<"$body"
-    grep -qF '[[ "$code" == 207 ]]' <<<"$body"
     names="$(awk '/^share_verify_names\(\)/,/^}$/' "$mm")"
     grep -qF 'http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/"' <<<"$names"
     grep -qF 'http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/"' <<<"$names"
@@ -1168,25 +1139,13 @@ EOF
     [ "$(grep -c '^http://' "$V2_ROOT/templates/Caddyfile.wg")" -eq 1 ]
 }
 
-@test "the share's rclone is pinned by version and checksum and verified before it runs" {
-    # DD-152: no images at all; rclone comes from its official release, checked against defaults.env.
-    run ! grep -qE '_IMAGE=' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_SHA256_AMD64="[0-9a-f]{64}"$' "$V2_ROOT/config/defaults.env"
-    grep -qE '^RCLONE_SHA256_ARM64="[0-9a-f]{64}"$' "$V2_ROOT/config/defaults.env"
-    grep -qx 'RCLONE_DOWNLOAD_URL="https://downloads.rclone.org"' "$V2_ROOT/config/defaults.env"
-    for k in RCLONE_VERSION RCLONE_SHA256_AMD64 RCLONE_SHA256_ARM64 RCLONE_DOWNLOAD_URL RCLONE_BIN; do
-        awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\\\$$k"
-    done
-    body="$(awk '/^share_rclone\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
-    grep -qF "curl -fsSL --proto '=https' --tlsv1.2" <<<"$body"
-    grep -qF 'sha256sum -c --quiet' <<<"$body"
-    # The archive is opened only after its checksum matched, and the binary is swapped in whole.
-    awk '/sha256sum -c --quiet/ {s = NR} /python3 - "\$tmp\/rclone.zip"/ {z = NR} END {exit !(s && z && s < z)}' <<<"$body"
-    grep -qF '[[ "$have" != "rclone v$RCLONE_VERSION" ]] || return 0' <<<"$body"
-    grep -qF 'mv -f -- "$RCLONE_BIN.yeni" "$RCLONE_BIN"' <<<"$body"
-    # The distribution's old rclone package is never used.
-    run ! grep -qE 'apt_install .*rclone|apt-get install .*rclone' "$V2_ROOT/scripts/master-modul" "$V2_ROOT/install.sh"
+@test "WebDAV uses packaged Python with no downloaded executable or shared plaintext password" {
+    run ! grep -qE '^RCLONE_|^SHARE_ACCOUNT=|^SHARE_PASSWORD_LENGTH=' "$V2_ROOT/config/defaults.env"
+    run ! grep -qE 'share_rclone|share_write_account|apt_install apache2-utils' "$V2_ROOT/scripts/master-modul"
+    grep -qx 'SHARE_STATE_FILE="/etc/master-stack/webdav.json"' "$V2_ROOT/config/defaults.env"
+    grep -q 'hashlib.scrypt' "$V2_ROOT/panel/master_shares.py"
+    grep -q 'hmac.compare_digest' "$V2_ROOT/panel/master_shares.py"
+    grep -q 'parser.error("WebDAV root olarak çalıştırılamaz.")' "$V2_ROOT/panel/master_webdav.py"
 }
 
 @test "refresh timer has no no-op Persistent key" {
@@ -1664,12 +1623,12 @@ mm() {
     run mm liste
     [ "$status" -eq 0 ]
     # Catalogue order is Konsol's order (DD-149, DD-150); DD-152: no Docker runtime, no Arşiv açıcı.
-    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'dosya wireguard torrent paylasim ' ]
-    [ "$(cut -f2 <<<"$output" | tr '\n' ' ')" = 'konsol konsol host host ' ]
-    [ "$(grep '^paylasim' <<<"$output")" = "$(printf 'paylasim\thost\tyok\t-\t-\t-\t-\t-')" ]
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'wireguard torrent ' ]
+    [ "$(cut -f2 <<<"$output" | tr '\n' ' ')" = 'konsol host ' ]
+    [ "$(grep -c '^paylasim' <<<"$output")" -eq 0 ]
     run mm kaldir paylasim
     [ "$status" -ne 0 ]
-    case "$output" in *"kurulu değil"*) ;; *) false ;; esac
+    case "$output" in *"bilinmeyen modül"*) ;; *) false ;; esac
     run mm baslat torrent
     [ "$status" -ne 0 ]
     # Only catalogued ids and known commands are accepted.
@@ -1687,16 +1646,9 @@ mm() {
     [ "$(grep -vE '^[[:space:]]*#' "$V2_ROOT/scripts/master-modul" | grep -ciE 'docker|compose|container|unpackerr')" -eq 0 ]
 }
 
-@test "master-modul keeps every change under one lock and deletes only what it owns" {
-    # Every change runs under the one module lock (kur, baslat, durdur, kaldir, parola, uygula).
+@test "master-modul keeps lifecycle changes locked and deletes only owned data" {
     [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 6 ]
     grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
-    # The only deletions: rclone's own download folder (DD-152), the share's links (never
-    # followed), and with --veri the trash contents, the WireGuard keys (DD-150) and
-    # qBittorrent's profile (DD-151).
-    [ "$(grep -cE 'rm -r|-delete' "$V2_ROOT/scripts/master-modul")" -eq 8 ]
-    [ "$(grep -c 'rm -rf -- "$tmp"' "$V2_ROOT/scripts/master-modul")" -eq 4 ]
-    grep -qF 'tmp="$(mktemp -d)"' "$V2_ROOT/scripts/master-modul"
     grep -qF '[[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$cop" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
     grep -qF 'find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
@@ -1705,35 +1657,27 @@ mm() {
 }
 
 share_fixture() {
-    # DD-149, DD-152: master-modul's Paylaşım module against fakes: systemctl, ps, ss, caddy,
-    # dnsmasq, curl (also the rclone download), dig, dpkg, install and sha256sum; real htpasswd,
-    # python3 and a real release-style zip whose SHA256 is pinned in the state file. Every fake
-    # logs its argv so the tests can prove the password never reaches a command line.
-    command -v htpasswd >/dev/null || skip "htpasswd yok"
+    # Real registry preparation; fake host services and network probes.
     modul_fixture
     mkdir -p "$TMP/mods/paylasim" "$TMP/etc" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/units" "$TMP/lib" \
         "$TMP/srv/.pay/w" "$TMP/srv/downloads"
-    printf '[Service]\nExecStart=%s/lib/rclone serve webdav\n' "$TMP" >"$TMP/mods/paylasim/master-paylasim.service"
+    printf '[Service]\nExecStart=/usr/bin/python3 %s/lib/master_webdav.py\n' "$TMP" >"$TMP/mods/paylasim/master-paylasim.service"
     printf 'http://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\treverse_proxy 127.0.0.1:61010\n}\n' >"$TMP/mods/paylasim/paylasim.caddy"
     printf 'interface-name=paylas.ayc,tailscale0\n' >"$TMP/mods/paylasim/dnsmasq.conf"
     : >"$TMP/caddy/Caddyfile"
-    # A release archive like rclone's: one folder holding the binary and its papers.
-    python3 - "$TMP/rclone.zip" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], "w") as z:
-    z.writestr("rclone-v1.75.1-linux-amd64/rclone", '#!/bin/bash\n[ "$1" != version ] || echo "rclone v1.75.1"\n')
-    z.writestr("rclone-v1.75.1-linux-amd64/README.txt", "rclone\n")
-PY
-    local sum
-    sum="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TMP/rclone.zip")"
+    cp "$V2_ROOT/panel/master_shares.py" "$TMP/lib/master_shares.py"
     cat >>"$TMP/mstate.env" <<EOF
 SERVER_ROOT=$TMP/srv
 SHARE_DIR=.pay
 SHARE_PORT=61010
 SHARE_HTPASSWD_FILE=$TMP/etc/paylasim.htpasswd
 SHARE_CRED_FILE=$TMP/etc/paylasim.cred
-SHARE_ACCOUNT=paylasim
-SHARE_PASSWORD_LENGTH=20
+SHARE_STATE_FILE=$TMP/etc/webdav.json
+SBIN_DIR=$TMP/lib
+TORRENT_TEMP_DIR=incomplete
+TORRENT_PROFILE_DIR=$TMP/profile
+DOWNLOADS_PATH=$TMP/srv/downloads
+SETTINGS_PENDING_FILE=$TMP/pending
 STATE_DIR=$TMP/etc
 CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
@@ -1743,29 +1687,12 @@ TAILSCALE_IPV4=100.64.0.7
 UNIT_DIR=$TMP/units
 DOWNLOADS_UID=1000
 FILES_PANEL_TRASH=.cop
-RCLONE_VERSION=1.75.1
-RCLONE_SHA256_AMD64=$sum
-RCLONE_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
-RCLONE_DOWNLOAD_URL=https://downloads.rclone.org
-RCLONE_BIN=$TMP/lib/rclone
 EOF
     cat >"$TMP/mbin/curl" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/curl-calls"
 printf 'curl %s\n' "\$*" >>"$TMP/order"
-case " \$* " in
-    *" -fsSL "*)
-        [ ! -e "$TMP/download-fail" ] || exit 22
-        out=""
-        prev=""
-        for a in "\$@"; do [ "\$prev" != -o ] || out="\$a"; prev="\$a"; done
-        if [ -e "$TMP/bad-archive" ]; then printf 'bozuk\n' >"\$out"; else cp "$TMP/rclone.zip" "\$out"; fi ;;
-    *" -K - "*)
-        IFS= read -r line
-        pw="\$(sed -n 's/^paylasim://p' "$TMP/etc/paylasim.cred")"
-        if [ "\$line" = "user = \"paylasim:\$pw\"" ]; then printf 207; else printf 401; fi ;;
-    *) printf 401 ;;
-esac
+printf 401
 EOF
     cat >"$TMP/mbin/systemctl" <<EOF
 #!/bin/bash
@@ -1787,7 +1714,6 @@ EOF
 case "\$2" in
     uid=)
         if [ -e "$TMP/uid-seen" ]; then echo " 1000"; else touch "$TMP/uid-seen"; echo " 0"; fi ;;
-    args=) echo "$TMP/lib/rclone serve webdav $TMP/srv/.pay/w --config=/dev/null --addr=127.0.0.1:61010 --htpasswd=/run/credentials/master-paylasim.service/htpasswd --dir-cache-time=10s --copy-links --read-only" ;;
 esac
 EOF
     # Caddy owns the Infuse address; only the share process's own sockets count.
@@ -1807,18 +1733,6 @@ for a in "$@"; do
 done
 exec /usr/bin/install "${args[@]}"
 EOF
-    cat >"$TMP/mbin/sha256sum" <<'EOF'
-#!/bin/bash
-# GNU "sha256sum -c --quiet" over "HASH  FILE" lines from stdin.
-[ "$1" = -c ] || exit 2
-python3 -c '
-import hashlib, sys
-ok = True
-for line in sys.stdin:
-    h, f = line.rstrip("\n").split("  ", 1)
-    ok = ok and hashlib.sha256(open(f, "rb").read()).hexdigest() == h
-sys.exit(0 if ok else 1)'
-EOF
     printf '#!/bin/bash\necho amd64\n' >"$TMP/mbin/dpkg"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/caddy-calls"\n[ ! -e "%s/caddy-bad" ]\n' "$TMP" "$TMP" >"$TMP/mbin/caddy"
     printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/dnsmasq-calls"\n[ ! -e "%s/dnsmasq-bad" ]\n' "$TMP" "$TMP" >"$TMP/mbin/dnsmasq"
@@ -1830,225 +1744,97 @@ EOF
     chmod +x "$TMP/mbin"/*
 }
 
-share_pw() { sed -n 's/^paylasim://p' "$TMP/etc/paylasim.cred"; }
+
+builtin_fixture() {
+    share_fixture
+    mkdir -p "$TMP/mods/dosya" "$TMP/srv/.cop"
+    printf '[Service]\nExecStart=/bin/true\n' >"$TMP/mods/dosya/master-files-panel.service"
+    printf 'import sys\nsys.exit(0)\n' >"$TMP/lib/master-files-panel"
+    printf 'FILES_PANEL_PORT=61009\n' >>"$TMP/mstate.env"
+    # Both workers are unprivileged; loopback Files denies a missing panel header.
+    printf '#!/bin/bash\necho 1000\n' >"$TMP/mbin/ps"
+    cat >"$TMP/mbin/curl" <<EOF
+#!/bin/bash
+printf 'curl %s\\n' "\$*" >>"$TMP/order"
+case "\$*" in *61009*) printf 403 ;; *) printf 401 ;; esac
+EOF
+    chmod +x "$TMP/mbin/ps" "$TMP/mbin/curl"
+}
+
 file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$1"; }
 
-@test "master-modul installs the share with a generated account and publishes its name only after the checks" {
-    share_fixture
-    run mm kur paylasim
+@test "builtins prepare a private registry and verify both services before registration" {
+    builtin_fixture
+    : >"$TMP/moduller"
+    run mm yerlesik
     [ "$status" -eq 0 ]
     grep -qx "$(printf 'paylasim\tcalisiyor')" "$TMP/moduller"
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
-    # DD-152: rclone came from its release URL, passed its checksum and was put in place whole.
-    grep -q -- "-fsSL --proto =https --tlsv1.2 --retry 3 --max-time 300 -o .* https://downloads.rclone.org/v1.75.1/rclone-v1.75.1-linux-amd64.zip" "$TMP/curl-calls"
-    [ "$("$TMP/lib/rclone" version)" = "rclone v1.75.1" ]
-    [ ! -e "$TMP/lib/rclone.yeni" ]
+    grep -qx "$(printf 'dosya\tcalisiyor')" "$TMP/moduller"
+    [ "$(file_mode "$TMP/etc/webdav.json")" = 0o600 ]
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schema"] == 2 and d["items"] == []' "$TMP/etc/webdav.json"
     cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
-    [ "$(liste_live paylasim)" = running ]
-    # One account: user paylasim, 20 characters from the alphabet without 0/O/1/l/I, both files 0600.
-    [ "$(wc -l <"$TMP/etc/paylasim.cred" | tr -d ' ')" = 1 ]
-    pw="$(share_pw)"
-    [ "${#pw}" -eq 20 ]
-    [ -z "$(tr -d 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789' <<<"$pw")" ]
-    printf '%s' "$pw" | htpasswd -vi "$TMP/etc/paylasim.htpasswd" paylasim >/dev/null 2>&1
-    [ "$(file_mode "$TMP/etc/paylasim.cred")" = 0o600 ]
-    [ "$(file_mode "$TMP/etc/paylasim.htpasswd")" = 0o600 ]
-    # The password never reaches an argv, the progress file, the journal or the output.
-    for f in curl-calls caddy-calls dnsmasq-calls systemctl-calls logger-calls run/modul-paylasim.ilerleme; do
-        [ "$(grep -c -- "$pw" "$TMP/$f")" -eq 0 ]
-    done
-    [ "$(grep -c -- "$pw" <<<"$output")" -eq 0 ]
-    # The account was proven with PROPFIND (207) through curl's stdin config.
-    grep -q -- '-K - -X PROPFIND -H Depth: 0 http://127.0.0.1:61010/' "$TMP/curl-calls"
-    # Names: live copies of the module files, no dot-temp leftovers, Caddy reloaded (never restarted).
-    cmp -s "$TMP/mods/paylasim/paylasim.caddy" "$TMP/caddy/moduller/paylasim.caddy"
-    cmp -s "$TMP/mods/paylasim/dnsmasq.conf" "$TMP/dnsmasq.d/modul-paylasim.conf"
-    [ "$(ls -A "$TMP/caddy/moduller")" = paylasim.caddy ]
-    [ "$(ls -A "$TMP/dnsmasq.d")" = modul-paylasim.conf ]
-    grep -qx 'reload caddy' "$TMP/systemctl-calls"
-    grep -qx 'restart dnsmasq' "$TMP/systemctl-calls"
-    [ "$(grep -c 'restart caddy' "$TMP/systemctl-calls")" -eq 0 ]
-    grep -q "validate --config $TMP/caddy/Caddyfile --adapter caddyfile" "$TMP/caddy-calls"
-    grep -q -- "--test --conf-dir=$TMP/dnsmasq.d,.dpkg-dist,.dpkg-old,.dpkg-new" "$TMP/dnsmasq-calls"
-    # The download comes first; the service is started and checked before the name is published.
-    awk '/^curl -fsSL/ {d = NR} /^systemctl restart master-paylasim.service$/ {a = NR} /^curl .*-K - -X PROPFIND/ {b = NR} /^systemctl reload caddy$/ {c = NR}
-        END {exit !(d && a && b && c && d < a && a < b && b < c)}' "$TMP/order"
-    # The file backend learns the module state from the marker.
+    cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
     [ "$(cat "$TMP/srv/.pay/acik")" = paylasim ]
-    # hesap: the name and when it changed; the password only with --parola.
-    run mm hesap paylasim
-    [ "$status" -eq 0 ]
-    [ "$(cut -f1 <<<"$output")" = paylasim ]
-    case "$(cut -f2 <<<"$output")" in "" | *[!0-9]*) false ;; esac
-    [ "$(awk -F'\t' '{print NF}' <<<"$output")" -eq 2 ]
-    run mm hesap paylasim --parola
-    [ "$(cut -f3 <<<"$output")" = "$pw" ]
-    run mm hesap dosya
-    [ "$status" -ne 0 ]
-    run mm parola dosya
-    [ "$status" -ne 0 ]
-    run mm kur paylasim
-    [ "$status" -ne 0 ]
+    run mm liste
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'wireguard torrent ' ]
 }
 
 liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
 
-@test "master-modul refuses an rclone archive whose checksum does not match, and a failed download" {
-    share_fixture
-    touch "$TMP/bad-archive"
-    run mm kur paylasim
+@test "builtins fail closed on a corrupt share registry before publishing" {
+    builtin_fixture
+    printf '{"schema":1,"items":[]}\n' >"$TMP/etc/webdav.json"
+    run mm yerlesik
     [ "$status" -ne 0 ]
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\trclone arşivinin SHA256 özeti tutmadı; kurulmadı')" ]
-    [ ! -e "$TMP/lib/rclone" ]
-    [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
     [ ! -e "$TMP/units/master-paylasim.service" ]
-    [ ! -e "$TMP/etc/paylasim.cred" ]
-    rm -f "$TMP/bad-archive"
-    touch "$TMP/download-fail"
-    run mm kur paylasim
-    [ "$status" -ne 0 ]
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\trclone indirilemedi (https://downloads.rclone.org/v1.75.1/rclone-v1.75.1-linux-amd64.zip)')" ]
-    [ ! -e "$TMP/lib/rclone" ]
-    # An installed binary of the pinned version is not downloaded again.
-    rm -f "$TMP/download-fail"
-    run mm kur paylasim
-    [ "$status" -eq 0 ]
-    run mm kaldir paylasim
-    [ "$status" -eq 0 ]
-    [ -x "$TMP/lib/rclone" ]
-    : >"$TMP/curl-calls"
-    run mm kur paylasim
-    [ "$status" -eq 0 ]
-    [ "$(grep -c -- '-fsSL' "$TMP/curl-calls")" -eq 0 ]
-}
-
-@test "master-modul keeps the share account across removal, renews it on parola and drops only links with --veri" {
-    share_fixture
-    run mm kur paylasim
-    [ "$status" -eq 0 ]
-    first="$(share_pw)"
-    # durdur stops the service; the names and the marker stay.
-    run mm durdur paylasim
-    [ "$status" -eq 0 ]
-    grep -qx 'disable --now master-paylasim.service' "$TMP/systemctl-calls"
-    [ "$(liste_live paylasim)" = exited ]
-    [ -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    [ -e "$TMP/srv/.pay/acik" ]
-    run mm baslat paylasim
-    [ "$status" -eq 0 ]
-    [ "$(liste_live paylasim)" = running ]
-    # kaldir without --veri: names, marker and the unit go; the account, the links and rclone stay.
-    printf 'film\n' >"$TMP/srv/downloads/film.mkv"
-    ln -s ../../downloads/film.mkv "$TMP/srv/.pay/w/film.mkv"
-    printf 'elle\n' >"$TMP/srv/.pay/w/elle.txt"
-    printf '{"items": []}\n' >"$TMP/srv/.pay/kayit.json"
-    : >"$TMP/systemctl-calls"
-    : >"$TMP/order"
-    run mm kaldir paylasim
-    [ "$status" -eq 0 ]
     [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    [ ! -e "$TMP/dnsmasq.d/modul-paylasim.conf" ]
-    [ ! -e "$TMP/srv/.pay/acik" ]
-    [ ! -e "$TMP/units/master-paylasim.service" ]
-    [ -x "$TMP/lib/rclone" ]
-    grep -qx 'reload caddy' "$TMP/systemctl-calls"
-    grep -qx 'restart dnsmasq' "$TMP/systemctl-calls"
-    [ -L "$TMP/srv/.pay/w/film.mkv" ]
-    [ "$(share_pw)" = "$first" ]
-    # The names go before the service.
-    awk '/^systemctl reload caddy$/ {a = NR} /^systemctl disable --now master-paylasim.service$/ {b = NR} END {exit !(a && b && a < b)}' "$TMP/order"
-    # A reinstall reuses the same account: Infuse keeps working.
-    run mm kur paylasim
-    [ "$status" -eq 0 ]
-    [ "$(share_pw)" = "$first" ]
-    # parola: a new password; the running service restarts (systemd copies the credential at
-    # start) and is checked with it.
-    : >"$TMP/systemctl-calls"
-    run mm parola paylasim
-    [ "$status" -eq 0 ]
-    second="$(share_pw)"
-    [ "$second" != "$first" ]
-    printf '%s' "$second" | htpasswd -vi "$TMP/etc/paylasim.htpasswd" paylasim >/dev/null 2>&1
-    grep -qx 'restart master-paylasim.service' "$TMP/systemctl-calls"
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'parola\tbitti\t0\tparola değişti')" ]
-    [ "$(grep -c -- "$second" "$TMP/logger-calls")" -eq 0 ]
-    # kaldir --veri: account, registry and the links go; link targets and other files stay.
-    run mm kaldir paylasim --veri
-    [ "$status" -eq 0 ]
-    [ ! -e "$TMP/etc/paylasim.cred" ]
-    [ ! -e "$TMP/etc/paylasim.htpasswd" ]
-    [ ! -e "$TMP/srv/.pay/kayit.json" ]
-    [ ! -L "$TMP/srv/.pay/w/film.mkv" ]
-    [ -f "$TMP/srv/downloads/film.mkv" ]
-    [ -f "$TMP/srv/.pay/w/elle.txt" ]
-    [ -d "$TMP/srv/.pay/w" ]
-    [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
+    grep -q '"schema":1' "$TMP/etc/webdav.json"
 }
 
-@test "master-modul rolls a failed share install back and uygula leaves an uninstalled module alone" {
-    share_fixture
-    # The name step fails: the Caddy site already placed is taken back, the service goes down.
+@test "builtins reject every public lifecycle action and preserve their registry" {
+    builtin_fixture
+    run mm yerlesik
+    [ "$status" -eq 0 ]
+    cp "$TMP/etc/webdav.json" "$TMP/before.json"
+    for id in dosya paylasim; do
+        for action in kur baslat durdur kaldir uygula parola hesap; do
+            run mm "$action" "$id" --veri
+            [ "$status" -ne 0 ]
+            case "$output" in *"bilinmeyen modül"*) ;; *) false ;; esac
+        done
+    done
+    cmp -s "$TMP/etc/webdav.json" "$TMP/before.json"
+    [ -e "$TMP/units/master-paylasim.service" ]
+    [ -e "$TMP/units/master-files-panel.service" ]
+}
+
+@test "builtins reapply idempotently preserve accounts and recover an interrupted installation" {
+    builtin_fixture
     touch "$TMP/dnsmasq-bad"
-    run mm kur paylasim
+    run mm yerlesik
     [ "$status" -ne 0 ]
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\tdnsmasq yapılandırması doğrulanmadı (paylasim)')" ]
     [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
-    [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    [ ! -e "$TMP/dnsmasq.d/modul-paylasim.conf" ]
-    [ ! -e "$TMP/srv/.pay/acik" ]
-    [ "$(grep -c '^reload caddy$' "$TMP/systemctl-calls")" -eq 2 ]
-    grep -qx 'disable --now master-paylasim.service' "$TMP/systemctl-calls"
-    [ ! -e "$TMP/units/master-paylasim.service" ]
-    [ ! -e "$TMP/share-up" ]
+    cp "$TMP/etc/webdav.json" "$TMP/before.json"
     rm -f "$TMP/dnsmasq-bad"
-    # A service that does not start is taken back the same way.
-    touch "$TMP/start-fail"
-    run mm kur paylasim
-    [ "$status" -ne 0 ]
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$(printf 'kur\thata\t0\tpaylaşım servisi başlatılamadı')" ]
-    [ ! -e "$TMP/units/master-paylasim.service" ]
-    [ ! -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    rm -f "$TMP/start-fail"
-    # uygula (installer re-run) touches nothing for a module that is not installed.
+    run mm yerlesik
+    [ "$status" -eq 0 ]
     : >"$TMP/systemctl-calls"
-    : >"$TMP/curl-calls"
-    run mm uygula paylasim
+    run mm yerlesik
     [ "$status" -eq 0 ]
-    [ "$output" = "$(printf 'paylasim\tyok')" ]
-    [ ! -s "$TMP/systemctl-calls" ]
-    [ ! -s "$TMP/curl-calls" ]
-    # For a stopped module it refreshes the unit and the names but does not start the service,
-    # and it leaves Konsol's last result alone.
-    printf 'paylasim\tdurduruldu\n' >"$TMP/moduller"
-    last="$(cat "$TMP/run/modul-paylasim.ilerleme")"
-    run mm uygula paylasim
+    [ "$(grep -c '^restart ' "$TMP/systemctl-calls")" -eq 0 ]
+    cmp -s "$TMP/etc/webdav.json" "$TMP/before.json"
+    run mm yerlesik 'dosya paylasim'
     [ "$status" -eq 0 ]
-    [ -e "$TMP/caddy/moduller/paylasim.caddy" ]
-    cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
-    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 0 ]
-    [ "$(cat "$TMP/run/modul-paylasim.ilerleme")" = "$last" ]
-    # Running: a unit that changed (here: a new rclone version in it) restarts the service once.
-    printf 'paylasim\tcalisiyor\n' >"$TMP/moduller"
-    touch "$TMP/share-up"
-    : >"$TMP/systemctl-calls"
-    run mm uygula paylasim
-    [ "$status" -eq 0 ]
-    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 0 ]
-    printf '# rclone 1.75.2\n' >>"$TMP/mods/paylasim/master-paylasim.service"
-    run mm uygula paylasim
-    [ "$status" -eq 0 ]
-    [ "$(grep -c '^restart master-paylasim.service$' "$TMP/systemctl-calls")" -eq 1 ]
+    grep -qx 'restart master-files-panel.service' "$TMP/systemctl-calls"
+    grep -qx 'restart master-paylasim.service' "$TMP/systemctl-calls"
+    cmp -s "$TMP/etc/webdav.json" "$TMP/before.json"
 }
 
-@test "the share's sub-names agree between master-modul, the file backend and the installer" {
-    local mm="$V2_ROOT/scripts/master-modul" fb="$V2_ROOT/files-panel/master-files-panel"
-    grep -qx 'SHARE_SERVED="w"' "$mm"
-    grep -qx 'SHARE_SERVED = "w"' "$fb"
-    grep -qx 'SHARE_REGISTRY="kayit.json"' "$mm"
-    grep -qx 'SHARE_REGISTRY = "kayit.json"' "$fb"
-    grep -qx 'SHARE_ENABLED="acik"' "$mm"
-    grep -qx 'SHARE_ENABLED = "acik"' "$fb"
-    grep -qF '"$SERVER_ROOT/$SHARE_DIR/w"' "$V2_ROOT/install.sh"
+@test "the legacy share marker stays consistent and the writable symlink API is retired" {
+    grep -qx 'SHARE_ENABLED="acik"' "$V2_ROOT/scripts/master-modul"
+    grep -qx 'SHARE_ENABLED = "acik"' "$V2_ROOT/files-panel/master-files-panel"
+    run ! grep -q 'os.symlink' "$V2_ROOT/files-panel/master-files-panel"
+    grep -q 'raise PanelError(410' "$V2_ROOT/files-panel/master-files-panel"
 }
 
 @test "wg panel lists modules and starts module work as its own systemd unit" {
@@ -2100,57 +1886,17 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     grep -q 'panel: konsol 127.0.0.1 modul-baslat torrent -> hata' "$TMP/panel.log"
 }
 
-@test "wg panel shows the share account only on request and renews its password as module work" {
-    command -v python3 >/dev/null || skip "python3 yok"
+@test "wg panel never reveals or rotates a retired shared account even when installed" {
     panel_start
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
-    # Not installed: no account, no password renewal, no port row, no Infuse address.
-    [ "$(pc /api/konsol/moduller/paylasim/hesap -H 'X-Konsol: 1')" = 404 ]
-    [ "$(pc /api/konsol/moduller/paylasim/parola "${json[@]}" --data '{}')" = 409 ]
-    [ "$(pc /api/konsol/moduller/torrent/parola "${json[@]}" --data '{}')" = 404 ]
-    [ "$(pc /api/konsol/moduller/unpackerr/hesap -H 'X-Konsol: 1')" = 404 ]
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert d["share"] == {"port": 61010, "on": False, "rclone": "1.75.1"}, d["share"]
-assert not [r for r in d["ports"] if r["port"] == 61010], d["ports"]
-' "$TMP/body"
-    [ ! -e "$TMP/sdrun-calls" ]
-    # Installed: the account without the password, then the password only with ?parola=1.
     printf 'paylasim\tcalisiyor\n' >"$TMP/moduller"
-    printf 'calisiyor\n' >"$TMP/pay-state"
-    touch "$TMP/pay-cred"
-    [ "$(pc /api/konsol/moduller/paylasim/hesap)" = 403 ]
-    [ "$(pc /api/konsol/moduller/paylasim/hesap -H 'X-Konsol: 1')" = 200 ]
-    python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert d == {"user": "paylasim", "changed": 1700000000, "host": "paylas.ayc", "infuse": "http://100.64.0.7:61010/"}, d
-' "$TMP/body"
-    grep -qi '^Cache-Control: no-store' "$TMP/head"
-    [ "$(grep -c 'modul-hesap' "$TMP/panel.log")" -eq 0 ]
-    [ "$(pc '/api/konsol/moduller/paylasim/hesap?parola=1' -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["pass"] == "Qm7vRt2kWx9pLc4nHs8e"' "$TMP/body"
-    grep -q 'panel: konsol 127.0.0.1 modul-hesap paylasim -> ok' "$TMP/panel.log"
-    [ "$(grep -c 'Qm7vRt2kWx9pLc4nHs8e' "$TMP/panel.log")" -eq 0 ]
-    # Yeni parola runs as the module's own unit like every module action.
-    [ "$(pc /api/konsol/moduller/paylasim/parola "${json[@]}" --data '{"veri":true}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-paylasim.service --collect --quiet '
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul parola paylasim$"
-    grep -q 'panel: konsol 127.0.0.1 modul-parola paylasim -> ok' "$TMP/panel.log"
-    # The port row and the Infuse address follow the module.
+    for path in /api/konsol/moduller/paylasim/hesap '/api/konsol/moduller/paylasim/hesap?parola=1'; do
+        [ "$(pc "$path" -H 'X-Konsol: 1')" = 404 ]
+    done
+    [ "$(pc /api/konsol/moduller/paylasim/parola -H 'X-Konsol: 1' -H 'Content-Type: application/json' --data '{}')" = 404 ]
+    [ ! -e "$TMP/sdrun-calls" ]
     [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert d["share"] == {"port": 61010, "on": True, "rclone": "1.75.1"}, d["share"]
-assert [r["scope"] for r in d["ports"] if r["port"] == 61010] == ["tailscale"], d["ports"]
-' "$TMP/body"
-    # A missing account file reads as "no account", not as an error page.
-    rm -f "$TMP/pay-cred"
-    [ "$(pc /api/konsol/moduller/paylasim/hesap -H 'X-Konsol: 1')" = 404 ]
-    grep -q 'hesap yok' "$TMP/body"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["share"] == {"port":61010,"on":True}' "$TMP/body"
 }
 
 @test "wg panel answers without the WireGuard module and never runs master-wg for it" {
@@ -2181,9 +1927,9 @@ assert not [r for r in d["ports"] if r["scope"] == "wireguard" or r["name"].star
     python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["installed"] is True and d["networks"], d' "$TMP/body"
 }
 
-@test "console shows the Dosyalar and WireGuard pages only with their modules and installs Paylaşım together with its dependency" {
+@test "console always includes Files while WireGuard follows its optional application" {
     local js="$V2_ROOT/console/konsol.js"
-    grep -qF 'const fsOn = () => modOn("dosya");' "$js"
+    grep -qF 'const fsOn = () => true;' "$js"
     grep -qF 'const wgOn = () => modOn("wireguard");' "$js"
     grep -qF 'document.querySelectorAll('"'"'[data-route="dosyalar"]'"'"').forEach((a) => { a.hidden = !fsOn(); });' "$js"
     grep -qF 'document.querySelectorAll('"'"'[data-route="wireguard"]'"'"').forEach((a) => { a.hidden = !wgOn(); });' "$js"
@@ -2646,78 +2392,18 @@ PY
     grep -q 'dosya: konsol 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
 }
 
-@test "files panel shares a folder as a link in the share root, sweeps expired ones and keeps the rest of the root out" {
-    command -v python3 >/dev/null || skip "python3 yok"
+@test "files panel rejects legacy shared-root creation and hides its internal directory" {
     files_panel_start
-    # DD-149: without the Paylaşım module (no .pay/acik marker) nothing new is shared.
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 409 ]
-    grep -q 'Paylaşım modülü kurulu değil' "$TMP/body"
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 410 ]
     [ ! -e "$TMP/root/.pay/w/Kuzey" ]
-    [ "$(fp /api/state)" = 200 ]
-    python3 -c 'import json, sys; s = json.load(open(sys.argv[1]))["share"]; assert s == {"enabled": False, "host": "", "count": 0}, s' "$TMP/body"
     mkdir -p "$TMP/root/.pay"
-    ln -s ../notlar.txt "$TMP/root/.pay/acik"
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 409 ]
-    rm "$TMP/root/.pay/acik"
     printf 'paylasim\n' >"$TMP/root/.pay/acik"
-    # Paylaşımlar kendi köküne göreli bir bağlantı olarak girer; dosya kopyalanmaz.
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 201 ]
-    run python3 -c 'import json, sys
-item = json.load(open(sys.argv[1]))["item"]
-assert item["name"] == "Kuzey" and item["path"] == "Filmler/Kuzey" and item["type"] == "dir", item
-assert item["expires"] - item["created"] == 7 * 86400, item' "$TMP/body"
-    [ "$status" -eq 0 ]
-    [ "$(readlink "$TMP/root/.pay/w/Kuzey")" = "../../Filmler/Kuzey" ]
-    [ -d "$TMP/root/.pay/w/Kuzey" ]
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 410 ]
+    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey"}')" = 410 ]
     [ "$(fp /api/paylas)" = 200 ]
-    run python3 -c 'import json, sys
-d = json.load(open(sys.argv[1]))
-assert d["enabled"] is True and d["host"] == "http://paylas.ayc", d
-assert "user" not in d and "pass" not in d, d
-assert [i["name"] for i in d["items"]] == ["Kuzey"], d' "$TMP/body"
-    [ "$status" -eq 0 ]
-    # Aynı öge iki kez paylaşılmaz; ad çakışması numaralanır.
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":0}')" = 409 ]
-    mkdir -p "$TMP/root/Diziler/Kuzey"
-    [ "$(fpost /api/paylas '{"path":"Diziler/Kuzey","days":0}')" = 201 ]
-    python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["item"]["name"] == "Kuzey-2"' "$TMP/body"
-    # Kök, çöp ve paylaşım klasörünün kendisi paylaşılamaz; kökten çıkılamaz.
-    [ "$(fpost /api/paylas '{"path":"","days":0}')" = 400 ]
-    [ "$(fpost /api/paylas '{"path":".cop","days":0}')" = 403 ]
-    [ "$(fpost /api/paylas '{"path":".pay","days":0}')" = 403 ]
-    [ "$(fpost /api/paylas '{"path":"../etc","days":0}')" = 400 ]
-    [ "$(fpost /api/paylas '{"path":"yok-boyle","days":0}')" = 404 ]
-    [ "$(fpost /api/paylas '{"path":"Filmler","days":-3}')" = 400 ]
-    # Paylaşım klasörü dosya listesinde ve gezinmede görünmez.
-    [ "$(fp '/api/list?path=')" = 200 ]
-    run ! grep -q '"\.pay"' "$TMP/body"
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["items"] == []' "$TMP/body"
     [ "$(fp '/api/list?path=.pay')" = 403 ]
-    # Süresi dolan paylaşım listelemede düşer ve bağlantısı silinir.
-    python3 -c 'import json, sys, time
-path = sys.argv[1]
-data = json.load(open(path))
-data["items"][0]["expires"] = int(time.time()) - 10
-json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json"
-    [ "$(fp /api/paylas)" = 200 ]
-    python3 -c 'import json, sys; assert [i["name"] for i in json.load(open(sys.argv[1]))["items"]] == ["Kuzey-2"]' "$TMP/body"
-    [ ! -e "$TMP/root/.pay/w/Kuzey" ]
     [ -d "$TMP/root/Filmler/Kuzey" ]
-    # Çıkarmak yalnız bağlantıyı siler.
-    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey-2"}')" = 200 ]
-    [ ! -e "$TMP/root/.pay/w/Kuzey-2" ]
-    [ -d "$TMP/root/Diziler/Kuzey" ]
-    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey-2"}')" = 404 ]
-    [ "$(fpost /api/paylas/kaldir '{"name":"../x"}')" = 400 ]
-    # Kayıtta olmayan bir bağlantı elle konsa da temizlenir.
-    ln -s ../../Filmler "$TMP/root/.pay/w/elle"
-    [ "$(fp /api/paylas)" = 200 ]
-    [ ! -e "$TMP/root/.pay/w/elle" ]
-    grep -q 'konsol 127.0.0.1 paylas "Filmler/Kuzey -> Kuzey (7 gün)" -> ok' "$TMP/fpanel.log"
-    grep -q 'konsol 127.0.0.1 paylas-kaldir "Kuzey-2" -> ok' "$TMP/fpanel.log"
-    # The marker stays hidden and unshareable like the rest of .pay; removing it stops new shares.
-    [ "$(fp '/api/list?path=.pay')" = 403 ]
-    rm "$TMP/root/.pay/acik"
-    [ "$(fpost /api/paylas '{"path":"Diziler/Kuzey","days":0}')" = 409 ]
 }
 
 @test "files panel takes an upload into the folder, never over an existing name and leaves no half file" {
@@ -2792,7 +2478,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
         "$V2_ROOT/templates/Caddyfile.wg" "$V2_ROOT/templates/dnsmasq.conf" "$V2_ROOT/scripts/firewall.sh" \
         "$V2_ROOT/scripts/master-wg" "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" \
         "$V2_ROOT/console/index.html" | grep -ciE 'dozzle|COMPOSE_DIR|QBITTORRENT_(IMAGE|DATA_DIR|CONF_FILE)|PULL_IMAGES|bcrypt_matches|validate_account')" -eq 0 ]
-    grep -qx 'SERVICE_NAMES="health panel"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
     for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf; do
@@ -2812,7 +2498,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qF 'return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true,' "$js"
     # DD-152: Arşiv açıcı is gone, and with it the "recommended together" hint.
     run ! grep -qE 'recommends|unpackerr|Arşiv açıcı' "$js"
-    grep -qF '? [h("div", { class: "acct-head" }, h("span", null, "İlk giriş"), h("span", { class: "src" }, "Konsol bu hesabı yönetmez")),' "$js"
+    grep -qF 'Düzenle: Ayarlar → qBittorrent' "$js"
     grep -qF '} else if (id === "torrent") {' "$js"
     grep -qF 'const s = S.sys, on = !!(modOn("torrent") && s && s.domain), a = $("link-torrent");' "$js"
     grep -q 'id="side-other" hidden' "$html"
@@ -2820,7 +2506,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
 }
 
-@test "installer lays out modules without installing any, and reapplies installed ones" {
+@test "installer prepares optional modules and reapplies installed ones separately from builtins" {
     # DD-148: the installer writes module files and an empty registry; Konsol installs.
     grep -qx 'MODULES_FILE="/etc/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
     grep -qx 'MODULES_DIR="/usr/local/share/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
@@ -2844,7 +2530,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     [ "$(tail -n 1 "$V2_ROOT/templates/Caddyfile")" = 'import __CADDY_MODULES_DIR__/*.caddy' ]
     s6="$(awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh")"
     awk '/install -d -m 0755 -o root -g root "\$CADDY_MODULES_DIR"/ {a = NR} /caddy validate --config/ {b = NR} END {exit !(a && b && a < b)}' <<<"$s6"
-    for k in SHARE_DIR SHARE_HTPASSWD_FILE SHARE_CRED_FILE SHARE_ACCOUNT SHARE_PASSWORD_LENGTH STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
+    for k in SHARE_DIR SHARE_HTPASSWD_FILE SHARE_CRED_FILE SHARE_STATE_FILE STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\\\$$k"
     done
     # reapply_modules: a changed module file is applied to an installed module in either state.
@@ -2856,20 +2542,20 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     log() { :; }
     SBIN_DIR="$TMP/sbin"
     MODULES_FILE="$TMP/reg"
-    MODULES_CHANGED=" paylasim"
-    printf 'paylasim\tcalisiyor\n' >"$TMP/reg"
+    MODULES_CHANGED=" torrent"
+    printf 'torrent\tcalisiyor\n' >"$TMP/reg"
     reapply_modules
-    grep -qx 'uygula paylasim' "$TMP/calls"
+    grep -qx 'uygula torrent' "$TMP/calls"
     rm -f "$TMP/calls"
-    printf 'paylasim\tdurduruldu\n' >"$TMP/reg"
+    printf 'torrent\tdurduruldu\n' >"$TMP/reg"
     reapply_modules
-    grep -qx 'uygula paylasim' "$TMP/calls"
+    grep -qx 'uygula torrent' "$TMP/calls"
     rm -f "$TMP/calls"
     : >"$TMP/reg"
     reapply_modules
     [ ! -e "$TMP/calls" ]
     MODULES_CHANGED=""
-    printf 'paylasim\tcalisiyor\n' >"$TMP/reg"
+    printf 'torrent\tcalisiyor\n' >"$TMP/reg"
     reapply_modules
     [ ! -e "$TMP/calls" ]
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" | grep -qx '    reapply_modules'
@@ -2880,7 +2566,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
 @test "console shows the Modüller page from the module API" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
     # Side navigation and the phone's bottom bar both link the page.
-    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 2 ]
+    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 3 ]
     # DD-150: items come and go with their modules, so the bar sizes to what is shown.
     grep -q 'grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); position: fixed;' "$V2_ROOT/console/konsol.css"
     grep -q '<section data-view="moduller"' "$html"
@@ -2891,7 +2577,7 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -qF 'if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);' "$js"
     # Until the unit writes its first step, the card shows the requested action, not the previous one.
     grep -qF 'if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };' "$js"
-    grep -qF 'moduller: { title: "Modüller"' "$js"
+    grep -qF 'moduller: { title: "App Store"' "$js"
     run ! grep -qF 'unpackerr' "$js"
     # DD-152: every module runs on the host or in Konsol; there is no Docker runtime chip.
     grep -qF 'const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };' "$js"
@@ -2900,77 +2586,26 @@ json.dump(data, open(path, "w"), ensure_ascii=False)' "$TMP/root/.pay/kayit.json
     grep -q '^\.rt-chip' "$V2_ROOT/console/konsol.css"
 }
 
-@test "console offers sharing only while the share module is installed and renews its password from the card" {
-    local js="$V2_ROOT/console/konsol.js" css="$V2_ROOT/console/konsol.css"
-    # Dosyalar: the rail entry, the row button and the selection-bar button follow the module.
-    grep -qF 'const shareOn = () => fsOn() && !!(shareMod() || {}).installed;' "$js"
-    grep -qF 'shareOn() ? railBtn({ cur: fsView === "shares"' "$js"
-    grep -qF 'inTemp(here) || inTemp(pathText(fsPath)) || !shareOn() ? null : shareBtn(item, here),' "$js"
-    grep -qF 'shareOn() ? h("button", { type: "button", class: "btn btn-sm", disabled: !one' "$js"
+@test "console includes per-folder accounts as a Files capability" {
+    local js="$V2_ROOT/console/konsol.js" dav="$V2_ROOT/console/dosyalar.js"
+    grep -qF 'const shareOn = () => true;' "$js"
     grep -qF 'if (!shareOn()) { S.share = null; return Promise.resolve(); }' "$js"
-    # A failed load no longer retries the share dialog forever.
-    grep -qF 'if (!S.share) { loadShares().then(() => { if (S.share) openShareCreate(item, path); }); return; }' "$js"
-    # Modüller: the Paylaşım card, its four steps in master-modul's order and the Yeni parola action.
-    grep -qF 'steps: [["rclone indiriliyor", "resmi sürüm · SHA256"], ["Hesap üretiliyor", ""], ["Servis başlatılıyor", "systemd"], ["Ad ve adres açılıyor", `paylas.${d} · ${port}`]],' "$js"
-    grep -qF 'progress "$id" kur 1 4 "rclone indiriliyor"' "$V2_ROOT/scripts/master-modul"
-    grep -qF 'progress "$id" kur 3 4 "Servis başlatılıyor"' "$V2_ROOT/scripts/master-modul"
-    grep -qF 'progress "$id" kur 4 4 "Ad ve adres açılıyor"' "$V2_ROOT/scripts/master-modul"
-    grep -qF 'onOk: () => { hidePass(m.id); modAct(m, "parola"); } });' "$js"
-    grep -qF 'parola: "Uygulanıyor"' "$js"
-    grep -qF 'removeLabel: "Hesabı ve paylaşım kayıtlarını da sil",' "$js"
-    # Values come from the server, not from literals.
-    [ "$(grep -cE "paylas\.ayc|:61010|rclone 1\.75" "$js")" -eq 0 ]
-    # Günlük names module actions and files them under their own filter.
-    grep -qF '"modul-parola": (e) => `${modName(e.detail)} için yeni parola üretildi`,' "$js"
-    grep -qF '["mod", "Modüller"]' "$js"
-    # Icons the card uses exist (svg() silently falls back to the file icon).
-    grep -qE "^    key: '" "$js"
-    grep -qE "^    restart: '" "$js"
-    grep -q '^\.cred-row\.fresh' "$css"
-    grep -q '^\.linkbtn:disabled' "$css"
-    grep -q '^\.addside \.will' "$css"
+    grep -qF 'api("/api/konsol/paylasim")' "$js"
+    grep -qF 'window.createSharesPage' "$js"
+    grep -qF 'permission: permission.value, ack_write: ack.checked' "$dav"
+    grep -qF 'days.value === "keep" ? null' "$dav"
+    grep -qF 'data.password = ""' "$dav"
+    run ! grep -qE 'localStorage|sessionStorage' "$dav"
 }
 
-@test "installer wires the share module: generated account, names that come and go with it, hidden from the rest" {
-    local unit="$V2_ROOT/systemd/master-files-panel.service" mm="$V2_ROOT/scripts/master-modul" s7
-    # DD-152: the share service gets its account as a credential and never sees the trash.
-    grep -qx 'LoadCredential=htpasswd:__SHARE_HTPASSWD_FILE__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
-    grep -qx 'TemporaryFileSystem=__SERVER_ROOT__/__FILES_PANEL_TRASH__:ro' "$V2_ROOT/modules/paylasim/master-paylasim.service"
-    # DD-151: qBittorrent on the host writes only the downloads folder; systemd hides the rest.
+@test "installer wires private folder accounts without exposing hashes to the file backend" {
+    grep -qx 'LoadCredential=registry:__SHARE_STATE_FILE__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qF 'atomic_write "$SBIN_DIR/master_shares.py"' "$V2_ROOT/install.sh"
+    grep -qF 'atomic_write "$SBIN_DIR/master_webdav.py"' "$V2_ROOT/install.sh"
+    grep -qF 'dosyalar.css dosyalar.js' "$V2_ROOT/install.sh"
+    [ "$(cat "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|SHARE_STATE_FILE')" -eq 0 ]
     grep -qx 'ReadWritePaths=__TORRENT_PROFILE_DIR__ __DOWNLOADS_PATH__' "$V2_ROOT/modules/torrent/master-stack.conf"
     grep -qx 'InaccessiblePaths=-__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__' "$V2_ROOT/modules/torrent/master-stack.conf"
-    # DD-149: one generated account, no input keys; the user name and length are fixed in defaults.
-    grep -qx 'SHARE_PORT="61010"' "$V2_ROOT/config/defaults.env"
-    grep -qx 'SHARE_DIR=".pay"' "$V2_ROOT/config/defaults.env"
-    grep -qx 'SHARE_ACCOUNT="paylasim"' "$V2_ROOT/config/defaults.env"
-    grep -qx 'SHARE_PASSWORD_LENGTH="20"' "$V2_ROOT/config/defaults.env"
-    [ "$(grep -cE 'SHARE_(USER|PASS|MIN_PASSWORD_LENGTH)=|validate_account "Paylaşım"|ensure_share_account' \
-        "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
-    body="$(awk '/^share_write_account\(\)/,/^}$/' "$mm")"
-    grep -qF 'printf '"'"'%s'"'"' "$1" | htpasswd -i -B "$th" "$SHARE_ACCOUNT"' <<<"$body"
-    grep -qF 'chmod 0600 "$th" "$tc"' <<<"$body"
-    grep -qF 'umask 077 && mktemp "$STATE_DIR/.paylasim-XXXXXX"' <<<"$body"
-    # The file backend never gets the account (no LoadCredential there: a missing file would stop the unit).
-    grep -q -- '--share __SHARE_DIR__ --domain' "$unit"
-    [ "$(cat "$unit" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|share-credential|SHARE_CRED_FILE')" -eq 0 ]
-    # Names come from the module files: the base templates import the Caddy directory only.
-    [ "$(grep -c 'paylas' "$V2_ROOT/templates/dnsmasq.conf")" -eq 0 ]
-    [ "$(grep -cE '^http://paylas|\{\$SHARE_PORT\}' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
-    run ! grep -q 'SHARE_' "$V2_ROOT/templates/Caddyfile.wg"
-    grep -q '"paylasim:${SHARE_PORT:-}"' "$V2_ROOT/scripts/master-wg"
-    grep -q '"SHARE_PORT")}' "$V2_ROOT/panel/master-wg-panel"
-    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'SHARE_PORT=\$SHARE_PORT'
-    grep -q 'function shareIpUrl' "$V2_ROOT/console/konsol.js"
-    # Stage 7 keeps the share root owner and the hidden-folder checks; the WebDAV checks are the module's.
-    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -q 'Paylaşım kökü' <<<"$s7"
-    [ "$(grep -c "Paylaşım WebDAV'ı girişsiz yanıt" <<<"$s7")" -eq 0 ]
-    awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q '"\$SERVER_ROOT/\$SHARE_DIR/w"'
-    # Konsol reads the account from the root backend and shows the password only when asked.
-    grep -qF 'const acctUrl = (id, withPass) => `/api/konsol/moduller/${enc(id)}/hesap${withPass ? "?parola=1" : ""}`;' "$V2_ROOT/console/konsol.js"
-    grep -qF 'const REVEAL_SECONDS = 30;' "$V2_ROOT/console/konsol.js"
-    grep -qF 'document.addEventListener("visibilitychange", () => { if (document.hidden) hideAllPass(); });' "$V2_ROOT/console/konsol.js"
-    [ "$(grep -c 'showPass' "$V2_ROOT/console/konsol.js")" -eq 0 ]
 }
 
 @test "installer wires the files panel: downloads uid, sandbox, no password, tailnet name, hidden trash, stage 7 proof" {
@@ -3589,6 +3224,9 @@ EOF
     touch "$TMP/qb-password-set"
     run mm hesap torrent --parola
     [ "$output" = "$(printf 'admin\tayarli')" ]
+    printf '[Preferences]\nWebUI\\Username=operator\n' >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    run mm hesap torrent
+    [ "$output" = "$(printf 'operator\tayarli')" ]
     # Settings made in qBittorrent stay: a reinstall never rewrites the profile.
     printf 'kullanicinin ayari\n' >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
     run mm durdur torrent
@@ -3621,48 +3259,20 @@ EOF
     [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
 }
 
-@test "master-modul installs the file manager as a checked service and removes it before nothing else depends on it" {
-    konsol_fixture
-    run mm kur dosya
-    [ "$status" -eq 0 ]
-    grep -qx "$(printf 'dosya\tcalisiyor')" "$TMP/moduller"
-    [ "$(cat "$TMP/run/modul-dosya.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
-    cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
-    [ "$(ls -A "$TMP/units")" = master-files-panel.service ]
-    grep -qx 'enable --now master-files-panel.service' "$TMP/systemctl-calls"
-    run mm liste
-    [ "$(grep '^dosya' <<<"$output" | cut -f2-4)" = "$(printf 'konsol\tcalisiyor\trunning')" ]
-    # Konsol modules are installed or removed, never stopped.
-    run mm durdur dosya
-    [ "$status" -ne 0 ]
-    case "$output" in *"durdurulup başlatılmaz"*) ;; *) false ;; esac
-    # Paylaşım depends on it: it goes first.
-    printf 'paylasim\tcalisiyor\n' >>"$TMP/moduller"
-    run mm kaldir dosya
-    [ "$status" -ne 0 ]
-    case "$output" in *"önce Paylaşım kaldırılmalı"*) ;; *) false ;; esac
-    [ -e "$TMP/units/master-files-panel.service" ]
-    printf 'dosya\tcalisiyor\n' >"$TMP/moduller"
-    # --veri empties the trash; the trash folder and everything outside it stay.
-    mkdir -p "$TMP/srv/.cop/1789000000000-abcd1234" "$TMP/srv/downloads"
-    printf 'x\n' >"$TMP/srv/.cop/1789000000000-abcd1234/film.mkv"
-    printf '{}\n' >"$TMP/srv/.cop/1789000000000-abcd1234.json"
-    printf 'y\n' >"$TMP/srv/downloads/kalsin.mkv"
-    run mm kaldir dosya --veri
-    [ "$status" -eq 0 ]
-    [ ! -e "$TMP/units/master-files-panel.service" ]
-    grep -qx 'disable --now master-files-panel.service' "$TMP/systemctl-calls"
-    [ -d "$TMP/srv/.cop" ]
-    [ -z "$(ls -A "$TMP/srv/.cop")" ]
-    [ -f "$TMP/srv/downloads/kalsin.mkv" ]
-    [ "$(grep -c dosya "$TMP/moduller")" -eq 0 ]
-    # A service that does not answer is taken back and nothing is registered.
-    touch "$TMP/check-fail"
-    run mm kur dosya
-    [ "$status" -ne 0 ]
-    [ ! -e "$TMP/units/master-files-panel.service" ]
-    [ ! -e "$TMP/files-active" ]
-    [ "$(grep -c dosya "$TMP/moduller")" -eq 0 ]
+@test "installer protects the archive workspace and wires bounded nonroot ZIP jobs" {
+    eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    mkdir -p "$TMP/root/.arsiv" "$TMP/root/media"
+    printf 'private\n' >"$TMP/root/.arsiv/jobs.json"
+    chmod 0700 "$TMP/root/.arsiv"
+    chmod 0600 "$TMP/root/.arsiv/jobs.json"
+    FILES_ARCHIVE_DIR=.arsiv
+    ensure_downloads_tree "$TMP/root" "$(id -u)" "$(id -g)" >/dev/null
+    [ "$(file_mode "$TMP/root/.arsiv")" = 0o700 ]
+    [ "$(file_mode "$TMP/root/.arsiv/jobs.json")" = 0o600 ]
+    grep -qF -- '--archive-dir=__FILES_ARCHIVE_DIR__' "$V2_ROOT/systemd/master-files-panel.service"
+    grep -qx 'MemoryMax=512M' "$V2_ROOT/systemd/master-files-panel.service"
+    grep -qx 'CPUQuota=100%' "$V2_ROOT/systemd/master-files-panel.service"
+    grep -qF '"$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"' "$V2_ROOT/install.sh"
 }
 
 @test "master-modul installs WireGuard, opens the kept networks after the firewall and closes them on removal" {
@@ -3958,7 +3568,7 @@ EOF
     [ "${lines[0]}" = "  Dosya yöneticisi: kurulu değil" ]
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
-    [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — http://paylas.ayc, Infuse için 100.64.0.7:61010; hesabı kartında" ]
+    [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → WebDAV: klasör başına adres, kullanıcı ve erişim izni" ]
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
     awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'
@@ -4070,7 +3680,7 @@ assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e f
 web = {e["address"]: e for e in d["web"]["entries"]}
 assert [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]] == [
     ("/api/wg/* /api/konsol/*", "proxy", "127.0.0.1:61008"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
-assert web["health.ayc"]["routes"] == [{"path": "", "kind": "respond", "to": "ok"}]
+assert "health.ayc" not in web
 assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
 assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"
 assert (web["10.8.0.1:61006"]["access"], web["10.8.0.1:61006"]["iface"]) == ("wireguard", "wg0"), web
@@ -4078,7 +3688,7 @@ assert not [a for a in web if a.startswith(("wg.", "dosya.", "file."))]
 assert len(d["web"]["raw"]) == 4
 # Names: the base's and each module's, all on the Tailscale address.
 names = {n["name"]: n for n in d["dns"]["names"]}
-assert set(names) == {"health.ayc", "panel.ayc", "paylas.ayc", "torrent.ayc"}, names
+assert set(names) == {"panel.ayc", "paylas.ayc", "torrent.ayc"}, names
 assert names["panel.ayc"]["source"] == "base" and names["paylas.ayc"]["source"] == "paylasim"
 assert all(n["address"] == "100.64.0.7" for n in names.values())
 assert d["dns"]["listen"] == ["lo", "tailscale0"] and d["dns"]["domains"] == ["ayc"] and d["dns"]["dhcp"] is False
@@ -4098,21 +3708,24 @@ PY
     [ ! -e "$TMP/sdrun-calls" ]
 }
 
-@test "console shows the Ayarlar page read-only from the settings API" {
+@test "console manages settings in four tabs with review and server-side rollback" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/konsol.css"
     # Side navigation and the phone's bottom bar both link the page.
-    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 2 ]
+    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 3 ]
     grep -q '<section data-view="ayarlar" hidden>' "$html"
-    for id in cfg-sum cfg-fw cfg-web cfg-dns cfg-qb; do grep -q "id=\"$id\"" "$html"; done
-    # In-page jumps scroll; a #fragment would be taken for a route.
-    [ "$(grep -c 'data-jump="cfg-' "$html")" -eq 4 ]
-    run ! grep -q 'href="#cfg-' "$html"
+    grep -q 'id="settings-page"' "$html"
+    grep -q 'src="/ayarlar.js"' "$html"
+    grep -q 'href="/ayarlar.css"' "$html"
     grep -qF 'api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar")' "$js"
     grep -qF 'ayarlar: { title: "Ayarlar"' "$js"
-    # Read-only: the page posts nothing.
-    body="$(awk '/Ayarlar \(DD-155\)/,/yönlendirme ----------/' "$js")"
-    [ -n "$body" ]
-    run ! grep -qE 'method: "POST"|post\(' <<<"$body"
+    grep -q 'window.createSettingsPage' "$js"
+    local settings="$V2_ROOT/console/ayarlar.js"
+    for label in 'Güvenlik Duvarı' Caddy Dnsmasq qBittorrent 'İncele ve uygula' 'Geri al'; do grep -q "$label" "$settings"; done
+    grep -q '/api/konsol/ayarlar/uygula' "$settings"
+    grep -q '/api/konsol/ayarlar/durum' "$settings"
+    run ! grep -qE 'localStorage[.(]|innerHTML[ =]' "$settings"
+    grep -q 'OnUnitActiveSec=2s' "$V2_ROOT/systemd/master-settings-guard.timer"
+    grep -q 'master_settings.py --state __STATE_FILE__ guard' "$V2_ROOT/systemd/master-settings-guard.service"
     # Icons the page uses exist (svg() silently falls back to the file icon).
     for icon in sliders route chev arrow; do grep -qE "^    ${icon}: '" "$js"; done
     grep -q '^\.cfgsum {' "$css"
@@ -4121,4 +3734,92 @@ PY
     # CSP: no inline style in the markup.
     run ! grep -q ' style="' "$html"
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'CADDY_WG_FILE=\$CADDY_WG_FILE'
+}
+
+@test "settings API keeps its gates, hides hashes, lists all rules and passes mutations privately to a worker" {
+    TMP="$(cd "$TMP" && pwd -P)"
+    panel_start
+    settings_fixture
+    mkdir -p "$TMP/srv/media" "$TMP/run" "$TMP/units" "$TMP/templates"
+    cat >>"$TMP/state.env" <<EOF
+SETTINGS_FILE=$TMP/settings.json
+SETTINGS_PENDING_FILE=$TMP/pending.json
+SETTINGS_DNS_FILE=$TMP/dnsmasq.d/konsol.conf
+DNSMASQ_CONF_FILE=$TMP/dnsmasq.d/local-services.conf
+UNIT_DIR=$TMP/units
+MODULES_DIR=$TMP/templates
+RUNTIME_DIR=$TMP/run
+WG_NETWORKS_FILE=$TMP/networks
+MEDIA_SUBDIR=media
+SERVER_ROOT=$TMP/srv
+EOF
+    cat >"$TMP/pbin/iptables-save" <<'EOF'
+#!/bin/bash
+printf '%s\n' '*filter' ':INPUT DROP [3:40]' ':ts-input - [0:0]' '[2:120] -A INPUT -j ts-input' '[2:120] -A ts-input -i tailscale0 -j ACCEPT' 'COMMIT'
+EOF
+    cp "$TMP/pbin/iptables-save" "$TMP/pbin/ip6tables-save"
+    cat >"$TMP/pbin/ss" <<'EOF'
+#!/bin/bash
+case "$*" in *-4) echo 'tcp LISTEN 0 128 0.0.0.0:8081 0.0.0.0:*' ;; esac
+EOF
+    cat >"$TMP/pbin/systemd-run" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/sdrun-calls"
+python3 -c 'import json,sys; json.dump(json.load(sys.stdin), open(sys.argv[1], "w"))' "$TMP/worker-body"
+printf '{"ok":true}\n'
+EOF
+    chmod +x "$TMP/pbin/iptables-save" "$TMP/pbin/ip6tables-save" "$TMP/pbin/ss" "$TMP/pbin/systemd-run"
+    local headers=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
+    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    python3 - "$TMP/body" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["manage"]["username"] == "admin" and d["manage"]["pending"] is None, d["manage"]
+assert "GIZLI" not in json.dumps(d)
+assert any(r["spec"] == "Politika: DROP" for r in d["firewall"]["rules"]["rows"])
+assert any(r["owner"] == "Tailscale" and r["packets"] == 2 for r in d["firewall"]["rules"]["rows"])
+assert any(r["port"] == 8081 and r["scope"] == "wan" and not r["baseline"] for r in d["firewall"]["ports"])
+PY
+    [ "$(pc /api/konsol/ayarlar/durum)" = 403 ]
+    [ "$(pc /api/konsol/ayarlar/klasorler -H 'X-Konsol: 1')" = 200 ]
+    grep -q "$TMP/srv/media" "$TMP/body"
+    [ "$(pc '/api/konsol/ayarlar/klasorler?path=/etc' -H 'X-Konsol: 1')" = 400 ]
+    [ "$(pc /api/konsol/ayarlar/uygula -H 'Content-Type: application/json' --data '{}')" = 403 ]
+    [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" -H 'Sec-Fetch-Site: cross-site' --data '{}')" = 403 ]
+    [ ! -e "$TMP/sdrun-calls" ]
+    [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '{"revision":"sample","torrent":{"password":"dummy-api-password"}}')" = 200 ]
+    grep -q -- '--wait --pipe --collect' "$TMP/sdrun-calls"
+    grep -q 'master_settings.py --state .* apply$' "$TMP/sdrun-calls"
+    grep -q 'dummy-api-password' "$TMP/worker-body"
+    run ! grep -q 'dummy-api-password' "$TMP/sdrun-calls" "$TMP/panel.log" "$TMP/body"
+    [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" --data '{"id":"sample","client":"100.64.0.9","host":"panel.forged"}')" = 200 ]
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "127.0.0.1"' "$TMP/worker-body"
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["host"] != "panel.forged"' "$TMP/worker-body"
+    [ "$(pc /api/konsol/ayarlar/nested/uygula "${headers[@]}" --data '{}')" = 404 ]
+    [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '[]')" = 400 ]
+}
+
+@test "confirmed domain overrides stale installer input without retaining the health site" {
+    command -v python3 >/dev/null || skip "python3 unavailable"
+    run python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$TMP/settings.json"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    printf '%s\n' '{"domain":"ev"}' >"$TMP/settings.json"
+    run python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$TMP/settings.json"
+    [ "$status" -eq 0 ]
+    [ "$output" = ev ]
+    # Execute only the actual domain-selection stanza, never installer stages.
+    local stanza
+    stanza="$(sed -n '/^    LOCAL_DOMAIN="${INPUT_LOCAL_DOMAIN:-\$def_domain}"/,/^    # DD-144:/p' "$V2_ROOT/install.sh")"
+    [ -n "$stanza" ]
+    run env INPUT_LOCAL_DOMAIN=ayc SETTINGS_FILE="$TMP/settings.json" V2_ROOT="$V2_ROOT" \
+        bash -c 'die() { exit 90; }; pick_domain() { local def_domain=ayc; eval "$1"; echo "$LOCAL_DOMAIN"; }; pick_domain "$1"' _ "$stanza"
+    [ "$status" -eq 0 ]
+    [ "$output" = ev ]
+    printf '%s\n' '{"domain":"bad;value"}' >"$TMP/settings.json"
+    run python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$TMP/settings.json"
+    [ "$status" -ne 0 ]
+    run ! grep -q 'health.__LOCAL_DOMAIN__' "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf"
+    grep -q 'state.lock' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -q 'flock -n 8' "$V2_ROOT/scripts/refresh-tailnet-config"
 }

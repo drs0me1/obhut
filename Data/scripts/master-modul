@@ -37,7 +37,7 @@ source "$STATE_FILE"
 
 # Katalog: Konsol'daki sıra. Her modülün çalışma yeri (host | konsol) ve adımları aşağıdaki
 # case bloklarında tanımlıdır. Docker yok (DD-152): her modül sunucuda bir systemd servisidir.
-CATALOG="dosya wireguard torrent paylasim"
+CATALOG="wireguard torrent"
 ID_RE='^[a-z]{2,16}$'
 
 runtime_of() {
@@ -106,6 +106,8 @@ take_lock() {
     mkdir -p -- "$RUNTIME_DIR"
     exec 8>"$RUNTIME_DIR/modul.lock"
     flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
+    [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -f "$SETTINGS_PENDING_FILE" ]] ||
+        die "Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın"
 }
 
 # Birim "active" olur olmaz işlem henüz root olabilir: systemd User='a exec'ten hemen önce geçer.
@@ -124,176 +126,43 @@ http_code() { # URL ya da curl argümanları; yanıt yoksa 000
     curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" 2>/dev/null || true
 }
 
-# ------------------------------------------------------- paylaşım (DD-149, DD-152)
-# rclone'un resmi sürümü sunucuda, SHARE_UNIT servisi olarak (birimi kurulum MODULES_DIR/paylasim/
-# altına yazar). Paylaşım kökünün alt adları master-files-panel ve kurulumla aynıdır (bats sınar).
-SHARE_SERVED="w"
+# ------------------------------------------------------- klasör paylaşımı (DD-158)
+SHARE_SERVED="w" # yalnız eski sürümün veri temizliği
 SHARE_REGISTRY="kayit.json"
 SHARE_ENABLED="acik"
-# Parola TV kumandasıyla da yazılır: karışan harfler (0/O, 1/l/I) yok.
-SHARE_ALPHABET="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 SHARE_UNIT="master-paylasim.service"
-SHARE_FAIL="" SHARE_PW="" SHARE_REWROTE=0 SHARE_RCLONE_NEW=0
+SHARE_FAIL=""
 
 share_need() {
     local k
-    for k in SERVER_ROOT SHARE_DIR SHARE_PORT SHARE_HTPASSWD_FILE SHARE_CRED_FILE SHARE_ACCOUNT \
-        SHARE_PASSWORD_LENGTH STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN \
-        TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID FILES_PANEL_TRASH RCLONE_VERSION RCLONE_SHA256_AMD64 \
-        RCLONE_SHA256_ARM64 RCLONE_DOWNLOAD_URL RCLONE_BIN; do
+    for k in SERVER_ROOT SHARE_DIR SHARE_PORT SHARE_STATE_FILE STATE_DIR SBIN_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID; do
         [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
     done
 }
 
-share_new_password() {
-    python3 -c 'import secrets, sys; a = sys.argv[1]; print("".join(secrets.choice(a) for _ in range(int(sys.argv[2]))))' \
-        "$SHARE_ALPHABET" "$SHARE_PASSWORD_LENGTH"
-}
-
-# Kayıttaki parola (cred dosyası hesabın tek doğrusudur); geçerli değilse 1.
-share_cred_password() {
-    local line
-    [[ -f "$SHARE_CRED_FILE" && ! -L "$SHARE_CRED_FILE" ]] || return 1
-    [[ "$(wc -l <"$SHARE_CRED_FILE")" -eq 1 ]] || return 1
-    IFS= read -r line <"$SHARE_CRED_FILE" || return 1
-    [[ "${line%%:*}" == "$SHARE_ACCOUNT" && "${line#*:}" =~ ^[A-Za-z0-9]{16,}$ ]] || return 1
-    printf '%s\n' "${line#*:}"
-}
-
-share_htpasswd_ok() { # PAROLA — parola yalnız stdin'den geçer
-    [[ -f "$SHARE_HTPASSWD_FILE" && ! -L "$SHARE_HTPASSWD_FILE" ]] || return 1
-    [[ "$(wc -l <"$SHARE_HTPASSWD_FILE")" -eq 1 ]] || return 1
-    printf '%s' "$1" | htpasswd -vi "$SHARE_HTPASSWD_FILE" "$SHARE_ACCOUNT" >/dev/null 2>&1
-}
-
-# İki dosyayı da root'a özel (0600) yazar; parola argv'ye, günlüğe ya da ilerlemeye hiç girmez.
-share_write_account() { # PAROLA
-    local th tc
-    th="$(umask 077 && mktemp "$STATE_DIR/.paylasim-XXXXXX")"
-    tc="$(umask 077 && mktemp "$STATE_DIR/.paylasim-XXXXXX")"
-    if ! printf '%s' "$1" | htpasswd -i -B "$th" "$SHARE_ACCOUNT" >/dev/null 2>&1; then
-        rm -f -- "$th" "$tc"
-        return 1
-    fi
-    printf '%s:%s\n' "$SHARE_ACCOUNT" "$1" >"$tc"
-    chmod 0600 "$th" "$tc"
-    chown root:root "$th" "$tc"
-    mv -f -- "$th" "$SHARE_HTPASSWD_FILE"
-    mv -f -- "$tc" "$SHARE_CRED_FILE"
-}
-
-# Hesabı hazırlar: geçerli kayıt varsa aynen kullanılır (Infuse girişi değişmez), htpasswd
-# uymuyorsa kayıttan yeniden yazılır, kayıt yoksa ya da başka kullanıcıya aitse yenisi üretilir.
-# Sonuç: SHARE_PW (parola), SHARE_REWROTE=1 (htpasswd değişti; çalışan servis yeniden başlamalı:
-# hesap dosyasını systemd açılışta kopyalar).
 share_prepare() {
-    SHARE_REWROTE=0
-    if SHARE_PW="$(share_cred_password)"; then
-        share_htpasswd_ok "$SHARE_PW" && return 0
-    else
-        SHARE_PW="$(share_new_password)" || fail_step "parola üretilemedi"
+    if [[ ! -f "$SHARE_STATE_FILE" && -s "${SHARE_CRED_FILE:-/dev/null}" ]]; then
+        warn "Eski ortak WebDAV hesabı kullanımdan kalkıyor; Dosyalar → WebDAV bölümünde klasör hesaplarını yeniden tanımlayın. Dosyalar silinmez."
     fi
-    share_write_account "$SHARE_PW" || fail_step "hesap yazılamadı"
-    SHARE_REWROTE=1
+    python3 "$SBIN_DIR/master_shares.py" prepare || fail_step "klasör paylaşım kaydı hazırlanamadı"
 }
 
-share_auth_code() { # PAROLA URL — kimlik bilgisi curl'e stdin'deki ayarla gider, argv'ye değil
-    printf 'user = "%s:%s"\n' "$SHARE_ACCOUNT" "$1" |
-        curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - -X PROPFIND -H 'Depth: 0' "$2" 2>/dev/null ||
-        true
-}
-
-# rclone: resmi sürüm, sabit sürüm numarası ve SHA256 (DD-152). Aynı sürüm kuruluysa inmez.
-# Arşiv özet tutmadan açılmaz; ikili yanına yazılıp yerine taşınır. Yeni indiyse SHARE_RCLONE_NEW=1.
-share_rclone() {
-    local arch sum url tmp have
-    SHARE_RCLONE_NEW=0
-    have="$("$RCLONE_BIN" version 2>/dev/null | head -n 1 || true)"
-    [[ "$have" != "rclone v$RCLONE_VERSION" ]] || return 0
-    arch="$(dpkg --print-architecture 2>/dev/null || true)"
-    case "$arch" in
-        amd64) sum="$RCLONE_SHA256_AMD64" ;;
-        arm64) sum="$RCLONE_SHA256_ARM64" ;;
-        *) SHARE_FAIL="rclone bu işlemci için sabitlenmedi ($arch)"; return 1 ;;
-    esac
-    url="$RCLONE_DOWNLOAD_URL/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$arch.zip"
-    tmp="$(mktemp -d)"
-    if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --max-time 300 -o "$tmp/rclone.zip" "$url"; then
-        rm -rf -- "$tmp"
-        SHARE_FAIL="rclone indirilemedi ($url)"
-        return 1
-    fi
-    if ! printf '%s  %s\n' "$sum" "$tmp/rclone.zip" | sha256sum -c --quiet >/dev/null 2>&1; then
-        rm -rf -- "$tmp"
-        SHARE_FAIL="rclone arşivinin SHA256 özeti tutmadı; kurulmadı"
-        return 1
-    fi
-    if ! python3 - "$tmp/rclone.zip" "$tmp/rclone" <<'PY'
-import sys, zipfile
-z = zipfile.ZipFile(sys.argv[1])
-names = [n for n in z.namelist() if n.count("/") == 1 and n.endswith("/rclone")]
-if len(names) != 1:
-    sys.exit(1)
-with open(sys.argv[2], "wb") as fh:
-    fh.write(z.read(names[0]))
-PY
-    then
-        rm -rf -- "$tmp"
-        SHARE_FAIL="rclone arşivi açılamadı"
-        return 1
-    fi
-    install -d -m 0755 -o root -g root -- "$(dirname -- "$RCLONE_BIN")"
-    install -m 0755 -o root -g root -- "$tmp/rclone" "$RCLONE_BIN.yeni"
-    mv -f -- "$RCLONE_BIN.yeni" "$RCLONE_BIN"
-    rm -rf -- "$tmp"
-    have="$("$RCLONE_BIN" version 2>/dev/null | head -n 1 || true)"
-    [[ "$have" == "rclone v$RCLONE_VERSION" ]] || { SHARE_FAIL="rclone çalışmadı ('$have')"; return 1; }
-    SHARE_RCLONE_NEW=1
-}
-
-# htpasswd (apache2-utils) yalnız Paylaşım'ın hesabı içindir; temel kurulum getirmez (DD-153).
-share_tools() {
-    apt_install apache2-utils || { SHARE_FAIL="$FAIL"; return 1; }
-}
-
-share_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
+share_place_unit() {
     place_unit "$MODULES_DIR/paylasim/$SHARE_UNIT" "$SHARE_UNIT"
 }
 
-# Servis ayakta, indirme sahibi olarak (root değil) çalışıyor; kökü yalnız .pay/w ve salt okunur;
-# çöp onun için boş; yalnız 127.0.0.1:SHARE_PORT dinleniyor; girişsiz 401, hesapla 207.
-# Başarısızsa nedeni SHARE_FAIL'e yazar.
-share_verify() { # PAROLA
-    local _ pid uid cmd code="" socks
+share_verify() {
+    local _ uid code=""
     SHARE_FAIL=""
     for _ in $(seq 1 20); do
-        systemctl is-active --quiet "$SHARE_UNIT" && break
-        sleep 1
-    done
-    systemctl is-active --quiet "$SHARE_UNIT" || { SHARE_FAIL="paylaşım servisi başlamadı"; return 1; }
-    uid="$(unit_uid "$SHARE_UNIT")"
-    [[ "$uid" == "$DOWNLOADS_UID" ]] ||
-        { SHARE_FAIL="paylaşım uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
-    pid="$(systemctl show -p MainPID --value "$SHARE_UNIT" 2>/dev/null || true)"
-    cmd=" $(ps -o args= -p "$pid" 2>/dev/null || true) "
-    if ! [[ "$cmd" == *" serve webdav $SERVER_ROOT/$SHARE_DIR/$SHARE_SERVED "* && "$cmd" == *" --read-only "* &&
-        "$cmd" == *" --copy-links "* && "$cmd" == *" --addr=127.0.0.1:$SHARE_PORT "* ]]; then
-        SHARE_FAIL="paylaşım salt okunur değil ya da kökü $SERVER_ROOT/$SHARE_DIR/$SHARE_SERVED değil"
-        return 1
-    fi
-    [[ "$(systemctl show -p TemporaryFileSystem --value "$SHARE_UNIT" 2>/dev/null || true)" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* ]] ||
-        { SHARE_FAIL="paylaşım çöpü görebiliyor"; return 1; }
-    for _ in $(seq 1 10); do
         code="$(http_code "http://127.0.0.1:$SHARE_PORT/")"
         [[ "$code" != 401 ]] || break
         sleep 1
     done
-    [[ "$code" == 401 ]] || { SHARE_FAIL="paylaşım girişsiz yanıt $code verdi (beklenen 401)"; return 1; }
-    socks="$(ss -Hltnp 2>/dev/null | awk -v p="pid=$pid," 'index($0, p) {print $4}' | sort -u || true)"
-    [[ "$socks" == "127.0.0.1:$SHARE_PORT" ]] ||
-        { SHARE_FAIL="paylaşım yalnız 127.0.0.1:$SHARE_PORT'ta dinlemeli ($(tr '\n' ' ' <<<"$socks"))"; return 1; }
-    code="$(share_auth_code "$1" "http://127.0.0.1:$SHARE_PORT/")"
-    [[ "$code" == 207 ]] || { SHARE_FAIL="paylaşım hesabı kabul edilmedi (PROPFIND $code)"; return 1; }
+    systemctl is-active --quiet "$SHARE_UNIT" || { SHARE_FAIL="paylaşım servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$SHARE_UNIT")"
+    [[ "$uid" == "$DOWNLOADS_UID" && "$code" == 401 ]] ||
+        { SHARE_FAIL="paylaşım uid/adres/giriş kapısı doğrulanamadı"; return 1; }
 }
 
 share_off() { # servis durur, birim kalkar; hata vermez
@@ -309,6 +178,9 @@ caddy_validate() {
     TAILSCALE_IPV4="$TAILSCALE_IPV4" caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1
 }
 dnsmasq_check() {
+    if [[ -n "${SETTINGS_FILE:-}" ]]; then
+        python3 "$SBIN_DIR/master_settings.py" project-dns || return 1
+    fi
     if [[ -x /usr/share/dnsmasq/systemd-helper ]]; then
         /usr/share/dnsmasq/systemd-helper checkconfig >/dev/null 2>&1
     else
@@ -347,7 +219,7 @@ swap_out() { # HEDEF DOĞRULAYICI → 0 kaldırıldı, 1 zaten yok, 2 kaldırıl
 # Bir modülün adları: MODULES_DIR/<id>/<id>.caddy → CADDY_MODULES_DIR/<id>.caddy ve
 # MODULES_DIR/<id>/dnsmasq.conf → DNSMASQ_CONF_DIR/modul-<id>.conf. Hata: FAIL.
 names_on() { # ID
-    local id="$1" rc=0
+    local id="$1" rc=0 dns_src dns_tmp=""
     FAIL=""
     swap_in "$MODULES_DIR/$id/$id.caddy" "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
     case "$rc" in
@@ -357,7 +229,15 @@ names_on() { # ID
         *) FAIL="modül dosyası yok ($MODULES_DIR/$id/$id.caddy); kurulumu yeniden çalıştırın"; return 1 ;;
     esac
     rc=0
-    swap_in "$MODULES_DIR/$id/dnsmasq.conf" "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
+    dns_src="$MODULES_DIR/$id/dnsmasq.conf"
+    if [[ -n "${SETTINGS_FILE:-}" ]]; then
+        dns_tmp="$(mktemp "$RUNTIME_DIR/.dns-XXXXXX")"
+        cp -- "$dns_src" "$dns_tmp"
+        python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp" || { rm -f -- "$dns_tmp"; return 1; }
+        dns_src="$dns_tmp"
+    fi
+    swap_in "$dns_src" "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
+    [[ -z "$dns_tmp" ]] || rm -f -- "$dns_tmp"
     case "$rc" in
         0) systemctl restart dnsmasq >/dev/null 2>&1 || { FAIL="dnsmasq yeniden başlatılamadı"; return 1; } ;;
         1) ;;
@@ -387,6 +267,7 @@ share_verify_names() {
         a="$(http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/")"
         b="$(http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/")"
         ans="$(dig +short +time=2 +tries=1 "paylas.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "paylas.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
         [[ "$a" == 401 && "$b" == 401 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
         sleep 1
     done
@@ -417,7 +298,7 @@ share_marker() { # on | off
 # .pay/w'deki bağlantı olmayan hiçbir şey ve bağlanan dosyalar yerinde kalır.
 share_drop_data() {
     local pay="$SERVER_ROOT/$SHARE_DIR"
-    rm -f -- "$SHARE_CRED_FILE" "$SHARE_HTPASSWD_FILE"
+    rm -f -- "$SHARE_CRED_FILE" "$SHARE_HTPASSWD_FILE" "$SHARE_STATE_FILE"
     [[ -d "$pay" && ! -L "$pay" ]] || return 0
     rm -f -- "$pay/$SHARE_REGISTRY"
     [[ -d "$pay/$SHARE_SERVED" && ! -L "$pay/$SHARE_SERVED" ]] || return 0
@@ -657,6 +538,7 @@ torrent_verify_names() {
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         code="$(http_code -H "Host: torrent.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/api/v2/app/version")"
         ans="$(dig +short +time=2 +tries=1 "torrent.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "torrent.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
         [[ "$code" == 403 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
         sleep 1
     done
@@ -681,6 +563,7 @@ torrent_rollback() {
 torrent_drop_data() {
     [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
     rm -rf -- "$TORRENT_PROFILE_DIR"
+    rm -f -- "$UNIT_DIR/$TORRENT_DROPIN_DIR/90-konsol.conf"
 }
 
 # Geçici parola qBittorrent'in bu açılıştaki günlüğündedir; parola arayüzde ayarlandıysa yoktur.
@@ -692,6 +575,10 @@ torrent_first_login() { # [--parola]
     [[ "$inv" =~ ^[0-9a-f]{32}$ ]] || die "qBittorrent günlüğü okunamadı"
     log="$(journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" 2>/dev/null || true)"
     user="$(sed -n 's/.*WebUI administrator username is: *//p' <<<"$log" | tail -n 1)"
+    # DD-156: qBittorrent may omit the username in logs once the password is set.
+    local configured
+    configured="$(sed -n 's/^WebUI\\Username=//p' "$TORRENT_PROFILE_DIR/qBittorrent/qBittorrent.conf" 2>/dev/null | tail -n 1 || true)"
+    [[ -z "$configured" ]] || user="$configured"
     temp="$(sed -n 's/.*temporary password is provided for this session: *//p' <<<"$log" | tail -n 1)"
     [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || user="admin"
     if [[ ! "$temp" =~ ^[A-Za-z0-9]{6,64}$ ]]; then
@@ -776,21 +663,20 @@ cmd_kur() {
         paylasim)
             registry_get dosya >/dev/null || fail_step "önce Dosya yöneticisi kurulmalı (Paylaşım ona bağlı)"
             share_need
-            progress "$id" kur 1 4 "rclone indiriliyor"
-            share_tools || fail_step "$SHARE_FAIL"
-            share_rclone || fail_step "$SHARE_FAIL"
-            progress "$id" kur 2 4 "Hesap üretiliyor"
+            progress "$id" kur 1 4 "Paylaşım altyapısı"
+
+            progress "$id" kur 2 4 "Klasör kaydı hazırlanıyor"
             share_prepare
             progress "$id" kur 3 4 "Servis başlatılıyor"
             share_place_unit || true
-            { systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
+            { systemctl reset-failed "$SHARE_UNIT"; systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
                 { share_rollback; fail_step "paylaşım servisi başlatılamadı"; }
-            share_verify "$SHARE_PW" || { share_rollback; fail_step "$SHARE_FAIL"; }
+            share_verify || { share_rollback; fail_step "$SHARE_FAIL"; }
             progress "$id" kur 4 4 "Ad ve adres açılıyor"
             names_on paylasim || { share_rollback; fail_step "$FAIL"; }
             share_verify_names || { share_rollback; fail_step "$SHARE_FAIL"; }
             share_marker on || { share_rollback; fail_step "$SHARE_FAIL"; }
-            SHARE_PW=""
+
             ;;
     esac
     registry_set "$id" calisiyor
@@ -817,16 +703,15 @@ cmd_baslat() {
                     ;;
                 paylasim)
                     share_need
-                    share_tools || fail_step "$SHARE_FAIL"
-                    share_rclone || fail_step "$SHARE_FAIL"
+
                     share_prepare
                     share_place_unit || true
-                    { systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
+                    { systemctl reset-failed "$SHARE_UNIT"; systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
                         fail_step "paylaşım servisi başlatılamadı"
-                    share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
+                    share_verify || fail_step "$SHARE_FAIL"
                     names_on paylasim || fail_step "$FAIL"
                     share_marker on || fail_step "$SHARE_FAIL"
-                    SHARE_PW=""
+
                     ;;
             esac
             ;;
@@ -886,7 +771,7 @@ cmd_kaldir() {
             firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
             ;;
         paylasim)
-            # rclone ikilisi kalır (qBittorrent'in paketi gibi); yeniden kurulumda inmez.
+            # --veri verilmedikçe klasör hesapları ve dosyalar korunur.
             share_need
             names_off paylasim
             share_marker off
@@ -923,42 +808,18 @@ cmd_gunluk() {
 }
 
 cmd_parola() {
-    local id="$1"
-    CUR_ID="$id" CUR_ACTION=parola
-    take_lock
-    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
-    share_need
-    share_tools || fail_step "$SHARE_FAIL"
-    progress "$id" parola 1 2 "Parola üretiliyor"
-    SHARE_PW="$(share_new_password)" || fail_step "parola üretilemedi"
-    share_write_account "$SHARE_PW" || fail_step "hesap yazılamadı"
-    progress "$id" parola 2 2 "Paylaşım yeniden başlıyor"
-    # Hesap dosyasını systemd açılışta kopyalar: çalışan servis yeniden başlar.
-    if systemctl is-active --quiet "$SHARE_UNIT"; then
-        systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım yeniden başlatılamadı"
-        share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
-    fi
-    SHARE_PW=""
-    progress "$id" parola bitti 0 "parola değişti"
-    printf '%s\tparola\n' "$id"
+    die "Ortak hesap kaldırıldı; Dosyalar → WebDAV bölümünde ilgili klasörün parolasını değiştirin."
 }
 
 # Salt okunur: Konsol'un root arka ucu kendi korumalı alanında çalıştırır (kilit ve ilerleme yok).
 cmd_hesap() {
-    local id="$1" with="$2" pw changed
+    local id="$1" with="$2"
     if [[ "$id" == torrent ]]; then
         torrent_need
         if [[ "$with" == 1 ]]; then torrent_first_login --parola; else torrent_first_login; fi
         return 0
     fi
-    share_need
-    pw="$(share_cred_password)" || die "hesap yok"
-    changed="$(stat -c %Y -- "$SHARE_CRED_FILE" 2>/dev/null || stat -f %m -- "$SHARE_CRED_FILE")"
-    if [[ "$with" == 1 ]]; then
-        printf '%s\t%s\t%s\n' "$SHARE_ACCOUNT" "$changed" "$pw"
-    else
-        printf '%s\t%s\n' "$SHARE_ACCOUNT" "$changed"
-    fi
+    die "Ortak hesap yok; her klasörün hesabı Dosyalar → WebDAV bölümünde."
 }
 
 # Kurulumun yeniden çalışması: dosyası değişen kurulu modülü uygular; durdurulan modül durur,
@@ -1002,35 +863,58 @@ cmd_uygula() {
             return 0
             ;;
         paylasim)
-            # Yeni rclone, yeni birim ya da yeniden yazılan hesap servisi yeniden başlatır.
-            local restart=0
             share_need
-            share_tools || fail_step "$SHARE_FAIL"
-            share_rclone || fail_step "$SHARE_FAIL"
-            [[ "$SHARE_RCLONE_NEW" != 1 ]] || restart=1
             share_prepare
-            [[ "$SHARE_REWROTE" != 1 ]] || restart=1
-            ! share_place_unit || restart=1
+            share_place_unit || true
             names_on paylasim || fail_step "$FAIL"
             share_marker on || fail_step "$SHARE_FAIL"
             if [[ "$state" == calisiyor ]]; then
                 systemctl enable --quiet "$SHARE_UNIT" >/dev/null 2>&1 || true
-                if [[ "$restart" == 1 ]] || ! systemctl is-active --quiet "$SHARE_UNIT"; then
-                    systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım servisi başlatılamadı"
-                fi
-                share_verify "$SHARE_PW" || fail_step "$SHARE_FAIL"
+                systemctl reset-failed "$SHARE_UNIT" >/dev/null 2>&1 || true
+                systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım servisi başlatılamadı"
+                share_verify || fail_step "$SHARE_FAIL"
             fi
-            SHARE_PW=""
             ;;
     esac
     command -v logger >/dev/null 2>&1 && logger -t master-modul -- "$id uygula: $state" || true
     printf '%s\t%s\n' "$id" "$state"
 }
 
+# Installer-only lifecycle for built-ins; they are absent from the public
+# catalog and cannot be stopped/removed through a module API or CLI action.
+# Keep legacy storage and registry paths for firewall/settings compatibility.
+cmd_yerlesik() {
+    local changed=" ${1:-} " files_changed=0 share_changed=0
+    take_lock
+    files_need
+    share_need
+    share_prepare
+    files_place_unit && files_changed=1
+    share_place_unit && share_changed=1
+    systemctl enable --quiet "$FILES_UNIT" "$SHARE_UNIT"
+    if [[ "$changed" == *" dosya "* || "$files_changed" == 1 ]] || ! systemctl is-active --quiet "$FILES_UNIT"; then
+        systemctl reset-failed "$FILES_UNIT"
+        systemctl restart "$FILES_UNIT"
+    fi
+    if [[ "$changed" == *" paylasim "* || "$share_changed" == 1 ]] || ! systemctl is-active --quiet "$SHARE_UNIT"; then
+        systemctl reset-failed "$SHARE_UNIT"
+        systemctl restart "$SHARE_UNIT"
+    fi
+    files_verify || fail_step "$FAIL"
+    share_verify || fail_step "$SHARE_FAIL"
+    names_on paylasim || fail_step "$FAIL"
+    share_verify_names || fail_step "$SHARE_FAIL"
+    share_marker on || fail_step "$SHARE_FAIL"
+    [[ "$(registry_get dosya || true)" == calisiyor ]] || registry_set dosya calisiyor
+    [[ "$(registry_get paylasim || true)" == calisiyor ]] || registry_set paylasim calisiyor
+    printf 'Yerleşik Dosyalar + WebDAV doğrulandı.\n'
+}
+
 main() {
     local cmd="${1:-}"
     case "$cmd" in
         liste) cmd_liste ;;
+        yerlesik) cmd_yerlesik "${2:-}" ;;
         kur | baslat | durdur | gunluk | kaldir | parola | hesap | uygula)
             [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
             valid_id "$2"

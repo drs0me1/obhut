@@ -121,6 +121,16 @@ fi
 
 warn_if_tailnet_unusable
 
+# DD-157: alan adı değişimiyle aynı state.env dosyasını yarıştırma. Bekleme:
+# Caddy OnFailure bu birimi tetikleyebilir; doluysa sonraki timer turu yeterli.
+if [[ -n "${RUNTIME_DIR:-}" ]]; then
+    mkdir -p "$RUNTIME_DIR"
+    exec 8>"$RUNTIME_DIR/state.lock"
+    flock -n 8 || exit 0
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+fi
+
 new_v4="$(
     ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
         awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }'

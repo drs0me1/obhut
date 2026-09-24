@@ -1,0 +1,11 @@
+[Unit]
+Description=Konsol unconfirmed settings rollback
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master_settings.py --state __STATE_FILE__ guard
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=150
+StandardOutput=null

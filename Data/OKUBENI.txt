@@ -1,7 +1,7 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (ör. 2026.08.06-v2-96.command)
+  <sürüm>.command            güncel kurulum (2026.08.06-v2-129.command)
   wireguard.command          WireGuard menüsü: ağ seç, listele, ekle, çıkar, QR, DNS, ağı yeniden üret (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu ve alan adı (git dışı)
   kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png); kurulum buraya bakmaz (git dışı)
@@ -16,7 +16,7 @@ Girdi dosyası (bir kez hazırlanır, her kurulumda aynısı kullanılır):
   qBittorrent'in ilk girişi modül kartında görünür.
 
 WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın kendisini de kurmaz:
-  http://panel.ayc → Modüller → WireGuard → Kur (paketler, çekirdek modülü, güvenlik duvarı);
+  http://panel.ayc → App Store → WireGuard → Kur (paketler, çekirdek modülü, güvenlik duvarı);
   sonra WireGuard → Yapılandır (wg0, 10.8.0.0/24, UDP 61001 önerilir).
   Modülü kaldırmak bütün ağları kapatır; anahtarlar ve profiller kalır, yeniden kurunca ağlar geri gelir.
   Sunucu yeniden kurulursa WireGuard boş gelir: ağı yeniden kurar, cihazları yeniden eklersiniz.
@@ -43,9 +43,23 @@ Konsol (tarayıcıdan; v2-105):
   http://panel.ayc — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).
   Eski adresler (wg.ayc, dosya.ayc, file.ayc) v2-124'ten beri yok; yer imlerini panel.ayc yapın.
   Parola sorulmaz (v2-114): yalnız Tailscale'deki cihazlar açabilir; erişimi daraltmak Tailscale ACL'iyle.
-  Ayarlar (v2-125): sunucunun şu anki yapılandırması, salt okunur — güvenlik duvarı kuralları (paket
-  sayaçlarıyla, IPv4/IPv6), web adresleri (Caddy), ad çözümü (dnsmasq) ve qBittorrent'in indirme yeri.
-  Hiçbir şeyi değiştirmez; her satır değerin nereden değiştiğini söyler.
+  Ayarlar (v2-126): Güvenlik Duvarı, Caddy, Dnsmasq ve qBittorrent sekmeleri.
+  Portları aç/kapatın, IPv4/IPv6 port kuralı ekleyin; tüm kurallar, sayaçlar ve dinleyiciler görünür.
+  Adreslerin altında nerede dinledikleri açıklanır. Üçüncü taraf kuralları salt okunurdur.
+  İzinli port, erişilebilir servis demek değildir.
+  Caddy → Yerel alan adı → Güncelle (v2-127): ayc yerine örneğin ev kullanabilirsiniz.
+  Önce Tailscale Admin → DNS'te aynı sunucu IP'sine yeni alanı “Restrict to domain” ile ekleyin;
+  onay bitene kadar eski alanın eşleştirmesini de koruyun. Yeni panel adresini açıp 5 dakika içinde
+  onaylayın; açılmazsa eski ad kendiliğinden geri gelir. Dosya aktarımlarını önce bitirin.
+  Özel DNS kayıtlarının hedefleri/açık-kapalı durumu korunur; IP ile paylaşım adresi değişmez.
+  Onaylı alan adı sonraki kurulumlarda korunur; eski kurulum.env değeri onu geri değiştirmez.
+  health.ayc artık yoktur; kurulum gerçek paneli ve API'leri denetler.
+  Yerel adları aç/kapatın, yeni ad ekleyin; isterseniz genel sorguları seçtiğiniz public DNS'e yönlendirin.
+  Özel alanınızın bulunmayan/kapalı adları dışarı gönderilmez. Tailscale Admin DNS ayrıca ayarlanır.
+  qBittorrent kullanıcı/parolası ve yeni indirmelerin dizini değişebilir; mevcut dosyalar taşınmaz.
+  İncele ve uygula → Sunucuda uygula → 60 saniye içinde bağlantıyı onaylayın.
+  Onay verilmezse sayfa kapansa bile sunucu eski ayarları geri alır; kendi panel adını/erişimini
+  kapatan değişiklik kalıcılaştırılamaz. Onaylı firewall/DNS tercihleri kurulum tekrarında korunur.
   Genel bakış: işlemci ve bellek grafiği, disk (indirilenler / çöp / sistem), bağlı cihazlar,
   son işlemler ve kullanımdaki portlar (internete açık olanlar ayrı grupta).
   WireGuard sayfası:
@@ -65,30 +79,37 @@ Konsol (tarayıcıdan; v2-105):
   Uç nokta (v2-103): sunucunun IPv4'ü (uç nokta) ve varsa IPv6'sı (kayıt) kurulumda sunucuda tespit edilir, elle yazılmaz.
   Sunucunun IP'si değişirse kurulumu yeniden çalıştırın ve cihazlara yeni profil verin.
 
-Paylaşım (v2-106, v2-108; v2-116'dan beri Konsol → Modüller'den kurulur):
-  Sunucudaki tek WebDAV budur: indirme klasörünün tamamı artık hiçbir yerde yayımlanmıyor.
-  Temiz kurulumda yoktur: Konsol → Modüller → Paylaşım → Kur. Kurulunca hesap üretilir (kullanıcı
-  paylasim, 20 karakterlik parola) ve kartta bir kez gösterilir; parola sonra göz simgesiyle 30 sn
-  görünür. "Yeni parola" yenisini üretir (Infuse'a yenisini girin). Kaldırırken hesap ve bağlantılar
-  korunur; "Hesabı ve paylaşım kayıtlarını da sil" işaretlenirse silinir (paylaşılan dosyalar değil).
-  Infuse'u paylaşım adresiyle yeniden ekleyin (eski webdav.ayc kaydı çalışmaz).
-  Dosyalar sekmesinde bir klasörün ya da dosyanın yanındaki paylaş simgesine basın; süreyi seçin
-  (1/7/30 gün ya da süresiz). Paylaşılanların hepsi http://paylas.ayc adresinde yan yana görünür.
-  Infuse adı çözemezse (ör. Apple TV) Konsol'daki "Infuse" satırındaki IP:port adresini kullanın.
-  Adres, kullanıcı adı ve parola bütün paylaşımlarda aynıdır (Paylaşım modülünün hesabı);
-  Konsol bunları gösterir ve kopyalatır. Karşı taraf Infuse'a bu hesabı bir kez ekler, sonraki
-  paylaşımlar aynı yerde belirir. Salt okunur: izlenir ve indirilir, silinemez.
-  Parolayı verdiğiniz kişi o an paylaşımda olan her şeyi görür; tek tek kişi ayıramazsınız.
-  Süresi dolan paylaşım kendiliğinden kalkar; "Paylaşımdan çıkar" da yalnız paylaşımı kapatır,
-  dosyayı silmez. Yalnız Tailscale'e bağlı cihazlar açabilir.
+Klasör WebDAV (v2-128; v2-129'dan beri yerleşik):
+  Dosyalar → klasörün Ayrıntılar düğmesi → WebDAV ile paylaş. Ayrı uygulama kurulmaz.
+  Dosyalar → Paylaşımlar sekmesinde tüm hesaplar topluca görünür.
+  Her klasörün kullanıcı adı, parolası ve /s/<id>/ adresi ayrıdır. Parola en az 12 karakter.
+  Salt okunur varsayılandır. Okuma ve yazma silme/üzerine yazmayı kapsar; ayrıca onay gerekir.
+  WebDAV ile silinen dosya Çöp'e gitmez. Süre: 1/7/30 gün veya süresiz. Duraklat hesabı korur;
+  paylaşımı kaldır yalnız erişimi kapatır. Düzenle'de boş parola mevcut parolayı korur.
+  Parola sonradan gösterilemez. Kaydetmek servisi yeniler; tüm süren WebDAV aktarımları kesilir.
+  Taşınan/değiştirilen klasörde erişim kapanır; Düzenle'den yeni yolunu seçerek aynı adresi koruyun.
+  Eski ortak hesap ve kök kaldırıldı: istemciye yeni klasör hesabını ve tam adresi girin.
+  Alıcı yalnız WebDAV portuna erişmeli; Konsol parolasız yönetim panelidir. Tailscale ACL/grants
+  tarafında panel ve SSH yöneticiye özel kalmalı; kurulum bu kuralları değiştirmez.
+  Finder/Infuse ayrıca sınanmalı: dosya kilidi, PROPPATCH ve klasör COPY desteklenmez.
 
-Konsol · Modüller sekmesi (v2-115):
-  Temiz kurulum yalnız temeli getirir (Konsol, Tailscale, ad çözümü, güvenlik duvarı). Docker yok (v2-121).
-  Ek parçalar buradan tek tıkla kurulur, durdurulur, başlatılır, kaldırılır; sayfa kapansa da işlem sürer.
-  Modüller: Dosya yöneticisi, WireGuard, qBittorrent ve Paylaşım (WebDAV). Arşiv açıcı kaldırıldı (v2-121).
-  Dosyalar ve WireGuard sayfaları modülleriyle birlikte menüye gelir. Paylaşım Dosya yöneticisine bağlıdır:
-  "Dosya yöneticisi ile birlikte kur" ikisini sırayla kurar; Dosya yöneticisi kaldırılırken önce Paylaşım kalkar.
-  İndirilen dosyalara hiçbir modül işlemi dokunmaz. Kurulum yeniden çalışınca kurulu modüller korunur.
+Konsol Desktop · App Store (v2-129):
+  Uygulamalar ekranı ve alt dock; tek çalışma penceresini küçült, büyüt, kapat.
+  Bu bir KDE oturumu değil; mevcut Konsol işlevlerinin masaüstü görünümüdür.
+  Dosyalar, WebDAV ve ZIP yerleşiktir. Tailscale, DNS/Caddy ve güvenlik duvarı korunur.
+  App Store'dan WireGuard ve qBittorrent kurulup kaldırılır; qBittorrent durdurulup başlatılabilir.
+  Sayfa kapansa da kurulum sürer. Dosyalar/WebDAV için kaldır düğmesi veya modül işlemi yoktur.
+  Mevcut klasör hesapları kurulum tekrarında korunur; eksik/kapalı yerleşik servisler açılır.
+
+Dosyalar · ZIP oluştur / ZIP aç (v2-129):
+  Dosya ve klasörleri seç → ZIP oluştur; tek ZIP seç → ZIP aç. Hedef klasör ve sonuç adını seçin.
+  İç içe ZIP açma isteğe bağlıdır (varsayılan 3, en fazla 5 katman); iç ZIP dosyaları da korunur.
+  Aynı adlı sonuç varsa yeniden adlandır, atla veya dur seçenekleri; üzerine yazma yoktur.
+  İşler sunucuda sürer; Arşiv işleri bölümünden izle, iptal et veya sonucu aç.
+  ZIP Store/Deflate desteklenir; şifreli ZIP, çok parçalı/büyük ZIP64, RAR ve 7z desteklenmez.
+  İş başına toplam 2 GiB işlenen veri, 10.000 öge ve 15 dakika sınırı vardır; aynı anda tek iş.
+  Hata/iptalde yarım sonuç yayımlanmaz. Sunucu yeniden başlarsa yarım iş sürdürülmez.
+  Son 20 iş hatırlanır; bu dosya yedeği değildir. Kaynak arşivler silinmez.
 
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
   /downloads klasörü; aynı sayfada, aynı girişle.
@@ -100,10 +121,12 @@ Konsol · Dosyalar sekmesi (v2-104, v2-105):
   FileBrowser kaldırıldı (v2-114): dosyaları Konsol yönetir.
 
 qBittorrent (v2-118; modül, sunucuda Debian paketi):
-  Konsol → Modüller → qBittorrent → Kur. Arayüz: http://torrent.ayc (yalnız Tailscale'den).
+  Konsol → App Store → qBittorrent → Kur. Arayüz: http://torrent.ayc (yalnız Tailscale'den).
   İlk giriş: modül kartında "İlk giriş" altında kullanıcı ve geçici parola (göz düğmesiyle görünür).
   Girince Tools → Options → Web UI'dan kendi parolanızı koyun; geçici parola her
   yeniden başlatmada değişir. Kart bundan sonra "arayüzde ayarlandı" der.
+  v2-126: Konsol → Ayarlar → qBittorrent üzerinden de kullanıcı/parola değiştirebilirsiniz.
+  Yeni parola alanını boş bırakmak mevcut parolayı korur. Dizin seçimi downloads/media içindedir.
   Ayarlar yalnız ilk kurulumda yazılır (indirme yeri /srv/downloads, yarımlar incomplete klasöründe,
   yerel ağa torrent duyurusu kapalı — v2-120);
   sonra arayüzden değiştirdikleriniz kalır, kurulum onlara dokunmaz.

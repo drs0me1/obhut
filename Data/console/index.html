@@ -7,17 +7,30 @@
 <meta name="referrer" content="no-referrer">
 <title>Konsol</title>
 <link rel="stylesheet" href="/konsol.css">
+<link rel="stylesheet" href="/ayarlar.css">
+<link rel="stylesheet" href="/dosyalar.css">
+<link rel="stylesheet" href="/desktop.css">
+<script src="/arsiv.js" defer></script>
+<script src="/dosyalar.js" defer></script>
+<script src="/ayarlar.js" defer></script>
 <script src="/konsol.js" defer></script>
 </head>
 <body>
+<header class="desktop-menu"><a href="#/uygulamalar"><strong>Konsol</strong> Desktop</a><span>Sunucunuz · yalnız Tailscale</span><a href="#/ayarlar">Ayarlar</a></header>
+<div class="window-controls" aria-label="Pencere denetimleri">
+  <button type="button" id="window-home" aria-label="Uygulamalara dön" title="Uygulamalara dön">×</button>
+  <button type="button" id="window-min" aria-label="Pencereyi küçült" title="Pencereyi küçült">−</button>
+  <button type="button" id="window-max" aria-label="Pencereyi genişlet" title="Pencereyi genişlet" aria-pressed="false">+</button>
+</div>
 <div class="shell">
   <aside class="side" aria-label="Sunucu konsolu">
     <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
     <nav class="nav" aria-label="Bölümler">
+      <a href="#/uygulamalar" data-route="uygulamalar" data-icon="box">Uygulamalar</a>
       <a href="#/genel" data-route="genel" data-icon="gauge">Genel bakış</a>
       <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard <span class="count" id="nav-wg"></span></a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar <span class="count" id="nav-fs"></span></a>
-      <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller <span class="count" id="nav-mods"></span></a>
+      <a href="#/moduller" data-route="moduller" data-icon="stack">App Store <span class="count" id="nav-mods"></span></a>
       <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
       <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
     </nav>
@@ -40,6 +53,10 @@
       </header>
 
       <!-- GENEL BAKIŞ -->
+      <section data-view="uygulamalar" hidden>
+        <div class="desktop-intro"><span>KONSOL DESKTOP</span><h2>Sunucunuzun çalışma alanı.</h2><p>Dosyalar ve paylaşım yerleşik. İhtiyacınız olan uygulamaları App Store’dan ekleyin.</p></div>
+        <div id="desktop-apps" class="desktop-apps"></div>
+      </section>
       <section data-view="genel">
         <div class="grid">
           <article class="card span-12">
@@ -155,6 +172,7 @@
 
       <!-- DOSYALAR -->
       <section data-view="dosyalar" hidden>
+        <nav id="fs-tabs" class="fs09-tabs" aria-label="Dosya bölümleri"></nav>
         <!-- DD-145: solda kısayol sütunu, sağda liste; yükleme listenin içine bırakılır. -->
         <div class="fswrap">
           <nav class="fsrail" id="fs-rail" aria-label="Klasörler"></nav>
@@ -168,7 +186,7 @@
           <div class="card-head"><h2 data-icon="server">Temel</h2><div class="head-right"><span class="hm ok">kurulumla gelir · kaldırılmaz</span></div></div>
           <div class="base-list" id="mod-base"></div>
         </article>
-        <div class="sec-title"><h2>Modüller</h2><span id="mod-sum"></span></div>
+        <div class="sec-title"><h2>App Store</h2><span id="mod-sum"></span></div>
         <div class="grid" id="mod-grid"></div>
       </section>
 
@@ -180,25 +198,9 @@
         </div>
       </section>
 
-      <!-- AYARLAR (DD-155): sunucunun şu anki yapılandırması, salt okunur -->
+      <!-- AYARLAR (DD-156): taslak → sunucuda uygula → bağlantıyı onayla -->
       <section data-view="ayarlar" hidden>
-        <dl class="cfgsum" id="cfg-sum"></dl>
-        <div class="jump" role="group" aria-label="Bu sayfada">
-          <button type="button" data-jump="cfg-fw" data-icon="shield">Güvenlik duvarı</button>
-          <button type="button" data-jump="cfg-web" data-icon="globe">Web adresleri</button>
-          <button type="button" data-jump="cfg-dns" data-icon="route">Ad çözümü</button>
-          <button type="button" data-jump="cfg-qb" data-icon="download">qBittorrent</button>
-        </div>
-        <div class="grid">
-          <article class="card span-12" id="cfg-fw"></article>
-          <article class="card span-7" id="cfg-web"></article>
-          <article class="card span-5" id="cfg-dns"></article>
-          <article class="card span-7" id="cfg-qb"></article>
-          <article class="card span-5">
-            <div class="card-head"><h2 data-icon="lock">Neden salt okunur?</h2></div>
-            <p class="lede">Bu sayfa değer yazmaz. Her ayarın tek bir sahibi vardır: kurulum (kurulum.env ve varsayılanlar), ilgili modül ya da qBittorrent'in kendisi. Konsol'dan değiştirmek ikinci bir doğru kaynak açar ve yeniden kurulumda geri döner. Her satır değerin nereden değiştiğini söyler.</p>
-          </article>
-        </div>
+        <div id="settings-page" aria-label="Sunucu ayarları"></div>
       </section>
     </div>
   </main>
@@ -208,7 +210,7 @@
   <a href="#/genel" data-route="genel" data-icon="gauge">Genel</a>
   <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard</a>
   <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
-  <a href="#/moduller" data-route="moduller" data-icon="stack">Modüller</a>
+  <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
   <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
   <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
 </nav>
@@ -258,6 +260,13 @@
   </form>
 </dialog>
 
+<nav class="desktop-dock" aria-label="Uygulama kısayolları">
+  <a href="#/uygulamalar" data-route="uygulamalar" data-icon="box">Uygulamalar</a>
+  <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
+  <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
+  <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
+  <a href="#/genel" data-route="genel" data-icon="server">Sunucu</a>
+</nav>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

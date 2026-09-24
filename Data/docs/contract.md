@@ -7,8 +7,14 @@ document diverge, prefer the code and update this file.
 This document is the authoritative statement of what the installer does
 and — just as importantly — what it deliberately refuses to do. Removals
 relative to the retired monolith (no reconcile engine, no
-canonical-bundle machinery, no installer-owned WebDAV unit) are decisions, not
+canonical-bundle machinery, no legacy `master-webdav.service`) are decisions, not
 oversights. There is no parallel legacy installer tree.
+
+**v2-129 amendment (DD-159):** Files and folder WebDAV are now installer-owned
+built-ins; only WireGuard/qBittorrent remain in the public App Store catalogue.
+The [desktop and ZIP contract](desktop-and-archives.md) defines the archive API,
+limits, private history and upgrade behavior. This supersedes older optional
+Files/Paylaşım lifecycle references below, not their security or data boundaries.
 
 **Relationship to `.cursor/rules/`:** those rules cover the repository and
 govern *how* the work is done — process, Bash conventions, the
@@ -94,14 +100,12 @@ the ones agreed on 2026-08-05:
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**): only what the base itself uses (**DD-153**) — no `gnupg`
   (apt reads the armored Caddy key, `signed-by=…caddy-stable-archive-keyring.asc`),
-  no `gawk` (the distribution's `mawk` is `awk`), no `apache2-utils` (the
-  Paylaşım module installs it for `htpasswd`). rclone is not a distribution
-  package: the Paylaşım module downloads rclone's pinned official release
-  (§7, **DD-152**). No distribution `rclone` or `acl` package.
+  no `gawk` (the distribution's `mawk` is `awk`), no `apache2-utils`, rclone
+  download or `acl` package. Folder WebDAV uses the base Python runtime (DD-158).
 - `unattended-upgrades` is installed and enabled for the distribution's own
   origins (Debian stable + security; Ubuntu security), with automatic reboot
   off; Tailscale and Caddy packages are updated only by a re-run
-  (**DD-113**), rclone only when its pin changes (§7).
+  (**DD-113**). WebDAV code updates with the installer (§7).
 - Timezone set to the configured value.
 - Root-only, single-host, `flock`-serialised, wrapped in `systemd-inhibit`
   so a shutdown cannot land mid-transaction.
@@ -178,18 +182,17 @@ the ones agreed on 2026-08-05:
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
   (no full-tree rewrite). qBittorrent and Konsol's file backend share
-  read/write that way. The share WebDAV remains read-only (`--read-only` in a
-  sandbox with nothing writable, **DD-152**).
+  read/write that way. WebDAV enforces each account's RO/RW permission (DD-158).
 
 ### 1.5 DNS and Caddy
 
-- dnsmasq bound to `tailscale0` only, tracking the interface address with
-  `interface-name` + `bind-dynamic`, resolving the six service names to the
+- dnsmasq bound to loopback and `tailscale0`, tracking the interface address with
+  `interface-name` + `bind-dynamic`, resolving the installed service names to the
   current Tailscale IPv4 (**R14**).
 - Caddy listening on the Tailscale IPv4, port 80, HTTP only, reverse-proxying
   to loopback upstreams (**R15**, **R16**).
-- A `health.<domain>` endpoint that answers `ok`, used as the single cheap
-  end-to-end probe.
+- The real Konsol page and backend/gate checks verify the HTTP edge. The
+  redundant `health.<domain>` endpoint and DNS record are removed (**DD-157**).
 
 ### 1.6 Firewall
 
@@ -206,8 +209,9 @@ the ones agreed on 2026-08-05:
 
 ### 1.7 WebDAV
 
-The share WebDAV is the Paylaşım module (§1.11, **DD-149**), a host
-service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
+The share WebDAV is a built-in host service since v2-129 (**DD-159**), using
+the folder-scoped Python backend introduced in v2-128 (**DD-158**).
+Contract in §5–§7 and `folder-shares.md`.
 
 ### 1.8 Operator guidance
 
@@ -374,12 +378,10 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
 
 ### 1.10 Konsol and the file backend (DD-139, DD-140, DD-150)
 
-- The file backend belongs to the **Dosya yöneticisi** module (§1.11). The
-  installer installs `master-files-panel`, the downloads account and the
-  `SERVER_ROOT` tree, and renders the unit to `MODULES_DIR/dosya/`; the module
-  puts it in `UNIT_DIR`, starts and checks it. Without the module Konsol shows
-  no Dosyalar page, asks the file backend nothing, and takes the disk card
-  from the root backend (`/api/wg/sistem` → `root`, `disk`).
+- The file backend and bounded ZIP worker are built in (**DD-159**). The
+  installer prepares their downloads account, `SERVER_ROOT`, private archive
+  workspace and staged unit; `master-modul yerlesik` installs/enables/checks the
+  unit. Files is always present in Konsol, independent of the app catalogue.
 
 - **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
   administration page. Caddy serves the page files itself from
@@ -390,52 +392,60 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**).
   - Pages: Genel bakış (server card with CPU, memory and disk, WireGuard
-    devices, last actions, ports in use), WireGuard, Dosyalar, Modüller
-    (§1.11), Günlük and Ayarlar.
-  - Ayarlar (**DD-155**) is read-only and writes nothing. `GET
-    /api/konsol/ayarlar` (same gates; `?yenile=1` skips a 5 s cache) returns:
-    - the project's firewall chains read live with `iptables`/`ip6tables
-      -v -S` (`MASTER-INPUT`, `MASTER-FORWARD`, `MASTER-NAT`), classified by
-      interface with their packet counters, a rule the backend does not
-      recognise listed as such, and the `master-firewall --check` result;
-    - the Caddy sites from `CADDYFILE`, `CADDY_MODULES_DIR/*.caddy` and
-      `CADDY_WG_FILE` (per `ui` WireGuard network) with where each path goes;
-    - the dnsmasq files in `DNSMASQ_CONF_DIR`: listening interfaces, the
-      local domain, the names and their source;
-    - with the qBittorrent module, only the path and port keys of its
-      `qBittorrent.conf` (never the password hash), and whether the save and
-      temporary paths lie inside `DOWNLOADS_PATH` (outside it the unit's
-      sandbox refuses the writes).
-    The raw texts of those rules and files go along; no account, password or
-    key file is read.
+    devices, last actions, ports in use), installed WireGuard, Dosyalar,
+    App Store (§1.11), Günlük and Ayarlar; a launcher and dock wrap them (DD-159).
+  - Ayarlar (**DD-156**, superseding DD-155) has four tabs. `GET
+    /api/konsol/ayarlar` retains the same gates and 5 s cache (`?yenile=1`
+    bypasses it); `/durum` reads transaction state and `/klasorler` lists
+    allowed existing download folders. No password/hash is returned.
+    - Güvenlik Duvarı shows real IPv4/IPv6 rules and counters from all
+      iptables tables, listening sockets, and the baseline policy check.
+      Structured port overrides have family, WAN/tailnet/WireGuard scope,
+      TCP/UDP port, optional source CIDR and allow/deny action. Only these
+      overrides are editable; core and third-party rules are read-only.
+      `CHAIN_SETTINGS` precedes `ts-input`, so a tailnet deny is effective.
+      Loopback, established flows and ICMPv6 protections remain intact.
+      Permission does not imply a reachable listener; no bind address is changed.
+    - Caddy shows base/module/WireGuard sites and their routes. Its local-domain
+      field changes the single-label suffix (1–63 lowercase letters/digits/hyphens,
+      no leading/trailing hyphen) as a separate transaction (**DD-157**).
+      Base/module DNS and Caddy renderings, custom record suffixes, disabled
+      names, `state.env` and staged/installed file-backend units move together.
+      Only an active file backend restarts; Caddy reloads gracefully. Credentials,
+      VPN profiles, IP-based share links and download data stay untouched.
+      Before applying, the operator adds the new restricted domain to Tailscale
+      Admin DNS and retains the old mapping until confirmation. The server
+      cannot edit those account settings. Confirmation must arrive through
+      the new panel Host within five minutes; otherwise the guard restores
+      the previous domain. No old-name alias or arbitrary Caddy editor is added.
+    - Dnsmasq permits on/off for managed names, exact custom names within
+      `LOCAL_DOMAIN`, and optional public upstream IPs. Missing/disabled
+      private names stay local. Base/module collisions and local/self
+      upstreams are rejected; loopback/tailnet listeners stay unchanged.
+      This neither creates Caddy sites nor edits Tailscale Admin DNS.
+    - qBittorrent permits username, optional new password (12–256 characters)
+      and the default folder for new torrents. Blank in the UI preserves
+      the password. Only canonical existing non-hidden downloads/media
+      directories may be chosen; write permission is probed as the service
+      UID and narrowly added to its systemd sandbox. Existing files/torrent
+      locations and incomplete paths are not moved. Stop/snapshot/write/
+      restart avoids overwriting a live application's settings.
+    `POST /api/konsol/ayarlar/{uygula,onayla,geri-al}` runs an independent
+    worker with JSON on stdin, never a password on argv/in logs. Review is
+    followed by a 60 s confirmation window (300 s for a domain change). The server-side guard timer
+    restores unconfirmed settings after disconnect, timeout or reboot;
+    failed recovery remains pending for retry. Stale revisions and concurrent
+    installer/module writes are refused. Confirmation cannot preserve a rule
+    that blocks the confirming client's new console/DNS connections or the
+    console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/domain
+    choices across re-runs; `SETTINGS_PENDING_FILE` is root-only recovery data,
+    not a portable backup. qBittorrent remains the owner of its profile.
   - The ports card is built from `state.env`, the module registry and the
     network registry; nothing is scanned.
   - A peer or a whole network can be switched off and on (§1.9).
-- **Share links (DD-141, DD-149).** While the Paylaşım module is installed
-  (§1.11), a folder or file in `SERVER_ROOT` can be shared from the console.
-  Every share appears in one read-only WebDAV root at
-  `http://paylas.${LOCAL_DOMAIN}` (loopback `61010` behind Caddy, tailnet
-  only), with one account for all of them, generated by the module.
-  - Without the module Dosyalar shows no share controls, and the file backend
-    refuses a new share with `409` (it learns the state from the
-    `SERVER_ROOT/SHARE_DIR/acik` marker the module writes, because
-    `/etc/master-stack` is closed to it). Removing a share stays possible.
-  - The file backend never sees the account: Konsol reads it from the root
-    backend (below).
-  - Sharing creates a relative symlink in `SERVER_ROOT/SHARE_DIR/w`; the
-    registry next to it (not served) holds the path, the creation time and the
-    expiry. Nothing is copied.
-  - A share lasts 1, 7 or 30 days or until it is removed. Expired shares and
-    links with no registry entry are swept on every listing; files are never
-    deleted.
-  - The root itself, the trash and the share folder cannot be shared, and the
-    file panel hides the share folder from listings.
-  - The share service runs rclone with `--read-only` and `--copy-links` in a
-    sandbox where nothing is writable; the trash is an empty tmpfs for it, so a
-    link into the trash is skipped instead of failing the listing (§7,
-    **DD-152**). qBittorrent can write only `SERVER_ROOT/downloads` and its
-    profile, and the share folder and the trash are inaccessible to it
-    (**DD-144**, **DD-151**).
+- **Folder shares (DD-158):** Files v09 offers list/cards, details and a WebDAV
+  tab. The root backend manages separate accounts, RO/RW, expiry and pause.
+  The file backend's legacy share mutations return 410. See §5–7.
 - `master-files-panel.service` serves a file manager API for
   `SERVER_ROOT`: browse, search the current folder, select many items, new
   folder, rename, move, move to trash, restore, delete from the trash, empty
@@ -490,44 +500,39 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
   deleting there.
 - It replaced FileBrowser (**DD-146**).
 
-### 1.11 Modules (DD-148, DD-149)
+### 1.11 App Store and built-ins (DD-148, DD-149, DD-159)
 
-- A clean install brings the base only; optional parts are **modules**,
-  installed, started, stopped and removed from Konsol → Modüller.
-  - Catalogue (v2-121), in Konsol's order: `dosya` (Dosya yöneticisi,
-    Konsol), `wireguard` (WireGuard, Konsol), `torrent` (qBittorrent, host)
-    and `paylasim` (Paylaşım, the share WebDAV, host; needs `dosya`). There
-    is no Docker runtime; `unpackerr` (Arşiv açıcı) was removed (**DD-152**).
-  - Konsol modules (`dosya`, `wireguard`) are installed or removed, never
-    stopped or started (`baslat`/`durdur` refuse). A module another one depends
-    on cannot be removed first: `kaldir dosya` refuses while `paylasim` is
-    installed, and `kur paylasim` refuses without `dosya`; Konsol queues the
-    pair (install together, remove the dependent first).
+- A clean install includes Files, folder WebDAV and ZIP. Optional applications
+  are installed/removed from Konsol → App Store: `wireguard` and `torrent` only.
+  qBittorrent also supports start/stop; WireGuard has its own network switches.
+  No Docker or separate unpacker. Public module verbs reject `dosya`/`paylasim`;
+  they are protected internal IDs, not installable/removable applications.
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders each module's files to
     `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for
-    Paylaşım `master-paylasim.service` (the unit; its description carries
-    `RCLONE_VERSION`), `paylasim.caddy` and `dnsmasq.conf`; for
+    Paylaşım `master-paylasim.service` (the credential-loaded unit), `paylasim.caddy` and `dnsmasq.conf`; for
     qBittorrent `qBittorrent.conf` (the first settings), `master-stack.conf`
     (the unit drop-in), `torrent.caddy` and `dnsmasq.conf`;
   - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent,
     and `CADDY_MODULES_DIR` (`/etc/caddy/moduller`), which the base Caddyfile
     imports (`import …/*.caddy`, after the global options); the file backend's
-    unit goes to `MODULES_DIR/dosya/` only;
-  - never installs, starts, stops or removes a module. When a rendered file
-    (or the file backend's script) changed and the module is registered
+    unit is staged in `MODULES_DIR/dosya/` before built-in activation;
+  - invokes `master-modul yerlesik` to enable/check Files and WebDAV, preserve
+    their account/history state, and restart only changed/inactive services;
+  - never automatically installs/removes optional apps. When a rendered file
+    changed and the optional module is registered
     (`calisiyor` or `durduruldu`), stage 7 first runs
     `master-modul uygula <id>`; WireGuard is re-applied on every run while
     installed. A failure is a warning, not a stop.
-  - checks the file backend and the WireGuard networks in stage 7 only while
-    their modules are installed.
+  - always checks built-in Files/WebDAV; checks WireGuard networks only while
+    the optional application is installed.
 - `master-modul` (root):
   - `liste` prints, per catalogued module, `id runtime registry live action
     step total text` separated by tabs; `runtime` is `konsol` or `host`,
     `registry` is `yok`, `calisiyor` or `durduruldu`.
   - `kur ID`, `baslat ID`, `durdur ID`, `kaldir ID [--veri]`, `gunluk ID
-    [LINES]`, `uygula ID`; for `paylasim` only also `parola ID` and
-    `hesap ID [--parola]`. Any other id, verb or argument is refused before
+    [LINES]`, `uygula ID`; `hesap torrent [--parola]` reads the temporary login.
+    The old shared-account commands refuse. Any other id, verb or argument is refused before
     anything runs.
   - Changes take `RUNTIME_DIR/modul.lock`; a second operation waits up to 5 s
     and then fails.
@@ -535,7 +540,7 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
     `action step total text`, ending with step `bitti` or `hata` and the
     reason. Each step is also written to the journal (`master-modul`).
     `uygula` writes no progress line.
-  - A host module (`torrent`, `paylasim`) is a systemd unit; there is no
+  - A host application (`torrent`) is a systemd unit; there is no
     Docker module (**DD-152**). `kur` installs, starts, checks and registers
     it; on failure it takes back what it did and registers nothing. `durdur`
     disables and stops the unit (it stays stopped after a reboot; the names
@@ -543,13 +548,10 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
     if it is registered as running.
   - `--veri` deletes only the module's own data. User files are never module
     data.
-- Dosya yöneticisi (`dosya`, **DD-150**): `kur` copies
-  `MODULES_DIR/dosya/master-files-panel.service` to `UNIT_DIR`, enables and
-  starts it, and checks that it runs as `DOWNLOADS_UID`, answers through Caddy
-  (`master-files-panel check`) and refuses a request without `X-Konsol` (403);
-  on failure it is stopped and removed. `kaldir` stops it and removes the
-  unit; `--veri` also empties `SERVER_ROOT/FILES_PANEL_TRASH` (the folder
-  stays). `uygula` re-copies the unit and restarts the service.
+- Built-in Files (`dosya`, **DD-159**): `yerlesik` places its unit, enables and
+  checks it as `DOWNLOADS_UID`, verifies Caddy and the `X-Konsol` gate. Public
+  module operations cannot remove it or empty its trash. Archive behavior is
+  specified in `desktop-and-archives.md`.
 - WireGuard (`wireguard`, **DD-150**): `kur` in four steps — packages, kernel
   module, firewall hook (the module is registered, then `master-firewall` is
   restarted), networks from the registry. `kaldir` closes the networks,
@@ -589,61 +591,11 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
     names and the drop-in and stops the unit but leaves the package installed;
     `--veri` deletes the profile (settings and torrent list) — only under
     `/var/lib` — never a downloaded file.
-- Paylaşım (`paylasim`, **DD-149**, **DD-152**): the host unit
-  `master-paylasim.service` running rclone's official release binary (§7).
-  - `kur` in four steps: "rclone indiriliyor" (download rclone, only when
-    `RCLONE_BIN` is not the pinned `RCLONE_VERSION`); "Hesap üretiliyor"
-    (prepare the account); "Servis başlatılıyor" (place the unit, enable and
-    start it, check it); "Ad ve adres açılıyor" (publish the names). The
-    account is user `SHARE_ACCOUNT` (`paylasim`) with a
-    `SHARE_PASSWORD_LENGTH` (20) character random password from an alphabet
-    without `0 O 1 l I`, stored only in `SHARE_CRED_FILE` (plain, the
-    account's source of truth) and `SHARE_HTPASSWD_FILE` (bcrypt, handed to
-    the service as a systemd credential), both `0600 root`. A valid existing
-    account is reused, so Infuse keeps working after a reinstall; an
-    htpasswd that no longer matches is rewritten from it.
-  - rclone: the archive
-    `RCLONE_DOWNLOAD_URL/v<version>/rclone-v<version>-linux-<arch>.zip` is
-    fetched over HTTPS only (`amd64` or `arm64`; another architecture is
-    refused), its SHA256 must equal `RCLONE_SHA256_<ARCH>` before it is
-    opened, and the binary is written next to `RCLONE_BIN`
-    (`/usr/local/lib/master-stack/rclone`, `0755 root`) and moved over it;
-    `rclone version` must then report the pin. A failed download or checksum
-    leaves the old binary and stops before any service change.
-  - The password is passed only on stdin (`htpasswd -i`, curl `-K -`); it
-    never appears in an argv, the progress file, the journal, `state.env` or
-    Caddy's environment.
-  - Checks (`kur`, `baslat`, and `uygula`/`parola` while the service runs):
-    active within 20 s, running as `DOWNLOADS_UID`, a command line with
-    `serve webdav SERVER_ROOT/SHARE_DIR/w`, `--read-only`, `--copy-links`
-    and `--addr=127.0.0.1:SHARE_PORT`, the unit's `TemporaryFileSystem`
-    over the trash, `401` without the account, the process's own listening
-    sockets only `127.0.0.1:SHARE_PORT`, and `207` for `PROPFIND` with the
-    account; after the names (`kur`), `401` for
-    `Host: paylas.${LOCAL_DOMAIN}` and for `${TS_IPV4}:SHARE_PORT`, and the
-    name resolving to `${TS_IPV4}`. A failed `kur` takes back the names, the
-    marker and the unit; the account and the rclone binary stay.
-  - Names: `CADDY_MODULES_DIR/paylasim.caddy` (validated, then
-    `systemctl reload caddy`) and `DNSMASQ_CONF_DIR/modul-paylasim.conf`
-    (the whole dnsmasq configuration validated, then `systemctl restart
-    dnsmasq`). Temporary files start with a dot. A file that does not
-    validate is taken back. The names stay while the module is stopped and
-    go on `kaldir`, before the service.
-  - `kur` writes the marker `SERVER_ROOT/SHARE_DIR/acik`; `kaldir` removes it.
-  - `parola` writes a new password and, if the service runs, restarts it
-    (systemd copies the credential only at start) and re-checks it. `hesap`
-    prints `user<TAB>changed` (the cred file's mtime); with `--parola` also
-    the password. It only reads.
-  - `uygula` (installer re-run) downloads rclone when the pin changed and
-    puts the account, the unit, the names and the marker in place; while
-    the module is registered as running it restarts the service only when
-    the binary, the unit or the account changed, or when it is not active.
-  - `kaldir` disables and stops the service and removes its unit and the
-    names; it keeps the rclone binary, the account, the share registry and
-    the links; with
-    `--veri` it deletes both account files, `SERVER_ROOT/SHARE_DIR/kayit.json`
-    and the symbolic links in `SERVER_ROOT/SHARE_DIR/w` — never their
-    targets and nothing else in that folder.
+- Built-in Paylaşım (**DD-158/159**): prepare a registry only if absent,
+  place/enable the unprivileged service, check UID/anonymous 401, then publish/
+  check Caddy and DNS. An upgrade activates older stopped instances. Unchanged
+  reruns do not rewrite accounts or restart healthy services. Remove individual
+  accounts through Files; module stop/removal is no longer exposed.
 - The root backend (`master-wg-panel`):
   - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
     live, busy, progress}]}`. `busy` is a running `master-modul-<id>.service`,
@@ -651,14 +603,13 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
     transient unit wrote two journal lines per query).
   - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir|parola)`, JSON
     body, `{"veri": true}` honoured for `kaldir` only; `parola` only for
-    `paylasim` (else `404`) and only while installed (else `409`). The id
+    no module since DD-158 (404). The id
     must be in `liste` (else `404`). It starts `systemd-run
     --unit=master-modul-<id>.service --collect master-modul <verb> <id>` and
     answers `202`; while that unit is active the answer is `409`. The audit
     line is `modul-<verb>`.
-  - `GET /api/konsol/moduller/paylasim/hesap` → `{user, changed, host,
-    infuse}`; with `?parola=1` also `pass`, audited as `modul-hesap` without
-    the value. `404` when the module is not installed or has no account.
+  - Retired shared-account hesap/parola endpoints return 404. Folder shares use
+    GET /api/konsol/paylasim and POST kaydet/durum/kaldir below that path.
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
   - The `SHARE_PORT` row of the ports card and `share.on` in
     `/api/wg/sistem` follow the Paylaşım module, the `TORRENT_UI_PORT` rows
@@ -666,11 +617,8 @@ service running rclone since v2-121 (**DD-152**). Contract in §5–§7.
     module (v2-120); the ports stay reserved for WireGuard networks either
     way.
   - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
-- Konsol shows the Paylaşım account on the module card (address, Infuse
-  address, user, password masked). The password is fetched only when the
-  operator reveals or copies it, is never polled, and hides after 30 s, on
-  leaving the page and when the tab is hidden. After a page-initiated `kur`
-  or `parola` it is shown once.
+- Konsol never retrieves a stored WebDAV password; enter or generate it in the
+  folder form. Blank password on edit preserves its hash (DD-158).
 
 ---
 
@@ -685,7 +633,7 @@ Each entry names the v1 mechanism, its cost, and why it is gone.
 | **The 1821-line `master-network-reconcile`** | 33% of the file | Replaced by `refresh-tailnet-config`, which does one thing: react to a Tailscale address change. |
 | **General container self-healing** | `probe_compose_runtime` + 12 probes + restart engine | systemd's `Restart=` handles a module's crashes (Compose's restart policy did until v2-121, **DD-152**). A health probe that restarts services turns every upstream change into a restart loop. |
 | **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
-| **Image-digest-based recovery** | digest recording + final cross-check | No image is used since v2-121 (**DD-152**). rclone is pinned by version and SHA256 and checked before it is unpacked; recovery is a re-run. |
+| **Image-digest-based recovery** | digest recording + final cross-check | No image is used since v2-121 (**DD-152**). Since v2-128 the folder WebDAV runtime is shipped with the installer; no rclone release download (**DD-158**). |
 | **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
 | **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: FileBrowser itself was retired in v2-114 (**DD-146**). |
 | **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release, and there is no Compose since v2-121 (**DD-152**): every module is its own enabled systemd unit. |
@@ -766,23 +714,25 @@ No names, no WebDAV, no dnsmasq on any WireGuard network (**DD-120**,
 
 ## 4. DNS and Caddy service map
 
-`${LOCAL_DOMAIN}` comes from the installer input file (**R13**, **DD-119**);
-an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`.
+`${LOCAL_DOMAIN}` initially comes from the installer input file (**R13**, **DD-119**);
+an empty value takes `DEFAULT_LOCAL_DOMAIN` from `defaults.env`. A domain
+subsequently confirmed in Konsol (`SETTINGS_FILE.domain`) takes precedence
+on re-runs (**DD-157**); the operator's Mac input file is never edited.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
 | `paylas.${LOCAL_DOMAIN}` (Paylaşım module only) | `${TS_IPV4}` | `http://paylas.…` and `http://${TS_IPV4}:61010` | `127.0.0.1:61010` (**DD-149**) |
-| `health.${LOCAL_DOMAIN}` | `${TS_IPV4}` | `http://health.…` | `respond "ok" 200` |
 | `panel.${LOCAL_DOMAIN}` (Konsol) | `${TS_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → `127.0.0.1:61008`, other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 
 The old names `wg.`, `dosya.` and `file.${LOCAL_DOMAIN}` no longer exist
-(**DD-154**); `SERVICE_NAMES` is `health panel`.
+(**DD-154**); `health.` is also retired (**DD-157**). `SERVICE_NAMES` is `panel`.
 
 Rules:
 
-- dnsmasq answers **only** for `${LOCAL_DOMAIN}`; every other query is
-  `REFUSED`. It is not a general-purpose resolver and never a forwarder.
+- dnsmasq answers locally for `${LOCAL_DOMAIN}`. Other queries are `REFUSED`
+  by default; optional public upstream forwarding is configured in Ayarlar
+  (**DD-156**). Private-domain misses/disabled names never go upstream.
 - dnsmasq listens on `lo` and `tailscale0`, with `bind-dynamic`, and on
   nothing else (**DD-60**).
 - **The current Tailscale IPv4 is never written into the dnsmasq
@@ -803,210 +753,46 @@ Rules:
 
 ---
 
-## 5. WebDAV and Infuse: purpose
+## 5. Folder WebDAV: purpose (DD-158)
 
-The WebDAV service exists for exactly one consumer: **the Infuse app on an
-Apple TV**, reading the media library over the tailnet.
+Selected folders, not a shared symlink root, are published through independent
+accounts and stable /s/<id>/ URLs. RO is the default; RW includes permanent
+delete/overwrite and requires acknowledgement. The binding implementation
+details are in [folder-shares.md](folder-shares.md).
 
-- Infuse needs plain WebDAV over HTTP with basic authentication. It does not
-  need, and must not be given, WAN reachability.
-- The served root is the share root `SERVER_ROOT/SHARE_DIR/w`: only what is
-  shared from Konsol, as symbolic links that rclone follows (`--copy-links`,
-  **DD-141**, **DD-142**). The downloads folder as a whole is not published.
-- Access is **read-only**. Infuse never writes; the service must make a
-  write impossible rather than merely discouraged.
-- The installer creates only the directories it needs. Host ownership repair
-  of the user area is the selective Stage 3 pass in §1.4 (**DD-84**); WebDAV
-  itself stays read-only.
+## 6. WebDAV credentials and permissions (DD-158)
 
-Since v2-121 WebDAV is the host unit `master-paylasim.service` of the
-Paylaşım module (**DD-152**; a Compose service from **DD-77** until then): it
-listens only on loopback; Caddy is the Infuse path on
-`${TS_IPV4}:${SHARE_PORT}` (**DD-98**). It depends on no other service.
+SHARE_STATE_FILE is a 0600 root-owned schema-2 JSON registry of users, salted
+scrypt hashes, folder identity, RO/RW, pause and expiry. No plaintext password
+copy exists. The root API projects only non-secret metadata; fixed workers
+receive mutations on stdin under the existing panel gates and operation locks.
+The unprivileged data service receives a LoadCredential copy at start.
+No password enters argv, logs, environment files or browser storage.
 
----
+Each request authenticates against exactly one share. Directory descriptors,
+nofollow and birth-time/inode checks enforce its root. Expiry is checked on
+requests and transfer chunks, not listings. PUT replaces only after completion.
+Account changes restart the active data service and interrupt all transfers;
+stopped services stay stopped. Remove revokes only access, not shared files.
+Root administrators and passwordless Konsol remain outside this isolation boundary.
 
-## 6. WebDAV authentication and read-only contract
+## 7. WebDAV service lifecycle (DD-158)
 
-### 6.1 Credentials
+master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback,
+with no capabilities, system paths read-only, user area writable, internal
+trash/share paths inaccessible, and network restricted to loopback. There is
+no rclone download or shared account. Caddy publishes the existing name and
+Tailscale IP:SHARE_PORT. No WAN listener, extra port or Tailscale policy change.
 
-- The account is generated by the Paylaşım module, not read from the input
-  file (**DD-149**): user `SHARE_ACCOUNT` (`paylasim`), a random
-  `SHARE_PASSWORD_LENGTH`-character password (§1.11).
-- `kur`, `baslat` and every `uygula` check the htpasswd against the cred file
-  with `htpasswd -vi`, password on stdin. The htpasswd is rewritten only when
-  it no longer holds exactly that account; `uygula` then restarts a running
-  service.
-- A cred file that is not one `SHARE_ACCOUNT:<password>` line with at least
-  16 letters and digits is not an account: a new one is generated.
+The installer prepares an empty registry only when absent and enables this
+built-in service. Reruns preserve accounts; public module removal is refused.
+It keeps the existing staged templates for compatibility. Address refresh changes
+Caddy, not WebDAV. Old shared-account URLs are retired; recreating folder
+accounts is required. Existing files remain; no broader route is retained.
 
-### 6.2 Credential storage — recorded decision
-
-This is a binding decision, not a preference. Each numbered item is a
-property the implementation must satisfy and a test must assert.
-
-1. **WebDAV credentials live in separate, root-owned credential files**:
-   `SHARE_HTPASSWD_FILE` (`/etc/master-stack/paylasim.htpasswd`, bcrypt
-   hash) and `SHARE_CRED_FILE` (`paylasim.cred`, the plain copy Konsol shows
-   and the account's source of truth, **DD-141**, **DD-149**). Not in a
-   configuration file, not in a unit, not in an environment file.
-2. **Mode is `0600`**, owner `root:root`, set before the file is moved into
-   place.
-3. **The service receives the htpasswd as a systemd credential**
-   (`LoadCredential=htpasswd:SHARE_HTPASSWD_FILE`, **DD-152**): systemd
-   copies it into the unit's credentials directory at start, and rclone is
-   started with `--htpasswd=%d/htpasswd` (path only — no secret on the
-   command line). The service never reads `/etc/master-stack`.
-4. **The service runs as `DOWNLOADS_UID`, not root**, with an empty
-   capability set; the file keeps its `0600 root` mode on disk. Read-only
-   stays in force twice: `--read-only` and a sandbox with nothing writable
-   (§6.5).
-5. **The password is not present in any systemd unit content** — not as
-   `Environment=`, not as a command argument value, not in a drop-in.
-6. **The password is not written to any environment file** — not
-   `config.env`, not `state.env`, not `config/defaults.env`. The
-   forbidden keys are named explicitly in `defaults.env`:
-   `SHARE_PASSWORD`, `SHARE_PASSWORD_HASH`, `SHARE_USER_PASSWORD`,
-   `SHARE_USER`. There is no `webdav.env` or `paylasim.env`, and the
-   operator's input file (`kurulum/kurulum.env`, **DD-119**) holds no share
-   account.
-7. **The password does not appear on a command line.** The server is
-   pointed at a file path, so `ps` and the unit's `ExecStart` contain no
-   secret; `master-modul` passes it only on stdin.
-8. **The password is not written to logs.** It never enters the progress
-   file or the journal, the hashing and verification tools take it on
-   stdin, and no log statement echoes the variable.
-9. **The username is managed with the credential, not with the
-   configuration.** The htpasswd format already stores `user:hash`, so
-   recording the name separately would create a second source of truth
-   that can drift from the hash. `SHARE_USER` therefore does not exist in
-   any of the configuration files; `SHARE_ACCOUNT` is only the fixed name
-   the module generates the account for (**DD-149**).
-10. **An existing valid account is preserved** on `kur`, `baslat` and every
-    `uygula`, so Infuse keeps working after a reinstall. The operator
-    changes it with "Yeni parola" (`parola`) or `kaldir --veri`. Nothing
-    left by an older revision is hunted down (**DD-96**).
-
-### 6.3 Where each piece lives
-
-| Item | Location | Mode | Secret |
-|---|---|---|---|
-| Username + password hash | `/etc/master-stack/paylasim.htpasswd` | `0600` | **yes** |
-| Username + password (plain, shown in Konsol) | `/etc/master-stack/paylasim.cred` | `0600` | **yes** |
-| Port (loopback + Caddy Infuse) | `config/defaults.env` → unit + Caddy site | — | no |
-| Credential file **path** | `config/defaults.env`, unit `LoadCredential=` | — | no |
-| Read-only / rclone pin | unit template + `RCLONE_VERSION`, `RCLONE_SHA256_*` | — | no |
-
-Besides the cred file, the plaintext password exists only inside
-`master-modul` while it writes or checks the account, and in the root
-backend's answer when the operator reveals it (§1.11).
-
-### 6.4 Credential exposure checks
-
-Against a running `master-paylasim.service`:
-
-- its command line (`ps`, the unit's `ExecStart`) contains no password and
-  no username, only the credential *path* `--htpasswd=%d/htpasswd`,
-- its environment contains no password (the unit sets only `HOME`),
-- both account files remain `root:root` `0600` on the host.
-
-### 6.5 Read-only enforcement
-
-- rclone runs with an explicit `--read-only` flag, which `master-modul`
-  checks on the running process.
-- The unit has `ProtectSystem=strict` with no writable path, `ProtectHome`,
-  private `/tmp` and devices, and the trash as an empty read-only tmpfs
-  (`TemporaryFileSystem=`); what it serves is only the share root and the
-  targets of its links (**DD-152**).
-- A write attempt must be refused by the service. This is a tested
-  behaviour, not an assumption.
-
----
-
-## 7. WebDAV service lifecycle (`master-paylasim.service`)
-
-### 7.1 Service
-
-One systemd service: `master-paylasim.service` (**DD-152**), the Paylaşım
-module's unit. The installer renders it from
-`modules/paylasim/master-paylasim.service` to `MODULES_DIR/paylasim/`;
-`master-modul` places it in `UNIT_DIR`. It runs rclone's official release
-binary `RCLONE_BIN`, pinned in `defaults.env` (`RCLONE_VERSION`, one
-`RCLONE_SHA256_*` per architecture, `RCLONE_DOWNLOAD_URL`), with the
-command the container used to run:
-
-```
-rclone serve webdav SERVER_ROOT/SHARE_DIR/w --config=/dev/null
-  --addr=127.0.0.1:SHARE_PORT --htpasswd=%d/htpasswd
-  --dir-cache-time=10s --copy-links --read-only
-```
-
-No container, no image, no Compose; not the retired
-`master-webdav.service`.
-
-### 7.2 Ordering and coupling
-
-| Property | Value | Reason |
-|---|---|---|
-| Listen | `127.0.0.1:${SHARE_PORT}` | Tailnet reachability only via Caddy |
-| User | `DOWNLOADS_UID`/`DOWNLOADS_GID` | Reads what qBittorrent and Konsol write; never root |
-| Ordering | `After=`/`Wants=network-online.target` | No other service needed |
-| Tailscale coupling | **none** | Caddy binds `${TS_IPV4}` from `state.env` |
-| Network | `IPAddressDeny=any`, `IPAddressAllow=localhost` | It cannot connect out |
-| Restart | `Restart=on-failure`, `RestartSec=3s` | No custom cooldown stamp system |
-| Boot | enabled (`WantedBy=multi-user.target`) while the module is registered `calisiyor`; `durdur` disables it | A stopped module stays stopped |
-
-### 7.3 Reacting to a Tailscale address change
-
-WebDAV does not bind the Tailscale address. When the Tailscale IPv4
-changes, `refresh-tailnet-config` updates `state.env` and restarts **only
-Caddy** (both `:80` and `:${SHARE_PORT}` Infuse listeners):
-
-```
-Tailscale IPv4 change
-  → state.env updated (atomically)
-  → caddy          restarted
-  → WebDAV         untouched (loopback)
-  → dnsmasq        untouched
-  → firewall       untouched
-  → modules        untouched
-```
-
-The same oneshot also acts as the firewall watchdog (§10), independent of
-the address change.
-
-dnsmasq and the firewall still match the interface name rather than an
-address. `master-firewall` is `PartOf=tailscaled.service`; that must never
-bounce a module.
-
-### 7.4 Access path decision
-
-| Path | Address | Purpose |
-|---|---|---|
-| Preferred (MagicDNS) | `http://paylas.${LOCAL_DOMAIN}` | Phone Infuse / clients with MagicDNS |
-| Apple TV Infuse (no MagicDNS) | `http://${TS_IPV4}:${SHARE_PORT}/` | Caddy site on that port → loopback (**DD-98**) |
-| Loopback (host-local) | `http://127.0.0.1:${SHARE_PORT}` | `master-modul` checks / Caddy upstream / debug |
-
-Caddy proxies `paylas.${LOCAL_DOMAIN}` and
-`http://{$TAILSCALE_IPV4}:SHARE_PORT` to `127.0.0.1:SHARE_PORT` (site
-`CADDY_MODULES_DIR/paylasim.caddy`, present only while the module is
-installed; the port written literally, `{$TAILSCALE_IPV4}` from
-`state.env`, **DD-149**). The service stays loopback-only and never names
-the Tailscale address. Bare `http://${TS_IPV4}/` on port 80 is **not**
-WebDAV. A re-run after `SHARE_PORT` or `RCLONE_VERSION` changes re-renders
-the unit (and the site), and `master-modul uygula` puts them in place and
-restarts the running service.
-
-No TLS between Caddy and WebDAV: both endpoints are on the same host, and
-the hop is loopback.
-
-### 7.5 Firewall consequence
-
-**No WAN firewall permission is created for WebDAV.** Tailnet clients reach
-it only because inbound on `tailscale0` is permitted as a class (§8) and
-Caddy listens on `${TS_IPV4}:80` and `${TS_IPV4}:${SHARE_PORT}`. WebDAV's
-own socket never leaves loopback, and the service cannot connect out
-(`IPAddressDeny=any`).
+The supported DAV subset, filesystem and concurrency limits, migration and test
+commands are specified in [folder-shares.md](folder-shares.md). Finder/Infuse
+and recipient ACL reachability need separate operator acceptance.
 
 ---
 
@@ -1170,8 +956,8 @@ Invariants:
 - Re-running must not change a single byte of any generated file when the
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
-- Existing state that must survive a re-run: the Paylaşım account files and
-  share registry, the rclone binary, qBittorrent's profile (its settings are
+- Existing state that must survive a re-run: the folder share registry
+  (IDs, hashes, policies and paused state), qBittorrent's profile (its settings are
   written once, by the module, **DD-151**),
   every `wgN.conf` and `clients-wgN/` with the networks registry (the installer
   reads them, writes none — **DD-143**), the operator's chosen local domain.
@@ -1181,12 +967,12 @@ Invariants:
 - Directory creation is conditional; ownership/mode repair under downloads
   is selective (mismatched UID/GID/mode only — **DD-84**), not a full-tree
   rewrite and not limited to newly created directories.
-- No step is unconditionally expensive: package installation, the rclone
-  download and daemon restarts happen only when something actually
+- No step is unconditionally expensive: package installation and daemon
+  restarts happen only when something actually
   changed.
 - There is no image-refresh question any more: the pull prompt (**DD-99**,
   with **DD-101**'s disk floor) went with **DD-151**, and no image exists
-  since **DD-152**. rclone changes only when `RCLONE_VERSION` changes (§7).
+  since **DD-152**. Folder WebDAV code is part of the installer (§7).
   The one operator-driven exception left is the optional full-upgrade
   question on a re-run (default **hayır**).
 
@@ -1207,7 +993,7 @@ the run started.**
 | Stage 6 aborts midway | dnsmasq and/or Caddy remain masked — i.e. **off**. There is no rollback machinery; recovery is a re-run |
 | Tailscale never comes online | Hard failure before anything is published. The stack is not started against a missing address |
 | Paylaşım account setup fails | `master-modul` stops before the service is started; systemd also refuses a unit whose credential file is missing |
-| rclone download or checksum fails | The archive is not opened, the old binary stays, and `master-modul` stops before any service change (**DD-152**) |
+| Folder account service renewal fails | Previous registry is restored and restart retried; if recovery also fails, report it explicitly. No plaintext password is returned (**DD-158**) |
 | A module's Caddy site or dnsmasq name does not validate | The previous file is put back and a `kur` is taken back (§1.11) |
 | A generated file cannot be written with the intended owner/mode | Hard failure, temporary file removed |
 
@@ -1225,7 +1011,8 @@ Tailscale control plane, not on the host.
    - Nameserver IP: the Tailscale IPv4 printed at the end of the run.
 2. **Restrict to domain** — enable it, and enter `${LOCAL_DOMAIN}`.
    Without this the tailnet sends *all* DNS to this host, which will answer
-   `REFUSED` for everything outside `${LOCAL_DOMAIN}`.
+   `REFUSED` for everything outside `${LOCAL_DOMAIN}` unless upstream
+   forwarding was explicitly enabled in Ayarlar.
 3. **Machines → this host → Review exit-node route → Approve.** An
    advertised exit node is not usable until it is approved.
 4. **Machines → this host → key expiry** — decide whether to disable it for
@@ -1268,49 +1055,31 @@ An installer run is successful when every one of these holds on the target host.
 
 ### DNS and Caddy
 
-10. All five names resolve to `${TS_IPV4}` when queried against
-    `${TS_IPV4}`.
+10. Enabled base/installed-module names resolve to `${TS_IPV4}` when queried
+    against `${TS_IPV4}`; retired `health.` is not a built-in name.
 11. A query for an out-of-domain name against `${TS_IPV4}` returns
-    `REFUSED`.
-12. `curl -H "Host: health.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
-    `ok`.
-13. `file` returns a non-5xx status through Caddy (`Host:` + `${TS_IPV4}`).
+    `REFUSED` by default (or resolves via configured upstreams when enabled).
+12. `curl -H "Host: panel.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
+    the Konsol page, HTTP 200; both installed API backends pass their checks.
+13. Backend API gates reject missing `X-Konsol` and unrelated Host headers.
     With the qBittorrent module installed, `master-modul kur torrent` checks
     that `/api/v2/app/version` answers `403` without a login on loopback and
     through `torrent.${LOCAL_DOMAIN}`; a `200` means a localhost or subnet
     authentication bypass is on (**DD-127**, **DD-151**).
-14. With Paylaşım installed, the share service's own listening sockets are
-    only `127.0.0.1:${SHARE_PORT}` (`master-modul` checks with `ss`);
-    `${TS_IPV4}:${SHARE_PORT}` belongs to Caddy, and nothing of the service
-    listens on `0.0.0.0`, WAN, or LAN (**DD-152**).
-15. An unauthenticated request to loopback, via Caddy (`paylas.*`), and to
-    `${TS_IPV4}:${SHARE_PORT}` returns `401`.
-16. A `PROPFIND` with valid credentials succeeds through Caddy on both
-    Infuse paths.
-17. What Konsol shared is listable, and a link into the trash is skipped
-    instead of failing the listing (**DD-152**).
-18. Install-time: the running service's command line has
-    `serve webdav SERVER_ROOT/SHARE_DIR/w`, `--read-only`, `--copy-links` and
-    `--addr=127.0.0.1:${SHARE_PORT}`, it runs as `DOWNLOADS_UID`, and its
-    unit has the `TemporaryFileSystem` over the trash (**DD-152**).
-    Authenticated write refusal remains a live/manual check.
-19. Infuse paths: `http://paylas.${LOCAL_DOMAIN}` (MagicDNS) and
-    `http://${TS_IPV4}:${SHARE_PORT}/` (Apple TV — **DD-98**).
+14. WebDAV listens only on loopback as DOWNLOADS_UID; Caddy owns the tailnet port.
+15. Anonymous requests return 401; each account opens only its selected folder.
+16. PROPFIND/read/range succeed; RO write methods are rejected.
+17. RW changes stay inside the share; cross-share Destination and unsafe paths fail.
+18. Pause, expiry, rotation and removal revoke access as specified in §6.
+19. URLs include /s/<id>/; native-client acceptance is a separate test.
 
-### WebDAV credential handling (§6.2, §6.4)
+### WebDAV credential handling (§6)
 
-20. `/etc/master-stack/paylasim.htpasswd` and `paylasim.cred` are
-    `root:root` `0600`.
-21. Neither the password nor the username appears in `config.env`,
-    `state.env`, or any systemd unit (the unit names only the credential
-    path).
-22. The service's command line shows the credential *path* only
-    (`--htpasswd=%d/htpasswd`) — no password and no username; its
-    environment shows no password.
-23. The installer never creates the retired `master-webdav.service` or
-    `webdav.env`, and no distribution `rclone` package is installed (the
-    module uses the pinned release binary, **DD-152**). It does not remove
-    one left by an older revision either (**DD-96**).
+20. SHARE_STATE_FILE remains 0600 root, with hashes only.
+21. No secret enters environment files, argv, browser storage or audit logs.
+22. The service command line contains only the credential path.
+23. Reruns and reboot preserve IDs, hashes, policies and paused state.
+    No retired shared account/rclone route is retained as a bypass.
 
 ### Firewall
 
