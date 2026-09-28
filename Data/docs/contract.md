@@ -10,6 +10,33 @@ relative to the retired monolith (no reconcile engine, no
 canonical-bundle machinery, no legacy `master-webdav.service`) are decisions, not
 oversights. There is no parallel legacy installer tree.
 
+**v2-140 amendment (DD-167):** WireGuard network-card settings edit default DNS
+for future peers and local qBittorrent UI access without regenerating keys,
+editing existing profiles or restarting/waking WireGuard. Regeneration remains
+a separate typed-confirmation action. Registry revisions and the installer lock
+prevent stale/concurrent writes; a pending Settings transaction blocks edits.
+On apply failure restore prior registry/firewall/Caddy state and report any
+incomplete rollback. Existing explicit firewall overrides are not changed.
+
+**v2-139 amendment (DD-166):** Files also extracts unencrypted RAR3/RAR5,
+solid/multipart sets and mixed nested ZIP/RAR. Distribution-signed `unrar` and
+`python3-rarfile` are base dependencies. If missing from existing apt sources,
+one managed source enables Debian non-free or Ubuntu universe/multiverse with
+the installed distribution keyring. No operator source is overwritten. The
+[archive contract](desktop-and-archives.md) retains bounded jobs, source
+preservation, safe filesystem writes and atomic publication; it adds an
+unprivileged resource-limited RAR helper, never a shell extraction command.
+
+**v2-130 amendment (DD-160):** Model A replaces Overview, Applications,
+desktop dock and window controls with one responsive sidebar. Files is the
+landing page; optional apps appear only when installed. CPU/RAM/disk use the
+gated, independent `/api/konsol/kaynaklar` endpoint; missing/stale measurements
+are unknown, never fabricated zeroes. Settings owns System/Firewall/Caddy/
+Dnsmasq/Log; qBittorrent owns its account/path form. One shared transactional
+controller retains existing confirmation and rollback guarantees. Legacy
+bookmarks redirect; service/data/security boundaries remain unchanged.
+See [Model A and clean-install acceptance](model-a-clean-install.md).
+
 **v2-129 amendment (DD-159):** Files and folder WebDAV are now installer-owned
 built-ins; only WireGuard/qBittorrent remain in the public App Store catalogue.
 The [desktop and ZIP contract](desktop-and-archives.md) defines the archive API,
@@ -406,6 +433,13 @@ Contract in §5–§7 and `folder-shares.md`.
       `CHAIN_SETTINGS` precedes `ts-input`, so a tailnet deny is effective.
       Loopback, established flows and ICMPv6 protections remain intact.
       Permission does not imply a reachable listener; no bind address is changed.
+      **DD-164:** group port permissions by incoming network: Tailscale (default),
+      Internet, WireGuard only when installed (selectable tunnel interfaces), and
+      protected loopback. WireGuard public UDP endpoints belong to Internet,
+      not to tunnel-client traffic. Technical rules is a separate, all-network
+      read-only view including forwarding/NAT. Socket bindings carry explicit
+      scope metadata; unknown/unreadable and no listener remain distinct from
+      policy. Refresh re-reads the live state; switching tabs preserves drafts.
     - Caddy shows base/module/WireGuard sites and their routes. Its local-domain
       field changes the single-label suffix (1–63 lowercase letters/digits/hyphens,
       no leading/trailing hyphen) as a separate transaction (**DD-157**).
@@ -423,16 +457,31 @@ Contract in §5–§7 and `folder-shares.md`.
       private names stay local. Base/module collisions and local/self
       upstreams are rejected; loopback/tailnet listeners stay unchanged.
       This neither creates Caddy sites nor edits Tailscale Admin DNS.
-    - qBittorrent permits username, optional new password (12–256 characters)
+      DNS-only Apply validates, restarts dnsmasq and commits immediately, with
+      no 60 s confirmation (**DD-163**). The console's own name cannot be
+      disabled; reject that request before writing files or restarting services.
+    - qBittorrent permits username, optional new password (8–256 characters)
       and the default folder for new torrents. Blank in the UI preserves
       the password. Only canonical existing non-hidden downloads/media
       directories may be chosen; write permission is probed as the service
       UID and narrowly added to its systemd sandbox. Existing files/torrent
       locations and incomplete paths are not moved. Stop/snapshot/write/
       restart avoids overwriting a live application's settings.
+      **DD-165:** account-only Save commits immediately in one request, with
+      explicit success/failure feedback and no draft/review/countdown. Other
+      pending drafts are neither submitted nor discarded. Blank preserves a
+      stored password; a temporary startup password can rotate on restart.
+      Stopped services remain stopped. Folder changes retain review/confirmation.
     `POST /api/konsol/ayarlar/{uygula,onayla,geri-al}` runs an independent
-    worker with JSON on stdin, never a password on argv/in logs. Review is
-    followed by a 60 s confirmation window (300 s for a domain change). The server-side guard timer
+    worker with JSON on stdin, never a password on argv/in logs. DNS-only and
+    qBittorrent account-only (username/password, no folder or other section)
+    requests return `{pending: null, committed: true}` after a durable commit;
+    only the server determines eligibility from the supplied change sections.
+    Other requests retain review and a 60 s confirmation window (300 s for a
+    domain change), including mixed DNS/firewall or DNS/qBittorrent requests.
+    Failed immediate applies restore snapshots; interrupted pre-commit writes retain
+    guard recovery. The commit marker prevents recovery from undoing a durable
+    commit after a crash. The server-side guard timer
     restores unconfirmed settings after disconnect, timeout or reboot;
     failed recovery remains pending for retry. Stale revisions and concurrent
     installer/module writes are refused. Confirmation cannot preserve a rule
@@ -445,6 +494,9 @@ Contract in §5–§7 and `folder-shares.md`.
   - A peer or a whole network can be switched off and on (§1.9).
 - **Folder shares (DD-158):** Files v09 offers list/cards, details and a WebDAV
   tab. The root backend manages separate accounts, RO/RW, expiry and pause.
+  Access and expiry are edited inline in the Shares list (DD-169); Manage edits
+  only folder/account. Partial updates preserve omitted values under the lock
+  and do not rebind a folder unless a path is explicitly supplied.
   The file backend's legacy share mutations return 410. See §5–7.
 - `master-files-panel.service` serves a file manager API for
   `SERVER_ROOT`: browse, search the current folder, select many items, new
@@ -482,6 +534,8 @@ Contract in §5–§7 and `folder-shares.md`.
     control characters or leading and trailing spaces.
 - Delete moves the item into `DOWNLOADS_PATH/.cop/<id>/` with a small origin
   record, on the same disk.
+  - Move-to-trash has a short confirmation; long names remain available in its
+    subtitle/tooltip without overflowing. Permanent deletion guards are unchanged.
   - Restore puts it back where it was, or into the root if that folder is gone.
     A taken name gets a number.
   - Deleting permanently works only from the trash; emptying it needs

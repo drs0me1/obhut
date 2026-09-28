@@ -197,7 +197,9 @@ def main():
                 assert "REFUSED" in dig("public.example")
                 d = copy.deepcopy(settings.DEFAULT["dns"])
                 d.update(disabled=["torrent.ayc"], records=[dict(name="nas.ayc", target="192.0.2.10", enabled=True)], forward=True, servers=["9.9.9.9"])
-                apply(dns=d)
+                result = apply(dns=d)
+                assert result == {"pending": None, "committed": True}
+                assert m.config()["dns"] == d
                 assert "192.0.2.10" in dig("nas.ayc")
                 assert "100.64.0.2" not in dig("torrent.ayc")
                 answer_text = dig("public.example")
@@ -205,10 +207,21 @@ def main():
                 before = len(forwarded)
                 dig("missing.ayc")
                 assert len(forwarded) == before, "Yerel DNS sorgusu üst sunucuya sızdı"
-                m.rollback()
+                m.guard()
+                assert m.config()["dns"] == d
+                apply(dns=copy.deepcopy(settings.DEFAULT["dns"]))
                 assert "100.64.0.2" in dig("torrent.ayc")
                 assert "REFUSED" in dig("public.example")
-                print("PASS real dnsmasq local names, upstream forwarding, private-zone isolation, rollback", flush=True)
+                with patch.object(m, "dns_test", side_effect=[settings.SettingsError("injected"), None]):
+                    try:
+                        apply(dns=d)
+                    except settings.SettingsError:
+                        pass
+                    else:
+                        raise AssertionError("Invalid DNS was accepted")
+                assert m.pending() is None
+                assert "100.64.0.2" in dig("torrent.ayc")
+                print("PASS real dnsmasq local names, forwarding, private-zone isolation, immediate commit, failed-apply rollback", flush=True)
                 start("qbit")
                 with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
                     assert response.read() == b"Ok."
@@ -224,11 +237,45 @@ def main():
                 with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
                     assert response.read() == b"Ok."
                 assert not m.qdrop.exists()
+                before = m.qconf.read_bytes()
+                try:
+                    apply(torrent=dict(password="1234567"))
+                except settings.SettingsError:
+                    pass
+                else:
+                    raise AssertionError("Seven-character password was accepted")
+                assert m.qconf.read_bytes() == before
+                assert m.pending() is None
+                result = apply(torrent=dict(username="saved-user", password="Pass8!xy"))
+                assert result == {"pending": None, "committed": True}
+                assert m.pending() is None
+                with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
+                    assert response.read() == b"Ok."
+                with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
+                    assert response.read() == b"Fails."
+                start("qbit")
+                m.guard()
+                with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
+                    assert response.read() == b"Ok."
+                assert "Pass8!xy" not in m.qconf.read_text() + m.config_path.read_text()
+                # Real restart after a failed commit restores the previous working account.
+                with patch.object(m, "commit", side_effect=OSError("injected disk failure")):
+                    try:
+                        apply(torrent=dict(username="failed-user", password="test-failed-password-123"))
+                    except OSError:
+                        pass
+                    else:
+                        raise AssertionError("Failed commit was accepted")
+                assert m.pending() is None
+                with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
+                    assert response.read() == b"Ok."
                 stop("qbit")
-                apply(torrent=dict(username="stopped-user"))
+                assert apply(torrent=dict(username="stopped-user"))["committed"]
                 assert "qbit" not in processes, "Durdurulmuş servis kendiliğinden açıldı"
-                m.rollback()
-                print("PASS real qBittorrent login/hash, save path, permission probe, stopped-state preservation, rollback", flush=True)
+                start("qbit")
+                with request("auth/login", dict(username="stopped-user", password="Pass8!xy")) as response:
+                    assert response.read() == b"Ok."
+                print("PASS real qBittorrent eight-character password save/login/restart, seven-character rejection, old-login rejection, blank-password preservation, commit-failure rollback, save path, stopped-state preservation", flush=True)
         finally:
             for name in list(processes):
                 stop(name)

@@ -9,6 +9,7 @@ import stat
 import struct
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -86,6 +87,35 @@ class ArchiveTests(unittest.TestCase):
         self.assertFalse((self.root / "two" / "pictures" / "year").exists())
         self.assertEqual((self.root / "three" / "pictures" / "year" / "photo.jpg").read_bytes(), b"picture")
         self.assertTrue((self.root / "input.zip").is_file())
+
+    def test_automatic_nested_default_and_depth_ceiling_are_atomic(self):
+        def request():
+            data = self.request("unzip")
+            del data["nested"], data["layers"]
+            self.manager.submit(data)
+            self.manager.thread.join(5)
+            self.assertFalse(self.manager.thread.is_alive())
+            return self.manager.status()["items"][0]
+        inner = zip_bytes([("hello.txt", b"automatic")])
+        for _ in range(ar.MAX_LAYERS - 2):
+            inner = zip_bytes([("inside.zip", inner)])
+        self.input([("inside.zip", inner)])
+        result = request()
+        self.assertEqual(result["status"], "done", result)
+        self.assertTrue(result["automatic"])
+        self.assertEqual(result["archives"], ar.MAX_LAYERS)
+        self.assertEqual((self.root / "output" / ("inside/" * (ar.MAX_LAYERS - 1)) / "hello.txt").read_bytes(), b"automatic")
+        # One deeper archive must fail, not publish a misleading partial success.
+        self.input([("inside.zip", zip_bytes([("inside.zip", inner)]))])
+        result = request()
+        self.assertEqual(result["status"], "failed", result)
+        self.assertIn("güvenlik sınırı", result["message"])
+        self.assertFalse((self.root / "output (2)").exists())
+        self.assertEqual(sorted(p.name for p in (self.root / ".arsiv").iterdir()), ["jobs.json"])
+
+    def test_state_uses_installer_downloads_not_source_or_torrent_temp(self):
+        panel = files_module.Panel(SimpleNamespace(root=str(self.root),trash=".cop",share="",version="test",domain="test",temp_dir="different/tmp",downloads_dir="custom-downloads"))
+        self.assertEqual(panel.state()["downloads"], "custom-downloads")
 
     def test_conflicts_never_overwrite(self):
         self.input([("hello", b"new")])

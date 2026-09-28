@@ -145,16 +145,80 @@ class SettingsTests(unittest.TestCase):
         self.m.apply(self.payload(firewall=[self.rule(scope="tail", port=80, source="100.64.0.20/32", allow=False)]))
         self.confirm()
 
-    def test_disable_panel_cannot_be_confirmed(self):
-        self.m.apply(self.payload(dns=self.dns(disabled=["panel.ayc"])))
+    def test_disable_panel_is_rejected_before_mutation(self):
+        before = Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes()
+        for extra in ({}, {"firewall": []}):
+            with self.subTest(extra=extra), self.assertRaises(settings.SettingsError):
+                self.m.apply(self.payload(dns=self.dns(disabled=["panel.ayc"]), **extra))
+        self.assertEqual(before, Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes())
+        self.assertIsNone(self.m.pending())
+        self.assertFalse(self.m.config_path.exists())
+        self.assertEqual(self.calls, [])
+
+    def test_dns_only_commits_immediately_and_survives_deadline_and_reboot(self):
+        dns = self.dns(disabled=["health.ayc"])
+        result = self.m.apply(self.payload(dns=dns))
+        self.assertEqual(result, {"pending": None, "committed": True})
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.m.config_path.stat().st_mode & 0o777, 0o600)
+        self.now += 181
+        with patch.object(settings, "boot_id", return_value="boot-b"):
+            recovered = settings.Manager(self.state)
+            recovered.guard()
+            self.assertEqual(recovered.current()["dns"], dns)
+        self.assertEqual(self.m.config()["firewall"], [])
+        self.assertIn(["systemctl", "restart", "dnsmasq"], self.calls)
+
+    def test_mixed_dns_keeps_confirmation_even_with_unchanged_firewall(self):
+        for extra in ({"firewall": []}, {"torrent": {"username": "operator"}}):
+            with self.subTest(extra=extra):
+                self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"]), **extra))
+                self.assertEqual(self.m.status()["pending"]["seconds"], 60)
+                self.assertEqual(self.m.config()["dns"], settings.DEFAULT["dns"])
+                self.now += 61
+                self.m.guard()
+                self.assertEqual(self.m.current()["dns"], settings.DEFAULT["dns"])
+
+    def test_dns_restart_or_commit_failure_restores_previous_config(self):
+        self.m.apply(self.payload(dns=self.dns(records=[dict(name="nas.ayc", target="tailscale", enabled=True)])))
+        before = self.m.config()
+        for failure in ("restart", "commit"):
+            with self.subTest(failure=failure):
+                if failure == "restart":
+                    self.fail_cmd = "restart dnsmasq"
+                    with self.assertRaises(settings.SettingsError):
+                        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+                else:
+                    with patch.object(self.m, "commit", side_effect=OSError("disk failure")), self.assertRaises(OSError):
+                        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+                self.assertIsNone(self.m.pending())
+                self.assertEqual(self.m.config(), before)
+                self.assertIn("interface-name=nas.ayc", self.m.dns_file.read_text())
+
+    def test_dns_crash_recovery_before_and_after_durable_commit(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                dns = self.dns(disabled=["health.ayc"])
+                def crash(p):
+                    if committed:
+                        settings.save_json(self.m.config_path, dict(p["candidate"], _transaction=p["id"]))
+                    raise SystemExit("simulated process death")
+                with patch.object(self.m, "commit", side_effect=crash), self.assertRaises(SystemExit):
+                    self.m.apply(self.payload(dns=dns))
+                self.assertEqual(self.m.pending()["phase"], "applying")
+                self.now += 181
+                self.m.guard()
+                self.assertIsNone(self.m.pending())
+                self.assertEqual(self.m.config()["dns"], dns if committed else settings.DEFAULT["dns"])
+
+    def test_dns_rejects_client_confirmation_bypass_flag(self):
         with self.assertRaises(settings.SettingsError):
-            self.confirm()
-        self.m.rollback()
+            self.m.apply(self.payload(dns=self.dns(), firewall=[], committed=True))
+        self.assertIsNone(self.m.pending())
 
     def test_dns_projection_survives_rerender_and_private_zone_stays_local(self):
         self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"], forward=True, servers=["1.1.1.1"],
                          records=[{"name": "nas.ayc", "target": "192.0.2.10", "enabled": True}])))
-        self.confirm()
         base = Path(self.env["DNSMASQ_CONF_FILE"])
         self.assertIn(settings.OFF + "interface-name=health.ayc", base.read_text())
         base.write_text(base.read_text().replace(settings.OFF, ""))
@@ -215,6 +279,101 @@ class SettingsTests(unittest.TestCase):
         self.m.apply(self.payload(torrent={"username": "newuser"}))
         self.assertIn("oldhash", self.m.qconf.read_text())
 
+    def test_password_length_boundaries_before_any_service_change(self):
+        before = self.m.qconf.read_bytes()
+        for phrase in ("", "x" * 7, "x" * 257, "1234567\n", None):
+            with self.subTest(phrase=phrase), self.assertRaises(settings.SettingsError):
+                self.m.apply(self.payload(torrent={"password": phrase}))
+        for phrase in ("Pass8!xy", "ü" * 8, "x" * 11, "x" * 12, "x" * 256):
+            with self.subTest(length=len(phrase)):
+                self.m.validate(self.payload(torrent={"password": phrase}))
+        self.assertEqual(before, self.m.qconf.read_bytes())
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(self.m.pending())
+
+    def test_account_only_commits_and_survives_deadline_and_reboot(self):
+        phrase = "Pass8!xy"
+        result = self.m.apply(self.payload(torrent={"username": "new-user", "password": phrase}))
+        self.assertEqual(result, {"pending": None, "committed": True})
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.m.status()["username"], "new-user")
+        self.assertIn("Unrelated=keep", self.m.qconf.read_text())
+        self.assertNotIn(phrase, self.m.qconf.read_text() + self.m.config_path.read_text() + json.dumps(self.m.status()))
+        self.assertEqual(self.m.qconf.stat().st_mode & 0o777, 0o640)
+        self.assertFalse(self.m.qdrop.exists())
+        self.now += 181
+        with patch.object(settings, "boot_id", return_value="boot-b"):
+            recovered = settings.Manager(self.state)
+            recovered.guard()
+            self.assertEqual(recovered.status()["username"], "new-user")
+        self.assertEqual(self.m.config()["firewall"], [])
+        self.assertEqual(self.m.config()["dns"], settings.DEFAULT["dns"])
+
+    def test_password_only_commits_without_changing_username(self):
+        self.assertTrue(self.m.apply(self.payload(torrent={"password": "password-only-test"}))["committed"])
+        self.assertEqual(self.m.status()["username"], "admin")
+        self.assertNotIn("oldhash", self.m.qconf.read_text())
+
+    def test_account_start_or_commit_failure_restores_profile(self):
+        before = self.m.qconf.read_bytes()
+        for failure in ("start", "commit"):
+            with self.subTest(failure=failure):
+                if failure == "start":
+                    self.fail_cmd = "start qbittorrent-nox@"
+                    with self.assertRaises(settings.SettingsError):
+                        self.m.apply(self.payload(torrent={"username": "failed-user"}))
+                else:
+                    with patch.object(self.m, "commit", side_effect=OSError("disk failure")), self.assertRaises(OSError):
+                        self.m.apply(self.payload(torrent={"password": "failed-password-test"}))
+                self.assertIsNone(self.m.pending())
+                self.assertEqual(self.m.qconf.read_bytes(), before)
+
+    def test_account_crash_recovery_before_and_after_commit(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                def crash(p):
+                    if committed:
+                        settings.save_json(self.m.config_path, dict(p["candidate"], _transaction=p["id"]))
+                    raise SystemExit("simulated process death")
+                with patch.object(self.m, "commit", side_effect=crash), self.assertRaises(SystemExit):
+                    self.m.apply(self.payload(torrent={"username": "saved-user"}))
+                self.assertEqual(self.m.pending()["phase"], "applying")
+                self.now += 181
+                self.m.guard()
+                self.assertIsNone(self.m.pending())
+                self.assertEqual(self.m.status()["username"], "saved-user" if committed else "admin")
+
+    def test_account_save_never_starts_stopped_service(self):
+        original = self.fake_run
+        def inactive(argv, **kwargs):
+            if argv == ["systemctl", "is-active", "--quiet", self.m.q_unit()]:
+                return subprocess.CompletedProcess(argv, 3, "", "")
+            return original(argv, **kwargs)
+        with patch.object(settings, "run", side_effect=inactive):
+            self.assertTrue(self.m.apply(self.payload(torrent={"username": "stopped-user"}))["committed"])
+        self.assertNotIn(["systemctl", "start", self.m.q_unit()], self.calls)
+
+    def test_account_mixed_or_folder_edits_keep_confirmation(self):
+        for extra, q in (({"firewall": []}, {"username": "newuser"}),
+                         ({"dns": self.dns()}, {"password": "test-only-password"}),
+                         ({}, {"save": str(self.root / "srv/media")}),
+                         ({}, {"username": "newuser", "save": str(self.root / "srv/media")})):
+            with self.subTest(extra=extra, keys=list(q)):
+                result = self.m.apply(self.payload(torrent=q, **extra))
+                self.assertNotIn("committed", result)
+                self.assertEqual(result["pending"]["seconds"], 60)
+                self.m.rollback()
+
+    def test_invalid_or_stale_account_request_never_writes(self):
+        before = self.m.qconf.read_bytes()
+        for q in ({}, {"username": "bad user"}, {"password": "short"}, {"password": "x" * 257}, {"committed": True}):
+            with self.subTest(keys=list(q)), self.assertRaises(settings.SettingsError):
+                self.m.apply(self.payload(torrent=q))
+        with self.assertRaises(settings.SettingsError):
+            self.m.apply({"revision": "stale", "torrent": {"username": "newuser"}})
+        self.assertEqual(self.m.qconf.read_bytes(), before)
+        self.assertEqual(self.calls, [])
+
     def test_directory_scope_and_symlinks(self):
         for value in (str(self.root / "srv"), str(self.root / "srv/.pay"), "/etc", str(self.root / "srv/downloads/../media")):
             with self.subTest(value=value), self.assertRaises(settings.SettingsError):
@@ -242,11 +401,8 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(self.m.pending())
 
     def test_recovery_failure_keeps_pending_for_timer_retry(self):
-        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
-        self.now += 61
-        with patch.object(self.m, "dns_test", side_effect=settings.SettingsError("retry")):
-            with self.assertRaises(settings.SettingsError):
-                self.m.guard()
+        with patch.object(self.m, "dns_test", side_effect=settings.SettingsError("retry")), self.assertRaises(settings.SettingsError):
+            self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
         self.assertEqual(self.m.pending()["phase"], "rollback")
         self.m.guard()
         self.assertIsNone(self.m.pending())

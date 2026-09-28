@@ -12,6 +12,7 @@
 .as-toolbar { display:flex; align-items:end; gap:12px; flex-wrap:wrap; padding:14px 18px; }
 .as-toolbar .as-field { min-width:110px; }
 .as-toolbar>.btn { margin-left:auto; }
+.as-toolbar>.btn + .btn { margin-left:0; }
 .as-note { margin:0; padding:12px 18px; background:var(--surface-2); color:var(--muted); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .as-note.warn { color:var(--warn); background:var(--warn-soft); }
 .as-field { display:grid; gap:6px; font-size:13px; }
@@ -32,13 +33,41 @@
 .as-switch[aria-checked=true]::before { background:var(--ok); border-color:var(--ok); }
 .as-switch[aria-checked=true]::after { left:17px; }
 .as-switch:disabled { opacity:.5; }
-.as-ports details { min-width:60px; }
-.as-ports details[open] { min-width:160px; }
-.as-ports details p { font-size:11px; }
-.as-ports details .as-note { padding:8px; }
-.as-ports details .as-inline { margin-top:8px; }
-.as-rules { min-width:660px; }
-.as-rules td:nth-child(3) { max-width:480px; }
+/* Firewall stays a semantic table at every width; only its region scrolls. */
+.as-fw-rules, #as-fw-content { min-width:0; }
+.as-fw-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:12px 18px 0; border-bottom:1px solid var(--line); }
+.as-fw-tabs button { border:0; border-bottom:2px solid transparent; background:none; color:var(--muted); padding:12px; min-height:44px; font-size:12px; font-weight:600; }
+.as-fw-tabs [aria-selected=true] { border-bottom-color:var(--accent); color:var(--ink); }
+.as-fw-controls .btn, .as-fw-actions .btn { background:var(--surface); color:var(--ink); border:1px solid var(--line); }
+.as-fw-controls .btn:hover:not(:disabled), .as-fw-actions .btn:hover:not(:disabled) { background:var(--surface-2); }
+.as-fw-scroll { max-height:70vh; border:1px solid var(--line); border-radius:7px; }
+.as-fw-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+#settings-page .as-fw-table { min-width:1040px; table-layout:fixed; border-collapse:separate; border-spacing:0; }
+#settings-page .as-fw-table caption { text-align:left; padding:12px; color:var(--muted); font-size:12px; background:var(--surface); }
+#settings-page .as-fw-table th,#settings-page .as-fw-table td { padding:12px 10px; border-bottom:1px solid var(--line); border-right:1px solid var(--line); vertical-align:top; }
+#settings-page .as-fw-table tr > :last-child { border-right:0; }
+#settings-page .as-fw-table tbody tr:last-child > * { border-bottom:0; }
+#settings-page .as-fw-table thead th { position:sticky; top:0; z-index:1; font-weight:600; white-space:normal; }
+#settings-page .as-fw-table th[scope=row] { background:transparent; white-space:normal; overflow-wrap:anywhere; }
+#settings-page .as-fw-table strong { display:block; font-size:12px; font-weight:600; color:var(--ink); }
+#settings-page .as-fw-table small { font-size:11px; line-height:1.6; margin-top:4px; }
+#settings-page .as-fw-table tbody tr:nth-child(even) { background:var(--surface-2); }
+#settings-page .as-fw-table tbody tr.changed { background:var(--accent-soft); }
+#settings-page .as-ports thead th:nth-child(1) { width:20%; }
+#settings-page .as-ports thead th:nth-child(2) { width:8%; }
+#settings-page .as-ports thead th:nth-child(3) { width:12%; }
+#settings-page .as-ports thead th:nth-child(4) { width:24%; }
+#settings-page .as-ports thead th:nth-child(5) { width:14%; }
+#settings-page .as-ports thead th:nth-child(6) { width:10%; }
+#settings-page .as-ports thead th:nth-child(7) { width:12%; }
+#settings-page .as-rules thead th:nth-child(1) { width:17%; }
+#settings-page .as-rules thead th:nth-child(2) { width:5%; }
+#settings-page .as-rules thead th:nth-child(3) { width:30%; }
+#settings-page .as-rules thead th:nth-child(4) { width:22%; }
+#settings-page .as-rules thead th:nth-child(5) { width:12%; }
+#settings-page .as-rules thead th:nth-child(6) { width:14%; }
+.as-fw-actions { display:grid; gap:6px; }
+.as-fw-actions .btn { white-space:normal; font-size:11px; padding:6px 8px; }
 .as-footer { display:flex; justify-content:space-between; align-items:center; gap:15px; flex-wrap:wrap; padding:16px 0; border-top:1px solid var(--line); }
 .as-footer strong { font-size:13px; font-weight:600; }
 .as-rollback { padding:16px; border:1px solid var(--warn); border-radius:9px; background:var(--warn-soft); color:var(--warn); }
@@ -60,17 +89,15 @@
   .as-formgrid>div:empty { display:none; }
   .as-field input, .as-field select { font-size:16px; }
   .as-switch, .as-toolbar button { min-height:44px; }
-  #settings-page .as-ports thead, #settings-page .as-dns thead { display:none; }
-  #settings-page .as-ports tbody, #settings-page .as-dns tbody { display:block; }
-  #settings-page .as-ports tr, #settings-page .as-dns tr { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:14px; border-bottom:1px solid var(--line); }
-  #settings-page .as-ports td, #settings-page .as-dns td { padding:0; border:0; }
-  .as-ports td:nth-child(1), .as-dns td:nth-child(1) { grid-area:1/1; }
-  .as-ports td:nth-child(2) { grid-area:1/2; text-align:right; }
-  .as-ports td:nth-child(3), .as-dns td:nth-child(2) { grid-area:2/1; }
-  .as-ports td:nth-child(4), .as-dns td:nth-child(3) { grid-area:3/1; }
-  .as-ports td:nth-child(5), .as-dns td:nth-child(4) { grid-area:2/2; }
-  .as-ports td:nth-child(6), .as-dns td:nth-child(5) { grid-area:3/2; }
-  .as-ports details[open] { min-width:0; max-width:150px; }
+  #settings-page .as-dns thead { display:none; }
+  #settings-page .as-dns tbody { display:block; }
+  #settings-page .as-dns tr { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:14px; border-bottom:1px solid var(--line); }
+  #settings-page .as-dns td { padding:0; border:0; }
+  .as-dns td:nth-child(1) { grid-area:1/1; }
+  .as-dns td:nth-child(2) { grid-area:2/1; }
+  .as-dns td:nth-child(3) { grid-area:3/1; }
+  .as-dns td:nth-child(4) { grid-area:2/2; }
+  .as-dns td:nth-child(5) { grid-area:3/2; }
   .as-footer .as-inline { width:100%; }
   .as-footer .as-inline button { flex:1; }
 }

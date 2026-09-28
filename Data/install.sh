@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-129"
+V2_VERSION="2026.08.06-v2-144"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -421,7 +421,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve ZIP aracı
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve ZIP/RAR aracı
   App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
   Tailscale:     $ts_note
@@ -452,6 +452,38 @@ EOF
         log WARN "apt-daily zamanlayıcıları etkinleştirilemedi"
 }
 
+# DD-166: distribution-signed RAR dependencies; preserve operator source files.
+# OS-DIVERGENCE: rar-repository (debian/ubuntu) — non-free vs universe/multiverse [DD-166]
+ensure_rar_repository() {
+    local mirror security components keyring package candidate missing=0
+    for package in unrar python3-rarfile; do
+        candidate="$(LC_ALL=C apt-cache policy "$package" | awk '/Candidate:/ {value=$2} END {print value}')"
+        [[ -n "$candidate" && "$candidate" != '(none)' ]] || missing=1
+    done
+    [[ "$missing" -eq 1 ]] || return 0
+    case "$OS_ID" in
+        debian)
+            mirror="https://deb.debian.org/debian"; security="https://security.debian.org/debian-security"
+            components="non-free"; keyring="/usr/share/keyrings/debian-archive-keyring.gpg"
+            ;;
+        ubuntu)
+            mirror="https://archive.ubuntu.com/ubuntu"; security="https://security.ubuntu.com/ubuntu"
+            case "$OS_ARCH" in amd64|i386) ;; *) mirror="https://ports.ubuntu.com/ubuntu-ports"; security="$mirror" ;; esac
+            components="universe multiverse"; keyring="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+            ;;
+        *) die "RAR deposu için desteklenmeyen işletim sistemi" ;;
+    esac
+    [[ -f "$keyring" ]] || die "Dağıtım arşiv anahtarlığı bulunamadı: $keyring"
+    log INFO "RAR desteği: resmi $OS_CODENAME $components deposu ekleniyor (unrar lisanslı/freeware)."
+    atomic_write "$RAR_APT_SOURCE_FILE" 0644 <<EOF
+# master-stack: RAR dependencies (DD-166); operator repositories are untouched.
+deb [signed-by=$keyring] $mirror $OS_CODENAME $components
+deb [signed-by=$keyring] $mirror $OS_CODENAME-updates $components
+deb [signed-by=$keyring] $security $OS_CODENAME-security $components
+EOF
+    retry "apt-rar-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
+}
+
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
@@ -465,6 +497,7 @@ stage_1() {
     # SUSPEND apt kancasınca okunur; Debian'da needrestart kurulu değil, no-op.
     export NEEDRESTART_SUSPEND=1
     retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update
+    ensure_rar_repository
     if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
         retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
             apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
@@ -475,7 +508,7 @@ stage_1() {
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl ethtool iproute2 procps kmod \
         iptables coreutils util-linux diffutils jq \
-        dnsutils unattended-upgrades python3
+        dnsutils unattended-upgrades python3 python3-rarfile unrar
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
@@ -1066,7 +1099,7 @@ ensure_wg_panel() {
 ensure_console_pages() {
     local f
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
-    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js desktop.css arsiv.js; do
+    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
 }
@@ -1095,6 +1128,8 @@ ensure_files_panel() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     atomic_write "$SBIN_DIR/master_archives.py" 0644 <"$V2_ROOT/files-panel/master_archives.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    atomic_write "$SBIN_DIR/master_rar.py" 0644 <"$V2_ROOT/files-panel/master_rar.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ ! -L "$SERVER_ROOT/$FILES_ARCHIVE_DIR" ]] || die "arşiv çalışma alanı bağlantı olamaz"
     install -d -m 0700 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$SERVER_ROOT/$FILES_ARCHIVE_DIR"
     # DD-144, DD-151: qBittorrent modülünün ilk ayarındaki yarım indirme klasörü; panel onu
@@ -1112,7 +1147,8 @@ ensure_files_panel() {
         FILES_PANEL_GROUP="$group" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         V2_VERSION="$V2_VERSION" \
-        QBITTORRENT_TEMP_DIR="$temp_dir"
+        QBITTORRENT_TEMP_DIR="$temp_dir" \
+        DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED dosya"
 }
@@ -1289,7 +1325,7 @@ summary_modules() {
             dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
             wireguard) name="WireGuard"; info="${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer" ;;
             torrent) name="qBittorrent"; info="http://torrent.${LOCAL_DOMAIN}; ilk giriş bilgisi kartında" ;;
-            paylasim) name="Paylaşım"; info="Dosyalar → WebDAV: klasör başına adres, kullanıcı ve erişim izni" ;;
+            paylasim) name="Paylaşım"; info="Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ;;
         esac
         case "$(module_state "$id")" in
             calisiyor) st="kurulu" ;;
@@ -1317,7 +1353,8 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (sunucu durumu, modüller ve günlük; parolasız, yalnız Tailscale)
+Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; parolasız, yalnız Tailscale)
+  Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
 $(summary_modules)
   WireGuard ağları WireGuard → Yapılandır'dan; "Local erişim" açık ağlarda qBittorrent arayüzü

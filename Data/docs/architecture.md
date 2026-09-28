@@ -5,6 +5,15 @@ Read [`contract.md`](contract.md) first — that document says *what* the instal
 does; this one says *where each part of it lives* and *how data moves*.
 Operator entry point: [`README.md`](../../README.md).
 
+**v2-130 (DD-160):** [Model A](model-a-clean-install.md) is a single-workspace
+admin panel, not a desktop launcher. `panel.css` styles the sidebar and resource
+meters. Host CPU sampling runs independently of WireGuard; the resources API
+does not enumerate networks, ports or invoke external commands. The old
+`/api/wg/sistem` remains compatible. One Settings controller renders either
+system settings or the qBittorrent application form. **DD-165:** account-only
+Save uses the same worker but commits directly; other drafts remain separate
+and unapplied. Folder/network edits retain their confirmation flow.
+
 **v2-129 (DD-159):** Files, folder WebDAV and ZIP are built-ins. The App Store
 catalogue contains WireGuard/qBittorrent only. Internal `dosya`/`paylasim` paths
 and registry IDs remain for compatibility, not public lifecycle operations.
@@ -175,8 +184,8 @@ in §10, not resolved silently.
 | `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-149**, **DD-152**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
 | `files-panel/master-files-panel` | Serve the file API on loopback as the downloads uid: no password and the same gates as the root backend (**DD-147**), directory-descriptor walks with `O_NOFOLLOW`, no-overwrite renames and uploads, the `.cop` trash, text decoding, share links while the `.pay/acik` marker exists (**DD-139**, **DD-140**, **DD-145**, **DD-149**) | Anything outside `DOWNLOADS_PATH`; WireGuard — those calls go to the other backend |
 | `files-panel/master_archives.py` | Single background ZIP job, descriptor-safe paths, aggregate bounds, private staging and atomic result publication; `.arsiv/jobs.json` history (**DD-159**) | Root privileges, shell commands, arbitrary archive formats, backups or resumable jobs |
-| `console/desktop.css`, `console/arsiv.js` | Desktop shell styling and archive dialogs/status/cancellation, using the real file API | OS sessions, fake progress, service credentials |
-| `console/index.html`, `konsol.css`, `konsol.js` | The console: overview, WireGuard, files, modules and log, served by Caddy from `CONSOLE_WEB_DIR`, everything from its own origin (**DD-140**, **DD-148**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
+| `console/panel.css`, `console/arsiv.js` | Model A shell styling and archive dialogs/history/cancellation, using the real file API | OS sessions, fake progress, service credentials |
+| `console/index.html`, `konsol.css`, `konsol.js`, `ayarlar.js` | Files, App Store, installed app pages, sidebar resources and tabbed Settings; served by Caddy from `CONSOLE_WEB_DIR`, same-origin only (**DD-160**) | Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/Caddyfile.wg` | The qBittorrent UI port on `{$WG_BIND}` (**DD-151**), shared by every `caddy-wg@<interface>` instance (**DD-120**, **DD-136**) | Tailscale, names, WebDAV, which network it serves |
 | `templates/dnsmasq.conf` | Five base `interface-name` records (modules add their own files) and the fail-closed resolver posture on `lo` + `tailscale0` | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
@@ -387,6 +396,7 @@ forked into per-distribution paths.
 | Slug | Kind | Affects | What differs | DD |
 |---|---|---|---|---|
 | `tailscale-repo-suite` | identity-derived | both | apt suite and keyring URL come from `OS_ID`/`OS_CODENAME`; both vendors publish the same URL shape | DD-102 |
+| `rar-repository` | candidate probe + identity-derived | both | when RAR dependencies have no apt candidate, add only a managed signed source: Debian non-free, Ubuntu universe/multiverse; Ubuntu arm uses ports | DD-166 |
 | `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
 | `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
 | `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |

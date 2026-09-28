@@ -1,16 +1,45 @@
 /* Klasör başına WebDAV yönetimi (DD-158). Parola tarayıcı deposuna yazılmaz. */
 window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, getShares, setShares, root, showDialog, closeDialog, ask }) {
+  let busy = false;
+  const durations = [["1", "1 gün"], ["7", "7 gün"], ["30", "30 gün"], ["0", "Süresiz"]];
   const stateText = (s) => !s.available ? "Klasör bulunamadı" : s.expired ? "Süresi doldu" : s.paused ? "Duraklatıldı" : "Açık";
   const access = (s) => s.permission === "rw" ? "Okuma ve yazma" : "Salt okunur";
   const expiry = (s) => s.expires ? new Date(s.expires * 1000).toLocaleDateString("tr-TR") : "Süresiz";
   const button = (text, icon, fn, primary = false) => h("button", { type: "button", class: "btn btn-sm " + (primary ? "btn-primary" : "btn-quiet"), onclick: fn }, svg(icon), text);
+  const address = (s, label, boxed = false) => h("div", { class: "dav-address" + (boxed ? " dav-url" : "") },
+    h("code", null, s.url), copyButton(s.url, label));
   function warning() {
     return h("details", { class: "dav-boundary" }, h("summary", null, svg("shield"), "Paylaşmadan önce erişim sınırını kontrol edin"),
       h("p", null, "Alıcıya yalnız WebDAV portunu açın; Konsol ve SSH yalnız yöneticide kalmalı. Konsol parolasızdır: panele ulaşan kişi tüm dosyaları yönetebilir. Tailscale ACL/grants kuralları burada değiştirilmez."),
       h("p", null, "HTTP adresi Tailscale tünelinde taşınır. HTTPS veya dosya kilidi isteyen istemciler bu adresle uyumlu olmayabilir; Infuse/Finder uyumu istemcide ayrıca sınanmalıdır."));
   }
   function update(action, body) {
-    return post("/api/konsol/paylasim/" + action, body).then((data) => { setShares(data); return data; });
+    if (busy) return Promise.reject(new Error("Paylaşım kaydediliyor; lütfen bekleyin."));
+    busy = true; setShares(getShares());
+    return post("/api/konsol/paylasim/" + action, body).then((data) => { setShares(data); return data; })
+      .finally(() => { busy = false; setShares(getShares()); });
+  }
+  function options(s) {
+    const permission = h("select", { "aria-label": `${s.name} erişim izni`, disabled: busy, onchange: (event) => {
+      const value = event.target.value;
+      event.target.value = s.permission;
+      if (value === s.permission) return;
+      const save = () => update("kaydet", { id: s.id, permission: value, ack_write: value === "rw" })
+        .then(() => toast("Erişim izni kaydedildi.")).catch(fail);
+      if (value === "rw") ask({ title: "Yazma izni açılsın mı?", sub: s.name, go: "Yazma izni ver",
+        items: [["info", "Yükleme, üzerine yazma ve kalıcı silme izni verir."]], onOk: save });
+      else save();
+    } }, ...[["ro", "Salt okunur"], ["rw", "Okuma ve yazma"]].map(([value, label]) =>
+      h("option", { value, selected: value === s.permission }, label)));
+    const days = h("select", { "aria-label": `${s.name} paylaşım süresi`, disabled: busy, onchange: (event) => {
+      const value = days.value === "keep" ? null : Number(days.value);
+      event.target.value = s.expires ? "keep" : "0";
+      if (value === null || (value === 0 && !s.expires)) return;
+      update("kaydet", { id: s.id, days: value }).then(() => toast("Paylaşım süresi kaydedildi.")).catch(fail);
+    } }, s.expires ? h("option", { value: "keep", selected: true }, `Bitiş ${expiry(s)}`) : null,
+      ...durations.map(([value, label]) => h("option", { value, selected: !s.expires && value === "0" }, label)));
+    return [h("div", { class: "dav-cell dav-access" }, h("span", { class: "dav-label" }, "Erişim"), permission),
+      h("div", { class: "dav-cell dav-expiry" }, h("span", { class: "dav-label" }, "Süre"), days)];
   }
   function pause(s) {
     return update("durum", { id: s.id, paused: !s.paused }).then(() => toast(s.paused ? "Paylaşım devam ediyor." : "Paylaşım duraklatıldı.")).catch(fail);
@@ -27,7 +56,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
       h("div", { class: "dav-pair" }, h("small", null, "Erişim"), h("strong", null, access(s))),
       h("div", { class: "dav-pair" }, h("small", null, "Kullanıcı"), h("span", null, s.username, copyButton(s.username, "Kullanıcı"))),
       h("div", { class: "dav-pair" }, h("small", null, "Durum · bitiş"), h("span", null, `${stateText(s)} · ${expiry(s)}`)),
-      h("div", { class: "dav-pair" }, h("small", null, "Tailscale üzerinden WebDAV"), h("code", { class: "dav-url" }, s.url), copyButton(s.url, "WebDAV adresi")),
+      h("div", { class: "dav-pair" }, h("small", null, "Tailscale üzerinden WebDAV"), address(s, "WebDAV adresi", true)),
       h("div", { class: "dav-actions" }, button("Düzenle", "pencil", () => edit(s)),
         button(s.paused ? "Devam ettir" : "Duraklat", s.paused ? "play" : "pause", () => pause(s)),
         button("Kaldır", "trash", () => remove(s))),
@@ -37,7 +66,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     const username = h("input", { id: "dav-user", autocomplete: "off", required: true, minlength: 3, maxlength: 32,
       pattern: "[A-Za-z0-9][A-Za-z0-9._-]{2,31}", value: existing ? existing.username : "", placeholder: "ör. aile-medya" });
     const password = h("input", { type: "password", id: "dav-password", autocomplete: "new-password", required: !existing,
-      minlength: 12, maxlength: 256, placeholder: existing ? "Boş bırak: mevcut parola korunsun" : "En az 12 karakter" });
+      minlength: 8, maxlength: 256, placeholder: existing ? "Boş bırak: mevcut parola korunsun" : "En az 8 karakter" });
     const target = h("input", { id: "dav-path", required: true, value: path, autocomplete: "off", spellcheck: "false" });
     const permission = h("select", { id: "dav-permission", "aria-label": "Erişim izni" },
       h("option", { value: "ro", selected: !existing || existing.permission === "ro" }, "Salt okunur"),
@@ -49,7 +78,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     ack.required = permission.value === "rw";
     const days = h("select", { id: "dav-days", "aria-label": "Süre" },
       existing ? h("option", { value: "keep", selected: true }, `Mevcut süreyi koru · ${expiry(existing)}`) : null,
-      ...[["1", "1 gün"], ["7", "7 gün"], ["30", "30 gün"], ["0", "Süresiz"]].map(([value, label]) =>
+      ...durations.map(([value, label]) =>
         h("option", { value, selected: !existing && value === "7" }, label)));
     const error = h("p", { class: "err-s", role: "alert", hidden: true });
     const save = h("button", { type: "submit", class: "btn btn-primary" }, svg("share"), existing ? "Güncelle" : "Paylaşımı oluştur");
@@ -63,16 +92,16 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
         password.type = "text";
       }), button("Göster / gizle", "eye", () => { password.type = password.type === "password" ? "text" : "password"; })),
       h("small", { class: "hint-s" }, "Parolayı kaydetmeden önce not edin; daha sonra gösterilmez. Tarayıcı deposuna kaydedilmez."),
-      h("label", { for: "dav-permission" }, "Erişim izni", permission), acknowledgement,
-      h("label", { for: "dav-days" }, "Süre", days),
+      !existing ? h("label", { for: "dav-permission" }, "Erişim izni", permission) : null,
+      !existing ? acknowledgement : null,
+      !existing ? h("label", { for: "dav-days" }, "Süre", days) : null,
       h("p", { class: "hint-s" }, "Kaydetme WebDAV servisini yeniler ve devam eden aktarımları keser. Duraklatılmış paylaşım kendiliğinden açılmaz."),
       error, h("div", { class: "dav-actions" }, save, button("Vazgeç", "close", onDone)));
     frm.addEventListener("submit", (event) => {
       event.preventDefault();
       if (!frm.reportValidity()) return;
-      const data = { id: existing ? existing.id : "", path: target.value.trim(), username: username.value.trim(),
-        password: password.value, permission: permission.value, ack_write: ack.checked,
-        days: days.value === "keep" ? null : Number(days.value) };
+      const data = { id: existing ? existing.id : "", path: target.value.trim(), username: username.value.trim(), password: password.value };
+      if (!existing) Object.assign(data, { permission: permission.value, ack_write: ack.checked, days: Number(days.value) });
       save.disabled = true; error.hidden = true;
       update("kaydet", data).then(() => { password.value = ""; onDone(); toast(existing ? "Paylaşım güncellendi." : "Klasör paylaşımı hazır."); })
         .catch((err) => { error.textContent = err.message; error.hidden = false; save.disabled = false; })
@@ -93,19 +122,25 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     if (!data) { body.append(h("p", { class: "hint-s" }, "Paylaşımlar okunuyor…")); return; }
     if (!data.running) body.append(h("p", { class: "dav-warning" }, "WebDAV hizmeti çalışmıyor. Hesaplar korunuyor; sunucuda master-paylasim hizmetini kontrol edin."));
     body.append(h("div", { class: "dav-list-head" }, h("div", null, h("h2", null, "WebDAV paylaşımları"),
-      h("p", { class: "hint-s" }, `${data.items.length}/${data.max} klasör · her klasörün hesabı ve adresi ayrı`))));
+      h("p", { class: "hint-s" }, `${data.items.length}/${data.max} klasör · seçimler anında kaydedilir; süre bugünden başlar. Değişiklikler WebDAV aktarımlarını kesebilir.`))));
     if (!data.items.length) {
       body.append(h("div", { class: "dav-empty" }, svg("share"), h("h3", null, "Henüz paylaşım yok"),
         h("p", null, "Klasörler sekmesinde bir klasörün Ayrıntılar düğmesini seçin, ardından WebDAV ile paylaşın.")));
     }
-    body.append(h("div", { class: "dav-shares" }, ...data.items.map((s) => h("article", { class: "dav-share-row" },
-      h("div", { class: "dav-share-name" }, h("strong", null, s.name), h("small", null, `${root()}/${s.path}`), h("code", null, s.url)),
-      h("div", { class: "dav-share-meta" }, h("span", { class: "shchip" }, stateText(s)), h("span", null, `${s.username} · ${access(s)}`), h("small", null, expiry(s))),
-      h("div", { class: "dav-actions" }, copyButton(s.url, `${s.name} adresi`),
-        button("Yönet", "pencil", () => edit(s)),
-        h("button", { type: "button", class: "sw", role: "switch", "aria-checked": !s.paused,
-          "aria-label": `${s.name} paylaşımı duraklatılmamış`, title: s.paused ? "Devam ettir" : "Duraklat", onclick: () => pause(s) }),
-        button("Kaldır", "trash", () => remove(s)))))));
+    if (!data.items.length) return;
+    body.append(h("div", { class: "dav-shares", "aria-busy": busy },
+      h("div", { class: "dav-share-head", "aria-hidden": true }, ...["Klasör ve adres", "Kullanıcı", "Erişim", "Süre", "Durum", "İşlemler"].map(label => h("span", null, label))),
+      ...data.items.map((s) => h("article", { class: "dav-share-row", "data-share-id": s.id },
+      h("div", { class: "dav-share-name" }, h("strong", null, s.name), h("small", null, `${root()}/${s.path}`), address(s, `${s.name} adresi`)),
+      h("div", { class: "dav-cell dav-user" }, h("span", { class: "dav-label" }, "Kullanıcı"), h("span", null, s.username)),
+      ...options(s),
+      h("div", { class: "dav-cell dav-state" }, h("span", { class: "dav-label" }, "Durum"),
+        h("span", { class: "shchip" }, stateText(s)),
+        h("button", { type: "button", class: "sw", role: "switch", "aria-checked": !s.paused, disabled: busy,
+          "aria-label": `${s.name} paylaşımı duraklatılmamış`, title: s.paused ? "Devam ettir" : "Duraklat", onclick: () => pause(s) })),
+      h("div", { class: "dav-actions" }, ...[button("Yönet", "pencil", () => edit(s)), button("Kaldır", "trash", () => remove(s))]
+        .map(b => { b.disabled = busy; return b; }))))));
   }
-  return { list, create, edit, info, warning, stateText };
+  return { list, create, edit, info, warning, stateText,
+    interacting: () => busy || !!document.activeElement?.closest(".dav-shares select") };
 };

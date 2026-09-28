@@ -6,6 +6,249 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-28 — Files icon dock, approved model B (v2-144)
+
+- Replace the mixed action strip with six equal icon-over-label cells and a
+  separate selection-count/dismiss header. Use a compact floating surface,
+  subtle hover treatment and red text/icon for trash, without a filled button.
+- Keep unavailable actions disabled in stable positions; switch to a 3×2 grid
+  on mobile. Preserve keyboard focus, selection lifecycle, address/search bar,
+  confirmation dialogs and archive/share/download semantics (DD-170 follow-up).
+- Extend browser regression coverage for selection types, action routing,
+  keyboard activation, icon/label alignment and responsive light/dark rendering.
+- **Verified:** 108 Python tests (two native RAR skips), 155 Bats cases (three
+  macOS timeout skips), four browser suites and portable nrm deployment pass.
+  Live read-only checks cover seven widths/both themes with zero writes/errors.
+  Service/config checks pass; share/settings/qBittorrent profile hashes and
+  qBittorrent process unchanged. No fresh Ubuntu or reboot acceptance claim.
+
+### 2026-09-28 — Files action dock and automatic archive opener (v2-143)
+
+- Keep the address/search bar visible during selection; move file actions to a
+  responsive bottom dock. Reserve scroll space and place notifications above it.
+- Simplify archive creation/extraction to name, destination picker and collision
+  policy. Default destination comes from installer-configured downloads, not the
+  source folder. Use generic archive labels and automatically append `.zip` on
+  creation; remove depth/nested controls and verbose explanations/statistics.
+- Extraction automatically resolves supported multipart/nested archives with
+  existing safety limits. Automatic depth overflow fails atomically rather than
+  reporting partially expanded work as success; sources and hierarchy remain
+  intact. Explicit legacy API depth options remain compatible (DD-170).
+- **Verified:** 108 local Python tests (two native RAR skips), 155 Bats cases
+  (three macOS timeout skips), four browser suites, 27 native Debian archive
+  tests including compressed/solid/multipart RAR and mixed nested formats.
+  Portable nrm update and real browser ZIP/four-layer extraction pass; originals
+  verified by hash. No new packages, qBittorrent restart or account changes.
+  No fresh Ubuntu/reboot acceptance claim.
+
+### 2026-09-28 — Compact trash confirmation and inline share controls (v2-142)
+
+- Simplify move-to-trash to a short question, filename/count and two buttons;
+  contain long names without overflowing. Permanent deletion safeguards remain.
+- Align Shares into responsive columns; edit access and lifetime with inline
+  dropdowns, retaining write/delete acknowledgement and the adjacent copy action.
+  Manage now contains only folder/account fields (DD-169).
+- Accept partial existing-share saves under the existing locks, preserving
+  credentials/expiry/permissions not edited and never rebinding a replaced folder
+  through list controls. Keep failed-save rollback and busy-state UI protection.
+- **Verified:** 106 Python tests (two native RAR skips), 155 Bats cases (three
+  macOS skips), all four browser suites, and 22 native Debian WebDAV tests.
+  Portable nrm update and live desktop/mobile checks pass. A temporary account
+  verifies actual API access/expiry changes, PUT/GET/RO denial, account-only edits,
+  pause preservation and replaced-root refusal. It is removed afterward; original
+  share registry/settings/qBittorrent profile and qBittorrent process unchanged.
+  WebDAV restarts for the update and test changes; no fresh Ubuntu/reboot claim.
+
+### 2026-09-28 — Eight-character service password minimum (v2-141)
+
+- Lower the qBittorrent and folder WebDAV password minimum from 12 to 8
+  characters in browser forms and server validation (DD-168). Keep the maximum,
+  hashing, character restrictions, blank-edit preservation and strong generator.
+- Add seven/eight-character boundary tests, WebDAV HTTP authentication and
+  native qBittorrent login/restart coverage; no existing passwords are changed.
+- **Verified:** 102 Python tests (two native RAR skips), 155 Bats cases (three
+  macOS skips), both affected browser suites and portable nrm update. Isolated
+  Debian qBittorrent 5.1.0 accepts eight characters and preserves login across
+  restart; 18 WebDAV tests pass. Live forms enforce eight with zero account
+  mutations. Existing account/settings hashes and qBittorrent process unchanged;
+  WebDAV restarts during the update. No fresh Ubuntu/reboot acceptance.
+
+### 2026-09-28 — WireGuard network DNS and local access settings (v2-140)
+
+- Replace the destructive refresh shortcut with a network settings dialog:
+  default DNS presets/custom IPs, local qBittorrent access, Save and a separate
+  key-regeneration action retaining typed confirmation. Explain that default DNS
+  applies only to new peers and existing device profiles are unchanged.
+- Apply only registry DNS/scope, firewall and the selected Caddy instance;
+  preserve keys, profiles, ports, labels, other networks and stopped WG state.
+  Serialize and revision-check writes, block pending Settings transactions,
+  roll back apply failures, and refresh the firewall view's read cache (DD-167).
+- Give explicit local-access changes a fresh firewall/selected-Caddy start
+  budget; preserve automatic restart-loop limits. DNS-only edits touch no service.
+- Add API gate/validation, shell ordering/rollback/preservation and browser
+  save/error/draft/mobile/confirmation regression tests.
+- **Verified:** 155 Bats cases (three macOS skips), 99 Python tests (two native
+  RAR skips), four browser suites and portable nrm update/reruns. A disposable
+  encrypted WG client reaches qBittorrent only with local access enabled;
+  14 repeated toggles, stopped-network editing, stale-write rejection and
+  firewall read-back pass. Real desktop/mobile Save and new-peer DNS defaults
+  pass; original WG profiles and WebDAV/qBittorrent settings/processes unchanged.
+  No fresh Ubuntu/reboot acceptance in this update.
+
+### 2026-09-28 — Multipart and nested RAR in Files (v2-139)
+
+- Add “Arşivi aç” for ZIP/RAR3/RAR5, solid and multipart RAR, including mixed
+  nested ZIP/RAR sets. Later-part selection resolves the first automatically.
+  Keep all source/inner volumes, existing destinations, job limits and atomic
+  publication; invalid/missing/encrypted/unsafe archives publish no partial result.
+- Install distro-signed unrar/python3-rarfile, adding only a managed signed
+  Debian non-free or Ubuntu universe/multiverse source if required. No new port
+  or application module; ZIP creation stays unchanged.
+- Stream RAR content through a bounded, cancellable unprivileged helper; never
+  let the extractor write destination paths. Add multipart, safety, subprocess,
+  native-format and browser regression coverage (DD-166).
+- Keep long archive folder paths within the extraction dialog and file
+  breadcrumbs on mobile, without hiding the full breadcrumb text.
+- **Verified:** 94 local Python tests (two native-only skips), 149 Bats cases
+  (three macOS skips), three browser suites and 25 unprivileged native ZIP/RAR
+  tests on Debian. Portable update/reruns passed. The user's 17-volume RAR
+  extracted via Files in 16 seconds; output size/CRC and all source hashes verified.
+  WebDAV/qBittorrent accounts/processes unchanged; no fresh Ubuntu/reboot claim.
+
+### 2026-09-28 — Keep the share copy action beside its address (v2-138)
+
+- Place the copy button immediately after the WebDAV URL in both the Shares
+  list and folder details. Keep long addresses wrapped beside their action on
+  narrow screens; remove the distant duplicate action from the management row.
+- URL generation and clipboard handling are unchanged. Read-only live v137
+  checks found identical API, rendered, selected and actual clipboard text on
+  Chromium desktop/mobile layouts, with no whitespace or hidden characters.
+  This does not certify native iPhone clipboard behavior or identify where the
+  previously observed extra request-path character originated.
+- Browser regressions check address/button adjacency, exact copied text and
+  overflow in the list/details at five widths. No account, permission or WebDAV
+  backend changes.
+- **Verified:** Bats and all three UI suites pass (three macOS timeout skips).
+  Portable nrm update and read-only live geometry/actual clipboard checks pass;
+  WebDAV/qBittorrent processes, accounts and settings are unchanged.
+
+### 2026-09-27 — Keep Trash names and actions aligned (v2-137)
+
+- **Fixed:** the general five-column file grid overrode Trash's four columns,
+  squeezing names into the 26 px selection column. Give Trash its own scoped
+  grid; wrap full names and origin paths without clipping or page overflow.
+- Narrow layouts place the name/path above size/deletion time and actions.
+  Restore stays legible in dark mode. No API, restore, deletion or confirmation
+  behavior changes; no operator trash is changed by layout verification.
+- Extend browser regression coverage to populated/empty Trash, 255-character
+  names, long paths, seven widths/both themes and mocked restore/purge/empty
+  confirmation flows under the production CSP.
+- **Verified:** 144 Bats passes/3 macOS skips, all three browser suites and
+  portable nrm update. Live seven-width/both-theme checks pass with zero
+  mutation requests and unchanged Trash inventory. qBittorrent's profile and
+  process remain unchanged; no reset or reboot.
+
+### 2026-09-27 — Align qBittorrent account and download fields (v2-136)
+
+- **Fixed:** prevent the password-confirmation field from stretching/lowering
+  when the adjacent password field has help text. Equal control heights and
+  shared left edges for headings, inputs and Save remove the double inset.
+- Place the download path and folder action on one row on wide screens, stack
+  them on mobile, wrap long paths and keep the folder action legible in dark mode.
+- CSS is scoped to qBittorrent. Account saving, validation, credentials, folder
+  confirmation and all other settings pages are unchanged.
+- **Verified:** 144 Bats passes/3 macOS skips and all three browser suites.
+  Portable nrm update and live read-only geometry checks pass at five widths
+  in both themes, with no JS/CSP errors. Account/profile, settings and WebDAV
+  hashes and the running qBittorrent process are unchanged.
+
+### 2026-09-27 — One-click qBittorrent account save (v2-135)
+
+- **Fixed (DD-165):** Save account now persists username/password in one
+  request, without staging, review or timed confirmation. Show explicit saved
+  status, disable duplicate submission, clear secrets and preserve other drafts.
+- Fix username validation in modern browsers. Blank preserves the stored hash;
+  explain that temporary startup passwords can rotate on service restart.
+- Server-side eligibility is limited to account-only requests. Preserve failure/
+  crash recovery, stale-revision/lock checks, stopped services and unrelated
+  profile settings. Folder/mixed/firewall/domain confirmations are unchanged.
+- **Verified:** 84 Python tests, 144 Bats passes/3 macOS skips, three browser
+  suites and portable nrm update. Isolated real qBittorrent login/restart/
+  failure recovery passes; deployed UI/API stale-write rejection and asset
+  checks pass without changing the operator's live account.
+
+### 2026-09-27 — Firewall incoming-network categories (v2-134)
+
+- **Changed (DD-164):** Tailscale (default), Internet, conditional WireGuard
+  with per-network selection, and protected loopback tabs. Technical rules
+  remains an all-network read-only view including forwarding/NAT.
+- Separate socket binding status from firewall permission. Fix IPv6 link-local
+  zone formatting and preserve service names across scopes. No port scanning,
+  policy changes or new dependencies. Draft/apply/confirmation/rollback and
+  DNS-only immediate Apply are preserved.
+- **Verified:** 77 Python tests, 144 Bats passes (3 macOS skips), all three
+  browser fixture suites and portable nrm update. Live category/rule readback,
+  both-family TCP deny/allow/confirm/reload/manual and timed rollback pass;
+  owned test rules removed and original firewall/DNS choices restored.
+
+### 2026-09-27 — Immediate Dnsmasq Apply (v2-133)
+
+- **Changed (DD-163):** DNS-only edits persist on Apply after validation and
+  dnsmasq restart, without a review dialog or one-minute connection confirmation.
+  UI refreshes saved state and reports success; the panel's own DNS name stays
+  protected and cannot be disabled. Failed applies retain snapshot recovery.
+- Mixed firewall/qBittorrent drafts still require 60 s confirmation; domain
+  migration retains 300 s/new-address confirmation. Revision/lock checks and
+  crash-safe commit/guard recovery remain; no client confirmation bypass flag.
+- **Verified:** portable nrm update and live UI/DNS apply/reload/63-second
+  persistence/switch-off/panel-name rejection with fixture cleanup. 71 Python
+  tests, 144 Bats passes (3 macOS skips), all three browser suites, 33 Linux
+  settings unit tests and real systemd guard/worker recovery pass.
+
+### 2026-09-27 — Full firewall tables (v2-132)
+
+- **Changed (DD-162):** port permissions use an eight-column table with service
+  descriptions, port/protocol, incoming interface/family, source CIDR, listeners
+  and address notes, policy, switches and inline edit/remove actions. Details
+  are no longer hidden behind disclosures; drafts are labelled, not shown as saved.
+- All live rules retain raw specifications, order, counters and ownership,
+  with short explanations. Both views stay real tables on mobile, with sticky
+  headers and keyboard-accessible scrolling confined to the table.
+- Existing on/off drafts, review/apply/confirmation/rollback, protected loopback
+  and read-only third-party rules are unchanged. No backend or policy changes.
+- **Verified:** portable nrm update, live IPv4/IPv6 switch/discard with zero
+  mutation requests, five screen widths/light/dark; 66 Python tests, 144 Bats
+  passes (3 macOS skips) and all three browser fixture suites.
+
+### 2026-09-27 — Compact App Store list (v2-131)
+
+- **Changed (DD-161):** approved model 2 replaces large app cards with compact
+  icon/name/one-line-description rows, visible state and Install/Open actions.
+  A single optional Details panel holds technical notes, logs, stop/start and
+  removal. Account information stays on the qBittorrent page, loaded on request.
+- Progress and failures remain visible with details closed. Polling preserves
+  selection, keyboard focus and log scroll; mobile retains status and actions.
+  Failed log requests are reported instead of displayed as successful log data.
+- Existing APIs, install/remove confirmations and default data retention are
+  unchanged. No new runtime dependency, package or network exposure.
+- **Verified:** portable in-place update on nrm (Debian 13.7), desktop/mobile
+  light/dark live read-only checks, 66 Python tests, 144 Bats passes (3 macOS
+  skips) and all three fixture browser suites. No host reset or app/data removal.
+
+### 2026-09-27 — Model A admin panel and clean-install preparation (v2-130)
+
+- **Changed (DD-160):** Files is the landing page; one responsive sidebar,
+  optional installed-app links and live CPU/RAM/disk. Removed Overview,
+  Applications launcher, dock and imitation window controls; old bookmarks redirect.
+- **Changed:** Settings owns System/Firewall/Caddy/Dnsmasq/Log. qBittorrent
+  owns its service/account/download settings, sharing the existing transaction
+  controller, review and server-side rollback with Settings.
+- **Changed:** Files has Files/Shares/Archive jobs/Trash tabs; details are
+  optional. ZIP submissions open history and result buttons return to Files.
+- **Added:** independent, gated host-resource API/sampler, unknown/stale display,
+  browser/API regressions and a clean-install checklist. No new runtime dependency
+  or network exposure. Portable v130 prepared; no server deploy/reset this turn.
+
 ### 2026-09-25 — Konsol Desktop, built-in sharing and ZIP (v2-129)
 
 - **Added (DD-159):** the approved desktop shell, application launcher, dock

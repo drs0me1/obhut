@@ -14,7 +14,35 @@ Host acceptance (Debian 13 or supported Ubuntu target, after install) is
 separate: DNS loopback vs Tailscale answers, WebDAV PROPFIND/read-only,
 firewall `--check`, and the two public UDP ports.
 
-## Desktop and ZIP (DD-159, v2-129)
+## Model A and compact App Store (DD-160/DD-161, v2-131)
+
+Serve the real `Data/console` tree locally as below, then run
+`node Data/tests/panel-ui.cjs` from the repository root. It applies the actual
+Caddy CSP and fixtures all API calls: clean/installed sidebar, removed-page
+redirects, qBittorrent lifecycle and own settings, keyboard tabs, five widths,
+resource stale/offline/recovery, ZIP create/cancel/nested-unzip/result routes,
+and async WireGuard new-network bookmarks. No server is modified.
+App Store checks include compact row height, only one details panel, keyboard
+focus across polls, real-progress fixtures, failures with details closed,
+stop/start/removal and cancellation, default data retention, log HTTP errors
+and safe text rendering, no account reads, and visible status at mobile widths.
+`test_resources.py` covers independent sampling, guest CPU accounting, unknown
+measurements, legacy compatibility and real HTTP Host/header/origin gates.
+
+## Built-in ZIP/RAR (DD-159, DD-166, DD-170)
+
+v143 adds automatic nested extraction/default depth-ceiling rollback tests and
+installer-driven default-destination state. The native RAR suite submits without
+legacy depth flags. `panel-ui.cjs` checks the compact form, automatic ZIP suffix,
+default downloads, folder picker navigation/cancel/read-error/retry and failed
+submit draft retention. `files-ui.cjs` checks the bottom selection dock at eight
+widths/both themes, stable breadcrumbs/search, hidden-view/selection lifecycle,
+and notifications never covering its actions. Run browser suites sequentially
+against the simple preview server to avoid parallel request-queue timeouts.
+v144 additionally checks six stable icon/label slots, single-file/archive/folder
+and mixed-selection eligibility, keyboard focus and activation, download excluding
+folders, archive/share/move dialog routing, equal cells, a mobile 3×2 grid and
+unfilled danger styling under both themes.
 
 From the repository root, run all Python suites with an OpenSSL-enabled Python:
 
@@ -27,6 +55,16 @@ traversal/links/duplicates, byte/entry/central-directory/deadline limits,
 malformed inner archives, cancellation/concurrency and interrupted-job recovery.
 `KONSOL_FILES_BACKEND` can point at the installed backend for Linux tests.
 
+`test_rar.py` adds mocked multipart/unsafe-input/budget tests and real subprocess
+deadline/cancel/output-cap checks on all hosts. Native RAR→ZIP→RAR is tested on
+Linux with `/usr/bin/unrar` and distro `python3-rarfile`; otherwise it is explicitly
+skipped. Set `RAR_FIXTURES` to a private directory containing the upstream
+markokr/rarfile `test/files` fixtures named by the optional native test to cover
+compressed RAR3/RAR5, solid/old/new volumes, Unicode, encryption and link rejection.
+Tests copy them into TemporaryDirectory; no downloads or package installs happen
+inside tests. Browser fixtures test `.rar`, `.r00`, `.part01.rar` selection and
+submission as well as ZIP; ordinary files never offer extraction.
+
 `archives-live.py prepare` is a **mutating disposable-host test** through the
 installed Caddy/file service. Keep the printed manifest for `verify <manifest>`
 after rerun/reboot and `cleanup <manifest>` afterward. Cleanup removes only its
@@ -34,7 +72,7 @@ scratch tree/manifest, retaining ordinary job history as an audit record.
 
 `desktop-live.cjs` tests the **real host**, not fixtures. Set `ARCHIVE_FIXTURE`
 to the basename of that live test tree; it creates/extracts browser ZIP outputs.
-It checks launcher/dock/window controls, built-in shares, settings and five
+It checks Model A navigation/resource indicators, built-in shares, settings and five
 viewport widths. `TEST_APP_LIFECYCLE=1` explicitly enables qBittorrent
 install/stop/start/remove (requires it absent initially, leaves its package and
 profile, never requests data deletion). `KONSOL_URL` defaults to `http://panel.ayc/`.
@@ -43,10 +81,54 @@ Do not run live tests against an unauthorized host.
 
 ## Settings management (DD-156/DD-157, v2-127)
 
+WireGuard network settings (DD-167): `node Data/tests/wireguard-ui.cjs` uses the
+same preview/Playwright environment as the other UI suites. It fixtures all APIs
+and verifies DNS/local save, polling draft retention, errors, stopped-network
+editing, separate typed regeneration confirmation, four widths and production CSP.
+`test_wg_settings.py` tests real HTTP gates, IP/revision validation, delegation
+and revision hashing; `common.bats` covers DNS-only preservation, listener/firewall
+ordering, stopped networks, stale/pending edits, complete/incomplete rollback,
+and explicit start-limit resets (including an unloaded Caddy template instance).
+
+Firewall categories (DD-164, v2-134): `test_firewall_view.py` covers read-only
+socket scope classification, IPv6 normalization/zones, read failures, public-only
+network metadata, service-name reuse and WAN endpoint versus tunnel permissions.
+`settings-ui.cjs` tests default Tailscale, nested keyboard tabs, draft retention,
+absent/empty/multiple WireGuard networks, per-network rule defaults, protected
+loopback and listener-versus-policy labels (including unknown/unreadable).
+
+DNS-only Apply (DD-163, v2-133): unit tests cover immediate persistence past
+the old deadline/reboot, pre-write panel-name protection, mixed confirmation,
+restart/commit failure rollback, pre/post-commit crashes and recovery retries.
+Browser fixtures assert a single Apply request, no dialog/countdown/confirmation,
+reload persistence, failed-apply draft retention and retry. The isolated Linux
+DNS test checks immediate commit and failed-apply recovery with real dnsmasq.
+
+Firewall tables (DD-162, v2-132): `settings-ui.cjs` additionally verifies full
+semantic tables at five widths, row explanations/source CIDRs, filter/empty
+states, protected loopback, on/off drafts, edit/remove, lock during confirmation,
+payload/rollback, production CSP and keyboard scrolling without page overflow.
+
 Folder sharing (v2-128, DD-158): also run `python3 -m unittest discover -s
 Data/tests -p test_shares.py` and `node Data/tests/files-ui.cjs` from the repository
 root. Python must have OpenSSL scrypt (the macOS system Python may not; use an
 OpenSSL-enabled Python 3.12+). Linux distribution Python is the production runtime.
+The Files UI suite also checks exact share clipboard input and adjacent address/
+copy-button geometry in the list and folder details at five widths (v2-138).
+Copy APIs are intercepted in fixtures; native iPhone clipboard behavior is not
+covered by those checks.
+Inline Shares and compact trash (v2-142, DD-169): `files-ui.cjs` checks partial
+access/expiry payloads, RW confirmation/cancel/Escape, failed saves, disabled
+in-flight controls, account-only editing, eight responsive widths and short
+long-filename trash dialogs in both themes. Existing permanent-delete guards
+remain tested. `test_shares.py` covers omitted-field preservation, required RW
+acknowledgement, rollback and never rebinding a replaced folder via inline edits.
+Password policy (v2-141, DD-168): the settings/shares Python and browser suites
+reject seven-character passwords and accept eight, preserving blank edits.
+`test_shares.py` also verifies real WebDAV GET/PROPFIND authentication and the
+read-only write boundary with eight characters. `settings-linux.py` verifies
+native qBittorrent login and restart persistence with a disposable eight-character
+account inside its private network namespace; it never changes installed accounts.
 `shares-live.py prepare` is a **mutating disposable-host test**, using installed
 services, two scratch accounts and a random folder. Keep its printed manifest
 path for `verify <manifest>` after rerun/reboot and `cleanup <manifest>` afterward.
@@ -66,6 +148,8 @@ node Data/tests/settings-ui.cjs
 module, browser executable and preview URL. The test intercepts APIs with
 fixtures; it never modifies a server. It covers tabs, review/discard, custom
 rules, DNS, credentials/folder, confirmation/rollback, address explanations,
+account-only single Save (validation, duplicate blocking, failure/retry, reload,
+blank-password preservation, unrelated-draft retention and revision refresh),
 domain review/new-address links/old-host confirmation refusal, four widths and dark
 mode. Screenshots go to a fresh temporary directory.
 
@@ -80,7 +164,9 @@ PYTHONDONTWRITEBYTECODE=1 unshare --net --fork python3 Data/tests/settings-domai
 
 The first refuses the host network namespace, uses scratch profiles and
 dummy interfaces, and substitutes only service control; firewall, DNS and
-qBittorrent are real. A local upstream fixture verifies forwarding without
+qBittorrent are real. Account-only save verifies real new/old login results,
+restart persistence, failed-commit recovery and stopped-state preservation.
+A local upstream fixture verifies forwarding without
 internet access and proves private names are not forwarded. The second uses
 real transient systemd work/timer units with a scratch pending record and no
 firewall/DNS/qBittorrent changes. Both remove only their own scratch state.

@@ -106,7 +106,7 @@ EOF
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
     # DD-150: the WireGuard packages are installed by the WireGuard module, not here;
     # DD-152: no Docker repository update or packages either.
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 6 ]
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 7 ]
     grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
     grep -qF -- '-o DPkg::Lock::Timeout=300 "$@"' "$V2_ROOT/scripts/master-modul"
     grep -qx 'WG_PACKAGES="wireguard-tools qrencode"' "$V2_ROOT/scripts/master-modul"
@@ -116,6 +116,45 @@ EOF
     [ "$(grep -cF 'apt_get_install_masked_quiet "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 2 ]
     run bash -c "awk '/^apt_get_install_masked_quiet\\(\\)/,/^}/' '$V2_ROOT/install.sh' | grep -q APT_OPTS"
     [ "$status" -ne 0 ]
+}
+
+@test "RAR repository uses signed distribution components and supported architectures" {
+    # Exercise the actual distribution selection without touching host apt paths.
+    selection="$(awk '/^ensure_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh" |
+        sed -n '/    case "\$OS_ID" in/,/^    esac/p')"
+    for triple in 'debian trixie amd64' 'ubuntu noble amd64' 'ubuntu resolute arm64'; do
+        set -- $triple
+        OS_ID="$1" OS_CODENAME="$2" OS_ARCH="$3"
+        eval "$selection"
+        if [ "$OS_ID" = debian ]; then
+            [ "$components" = non-free ]
+            [ "$mirror" = https://deb.debian.org/debian ]
+            [ "$security" = https://security.debian.org/debian-security ]
+            [ "$keyring" = /usr/share/keyrings/debian-archive-keyring.gpg ]
+        else
+            [ "$components" = 'universe multiverse' ]
+            [ "$keyring" = /usr/share/keyrings/ubuntu-archive-keyring.gpg ]
+            if [ "$OS_ARCH" = arm64 ]; then
+                [ "$mirror" = https://ports.ubuntu.com/ubuntu-ports ]
+                [ "$security" = "$mirror" ]
+            else
+                [ "$mirror" = https://archive.ubuntu.com/ubuntu ]
+                [ "$security" = https://security.ubuntu.com/ubuntu ]
+            fi
+        fi
+    done
+    grep -qF 'deb [signed-by=$keyring] $security $OS_CODENAME-security $components' "$V2_ROOT/install.sh"
+    grep -qF 'dnsutils unattended-upgrades python3 python3-rarfile unrar' "$V2_ROOT/install.sh"
+    grep -qF 'master_rar.py' "$V2_ROOT/install.sh"
+}
+
+@test "RAR repository leaves existing sources alone when dependencies have candidates" {
+    eval "$(awk '/^ensure_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh")"
+    apt-cache() { echo '  Candidate: 1.2.3'; }
+    atomic_write() { return 99; }
+    retry() { return 98; }
+    run ensure_rar_repository
+    [ "$status" -eq 0 ]
 }
 
 @test "require_supported_os records version and architecture" {
@@ -1931,23 +1970,25 @@ assert not [r for r in d["ports"] if r["scope"] == "wireguard" or r["name"].star
     local js="$V2_ROOT/console/konsol.js"
     grep -qF 'const fsOn = () => true;' "$js"
     grep -qF 'const wgOn = () => modOn("wireguard");' "$js"
-    grep -qF 'document.querySelectorAll('"'"'[data-route="dosyalar"]'"'"').forEach((a) => { a.hidden = !fsOn(); });' "$js"
+    grep -q 'href="#/dosyalar" data-route="dosyalar"' "$V2_ROOT/console/index.html"
     grep -qF 'document.querySelectorAll('"'"'[data-route="wireguard"]'"'"').forEach((a) => { a.hidden = !wgOn(); });' "$js"
     # A page whose module is absent is not opened; the backends are not asked.
-    grep -qF 'if (MODS && ((key === "dosyalar" && !fsOn()) || (key === "wireguard" && !wgOn()))) {' "$js"
-    grep -qF 'return Promise.all([wgOn() ? loadWg() : null, loadSystem(), fsOn() ? loadFsState() : null, loadActions()]);' "$js"
-    grep -qF 'loadModules().then(refreshAll).then(() => { route(); if (fsOn()) loadFs(); });' "$js"
-    # Dependencies: Paylaşım needs Dosya yöneticisi; install together, remove the dependent first.
-    grep -qF 'requires: "dosya",' "$js"
+    grep -qF 'if (MODS && ((key === "torrent" && !modOn("torrent")) || (key === "wireguard" && !wgOn()))) {' "$js"
+    grep -qF 'api("/api/konsol/kaynaklar", { signal: controller.signal })' "$js"
+    grep -qF 'loadModules().then(() => { if (current === "wireguard" && wgOn()) loadWg(); });' "$js"
+    # Built-ins never enter the optional application catalogue.
+    run ! grep -qF 'requires: "dosya",' "$js"
     grep -qF 'modQueue.push([m.id, "kur", false]);' "$js"
     grep -qF 'modQueue.push([m.id, "kaldir", box.checked]);' "$js"
     grep -qF 'if (p.step === "hata") { modQueue.length = 0;' "$js"
-    # Konsol modules are not stopped; their card links the page instead.
-    grep -qF 'dosya: () => {' "$js"
+    # Konsol modules are opened from the row, never stopped from details.
+    run ! grep -qF 'dosya: () => {' "$js"
     grep -qF 'wireguard: { name: "WireGuard"' "$js"
-    grep -qF '? h("button", { type: "button", class: "btn btn-sm btn-primary", "data-go": meta.page[0] }, svg(meta.page[1]), meta.page[2])' "$js"
-    # The disk card falls back to the root backend.
-    grep -qF 'const sysDisk = S.sys && S.sys.disk;' "$js"
+    grep -qF '"data-go":meta.page ? meta.page[0] : "#/torrent"' "$js"
+    grep -qF 'meta.noStop ? null : h("button"' "$js"
+    # Host measurements remain independent of optional applications.
+    grep -qF 'fresh && s.disk?.total > 0' "$js"
+    run ! grep -qE 'data-view="(genel|uygulamalar|gunluk)"|desktop-dock|window-min' "$V2_ROOT/console/index.html"
 }
 
 @test "wg panel shows qBittorrent's first login only on request and never offers a new password for it" {
@@ -2456,7 +2497,7 @@ PY
     grep -q 'names: items.map((i) => i.name)' "$js"
     [ "$(grep -c 'names: items.map((i) => i.name)' "$js")" -ge 2 ]
     # Arama yalnız satırları yeniler; klasör değişince seçim ve arama sıfırlanır.
-    grep -q 'oninput: (e) => { fsQuery = e.target.value; renderRows(); updateMeta(); }' "$js"
+    grep -q 'oninput: (e) => { fsQuery = e.target.value; renderRows(); renderDock(); updateMeta(); }' "$js"
     grep -q 'fsSel.clear();' "$js"
     # qBittorrent'in yazdığı klasör seçilemez.
     grep -q 'const locked = inTemp(here) || inTemp(pathText(fsPath));' "$js"
@@ -2495,13 +2536,14 @@ PY
 
 @test "console shows qBittorrent's first login and its interface link" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    grep -qF 'return { name: "qBittorrent", sub: "Torrent istemcisi", icon: "download", tone: "t-video", firstLogin: true,' "$js"
-    # DD-152: Arşiv açıcı is gone, and with it the "recommended together" hint.
-    run ! grep -qE 'recommends|unpackerr|Arşiv açıcı' "$js"
-    grep -qF 'Düzenle: Ayarlar → qBittorrent' "$js"
+    grep -qF 'return { name: "qBittorrent", sub: "Torrent indirmelerini yönetin.", icon: "download", tone: "t-video", firstLogin: true,' "$js"
+    # DD-152: the Unpackerr application and its "recommended together" hint are gone.
+    # The removed Unpackerr app stays absent; the built-in Files action now uses this label.
+    run ! grep -qE 'recommends|unpackerr' "$js"
+    grep -qF 'qBittorrent ayarları' "$js"
     grep -qF '} else if (id === "torrent") {' "$js"
-    grep -qF 'const s = S.sys, on = !!(modOn("torrent") && s && s.domain), a = $("link-torrent");' "$js"
-    grep -q 'id="side-other" hidden' "$html"
+    grep -qF 'href:location.protocol + "//torrent." + S.sys.domain' "$js"
+    grep -q 'data-route="torrent".*hidden' "$html"
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
     grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
 }
@@ -2563,12 +2605,11 @@ PY
     grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-wg-panel.service"
 }
 
-@test "console shows the Modüller page from the module API" {
+@test "console shows App Store from the module API in one responsive sidebar" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    # Side navigation and the phone's bottom bar both link the page.
-    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 3 ]
-    # DD-150: items come and go with their modules, so the bar sizes to what is shown.
-    grep -q 'grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); position: fixed;' "$V2_ROOT/console/konsol.css"
+    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 1 ]
+    grep -q 'aria-controls="panel-sidebar"' "$html"
+    grep -q 'href="/panel.css"' "$html"
     grep -q '<section data-view="moduller"' "$html"
     grep -q 'id="mod-grid"' "$html"
     grep -q 'id="cf-extra"' "$html"
@@ -2589,7 +2630,7 @@ PY
 @test "console includes per-folder accounts as a Files capability" {
     local js="$V2_ROOT/console/konsol.js" dav="$V2_ROOT/console/dosyalar.js"
     grep -qF 'const shareOn = () => true;' "$js"
-    grep -qF 'if (!shareOn()) { S.share = null; return Promise.resolve(); }' "$js"
+    grep -qF '"#/dosyalar/arsiv"' "$js"
     grep -qF 'api("/api/konsol/paylasim")' "$js"
     grep -qF 'window.createSharesPage' "$js"
     grep -qF 'permission: permission.value, ack_write: ack.checked' "$dav"
@@ -2862,6 +2903,161 @@ EOF
     # list keeps its six fields for wireguard.command.
     run master_wg list
     [ "$(sed -n 1p <<<"$output")" = $'iphone\t10.8.0.2\t1700000000\t2048\t1024\tvar' ]
+}
+
+wg_settings_fixture() {
+    wg_mock_bin
+    wg_state_fixture
+    printf 'WG_BIND=10.8.0.1\n' >"$TMP/etc/wireguard/caddy-wg-wg0.env"
+    printf 'unchanged profile\n' >"$TMP/etc/wireguard/clients-wg0/test.conf"
+    touch "$TMP/caddy-active" "$TMP/caddy-enabled"
+    cat >"$TMP/bin/systemctl" <<'EOF'
+#!/bin/bash
+printf 'systemctl %s\n' "$*" >>"$MOCK_LOG"
+case "$*" in *"${FAIL_ONCE:-@never@}"*)
+    if [ ! -f "$MOCK_DIR/failed-once" ]; then touch "$MOCK_DIR/failed-once"; exit 1; fi ;;
+esac
+case "$*" in *"${FAIL_ALWAYS:-@never@}"*) exit 1 ;; esac
+case "$*" in
+    'reset-failed master-firewall.service') rm -f "$MOCK_DIR/firewall-limited" ;;
+    'reset-failed caddy-wg@wg0.service') rm -f "$MOCK_DIR/caddy-limited" ;;
+    'restart master-firewall.service') [ ! -e "$MOCK_DIR/firewall-limited" ] || exit 1 ;;
+    'start caddy-wg@wg0.service') [ ! -e "$MOCK_DIR/caddy-limited" ] || exit 1 ;;
+esac
+case "$*" in
+    'is-active --quiet wg-quick@wg0.service') [ "${WG_ACTIVE:-1}" = 1 ] ;;
+    'is-active --quiet caddy-wg@wg0.service') [ -f "$MOCK_DIR/caddy-active" ] ;;
+    'is-enabled --quiet caddy-wg@wg0.service') [ -f "$MOCK_DIR/caddy-enabled" ] ;;
+    'disable --now caddy-wg@wg0.service') rm -f "$MOCK_DIR/caddy-active" "$MOCK_DIR/caddy-enabled" ;;
+    'enable caddy-wg@wg0.service') touch "$MOCK_DIR/caddy-enabled" ;;
+    'disable caddy-wg@wg0.service') rm -f "$MOCK_DIR/caddy-enabled" ;;
+    'start caddy-wg@wg0.service') touch "$MOCK_DIR/caddy-active" ;;
+    'stop caddy-wg@wg0.service') rm -f "$MOCK_DIR/caddy-active" ;;
+esac
+EOF
+    printf '#!/bin/bash\nshift; exec "$@"\n' >"$TMP/bin/timeout"
+    chmod +x "$TMP/bin/timeout"
+    cp "$WG0_CONF" "$TMP/original.conf"
+    cp "$TMP/etc/wireguard/networks" "$TMP/original.networks"
+}
+
+wg_revision() {
+    local line
+    line="$(sed -n '1p' "$TMP/etc/wireguard/networks")"
+    printf '%s' "$line" | sha256sum | awk '{print $1}'
+}
+
+@test "network settings change default DNS only without changing peers keys or services" {
+    wg_settings_fixture
+    run master_wg --if wg0 net-settings ui '9.9.9.9, 2620:fe::fe' "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ "$(cut -f8 "$TMP/etc/wireguard/networks")" = '9.9.9.9, 2620:fe::fe' ]
+    [ "$(cut -f9 "$TMP/etc/wireguard/networks")" = 'Ana ağ' ]
+    cmp -s "$WG0_CONF" "$TMP/original.conf"
+    grep -qx 'unchanged profile' "$TMP/etc/wireguard/clients-wg0/test.conf"
+    [ ! -s "$TMP/calls" ]
+}
+
+@test "network settings close listener before firewall and open it after firewall" {
+    wg_settings_fixture
+    run master_wg --if wg0 net-settings inet 1.1.1.1 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/etc/wireguard/caddy-wg-wg0.env" ]
+    [ ! -e "$TMP/caddy-active" ]
+    [ ! -e "$TMP/caddy-enabled" ]
+    awk '/disable --now/ {a=NR} /restart master-firewall/ {b=NR} END {exit !(a && a<b)}' "$TMP/calls"
+    : >"$TMP/calls"
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ -f "$TMP/caddy-active" ]
+    [ -f "$TMP/caddy-enabled" ]
+    grep -qx 'WG_BIND=10.8.0.1' "$TMP/etc/wireguard/caddy-wg-wg0.env"
+    awk '/restart master-firewall/ {a=NR} /start caddy-wg/ {b=NR} END {exit !(a && a<b)}' "$TMP/calls"
+    cmp -s "$WG0_CONF" "$TMP/original.conf"
+    run ! grep -E 'systemctl (start|restart|enable).*wg-quick|^wg ' "$TMP/calls"
+}
+
+@test "network settings never start a stopped WireGuard network" {
+    wg_settings_fixture
+    master_wg --if wg0 net-settings inet 1.1.1.1 "$(wg_revision)" >/dev/null
+    : >"$TMP/calls"
+    export WG_ACTIVE=0
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/caddy-active" ]
+    [ -e "$TMP/caddy-enabled" ]
+    run ! grep -E '(start|restart|enable).*wg-quick| start caddy-wg' "$TMP/calls"
+}
+
+@test "network settings give explicit local changes a fresh service start budget" {
+    wg_settings_fixture
+    touch "$TMP/firewall-limited" "$TMP/caddy-limited"
+    run master_wg --if wg0 net-settings inet 1.1.1.1 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/firewall-limited" ]
+    [ ! -e "$TMP/caddy-limited" ]
+    awk '/reset-failed master-firewall.service/ {a=NR} /restart master-firewall/ {b=NR} END {exit !(a && a<b)}' "$TMP/calls"
+    touch "$TMP/firewall-limited" "$TMP/caddy-limited"
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ -e "$TMP/caddy-active" ]
+    cmp -s "$WG0_CONF" "$TMP/original.conf"
+    master_wg --if wg0 net-settings inet 1.1.1.1 "$(wg_revision)" >/dev/null
+    export FAIL_ONCE='reset-failed caddy-wg'
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -eq 0 ] # An unloaded template instance has no counter to reset.
+    [ -e "$TMP/caddy-active" ]
+}
+
+@test "network settings roll back registry env and listener after firewall or Caddy failure" {
+    wg_settings_fixture
+    export FAIL_ONCE='restart master-firewall'
+    run master_wg --if wg0 net-settings inet 9.9.9.9 "$(wg_revision)"
+    [ "$status" -ne 0 ]
+    case "$output" in *'önceki DNS ve erişim ayarları geri alındı'*) ;; *) false ;; esac
+    cmp -s "$TMP/original.networks" "$TMP/etc/wireguard/networks"
+    [ -e "$TMP/caddy-active" ]
+    [ -e "$TMP/caddy-enabled" ]
+    grep -qx 'WG_BIND=10.8.0.1' "$TMP/etc/wireguard/caddy-wg-wg0.env"
+    unset FAIL_ONCE
+    master_wg --if wg0 net-settings inet 1.1.1.1 "$(wg_revision)" >/dev/null
+    cp "$TMP/etc/wireguard/networks" "$TMP/inet.networks"
+    rm -f "$TMP/failed-once"
+    export FAIL_ONCE='start caddy-wg'
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -ne 0 ]
+    cmp -s "$TMP/inet.networks" "$TMP/etc/wireguard/networks"
+    [ ! -e "$TMP/caddy-active" ]
+    [ ! -e "$TMP/caddy-enabled" ]
+    [ ! -e "$TMP/etc/wireguard/caddy-wg-wg0.env" ]
+    cmp -s "$WG0_CONF" "$TMP/original.conf"
+    unset FAIL_ONCE
+    export FAIL_ALWAYS='restart master-firewall'
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(wg_revision)"
+    [ "$status" -ne 0 ]
+    case "$output" in *'geri dönüş tam doğrulanamadı'*) ;; *) false ;; esac
+}
+
+@test "network settings reject stale revisions pending settings and invalid DNS before writes" {
+    wg_settings_fixture
+    local revision bad
+    revision="$(wg_revision)"
+    for bad in '999.1.1.1' ':::' 'dns.example' 'fe80::1%eth0' $'1.1.1.1\n9.9.9.9'; do
+        run master_wg --if wg0 net-settings ui "$bad" "$revision"
+        [ "$status" -ne 0 ]
+    done
+    run master_wg --if wg0 net-settings all 1.1.1.1 "$revision"
+    [ "$status" -ne 0 ]
+    run master_wg --if wg0 net-settings ui 9.9.9.9 "$(printf 'a%.0s' {1..64})"
+    [ "$status" -ne 0 ]
+    case "$output" in *'Ağ ayarları değişmiş'*) ;; *) false ;; esac
+    printf 'SETTINGS_PENDING_FILE=%s/pending.json\n' "$TMP" >>"$TMP/state.env"
+    touch "$TMP/pending.json"
+    run master_wg --if wg0 net-settings inet 9.9.9.9 "$revision"
+    [ "$status" -ne 0 ]
+    case "$output" in *'bekleyen işlemi'*) ;; *) false ;; esac
+    cmp -s "$TMP/original.networks" "$TMP/etc/wireguard/networks"
+    [ ! -s "$TMP/calls" ]
 }
 
 @test "master-wg net-add creates the next network, opens the firewall before the interface and undoes a failed step" {
@@ -3568,7 +3764,7 @@ EOF
     [ "${lines[0]}" = "  Dosya yöneticisi: kurulu değil" ]
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
-    [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → WebDAV: klasör başına adres, kullanıcı ve erişim izni" ]
+    [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
     awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'
@@ -3708,10 +3904,9 @@ PY
     [ ! -e "$TMP/sdrun-calls" ]
 }
 
-@test "console manages settings in four tabs with review and server-side rollback" {
+@test "console manages five system tabs and separate torrent settings with shared rollback" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/konsol.css"
-    # Side navigation and the phone's bottom bar both link the page.
-    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 3 ]
+    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 1 ]
     grep -q '<section data-view="ayarlar" hidden>' "$html"
     grep -q 'id="settings-page"' "$html"
     grep -q 'src="/ayarlar.js"' "$html"
@@ -3720,7 +3915,8 @@ PY
     grep -qF 'ayarlar: { title: "Ayarlar"' "$js"
     grep -q 'window.createSettingsPage' "$js"
     local settings="$V2_ROOT/console/ayarlar.js"
-    for label in 'Güvenlik Duvarı' Caddy Dnsmasq qBittorrent 'İncele ve uygula' 'Geri al'; do grep -q "$label" "$settings"; done
+    for label in Sistem 'Güvenlik Duvarı' Caddy Dnsmasq Günlük qBittorrent 'İncele ve uygula' 'Geri al'; do grep -q "$label" "$settings"; done
+    grep -q 'id="torrent-settings"' "$html"
     grep -q '/api/konsol/ayarlar/uygula' "$settings"
     grep -q '/api/konsol/ayarlar/durum' "$settings"
     run ! grep -qE 'localStorage[.(]|innerHTML[ =]' "$settings"

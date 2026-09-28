@@ -13,10 +13,17 @@ Existing file upload, text view, move, rename and trash operations remain.
 - Each of at most 32 non-overlapping folders has an opaque stable 24-hex ID,
   its own unique username and password, RO/RW permission, 1/7/30-day or unlimited
   lifetime and paused state. New forms default to RO and seven days.
+- Since v142, the Shares list has aligned folder/address, account, access,
+  duration, state and action columns. Access and duration are native dropdowns
+  saved immediately; RW still asks for explicit acknowledgement. Choosing 1/7/30
+  days starts that duration now; the current absolute expiry is shown until then.
+  Manage edits folder/username/password only. Omitted fields preserve the current
+  registry values under its lock; access/expiry-only edits never rebind a missing
+  or replaced root. Failed writes retain the last confirmed UI values.
 - Address: `http://<tailscale-ip>:<SHARE_PORT>/s/<id>/`. The same path works
   through `paylas.<domain>`. The IP/domain and port come from runtime state.
 - Blank password on edit keeps its hash; keep-duration preserves the exact
-  expiry. New passwords have 12–256 characters and can be generated in the
+  expiry. New passwords have 8–256 characters and can be generated in the
   form. They are never retrievable after saving. No password goes into browser
   storage, argv, environment files, progress or audit logs.
 - RW explicitly includes upload, overwrite, mkdir, move and deletion. It needs

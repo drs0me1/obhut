@@ -1,25 +1,26 @@
-/* Built-in ZIP jobs. Progress is reported by the server, never simulated. */
+/* Built-in ZIP/RAR jobs. Progress is reported by the server, never simulated. */
 "use strict";
-window.createArchiveTools = function ({h, api, post, toast, fail, bytes, showDialog, closeDialog, root, refresh, openFolder}) {
-  let jobs = [], limits = null, timer = null, loading = false, started = false;
+window.createArchiveTools = function ({h, api, post, toast, fail, showDialog, closeDialog, root, downloads, refresh, openFolder}) {
+  let jobs = [], timer = null, loading = false, started = false;
   const active = (job) => ["queued", "running"].includes(job.status);
   const labels = {queued:"Sırada", running:"Çalışıyor", done:"Tamamlandı", skipped:"Atlandı", failed:"Başarısız", cancelled:"İptal edildi", interrupted:"Kesildi"};
   const containers = new Set();
+  const canExtract = name => /\.(zip|rar|[r-z][0-9]{2})$/i.test(name);
   function paint() {
     for (const container of containers) {
       if (!container.isConnected) { containers.delete(container); continue; }
       const opened = container.firstElementChild?.open;
-      const details = h("details", {class:"archive-panel", open:opened || jobs.some(active)},
+      const details = h("details", {class:"archive-panel", open:opened ?? true},
         h("summary", null, `Arşiv işlemleri · ${jobs.filter(active).length} çalışıyor · ${jobs.length} kayıt`),
         h("div", {class:"archive-status", "aria-live":"polite"},
           ...jobs.slice(0,20).map((job) => h("div", {class:`archive-row ${job.status}`},
             h("div", null, h("strong", null, `${job.name} · ${labels[job.status] || job.status}`),
-              h("small", null, job.message), h("small", null, `${job.entries} öge · ${bytes(job.bytes)} işlendi${job.archives ? ` · ${job.archives} ZIP` : ""}`)),
+              h("small", null, job.message)),
             active(job) ? h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick: async (e) => {
               e.currentTarget.disabled = true;
               try { await post("/api/archives/cancel", {id:job.id}); await load(); } catch (err) { fail(err); await load(); }
             }}, "İptal et") : job.result ? h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick:() => openFolder(job.operation === "unzip" ? job.result : job.target)}, "Sonucu göster") : null)),
-          !jobs.length ? h("p", {class:"archive-limits"}, "Henüz işlem yok. Bir dosya veya klasör seçip ZIP oluşturabilir; ZIP dosyasının ayrıntılarından açabilirsiniz.") : null));
+          !jobs.length ? h("p", {class:"hint-s"}, "Henüz arşiv işlemi yok.") : null));
       container.replaceChildren(details);
     }
   }
@@ -29,7 +30,7 @@ window.createArchiveTools = function ({h, api, post, toast, fail, bytes, showDia
     try {
       const data = await api("/api/archives");
       const previous = new Map(jobs.map((j) => [j.id, j]));
-      jobs = data.items; limits = data.limits;
+      jobs = data.items;
       for (const job of jobs) if (started && !active(job) && previous.has(job.id) && active(previous.get(job.id))) {
         toast(`${job.name}: ${job.message}`);
         if (job.status === "done") refresh();
@@ -46,33 +47,67 @@ window.createArchiveTools = function ({h, api, post, toast, fail, bytes, showDia
   function mount(container) { containers.add(container); paint(); load(true); }
   function open(operation, path, items) {
     const unzip = operation === "unzip";
-    const initial = items.length === 1 ? items[0].name.replace(/\.zip$/i, "") : "arsiv";
+    let target = downloads(), browsing = false, working = false, sequence = 0;
+    if (typeof target !== "string") { fail(new Error("İndirme klasörü bilgisi yüklenemedi; sayfayı yenileyin.")); return; }
+    const initial = items.length === 1 ? items[0].name.replace(/(?:\.part[0-9]+)?\.(zip|rar|[r-z][0-9]{2})$/i, "") : "arsiv";
     const field = (label, input) => h("label", null, label, input);
-    const name = h("input", {id:"archive-name", required:true, value:unzip ? initial || "acilan" : initial + ".zip", maxlength:150, autocomplete:"off"});
-    const target = h("input", {id:"archive-target", value:path, autocomplete:"off", placeholder:`${root()} kökü için boş bırakın`});
-    const nested = h("input", {id:"archive-nested", type:"checkbox", checked:true});
-    const layers = h("select", {id:"archive-layers"}, ...[1,2,3,4,5].map((n) => h("option", {value:String(n), selected:n === 3}, `${n} katman`)));
+    const name = h("input", {id:"archive-name", required:true, value:initial || "arsiv", maxlength:150, autocomplete:"off"});
+    const targetText = h("span", {id:"archive-target"}, [root(),target].filter(Boolean).join("/"));
+    const picker = h("div", {id:"archive-picker", class:"archive-picker", hidden:true, role:"group", "aria-label":"Hedef klasör seçimi"});
+    const choose = h("button", {type:"button", class:"archive-target btn btn-quiet", "aria-label":"Hedef klasör seç", "aria-controls":"archive-picker", "aria-expanded":"false", onclick:() => {
+      if (working) return;
+      if (browsing) finishPicker();
+      else { browsing = true; picker.hidden = false; choose.setAttribute("aria-expanded","true"); submit.disabled = true; browse(target); }
+    }}, targetText, h("span", null, "Değiştir"));
+    function finishPicker() {
+      sequence++; browsing = false; picker.hidden = true; choose.setAttribute("aria-expanded","false"); submit.disabled = working; choose.focus();
+    }
+    async function browse(folder) {
+      const request = ++sequence;
+      const navigation = h("div", {class:"archive-picker-nav"},
+        h("button", {type:"button", class:"btn btn-sm btn-quiet", disabled:!folder, onclick:() => browse(folder.split("/").slice(0,-1).join("/"))}, "Üst klasör"),
+        h("button", {type:"button", class:"btn btn-sm btn-quiet", disabled:!folder, onclick:() => browse("")}, "Sunucu"));
+      const listing = h("div", {class:"archive-folders", "aria-live":"polite"}, "Yükleniyor…");
+      const use = h("button", {type:"button", class:"btn btn-sm btn-primary", disabled:true, onclick:() => {
+        target = folder; targetText.textContent = [root(),target].filter(Boolean).join("/"); finishPicker();
+      }}, "Bu klasörü seç");
+      picker.replaceChildren(navigation, h("p", {class:"archive-location"}, [root(),folder].filter(Boolean).join("/")), listing,
+        h("div", {class:"dlg-foot"}, h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick:finishPicker}, "Geri"), use));
+      try {
+        const data = await api(`/api/list?dirs=1&path=${encodeURIComponent(folder)}`);
+        if (!browsing || request !== sequence || !picker.isConnected) return;
+        const dirs = data.entries.filter(item => item.type === "dir").sort((a,b) => a.name.localeCompare(b.name,"tr"));
+        listing.replaceChildren(...dirs.map(item => h("button", {type:"button", class:"archive-folder btn btn-quiet", onclick:() => browse([folder,item.name].filter(Boolean).join("/"))}, item.name)));
+        if (!dirs.length) listing.append(h("span", {class:"hint-s"}, "Alt klasör yok."));
+        use.disabled = false;
+        (listing.querySelector("button") || use).focus();
+      } catch (err) {
+        if (!browsing || request !== sequence || !picker.isConnected) return;
+        listing.replaceChildren(h("p", {class:"err-s", role:"alert"}, err.message),
+          h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick:() => browse(folder)}, "Yeniden dene"));
+      }
+    }
     const conflict = h("select", {id:"archive-conflict"}, ...[["rename","Yeni ad ver: ad (2)"],["skip","Sonucu atla"],["stop","İşlemi durdur"]].map(([value,label]) => h("option", {value}, label)));
     const error = h("p", {class:"err-s", role:"alert", hidden:true});
-    const submit = h("button", {type:"submit", class:"btn btn-primary"}, unzip ? "ZIP aç" : "ZIP oluştur");
-    const form = h("form", {class:"dav-form", onsubmit:async (event) => {
-      event.preventDefault(); submit.disabled = true; error.hidden = true;
+    const submit = h("button", {type:"submit", class:"btn btn-primary"}, unzip ? "Arşivi aç" : "Oluştur");
+    const form = h("form", {class:"dav-form archive-form", onsubmit:async (event) => {
+      event.preventDefault();
+      if (working || browsing) return;
+      working = true; submit.disabled = true; choose.disabled = true; error.hidden = true;
       try {
-        const response = await post("/api/archives", {operation,path,names:items.map((item) => item.name),target:target.value.trim(),name:name.value.trim(),nested:unzip && nested.checked,layers:Number(layers.value),conflict:conflict.value});
+        let resultName = name.value.trim();
+        if (!unzip && !/\.zip$/i.test(resultName)) resultName += ".zip";
+        const response = await post("/api/archives", {operation,path,names:items.map((item) => item.name),target,name:resultName,conflict:conflict.value});
         jobs = [response.job, ...jobs.filter((j) => j.id !== response.job.id)].slice(0,20);
         started = true;
-        closeDialog(); toast("Arşiv işlemi başladı; sayfa kapansa da sunucuda sürer."); await load(true);
-      } catch (err) { error.textContent = err.message; error.hidden = false; submit.disabled = false; }
-    }}, h("p", {class:"hint-s"}, `${items.length} öge · ${root()}/${path}`),
-    field(unzip ? "Yeni sonuç klasörü" : "ZIP dosya adı", name), field(`Hedef klasör · ${root()} altında göreli yol`, target),
-    unzip ? h("label", {class:"dav-check"}, nested, "İç içe ZIP dosyalarını da aç") : null,
-    unzip ? field("Katman sınırı (ilk ZIP dahil)", layers) : null,
+        closeDialog(); location.hash = "#/dosyalar/arsiv";
+        toast("Arşiv işlemi başladı."); await load(true);
+      } catch (err) { error.textContent = err.message; error.hidden = false; working = false; submit.disabled = false; choose.disabled = false; }
+    }}, field(unzip ? "Sonuç klasörü" : "Arşiv adı", name),
+    h("div", {class:"archive-destination"}, h("span", null, "Hedef klasör"), choose, picker),
     field("Hedefte sonuç adı zaten varsa", conflict),
-    h("p", {class:"archive-limits"}, "Kaynaklar silinmez; mevcut dosyaların üzerine yazılmaz. Açılan içerik yeni bir klasörde toplanır. İç ZIP dosyaları da korunur. ",
-      limits ? `${bytes(limits.bytes)} toplam işlenen veri · ${limits.entries.toLocaleString("tr-TR")} öge · ${limits.seconds / 60} dakika · aynı anda tek işlem. ` : "",
-      "Yalnız şifresiz ZIP (Store/Deflate); ZIP64, RAR ve 7z desteklenmez. İçerikte çakışan/güvensiz ad veya bozuk ZIP varsa hiçbir sonuç yayımlanmaz."),
     error, h("div", {class:"dlg-foot"}, h("button", {type:"button", class:"btn btn-quiet", onclick:closeDialog}, "Vazgeç"), submit));
-    showDialog(unzip ? "ZIP aç" : "ZIP oluştur", form); name.focus(); name.select();
+    showDialog(unzip ? "Arşiv açıcı" : "Arşiv oluştur", form); name.focus(); name.select();
   }
-  return {mount, load, open};
+  return {mount, load, open, canExtract};
 };

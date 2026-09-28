@@ -189,6 +189,32 @@ class SharesTests(unittest.TestCase):
         self.assertEqual(len(self.manager.read()["items"]), 1)
         self.assertFalse(any("restart" in call.args[0] for call in run.call_args_list))
 
+    def test_password_length_boundaries_create_edit_and_blank_preservation(self):
+        (self.root / "gamma").mkdir()
+        request = dict(path="gamma", username="third", permission="ro", days=0)
+        before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
+        for phrase in ("", "x" * 7, "x" * 257, "1234567\n", "1234:678", None):
+            with self.subTest(phrase=phrase), self.assertRaises(shares.ShareError):
+                self.manager.change("save", dict(request, password=phrase))
+        self.assertEqual(before, Path(self.env["SHARE_STATE_FILE"]).read_bytes())
+        for phrase in ("Pass8!xy", "ü" * 8, "x" * 11, "x" * 12, "x" * 256):
+            self.manager.change("save", dict(request, password=phrase))
+            item = self.manager.read()["items"][-1]
+            request["id"] = item["id"]
+            self.assertTrue(shares.password_ok(item, phrase))
+            self.assertNotIn(phrase, Path(self.env["SHARE_STATE_FILE"]).read_text())
+        self.manager.change("save", dict(request, password=""))
+        self.assertEqual(self.manager.read()["items"][-1]["hash"], item["hash"])
+
+    def test_eight_character_password_authenticates_and_retains_readonly_boundary(self):
+        self.manager.change("save", dict(id=self.a["id"], path="alpha", username="reader",
+                                        permission="ro", password="Pass8!xy", days=None))
+        self.a.update(self.manager.read()["items"][0])
+        self.assertEqual(self.request("GET", leaf="movie.txt", password="Pass8!xy")[:2], (200, b"abcdefghij"))
+        self.assertEqual(self.request("PROPFIND", password="Pass8!xy", headers={"Depth":"1"})[0], 207)
+        self.assertEqual(self.request("GET", leaf="movie.txt")[0], 401)
+        self.assertEqual(self.request("PUT", leaf="movie.txt", body=b"deny", password="Pass8!xy")[0], 403)
+
     def test_pending_settings_and_operation_locks_block_mutations(self):
         before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
         Path(self.env["SETTINGS_PENDING_FILE"]).touch()
@@ -200,6 +226,59 @@ class SharesTests(unittest.TestCase):
             with self.assertRaises(shares.ShareError):
                 self.manager.change("pause", {"id": self.a["id"], "paused": True})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
+
+    def test_inline_access_and_duration_preserve_other_fields(self):
+        sid = self.a["id"]
+        self.manager.change("pause", {"id": sid, "paused": True})
+        before = self.manager.read()["items"][0]
+        for fields in ({"permission": "rw", "ack_write": True}, {"days": 7}, {"days": 0}, {"permission": "ro"}):
+            with self.subTest(fields=fields):
+                self.manager.change("save", dict(id=sid, **fields))
+                item = self.manager.read()["items"][0]
+                for key in ("id", "path", "name", "username", "identity", "salt", "hash", "created", "paused"):
+                    self.assertEqual(item[key], before[key], key)
+                if "permission" in fields:
+                    self.assertEqual(item["permission"], fields["permission"])
+                    self.assertEqual(item["expires"], before["expires"])
+                else:
+                    self.assertEqual(item["permission"], before["permission"])
+                    self.assertEqual(item["expires"], item["changed"] + 7 * 86400 if fields["days"] else None)
+                before = item
+        self.assertEqual(self.manager.read()["items"][1], self.b)
+
+    def test_inline_validation_and_restart_failure_do_not_change_registry(self):
+        before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
+        for fields in ({"permission":"rw"}, {"permission":"rw","ack_write":1}, {"permission":"bad"},
+                       {"days":True}, {"days":-1}, {"days":"7"}, {"days":2}):
+            with self.subTest(fields=fields), self.assertRaises(shares.ShareError):
+                self.manager.change("save", dict(id=self.a["id"], **fields))
+        self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
+        (self.base / "modules").write_text("paylasim\tcalisiyor\n")
+        with patch.object(self.manager, "restart", side_effect=[shares.ShareError("injected"), None]), self.assertRaises(shares.ShareError):
+            self.manager.change("save", {"id": self.a["id"], "days": 1})
+        self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
+
+    def test_inline_options_never_rebind_replaced_or_missing_directory(self):
+        (self.root / "alpha").rename(self.root / "old-alpha")
+        self.manager.change("save", {"id": self.a["id"], "days": 7})
+        self.assertFalse(self.manager.public()["items"][0]["available"])
+        (self.root / "alpha").mkdir()
+        (self.root / "alpha/movie.txt").write_text("wrong target")
+        self.manager.change("save", {"id": self.a["id"], "permission": "rw", "ack_write": True})
+        self.a.update(self.manager.read()["items"][0])
+        self.assertFalse(self.manager.public()["items"][0]["available"])
+        self.assertEqual(self.request("GET", leaf="movie.txt")[0], 410)
+
+    def test_account_edit_preserves_latest_access_expiry_and_paused_state(self):
+        sid = self.b["id"]
+        self.manager.change("save", {"id": sid, "days": 30})
+        self.manager.change("pause", {"id": sid, "paused": True})
+        before = self.manager.read()["items"][1]
+        self.manager.change("save", {"id":sid, "path":"beta", "username":"renamed-writer", "password":""})
+        after = self.manager.read()["items"][1]
+        for key in ("permission", "expires", "paused", "identity", "salt", "hash"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(after["username"], "renamed-writer")
 
     def test_failed_service_restart_rolls_back_registry(self):
         before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()

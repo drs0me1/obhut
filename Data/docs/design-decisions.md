@@ -6832,6 +6832,241 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-170: Contextual Files dock and automatic archive extraction (2026-09-28)
+
+- **Decision (v2-143):** keep the address/search bar stable and show selected-file
+  actions in a bottom dock, confined to Files. Reserve scroll space for the last
+  row and wrap controls on mobile. Other pages never retain the dock.
+- One archive vocabulary: creation always ZIP; extraction resolves supported
+  RAR volumes and nested ZIP/RAR automatically. Default destination comes from
+  `DOWNLOADS_SUBDIR` via file state, not the current source or torrent save path.
+  Browse existing directories with the gated file API; failed/stale picker reads
+  cannot select an unverified folder. Submit failures retain the form draft.
+- Hide nested/depth controls and verbose explanations/statistics, not server
+  protections. Keep shared byte/entry/time/depth limits, cancellation, safe paths,
+  private staging and atomic no-replace publication. Automatic depth overflow
+  fails the whole job; explicit legacy depth requests keep their earlier contract.
+- Preserve original archives and per-archive output directories; assembling
+  multipart contents does not mean flattening paths or overwriting same-name data.
+- **Visual follow-up (v2-144):** implement approved alternative B: six equal
+  icon-over-label cells, count and dismiss in a separate header, compact floating
+  surface and a mobile 3×2 grid. Keep ineligible actions disabled in fixed slots
+  so selection changes do not shift targets. Trash uses red ink, not a filled
+  button; global keyboard focus and existing action/confirmation guards remain.
+  No API, archive-worker, permission or sharing behavior changes.
+
+### DD-169: Compact trash confirmation and inline share controls (2026-09-28)
+
+- **Decision (v2-142):** remove move-to-trash explanations/path/size and show
+  only a short question, filename (ellipsized with full tooltip) or count,
+  Cancel and Move. Bound dialog content so long names cannot push buttons out.
+  Permanent purge warnings and typed confirmation for emptying Trash remain.
+- Replace the stretched share cards with aligned responsive columns: folder/URL,
+  username, access, duration, state and actions. Use native selects for access
+  and 1/7/30-day or unlimited lifetime; save on change, still explicitly confirm
+  granting write/delete access. Keep address and copy button adjacent.
+- Manage now changes folder/account only; creation still offers RO/seven-day
+  defaults. Reuse the existing save endpoint with partial existing-share bodies.
+  Read omitted fields from the registry under its existing locks, not from a
+  potentially stale browser row. Do not recalculate folder identity when only
+  access/expiry changes. Existing RW grants need no new acknowledgement for an
+  unrelated account/expiry edit; an explicitly supplied RW setting still does.
+- Disable conflicting list actions during saves; ignore older list reads, retain
+  confirmed values on failure and avoid polling redraws while a select has focus.
+  The existing active WebDAV restart/rollback and stopped-service behavior remain.
+  Durations start now, never silently extend during account/permission changes.
+
+### DD-168: Eight-character minimum for service passwords (2026-09-28)
+
+- **Decision (v2-141):** at the operator's request, lower the Konsol minimum
+  from 12 to 8 characters for qBittorrent and folder WebDAV, in both browser
+  forms and server validation. This was a panel policy, not a service limit.
+  qBittorrent 5.1.0 accepts eight-character passwords; WebDAV's scrypt verifier
+  has no twelve-character requirement.
+- Keep the 256-character maximum, existing character restrictions, salted
+  password hashing, blank-on-edit preservation and long random WebDAV password
+  generator unchanged. Existing accounts are not rewritten or shortened.
+- Eight characters allow weaker choices than twelve. This is a minimum, not
+  a recommendation; longer unique passwords remain preferable.
+- Regression tests reject seven characters before a write, accept eight,
+  preserve blank edits, and check real HTTP authentication using isolated
+  WebDAV fixtures and a disposable native qBittorrent profile.
+
+### DD-167: Edit a WireGuard network without regenerating it (2026-09-28)
+
+- **Need:** the network-card refresh action should also expose default DNS and
+  local access. Previously the refresh icon meant destructive regeneration.
+- **Decision:** replace that entry with “Arayüz ayarları”. Save edits the selected
+  registry row's default DNS and `inet`/`ui` scope only. Keep key regeneration
+  inside a separate danger section with the existing typed `onayla` confirmation;
+  unsaved form choices are never silently applied by regeneration.
+- **DNS:** a default for newly added peers, not a DNS server setting or a push
+  to existing client devices. Existing profiles, keys, addresses, peer states,
+  labels and ports are untouched. Existing peer DNS retains its own edit/QR flow.
+- **Local access:** same narrow boundary as before: qBittorrent's UI via that
+  network's IPv4-bound `caddy-wg@`, not Konsol/SSH/WebDAV/DNS or other networks.
+  Explicit firewall overrides remain authoritative. Close the Caddy listener
+  before restricting policy; open policy before starting it. Never restart
+  WireGuard or wake a stopped network; stage its Caddy enablement for next start.
+- **Concurrency/failures:** `master-wg --if wgN net-settings` holds the existing
+  installer lock, checks the selected row's SHA256 revision under lock, and
+  refuses pending settings transactions. Use bounded systemctl calls; ordinary
+  failures/signals restore registry, Caddy env, firewall and prior listener state.
+  Report incomplete rollback explicitly. This is a scoped command transaction,
+  not a power-loss/SIGKILL recovery engine. Save is immediate: this setting does
+  not change the Tailscale-only access path to Konsol.
+- **Explicit attempts:** local-access changes reset the start-limit counters
+  of the firewall and selected Caddy instance before applying, as module actions
+  already do. Live repeated toggles exhausted the firewall's 12/300s budget and
+  prevented rollback. Do not change the automatic restart-loop limits or reset
+  other networks' counters; DNS-only changes still perform no service actions.
+- **API/UI:** `POST /api/wg/nets/<iface>/ayarlar` accepts `{scope,dns,revision}`,
+  retains Host/header/origin/module gates and validates IPs before delegation.
+  Invalidate Settings' read cache after the attempt. Polling never overwrites
+  the open form; failures preserve the draft and stale forms must be reopened.
+
+### DD-166: Bounded multipart and nested RAR in Files (2026-09-28)
+
+- **Need:** downloaded multipart RAR and inner RAR sets must open through the
+  same Files workflow as ZIP, without deleting seeding/source files.
+- **Decision:** install distribution `unrar` + `python3-rarfile` as base
+  dependencies. Full unrar supports solid/RAR3/RAR5/volumes consistently;
+  unrar-free/libarchive is not an equivalent backend. When apt has no candidate,
+  add a dedicated signed Debian non-free or Ubuntu universe/multiverse source,
+  including updates/security and Ubuntu ports for non-x86. Preserve other sources.
+  The package carries the distro's non-free unrar license; no arbitrary binary,
+  pip install or root extraction endpoint is introduced.
+- **Boundary:** the existing unprivileged worker owns all destination writes.
+  Copy descriptor-validated source volumes into bounded private staging, inspect
+  metadata in a resource-limited child, then stream each member using `unrar p`.
+  Never use extractor-controlled output paths. Bound time/output/memory, kill
+  and reap the whole helper process group on cancel/error; reject links, duplicate
+  or ambiguous names, encrypted/invalid archives, missing parts and changed sources.
+  Preserve atomic publication and the existing aggregate ZIP byte/entry/layer limits.
+- **Compatibility:** keep API operation `unzip` for both formats; label it
+  “Arşivi aç”. Normalize later-part selection to the first, deduplicate nested
+  volume sets and retain every source and inner archive. Compression still creates ZIP.
+  Solid archives may re-decompress earlier members per streamed file; time limits
+  deliberately win over unlimited CPU for pathological inputs.
+- **Evidence:** `test_rar.py` covers volume selection, traversal/link/duplicate
+  boundaries, budgets, CRC/source mutation, mixed nesting and real subprocess
+  cancellation. Optional upstream fixtures exercise real RAR3/RAR5/solid/volumes;
+  current live verification is recorded in `SESSION.md`, not inferred for Ubuntu.
+
+### DD-165: One-click qBittorrent account save (2026-09-27)
+
+- **Decision (v2-135):** replace account staging/review/60-second confirmation
+  with one explicit Save. The former first button only staged credentials;
+  opening the Web UI immediately afterward therefore still required the old
+  login. Native browser username validation also needs an escaped hyphen for
+  the modern HTML pattern `v` flag.
+- Only an isolated username/password request commits immediately. Eligibility
+  is decided by the worker, never a client flag. Folder and mixed requests keep
+  confirmation, as do firewall edits; domain migration retains five minutes.
+  Account edits cannot remove Konsol's network access, so connectivity approval
+  adds no protection here. Successful saves do not revert after disconnect.
+- Preserve revision/lock validation, stop/flush/snapshot/write/restart, durable
+  pre-write recovery, commit markers and guard recovery for failure/process death.
+  Keep stopped services stopped and unrelated profile keys untouched. A blank
+  password preserves a stored hash, not a rotating temporary startup password.
+- The UI reports success only for an explicit committed response, disables
+  duplicate submission, clears secret fields and never stages the password.
+  Unrelated drafts remain unapplied and use the refreshed revision afterward.
+  Failed/ambiguous requests ask the operator to refresh and re-enter the password;
+  no automatic credential retry or new dependency is introduced.
+
+### DD-164: Incoming-network firewall tabs, not service buckets (2026-09-27)
+
+- **Decision (v2-134):** implement the approved Tailscale (default), Internet,
+  optional WireGuard and protected loopback categories. A service can have
+  different permissions on different incoming networks, so it must not be
+  assigned to just one global service bucket. WireGuard supports per-interface
+  selection; installed-without-networks gets an empty state, not a fictional wg0.
+- Public VPN UDP endpoints stay under Internet. Tunnel-client INPUT permissions
+  are under WireGuard; Technical rules remains an all-network read-only view
+  with original specs, order, ownership and counters, including FORWARD/NAT.
+- A socket binding is not an end-to-end reachability test. The backend annotates
+  addresses using state/network metadata and IPv6 zones, without scanning ports
+  or inferring ownership from private IP prefixes. Fix ss's bracketed link-local
+  zone parsing; keep unreadable/unknown distinct from no listener. Preserve known
+  service names when the same listener appears under another traffic category.
+- No firewall policy/worker, API write contract, dependency, bind address or
+  privilege change. Preserve drafts across tabs, keyboard navigation, protected
+  loopback and the existing apply/confirmation/rollback flow. DNS-only immediate
+  Apply (DD-163) remains unchanged. Refresh is explicit, not background polling.
+
+### DD-163: Immediate DNS-only Apply, retaining transactional recovery (2026-09-27)
+
+- **Decision (v2-133):** remove the one-minute connection confirmation for
+  DNS-only edits as requested. One Apply action validates, projects and restarts
+  dnsmasq, then durably commits. Return an explicit committed result and refresh
+  the UI without a review dialog, countdown or confirmation POST.
+- The worker, not a client bypass flag, classifies DNS-only requests. Mixed
+  firewall/qBittorrent drafts retain the existing review and 60 s confirmation;
+  domain migration retains its separate 300 s/new-Host confirmation.
+- Protect `panel.<LOCAL_DOMAIN>` before any mutation and disable its UI switch.
+  Previously its disable could be staged but could never be confirmed. This
+  preserves that restriction without relying on a now-removed confirmation.
+- Keep locks, revision checks, validators, snapshots and the independent guard
+  for apply failures/process death. Share the existing durable commit marker
+  with confirmed transactions: a post-commit crash must not undo saved DNS.
+  Successful DNS changes no longer automatically revert after disconnection.
+
+### DD-162: Explicit firewall tables without changing policy authority (2026-09-27)
+
+- **Decision (v2-132):** the user requested a full table, including short
+  explanations, retaining on/off controls. Replace per-row disclosures and
+  mobile cards with semantic row/column headers and bounded table scrolling.
+  Service descriptions, source CIDR, address scope, draft/saved policy and
+  edit/remove actions are visible together. Keep family/scope filters.
+- Preserve the distinction between intended permission, an observed listener
+  and actual reachability. No port scan or Tailscale ACL claim is inferred from
+  an enabled switch. Loopback is protected; existing connections are not cut.
+- The all-rules view adds conservative explanations without replacing raw
+  specifications/order/counters. Foreign chains remain read-only. This is not
+  an iptables editor/parser; port changes use the existing validated controller.
+- No API, firewall worker, transaction deadline or privilege boundary changes.
+  Switching a row only edits the in-memory draft until reviewed and applied.
+
+### DD-161: Compact App Store with optional details (2026-09-27)
+
+- **Decision (v2-131):** implement the user's approved second model: a compact
+  list, not a grid of large cards. Each row shows icon, name, one-line description,
+  live status, Details and Install/Open. A single selected panel below the list
+  holds technical information and service/log/removal controls.
+- Collapse explanations, not operational feedback. Server progress and failures
+  stay visible in rows; mobile keeps both status and controls. Polling retains
+  selected details, keyboard focus and log position; unchanged data avoids DOM
+  replacement. Log HTTP errors cannot masquerade as successfully fetched logs.
+- qBittorrent credentials are requested only from its own page, not by opening
+  App Store or expanding technical details. Removal still requires confirmation
+  and defaults to retaining profiles; files are not deleted.
+- This changes presentation only: no backend/catalogue/dependency, firewall,
+  DNS, privilege, CSP or transaction changes. Existing Model A routes remain.
+
+### DD-160: Model A, one admin workspace and independent resources (2026-09-27)
+
+- **Decision (v2-130):** implement the user's approved Model A. Remove the
+  Applications launcher, Overview, dock and imitation window controls. Files is
+  the default route; the sidebar contains App Store, installed apps and Settings.
+  This supersedes DD-159's shell presentation only, not its service boundaries.
+- CPU/RAM/disk belong below the sidebar menu. Sample CPU on a separate backend
+  thread so a slow WireGuard command cannot stall host measurements. The gated
+  resource endpoint does not enumerate ports/networks or invoke subprocesses;
+  the legacy system API remains available. The browser polls independently and
+  displays unknown values after failure/staleness instead of stale healthy data.
+- Settings has System, Firewall, Caddy, Dnsmasq and Log. qBittorrent's own page
+  holds its service controls, Web UI link and account/path forms. One shared
+  draft/transaction controller prevents duplicated state or rollback logic.
+- Files has Files, Shares, Archive jobs and Trash tabs, optional item details,
+  and folder shortcuts only. ZIP submission opens job history; results return
+  to Files. Background work and the existing unprivileged sandbox are unchanged.
+- Clean installation still provisions protected infrastructure/Files/WebDAV,
+  never optional apps or old credentials. No new production dependencies,
+  external assets, auth bypass, network ports or automatic restore are introduced.
+- v130 is prepared locally. Deployment/reset and fresh Debian/Ubuntu acceptance
+  are separate steps; details and verification are in `model-a-clean-install.md`.
+
 ### DD-159: Desktop shell with protected Files, sharing and bounded ZIP (2026-09-25)
 
 - **Decision (v2-129):** implement the approved desktop prototype after explicit

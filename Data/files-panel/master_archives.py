@@ -1,20 +1,26 @@
-"""Bounded ZIP jobs for the unprivileged Files backend (DD-159).
+"""Bounded ZIP/RAR jobs for the unprivileged Files backend (DD-159/DD-166).
 
-No shell, external extractor, automatic folder watcher or root worker. Sources
+No shell, automatic folder watcher or root worker. Sources
 are never removed. A private staging tree is published with NOREPLACE only
 after every member and nested archive has passed the same global limits.
 """
 import copy
+import contextlib
 import errno
 import json
 import os
 import re
 import secrets
+import selectors
+import signal
 import stat
 import struct
+import subprocess
+import sys
 import threading
 import time
 import zipfile
+import zlib
 
 MAX_BYTES = 2 * 1024 ** 3
 MAX_ENTRIES = 10000
@@ -26,6 +32,9 @@ HISTORY = 20
 JOB_RE = re.compile(r"^[a-f0-9]{24}$")
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+RAR_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "master_rar.py")
+RAR_SUFFIX = re.compile(r"\.(?:rar|[r-z][0-9]{2})$", re.I)
+MAX_VOLUMES = 1000
 
 
 class ArchiveError(Exception):
@@ -106,12 +115,12 @@ class Archives:
         with self.lock:
             return {"items": copy.deepcopy(self.jobs), "limits": {
                 "bytes": MAX_BYTES, "entries": MAX_ENTRIES, "layers": MAX_LAYERS,
-                "seconds": MAX_SECONDS, "formats": ["zip"], "concurrent": 1}}
+                "seconds": MAX_SECONDS, "formats": ["zip", "rar"], "concurrent": 1}}
 
     def submit(self, data):
         operation = data.get("operation")
         if operation not in ("zip", "unzip"):
-            raise ArchiveError(400, "İşlem ZIP oluşturma veya açma olmalı.")
+            raise ArchiveError(400, "İşlem arşiv oluşturma veya arşiv açma olmalı.")
         source = self.files.split(data.get("path"))
         target = self.files.split(data.get("target"))
         if len("/".join(source).encode()) > 2048 or len("/".join(target).encode()) > 2048:
@@ -129,9 +138,12 @@ class Archives:
             raise ArchiveError(400, "Sonuç adı noktayla başlayamaz; en çok 220 bayt olabilir.")
         if operation == "zip" and not name.lower().endswith(".zip"):
             raise ArchiveError(400, "Dosya adı .zip ile bitmeli.")
-        if operation == "unzip" and (len(names) != 1 or not names[0].lower().endswith(".zip")):
-            raise ArchiveError(400, "Açmak için tek bir ZIP dosyası seçin.")
-        nested, layers, conflict = data.get("nested", False), data.get("layers", 3), data.get("conflict", "rename")
+        if operation == "unzip" and (len(names) != 1 or not self.is_archive(names[0])):
+            raise ArchiveError(400, "Açmak için tek bir ZIP veya RAR parçası seçin.")
+        # The compact UI omits legacy depth controls: recurse automatically and
+        # fail atomically at the safety ceiling, never report a partial open as done.
+        automatic = operation == "unzip" and "nested" not in data and "layers" not in data
+        nested, layers, conflict = data.get("nested", operation == "unzip"), data.get("layers", MAX_LAYERS), data.get("conflict", "rename")
         if not isinstance(nested, bool) or type(layers) is not int or not 1 <= layers <= MAX_LAYERS or conflict not in ("rename", "skip", "stop"):
             raise ArchiveError(400, "Arşiv seçenekleri geçersiz.")
         with self.fd(self.files.open_dir(source)) as src, self.fd(self.files.open_dir(target)) as dst, self.work_fd() as work:
@@ -143,7 +155,7 @@ class Archives:
                 if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                     raise ArchiveError(400, "Bağlantı veya özel dosya arşivlenemez.")
                 if operation == "unzip" and not stat.S_ISREG(info.st_mode):
-                    raise ArchiveError(400, "Seçim ZIP dosyası olmalı.")
+                    raise ArchiveError(400, "Seçim ZIP veya RAR dosyası olmalı.")
                 if stat.S_ISDIR(info.st_mode) and target[:len(source) + 1] == source + [n]:
                     raise ArchiveError(400, "ZIP hedefi seçilen klasörün içinde olamaz.")
             identity = (os.fstat(dst).st_dev, os.fstat(dst).st_ino)
@@ -151,7 +163,7 @@ class Archives:
             if self.thread and self.thread.is_alive():
                 raise ArchiveError(409, "Bir arşiv işlemi sürüyor; bitmesini bekleyin veya iptal edin.")
             job = {"id": secrets.token_hex(12), "operation": operation, "path": "/".join(source), "names": names,
-                   "target": "/".join(target), "name": name, "nested": nested, "layers": layers, "conflict": conflict,
+                   "target": "/".join(target), "name": name, "nested": nested, "layers": layers, "automatic": automatic, "conflict": conflict,
                    "status": "queued", "message": "Sıraya alındı", "created": int(time.time()), "bytes": 0, "entries": 0, "archives": 0}
             self.jobs = [job] + self.jobs[:HISTORY - 1]
             self.persist()
@@ -267,31 +279,189 @@ class Archives:
                             output.write(chunk)
                         output.flush()
                         os.fsync(output.fileno())
-                    if parts[-1].lower().endswith(".zip"):
+                    if self.is_archive(parts[-1]):
                         nested.append(parts)
-            if job["nested"]:
-                for parts in nested:
-                    if layer >= job["layers"]:
-                        with self.lock:
-                            job["limited"] = job.get("limited", 0) + 1
+            self.extract_nested(base, nested, job, event, deadline, layer)
+
+    @staticmethod
+    def is_archive(name):
+        return name.lower().endswith(".zip") or bool(RAR_SUFFIX.search(name))
+
+    def rar_volumes(self, parent, selected):
+        names = os.listdir(parent)
+        if len(names) > MAX_ENTRIES:
+            raise ArchiveError(400, "RAR klasöründe çok fazla öge var.")
+        part = re.fullmatch(r"(.+)\.part([0-9]+)\.rar", selected, re.I)
+        if part:
+            prefix = part[1]
+            pattern = re.compile(re.escape(prefix) + r"\.part([0-9]+)\.rar\Z", re.I)
+            number = lambda m: int(m[1])
+        else:
+            prefix = RAR_SUFFIX.sub("", selected)
+            pattern = re.compile(re.escape(prefix) + r"\.(rar|[r-z][0-9]{2})\Z", re.I)
+            number = lambda m: 1 if m[1].lower() == "rar" else (ord(m[1][0].lower()) - ord("r")) * 100 + int(m[1][1:]) + 2
+        found = [(number(match), name) for name in names if (match := pattern.fullmatch(name))]
+        found.sort()
+        if not found or len(found) > MAX_VOLUMES or [n for n, _ in found] != list(range(1, len(found) + 1)):
+            raise ArchiveError(400, "RAR parçaları eksik veya sırası belirsiz; ilk .rar/part01.rar ve tüm parçalar aynı klasörde olmalı.")
+        return [name for _, name in found]
+
+    def helper_output(self, args, job, event, deadline, limit):
+        """Bound output and wall time even while unrar produces no data; reap its group."""
+        env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+        process = subprocess.Popen([sys.executable, RAR_HELPER] + args, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
+                                   start_new_session=True, env=env)
+        total = 0
+        try:
+            with selectors.DefaultSelector() as poll:
+                poll.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    self.check(job, event, deadline)
+                    if not poll.select(0.1):
                         continue
-                    with self.fd(self.make_dirs(base, parts[:-1], job, event, deadline)) as parent:
-                        dest = parts[-1][:-4] or "arsiv"
-                        for index in range(1, 102):
-                            candidate = dest if index == 1 else "%s (%d)" % (dest, index)
-                            try:
-                                os.mkdir(candidate, 0o775, dir_fd=parent)
-                                break
-                            except FileExistsError:
-                                continue
-                        else:
-                            raise ArchiveError(409, "İç ZIP için boş klasör adı bulunamadı.")
+                    chunk = os.read(process.stdout.fileno(), CHUNK)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > limit:
+                        raise ArchiveError(400, "RAR çıktısı boyut sınırını aştı; sonuç yayımlanmadı.")
+                    yield chunk
+                while process.poll() is None:
+                    self.check(job, event, deadline)
+                    event.wait(0.05)
+                if process.returncode:
+                    raise ArchiveError(400, "RAR açılamadı: eksik/bozuk/şifreli parça, CRC hatası veya bellek sınırı. Sonuç yayımlanmadı.")
+        finally:
+            # The helper's comment decoder may have descendants even after it exits.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.stdout.close()
+            process.wait()
+
+    def extract_rar(self, parent, selected, base, job, event, deadline, layer):
+        volumes = self.rar_volumes(parent, selected)
+        with self.work_fd() as work, self.fd(os.open(job["id"], DIR_FLAGS, dir_fd=work)) as stage:
+            snapshot = "rar-" + secrets.token_hex(8)
+            os.mkdir(snapshot, 0o700, dir_fd=stage)
+            source_info, compressed = [], 0
+            try:
+                with self.fd(os.open(snapshot, DIR_FLAGS, dir_fd=stage)) as snap:
+                    for name in volumes:
+                        self.check(job, event, deadline)
+                        with self.fd(os.open(name, FILE_FLAGS, dir_fd=parent)) as src:
+                            info = os.fstat(src)
+                            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_dev != os.fstat(stage).st_dev:
+                                raise ArchiveError(400, "RAR parçası tek bağlı normal dosya ve aynı diskte olmalı.")
+                            compressed += info.st_size
+                            if compressed > MAX_BYTES:
+                                raise ArchiveError(400, "RAR parçalarının toplam boyutu sınırı aşıyor.")
+                            handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=snap)
+                            copied = 0
+                            with os.fdopen(handle, "wb") as output:
+                                while True:
+                                    self.check(job, event, deadline)
+                                    chunk = os.read(src, CHUNK)
+                                    if not chunk:
+                                        break
+                                    copied += len(chunk)
+                                    if copied > info.st_size:
+                                        raise ArchiveError(409, "RAR parçası işlem sırasında değişti.")
+                                    output.write(chunk)
+                            after = os.fstat(src)
+                            if copied != info.st_size or self.fingerprint(info) != self.fingerprint(after):
+                                raise ArchiveError(409, "RAR parçası işlem sırasında değişti.")
+                            source_info.append((name, self.fingerprint(info)))
+                archive_path = os.path.join(self.files.root, self.workspace, job["id"], snapshot, volumes[0])
+                data = b"".join(self.helper_output(["list", archive_path, str(MAX_ENTRIES - job["entries"]), str(MAX_BYTES - job["bytes"])],
+                                                  job, event, min(deadline, time.monotonic() + 30), MAX_CENTRAL))
+                metadata = json.loads(data)
+                if metadata.get("volumes") != volumes:
+                    raise ArchiveError(400, "RAR parça dizisi arşiv başlıklarıyla uyuşmuyor.")
+                seen, nested = set(), []
+                with self.lock:
+                    job["archives"] += 1
+                for item in metadata["entries"]:
+                    self.check(job, event, deadline)
+                    name, size = item["name"], item["size"]
+                    if any(c in name for c in "*?[]"):
+                        raise ArchiveError(400, "RAR dosya adında belirsiz seçim karakteri var.")
+                    parts = self.member_parts(zipfile.ZipInfo(name))
+                    key = "/".join(parts)
+                    if key in seen:
+                        raise ArchiveError(400, "Arşivde aynı adlı birden fazla öge var.")
+                    seen.add(key)
+                    if size + job["bytes"] > MAX_BYTES:
+                        raise ArchiveError(400, "Toplam açılmış veri sınırı aşılacak; işlem durduruldu.")
+                    with self.fd(self.make_dirs(base, parts if item["directory"] else parts[:-1], job, event, deadline)) as dest:
+                        if item["directory"]:
+                            continue
                         self.check(job, event, deadline, entry=True)
-                        with self.fd(os.open(candidate, DIR_FLAGS, dir_fd=parent)) as child:
-                            handle = os.open(parts[-1], FILE_FLAGS, dir_fd=parent)
-                            with os.fdopen(handle, "rb") as inner:
-                                self.extract(inner, child, job, event, deadline, layer + 1)
-                        # Retain the nested ZIP alongside its extracted folder.
+                        handle = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o664, dir_fd=dest)
+                        total, checksum = 0, 0
+                        with os.fdopen(handle, "wb") as output, contextlib.closing(self.helper_output(["stream", archive_path, name], job, event, deadline, size)) as chunks:
+                            for chunk in chunks:
+                                self.check(job, event, deadline, added=len(chunk))
+                                total += len(chunk)
+                                checksum = zlib.crc32(chunk, checksum)
+                                output.write(chunk)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        if total != size or (item["crc"] is not None and checksum != item["crc"]):
+                            raise ArchiveError(400, "RAR içerik uzunluğu veya CRC doğrulaması başarısız.")
+                    if self.is_archive(parts[-1]):
+                        nested.append(parts)
+                for name, fingerprint in source_info:
+                    if self.fingerprint(os.stat(name, dir_fd=parent, follow_symlinks=False)) != fingerprint:
+                        raise ArchiveError(409, "Kaynak RAR parçası değişti; sonuç yayımlanmadı.")
+            finally:
+                self.remove_tree(stage, snapshot)
+        self.extract_nested(base, nested, job, event, deadline, layer)
+
+    @staticmethod
+    def fingerprint(info):
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def extract_nested(self, base, nested, job, event, deadline, layer):
+        if not job["nested"]:
+            return
+        done = set()
+        for parts in nested:
+            if layer >= job["layers"]:
+                if job.get("automatic"):
+                    raise ArchiveError(400, "Arşiv iç içe açma güvenlik sınırını aşıyor; sonuç yayımlanmadı.")
+                stem = re.sub(r"(?:\.part[0-9]+)?\.(?:rar|[r-z][0-9]{2})$", ".rar", parts[-1], flags=re.I)
+                key = tuple(parts[:-1] + [stem])
+                if key not in done:
+                    done.add(key)
+                    with self.lock:
+                        job["limited"] = job.get("limited", 0) + 1
+                continue
+            with self.fd(self.make_dirs(base, parts[:-1], job, event, deadline)) as parent:
+                first = self.rar_volumes(parent, parts[-1])[0] if RAR_SUFFIX.search(parts[-1]) else parts[-1]
+                key = tuple(parts[:-1] + [first])
+                if key in done:
+                    continue
+                done.add(key)
+                dest = re.sub(r"(?:\.part[0-9]+)?\.(?:zip|rar)$", "", first, flags=re.I) or "arsiv"
+                for index in range(1, 102):
+                    candidate = dest if index == 1 else "%s (%d)" % (dest, index)
+                    try:
+                        os.mkdir(candidate, 0o775, dir_fd=parent)
+                        break
+                    except FileExistsError:
+                        continue
+                else:
+                    raise ArchiveError(409, "İç arşiv için boş klasör adı bulunamadı.")
+                self.check(job, event, deadline, entry=True)
+                with self.fd(os.open(candidate, DIR_FLAGS, dir_fd=parent)) as child:
+                    if RAR_SUFFIX.search(first):
+                        self.extract_rar(parent, first, child, job, event, deadline, layer + 1)
+                    else:
+                        with os.fdopen(os.open(first, FILE_FLAGS, dir_fd=parent), "rb") as inner:
+                            self.extract(inner, child, job, event, deadline, layer + 1)
 
     def pack(self, archive, parent, name, relative, device, job, event, deadline, depth=0):
         self.check(job, event, deadline, entry=True)
@@ -351,7 +521,7 @@ class Archives:
                         except OSError:
                             job["message"] += " Hedef dizin kalıcılığı doğrulanamadı."
                         if job.get("limited"):
-                            job["message"] += " %d iç ZIP katman sınırı nedeniyle kapalı bırakıldı." % job["limited"]
+                            job["message"] += " %d iç arşiv katman sınırı nedeniyle kapalı bırakıldı." % job["limited"]
                         return
                     except FileExistsError:
                         if job["conflict"] == "skip":
@@ -367,7 +537,7 @@ class Archives:
         deadline = time.monotonic() + MAX_SECONDS
         try:
             with self.lock:
-                job.update(status="running", message="ZIP oluşturuluyor" if job["operation"] == "zip" else "ZIP açılıyor")
+                job.update(status="running", message="Arşiv oluşturuluyor" if job["operation"] == "zip" else "Arşiv açılıyor")
                 self.persist()
             with self.work_fd() as work:
                 os.mkdir(job["id"], 0o700, dir_fd=work)
@@ -383,6 +553,11 @@ class Archives:
                             os.fsync(output.fileno())
                     else:
                         os.mkdir("result", 0o775, dir_fd=stage)
+                        if RAR_SUFFIX.search(job["names"][0]):
+                            with self.fd(self.files.open_dir(self.files.split(job["path"]))) as parent, self.fd(os.open("result", DIR_FLAGS, dir_fd=stage)) as target:
+                                self.extract_rar(parent, job["names"][0], target, job, event, deadline, 1)
+                            self.publish(stage, identity, job, event, deadline)
+                            return
                         handle, info = self.files.open_file(self.files.split(job["path"]) + job["names"])
                         with os.fdopen(handle, "rb") as source, self.fd(os.open("result", DIR_FLAGS, dir_fd=stage)) as target:
                             if info.st_nlink != 1 or info.st_dev != os.fstat(work).st_dev:
@@ -396,7 +571,7 @@ class Archives:
             with self.lock:
                 job.update(status="cancelled", message="İptal edildi; kaynaklar korundu, sonuç yayımlanmadı.")
         except Exception as err:
-            message = str(err) if isinstance(err, ArchiveError) else "Arşiv işlenemedi; bozuk/uyumsuz ZIP, değişen kaynak veya disk/izin hatası."
+            message = str(err) if isinstance(err, ArchiveError) else "Arşiv işlenemedi; bozuk/uyumsuz arşiv, değişen kaynak veya disk/izin hatası."
             with self.lock:
                 job.update(status="failed", message=message)
         finally:

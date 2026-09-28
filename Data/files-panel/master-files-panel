@@ -692,6 +692,7 @@ class Panel:
             "host": socket.gethostname(),
             "version": self.args.version,
             "root": self.args.root,
+            "downloads": getattr(self.args, "downloads_dir", ""),
             "domain": self.args.domain,
             "temp": self.args.temp_dir,
             "writable": os.access(self.args.root, os.W_OK),
@@ -1070,6 +1071,10 @@ def cmd_serve(args):
     if args.temp_dir and not all(valid_name(p) for p in args.temp_dir.split("/")):
         fail("geçersiz --temp-dir")
     try:
+        Files(args.root, args.trash, args.share, args.archive_dir).split(args.downloads_dir)
+    except PanelError:
+        fail("geçersiz --downloads-dir")
+    try:
         os.close(Files(args.root, args.trash, args.share).open_dir([]))
     except OSError as err:
         fail("kök açılamadı: %s (%s)" % (args.root, os_message(err)))
@@ -1094,6 +1099,7 @@ def main():
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
     s.add_argument("--temp-dir", dest="temp_dir", default="")
+    s.add_argument("--downloads-dir", default="")
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)

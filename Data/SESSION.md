@@ -4,6 +4,658 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-28 — v2-144, approved Files icon dock B (DD-170 follow-up):**
+- Implemented the second visual alternative: compact floating surface, count
+  left/dismiss right above six equal icon-over-label actions. Ineligible actions
+  retain disabled slots, trash uses red ink without a filled button, mobile is
+  3×2. No new dependencies or backend/API/archive semantics changes.
+- Local: 108 Python tests pass (two native RAR skips), 155 Bats cases pass
+  (three macOS timeout skips), all four browser suites pass; JS/bash syntax,
+  ShellCheck and whitespace checks pass. Files coverage now checks eligibility
+  for ordinary files, RAR volumes, folders and multiple selections, keyboard
+  focus/activation, action-dialog routing, download links excluding folders,
+  equal cell widths/icon-label geometry and eight widths in both themes.
+  Initial download assertion used a route that Chromium downloads bypassed;
+  changed the fixture to capture generated download anchors, not real transfers.
+- Deployed only through the exported portable launcher using a scratch
+  SSH_HOST=nrm/blank LOCAL_DOMAIN, h full-upgrade and E confirmation. Stages
+  0–7 passed; no packages/reset/reboot. Normal permission sweep repaired one
+  entry. Root/app/repeated exports are identical; embedded archive SHA256:
+  4a82d1706db2fdec9771488d2cda90f03ae19d6424f022ed39568a94dc85283a.
+- Installed JS/CSS/backend hashes match source and /api/state reports v144.
+  Read-only live browser passed seven widths × two themes, dialog open/cancel,
+  keyboard and dock visibility checks, blocking all non-GET/HEAD requests:
+  zero writes, CSP or JS errors. Local and live screenshots visually inspected.
+  Eight services active, zero failed units/pending settings; firewall --check,
+  dnsmasq --test, Caddy and systemd unit validation pass.
+- Pre/post WebDAV registry SHA256 remains
+  664fae636cb8e04388a82739974d725dd7bcbae049b213007812b29c00700f38;
+  settings remains 7d401335dcfe735657dde6b3d9767876247dcbf9ec3e91357d21d2020fa75e30;
+  qBittorrent profile remains c6f4f84a250237f3b64d21c5d03aacb21ba5f3e909889ac34b8438f3cf417048.
+  qBittorrent PID/InvocationID 340708/c3a224de978a48dc8c6969043a79cbff unchanged
+  from this turn's preflight (operator changed it since the v143 record).
+- No user data removed. Exporter replaced the two v143 portable copies; both
+  are recoverable in /tmp/konsol-icon-dock.WNHmtj alongside the scratch input,
+  repeated export, read-only live test and screenshots. No fresh Ubuntu/reboot
+  acceptance claim. No commit or push requested/performed.
+
+**2026-09-28 — v2-143, Files dock and automatic archive opener (DD-170):**
+- Selected-item actions now appear in a bottom dock, keeping breadcrumbs/search
+  in place. Selection filtering, leaving Files, clearing selection and navigation
+  update/hide it; responsive controls and bottom spacing prevent clipping. Toasts
+  sit above the dock. The compact trash and inline share controls are preserved.
+- Archive dialog now has result name, directory picker and name-collision policy
+  only. Default downloads comes from DOWNLOADS_SUBDIR -> unit --downloads-dir ->
+  GET /api/state.downloads, independently of current source/qBittorrent save path.
+  Picker uses dirs-only API, rejects failed/stale reads, supports root/up/subfolder,
+  retains destination on cancel and draft on submit failure. Generic labels:
+  Arşiv açıcı / Arşiv oluştur; creation automatically appends .zip.
+- UI omits nested/layers; worker defaults to recursive/MAX_LAYERS. At five-layer
+  ceiling the automatic job fails without publication (legacy explicit options
+  remain compatible). RAR volume discovery and ZIP/RAR recursion stay in the
+  existing bounded worker. Originals and nested archives remain; per-archive
+  subfolders avoid flattening/overwrite. Job statistics hidden in UI, not removed
+  from API. Shared 2 GiB/10,000-entry/900-second caps are unchanged.
+- Local 108 Python tests pass (two native RAR skips), 155 Bats pass (three macOS
+  timeout skips), four browser suites pass. Updated obsolete structural guards
+  for search's dock refresh and retired-Unpackerr versus built-in action label.
+  Initial Bats environment omitted /sbin (sha256sum); full rerun with normal
+  system paths passes. Parallel preview browser starts timed out; sequential
+  suites pass. Files dock tested at eight widths/both themes, archive picker at
+  four widths/long names/failed reads and saves. JS/bash syntax, shellcheck -x,
+  whitespace checks pass. Screenshots visually inspected.
+- Portable-only nrm update: scratch SSH_HOST=nrm, blank LOCAL_DOMAIN, h full
+  upgrade and E confirm. Initial attempt stopped before confirmation to include
+  toast positioning fix, final stages 0–7 pass. No packages/reset/reboot. Normal
+  permissions pass repaired one entry; Files service restarted. Export root/app
+  and repeat output match; archive SHA256:
+  84e02095ad3765130cf91a7a6f2e08b73f39f42b7124ac87b7f21e4a36c6a140.
+  Installed JS/CSS/backend hashes match local; file state reports v143/downloads.
+- Native Linux: 27 ZIP/RAR tests pass as master-downloads, including actual
+  unrar compressed/solid/old/new multipart/unsafe/encrypted rejection and mixed
+  recursion. Existing upstream fixtures reused read-only. Live production browser
+  creates ZIP and automatically expands four layers through the real service;
+  exact payload and original source SHA256 match. It tests picker/default target,
+  invalid-name error recovery, shares/settings/navigation and five widths.
+  Initial live test's mobile navigation race was fixed by awaiting hash/menu
+  completion; repeat passes. No optional application lifecycle was enabled.
+- Both owned /srv/archive-test-* trees were verified then removed permanently;
+  ordinary archive job audit history retained. No user archives were extracted,
+  moved or deleted. Final eight services active, no failed units/pending settings;
+  firewall --check, dnsmasq --test, Caddy and systemd unit validation pass.
+  WebDAV/settings/qBittorrent hashes remain exactly as v142 below; qBittorrent
+  PID/InvocationID still 320350/08757c3722ff491593e33fa6fa3ad9dd.
+- Scratch inputs/helpers and recoverable v142 exports:
+  `/tmp/konsol-archive-dock.BjrfwF/`; native helpers:
+  `/tmp/konsol-archive-v143.wFowc1/`. Final live screenshots:
+  `/var/folders/hz/s9hhjptx181_cspndbzdz7c80000gn/T/konsol-v130-live-aVBybE/`.
+  Operator input, frozen versions and unrelated dirty changes preserved. No
+  commit/push; no fresh Ubuntu/reboot acceptance claim.
+
+**2026-09-28 — v2-142, compact trash and inline share controls (DD-169):**
+- User supplied overflow/sparse-layout screenshots. Move-to-trash now shows
+  a short question, filename (one line, full title tooltip) or item count and
+  Cancel/Move. No path/size/explanation rows; shared confirmation content is
+  bounded. Permanent purge warnings and typed empty-trash confirmation remain.
+- Shares use aligned folder/URL, username, access, expiry, state and action
+  columns, folding to labeled cells on narrower screens. Native selects save
+  immediately; RW still confirms permanent-write/delete permission. Durations
+  1/7/30 days begin now; unlimited and current absolute expiry are explicit.
+  Manage edits only folder/username/password; new-share defaults are still RO/7d.
+- Existing `kaydet` endpoint accepts partial existing-share bodies. Under the
+  existing locks, omitted fields retain current registry values; list-only
+  edits preserve folder identity rather than rebinding missing/replaced roots.
+  Explicit RW requires acknowledgement; unrelated edits of existing RW do not.
+  Block conflicting list controls during writes and suppress stale/focused-select
+  polling redraws. Keep restart/rollback, stopped-service and expiry behavior.
+- Local: 106 Python tests (two native RAR skips), 155 Bats cases (three expected
+  macOS skips), all four UI suites, JS/bash syntax, ShellCheck and whitespace
+  checks pass. The first Bats run caught an obsolete structural keep-duration
+  expression; the equivalent keep/null conversion now lives in the inline
+  selector. Full rerun passed without changing its guard. Native Debian: 22
+  WebDAV fixture tests pass in a private network namespace.
+- Portable-only nrm update: scratch SSH_HOST=nrm, blank LOCAL_DOMAIN,
+  full-upgrade h, confirmation E; stages 0–7 passed. No packages/reset/reboot.
+  Installer's normal permissions pass repaired one entry. WebDAV restarted for
+  its updated helper. Installed Python/JS/CSS hashes match local; repeated root/
+  app exports match with archive SHA256:
+  98811e88adc37e4ba1102ff3344208cf9973b405a6d9cdeb77c6783a75acd1e2.
+- Live production Caddy/API/worker test created only a random owned share/tree:
+  acknowledge RW, real PUT/GET, RO write/delete rejection, all durations,
+  account-only edit retaining hash/access/expiry, paused expiry edit and replaced
+  root failing closed. Cleanup revoked its account and deleted only its test
+  files. Original share registry is byte-identical. Read-only live browser checks
+  pass eight widths/both themes plus compact confirmation/account editor, with
+  zero writes or JS errors. Existing trash was never mutated by UI checks.
+- Final eight services active, no failed units/pending settings; firewall,
+  dnsmasq, Caddy and systemd unit validation pass. Before/after hashes unchanged:
+  WebDAV 664fae636cb8e04388a82739974d725dd7bcbae049b213007812b29c00700f38;
+  settings 7d401335dcfe735657dde6b3d9767876247dcbf9ec3e91357d21d2020fa75e30;
+  qBittorrent 35b23611c5c2680ede1cd8211b746788d5f15c46aff4dd4c3aaf2f4b76340502.
+  Real qBittorrent PID/InvocationID remain 320350/08757c3722ff491593e33fa6fa3ad9dd.
+- Scratch inputs, live helpers/screenshots and recoverable v141 exports are in
+  `/tmp/konsol-shares-layout.Qb6T2N/`; server test helpers (not account secrets)
+  in `/tmp/konsol-share-controls.QD2iPw/`. Local preview/launcher/test processes
+  closed. Operator input, frozen versions and prior dirty work preserved;
+  no commit/push and no fresh Ubuntu/reboot acceptance.
+
+**2026-09-28 — v2-141, eight-character service passwords (DD-168):**
+- User requested qBittorrent/WebDAV minimum 12 -> 8 if supported. The old
+  minimum was a Konsol policy: change both browser inputs/messages and backend
+  validators. Keep maximum 256, character restrictions, password hashes,
+  blank-edit preservation and the long random WebDAV generator. No real account
+  password is changed. Historical design demos/retired policies remain historical.
+- Local: 102 Python tests (two native RAR skips), 155 Bats cases (three macOS
+  timeout skips), settings/files browser suites, JS/bash syntax, ShellCheck and
+  diff whitespace checks pass. Boundaries include seven rejected/eight accepted,
+  existing upper/control-character restrictions and real WebDAV GET/PROPFIND
+  authentication/old-password rejection/read-only write denial.
+- Portable nrm update completed stages 0–7 using scratch SSH_HOST=nrm and blank
+  LOCAL_DOMAIN, full-upgrade h and confirmation E. No package changes, reset or
+  reboot. The normal installer corrected one download entry's ownership/mode.
+  WebDAV was restarted because its imported validator changed; the real
+  qBittorrent PID/InvocationID stayed 55839/8ffc2db03d9d4ffba9e01e79d648347f.
+- Existing WebDAV registry, panel settings and qBittorrent configuration SHA256
+  remain identical to pre-install values. Installed Python/JS hashes match local
+  sources; eight services are active, no failed units or pending settings;
+  firewall/Caddy/dnsmasq checks pass. Live browser forms enforce 8 and reject 7
+  with zero mutation requests/JS errors. Eighteen isolated Debian WebDAV tests pass.
+- Disposable native qBittorrent 5.1.0 test passes: seven characters rejected,
+  eight-character login, persistence after process restart, old credentials
+  rejected, blank password retained, failed-commit rollback and stopped-service
+  preservation. Its real firewall/DNS checks also pass, in a private network
+  namespace and temporary profile, never the installed services/configuration.
+- Root/app/repeated export match; embedded archive SHA256:
+  d20de3bef708357d4a0adbc9719af530bd51d9fc48cd3d145fcee26fd2fdf305.
+  Scratch input, read-only browser helper and recoverable v140 installer copies:
+  `/tmp/konsol-password.WIRBnD/`. Only tests were copied separately to the server;
+  runtime delivery used the portable installer. Operator input and frozen versions
+  untouched; prior dirty work preserved; no commit/push. No fresh Ubuntu/reboot claim.
+
+**2026-09-28 — v2-140, WireGuard network settings (DD-167):**
+- User requested default DNS and local-access editing from the network-card
+  refresh action. Replace that destructive shortcut with a settings dialog;
+  keep key regeneration separate with typed `onayla`. Save is immediate and
+  preserves existing profiles/keys/ports/addresses/labels and WG running state.
+  Default DNS only preselects the new-peer form; per-peer DNS editing is unchanged.
+  Local access retains its narrow qBittorrent-only meaning, not Konsol/SSH/WebDAV.
+- Add gated `POST /api/wg/nets/<iface>/ayarlar` and locked `net-settings` helper.
+  Validate DNS IPs, compare exact registry-row SHA256 revision under the install
+  lock, reject pending Settings transactions, invalidate the firewall read cache.
+  Close listener before tightening policy; open policy before listener. Roll back
+  ordinary failures/signals, with explicit incomplete-rollback errors. No durable
+  power-loss/SIGKILL recovery claim or general reconcile loop.
+- Live stress testing exposed systemd's firewall 12/300s and Caddy 5/600s start
+  budgets. Explicit local changes now reset only these two counters, retaining
+  automatic restart-loop limits. A never-loaded Caddy instance rejects reset;
+  ignore that case and still strictly check actual enable/start. DNS-only changes
+  invoke no service actions. Unit tests cover both cases and rollback.
+- Native Debian integration uses its own temporary WG network/peer and Linux
+  client namespace. Client UDP socket stays in its birth host namespace; actual
+  encrypted traffic reaches the selected WG interface and real input firewall.
+  OFF blocks qBittorrent; ON returns HTTP 200. Fourteen rapid additional toggles
+  pass without rate-limit lockout. Stale revisions return 409; firewall view
+  baseline updates; server config/profile and WG InvocationID stay unchanged.
+  Editing a stopped network does not start WG/Caddy; explicit start restores
+  access. Allow handshake re-establishment after that intentional restart (the
+  first test's immediate 3-second probe was too short). Owned test network,
+  peer and namespace are removed; original registry/configs match byte-for-byte.
+- Local: 155 Bats cases (three expected macOS timeout skips), 99 Python tests
+  (two native RAR skips) and all four browser fixture suites pass. WireGuard
+  checks save/failure/draft retention, new-peer DNS default, stopped networks,
+  separate regeneration confirmation, four widths/dark/production CSP.
+- Portable-only nrm update/reruns: scratch SSH_HOST=nrm, blank LOCAL_DOMAIN,
+  full-upgrade h, confirmation E. All three completed installers pass stages 0–7;
+  no package changes, reset or reboot. One intermediate browser stress attempt
+  exhausted the pre-fix start budget; scratch network was removed and project
+  firewall explicitly reset/restarted before the corrected portable reruns.
+- Root/app/repeat exports match. Embedded archive SHA256:
+  9d8cca47cf9aedf21c357d5b1346c5460ba26b45c396ddf8fa7f70317dac59d5.
+  Installed helper/backend/JS/CSS hashes equal local sources. Scratch input,
+  test helpers/logs/screenshots and recoverable v139 exports:
+  `/tmp/konsol-wg-settings.uxzX1D/`; server helper (no secrets) in
+  `/tmp/konsol-wg-settings-live.90jN4B/`. Prior dirty work preserved;
+  no commit/push, operator input/frozen versions/Desktop untouched.
+- Final live Chromium Save ON/OFF, reopen persistence, new-peer DNS preselection
+  and 1440/390/320px layouts pass, with zero JS/CSP errors. Browser-owned network
+  removed. Baseline `before.txt` equals final hashes for original registry,
+  wg0/wg1 configs, existing peer, WebDAV/settings/qBittorrent config and both
+  WebDAV/qBittorrent PIDs/InvocationIDs. Eight services active; no failed units,
+  pending settings or test namespaces. Firewall/Caddy/dnsmasq/unit checks pass.
+  Launcher/browser sessions and task-owned local preview are closed.
+  No fresh Ubuntu or reboot acceptance; committed history remains unchanged.
+
+**2026-09-28 — v2-139, multipart/nested RAR in Files (DD-166):**
+- User requested unrar and file-manager support for multipart/nested RAR.
+  Keep the existing ZIP API/job manager; `unzip` accepts ZIP/RAR3/RAR5,
+  solid/old-style/new-style volumes, later-part selection and mixed nesting.
+  Sources/inner volumes are retained. Job limits remain 2 GiB/10,000 entries/
+  five layers/900 seconds; missing/unsafe/encrypted/corrupt archives fail closed.
+- Add distro `unrar` and `python3-rarfile`, with a managed signed non-free
+  Debian or universe/multiverse Ubuntu apt source only if candidates are missing.
+  RAR metadata is parsed in a resource-limited process. Snapshot validated source
+  volumes privately; stream `unrar p` output through parent-owned safe writes,
+  size/CRC checks, cancellation/time/output caps and atomic publication.
+- Native tests caught unnamed metadata headers and Windows attribute bits
+  overlapping Unix device types; both fixed and covered by real fixtures.
+  The UI offers “Arşivi aç”; long archive paths now wrap in the dialog and
+  breadcrumbs without forcing the Files grid offscreen. Share copy placement,
+  account/permission flows and ZIP creation are preserved.
+- Local: 94 Python tests (two explicit Linux/optional-fixture skips), 149 Bats
+  cases (three expected macOS timeout skips), all three browser suites pass.
+  Bash/ShellCheck/JS syntax and diff whitespace pass. Browser fixture coverage
+  includes RAR/.r00/.part01 selection, submission and long-path dialogs at four widths.
+- Debian 13 nrm: 25 ZIP/RAR tests pass as the unprivileged master-downloads user,
+  against installed code and real distro unrar 1:7.1.8-1 / python3-rarfile 4.2-3.
+  Test genuine RAR3/RAR5, solid, old/new multipart, Unicode/BLAKE2, encrypted/link/
+  duplicate rejection, missing final volume, RAR→ZIP→RAR and multipart RAR inside
+  RAR (reverse member order, extracted once). Upstream test fixtures are scratch
+  only, pinned to markokr/rarfile d2f7df6fc843dae356fd6b0a85971dc36fd6e757.
+- Portable launcher deployed/re-ran with scratch SSH_HOST=nrm, blank domain,
+  full-upgrade h, confirmation E. All completed installs passed stages 0–7.
+  One stale-launcher attempt was interrupted at the pre-install prompt, before
+  confirmation. Only the two RAR packages were added; non-free source is managed
+  separately. Final UI-only rerun left Files PID 91508 unchanged. No reset/reboot.
+- Real browser selected `rg-42386.rar` in
+  `/srv/downloads/Acronis.True.Image.Build.42386.Multilingual.Bootable.iSO-rG`.
+  Job 52254606ec18176e5245dd41 opened all 17 volumes in 16 seconds, output
+  `rg-42386-acilan-test/rg-42386.iso` (881,197,056 bytes, CRC32 3452295790).
+  SHA256 e892719cb1c71b42fe33600d0b29c8bc6a1991fa1762cf5451d4cbb953b273bc.
+  All 17 source SHA256 values match before/after. This actual archive contains
+  an ISO, not an inner RAR; nesting was verified separately above. No extracted
+  software was executed. Output is retained for the user, staging contains only jobs.json.
+- Live dialog verified at 1440/390/320 px. The scratch browser's asynchronous
+  wait assertion initially returned while the job was running; no resubmission.
+  A read-only follow-up waited for the terminal UI row and verified result
+  navigation/ISO listing, with zero writes or JS/CSP errors. Source/runtime hashes match.
+- WebDAV registry, confirmed settings and qBittorrent profile hashes match the
+  v138 baseline below; WebDAV PID 70392 and qBittorrent PID 55839/invocations
+  unchanged. Eight checked services active, no failed units/pending settings;
+  firewall --check, dnsmasq and Caddy validation pass. Ubuntu repo selection is
+  unit tested, not a new fresh Ubuntu/live/reboot acceptance.
+- Root/app/repeat exports identical. Embedded archive SHA256:
+  9e4b7f62887798f368f6b4967751b37585b6ecd75a2c0c2302999d26b8f542df.
+  Scratch sources, screenshots, test logs, input and recoverable v138 packages:
+  `/tmp/konsol-rar.uHiKcV/`; Linux fixtures `/tmp/konsol-rar-test.uZ431f/`.
+  Preview and launcher/browser sessions closed. Prior dirty work preserved;
+  no commit/push, operator input/frozen versions/Desktop untouched.
+
+**2026-09-28 — v2-138, share address copy placement and Infuse diagnosis:**
+- User confirmed Infuse on their phone now browses/plays the existing media
+  share after re-entering the path, then reported a successful transfer test.
+  Earlier passive WebDAV metadata inspection saw authenticated PROPFIND to a
+  nonexistent one-character child path returning 404. The exact character and
+  its origin were not established; do not blame the panel or iOS without proof.
+- Read-only live v137 and v138 audits compared API URL, textContent, innerText,
+  Range selection, fallback textarea value and actual isolated Chromium
+  clipboard. All are identical (53 printable ASCII characters, final slash),
+  desktop and mobile emulation. Native iPhone clipboard was not instrumented;
+  WebKit was not installed. No password was read, reset or logged.
+- On request, move copy beside the URL in both the Shares list and folder
+  details, using a shared compact address group with 6 px spacing, wrapping and
+  a non-shrinking button. Remove the distant list action. URL generation,
+  clipboard implementation, account APIs and WebDAV backend are unchanged.
+- Files fixtures check exact copied text and geometry in both places at five
+  widths; original forms, ZIP/navigation, Trash and dark/CSP coverage passes.
+  Files, Settings and Model A browser suites pass; all Bats tests pass apart
+  from the three expected macOS timeout skips. Bash/ShellCheck/JS syntax and
+  whitespace checks pass. Existing WebDAV Python tests passed during the prior
+  diagnostic (16 tests); no backend changed in this UI-only release.
+- Portable nrm update exit 0, all seven stages passed. Scratch SSH_HOST=nrm,
+  blank LOCAL_DOMAIN, full-upgrade h, confirmation E; no package changes or
+  reset/reboot. Installer repaired one data-tree permission/ownership entry
+  and reapplied the existing WireGuard network (actual interface wg0, one peer).
+  Live firewall --check, dnsmasq and Caddy validation pass; no failed units or
+  pending settings. An initial inspection used wrong settings/unit names and
+  the wrong firewall CLI spelling; corrected checks above are authoritative.
+- Before/after WebDAV registry, settings and qBittorrent profile hashes match.
+  WebDAV PID 70392/invocation 3f2317e98a3e4b8892c0dd7f21bb7714 and qBittorrent
+  PID 55839/invocation 8ffc2db03d9d4ffba9e01e79d648347f are unchanged.
+  WebDAV hash: 664fae636cb8e04388a82739974d725dd7bcbae049b213007812b29c00700f38.
+- Postdeploy read-only live audit passes list geometry at five widths,
+  desktop/mobile actual clipboard, selected URL and served-source hashes;
+  zero JS errors or mutation requests. This is in-place Debian acceptance,
+  not a new clean Ubuntu/reboot test. Preview/launcher/browser sessions closed.
+- Root/app/repeat exports identical. Embedded archive SHA256:
+  888d8839bac562e488b1df761304bcf61ce9b649787e7ea5d5d26a7a5707d12f.
+  Scratch audit/screenshots/input and recoverable v137 root/app packages:
+  /tmp/share-copy-audit.67r26b/. Existing dirty v130–v137 work preserved;
+  no commit/push, operator input/frozen versions/Desktop untouched.
+
+**2026-09-27 — v2-137, Trash column/name layout:**
+- User reported the Trash page collapsing filenames. Live inspection confirmed
+  the later `.fs-t .tr` five-column rule overrode `.trash-t .tr`: the filename
+  was placed in a 26 px selection column (47-character name, 876 px row height).
+  Previous Files fixtures only exercised empty Trash, so they missed it.
+- Add scoped `.fs-t.trash-t` rules in dosyalar.css: four desktop columns,
+  wrap full names/origin paths, min-width guards, aligned headers/actions,
+  dark-mode Restore text. At <=1100 px the name spans both columns, metadata
+  stays visible and actions move below it. No runtime JS/API/backend changes.
+- Files UI fixtures now cover empty/populated Trash, short/Turkish/255-character
+  unbroken names, long paths, seven widths including both breakpoint edges,
+  light/dark and production CSP. Assert bounds/alignment/overlap and mocked
+  restore, purge cancel/confirm and typed empty confirmation. Wait two render
+  frames after resizing; an initial live geometry assertion was transient,
+  a rerun and the frame-synchronized final test both pass. All live mutation
+  requests are blocked; no real Trash item is restored/purged/emptied.
+- Local: 144 Bats passes/3 macOS timeout skips; Files, Settings and Model A
+  browser suites pass. Bash/ShellCheck/JS syntax/whitespace checks pass.
+  Python unit suites were not rerun for this CSS-only change. Desktop/mobile
+  fixture and live screenshots inspected; long text stays inside its cells.
+- Portable nrm update exit 0/all stages passed. Scratch SSH_HOST=nrm,
+  LOCAL_DOMAIN blank; full-upgrade default no, confirmation E. No package
+  additions/upgrades/removals, host reset or reboot. Installer repaired two
+  data-tree ownership/permission entries and reapplied the existing WireGuard
+  network (one peer); qBittorrent's PID/invocation/profile hash and confirmed
+  settings hash unchanged. WebDAV registry changed during the predeployment
+  interval (mtime 22:37:24 +02, deployment started 22:38:18), with one RO share;
+  do not claim its initial-turn hash was preserved or revert this operator state.
+- Live v137 CSS matches source; seven widths/both themes, zero JS/CSP errors
+  or mutation requests. Trash API inventory hash identical before/after
+  deployment: `8fffbceb8c5c33fe0953889d69ae137b64a12dce7d2d4c14a1408602db4ed642`
+  (one item). Filename column is 664 px at 1440 px and 254 px at 320 px.
+  Eight core/app services active, no failed units/pending transaction;
+  firewall, Caddy, dnsmasq and systemd validation pass. In-place Debian only,
+  not fresh Ubuntu/reboot acceptance.
+- Scratch screenshots/scripts and recoverable previous v136 root/app copies:
+  `/tmp/konsol-v137.QxsVK1/`. Root/app/repeat exports identical; embedded runtime
+  matches sources. Archive SHA256:
+  `8656dac3dbcc3c8e9ae3078e0f1edbe3bbaa9cd55358f57d366278746585d447`.
+  Existing dirty v130–v136 work retained; no commit/push. Operator input file,
+  frozen versions and Desktop untouched.
+
+**2026-09-27 — v2-136, qBittorrent field alignment:**
+- User confirmed their password change works and requested layout alignment.
+  Read-only live inspection found the repeat-password input 12 px lower/taller
+  than its neighbour and an extra 18 px body inset beneath card headings.
+- Scoped panel.css rules align labels/inputs/Save, equalize control heights,
+  remove the double inset and place the boxed download path beside its action
+  on desktop. Mobile stacks controls; long paths wrap; dark-mode folder action
+  stays legible. No account API, worker, validation or save-flow changes.
+- Local: 144 Bats passes/3 macOS timeout skips; Settings, Model A and Files
+  browser suites pass. Settings geometry now covers five widths in both themes
+  and very long paths; existing single-save/validation/failure/retry checks pass.
+  Bash/ShellCheck/JS syntax and whitespace checks pass. Python unit suites were
+  not rerun for this CSS-only change (84 passed in v135).
+- Portable nrm update exit 0/all stages passed. Scratch SSH_HOST=nrm and blank
+  LOCAL_DOMAIN; full-upgrade default no, confirmation E. No packages upgraded,
+  added or removed; no host reset/reboot. Installer repaired one downloads
+  ownership/permission entry. qBittorrent profile, settings and WebDAV hashes
+  are unchanged; qBittorrent PID/invocation unchanged. User's live account was
+  never submitted/revealed by these tests. WireGuard is now installed with one
+  network/peer (operator change since v135); installer retained/reapplied it.
+- Live read-only browser checks pass at 1440/1024/736/390/320 px in light/dark:
+  headings/input/action alignment, equal heights, responsive stacking, no
+  overflow, no JS/CSP errors, zero mutation requests. Served v136 CSS matches
+  source. Desktop/mobile screenshots inspected. Eight core/app services active,
+  zero failed units/no pending settings; firewall, Caddy, dnsmasq and systemd
+  validation pass. This is an in-place Debian update, not fresh Ubuntu or
+  reboot acceptance. Local preview and portable launcher sessions closed.
+- Scratch scripts/screenshots and preserved untracked v135 root/app copies:
+  `/tmp/konsol-v136.yytewk/`. Root/app/repeat exports identical and embedded
+  runtime sources match. Archive SHA256:
+  `913f5d62dcff265fb7385482b4a09a2d768cd8b408e40029f29d660d4d8693f1`.
+  Existing dirty v130–v135 work retained; no commit/push. Operator input file,
+  frozen versions and Desktop untouched.
+
+**2026-09-27 — v2-135, one-click qBittorrent account save (DD-165):**
+- User approved simplifying the confusing staged account flow. Read-only
+  diagnosis found admin/temporary login unchanged, no account apply POST, and
+  working qBittorrent/API connectivity. Staging was being mistaken for saving.
+- Account Save now sends username/password alone, commits immediately, reports
+  explicit success/failure, disables duplicate submission and clears passwords.
+  Other DNS/firewall/folder drafts remain unapplied and use the refreshed revision.
+  Fix the HTML username pattern's unescaped hyphen. Explain temporary-password
+  rotation; blank preserves an existing stored hash. Hide the empty draft footer
+  on the account page. No password persistence in the browser or worker metadata.
+- Worker classifies account-only requests (no save path or other sections),
+  retaining validation/locks, stop/flush/snapshot/write/restart, stopped state and
+  crash-safe rollback/commit markers. Folder/mixed/firewall/domain confirmation
+  and DNS-only immediate Apply are unchanged. No new packages or network exposure.
+- Local: 84 Python tests; 144 Bats passes/3 macOS timeout skips; Settings,
+  Model A and Files browser suites pass. Tests cover single Save, validation,
+  mismatch, duplicate blocking, username-only/password-only, failure/retry,
+  reload, unrelated drafts and revision refresh; no browser regex/CSP errors.
+  Bash/ShellCheck/JS syntax and whitespace checks pass; desktop/mobile inspected.
+- Portable nrm update exit 0/all stages passed, using scratch SSH_HOST=nrm and
+  blank LOCAL_DOMAIN, full-upgrade default no and confirmation E. No package
+  changes, host reset or reboot. Installer repaired one downloads permission/
+  ownership entry. qBittorrent's process/invocation and profile hash unchanged;
+  WebDAV registry hash unchanged. Existing optional qBittorrent retained, WG absent.
+- On nrm, 40 settings unit tests and real isolated Linux tests pass: actual
+  qBittorrent new login/old login rejection, restart persistence, stored-password
+  preservation, failed-commit rollback and stopped-state retention. The fixture
+  uses a private network namespace/profile and never controls production services.
+  Real IPv4/IPv6 firewall and dnsmasq regressions and systemd guard/worker pass.
+- Deployed browser check verifies served asset equality, one account POST, real
+  API/systemd stale-revision rejection before mutation (forced stale revision,
+  disposable input only), explicit error/no false success, secret clearing and
+  unchanged account/config/revision. Missing-header gate returns 403. Three
+  widths/light/dark pass. Successful credential changes were tested in the
+  isolated real qBittorrent fixture, not by changing the operator's live account.
+- Caddy/dnsmasq/firewall/systemd verify pass; eight core/app services active,
+  zero failed units/no live pending transaction. User should reload the panel
+  and set their preferred account with Hesabı kaydet; no password was chosen
+  for them. In-place Debian verification, not fresh Ubuntu/reboot acceptance.
+- Scratch scripts/screenshots and preserved v134 root/app copies:
+  `/tmp/konsol-v135.3gfPpL/`. Root/app/repeat v135 exports identical, embedded
+  runtime tree matches sources. Archive SHA256:
+  `979b3a833f86a341428c36844cd72838e9024095063be0d55019fe99fe7d4e06`.
+  Existing dirty v130–v134 work retained; no commit/push. Operator inputs,
+  frozen versions and Desktop untouched.
+
+**2026-09-27 — v2-134, incoming-network firewall tabs (DD-164):**
+- User approved the proposed categorization. Implemented Tailscale (default),
+  Internet, conditional WireGuard with per-interface selection, and protected
+  loopback. Technical rules stays an all-network read-only view, including
+  INPUT/FORWARD/NAT, full specs/order/counters/ownership. Incoming scope replaces
+  the redundant table column; service rows retain interface/family and descriptions.
+- Socket binding status is separate from permission: matching network, loopback
+  only, another address, no listener and unknown/unreadable. Backend read-only
+  metadata classifies actual addresses/zones, fixes ss IPv6 `]%tailscale0`
+  formatting and reuses known service names across scopes. No worker/policy,
+  write-API, dependency, bind address, deadline or privilege changes.
+- Preserve drafts across tabs, keyboard focus/navigation, edit/remove/on-off,
+  protected loopback, confirmation and server rollback. DNS-only immediate
+  Apply remains. WireGuard public UDP endpoints stay in Internet; installed
+  with no available networks has an explicit empty state. Explicit Refresh,
+  not background polling, reads external changes.
+- Local: 77 Python tests pass, including six new firewall-view tests; Bats
+  147 total (144 pass/3 macOS timeout skips). Settings/Model A/Files browser
+  suites pass with production CSP. New fixtures cover absent/empty/multiple
+  VPN networks, per-interface rule defaults, bindings versus permissions,
+  draft retention and nested keyboard tabs. Five widths/light/dark pass.
+  Fixed a wrapper min-width overflow and firewall button theme contrast found
+  during visual checks. Bash/ShellCheck/JS syntax and whitespace checks pass.
+- Portable nrm update used scratch SSH_HOST=nrm, blank LOCAL_DOMAIN,
+  full-upgrade default no, confirmation E. Exit 0/all stages passed; no package
+  upgrades/additions/removals, reset or reboot. Installer repaired one downloads
+  ownership/permission entry. Installed optional apps remain absent. Six new
+  backend unit tests pass on Debian Python against the portable runtime.
+- Live browser audit passes: category rows match the API, every raw IPv4/IPv6
+  rule specification/order matches the kernel, scoped IPv6 addresses are valid,
+  loopback switches disabled, WireGuard absent as expected. Five widths and
+  light/dark inspected; no browser JS/CSP errors. On owned tailnet-only TCP
+  port 49429, both families pass draft-only/deny/confirm/reload/allow/manual
+  rollback/60-second guard rollback, verified using fresh connections and
+  actual kernel rules. Removed only the two owned test rules through the UI;
+  complete normalized kernel rules (including foreign chains) and DNS choices
+  match the starting state. No pending transaction remains. Screenshots/script/
+  report are in the scratch directory. No actual WireGuard installation was
+  needed: multi-network behavior is fixture/unit tested, not live VPN certified.
+- Core services and guard active, zero failed units/recent service errors;
+  firewall/Caddy/dnsmasq/systemd verify (--man=no) pass. Initial deployment
+  preserved settings/WebDAV/ZIP file hashes; after the scoped test, semantic
+  settings are restored (only transaction metadata changes).
+- Scratch work and preserved untracked v133 root/app installers:
+  `/tmp/konsol-v134-deploy.2PWIKt/`. Existing dirty v130–v133 work preserved;
+  no commit/push. Operator input file, frozen versions and Desktop untouched.
+- Final portable archive SHA256 (root/app/repeat exports identical; all 44
+  embedded runtime files match source):
+  `d0c0742a4ed63a4ce9009a4e466a4b07927199ac66923c05ef134ad2bd5f0d54`.
+- Final theme contrast patch was re-exported and deployed through the portable
+  launcher, with the same scratch inputs/defaults. Re-run exit 0; unchanged
+  firewall, DNS, Caddy and panel backend were not restarted. Live source hashes
+  match; missing API header still gets 403. WebDAV/ZIP hashes remain unchanged.
+  Test responder PID 34826 was identified by its port, then terminated; no
+  socket at 49429 or test rules/pending records remain. This is in-place Debian
+  acceptance, not a fresh Ubuntu install, VPN data-plane or reboot certification.
+- Final deployed read-only browser check passes both families, all categories,
+  full raw-rule/API equality, and five widths in both themes with zero writes
+  or JS/CSP errors. Final screenshots inspected; local preview stopped.
+
+**2026-09-27 — v2-133, immediate Dnsmasq Apply deployed (DD-163):**
+- User requested removal of the one-minute DNS confirmation. DNS-only Apply
+  now validates/restarts/commits in one request, returning explicit committed
+  state. UI clears its draft, refreshes and has no review dialog/countdown.
+  Mixed firewall/qBittorrent drafts retain 60 s confirmation; local-domain
+  changes retain 300 s/new-Host confirmation.
+- Protect the panel's own DNS name before any mutation and disable its switch.
+  Keep snapshots, revision/lock checks and guard recovery on failed/interrupted
+  applies. The shared durable commit marker prevents rollback after a committed
+  DNS write. Prior dirty v130–v132 work retained; no commit/push.
+- Local: 71 Python tests pass; Bats 147 total (144 pass/3 missing-timeout macOS
+  skips); Settings/Model A/Files browser suites pass. New checks cover single
+  Apply, reload, failure/retry, protected panel, mixed confirmation, restart/
+  commit failure and pre/post-commit crash recovery. Bash/ShellCheck/JS syntax,
+  diff whitespace and post-export consistency pass.
+- Portable nrm in-place update exit 0/all seven stages passed. Scratch inputs:
+  SSH_HOST=nrm, LOCAL_DOMAIN blank; full-upgrade default no; confirmation E.
+  No packages upgraded/added/removed, no reset/reboot. Installer repaired one
+  downloads ownership/permission entry. Optional WireGuard/qBittorrent absent.
+- On nrm, 33 settings unit tests and a real transient systemd worker/timer
+  recovery test pass against the portable runtime, using scratch state only.
+  Full settings-linux.py was adapted but not run (qBittorrent binary absent).
+- Live browser test creates a unique DNS record through the real UI, verifies
+  one Apply request/no confirmation, real DNS response and reload persistence,
+  waits 63 s, then verifies the record still resolves. Switch-off takes effect
+  immediately. A direct attempt to disable panel.ayc returns 400 before mutation.
+  Only the owned fixture is removed afterward; original DNS choices restored.
+  First live attempt hit local SSH forwarding conflicts and cleaned its record;
+  rerun with ClearAllForwardings passed. Desktop/mobile screenshots inspected;
+  no JS/CSP errors. Test script/screenshots remain in the scratch directory.
+- Core services/guard active, zero failed units/recent errors; firewall/Caddy/
+  dnsmasq/systemd verify (--man=no) pass. Missing API header remains 403. Installed
+  worker/frontend SHA256 match source; WebDAV registry/ZIP history unchanged.
+  Live DNS already had Cloudflare addresses saved with forwarding disabled;
+  these operator choices, empty records/disabled list and firewall were preserved.
+- v133 root/Data/app copies and repeat export match; all 44 embedded runtime
+  files match sources. Archive SHA256:
+  `4747f590a85c176603477829a19bf7a9cf84bd2a997ad74749f7706b80f07be8`.
+  Before exporter replacement, both untracked v132 copies were preserved under
+  `/tmp/konsol-v133-deploy.HKOJ5r/previous-{root,app}-v132.command`.
+  Operator inputs, frozen versions and Desktop were untouched; local preview
+  stopped. This was an in-place Debian update, not clean Ubuntu/reboot acceptance.
+
+**2026-09-27 — v2-132, full firewall tables deployed (DD-162):**
+- User requested a full firewall table with details/short explanations and
+  retained on/off controls. Preserved all existing dirty v130/v131 work; no
+  commit/push, reset/reboot, operator-input access or account/ACL changes.
+- Changed `console/ayarlar.js` and `ayarlar.css`: eight-column port table,
+  service/address descriptions, source CIDRs, scope/interface/family, visible
+  draft markers, inline edit/remove and existing switches. All-rules view has
+  six columns including conservative explanations, full raw specs/counters and
+  ownership. No hidden disclosures or mobile cards; bounded scroll region,
+  sticky headers, keyboard scrolling, captions and row/column semantics.
+- Backend and policy authority unchanged. Loopback remains protected; foreign
+  chains read-only. Draft/review/apply/confirm/rollback flow retained. Fixed a
+  grid intrinsic-width overflow caught in the 1024px all-rules test.
+- Tests: settings UI covers on/off drafts, CIDR edit/remove/discard, family/
+  scope/empty states, locked confirmation, payload/rollback and five widths
+  under production CSP. Model A and Files suites also pass. Python 66 pass;
+  Bats 147 total, 144 pass/3 missing-timeout macOS skips. Bash/ShellCheck/JS,
+  diff whitespace and post-export consistency pass.
+- Portable in-place nrm update exit 0/all seven stages passed: scratch
+  SSH_HOST=nrm, LOCAL_DOMAIN blank, full-upgrade default no, confirmation E.
+  No packages upgraded/installed/removed. Installer repaired one downloads
+  ownership/permission entry. Existing data retained; no fresh-host claim.
+- Live read-only browser verification passes both families (30/23 port rows,
+  51/58 raw-rule rows), switch/discard with zero POST requests, five widths,
+  light/dark, keyboard scrolling, no JS/CSP errors. Screenshots inspected.
+  Six core services active; no failed units/recent backend errors. Firewall,
+  Caddy, dnsmasq, systemd verify (--man=no) pass; live assets match local SHA256.
+  Settings override file remains absent/default policy; WebDAV registry and
+  ZIP history hashes unchanged. No live port permission was applied by the test.
+- v132 root/Data/app exports match; two builds byte-identical and all 44
+  embedded runtime files match sources. Archive SHA256:
+  `90e5724c250a5e358b5aa0edbd4975406ec92448523adf5850cf987c0461b7ab`.
+  Before normal exporter replacement, both untracked v131 copies were saved
+  in `/tmp/konsol-v132-deploy.TroDNM/previous-{root,app}-v131.command`.
+  Scratch inputs, verification extraction, read-only test and screenshots also
+  remain there. Frozen versions and the Desktop were not modified.
+
+**2026-09-27 — v2-131, compact App Store model 2 deployed (DD-161):**
+- User approved the second, list-based design. Preserved all uncommitted v130
+  work; no commit/push, reset, reboot or operator input access. Only store UI,
+  regression coverage, version and documentation changed in this turn.
+- Compact rows show name, short description, status and Install/Open. One
+  optional Details panel owns technical information, service controls, logs and
+  confirmed removal. Progress/errors remain visible while collapsed. Polling
+  retains details/focus/log scroll; failed log reads report HTTP errors. Store
+  no longer requests qBittorrent account data; its own page still handles login.
+- Verified before update: nrm core services active; both optional apps absent.
+  Exported and deployed using the portable launcher with scratch SSH_HOST=nrm,
+  blank LOCAL_DOMAIN, full-upgrade default no and confirmation E. Exit 0, all
+  seven stages passed. No packages upgraded/added/removed; installer repaired
+  one downloads ownership/permission entry. File backend restarted; WebDAV
+  InvocationID unchanged. Share registry/archive history hashes unchanged.
+- nrm: Debian 13.7, kernel 6.12.107+deb13-amd64, tailnet 100.79.17.10, ayc.
+  Canonical tree and live frontend are v131, all three changed UI assets match
+  local SHA256. Both optional apps remain absent; no actual lifecycle mutations
+  were needed for this UI update.
+- Local: 66 Python tests pass; Bats 147 cases, 144 pass/3 macOS timeout skips.
+  Bash/ShellCheck/JS syntax, diff whitespace and post-export consistency pass.
+  Model A/Files/Settings browser suites pass. New fixture checks cover progress,
+  failure/retry, lifecycle, cancelled removal/default retention, log HTTP errors/
+  safe text rendering, no credential reads, keyboard/poll focus and five widths.
+- Live read-only browser acceptance passes 1440/1024/736/390/320 in light/dark,
+  details/focus across polling, Files/Settings navigation, zero JS/CSP errors
+  and zero mutation requests. Desktop rows measure 75/76px. Screenshots inspected.
+  Six core services active, zero failed units/error logs; Caddy/dnsmasq/firewall
+  checks pass. systemd verify passes with --man=no (default check failed only
+  because dnsmasq's man page is unavailable). Missing API header still gives 403.
+- Portable root/Data/app v131 copies match; two exports byte-identical, all 44
+  embedded runtime files match sources. Archive SHA256:
+  `0e7192cab8f3e52abc8c2cb34d2d36cd87f4ff4d6a3e0d68232777b453164671`.
+  Exporter replaced generated v130 copies; both untracked originals were first
+  preserved under `/tmp/konsol-v131-deploy.P5014r/previous-{root,app}-v130.command`.
+  Scratch inputs, extracted verification tree, read-only live test and screenshots
+  remain in that directory. No frozen archive/Desktop copy changed.
+- This is an in-place Debian update, not fresh-host/Ubuntu or reboot acceptance.
+
+**2026-09-27 — v2-130, approved Model A implemented; clean installer prepared (DD-160):**
+- User approved Model A and requested implementation/clean-install preparation.
+  Started from clean commit `18b7ba7`. No commit/push, server reset, deployment,
+  Tailscale changes or operator input access this turn. Active checkout is
+  `~/Documents/debian-server-installer`, not the stale iCloud cwd.
+- Replaced desktop shell with a responsive sidebar. Removed Overview/Applications,
+  dock/window controls; Files is default. CPU/RAM/disk below menu, optional app
+  entries follow registry. System and Log moved into Settings; qBittorrent has
+  its own service/account/path page. Shared drafts/review/rollback preserved.
+- Files has Files/Shares/Archive jobs/Trash, folder-only shortcuts and optional
+  details. ZIP submission opens jobs, results return to Files. Fixed async WG
+  new-network bookmarks, keyboard tab navigation and skip-link route preservation.
+- New gated `/api/konsol/kaynaklar`; independent sampler, no WG/port enumeration.
+  Missing/stale CPU is unknown, fetch failure hides all meters, recovery resumes.
+  Guest CPU time is no longer double-counted. Legacy system API remains compatible.
+- Verified: 66 Python tests; 147 Bats cases (144 pass, 3 skipped: macOS lacks
+  `timeout`); Bash/ShellCheck/JS syntax and whitespace checks. Model A browser
+  fixtures passed production CSP, clean/installed navigation, lifecycle requests,
+  resource failure/recovery, archive routes, keyboard/mobile (5 widths). Existing
+  Files and transactional Settings browser suites also pass. Screenshots inspected.
+- Caddy, dnsmasq and systemd-analyze are unavailable on this Mac. Target validators,
+  apt installation, rerun/reboot and fresh Debian/Ubuntu acceptance remain pending.
+  `desktop-live.cjs` was adapted, not run against nrm in this turn. No claim that
+  local browser lifecycle fixtures install actual packages.
+- Built portable root and Data/app v130 copies; replaced their generated v129
+  copies (recoverable in Git), no frozen archive modified. Two exports produced
+  identical archive SHA256 `96a03a0b168b876955d5fb499d1b52369a0b63546774c1057fafa43ca0330b1d`.
+  Verified 44 runtime files match sources byte-for-byte, all eight linked UI assets
+  included, no operator inputs/tests/cache/retired desktop.css. No desktop copy made.
+- Updated operator instructions to remove obsolete restore promises and explain
+  fresh vs rerun. Next: `docs/model-a-clean-install.md` acceptance on a fresh host;
+  use scratch inputs for authorized nrm tests, never `kurulum/kurulum.env`.
+
 **2026-09-25 — v2-129, Konsol Desktop and built-in ZIP deployed to nrm (DD-159):**
 - User explicitly requested implementation, deployment and tests, superseding
   the previous mockup-only restriction. No commit/push requested. Preserved the

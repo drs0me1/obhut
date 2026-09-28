@@ -16,6 +16,7 @@
 # CSRF), Host denetimi (DNS rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan
 # yanıtlar (profil, QR) yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
 import argparse
+import hashlib
 import http.server
 import ipaddress
 import json
@@ -490,6 +491,11 @@ class Panel:
                 self.state()
             except Exception as err:  # örnekleme durursa sayfa yine el sıkışmaya düşer
                 print("panel: sayaç okunamadı (%s)" % err, flush=True)
+            time.sleep(SAMPLE_SECONDS)
+
+    def sample_resources_forever(self):
+        """A slow WireGuard command must not delay host resource sampling."""
+        while True:
             try:
                 self.sample_system()
             except Exception as err:
@@ -501,7 +507,10 @@ class Panel:
         """İşlemci ve bellek kullanımı; grafiğe son SYS_POINTS örnek girer."""
         try:
             with open("/proc/stat", "rb") as fh:
-                fields = [int(x) for x in fh.readline().split()[1:]]
+                # guest/guest_nice are already included in user/nice.
+                fields = [int(x) for x in fh.readline().split()[1:9]]
+            if len(fields) < 4:
+                return
         except (OSError, ValueError, IndexError):
             return
         total = sum(fields)
@@ -590,7 +599,7 @@ class Panel:
             return None
         return {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize}
 
-    def system(self, networks):
+    def system(self, networks=None):
         env = read_env(self.args.state)
         with self.sys_lock:
             samples = list(self.samples)
@@ -609,6 +618,8 @@ class Panel:
             "uptime": uptime,
             "cores": os.cpu_count() or 1,
             "interval": int(SAMPLE_SECONDS),
+            "read_at": int(time.time()),
+            "sampled_at": samples[-1]["t"] if samples else None,
             "cpu": [s["cpu"] for s in samples],
             "mem": {"total": mem_total, "used": mem_used, "graph": [s["mem"] for s in samples]},
             "net": {
@@ -616,7 +627,8 @@ class Panel:
                 "iface": env.get("WAN_INTERFACE", ""), "tailscale": env.get("TAILSCALE_IPV4", ""),
                 "tailscale6": env.get("TAILSCALE_IPV6", ""), "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             },
-            "ports": self.ports(env, networks),
+            # Legacy API only; the shell never needs WireGuard or port enumeration.
+            **({"ports": self.ports(env, networks)} if networks is not None else {}),
             # DD-150: disk kartı Dosya yöneticisi kurulu değilken de dolsun (kullanıcı alanının diski).
             "root": env.get("SERVER_ROOT", ""),
             # DD-151: qBittorrent modülünün kartı için (yol ve port sabit yazılmasın).
@@ -770,11 +782,15 @@ class Panel:
             "dns": self.dns_view(env),
             "torrent": self.torrent_view(env),
         }
+        # Presentation metadata only; no peer identities or firewall mutations.
+        data["firewall"]["wireguard_installed"] = bool(self.module_state("wireguard", env))
+        data["firewall"]["networks"] = [{k: net[k] for k in ("iface", "label", "active", "server4", "server6")}
+                                        for net in networks]
         if env.get("SETTINGS_FILE"):
             try:
                 data["manage"] = master_settings.Manager(self.args.state).status()
                 data["firewall"]["rules"] = self.all_firewall_rules(env)
-                data["firewall"]["listeners"] = self.listeners()
+                data["firewall"]["listeners"] = self.listeners(env, networks)
                 data["firewall"]["ports"] = self.settings_ports(env, networks, data["firewall"]["listeners"])
             except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
                 data["manage"] = {"error": str(err) if isinstance(err, master_settings.SettingsError) else "Ayar yönetimi okunamadı; kurulumu yenileyin."}
@@ -812,7 +828,39 @@ class Panel:
                 errors.append("IPv%d kuralları okunamadı" % family)
         return {"rows": rows, "errors": errors}
 
-    def listeners(self):
+    @staticmethod
+    def binding_scope(address, env, networks):
+        """Classify a local socket binding, not packet reachability or firewall permission."""
+        host, _, zone = address.partition("%")
+        if host == "*":
+            return "any"
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return "unknown"
+        if ip.is_unspecified:
+            return "any"
+        if ip.is_loopback:
+            return "lo"
+        addresses = [("tail", env.get("TAILSCALE_IF", "tailscale0"),
+                      [env.get("TAILSCALE_IPV4", ""), env.get("TAILSCALE_IPV6", "")]),
+                     ("wan", env.get("WAN_INTERFACE", ""),
+                      [env.get("WAN_IPV4", ""), env.get("WAN_IPV6", "")])]
+        addresses += [(n["iface"], n["iface"], [n["server4"], n["server6"]]) for n in networks]
+        for scope, iface, values in addresses:
+            if zone:
+                if iface and zone == iface:
+                    return scope
+                continue
+            for value in values:
+                try:
+                    if ip == ipaddress.ip_address(value.split("%", 1)[0]):
+                        return scope
+                except ValueError:
+                    continue
+        return "unknown"
+
+    def listeners(self, env, networks):
         rows = []
         for family in (4, 6):
             try:
@@ -827,7 +875,10 @@ class Panel:
                     continue
                 addr, _, port = f[4].rpartition(":")
                 if port.isdigit():
-                    rows.append({"proto": f[0], "family": family, "port": int(port), "address": addr.strip("[]")})
+                    # ss may print [fe80::1]%tailscale0, not [fe80::1%tailscale0].
+                    addr = addr.replace("[", "").replace("]", "")
+                    rows.append({"proto": f[0], "family": family, "port": int(port), "address": addr,
+                                 "scope": self.binding_scope(addr, env, networks)})
         return rows
 
     def settings_ports(self, env, networks, listeners=None):
@@ -847,13 +898,15 @@ class Panel:
                 rows.append({"name": "qBittorrent arayüzü", "family": family, "proto": "tcp", "port": int(env["TORRENT_UI_PORT"]),
                              "scope": net["iface"], "baseline": family == 4 and net["scope"] == "ui"})
         seen = {(r["family"], r["proto"], r["port"], r["scope"]) for r in rows}
+        names = {(r["proto"], r["port"]): r["name"] for r in rows}
         for listener in listeners or []:
             for scope in ("wan", "tail", "lo"):
                 key = (listener["family"], listener["proto"], listener["port"], scope)
                 if key in seen:
                     continue
                 seen.add(key)
-                rows.append({"name": "Diğer dinleyici", "family": listener["family"], "proto": listener["proto"],
+                rows.append({"name": names.get((listener["proto"], listener["port"]), "Diğer dinleyici"),
+                             "family": listener["family"], "proto": listener["proto"],
                              "port": listener["port"], "scope": scope, "baseline": scope != "wan"})
         return rows
 
@@ -931,6 +984,7 @@ class Panel:
                 "iface": f[0], "port": num_or(f[1], 0), "scope": f[2],
                 "server4": f[3], "subnet4": f[4], "server6": f[5], "subnet6": f[6],
                 "dns": f[7], "label": f[8], "active": f[9] == "1", "count": num_or(f[10], 0),
+                "revision": hashlib.sha256("\t".join(f[:9]).encode("utf-8")).hexdigest(),
             })
         return rows
 
@@ -1084,6 +1138,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.json(200, self.panel.system(self.panel.net_rows()))
             except RuntimeError as err:
                 self.error(502, str(err))
+            return
+        if path == "/api/konsol/kaynaklar":
+            self.json(200, self.panel.system())
             return
         if path == "/api/konsol/ayarlar":
             self.json(200, self.panel.settings(fresh="yenile" in query))
@@ -1256,10 +1313,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.json(201, {"iface": parts[0], "port": num_or(parts[-1], 0)})
             return
-        m = re.match(r"^/api/wg/nets/([^/]+)/(remove|reset|peers|durum)$", path)
+        m = re.match(r"^/api/wg/nets/([^/]+)/(remove|reset|peers|durum|ayarlar)$", path)
         if m:
             net, _ = self.net_and_name(m.group(1))
             if net is None:
+                return
+            if m.group(2) == "ayarlar":
+                scope, dns, revision = (data.get(k) for k in ("scope", "dns", "revision"))
+                if (scope not in ("inet", "ui") or not isinstance(dns, str) or not dns.strip()
+                        or len(dns) > 512 or any(ord(c) < 32 for c in dns)
+                        or not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision)):
+                    self.error(400, "Geçerli erişim, DNS ve ağ revizyonu gerekli")
+                    return
+                try:
+                    addresses = [s.strip() for s in dns.split(",")]
+                    if not 1 <= len(addresses) <= 8 or any("%" in s for s in addresses):
+                        raise ValueError("DNS")
+                    for address in addresses:
+                        ipaddress.ip_address(address)
+                except ValueError:
+                    self.error(400, "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın")
+                    return
+                rc, _, message = self.panel.run("net-settings", scope, dns, revision, net=net)
+                self.panel.settings_cache = (0, None)
+                self.audit(user, "ag-ayarlar", net, rc == 0)
+                if rc != 0:
+                    self.error(409, message or "Ağ ayarları kaydedilemedi")
+                    return
+                self.json(200, {"iface": net, "scope": scope, "dns": ", ".join(addresses)})
                 return
             if m.group(2) == "remove":
                 if not self.confirmed(data):
@@ -1355,6 +1436,7 @@ def cmd_serve(args):
     Handler.panel = Panel(args)
     httpd = Server((host, int(port)), Handler)
     threading.Thread(target=Handler.panel.sample_forever, name="sampler", daemon=True).start()
+    threading.Thread(target=Handler.panel.sample_resources_forever, name="resource-sampler", daemon=True).start()
     print("panel: %s:%s dinleniyor" % (host, port), flush=True)
     try:
         httpd.serve_forever()

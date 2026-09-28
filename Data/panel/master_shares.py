@@ -220,25 +220,30 @@ class Manager:
             if action == "save":
                 if item is None and len(items) >= 32:
                     raise ShareError("En çok 32 bağımsız paylaşım oluşturulabilir.")
-                user = request.get("username", "")
+                user = request.get("username", item["username"] if item else "")
                 if not isinstance(user, str) or not USER_RE.fullmatch(user):
                     raise ShareError("Kullanıcı adı 3–32 harf/rakam veya . _ - içermeli.")
                 if any(i["username"].lower() == user.lower() and i["id"] != sid for i in items):
                     raise ShareError("Bu kullanıcı adı başka bir paylaşımda kullanılıyor.")
-                permission = request.get("permission", "ro")
+                permission = request.get("permission", item["permission"] if item else "ro")
                 if permission not in ("ro", "rw"):
                     raise ShareError("Geçersiz erişim izni.")
-                if permission == "rw" and request.get("ack_write") is not True:
+                if permission == "rw" and (item is None or "permission" in request) and request.get("ack_write") is not True:
                     raise ShareError("Yazma izninin silmeyi de kapsadığını onaylayın.")
                 password = request.get("password", "")
                 if not isinstance(password, str) or len(password) > 256 or ":" in password or any(ord(c) < 32 for c in password):
                     raise ShareError("Parola geçersiz (en çok 256 karakter; kontrol karakteri ve : yok).")
-                if (password or item is None) and len(password) < 12:
-                    raise ShareError("Yeni parola en az 12 karakter olmalı.")
+                if (password or item is None) and len(password) < 8:
+                    raise ShareError("Yeni parola en az 8 karakter olmalı.")
                 days = request.get("days")
                 if days is not None and (type(days) is not int or days not in (0, 1, 7, 30)):
                     raise ShareError("Süre 1, 7, 30 gün veya süresiz olabilir.")
-                path, ident = self.validate_path(data, request.get("path"), sid)
+                # List controls change only access/expiry; never rebind a replaced folder
+                # or overwrite credentials from stale browser metadata.
+                if item is None or "path" in request:
+                    path, ident = self.validate_path(data, request.get("path"), sid)
+                else:
+                    path, ident = item["path"], item["identity"]
                 now = int(time.time())
                 if item is None:
                     item = {"id": secrets.token_hex(12), "created": now, "paused": False, "expires": None}

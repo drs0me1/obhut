@@ -13,7 +13,7 @@ operator double-clicks — the current portable installer (`<V2_VERSION>.command
 The installer turns a fresh Debian 13
 (trixie) or Ubuntu 24.04/26.04 LTS host
 into a Tailscale exit-node with host dnsmasq + Caddy on the tailnet and a
-persistent firewall. Files, folder WebDAV and ZIP are built in; optional
+persistent firewall. Files, folder WebDAV and ZIP/RAR are built in; optional
 WireGuard and qBittorrent are installed from App Store (**DD-159**).
 There is no Docker (**DD-152**). There is no
 reconcile / self-healing engine by design.
@@ -126,7 +126,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)
   only (**DD-102**). Noble live-verified 2026-08-29; resolute
   live-verified 2026-08-30, including re-run, service restarts and reboot.
-- The fixed base includes Files, folder WebDAV and ZIP (**DD-159**).
+- The fixed base includes Files, folder WebDAV and ZIP/RAR (**DD-159**, **DD-166**).
   The App Store catalogue is only WireGuard and qBittorrent. Public module
   verbs refuse `dosya`/`paylasim`; their internal templates/registry IDs remain
   for compatibility with settings and DNS/firewall rendering. No profiles.

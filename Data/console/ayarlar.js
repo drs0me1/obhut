@@ -1,13 +1,13 @@
 /* Approved v08 interaction model, live implementation (DD-156).
    Drafts/passwords stay in memory only. No localStorage, no inline HTML. */
 "use strict";
-window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSettings }) => {
-  const root = document.getElementById("settings-page");
+window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog }) => {
+  let root = document.getElementById("settings-page");
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const tabs = [["fw", "Güvenlik Duvarı"], ["web", "Caddy"], ["dns", "Dnsmasq"], ["qb", "qBittorrent"]];
-  const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", lo: "Sunucu içi" }[s] || s);
-  let live = null, draft = null, qdraft = {}, tab = "fw", family = 4, scope = "all", mode = "ports";
+  const tabs = [["system", "Sistem"], ["fw", "Güvenlik Duvarı"], ["web", "Caddy"], ["dns", "Dnsmasq"], ["log", "Günlük"]];
+  const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", wg: "WireGuard", lo: "Sunucu içi" }[s] || s);
+  let live = null, draft = null, qdraft = {}, tab = "system", family = 4, scope = "tail", mode = "ports", wgNetwork = "all";
   let pending = null, busy = false, poll = null, message = "", baseRevision = "";
   let domainInput = "", migration = null;
   const dirty = () => live?.manage?.config && draft && (!same(draft.firewall, live.manage.config.firewall) || !same(draft.dns, live.manage.config.dns) || Object.keys(qdraft).length);
@@ -27,9 +27,12 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     return h("button", { type: "button", id, class: "as-switch", role: "switch", "aria-label": label, "aria-checked": !!value,
       disabled: disabled || locked(), onclick: () => { action(!value); draw(); document.getElementById(id)?.focus(); } }, value ? "Açık" : "Kapalı");
   }
-  function table(headers, rows, className = "") {
-    return h("div", { class: "as-tablewrap" }, h("table", { class: className }, h("thead", null, h("tr", null, ...headers.map((x) => h("th", { scope: "col" }, x)))),
-      h("tbody", null, ...rows)));
+  function table(headers, rows, className = "", caption = "") {
+    return h("div", { class: "as-tablewrap" + (caption ? " as-fw-scroll" : ""),
+      ...(caption ? {role:"region", "aria-label":caption, tabindex:"0"} : {}) },
+      h("table", { class: className }, caption ? h("caption", null, caption) : null,
+        h("thead", null, h("tr", null, ...headers.map((x) => h("th", { scope: "col" }, x)))),
+        h("tbody", null, ...(rows.length ? rows : [h("tr", null, h("td", {colspan:headers.length}, "Bu seçimde kayıt yok."))]))));
   }
   const td = (...kids) => h("td", null, ...kids);
   function modal(title, content, submit) {
@@ -44,7 +47,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   }
   function error(e) { message = e.message || String(e); fail(e); draw(); }
   function changes() {
-    if (!live || !draft) return [];
+    if (!live?.manage?.config || !draft) return [];
     const out = [], old = live.manage.config;
     for (const r of draft.firewall) {
       if (!same(r, old.firewall.find((x) => x.id === r.id))) out.push(`${r.name}: IPv${r.family} · ${scopeName(r.scope)} · ${r.proto.toUpperCase()} ${r.port} · ${r.source || "tüm kaynaklar"} → ${r.allow ? "izin ver" : "engelle"}`);
@@ -58,8 +61,6 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       for (const r of old.dns.records) if (!draft.dns.records.some((x) => x.name === r.name)) out.push(`${r.name}: silinecek`);
       if (draft.dns.forward !== old.dns.forward || !same(draft.dns.servers, old.dns.servers)) out.push(`Üst DNS → ${draft.dns.forward ? draft.dns.servers.join(", ") : "kapalı"}`);
     }
-    if (qdraft.username !== undefined) out.push(`qBittorrent kullanıcısı → ${qdraft.username}`);
-    if (qdraft.password !== undefined) out.push("qBittorrent parolası değişecek (gösterilmez).");
     if (qdraft.save !== undefined) out.push(`Yeni indirmeler → ${qdraft.save}; mevcut dosyalar taşınmaz.`);
     return out;
   }
@@ -67,6 +68,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     draft = clone(live.manage.config); qdraft = {}; baseRevision = live.manage.revision; message = ""; draw();
   }
   async function submitChanges(close) {
+    if (locked() || !dirty()) return;
     const payload = { revision: baseRevision };
     if (!same(draft.firewall, live.manage.config.firewall)) payload.firewall = draft.firewall;
     if (!same(draft.dns, live.manage.config.dns)) payload.dns = draft.dns;
@@ -74,8 +76,16 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     close(); busy = true; message = "Sunucuda doğrulanıyor ve uygulanıyor…"; draw();
     try {
       const result = await post("/api/konsol/ayarlar/uygula", payload);
-      qdraft = {}; pending = result.pending; message = "Değişiklikler geçici olarak uygulandı. Bağlantınızı onaylayın.";
-      startPoll(); loadSettings(true);
+      qdraft = {}; pending = result.pending;
+      if (result.committed) {
+        draft = null; clearTimeout(poll);
+        message = "Dnsmasq ayarları uygulandı ve kaydedildi.";
+        toast(message);
+      } else {
+        message = "Değişiklikler geçici olarak uygulandı. Bağlantınızı onaylayın.";
+        startPoll();
+      }
+      await loadSettings(true);
     } catch (e) { delete qdraft.password; error(e); startPoll(); }
     finally { busy = false; draw(); }
   }
@@ -108,12 +118,13 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         const was = pending; pending = s.pending;
         if (was && !pending) { draft = null; qdraft = {}; message = "İşlem tamamlandı; sunucudaki ayarlar yeniden okunuyor."; loadSettings(true); }
         draw();
-      } catch (_e) { message = "Sunucuya erişilemiyor. Onay verilmezse sunucu değişiklikleri geri alır."; draw(); }
+      } catch (_e) { message = pending ? "Sunucuya erişilemiyor. Onay verilmezse sunucu değişiklikleri geri alır." : "Sunucuya erişilemiyor. İşlemin sonucunu ayarları yenileyerek kontrol edin."; draw(); }
       if (pending) startPoll();
     }, 2000);
   }
   function ruleForm(existing = null) {
-    const r = existing || { name: "", family, scope: scope !== "all" && scope !== "lo" ? scope : "wan", proto: "tcp", port: "", source: "", allow: true };
+    const selectedScope = scope === "wg" ? (wgNetwork === "all" ? wgScopes()[0] : wgNetwork) : scope;
+    const r = existing || { name: "", family, scope: selectedScope && selectedScope !== "lo" ? selectedScope : "tail", proto: "tcp", port: "", source: "", allow: true };
     const input = (name, value, attrs = {}) => h("input", { name, value, ...attrs });
     const opts = (name, choices, value) => { const s = select(choices, value, () => {}); s.name = name; return s; };
     modal(existing ? "Kuralı düzenle" : "Port kuralı ekle", h("div", { class: "as-formgrid" },
@@ -134,14 +145,15 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       close(); draw();
     });
   }
-  const wgScopes = () => [...new Set((live.firewall.ports || []).map((r) => r.scope).filter((s) => s.startsWith("wg")))];
+  const wgScopes = () => [...new Set([...(live.firewall.networks || []).map((n) => n.iface),
+    ...(live.firewall.ports || []).map((r) => r.scope).filter((s) => /^wg\d+$/.test(s))])];
   function addressNote(address) {
-    const ip = address.replace(/^\[|\]$/g, "").split("%")[0];
+    const ip = address.split("%")[0].replace(/^\[|\]$/g, "");
     if (ip === "0.0.0.0") return "Tüm IPv4 arayüzlerinde dinler.";
     if (ip === "::") return "Tüm IPv6 arayüzlerinde dinler.";
     if (ip === "*") return "Tüm yerel arayüzlerde dinler.";
     if (ip.startsWith("127.") || ip === "::1") return "Yalnız sunucu içinden erişilir.";
-    if (ip === live.tailscale || ip.startsWith("fd7a:115c:a1e0:")) return "Sunucunun Tailscale adresi.";
+    if (ip === live.tailscale || ip === live.tailscale6) return "Sunucunun Tailscale adresi.";
     if (ip === live.wan?.ipv4 || ip === live.wan?.ipv6) return "Sunucunun internet arayüzü.";
     return "Yalnız bu yerel IP üzerinde dinler.";
   }
@@ -152,41 +164,117 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       if (found && !r.source) { found.rule = r; continue; }
       rows.push({ ...r, rule: r, baseline: r.scope === "tail" });
     }
-    return rows.filter((r) => r.family === family && (scope === "all" || r.scope === scope));
+    return rows.filter((r) => r.family === family && (scope === "wg"
+      ? wgScopes().includes(r.scope) && (wgNetwork === "all" || r.scope === wgNetwork) : r.scope === scope));
+  }
+  function bindingStatus(binds, row) {
+    if (live.firewall.listeners == null) return "Okunamadı";
+    if (!binds.length) return "Dinleyici yok";
+    if (binds.some((b) => b.scope === "any" || b.scope === row.scope))
+      return row.scope === "lo" ? "Sunucu içinde dinliyor" : "Bu ağda dinliyor";
+    if (binds.every((b) => b.scope === "lo")) return "Yalnız sunucu içinde";
+    if (binds.some((b) => !b.scope || b.scope === "unknown")) return "Ağ eşleşmesi bilinmiyor";
+    return "Başka adreste dinliyor";
+  }
+  function serviceNote(row) {
+    const known = [
+      ["SSH", "Sunucuya uzaktan terminal bağlantısı."],
+      ["Tailscale", "Tailscale tünelinin bağlantı trafiği."],
+      ["WireGuard", "WireGuard VPN ağına cihaz bağlantısı."],
+      ["Caddy", "Panel ve servislerin web adreslerini sunar."],
+      ["dnsmasq", "Yerel alan adlarını DNS ile çözer."],
+      ["Paylaşım WebDAV", "Dosyalar uygulamasındaki klasör paylaşımları."],
+      ["Konsol · WireGuard", "Panelin ağ ve sistem yönetimi arka ucu."],
+      ["Konsol · dosya", "Panelin dosya ve ZIP işlemleri arka ucu."],
+      ["qBittorrent", "Torrent uygulamasının web arayüzü."],
+    ];
+    return known.find(([prefix]) => row.name.startsWith(prefix))?.[1]
+      || (row.rule ? "Kullanıcının tanımladığı port izni." : "Servis adı eşleştirilemedi; dinlenen adresi kontrol edin.");
+  }
+  function ruleNote(row) {
+    if (row.spec.startsWith("Politika: ")) return "Bu zincirde eşleşmeyen paketler için varsayılan karar.";
+    if (row.spec === "Özel zincir") return "Başka bir kuralın yönlendirmesiyle çalıştırılan zincir.";
+    // Explain only an unambiguous terminal target; keep the complete rule visible.
+    const target = row.spec.match(/(?:^|\s)-j ([A-Za-z0-9_-]+)$/)?.[1];
+    const notes = {ACCEPT:"Eşleşen pakete bu zincirde izin verir.", DROP:"Eşleşen paketi yanıt vermeden düşürür.",
+      REJECT:"Eşleşen paketi ret yanıtıyla engeller.", RETURN:"Çağıran zincire döner; ana zincirde varsayılan karar uygulanır.",
+      MASQUERADE:"Kaynak adresini çıkış arayüzünün adresine dönüştürür."};
+    if (notes[target]) return notes[target];
+    return "Ham kuraldaki eşleşme ve hedef seçenekleri geçerlidir.";
   }
   function firewall() {
-    const toolbar = h("div", { class: "as-toolbar" }, h("div", { class: "seg" }, ...[["ports", "Portlar"], ["rules", "Tüm kurallar"]].map(([key, name]) => h("button", { type: "button", "aria-pressed": mode === key, onclick: () => { mode = key; draw(); } }, name))),
+    const groups = ["tail", "wan", ...(live.firewall.wireguard_installed ? ["wg"] : []), "lo"];
+    if (!groups.includes(scope)) scope = "tail";
+    if (wgNetwork !== "all" && !wgScopes().includes(wgNetwork)) wgNetwork = "all";
+    const chooseScope = (key) => { scope = key; mode = "ports"; draw(); document.getElementById("as-fw-tab-" + key)?.focus(); };
+    const categories = h("nav", {class:"as-fw-tabs", role:"tablist", "aria-label":"Trafik kategorileri"}, ...groups.map((key) => h("button", {
+      type:"button", role:"tab", id:"as-fw-tab-" + key, "aria-controls":"as-fw-content", "aria-selected":scope === key, tabindex:scope === key ? "0" : "-1",
+      onclick:() => chooseScope(key), onkeydown:(e) => {
+        const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!delta && !["Home", "End"].includes(e.key)) return;
+        e.preventDefault(); chooseScope(groups[e.key === "Home" ? 0 : e.key === "End" ? groups.length - 1 : (groups.indexOf(key) + delta + groups.length) % groups.length]);
+      }
+    }, scopeName(key))));
+    const descriptions = {
+      tail:"Tailscale ağından sunucuya gelen bağlantılar. Panel, yerel DNS ve dosya paylaşımları bu ağda kullanılır.",
+      wan:"İnternet arayüzünden gelen bağlantılar. SSH ve VPN bağlantı portları burada yer alır; listede olmayan portlar varsayılan olarak engellenir.",
+      wg:"WireGuard tünellerindeki cihazlardan sunucuya gelen bağlantılar. VPN’in UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar görünümündedir.",
+      lo:"Sunucunun kendi iç bağlantıları (loopback). Servislerin arka uçları burada çalışır; bu izinler korunur ve değiştirilemez."
+    };
+    const toolbar = h("div", { class: "as-toolbar as-fw-controls" },
       field("Adres ailesi", select([[4, "IPv4"], [6, "IPv6"]], family, (v) => { family = Number(v); draw(); })),
-      mode === "ports" ? field("Gelen ağ", select([["all", "Tüm ağlar"], ["wan", "İnternet"], ["tail", "Tailscale"], ["lo", "Sunucu içi"], ...wgScopes().map((s) => [s, s])], scope, (v) => { scope = v; draw(); })) : null,
-      btn("+ Port kuralı", () => ruleForm()));
+      mode === "ports" && scope === "wg" && wgScopes().length ? field("WireGuard ağı", select([["all", "Tüm WireGuard ağları"], ...wgScopes().map((s) => {
+        const net = (live.firewall.networks || []).find(n => n.iface === s);
+        return [s, `${s}${net?.label ? " · " + net.label : ""}${net && !net.active ? " · durduruldu" : ""}`];
+      })], wgNetwork, (v) => { wgNetwork = v; draw(); })) : null,
+      mode === "ports" && scope !== "lo" && (scope !== "wg" || wgScopes().length) ? btn("+ Port kuralı", () => ruleForm()) : null,
+      btn(mode === "rules" ? "Portlara dön" : "Teknik kurallar", () => { mode = mode === "rules" ? "ports" : "rules"; draw(); }, false, true));
     let content;
     if (mode === "rules") {
       const rules = live.firewall.rules || { rows: [], errors: ["Kurallar okunamadı"] };
-      content = h("div", null, ...rules.errors.map((e) => note(e, true)), table(["Tablo / zincir", "Sıra", "Kural", "Sayaç", "Sahibi"], rules.rows.filter((r) => r.family === family).map((r) => h("tr", null,
-        td(h("strong", null, r.table), h("small", null, r.chain)), td(r.position), td(h("code", null, r.spec)), td(`${r.packets.toLocaleString("tr-TR")} pkt`, h("small", null, `${r.bytes} bayt`)), td(r.owner, h("small", null, "salt okunur")))), "as-rules"));
+      const rows = rules.rows.filter(r => r.family === family);
+      content = h("div", {class:"as-fw-rules"}, ...rules.errors.map((e) => note(e, true)),
+        table(["Tablo / zincir", "Sıra", "Ham kural", "Kısa açıklama", "Sayaç", "Sahibi / yönetim"], rows.map((r) => h("tr", null,
+          h("th", {scope:"row"}, h("strong", null, r.chain), h("small", null, `${r.table} · IPv${r.family}`)), td(r.position), td(h("code", null, r.spec)),
+          td(ruleNote(r)), td(`${r.packets.toLocaleString("tr-TR")} paket`, h("small", null, `${r.bytes.toLocaleString("tr-TR")} bayt`)),
+          td(r.owner, h("small", null, r.owner === "Konsol" ? "Salt okunur · izinler trafik sekmelerinde yönetilir." : "Salt okunur · bu panelden değiştirilmez.")))),
+        "as-rules as-fw-table", `Canlı kurallar · IPv${family} · ${rows.length} satır`),
+        note("Tüm ağlar · INPUT, FORWARD ve NAT dahil tüm tablolar. Kurallar zincir içindeki sırayla değerlendirilir; sayaçlar son okumanın değeridir. Bu görünüm salt okunurdur."));
     } else {
-      content = table(["Servis / kaynak", "Port", "Dinlenen adres", "Politika", "İzin", "Ayrıntı"], fwRows().map((r, i) => {
+      const rows = fwRows();
+      content = table(["Servis / açıklama", "Port / protokol", "Kaynak IP / CIDR", "Dinleme / adres", "Firewall izni", "Aç / kapa", "İşlemler"], rows.map((r, i) => {
         const rule = r.rule, allow = rule ? rule.allow : r.baseline;
+        const saved = live.manage.config.firewall.find(x => rule ? x.id === rule.id
+          : x.family === r.family && x.scope === r.scope && x.proto === r.proto && x.port === r.port && !x.source);
+        const changed = rule ? !same(rule, saved) : !!saved;
         const sockets = live.firewall.listeners;
-        const binds = (sockets || []).filter((s) => s.port === r.port && s.proto === r.proto && (!s.family || s.family === family)).map((s) => s.address);
-        const detail = h("details", null, h("summary", null, "Ayrıntı"), h("p", null, `IPv${r.family} · ${scopeName(r.scope)} · kaynak ${rule?.source || "tümü"}`),
-          note("Bu izin politikasıdır; port taraması/erişim garantisi değildir. Tailscale ACL ve üçüncü taraf kuralları da etkili olabilir."),
-          rule ? h("div", { class: "as-inline" }, btn("Düzenle", () => ruleForm(rule)), btn("Kuralı kaldır", () => { draft.firewall = draft.firewall.filter((x) => x.id !== rule.id); draw(); })) : null);
-        return h("tr", { class: rule && !same(rule, live.manage.config.firewall.find((x) => x.id === rule.id)) ? "changed" : "" },
-          td(h("strong", null, r.name), h("small", null, scopeName(r.scope), rule?.source ? ` · ${rule.source}` : "")),
-          td(h("code", null, `${r.port}/${r.proto}`)), td(sockets === null ? "Okunamadı" : binds.length ?
-            [...new Set(binds)].map((address) => h("div", { class: "as-address" }, h("code", null, address), h("small", null, addressNote(address)))) :
-            [h("span", null, "Dinleyici yok"), h("small", null, "Bu portta çalışan servis görülmedi.")]),
-          td(badge(allow ? "İzinli" : "Engelli", allow), h("small", null, rule ? "kullanıcı kuralı" : "temel politika")),
+        const binds = (sockets || []).filter((s) => s.port === r.port && s.proto === r.proto && s.family === family);
+        const iface = r.scope === "wan" ? live.wan?.iface : r.scope === "tail" ? live.ts_if : r.scope;
+        return h("tr", { class: changed ? "changed" : "" },
+          h("th", {scope:"row"}, h("strong", null, r.name.split(" — ")[0]), h("small", null, serviceNote(r)), h("small", null, `IPv${r.family} · ${iface || "arayüz okunamadı"}`)),
+          td(h("code", null, String(r.port)), h("small", null, r.proto.toUpperCase())),
+          td(h("code", null, rule?.source || "Tüm kaynaklar"), h("small", null, rule?.source ? "Yalnız bu IP / ağ eşleşir." : "Seçilen gelen ağdaki tüm kaynaklar.")),
+          td(h("strong", {class:"as-binding"}, bindingStatus(binds, r)), ...[...new Set(binds.map(b => b.address))].map((address) =>
+            h("div", { class: "as-address" }, h("code", null, address), h("small", null, addressNote(address)))),
+            sockets == null ? h("small", null, "Dinleyici durumu bilinmiyor.") : !binds.length ? h("small", null, "Bu adres ailesi ve protokolde servis görülmedi.") : null),
+          td(badge(allow ? "İzinli" : "Engelli", allow), h("small", null, changed ? "Taslak · henüz uygulanmadı" : rule ? "Kullanıcı kuralı" : "Temel politika"),
+            changed ? h("small", null, saved ? `Kayıtlı: ${saved.allow ? "izinli" : "engelli"}` : "Yeni kullanıcı kuralı") : null),
           td(toggle(`${r.name} ${scopeName(r.scope)} ${r.proto} ${r.port}`, allow, (on) => {
             if (rule) rule.allow = on;
             else draft.firewall.push({ id: `p_${r.family}_${r.scope}_${r.proto}_${r.port}`, name: r.name.slice(0, 64), family: r.family, scope: r.scope, proto: r.proto, port: r.port, source: "", allow: on });
-          }, "as-port-" + i, r.scope === "lo")), td(detail));
-      }), "as-ports");
+          }, "as-port-" + i, r.scope === "lo"), r.scope === "lo" ? h("small", null, "Sunucu içi · korunur") : null),
+          td(rule ? h("div", { class:"as-fw-actions" }, btn("Düzenle", () => ruleForm(rule)), btn("Kuralı kaldır", () => {
+            draft.firewall = draft.firewall.filter(x => x.id !== rule.id); draw();
+          })) : h("small", null, r.scope === "lo" ? "Değiştirilemez" : "Anahtarla kullanıcı kuralı eklenir.")));
+      }), "as-ports as-fw-table", `${scopeName(scope)}${scope === "wg" && wgNetwork !== "all" ? " · " + wgNetwork : ""} · IPv${family} · ${rows.length} satır`);
     }
-    return card("Güvenlik Duvarı", "Canlı kurallar ve dinleyiciler · IPv4 / IPv6", toolbar,
-      live.firewall.ok ? note("Temel kurallar çalışıyor. Eklediğiniz kurallar, ilgili portun varsayılan izninden önce değerlendirilir.") : note(live.firewall.check || "Güvenlik duvarı denetimi uyardı.", true), content,
-      note("Anahtarlar yeni bağlantılara izin verir veya engeller; servisi başlatmaz ve dinlediği adresi değiştirmez. Listede olmayan internet portları varsayılan olarak kapalıdır. Sunucu içi ve mevcut bağlantılar korunur."));
+    return card("Güvenlik Duvarı", "Gelen ağa göre port izinleri · IPv4 / IPv6", mode === "ports" ? categories : null, toolbar,
+      !live.firewall.ok ? note(live.firewall.check || "Güvenlik duvarı denetimi uyardı.", true) : null,
+      h("div", {id:"as-fw-content", ...(mode === "ports" ? {role:"tabpanel", "aria-labelledby":"as-fw-tab-" + scope} : {})},
+        mode === "ports" ? note(descriptions[scope]) : null,
+        mode === "ports" && scope === "wg" && !wgScopes().length ? note("Henüz yönetilebilir bir WireGuard ağı yok. WireGuard uygulamasından ağ oluşturun veya durdurulmuş modülü başlatın.") : content),
+      note("Dinleme ve izin ayrıdır; bu ağda dinlemesi erişim garantisi değildir. Tailscale ACL, kaynak kısıtları ve diğer kurallar da etkilidir. Yenile, güncel durumu yeniden okur."),
+      note("Aç/kapa yalnız yeni bağlantıların iznini değiştirir; servisi başlatmaz. Mevcut bağlantılar korunur. Dar ekranda tabloyu yatay kaydırabilirsiniz."));
   }
   const domainUrl = (domain) => `http://panel.${domain}/#/ayarlar`;
   function domainLinks(change) {
@@ -247,7 +335,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       td(toggle(r.name, r.enabled, (on) => {
         if (r.source === "Özel") d.records.find((x) => x.name === r.name).enabled = on;
         else d.disabled = on ? d.disabled.filter((n) => n !== r.name) : [...d.disabled, r.name];
-      }, "as-dns-" + i)), td(r.source === "Özel" ? btn("Sil", () => { d.records = d.records.filter((x) => x.name !== r.name); draw(); }) : null)));
+      }, "as-dns-" + i, r.name === "panel." + live.domain)), td(r.source === "Özel" ? btn("Sil", () => { d.records = d.records.filter((x) => x.name !== r.name); draw(); }) : null)));
     const providers = [["cloudflare", "Cloudflare", ["1.1.1.1", "1.0.0.1"]], ["google", "Google", ["8.8.8.8", "8.8.4.4"]], ["quad9", "Quad9", ["9.9.9.9", "149.112.112.112"]]];
     const provider = providers.find((x) => same(x[2], d.servers))?.[0] || "custom";
     const providerSelect = select([...providers.map((x) => [x[0], x[1]]), ["custom", "Özel IP adresleri"]], provider, (v) => { if (v !== "custom") d.servers = providers.find((x) => x[0] === v)[2].slice(); else d.servers = []; draw(); });
@@ -255,7 +343,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     const upstream = h("input", { value: d.servers.join(", "), disabled: !d.forward || locked(), placeholder: "1.1.1.1, 1.0.0.1", "aria-label": "Üst DNS adresleri",
       onchange: (e) => { d.servers = e.target.value.split(",").map((x) => x.trim()).filter(Boolean); draw(); } });
     return h("div", { class: "as-stack" }, card("Yerel adlar", `${live.domain} · adları kapatmak servisleri durdurmaz`, h("div", { class: "as-toolbar" }, note(`Dinleme: ${live.dns.listen.join(", ")}`), btn("+ Alan adı", addDns)),
-      table(["Ad", "Yanıt", "Sahibi", "Durum", ""], rows, "as-dns"), note("DNS önbellekleri hemen silinmez. Yeni ad eklemek Caddy sitesi oluşturmaz. Konsol'un kendi adını kapatan değişiklik onaylanamaz; sunucu geri alır.")),
+      table(["Ad", "Yanıt", "Sahibi", "Durum", ""], rows, "as-dns"), note("DNS önbellekleri hemen silinmez. Yeni ad eklemek Caddy sitesi oluşturmaz. Panel erişimi için Konsol'un kendi DNS adı korunur.")),
     card("Üst DNS'e yönlendirme", "Yerel alan dışındaki sorgular için", h("div", { class: "as-body" },
       h("div", { class: "as-inline" }, toggle("Üst DNS'e yönlendirme", d.forward, (on) => { d.forward = on; if (on && !d.servers.length) d.servers = providers[0][2].slice(); }, "as-forward"), h("span", null, "Genel adları çöz")),
       field("Sağlayıcı", providerSelect),
@@ -276,19 +364,47 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     }
     show();
   }
+  async function saveAccount(account) {
+    if (locked()) return;
+    busy = true; message = "qBittorrent hesabı kaydediliyor…"; draw();
+    try {
+      // Account-only: never submit unrelated DNS/firewall/folder drafts (DD-165).
+      const result = await post("/api/konsol/ayarlar/uygula", { revision: baseRevision, torrent: account });
+      delete account.password;
+      pending = result.pending;
+      if (!result.committed || pending) {
+        startPoll();
+        throw new Error("Sunucu kalıcı kaydı doğrulamadı; işlem durumunu kontrol edin.");
+      }
+      if (account.username !== undefined) live.manage.username = account.username;
+      message = "qBittorrent hesabı kaydedildi. Web arayüzüne yeni bilgilerle giriş yapabilirsiniz.";
+      toast(message);
+      await loadSettings(true);
+      // Keep other drafts, but rebase them after our own committed profile write.
+      baseRevision = live.manage.revision;
+    } catch (e) {
+      error(new Error(`Hesap kaydı doğrulanamadı. ${e.message} Sonucu Yenile ile kontrol edin; yeniden denemek için parolayı tekrar girin.`));
+    } finally { delete account.password; busy = false; draw(); }
+  }
   function torrent() {
-    if (!live.torrent.installed) return card("qBittorrent", "Kurulu değil", note("Önce Modüller sayfasından qBittorrent'i kurun."));
-    const username = h("input", { name: "username", required: true, value: qdraft.username ?? live.manage.username, pattern: "[A-Za-z0-9._@-]{1,64}", autocomplete: "username", disabled: locked() });
-    const password = h("input", { name: "password", type: "password", minlength: 12, maxlength: 256, autocomplete: "new-password", disabled: locked() });
+    if (!live.torrent.installed) return card("qBittorrent", "Kurulu değil", note("Önce App Store’dan qBittorrent’i kurun."));
+    const username = h("input", { name: "username", required: true, value: live.manage.username, maxlength: 64, pattern: "[A-Za-z0-9._@\\-]{1,64}", autocomplete: "username", disabled: locked() });
+    const password = h("input", { name: "password", type: "password", minlength: 8, maxlength: 256, autocomplete: "new-password", disabled: locked() });
     const repeat = h("input", { name: "repeat", type: "password", autocomplete: "new-password", disabled: locked() });
     const form = h("form", { class: "as-body", onsubmit: (e) => {
       e.preventDefault();
+      if (locked()) return;
       if (password.value !== repeat.value) { repeat.setCustomValidity("Parolalar aynı olmalı."); repeat.reportValidity(); return; }
-      if (username.value !== live.manage.username) qdraft.username = username.value; else delete qdraft.username;
-      if (password.value) qdraft.password = password.value;
-      password.value = repeat.value = ""; draw(); toast("Hesap değişikliği taslağa eklendi.");
-    } }, h("div", { class: "as-formgrid" }, field("Kullanıcı adı", username), h("div"), field("Yeni parola", password, "Boş bırakılırsa mevcut parola korunur; en az 12 karakter."), field("Yeni parola (tekrar)", repeat)),
-    h("div", { class: "as-inline" }, h("button", { type: "submit", class: "btn btn-sm", disabled: locked() }, "Hesabı taslağa ekle"), qdraft.password ? badge("Yeni parola taslakta") : null));
+      const account = {};
+      if (username.value !== live.manage.username) account.username = username.value;
+      if (password.value) account.password = password.value;
+      if (!Object.keys(account).length) { toast("Hesap bilgilerinde değişiklik yok."); return; }
+      password.value = repeat.value = "";
+      saveAccount(account);
+    } }, h("div", { class: "as-formgrid" }, field("Kullanıcı adı", username), h("div"), field("Yeni parola", password, "Boş bırakılırsa kayıtlı parola korunur; en az 8 karakter."), field("Yeni parola (tekrar)", repeat)),
+    h("div", { class: "as-inline" }, h("button", { type: "submit", class: "btn btn-primary", disabled: locked() }, "Hesabı kaydet")),
+    note("Doğrudan kaydedilir; ek onay gerekmez. Çalışıyorsa qBittorrent kısa süre yeniden başlar. Diğer ayar taslakları uygulanmaz."),
+    note("Henüz kalıcı parola belirlenmediyse geçici ilk giriş parolası yeniden başlatmada değişebilir. Kalıcı giriş için yeni parola belirleyin."));
     repeat.addEventListener("input", () => repeat.setCustomValidity(""));
     password.addEventListener("input", () => repeat.setCustomValidity(""));
     return h("div", { class: "as-stack" }, card("Web arayüzü hesabı", "Mevcut parola gösterilmez", form),
@@ -297,37 +413,51 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       note(`Profil: ${live.torrent.profile}. Çöp, paylaşım iç dizinleri, gizli klasörler ve sembolik bağlantılar seçilemez.`)));
   }
   function draw() {
-    if (!live) { root.replaceChildren(note("Ayarlar okunuyor…")); return; }
-    if (!live.manage || live.manage.error) { root.replaceChildren(note(live.manage?.error || "Ayar yönetimi için güncel kurulumu tamamlayın.", true)); return; }
-    if (!draft) return;
+    const previousTable = root.querySelector(".as-fw-scroll");
+    const tableScroll = previousTable ? {name:previousTable.getAttribute("aria-label"), top:previousTable.scrollTop, left:previousTable.scrollLeft} : null;
+    const choose = (key) => { location.hash = "#/ayarlar/" + key; };
     const nav = h("nav", { class: "as-tabs", role: "tablist", "aria-label": "Ayar sekmeleri" }, ...tabs.map(([key, name]) => h("button", {
-      type: "button", role: "tab", id: "as-tab-" + key, "aria-selected": key === tab, "aria-controls": "as-view", tabindex: key === tab ? "0" : "-1", onclick: () => { tab = key; draw(); document.getElementById("as-tab-" + key).focus(); },
-      onkeydown: (e) => { const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!delta && !["Home", "End"].includes(e.key)) return; e.preventDefault(); tab = tabs[e.key === "Home" ? 0 : e.key === "End" ? 3 : (tabs.findIndex(([k]) => k === tab) + delta + 4) % 4][0]; draw(); document.getElementById("as-tab-" + tab).focus(); }
+      type: "button", role: "tab", id: "as-tab-" + key, "aria-selected": key === tab, "aria-controls": "as-view", tabindex: key === tab ? "0" : "-1", onclick: () => choose(key),
+      onkeydown: (e) => { const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!delta && !["Home", "End"].includes(e.key)) return; e.preventDefault(); choose(tabs[e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (tabs.findIndex(([k]) => k === key) + delta + tabs.length) % tabs.length][0]); }
     }, name)));
-    const view = h("div", { id: "as-view", role: "tabpanel", "aria-labelledby": "as-tab-" + tab },
-      tab === "fw" ? firewall() : tab === "dns" ? dns() : tab === "qb" ? torrent() : caddy());
+    const ready = !!(live?.manage && !live.manage.error && draft);
+    const content = tab === "system" ? systemContent() : tab === "log" ? logContent() : !ready
+      ? note(live?.manage?.error || "Ayarlar okunuyor…", !!live?.manage?.error)
+      : tab === "fw" ? firewall() : tab === "dns" ? dns() : tab === "qb" ? torrent() : caddy();
+    const view = h("div", { id: "as-view", ...(tab === "qb" ? {} : {role: "tabpanel", "aria-labelledby": "as-tab-" + tab}) }, content);
     const list = changes();
-    root.replaceChildren(...[nav,
+    const directDns = ready && (tab === "dns" || !same(draft.dns, live.manage.config.dns))
+      && same(draft.firewall, live.manage.config.firewall) && !Object.keys(qdraft).length;
+    const restoreFocus = document.activeElement?.getAttribute("role") === "tab" ? document.activeElement.id : "";
+    root.replaceChildren(...[tab === "qb" ? null : nav,
       pending ? h("div", { class: "as-rollback", role: "status" }, h("strong", null, pending.phase === "awaiting" ? `${pending.seconds} sn içinde bağlantıyı onaylayın` : "Sunucuda işlem sürüyor…"),
         h("p", null, "Onay verilmezse önceki ayarlar sunucuda geri yüklenir. Sayfayı kapatmak bunu durdurmaz."),
         h("div", { class: "as-inline" }, h("button", { type: "button", class: "btn btn-primary", disabled: busy || pending.phase !== "awaiting" || pending.seconds <= 0 || (!!pending.domain && location.hostname !== "panel." + pending.domain.new), onclick: () => finish("onayla") }, "Bağlantı çalışıyor · onayla"),
           h("button", { type: "button", class: "btn", disabled: busy || pending.phase === "applying", onclick: () => finish("geri-al") }, "Geri al"))) : null,
       pending?.domain || migration ? domainLinks(pending?.domain || migration) : null,
       message ? h("p", { class: "as-message", role: "status" }, message) : null, view,
-      h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
-        h("small", null, "İnceleyip uygulayana kadar sunucu değişmez.")), h("div", { class: "as-inline" },
+      ready && (list.length || !["system", "log", "qb"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
+        h("small", null, directDns ? "Uygula ile DNS ayarları doğrudan kaydedilir; süreli onay gerekmez." : "İnceleyip uygulayana kadar sunucu değişmez.")), h("div", { class: "as-inline" },
         h("button", { type: "button", class: "btn btn-quiet", disabled: locked() || !list.length, onclick: reset }, "Vazgeç"),
-        h("button", { type: "button", class: "btn btn-primary", disabled: locked() || !list.length, onclick: review }, "İncele ve uygula")))].filter(Boolean));
-    if (tab === "web") paintWeb();
+        h("button", { type: "button", class: "btn btn-primary", disabled: locked() || !list.length, onclick: directDns ? () => submitChanges(() => {}) : review }, directDns ? "Uygula" : "İncele ve uygula"))) : null].filter(Boolean));
+    if (tab === "web" && ready) paintWeb();
+    if (tab === "log") paintLog();
+    const nextTable = root.querySelector(".as-fw-scroll");
+    if (tableScroll && nextTable?.getAttribute("aria-label") === tableScroll.name) {
+      nextTable.scrollTop = tableScroll.top; nextTable.scrollLeft = tableScroll.left;
+    }
+    if (restoreFocus && tab !== "qb") document.getElementById(restoreFocus.startsWith("as-fw-tab-") ? "as-fw-tab-" + scope : "as-tab-" + tab)?.focus();
   }
   window.addEventListener("beforeunload", (e) => { if ((dirty() || (domainInput && domainInput !== live?.domain)) && !pending && !migration) { e.preventDefault(); e.returnValue = ""; } });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       root.querySelectorAll('input[type="password"]').forEach((x) => { x.value = ""; });
-      if (qdraft.password) { delete qdraft.password; message = "Sekme gizlendiği için parola taslağı temizlendi; gerekiyorsa yeniden girin."; draw(); }
     }
   });
-  return { render(data) {
+  return { render(data, section = "system") {
+    tab = section;
+    const next = document.getElementById(section === "qb" ? "torrent-settings" : "settings-page");
+    if (root !== next) { root.replaceChildren(); root = next; }
     if (!data) { draw(); return; }
     const keepDraft = dirty();
     live = data;

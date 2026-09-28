@@ -3,10 +3,15 @@
 Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 (noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, host
 dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
-the optional applications are installed. Files, folder WebDAV and ZIP tools
-are built in (**DD-159**). No Docker (**DD-152**), no reconcile engine.
+the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
+are built in (**DD-159**, **DD-166**). No Docker (**DD-152**), no reconcile engine.
 
-**Current version:** `2026.08.06-v2-129` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-144` (see `Data/install.sh`).
+
+Model A is implemented: Files is the landing page, with one sidebar and live
+CPU/RAM/disk indicators. See the [clean-install checklist](Data/docs/model-a-clean-install.md).
+App Store uses the compact list (model 2): Install/Open in each row, service
+controls and logs under Details. Fresh-host acceptance remains separate from upgrades.
 
 The repository root holds only what is double-clicked: the current portable
 installer (`<version>.command`), `wireguard.command` (WireGuard peers and
@@ -24,7 +29,7 @@ Earlier reviews (historical, v2-27 and v2-73):
 ## Quick start
 
 ```bash
-# Once: installer inputs (SSH host, domain, service accounts)
+# Once, only if absent: installer inputs (SSH host and domain; no accounts)
 mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
 chmod 600 kurulum/kurulum.env   # then fill it in
 
@@ -85,21 +90,34 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 | Service | Exposure | Role |
 |---------|----------|------|
-| qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. The first login's temporary password is shown on its card |
+| qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. Its own page shows first-login information on request |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010/s/<id>/` | Separate account per folder, RO/RW, expiry and pause. Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
-| Konsol Desktop (**DD-159**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | launcher, dock and a single workspace: Files (browse, upload, move, trash, text, ZIP/nested unzip), Settings, server overview, App Store and installed WireGuard; qBittorrent opens its own UI |
+| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, ZIP/nested unzip), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
 to the WireGuard address; firewall (custom INPUT/FORWARD/NAT chains) for
 Tailscale, WireGuard and WAN SSH.
 
-Konsol → Ayarlar (**DD-156**) manages firewall port overrides, local DNS
-names/upstreams and qBittorrent's account/new-download folder in separate
-tabs. Firewall addresses include short listening-scope explanations.
+Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq and
+Log tabs. qBittorrent's account/new-download folder is on its own application
+page. Account-only Save commits directly (**DD-165**); folder edits share the
+existing draft/review/rollback controller with Settings.
+Firewall uses full tables with service/address explanations, source CIDRs,
+policy and on/off controls. Incoming-network tabs are Tailscale (default), Internet,
+WireGuard (when installed, with per-network selection) and protected loopback.
+Listener binding is labelled separately from permission; Technical rules shows
+all chains read-only (**DD-164**). Details stay visible; narrow screens scroll the table.
 Caddy shows routes and offers a local-domain suffix change (**DD-157**).
-Review ordinary changes, apply, then confirm within
-60 seconds; an independent server-side timer rolls unconfirmed changes back.
+DNS-only changes use one Apply action and persist immediately after validation
+and restart, without a timed confirmation (**DD-163**). The panel's own DNS
+name cannot be disabled; failed applies restore previous settings.
+Account Save sends only username/password, keeps other drafts untouched and
+reports success after durable commit. Blank preserves a stored password;
+temporary first-login passwords can rotate on restart. Failed applies retain
+snapshot recovery. Firewall/qBittorrent folder changes (including mixed drafts) require review,
+apply and confirmation within 60 seconds; an independent server-side timer
+rolls unconfirmed changes back.
 Domain changes are separate: configure the new restricted domain in Tailscale
 Admin DNS first, then update in Caddy and confirm from the new panel address
 within five minutes. Old DNS mapping should stay until confirmation. Service
@@ -115,14 +133,19 @@ sharing with other people: recipients must not reach passwordless Konsol/SSH.
 The v128 upgrade retires old shared-account URLs; create new folder accounts.
 Native Finder/Infuse compatibility and fresh Ubuntu acceptance are separate tests.
 
-Desktop v10 is implemented in v129, not a KDE session. Files/WebDAV are always
-installed; existing folder accounts survive the upgrade. ZIP jobs run on the
+Model A replaces v129's launcher, dock, window controls and Overview; it is
+not an OS session. Files/WebDAV are always installed; existing folder accounts
+survive the upgrade. ZIP creation and ZIP/RAR extraction jobs run on the
 server after the page closes, with cancellation and bounded nested extraction.
-See [desktop, archives and upgrade boundaries](Data/docs/desktop-and-archives.md).
+RAR3/RAR5, solid and multipart sets are supported; keep all volumes together.
+All source archives are retained. Encrypted archives/ZIP64/7z are not supported;
+the existing 2 GiB aggregate job limit also applies to RAR.
+See [archive and upgrade boundaries](Data/docs/desktop-and-archives.md) and
+[Model A navigation and acceptance](Data/docs/model-a-clean-install.md).
 
 ## Backups
 
-There is no backup tool. A host is rebuilt from `kurulum/` alone:
+There is no backup/restore tool. `kurulum/` supplies installation inputs, not server data:
 - `kurulum/kurulum.env` holds only the SSH host and the domain; Konsol has
   no account (**DD-147**) and the modules make or show their own.
 - qBittorrent keeps its settings and torrent list on the server only; a

@@ -357,8 +357,8 @@ class Manager:
             if "username" in q:
                 require(isinstance(q["username"], str) and re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", q["username"]), "Kullanıcı adı geçersiz (1–64 harf/rakam/._@-).")
             if "password" in q:
-                require(isinstance(q["password"], str) and 12 <= len(q["password"]) <= 256
-                        and all(ord(x) >= 32 for x in q["password"]), "Parola 12–256 karakter olmalı.")
+                require(isinstance(q["password"], str) and 8 <= len(q["password"]) <= 256
+                        and all(ord(x) >= 32 for x in q["password"]), "Parola 8–256 karakter olmalı.")
             if "save" in q:
                 self.safe_dir(q["save"], writable=True)
         return c
@@ -565,6 +565,13 @@ class Manager:
         candidate = self.validate(data)
         change = {k: k in data for k in ("firewall", "dns", "torrent", "domain")}
         require(any(change.values()), "Değişiklik yok.")
+        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "torrent", "domain"))
+        # Account edits cannot disconnect Konsol. Folder/mixed writes keep the
+        # existing confirmation; eligibility is server-owned, not a client flag.
+        account_only = set(data) == {"revision", "torrent"} and set(data["torrent"]) <= {"username", "password"}
+        if change["dns"]:
+            require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
+                    "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
         run(["systemctl", "is-active", "--quiet", "master-settings-guard.timer"])
         paths = ([*self.dns_paths(), self.dns_file] if change["dns"] else []) + ([self.qdrop] if change["torrent"] else [])
         files_active = False
@@ -591,6 +598,9 @@ class Manager:
                 self.firewall_apply()
             p = self.pending()
             require(p["until"] > time.monotonic(), "Uygulama zaman aşımına uğradı.")
+            if dns_only or account_only:
+                self.commit(p)
+                return {"pending": None, "committed": True}
             p.update(phase="awaiting", until=time.monotonic() + (300 if change["domain"] else 60))
             save_json(self.pending_path, p)
         except Exception:
@@ -626,13 +636,16 @@ class Manager:
         if p["changes"]["dns"]:
             self.dns_test()
         require(p["until"] > time.monotonic(), "Onay süresi doldu.")
+        self.commit(p)
+        return {"ok": True}
+
+    def commit(self, p):
         committed = dict(p["candidate"], _transaction=p["id"])
         save_json(self.config_path, committed)
         # A crash after the commit is recognized by guard, rather than rolling back a committed change.
         p["phase"] = "committed"
         save_json(self.pending_path, p)
         self.pending_path.unlink()
-        return {"ok": True}
 
     def rollback(self):
         p = self.pending()

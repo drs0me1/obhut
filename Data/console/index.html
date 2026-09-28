@@ -9,103 +9,43 @@
 <link rel="stylesheet" href="/konsol.css">
 <link rel="stylesheet" href="/ayarlar.css">
 <link rel="stylesheet" href="/dosyalar.css">
-<link rel="stylesheet" href="/desktop.css">
+<link rel="stylesheet" href="/panel.css">
 <script src="/arsiv.js" defer></script>
 <script src="/dosyalar.js" defer></script>
 <script src="/ayarlar.js" defer></script>
 <script src="/konsol.js" defer></script>
 </head>
 <body>
-<header class="desktop-menu"><a href="#/uygulamalar"><strong>Konsol</strong> Desktop</a><span>Sunucunuz · yalnız Tailscale</span><a href="#/ayarlar">Ayarlar</a></header>
-<div class="window-controls" aria-label="Pencere denetimleri">
-  <button type="button" id="window-home" aria-label="Uygulamalara dön" title="Uygulamalara dön">×</button>
-  <button type="button" id="window-min" aria-label="Pencereyi küçült" title="Pencereyi küçült">−</button>
-  <button type="button" id="window-max" aria-label="Pencereyi genişlet" title="Pencereyi genişlet" aria-pressed="false">+</button>
-</div>
+<a class="skip-link" href="#main-content">İçeriğe geç</a>
+<header class="mobile-brand">
+  <span class="wordmark"><span id="brand-host-m">sunucu</span><span class="dot">.</span></span>
+  <button type="button" class="btn btn-quiet" id="menu-toggle" aria-controls="panel-sidebar" aria-expanded="false">Menü</button>
+</header>
 <div class="shell">
-  <aside class="side" aria-label="Sunucu konsolu">
+  <aside class="side" id="panel-sidebar" aria-label="Sunucu konsolu">
     <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
     <nav class="nav" aria-label="Bölümler">
-      <a href="#/uygulamalar" data-route="uygulamalar" data-icon="box">Uygulamalar</a>
-      <a href="#/genel" data-route="genel" data-icon="gauge">Genel bakış</a>
-      <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard <span class="count" id="nav-wg"></span></a>
-      <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar <span class="count" id="nav-fs"></span></a>
-      <a href="#/moduller" data-route="moduller" data-icon="stack">App Store <span class="count" id="nav-mods"></span></a>
-      <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
-      <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
+      <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
+      <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
+      <span class="side-label" id="installed-label" hidden>Kurulu uygulamalar</span>
+      <a href="#/torrent" data-route="torrent" data-icon="download" hidden>qBittorrent</a>
+      <a href="#/wireguard" data-route="wireguard" data-icon="shield" hidden>WireGuard</a>
+      <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders" class="settings-link">Ayarlar</a>
     </nav>
-    <div class="side-group" id="side-other" hidden>
-      <span class="side-label">Diğer arayüzler</span>
-      <a id="link-torrent" data-icon="download" hidden>qBittorrent <svg class="ext" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7 3.5H3.5v11h11V11M10 3.5h4.5V8M14.5 3.5L8 10"/></svg></a>
-    </div>
-    <div class="side-foot">
-      <span>Sürüm <span class="mono" id="foot-version">–</span></span>
-      <span>Tailscale <span class="mono" id="foot-ts">–</span></span>
-    </div>
+    <section class="resources" aria-label="Sunucu kaynakları">
+      <p class="resource-status" id="resource-status" role="status">Kaynaklar okunuyor…</p>
+      <div class="resource"><div><span>İşlemci</span><strong id="resource-cpu">—</strong></div><progress id="bar-cpu" max="100" value="0" aria-label="İşlemci kullanımı" hidden></progress><small id="detail-cpu">Örnek bekleniyor</small></div>
+      <div class="resource"><div><span>RAM</span><strong id="resource-mem">—</strong></div><progress id="bar-mem" max="100" value="0" aria-label="Bellek kullanımı" hidden></progress><small id="detail-mem">—</small></div>
+      <div class="resource"><div><span>Disk</span><strong id="resource-disk">—</strong></div><progress id="bar-disk" max="100" value="0" aria-label="Disk kullanımı" hidden></progress><small id="detail-disk">—</small></div>
+    </section>
+    <div class="side-foot"><span>Yalnız Tailscale</span><span class="mono" id="foot-ts">—</span><span class="mono" id="foot-version">—</span></div>
   </aside>
-
-  <main class="main">
+  <main class="main" id="main-content" tabindex="-1">
     <div class="content">
-      <div class="mobile-brand"><span class="wordmark"><span id="brand-host-m">sunucu</span><span class="dot">.</span></span></div>
       <header class="topbar">
-        <div><p class="eyebrow" id="eyebrow">–</p><h1 id="title">Genel bakış</h1></div>
+        <div><p class="eyebrow" id="eyebrow">Sunucu yönetimi</p><h1 id="title">Dosyalar</h1></div>
         <div class="top-actions" id="top-actions"></div>
       </header>
-
-      <!-- GENEL BAKIŞ -->
-      <section data-view="uygulamalar" hidden>
-        <div class="desktop-intro"><span>KONSOL DESKTOP</span><h2>Sunucunuzun çalışma alanı.</h2><p>Dosyalar ve paylaşım yerleşik. İhtiyacınız olan uygulamaları App Store’dan ekleyin.</p></div>
-        <div id="desktop-apps" class="desktop-apps"></div>
-      </section>
-      <section data-view="genel">
-        <div class="grid">
-          <article class="card span-12">
-            <div class="card-head"><h2 data-icon="server">Sunucu</h2><div class="head-right"><span class="hm ok" id="sys-uptime">–</span></div></div>
-            <dl class="facts wide">
-              <div class="fact"><dt id="cpu-dt">İşlemci</dt><dd>
-                <span class="gval" id="cpu-val">–<small>şu an</small></span>
-                <div class="spark" id="cpu-spark" role="img" aria-label="Son 2 dakikanın işlemci kullanımı"><svg viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><line class="gl" x1="0" y1="20" x2="120" y2="20"/><line class="base" x1="0" y1="40" x2="120" y2="40"/><path class="area"/><path class="line"/></svg><span class="enddot"></span></div>
-                <span class="gsub"><span>2 dk önce</span><span>kesikli çizgi %50</span><span>şimdi</span></span>
-              </dd></div>
-              <div class="fact"><dt id="ram-dt">Bellek</dt><dd>
-                <span class="gval" id="ram-val">–<small></small></span>
-                <div class="spark ram" id="ram-spark" role="img" aria-label="Son 2 dakikanın bellek kullanımı"><svg viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><line class="gl" x1="0" y1="20" x2="120" y2="20"/><line class="base" x1="0" y1="40" x2="120" y2="40"/><path class="area"/><path class="line"/></svg><span class="enddot"></span></div>
-                <span class="gsub"><span>2 dk önce</span><span>kesikli çizgi %50</span><span>şimdi</span></span>
-              </dd></div>
-              <div class="fact"><dt id="disk-dt">Disk</dt><dd>
-                <span class="gval" id="disk-val">–<small></small></span>
-                <div class="dbox">
-                  <div class="dbar" id="disk-bar" role="img" aria-label="Disk kullanımı"></div>
-                  <div class="dleg" id="disk-leg"></div>
-                </div>
-                <span class="gsub" id="disk-sub"></span>
-              </dd></div>
-              <div class="fact info">
-                <dt>Sistem</dt><dd id="sys-os">–</dd>
-                <dt>WAN</dt><dd class="mono" id="sys-wan">–</dd>
-                <dt>Kurulum</dt><dd class="mono" id="sys-version">–</dd>
-              </div>
-            </dl>
-          </article>
-
-          <article class="card span-7 eq">
-            <div class="card-head"><h2 data-icon="shield">WireGuard cihazları</h2><div class="head-right"><span class="hm ok" id="sum-wg"></span><button class="linkbtn" type="button" data-go="#/wireguard">Tümü <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M7 4.5l4.5 4.5L7 13.5"/></svg></button></div></div>
-            <div class="peers-mini" id="peers-mini"></div>
-            <div class="card-foot"><span id="wg-foot"></span></div>
-          </article>
-
-          <article class="card span-5 eq">
-            <div class="card-head"><h2 data-icon="list">Son işlemler</h2><div class="head-right"><span class="hm" id="feed-sum"></span><button class="linkbtn" type="button" data-go="#/gunluk">Günlük <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M7 4.5l4.5 4.5L7 13.5"/></svg></button></div></div>
-            <div class="feed" id="feed-mini"></div>
-          </article>
-
-          <article class="card span-12">
-            <div class="card-head"><h2 data-icon="lock">Kullanımdaki portlar</h2><div class="head-right"><span class="hm warn" id="ports-sum"></span></div></div>
-            <div class="portgrid" id="ports"></div>
-            <div class="card-foot"><span id="ports-foot"></span></div>
-          </article>
-        </div>
-      </section>
 
       <!-- WIREGUARD -->
       <section data-view="wireguard" hidden>
@@ -173,47 +113,31 @@
       <!-- DOSYALAR -->
       <section data-view="dosyalar" hidden>
         <nav id="fs-tabs" class="fs09-tabs" aria-label="Dosya bölümleri"></nav>
-        <!-- DD-145: solda kısayol sütunu, sağda liste; yükleme listenin içine bırakılır. -->
+        <!-- Folder shortcuts, selection actions and uploads share one workspace. -->
         <div class="fswrap">
           <nav class="fsrail" id="fs-rail" aria-label="Klasörler"></nav>
           <div class="fspanel" id="fs-panel"><div id="fs-body" class="fs-body"></div></div>
         </div>
       </section>
 
-      <!-- MODÜLLER (DD-148) -->
+      <!-- Optional applications; built-in services live in Settings. -->
       <section data-view="moduller" hidden>
-        <article class="card span-12">
-          <div class="card-head"><h2 data-icon="server">Temel</h2><div class="head-right"><span class="hm ok">kurulumla gelir · kaldırılmaz</span></div></div>
-          <div class="base-list" id="mod-base"></div>
-        </article>
-        <div class="sec-title"><h2>App Store</h2><span id="mod-sum"></span></div>
-        <div class="grid" id="mod-grid"></div>
+        <div class="store-list" id="mod-grid" aria-label="Uygulamalar"></div>
+        <section class="store-detail" id="mod-detail" aria-labelledby="mod-detail-title" hidden></section>
       </section>
 
-      <!-- GÜNLÜK -->
-      <section data-view="gunluk" hidden>
-        <div class="logwrap">
-          <div class="chipset" id="log-filter" role="group" aria-label="Süzgeç"></div>
-          <div class="table log-t" id="log-table"></div>
-        </div>
+      <section data-view="torrent" hidden>
+        <div id="torrent-status" class="app-toolbar"></div>
+        <details class="card app-account"><summary>İlk giriş bilgileri</summary><div id="torrent-account"></div></details>
+        <div id="torrent-settings"></div>
       </section>
 
-      <!-- AYARLAR (DD-156): taslak → sunucuda uygula → bağlantıyı onayla -->
       <section data-view="ayarlar" hidden>
         <div id="settings-page" aria-label="Sunucu ayarları"></div>
       </section>
     </div>
   </main>
 </div>
-
-<nav class="bottomnav" aria-label="Bölümler">
-  <a href="#/genel" data-route="genel" data-icon="gauge">Genel</a>
-  <a href="#/wireguard" data-route="wireguard" data-icon="shield">WireGuard</a>
-  <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
-  <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
-  <a href="#/gunluk" data-route="gunluk" data-icon="list">Günlük</a>
-  <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
-</nav>
 
 <!-- genel amaçlı pencere: peer ekle, QR, dosya görüntüleyici -->
 <dialog id="sh" aria-labelledby="sh-title"><div class="dlg" id="sh-body"></div></dialog>
@@ -260,13 +184,6 @@
   </form>
 </dialog>
 
-<nav class="desktop-dock" aria-label="Uygulama kısayolları">
-  <a href="#/uygulamalar" data-route="uygulamalar" data-icon="box">Uygulamalar</a>
-  <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
-  <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
-  <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders">Ayarlar</a>
-  <a href="#/genel" data-route="genel" data-icon="server">Sunucu</a>
-</nav>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
