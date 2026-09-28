@@ -1,7 +1,7 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (2026.08.06-v2-144.command)
+  <sürüm>.command            güncel kurulum (2026.08.06-v2-151.command)
   wireguard.command          WireGuard menüsü: ağ seç, listele, ekle, çıkar, QR, DNS, ağı yeniden üret (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu ve alan adı (git dışı)
   kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png); kurulum buraya bakmaz (git dışı)
@@ -33,9 +33,8 @@ WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın ken
   7) DNS değiştir: anahtar ve IP aynı kalır; yeni QR'ı cihazda okutun (eski tüneli silin).
   8) ağı yeniden üret: seçili ağa yeni sunucu anahtarı; o ağdaki bütün peer'lar ve profiller silinir, geri alınamaz.
      onayla yazınca çalışır (büyük/küçük harf fark etmez); cihazları 2) ekle ile yeniden ekleyin.
-  WireGuard'dayken arayüz (ağ "İnternet + arayüzler" ise ve qBittorrent kuruluysa):
-  http://10.8.N.1:61006 qBittorrent (wg0 için 10.8.0.1). Dosyalar WireGuard'dan açılmaz; Konsol yalnız Tailscale'den
-  (tailnet, WebDAV ve SSH WireGuard'dan kapalı)
+  WireGuard yalnız internet erişimi sağlar. Sunucu servisleri, Tailscale ağı,
+  diğer VPN ağları ve özel IP hedefleri kapalıdır. qBittorrent'e Tailscale'den erişin.
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
 
@@ -49,7 +48,8 @@ Konsol (tarayıcıdan; v2-105):
   Adreslerin altında nerede dinledikleri açıklanır. Üçüncü taraf kuralları salt okunurdur.
   v2-134: Firewall gelen ağa göre sekmelidir: Tailscale (ilk görünüm), İnternet,
   WireGuard (kuruluysa; ağ seçilebilir) ve Sunucu içi (korumalı).
-  VPN'in UDP bağlantı portu İnternet'te, tüneldeki cihazların izinleri WireGuard'dadır.
+  VPN'in UDP bağlantı portu İnternet'tedir. WireGuard sekmesi internet-only politikasını gösterir;
+  bu sekmeden sunucu portu açılamaz.
   Servis, port/protokol, kaynak IP/CIDR, dinleme/adres, firewall izni, aç/kapa ve işlemler
   aynı satırdadır. Teknik kurallar, tüm ağların yönlendirme/NAT dahil ham kurallarını gösterir.
   Dinleme durumu izinden ayrıdır; dışarıdan yapılan değişiklikleri Yenile ile okuyun.
@@ -78,16 +78,17 @@ Konsol (tarayıcıdan; v2-105):
   Güncel veri yoksa yüzde yerine — görünür. Son işlemler Ayarlar → Günlük'tedir.
   Port ayrıntıları Ayarlar → Güvenlik Duvarı'ndadır; kullanıcılar WireGuard'da görünür.
   WireGuard sayfası:
-  v2-140: Ağ kartının başlığındaki Arayüz ayarları simgesinden varsayılan DNS ve Local erişim değişir.
+  v2-151: Tüm ağlar ve cihazlar yalnız internete çıkar; local erişim seçeneği kaldırıldı.
+  Güncelleme mevcut ağları da bu politikaya geçirir; eski WG servis izinleri kaldırılır.
+  Ağ kartındaki Arayüz ayarları simgesinden yalnız varsayılan DNS değişir.
   Ayarları kaydet doğrudan uygular; mevcut anahtarlar, cihaz profilleri, portlar ve adresler korunur.
   Varsayılan DNS yalnız yeni eklenecek cihazlara önerilir; mevcut cihaz için Düzenle → DNS kullanın.
-  Local erişim yalnız o ağdan qBittorrent arayüzünü açar/kapatır; Konsol, SSH ve WebDAV açılmaz.
   Kapalı ağ bu işlemle açılmaz. Anahtarı yeniden üret ayrı bir işlemdir; onayla yazmayı gerektirir
   ve o ağın tüm cihaz profillerini siler. Bekleyen Ayarlar işlemini önce onaylayın veya geri alın.
   Peer listesi (bağlı/boşta, el sıkışma, trafik), ekle, çıkar, QR göster (60 sn sonra gizlenir),
   profil ve QR resmi indir, DNS değiştir, ağı yeniden üret (onayla yazınca).
   Arayüz ekle (v2-101): wg1…wg9 — her ağın sekmesi, anahtarı, UDP portu ve adresleri ayrı
-  (wg1: 10.8.1.x). "Yalnız internet" ya da "İnternet + arayüzler" seçilir; ağlar birbirini görmez.
+  (wg1: 10.8.1.x). Yalnız internet erişimi vardır; ağlar birbirini görmez.
   Her ağ kaldırılabilir (onayla), wg0 dahil (v2-110): ağ kartındaki çöp kutusu düğmesi. Son ağ da
   kaldırılınca sayfa "Yapılandır"a döner, altyapı durur, istediğinizde yeni ağ kurarsınız.
   wireguard.command da aynı ağlarla çalışır: 6) ağ seç ile hangisini yöneteceğinizi seçersiniz.
@@ -118,9 +119,10 @@ Klasör WebDAV (v2-128; v2-129'dan beri yerleşik):
 
 Konsol Model A · App Store (v2-131):
   Açılış sayfası Dosyalar. Tek sol menü: Dosyalar, App Store, kurulu uygulamalar, Ayarlar.
-  Dock ve pencere düğmeleri yoktur. Mobilde aynı menü Menü düğmesiyle açılır.
+  Masaüstü uygulama dock'u ve pencere düğmeleri yoktur; dosya seçince işlem dock'u açılır.
+  Mobilde aynı menü Menü düğmesiyle açılır.
   Bu bir KDE veya işletim sistemi oturumu değil, sunucu yönetim panelidir.
-  Dosyalar, WebDAV ve ZIP yerleşiktir. Tailscale, DNS/Caddy ve güvenlik duvarı korunur.
+  Dosyalar, WebDAV ve arşiv araçları yerleşiktir. Tailscale, DNS/Caddy ve güvenlik duvarı korunur.
   App Store'dan WireGuard ve qBittorrent kurulup kaldırılır; qBittorrent durdurulup başlatılabilir.
   Sade liste: kısa açıklama, durum ve Kur/Aç. Ayrıntı düğmesi teknik bilgileri,
   Günlük, Durdur/Başlat ve Kaldır seçeneklerini açar; aynı anda tek ayrıntı görünür.
@@ -128,9 +130,10 @@ Konsol Model A · App Store (v2-131):
   Sayfa kapansa da kurulum sürer. Dosyalar/WebDAV için kaldır düğmesi veya modül işlemi yoktur.
   Mevcut klasör hesapları kurulum tekrarında korunur; eksik/kapalı yerleşik servisler açılır.
 
-Dosyalar · ZIP oluştur / Arşivi aç (v2-139):
-  Dosya ve klasörleri seç → ZIP oluştur; tek ZIP/RAR seç → Arşivi aç. Hedef klasör ve sonuç adını seçin.
-  İç içe ZIP/RAR açma isteğe bağlıdır (varsayılan 3, en fazla 5 katman); iç arşivler de korunur.
+Dosyalar · Arşiv oluştur / Arşiv açıcı:
+  Dosya ve klasörleri seç → Arşiv oluştur (ZIP); tek arşiv/parça seç → Arşiv açıcı.
+  Hedef varsayılan olarak downloads klasörüdür; klasör seçiciyle başka bir yer seçilebilir.
+  İç içe arşivler otomatik açılır; katman seçeneği yoktur, beş katman güvenlik sınırı arka plandadır.
   Parçalı RAR: tüm .rar/.r00/.r01… veya .part01.rar/.part02.rar… aynı klasörde olmalıdır.
   İlk parçayı seçin; sonraki parça seçilirse ilk parça otomatik bulunur. Kaynak parçalar silinmez.
   Aynı adlı sonuç varsa yeniden adlandır, atla veya dur seçenekleri; üzerine yazma yoktur.
@@ -169,14 +172,14 @@ qBittorrent (v2-118; modül, sunucuda Debian paketi):
   ve liste silinir; indirilen dosyalar hiçbir durumda silinmez.
   Dozzle kaldırıldı (v2-118): App Store → Ayrıntı içinde Günlük vardır.
 
-A) Temiz kurulum — v2-144
+A) Temiz kurulum — v2-151
   0. Sunucuyu sıfırlamak ayrı bir işlemdir; kurulum betiği sunucuyu silmez.
      Sıfırlamada korunması gereken veriyi önceden kendiniz yedekleyin.
      SSH host anahtarı değişmişse yeni parmak izini sağlayıcı konsolundan doğrulayın;
      sonra yalnız o sunucunun eski known_hosts kaydını değiştirin. SSH doğrulamasını kapatmayın.
   1. Güncel .command ve kurulum/ aynı klasörde olmalı. Var olan kurulum.env'yi üzerine yazmayın.
      İzin 600 veya 400; yalnız SSH_HOST ve isteğe bağlı LOCAL_DOMAIN.
-  2. 2026.08.06-v2-144.command → sunucu/özeti kontrol edin → E.
+  2. 2026.08.06-v2-151.command → sunucu/özeti kontrol edin → E.
      Tailscale giriş bağlantısı gelirse tarayıcıdan onaylayın.
   3. Tailscale Admin: exit-node onayı, restricted DNS alanı ve yeni sunucunun Tailscale IP'si.
      Sunucuyu sıfırlamak aynı Tailscale IP'sini garanti etmez.
@@ -194,6 +197,31 @@ B) Tekrar çalıştırma ve sınama
   Başarılı kurulumdan sonra Files/WebDAV/ZIP, App Store, Ayarlar ve kaynak göstergelerini sınayın.
   Ardından aynı sürümü tekrar çalıştırma ve sunucuyu yeniden başlatma kontrolü yapılmalıdır.
   Ayrıntılı kabul listesi: Data/docs/model-a-clean-install.md
+
+v2-149: Firewall kaynak temizliği; modül kaydı yoksa saklı WireGuard ağları
+kendiliğinden açılmaz. Ağ yoksa boş yönlendirme/NAT zincirleri üretilmez.
+Gereksiz son RETURN satırları kaldırıldı; fazla/eski kurallar denetimde yakalanır.
+Kullanıcının oluşturduğu tüm WireGuard ağlarının gerekli portları korunur.
+
+v2-148: İnternet ve WireGuard port listelerindeki gereksiz kapalı örnek satırlar
+kaldırıldı. İnternet'te SSH, Tailscale ve yapılandırılmış VPN bağlantı portları;
+WireGuard'ın eski servis izinleri v2-151'de tamamen kaldırılmıştır.
+Kullanıcının eklediği izin/engel kuralları, ağlar ve teknik kayıtlar korunur.
+
+v2-147: Tailscale port listesi yalnız yapılandırılmış servisleri ve WireGuard
+ağlarını içerir; sunucu içi portlar otomatik olarak bu listeye kopyalanmaz.
+Özel kullanıcı kuralları korunur. Listelenmeyen portlar varsayılan olarak kapalıdır;
+sunucu içi servisler ve teknik güvenlik duvarı kayıtları değişmez.
+
+v2-146: Tailscale üzerinden yeni bağlantılar gerekli servis portlarıyla sınırlandı.
+SSH, DNS, Caddy, WebDAV, Tailscale PeerAPI ve kullanıcı tanımlı WireGuard portları
+korunur. Diğer portlar yalnız açık bir kullanıcı kuralıyla açılır. İnternet/VPN
+çıkışı ve kurulmuş bağlantılar değişmez; port tablosu aynı politikayı gösterir.
+
+v2-145: Kullanılmayan eski paylaşım/modül kodları ve arayüz kalıntıları temizlendi.
+Yeni kurulum .pay/w veya durum işareti oluşturmaz. Var olan eski veriler silinmez,
+izinleri değiştirilmez ve erişime açılmaz. Güncel klasör hesapları aynen korunur.
+Mac WireGuard menüsü otomatik yedek/eşitleme yapmaz; indirilmiş profil kopyaları ayrıdır.
 
 v2-144: Dock, seçilen ikinci taslaktaki simgeli görünümdedir: eşit aralıklı simgeler
 ve altında kısa etiketler; seçim sayısı ve kapatma ayrı satırdadır. Uygun olmayan
@@ -217,7 +245,7 @@ qBittorrent yeniden başlatılmadı. Yeni sınır için panel sayfasını yenile
 
 Önceki doğrulamalar:
 v2-140 nrm üzerindeki Debian kurulumuna güncelleme olarak yüklendi; sunucu sıfırlanmadı.
-WireGuard kartındaki Arayüz ayarları: varsayılan DNS ve Local erişim doğrudan kaydedilir.
+Bu eski sürümde varsayılan DNS ve Local erişim kaydediliyordu; Local erişim v2-151'de kaldırıldı.
 Gerçek WireGuard bağlantısıyla erişim aç/kapa, kapalı ağı koruma ve art arda 14 değişiklik sınandı.
 Masaüstü/mobil kayıt testleri geçti; mevcut ağlar, cihaz profilleri ve hesaplar korundu.
 WebDAV ve qBittorrent yeniden başlatılmadı. Yeni seçenek için panel sayfasını yenileyin.

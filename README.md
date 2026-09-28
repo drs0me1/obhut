@@ -6,7 +6,7 @@ dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
 the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
 are built in (**DD-159**, **DD-166**). No Docker (**DD-152**), no reconcile engine.
 
-**Current version:** `2026.08.06-v2-144` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-151` (see `Data/install.sh`).
 
 Model A is implemented: Files is the landing page, with one sidebar and live
 CPU/RAM/disk indicators. See the [clean-install checklist](Data/docs/model-a-clean-install.md).
@@ -14,9 +14,9 @@ App Store uses the compact list (model 2): Install/Open in each row, service
 controls and logs under Details. Fresh-host acceptance remains separate from upgrades.
 
 The repository root holds only what is double-clicked: the current portable
-installer (`<version>.command`), `wireguard.command` (WireGuard peers and
-their backup) and the Git-ignored `kurulum/` (installer inputs and the
-WireGuard backup). Everything else lives under `Data/`; paths in the
+installer (`<version>.command`), `wireguard.command` (WireGuard peer management)
+and the Git-ignored `kurulum/` (installer inputs and device profiles/QR codes
+downloaded on request, not a server backup). Everything else lives under `Data/`; paths in the
 documents there are relative to `Data/`. Turkish click order:
 [`Data/OKUBENI.txt`](Data/OKUBENI.txt).
 
@@ -73,13 +73,13 @@ only the runtime files and their archive SHA-256. It uploads them to
 └── Data/
     ├── install.sh          # orchestrator
     ├── common.sh           # shared helpers
-    ├── config/defaults.env # single source of truth for ports/images/paths
-    ├── templates/          # Caddyfile, Caddyfile.wg, dnsmasq.conf
+    ├── config/defaults.env # single source of truth for ports/paths/chain names
+    ├── templates/          # Caddyfile, dnsmasq.conf
     ├── modules/            # app and built-in service templates
     ├── scripts/            # firewall, refresh-tailnet, GRO, wait helpers
     ├── systemd/            # units and drop-ins
     ├── tests/              # Bats, settings worker, browser and isolated Linux tests
-    ├── dev/                # installer exporter, backup worker
+    ├── dev/                # portable installer exporter
     ├── app/                # the current exported <version>.command (older ones in Git)
     ├── docs/               # contract, architecture and design rationale
     ├── OKUBENI.txt         # Turkish click order
@@ -91,13 +91,22 @@ only the runtime files and their archive SHA-256. It uploads them to
 | Service | Exposure | Role |
 |---------|----------|------|
 | qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. Its own page shows first-login information on request |
-| WireGuard (host kernel; app, **DD-150**) | public UDP; UIs at `10.8.0.1:<port>` via `caddy-wg` | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
+| WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010/s/<id>/` | Separate account per folder, RO/RW, expiry and pause. Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
-| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, ZIP/nested unzip), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
+| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
 
-Host edge: dnsmasq + Caddy bound to the Tailscale address; `caddy-wg` bound
-to the WireGuard address; firewall (custom INPUT/FORWARD/NAT chains) for
+Host edge: dnsmasq + Caddy bound to the Tailscale address; firewall (custom INPUT/FORWARD/NAT chains) for
 Tailscale, WireGuard and WAN SSH.
+Tailnet host ingress uses an explicit service allowlist (**DD-172**); arbitrary
+listeners do not become accessible automatically. Registered WireGuard ports and
+outbound/established traffic remain protected; explicit WAN/tailnet rules take precedence.
+
+WireGuard is internet-only for all networks and peers (**DD-177**).
+There is no Local access option in creation, settings, API or CLI. Upgrades
+normalize existing networks, remove WG-scoped host rules and retire the old WG
+Caddy listener without changing keys, profiles, ports, addresses or DNS.
+WG cannot reach host services, other VPN networks or private destinations routed
+through WAN. Firewall overrides are available only for WAN and Tailscale.
 
 Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq and
 Log tabs. qBittorrent's account/new-download folder is on its own application
@@ -133,11 +142,15 @@ sharing with other people: recipients must not reach passwordless Konsol/SSH.
 The v128 upgrade retires old shared-account URLs; create new folder accounts.
 Native Finder/Infuse compatibility and fresh Ubuntu acceptance are separate tests.
 
-Model A replaces v129's launcher, dock, window controls and Overview; it is
-not an OS session. Files/WebDAV are always installed; existing folder accounts
+Model A replaces v129's application launcher, desktop dock, window controls and
+Overview; it is not an OS session. Files has its own contextual action dock when
+items are selected (**DD-170**). Files/WebDAV are always installed; existing folder accounts
 survive the upgrade. ZIP creation and ZIP/RAR extraction jobs run on the
 server after the page closes, with cancellation and bounded nested extraction.
-RAR3/RAR5, solid and multipart sets are supported; keep all volumes together.
+Archive creation produces ZIP. Extraction automatically finds multipart RAR and
+nested archives; the destination defaults to downloads and can be chosen with
+the folder picker (**DD-170**). RAR3/RAR5, solid and multipart sets are supported;
+keep all volumes together. The internal depth limit is five layers.
 All source archives are retained. Encrypted archives/ZIP64/7z are not supported;
 the existing 2 GiB aggregate job limit also applies to RAR.
 See [archive and upgrade boundaries](Data/docs/desktop-and-archives.md) and

@@ -23,10 +23,10 @@
 # (ya da bu komut) oluşturur. Tek ağ varsa peer komutları onu seçer; birden çok
 # ağ varsa "--if wgN" gerekir.
 #   master-wg nets                        ağlar: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer
-#   master-wg net-add PORT ERİŞİM DNS ETİKET   yeni ağ (wg0-wg9); erişim: inet | ui
+#   master-wg net-add PORT DNS ETİKET          yeni ağ (wg0-wg9); yalnız internet
 #   master-wg net-remove wgN --onay       ağı, anahtarını ve bütün peer'larını siler
 #   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
-#   master-wg --if wgN net-settings ERİŞİM DNS REVİZYON   anahtarları değiştirmeden ağ ayarları
+#   master-wg --if wgN net-settings DNS REVİZYON          anahtarları değiştirmeden varsayılan DNS
 set -Eeuo pipefail
 umask 077
 
@@ -103,10 +103,10 @@ net_line() {
 }
 
 select_net() {
-    local iface="$1" line port scope s4 n4 s6 n6 rest
+    local iface="$1" line port _policy s4 n4 s6 n6 rest
     [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
     line="$(net_line "$iface")" || die "'$iface' diye bir WireGuard ağı yok"
-    IFS=$'\t' read -r _ port scope s4 n4 s6 n6 rest <<<"$line"
+    IFS=$'\t' read -r _ port _policy s4 n4 s6 n6 rest <<<"$line"
     WG_INTERFACE="$iface"
     WG_PUBLIC_PORT="$port"
     WG_SERVER_IPV4="$s4"
@@ -147,7 +147,7 @@ peer_count() {
     printf '%s' "${n:-0}"
 }
 
-# Satır: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer. Kayıt boşsa çıktı da boştur
+# Satır: arayüz port sabit-inet s4 n4 s6 n6 dns etiket aktif peer. Kayıt boşsa çıktı da boştur
 # (DD-143: kurulum ağ yaratmaz; ilk ağı Konsol oluşturur).
 cmd_nets() {
     local iface line
@@ -174,23 +174,21 @@ registry_drop() {
 # Panelde eklenen ağın bütün izleri; hata yolunda ve net-remove'da aynı sıra.
 net_teardown() {
     local iface="$1"
-    systemctl disable --now "caddy-wg@${iface}.service" >/dev/null 2>&1 || true
     systemctl disable --now "wg-quick@${iface}.service" >/dev/null 2>&1 || true
-    rm -f -- "$BASE_CONF_DIR/${iface}.conf" "$BASE_CONF_DIR/caddy-wg-${iface}.env"
+    rm -f -- "$BASE_CONF_DIR/${iface}.conf"
     rm -rf -- "${BASE_CLIENTS_DIR:?}-${iface}"
     registry_drop "$iface"
 }
 
 # DD-136: yeni WireGuard ağı. Sıradaki boş wgN seçilir; 10.8.N.0/24 ve …::N:0/112.
 # Sıra: dosyalar ve kayıt → güvenlik duvarı (port açılır, yönlendirme ve NAT gelir)
-# → wg-quick@wgN → erişim "ui" ise caddy-wg@wgN. Bir adım düşerse ağın bütün
+# → wg-quick@wgN. Bir adım düşerse ağın bütün
 # izleri silinir ve güvenlik duvarı eski haline döner.
 cmd_net_add() {
-    local port="$1" scope="$2" dns label="$4" id="" iface="" p s4 n4 s6 n6 base4 base6 priv tmp
+    local port="$1" dns label="$3" id="" iface="" p s4 n4 s6 n6 base4 base6 priv tmp
     [[ "$port" =~ ^[1-9][0-9]{3,4}$ && "$port" -ge 1024 && "$port" -le 65535 ]] ||
         die "UDP portu 1024-65535 arasında olmalı"
-    [[ "$scope" == inet || "$scope" == ui ]] || die "erişim 'inet' (yalnız internet) ya da 'ui' (internet + arayüzler) olmalı"
-    dns="$(normalize_dns "$3")"
+    dns="$(normalize_dns "$2")"
     [[ "$label" != *[[:cntrl:]]* && "$label" != " "* && "$label" != *" " ]] ||
         die "etiket denetim karakteri ya da baş/son boşluk içeremez"
     [[ "$(printf '%s' "$label" | wc -c)" -le 64 ]] || die "etiket çok uzun (en çok 64 bayt)"
@@ -225,12 +223,8 @@ cmd_net_add() {
     chmod 0600 "$tmp"
     mv -f -- "$tmp" "$BASE_CONF_DIR/$iface.conf"
     { [[ ! -f "$NETWORKS_FILE" ]] || cat -- "$NETWORKS_FILE"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iface" "$port" "$scope" "$s4" "$n4" "$s6" "$n6" "$dns" "$label"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iface" "$port" inet "$s4" "$n4" "$s6" "$n6" "$dns" "$label"
     } | registry_write
-    if [[ "$scope" == ui ]]; then
-        printf 'WG_BIND=%s\n' "$s4" >"$BASE_CONF_DIR/caddy-wg-$iface.env"
-        chmod 0644 "$BASE_CONF_DIR/caddy-wg-$iface.env"
-    fi
     if ! systemctl restart master-firewall.service; then
         net_teardown "$iface"; systemctl restart master-firewall.service || true
         die "güvenlik duvarı yeni ağla uygulanamadı; ağ oluşturulmadı"
@@ -238,10 +232,6 @@ cmd_net_add() {
     if ! systemctl enable --now "wg-quick@$iface.service" >/dev/null 2>&1; then
         net_teardown "$iface"; systemctl restart master-firewall.service || true
         die "$iface başlatılamadı; ağ oluşturulmadı"
-    fi
-    if [[ "$scope" == ui ]] && ! systemctl enable --now "caddy-wg@$iface.service" >/dev/null 2>&1; then
-        net_teardown "$iface"; systemctl restart master-firewall.service || true
-        die "$iface için arayüz erişimi (caddy-wg@$iface) başlatılamadı; ağ oluşturulmadı"
     fi
     printf '%s\t%s\n' "$iface" "$port"
 }
@@ -260,15 +250,12 @@ cmd_net_remove() {
     printf '%s\t%s\n' "$iface" "$peers"
 }
 
-# DD-167: DNS yalnız yeni peer önerisidir; mevcut profil/anahtarlar okunmaz/yazılmaz.
-# Local erişim yalnız o ağın Caddy örneğini ve kayıt tabanlı firewall'u değiştirir.
-cmd_net_settings() (
-    local scope="$1" dns expected="$3" previous line revision old_scope env_file old_env="" had_env=0
-    local was_active=0 was_enabled=0 dirty=0 committed=0 caddy="caddy-wg@${WG_INTERFACE}.service"
-    [[ "$scope" == inet || "$scope" == ui ]] || die "erişim inet veya ui olmalı"
+# DD-177: DNS only suggests defaults for future peers; keys/profiles stay untouched.
+cmd_net_settings() {
+    local dns expected="$2" line revision
     [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || die "geçerli ağ revizyonu gerekli; sayfayı yenileyin"
-    [[ "${#2}" -le 512 && "$2" != *[[:cntrl:]]* ]] || die "geçersiz DNS listesi"
-    dns="$(normalize_dns "$2")"
+    [[ "${#1}" -le 512 && "$1" != *[[:cntrl:]]* ]] || die "geçersiz DNS listesi"
+    dns="$(normalize_dns "$1")"
     python3 -c 'import ipaddress,sys
 ips=sys.argv[1].split(", ")
 assert 1 <= len(ips) <= 8
@@ -276,90 +263,16 @@ for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en
     take_lock
     [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
         die "Önce Ayarlar sayfasındaki bekleyen işlemi onaylayın veya geri alın"
-    # --if was parsed before locking; re-read it to reject a removed/changed network.
     select_net "$WG_INTERFACE"
     [[ -f "$WG_CONF_FILE" ]] || die "WireGuard yapılandırması bulunamadı"
     line="$(net_line "$WG_INTERFACE")"
     revision="$(printf '%s' "$line" | sha256sum | awk '{print $1}')"
     [[ "$revision" == "$expected" ]] || die "Ağ ayarları değişmiş; pencereyi kapatıp yeniden açın"
-    old_scope="$(cut -f3 <<<"$line")"
-    [[ "$old_scope" == inet || "$old_scope" == ui ]] || die "Ağ kaydı geçersiz"
-    previous="$(cat -- "$NETWORKS_FILE")"
-    env_file="$BASE_CONF_DIR/caddy-wg-${WG_INTERFACE}.env"
-    [[ ! -L "$env_file" ]] || die "Caddy ortam dosyası bağlantı olamaz"
-    if [[ -f "$env_file" ]]; then had_env=1; old_env="$(cat -- "$env_file")"; fi
-    if [[ "$scope" != "$old_scope" ]]; then
-        was_active="$(unit_active "$caddy")"
-        systemctl is-enabled --quiet "$caddy" 2>/dev/null && was_enabled=1
-    fi
-    # Bound each step so the panel's command deadline also leaves time for rollback.
-    ctl() { timeout 15 systemctl "$@" >/dev/null 2>&1; }
-    if [[ "$scope" != "$old_scope" ]]; then
-        # An explicit user change gets a fresh attempt, like master-modul.
-        # Keep automatic restart-loop limits; DNS-only edits touch no services.
-        ctl reset-failed master-firewall.service ||
-            die "Servis başlatma sayacı sıfırlanamadı; ağ ayarları değiştirilmedi"
-        # A never-started template instance may be unloaded and refuse reset.
-        # Starting/verification below still fails closed on an actual error.
-        ctl reset-failed "$caddy" || true
-    fi
-    write_env() {
-        local tmp
-        tmp="$(mktemp "$BASE_CONF_DIR/.wg-caddy-XXXXXX")" || return 1
-        printf '%s\n' "$1" >"$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$env_file"
-    }
-    # shellcheck disable=SC2329 # Invoked by the EXIT trap, including failed writes.
-    rollback_settings() {
-        local rc=$? failed=0
-        trap - EXIT HUP INT TERM
-        if [[ "$dirty" -eq 1 && "$committed" -eq 0 ]]; then
-            set +e
-            if [[ "$scope" != "$old_scope" ]]; then ctl stop "$caddy" || failed=1; fi
-            printf '%s\n' "$previous" | registry_write || failed=1
-            if [[ "$scope" != "$old_scope" ]]; then
-                if [[ "$had_env" -eq 1 ]]; then write_env "$old_env" || failed=1
-                else rm -f -- "$env_file" || failed=1; fi
-                ctl restart master-firewall.service || failed=1
-                if [[ "$was_enabled" -eq 1 ]]; then ctl enable "$caddy" || failed=1
-                else ctl disable "$caddy" || failed=1; fi
-                if [[ "$was_active" -eq 1 ]]; then ctl start "$caddy" || failed=1; fi
-            fi
-            if [[ "$failed" -eq 1 ]]; then
-                printf 'HATA: Ağ ayarı uygulanamadı; geri dönüş tam doğrulanamadı. Firewall ve Caddy durumunu denetleyin.\n' >&2
-            else
-                printf 'HATA: Ağ ayarı uygulanamadı; önceki DNS ve erişim ayarları geri alındı.\n' >&2
-            fi
-        fi
-        exit "$rc"
-    }
-    trap rollback_settings EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    dirty=1
-    # Close the listener before restricting policy; opening does policy first.
-    if [[ "$scope" == inet && "$old_scope" != inet ]]; then
-        ctl disable --now "$caddy" || die "Local arayüz durdurulamadı"
-        [[ "$(unit_active "$caddy")" == 0 ]] || die "Local arayüz hâlâ çalışıyor"
-        rm -f -- "$env_file"
-    fi
-    printf '%s\n' "$previous" | awk -F'\t' -v OFS='\t' -v i="$WG_INTERFACE" -v s="$scope" -v d="$dns" \
-        '$1 == i {$3=s; $8=d} {print}' | registry_write
-    if [[ "$scope" != "$old_scope" ]]; then
-        if [[ "$scope" == ui ]]; then write_env "WG_BIND=$WG_SERVER_IPV4"; fi
-        ctl restart master-firewall.service || die "Güvenlik duvarı uygulanamadı"
-        if [[ "$scope" == ui ]]; then
-            # Never wake a disabled/stopped WireGuard network through Caddy's Requires.
-            ctl enable "$caddy" || die "Local arayüz etkinleştirilemedi"
-            if [[ "$(unit_active "wg-quick@${WG_INTERFACE}.service")" == 1 ]]; then
-                ctl start "$caddy" || die "Local arayüz başlatılamadı"
-                [[ "$(unit_active "$caddy")" == 1 ]] || die "Local arayüz çalışmıyor"
-            fi
-        fi
-    fi
-    committed=1
-    printf '%s\t%s\t%s\n' "$WG_INTERFACE" "$scope" "$dns"
-)
+    [[ "$(cut -f3 <<<"$line")" == inet ]] || die "Ağ kaydı geçersiz; kurulumu güncelleyin"
+    awk -F'\t' -v OFS='\t' -v i="$WG_INTERFACE" -v d="$dns" \
+        '$1 == i {$8=d} {print}' "$NETWORKS_FILE" | registry_write
+    printf '%s\t%s\n' "$WG_INTERFACE" "$dns"
+}
 
 peer_exists() {
     grep -qxF "# peer: $1" "$WG_CONF_FILE"
@@ -600,20 +513,15 @@ cmd_peer() {
 # düşer. Yapılandırma, kayıt ve anahtarlar durur: yalnız birim durumu değişir.
 # Güvenlik duvarındaki UDP portu açık kalır (dinleyen yoktur).
 cmd_net() {
-    local want="$1" unit="wg-quick@${WG_INTERFACE}.service" caddy="caddy-wg@${WG_INTERFACE}.service"
+    local want="$1" unit="wg-quick@${WG_INTERFACE}.service"
     [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
     [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
     if [[ "$want" == kapat ]]; then
-        systemctl disable --now "$caddy" >/dev/null 2>&1 || true
         systemctl disable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE kapatılamadı"
         [[ "$(unit_active "$unit")" == 0 ]] || die "$WG_INTERFACE hâlâ çalışıyor"
     else
         systemctl enable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE açılamadı"
         [[ "$(unit_active "$unit")" == 1 ]] || die "$WG_INTERFACE açılamadı"
-        if [[ -f "$BASE_CONF_DIR/caddy-wg-${WG_INTERFACE}.env" ]]; then
-            systemctl enable --now "$caddy" >/dev/null 2>&1 ||
-                die "$WG_INTERFACE açıldı ama arayüz erişimi (caddy-wg) başlatılamadı"
-        fi
     fi
     printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
 }
@@ -689,8 +597,8 @@ fi
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
     nets) [[ -z "$WG_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;
-    net-add) [[ "$#" -eq 5 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-add PORT ERİŞİM DNS ETİKET"
-        cmd_net_add "$2" "$3" "$4" "$5" ;;
+    net-add) [[ "$#" -eq 4 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-add PORT DNS ETİKET"
+        cmd_net_add "$2" "$3" "$4" ;;
     net-remove) [[ "$#" -le 3 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-remove wgN --onay"
         cmd_net_remove "${2:-}" "${3:-}" ;;
     list) cmd_list list ;;
@@ -704,7 +612,7 @@ case "${1:-}" in
     keepalive) [[ "$#" -eq 3 ]] || die "kullanım: master-wg keepalive AD SANİYE"; cmd_keepalive "$2" "$3" ;;
     peer) [[ "$#" -eq 3 ]] || die "kullanım: master-wg peer AD ac|kapat"; cmd_peer "$2" "$3" ;;
     net) [[ "$#" -eq 2 ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"; cmd_net "$2" ;;
-    net-settings) [[ "$#" -eq 4 ]] || die "kullanım: master-wg --if wgN net-settings ERİŞİM DNS REVİZYON"; cmd_net_settings "$2" "$3" "$4" ;;
+    net-settings) [[ "$#" -eq 3 ]] || die "kullanım: master-wg --if wgN net-settings DNS REVİZYON"; cmd_net_settings "$2" "$3" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
     *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove|net-settings" ;;
 esac

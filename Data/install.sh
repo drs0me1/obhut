@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-144"
+V2_VERSION="2026.08.06-v2-151"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -91,8 +91,6 @@ SHARE_PORT=$SHARE_PORT
 SHARE_STATE_FILE=$SHARE_STATE_FILE
 TORRENT_TEMP_DIR=$TORRENT_TEMP_DIR
 SHARE_DIR=$SHARE_DIR
-SHARE_HTPASSWD_FILE=$SHARE_HTPASSWD_FILE
-SHARE_CRED_FILE=$SHARE_CRED_FILE
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
@@ -103,7 +101,8 @@ FILES_ARCHIVE_DIR=$FILES_ARCHIVE_DIR
 WG_MODULES_LOAD_FILE=$WG_MODULES_LOAD_FILE
 CADDYFILE=$CADDYFILE
 CADDY_MODULES_DIR=$CADDY_MODULES_DIR
-CADDY_WG_FILE=$CADDY_WG_FILE
+WG_BLOCK_DEST4="$WG_BLOCK_DEST4"
+WG_BLOCK_DEST6="$WG_BLOCK_DEST6"
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
 RUNTIME_DIR=$RUNTIME_DIR
@@ -324,7 +323,7 @@ stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
     # DD-119: girdi ilk iş okunur ve silinir; kapılardan biri düşse bile
-    # parolalar /run'da kalmaz.
+    # geçici girdi /run'da kalmaz.
     read_input_file "$INPUT_FILE" "$INPUT_KEYS" "$INPUT_NONEMPTY_KEYS"
     rm -rf -- "$INPUT_DIR"
     require_supported_os
@@ -421,7 +420,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve ZIP/RAR aracı
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve arşiv aracı
   App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
   Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
   Tailscale:     $ts_note
@@ -504,7 +503,7 @@ stage_1() {
                 -o Dpkg::Options::=--force-confold full-upgrade
     fi
     # DD-153: yalnız temelin kullandıkları. gnupg (Caddy anahtarı artık .asc), gawk (v1'den
-    # kalma; awk sistemin mawk'ı) ve apache2-utils (htpasswd yalnız Paylaşım'ın) temelde yok.
+    # kalma; awk sistemin mawk'ı) ve apache2-utils (ortak htpasswd hesabı kaldırıldı) yok.
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl ethtool iproute2 procps kmod \
         iptables coreutils util-linux diffutils jq \
@@ -618,7 +617,8 @@ ensure_downloads_tree() {
     # hedef modlarda suid/sgid olmadığından exec sırası sonucu değiştirmez.
     # -print düzeltilen girdiyi yazar; aynı girdi hem sahip hem mod için
     # görünebilir, sayı tekilleştirilir. Çıktı: düzeltilen girdi sayısı.
-    find "$root" \( -path "$root/${FILES_ARCHIVE_DIR:-.arsiv}" -prune \) -o \
+    # DD-171: retired share data is neither served nor repaired/deleted.
+    find "$root" \( \( -path "$root/${FILES_ARCHIVE_DIR:-.arsiv}" -o -path "$root/${SHARE_DIR:-.pay}" \) -prune \) -o \
         \( \( ! -uid "$uid" -o ! -gid "$gid" \) \
         -print -exec chown -h "${uid}:${gid}" {} + -false \) -o \
         \( -type d ! -perm 0775 -print -exec chmod 0775 {} + -false \) -o \
@@ -652,8 +652,8 @@ assert_downloads_path_allowed() {
 
 # DD-148: modüllerin dosyaları. Kurulum her modülün şablonunu yer tutucuları doldurarak
 # MODULES_DIR/<id>/ altına yazar ve kayıt dosyasını (yoksa boş) oluşturur; hiçbir modülü
-# kendiliğinden kurmaz, başlatmaz ya da kaldırmaz. Dosyası değişen kurulu modülü aşama 7
-# yeniden uygular. Sıra master-modul'deki katalogla aynıdır.
+# isteğe bağlı uygulamayı kendiliğinden kurmaz ya da kaldırmaz. Aşama 7 yerleşik
+# Dosyalar/WebDAV'ı doğrular; kurulu isteğe bağlı uygulamaların değişen dosyalarını uygular.
 MODULES_CHANGED=""
 PANEL_HELPERS_CHANGED=0
 module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
@@ -731,7 +731,7 @@ reapply_modules() {
             log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
         fi
         "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
-            log WARN "Modül $id yeniden uygulanamadı; Konsol → Modüller'den bakın"
+            log WARN "Uygulama $id yeniden uygulanamadı; Konsol → App Store'dan bakın"
     done
 }
 
@@ -743,17 +743,14 @@ stage_3() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
 
     local d
-    # DD-144: kök kullanıcı alanı; indirme klasörü, kütüphane, çöp ve paylaşım kökü
-    # kardeştir. Torrent istemcisi yalnız indirme klasörünü görür.
+    # DD-144/171: downloads, media and trash are siblings. No legacy share tree.
     for d in \
         "$SERVER_ROOT" \
         "$DOWNLOADS_PATH" \
         "$SERVER_ROOT/$MEDIA_SUBDIR" \
         "$SERVER_ROOT/$MEDIA_SUBDIR/movies" \
         "$SERVER_ROOT/$MEDIA_SUBDIR/series" \
-        "$SERVER_ROOT/$FILES_PANEL_TRASH" \
-        "$SERVER_ROOT/$SHARE_DIR" \
-        "$SERVER_ROOT/$SHARE_DIR/w"; do
+        "$SERVER_ROOT/$FILES_PANEL_TRASH"; do
         mkdir -p "$d"
     done
     local fixed
@@ -771,6 +768,10 @@ stage_4() {
     atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
     atomic_write "$SBIN_DIR/master_settings.py" 0755 <"$V2_ROOT/panel/master_settings.py"
+    if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+        PANEL_HELPERS_CHANGED=1
+        FIREWALL_NEEDS_RESTART=1
+    fi
     atomic_write "$SBIN_DIR/master_shares.py" 0755 <"$V2_ROOT/panel/master_shares.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
@@ -796,6 +797,8 @@ stage_4() {
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl daemon-reload
     systemctl enable --now master-settings-guard.timer
+    # DD-177: scoped, idempotent retirement, under the installer lock.
+    python3 "$V2_ROOT/panel/master_wg_upgrade.py" "$STATE_FILE"
 }
 
 stage_5() {
@@ -1021,49 +1024,12 @@ EOF
     else
         log INFO "Caddy yapılandırması aynı; yeniden başlatılmadı"
     fi
-    ensure_caddy_wg "$OS_CHANGED"
     ensure_wg_panel "$OS_CHANGED"
     ensure_files_panel "$OS_CHANGED"
 }
 
-# DD-120: WireGuard istemcilerinin arayüzlere eriştiği ikinci Caddy. Yalnız
-# WireGuard adresinde IP:port dinler; Tailscale'e bağlı değildir, wg-quick
-# ile birlikte kalkar ve iner. Tailnet Caddy'sine ve refresh'e dokunmaz.
-# DD-136: tek Caddyfile.wg, arayüz başına bir örnek (caddy-wg@wgN). Dinlenen adres
-# /etc/wireguard/caddy-wg-<arayüz>.env'deki WG_BIND; wg0'ınkini kurulum, panel ağlarınınkini
-# master-wg yazar. Ortak dosya ya da şablon değişince panel ağlarının örnekleri de
-# yeniden başlar.
-ensure_caddy_wg() {
-    local changed="${1:-0}" validate_out iface
-    render_template "$V2_ROOT/templates/Caddyfile.wg" "$CADDY_WG_FILE" 0644 \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    # Ağ yokken sunucu adresi de yok; doğrulama yalnız sözdizimi için yer tutucu bağlar.
-    if ! validate_out="$(WG_BIND="127.0.0.1" caddy validate --config "$CADDY_WG_FILE" --adapter caddyfile 2>&1)"; then
-        die "Caddyfile.wg geçersiz ($CADDY_WG_FILE): $(
-            grep -i -m1 'error' <<<"$validate_out" || tail -n1 <<<"$validate_out"
-        )"
-    fi
-    render_template "$V2_ROOT/systemd/caddy-wg@.service" "$UNIT_DIR/caddy-wg@.service" 0644 \
-        WG_CONF_DIR="$WG_CONF_DIR" \
-        CADDY_WG_FILE="$CADDY_WG_FILE"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    systemctl daemon-reload
-    # DD-143: örnek birimleri ağlarla birlikte master-wg açar; kurulum yalnız şablonu
-    # günceller ve şablon değiştiyse ayakta olanları yeniler.
-    if [[ "$changed" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
-        while IFS=$'\t' read -r iface _; do
-            [[ "$iface" =~ ^wg[0-9]$ ]] || continue
-            systemctl try-restart "caddy-wg@${iface}.service" ||
-                log WARN "caddy-wg@${iface} yeniden başlatılamadı"
-        done <"$WG_NETWORKS_FILE"
-    else
-        log INFO "caddy-wg yapılandırması aynı; yeniden başlatılmadı"
-    fi
-}
-
 # DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. 127.0.0.1:WG_PANEL_PORT dinler;
-# tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/*). DD-147: parola yok, erişim
+# tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*). DD-147: parola yok, erişim
 # sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
@@ -1090,12 +1056,9 @@ ensure_wg_panel() {
     fi
 }
 
-# DD-139: dosya paneli. 127.0.0.1:FILES_PANEL_PORT dinler; tailnet'e Caddy açar. Servis
-# DOWNLOADS_UID olarak çalışır ve yalnız SERVER_ROOT'a yazar. qBittorrent'in yarım indirme
-# klasörü şablondan okunur; panel orada taşıma/silme için uyarır. DD-150: Dosya yöneticisi bir
-# Konsol modülüdür: kurulum betiği ve servis birimini (MODULES_DIR/dosya/) hazırlar, servisi
-# modül açar. Betik ya da birim değişirse kurulu modül aşama 7'de yeniden uygulanır.
-# DD-148: Konsol sayfaları temeldir; Caddy doğrudan sunar (dosya yöneticisi modüldür).
+# Built-in Files listens on loopback as DOWNLOADS_UID, writing only SERVER_ROOT.
+# Stage 7 applies changed worker/unit files through master-modul yerlesik (DD-159).
+# Caddy directly serves the console's static assets.
 ensure_console_pages() {
     local f
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
@@ -1155,7 +1118,7 @@ ensure_files_panel() {
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    # Built-in capabilities keep the existing storage/registry paths (DD-159).
+    # Built-in capabilities keep the service registry IDs (DD-159/171).
     "$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
@@ -1219,36 +1182,28 @@ stage_7() {
             die "DNS: alan dışı sorgu REFUSED değil (Tailscale DNS)"
     fi
 
-    # DD-120/DD-143: WireGuard katmanı hazır; kayıtta ağ varsa her biri ayakta, portu
-    # kaydındaki port ve erişimi "ui" olanın arayüzleri caddy-wg'den non-5xx.
-    local wg_iface wg_scope wg_s4 wg_port wg_ui_port ui_code
+    # DD-177: registered networks retain ports/addresses; internet-only policy.
+    local wg_iface wg_policy wg_s4 wg_port
     "$SBIN_DIR/master-wg" version >/dev/null ||
         die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
     WG_PEER_COUNT=0
     WG_NET_COUNT=0
     # DD-150: ağlar ve çekirdek modülü yalnız WireGuard modülü kuruluyken denetlenir.
-    local wg_on=0 files_on=0
+    local wg_on=0
     [[ -z "$(module_state wireguard)" ]] || wg_on=1
-    [[ -z "$(module_state dosya)" ]] || files_on=1
     if [[ "$wg_on" -eq 1 ]]; then
         [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard modül dosyası yok: $WG_MODULES_LOAD_FILE"
     fi
     if [[ "$wg_on" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
-        while IFS=$'\t' read -r wg_iface wg_port wg_scope wg_s4 _; do
+        while IFS=$'\t' read -r wg_iface wg_port wg_policy wg_s4 _; do
             [[ "$wg_iface" =~ ^wg[0-9]$ ]] || continue
+            [[ "$wg_policy" == inet ]] || die "WireGuard kaydı güncellenmedi: $wg_iface"
             WG_NET_COUNT=$((WG_NET_COUNT + 1))
             [[ "$(wg show "$wg_iface" listen-port 2>/dev/null || true)" == "$wg_port" ]] ||
                 die "WireGuard $wg_iface dinleme portu kayıttaki $wg_port değil"
             ip -4 -o addr show dev "$wg_iface" 2>/dev/null | grep -q " ${wg_s4}/" ||
                 die "WireGuard $wg_iface üzerinde $wg_s4 yok"
             WG_PEER_COUNT=$((WG_PEER_COUNT + $(wg show "$wg_iface" peers 2>/dev/null | grep -c . || true)))
-            # DD-151: WireGuard'dan açılan arayüz qBittorrent'inkidir; modül kuruluysa sınanır.
-            [[ "$wg_scope" == ui && -n "$(module_state torrent)" ]] || continue
-            wg_ui_port="$TORRENT_UI_PORT"
-            ui_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-                "http://${wg_s4}:${wg_ui_port}/" || true)"
-            [[ "$ui_code" =~ ^[1-4][0-9][0-9]$ ]] ||
-                die "caddy-wg ${wg_s4}:${wg_ui_port}: HTTP '${ui_code}' (non-5xx beklenir)"
         done <"$WG_NETWORKS_FILE"
     fi
 
@@ -1259,8 +1214,7 @@ stage_7() {
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
     [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
-    local gate_port gate_path gates="$WG_PANEL_PORT:/api/wg/state"
-    [[ "$files_on" -eq 0 ]] || gates="$FILES_PANEL_PORT:/api/state $gates"
+    local gate_port gate_path gates="$FILES_PANEL_PORT:/api/state $WG_PANEL_PORT:/api/wg/state"
     for gate_port in $gates; do
         gate_path="${gate_port#*:}"
         gate_port="${gate_port%%:*}"
@@ -1276,19 +1230,15 @@ stage_7() {
         --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
         die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
-    # DD-139: dosya arka ucu açılır, kök yazılabilir, root değil (DD-150: modül kuruluysa).
+    # DD-159: built-in Files is required, writable and unprivileged.
     local files_out files_uid
-    if [[ "$files_on" -eq 1 ]]; then
-        files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
-            --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
-            die "Konsol dosya arka ucu yanıt vermedi: $files_out"
-        log INFO "Konsol dosya arka ucu açıldı: $files_out"
-        files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
-        [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
-            die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
-    else
-        log INFO "Dosya yöneticisi kurulu değil; Konsol → Modüller'den kurulur"
-    fi
+    files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
+        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+        die "Konsol dosya arka ucu yanıt vermedi: $files_out"
+    log INFO "Konsol dosya arka ucu açıldı: $files_out"
+    files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
+    [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
+        die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
     # DD-143: ağ varsa Konsol o ağın sunucu adresinde dinlememeli (ağ yoksa denetim atlanır).
     local wg_first_addr=""
     [[ "$wg_on" -eq 0 || ! -f "${WG_NETWORKS_FILE:-}" ]] ||
@@ -1298,15 +1248,7 @@ stage_7() {
             "http://${wg_first_addr}:${FILES_PANEL_PORT}/" || true)"
         [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
     fi
-    # DD-141: paylaşım kökü indirme sahibinde (dosya servisi bağlantıları oraya yazar). WebDAV'ı
-    # (401, ad ve Infuse adresi) Paylaşım modülü kurulurken master-modul sınar (DD-149).
-    local share_owner
-    share_owner="$(stat -c '%u:%g' "$SERVER_ROOT/$SHARE_DIR/w" 2>/dev/null || true)"
-    [[ "$share_owner" == "${DOWNLOADS_UID}:${DOWNLOADS_GID}" ]] ||
-        die "Paylaşım kökü ${SERVER_ROOT}/${SHARE_DIR}/w sahibi '${share_owner}' (beklenen ${DOWNLOADS_UID}:${DOWNLOADS_GID})"
-
-    # DD-144: çöp ve paylaşım kökü indirme klasörünün dışında; qBittorrent onları göremez,
-    # Paylaşım çöpü göremez — kurulurken master-modul sınar (DD-151, DD-152).
+    # WebDAV registry, unprivileged listener and addresses were verified by yerlesik.
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
             "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
@@ -1316,8 +1258,7 @@ stage_7() {
     log INFO "Temel doğrulamalar geçti"
 }
 
-# Özet: her modülün durumu; kurulu olanın adresi (DD-148). v2-120'ye dek kurulu modül için de
-# "Konsol → Modüller'den kurulur" yazılıyordu.
+# Özet: yerleşik yetenekler ve isteğe bağlı uygulamalar; kurulu olanın adresi.
 summary_modules() {
     local id name info st
     for id in dosya wireguard torrent paylasim; do
@@ -1357,8 +1298,8 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; parolasız
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
 $(summary_modules)
-  WireGuard ağları WireGuard → Yapılandır'dan; "Local erişim" açık ağlarda qBittorrent arayüzü
-  o ağın sunucu adresinde açılır. Peer ve QR: Konsol ya da Mac'te wireguard.command.
+  WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
+  Ağlar: WireGuard → Yapılandır. Peer ve QR: Konsol ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
 
 EOF
@@ -1372,7 +1313,6 @@ main() {
     stage_3
     stage_4
     stage_5
-    # DD-128: hazır ayarların işi bitti; anahtarlar /run'da kalmaz.
     stage_6
     stage_7
     print_summary

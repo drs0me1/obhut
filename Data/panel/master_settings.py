@@ -23,6 +23,7 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.parse
 
 LIMIT = 65536
 OFF = "# konsol-off: "
@@ -148,6 +149,44 @@ def boot_id():
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
+def tailnet_ports(env):
+    """DD-172: host ingress allowlist; not a list of arbitrary open sockets.
+
+    Keep Tailscale's own PeerAPI endpoints, discovered from Self, never peers.
+    A daemon not yet ready must not prevent the WAN firewall from landing.
+    The existing firewall watchdog notices changed endpoints via --check.
+    """
+    rows = []
+    for key, proto, name in (("SSH_PUBLIC_PORT", "tcp", "SSH"),
+                             ("CADDY_HTTP_PORT", "tcp", "Caddy"),
+                             ("DNS_PORT", "tcp", "dnsmasq"),
+                             ("DNS_PORT", "udp", "dnsmasq"),
+                             ("SHARE_PORT", "tcp", "Paylaşım WebDAV")):
+        port = int(env.get(key, 0))
+        if 1 <= port <= 65535:
+            # Caddy templates bind only TAILSCALE_IPV4, including folder WebDAV.
+            families = (4,) if key in ("CADDY_HTTP_PORT", "SHARE_PORT") else (4, 6)
+            rows.extend(dict(family=f, proto=proto, port=port, name=name) for f in families)
+    try:
+        status = json.loads(run(["tailscale", "status", "--json", "--peers=false"], timeout=3).stdout)
+        own = status.get("Self") or {}
+        addresses = {ipaddress.ip_address(x) for x in own.get("TailscaleIPs", [])}
+        for value in own.get("PeerAPIURL", []) or []:
+            url = urllib.parse.urlsplit(value)
+            ip = ipaddress.ip_address(url.hostname)
+            if (url.scheme == "http" and ip in addresses and url.port and
+                    not url.username and not url.password and url.path in ("", "/") and
+                    not url.query and not url.fragment):
+                row = dict(family=ip.version, proto="tcp", port=url.port, name="Tailscale PeerAPI")
+                if not any(all(r[k] == row[k] for k in ("family", "proto", "port")) for r in rows):
+                    rows.append(row)
+    except (SettingsError, ValueError, TypeError, AttributeError):
+        # PeerAPI normally also has a userspace netstack path; never grant an
+        # ephemeral port range or abort host protection on a failed status read.
+        pass
+    return rows
+
+
 def ini_values(text):
     section, out = "", {}
     for line in text.splitlines():
@@ -206,6 +245,8 @@ class Manager:
 
     def config(self):
         config = read_json(self.config_path, DEFAULT)
+        # DD-177: retired tunnel overrides never appear or survive DNS-only saves.
+        config["firewall"] = [r for r in config["firewall"] if not re.fullmatch(r"wg[0-9]", str(r.get("scope", "")))]
         # An upgrade retires the built-in health name. Do not keep an invisible
         # disabled entry that would make later DNS drafts fail validation.
         retired = "health." + self.e["LOCAL_DOMAIN"]
@@ -292,10 +333,7 @@ class Manager:
                 seen.add(r["id"])
                 require(isinstance(r["name"], str) and 1 <= len(r["name"]) <= 64 and r["name"].isprintable(), "Kural adı geçersiz.")
                 require(type(r["family"]) is int and r["family"] in (4, 6), "IPv4 veya IPv6 seçin.")
-                require(r["scope"] in ("wan", "tail") or bool(re.fullmatch(r"wg[0-9]", str(r["scope"]))), "Kapsam geçersiz.")
-                if r["scope"].startswith("wg"):
-                    nets = Path(self.e["WG_NETWORKS_FILE"])
-                    require(nets.exists() and any(x.startswith(r["scope"] + "\t") for x in nets.read_text().splitlines()), "WireGuard ağı artık yok.")
+                require(r["scope"] in ("wan", "tail"), "Port kuralları yalnız İnternet ve Tailscale için düzenlenebilir.")
                 require(r["proto"] in ("tcp", "udp") and type(r["port"]) is int and 1 <= r["port"] <= 65535, "Port/protokol geçersiz.")
                 require(type(r["allow"]) is bool and isinstance(r["source"], str), "Kural eylemi/kaynağı geçersiz.")
                 if r["source"]:
@@ -425,9 +463,9 @@ class Manager:
     def rules(self, family, wan=None):
         out = []
         for r in self.current()["firewall"]:
-            if r["family"] != family:
+            if r["family"] != family or r["scope"] not in ("wan", "tail"):
                 continue
-            iface = (wan or self.e["WAN_INTERFACE"]) if r["scope"] == "wan" else self.e["TAILSCALE_IF"] if r["scope"] == "tail" else r["scope"]
+            iface = (wan or self.e["WAN_INTERFACE"]) if r["scope"] == "wan" else self.e["TAILSCALE_IF"]
             require(bool(re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", iface)), "Arayüz adı geçersiz.")
             args = ["-i", iface, "-p", r["proto"], "--dport", str(r["port"])]
             if r["source"]:
@@ -685,7 +723,7 @@ class Manager:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "guard", "rules", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
@@ -694,6 +732,10 @@ def main():
             print(saved_domain(args.value))
             return
         m = Manager(args.state)
+        if args.action == "tailnet-ports":
+            for row in tailnet_ports(m.e):
+                print(row["family"], row["proto"], row["port"])
+            return
         if args.action == "guard" and not m.pending():
             return
         if args.action == "rules":

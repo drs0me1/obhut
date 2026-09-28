@@ -31,7 +31,7 @@ class NetworkSettingsTests(unittest.TestCase):
         self.thread.start()
         self.addCleanup(self.stop)
         self.base = f"http://127.0.0.1:{self.server.server_port}"
-        self.data = dict(scope="ui", dns="9.9.9.9, 2620:fe::fe", revision="a" * 64)
+        self.data = dict(dns="9.9.9.9, 2620:fe::fe", revision="a" * 64)
 
     def stop(self):
         self.server.shutdown()
@@ -54,17 +54,35 @@ class NetworkSettingsTests(unittest.TestCase):
         with patch.object(self.p,"wg_on",return_value=True), patch.object(self.p,"run",return_value=(0,"","")) as run:
             code, data = self.request()
             self.assertEqual(code,200,data)
-            run.assert_called_once_with("net-settings","ui",self.data["dns"],self.data["revision"],net="wg0")
+            run.assert_called_once_with("net-settings",self.data["dns"],self.data["revision"],net="wg0")
             self.assertEqual(data["dns"],self.data["dns"])
         self.assertEqual(self.p.settings_cache,(0,None))
 
     def test_gates_and_module_absence_never_invoke_helper(self):
         with patch.object(self.p,"run",side_effect=AssertionError("must not mutate")):
-            for headers in ({}, {"X-Konsol":"1","Host":"evil.test"},
-                            {"X-Konsol":"1","Sec-Fetch-Site":"cross-site"}):
-                self.assertEqual(self.request(headers=headers)[0],403)
-            with patch.object(self.p,"wg_on",return_value=False):
-                self.assertEqual(self.request()[0],409)
+            for path in ("/api/wg/nets", "/api/wg/nets/wg0/ayarlar"):
+                for headers in ({}, {"X-Konsol":"1","Host":"evil.test"},
+                                {"X-Konsol":"1","Sec-Fetch-Site":"cross-site"}):
+                    self.assertEqual(self.request(headers=headers,path=path)[0],403)
+                with patch.object(self.p,"wg_on",return_value=False):
+                    self.assertEqual(self.request(path=path)[0],409)
+
+    def test_network_creation_has_no_access_option(self):
+        data = dict(port="61020", dns="1.1.1.1", label="New network")
+        with patch.object(self.p,"wg_on",return_value=True), \
+                patch.object(self.p,"run",return_value=(0,"wg1\t61020\n","")) as run:
+            code, result = self.request(data,path="/api/wg/nets")
+            self.assertEqual(code,201,result)
+            self.assertEqual(result,{"iface":"wg1","port":61020})
+            run.assert_called_once_with("net-add","61020","1.1.1.1","New network")
+
+    def test_retired_scope_is_rejected_on_both_routes(self):
+        with patch.object(self.p,"wg_on",return_value=True), patch.object(self.p,"run",side_effect=AssertionError("invalid mutation")):
+            for scope in (None, "", "all", False, "ui", "inet"):
+                for path, data in (("/api/wg/nets",dict(port="61020",dns="1.1.1.1")),
+                                   ("/api/wg/nets/wg0/ayarlar",self.data)):
+                    with self.subTest(scope=scope,path=path):
+                        self.assertEqual(self.request({**data,"scope":scope},path=path)[0],400)
 
     def test_bad_inputs_never_reach_helper(self):
         with patch.object(self.p,"wg_on",return_value=True), patch.object(self.p,"run",side_effect=AssertionError("invalid mutation")):
@@ -83,10 +101,11 @@ class NetworkSettingsTests(unittest.TestCase):
             self.assertIn("Ağ ayarları değişmiş",data["error"])
 
     def test_revision_matches_exact_registry_line_not_runtime_activity(self):
-        line="wg0\t61001\tui\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tTürkçe ağ"
+        line="wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tTürkçe ağ"
         with patch.object(self.p,"wg_on",return_value=True), patch.object(self.p,"run") as run:
             for runtime in ("\t1\t2","\t0\t3"):
                 run.return_value=(0,line+runtime+"\n","")
+                self.assertNotIn("scope",self.p.net_rows()[0])
                 self.assertEqual(self.p.net_rows()[0]["revision"],hashlib.sha256(line.encode()).hexdigest())
 
 

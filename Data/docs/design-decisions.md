@@ -6832,6 +6832,164 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
+### DD-177: Retire Local access; WireGuard is internet-only (2026-09-28)
+
+- **Decision (v2-151):** supersedes DD-176 and DD-167's Local toggle. All
+  existing/new WG networks and peers get internet egress only. Remove selectors
+  from creation/settings, reject API scope, remove the CLI scope argument and
+  reject/filter WG host overrides in Settings. DNS-only editing remains.
+- **Enforcement:** WG INPUT drops precede established/ICMP and Tailscale accepts;
+  FORWARD blocks private/CGNAT/link-local/multicast/reserved destinations before
+  WAN allow, permits replies only from WAN and drops other WG traffic. NAT and
+  required per-network transport UDP ports remain. Constants live in defaults.env.
+- **Upgrade:** a stage-4 helper under install/module/settings locks normalizes
+  only registry column 3 to fixed inet, removes WG overrides, disables exact old
+  caddy-wg instances and removes their template/config/env files. It is fatal on
+  failure and idempotent, not a general cleanup engine (narrow DD-96 exception).
+  Keys, profiles, addresses, ports, DNS and other services remain unchanged.
+- **Compatibility:** keep the nine-column registry layout to avoid unrelated
+  data migration; no access setting is exposed. History remains historical.
+  Existing profiles need no reimport unless they use a private DNS server,
+  which is no longer reachable through this internet-only tunnel.
+- **Verification:** HTTP/CLI refusal, upgrade/fresh/repeat/failure tests, UI
+  creation/settings and read-only WG firewall category, plus real isolated
+  Linux IPv4/IPv6 internet NAT/return and blocked host/private/tailnet traffic.
+
+### DD-176: Local access by default when creating a WireGuard network (2026-09-28; superseded by DD-177)
+
+- **Decision (v2-150):** remove the creation screen's access card, toggle, draft
+  state and unused styles. The backend defaults an omitted scope to `ui`; the
+  browser submits only port, DNS and label. First and additional networks use
+  the same default. Preview and empty-state copy describe Internet + local.
+- **Boundary:** Local still means the installed qBittorrent UI at that network's
+  own IPv4 address. It never grants SSH, Konsol, WebDAV, DNS, tailnet, cross-network
+  or peer access. No new firewall generator or global exception is introduced;
+  existing `net-add`/`net-settings` and Caddy/firewall lifecycle remain authoritative.
+- Existing network settings retain their Local switch. Explicit API `inet`/`ui`
+  and the CLI's required scope remain compatible; invalid explicit scope is not
+  silently defaulted. Re-runs never overwrite a saved internet-only choice.
+- Existing internet-only networks on nrm may be enabled once through the
+  revision-checked settings API, never through an installer migration. Live
+  inspection found only wg0, already `ui`, so no existing scope change was needed.
+  Keys, peer profiles, DNS, ports and network activity must be preserved.
+- Tests cover absent scope, explicit/invalid scopes, request/module gates, first
+  and additional network creation, preview, cancelled/failed saves, polling drafts,
+  mobile layout and the retained settings switch.
+
+### DD-175: Remove obsolete firewall generation, not VPN requirements (2026-09-28)
+
+- **Decision (v2-149):** remove the pre-module fallback that treated a missing
+  module registry as WireGuard installed. Only an explicit `wireguard/calisiyor`
+  record activates preserved network definitions. No configured networks means
+  no project FORWARD/NAT chains or parent jumps, including after removal/rerun.
+- Remove eight redundant terminal `RETURN` rules (four chains, two families)
+  on a host with WG networks. User-chain fall-through has the same result;
+  conditional settings returns, ordering, staging and recovery remain intact.
+  Replace the obsolete one-element multiport generator with a single qB UI port
+  match. The diagnostic reader accepts both spellings during upgrades.
+- Check INPUT's full cardinality/guards/all ICMPv6 types and NAT cardinality,
+  in addition to existing WAN/order/forward/settings checks. Stale extra rules
+  must fail verification; applying the current source replaces them rather than
+  importing old raw firewall dumps. A missing expected WG chain is still an error.
+- **Not dead:** registered VPN endpoints (even stopped/zero-peer networks),
+  loopback/established/control traffic, Tailscale's own chains and marks, exit-node
+  forwarding, and the WAN Tailscale UDP fallback (DD-73). No counters-based deletion,
+  package purge, network/profile deletion, peer-port opening or account change.
+  Built-in Files/WebDAV/archive services remain; retired Docker/wg-easy/shared-root
+  WebDAV generation is not reintroduced. Explicit user overrides stay authoritative.
+- **Verification:** isolated Linux tests cover clean/repeated policy application,
+  missing/empty/stopped module records with preserved networks, teardown/re-add,
+  stale INPUT/FORWARD/NAT detection/removal and untouched third-party chains.
+  Packet tests exercise IPv4/IPv6 allow/deny behavior. This is not a new OS image
+  installation, reboot or real WireGuard-client throughput acceptance.
+
+### DD-174: Remove synthetic closed WAN and tunnel-local port rows (2026-09-28)
+
+- **Decision (v2-148):** extend DD-173 to Internet and WireGuard. WAN rows now
+  describe only configured SSH/Tailscale ingress and registered IPv4 WG UDP
+  endpoints; do not duplicate local/tailnet services, arbitrary listeners or
+  PeerAPI into closed WAN entries. IPv6 WG endpoint placeholders are omitted
+  because the existing WAN IPv6 policy does not permit those endpoints.
+- Tunnel-local rows follow `master-firewall`: only IPv4 qBittorrent UI permits
+  for networks whose Local access (`ui`) is configured. No closed placeholder
+  for an `inet` network or IPv6 UI. Keep configured permissions independently
+  of live sockets, stopped interfaces, peer count or recent traffic; the network
+  selector and required VPN UDP endpoints remain intact even for an empty list.
+- Explicit user allow/deny rules remain visible and editable through the existing
+  draft merge, including a required base port the operator has turned off. Only
+  synthetic defaults disappear. Loopback inventory, raw listeners and all technical
+  rules are untouched. No service, saved rule, WG network or actual firewall policy
+  is removed; unlisted ingress remains blocked by the existing default deny.
+
+### DD-173: Tailnet port catalogue is configuration-driven, not socket-driven (2026-09-28)
+
+- **Decision (v2-147):** stop synthesizing Tailscale management rows from every
+  host listener. Generate them only from the shared per-family core allowlist
+  and registered WireGuard endpoints, even when no socket is currently present.
+  Operator-defined allows/denies remain independently visible and editable.
+- The reported ports were not stale allow/deny rules: 20902 was qBittorrent peer
+  traffic, 61006 its local UI, 61008/61009 the panel backends, and 2019 Caddy's
+  loopback admin endpoint used for reload. Keep these required service settings;
+  remove their implicit tailnet catalogue entries at the backend source, with
+  no hardcoded port blacklist or frontend-only concealment. IPv6 Caddy/WebDAV
+  entries are likewise absent while their configured service is IPv4-only.
+- Default deny still blocks unconfigured new tailnet ingress. Keep raw listener
+  inventory, technical firewall rules and explicit user overrides unfiltered.
+  Do not alter socket bindings, qBittorrent's interface choice, Tailscale-owned
+  chains, credentials, WG networks, forwarding or NAT. This is catalogue cleanup,
+  not removal of listening services or a new firewall policy.
+
+### DD-172: Minimum tailnet host ingress without changing VPN requirements (2026-09-28)
+
+- **Decision (v2-146):** retain operator overrides at the head of CHAIN_SETTINGS,
+  then allow only host SSH, Caddy, DNS TCP/UDP, folder WebDAV, Self PeerAPI TCP
+  endpoints and registered WireGuard UDP endpoints from the tailnet. Caddy and
+  WebDAV permits are IPv4-only, matching their actual template binds. Return these
+  to the existing downstream policy; drop other new tailnet ingress before the
+  unconditional acceptance in `ts-input`. Never edit Tailscale-owned rules.
+- Registered WireGuard ports are intentional requirements, regardless of peers,
+  handshakes or counters. Preserve their WAN/tailnet permissions, tunnel-local
+  UI rules, interface state, forwarding, NAT, profiles and keys. Leave outbound
+  torrent connections and established/related replies untouched.
+- Use existing defaults/state port keys, not socket discovery, to admit ordinary
+  services. Only Tailscale's own Self-advertised PeerAPI URLs may add dynamic TCP
+  ports, validated against Self addresses and split by address family. Never
+  allow a dynamic range, another peer's endpoint or an arbitrary listening app.
+  Missing/not-ready daemon status does not prevent base host protection. The
+  existing restart hook/watchdog checks changed endpoints; no new timer/cache.
+- The port table derives tailnet baseline permissions from the same helper.
+  Kernel firewall permission, socket binding and Tailscale's userspace services
+  remain separate concepts: host INPUT is not a replacement for tailnet ACLs.
+- Loopback/established guards precede overrides; overrides precede core allow/drop.
+  Presence, exact cardinality and ordered comment identities are checked together
+  so inserting a blanket RETURN/ACCEPT cannot silently bypass the new default.
+  ICMP control traffic remains allowed. No package removal or listener restart is
+  needed to close unnecessary *new inbound* qBittorrent peer connections.
+
+### DD-171: Remove dead sharing lifecycle without deleting legacy data (2026-09-28)
+
+- **Decision (v2-145):** remove unreachable public Files/WebDAV lifecycle and
+  data-deletion branches, legacy marker readers/writers, shared-password command
+  plumbing and credential-path defaults. Built-ins retain their installer-only
+  lifecycle and internal registry IDs used by firewall, settings and DNS.
+- Fresh installs create no `.pay/w` or `.pay/acik`. Existing `.pay` contents are
+  neither migrated/deleted nor included in permission repair. Keep the reserved
+  name and service/path exclusions: removing them would expose old metadata.
+  The WebDAV unit tolerates a missing legacy path, not an accessible existing one.
+- Retired Files endpoints return explicit 410 after security gates; `/api/state`
+  stops reporting the misleading marker-derived summary. Current per-folder
+  accounts remain exclusively in root-owned `webdav.json` and its gated API.
+- Remove dead frontend helpers/styles and stale operational instructions. Keep
+  historical decisions/designs/releases as history. Optional-app profiles, keys,
+  user files, active API aliases and all actual runtime dependencies remain.
+- Dependencies are already minimal for the current feature set: Python/RAR,
+  network/firewall/DNS tools, systemd/core utilities and security-update packages
+  all have callers. No apt purge/autoremove, package upgrades solely for cleanup,
+  replacement runtime or new background service.
+- Regression coverage exercises absent legacy directories, preserved metadata
+  and private modes, marker symlinks, explicit retired-route errors/gates,
+  built-in idempotency, current module lifecycle and temporary-login secrecy.
+
 ### DD-170: Contextual Files dock and automatic archive extraction (2026-09-28)
 
 - **Decision (v2-143):** keep the address/search bar stable and show selected-file

@@ -6,6 +6,129 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-28 — WireGuard internet-only (v2-151)
+
+- Retire Local access entirely (DD-177): no creation/settings selector, API
+  scope or CLI argument. Network settings now change default DNS only.
+- Drop WG host ingress before established/ICMP/Tailscale acceptance; block
+  private/CGNAT/link-local destinations even via WAN. Keep internet NAT/return
+  traffic and required user-created UDP endpoints.
+- Upgrade existing registry policies without modifying keys, profiles, DNS,
+  ports or addresses. Remove WG host-rule overrides and only the retired WG
+  Caddy instances/template/env files; clean/repeat installs never recreate them.
+- Firewall host overrides remain available for WAN/Tailscale only.
+- **Verified:** 155 Bats cases (three platform skips), 126 Python cases (two
+  native-RAR skips), WireGuard/Settings/Panel/Files browser suites and syntax/
+  ShellCheck. Isolated Linux tests cover IPv4/IPv6 NAT, host/old-flow denial,
+  private WAN destinations, retained networks and third-party chain preservation.
+  nrm upgrade passed stages 0–7; real kernel WG clients on existing wg0 and an
+  own new test network reached IPv4/IPv6 internet and public DNS, not host services.
+  Test peers/network were removed; original keys/settings/accounts and qB process
+  stayed unchanged. Transport was host-loopback to WG, not an external WAN device.
+  Fresh OS installation and reboot acceptance are separate, not claimed here.
+
+### 2026-09-28 — Default WireGuard Local access (v2-150)
+
+- New Konsol networks default to Internet + local at the backend. Remove the
+  creation access card/toggle and its unused code/styles; update preview/help.
+- All peers inherit access to the installed qBittorrent UI on their own network;
+  all other isolation remains. Existing network settings can still disable Local,
+  and re-runs preserve that saved choice. Explicit CLI/API scopes remain supported
+  (DD-176). No key/profile regeneration, new dependency or firewall widening.
+- **Verified:** 157 Bats cases (three macOS skips), 121 Python cases (two
+  native-RAR skips), WireGuard/Panel/Settings browser suites, syntax/ShellCheck.
+  nrm portable upgrade passed stages 0–7. A scope-less test network created with
+  `ui`, active WG/Caddy, the narrow firewall permit and qB UI HTTP 200; removed
+  only that empty fixture. Eight services healthy, live desktop/mobile passed;
+  original registry/configuration hashes, qB process and full normalized firewall
+  match before/after. Existing wg0 was already Local-enabled. No fresh OS/reboot
+  or external WG-client acceptance claimed.
+
+### 2026-09-28 — Firewall source and rule cleanup (v2-149)
+
+- Missing WireGuard module registration no longer revives retained networks.
+  Omit/remove unused project forwarding/NAT chains when no networks are configured.
+- Remove redundant terminal returns and single-element multiport generation.
+  Preserve required VPN endpoints, actual permissions, user overrides and all
+  third-party rules; no legacy service installer is restored (DD-175).
+- Strengthen INPUT/NAT drift checks and add clean/repeat/removal regression
+  fixtures, while keeping the panel accurate for intentionally absent chains.
+- **Verified:** 157 Bats cases (three platform skips), 119 Python cases (two
+  native-RAR skips), Settings browser suite, isolated Linux IPv4/IPv6 input and
+  routed WG NAT/isolation tests. Portable upgrade and repeat install on nrm
+  passed stages 0–7. Project rules decreased 81 → 73; all other firewall content,
+  user settings, WG profiles and qB process remained unchanged. Eight services
+  healthy; live API/desktop/mobile tests passed. No fresh OS/reboot claim.
+
+### 2026-09-28 — Simplify Internet and WireGuard port lists (v2-148)
+
+- Remove synthetic closed WAN rows for local/tailnet services, arbitrary sockets
+  and unsupported IPv6 WG endpoints at the backend source (DD-174).
+- List tunnel-local qBittorrent permissions only for IPv4 networks with Local
+  access configured. Keep required VPN UDP endpoints regardless of peer/socket
+  activity, explicit user allows/denies, network selectors and raw diagnostics.
+  Actual firewall policy, services and saved settings are unchanged.
+- **Verified:** 157 Bats cases (three platform skips), 117 Python cases (two
+  native-RAR skips), Settings browser tests, syntax/ShellCheck and portable nrm
+  upgrade. Live API/browser checks confirm WAN 4/2 rows (IPv4/IPv6), one wg0
+  IPv4 UI row and no synthetic wg1/IPv6 UI rows; explicit-rule fixtures remain
+  editable. Normalized full firewall rules, configuration hashes and qB process
+  match before/after; eight services healthy. No fresh-install/reboot claim.
+
+### 2026-09-28 — Remove synthetic Tailscale port entries (v2-147)
+
+- Generate Tailscale port rows from the configured per-family allowlist and WG
+  registry, not arbitrary host listeners (DD-173). Remove irrelevant peer/local
+  backend/Caddy admin rows at their source; preserve explicit user rules and
+  unfiltered technical diagnostics. No hardcoded port exclusions.
+- Preserve default-deny protection, required local services, every configured
+  WG endpoint, socket bindings, torrent settings and all forwarding/NAT policy.
+- **Verified:** 157 Bats cases (three platform skips), 114 Python cases (two
+  native-RAR skips), Settings browser suite, portable nrm upgrade and live
+  IPv4/IPv6 API/socket checks. Desktop/mobile show only configured tailnet rows;
+  raw diagnostics remain intact. Eight services active, no failed units; account,
+  share, module/WG registry/profile hashes and qBittorrent process unchanged.
+  No fresh install, Ubuntu, reboot or authenticated Infuse claim for this change.
+
+### 2026-09-28 — Minimum tailnet host exposure (v2-146)
+
+- Replace implicit all-port tailnet access with an explicit host allowlist before
+  Tailscale's own INPUT acceptance (DD-172). Keep SSH, Caddy, DNS, folder WebDAV,
+  self-advertised PeerAPI and every registered WireGuard endpoint. Block other
+  new inbound ports by default, including qBittorrent peers and direct backends.
+- Preserve operator overrides, loopback, established replies, ICMP, all WAN/WG
+  and forwarding/NAT policies. No network deletion, credential change or package
+  removal. Peer counts and counters never determine whether a WG port is needed.
+- Make the port table use the same allowlist instead of treating any listener
+  as tailnet-accessible. Add real IPv4/IPv6 packet, override and drift tests;
+  helper changes now trigger both firewall refresh and panel restart.
+- **Verified:** 157 Bats cases (three platform skips), 113 Python cases (two
+  local RAR skips, native Debian coverage), Settings browser suite and isolated
+  Linux packet/settings tests. Portable nrm upgrade and live dual-stack checks
+  preserve service/config/WG state; qBittorrent's PID is unchanged. No clean
+  Ubuntu/reboot, VPN client throughput or authenticated Infuse acceptance claim.
+
+### 2026-09-28 — Runtime and installer cleanup (v2-145)
+
+- Align active documentation, input-template and launcher messages with built-in
+  Files/WebDAV/archive tools, App Store, current settings and no automatic backup.
+  Remove unused frontend helpers, old shared-account UI and obsolete CSS.
+- Remove unreachable built-in module install/remove/data-delete branches and
+  shared-password plumbing. Stop creating `.pay/w` and its marker, exporting old
+  credential paths or repairing legacy metadata permissions (DD-171).
+- Preserve current folder accounts and all existing data; retain reserved-path
+  guards and tolerate absent legacy paths in the WebDAV sandbox. Retired Files
+  share routes now consistently answer 410; drop their obsolete state summary.
+- Keep all used dependencies and runtime files; no package purge, automatic
+  migration, data deletion or extra background service. Add regression checks
+  for fresh/legacy trees, retired API gates and first-login secret handling.
+- **Verified:** 157 local Bats cases (three platform skips), 108 local Python
+  cases (two native RAR skips), four browser suites; all 108 Python cases pass
+  on native Debian including real RAR. Reproducible 45-file portable payload,
+  nrm upgrade, live UI/API, systemd absent/present-path sandbox and built-in
+  idempotency checks pass. Accounts, settings, WG configs and qBittorrent process
+  are unchanged. No fresh Ubuntu/full fresh-install/reboot acceptance claim.
+
 ### 2026-09-28 — Files icon dock, approved model B (v2-144)
 
 - Replace the mixed action strip with six equal icon-over-label cells and a

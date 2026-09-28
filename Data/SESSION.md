@@ -4,6 +4,351 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-28 — Internet-only WireGuard, v2-151 (DD-177), supersedes v150 below:**
+- User retired Local access everywhere, including existing networks, creation,
+  settings and server configuration. DNS remains editable without key/profile reset.
+- Runtime updated: fixed inet policy column, no API/CLI scope, no WG host-rule
+  overrides; WG ingress denied before established/ICMP/ts-input and private
+  destinations blocked before WAN forwarding. Internet NAT/replies remain.
+- Installer stage 4 runs a narrow locked retirement helper: exact old caddy-wg
+  instances/template/env, old scope values and WG overrides only. No broad cleanup.
+- Workstation: 155 Bats cases (152 pass, three missing-timeout skips); 126 Python
+  cases (124 pass, two optional native-RAR skips); WG/Settings/Panel/Files browser
+  suites, Bash/JS syntax, ShellCheck and diff whitespace passed.
+- Native isolated Linux test passes both families: mandatory host deny including
+  established UDP, internet forwarding/NAT, private destinations via WAN, tailnet
+  isolation, stale-rule detection, fresh/repeat/missing-module states and unchanged
+  third-party rules. Veth fixtures pin WG neighbors (real WG has no NDP).
+- nrm Debian 13 upgraded via portable v151, stages 0–7 passed. Existing wg0
+  changed only policy ui→inet, retaining addresses/port/DNS/label and config hash.
+  Seven base/application services active, WG up; no failed units or caddy-wg
+  artifacts/listeners. Settings/shares/qB hashes and qB process unchanged.
+- Real kernel WG tests used own peers on wg0 and a tagged new wg1. Both reached
+  public IPv4/IPv6 internet and DNS; host SSH/qB/WebDAV were blocked on WG/TS/public
+  addresses. Transport used host-loopback UDP to WG, not an external WAN device.
+  Removed only own peers and empty wg1; original registry/activity restored.
+- Repeated installation preserved all snapshot hashes, qB process, registry and
+  normalized IPv4/IPv6 rules. Final visual review removed stale Caddy proxy copy
+  and irrelevant WG toggle hints; packaged and installed through the exporter.
+- Live read-only browser: no creation/settings Local toggle or API scope, DNS
+  unchanged, readonly WG firewall, four widths/no writes/errors. Screenshots
+  inspected. Root/app/Desktop payload contains 44 source-matching runtime files.
+- Final portable payload SHA256:
+  `e5953cb9d19a1f3a0793ba613d47ff8ad279b58a52d57ae2f85786d1b2dc69ce`.
+  All 44 files match nrm's installer source; nine changed installed runtime files
+  match workstation hashes. Final repeat/live Caddy copy checks passed. Task-owned
+  preview/launcher sessions closed; no background test client or network remains.
+- Scratch `/tmp/master-stack-v151.DdGuqK/` contains evidence and recoverable v150;
+  previous Desktop v150 remains. Root/app carry v151. Private operator inputs
+  never read or edited. Pre-existing dirty v145–150 work retained; no commit.
+- Fresh Debian/Ubuntu image installation, reboot and external-device acceptance
+  were not run this turn. Hosts using private DNS in device profiles must switch
+  to public DNS for internet-only use; nrm's saved defaults are already public.
+
+## Previous tasks (historical; newer decisions take precedence)
+
+**2026-09-28 — WireGuard Local access default, v2-150 (DD-176):**
+- User requested all new WG users get Local access by default and removal of
+  its creation selector. Existing Local scope is narrow: installed qB UI at the
+  network's own IPv4 address, not general LAN/SSH/panel/WebDAV/peer access.
+- Removed creation Erişim card, toggle/draft/listener and unused CSS. API
+  defaults an omitted scope to ui; creation posts only port/DNS/label. Updated
+  preview/empty-state/help. Existing network settings retain the Local switch;
+  explicit CLI/API inet/ui remain valid, and re-runs preserve saved scopes.
+- Fresh live inspection superseded prior-turn host inventory: nrm now has only
+  wg0/main, already ui, active, zero peers (different tailnet IP). No existing
+  scope migration was needed; did not recreate a previously removed wg1.
+- Tests: all 157 Bats cases (154 pass, three macOS timeout skips); 121 Python
+  (119 pass, two native-RAR skips); WireGuard, Panel and Settings Playwright
+  suites; Bash/JS syntax, ShellCheck and diff checks. Added omitted/explicit/bad
+  scope and request/module gates; first/additional network UI creation, retained
+  settings switch, failure/retry/cancel, polling drafts and four widths/dark/CSP.
+  One new UI test initially raced hash navigation; waiting for the rendered first
+  port fixed the test. Complete rerun passed; no production workaround.
+- Exported root/app/Desktop v150 match; all 45 runtime payload files equal
+  source with no private inputs/docs/tests/caches. Payload SHA256:
+  670ccd845ab6210f2b48d2987752e908f3fd399a1b27a29b51ec2b6f6cb65f99.
+  Installed backend equals source SHA256:
+  43fa0f18471f80ab8dcf7c1cddd0263bef78e166a3005146153d39be24953238.
+- nrm upgrade through portable only, own SSH_HOST=nrm/blank-domain scratch
+  input (600), h full-upgrade/E confirmation. Stages 0–7 passed; no packages
+  changed/reboot. Caddy/dnsmasq unchanged; qB process unchanged.
+- Live API created only a tagged empty wg1 fixture without scope. Verified ui,
+  active WG/Caddy, narrow IPv4 qB permit, IPv4/IPv6 catch-all WG drops, full
+  firewall --check, qB UI HTTP 200 on the new network address and matching panel
+  firewall row. Finally removed only that verified empty fixture through the
+  official confirmed API. wg0 registry/key/DNS/port/activity remained unchanged.
+- Before/after snapshots are byte-identical: settings/shares/module/network
+  registry/WG/qB profile hashes, qB PID/InvocationID and complete normalized
+  IPv4/IPv6 rules including all third-party content. Eight services active;
+  no failed units. Real desktop/mobile browser shows v150, correct preview,
+  no creation switch, retained wg0 Local-on setting and zero writes/JS errors.
+- Scratch `/tmp/master-stack-v150.cVpBgK/` has test inputs, probes, snapshots,
+  screenshots and recoverable v149 portable. Root/app now carry v150; Desktop
+  v149 remains. Earlier scratch server path and hardcoded wg1 snapshot failed
+  safely before changes; replaced with current-registry inspection and hash-only
+  dynamic snapshot. No clean OS/Ubuntu/reboot/real client traffic acceptance.
+  Earlier dirty work preserved; no commit/push.
+
+**2026-09-28 — actual firewall source/rule cleanup, v2-149 (DD-175):**
+- User requested a complete rule-generation/install audit, not just catalogue
+  filtering. Reviewed the producer, defaults, installer/module lifecycle,
+  watchdog/settings ownership and live filter/NAT/mangle tables. No active
+  retired Docker/wg-easy/shared-root WebDAV generator or chain was found.
+- Removed the missing-module-registry fallback that activated preserved WG
+  network files. Absent/empty/stopped module records now produce no WG policy.
+  No configured networks -> remove/omit only project FORWARD/NAT chains/jumps.
+  All registered networks still retain requirements regardless of interface
+  state/peer count; wg1/61020 explicitly preserved. No profile/data deletion.
+- Removed eight redundant terminal RETURN rules; conditional settings returns
+  remain. Single qB UI match uses --dport, not legacy multiport. INPUT checks all
+  expected guards/ICMPv6 types and exact cardinality; NAT also rejects extras.
+  Panel reads both old/new port syntax and expects absent WG chains only when
+  no networks exist. Raw technical diagnostics remain unfiltered.
+- Final local tests: 157 Bats (154 pass/three timeout skips), 119 Python
+  (117 pass/two native-RAR skips), Settings browser suite, syntax/ShellCheck and
+  diff checks. One old static ICMP assertion required updating after factoring
+  its unchanged type list; complete rerun passed. Live probe initially counted
+  eight chain declarations as rules; corrected the test's position filter,
+  not production code. Final API checks passed before and after repeat install.
+- Isolated native Linux tests used the exported payload (not installed host
+  chains): clean baseline, preserved network with missing/empty/stopped module,
+  teardown/re-add, duplicate/redundant/stale rule detection and removal, repeated
+  application, explicit user allow/deny, both address families. Real veth
+  packets verify WAN/tailnet/WG INPUT, WG->WAN NAT round trips and denied WG->TS
+  forwarding. Stub ts-input and third-party filter/NAT chains/jumps unchanged.
+- Root/app/Desktop v149 exports match; all 45 embedded runtime files equal
+  source and no private input/docs/tests/caches are included. Payload SHA256:
+  8a2cd1a4e0e3af28fec84141c0120c4b23b8050c9256dd426648159438b503e6.
+  Installed firewall SHA256 615427f88613a5911b1d443c7ed261fc5ff2202437e12a471250b4a09ed7fd46;
+  panel SHA256 068f76a2970373c318d1f3f00eab1ddfe4ce7a3421666b17918842614759892c.
+- nrm upgraded and immediately rerun using only exported portable and scratch
+  SSH_HOST=nrm/blank-domain input, h full-upgrade/E confirmation both times.
+  Both runs passed stages 0–7, no package changes or reboot. Repeat left firewall,
+  panel, Caddy and dnsmasq unchanged; WG lifecycle verification is intentional.
+- Exact normalized before/after comparison: project IPv4 rows 39->35, IPv6
+  42->38. The only other syntax delta is single-port matching. Every third-party
+  rule/table/order, settings/share/module/network/profile hash and qB process
+  unchanged. Second installation snapshot matches first byte-for-byte after
+  counter normalization. Eight services active, no failed units/pending settings.
+  Live tailnet API/socket/desktop/mobile checks pass, including SSH/PeerAPI both
+  families, panel/qB UI, share authentication boundary and blocked direct ports.
+- Local scratch `/tmp/master-stack-v149.7roWmk/` holds own inputs, before/after/
+  repeat snapshots, probes/screenshots and recoverable v148 portable. Native
+  scratch `/tmp/master-stack-v149-native.6U0iJk/` holds exported test tree only.
+  Root/app now carry v149; prior Desktop v148 remains. Preview process stopped.
+  No clean OS image/Ubuntu/reboot/real WG client throughput/authenticated Infuse
+  claim. Earlier dirty work preserved; no commit/push.
+
+**2026-09-28 — Internet/WireGuard catalogue cleanup, v2-148 (DD-174):**
+- User requested the same simplification as v147 for Internet and WireGuard:
+  remove unused automatic closed rows, not required WG network ports. Live nrm
+  audit confirmed the saved firewall override list is still empty.
+- Backend `settings_ports` no longer duplicates local/tailnet services or socket
+  discoveries into closed WAN rows. WAN has configured SSH/Tailscale in both
+  families and registered WG UDP in IPv4 only (matching existing policy).
+  Tunnel-local rows are only IPv4 qB UI permits on `ui` networks. Preserve
+  configured permits regardless of stopped interfaces, missing sockets/peers.
+  No raw-rule or listener filtering, service deletion or actual firewall edits.
+- Unit tests cover both families, configured non-default ports, unknown sockets,
+  stopped/inet/no-network cases and required WG endpoints. Browser fixture now
+  uses an explicit blocked wg1 rule rather than an obsolete automatic placeholder;
+  explicit allow/deny toggle/remove/cancel passes in tailnet, WAN and WireGuard.
+- Initial Bats run failed one old expectation requiring unknown socket 8081 to
+  create a closed WAN row. Updated that assertion to require retained raw/local
+  visibility and no remote row; focused and complete reruns passed. Final totals:
+  157 Bats (154 pass/three timeout skips), 117 Python (115 pass/two native-RAR
+  skips), Settings browser suite, syntax/ShellCheck/diff checks. No frontend
+  production edits or new dependencies needed for this change.
+- Exported root/app/Desktop v148 copies match; payload SHA256:
+  04afbde658816db8d43d27a59cca2cc348a854682dd3a415f1a1057099d01a6b.
+  Installed on nrm through portable only with own SSH_HOST=nrm/blank-domain input,
+  h full-upgrade/E confirmation. Stages 0–7 passed, no package changes/reboot.
+- Live API + readonly desktop/mobile browser: WAN IPv4 only 22/TCP,41641/UDP,
+  61001/UDP,61020/UDP; WAN IPv6 only 22/TCP,41641/UDP. WireGuard shows wg0 IPv4
+  61006/TCP only; wg1 and IPv6 have no automatic UI rows. Empty wg1 retains its
+  selector and Add rule control; wg1 itself and its endpoint remain active.
+  Technical rules remain visible; browser had zero writes/errors. Tailnet rows,
+  panel/qB UI, SSH/PeerAPI dual-stack and unauthenticated WebDAV 401 remain valid.
+- All eight project services active, no failed units/pending settings; installed
+  backend hash matches source. Settings/shares/module/network registry/WG profile/
+  qB profile hashes and qB PID/InvocationID unchanged. Both complete iptables-save
+  snapshots match after stripping generated comments and normalizing counters.
+  Existing default denies remain, with fresh TCP probes still blocked.
+- Scratch probes/screenshots and recoverable old v147 portable:
+  `/tmp/master-stack-v148.667cPe/`; v147 also remains on Desktop. Root/app now
+  carry only v148. Preview server stopped; all earlier dirty work preserved.
+  No clean install/Ubuntu/reboot/VPN throughput/authenticated Infuse claim.
+  No commit/push.
+
+**2026-09-28 — remove synthetic Tailscale port entries, v2-147 (DD-173):**
+- User requested source-level removal of unused closed Tailscale entries for
+  20902 TCP/UDP, 61006, 61008, 61009 and 2019. Live audit confirmed no explicit
+  overrides (`ayarlar.json` firewall list empty). They were automatic copies of
+  host sockets, not stale firewall allowances. 20902 belongs to qBittorrent,
+  61006 its local UI, 61008/61009 the panel backends, 2019 Caddy's reload admin.
+- Changed only the backend catalogue generator (plus version/docs/tests): tail
+  rows now come from per-family configured core permits and registered WG ports,
+  including networks with no sockets/peers. No arbitrary listener becomes a
+  Tailscale row. IPv6-only unsupported Caddy/WebDAV entries also disappear.
+  Explicit user allow/deny rules remain editable; raw listeners and technical
+  rules stay unfiltered. Default deny still blocks these ports. No port blacklist,
+  service removal, bind/interface change, qB restart or firewall policy change.
+- Local: all 157 Bats cases passed with three platform skips; all 114 Python
+  cases passed with two native-RAR skips. Settings browser suite includes explicit
+  tailnet allow/deny, toggle/remove/cancel and no automatic fallback-row tests.
+  Syntax/ShellCheck/diff checks passed. Existing v145/v146 dirty work preserved.
+- Exported root/app/Desktop v147 copies match. Embedded payload SHA256:
+  d20bc7582dc84ffc2c310089199125947d4cc56852f8196d140e946af87df4fb.
+  Deployed only through portable using own scratch SSH_HOST=nrm/blank domain,
+  h full-upgrade/E confirmation; stages 0–7 passed, no package changes/reboot.
+- Live API + read-only browser confirmed target rows absent in IPv4/IPv6, raw
+  diagnostics/local rows preserved, WG endpoints 61001/61020 allowed and both
+  networks active. New TCP connections to all reported ports remain blocked;
+  SSH/PeerAPI dual-stack and panel/qB UI respond; WebDAV retains unauthenticated
+  401. Eight services active, no failed units/pending settings. Installed backend
+  hash matches source. Settings/shares/module/WG registry/WG configs/qB profile
+  hashes and qB PID/InvocationID unchanged. No new live UDP packet probe was run;
+  the unchanged dual-stack firewall checker passed (v146 isolated packet coverage).
+- Scratch probes/screenshots and preserved v146 portable:
+  `/tmp/master-stack-v147.xpHRjj/`. Root/app now carry only v147; v146 also remains
+  on Desktop. Preview server stopped. No clean install/Ubuntu/reboot/live VPN
+  throughput/authenticated Infuse claim. No commit/push.
+
+**2026-09-28 — minimum firewall exposure, v2-146 (DD-172):**
+- User authorized audit and restriction of unused exposure, then explicitly
+  clarified that every user-created WireGuard network/port is a requirement.
+  Do not disable/delete wg1 or close its endpoint based on zero peers/counters.
+  wg0 UDP 61001 and wg1 UDP 61020 remain configured/active and unchanged.
+- Audit found no legacy Docker/Portainer/Filebrowser/wg-easy listeners or rules.
+  WAN already permits only SSH, Tailscale and registered WG UDP. The real excess
+  was blanket tailnet ingress before host policy: qBittorrent peer TCP 20902
+  was reachable from the Mac, although WAN peer ingress was already blocked.
+- Added a core tailnet allowlist/default drop after operator overrides in
+  CHAIN_SETTINGS, before ts-input. Keep loopback, established/related and ICMP;
+  allow SSH/DNS, IPv4 Caddy/WebDAV, Self-only per-family PeerAPI endpoints and
+  all registered WG UDP ports. WAN, WG local input, FORWARD/NAT and Tailscale
+  chains are not changed. No service/listener/package removal or credential edit.
+- Panel policy uses the shared allowlist; unknown listeners no longer imply
+  tailnet permission. Current Caddy templates bind IPv4 only, so no unused
+  IPv6 HTTP/WebDAV permission. Updated table explanation, contract and DD-172.
+  Settings-helper edits now trigger firewall and panel refresh on reinstall.
+- Local verification: 157 Bats (154 pass/three timeout skips), 113 Python
+  (111 pass/two native-RAR skips), Settings browser suite, syntax/ShellCheck/diff.
+  Native Debian: 113 Python pass with real RAR plus the final focused helper
+  rerun; isolated firewall packet and settings/DNS/qBittorrent transaction tests
+  pass. Packet fixture covers IPv4/IPv6 tailnet/WAN/WG, explicit user allow/deny,
+  idempotency, extra-bypass detection and unchanged Tailscale-owned rules.
+- Initial packet-fixture override assertion failed because its state included
+  defaults' STATE_FILE instead of the scratch file; fixed the fixture. Only its
+  private namespace firewall was modified. Concurrent SSH testing initially hit
+  local-forward conflicts; use ClearAllForwardings=yes for all nrm checks.
+- Deployed through the exported portable only, scratch SSH_HOST=nrm/blank domain,
+  h upgrade/E confirm; stages 0–7 passed, no packages/reset/reboot. A final portable
+  refinement removes unused IPv6 Caddy/WebDAV allowances. Root/app/Desktop
+  copies match the scratch export; embedded SHA256:
+  c472baccf0bf3d0d6268c7d712454611fdfdccde4f140a9780c185f88acf0b15.
+- Live Mac checks: panel/qB UI, DNS UDP/TCP, IPv4/IPv6 SSH and PeerAPI respond;
+  new qB TCP 20902 and direct backend connections are blocked. Both-family drop
+  counters increment. WebDAV retains its 401 authentication boundary (no stored
+  password was read). API permissions and desktop/mobile toggles agree; browser
+  performed zero writes and had no JS errors. Eight services active, no failed
+  units/pending settings. The temporary rollback timer was stopped after checks.
+- Before/after SHA256s for settings, shares, module/network registries, both WG
+  configs and qB profile are identical, as are Tailscale INPUT and WG FORWARD/NAT
+  rule texts. qB PID/InvocationID remain 340708/c3a224de978a48dc8c6969043a79cbff.
+  No external tailnet policy, user data or network configuration was removed.
+- Scratch/live probes/screenshots/old v145 portable: `/tmp/master-stack-v146.HTNI8K/`.
+  Native isolated test copy: `/tmp/master-stack-v146-native.95kSul/` on nrm.
+  Only generated v145 root/app copies were replaced; scratch/Desktop retain it.
+  No clean Ubuntu/reboot, live VPN-client throughput or authenticated Infuse
+  acceptance claim. Existing v145 dirty work was preserved. No commit/push.
+
+**2026-09-28 — remaining cleanup complete, v2-145 (DD-171):**
+- Continued the approved phases 1–2 below, preserving their dirty changes.
+  Removed unreachable public Files/WebDAV lifecycle/data-delete branches, shared
+  password plumbing, `.pay` marker readers/writers and old credential defaults.
+  Current built-in service/registry IDs, per-folder account API, safety boundaries
+  and optional-app behavior remain. No dependency is unused enough to remove;
+  no apt purge/autoremove or replacement runtime was introduced.
+- Fresh installs no longer create `.pay/w` or `.pay/acik`; old metadata is not
+  read/imported/deleted/repaired. Reserved path guards remain; the WebDAV unit
+  permits an absent legacy directory while blocking one that exists. Files
+  `/api/paylas` GET/HEAD/POST and `/api/paylas/kaldir` POST return 410 behind
+  the existing gates; `/api/state` drops its misleading `share` summary.
+- Corrected launcher/input-template/reset text, current docs and version links.
+  Installer always verifies built-in Files. Portable packaging now explicitly
+  excludes Python caches. All 45 runtime files still have active consumers;
+  historical DD/designs/reviews and `versiyon/` were not rewritten or deleted.
+- Local: 157 Bats cases (154 pass, three macOS timeout skips), 108 Python tests
+  (106 pass, two native RAR skips), four browser suites, JS/bash syntax, core
+  ShellCheck and diff checks pass. Initial failures were outdated text/shape
+  assertions and a test issuing duplicate Host/header values; corrected the
+  tests without weakening production gates. The pre-existing wireguard.command
+  trap callback ShellCheck informational warning remains outside core checks.
+- Root/Data-app/Desktop portable files and repeated export are byte-identical.
+  Embedded SHA256: a2415a9aa05a1d37306926f4d90a640f88e4da997598438b7693148cce5292c4.
+  Inspected the full archive: exactly 45 source-identical runtime files, no
+  private input, docs, tests, caches or workstation metadata.
+- Deployed through the portable launcher only, scratch SSH_HOST=nrm and blank
+  LOCAL_DOMAIN, h full-upgrade/E confirm. Debian 13 stages 0–7 passed, no package
+  changes, reset or reboot; permission sweep changed zero entries. Files, root
+  panel and WebDAV restarted for changed code/unit; qBittorrent did not restart.
+  Eight services active, no failed units/pending settings; firewall, DNS, Caddy
+  and systemd unit checks pass. Installed code/assets equal portable sources.
+- On native Debian all 108 Python tests pass as master-downloads, including real
+  unrar and the existing upstream fixtures. Separate transient systemd sandbox
+  probes verify missing `.pay` is accepted and existing `.pay`/trash contents
+  remain inaccessible/unchanged. Live retired API/gates pass. Re-running
+  `master-modul yerlesik` changes neither worker InvocationID nor registry hash.
+- Live browser: seven widths × two themes, dock/dialog cancel/keyboard/routes,
+  all non-GET/HEAD requests blocked, zero writes/CSP/JS errors. Local and live
+  screenshots visually inspected. Share registry stays
+  664fae636cb8e04388a82739974d725dd7bcbae049b213007812b29c00700f38;
+  current settings stay 2c8d8303d7ae4c23d03908996493cdfeeb21b22256fa37d66c105abef243b791;
+  qBittorrent profile stays c6f4f84a250237f3b64d21c5d03aacb21ba5f3e909889ac34b8438f3cf417048,
+  PID/InvocationID 340708/c3a224de978a48dc8c6969043a79cbff. Both WG config hashes
+  and old `.pay/acik` contents, mode/owner and mtime remain unchanged.
+- Scratch/recoverable v144 export/live screenshots: `/tmp/master-stack-v145.ZynQVN/`.
+  Native test copy: `/tmp/master-stack-v145-native.r3S2hJ/` on nrm. Only the two
+  superseded v144 portable copies were replaced in the repo; Git and scratch
+  retain them. No user data removed. No clean Ubuntu/full fresh-install/reboot
+  acceptance claim. Operator input untouched; no commit or push requested/done.
+
+**2026-09-28 — cleanup phases 1–2, source only (based on v2-144):**
+- Approved first pass: reconcile current documentation/rules and remove dead
+  frontend code/styles, without changing live service behaviour. No nrm access,
+  package/dependency changes, deployment, export, version bump, commit or push.
+  Existing v144 portable files still contain the previously released sources.
+- Corrected active README/CLAUDE/rules/OKUBENI, architecture, contract and
+  clean-install checklist: no automatic WireGuard backup/restore, built-in
+  Files/WebDAV/archive tools, current paths and Caddy routing, mutable Settings,
+  firewall overrides, bounded refresh recovery and contextual Files dock.
+  Historical DD/CHANGELOG entries, archived reviews/designs and `versiyon/`
+  remain untouched. The private operator input was not read.
+- Removed unused helpers, constant built-in feature gates, retired shared-account
+  UI and unreachable optional-app dependency queue. Removed obsolete Overview,
+  module-card/progress, selection-toolbar and read-only Settings CSS. The four
+  changed production assets shrink by 18,353 bytes (8.8% of those assets).
+  Preserved current dock/sharing, qBittorrent first-login reveal, route aliases,
+  backend/API compatibility, safety checks and every installed dependency.
+- Added browser regression checks for qBittorrent opt-in secrets, 30-second
+  expiry, hidden-tab/card-close/navigation clearing, no browser storage and
+  non-revealable stored passwords. The browser clock is realigned with fixture
+  timestamps after the expiry probe. Files copy geometry now waits for a visible
+  address before measuring; an initial immediate hidden-view read was flaky.
+- Local verification: 155 Bats cases (152 passed, 3 skipped: no `timeout`),
+  108 Python tests (106 passed, 2 native-RAR skips), four browser suites,
+  JS/bash syntax, core installer ShellCheck and `git diff --check` passed.
+  macOS lacks `sha256sum`: baseline tests 132–137 failed before edits; a temporary
+  test-only adapter to `/usr/bin/shasum -a 256` was used, never shipped.
+  Unchanged `wireguard.command` has the same pre-existing ShellCheck SC2329
+  informational warning at its trap callback on HEAD and working tree.
+- Deferred: retire `.pay`/old share endpoints only with their migration and
+  permission callers; review remaining launcher terminology; package and test
+  a new release after the next approved cleanup stage. No fresh Linux install,
+  reboot, native-RAR or live-server acceptance is claimed by this pass.
+
 **2026-09-28 — v2-144, approved Files icon dock B (DD-170 follow-up):**
 - Implemented the second visual alternative: compact floating surface, count
   left/dismiss right above six equal icon-over-label actions. Ineligible actions

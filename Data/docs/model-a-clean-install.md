@@ -1,12 +1,13 @@
-# Model A and clean-install readiness — v2-132
+# Model A and clean-install readiness
 
 ## What ships
 
 This is the approved Model A implemented in the real panel, not a new mockup.
 Files is the landing page. The sidebar contains Files, App Store, installed
 qBittorrent/WireGuard, Settings, then live CPU/RAM/disk indicators. Mobile uses
-the same sidebar behind an accessible menu button. The dock, Applications,
-Overview and window controls are removed.
+the same sidebar behind an accessible menu button. The old desktop dock,
+Applications, Overview and window controls are removed. Files has a contextual
+action dock for selected items (DD-170); it is not an application launcher.
 App Store uses model 2's compact rows (DD-161). Install/Open stays in the row;
 technical details, logs, service controls and removal share an optional panel.
 
@@ -26,7 +27,7 @@ staleness. Missing CPU samples do not hide valid RAM/disk measurements. Disk is
 the filesystem containing the configured user root, not a sum of directory sizes.
 
 No production dependency or privilege boundary changed. Tailscale, Caddy,
-Dnsmasq, firewall, Files, per-folder WebDAV and ZIP remain protected. Optional
+Dnsmasq, firewall, Files, per-folder WebDAV and ZIP/RAR remain protected. Optional
 app removal preserves profiles unless the user separately confirms data deletion.
 Existing Settings review, timed confirmation, server rollback, folder boundaries,
 archive limits, same-origin gates and CSP remain in force.
@@ -39,7 +40,8 @@ archive limits, same-origin gates and CSP remain in force.
    not wipe the host, restore backups or recover old credentials/peer identities.
    Save any data that must survive before a reset. On an existing host, rerunning
    the installer preserves managed data and is **not** a clean installation.
-3. Keep `2026.08.06-v2-132.command` beside the operator-owned `kurulum/` directory.
+3. Keep the current `<V2_VERSION>.command` beside the operator-owned `kurulum/`
+   directory; read the release version from `Data/install.sh` or the root README.
    Inputs are only `SSH_HOST` and optional `LOCAL_DOMAIN`, using the existing
    example; do not overwrite an existing input file. Mode must be 0600 or 0400.
 4. Confirm SSH works. If a reset changed the SSH host key, independently verify
@@ -51,10 +53,11 @@ archive limits, same-origin gates and CSP remain in force.
    receive a different Tailscale address. Account/ACL changes are manual.
 
 For agent-driven tests on `nrm`, use scratch inputs rather than the operator's
-`kurulum/kurulum.env`. v131 and v132 were deployed as in-place updates on the user's
+`kurulum/kurulum.env`. Historical acceptance: v131 and v132 were deployed as in-place updates on the user's
 v130 Debian installation. Portable validation, live read-only Store/firewall checks and
 local regression suites passed; no reset/reboot or fresh Ubuntu run was performed.
-See `SESSION.md` for exact scope and results.
+Those results do not certify a fresh install of later releases. See `SESSION.md`
+for exact scope and results.
 
 ## Fresh-host acceptance checklist (pending)
 
@@ -64,8 +67,10 @@ See `SESSION.md` for exact scope and results.
   are in the initial menu. No old settings, peers or accounts appear.
 - Resource values become live without installing WireGuard. Disconnecting
   marks values unknown; reconnecting recovers them.
-- File upload/create/move/trash/restore, per-folder RO/RW/pause sharing and ZIP/
-  nested unzip work. The file backend remains unprivileged.
+- File upload/create/move/trash/restore, per-folder RO/RW/pause sharing, ZIP
+  creation and automatic nested ZIP/RAR extraction work. Check multipart RAR,
+  the downloads default destination and folder picker. The file backend remains
+  unprivileged; sources and archive safety limits remain protected.
 - App Store qBittorrent install → own page → settings → stop/start → removal
   succeeds; menu entries follow installed state. WireGuard install → first
   network → test peer succeeds; removal closes network access.

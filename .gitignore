@@ -2,5 +2,5 @@
 # installer or its documentation.
 .DS_Store
 
-# Installer inputs: passwords and the Tailscale auth key (DD-119).
+# Private installer inputs and downloaded WireGuard profiles/QR codes (DD-143).
 /kurulum/

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Konsol'un WireGuard ve sistem arka ucu (DD-133, DD-140). Yalnız 127.0.0.1'i
-# dinler; tailnet'e Caddy açar: http://panel.<alan> altında yalnız /api/wg/*.
-# Sayfanın kendisini Konsol'un öbür arka ucu (master-files-panel) sunar; burası
+# dinler; tailnet'e Caddy açar: http://panel.<alan> altında /api/wg/* ve /api/konsol/*.
+# Statik sayfaları Caddy sunar; burası
 # root çalışır ve sayfa dosyası servis etmez. Bütün WireGuard değişiklikleri
 # master-wg ile yapılır: aynı doğrulama, aynı kilit, aynı "kopmadan uygula".
 # Yalnız Python standart kütüphanesi.
@@ -39,11 +39,9 @@ import master_shares
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
-MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir", "parola")
-# DD-149, DD-151: hesabı Konsol'da görünen modüller; "Yeni parola" yalnız Paylaşım'da (qBittorrent'in
-# ilk girişi günlüğündeki geçici paroladır; DD-156 hesap düzenleme Ayarlar'dadır).
+MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir")
+# qBittorrent's temporary first login is read on request; Settings edits the account.
 ACCOUNT_MODULES = ("torrent",)
-PASSWORD_MODULES = ()
 IFACE_RE = re.compile(r"^wg[0-9]$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
@@ -58,7 +56,7 @@ API_HEADER = "X-Konsol"
 ACTOR = "konsol"
 CSP = ("default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 MASK = "•" * 44
-# Genel bakıştaki işlemci/bellek grafiği: SAMPLE_SECONDS'ta bir örnek, son 2 dakika.
+# Sidebar resource sampling: bounded history, SAMPLE_SECONDS between samples.
 SYS_POINTS = 12
 # Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
@@ -71,7 +69,7 @@ IPT_COUNTER_RE = re.compile(r" -c (\d+) (\d+)")
 TORRENT_KEYS = ("Session\\DefaultSavePath", "Session\\TempPath", "Session\\TempPathEnabled", "Session\\Port",
                 "Downloads\\SavePath", "Downloads\\TempPath", "WebUI\\Address", "WebUI\\Port")
 ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
-# Genel bakıştaki "Kullanımdaki portlar" kartı: yapılandırmadan üretilir, tarama yok.
+# Settings service-port metadata: produced from configuration, no scanning.
 # (state.env anahtarı, ad, protokol, kapsam, varsayılan)
 PORT_ROWS = (
     ("TAILSCALE_UDP_PORT", "Tailscale", "udp", "internet", 0),
@@ -83,8 +81,6 @@ PORT_ROWS = (
     ("WG_PANEL_PORT", "Konsol · WireGuard arka ucu", "tcp", "loopback", 0),
     ("FILES_PANEL_PORT", "Konsol · dosya arka ucu", "tcp", "loopback", 0),
 )
-# WireGuard istemcilerine açılan arayüzler (Caddyfile.wg): erişimi "ui" olan ağlarda.
-WG_UI_ROWS = (("TORRENT_UI_PORT", "qBittorrent arayüzü"),)
 # Satırı bir modülle gelen portlar: modül kurulu değilse o port dinlenmez (DD-149, DD-150, DD-151).
 PORT_MODULES = {"SHARE_PORT": "paylasim", "TORRENT_UI_PORT": "torrent", "FILES_PANEL_PORT": "dosya"}
 
@@ -220,8 +216,8 @@ def classify_rules(chain_kind, rules, env, networks):
                              iface=net["iface"], label=net["label"])
                 else:
                     e.update(group="other", kind="unknown")
-            elif i_if in by_iface and j == "ACCEPT" and o.get("--dports"):
-                ports = [p for p in o["--dports"].split(",") if p]
+            elif i_if in by_iface and j == "ACCEPT" and (o.get("--dport") or o.get("--dports")):
+                ports = [p for p in (o.get("--dport") or o["--dports"]).split(",") if p]
                 e.update(group="wg:" + i_if, kind="ui", proto=o.get("-p", ""), addr=o.get("-d", "").split("/")[0],
                          ports=[{"port": int(p) if p.isdigit() else p, "name": ui_names.get(p, "")} for p in ports])
             elif i_if in by_iface and j == "ACCEPT" and o.get("-p") == "icmp":
@@ -582,11 +578,6 @@ class Panel:
             port = num_or(env.get(key), default)
             if port:
                 rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
-        if on["TORRENT_UI_PORT"] and any(net["scope"] == "ui" and net["active"] for net in networks):
-            for key, name in WG_UI_ROWS:
-                port = num_or(env.get(key), 0)
-                if port:
-                    rows.append({"port": port, "proto": "tcp", "scope": "wireguard", "name": name})
         return rows
 
     @staticmethod
@@ -670,7 +661,10 @@ class Panel:
                     continue
                 rules, raw = self.iptables_chain(binary, chain, table)
                 if rules is None:
-                    readable = False
+                    # No registered networks: DD-175 deliberately omits our WG
+                    # forwarding/NAT chains. --check still detects real drift.
+                    if kind == "input" or networks:
+                        readable = False
                     continue
                 entries += classify_rules(kind, rules, env, networks)
                 raws.append("# %s%s -S %s\n%s" % (binary, " -t nat" if table else "", chain, raw))
@@ -701,17 +695,6 @@ class Panel:
                 for addr in site["addresses"]:
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
                                     "access": "tailscale"})
-        wg_text = read_text(env.get("CADDY_WG_FILE", ""))
-        if wg_text is not None:
-            raws.append({"file": env.get("CADDY_WG_FILE", ""), "text": wg_text})
-            for site in parse_caddy(wg_text, ts_ip, "wireguard"):
-                for addr in site["addresses"]:
-                    port = addr.rpartition(":")[2]
-                    for net in networks:
-                        if net["scope"] == "ui" and net["active"]:
-                            entries.append({"address": "%s:%s" % (net["server4"], port), "routes": site["routes"],
-                                            "source": "wireguard", "access": "wireguard",
-                                            "iface": net["iface"], "label": net["label"]})
         return {"entries": entries, "raw": raws}
 
     def dns_view(self, env):
@@ -883,31 +866,40 @@ class Panel:
 
     def settings_ports(self, env, networks, listeners=None):
         rows = []
+        tailnet = master_settings.tailnet_ports(env)
+        tail_keys = {(r["family"], r["proto"], r["port"]) for r in tailnet}
+        tail_keys.update((f, "udp", n["port"]) for n in networks for f in (4, 6))
         for p in self.ports(env, networks):
-            if p["scope"] == "wireguard":
-                continue
             scope = {"internet": "wan", "tailscale": "tail", "loopback": "lo"}[p["scope"]]
             for family in (4, 6):
                 for proto in p["proto"].split("+"):
-                    rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"], "scope": scope,
-                                 "baseline": not (family == 6 and p["name"].startswith("WireGuard "))})
-                    if scope in ("tail", "lo"):
-                        rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"], "scope": "wan", "baseline": False})
-        for net in networks:
-            for family in (4, 6):
-                rows.append({"name": "qBittorrent arayüzü", "family": family, "proto": "tcp", "port": int(env["TORRENT_UI_PORT"]),
-                             "scope": net["iface"], "baseline": family == 4 and net["scope"] == "ui"})
+                    # WAN IPv6 has no base WireGuard endpoint permission.
+                    if not (scope == "wan" and family == 6 and p["name"].startswith("WireGuard ")):
+                        rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"],
+                                     "scope": scope, "baseline": True})
+                    if p["name"].startswith("WireGuard ") and scope == "wan":
+                        rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"],
+                                     "scope": "tail", "baseline": True})
+        # DD-173: generate the tailnet catalogue from configured permissions,
+        # never from arbitrary sockets. Keep raw listeners/technical rules intact.
+        rows = [r for r in rows if r["scope"] != "tail" or (r["family"], r["proto"], r["port"]) in tail_keys]
         seen = {(r["family"], r["proto"], r["port"], r["scope"]) for r in rows}
         names = {(r["proto"], r["port"]): r["name"] for r in rows}
-        for listener in listeners or []:
-            for scope in ("wan", "tail", "lo"):
-                key = (listener["family"], listener["proto"], listener["port"], scope)
-                if key in seen:
-                    continue
+        names.update({(r["proto"], r["port"]): r["name"] for r in tailnet if r["name"] == "Tailscale PeerAPI"})
+        for listener in [*(listeners or []), *tailnet]:
+            # Local inventory stays complete; sockets create no remote access rows.
+            key = (listener["family"], listener["proto"], listener["port"], "lo")
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({"name": names.get((listener["proto"], listener["port"]), "Diğer dinleyici"),
+                         "family": listener["family"], "proto": listener["proto"],
+                         "port": listener["port"], "scope": "lo", "baseline": True})
+        for port in tailnet:
+            key = (port["family"], port["proto"], port["port"], "tail")
+            if key not in seen:
                 seen.add(key)
-                rows.append({"name": names.get((listener["proto"], listener["port"]), "Diğer dinleyici"),
-                             "family": listener["family"], "proto": listener["proto"],
-                             "port": listener["port"], "scope": scope, "baseline": scope != "wan"})
+                rows.append({**port, "scope": "tail", "baseline": True})
         return rows
 
     def settings_run(self, action, data, shares=False):
@@ -981,7 +973,7 @@ class Panel:
             if len(f) != 11 or not IFACE_RE.match(f[0]):
                 continue
             rows.append({
-                "iface": f[0], "port": num_or(f[1], 0), "scope": f[2],
+                "iface": f[0], "port": num_or(f[1], 0),
                 "server4": f[3], "subnet4": f[4], "server6": f[5], "subnet6": f[6],
                 "dns": f[7], "label": f[8], "active": f[9] == "1", "count": num_or(f[10], 0),
                 "revision": hashlib.sha256("\t".join(f[:9]).encode("utf-8")).hexdigest(),
@@ -1279,13 +1271,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if mid not in known:
                 self.error(404, "bilinmeyen modül")
                 return
-            if action == "parola":
-                if mid not in PASSWORD_MODULES:
-                    self.error(404, "bu modülde parola yok")
-                    return
-                if not self.panel.module_state(mid):
-                    self.error(409, "modül kurulu değil")
-                    return
             code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
             self.audit(user, "modul-" + action, mid + (" +veri" if action == "kaldir" and data.get("veri") else ""), code == 202)
             if code != 202:
@@ -1295,17 +1280,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         # DD-150: WireGuard modülü kurulu değilken hiçbir ağ işlemi master-wg'ye gitmez.
         if path.startswith("/api/wg/") and not self.panel.wg_on():
-            self.error(409, "WireGuard modülü kurulu değil; Konsol → Modüller'den kurun")
+            self.error(409, "WireGuard kurulu değil; Konsol → App Store'dan kurun")
             return
         if path == "/api/wg/nets":
             port = str(data.get("port", "")).strip()
-            scope = str(data.get("scope", "")).strip()
             dns = str(data.get("dns", "")).strip()
             label = str(data.get("label", "")).strip()
-            if not port.isdigit() or scope not in ("inet", "ui") or not dns:
-                self.error(400, "port, erişim (inet | ui) ve DNS gerekli")
+            if "scope" in data or not port.isdigit() or not dns:
+                self.error(400, "Port ve DNS gerekli; erişim seçeneği desteklenmiyor. Sayfayı yenileyin.")
                 return
-            rc, out, message = self.panel.run("net-add", port, scope, dns, label)
+            rc, out, message = self.panel.run("net-add", port, dns, label)
             parts = out.strip().split("\t")
             self.audit(user, "ag-ekle", parts[0] if rc == 0 else port, rc == 0)
             if rc != 0:
@@ -1319,11 +1303,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if net is None:
                 return
             if m.group(2) == "ayarlar":
-                scope, dns, revision = (data.get(k) for k in ("scope", "dns", "revision"))
-                if (scope not in ("inet", "ui") or not isinstance(dns, str) or not dns.strip()
+                dns, revision = (data.get(k) for k in ("dns", "revision"))
+                if ("scope" in data or not isinstance(dns, str) or not dns.strip()
                         or len(dns) > 512 or any(ord(c) < 32 for c in dns)
                         or not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision)):
-                    self.error(400, "Geçerli erişim, DNS ve ağ revizyonu gerekli")
+                    self.error(400, "Geçerli DNS ve ağ revizyonu gerekli; erişim seçeneği desteklenmiyor.")
                     return
                 try:
                     addresses = [s.strip() for s in dns.split(",")]
@@ -1334,13 +1318,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except ValueError:
                     self.error(400, "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın")
                     return
-                rc, _, message = self.panel.run("net-settings", scope, dns, revision, net=net)
+                rc, _, message = self.panel.run("net-settings", dns, revision, net=net)
                 self.panel.settings_cache = (0, None)
                 self.audit(user, "ag-ayarlar", net, rc == 0)
                 if rc != 0:
                     self.error(409, message or "Ağ ayarları kaydedilemedi")
                     return
-                self.json(200, {"iface": net, "scope": scope, "dns": ", ".join(addresses)})
+                self.json(200, {"iface": net, "dns": ", ".join(addresses)})
                 return
             if m.group(2) == "remove":
                 if not self.confirmed(data):

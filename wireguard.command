@@ -1,7 +1,7 @@
 #!/bin/bash
 # WireGuard peer menüsü (DD-124, DD-143). Repo kökünde çift tıklanır; sunucudaki
-# master-wg'yi SSH ile çağırır. Sunucuya hiçbir şey gönderilmez ve Mac'te hiçbir
-# şey saklanmaz: ağlar ve peer'lar sunucuda yaşar, QR kodu terminale basılır.
+# master-wg'yi SSH ile çağırır. Yapılandırma sunucuda üretilir; Mac'ten profil
+# yüklenmez. Ağlar ve peer'lar sunucuda yaşar, QR kodu terminale basılır.
 # İstenirse profil kurulum/wireguard/<ad>.conf ve QR resmi <ad>.png olarak indirilir
 # (DD-132) — bu yalnız kolaylıktır, kurulum o klasöre bakmaz. "DNS değiştir" yalnız
 # profildeki DNS satırını, "Ağı yeniden üret" sunucu anahtarını ve o ağdaki bütün
@@ -186,13 +186,13 @@ change_dns() {
 }
 
 # DD-130: sunucuda yeni anahtar üretir, bütün peer kayıtlarını ve profilleri
-# siler; ardından kurulum/wireguard yedeğini bu temiz hale eşitler. Yazılı onay ister.
+# siler. İndirilmiş yerel profil kopyalarına dokunmaz. Yazılı onay ister.
 regenerate_net() {
     local out confirm=""
     echo
     echo "UYARI: sunucuda yeni bir WireGuard anahtarı üretilir; bütün peer kayıtları ve profilleri silinir."
     echo "       Kayıtlı cihazların hiçbiri bağlanamaz; hepsinin '2) Peer ekle' ile yeniden eklenmesi gerekir."
-    echo "       Ardından kurulum/wireguard yedeği de bu temiz hale eşitlenir (eski profiller silinir)."
+    echo "       Mac'e indirilmiş profil kopyaları silinmez; bu ağın eski profilleri artık geçersizdir."
     echo
     list_peers || return 1
     echo
@@ -220,10 +220,10 @@ select_net() {
     fi
     lines=""
     i=0
-    while IFS=$'\t' read -r iface port scope s4 rest; do
+    while IFS=$'\t' read -r iface port _policy s4 rest; do
         [[ -n "$iface" ]] || continue
         i=$((i + 1))
-        lines="$lines$i) $iface  UDP $port  $s4  $([[ "$scope" == ui ]] && echo "internet + local" || echo "yalnız internet")"$'\n'
+        lines="$lines$i) $iface  UDP $port  $s4  yalnız internet"$'\n'
         eval "net_$i=\$iface"
     done <<<"$out"
     if [[ "$i" -eq 1 && "$ask_always" != "--ask" ]]; then

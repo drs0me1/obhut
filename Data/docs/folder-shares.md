@@ -109,6 +109,15 @@ operators must accept the migration before upgrading. Old metadata is not
 automatically imported or deleted. Since v129 these built-ins no longer expose
 the former module metadata cleanup command.
 
+Since v145 (DD-171), the installer no longer creates `.pay/w` or writes
+`.pay/acik`, exports old credential paths, or repairs legacy directory permissions.
+Existing metadata stays untouched and inaccessible. `SHARE_DIR` and the Files
+`--share` argument remain only as reserved-path guards. WebDAV's systemd exclusion
+allows that path to be absent on fresh installs while blocking it when present.
+The retired Files `/api/paylas` GET/HEAD/POST and `/api/paylas/kaldir` POST answer
+410 behind the usual Host/header/origin gates; there is no fake empty active list
+or marker-derived share summary. The current folder API and registry are unchanged.
+
 ## Verification
 
 `tests/test_shares.py` tests real HTTP requests and descriptor boundaries;

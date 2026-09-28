@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Konsol'un dosya arka ucu (DD-139, DD-140, DD-141). Kullanıcı alanını tarayıcıdan yönetir:
 # gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
-# oku, indir, yükle, paylaş. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri öbür
-# arka uca (master-wg-panel) gider. Paylaşım hesabı bu servise hiç açılmaz (DD-149).
+# oku, indir, yükle ve arşivle. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri
+# root arka ucuna (master-wg-panel) gider. Klasör paylaşım hesapları orada yönetilir.
 # Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (http://panel.<alan>). Parola yoktur
 # (DD-147): erişim sınırı Tailscale. Servis root değil, kullanıcı alanının sahibi olarak
 # çalışır. Yalnız Python standart kütüphanesi.
@@ -37,14 +37,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from master_archives import Archives, ArchiveError
 
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
-# DD-141: paylaşım klasörü. <kök>/.pay sunulmaz; yalnız içindeki w/ paylaşım WebDAV'ının
-# köküdür ve kayıt (kayit.json) onun dışında durur. Paylaşılan öge w/ içine göreli bir
-# sembolik bağlantı olarak konur: kopya yok, klasöre sonradan inen dosya kendiliğinden görünür.
-# DD-149: Paylaşım modülü kuruluyken .pay içinde durur (master-modul koyar ve kaldırır).
-# Modül kaydı bu servise kapalıdır (/etc/master-stack 0700); yeni paylaşım yalnız işaret varken açılır.
-SHARE_ENABLED = "acik"
-MAX_SHARES = 100
-MAX_SHARE_DAYS = 3650
+# DD-171: --share only reserves the retired hidden directory; never reads its marker.
+RETIRED_SHARE_MESSAGE = "Eski paylaşım API'si kaldırıldı; Dosyalar → Paylaşımlar bölümünü kullanın."
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 MAX_BODY = 262144
@@ -274,7 +268,7 @@ class Files:
         if parts[0] == self.trash:
             raise PanelError(403, "çöpe yalnız Çöp sekmesinden erişilir")
         if self.share and parts[0] == self.share:
-            raise PanelError(403, "paylaşım klasörüne yalnız Paylaşımlar sekmesinden erişilir")
+            raise PanelError(403, "eski paylaşım çalışma alanına erişilemez")
         if self.archive and parts[0] == self.archive:
             raise PanelError(403, "arşiv çalışma alanına erişilemez")
         return parts
@@ -283,7 +277,7 @@ class Files:
         if not valid_name(name) or CONTROL_RE.search(name) or name != name.strip():
             raise PanelError(400, "geçersiz ad (boş olamaz, / içeremez, en çok 255 bayt)")
         if not parts and name in (self.trash, self.share, self.archive):
-            raise PanelError(400, "bu ad çöp ve paylaşım klasörü için ayrılmış")
+            raise PanelError(400, "bu ad sistem çalışma alanı için ayrılmış")
 
     def open_dir(self, parts):
         fd = os.open(self.root, O_DIR)
@@ -348,29 +342,6 @@ class Files:
                 if not dirs_only or item["type"] == "dir":
                     entries.append(item)
         return {"path": "/".join(parts), "entries": entries, "skipped": skipped}
-
-    # -- paylaşım (DD-141)
-    def share_enabled(self):
-        """Paylaşım modülü kurulu mu: .pay/acik düz bir dosya olarak duruyor mu (bağlantı izlenmez)."""
-        if not self.share:
-            return False
-        try:
-            with DirFd(self.open_dir([])) as root:
-                with DirFd(os.open(self.share, O_DIR, dir_fd=root)) as fd:
-                    st = os.stat(SHARE_ENABLED, dir_fd=fd, follow_symlinks=False)
-        except OSError:
-            return False
-        return stat.S_ISREG(st.st_mode)
-
-    def shares(self):
-        """Legacy API: credentials and shares now belong to the root manager."""
-        return []
-
-    def share_add(self, parts, days):
-        raise PanelError(410, "Klasör paylaşımı Konsol WebDAV bölümüne taşındı.")
-
-    def share_remove(self, name):
-        raise PanelError(410, "Klasör paylaşımı Konsol WebDAV bölümüne taşındı.")
 
     def used(self):
         """Kökün toplam boyutu (çöp hariç); bütçe aşılırsa None."""
@@ -679,12 +650,6 @@ class Panel:
         self.usage_cache = (now, value)
         return value
 
-    def share_summary(self):
-        enabled = self.files.share_enabled()
-        return {"enabled": enabled,
-                "host": "paylas.%s" % self.args.domain if enabled and self.args.domain else "",
-                "count": len(self.files.shares()) if self.args.share else 0}
-
     def state(self):
         vfs = os.statvfs(self.args.root)
         items = self.files.trash_items()
@@ -699,7 +664,6 @@ class Panel:
             "disk": {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize,
                      "used": self.used(), "mount": os.path.ismount(self.args.root)},
             "trash": {"count": len(items), "size": sum(i["size"] or 0 for i in items)},
-            "share": self.share_summary(),
             "textLimit": TEXT_LIMIT,
         }
 
@@ -848,7 +812,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif route == "/api/trash":
             self.run(user, None, lambda: (200, {"items": files.trash_items()}, None), lock=False)
         elif route == "/api/paylas":
-            self.run(user, None, lambda: (200, self.share_state(), None), lock=False)
+            self.error(410, RETIRED_SHARE_MESSAGE)
         elif route == "/api/text":
             self.run(user, None, lambda: (200, files.text(files.split(arg("path")), arg("enc") or "auto"), None),
                      lock=False)
@@ -859,18 +823,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
-
-    def share_state(self):
-        """Paylaşım listesi ve ortak adres. Hesap burada yok: Konsol onu root arka ucundan okur (DD-149)."""
-        panel = self.panel
-        if not panel.args.share:
-            raise PanelError(404, "paylaşım kapalı")
-        enabled = panel.files.share_enabled()
-        return {
-            "enabled": enabled,
-            "host": "http://paylas.%s" % panel.args.domain if enabled and panel.args.domain else "",
-            "items": panel.files.shares(),
-        }
 
     def upload(self, user):
         """POST /api/upload?path=<klasör>&name=<ad> — gövde dosyanın kendisidir (DD-145)."""
@@ -965,6 +917,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if route == "/api/upload":
             self.upload(user)
             return
+        if route in ("/api/paylas", "/api/paylas/kaldir"):
+            self.error(410, RETIRED_SHARE_MESSAGE)
+            return
         data = self.body_json()
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
@@ -1009,23 +964,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             files.purge(ids)
             return 200, {"purged": len(ids)}, ids[:5]
 
-        def share_add():
-            parts = files.split(data.get("path"))
-            raw_days = data.get("days", 0)
-            days = raw_days if isinstance(raw_days, int) and not isinstance(raw_days, bool) else -1
-            if days < 0 or days > MAX_SHARE_DAYS:
-                raise PanelError(400, "süre gün olarak verilir (0 = süresiz)")
-            item = files.share_add(parts, days)
-            return 201, {"item": item}, "%s -> %s (%s)" % ("/".join(parts), item["name"],
-                                                           "süresiz" if not days else "%d gün" % days)
-
-        def share_remove():
-            name = data.get("name")
-            if not isinstance(name, str) or not valid_name(name):
-                raise PanelError(400, "geçersiz paylaşım adı")
-            files.share_remove(name)
-            return 200, {"name": name}, name
-
         def empty():
             if str(data.get("confirm", "")).strip().lower() != CONFIRM_WORD:
                 raise PanelError(400, "onay için %s yazın" % CONFIRM_WORD)
@@ -1040,8 +978,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/api/trash/restore": ("geri-yukle", restore),
             "/api/trash/purge": ("kalici-sil", purge),
             "/api/trash/empty": ("cop-bosalt", empty),
-            "/api/paylas": ("paylas", share_add),
-            "/api/paylas/kaldir": ("paylas-kaldir", share_remove),
         }
         if route not in routes:
             self.error(404, "bulunamadı")

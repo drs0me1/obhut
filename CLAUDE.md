@@ -6,7 +6,7 @@ Working guide for any AI assistant in this repository. Read this first.
 
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
-`wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs and the WireGuard backup),
+`wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs and downloaded WireGuard device profiles/QR codes),
 `versiyon/` (frozen copies of verified working versions), this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
@@ -55,7 +55,9 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   superseded by the user's latest test-host instruction. Other hosts are not covered.
   Non-default config values still need the user.
 - **Never open, print or copy `kurulum/kurulum.env`** — it holds the
-  operator's service passwords. There is no Tailscale auth key any more
+  operator's private installer inputs (SSH host and local domain), not service
+  passwords. Downloaded device profiles contain private keys and must also stay
+  private. There is no Tailscale auth key any more
   (**DD-147**): the node joins through the login link. Running the launcher
   with the operator's folder is allowed only when the user asks for it in chat.
 - **Relay only the Tailscale login URL** (`https://login.tailscale.com/a/...`)
@@ -85,7 +87,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Preserve idempotency: re-runs against a provisioned host must stay safe.
 - Prefer security over convenience when both achieve the same result; flag
   the trade-off.
-- Single source of truth for ports/images/paths:
+- Single source of truth for ports/paths/chain names:
   `config/defaults.env`. Do not restate literals elsewhere.
 - Do not grow a general-purpose reconcile engine (contract + rules).
 
@@ -95,19 +97,19 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 |------|---------|
 | `<V2_VERSION>.command` (root) | Current portable installer, copied from `Data/app/` by the exporter |
 | `kurulum/kurulum.env` (root) | Installer inputs, Git-ignored, mode 600; template `Data/config/kurulum.env.example` |
-| `wireguard.command` (root) | WireGuard peer menu over SSH (**DD-124**, **DD-143**): pick a network, list/add/remove/QR, 7) DNS change, 8) regenerate the network after typing `onayla`. Nothing is uploaded and nothing is kept on the Mac |
+| `wireguard.command` (root) | WireGuard peer menu over SSH (**DD-124**, **DD-143**): pick a network, list/add/remove/QR, 7) DNS change, 8) regenerate the network after typing `onayla`. No server backup/restore; only explicitly downloaded device profiles and QR codes are kept on the Mac |
 | `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Shared-account commands are retired; folder accounts use `master_shares.py` (**DD-158**) |
 | `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only (**DD-140**); the old names `wg.`, `dosya.` and `file.` are gone (**DD-154**). Design mockups in `Data/docs/design/` |
 | Built-in WebDAV (`paylasim` internal ID) | **DD-158/159:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Per-folder `/s/<id>/` URLs, separate users, RO/RW, expiry and pause. One Tailscale-facing port via Caddy; no shared account or writable symlink tree. See contract §5–7 for limits and manual recipient ACL requirements. |
-| `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, `127.0.0.1:61008`, `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg1…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
-| `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` runs bounded ZIP jobs with private `.arsiv` staging/history. Installer activates both data services through `master-modul yerlesik` (**DD-159**). |
+| `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, `127.0.0.1:61008`, `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
+| `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
 | `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
 | `Data/install.sh` | Orchestrator |
 | `Data/common.sh` | Shared helpers |
-| `Data/config/defaults.env` | Ports, images, paths, chain names |
+| `Data/config/defaults.env` | Ports, paths, chain names |
 | `Data/templates/` | Caddy, dnsmasq |
 | `Data/scripts/` | Firewall, refresh-tailnet, GRO, wait |
 | `Data/systemd/` | Unit/timer templates |

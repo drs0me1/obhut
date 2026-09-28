@@ -40,44 +40,44 @@ fi
 : "${TAILSCALE_UDP_PORT:?}"
 : "${CHAIN_FORWARD:?}"
 : "${CHAIN_NAT:?}"
-: "${TORRENT_UI_PORT:?}"
+: "${WG_BLOCK_DEST4:?}"
+: "${WG_BLOCK_DEST6:?}"
 
 # nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
 # seçimi bu sarmalayıcılardadır.
 iptables_nat() { iptables -t nat "$@"; }
 ip6tables_nat() { ip6tables -t nat "$@"; }
 
-# DD-120: WireGuard istemcilerinin host'ta ulaşabildiği tek yer: caddy-wg'nin
-# WireGuard adresindeki arayüz portları.
-wg_ui_ports() {
-    printf '%s\n' "$TORRENT_UI_PORT"
-}
+# DD-175: Kullanıcı zincirinin sonuna ulaşmak zaten çağırana döner; sonda
+# koşulsuz RETURN üretilmez. Ara RETURN izinleri/korumaları bunun dışındadır.
+ICMP6_TYPES=(destination-unreachable packet-too-big time-exceeded parameter-problem
+    echo-request echo-reply router-solicitation router-advertisement
+    neighbour-solicitation neighbour-advertisement)
 
 # DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun
 # yarattığı ayrıcalıklı bir ağ yoktur ve kayıt boş olabilir (sunucu kurulur, ağı Konsol
 # oluşturur). Her şey uygulanmadan önce okunur ve doğrulanır: bozuk bir kayıt hiçbir
-# zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, erişim (ui | inet), sunucu
-# IPv4, alt ağ IPv4, alt ağ IPv6.
-WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
+# zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, alt ağ IPv4/IPv6.
+WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
 # DD-150: WireGuard bir Konsol modülüdür. Modül kayıtta yoksa ağ kaydı (anahtarlarla birlikte
 # korunmuş olabilir) yok sayılır: hiçbir WireGuard portu ya da kuralı açılmaz.
 wg_module_on() {
-    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] || return 0
+    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] || return 1
     awk -F'\t' '$1 == "wireguard" && $2 == "calisiyor" {f = 1} END {exit !f}' "$MODULES_FILE"
 }
 load_wg_networks() {
     local iface port scope s4 n4 s6 n6 rest i j
-    WG_IFACES=() WG_PORTS=() WG_SCOPES=() WG_ADDR4=() WG_NET4=() WG_NET6=()
+    WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
     if wg_module_on && [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r iface port scope s4 n4 s6 n6 rest; do
             [[ -n "$iface" ]] || continue
             [[ "$iface" =~ ^wg[0-9]$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
-                ( "$scope" == ui || "$scope" == inet ) &&
+                "$scope" == inet &&
                 "$s4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/24$ &&
                 "$s6" =~ ^[0-9a-f:]+$ && "$n6" =~ ^[0-9a-f:]+/112$ ]] ||
                 die "WireGuard ağ kaydı bozuk ($WG_NETWORKS_FILE: '$iface'); hiçbir kural değiştirilmedi"
-            WG_IFACES+=("$iface") WG_PORTS+=("$port") WG_SCOPES+=("$scope")
-            WG_ADDR4+=("$s4") WG_NET4+=("$n4") WG_NET6+=("$n6")
+            WG_IFACES+=("$iface") WG_PORTS+=("$port")
+            WG_NET4+=("$n4") WG_NET6+=("$n6")
         done <"$WG_NETWORKS_FILE"
     fi
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
@@ -226,9 +226,39 @@ activate_named() {
     done
 }
 
+# Ağ yokken boş FORWARD/NAT zinciri ve jump oluşturulmaz. Yalnız bize ait
+# zincir kaldırılır; ts-* ve diğer yazılımların kuralları olduğu gibi kalır.
+remove_named() {
+    local bin="$1" parent="$2" chain="$3"
+    while "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null; do
+        "$bin" -w 5 -D "$parent" -j "$chain"
+    done
+    if "$bin" -w 5 -L "$chain" -n >/dev/null 2>&1; then
+        "$bin" -w 5 -F "$chain"
+        "$bin" -w 5 -X "$chain"
+    fi
+}
+
+check_absent() {
+    local bin="$1" parent="$2" chain="$3"
+    if "$bin" -w 5 -L "$chain" -n >/dev/null 2>&1 ||
+        "$bin" -w 5 -C "$parent" -j "$chain" 2>/dev/null; then
+        die "$bin: ağ yokken gereksiz $chain zinciri/jump mevcut"
+    fi
+}
+
+check_rule_count() {
+    local bin="$1" chain="$2" expected="$3" count
+    count="$("$bin" -w 5 -S "$chain" | grep -c "^-A $chain " || true)"
+    [[ "$count" -eq "$expected" ]] || die "$bin: $chain kural sayısı $count (beklenen $expected)"
+}
+
 apply_input4() {
     local bin=iptables staging i
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN-")"
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    done
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
@@ -241,70 +271,52 @@ apply_input4() {
         "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${WG_PORTS[i]}" -j ACCEPT
     done
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
-    # DD-120/DD-136: WireGuard istemcisi host'ta yalnız kendi ağının sunucu
-    # adresindeki arayüz portlarına (erişimi "ui" ise) ve ping'e ulaşır; SSH, DNS,
-    # TS IP (dolayısıyla WebDAV) ve başka ağın adresi kapalı.
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        if [[ "${WG_SCOPES[i]}" == ui ]]; then
-            "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -d "${WG_ADDR4[i]}" -p tcp \
-                -m multiport --dports "$(wg_ui_ports)" -j ACCEPT
-        fi
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -d "${WG_ADDR4[i]}" -p icmp \
-            --icmp-type echo-request -j ACCEPT
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
-    done
-    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
 apply_input6() {
-    local bin=ip6tables staging i
+    local bin=ip6tables staging i type
     command -v "$bin" >/dev/null || die "ip6tables gerekli"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN6-")"
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    done
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
     # NDP/RA ve PMTU: WAN IPv6 default (fe80::…) komşu çözümü buna bağlı.
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type destination-unreachable -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type time-exceeded -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type parameter-problem -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type echo-request -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type echo-reply -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-solicitation -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
-    "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
+    for type in "${ICMP6_TYPES[@]}"; do
+        "$bin" -w 5 -A "$staging" -p ipv6-icmp --icmpv6-type "$type" -j ACCEPT
+    done
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
         --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
-    # DD-120: arayüzlere WireGuard erişimi yalnız IPv4 adresinden.
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
-    done
-    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-# DD-120: WireGuard istemcileri yalnız internete çıkar ve dönüşünü alır;
-# tailnet ve istemciler arası trafik kapalı. Zincir FORWARD'ın
-# başına bağlanır; tailscaled yeniden başlayınca PartOf
-# politikayı yeniden uygular. Arada altta kalsa bile ts-forward tailnet'e yeni
-# bağlantıyı zaten düşürür.
-# DD-136: her ağ için aynı dört kural; wg1'den wg0'a (ya da tersi) giden paket
-# kendi "-i … -j DROP" kuralında düşer — ağlar birbirini görmez.
+# DD-177: internet-only. Deny private destinations even when routed via WAN.
+# All ingress guards precede return-path permits (including between WG networks).
 apply_forward() {
-    local bin="$1" prefix="$2" staging i
+    local bin="$1" prefix="$2" staging i dest blocked="$WG_BLOCK_DEST4"
+    [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
+    if [[ "${#WG_IFACES[@]}" -eq 0 ]]; then
+        remove_named "$bin" FORWARD "$CHAIN_FORWARD"
+        return 0
+    fi
     staging="$(create_staging "$bin" "$prefix")"
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        for dest in $blocked; do
+            "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -d "$dest" -j DROP
+        done
         "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -o "$WAN_INTERFACE" -j ACCEPT
         "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
-        "$bin" -w 5 -A "$staging" -o "${WG_IFACES[i]}" \
+    done
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -o "${WG_IFACES[i]}" \
             -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         "$bin" -w 5 -A "$staging" -o "${WG_IFACES[i]}" -j DROP
     done
-    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" FORWARD "$staging" "$CHAIN_FORWARD"
 }
 
@@ -313,11 +325,14 @@ apply_forward() {
 apply_nat() {
     local bin="$1" prefix="$2" subnet staging
     shift 2
+    if [[ "$#" -eq 0 ]]; then
+        remove_named "$bin" POSTROUTING "$CHAIN_NAT"
+        return 0
+    fi
     staging="$(create_staging "$bin" "$prefix")"
     for subnet in "$@"; do
         "$bin" -w 5 -A "$staging" -s "$subnet" -o "$WAN_INTERFACE" -j MASQUERADE
     done
-    "$bin" -w 5 -A "$staging" -j RETURN
     activate_named "$bin" POSTROUTING "$staging" "$CHAIN_NAT"
 }
 
@@ -449,10 +464,13 @@ check_wan_allow_count() {
 }
 
 check_input_chain() {
-    local bin="$1" family="$2" n=0 proto port i
+    local bin="$1" family="$2" n=0 proto port i type expected=4
     check_jump_exactly_one "$bin" INPUT "$CHAIN_INPUT"
     check_no_staging_artifacts "$bin"
     check_ts_input_precedence "$bin"
+    check_rule "$bin" "$CHAIN_INPUT" -i lo -j ACCEPT
+    check_rule "$bin" "$CHAIN_INPUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    check_rule "$bin" "$CHAIN_INPUT" -i "$TAILSCALE_IF" -j ACCEPT
     check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
     while read -r proto port; do
         [[ -n "$proto" ]] || continue
@@ -462,22 +480,20 @@ check_input_chain() {
     done < <(wan_allow_pairs "$family")
     check_wan_allow_count "$bin" "$CHAIN_INPUT" ACCEPT "$n"
     check_chain_shape "$bin" "$CHAIN_INPUT" ACCEPT
+    expected=$((expected + n))
+    if [[ "$family" == v6 ]]; then
+        for type in "${ICMP6_TYPES[@]}"; do
+            check_rule "$bin" "$CHAIN_INPUT" -p ipv6-icmp --icmpv6-type "$type" -j ACCEPT
+        done
+        expected=$((expected + ${#ICMP6_TYPES[@]}))
+    fi
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
         check_rule "$bin" "$CHAIN_INPUT" -i "${WG_IFACES[i]}" -j DROP
-        [[ "$family" == v4 ]] || continue
-        if [[ "${WG_SCOPES[i]}" == ui ]]; then
-            check_rule "$bin" "$CHAIN_INPUT" -i "${WG_IFACES[i]}" -d "${WG_ADDR4[i]}" \
-                -p tcp -m multiport --dports "$(wg_ui_ports)" -j ACCEPT
-        elif "$bin" -w 5 -C "$CHAIN_INPUT" -i "${WG_IFACES[i]}" -d "${WG_ADDR4[i]}" \
-            -p tcp -m multiport --dports "$(wg_ui_ports)" -j ACCEPT 2>/dev/null; then
-            die "$bin: ${WG_IFACES[i]} yalnız internet ağı ama arayüz portları açık"
-        fi
-        check_rule "$bin" "$CHAIN_INPUT" -i "${WG_IFACES[i]}" -d "${WG_ADDR4[i]}" \
-            -p icmp --icmp-type echo-request -j ACCEPT
-        # `-S` önce -d, sonra -i yazar (ölçüldü, iptables 1.8 nft).
-        check_before "$bin" "$CHAIN_INPUT" "-i ${WG_IFACES[i]} -j DROP" \
-            "-d ${WG_ADDR4[i]}/32 -i ${WG_IFACES[i]} "
+        expected=$((expected + 1))
+        check_before "$bin" "$CHAIN_INPUT" "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
+            "-i ${WG_IFACES[i]} -j DROP"
     done
+    check_rule_count "$bin" "$CHAIN_INPUT" "$expected"
 }
 
 # check_before BIN CHAIN SON_KURAL ÖNCEKİ_DESEN — ÖNCEKİ_DESEN'le başlayan her
@@ -497,33 +513,46 @@ check_before() {
 }
 
 check_forward_chain() {
-    local bin="$1" count expected i w
+    local bin="$1" i w dest blocked="$WG_BLOCK_DEST4" count=0
+    [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
+    if [[ "${#WG_IFACES[@]}" -eq 0 ]]; then
+        check_absent "$bin" FORWARD "$CHAIN_FORWARD"
+        return 0
+    fi
     check_jump_exactly_one "$bin" FORWARD "$CHAIN_FORWARD"
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
         w="${WG_IFACES[i]}"
+        for dest in $blocked; do
+            check_rule "$bin" "$CHAIN_FORWARD" -i "$w" -d "$dest" -j DROP
+            count=$((count + 1))
+            check_before "$bin" "$CHAIN_FORWARD" "-i $w -o $WAN_INTERFACE -j ACCEPT" "-d $dest -i $w "
+        done
         check_rule "$bin" "$CHAIN_FORWARD" -i "$w" -o "$WAN_INTERFACE" -j ACCEPT
         check_rule "$bin" "$CHAIN_FORWARD" -i "$w" -j DROP
-        check_rule "$bin" "$CHAIN_FORWARD" -o "$w" \
+        check_rule "$bin" "$CHAIN_FORWARD" -i "$WAN_INTERFACE" -o "$w" \
             -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         check_rule "$bin" "$CHAIN_FORWARD" -o "$w" -j DROP
         check_before "$bin" "$CHAIN_FORWARD" "-i $w -j DROP" "-i $w -o $WAN_INTERFACE "
         check_before "$bin" "$CHAIN_FORWARD" "-o $w -j DROP" \
-            "-o $w -m conntrack --ctstate RELATED,ESTABLISHED "
+            "-i $WAN_INTERFACE -o $w -m conntrack --ctstate RELATED,ESTABLISHED "
     done
     # Fazladan kural (ör. -i wg0 -j ACCEPT) -C ile görünmez; sayı birebir tutmalı.
-    expected=$((4 * ${#WG_IFACES[@]} + 1))
-    count="$("$bin" -w 5 -S "$CHAIN_FORWARD" | grep -c "^-A $CHAIN_FORWARD " || true)"
-    [[ "$count" -eq "$expected" ]] || die "$bin: $CHAIN_FORWARD kural sayısı $count (beklenen $expected)"
+    check_rule_count "$bin" "$CHAIN_FORWARD" "$((4 * ${#WG_IFACES[@]} + count))"
 }
 
 check_nat_chain() {
     local bin="$1" subnet
     shift
+    check_no_staging_artifacts "$bin"
+    if [[ "$#" -eq 0 ]]; then
+        check_absent "$bin" POSTROUTING "$CHAIN_NAT"
+        return 0
+    fi
     check_jump_exactly_one "$bin" POSTROUTING "$CHAIN_NAT"
     for subnet in "$@"; do
         check_rule "$bin" "$CHAIN_NAT" -s "$subnet" -o "$WAN_INTERFACE" -j MASQUERADE
     done
-    check_no_staging_artifacts "$bin"
+    check_rule_count "$bin" "$CHAIN_NAT" "$#"
 }
 
 # DD-156: structured operator rules are separate from the fixed baseline and
@@ -532,15 +561,41 @@ check_nat_chain() {
 # no eval, shell commands or arbitrary match expressions are accepted.
 SETTINGS4="" SETTINGS6=""
 load_settings_rules() {
+    local ports family proto port line core4="" core6=""
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     SETTINGS4="$(python3 "$SBIN_DIR/master_settings.py" rules 4 "$WAN_INTERFACE")" || die "Konsol IPv4 kuralları okunamadı"
     SETTINGS6="$(python3 "$SBIN_DIR/master_settings.py" rules 6 "$WAN_INTERFACE")" || die "Konsol IPv6 kuralları okunamadı"
+    ports="$(python3 "$SBIN_DIR/master_settings.py" tailnet-ports)" || die "Tailscale izinleri okunamadı"
+    while read -r family proto port; do
+        [[ "$family" =~ ^[46]$ && "$proto" =~ ^(tcp|udp)$ && "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] ||
+            die "Tailscale port kaydı geçersiz; kurallar değiştirilmedi"
+        line="-i $TAILSCALE_IF -p $proto --dport $port -m comment --comment konsol-base:tail-$proto-$port -j RETURN"
+        if [[ "$family" == 4 ]]; then core4+="$line"$'\n'; else core6+="$line"$'\n'; fi
+    done <<<"$ports"
+    # User-created WireGuard endpoints are requirements, including access over
+    # tailnet. Do not infer obsolescence from peer counts or traffic counters.
+    for port in ${WG_PORTS[@]+"${WG_PORTS[@]}"}; do
+        line="-i $TAILSCALE_IF -p udp --dport $port -m comment --comment konsol-base:wg-$port -j RETURN"
+        core4+="$line"$'\n'; core6+="$line"$'\n'
+    done
+    # Ping/error control traffic has no service port; IPv6 PMTU/NDP must survive.
+    core4+="-i $TAILSCALE_IF -p icmp -m comment --comment konsol-base:icmp -j RETURN"$'\n'
+    core6+="-i $TAILSCALE_IF -p ipv6-icmp -m comment --comment konsol-base:icmp -j RETURN"$'\n'
+    line="-i $TAILSCALE_IF -m comment --comment konsol-base:tail-drop -j DROP"
+    # Operator overrides remain first; the default deny MUST precede ts-input,
+    # whose blanket ACCEPT would bypass a restriction inside CHAIN_INPUT.
+    SETTINGS4+=$'\n'"$core4$line"
+    SETTINGS6+=$'\n'"$core6$line"
 }
 apply_settings_rules() {
-    local bin="$1" rules="$2" staging line
+    local bin="$1" rules="$2" staging line i
     local -a args
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}USER-")"
+    # Before established/ICMP and ts-input: no old flow or override bypass.
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    done
     "$bin" -w 5 -A "$staging" -i lo -j RETURN
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     while IFS= read -r line; do
@@ -548,7 +603,6 @@ apply_settings_rules() {
         read -r -a args <<<"$line"
         "$bin" -w 5 -A "$staging" "${args[@]}"
     done <<<"$rules"
-    "$bin" -w 5 -A "$staging" -j RETURN
     "$bin" -w 5 -I INPUT 1 -j "$staging"
     while "$bin" -w 5 -C INPUT -j "$CHAIN_SETTINGS" 2>/dev/null; do
         "$bin" -w 5 -D INPUT -j "$CHAIN_SETTINGS"
@@ -560,27 +614,34 @@ apply_settings_rules() {
     "$bin" -w 5 -E "$staging" "$CHAIN_SETTINGS"
 }
 check_settings_rules() {
-    local bin="$1" rules="$2" line expected=3 actual listing ids="" actual_ids
+    local bin="$1" rules="$2" line expected=2 actual listing ids="" actual_ids i
     local -a args
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     check_jump_exactly_one "$bin" INPUT "$CHAIN_SETTINGS"
     [[ "$(input_line "$bin" "$CHAIN_SETTINGS")" == 1 ]] || die "$bin: Konsol kuralları INPUT başında değil"
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        check_rule "$bin" "$CHAIN_SETTINGS" -i "${WG_IFACES[i]}" -j DROP
+        expected=$((expected + 1))
+    done
     check_rule "$bin" "$CHAIN_SETTINGS" -i lo -j RETURN
     check_rule "$bin" "$CHAIN_SETTINGS" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
         read -r -a args <<<"$line"
         check_rule "$bin" "$CHAIN_SETTINGS" "${args[@]}"
-        ids="$ids$(sed -n 's/.*--comment \(konsol:[a-zA-Z0-9_-]*\).*/\1/p' <<<"$line") "
+        ids="$ids$(sed -n 's/.*--comment \(konsol\(-base\)\{0,1\}:[a-zA-Z0-9_-]*\).*/\1/p' <<<"$line") "
         expected=$((expected + 1))
     done <<<"$rules"
     listing="$("$bin" -w 5 -S "$CHAIN_SETTINGS" | grep "^-A $CHAIN_SETTINGS " || true)"
     actual="$(grep -c . <<<"$listing" || true)"
     [[ "$actual" -eq "$expected" ]] || die "$bin: Konsol zincirinde beklenmeyen kural var"
-    [[ "$(head -n 1 <<<"$listing")" == "-A $CHAIN_SETTINGS -i lo -j RETURN" &&
-        "$(sed -n 2p <<<"$listing")" == "-A $CHAIN_SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" &&
-        "$(tail -n 1 <<<"$listing")" == "-A $CHAIN_SETTINGS -j RETURN" ]] || die "$bin: Konsol koruma kurallarının sırası bozuk"
-    actual_ids="$(sed -n 's/.*--comment "\{0,1\}\(konsol:[a-zA-Z0-9_-]*\)"\{0,1\}.*/\1/p' <<<"$listing" | tr '\n' ' ')"
+    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+        [[ "$(sed -n "$((i + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i ${WG_IFACES[i]} -j DROP" ]] ||
+            die "$bin: WireGuard engeli Konsol zincirinin başında değil"
+    done
+    [[ "$(sed -n "$((${#WG_IFACES[@]} + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i lo -j RETURN" &&
+        "$(sed -n "$((${#WG_IFACES[@]} + 2))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ]] || die "$bin: Konsol koruma kurallarının sırası bozuk"
+    actual_ids="$(sed -n 's/.*--comment "\{0,1\}\(konsol\(-base\)\{0,1\}:[a-zA-Z0-9_-]*\)"\{0,1\}.*/\1/p' <<<"$listing" | tr '\n' ' ')"
     [[ "$actual_ids" == "$ids" ]] || die "$bin: Konsol kullanıcı kurallarının sırası bozuk"
 }
 
@@ -597,12 +658,6 @@ if [[ "$MODE" == check ]]; then
     resolve_wan_interface
     check_input_chain iptables v4
     check_input_chain ip6tables v6
-    check_rule ip6tables "$CHAIN_INPUT" \
-        -p ipv6-icmp --icmpv6-type neighbour-solicitation -j ACCEPT
-    check_rule ip6tables "$CHAIN_INPUT" \
-        -p ipv6-icmp --icmpv6-type neighbour-advertisement -j ACCEPT
-    check_rule ip6tables "$CHAIN_INPUT" \
-        -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
     check_forward_chain iptables
     check_forward_chain ip6tables
     check_nat_chain iptables_nat ${WG_NET4[@]+"${WG_NET4[@]}"}

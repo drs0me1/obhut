@@ -75,13 +75,6 @@
               </div>
             </article>
             <article class="card">
-              <div class="card-head"><h2 data-icon="lock">Erişim</h2><span class="hint-s">İnternet erişimi her zaman açık</span></div>
-              <div class="toggle-row" id="na-local-row">
-                <div class="tr-text"><strong><span data-icon="server"></span>Local erişim</strong><small id="na-local-desc"></small></div>
-                <button type="button" class="vsw" id="na-local" role="switch" aria-checked="false" aria-describedby="na-local-desc" aria-label="Local erişim"></button>
-              </div>
-            </article>
-            <article class="card">
               <div class="card-head"><h2 data-icon="stack">Port</h2><span class="hint-s">Sunucunun internete açtığı UDP portu</span></div>
               <div class="field">
                 <label for="na-port">UDP portu</label>
@@ -100,7 +93,7 @@
               <div class="card-head"><h2>Oluşturulacak ağ</h2></div>
               <div id="na-preview"></div>
               <ul class="will" id="na-will"></ul>
-              <div class="infoline-s" data-icon="info"><span>Ağlar birbirini görmez: bu ağdaki cihazlar diğer ağlara, tailnet'e ve SSH'a ulaşamaz.</span></div>
+              <div class="infoline-s" data-icon="info"><span>Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.</span></div>
               <div class="dlg-foot">
                 <button class="btn btn-quiet" type="button" data-go="#/wireguard">Vazgeç</button>
                 <button class="btn btn-primary" type="button" id="na-create" disabled>Arayüzü oluştur</button>

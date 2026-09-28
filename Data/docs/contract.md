@@ -1,7 +1,7 @@
 # Behaviour Contract
 
-**Status:** behaviour contract (frozen intent 2026-08-05). Implemented by the
-lean tree at the repository root (`install.sh` and helpers). Where live code and this
+**Status:** current behaviour contract, evolved from the 2026-08-05 requirements.
+Implemented by `Data/install.sh` and helpers. Where live code and this
 document diverge, prefer the code and update this file.
 
 This document is the authoritative statement of what the installer does
@@ -10,13 +10,18 @@ relative to the retired monolith (no reconcile engine, no
 canonical-bundle machinery, no legacy `master-webdav.service`) are decisions, not
 oversights. There is no parallel legacy installer tree.
 
-**v2-140 amendment (DD-167):** WireGuard network-card settings edit default DNS
-for future peers and local qBittorrent UI access without regenerating keys,
-editing existing profiles or restarting/waking WireGuard. Regeneration remains
-a separate typed-confirmation action. Registry revisions and the installer lock
-prevent stale/concurrent writes; a pending Settings transaction blocks edits.
-On apply failure restore prior registry/firewall/Caddy state and report any
-incomplete rollback. Existing explicit firewall overrides are not changed.
+**Current Files workflow (DD-170):** selecting files opens a contextual
+action dock, not a desktop application launcher. Archive creation produces ZIP;
+the archive opener automatically detects multipart RAR and nested ZIP/RAR. The
+destination defaults to downloads with a folder picker. Depth/size/time limits
+remain enforced internally, without a nesting prompt; source archives are kept.
+
+**v2-151 amendment (DD-177):** all WireGuard networks and peers are internet-only.
+Local access is retired, including UI/API/CLI selectors, WG host-rule overrides
+and the per-network Caddy listener. Installer upgrades normalize registry policy
+and remove only the retired WG artifacts/rules, preserving keys/profiles/DNS.
+Network settings change only future-peer DNS under revision/install-lock checks;
+they never regenerate keys, change existing profiles or wake a stopped network.
 
 **v2-139 amendment (DD-166):** Files also extracts unencrypted RAR3/RAR5,
 solid/multipart sets and mixed nested ZIP/RAR. Distribution-signed `unrar` and
@@ -49,7 +54,7 @@ per-phase verification set, and the hard prohibitions (do not delete other
 software's chains such as Tailscale's `ts-*`, do not silently turn the
 UDP-only decision into TCP+UDP, do not grow
 a general-purpose reconcile engine). This document governs *what the result
-must do*. Where the rules are silent (for example on WebDAV), this contract
+must do*. Where the rules do not specify a feature in detail, this contract
 extends them. Settled disagreements with early rule drafts — dnsmasq
 listening scope, chain name, refresh helper scope, Portainer upstream
 scheme — are recorded as **DD-59** through **DD-62** in
@@ -73,9 +78,9 @@ the ones agreed on 2026-08-05:
 | R5 | Enable Tailscale SSH |
 | R6 | Apply IP forwarding and the official Linux exit-node optimisations |
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
-| R8 | Create `/downloads` and `/downloads/media` |
+| R8 | Create the user root `/srv`, downloads `/srv/downloads` and media `/srv/media` (**DD-144**) |
 | R9 | Withdrawn in v2-121 (**DD-152**): Docker Engine and the Compose plugin are not installed; every module is a host systemd service |
-| R10 | No Compose at all: Dozzle is gone and qBittorrent is a host module since v2-118 (**DD-151**); since v2-121 the share WebDAV runs rclone on the host and Unpackerr (Arşiv açıcı) is dropped (**DD-148**, **DD-149**, **DD-152**). FileBrowser was retired; Konsol manages the files (**DD-146**) |
+| R10 | No Compose: optional qBittorrent is a host service; Files, per-folder Python WebDAV and bounded archive tools are built in. Dozzle, FileBrowser, rclone sharing and Unpackerr are retired (**DD-146**, **DD-151**, **DD-152**, **DD-158**, **DD-159**) |
 | R11 | Publish every web interface on `127.0.0.1` only |
 | R12 | Publish publicly the WireGuard UDP port of each network (host kernel since v2-86, **DD-120**; formerly wg-easy). The torrent peer port is no longer opened (**DD-151**): qBittorrent makes outgoing connections only |
 | R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
@@ -83,7 +88,7 @@ the ones agreed on 2026-08-05:
 | R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Create persistent firewall rules that permit Tailscale traffic, the public peer ports (wg UDP + torrent peer TCP+UDP), and WAN host SSH TCP `${SSH_PUBLIC_PORT}` |
+| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP and WAN SSH; confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
 | R19 | Withdrawn in v2-121 (**DD-152**): no Docker, so nothing to filter through `DOCKER-USER`; the firewall never touches that chain |
 | R20 | Keep the installation re-runnable |
 
@@ -185,12 +190,14 @@ the ones agreed on 2026-08-05:
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
 - Dozzle is gone (**DD-151**): every module card has a Günlük panel reading
   the unit's journal. There is no image-pull question on re-runs.
-- Arşiv açıcı (Unpackerr) is dropped (**DD-152**): it left the catalogue,
-  the templates, Konsol and the downloads tree. Nothing replaces it.
+- Unpackerr is dropped (**DD-152**): no watcher/service remains. Files provides
+  an on-demand, bounded archive opener instead (**DD-159**, **DD-166**, **DD-170**).
 - **qBittorrent is a host module (DD-151)**, installed from Konsol (§1.11): the
   distribution's `qbittorrent-nox` runs on the server as the downloads account.
-  The installer holds no qBittorrent account, settings template or peer port;
-  `TORRENT_USER`/`TORRENT_PASS` are gone with DD-129's settings sync.
+  `modules/torrent/qBittorrent.conf` seeds minimal settings only when absent.
+  The installer holds no account or incoming peer-port setting;
+  `TORRENT_USER`/`TORRENT_PASS` are gone with DD-129's settings sync. Later
+  account/download-folder edits use the settings worker and qBittorrent profile.
 - There is no FileBrowser (**DD-146**): no service, no account in the input
   file, no port and no database. Files are managed in Konsol (§1.10). The
   old name `file.${LOCAL_DOMAIN}` is gone (**DD-154**).
@@ -201,8 +208,8 @@ the ones agreed on 2026-08-05:
 
 ### 1.4 Directories
 
-- `/downloads`, `/downloads/media`, `/downloads/media/movies` and
-  `/downloads/media/series` are created when absent (**R8**); there is no
+- `/srv/downloads`, `/srv/media`, `/srv/media/movies` and
+  `/srv/media/series` are created when absent (**R8**, **DD-144**); there is no
   Unpackerr work directory since **DD-152**.
 - **The downloads tree is repaired selectively on every run** (**DD-84**):
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
@@ -210,6 +217,10 @@ the ones agreed on 2026-08-05:
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
   (no full-tree rewrite). qBittorrent and Konsol's file backend share
   read/write that way. WebDAV enforces each account's RO/RW permission (DD-158).
+- The private `.arsiv` work/history tree and retired `.pay` tree are excluded from
+  ordinary ownership/mode repair. `.pay` is no longer created or used for status;
+  existing contents are preserved and blocked, not imported or deleted (DD-171).
+  `.cop` and `.pay` are internal areas, not shareable folders.
 
 ### 1.5 DNS and Caddy
 
@@ -243,14 +254,13 @@ Contract in §5–§7 and `folder-shares.md`.
 ### 1.8 Operator guidance
 
 - The manual Tailscale admin steps are printed at the end (**R17**, §13).
-- No password reminders are printed: every service account comes from
-  `kurulum/kurulum.env` (**DD-119**).
+- No service accounts come from installer input; folder accounts are set in
+  Files and qBittorrent manages its own account (**DD-147/151/158**).
 
 ### 1.9 WireGuard (DD-120, DD-124)
 
 - **A fresh install has no WireGuard (DD-143, DD-150).** WireGuard is a Konsol
-  module (§1.11). The installer only puts `master-wg`, the `caddy-wg@` template,
-  `Caddyfile.wg` and an empty `/etc/wireguard` (`0700`, the root backend's only
+  module (§1.11). The installer only puts `master-wg` and an empty `/etc/wireguard` (`0700`, the root backend's only
   writable path, v2-119) in place. Installing the module installs `wireguard-tools`
   and `qrencode` (`--no-install-recommends`), loads the kernel module (and
   writes `WG_MODULES_LOAD_FILE`), creates `/etc/wireguard`, re-applies the
@@ -260,7 +270,7 @@ Contract in §5–§7 and `folder-shares.md`.
   WireGuard port or rule), `master-wg` refuses every command but `version`,
   and the root backend answers `/api/wg/state` with `installed: false` and
   refuses changes with `409`. Removing the module closes every network
-  (`wg-quick@`/`caddy-wg@` disabled) and keeps `/etc/wireguard`, so a
+  (`wg-quick@` disabled) and keeps `/etc/wireguard`, so a
   reinstall brings the networks back; `--veri` also deletes the keys, the
   device profiles and the registry.
 - **Networks are created from Konsol** (WireGuard → Yapılandır → Arayüz ekle) or
@@ -271,6 +281,10 @@ Contract in §5–§7 and `folder-shares.md`.
   network: `defaults.env` and `state.env` carry only the address base
   (`WG_ADDR_BASE4`, `WG_ADDR_BASE6`), the suggested first port and the peer
   profile defaults.
+- **Internet-only (DD-177).** No access selector. API creation/settings reject
+  a supplied `scope` field; CLI creation is `net-add PORT DNS LABEL`, and
+  settings is `--if wgN net-settings DNS REVISION`. Existing networks are
+  upgraded to the same policy; there is no supported host-access override.
 - **The server is the source of truth.** `/etc/wireguard/wgN.conf` (`0600`)
   holds that network's key and one `# peer: <name>` + `[Peer]` block per device;
   the registry holds the network's parameters. Nothing is restored from the
@@ -317,17 +331,11 @@ Contract in §5–§7 and `folder-shares.md`.
   - The menu keeps nothing on the Mac beyond a profile the operator asked for
     (**DD-143**): it never uploads, and a reinstall cannot bring back a removed
     peer, a removed network or an old key.
-- **What clients reach:** internet egress (IPv4 and IPv6, masqueraded) and the
-  qBittorrent UI at `http://<that network's server address>:${TORRENT_UI_PORT}`
-  when its scope is `ui` and the qBittorrent module is installed (**DD-151**). Files are not reachable over WireGuard: Konsol is
-  tailnet-only and FileBrowser is gone (**DD-146**).
-  Nothing else: not the tailnet, WebDAV, SSH, dnsmasq, other networks or
-  other peers (§9).
-- The UIs are served by `caddy-wg@wgN.service` (`/etc/caddy/Caddyfile.wg`, admin
-  API off, address from `/etc/wireguard/caddy-wg-wgN.env`, written by `master-wg`
-  when the network is created). Each instance binds only its own network's server
-  address, follows its `wg-quick@wgN` and has no Tailscale dependency, so the
-  path survives a Tailscale outage.
+- **What clients reach:** IPv4/IPv6 internet egress via WAN masquerading.
+  All WG-originated host traffic (including existing connections and ping) is
+  dropped before established/ICMPv6/Tailscale accepts. Other peers, VPN networks
+  and private/CGNAT/link-local destinations routed via WAN are blocked (§9).
+  There is no WG web proxy or listener; administration uses Tailscale.
 - **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
   `http://panel.${LOCAL_DOMAIN}` (**DD-140**) to list, add and remove peers, show a peer's QR code, download its
   profile or picture, change its DNS and regenerate a network.
@@ -364,27 +372,24 @@ Contract in §5–§7 and `folder-shares.md`.
     detected on the server; no address is written by hand (**DD-138**).
   - Nothing on the Mac is tracked (**DD-143**); `wireguard.command` is managed
     on its own and asks which network to work on.
-- **More WireGuard networks from the panel (DD-136).** "Arayüz ekle" creates
-  `wg1`…`wg9` at run time with `master-wg net-add PORT SCOPE DNS LABEL`; each
+- **WireGuard networks from the panel (DD-136/143).** "Arayüz ekle" creates
+  `wg0`…`wg9` at run time with `master-wg net-add PORT DNS LABEL`; each
   network has its own tab, server key, UDP port and addresses.
   - Addressing: `wgN` is `10.8.N.0/24` (server `10.8.N.1`) and
     `fdcc:ad94:bacf:61a4::N:0/112` (server `…::N:1`); peers get `10.8.N.H`
     and `…::N:H` (H in hex). Profiles live in `/etc/wireguard/clients-wgN`;
     the interface in `/etc/wireguard/wgN.conf`.
-  - Scope per network: `inet` reaches only the internet; `ui` also reaches
-    qBittorrent (module) on its own server address through
-    `caddy-wg@wgN`. Every network pings its own server address; nothing
-    reaches another network, the tailnet, SSH, DNS, WebDAV or the panel.
+  - The same internet-only policy applies to every network and peer.
   - The registry `/etc/wireguard/networks` (one tab-separated line per
-    network: interface, port, scope, server and subnet IPv4 and IPv6, default
-    DNS, label) is written only by `master-wg`, and read by `master-firewall`
+    network: interface, port, reserved fixed `inet` field, server and subnet IPv4 and IPv6, default
+    DNS, label) is written by `master-wg` (the upgrade only normalizes the policy field), and read by `master-firewall`
     and the panel. A malformed or clashing registry stops the firewall
     before any chain changes.
   - A new network's port may not be a stack port, another network's port or a
     UDP port already listened on; the next free number is taken (from `wg0`, at
-    most `WG_NETWORKS_MAX`, 9).
+    most `WG_NETWORKS_MAX + 1` slots, currently 10).
   - Order when adding: files and registry, `master-firewall` restart, then
-    `wg-quick@wgN`, then `caddy-wg@wgN` for `ui`. A failing step removes
+    `wg-quick@wgN`. A failing step removes
     every trace of the network and restores the firewall.
   - `master-wg --if wgN` runs any peer command on that network;
     `net-remove wgN --onay` stops its units, deletes its files, key, peers and
@@ -393,19 +398,19 @@ Contract in §5–§7 and `folder-shares.md`.
     and Konsol back at "Yapılandır".
   - The panel confirms regenerating or removing a network with `onayla`.
   - **Switches (DD-140).** `master-wg [--if wgN] net ac|kapat` stops or starts
-    `wg-quick@wgN` (and `caddy-wg@wgN`); the registry, keys and profiles stay
+    `wg-quick@wgN`; the registry, keys and profiles stay
     and the UDP port stays open with nothing listening. `master-wg peer AD
     ac|kapat` comments the peer's block out of the interface configuration, so
     it leaves the running interface at once and stays off across a reboot with
     its key, address and profile intact. `master-wg keepalive AD SANİYE`
     rewrites only the profile's `PersistentKeepalive`.
-  - Networks and their units survive reboots and installer re-runs; the
-    installer manages only `wg0` and refuses a `wg0` or WebDAV port that a
-    panel network uses. The Mac backup and the restore cover `wg0` only.
+  - Registered networks and their units survive reboots and installer re-runs.
+    There is no special installer-owned wg0 and no Mac backup/restore. The SSH
+    menu operates on the selected network; downloaded profiles are for devices.
 
 ### 1.10 Konsol and the file backend (DD-139, DD-140, DD-150)
 
-- The file backend and bounded ZIP worker are built in (**DD-159**). The
+- The file backend and bounded ZIP/RAR worker are built in (**DD-159/166**). The
   installer prepares their downloads account, `SERVER_ROOT`, private archive
   workspace and staged unit; `master-modul yerlesik` installs/enables/checks the
   unit. Files is always present in Konsol, independent of the app catalogue.
@@ -427,11 +432,12 @@ Contract in §5–§7 and `folder-shares.md`.
     allowed existing download folders. No password/hash is returned.
     - Güvenlik Duvarı shows real IPv4/IPv6 rules and counters from all
       iptables tables, listening sockets, and the baseline policy check.
-      Structured port overrides have family, WAN/tailnet/WireGuard scope,
+      Structured port overrides have family, WAN/tailnet scope,
       TCP/UDP port, optional source CIDR and allow/deny action. Only these
       overrides are editable; core and third-party rules are read-only.
       `CHAIN_SETTINGS` precedes `ts-input`, so a tailnet deny is effective.
-      Loopback, established flows and ICMPv6 protections remain intact.
+      Loopback, established flows and ICMPv6 protections remain intact outside WG;
+      the mandatory WG deny precedes them.
       Permission does not imply a reachable listener; no bind address is changed.
       **DD-164:** group port permissions by incoming network: Tailscale (default),
       Internet, WireGuard only when installed (selectable tunnel interfaces), and
@@ -440,7 +446,7 @@ Contract in §5–§7 and `folder-shares.md`.
       read-only view including forwarding/NAT. Socket bindings carry explicit
       scope metadata; unknown/unreadable and no listener remain distinct from
       policy. Refresh re-reads the live state; switching tabs preserves drafts.
-    - Caddy shows base/module/WireGuard sites and their routes. Its local-domain
+    - Caddy shows base/module sites and their routes. Its local-domain
       field changes the single-label suffix (1–63 lowercase letters/digits/hyphens,
       no leading/trailing hyphen) as a separate transaction (**DD-157**).
       Base/module DNS and Caddy renderings, custom record suffixes, disabled
@@ -494,7 +500,7 @@ Contract in §5–§7 and `folder-shares.md`.
   - A peer or a whole network can be switched off and on (§1.9).
 - **Folder shares (DD-158):** Files v09 offers list/cards, details and a WebDAV
   tab. The root backend manages separate accounts, RO/RW, expiry and pause.
-  Access and expiry are edited inline in the Shares list (DD-169); Manage edits
+  Access and expiry are edited inline in the Shares list (DD-170); Manage edits
   only folder/account. Partial updates preserve omitted values under the lock
   and do not rebind a folder unless a path is explicitly supplied.
   The file backend's legacy share mutations return 410. See §5–7.
@@ -556,7 +562,7 @@ Contract in §5–§7 and `folder-shares.md`.
 
 ### 1.11 App Store and built-ins (DD-148, DD-149, DD-159)
 
-- A clean install includes Files, folder WebDAV and ZIP. Optional applications
+- A clean install includes Files, folder WebDAV and archive tools. Optional applications
   are installed/removed from Konsol → App Store: `wireguard` and `torrent` only.
   qBittorrent also supports start/stop; WireGuard has its own network switches.
   No Docker or separate unpacker. Public module verbs reject `dosya`/`paylasim`;
@@ -631,11 +637,10 @@ Contract in §5–§7 and `folder-shares.md`.
     `127.0.0.1:TORRENT_UI_PORT` and through `torrent.${LOCAL_DOMAIN}`, and that
     the name resolves; a failed install is taken back.
   - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name, like
-    Paylaşım's). On WireGuard networks with local access `caddy-wg` serves the
-    same interface on the network's server address.
+    Paylaşım's); no WireGuard publication.
   - No inbound peer port: the firewall opens nothing for it. qBittorrent
     still listens on its own random peer port on every interface; new WAN
-    traffic to it is dropped in both families, the tailnet can reach it.
+    traffic to it is dropped in both families; tailnet access requires an explicit rule.
   - The account is not Konsol's: qBittorrent prints a temporary password to
     its journal on each start until one is set in its UI. `hesap torrent`
     reads this run's journal (`_SYSTEMD_INVOCATION_ID`) and prints
@@ -655,15 +660,17 @@ Contract in §5–§7 and `folder-shares.md`.
     live, busy, progress}]}`. `busy` is a running `master-modul-<id>.service`,
     read with `systemctl list-units` (v2-120: `is-active` on a collected
     transient unit wrote two journal lines per query).
-  - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir|parola)`, JSON
-    body, `{"veri": true}` honoured for `kaldir` only; `parola` only for
-    no module since DD-158 (404). The id
+  - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir)`, JSON
+    body, `{"veri": true}` honoured for `kaldir` only. The id
     must be in `liste` (else `404`). It starts `systemd-run
     --unit=master-modul-<id>.service --collect master-modul <verb> <id>` and
     answers `202`; while that unit is active the answer is `409`. The audit
     line is `modul-<verb>`.
   - Retired shared-account hesap/parola endpoints return 404. Folder shares use
     GET /api/konsol/paylasim and POST kaydet/durum/kaldir below that path.
+    Retired Files `GET/HEAD/POST /api/paylas` and `POST /api/paylas/kaldir`
+    return 410 after the existing Host/header/origin gates; they never inspect
+    or modify legacy data. Files `/api/state` omits its obsolete `share` summary.
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
   - The `SHARE_PORT` row of the ports card and `share.on` in
     `/api/wg/sistem` follow the Paylaşım module, the `TORRENT_UI_PORT` rows
@@ -711,9 +718,10 @@ No module gets a WAN port, and there is no Docker publish (**DD-152**). The
 torrent peer port (61005) is gone since v2-118 (**DD-151**): qBittorrent is
 a host module that makes outgoing connections only.
 
-**WireGuard is a host listener (DD-120):** the kernel's `wg0` socket on UDP
-`${WG_PUBLIC_PORT}` (61001) is admitted by `MASTER-INPUT` on the WAN
-interface.
+**WireGuard is a host listener (DD-120/143):** each registered network's UDP
+port is admitted by the base WAN policy while the application is installed.
+`WG_PORT_DEFAULT` (61001) is only a suggestion for a new network, not an
+automatically created listener.
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
@@ -728,8 +736,8 @@ port; that port went with **DD-151**, Docker with **DD-152**.)
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| Caddy | `${TS_IPV4}` | 80 | TCP, HTTP only |
-| dnsmasq | `${TS_IPV4}` (via `bind-dynamic`) | 53 | UDP + TCP |
+| Caddy | `${TAILSCALE_IPV4}` | 80 | TCP, HTTP only |
+| dnsmasq | `${TAILSCALE_IPV4}` (via `bind-dynamic`) | 53 | UDP + TCP |
 
 dnsmasq also listens on `127.0.0.1:53` (**DD-60**), so the host itself can
 resolve the service names and the installation can verify DNS without
@@ -742,11 +750,11 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 |---|---|---|
 | qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
 | Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
-| Konsol file backend (`master-files-panel`; Dosya yöneticisi module only) | `127.0.0.1` | 61009 (**DD-139**, **DD-140**, **DD-150**) |
-| WebDAV — shares only (`paylasim` module; only while installed) | `127.0.0.1` | 61010 (**DD-141**, **DD-142**, **DD-149**) |
+| Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
+| Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` | 61010 (**DD-158**, **DD-159**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
-the share WebDAV on `paylas.*:80` and `${TS_IPV4}:${SHARE_PORT}`. No
+the share WebDAV on `paylas.*:80` and `${TAILSCALE_IPV4}:${SHARE_PORT}`. No
 loopback service names the Tailscale address. No WAN / `0.0.0.0` listener.
 
 ### 3.4 Single source of truth
@@ -755,14 +763,11 @@ Every number above is declared exactly once, in `config/defaults.env`,
 and reaches the module templates, the Caddyfile, the firewall script and the
 state file by substitution. A port literal appearing twice is a bug.
 
-### 3.5 WireGuard (`wg0`) — reachable only by WireGuard clients
+### 3.5 WireGuard (`wgN`) — internet-only
 
-| Service | Listen address | Port |
-|---|---|---|
-| caddy-wg@wgN → qBittorrent (`ui` networks; module only) | that network's server address | 61006 (TCP, HTTP only) |
-
-No names, no WebDAV, no dnsmasq on any WireGuard network (**DD-120**,
-**DD-136**). Each network's UDP port is open on the WAN in `MASTER-INPUT`.
+No host service is exposed to WireGuard clients. Each registered network's UDP
+transport endpoint remains admitted on WAN/Tailscale while the module is installed.
+This transport permission does not grant tunnel clients access to the host.
 
 ---
 
@@ -775,9 +780,9 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
-| `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TS_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
-| `paylas.${LOCAL_DOMAIN}` (Paylaşım module only) | `${TS_IPV4}` | `http://paylas.…` and `http://${TS_IPV4}:61010` | `127.0.0.1:61010` (**DD-149**) |
-| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TS_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → `127.0.0.1:61008`, other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
+| `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
+| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → `127.0.0.1:61008`, other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 
 The old names `wg.`, `dosya.` and `file.${LOCAL_DOMAIN}` no longer exist
 (**DD-154**); `health.` is also retired (**DD-157**). `SERVICE_NAMES` is `panel`.
@@ -794,9 +799,9 @@ Rules:
   which resolves to whatever address the interface currently holds, so
   tearing down and recreating `tailscale0` needs nothing regenerated.
 - **Acceptance test:** a query arriving over loopback must answer
-  `${TS_IPV4}` — not `127.0.0.1` or `NXDOMAIN`. Stage 7 measures
-  `dig +short … @127.0.0.1` and `@${TS_IPV4}` for every name in
-  `SERVICE_NAMES`; both must return `${TS_IPV4}`.
+  `${TAILSCALE_IPV4}` — not `127.0.0.1` or `NXDOMAIN`. Stage 7 measures
+  `dig +short … @127.0.0.1` and `@${TAILSCALE_IPV4}` for every name in
+  `SERVICE_NAMES`; both must return `${TAILSCALE_IPV4}`.
 - Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
   no certificate machinery — the tailnet is the transport security boundary.
 - Every upstream is plain HTTP on loopback. The only HTTPS upstream,
@@ -855,20 +860,29 @@ and recipient ACL reachability need separate operator acceptance.
 The retired installer filtered only Docker's forwarded traffic and left host
 services exposed to whatever the provider's network allowed.
 
-Accepted:
+Base policy (confirmed panel overrides are applied by `MASTER-SETTINGS` before
+Tailscale acceptance; WG host ingress is dropped first in both project chains):
+
+0. Drop all WG host ingress before any established, ICMPv6 or Tailscale accept.
 
 1. Loopback (`lo`) traffic.
 2. `ESTABLISHED,RELATED` connections — this is what keeps the operator's
    **currently active SSH session alive** while the policy is installed.
-3. **All inbound traffic arriving on `tailscale0`.** This is the single
-   permission that makes WebDAV, Caddy and dnsmasq reachable; none of them
-   gets an individual rule.
+3. Inbound traffic arriving on `tailscale0` only for SSH, Caddy, DNS TCP/UDP,
+   folder WebDAV, self-advertised Tailscale PeerAPI TCP and registered WireGuard
+   UDP endpoints, subject to confirmed overrides (**DD-172**). Other new tailnet
+   host connections are dropped in `MASTER-SETTINGS` before `ts-input` can accept
+   them. Listener binding and firewall permission remain separate facts.
+   The Tailscale port catalogue comes from this per-family allowlist and the WG
+   registry, not arbitrary host sockets; explicit user rules remain manageable.
+   Raw listeners and technical rules stay unfiltered (**DD-173**).
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
-5. New inbound UDP on the WAN interface to `${WG_PUBLIC_PORT}`.
+5. New inbound UDP for Tailscale and each registered WireGuard network.
 
 Dropped:
 
-6. Every other new inbound connection arriving on the WAN interface.
+6. Every other new inbound connection arriving on the WAN interface, and any
+   new tailnet host service connection outside the allowlist/explicit overrides.
 
 Rules:
 
@@ -883,16 +897,22 @@ Rules:
   behind the policy; there is no Docker since **DD-152**). Rules
   are not persisted to disk (**DD-66**), so this window is accepted, not
   closed (**DD-95**).
-- Ordering guarantees that rule 2 precedes rule 7.
+- Established/related acceptance precedes the default WAN drop.
 - The WAN interface is the **live default route at apply time**, not the
   `WAN_INTERFACE` recorded in `state.env`. A renamed NIC produces a warning
   and a correct policy; it no longer makes the unit fail with no policy at
   all (**DD-94**).
-- There is **no** WAN permission for WebDAV, Caddy, dnsmasq, or any
-  module web interface.
+- There is no **default** WAN permission for WebDAV, Caddy, dnsmasq or an
+  application web interface. Custom firewall allows do not change socket binds.
+- The Internet port catalogue lists only configured per-family base permits;
+  local/tailnet sockets do not create closed WAN placeholders. WireGuard lists
+  the fixed internet-only policy with no editable host port. Explicit WAN/tailnet
+  rules, required VPN endpoints and technical diagnostics remain visible; these
+  lists do not discard requirements based on activity or peer count (**DD-174**).
 - IPv6 `INPUT` follows the same shape and is equally fail-closed. Tailscale
-  IPv6 traffic is permitted; WAN IPv6 allows NDP/ICMPv6 essentials, host
-  SSH TCP, and drops other NEW WAN traffic.
+  IPv6 traffic uses the service allowlist except Caddy/WebDAV (their templates
+  bind IPv4 only); WAN IPv6 allows NDP/ICMPv6 essentials, host
+  SSH TCP and Tailscale UDP, and drops other NEW WAN traffic.
 
 ---
 
@@ -906,13 +926,18 @@ and the shape check shared with §8.
 
 **Chain names are fixed** (**DD-59**): `MASTER-INPUT` for the host policy,
 `MASTER-FORWARD` and `MASTER-NAT` for WireGuard (**DD-120**).
+`MASTER-SETTINGS` owns confirmed panel overrides, followed by the core tailnet
+allowlist/default drop, before the `ts-input` jump (**DD-156**, **DD-172**);
+`MASTER-INPUT` remains behind it. User-created WireGuard endpoint ports remain
+requirements regardless of current peer count or recent activity.
 `MASTER-DOCKER-FILTER` and `MASTER-DOCKER` are not used. The same logical
 names serve IPv4 and IPv6 — separate tables mean no collision — and all are
 declared in `config/defaults.env` and nowhere else.
 
 - The installer creates **only its own chains** and inserts **one
   idempotent jump** to each (`INPUT` → `MASTER-INPUT` behind `ts-input`,
-  `FORWARD` → `MASTER-FORWARD`, `nat POSTROUTING` → `MASTER-NAT`).
+  `FORWARD` → `MASTER-FORWARD`, `nat POSTROUTING` → `MASTER-NAT`; the latter
+  two exist only while the installed WireGuard module has registered networks).
 - tailscaled's own chains (`ts-input`, `ts-forward`) are **never** flushed or
   deleted; the firewall only orders `MASTER-INPUT` behind the `ts-input`
   jump (re-adding that jump when it is missing), which is why the
@@ -921,20 +946,20 @@ declared in `config/defaults.env` and nowhere else.
   `POSTROUTING` are never deleted**: the installer adds its jumps and leaves
   everything else in place. The retired installer's `activate_staging_chain`
   deleted every other `DOCKER-USER` rule; that behaviour is gone.
-- WireGuard (**DD-120**), all interface-based and in both families:
-  - `MASTER-INPUT` accepts from `wg0` only TCP to `10.8.0.1` on the
-    qBittorrent UI port (open whether or not the module is installed;
-    `caddy-wg` answers `502` without it) and ping (IPv4), and drops
-    everything else from `wg0`.
-  - `MASTER-FORWARD`, jumped at the top of `FORWARD`, accepts `wg0` → WAN
-    and its replies and drops all other traffic to or from `wg0` (tailnet,
-    other networks, other peers).
+- WireGuard (**DD-120/143/150**), for registered networks while installed:
+  - `MASTER-SETTINGS` and `MASTER-INPUT` drop all WG ingress first.
+    Old WG-scoped user rules are removed on upgrade, filtered when read and
+    refused on new writes. They cannot bypass the mandatory policy.
+  - `MASTER-FORWARD` first drops destinations in `WG_BLOCK_DEST4/6`
+    (private, CGNAT, loopback, link-local, multicast/reserved and standard NAT64
+    prefixes), then accepts `wgN` → WAN. Other WG ingress is dropped.
+    Only established/related replies arriving from WAN can reach WG; all other
+    traffic toward WG is dropped. Prefix lists have one owner: defaults.env.
   - `MASTER-NAT`, in `nat POSTROUTING`, masquerades the WireGuard subnets out
     of the WAN.
   - wg-quick carries no `PostUp`: every rule belongs to `master-firewall`.
-- IPv6 policy is explicit and fail-closed with the same shape. If the host
-  has no IPv6 WAN route, the rule set reduces accordingly rather than
-  silently permitting.
+- IPv6 policy is explicit and fail-closed; it is generated even without an
+  IPv6 WAN route. Missing IPv6 connectivity never switches off its protection.
 - The helper refuses to run if `ip6tables` is unavailable while IPv6
   forwarding is enabled, rather than degrading to an IPv4-only policy.
 - The policy lives only in memory; `master-firewall.service` re-applies it
@@ -947,9 +972,17 @@ declared in `config/defaults.env` and nowhere else.
   `ACCEPT`/`RETURN` may precede it (**DD-94**), and the number of WAN allows
   must equal the allow list exactly — for IPv4 Tailscale's UDP port, host
   SSH and one UDP port per WireGuard network (none without the module), for
-  IPv6 the first two. `MASTER-FORWARD` must hold exactly four rules per
-  network plus its `RETURN`. Any extra WAN pass, whether a blanket
+  IPv6 the first two. `MASTER-FORWARD` must hold four base rules plus the configured blocked-prefix rules per
+  network, `MASTER-NAT` one per subnet, and INPUT's entire rule count and
+  all IPv6 control types are checked. No managed chain emits a redundant
+  terminal `RETURN`; intermediate settings returns remain essential. Any extra WAN pass, whether a blanket
   `-i eth0 -j ACCEPT` or one more port, fails the check (**DD-95**).
+- **DD-175:** absent/empty/non-running WireGuard module registration never
+  activates a retained network file. With no configured active-module networks,
+  `MASTER-FORWARD`/`MASTER-NAT` and their jumps are absent, not empty placeholders.
+  Removing the final network/module removes only these project-owned chains;
+  adding a network recreates them. Interface state/peer count never decides
+  whether a registered network's required endpoint or policy is kept.
 
 ---
 
@@ -969,7 +1002,8 @@ The Caddy drop-in also carries
 `{$TAILSCALE_IPV4}` in the Caddyfile is resolved at daemon start. There is
 no separately rendered environment file (**DD-61**), so `state.env` must be
 written in a form both bash and systemd can parse: plain `KEY=value`,
-unquoted, no spaces around `=`. `ExecStartPre=wait-tailnet-addr` requires
+no spaces around `=`; whitespace-separated prefix lists use double quotes
+with no shell expansion. `ExecStartPre=wait-tailnet-addr` requires
 that address on `tailscale0` (**DD-85**).
 
 Invariants:
@@ -1013,8 +1047,8 @@ Invariants:
 - Existing state that must survive a re-run: the folder share registry
   (IDs, hashes, policies and paused state), qBittorrent's profile (its settings are
   written once, by the module, **DD-151**),
-  every `wgN.conf` and `clients-wgN/` with the networks registry (the installer
-  reads them, writes none — **DD-143**), the operator's chosen local domain.
+  every `wgN.conf` and `clients-wgN/` with the networks registry (DD-177 only normalizes the old registry policy column;
+  keys and device profiles are never rewritten), the operator's chosen local domain.
 - Firewall application is idempotent by construction: each chain is rebuilt
   from scratch and swapped in, and each parent jump is inserted only when
   absent.
@@ -1093,27 +1127,26 @@ An installer run is successful when every one of these holds on the target host.
 
 ### Ports
 
-5. No module gets a WAN port (**DD-151**, **DD-152**).
-   `wg show wg0 listen-port` is
-   `${WG_PUBLIC_PORT}`, `10.8.0.1` is on `wg0`, `master-wg version` runs, and
-   with the qBittorrent module installed `caddy-wg` answers non-5xx on its
-   port (**DD-120**, **DD-124**, **DD-151**).
+5. No application web service gets a default WAN listener. A clean install
+   creates no WireGuard network. With WireGuard installed, each active network
+   matches the registry's address/port, `master-wg version` runs, and all
+   networks are internet-only with no WG service listener.
 6. No module web interface listens on a non-loopback address.
-7. The loopback services of §3.3 (the Konsol backends and, with their
-   modules, qBittorrent's UI and the share WebDAV) listen on `127.0.0.1`
+7. The loopback services of §3.3 (Konsol backends, built-in WebDAV and the
+   installed qBittorrent UI) listen on `127.0.0.1`
    only.
-8. Caddy listens on `${TS_IPV4}:80` and, with Paylaşım installed,
-   `${TS_IPV4}:${SHARE_PORT}` (Infuse), and on no other address.
-9. dnsmasq answers on `${TS_IPV4}:53` **and** `127.0.0.1:53`, and on no
+8. Main Caddy listens on `${TAILSCALE_IPV4}:80` and
+   `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse); no WG web listener exists.
+9. dnsmasq answers on `${TAILSCALE_IPV4}:53` **and** `127.0.0.1:53`, and on no
    other address; it serves no DHCP.
 
 ### DNS and Caddy
 
-10. Enabled base/installed-module names resolve to `${TS_IPV4}` when queried
-    against `${TS_IPV4}`; retired `health.` is not a built-in name.
-11. A query for an out-of-domain name against `${TS_IPV4}` returns
+10. Enabled base/installed-module names resolve to `${TAILSCALE_IPV4}` when queried
+    against `${TAILSCALE_IPV4}`; retired `health.` is not a built-in name.
+11. A query for an out-of-domain name against `${TAILSCALE_IPV4}` returns
     `REFUSED` by default (or resolves via configured upstreams when enabled).
-12. `curl -H "Host: panel.${LOCAL_DOMAIN}" http://${TS_IPV4}/` returns
+12. `curl -H "Host: panel.${LOCAL_DOMAIN}" http://${TAILSCALE_IPV4}/` returns
     the Konsol page, HTTP 200; both installed API backends pass their checks.
 13. Backend API gates reject missing `X-Konsol` and unrelated Host headers.
     With the qBittorrent module installed, `master-modul kur torrent` checks
@@ -1137,13 +1170,13 @@ An installer run is successful when every one of these holds on the target host.
 
 ### Firewall
 
-24. `MASTER-INPUT` accepts loopback, `ESTABLISHED,RELATED`, all
-    `tailscale0` inbound, WAN TCP `${SSH_PUBLIC_PORT}` (host SSH) and WAN
-    UDP `${WG_PUBLIC_PORT}`; it drops other new WAN inbound.
+24. The base policy accepts loopback, `ESTABLISHED,RELATED`, Tailscale,
+    WAN SSH/Tailscale UDP and registered WireGuard UDP ports; other NEW WAN
+    input is dropped. Confirmed `MASTER-SETTINGS` overrides are tested separately.
 25. `INPUT` holds exactly one jump to `MASTER-INPUT`, behind `ts-input`;
     `FORWARD` exactly one to `MASTER-FORWARD` and `nat POSTROUTING` exactly
     one to `MASTER-NAT`, in both families (replaces the `DOCKER-USER` jump,
-    **DD-152**).
+    **DD-152**). `MASTER-SETTINGS` has its own single jump before `ts-input`.
 26. A third-party rule planted in `INPUT` or `FORWARD` before the run is
     still present after it.
 27. tailscaled's own chains (`ts-input`, `ts-forward`) are not flushed or

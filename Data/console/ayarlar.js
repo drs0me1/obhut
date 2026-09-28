@@ -123,13 +123,13 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     }, 2000);
   }
   function ruleForm(existing = null) {
-    const selectedScope = scope === "wg" ? (wgNetwork === "all" ? wgScopes()[0] : wgNetwork) : scope;
+    const selectedScope = ["wan", "tail"].includes(scope) ? scope : "tail";
     const r = existing || { name: "", family, scope: selectedScope && selectedScope !== "lo" ? selectedScope : "tail", proto: "tcp", port: "", source: "", allow: true };
     const input = (name, value, attrs = {}) => h("input", { name, value, ...attrs });
     const opts = (name, choices, value) => { const s = select(choices, value, () => {}); s.name = name; return s; };
     modal(existing ? "Kuralı düzenle" : "Port kuralı ekle", h("div", { class: "as-formgrid" },
       field("Ad", input("name", r.name, { required: true, maxlength: 64 })),
-      field("Kapsam", opts("scope", [["wan", "İnternet"], ["tail", "Tailscale"], ...wgScopes().map((x) => [x, x])], r.scope)),
+      field("Kapsam", opts("scope", [["wan", "İnternet"], ["tail", "Tailscale"]], r.scope)),
       field("Adres ailesi", opts("family", [[4, "IPv4"], [6, "IPv6"]], r.family)),
       field("Protokol", opts("proto", [["tcp", "TCP"], ["udp", "UDP"]], r.proto)),
       field("Port", input("port", r.port, { type: "number", required: true, min: 1, max: 65535 })),
@@ -145,8 +145,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       close(); draw();
     });
   }
-  const wgScopes = () => [...new Set([...(live.firewall.networks || []).map((n) => n.iface),
-    ...(live.firewall.ports || []).map((r) => r.scope).filter((s) => /^wg\d+$/.test(s))])];
+  const wgScopes = () => (live.firewall.networks || []).map((n) => n.iface);
   function addressNote(address) {
     const ip = address.split("%")[0].replace(/^\[|\]$/g, "");
     if (ip === "0.0.0.0") return "Tüm IPv4 arayüzlerinde dinler.";
@@ -158,14 +157,14 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     return "Yalnız bu yerel IP üzerinde dinler.";
   }
   function fwRows() {
+    if (scope === "wg") return []; // Fixed internet-only policy; no host overrides.
     const rows = clone(live.firewall.ports || []);
     for (const r of draft.firewall) {
       const found = rows.find((x) => x.family === r.family && x.scope === r.scope && x.proto === r.proto && x.port === r.port && !x.rule);
       if (found && !r.source) { found.rule = r; continue; }
-      rows.push({ ...r, rule: r, baseline: r.scope === "tail" });
+      rows.push({ ...r, rule: r, baseline: false });
     }
-    return rows.filter((r) => r.family === family && (scope === "wg"
-      ? wgScopes().includes(r.scope) && (wgNetwork === "all" || r.scope === wgNetwork) : r.scope === scope));
+    return rows.filter((r) => r.family === family && r.scope === scope);
   }
   function bindingStatus(binds, row) {
     if (live.firewall.listeners == null) return "Okunamadı";
@@ -179,6 +178,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   function serviceNote(row) {
     const known = [
       ["SSH", "Sunucuya uzaktan terminal bağlantısı."],
+      ["Tailscale PeerAPI", "Tailscale'in cihazlar arası hizmet ucu; portu otomatik izlenir."],
       ["Tailscale", "Tailscale tünelinin bağlantı trafiği."],
       ["WireGuard", "WireGuard VPN ağına cihaz bağlantısı."],
       ["Caddy", "Panel ve servislerin web adreslerini sunar."],
@@ -216,9 +216,9 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       }
     }, scopeName(key))));
     const descriptions = {
-      tail:"Tailscale ağından sunucuya gelen bağlantılar. Panel, yerel DNS ve dosya paylaşımları bu ağda kullanılır.",
+      tail:"Tailscale ağından sunucuya gelen bağlantılar. Gerekli servisler ve tanımlı VPN portları izinlidir; diğer portlar açık bir kullanıcı kuralı olmadıkça engellenir.",
       wan:"İnternet arayüzünden gelen bağlantılar. SSH ve VPN bağlantı portları burada yer alır; listede olmayan portlar varsayılan olarak engellenir.",
-      wg:"WireGuard tünellerindeki cihazlardan sunucuya gelen bağlantılar. VPN’in UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar görünümündedir.",
+      wg:"WireGuard cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. VPN’in UDP bağlantı portu İnternet sekmesindedir. Yönlendirme ve NAT kuralları Teknik kurallar görünümündedir.",
       lo:"Sunucunun kendi iç bağlantıları (loopback). Servislerin arka uçları burada çalışır; bu izinler korunur ve değiştirilemez."
     };
     const toolbar = h("div", { class: "as-toolbar as-fw-controls" },
@@ -227,7 +227,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         const net = (live.firewall.networks || []).find(n => n.iface === s);
         return [s, `${s}${net?.label ? " · " + net.label : ""}${net && !net.active ? " · durduruldu" : ""}`];
       })], wgNetwork, (v) => { wgNetwork = v; draw(); })) : null,
-      mode === "ports" && scope !== "lo" && (scope !== "wg" || wgScopes().length) ? btn("+ Port kuralı", () => ruleForm()) : null,
+      mode === "ports" && ["wan", "tail"].includes(scope) ? btn("+ Port kuralı", () => ruleForm()) : null,
       btn(mode === "rules" ? "Portlara dön" : "Teknik kurallar", () => { mode = mode === "rules" ? "ports" : "rules"; draw(); }, false, true));
     let content;
     if (mode === "rules") {
@@ -273,8 +273,8 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       h("div", {id:"as-fw-content", ...(mode === "ports" ? {role:"tabpanel", "aria-labelledby":"as-fw-tab-" + scope} : {})},
         mode === "ports" ? note(descriptions[scope]) : null,
         mode === "ports" && scope === "wg" && !wgScopes().length ? note("Henüz yönetilebilir bir WireGuard ağı yok. WireGuard uygulamasından ağ oluşturun veya durdurulmuş modülü başlatın.") : content),
-      note("Dinleme ve izin ayrıdır; bu ağda dinlemesi erişim garantisi değildir. Tailscale ACL, kaynak kısıtları ve diğer kurallar da etkilidir. Yenile, güncel durumu yeniden okur."),
-      note("Aç/kapa yalnız yeni bağlantıların iznini değiştirir; servisi başlatmaz. Mevcut bağlantılar korunur. Dar ekranda tabloyu yatay kaydırabilirsiniz."));
+      scope !== "wg" || mode !== "ports" ? note("Dinleme ve izin ayrıdır; bu ağda dinlemesi erişim garantisi değildir. Tailscale ACL, kaynak kısıtları ve diğer kurallar da etkilidir. Yenile, güncel durumu yeniden okur.") : null,
+      ["wan", "tail"].includes(scope) && mode === "ports" ? note("Aç/kapa yalnız yeni bağlantıların iznini değiştirir; servisi başlatmaz. Mevcut bağlantılar korunur. Dar ekranda tabloyu yatay kaydırabilirsiniz.") : null);
   }
   const domainUrl = (domain) => `http://panel.${domain}/#/ayarlar`;
   function domainLinks(change) {

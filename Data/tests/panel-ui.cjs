@@ -12,6 +12,8 @@ const settings = {read_at:Date.now()/1000,domain:"ayc",tailscale:"100.64.0.2",ts
   manage:{revision:"r1",config,pending:null,username:"admin",save:"/srv/downloads/",names:[]}};
 const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "host",live:"-"}));
 const calls = [], errors = [], jobs = [];
+const temporaryPassword = "FixtureTemp8!";
+let passwordReads = 0, temporaryLogin = true;
 const longArchiveFolder = "archive." + "a".repeat(150);
 let resources = "normal", submitted, resourceCount = 0, holdInstall = false, logStatus = 200, pickerFailure = false, archiveFailure = false;
 const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now()/1000});
@@ -25,6 +27,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       await route.fulfill({response,headers:{...response.headers(),"content-security-policy":csp}});
     });
     const page = await context.newPage();
+    await page.clock.install();
     page.on("pageerror", e => errors.push(e.message));
     page.on("console", msg => { if (/violates.*Content Security Policy|Refused to/.test(msg.text())) errors.push(msg.text()); });
     await page.route("**/api/**", async route => {
@@ -44,7 +47,10 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         m.live = m.state === "calisiyor" ? "running" : "inactive";
         m.progress = {action,step:"bitti"}; result = {ok:true};
       } else if (p.endsWith("/torrent/gunluk")) return route.fulfill({status:logStatus,contentType:"text/plain",body:"<img src=x onerror=alert(1)>\nfixture service log"});
-      else if (p.endsWith("/torrent/hesap")) result = {user:"admin",temp:false};
+      else if (p.endsWith("/torrent/hesap")) {
+        result = {user:"admin",temp:temporaryLogin};
+        if (url.searchParams.get("parola") === "1") { passwordReads++; result.pass = temporaryPassword; }
+      }
       else if (p === "/api/konsol/kaynaklar") {
         resourceCount++;
         if (resources === "offline") return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"fixture offline"})});
@@ -172,6 +178,49 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await card.getByRole("button",{name:"Aç",exact:true}).click();
     await page.getByRole("textbox",{name:"Kullanıcı adı",exact:true}).waitFor();
     assert.equal(await page.getByRole("tab").count(),0);
+    // Removing the old shared-account UI must preserve qBittorrent's opt-in secret.
+    assert.equal(passwordReads,0);
+    const firstLogin = page.locator(".app-account > summary");
+    const account = page.locator("#torrent-account");
+    const showPassword = account.getByRole("button",{name:"Geçici parolayı göster",exact:true});
+    await firstLogin.click(); await showPassword.waitFor();
+    assert.equal(passwordReads,0,"Expanding metadata must not request the password");
+    await showPassword.click();
+    await account.getByText(temporaryPassword,{exact:true}).waitFor();
+    assert.equal(passwordReads,1);
+    assert.equal(await page.locator(".cred.row3,.fresh-msg").count(),0);
+    // Advance only the browser clock; no 30-second wall-clock wait is needed.
+    await account.getByRole("button",{name:"Geçici parolayı gizle",exact:true}).click();
+    await showPassword.click(); await account.getByText(temporaryPassword,{exact:true}).waitFor();
+    await page.clock.runFor(31000);
+    // API fixtures use the runner's wall clock; realign after the expiry probe.
+    await page.clock.setSystemTime(new Date());
+    assert.equal(await account.getByText(temporaryPassword,{exact:true}).count(),0);
+    assert.equal(passwordReads,2,"Polling must not reread secrets");
+    await showPassword.click(); await account.getByText(temporaryPassword,{exact:true}).waitFor();
+    await page.evaluate(() => {
+      Object.defineProperty(document,"hidden",{configurable:true,value:true});
+      document.dispatchEvent(new Event("visibilitychange"));
+      delete document.hidden;
+    });
+    assert.equal(await account.getByText(temporaryPassword,{exact:true}).count(),0);
+    await showPassword.click(); await account.getByText(temporaryPassword,{exact:true}).waitFor();
+    await firstLogin.click();
+    await page.waitForFunction(() => !document.querySelector("#torrent-account").textContent);
+    await firstLogin.click(); await showPassword.waitFor();
+    assert.equal(passwordReads,4,"Reopening the card must keep the password hidden");
+    await showPassword.click(); await account.getByText(temporaryPassword,{exact:true}).waitFor();
+    await navigate("#/moduller"); await navigate("#/torrent");
+    assert.equal(await account.getByText(temporaryPassword,{exact:true}).count(),0);
+    assert.equal(passwordReads,5,"Navigation must not restore the secret");
+    assert(!JSON.stringify(await page.evaluate(() => [localStorage,sessionStorage])).includes(temporaryPassword));
+    await firstLogin.click();
+    temporaryLogin = false;
+    await firstLogin.click();
+    await account.getByText(/^Parola kayıtlı;/).waitFor();
+    assert.equal(await showPassword.count(),0,"Stored passwords cannot be revealed");
+    assert.equal(passwordReads,5);
+    await firstLogin.click();
     await page.locator("#torrent-status").getByRole("button",{name:"Durdur",exact:true}).click();
     await page.locator("#cf-go").click();
     await page.locator("#torrent-status").getByRole("button",{name:"Başlat",exact:true}).click();
@@ -308,6 +357,6 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#menu-toggle").click();
     await page.screenshot({path:path.join(shots,"model-a-mobile-dark.png"),fullPage:true});
     assert.deepEqual(errors,[]);
-    console.log("PASS: Model A routes/navigation, compact Store rows/details/progress/failure/focus/logs/no credentials/lifecycle, shared settings, keyboard/5 widths/dark, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, production CSP. Screenshots: " + shots);
+    console.log("PASS: Model A routes/navigation, compact Store rows/details/progress/failure/focus/logs/no credentials/lifecycle, qBittorrent opt-in password/30s expiry/hidden-tab/card-close/navigation/no storage, shared settings, keyboard/5 widths/dark, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, production CSP. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch(err => {console.error(err); process.exit(1);});

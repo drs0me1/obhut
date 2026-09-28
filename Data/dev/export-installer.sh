@@ -65,6 +65,8 @@ echo "==> Paketleniyor: kurulum çalışma dosyaları ($V2_VERSION) [determinist
 rsync -a \
     --exclude='._*' \
     --exclude='.DS_Store' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
     "$REPO_ROOT/install.sh" \
     "$REPO_ROOT/common.sh" \
     "$REPO_ROOT/config" \
@@ -169,7 +171,7 @@ printf 'Üretim: %s\n' "$PORTABLE_BUILT_AT"
 printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 
 # DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de. Burada
-# yalnız varlığı, izni ve SSH_HOST okunur; parolalara bakılmaz, doğrulama
+# yalnız varlığı, izni ve SSH_HOST okunur; alan doğrulaması
 # sunucuda kurulumun kendisindedir. DD-143: sunucuya yalnız bu dosya gider —
 # WireGuard ağları ve peer'ları sunucuda Konsol/master-wg ile kurulur, Mac'ten
 # hiçbir anahtar ya da profil taşınmaz.
@@ -183,7 +185,7 @@ if [[ ! -f "$INPUT_FILE_LOCAL" ]]; then
 fi
 input_mode="$(stat -f %Lp "$INPUT_FILE_LOCAL")"
 if [[ "$input_mode" != 600 && "$input_mode" != 400 ]]; then
-    echo "HATA: $INPUT_FILE_LOCAL izinleri $input_mode; parola içerdiği için 600 olmalı:" >&2
+    echo "HATA: $INPUT_FILE_LOCAL izinleri $input_mode; özel kurulum girdisi 600 olmalı:" >&2
     echo "  chmod 600 \"$INPUT_FILE_LOCAL\"" >&2
     pause_exit 1
 fi
@@ -199,7 +201,7 @@ send_files="kurulum.env"
 for rel in $send_files; do
     mode="$(stat -f %Lp "$INPUT_LOCAL_DIR/$rel")"
     if [[ "$mode" != 600 && "$mode" != 400 ]]; then
-        echo "HATA: kurulum/$rel izinleri $mode; anahtar/parola içerdiği için 600 olmalı:" >&2
+        echo "HATA: kurulum/$rel izinleri $mode; özel kurulum girdisi 600 olmalı:" >&2
         echo "  chmod 600 \"$INPUT_LOCAL_DIR/$rel\"" >&2
         pause_exit 1
     fi
@@ -276,8 +278,7 @@ grep -E '^V2_VERSION=' "\$remote_root/install.sh"
 echo "SYNC_OK → \$remote_root"
 EOF
 
-# /run tmpfs değilse girdi diske inerdi: gönderilmez. kurulum.env ve varsa
-# hazır ayarlar gider.
+# /run tmpfs değilse girdi diske inerdi: gönderilmez. Yalnız kurulum.env gider.
 echo "==> Girdi gönderiliyor → ${HOST}:${REMOTE_INPUT_DIR} (tmpfs)"
 remote_input_sent=1
 # shellcheck disable=SC2086 # send_files: süzülmüş, boşluksuz göreli yollar

@@ -3,8 +3,8 @@
 # buradan kurar, başlatır, durdurur ve kaldırır. Konsol'un root arka ucu bu betiği
 # `systemd-run` ile ayrı bir birim olarak çalıştırır: işlem sayfa kapansa da sürer ve
 # ilerleme RUNTIME_DIR/modul-<id>.ilerleme dosyasından okunur. Aynı anda tek modül
-# işlemi yapılır (kilit). Kullanıcı dosyalarına hiçbir işlem dokunmaz: paylaşımın --veri'si
-# yalnız kendi kaydını ve .pay/w içindeki bağlantıları siler, bağlanan dosyaları değil.
+# işlemi yapılır (kilit). İndirilen dosyalar korunur; --veri yalnız isteğe bağlı
+# uygulamanın ayarlarını siler. Yerleşik Dosyalar/WebDAV kaldırılamaz (DD-159/171).
 #
 #   master-modul liste                  id runtime kayıt canlı eylem adım toplam metin (sekmeyle)
 #   master-modul kur ID
@@ -12,12 +12,9 @@
 #   master-modul durdur ID
 #   master-modul kaldir ID [--veri]     --veri: modülün ayar/günlük verisi de silinir
 #   master-modul gunluk ID [SATIR]
-#   master-modul parola ID              yalnız paylasim: yeni parola üretir (DD-149)
 #
-# Konsol modülleri (dosya, wireguard; DD-150) durdurulup başlatılmaz: kurulur ya da kaldırılır.
-# Paylaşım Dosya yöneticisine bağlıdır: önce o kurulur, en son o kaldırılır.
-#   master-modul hesap ID [--parola]    paylasim: "kullanıcı<TAB>değişim" (+ <TAB>parola)
-#                                       torrent: "kullanıcı<TAB>gecici|ayarli" (+ <TAB>geçici parola)
+# WireGuard uygulaması kurulur/kaldırılır; ağları kendi sayfasından açılır/kapatılır.
+#   master-modul hesap torrent [--parola]  "kullanıcı<TAB>gecici|ayarli" (+ <TAB>geçici parola)
 #   master-modul uygula ID              kurulumun yeniden çalışması: kurulu modülün dosyalarını uygular
 set -Eeuo pipefail
 umask 022
@@ -42,8 +39,8 @@ ID_RE='^[a-z]{2,16}$'
 
 runtime_of() {
     case "$1" in
-        dosya | wireguard) printf 'konsol\n' ;;
-        torrent | paylasim) printf 'host\n' ;;
+        wireguard) printf 'konsol\n' ;;
+        torrent) printf 'host\n' ;;
         *) return 1 ;;
     esac
 }
@@ -127,9 +124,6 @@ http_code() { # URL ya da curl argümanları; yanıt yoksa 000
 }
 
 # ------------------------------------------------------- klasör paylaşımı (DD-158)
-SHARE_SERVED="w" # yalnız eski sürümün veri temizliği
-SHARE_REGISTRY="kayit.json"
-SHARE_ENABLED="acik"
 SHARE_UNIT="master-paylasim.service"
 SHARE_FAIL=""
 
@@ -141,8 +135,8 @@ share_need() {
 }
 
 share_prepare() {
-    if [[ ! -f "$SHARE_STATE_FILE" && -s "${SHARE_CRED_FILE:-/dev/null}" ]]; then
-        warn "Eski ortak WebDAV hesabı kullanımdan kalkıyor; Dosyalar → WebDAV bölümünde klasör hesaplarını yeniden tanımlayın. Dosyalar silinmez."
+    if [[ ! -f "$SHARE_STATE_FILE" && -d "$SERVER_ROOT/$SHARE_DIR" && ! -L "$SERVER_ROOT/$SHARE_DIR" ]]; then
+        warn "Eski ortak WebDAV hesabı kullanımdan kalkıyor; Dosyalar → Paylaşımlar bölümünde klasör hesaplarını yeniden tanımlayın. Dosyalar silinmez."
     fi
     python3 "$SBIN_DIR/master_shares.py" prepare || fail_step "klasör paylaşım kaydı hazırlanamadı"
 }
@@ -163,12 +157,6 @@ share_verify() {
     uid="$(unit_uid "$SHARE_UNIT")"
     [[ "$uid" == "$DOWNLOADS_UID" && "$code" == 401 ]] ||
         { SHARE_FAIL="paylaşım uid/adres/giriş kapısı doğrulanamadı"; return 1; }
-}
-
-share_off() { # servis durur, birim kalkar; hata vermez
-    systemctl disable --now "$SHARE_UNIT" >/dev/null 2>&1 || true
-    rm -f -- "$UNIT_DIR/$SHARE_UNIT"
-    systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 # -- adlar: Caddy sitesi ve dnsmasq adı. Geçici dosyalar noktayla başlar: Caddy'nin içe aktarma
@@ -275,42 +263,6 @@ share_verify_names() {
     return 1
 }
 
-# Dosya servisi (uid 1000) modül kaydını okuyamaz (/etc/master-stack 0700); paylaşımın açık
-# olduğunu .pay/acik işaretinden anlar. Dizin uid 1000'in: dosya mktemp ile açılır, bağlantı izlenmez.
-share_marker() { # on | off
-    local pay="$SERVER_ROOT/$SHARE_DIR" tmp
-    if [[ ! -d "$pay" || -L "$pay" ]]; then
-        [[ "$1" == off ]] && return 0
-        SHARE_FAIL="$pay klasörü yok; kurulumu yeniden çalıştırın"
-        return 1
-    fi
-    if [[ "$1" == on ]]; then
-        tmp="$(mktemp "$pay/.$SHARE_ENABLED.XXXXXX")"
-        printf 'paylasim\n' >"$tmp"
-        chmod 0644 "$tmp"
-        mv -f -- "$tmp" "$pay/$SHARE_ENABLED"
-    else
-        rm -f -- "$pay/$SHARE_ENABLED"
-    fi
-}
-
-# kaldir --veri: hesap, paylaşım kaydı ve .pay/w içindeki bağlantılar. Bağlantılar izlenmez;
-# .pay/w'deki bağlantı olmayan hiçbir şey ve bağlanan dosyalar yerinde kalır.
-share_drop_data() {
-    local pay="$SERVER_ROOT/$SHARE_DIR"
-    rm -f -- "$SHARE_CRED_FILE" "$SHARE_HTPASSWD_FILE" "$SHARE_STATE_FILE"
-    [[ -d "$pay" && ! -L "$pay" ]] || return 0
-    rm -f -- "$pay/$SHARE_REGISTRY"
-    [[ -d "$pay/$SHARE_SERVED" && ! -L "$pay/$SHARE_SERVED" ]] || return 0
-    find "$pay/$SHARE_SERVED" -mindepth 1 -maxdepth 1 -type l -delete
-}
-
-share_rollback() { # başarısız kurulum: adlar, işaret ve servis geri alınır; hesap ve rclone kalır
-    names_off paylasim
-    share_marker off || true
-    share_off
-}
-
 # -------------------------------------------------------- dosya yöneticisi (DD-150)
 # Servis birimini kurulum MODULES_DIR/dosya/ altına yazar; modül onu UNIT_DIR'e koyar ve açar.
 FILES_UNIT="master-files-panel.service"
@@ -368,19 +320,6 @@ files_verify() {
     [[ "$code" == 403 ]] || { FAIL="dosya servisi başlıksız isteğe $code verdi (beklenen 403)"; return 1; }
 }
 
-files_off() { # servis durur, birim kalkar; hata vermez
-    systemctl disable --now "$FILES_UNIT" >/dev/null 2>&1 || true
-    rm -f -- "$UNIT_DIR/$FILES_UNIT"
-    systemctl daemon-reload >/dev/null 2>&1 || true
-}
-
-# --veri: çöp boşaltılır (kullanıcı onları zaten silmişti). Çöp klasörü kalır.
-files_drop_data() {
-    local cop="$SERVER_ROOT/$FILES_PANEL_TRASH"
-    [[ -d "$cop" && ! -L "$cop" ]] || return 0
-    find "$cop" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-}
-
 # ---------------------------------------------------------------- WireGuard (DD-150)
 # Kurulum yalnız aracı (master-wg), birim şablonlarını ve güvenlik duvarını koyar; paketler,
 # çekirdek modülü ve ağların açılması bu modüldedir. Güvenlik duvarı ağları yalnız modül
@@ -425,15 +364,12 @@ wg_layer() {
 
 # Kayıttaki ağlar açılır (anahtarlar ve profiller /etc/wireguard'da durur); açılamayan uyarıdır.
 wg_networks_up() {
-    local iface scope count=0
+    local iface count=0
     [[ -f "$WG_NETWORKS_FILE" ]] || { printf '0\n'; return 0; }
-    while IFS=$'\t' read -r iface _ scope _; do
+    while IFS=$'\t' read -r iface _; do
         [[ "$iface" =~ ^wg[0-9]$ ]] || continue
         count=$((count + 1))
         systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1 || warn "$iface açılamadı"
-        if [[ "$scope" == ui ]]; then
-            systemctl enable --now --quiet "caddy-wg@$iface.service" >/dev/null 2>&1 || warn "caddy-wg@$iface açılamadı"
-        fi
     done <"$WG_NETWORKS_FILE"
     printf '%s\n' "$count"
 }
@@ -441,12 +377,12 @@ wg_networks_up() {
 wg_networks_down() {
     local unit
     while IFS= read -r unit; do
-        [[ "$unit" =~ ^(wg-quick|caddy-wg)@wg[0-9]\.service$ ]] || continue
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
         systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
     done < <(
-        systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 'caddy-wg@wg*.service' 2>/dev/null | awk '{print $1}'
-        systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 'caddy-wg@wg*.service' 2>/dev/null | awk '{print $1}'
-        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"; print "caddy-wg@" $1 ".service"}' "$WG_NETWORKS_FILE"
+        systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
+        systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
+        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"}' "$WG_NETWORKS_FILE"
     )
 }
 
@@ -464,8 +400,8 @@ wg_drop_data() {
 # ------------------------------------------------------------------ qBittorrent (DD-151)
 # Debian paketi (qbittorrent-nox) sunucunun kendisinde, indirme klasörünün sahibi olarak
 # çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
-# yeri, yarım indirmeler, arayüz 127.0.0.1:TORRENT_UI_PORT); sonra hiç dokunulmaz. Konsol
-# hesabı yönetmez: qBittorrent ilk açılışta geçici parolayı günlüğüne yazar. İnternete eş
+# yeri, yarım indirmeler, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur.
+# Hesap/dizin değişikliklerini Konsol ayar işçisi yapar; ilk giriş geçici paroladır. İnternete eş
 # portu açılmaz; paket kaldırılınca bile sunucuda kalır (yalnız servis kapanır).
 TORRENT_DROPIN_DIR="qbittorrent-nox@.service.d"
 
@@ -600,8 +536,6 @@ cmd_liste() {
         if [[ "$reg" != yok ]]; then
             unit=""
             case "$id" in
-                dosya) unit="$FILES_UNIT" ;;
-                paylasim) unit="$SHARE_UNIT" ;;
                 torrent) unit="$(torrent_unit_name 2>/dev/null || true)" ;;
             esac
             if [[ -n "$unit" ]]; then
@@ -623,15 +557,6 @@ cmd_kur() {
     take_lock
     ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
     case "$id" in
-        dosya)
-            files_need
-            progress "$id" kur 1 3 "Servis kuruluyor"
-            files_place_unit || true
-            progress "$id" kur 2 3 "$SERVER_ROOT kökü bağlanıyor"
-            systemctl enable --now "$FILES_UNIT" >/dev/null 2>&1 || { files_off; fail_step "dosya servisi başlatılamadı"; }
-            files_verify || { files_off; fail_step "$FAIL"; }
-            progress "$id" kur 3 3 "Dosyalar sayfası açılıyor"
-            ;;
         wireguard)
             wg_need
             progress "$id" kur 1 4 "Paketler kuruluyor"
@@ -660,24 +585,6 @@ cmd_kur() {
             names_on torrent || { torrent_rollback; fail_step "$FAIL"; }
             torrent_verify_names || { torrent_rollback; fail_step "$FAIL"; }
             ;;
-        paylasim)
-            registry_get dosya >/dev/null || fail_step "önce Dosya yöneticisi kurulmalı (Paylaşım ona bağlı)"
-            share_need
-            progress "$id" kur 1 4 "Paylaşım altyapısı"
-
-            progress "$id" kur 2 4 "Klasör kaydı hazırlanıyor"
-            share_prepare
-            progress "$id" kur 3 4 "Servis başlatılıyor"
-            share_place_unit || true
-            { systemctl reset-failed "$SHARE_UNIT"; systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
-                { share_rollback; fail_step "paylaşım servisi başlatılamadı"; }
-            share_verify || { share_rollback; fail_step "$SHARE_FAIL"; }
-            progress "$id" kur 4 4 "Ad ve adres açılıyor"
-            names_on paylasim || { share_rollback; fail_step "$FAIL"; }
-            share_verify_names || { share_rollback; fail_step "$SHARE_FAIL"; }
-            share_marker on || { share_rollback; fail_step "$SHARE_FAIL"; }
-
-            ;;
     esac
     registry_set "$id" calisiyor
     progress "$id" kur bitti 0 "kuruldu"
@@ -701,18 +608,6 @@ cmd_baslat() {
                     torrent_verify || fail_step "$FAIL"
                     names_on torrent || fail_step "$FAIL"
                     ;;
-                paylasim)
-                    share_need
-
-                    share_prepare
-                    share_place_unit || true
-                    { systemctl reset-failed "$SHARE_UNIT"; systemctl enable --quiet "$SHARE_UNIT" && systemctl restart "$SHARE_UNIT"; } >/dev/null 2>&1 ||
-                        fail_step "paylaşım servisi başlatılamadı"
-                    share_verify || fail_step "$SHARE_FAIL"
-                    names_on paylasim || fail_step "$FAIL"
-                    share_marker on || fail_step "$SHARE_FAIL"
-
-                    ;;
             esac
             ;;
     esac
@@ -733,10 +628,6 @@ cmd_durdur() {
             # Açılışta da kapalı kalır; ad kalır (başlatılınca geri gelir).
             case "$id" in
                 torrent) torrent_need; torrent_off ;;
-                paylasim)
-                    share_need
-                    systemctl disable --now "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım durdurulamadı"
-                    ;;
             esac
             ;;
     esac
@@ -750,14 +641,8 @@ cmd_kaldir() {
     CUR_ID="$id" CUR_ACTION=kaldir
     take_lock
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
-    [[ "$id" != dosya ]] || ! registry_get paylasim >/dev/null ||
-        fail_step "önce Paylaşım kaldırılmalı (Dosya yöneticisine bağlı)"
     progress "$id" kaldir 1 1 "Kaldırılıyor"
     case "$id" in
-        dosya)
-            files_need
-            files_off
-            ;;
         torrent)
             torrent_need
             torrent_rollback
@@ -770,18 +655,9 @@ cmd_kaldir() {
             registry_set "$id" ""
             firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
             ;;
-        paylasim)
-            # --veri verilmedikçe klasör hesapları ve dosyalar korunur.
-            share_need
-            names_off paylasim
-            share_marker off
-            share_off
-            ;;
     esac
     if [[ "$data" == 1 ]]; then
         case "$id" in
-            paylasim) share_drop_data ;;
-            dosya) files_drop_data ;;
             wireguard) wg_drop_data ;;
             torrent) torrent_drop_data ;;
         esac
@@ -795,7 +671,6 @@ cmd_gunluk() {
     local id="$1" lines="${2:-60}"
     [[ "$lines" =~ ^[0-9]{1,4}$ ]] || die "satır sayısı geçersiz"
     case "$id" in
-        dosya) journalctl -u "$FILES_UNIT" -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
         wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
         torrent)
             torrent_unit_name >/dev/null || { printf '(günlük yok)\n'; return 0; }
@@ -803,23 +678,14 @@ cmd_gunluk() {
             journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>&1 |
                 sed 's/\(temporary password is provided for this session:\).*/\1 ••••/' || printf '(günlük yok)\n'
             ;;
-        paylasim) journalctl -u "$SHARE_UNIT" -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
     esac
-}
-
-cmd_parola() {
-    die "Ortak hesap kaldırıldı; Dosyalar → WebDAV bölümünde ilgili klasörün parolasını değiştirin."
 }
 
 # Salt okunur: Konsol'un root arka ucu kendi korumalı alanında çalıştırır (kilit ve ilerleme yok).
 cmd_hesap() {
-    local id="$1" with="$2"
-    if [[ "$id" == torrent ]]; then
-        torrent_need
-        if [[ "$with" == 1 ]]; then torrent_first_login --parola; else torrent_first_login; fi
-        return 0
-    fi
-    die "Ortak hesap yok; her klasörün hesabı Dosyalar → WebDAV bölümünde."
+    local with="$1"
+    torrent_need
+    if [[ "$with" == 1 ]]; then torrent_first_login --parola; else torrent_first_login; fi
 }
 
 # Kurulumun yeniden çalışması: dosyası değişen kurulu modülü uygular; durdurulan modül durur,
@@ -833,16 +699,6 @@ cmd_uygula() {
         return 0
     fi
     case "$id" in
-        dosya)
-            files_need
-            files_place_unit || true
-            systemctl enable --quiet "$FILES_UNIT" >/dev/null 2>&1 || true
-            systemctl reset-failed "$FILES_UNIT" >/dev/null 2>&1 || true
-            systemctl restart "$FILES_UNIT" >/dev/null 2>&1 || fail_step "dosya servisi yeniden başlatılamadı"
-            files_verify || fail_step "$FAIL"
-            printf '%s\t%s\n' "$id" "$state"
-            return 0
-            ;;
         wireguard)
             wg_need
             wg_packages || fail_step "$FAIL"
@@ -862,27 +718,12 @@ cmd_uygula() {
             printf '%s\t%s\n' "$id" "$state"
             return 0
             ;;
-        paylasim)
-            share_need
-            share_prepare
-            share_place_unit || true
-            names_on paylasim || fail_step "$FAIL"
-            share_marker on || fail_step "$SHARE_FAIL"
-            if [[ "$state" == calisiyor ]]; then
-                systemctl enable --quiet "$SHARE_UNIT" >/dev/null 2>&1 || true
-                systemctl reset-failed "$SHARE_UNIT" >/dev/null 2>&1 || true
-                systemctl restart "$SHARE_UNIT" >/dev/null 2>&1 || fail_step "paylaşım servisi başlatılamadı"
-                share_verify || fail_step "$SHARE_FAIL"
-            fi
-            ;;
     esac
-    command -v logger >/dev/null 2>&1 && logger -t master-modul -- "$id uygula: $state" || true
-    printf '%s\t%s\n' "$id" "$state"
 }
 
 # Installer-only lifecycle for built-ins; they are absent from the public
 # catalog and cannot be stopped/removed through a module API or CLI action.
-# Keep legacy storage and registry paths for firewall/settings compatibility.
+# Keep internal registry IDs for firewall/settings compatibility, not disk markers.
 cmd_yerlesik() {
     local changed=" ${1:-} " files_changed=0 share_changed=0
     take_lock
@@ -904,7 +745,6 @@ cmd_yerlesik() {
     share_verify || fail_step "$SHARE_FAIL"
     names_on paylasim || fail_step "$FAIL"
     share_verify_names || fail_step "$SHARE_FAIL"
-    share_marker on || fail_step "$SHARE_FAIL"
     [[ "$(registry_get dosya || true)" == calisiyor ]] || registry_set dosya calisiyor
     [[ "$(registry_get paylasim || true)" == calisiyor ]] || registry_set paylasim calisiyor
     printf 'Yerleşik Dosyalar + WebDAV doğrulandı.\n'
@@ -915,12 +755,11 @@ main() {
     case "$cmd" in
         liste) cmd_liste ;;
         yerlesik) cmd_yerlesik "${2:-}" ;;
-        kur | baslat | durdur | gunluk | kaldir | parola | hesap | uygula)
+        kur | baslat | durdur | gunluk | kaldir | hesap | uygula)
             [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
             valid_id "$2"
             case "$cmd" in
-                parola) [[ "$2" == paylasim ]] || die "bu modülde parola yok: '$2'" ;;
-                hesap) [[ "$2" == paylasim || "$2" == torrent ]] || die "bu modülde hesap yok: '$2'" ;;
+                hesap) [[ "$2" == torrent ]] || die "bu modülde hesap yok: '$2'" ;;
             esac
             case "$cmd" in
                 kur) cmd_kur "$2" ;;
@@ -931,15 +770,14 @@ main() {
                     [[ "${3:-}" == "" || "${3:-}" == --veri ]] || die "kullanım: master-modul kaldir ID [--veri]"
                     cmd_kaldir "$2" "$([[ "${3:-}" == --veri ]] && echo 1 || echo 0)"
                     ;;
-                parola) [[ $# -eq 2 ]] || die "kullanım: master-modul parola ID"; cmd_parola "$2" ;;
                 hesap)
                     [[ "${3:-}" == "" || "${3:-}" == --parola ]] || die "kullanım: master-modul hesap ID [--parola]"
-                    cmd_hesap "$2" "$([[ "${3:-}" == --parola ]] && echo 1 || echo 0)"
+                    cmd_hesap "$([[ "${3:-}" == --parola ]] && echo 1 || echo 0)"
                     ;;
                 uygula) [[ $# -eq 2 ]] || die "kullanım: master-modul uygula ID"; cmd_uygula "$2" ;;
             esac
             ;;
-        *) die "kullanım: master-modul liste | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | parola ID | hesap ID [--parola] | uygula ID" ;;
+        *) die "kullanım: master-modul liste | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
     esac
 }
 

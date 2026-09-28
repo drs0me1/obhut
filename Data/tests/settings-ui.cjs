@@ -331,8 +331,8 @@ let lastApply = null, writes = 0, failApply = false, holdAccount = false, releas
             assert.equal(await region.locator("tbody tr").first().evaluate(el => getComputedStyle(el).display),"table-row");
             if (width <= 736) {
               assert(await region.evaluate(el => el.scrollWidth > el.clientWidth));
-              await region.focus(); await page.keyboard.press("ArrowRight"); await page.waitForTimeout(120);
-              assert(await region.evaluate(el => el.scrollLeft > 0),"Keyboard scroll");
+              await region.focus(); await page.keyboard.press("ArrowRight");
+              await page.waitForFunction(() => document.querySelector(".as-fw-scroll")?.scrollLeft > 0);
             }
             const bounds = await page.evaluate(() => ({window:innerWidth, page:document.documentElement.scrollWidth,
               boxes:[...document.querySelectorAll('.main,.content,#settings-page,#as-view,.as-card,.as-fw-scroll')].map(el => [el.className || el.id,el.clientWidth,el.scrollWidth])}));
@@ -360,30 +360,51 @@ let lastApply = null, writes = 0, failApply = false, holdAccount = false, releas
     assert.match(await page.locator("#as-fw-content").innerText(),/Henüz yönetilebilir bir WireGuard ağı yok/);
     assert.equal(await page.getByRole("button",{name:"+ Port kuralı",exact:true}).count(),0);
     data.firewall.networks = [{iface:"wg0",label:"Ev",active:true}, {iface:"wg1",label:"Telefon",active:false}];
-    data.firewall.ports.push(
-      {name:"WireGuard wg0",family:4,scope:"wan",port:51820,proto:"udp",baseline:true},
-      {name:"VPN arayüzü",family:4,scope:"wg0",port:8080,proto:"tcp",baseline:true},
-      {name:"VPN arayüzü",family:4,scope:"wg1",port:8080,proto:"tcp",baseline:false});
-    data.firewall.listeners.push({port:8080,proto:"tcp",family:4,address:"10.8.0.1",scope:"wg0"});
+    data.firewall.ports.push({name:"WireGuard wg0",family:4,scope:"wan",port:51820,proto:"udp",baseline:true});
     await page.getByRole("button",{name:"Yenile",exact:true}).click();
     await page.getByRole("combobox",{name:"WireGuard ağı",exact:true}).waitFor();
-    await page.waitForFunction(() => document.querySelectorAll(".as-ports th[scope=row]").length === 2);
-    assert(!((await page.locator(".as-ports").innerText()).includes("51820")));
+    assert.equal(await page.locator(".as-ports th[scope=row]").count(),0);
+    assert.match(await page.locator("#as-fw-content").innerText(),/yalnız internete/);
+    assert.equal(await page.getByRole("button",{name:"+ Port kuralı",exact:true}).count(),0);
     await page.getByRole("combobox",{name:"WireGuard ağı",exact:true}).selectOption("wg1");
-    assert.equal(await page.locator(".as-ports th[scope=row]").count(),1);
-    assert.match(await page.locator(".as-ports").innerText(),/Başka adreste dinliyor/);
-    await page.getByRole("button",{name:"+ Port kuralı",exact:true}).click();
-    assert.equal(await page.getByRole("combobox",{name:"Kapsam",exact:true}).inputValue(),"wg1");
-    await page.getByRole("textbox",{name:"Ad",exact:true}).fill("VPN draft");
-    await page.getByRole("spinbutton",{name:"Port",exact:true}).fill("9000");
-    await page.getByRole("button",{name:"Devam et",exact:true}).click();
-    assert(await page.getByRole("switch",{name:"VPN draft wg1 tcp 9000",exact:true}).count());
+    assert.equal(await page.locator(".as-ports").getByRole("switch").count(),0);
     await category("İnternet").click();
     assert(await page.getByRole("switch",{name:"WireGuard wg0 İnternet udp 51820",exact:true}).count());
-    assert.match(await page.locator(".as-footer").innerText(),/1 değişiklik/);
-    await page.getByRole("button",{name:"Vazgeç",exact:true}).click();
+    await page.getByRole("button",{name:"+ Port kuralı",exact:true}).click();
+    assert.deepEqual(await page.getByRole("combobox",{name:"Kapsam",exact:true}).locator("option").evaluateAll(xs=>xs.map(x=>x.value)),["wan","tail"]);
+    await page.locator(".as-dialog").getByRole("button",{name:"Vazgeç",exact:true}).click();
     await category("WireGuard").click();
     await page.screenshot({path:path.join(screenshots,"wireguard-networks.png"),fullPage:true});
+    // DD-173/174: removing automatic rows never hides explicit rules on WAN and Tailscale.
+    const beforeRules = copy(data.manage.config.firewall), beforeRuleWrites = writes;
+    for (const [ruleScope, tab] of [["tail","Tailscale"], ["wan","İnternet"]]) {
+      await category(tab).click();
+      if (ruleScope === "wg1") await page.getByRole("combobox",{name:"WireGuard ağı",exact:true}).selectOption("wg1");
+      const label = `Özel kural ${ruleScope === "wg1" ? "wg1" : tab} tcp 61009`;
+      for (const allow of [false, true]) {
+        data.manage.config.firewall = [...copy(beforeRules),
+          {id:"explicit-rule",name:"Özel kural",family:4,scope:ruleScope,proto:"tcp",port:61009,source:"",allow}];
+        await page.getByRole("button",{name:"Yenile",exact:true}).click();
+        const custom = page.getByRole("switch",{name:label,exact:true});
+        await page.waitForFunction(({label,allow}) => [...document.querySelectorAll('[role="switch"]')]
+          .find(el => el.getAttribute("aria-label") === label)?.getAttribute("aria-checked") === String(allow), {label,allow});
+        assert.equal(await custom.getAttribute("aria-checked"),String(allow));
+        await custom.click();
+        assert.equal(await custom.getAttribute("aria-checked"),String(!allow));
+        await page.getByRole("button",{name:"Vazgeç",exact:true}).click();
+        const row = page.locator(".as-ports tbody tr").filter({has:custom});
+        await row.getByRole("button",{name:"Kuralı kaldır",exact:true}).click();
+        assert.equal(await custom.count(),0,"Removing an explicit rule does not invent a listener-derived baseline");
+        await page.getByRole("button",{name:"Vazgeç",exact:true}).click();
+        assert.equal(await custom.getAttribute("aria-checked"),String(allow));
+      }
+      data.manage.config.firewall = copy(beforeRules);
+      await page.getByRole("button",{name:"Yenile",exact:true}).click();
+      await page.getByRole("switch",{name:label,exact:true}).waitFor({state:"detached"});
+    }
+    assert.equal(writes,beforeRuleWrites,"Custom rule checks only stage drafts");
+    data.manage.config.firewall = beforeRules.filter(r => r.id !== "fixture-wg1");
+    await category("WireGuard").click();
     data.firewall.wireguard_installed = false;
     data.firewall.networks = [];
     data.firewall.ports = data.firewall.ports.filter(r => !r.scope.startsWith("wg") && r.port !== 51820);

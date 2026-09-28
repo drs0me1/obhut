@@ -8,7 +8,7 @@ alwaysApply: true
 
 *Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `Data/docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz.*
 
-Bu proje Debian 13 üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
+Bu proje Debian 13 ve Ubuntu 24.04/26.04 LTS üzerinde çalışan kişisel bir sunucu kurulum sistemidir.
 
 Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`Data/docs/contract.md`) dışına taşmadan davranışı korumaktır.
 
@@ -29,7 +29,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Portlar, alan adı, yollar ve IP bilgileri için tek doğruluk kaynağı kullan.
 - Ana kurulum betiğini mümkün olduğunca orkestrasyon seviyesinde tut.
 - Uzun Bash içeriklerini heredoc içinde gömmek yerine ayrı dosyalarda tut.
-- Kullanıcı istemedikçe Ansible, Python, Go veya başka bir altyapıya geçme.
+- Kullanıcı istemedikçe Bash kurulumunu Ansible, Python, Go veya başka bir altyapıya taşıma. Mevcut panel ve dosya servisleri Python stdlib kullanır.
 - Bash kullanılacaksa:
   - `#!/usr/bin/env bash`
   - `set -Eeuo pipefail`
@@ -41,12 +41,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Mevcut kullanıcı dosyalarını habersizce silme veya üzerine yazma.
 - Başka yazılımların (ör. Tailscale'in ts-*) iptables zincirlerini silme ya da yeniden oluşturma. Docker yoktur (DD-152).
 - Yalnızca bu projeye ait özel zincirleri ve jump kurallarını yönet.
-- Her aşama sonunda şu kontrolleri çalıştır:
+- Değişen katmana uygun kontrolleri çalıştır; sunucuya özgü doğrulayıcıları desteklenen Linux hedefinde uygula. Çalıştırılmayan kontrolleri geçti diye bildirme:
   - `bash -n`
   - `shellcheck`
   - `caddy validate`
   - `dnsmasq --test`
   - `systemd-analyze verify`
+  - `bats Data/tests`, Python birim testleri ve değişen arayüzün tarayıcı testleri
 - Kod değiştirdikten sonra:
   - değişen dosyaları,
   - kaldırılan davranışları,
@@ -56,13 +57,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ## Kesin sistem gereksinimleri
 
-### Debian
+### Desteklenen sistemler
 
-- Hedef sistem Debian 13 Trixie.
+- Hedef sistemler Debian 13 Trixie, Ubuntu 24.04 Noble ve Ubuntu 26.04 Resolute.
 - Sistem paket listesi güncellenecek.
 - Sistem güncellenecek.
 - Yalnızca gerçekten kullanılan paketler kurulacak.
-- Tailscale, Caddy ve dnsmasq resmî paket kaynakları veya Debian deposu üzerinden kurulacak. Docker kurulmaz (DD-152).
+- Tailscale, Caddy ve dnsmasq resmî paket kaynakları veya dağıtım deposu üzerinden kurulacak. Docker kurulmaz (DD-152).
 - Kurulum root olarak çalışacak.
 - Kurulum tekrar çalıştırılabilir olmalı.
 
@@ -77,51 +78,56 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Varsayılan internet arabiriminde:
   - `rx-udp-gro-forwarding on`
   - `rx-gro-list off` uygulanacak.
-- Tailscale IPv4 değeri `TS_IPV4` değişkenine alınacak.
-- Tailscale IPv6 değeri `TS_IPV6` değişkenine alınacak.
+- Tailscale IPv4 değeri `TAILSCALE_IPV4` değişkenine alınacak.
+- Tailscale IPv6 değeri `TAILSCALE_IPV6` değişkenine alınacak.
 - Değerler `/etc/master-stack/state.env` içinde güvenli biçimde saklanacak.
-- Gerekli olduğu için public IPv4 de `PUBLIC_IPV4` olarak tespit edilip saklanacak.
+- WAN adresleri `WAN_IPV4` ve varsa `WAN_IPV6` olarak tespit edilip saklanacak.
 - Tailscale bağlantısı hazır olmadan sonraki ağ yapılandırmasına geçilmeyecek.
 
 ### Dizinler
 
 - Aşağıdaki dizinler oluşturulacak:
-  - `/downloads`
-  - `/downloads/media`
-- Mevcut `/downloads` ağacında sahiplik/izin **seçici** onarılır (DD-84):
+  - `/srv` (`SERVER_ROOT`)
+  - `/srv/downloads` (`DOWNLOADS_PATH`)
+  - `/srv/media`
+- Mevcut kullanıcı ağacında sahiplik/izin **seçici** onarılır (DD-84):
   sapmış UID/GID `chown -h`, sapmış dizin `0775` / dosya `0664`; eşleşen
-  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok.
+  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok. `.cop` çöp, `.arsiv`
+  özel arşiv alanıdır; `.pay` uyumluluk kalıntısı hâlâ kurulum/izin denetimlerinde
+  kullanılır. Bu alanları veri dizini sanıp yayımlama veya körlemesine silme;
+  özel `.arsiv` alanı genel izin taramasından hariçtir.
 
 ### Modül servisleri (Docker yok)
 
-- DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). Her modül sunucuda bir systemd servisidir. Dozzle (DD-151) ve Arşiv açıcı (Unpackerr, DD-152) kaldırıldı.
+- DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). Her modül sunucuda bir systemd servisidir. Dozzle ve Unpackerr kaldırıldı; arşiv açıcı artık Dosyalar'ın yerleşik, istek üzerine çalışan yeteneğidir (DD-159/166/170).
 - qBittorrent bir host modülüdür (`torrent`, DD-151): Debian `qbittorrent-nox`, indirme hesabıyla `qbittorrent-nox@<kullanıcı>.service` + `master-stack.conf` drop-in'i; profil `/var/lib/qbittorrent`. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/modules/torrent/qBittorrent.conf`), sonra dokunulmaz. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca paket kalır; `--veri` profili siler.
 - Paylaşım (DD-158): Python stdlib `master_webdav.py`, `master-paylasim.service` içinde indirme UID'siyle loopback'te çalışır. Root kayıt `webdav.json` 0600, yalnız scrypt özeti, `LoadCredential`; çöp/iç alanlar erişilemez. Klasör sınırı tanıtıcı tabanlı istek denetimiyle korunur. Ayrıntı: `Data/docs/folder-shares.md`.
 
 ### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)
 
-- WireGuard host çekirdeğinde `wg-quick@wg0` olarak çalışır (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::1/112`, peer'lar `…::N`, UDP 61001).
-- DD-150: WireGuard bir Konsol modülüdür (`wireguard`): paketler, çekirdek modülü, güvenlik duvarı kancası ve ağların açılması `master-modul`'dedir; kurulum yalnız `master-wg`, `caddy-wg@` şablonu ve `Caddyfile.wg` koyar. Modül yokken `master-firewall` ağ kaydını yok sayar, `master-wg` yalnız `version` yanıtlar.
+- WireGuard host çekirdeğinde ağ başına `wg-quick@wgN` olarak çalışır. İlk ağ için öneri wg0 (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::1/112`, UDP 61001); kurulum bunu kendiliğinden oluşturmaz.
+- DD-150: WireGuard bir Konsol modülüdür (`wireguard`): paketler, çekirdek modülü, güvenlik duvarı kancası ve ağların açılması `master-modul`'dedir; kurulum `master-wg` koyar; DD-177 eski WG web dinleyicilerini kaldırır. Modül yokken `master-firewall` ağ kaydını yok sayar, `master-wg` yalnız `version` yanıtlar.
 - DD-143: kurulum WireGuard ağı yaratmaz; ağları (ilki dahil) Konsol → WireGuard → Yapılandır ya da `master-wg net-add` kurar ve hepsi `/etc/wireguard/networks` kaydında yaşar. Kurulum yalnız araçları/modülü hazırlar ve kayıttaki ağları uygular; Mac'ten hiçbir dosya okunmaz, sunucuya gönderilmez.
 - Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wgN.conf`.
-- `wireguard.command` → 6) Yedek al sunucu yapılandırmasını (`kurulum/wireguard/sunucu/wg0.conf`) ve profilleri `kurulum/`'a çeker; kurulum yalnız sunucuda yoksa geri yükler, `PostUp` gibi satırlar reddedilir.
-- `wireguard.command` → 7) DNS değiştir yalnız profilin `DNS =` satırını değiştirir (`master-wg dns`); 8) wg0 yeniden üret `onayla` onayıyla yeni anahtar üretir, bütün peer ve profilleri siler (`master-wg reset --onay`), ardından yedeği günceller.
+- `wireguard.command` → 6) Ağ seç; yedek almaz. Sunucu yapılandırması Mac'ten geri yüklenmez.
+- `wireguard.command` → 7) DNS değiştir yalnız profilin `DNS =` satırını değiştirir (`master-wg dns`); 8) seçili ağı yeniden üret `onayla` onayıyla o ağ için yeni anahtar üretir, o ağın peer ve profillerini siler (`master-wg reset --onay`).
 - Her profille birlikte QR resmi `kurulum/wireguard/<ad>.png` olarak iner (`master-wg png`, sunucu üretir; izin 600, sunucuya gönderilmez).
-- 2) ekle, 3) çıkar, 7) ve 8) başarılı olunca yedek kendiliğinden alınır (`auto_backup` → 6); vazgeçilen ya da başarısız değişiklikte yedek alınmaz.
-- WireGuard istemcisi yalnız internete çıkar ve `10.8.0.1` üzerindeki arayüz portlarına (`caddy-wg`) ulaşır; tailnet, WebDAV, SSH ve dnsmasq kapalıdır.
-- Konsol'un WireGuard arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler ve yalnız `/api/wg/*` yanıtlar; sayfa sunmaz. Tailnet'e Caddy `panel.<alan>` ile açılır; WireGuard'dan ve WAN'dan kapalı. Parola yok (DD-147): erişim sınırı Tailscale; bu yüzden `/api/*` için `X-Konsol` başlığı ve Host denetimi zorunlu; her değişiklik `master-wg` ile.
-- Panelden ek ağlar (DD-136): `master-wg net-add/net-remove` wg1…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını o ağda çalıştırır. Güvenlik duvarı kaydı okuyup her ağ için kural kurar ve bozuk kayıtta hiçbir zinciri değiştirmez; `caddy-wg@<arayüz>` şablon birimdir. wireguard.command ve Mac yedeği yalnız wg0'ı kapsar.
+- Otomatik yedek yoktur. Yalnız kullanıcının indirdiği cihaz profili ve QR resmi Mac'te kalır; bunlar sunucu yedeği değildir.
+- DD-177: WireGuard yalnız internete çıkar. UI/API/CLI erişim seçeneği yoktur; WG host trafiği ilk sırada düşürülür, özel hedefler ve diğer VPN ağları engellenir. WG özel port kuralı kabul edilmez; WAN/Tailscale kuralları ayrı kalır.
+- Konsol'un root arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler, `/api/wg/*` ve `/api/konsol/*` yanıtlar; sayfa sunmaz. Caddy `panel.<alan>` ile yalnız Tailscale'e açılır. Parola yoktur (DD-147); Host, `X-Konsol` ve değişikliklerde aynı kaynak denetimleri korunur. WireGuard işlemleri `master-wg`, ayarlar `master_settings.py`, klasör hesapları `master_shares.py` üzerinden yürür.
+- Ağlar (DD-136/143): `master-wg net-add/net-remove` wg0…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını seçili ağda çalıştırır. Firewall bozuk kayıtta hiçbir zinciri değiştirmez; her ağ yalnız `wg-quick@` birimine sahiptir. `wireguard.command` da seçili ağla çalışır.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
 ### Konsol ve dosya arka ucu (DD-139, DD-140)
 
-- Tek adres: `panel.<alan>`. Caddy `/api/wg/*` isteklerini WireGuard arka ucuna, kalanını (sayfa dosyaları dahil) dosya arka ucuna yollar; eski adlar (`wg.`, `dosya.`, `file.`) yoktur (DD-154). Ayarlar sayfası (DD-155) salt okunurdur: `GET /api/konsol/ayarlar` kuralları, Caddy/dnsmasq dosyalarını ve qBittorrent'in yalnız yol/port anahtarlarını okur; hiçbir şey yazmaz, parola/anahtar dosyası okumaz. İki arka uç da yalnız bu Host'u kabul eder, aynı hesabı ve `Konsol` realm'ını kullanır.
+- Tek adres: `panel.<alan>`. Caddy sayfa dosyalarını kendisi sunar; `/api/wg/*` ve `/api/konsol/*` root arka ucuna, diğer dosya API'leri yetkisiz dosya arka ucuna gider. Eski adlar (`wg.`, `dosya.`, `file.`) yoktur. İki arka uçta da panel hesabı/parolası yoktur; aynı Host ve istek güvenlik sınırları uygulanır.
+- Ayarlar salt okunur değildir (DD-156–165): DNS-only Uygula ve qBittorrent hesap kaydı doğrulama sonrası doğrudan kalıcılaşır. Firewall/qBittorrent dizini ve karma taslaklar 60 saniyelik onay/bağımsız geri alma korumasındadır. Alan adı değişimi yeni panel adresinden beş dakika içinde onaylanır. Üçüncü taraf ham firewall zincirleri yalnız okunur; parola özetleri istemciye verilmez.
 - Sayfalar `Data/console/` içindedir (`index.html`, `konsol.css`, `konsol.js`): dış kaynak yüklemez, satır içi kod ya da biçem yoktur, adlar yalnız metin olarak eklenir. Tasarım örnekleri `Data/docs/design/`.
 - Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
-- `Data/files-panel/master-files-panel` yerleşiktir (DD-159): kurulum birimini `MODULES_DIR/dosya/`'ya yazar, `master-modul yerlesik` etkinleştirir. Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur (DD-147); paylaşım hesabını hiç görmez. `master_archives.py` sınırlı ZIP işlerini aynı yetkisiz süreçte yürütür; özel `.arsiv` alanı kurulumun izin taramasından hariçtir.
+- `Data/files-panel/master-files-panel` yerleşiktir (DD-159): kurulum birimini `MODULES_DIR/dosya/`'ya yazar, `master-modul yerlesik` etkinleştirir. Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur; paylaşım hesabını hiç görmez. `master_archives.py`/`master_rar.py` sınırlı arşiv işlerini aynı yetkisiz süreçte yürütür.
 - Sunucudaki tek WebDAV paylaşımdır (DD-142): indirme klasörünün tamamını yayımlayan `webdav` servisi, `webdav.<alan>` adı, 61003 portu ve `WEBDAV_*` girdi anahtarları kaldırıldı.
 - DD-158: eski ortak hesap ve sembolik bağlantılı kök kaldırıldı. URL `/s/<id>/`; klasör başına hesap/RO-RW/süre/duraklatma Dosyalar → WebDAV'dan yönetilir. Düz parola saklanmaz. Paylaşımı kaldırmak dosyayı silmez; RW silme kalıcıdır. Tailscale ACL/grants otomatik değişmez; alıcı Konsol/SSH'ye erişmemeli. Yerel istemci uyumu ayrıca test edilir.
-- Servis root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Yazabildiği tek yer `DOWNLOADS_PATH`.
+- Dosya ve WebDAV servisleri root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Dosya servisi `SERVER_ROOT` altında, WebDAV yalnız tanımlı klasör sınırında çalışır. qBittorrent yalnız indirme alanına ve onaylı hedeflere yazabilir.
 - Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
 - Çöp (`.cop`) ve paylaşım kökü `/srv/downloads` dışındadır; qBittorrent onları görmez, Paylaşım çöpü boş görür (DD-144, DD-152). `master-modul kur` bunu sınar.
 
@@ -132,18 +138,19 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - qBittorrent web arayüzü (modül): `127.0.0.1:61006`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
-  - WireGuard (host çekirdeği, wg-quick@wg0; DD-120): yalnız UDP
+  - WireGuard (host çekirdeği, ağ başına wg-quick@wgN): yalnız UDP
   - Torrent eş portu yok (DD-151): qBittorrent yalnız dışa bağlanır. Yeniden açmak açık karar ister.
 - Servis adları, portlar ve yollar tek bir yapılandırma kaynağından (`defaults.env`) yönetilmeli.
 
 ### dnsmasq
 
 - Doğru yazım dnsmasq olmalıdır.
-- Kurulumun başında kullanıcıdan yerel alan adı istenecek.
+- Yerel alan adı kurulum girdisinden okunur; panelde sonradan onaylanan alan adı tekrar kurulumda önceliklidir.
 - Örnek:
   - `ayc`
-  - `home.arpa`
-  - `murat.internal`
+  - `ev`
+  - `murat`
+- Geçerli yerel son ek tek DNS etiketidir; noktalı alan adı desteği varsayma.
 - Alan adı güvenli biçimde doğrulanacak.
 - dnsmasq yalnız DNS hizmeti verecek; DHCP hizmeti vermeyecek.
 - dnsmasq:
@@ -153,8 +160,10 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
   üzerinde kontrollü biçimde dinleyecek.
 - Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
-  - `panel.${LOCAL_DOMAIN}` (Konsol) ve `health.${LOCAL_DOMAIN}` (temel, `SERVICE_NAMES`)
-  - `torrent.${LOCAL_DOMAIN}` ve `paylas.${LOCAL_DOMAIN}` (modül kuruluysa; ad modülle gelir)
+  - `panel.${LOCAL_DOMAIN}` (Konsol; temel, `SERVICE_NAMES`)
+  - `paylas.${LOCAL_DOMAIN}` (yerleşik WebDAV)
+  - `torrent.${LOCAL_DOMAIN}` (qBittorrent kuruluysa)
+- `health` adı yoktur. Panel DNS adı kapatılamaz; özel alanın bilinmeyen/kapalı adları public DNS'e sızdırılmaz. Genel sorguların seçilen üst DNS'lere aktarımı panelden açılıp kapatılır.
 - Gerekli görülürse ek servis isimleri aynı açık listeye eklenebilir.
 - Wildcard davranışı varsayılan olmasın. Yalnız tanımlı servis isimleri çözülsün.
 
@@ -165,7 +174,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   1. Tailscale Admin Console aç.
   2. DNS bölümüne gir.
   3. Custom nameserver ekle.
-  4. Nameserver IP olarak `TS_IPV4` değerini gir.
+  4. Nameserver IP olarak `TAILSCALE_IPV4` değerini gir.
   5. “Restrict to domain” seçeneğini etkinleştir.
   6. Kullanıcının seçtiği `LOCAL_DOMAIN` değerini gir.
   7. Kaydet.
@@ -173,16 +182,14 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 ### Caddy
 
 - Caddy host üzerinde systemd servisi olarak çalışacak.
-- Caddy yalnız `TS_IPV4` adresinde dinleyecek.
-- İlk sürüm HTTP-only olacak.
+- Caddy yalnız `TAILSCALE_IPV4` adresinde dinler; WireGuard web dinleyicisi yoktur.
+- Sunulan web uçları HTTP-only'dir; şifreli taşıma Tailscale/WireGuard üzerinden sağlanır.
 - Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
 - Örnek:
   - `http://panel.${LOCAL_DOMAIN}`
-  - `http://health.${LOCAL_DOMAIN}`
   - `http://torrent.${LOCAL_DOMAIN}` (modül; `CADDY_MODULES_DIR/torrent.caddy`)
-  - `http://paylas.${LOCAL_DOMAIN}` + Infuse için `http://<ts-ip>:61010` (modül; `CADDY_MODULES_DIR/paylasim.caddy`)
-- Her site yalnız kendi loopback upstream’ine proxy yapacak (health hariç:
-  sabit `ok` yanıtı).
+  - `http://paylas.${LOCAL_DOMAIN}` + Infuse için `http://<ts-ip>:61010/s/<id>/` (yerleşik; `CADDY_MODULES_DIR/paylasim.caddy`)
+- Panel statik dosyaları Caddy'den, API'ler ve diğer servisler ilgili loopback upstream'inden sunulur. Sağlık kontrolü gerçek panel/API'lerle yapılır.
 - Örnek:
   - `torrent.${LOCAL_DOMAIN}` → `127.0.0.1:61006`
 - Tüm upstream'ler loopback üzerinde düz HTTP'dir; tek HTTPS upstream (Portainer, DD-62) Portainer'la birlikte kaldırıldı (DD-116).
@@ -192,7 +199,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Temel politika:
   - established ve related trafik kabul edilecek,
   - loopback kabul edilecek,
-  - `tailscale0` üzerinden gelen trafik kabul edilecek,
+  - `tailscale0` için yalnız SSH, Caddy, DNS, WebDAV, Self PeerAPI ve kayıtlı WireGuard portları izinlidir; diğer yeni host bağlantıları `ts-input` öncesinde düşürülür (DD-172), panelin onaylı izin/engel kuralları önceliklidir,
   - public WAN üzerinden yalnız:
     - SSH ve Tailscale UDP portu,
     - WireGuard UDP portları kabul edilecek (torrent eş portu yok, DD-151),
@@ -200,6 +207,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Docker yoktur (DD-152): `DOCKER-USER`'a ve `MASTER-DOCKER`'a dair kural yazılmaz.
 - Proje yalnız kendi zincirlerini oluşturabilir:
   - `MASTER-INPUT`
+  - `MASTER-SETTINGS` (onaylı panel kuralları; Tailscale kabulünden önce)
   - `MASTER-FORWARD`, `MASTER-NAT` (WireGuard)
   (tek isimler `defaults.env`’de.)
 - Firewall kuralları reboot sonrasında yeniden kurulmalı.
@@ -212,9 +220,9 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - `watch-tailnet-addr` yok; yalnız `refresh-tailnet-config`
   (`WantedBy=tailscaled` + 5 dk timer).
 - Küçük bir `refresh-tailnet-config` betiği:
-  - Güncel `TS_IPV4` ve `TS_IPV6` değerlerini okur.
+  - Güncel `TAILSCALE_IPV4` ve `TAILSCALE_IPV6` değerlerini okur.
   - Önceki değerlerle karşılaştırır.
-  - Değişiklik yoksa failed Caddy varsa kurtarır (`recover_failed`), çıkar.
+  - Firewall kritik politikalarını denetler, gerekirse firewall servisini yeniden uygular. IP değişmese de bu kontrol ve sınırlı Caddy kurtarma yolu çalışır.
   - Değişiklik varsa:
     - `/etc/master-stack/state.env` dosyasını atomik günceller,
     - yalnız Caddy’yi restart eder (dnsmasq `bind-dynamic`; firewall
@@ -271,7 +279,7 @@ Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 
 ## Modüller (DD-148)
 
-- DD-159: Dosyalar, klasör WebDAV ve ZIP temelin yerleşik parçalarıdır; her kurulumda etkinleştirilip doğrulanır. Hesaplar/geçmiş korunur; değişmeyen sağlıklı servis yeniden başlatılmaz. `dosya`/`paylasim` yalnız iç şablon/kayıt kimlikleridir, genel modül fiilleri bunları reddeder.
+- DD-159/166/170: Dosyalar, klasör WebDAV ve arşiv araçları yerleşiktir; her kurulumda doğrulanır. Oluşturma ZIP üretir; iç içe arşiv ve parçalı RAR algılama otomatiktir, hedef varsayılan downloads'tur. Veri/süre/derinlik sınırları kullanıcı seçeneği olmadan korunur. Hesaplar/geçmiş korunur; değişmeyen sağlıklı servis yeniden başlatılmaz. `dosya`/`paylasim` yalnız iç şablon/kayıt kimlikleridir, genel modül fiilleri bunları reddeder.
 - App Store kataloğu yalnız WireGuard ve qBittorrent'tir. Kurulum bunları kendiliğinden kurmaz/kaldırmaz; mevcut yeniden uygulama davranışı sürer. Tailscale, DNS/Caddy ve firewall kaldırılabilir uygulama değildir.
 - Katalog `Data/scripts/master-modul` içindedir (sabit id + fiiller). Serbest argüman ekleme; kök arka uç id'yi `liste` ile doğrular.
 - İşlem `systemd-run --unit=master-modul-<id>.service` ile ayrı birimde çalışır; birim etkinken aynı modüle istek 409 alır. İlerleme `RUNTIME_DIR/modul-<id>.ilerleme`.

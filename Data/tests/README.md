@@ -29,6 +29,17 @@ and safe text rendering, no account reads, and visible status at mobile widths.
 `test_resources.py` covers independent sampling, guest CPU accounting, unknown
 measurements, legacy compatibility and real HTTP Host/header/origin gates.
 
+## Legacy cleanup boundaries (DD-171)
+
+The Bats suite exercises stage 3 with an absent legacy sharing tree, then with
+private existing metadata; reruns must not create markers or repair old modes.
+Built-in fixtures also verify marker symlinks and old account files are untouched,
+current registry preparation is idempotent and public lifecycle actions refuse.
+Retired Files endpoints return 410 only after Host/header/origin checks and never
+advertise a fake active empty list. Current folder-sharing tests remain below.
+Portable validation should compare the complete embedded file set with runtime
+sources, excluding Python caches, metadata, tests, docs and private input.
+
 ## Built-in ZIP/RAR (DD-159, DD-166, DD-170)
 
 v143 adds automatic nested extraction/default depth-ceiling rollback tests and
@@ -81,21 +92,53 @@ Do not run live tests against an unauthorized host.
 
 ## Settings management (DD-156/DD-157, v2-127)
 
-WireGuard network settings (DD-167): `node Data/tests/wireguard-ui.cjs` uses the
-same preview/Playwright environment as the other UI suites. It fixtures all APIs
-and verifies DNS/local save, polling draft retention, errors, stopped-network
-editing, separate typed regeneration confirmation, four widths and production CSP.
-`test_wg_settings.py` tests real HTTP gates, IP/revision validation, delegation
-and revision hashing; `common.bats` covers DNS-only preservation, listener/firewall
-ordering, stopped networks, stale/pending edits, complete/incomplete rollback,
-and explicit start-limit resets (including an unloaded Caddy template instance).
+WireGuard internet-only (DD-177): `wireguard-ui.cjs` tests creation/settings with
+no Local selector, DNS-only saves, polling/error/cancel/stopped-network behavior,
+explicit regeneration and four widths/CSP. `test_wg_settings.py` rejects legacy
+scope on both HTTP routes and checks revision/gates. Bats verifies DNS-only
+preservation and rejects old CLI arguments. `test_wg_upgrade.py` tests scoped
+retirement, fresh/repeated runs, invalid/pending/symlink/failure boundaries,
+opaque key/profile preservation and refusal/filtering of old WG overrides.
+`firewall-linux.py` tests actual IPv4/IPv6 host deny (including prior flows),
+internet forwarding/NAT, private destinations through WAN, and tailnet isolation.
+Veth fixtures pin WG IPv6 neighbors because real WireGuard uses no NDP.
 
 Firewall categories (DD-164, v2-134): `test_firewall_view.py` covers read-only
 socket scope classification, IPv6 normalization/zones, read failures, public-only
 network metadata, service-name reuse and WAN endpoint versus tunnel permissions.
 `settings-ui.cjs` tests default Tailscale, nested keyboard tabs, draft retention,
-absent/empty/multiple WireGuard networks, per-network rule defaults, protected
+absent/empty/multiple WireGuard networks, read-only internet-only WG policy, protected
 loopback and listener-versus-policy labels (including unknown/unreadable).
+
+Minimum tailnet exposure (DD-172, v2-146): `test_tailnet.py` verifies configured
+service ports, validated Self-only PeerAPI discovery and daemon-startup fallback.
+The view suite also rejects listener-implies-access and preserves WG endpoints.
+Run `unshare --net --fork python3 Data/tests/firewall-linux.py` as root on the
+authorized Linux test host. It refuses the host namespace and uses nested veth
+clients/echo listeners to test actual IPv4/IPv6 WAN, tailnet and WG input packets,
+operator allow/deny precedence, idempotency and extra-rule detection. No installed
+service, account or host firewall is modified; all fixtures are temporary.
+
+Tailnet catalogue cleanup (DD-173, v2-147): the view tests exclude arbitrary
+peer/backend/admin sockets, retain configured per-family ports even without
+listeners, and keep registered WG endpoints with no active peers/sockets.
+Browser fixtures preserve explicit tailnet allow/deny rules, editable drafts,
+remove/cancel behavior and fallback to default deny without invented port rows.
+Live checks must also verify raw diagnostics and required local services remain.
+
+WAN/tunnel catalogue cleanup (DD-174, v2-148): view tests cover configured SSH/
+Tailscale ports and IPv4-only WAN WG endpoints independent
+of sockets/peer count; retired tunnel permits stay absent. Browser fixtures exercise
+explicit allow/deny toggle/remove/cancel for WAN and Tailscale; a closed
+user rule remains visible even where no automatic row exists.
+
+Firewall source cleanup (DD-175, v2-149): `firewall-linux.py` additionally starts
+from absent module/network files, then verifies preserved networks cannot revive
+an absent/empty/stopped module. Test teardown/re-add, no empty forwarding/NAT
+chains, repeatability of both tables/families, stale extra INPUT/FORWARD/NAT rules,
+unchanged third-party jumps/chains and retained network files. The view suite
+covers single-port WG rules and intentionally absent chains versus real failures.
+These are isolated policy fixtures, not a fresh Debian/Ubuntu image installation.
 
 DNS-only Apply (DD-163, v2-133): unit tests cover immediate persistence past
 the old deadline/reboot, pre-write panel-name protection, mixed confirmation,

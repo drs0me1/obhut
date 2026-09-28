@@ -36,7 +36,6 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
 @media(pointer:coarse) { .fs-dock .pf-btn { width:44px; height:44px; } }
 [data-view="dosyalar"] .fswrap { display:block; }
 [data-view="dosyalar"] .fsrail { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:0 0 14px; border:0; background:none; }
-[data-view="dosyalar"] .fsrail .rl-t, [data-view="dosyalar"] .fsrail .rl-disk { display:none; }
 [data-view="dosyalar"] .fsrail .rl { width:auto; margin:0; min-width:0; max-width:100%; }
 [data-view="dosyalar"] .fspanel { padding:0; background:none; border:0; }
 .fs09-tabs { display:flex; gap:24px; border-bottom:1px solid var(--line); margin-bottom:18px; }

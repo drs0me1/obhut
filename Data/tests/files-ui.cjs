@@ -35,6 +35,9 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
       };
     });
     const checkShareAddress = async locator => {
+      // A hash change can leave the previous view hidden until its API resolves.
+      // Measure the rendered address, not a zero-size intermediate layout.
+      await locator.waitFor({state:"visible"});
       const expected = shares.items[0].url;
       assert.equal(await locator.locator("code").textContent(), expected);
       assert(!/[^\x21-\x7e]/.test(expected), "share URL contains whitespace or non-ASCII characters");
