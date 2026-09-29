@@ -77,11 +77,22 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
 .dav-pair { display:grid; gap:4px; font-size:13px; min-width:0; }
 .dav-pair small { font-size:11px; color:var(--muted); }
 .dav-pair > span { display:flex; gap:6px; align-items:center; }
+.dav-addresses { display:grid; gap:10px; min-width:0; }
+.dav-network-badges { display:flex; flex-wrap:wrap; gap:4px; }
+.dav-network-badges .shchip { margin:0; }
 .dav-address { display:inline-flex; align-items:center; gap:6px; width:fit-content; max-width:100%; min-width:0; }
 .dav-address > code { min-width:0; overflow-wrap:anywhere; user-select:all; }
 .dav-address > .ib { flex:none; }
 .dav-url { padding:9px; background:var(--ground); border:1px solid var(--line); border-radius:6px; font-size:11px; }
-.dav-form { display:grid; gap:15px; }
+.dav-form { display:grid; gap:15px; min-width:0; }
+.dav-form > * { min-width:0; overflow-wrap:anywhere; }
+.dav-networks { display:grid; gap:10px; margin:0; padding:12px; border:1px solid var(--line); border-radius:7px; font-size:13px; }
+.dav-networks legend { padding:0 4px; }
+.dav-network-choices { display:flex; flex-wrap:wrap; gap:12px 20px; }
+.dav-network-choices .dav-check { align-items:center; min-height:32px; }
+.dav-network-choices input { margin:0; }
+.dav-network-choices label:has(:disabled) { color:var(--muted); }
+.dav-networks p { margin:0; }
 .dav-form > label:not(.dav-check) { display:grid; gap:6px; font-size:13px; }
 .dav-form input:not([type=checkbox]), .dav-form select { width:100%; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:var(--ground); color:var(--ink); font:inherit; }
 .dav-check { display:flex; align-items:flex-start; gap:8px; }
@@ -96,14 +107,15 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
 .dav-empty h3 { font-size:15px; color:var(--ink); }
 .dav-list-head h2 { margin:0; font-size:18px; }
 .dav-shares { display:grid; margin-top:18px; border:1px solid var(--line); border-radius:9px; background:var(--surface); }
-.dav-share-head, .dav-share-row { display:grid; grid-template-columns:minmax(200px,2.2fr) minmax(80px,.8fr) minmax(150px,1fr) minmax(145px,1fr) minmax(75px,.6fr) 150px; align-items:center; gap:16px; padding:16px; }
+.dav-share-head, .dav-share-row { display:grid; grid-template-columns:minmax(240px,2fr) minmax(80px,.8fr) 76px minmax(145px,1fr) minmax(145px,1fr) 82px 150px; align-items:center; gap:12px; padding:16px; }
 .dav-share-head { font-size:11px; color:var(--muted); background:var(--surface-2); border-radius:9px 9px 0 0; }
 .dav-share-row { border-top:1px solid var(--line); }
 .dav-share-row > * { min-width:0; }
 .dav-share-name { overflow-wrap:anywhere; }
 .dav-share-name strong, .dav-share-name small { display:block; }
 .dav-share-name small { color:var(--muted); font-size:11px; margin-top:4px; }
-.dav-share-name .dav-address { margin-top:8px; }
+.dav-share-name .dav-addresses { margin-top:10px; }
+.dav-share-name .dav-pair small { margin:0; }
 .dav-share-name code { font-size:11px; }
 .dav-cell { display:grid; gap:7px; font-size:12px; overflow-wrap:anywhere; }
 .dav-cell select { width:100%; min-width:0; max-width:100%; min-height:36px; padding:7px; border:1px solid var(--line); border-radius:6px; background:var(--ground); color:var(--ink); font:inherit; }
@@ -154,7 +166,7 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
   .dav-share-row:first-of-type { border-top:0; }
   .dav-share-name { grid-column:1/-1; }
   .dav-label { display:block; }
-  .dav-share-row .dav-actions { grid-column:2/-1; align-self:center; }
+  .dav-share-row .dav-actions { align-self:center; }
 }
 @media(max-width:760px) {
   .dav-share-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -166,6 +178,6 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
   .fs09-tabs button { font-size:12px; }
   [data-view="dosyalar"] #fs-bar .fs-search { order:2; width:100%; max-width:none; }
   .fs09-layout.cards #fs-table { grid-template-columns:minmax(0,1fr); }
-  .dav-share-row { padding:14px; }
+  .dav-share-row { padding:14px; grid-template-columns:minmax(0,1fr); }
   .fs09-layout .fs-t > .tr { padding:12px 8px; }
 }

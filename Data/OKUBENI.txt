@@ -1,7 +1,7 @@
 Master Stack — kullanım (yalnız macOS)
 
 Repo kökünde yalnız çift tıklanan dosyalar durur:
-  <sürüm>.command            güncel kurulum (2026.08.06-v2-151.command)
+  <sürüm>.command            güncel kurulum (2026.08.06-v2-153.command)
   wireguard.command          WireGuard menüsü: ağ seç, listele, ekle, çıkar, QR, DNS, ağı yeniden üret (kurulumdan sonra)
   kurulum/kurulum.env        kurulum girdileri: sunucu ve alan adı (git dışı)
   kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png); kurulum buraya bakmaz (git dışı)
@@ -105,7 +105,15 @@ Klasör WebDAV (v2-128; v2-129'dan beri yerleşik):
   Dosyalar → klasörün Ayrıntılar düğmesi → WebDAV ile paylaş. Ayrı uygulama kurulmaz.
   Dosyalar → Paylaşımlar sekmesinde tüm hesaplar topluca görünür.
   Erişim ve Süre açılır alanlarından seçim yapınca kaydedilir; gün seçenekleri bugünden başlar.
-  Yönet yalnız klasör, kullanıcı adı ve parola içindir; erişim/süreyi değiştirmez.
+  Yönet: klasör, kullanıcı adı, parola ve Tailscale/WAN ağ seçimi; erişim/süreyi değiştirmez.
+  v2-153: Tailscale, WAN (internet) veya ikisini seçebilirsiniz. Eski/yeni paylaşımlar
+  varsayılan Tailscale'dedir. WAN yalnız genel IPv4 üzerinden aynı WebDAV portunu kullanır.
+  WAN HTTP şifrelemez: parola ve dosya içeriği açık taşınır; açarken ayrıca onay verilir.
+  WAN: 60 saniyede 5 hatalı parola → 5 dakika engel; IP başına 4, toplam 8 eşzamanlı istek.
+  Ön kapıda TCP sınırı IP başına 16, toplam 64'tür. Hız/bant genişliği sınırı değildir.
+  Son WAN paylaşımı duraklatılır/kaldırılırsa dinleyici ve izin kapanır; süre bitiminde
+  erişim hemen, ağ temizliği normalde 30 saniyelik zamanlayıcının sonraki turunda kapanır.
+  Mevcut firewall engelleri/sağlayıcı kuralları korunur; panel ve diğer servisler internete açılmaz.
   Her klasörün kullanıcı adı, parolası ve /s/<id>/ adresi ayrıdır. Parola en az 8 karakter.
   Salt okunur varsayılandır. Okuma ve yazma silme/üzerine yazmayı kapsar; ayrıca onay gerekir.
   WebDAV ile silinen dosya Çöp'e gitmez. Süre: 1/7/30 gün veya süresiz. Duraklat hesabı korur;
@@ -152,7 +160,7 @@ Konsol · Dosyalar sekmesi (v2-104, v2-105):
   v2-138: Paylaşım adresini kopyalama simgesi, listede ve klasör ayrıntısında adresin hemen yanındadır.
   Metin dosyaları (.txt .log .nfo .srt …) tıklayınca açılır; Türkçe altyazı bozuk görünürse Kodlama'dan Türkçe seçin.
   Hiçbir işlem aynı adlı bir dosyanın üzerine yazmaz.
-  incomplete klasörü qBittorrent'in yarım indirmeleridir: oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
+  incomplete klasörünü yarım indirmeler için kullanıyorsanız oradaki dosyayı taşımak ya da silmek indirmeyi bozar.
   FileBrowser kaldırıldı (v2-114): dosyaları Konsol yönetir.
 
 qBittorrent (v2-118; modül, sunucuda Debian paketi):
@@ -164,22 +172,25 @@ qBittorrent (v2-118; modül, sunucuda Debian paketi):
   Hesabı kaydet ile tek adımda kalıcı kayıt yapılır. Yeni parola en az 8 karakter olmalıdır.
   Boş parola kayıtlı parolayı korur; geçici ilk giriş parolası yeniden başlatmada değişebilir.
   Dizin seçimi downloads/media içindedir; inceleme ve süreli onay akışı korunur.
-  Ayarlar yalnız ilk kurulumda yazılır (indirme yeri /srv/downloads, yarımlar incomplete klasöründe,
-  yerel ağa torrent duyurusu kapalı — v2-120);
-  sonra arayüzden değiştirdikleriniz kalır, kurulum onlara dokunmaz.
+  v2-152: İlk profil yalnız panel entegrasyonuyla hazırlanır: /srv/downloads, parola isteyen
+  loopback web arayüzü ve servisin etkileşimsiz başlaması için gereken onay.
+  UPnP, otomatik port yönlendirme, yerel eş keşfi ve ayrı geçici klasör seçimi kullanıcıya aittir;
+  kurulum bunları açmaz veya kapatmaz. Siz değiştirene kadar qBittorrent varsayılanları geçerlidir.
+  Mevcut profillerde eski kurulum değerleri dahil tüm tercihler korunur; bunları değiştirmek
+  isterseniz qBittorrent'in kendi ayarlarını kullanın. Yeniden kurulum tercihleri sıfırlamaz.
   Gelen bağlantı portu açılmaz: qBittorrent yalnız dışa bağlanır.
   Kaldır: servis durur, paket sunucuda kalır. "Profili ve torrent listesini de sil" seçilirse ayarlar
   ve liste silinir; indirilen dosyalar hiçbir durumda silinmez.
   Dozzle kaldırıldı (v2-118): App Store → Ayrıntı içinde Günlük vardır.
 
-A) Temiz kurulum — v2-151
+A) Temiz kurulum — v2-153
   0. Sunucuyu sıfırlamak ayrı bir işlemdir; kurulum betiği sunucuyu silmez.
      Sıfırlamada korunması gereken veriyi önceden kendiniz yedekleyin.
      SSH host anahtarı değişmişse yeni parmak izini sağlayıcı konsolundan doğrulayın;
      sonra yalnız o sunucunun eski known_hosts kaydını değiştirin. SSH doğrulamasını kapatmayın.
   1. Güncel .command ve kurulum/ aynı klasörde olmalı. Var olan kurulum.env'yi üzerine yazmayın.
      İzin 600 veya 400; yalnız SSH_HOST ve isteğe bağlı LOCAL_DOMAIN.
-  2. 2026.08.06-v2-151.command → sunucu/özeti kontrol edin → E.
+  2. 2026.08.06-v2-153.command → sunucu/özeti kontrol edin → E.
      Tailscale giriş bağlantısı gelirse tarayıcıdan onaylayın.
   3. Tailscale Admin: exit-node onayı, restricted DNS alanı ve yeni sunucunun Tailscale IP'si.
      Sunucuyu sıfırlamak aynı Tailscale IP'sini garanti etmez.

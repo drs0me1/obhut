@@ -59,6 +59,16 @@ ICMP6_TYPES=(destination-unreachable packet-too-big time-exceeded parameter-prob
 # oluşturur). Her şey uygulanmadan önce okunur ve doğrulanır: bozuk bir kayıt hiçbir
 # zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, alt ağ IPv4/IPv6.
 WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
+SHARE_WAN_ACTIVE=0 SHARE_SOCKET_IP=0 SHARE_SOCKET_TOTAL=0
+load_share_wan() {
+    local values
+    [[ -n "${SHARE_WAN_BACKEND:-}" ]] || return 0
+    values="$(python3 "$SBIN_DIR/master_shares.py" --state "$STATE_FILE" wan-firewall)" ||
+        die "WebDAV WAN kaydı okunamadı; kurallar değiştirilmedi"
+    read -r SHARE_WAN_ACTIVE SHARE_SOCKET_IP SHARE_SOCKET_TOTAL <<<"$values"
+    [[ "$SHARE_WAN_ACTIVE" =~ ^[01]$ && "$SHARE_SOCKET_IP" =~ ^[0-9]+$ && "$SHARE_SOCKET_TOTAL" =~ ^[0-9]+$ ]] ||
+        die "WebDAV WAN sınırları geçersiz"
+}
 # DD-150: WireGuard bir Konsol modülüdür. Modül kayıtta yoksa ağ kaydı (anahtarlarla birlikte
 # korunmuş olabilir) yok sayılır: hiçbir WireGuard portu ya da kuralı açılmaz.
 wg_module_on() {
@@ -270,6 +280,9 @@ apply_input4() {
     for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
         "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${WG_PORTS[i]}" -j ACCEPT
     done
+    if [[ "$SHARE_WAN_ACTIVE" == 1 ]]; then
+        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SHARE_PORT" -j ACCEPT
+    fi
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
@@ -445,6 +458,7 @@ check_chain_shape() {
 wan_allow_pairs() {
     printf '%s\n' "udp $TAILSCALE_UDP_PORT" "tcp $SSH_PUBLIC_PORT"
     [[ "$1" == v4 ]] || return 0
+    [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_PORT"
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
     [[ "${#WG_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${WG_PORTS[@]}"
     # DD-151: qBittorrent'e gelen eş portu açılmaz.
@@ -565,6 +579,15 @@ load_settings_rules() {
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     SETTINGS4="$(python3 "$SBIN_DIR/master_settings.py" rules 4 "$WAN_INTERFACE")" || die "Konsol IPv4 kuralları okunamadı"
     SETTINGS6="$(python3 "$SBIN_DIR/master_settings.py" rules 6 "$WAN_INTERFACE")" || die "Konsol IPv6 kuralları okunamadı"
+    if [[ "$SHARE_WAN_ACTIVE" == 1 ]]; then
+        # Before operator ACCEPT rules: cap even unauthenticated idle TCP sockets.
+        # Existing manual DENY rules remain effective; no third-party chains touched.
+        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_PORT -m connlimit --connlimit-above $SHARE_SOCKET_TOTAL --connlimit-mask 0 --connlimit-saddr -m comment --comment konsol-base:share-total -j REJECT --reject-with tcp-reset"
+        core4="$line"$'\n'
+        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_PORT -m connlimit --connlimit-above $SHARE_SOCKET_IP --connlimit-mask 32 --connlimit-saddr -m comment --comment konsol-base:share-ip -j REJECT --reject-with tcp-reset"
+        SETTINGS4="$core4$line"$'\n'"$SETTINGS4"
+        core4=""
+    fi
     ports="$(python3 "$SBIN_DIR/master_settings.py" tailnet-ports)" || die "Tailscale izinleri okunamadı"
     while read -r family proto port; do
         [[ "$family" =~ ^[46]$ && "$proto" =~ ^(tcp|udp)$ && "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] ||
@@ -651,6 +674,7 @@ if [[ -n "${RUNTIME_DIR:-}" ]]; then
     flock -w 5 7 || die "başka bir firewall işlemi sürüyor"
 fi
 load_wg_networks
+load_share_wan
 resolve_wan_interface
 load_settings_rules
 

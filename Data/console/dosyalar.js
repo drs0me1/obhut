@@ -6,12 +6,21 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
   const access = (s) => s.permission === "rw" ? "Okuma ve yazma" : "Salt okunur";
   const expiry = (s) => s.expires ? new Date(s.expires * 1000).toLocaleDateString("tr-TR") : "Süresiz";
   const button = (text, icon, fn, primary = false) => h("button", { type: "button", class: "btn btn-sm " + (primary ? "btn-primary" : "btn-quiet"), onclick: fn }, svg(icon), text);
-  const address = (s, label, boxed = false) => h("div", { class: "dav-address" + (boxed ? " dav-url" : "") },
-    h("code", null, s.url), copyButton(s.url, label));
+  const networkChoices = [["tailscale", "Tailscale"], ["wan", "WAN"]];
+  const networks = (s) => s?.networks ?? ["tailscale"];
+  const networkBadges = (s) => h("div", { class: "dav-network-badges" }, ...networkChoices
+    .filter(([value]) => networks(s).includes(value)).map(([value, label]) => h("span", { class: "shchip", "data-network": value }, label)));
+  const addresses = (s, boxed = false) => h("div", { class: "dav-addresses" }, ...networkChoices
+    .filter(([value]) => networks(s).includes(value)).map(([value, label]) => {
+      const url = s.urls ? s.urls[value] : s.networks == null && value === "tailscale" ? s.url : null;
+      return h("div", { class: "dav-pair", "data-network": value }, h("small", null, `${label} · HTTP`),
+        url ? h("div", { class: "dav-address" + (boxed ? " dav-url" : "") }, h("code", null, url), copyButton(url, `${s.name} ${label} adresi`))
+          : h("small", null, value === "wan" ? getShares()?.wan?.reason || "WAN adresi kullanılamıyor." : "Tailscale adresi kullanılamıyor."));
+    }));
   function warning() {
     return h("details", { class: "dav-boundary" }, h("summary", null, svg("shield"), "Paylaşmadan önce erişim sınırını kontrol edin"),
       h("p", null, "Alıcıya yalnız WebDAV portunu açın; Konsol ve SSH yalnız yöneticide kalmalı. Konsol parolasızdır: panele ulaşan kişi tüm dosyaları yönetebilir. Tailscale ACL/grants kuralları burada değiştirilmez."),
-      h("p", null, "HTTP adresi Tailscale tünelinde taşınır. HTTPS veya dosya kilidi isteyen istemciler bu adresle uyumlu olmayabilir; Infuse/Finder uyumu istemcide ayrıca sınanmalıdır."));
+      h("p", null, "Tailscale bağlantısı şifreli tünelde taşınır. WAN üzerinden HTTP, parola ve verileri şifrelemeden gönderir. Dosya kilidi isteyen istemciler bu adresle uyumlu olmayabilir; Infuse/Finder uyumu istemcide ayrıca sınanmalıdır."));
   }
   function update(action, body) {
     if (busy) return Promise.reject(new Error("Paylaşım kaydediliyor; lütfen bekleyin."));
@@ -56,7 +65,8 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
       h("div", { class: "dav-pair" }, h("small", null, "Erişim"), h("strong", null, access(s))),
       h("div", { class: "dav-pair" }, h("small", null, "Kullanıcı"), h("span", null, s.username, copyButton(s.username, "Kullanıcı"))),
       h("div", { class: "dav-pair" }, h("small", null, "Durum · bitiş"), h("span", null, `${stateText(s)} · ${expiry(s)}`)),
-      h("div", { class: "dav-pair" }, h("small", null, "Tailscale üzerinden WebDAV"), address(s, "WebDAV adresi", true)),
+      h("div", { class: "dav-pair" }, h("small", null, "Ağ"), networkBadges(s)),
+      addresses(s, true),
       h("div", { class: "dav-actions" }, button("Düzenle", "pencil", () => edit(s)),
         button(s.paused ? "Devam ettir" : "Duraklat", s.paused ? "play" : "pause", () => pause(s)),
         button("Kaldır", "trash", () => remove(s))),
@@ -68,6 +78,23 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     const password = h("input", { type: "password", id: "dav-password", autocomplete: "new-password", required: !existing,
       minlength: 8, maxlength: 256, placeholder: existing ? "Boş bırak: mevcut parola korunsun" : "En az 8 karakter" });
     const target = h("input", { id: "dav-path", required: true, value: path, autocomplete: "off", spellcheck: "false" });
+    const hadWan = !!existing && networks(existing).includes("wan");
+    const wanAvailable = getShares()?.wan?.available === true;
+    const tailscale = h("input", { type: "checkbox", id: "dav-tailscale", checked: networks(existing).includes("tailscale") });
+    const wan = h("input", { type: "checkbox", id: "dav-wan", checked: hadWan, disabled: !wanAvailable && !hadWan,
+      "aria-describedby": !wanAvailable ? "dav-wan-status" : null });
+    const ackWan = h("input", { type: "checkbox", id: "dav-ack-wan" });
+    const wanAcknowledgement = h("label", { class: "dav-warning dav-check", hidden: true }, ackWan,
+      h("span", null, "WAN üzerinden HTTP, parola ve verileri şifrelemeden gönderir. Onaylıyorum."));
+    const validateNetworks = () => {
+      tailscale.setCustomValidity(tailscale.checked || wan.checked ? "" : "En az bir ağ seçin: Tailscale veya WAN.");
+      ackWan.required = wan.checked && !hadWan;
+      wanAcknowledgement.hidden = !ackWan.required;
+      if (!ackWan.required) ackWan.checked = false;
+    };
+    tailscale.addEventListener("change", validateNetworks);
+    wan.addEventListener("change", validateNetworks);
+    validateNetworks();
     const permission = h("select", { id: "dav-permission", "aria-label": "Erişim izni" },
       h("option", { value: "ro", selected: !existing || existing.permission === "ro" }, "Salt okunur"),
       h("option", { value: "rw", selected: existing && existing.permission === "rw" }, "Okuma ve yazma"));
@@ -92,6 +119,13 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
         password.type = "text";
       }), button("Göster / gizle", "eye", () => { password.type = password.type === "password" ? "text" : "password"; })),
       h("small", { class: "hint-s" }, "Parolayı kaydetmeden önce not edin; daha sonra gösterilmez. Tarayıcı deposuna kaydedilmez."),
+      h("fieldset", { class: "dav-networks" }, h("legend", null, "Erişim ağı"),
+        h("div", { class: "dav-network-choices" }, h("label", { class: "dav-check" }, tailscale, "Tailscale"),
+          h("label", { class: "dav-check" }, wan, "WAN (internet)")),
+        h("small", { class: "hint-s" }, "En az bir ağ seçin; ikisini birlikte kullanabilirsiniz."),
+        !wanAvailable ? h("p", { class: "hint-s", id: "dav-wan-status" }, `WAN kullanılamıyor: ${getShares()?.wan?.reason || "Sunucuda WAN adresi hazır değil."}`) : null),
+      wanAcknowledgement,
+      h("small", { class: "hint-s" }, "WAN sınırları: 60 saniyede 5 hatalı giriş → 5 dakika engel; IP başına 4, toplam 8 eşzamanlı istek. Güvenlik duvarındaki engeller ve sağlayıcı kuralları ayrıca geçerlidir."),
       !existing ? h("label", { for: "dav-permission" }, "Erişim izni", permission) : null,
       !existing ? acknowledgement : null,
       !existing ? h("label", { for: "dav-days" }, "Süre", days) : null,
@@ -99,8 +133,11 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
       error, h("div", { class: "dav-actions" }, save, button("Vazgeç", "close", onDone)));
     frm.addEventListener("submit", (event) => {
       event.preventDefault();
+      validateNetworks();
       if (!frm.reportValidity()) return;
-      const data = { id: existing ? existing.id : "", path: target.value.trim(), username: username.value.trim(), password: password.value };
+      const data = { id: existing ? existing.id : "", path: target.value.trim(), username: username.value.trim(), password: password.value,
+        networks: [tailscale.checked ? "tailscale" : null, wan.checked ? "wan" : null].filter(Boolean) };
+      if (wan.checked && !hadWan) data.ack_wan_http = ackWan.checked;
       if (!existing) Object.assign(data, { permission: permission.value, ack_write: ack.checked, days: Number(days.value) });
       save.disabled = true; error.hidden = true;
       update("kaydet", data).then(() => { password.value = ""; onDone(); toast(existing ? "Paylaşım güncellendi." : "Klasör paylaşımı hazır."); })
@@ -109,12 +146,18 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     });
     return frm;
   }
-  function edit(s) { showDialog(`${s.name} · paylaşımı düzenle`, form(s.path, s, closeDialog)); }
+  function openForm(title, path, existing) {
+    const content = form(path, existing, closeDialog);
+    showDialog(title, content);
+    const subtitle = content.closest("dialog")?.querySelector(".dlg-head p");
+    if (subtitle) subtitle.textContent = "Klasör başına ayrı hesap · seçili ağlar üzerinden HTTP";
+  }
+  function edit(s) { openForm(`${s.name} · paylaşımı düzenle`, s.path, s); }
   function create(item, path) {
     if (item.type !== "dir") { toast("WebDAV için bir klasör seçin."); return; }
     const found = (getShares()?.items || []).find((s) => s.path === path);
     if (found) { edit(found); return; }
-    showDialog(`${item.name} · WebDAV ile paylaş`, form(path, null, closeDialog));
+    openForm(`${item.name} · WebDAV ile paylaş`, path, null);
   }
   function list(body) {
     const data = getShares();
@@ -129,10 +172,11 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     }
     if (!data.items.length) return;
     body.append(h("div", { class: "dav-shares", "aria-busy": busy },
-      h("div", { class: "dav-share-head", "aria-hidden": true }, ...["Klasör ve adres", "Kullanıcı", "Erişim", "Süre", "Durum", "İşlemler"].map(label => h("span", null, label))),
+      h("div", { class: "dav-share-head", "aria-hidden": true }, ...["Klasör ve adres", "Kullanıcı", "Ağ", "Erişim", "Süre", "Durum", "İşlemler"].map(label => h("span", null, label))),
       ...data.items.map((s) => h("article", { class: "dav-share-row", "data-share-id": s.id },
-      h("div", { class: "dav-share-name" }, h("strong", null, s.name), h("small", null, `${root()}/${s.path}`), address(s, `${s.name} adresi`)),
+      h("div", { class: "dav-share-name" }, h("strong", null, s.name), h("small", null, `${root()}/${s.path}`), addresses(s)),
       h("div", { class: "dav-cell dav-user" }, h("span", { class: "dav-label" }, "Kullanıcı"), h("span", null, s.username)),
+      h("div", { class: "dav-cell dav-network" }, h("span", { class: "dav-label" }, "Ağ"), networkBadges(s)),
       ...options(s),
       h("div", { class: "dav-cell dav-state" }, h("span", { class: "dav-label" }, "Durum"),
         h("span", { class: "shchip" }, stateText(s)),

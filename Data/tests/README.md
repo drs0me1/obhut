@@ -14,6 +14,32 @@ Host acceptance (Debian 13 or supported Ubuntu target, after install) is
 separate: DNS loopback vs Tailscale answers, WebDAV PROPFIND/read-only,
 firewall `--check`, and the two public UDP ports.
 
+## Folder network selection and WAN admission (v2-153, DD-179)
+
+`test_share_manager_networks.py` covers opt-in, schema-2 migration, immutable
+credentials/identity/expiry on network edits, public projection, rollback and
+interrupted-change recovery. `test_webdav_networks.py` checks scope before
+hash/filesystem work, header spoofing, sliding failure windows, bounded tables,
+parallel hashes/requests, distinct loopback pools, timeout/abort cleanup and
+expect-continue/pipeline behavior. Run on Linux as well: macOS skips the test
+that binds the same port on a second loopback address. `share-networks.bats`
+checks deployment wiring and conditional firewall/edge limits.
+
+With explicit disposable-host authorization, run from an external client:
+
+```bash
+python3 Data/tests/share-networks-live.py --host nrm
+```
+
+Only temporary folders/accounts are published, with random credentials kept in
+memory/SSH stdin. The test exercises actual WAN and Tailscale Caddy endpoints,
+cross-scope refusal, GET/PROPFIND/ranges, RO/RW, forged Host/client-IP, idle TCP
+admission, simultaneous-request/login caps, tailnet availability, last-share
+pause and timed expiry. WAN ingress packet counters confirm external routing.
+Cleanup removes only the fixture prefix/accounts, never existing shares.
+Fresh supported-OS installation, reboot and native Infuse/Finder acceptance are
+separate; protocol tests do not certify every DAV client.
+
 ## Model A and compact App Store (DD-160/DD-161, v2-131)
 
 Serve the real `Data/console` tree locally as below, then run
@@ -28,6 +54,26 @@ stop/start/removal and cancellation, default data retention, log HTTP errors
 and safe text rendering, no account reads, and visible status at mobile widths.
 `test_resources.py` covers independent sampling, guest CPU accounting, unknown
 measurements, legacy compatibility and real HTTP Host/header/origin gates.
+
+## qBittorrent integration-only seed (DD-178, v2-152)
+
+Bats requires an exact six-key seed allowlist (startup notice, two download-path
+compatibility keys and three authenticated loopback WebUI keys). The module
+fixture renders that real seed; reapply and remove/reinstall must preserve user
+UPnP/discovery/temporary-path choices byte-for-byte and never apply the firewall.
+
+On an authorized Linux test host with qBittorrent, iproute2 and setpriv installed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 unshare --net --fork python3 Data/tests/torrent-defaults-linux.py
+```
+
+This refuses the host network namespace, starts native qBittorrent as uid 1000
+in disposable profiles, and compares the actual seed against application
+defaults. It checks loopback/local authentication, download location and native
+restart persistence of user choices. No torrents are added, no installed config
+is read, no host service is controlled, and fixture passwords are never printed.
+It does not replace clean Debian/Ubuntu installation or service-sandbox tests.
 
 ## Legacy cleanup boundaries (DD-171)
 

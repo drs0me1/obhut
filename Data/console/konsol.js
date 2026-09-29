@@ -1816,6 +1816,7 @@
 
   const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
   function webDesc(e) {
+    if (e.access === "wan") return "İnternet üzerinden seçili klasör paylaşımları · HTTP şifrelemez";
     const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
     if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
     return metaOf(e.source).name + extra;
@@ -1832,13 +1833,13 @@
     const rows = w.entries.map((e) => h("div", { class: "tr" },
       h("span", { class: "a" }, e.address, h("small", null, webDesc(e))),
       h("span", { class: "to" }, e.routes.map((r) => webHop(r, e.routes.length > 1))),
-      h("span", { class: "who" }, srcTag(e.source), h("span", { class: "tag" }, "Tailscale"))));
+      h("span", { class: "who" }, srcTag(e.source === "paylasim-wan" ? "paylasim" : e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · HTTP" : "Tailscale"))));
     fill("cfg-web", 
       h("div", { class: "card-head" }, h("h2", null, svg("globe"), "Web adresleri"),
         h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
       h("div", { class: "table addr-t" }, h("div", { class: "tr head" }, h("span", null, "Adres"), h("span", null, "Nereye gider"), h("span", null, "Kaynak · erişim")), rows),
       rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
-      h("div", { class: "card-foot" }, h("span", null, "Bu adresler internete doğrudan açık değildir. Caddy yalnız Tailscale üzerinden erişilir. HTTP kullanılır; Tailscale tüneli trafiği şifreler.")));
+      h("div", { class: "card-foot" }, h("span", null, "Panel ve uygulama arayüzleri yalnız Tailscale'dedir. WAN etiketi yalnız seçilen klasör paylaşımlarını gösterir; internet üzerinden HTTP parola ve dosyaları şifrelemez.")));
   }
   function systemContent() {
     const s = S.sys;

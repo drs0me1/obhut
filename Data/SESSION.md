@@ -4,6 +4,89 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-09-29 — HTTP WAN folder-share selection, v2-153 (DD-179):**
+- User approved implementing/deploying the network-selection proposal but
+  explicitly retained HTTP. WAN password-attempt and connection limits are
+  mandatory. Existing shares remain Tailscale-only; no real share was opted in.
+- Schema 3 stores per-folder networks; stable ID/hash/permission/expiry. Two
+  loopback scopes on the same SHARE_PORT isolate WAN/tailnet budgets. Caddy
+  overrides the socket-peer header, exposes only `/s/*` on explicit WAN IPv4,
+  and projects/removes its site with the last active share. Public IPv6/NAT,
+  certificates and Tailscale policy changes are outside this phase.
+- Limits: 5 bad attempts/60s → 300s IP block; 4096 history entries; 4 hash slots;
+  8 WAN connections, 4 requests/IP, independent 16 tailnet connections; backend
+  idle 30s. Edge TCP 16/IP, 64 total, Caddy header 10s/idle 30s. Manual firewall
+  denials remain ahead of base permission. Caddy startup waits for/checks FW.
+- Root changes keep a private pending snapshot and restore on failure. The
+  scoped 30s guard handles expiry and interrupted operations under existing
+  locks. Installer recovery reloads the old credential before clearing pending.
+- UI: checkboxes/HTTP acknowledgement, network column, labeled adjacent-copy
+  URLs, limits note. Access and duration remain inline. Caddy inventory now
+  recognizes proxy blocks and labels WAN separately; firewall has conditional
+  IPv4 WebDAV permission only while needed.
+- Deployed through the portable launcher with scratch `kurulum.env` (SSH_HOST
+  nrm, blank LOCAL_DOMAIN), default no full-upgrade and E confirmation. Never
+  opened the operator input file. Three incremental deployments succeeded;
+  final payload SHA256 `ad705b542391b24940a2fd7ea013c4b0beefa45b56cc42ee210af39dad80f91f`.
+  Root/Data/app launchers are identical; all 46 embedded runtime files match.
+- Checks: 159 Bats (156 pass, 3 platform skips), 170 local Python (167 pass,
+  3 optional native RAR/loopback skips); 66 installed Linux share tests all pass.
+  Bash/ShellCheck, systemd-analyze verify, dnsmasq --test and firewall --check
+  passed. Settings and Files browser suites passed. Files UI added a detached-DOM
+  measurement regression: actual 6px copy-button adjacency stays asserted.
+- External Mac → actual WAN IPv4 acceptance passed selection/isolation,
+  GET/PROPFIND/ranges, RO/RW, forged Host/IP, TCP cap, concurrent request cap,
+  login block, independent tailnet availability, last-share pause and timed
+  expiry. WAN ingress counters prove this was not merely a loopback test;
+  live Caddy configuration confirms public header/idle deadlines. Test fixtures
+  were removed without targeting other accounts. Final nrm registry is empty,
+  with no test folder, pending operation, failed unit or active WAN share left.
+- Initial testing caught an unknown Host yielding empty 200 (now explicit
+  public catch-all 404), a test expectation mismatch (expiry is 403), and
+  cleanup colliding with the guard lock (fixture cleanup now retries). One
+  parallel test upload hit the operator SSH local-forward config; tests now
+  pass ClearAllForwardings=yes and never modify that config.
+- Evidence: `/tmp/master-stack-v153.40w1Du/` logs and scratch launcher/input.
+  No commit/push; pre-existing v152 qBittorrent changes remain included. No
+  fresh Ubuntu/Debian install, reboot, or native Infuse/Finder acceptance run.
+
+## Previous Task
+
+**2026-09-29 — qBittorrent integration-only seed, v2-152 (DD-178):**
+- User requested only panel/functional integration settings; UPnP, automatic
+  mapping and local peer discovery must be left to the user. Removed their
+  forced values plus forced separate temporary storage from the first-profile
+  template. Six keys remain: startup notice, current/compatibility download path,
+  authenticated loopback WebUI address/port. No service sandbox/firewall changes.
+- Existing profiles are not migrated: their values may already be intentional
+  user choices. Reapply and remove/reinstall preserve them byte-for-byte.
+  Conventional incomplete-path guards remain for existing/manual configurations.
+- Bats uses the real rendered seed, enforces its exact key allowlist, checks
+  preservation/no firewall calls and reports both absent and user-set temp paths.
+  First full run exposed an obsolete expected forced-temp assertion; corrected
+  the expectation and added user-selected temp-path/read-only coverage.
+- Final checks: 155 Bats cases (152 pass, three missing-timeout skips), 126
+  Python cases (124 pass, two optional RAR skips), Bash syntax and ShellCheck.
+  No browser layout/code changes; browser suites were not rerun.
+- Added `tests/torrent-defaults-linux.py`: disposable network namespace and
+  uid-1000 profiles compare native defaults, anonymous/authenticated loopback,
+  downloads and user-selected UPnP/discovery/temp storage across native restart.
+  Ran twice on nrm's Debian qBittorrent 5.1.0-2; both passed. No torrent added,
+  installed profile read/changed, host service control or firewall mutation.
+- Exported v152 to repo root and Data/app (no Desktop copy); both identical,
+  all 44 embedded runtime files match source. Payload SHA256:
+  `a24f3e97c3796fea73ec31cac24416943e395fe3ba01ba89c3320ffe6b64a0a7`.
+  Previous repo/app v151 launchers are recoverable from Git (`c0826c0`).
+- Evidence: `/tmp/master-stack-v152.6BTcfb/` local test logs; nrm scratch
+  `/tmp/master-stack-v152.Jw3WDO/` contains only test script/template. Private
+  profiles were automatically removed. No extra package installed (remote rsync
+  absent; copied these two files with tar over SSH). No active test process.
+- Full v152 deployment, fresh OS install and reboot not performed; current live
+  preferences remain untouched. No commit/push. v145–151 were committed in
+  `c0826c0` before this task; older "no commit" notes below are historical.
+
+## Previous tasks (historical; newer decisions take precedence)
+
 **2026-09-28 — Internet-only WireGuard, v2-151 (DD-177), supersedes v150 below:**
 - User retired Local access everywhere, including existing networks, creation,
   settings and server configuration. DNS remains editable without key/profile reset.
@@ -44,8 +127,6 @@ Cross-session continuity for this repository.
 - Fresh Debian/Ubuntu image installation, reboot and external-device acceptance
   were not run this turn. Hosts using private DNS in device profiles must switch
   to public DNS for internet-only use; nrm's saved defaults are already public.
-
-## Previous tasks (historical; newer decisions take precedence)
 
 **2026-09-28 — WireGuard Local access default, v2-150 (DD-176):**
 - User requested all new WG users get Local access by default and removal of

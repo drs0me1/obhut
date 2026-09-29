@@ -1,0 +1,10 @@
+[Unit]
+Description=WebDAV WAN expiry and interrupted-operation recovery
+After=caddy.service master-paylasim.service master-firewall.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master_shares.py --state __STATE_FILE__ guard
+TimeoutStartSec=120
+UMask=0077

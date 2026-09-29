@@ -2,6 +2,30 @@
 
 ## Design decisions and rationale
 
+### DD-179: Per-folder HTTP WAN opt-in with separate admission budgets (v2-153)
+
+- **Decision:** keep HTTP as explicitly requested. A folder selects Tailscale,
+  WAN IPv4 or both; schema-2 migration/new shares are Tailscale-only. Adding WAN
+  requires explicit plaintext-risk consent; TLS and provider/NAT automation are
+  not implied. The same account, ID, permissions and expiry serve both addresses.
+- **Boundary:** Caddy binds an explicit WAN IP only when needed, proxies only
+  `/s/*` to a distinct loopback address on the same port, and overwrites the
+  real-client-IP header. Listener scope decides access before credentials/file
+  IO; forwarded headers cannot turn a WAN request into a Tailscale request.
+- **Limits:** 5 failures/60s blocks the IP for 300s; bounded 4096-entry history,
+  4 concurrent scrypt checks; 8 WAN backend connections, 4 requests/IP, 16 separate
+  tailnet slots, 30s WAN idle timeout. Edge TCP connlimit is 16/IP and 64 total,
+  before manual allows; denials remain effective. These are not bandwidth caps.
+- **Lifecycle:** locked atomic registry plus private pending snapshot; failed
+  publication rolls back. A narrow 30s expiry/recovery timer removes the last
+  expired WAN projection; unchanged projections do nothing. Immediate request
+  expiry remains in the unprivileged handler. No broad reconcile engine.
+- **Trade-offs:** HTTP reveals credentials/content on the internet; account
+  edits still interrupt all DAV streams and reset in-memory attempt blocks.
+  Conntrack can retain closing sockets temporarily. TLS and native-client/fresh
+  Ubuntu acceptance remain separate from this initial disposable-host test.
+
+
 This document records the *why* behind non-obvious choices in
 `install.sh`, so future changes don't accidentally "fix" something that
 was deliberate. Entries are derived from reading the script's own inline
@@ -6831,6 +6855,31 @@ failure with an early, named one.
     - After a reboot the panel and both tmpfs mounts came back, with 0 failed
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
+
+### DD-178: Seed qBittorrent integration, not user preferences (2026-09-29)
+
+- **Request:** limit configuration to panel integration and correct service
+  operation; leave UPnP/automatic port mapping and local peer discovery to users.
+- **Decision (v2-152):** remove forced UPnP, port-mapping and LSD values, and
+  forced separate temporary storage, from the new-profile template. Keep only
+  the writable default download location (current/compatibility keys), loopback
+  WebUI address/port, localhost authentication and the existing headless-startup
+  notice acceptance. Absent keys use the installed application's defaults;
+  removing `false` does not mean writing `true` instead.
+- **Preserve:** nonroot service account, profile ownership, systemd sandbox,
+  DNS/Caddy integration and host firewall. No new peer-port permission, routing
+  change, automatic tuning or extra package. Existing Files/share guards for the
+  conventional incomplete path remain; they do not enable temporary storage.
+- **Existing profiles:** no automatic deletion or migration of preference keys;
+  old installer defaults cannot be distinguished safely from deliberate user
+  choices. Reapply and remove/reinstall without data deletion preserve all of
+  them. Users change their current preferences in qBittorrent's own settings.
+- **Verification:** exact seed-key allowlist and lifecycle/profile-preservation
+  Bats tests; isolated native Linux comparison against the same qBittorrent's
+  defaults, anonymous/login gates, nonroot startup and preference persistence
+  after restart. Live installed accounts/services are not used by this fixture.
+- Supersedes DD-151's enforced UPnP/LSD/temporary-storage defaults only; the
+  firewall and other module lifecycle decisions are unchanged.
 
 ### DD-177: Retire Local access; WireGuard is internet-only (2026-09-28)
 

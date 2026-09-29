@@ -9,7 +9,7 @@ User=__DOWNLOADS_UID__
 Group=__DOWNLOADS_GID__
 LoadCredential=registry:__SHARE_STATE_FILE__
 Environment=HOME=/tmp
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__ --wan-listen=__SHARE_WAN_BACKEND__
 Restart=on-failure
 RestartSec=3s
 UMask=0002

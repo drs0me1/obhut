@@ -16,6 +16,21 @@ the archive opener automatically detects multipart RAR and nested ZIP/RAR. The
 destination defaults to downloads with a folder picker. Depth/size/time limits
 remain enforced internally, without a nesting prompt; source archives are kept.
 
+**v2-153 amendment (DD-179):** folder shares explicitly select Tailscale/WAN
+IPv4/both; existing and new shares default to Tailscale. WAN deliberately uses
+HTTP with explicit plaintext-risk consent. Only selected `/s/<id>/` routes
+are public on SHARE_PORT; no administrative interface is exposed. Separate
+listener scopes, IP attempt limits and backend/edge connection caps apply.
+Expired/paused/removed shares revoke access; the last one removes the WAN
+listener and owned permission. See [folder-shares.md](folder-shares.md) for exact
+limits, failure recovery and the scoped expiry timer. This supersedes older
+tailnet-only WebDAV wording below; all other services remain tailnet-only.
+
+**v2-152 amendment (DD-178):** qBittorrent seed settings are limited to panel
+integration and headless startup. UPnP/automatic mapping, local peer discovery
+and separate temporary storage are user choices, not installer-enforced values.
+Existing profiles and the host firewall policy are unchanged.
+
 **v2-151 amendment (DD-177):** all WireGuard networks and peers are internet-only.
 Local access is retired, including UI/API/CLI selectors, WG host-rule overrides
 and the per-network Caddy listener. Installer upgrades normalize registry policy
@@ -555,9 +570,10 @@ Contract in §5–§7 and `folder-shares.md`.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
     by the operator, and decoded on the server.
   - The page inserts the text as text nodes only.
-- The page marks qBittorrent's temporary folder (`DOWNLOADS_SUBDIR/TORRENT_TEMP_DIR`,
-  the one the module's first settings name) and warns before moving or
-  deleting there.
+- The page protects the conventional temporary folder
+  (`DOWNLOADS_SUBDIR/TORRENT_TEMP_DIR`) for existing/user-configured downloads.
+  Since DD-178 new profiles do not automatically enable separate temporary
+  storage. Keeping this existing path guard does not enable it in qBittorrent.
 - It replaced FileBrowser (**DD-146**).
 
 ### 1.11 App Store and built-ins (DD-148, DD-149, DD-159)
@@ -626,12 +642,16 @@ Contract in §5–§7 and `folder-shares.md`.
     profile in `TORRENT_PROFILE_DIR` (`/var/lib/qbittorrent`), `UMask=0002`,
     `ProtectSystem=strict` with only the profile and `DOWNLOADS_PATH`
     writable, the trash and the share root inaccessible, no new privileges.
-  - Its settings are written once, when the profile has none: save path
-    `DOWNLOADS_PATH`, temporary folder `DOWNLOADS_PATH/TORRENT_TEMP_DIR`, web UI
-    on `127.0.0.1:TORRENT_UI_PORT` with local authentication, UPnP, port
-    forwarding and Local Peer Discovery off (v2-120), the legal notice
-    accepted. After that nothing touches them; changes made in qBittorrent
-    stay.
+  - Its settings are written once, when the profile has none (**DD-178**): save
+    path `DOWNLOADS_PATH`, WebUI on `127.0.0.1:TORRENT_UI_PORT` with local
+    authentication, and startup legal notice acceptance for the headless service.
+    No UPnP/automatic port-mapping, Local Peer Discovery, temporary folder/enable,
+    performance, peer-limit or other user-preference override is seeded. Those
+    follow the installed qBittorrent version's defaults until the user changes
+    them. Reinstall/reapply preserves the entire existing profile, including any
+    old installer values; it cannot distinguish those from user choices. Explicit
+    account/folder saves in Konsol remain supported. Service sandbox, DNS/Caddy
+    integration and firewall policy are unchanged.
   - `kur` checks that it runs as `DOWNLOADS_UID`, that the trash and share root
     are inaccessible to it, that its API answers `403` without a login on
     `127.0.0.1:TORRENT_UI_PORT` and through `torrent.${LOCAL_DOMAIN}`, and that
@@ -821,7 +841,7 @@ details are in [folder-shares.md](folder-shares.md).
 
 ## 6. WebDAV credentials and permissions (DD-158)
 
-SHARE_STATE_FILE is a 0600 root-owned schema-2 JSON registry of users, salted
+SHARE_STATE_FILE is a 0600 root-owned schema-3 JSON registry of networks, users, salted
 scrypt hashes, folder identity, RO/RW, pause and expiry. No plaintext password
 copy exists. The root API projects only non-secret metadata; fixed workers
 receive mutations on stdin under the existing panel gates and operation locks.
@@ -841,7 +861,8 @@ master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback,
 with no capabilities, system paths read-only, user area writable, internal
 trash/share paths inaccessible, and network restricted to loopback. There is
 no rclone download or shared account. Caddy publishes the existing name and
-Tailscale IP:SHARE_PORT. No WAN listener, extra port or Tailscale policy change.
+Tailscale IP:SHARE_PORT and an explicitly opted-in WAN IPv4:SHARE_PORT site
+(DD-179). No extra port number or Tailscale policy change.
 
 The installer prepares an empty registry only when absent and enables this
 built-in service. Reruns preserve accounts; public module removal is refused.

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-29 — Per-folder Tailscale / HTTP WAN sharing (v2-153)
+
+- Select Tailscale, WAN IPv4 or both per folder; one account/ID/permission/expiry.
+  Existing schema-2 and new shares default to Tailscale; adding WAN requires
+  explicit acknowledgement that HTTP exposes credentials/content (DD-179).
+- Separate trusted listener scopes and connection pools; Caddy replaces the
+  client-IP header. WAN: 5 bad logins/60s → 300s IP block with Retry-After,
+  4096-entry bounded history, 4 parallel hashes, 8 backend connections total,
+  4 requests/IP. Tailnet retains 16 connections. Edge TCP: 16/IP, 64 total;
+  WAN header/idle timeouts are 10s/30s. No bandwidth limiter or new package.
+- Open only the existing WebDAV port and `/s/*`; no admin interfaces, public
+  IPv6, wildcard bind, NAT/ACL change or automatic exposure of existing shares.
+  Manual firewall denies remain effective. Last active WAN share removal/pause
+  closes the listener/owned rules; a scoped timer projects expiry and recovers
+  interrupted registry operations. Caddy startup checks the firewall first.
+- Show labeled copyable URLs/network badges, HTTP consent and limits. Keep
+  inline RO/RW and duration controls. Caddy/firewall inventory identifies WAN
+  correctly and parses proxy blocks as well as single-line upstreams.
+- Add manager migration/publication/recovery tests, real-HTTP budget/scope
+  regressions, UI network tests and a disposable external-client acceptance
+  script. HTTP remains unsuitable for confidential internet traffic.
+- **Verified on nrm:** portable upgrade, Caddy/systemd/DNS/firewall checks,
+  external WAN/Tailscale isolation, TCP/request/login caps, pause/expiry cleanup
+  and 66 installed Linux share tests. Local 159 Bats and 170 Python cases have
+  three platform skips each. No fresh-OS/reboot/native-client certification.
+
+### 2026-09-29 — Integration-only qBittorrent defaults (v2-152)
+
+- Stop forcing UPnP/automatic port mapping, local peer discovery and separate
+  temporary storage in new qBittorrent profiles (DD-178). Leave these and other
+  user preferences at the installed application's defaults until changed.
+- Keep the download path, authenticated loopback WebUI and headless startup
+  notice, plus existing nonroot service/sandbox and DNS/Caddy integration.
+  Existing profiles and host firewall permissions are unchanged.
+- Add exact seed-key and reapply/reinstall preservation checks, plus a native
+  isolated Linux comparison and user-choice restart test.
+- **Verified:** 155 Bats cases (three platform skips), 126 Python cases (two
+  optional native-RAR skips), Bash syntax/ShellCheck and 44-file portable payload
+  equality. Native Debian qBittorrent 5.1.0-2 passed the isolated default/login/
+  preference-persistence test twice. No installed profile/service was changed;
+  full host upgrade, fresh OS installation and reboot were not run this turn.
+
 ### 2026-09-28 — WireGuard internet-only (v2-151)
 
 - Retire Local access entirely (DD-177): no creation/settings selector, API

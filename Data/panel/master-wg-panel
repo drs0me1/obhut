@@ -265,6 +265,8 @@ def parse_caddy(text, ts_ip, source):
             continue
         if line.endswith("{"):
             head = line[:-1].strip()
+            if cur is not None and head.startswith("reverse_proxy "):
+                cur["routes"].append({"path": ctx[-1], "kind": "proxy", "to": head.split()[1]})
             if cur is not None and head.startswith("handle"):
                 arg = head[len("handle"):].strip()
                 ctx.append(matchers.get(arg[1:], arg) if arg.startswith("@") else arg)
@@ -693,8 +695,11 @@ class Panel:
             raws.append({"file": path, "text": text})
             for site in parse_caddy(text, ts_ip, source):
                 for addr in site["addresses"]:
+                    public_share = source == "paylasim-wan"
+                    if public_share and addr.startswith(":"):
+                        addr = env.get("WAN_IPV4", "") + addr
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
-                                    "access": "tailscale"})
+                                    "access": "wan" if public_share else "tailscale"})
         return {"entries": entries, "raw": raws}
 
     def dns_view(self, env):
@@ -869,6 +874,12 @@ class Panel:
         tailnet = master_settings.tailnet_ports(env)
         tail_keys = {(r["family"], r["proto"], r["port"]) for r in tailnet}
         tail_keys.update((f, "udp", n["port"]) for n in networks for f in (4, 6))
+        try:
+            if master_shares.Manager(self.args.state).wan_active():
+                rows.append({"name": "Paylaşım WebDAV · WAN", "family": 4, "proto": "tcp",
+                             "port": int(env["SHARE_PORT"]), "scope": "wan", "baseline": True})
+        except (OSError, ValueError, KeyError, master_shares.ShareError):
+            pass
         for p in self.ports(env, networks):
             scope = {"internet": "wan", "tailscale": "tail", "loopback": "lo"}[p["scope"]]
             for family in (4, 6):

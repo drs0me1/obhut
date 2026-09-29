@@ -1,4 +1,55 @@
-# Folder WebDAV (v2-128/v2-129, DD-158/DD-159)
+# Folder WebDAV (v2-153, DD-158/DD-159/DD-179)
+
+## Network selection and WAN limits (DD-179)
+
+Each folder selects `tailscale`, `wan` or both, with the same ID, account,
+password hash, permission and absolute expiry. Schema-2 records migrate to
+schema 3 with Tailscale only; new shares also default to Tailscale. An empty
+selection is rejected; adding WAN requires explicit `ack_wan_http: true`.
+WAN is **unencrypted HTTP**, deliberately requested for this phase: credentials
+and content can be observed or modified in transit. Limits do not provide TLS.
+Use temporary credentials/non-sensitive data for public testing.
+
+Caddy binds the server's assigned, globally routable WAN IPv4 on SHARE_PORT
+while an unpaused, unexpired, identity-valid WAN share exists. No NAT discovery,
+provider forwarding, IPv6 WAN, wildcard bind, admin/API route or ACL change.
+Manual firewall denials remain effective; the form notes this prerequisite.
+Public results contain labeled URLs; unavailable WAN is not advertised.
+
+The unprivileged process uses separate loopback addresses on SHARE_PORT:
+127.0.0.1 for Tailscale, SHARE_WAN_BACKEND for WAN. Listener scope, not an HTTP
+header, selects folder authorization. Caddy overwrites X-Share-Client-IP using
+the socket peer; client X-Forwarded-For is not trusted. All DAV methods require
+the selected network, including OPTIONS and unsupported methods.
+
+- WAN: 8 backend connections total, 4 simultaneous requests per source IP,
+  4 parallel scrypt checks and a 30-second socket inactivity timeout.
+- Five supplied bad credentials in a sliding 60 seconds block that IP for
+  300 seconds; 429 includes Retry-After. Missing Authorization is the usual
+  uncounted 401 challenge. Unknown accounts and malformed credentials count.
+  The 4096-entry table fails closed when full; active blocks are never evicted.
+- Tailscale keeps its independent 16-connection pool. WAN connections close
+  after each response; proxy keepalive is off for that upstream.
+- Host TCP admission additionally caps new WAN sockets at 16 per source IP and
+  64 total, before manual allow rules. Conntrack can temporarily retain closing
+  sockets. These are connection counts, not bandwidth caps or DDoS protection.
+- The WAN Caddy listener has a 10-second header deadline and 30-second keepalive
+  idle limit; other listener timeouts are unchanged. Caddy startup waits for and
+  checks the owned firewall before serving. See the official [Caddy listener
+  binding](https://caddyserver.com/docs/caddyfile/directives/bind) and [server
+  timeout](https://caddyserver.com/docs/caddyfile/options#timeouts) semantics.
+- In-memory login blocks reset on service restart, including account edits;
+  unauthenticated clients cannot trigger such restarts.
+
+Registry changes restart the data service, then validate/project Caddy and the
+owned firewall rules. Failures restore the old registry/projection; a private
+pending snapshot recovers interrupted changes under the same locks. A focused
+30-second `master-share-network.timer` closes expired WAN projections and
+recovers pending operations, without rewriting unchanged state or restarting
+healthy services. Request/chunk expiry remains immediate; listener/rule cleanup
+is normally within the next tick and defers during locked/pending settings
+operations. Last-share pause/removal closes it synchronously. Reboot reprojects
+from the registry. This is not a general service reconciliation engine.
 
 The Files v09 layout is implemented in `console/konsol.js`, `dosyalar.js`
 and `dosyalar.css`: list by default, optional cards, selected-item details on
@@ -17,7 +68,7 @@ Existing file upload, text view, move, rename and trash operations remain.
   duration, state and action columns. Access and duration are native dropdowns
   saved immediately; RW still asks for explicit acknowledgement. Choosing 1/7/30
   days starts that duration now; the current absolute expiry is shown until then.
-  Manage edits folder/username/password only. Omitted fields preserve the current
+  Manage edits folder/username/password and networks. Omitted fields preserve the current
   registry values under its lock; access/expiry-only edits never rebind a missing
   or replaced root. Failed writes retain the last confirmed UI values.
 - Address: `http://<tailscale-ip>:<SHARE_PORT>/s/<id>/`. The same path works
@@ -47,7 +98,7 @@ Existing file upload, text view, move, rename and trash operations remain.
 
 - `panel/master_shares.py`: root-only registry owner, fixed verbs
   prepare/status/save/pause/remove, scrypt hashes with random salts. The source
-  is `SHARE_STATE_FILE` (`/etc/master-stack/webdav.json`, 0600 root), schema 2.
+  is `SHARE_STATE_FILE` (`/etc/master-stack/webdav.json`, 0600 root), schema 3.
   Public results omit hashes, salts and filesystem identities.
 - `master-wg-panel`: existing Host, same-origin and `X-Konsol: 1` gates.
   `GET /api/konsol/paylasim` lists public metadata; POST `.../kaydet`,
@@ -62,9 +113,9 @@ Existing file upload, text view, move, rename and trash operations remain.
   `SERVER_ROOT` is writable to support shares anywhere inside the user area.
   **Per-folder isolation is enforced in the request handler, not by a separate
   OS sandbox per account**. This differs from the tentative rclone-instance
-  proposal and is not a general-purpose externally exposed file server.
-- Caddy proxies the existing tailnet name/IP port to the loopback service.
-  No extra public listener or Tailscale ACL/grant is created. An address refresh
+  proposal; the supported DAV subset is intentionally bounded.
+- Caddy proxies the tailnet name/IP port and an opted-in WAN IPv4 site.
+  No Tailscale ACL/grant is created. An address refresh
   restarts only Caddy; WebDAV remains on loopback.
 
 ## Filesystem and protocol boundaries
@@ -88,7 +139,7 @@ PUT (fixed-length/chunked, up to 64 GiB), MKCOL, DELETE, MOVE and **file** COPY.
 Destination must stay in the same share/host. No DAV locks, PROPPATCH or directory
 COPY: these explicitly fail, never report false success. Full WebDAV conformance
 and Finder/Infuse interoperability are **not certified** by protocol tests.
-Maximum 16 simultaneous connections, 10,000 entries per PROPFIND listing.
+Connection limits are listed above; 10,000 entries per PROPFIND listing.
 
 ## Network prerequisite
 

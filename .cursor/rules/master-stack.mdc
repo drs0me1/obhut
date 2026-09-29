@@ -99,8 +99,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### Modül servisleri (Docker yok)
 
+- DD-179: klasör paylaşımları Tailscale/WAN IPv4/ikisi olarak seçilir; eski ve yeni
+  kayıtlar varsayılan Tailscale'dir. WAN açık HTTP için açık onay ister; TLS yoktur.
+  Yalnız WebDAV portu gerektiğinde açılır. Parola/bağlantı sınırları ve ağ bazlı
+  yetki denetimi zorunludur; Konsol/API ve diğer servisler WAN'a açılmaz.
+
 - DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). Her modül sunucuda bir systemd servisidir. Dozzle ve Unpackerr kaldırıldı; arşiv açıcı artık Dosyalar'ın yerleşik, istek üzerine çalışan yeteneğidir (DD-159/166/170).
-- qBittorrent bir host modülüdür (`torrent`, DD-151): Debian `qbittorrent-nox`, indirme hesabıyla `qbittorrent-nox@<kullanıcı>.service` + `master-stack.conf` drop-in'i; profil `/var/lib/qbittorrent`. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/modules/torrent/qBittorrent.conf`), sonra dokunulmaz. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca paket kalır; `--veri` profili siler.
+- qBittorrent bir host modülüdür (`torrent`, DD-151): Debian `qbittorrent-nox`, indirme hesabıyla `qbittorrent-nox@<kullanıcı>.service` + `master-stack.conf` drop-in'i; profil `/var/lib/qbittorrent`. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/modules/torrent/qBittorrent.conf`), sonra dokunulmaz. DD-178: yalnız indirme yolu, kimlik doğrulamalı loopback WebUI ve başlatma onayı; UPnP/otomatik port yönlendirme, yerel eş keşfi ve ayrı geçici klasör tercihi kullanıcıya aittir. Mevcut profillerdeki eski değerler de otomatik silinmez. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca paket kalır; `--veri` profili siler.
 - Paylaşım (DD-158): Python stdlib `master_webdav.py`, `master-paylasim.service` içinde indirme UID'siyle loopback'te çalışır. Root kayıt `webdav.json` 0600, yalnız scrypt özeti, `LoadCredential`; çöp/iç alanlar erişilemez. Klasör sınırı tanıtıcı tabanlı istek denetimiyle korunur. Ayrıntı: `Data/docs/folder-shares.md`.
 
 ### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)

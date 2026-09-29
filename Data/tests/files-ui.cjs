@@ -2,9 +2,10 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
-const shots = fs.mkdtempSync(path.join(os.tmpdir(), "konsol-v144-files-"));
+const shots = fs.mkdtempSync(path.join(os.tmpdir(), "konsol-files-networks-"));
 const csp = fs.readFileSync(path.join(__dirname, "../templates/Caddyfile"), "utf8").match(/Content-Security-Policy "([^"]+)"/)[1];
-const shares = { enabled: true, running: true, max: 32, host: "http://100.64.0.2:61010", items: [] };
+const wanStatus = {available:true,address:"192.0.2.1",port:61010,reason:""};
+const shares = { enabled: true, running: true, max: 32, host: "http://100.64.0.2:61010", wan:{...wanStatus}, items: [] };
 const trashFixtures = [
   {id:"trash-short",name:"notlar.txt",type:"file",from:"",size:1024,deleted:Date.now()/1000-300},
   {id:"trash-long",name:"Uzun.dosya.adı.".repeat(12)+"1080p.2026.zip",type:"file",from:"downloads/"+"çok-uzun-klasör/".repeat(12),size:7*1024**3,deleted:Date.now()/1000-3600},
@@ -34,22 +35,42 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
         return true;
       };
     });
-    const checkShareAddress = async locator => {
-      // A hash change can leave the previous view hidden until its API resolves.
-      // Measure the rendered address, not a zero-size intermediate layout.
-      await locator.waitFor({state:"visible"});
-      const expected = shares.items[0].url;
+    const checkShareAddress = async (locator, expected, rerenderDuringMeasurement = false) => {
       assert.equal(await locator.locator("code").textContent(), expected);
       assert(!/[^\x21-\x7e]/.test(expected), "share URL contains whitespace or non-ASCII characters");
-      const geometry = await locator.evaluate(el => {
-        const rect = node => { const r=node.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}; };
-        return {group:rect(el),text:rect(el.querySelector("code")),button:rect(el.querySelector("button"))};
-      });
-      assert(Math.abs(geometry.button.left-geometry.text.right-6)<1, "copy button must directly follow address");
+      // Hash routing and the share response both rebuild the list. The element
+      // resolved by evaluate can detach AFTER waitFor(visible), yielding all-zero
+      // rectangles. Re-resolve only stale/hidden snapshots, never a real bad gap.
+      let geometry;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await locator.waitFor({state:"visible"});
+        geometry = await locator.evaluate((el, rerender) => {
+          // Deterministically exercise replacement between resolution and reading.
+          if (rerender) document.querySelector('#fs-tabs [aria-pressed="true"]').click();
+          const rect = node => { const r=node.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}; };
+          return {group:rect(el),text:rect(el.querySelector("code")),button:rect(el.querySelector("button")),
+            rendered:el.isConnected && el.checkVisibility(), gap:getComputedStyle(el).columnGap};
+        }, rerenderDuringMeasurement && attempt === 0);
+        if (rerenderDuringMeasurement && attempt === 0) assert.equal(geometry.rendered,false,"Regression must replace the resolved address");
+        if (geometry.rendered) break;
+      }
+      assert(geometry.rendered, "address must remain rendered for measurement: " + JSON.stringify(geometry));
+      assert(Math.abs(geometry.button.left-geometry.text.right-6)<1, "copy button must directly follow address: " + JSON.stringify(geometry));
       assert(geometry.button.right<=geometry.group.right+1, "copy button outside address group");
       assert(geometry.text.left>=geometry.group.left-1, "address outside group");
       await locator.getByRole("button").click();
       assert.equal(await page.evaluate(() => window.copiedShareTexts.at(-1)),expected);
+    };
+    const checkShareAddresses = async (locator, share = shares.items[0]) => {
+      await locator.waitFor({state:"visible"});
+      const networks = ["tailscale","wan"].filter(n=>(share.networks || ["tailscale"]).includes(n));
+      assert.deepEqual(await locator.locator(".dav-addresses > [data-network]").evaluateAll(nodes=>nodes.map(n=>n.dataset.network)),networks);
+      for (const network of networks) {
+        const pair = locator.locator(`.dav-addresses > [data-network="${network}"]`);
+        assert.equal(await pair.locator("small").first().textContent(), `${network==="wan"?"WAN":"Tailscale"} · HTTP`);
+        await checkShareAddress(pair.locator(".dav-address"), share.urls ? share.urls[network] : share.url);
+      }
+      assert.equal(await locator.locator(".dav-address").count(), networks.length);
     };
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -76,13 +97,22 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
         shareWrites.push(submitted);
         if (holdShare) await new Promise(resolve => { releaseShare = resolve; });
         if (failShare) { failShare = false; return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Test: önceki paylaşım korundu."})}); }
-        const id = submitted.id || "a".repeat(24);
+        const id = submitted.id || (shares.items.length ? "b" : "a").repeat(24);
         let s = shares.items.find((i) => i.id === id);
+        if (submitted.networks) {
+          assert(submitted.networks.length > 0, "Empty networks must never reach the API");
+          assert(submitted.networks.every(n=>["tailscale","wan"].includes(n)));
+          if (submitted.networks.includes("wan") && !s?.networks?.includes("wan")) {
+            assert.equal(submitted.ack_wan_http,true,"WAN activation requires explicit acknowledgement");
+            assert.equal(shares.wan?.available,true,"Unavailable WAN must not be activated");
+          }
+        }
         if (!s) { s = { id, paused: false, available: true, expired: false, created: Date.now() / 1000, expires: null }; shares.items.push(s); }
         if (submitted.path !== undefined) Object.assign(s, { name: submitted.path.split("/").pop(), path: submitted.path });
-        for (const key of ["username", "permission"]) if (submitted[key] !== undefined) s[key] = submitted[key];
+        for (const key of ["username", "permission", "networks"]) if (submitted[key] !== undefined) s[key] = submitted[key];
         if (submitted.days != null) s.expires = submitted.days ? Math.floor(Date.now()/1000) + submitted.days * 86400 : null;
-        s.url = shares.host + "/s/" + id + "/";
+        s.urls = Object.fromEntries((s.networks || ["tailscale"]).map(n=>[n,(n==="tailscale" ? shares.host : `http://${shares.wan.address}:${shares.wan.port}`)+"/s/"+id+"/"]));
+        s.url = s.urls.tailscale || s.urls.wan;
         result = shares;
       } else if (p.endsWith("/durum")) { const d = req.postDataJSON(); shares.items.find((s) => s.id === d.id).paused = d.paused; result = shares; }
       else if (p.endsWith("/kaldir")) { const d = req.postDataJSON(); shares.items = shares.items.filter((s) => s.id !== d.id); result = shares; }
@@ -106,6 +136,13 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     await page.screenshot({ path: path.join(shots, "desktop-list.png"), fullPage: true });
     await page.getByRole("button", { name: "WebDAV ile paylaş", exact: true }).click();
     assert.equal(await page.getByLabel("Erişim izni", { exact: true }).inputValue(), "ro");
+    const tailscale = page.getByRole("checkbox", {name:"Tailscale",exact:true});
+    const wan = page.getByRole("checkbox", {name:"WAN (internet)",exact:true});
+    const ackWan = page.locator("#dav-ack-wan");
+    assert(await tailscale.isChecked());
+    assert(!(await wan.isChecked()));
+    assert(await ackWan.isHidden());
+    assert(!/yalnız Tailscale|HTTPS|sertifika/i.test(await page.locator("#sh").innerText()));
     await page.getByLabel("Kullanıcı adı", { exact: true }).fill("family-media");
     const sharePassword = page.getByLabel("Parola", { exact: true });
     assert.equal(await sharePassword.evaluate(input => input.minLength), 8);
@@ -114,6 +151,19 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     assert.equal(submitted, undefined, "Seven-character password must not reach the API");
     assert.equal(await sharePassword.evaluate(input => input.checkValidity()), false);
     await sharePassword.fill("Pass8!xy");
+    await tailscale.uncheck();
+    await page.getByRole("button", { name: "Paylaşımı oluştur", exact: true }).click();
+    assert.equal(submitted, undefined, "At least one network is required");
+    assert.equal(await tailscale.evaluate(input=>input.validationMessage), "En az bir ağ seçin: Tailscale veya WAN.");
+    await wan.check();
+    assert(await ackWan.evaluate(input=>input.required));
+    assert.match(await ackWan.locator("..").textContent(), /HTTP, parola ve verileri şifrelemeden gönderir/);
+    await page.getByRole("button", { name: "Paylaşımı oluştur", exact: true }).click();
+    assert.equal(submitted, undefined, "New WAN share must require its own acknowledgement");
+    await ackWan.check();
+    await wan.uncheck();
+    assert(!(await ackWan.isChecked()), "Turning WAN off clears acknowledgement");
+    await tailscale.check();
     await page.getByLabel("Erişim izni", { exact: true }).selectOption("rw");
     assert(await page.locator("#dav-ack").evaluate((input) => input.required));
     await page.locator("#dav-ack").check();
@@ -123,20 +173,35 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     assert.equal(submitted.permission, "rw");
     assert.equal(submitted.ack_write, true);
     assert.equal(submitted.password, "Pass8!xy");
+    assert.deepEqual(submitted.networks,["tailscale"]);
+    assert.equal(submitted.ack_wan_http,undefined);
     assert(!JSON.stringify(await page.evaluate(() => ({ ...localStorage }))).includes("Pass8!xy"));
     await page.getByRole("button", { name: "media ayrıntıları", exact: true }).click();
-    await checkShareAddress(page.locator("#fs-detail .dav-address"));
+    await checkShareAddresses(page.locator("#fs-detail"));
+    // A legacy status has only url and no WAN capability or per-share networks.
+    delete shares.items[0].networks;
+    delete shares.items[0].urls;
+    delete shares.wan;
+    await page.reload();
+    await page.getByRole("button", { name: "media ayrıntıları", exact: true }).click();
+    await checkShareAddresses(page.locator("#fs-detail"));
     await page.locator("#fs-tabs").getByRole("button", { name: "Paylaşımlar", exact: true }).click();
-    await checkShareAddress(page.locator(".dav-share-name .dav-address"));
+    await checkShareAddresses(page.locator(".dav-share-name"));
+    await checkShareAddress(page.locator(".dav-share-name .dav-address"),shares.items[0].url,true);
     assert.equal(await page.locator('.dav-actions [aria-label="media adresi kopyala"]').count(),0);
     await page.getByRole("button", { name: "Yönet", exact: true }).click();
     assert.equal(await page.getByLabel("Yeni parola (isteğe bağlı)", { exact: true }).inputValue(), "");
-    assert.equal(await page.locator("#sh select, #sh #dav-ack").count(), 0, "Manage only edits folder and account");
+    assert.equal(await page.locator("#sh select, #sh #dav-ack").count(), 0, "RO/RW and duration stay in the list");
+    assert(await tailscale.isChecked(),"Legacy share defaults to Tailscale");
+    assert(!(await wan.isChecked()));
+    assert(await wan.isDisabled(),"Legacy server cannot activate WAN");
     await page.getByRole("button", { name: "Güncelle", exact: true }).click();
     await page.waitForFunction(() => !document.querySelector("#sh").open);
     assert.equal(submitted.password, "");
     assert.equal(submitted.days, undefined);
     assert.equal(submitted.permission, undefined);
+    assert.deepEqual(submitted.networks,["tailscale"]);
+    assert.equal(submitted.ack_wan_http,undefined);
     assert.equal(shares.items[0].permission, "rw");
     const permission = page.getByRole("combobox", {name:"media erişim izni",exact:true});
     const days = page.getByRole("combobox", {name:"media paylaşım süresi",exact:true});
@@ -176,10 +241,124 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     await page.getByText("Duraklatıldı", { exact: true }).waitFor();
     await days.selectOption("0"); await ready();
     assert.equal(shares.items[0].paused, true);
-    for (const width of [2560, 1440, 1351, 1350, 1024, 736, 390, 320]) {
+    const refreshShares = async () => { await page.reload(); await page.locator(".dav-share-row").first().waitFor(); };
+    shares.wan = {...wanStatus,available:false,reason:"Genel IPv4 adresi bulunamadı."};
+    await refreshShares();
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    assert(await wan.isDisabled());
+    assert.match(await page.locator("#dav-wan-status").textContent(), /Genel IPv4 adresi bulunamadı/);
+    await page.getByRole("button", {name:"Vazgeç",exact:true}).click();
+    shares.wan = {...wanStatus};
+    await refreshShares();
+    const savedShare = {...shares.items[0]};
+    const saveEdit = page.getByRole("button", {name:"Güncelle",exact:true});
+    const editClosed = () => page.waitForFunction(() => !document.querySelector("#sh").open);
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    await wan.check();
+    await ackWan.check();
+    const beforeCancel = shareWrites.length;
+    await page.keyboard.press("Escape");
+    assert.equal(shareWrites.length,beforeCancel);
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    assert(!(await wan.isChecked()));
+    await tailscale.uncheck();
+    await saveEdit.click();
+    assert.equal(shareWrites.length,beforeCancel,"Empty networks rejected on edit as well");
+    await tailscale.check();
+    await wan.check();
+    assert(!(await ackWan.isChecked()),"Acknowledgement is not retained across dialogs");
+    await saveEdit.click();
+    assert.equal(shareWrites.length,beforeCancel,"WAN addition requires acknowledgement");
+    await ackWan.check();
+    await wan.uncheck(); await wan.check();
+    assert(!(await ackWan.isChecked()),"Re-selecting new WAN requires fresh acknowledgement");
+    await ackWan.check();
+    failShare = true;
+    await saveEdit.click();
+    await page.locator("#sh [role=alert]").waitFor({state:"visible"});
+    assert.match(await page.locator("#sh [role=alert]").textContent(),/önceki paylaşım korundu/);
+    assert(!(await saveEdit.isDisabled()));
+    assert.deepEqual(shares.items[0],savedShare,"Failed network edit leaves confirmed record intact");
+    assert.deepEqual(await page.locator(".dav-network .shchip").allTextContents(),["Tailscale"]);
+    assert(await wan.isChecked(),"Failed save retains the draft");
+    assert(await ackWan.isChecked());
+    assert.equal(await page.locator("#dav-password").inputValue(),"");
+    assert.equal(submitted.ack_wan_http,true);
+    await saveEdit.click(); await editClosed();
+    assert.deepEqual(submitted.networks,["tailscale","wan"]);
+    assert.equal(submitted.password,"");
+    for (const key of ["permission","days","ack_write"]) assert.equal(submitted[key],undefined);
+    for (const key of ["username","path","permission","expires","paused"]) assert.equal(shares.items[0][key],savedShare[key]);
+    await checkShareAddresses(page.locator(".dav-share-name"));
+    assert.deepEqual(await page.locator(".dav-network .shchip").allTextContents(),["Tailscale","WAN"]);
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    assert(await tailscale.isChecked()); assert(await wan.isChecked());
+    assert(await ackWan.isHidden(),"Existing WAN does not need repeated activation acknowledgement");
+    await tailscale.uncheck();
+    await saveEdit.click(); await editClosed();
+    assert.deepEqual(submitted.networks,["wan"]);
+    assert.equal(submitted.ack_wan_http,undefined);
+    assert.equal(shares.items[0].url,shares.items[0].urls.wan);
+    await checkShareAddresses(page.locator(".dav-share-name"));
+    // Do not mislabel a stale preferred URL when the selected WAN has no URL.
+    shares.wan = {...wanStatus,available:false,reason:"WAN adresi şu anda kullanılamıyor."};
+    shares.items[0].urls = {};
+    await refreshShares();
+    assert.equal(await page.locator(".dav-share-name .dav-address").count(),0);
+    assert.match(await page.locator(".dav-share-name").textContent(),/WAN adresi şu anda kullanılamıyor/);
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    assert(await wan.isChecked()); assert(!(await wan.isDisabled()),"Unavailable existing WAN can still be removed");
+    assert(!(await tailscale.isChecked()),"WAN-only edit preserves the existing network default");
+    await tailscale.check(); await wan.uncheck();
+    await saveEdit.click(); await editClosed();
+    assert.deepEqual(submitted.networks,["tailscale"]);
+    assert.equal(submitted.ack_wan_http,undefined);
+    await checkShareAddresses(page.locator(".dav-share-name"));
+    shares.wan = {...wanStatus};
+    await refreshShares();
+    await page.getByRole("button", {name:"Yönet",exact:true}).click();
+    await wan.check(); await saveEdit.click();
+    assert(await ackWan.evaluate(input=>!input.checkValidity()),"Adding previously removed WAN requires acknowledgement again");
+    await ackWan.check(); await saveEdit.click(); await editClosed();
+    // New WAN-only and dual-network shares exercise both independent choices.
+    for (const selected of [["wan"],["tailscale","wan"]]) {
+      await page.locator("#fs-tabs").getByRole("button", {name:"Dosyalar",exact:true}).click();
+      await page.getByRole("button", {name:"Belgeler ve uzun klasör adı ayrıntıları",exact:true}).click();
+      await page.getByRole("button", {name:"WebDAV ile paylaş",exact:true}).click();
+      await page.getByLabel("Kullanıcı adı",{exact:true}).fill("wan-documents");
+      await sharePassword.fill("WanPass8!");
+      if (!selected.includes("tailscale")) await tailscale.uncheck();
+      await wan.check();
+      const beforeNewWan = shareWrites.length;
+      await page.getByRole("button", {name:"Paylaşımı oluştur",exact:true}).click();
+      assert.equal(shareWrites.length,beforeNewWan);
+      await ackWan.check();
+      await page.setViewportSize({width:selected.length===1?390:320,height:800});
+      assert(await page.locator("#sh").evaluate(d=>d.scrollWidth<=d.clientWidth+1),"Mobile WAN warning must wrap inside the dialog");
+      await page.screenshot({path:path.join(shots,`wan-create-${selected.length}.png`),fullPage:true});
+      failShare = true;
+      await page.getByRole("button", {name:"Paylaşımı oluştur",exact:true}).click();
+      await page.locator("#sh [role=alert]").waitFor({state:"visible"});
+      assert.equal(shares.items.length,1,"Failed creation must not add a share");
+      assert.equal(await sharePassword.inputValue(),"WanPass8!");
+      assert(await ackWan.isChecked());
+      await page.getByRole("button", {name:"Paylaşımı oluştur",exact:true}).click(); await editClosed();
+      assert.deepEqual(submitted.networks,selected);
+      assert.equal(submitted.ack_wan_http,true);
+      assert.equal(submitted.ack_write,false,"WAN acknowledgement is independent of RW");
+      assert.equal(shares.items[1].permission,"ro");
+      await checkShareAddresses(page.locator("#fs-detail"),shares.items[1]);
+      await page.locator("#fs-detail").getByRole("button",{name:"Kaldır",exact:true}).click();
+      await page.locator("#cf-go").click();
+      await page.getByRole("button", {name:"WebDAV ile paylaş",exact:true}).waitFor();
+      assert.equal(shares.items.length,1);
+      await page.setViewportSize({width:1440,height:1000});
+      await page.locator("#fs-tabs").getByRole("button", {name:"Paylaşımlar",exact:true}).click();
+    }
+    for (const width of [2560, 1440, 1351, 1350, 1024, 761, 760, 736, 480, 390, 320]) {
       await page.setViewportSize({ width, height: 950 });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      await checkShareAddress(page.locator(".dav-share-name .dav-address"));
+      await checkShareAddresses(page.locator(".dav-share-name"));
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `shares overflow ${width}`);
       const cells = await page.locator('.dav-share-row').evaluate(row => {
         const r = row.getBoundingClientRect();
@@ -187,14 +366,27 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
       });
       assert(cells.every(c=>c.inside && c.scroll<=c.client+1), `share column overflow ${width}`);
       assert.equal(await page.locator('.dav-share-row select').count(),2);
+      assert(await page.locator('.dav-share-row select').evaluateAll(selects=>selects.every(s=>s.getBoundingClientRect().width>=145)),`inline controls squeezed ${width}`);
       if (width>1350) {
         const headers = await page.locator('.dav-share-head').evaluate(row=>[...row.children].map(c=>c.getBoundingClientRect().left));
         cells.forEach((c,i)=>assert(Math.abs(c.left-headers[i])<1,`share column/header alignment ${width}`));
       }
       await page.screenshot({path:path.join(shots,`shares-${width}.png`),fullPage:true});
+      if ([1440,736,390,320].includes(width)) {
+        await page.getByRole("button",{name:"Yönet",exact:true}).click();
+        assert(await tailscale.isChecked()); assert(await wan.isChecked());
+        const fits = await page.locator("#sh").evaluate(d=>{
+          const r=d.getBoundingClientRect();
+          return r.left>=0 && r.right<=innerWidth && d.scrollWidth<=d.clientWidth+1 &&
+            [...d.querySelectorAll('.dav-networks,.dav-check,input,button')].filter(e=>e.getBoundingClientRect().width).every(e=>{const b=e.getBoundingClientRect();return b.left>=r.left && b.right<=r.right;});
+        });
+        assert(fits,`network editor overflow ${width}`);
+        await page.screenshot({path:path.join(shots,`networks-editor-${width}.png`),fullPage:true});
+        await page.getByRole("button",{name:"Vazgeç",exact:true}).click();
+      }
       await page.getByRole("button", { name: "Dosyalar", exact: true }).click();
       await page.getByRole("button", { name: "media ayrıntıları", exact: true }).click();
-      await checkShareAddress(page.locator("#fs-detail .dav-address"));
+      await checkShareAddresses(page.locator("#fs-detail"));
       for (const mode of ["Kartlar", "Liste"]) {
         await page.getByRole("button", { name: mode, exact: true }).click();
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${mode} overflow ${width}`);
@@ -202,7 +394,7 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
       await page.locator("#fs-tabs").getByRole("button", { name: "Paylaşımlar", exact: true }).click();
     }
     await page.emulateMedia({ colorScheme: "dark" });
-    await checkShareAddress(page.locator(".dav-share-name .dav-address"));
+    await checkShareAddresses(page.locator(".dav-share-name"));
     await page.screenshot({ path: path.join(shots, "mobile-shares-dark.png"), fullPage: true });
     await page.getByRole("button", { name: "Dosyalar", exact: true }).click();
     await page.getByRole("button", { name: "Kartlar", exact: true }).click();
@@ -382,6 +574,6 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     await page.getByText("Çöp boş",{exact:true}).waitFor();
     assert.deepEqual(trashWrites.at(-1),{path:"/api/trash/empty",data:{confirm:"onayla"}});
     assert.deepEqual(errors, []);
-    console.log("PASS: Model B dock fixed slots/eligibility/icon-label alignment/keyboard/action routing/download links/mobile grid; inline share access/expiry, RW acknowledgement/cancel, partial payloads, failed/busy saves, account-only editor, aligned responsive columns/copy; compact trash confirmation/full long names/cancel/Escape/multi-select, permanent trash guards retained, layouts/light+dark/CSP. Screenshots: " + shots);
+    console.log("PASS: share Tailscale/WAN/both creation and edits, legacy default, empty-network rejection, explicit WAN HTTP acknowledgement/reset/cancel, WAN unavailable/removal/missing URL, blank-password and inline access/expiry preservation, failed saves/retry, labeled addresses and copy, network badges/responsive editor and list; Model B dock, trash confirmations/guards, layouts/light+dark/CSP. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch((e) => { console.error(e); process.exit(1); });

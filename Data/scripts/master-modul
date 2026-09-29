@@ -400,7 +400,7 @@ wg_drop_data() {
 # ------------------------------------------------------------------ qBittorrent (DD-151)
 # Debian paketi (qbittorrent-nox) sunucunun kendisinde, indirme klasörünün sahibi olarak
 # çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
-# yeri, yarım indirmeler, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur.
+# yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur (DD-178).
 # Hesap/dizin değişikliklerini Konsol ayar işçisi yapar; ilk giriş geçici paroladır. İnternete eş
 # portu açılmaz; paket kaldırılınca bile sunucuda kalır (yalnız servis kapanır).
 TORRENT_DROPIN_DIR="qbittorrent-nox@.service.d"

@@ -123,6 +123,12 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 
 ## Constraints
 
+- DD-179 (v153): per-folder WebDAV can opt into HTTP WAN IPv4 or both networks;
+  existing/new shares default to Tailscale. Plaintext-risk acknowledgement,
+  independent scope enforcement and attempt/connection budgets are mandatory.
+  Only the WebDAV port may be published; console/admin services remain private.
+  See `Data/docs/folder-shares.md` for limits and the scoped expiry/recovery timer.
+
 - Root-only, single-host. Inputs come from `kurulum/kurulum.env`; the
   installer still needs a TTY and one confirmation. No unattended mode.
 - Debian 13 (trixie), Ubuntu 24.04 (noble) or Ubuntu 26.04 (resolute)

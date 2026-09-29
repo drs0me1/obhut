@@ -2,6 +2,13 @@
 	default_bind {$TAILSCALE_IPV4}
 	http_port __CADDY_HTTP_PORT__
 	auto_https off
+	# DD-179: only the optional public DAV socket; tailnet streams are unchanged.
+	servers __WAN_IPV4__:__SHARE_PORT__ {
+		timeouts {
+			read_header 10s
+			idle 30s
+		}
+	}
 }
 # Konsol (DD-140, DD-148): tek adres. /api/wg/* ve /api/konsol/* root arka uca (WireGuard,
 # sistem, modüller), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:

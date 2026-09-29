@@ -7,20 +7,24 @@ ve PROPPATCH desteklenmez; desteklenmeyen işlemler başarılı gibi gösterilme
 """
 import argparse
 import base64
+from collections import deque
 import contextlib
 import email.utils
 import http.server
+import ipaddress
+import math
 import mimetypes
 import os
 import re
 import secrets
+import socket
 import stat
 import threading
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-from master_shares import DIR_FLAGS, FILE_FLAGS, ShareError, identity, load, open_dir, parts, password_ok
+from master_shares import DEFAULT_LIMITS, DIR_FLAGS, FILE_FLAGS, ShareError, identity, load, open_dir, parts, password_ok
 
 MAX_UPLOAD = 64 * 1024 ** 3
 CHUNK = 1024 * 1024
@@ -31,9 +35,92 @@ WRITE_METHODS = ("PUT", "MKCOL", "DELETE", "MOVE", "COPY")
 
 
 class DavError(Exception):
-    def __init__(self, code, message="İstek reddedildi."):
+    def __init__(self, code, message="İstek reddedildi.", retry_after=None):
         super().__init__(message)
         self.code = code
+        self.retry_after = retry_after
+
+
+class WanLimiter:
+    """Bound in-flight requests, hash work and sliding bad-credential history by IP."""
+    def __init__(self, limits, clock=time.monotonic):
+        self.limits = limits
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.active = {}
+        self.entries = {}
+        self.auth_slots = threading.BoundedSemaphore(limits["wan_auth_parallel"])
+
+    def prune(self, now):
+        # Called under lock. Never evict an active block or an unfinished attempt.
+        for ip, entry in list(self.entries.items()):
+            failures = entry["failures"]
+            while failures and failures[0] <= now - self.limits["auth_window_seconds"]:
+                failures.popleft()
+            if not failures and entry["blocked_until"] <= now and not entry["pending"]:
+                del self.entries[ip]
+
+    def blocked(self, ip, now):
+        entry = self.entries.get(ip)
+        if entry and entry["blocked_until"] > now:
+            raise DavError(429, retry_after=math.ceil(entry["blocked_until"] - now))
+
+    @contextlib.contextmanager
+    def request(self, ip):
+        with self.lock:
+            now = self.clock()
+            self.prune(now)
+            self.blocked(ip, now)
+            if self.active.get(ip, 0) >= self.limits["wan_connections_per_ip"]:
+                raise DavError(429, retry_after=1)
+            self.active[ip] = self.active.get(ip, 0) + 1
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.active[ip] -= 1
+                if not self.active[ip]:
+                    del self.active[ip]
+
+    @contextlib.contextmanager
+    def credentials(self, ip):
+        with self.lock:
+            now = self.clock()
+            self.prune(now)
+            self.blocked(ip, now)
+            if ip not in self.entries:
+                if len(self.entries) >= self.limits["auth_entries"]:
+                    raise DavError(429, retry_after=1)
+                self.entries[ip] = {"failures": deque(), "blocked_until": 0, "pending": 0}
+            entry = self.entries[ip]
+            entry["pending"] += 1
+        failed = False
+        try:
+            yield
+        except DavError as err:
+            failed = err.code == 401
+            raise
+        finally:
+            with self.lock:
+                now = self.clock()
+                entry["pending"] -= 1
+                self.prune(now)
+                # A request admitted before a block cannot lengthen its TTL.
+                if failed and entry["blocked_until"] <= now:
+                    entry["failures"].append(now)
+                    self.entries[ip] = entry
+                    if len(entry["failures"]) >= self.limits["auth_failures"]:
+                        entry["failures"].clear()
+                        entry["blocked_until"] = now + self.limits["auth_block_seconds"]
+                self.blocked(ip, now)
+
+    def verify(self, item, password):
+        if not self.auth_slots.acquire(blocking=False):
+            raise DavError(429, retry_after=1)
+        try:
+            return password_ok(item, password)
+        finally:
+            self.auth_slots.release()
 
 
 def check_stat(st, device):
@@ -54,9 +141,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def setup(self):
         super().setup()
-        self.connection.settimeout(60)
+        self.connection.settimeout(self.server.limits["wan_timeout_seconds"]
+                                   if self.server.scope == "wan" else 60)
+
+    def handle(self):
+        try:
+            super().handle()
+        except OSError:
+            # Disconnects during header parsing or shutdown are ordinary cleanup.
+            self.close_connection = True
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if self.server.scope == "wan":
+            self.close_connection = True
+        # Unsupported methods still pass through the same ingress/auth gates.
+        if not hasattr(self, "do_" + self.command):
+            setattr(self, "do_" + self.command, self.dispatch)
+        return True
+
+    def handle_expect_100(self):
+        # Delay upload permission until network and credential checks have passed.
+        return True
 
     def end_headers(self):
+        if self.server.scope == "wan":
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.response_started = True
         super().end_headers()
 
@@ -83,18 +195,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         match = re.match(r"^/s/([0-9a-f]{24})(?:/|$)", self.path)
         self.item = next((i for i in self.server.config["items"]
                           if match and i["id"] == match.group(1)), None)
-        raw = self.headers.get("Authorization", "")
-        if len(raw) > 2048:
-            raise DavError(401)
-        try:
-            kind, value = raw.split(" ", 1)
-            user, password = base64.b64decode(value, validate=True).decode("utf-8").split(":", 1)
-        except (ValueError, UnicodeError):
-            raise DavError(401)
         item = self.item
-        if (kind.lower() != "basic" or not item or item["paused"] or user != item["username"]
-                or len(password) > 256 or not password_ok(item, password)):
+        if item:
+            networks = item.get("networks")
+            if (not isinstance(networks, list) or not networks
+                    or any(n not in ("tailscale", "wan") for n in networks)
+                    or len(networks) != len(set(networks)) or self.server.scope not in networks):
+                raise DavError(403)
+        supplied = self.headers.get_all("Authorization", [])
+        if not supplied:
             raise DavError(401)
+        limiter = self.server.wan_limiter
+        with limiter.credentials(self.client_ip) if limiter else contextlib.nullcontext():
+            self.check_credentials(supplied)
         self.live()
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") == "cross-site":
             raise DavError(403)
@@ -108,6 +221,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if identity(self.rootfd) != item["identity"]:
             raise DavError(410, "Klasör taşındı veya değiştirildi; yönetici paylaşımı güncellemeli.")
         self.device = os.fstat(self.rootfd).st_dev
+
+    def check_credentials(self, supplied):
+        if len(supplied) != 1 or len(supplied[0]) > 2048:
+            raise DavError(401)
+        try:
+            kind, value = supplied[0].split(" ", 1)
+            user, password = base64.b64decode(value, validate=True).decode("utf-8").split(":", 1)
+        except (ValueError, UnicodeError):
+            raise DavError(401)
+        item = self.item
+        if (kind.lower() != "basic" or not item or item["paused"] or user != item["username"]
+                or len(password) > 256):
+            raise DavError(401)
+        verify = self.server.wan_limiter.verify if self.server.wan_limiter else password_ok
+        if not verify(item, password):
+            raise DavError(401)
+
+    def client_address_ip(self):
+        values = self.headers.get_all("X-Share-Client-IP", [])
+        if len(values) != 1 or len(values[0]) > 45 or "%" in values[0]:
+            raise DavError(400)
+        try:
+            address = ipaddress.ip_address(values[0])
+        except ValueError:
+            raise DavError(400)
+        # Canonicalize IPv6 spellings and IPv4-mapped addresses to one budget.
+        return str(getattr(address, "ipv4_mapped", None) or address)
 
     def path_parts(self, raw, destination=False):
         parsed = urllib.parse.urlsplit(raw)
@@ -435,9 +575,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def dispatch(self):
         self.rootfd = None
         self.response_started = False
+        budget = contextlib.ExitStack()
         try:
+            if self.server.wan_limiter:
+                self.client_ip = self.client_address_ip()
+                budget.enter_context(self.server.wan_limiter.request(self.client_ip))
             self.authenticate()
             pp = self.path_parts(self.path)
+            if self.headers.get("Expect", "").lower() == "100-continue":
+                self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
             if self.command == "OPTIONS":
                 self.send(200, headers={"DAV": "1", "Allow": ", ".join(READ_METHODS + (WRITE_METHODS if self.item["permission"] == "rw" else ()))})
             elif self.command in ("GET", "HEAD"):
@@ -450,6 +596,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             code = err.code if isinstance(err, DavError) else 404 if isinstance(err, FileNotFoundError) else 403
             extra = {"WWW-Authenticate": 'Basic realm="Klasor-%s", charset="UTF-8"' % (self.item["id"] if getattr(self, "item", None) else "WebDAV")} if code == 401 else {}
+            if isinstance(err, DavError) and err.retry_after is not None:
+                extra["Retry-After"] = str(err.retry_after)
             if not self.response_started:
                 try:
                     self.send(code, (str(err) if isinstance(err, DavError) else "İstek gerçekleştirilemedi.").encode(), extra)
@@ -458,6 +606,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             if self.rootfd is not None:
                 os.close(self.rootfd)
+            budget.close()
 
     do_GET = do_HEAD = do_OPTIONS = do_PROPFIND = dispatch
     do_PUT = do_MKCOL = do_DELETE = do_MOVE = do_COPY = dispatch
@@ -467,20 +616,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
-    # Bound concurrent connections and expensive password verification.
-    def __init__(self, address, config):
+    def __init__(self, address, config, scope="tailscale", mutation_lock=None):
+        if scope not in ("tailscale", "wan"):
+            raise ValueError("Geçersiz paylaşım ağı.")
+        if not ipaddress.IPv4Address(address[0]).is_loopback:
+            raise ValueError("WebDAV yalnız loopback adresinde dinleyebilir.")
         self.config = config
-        self.mutation_lock = threading.Lock()
-        self.slots = threading.BoundedSemaphore(16)
+        self.scope = scope
+        supplied = config.get("limits", {})
+        if not isinstance(supplied, dict):
+            raise ValueError("Geçersiz paylaşım sınırları.")
+        self.limits = dict(DEFAULT_LIMITS, **supplied)
+        if any(type(self.limits[key]) is not int or self.limits[key] <= 0 for key in DEFAULT_LIMITS):
+            raise ValueError("Geçersiz paylaşım sınırları.")
+        self.mutation_lock = mutation_lock if mutation_lock is not None else threading.Lock()
+        self.wan_limiter = WanLimiter(self.limits) if scope == "wan" else None
+        self.slots = threading.BoundedSemaphore(self.limits["wan_connections" if scope == "wan" else "tail_connections"])
+        self.connections = set()
+        self.connection_lock = threading.Lock()
         super().__init__(address, Handler)
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
             request.close()
             return
+        with self.connection_lock:
+            self.connections.add(request)
         try:
             super().process_request(request, address)
         except BaseException:
+            with self.connection_lock:
+                self.connections.discard(request)
             self.slots.release()
             raise
 
@@ -488,17 +654,44 @@ class Server(http.server.ThreadingHTTPServer):
         try:
             super().process_request_thread(request, address)
         finally:
+            with self.connection_lock:
+                self.connections.discard(request)
             self.slots.release()
+
+    def server_close(self):
+        # Wake idle/header/body readers so shutdown releases their request budgets.
+        with self.connection_lock:
+            for request in self.connections:
+                with contextlib.suppress(OSError):
+                    request.shutdown(socket.SHUT_RDWR)
+        super().server_close()
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--registry", required=True)
     parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--wan-listen", required=True)
     args = parser.parse_args()
     if os.geteuid() == 0:
         parser.error("WebDAV root olarak çalıştırılamaz.")
-    Server(("127.0.0.1", args.port), load(args.registry)).serve_forever()
+    try:
+        wan_address = ipaddress.IPv4Address(args.wan_listen)
+    except ValueError:
+        parser.error("WAN arka ucu geçerli bir IPv4 loopback adresi olmalı.")
+    if not wan_address.is_loopback or str(wan_address) == "127.0.0.1":
+        parser.error("WAN arka ucu Tailscale'den ayrı bir loopback adresi olmalı.")
+    config = load(args.registry)
+    mutation_lock = threading.Lock()
+    with Server(("127.0.0.1", args.port), config, mutation_lock=mutation_lock) as tail:
+        with Server((args.wan_listen, args.port), config, scope="wan", mutation_lock=mutation_lock) as wan:
+            thread = threading.Thread(target=tail.serve_forever, daemon=True)
+            thread.start()
+            try:
+                wan.serve_forever()
+            finally:
+                tail.shutdown()
+                thread.join()
 
 
 if __name__ == "__main__":

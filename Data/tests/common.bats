@@ -869,7 +869,7 @@ EOF
 
 @test "the only WebDAV is a credential-loaded unprivileged host service behind Caddy" {
     local unit="$V2_ROOT/modules/paylasim/master-paylasim.service"
-    grep -qxF 'ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__' "$unit"
+    grep -qxF 'ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__ --wan-listen=__SHARE_WAN_BACKEND__' "$unit"
     for line in 'LoadCredential=registry:__SHARE_STATE_FILE__' 'User=__DOWNLOADS_UID__' \
         'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
         'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
@@ -1807,7 +1807,7 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     grep -qx "$(printf 'paylasim\tcalisiyor')" "$TMP/moduller"
     grep -qx "$(printf 'dosya\tcalisiyor')" "$TMP/moduller"
     [ "$(file_mode "$TMP/etc/webdav.json")" = 0o600 ]
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schema"] == 2 and d["items"] == []' "$TMP/etc/webdav.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schema"] == 3 and d["items"] == []' "$TMP/etc/webdav.json"
     cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
     cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
     [ ! -e "$TMP/srv/.pay" ]
@@ -2577,9 +2577,14 @@ PY
     grep -qx 'WebUI\\Address=127.0.0.1' "$V2_ROOT/modules/torrent/qBittorrent.conf"
     grep -qx 'WebUI\\Port=__TORRENT_UI_PORT__' "$V2_ROOT/modules/torrent/qBittorrent.conf"
     grep -qx 'Session\\DefaultSavePath=__DOWNLOADS_PATH__/' "$V2_ROOT/modules/torrent/qBittorrent.conf"
-    grep -qx 'Connection\\UPnP=false' "$V2_ROOT/modules/torrent/qBittorrent.conf"
-    # v2-120: no Local Peer Discovery — it announces the torrents on the provider's LAN.
-    grep -qx 'Session\\LSDEnabled=false' "$V2_ROOT/modules/torrent/qBittorrent.conf"
+    # DD-178: only panel integration/headless startup keys may be seeded. In
+    # particular do not force UPnP, discovery, temporary storage or performance.
+    expected="$(printf '%s\n' Accepted 'Session\DefaultSavePath' 'Downloads\SavePath' \
+        'WebUI\Address' 'WebUI\LocalHostAuth' 'WebUI\Port' | LC_ALL=C sort)"
+    actual="$(awk -F= '/=/ {print $1}' "$V2_ROOT/modules/torrent/qBittorrent.conf" | LC_ALL=C sort)"
+    [ "$actual" = "$expected" ]
+    grep -qx 'Accepted=true' "$V2_ROOT/modules/torrent/qBittorrent.conf"
+    grep -qx 'WebUI\\LocalHostAuth=true' "$V2_ROOT/modules/torrent/qBittorrent.conf"
     grep -qx 'TORRENT_PROFILE_DIR="/var/lib/qbittorrent"' "$V2_ROOT/config/defaults.env"
 }
 
@@ -3319,7 +3324,8 @@ torrent_fixture() {
     konsol_fixture
     mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof"
     printf '[Service]\nUMask=0002\n' >"$TMP/mods/torrent/master-stack.conf"
-    printf '[LegalNotice]\nAccepted=true\n' >"$TMP/mods/torrent/qBittorrent.conf"
+    sed -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_UI_PORT__/61006/g' \
+        "$V2_ROOT/modules/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
     printf 'http://torrent.ayc {\n\treverse_proxy 127.0.0.1:61006\n}\n' >"$TMP/mods/torrent/torrent.caddy"
     printf 'interface-name=torrent.ayc,tailscale0\n' >"$TMP/mods/torrent/dnsmasq.conf"
     : >"$TMP/caddy/Caddyfile"
@@ -3391,7 +3397,14 @@ EOF
     run mm hesap torrent
     [ "$output" = "$(printf 'operator\tayarli')" ]
     # Settings made in qBittorrent stay: a reinstall never rewrites the profile.
-    printf 'kullanicinin ayari\n' >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    printf '%s\n' '[BitTorrent]' 'Session\LSDEnabled=false' 'Session\TempPathEnabled=true' \
+        'Session\TempPath=/operator/incomplete/' '[Network]' 'PortForwardingEnabled=true' \
+        '[Preferences]' 'Connection\UPnP=true' 'WebUI\Username=operator' \
+        >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/operator.conf"
+    run mm uygula torrent
+    [ "$status" -eq 0 ]
+    cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
     run mm durdur torrent
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/qb-active" ]
@@ -3408,7 +3421,8 @@ EOF
     run mm kur torrent
     [ "$status" -eq 0 ]
     [ ! -s "$TMP/apt-calls" ]
-    [ "$(cat "$TMP/qbprof/qBittorrent/qBittorrent.conf")" = 'kullanicinin ayari' ]
+    cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    [ "$(grep -c 'master-firewall' "$TMP/systemctl-calls")" -eq 0 ]
     # --veri deletes the profile only under /var/lib; nothing else is ever removed.
     run mm kaldir torrent --veri
     [ "$status" -eq 0 ]
@@ -3841,9 +3855,22 @@ assert names["panel.ayc"]["source"] == "base" and names["paylas.ayc"]["source"] 
 assert all(n["address"] == "100.64.0.7" for n in names.values())
 assert d["dns"]["listen"] == ["lo", "tailscale0"] and d["dns"]["domains"] == ["ayc"] and d["dns"]["dhcp"] is False
 t = d["torrent"]
-assert t["save"] == tmp + "/srv/downloads/" and t["save_inside"] and t["temp_on"] and t["temp_inside"], t
+assert t["save"] == tmp + "/srv/downloads/" and t["save_inside"], t
+assert t["temp"] == "" and not t["temp_on"] and not t["temp_inside"], t
 assert t["peer_port"] == 45410 and t["ui"] == "127.0.0.1:61006"
 PY
+    # DD-178: absent in the seed, but an explicit user's temporary folder is
+    # still reported accurately; GET must never enable or rewrite it.
+    printf '\n[BitTorrent]\nSession\\TempPath=%s/srv/downloads/user-buffer/\nSession\\TempPathEnabled=true\n' \
+        "$TMP" >>"$TMP/qb/qBittorrent/qBittorrent.conf"
+    cp "$TMP/qb/qBittorrent/qBittorrent.conf" "$TMP/user-temp.conf"
+    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    python3 - "$TMP/body" "$TMP" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1]))["torrent"]
+assert t["temp"] == sys.argv[2] + "/srv/downloads/user-buffer/" and t["temp_on"] and t["temp_inside"], t
+PY
+    cmp -s "$TMP/user-temp.conf" "$TMP/qb/qBittorrent/qBittorrent.conf"
     # A save path outside the downloads folder is flagged (the sandbox would refuse the writes);
     # "Yenile" skips the short cache.
     sed -i.bak 's#^Session\\DefaultSavePath=.*#Session\\DefaultSavePath=/root/indirilenler/#' "$TMP/qb/qBittorrent/qBittorrent.conf"

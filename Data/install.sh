@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-151"
+V2_VERSION="2026.08.06-v2-153"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -88,6 +88,7 @@ MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
+SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND
 SHARE_STATE_FILE=$SHARE_STATE_FILE
 TORRENT_TEMP_DIR=$TORRENT_TEMP_DIR
 SHARE_DIR=$SHARE_DIR
@@ -669,6 +670,7 @@ ensure_module_files() {
         SERVER_ROOT="$SERVER_ROOT" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_PORT="$SHARE_PORT" \
+        SHARE_WAN_BACKEND="$SHARE_WAN_BACKEND" \
         SHARE_STATE_FILE="$SHARE_STATE_FILE" \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
@@ -780,6 +782,9 @@ stage_4() {
     render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
         SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     atomic_write "$UNIT_DIR/master-settings-guard.timer" 0644 <"$V2_ROOT/systemd/master-settings-guard.timer"
+    render_template "$V2_ROOT/systemd/master-share-network.service" "$UNIT_DIR/master-share-network.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
+    atomic_write "$UNIT_DIR/master-share-network.timer" 0644 <"$V2_ROOT/systemd/master-share-network.timer"
     ensure_module_files
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
@@ -947,6 +952,7 @@ EOF
     fi
 
     render_template "$V2_ROOT/templates/Caddyfile" "$CADDYFILE" 0644 \
+        WAN_IPV4="$WAN_IPV4" SHARE_PORT="$SHARE_PORT" \
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         WG_PANEL_PORT="$WG_PANEL_PORT" \
@@ -997,11 +1003,14 @@ EOF
 Wants=tailscaled.service
 After=tailscaled.service
 OnFailure=refresh-tailnet-config.service
+Wants=master-firewall.service
+After=master-firewall.service
 StartLimitIntervalSec=600
 StartLimitBurst=3
 
 [Service]
 EnvironmentFile=$STATE_FILE
+ExecStartPre=+$SBIN_DIR/master-firewall --check
 ExecStartPre=$SBIN_DIR/wait-tailnet-addr
 TimeoutStartSec=150s
 Restart=on-failure
@@ -1120,6 +1129,8 @@ stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
     # Built-in capabilities keep the service registry IDs (DD-159/171).
     "$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"
+    python3 "$SBIN_DIR/master_shares.py" publish
+    systemctl enable --now master-share-network.timer
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
     "$SBIN_DIR/master-firewall" --check

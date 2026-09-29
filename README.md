@@ -6,7 +6,11 @@ dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
 the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
 are built in (**DD-159**, **DD-166**). No Docker (**DD-152**), no reconcile engine.
 
-**Current version:** `2026.08.06-v2-151` (see `Data/install.sh`).
+**Current version:** `2026.08.06-v2-153` (see `Data/install.sh`).
+
+Folder shares can opt into Tailscale, WAN IPv4 or both (DD-179). Existing/new
+shares default to Tailscale. WAN uses HTTP with explicit plaintext-risk consent,
+credential-attempt and connection caps; no console/admin endpoint is published.
 
 Model A is implemented: Files is the landing page, with one sidebar and live
 CPU/RAM/disk indicators. See the [clean-install checklist](Data/docs/model-a-clean-install.md).
@@ -94,6 +98,12 @@ only the runtime files and their archive SHA-256. It uploads them to
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy `paylas.<domain>` and `<tailscale-ip>:61010/s/<id>/` | Separate account per folder, RO/RW, expiry and pause. Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
 | Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
+
+qBittorrent's first profile contains only panel integration and headless-startup
+settings (**DD-178**): download path, authenticated loopback WebUI and startup
+notice acceptance. UPnP/automatic port mapping, local peer discovery and separate
+temporary storage remain application defaults until the user changes them.
+Existing profiles are never reset by an upgrade or reinstall.
 
 Host edge: dnsmasq + Caddy bound to the Tailscale address; firewall (custom INPUT/FORWARD/NAT chains) for
 Tailscale, WireGuard and WAN SSH.
