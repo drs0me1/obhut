@@ -12,7 +12,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     .filter(([value]) => networks(s).includes(value)).map(([value, label]) => h("span", { class: "shchip", "data-network": value }, label)));
   const addresses = (s, boxed = false) => h("div", { class: "dav-addresses" }, ...networkChoices
     .filter(([value]) => networks(s).includes(value)).map(([value, label]) => {
-      const url = s.urls ? s.urls[value] : s.networks == null && value === "tailscale" ? s.url : null;
+      const url = s.urls?.[value];
       return h("div", { class: "dav-pair", "data-network": value }, h("small", null, `${label} · HTTP`),
         url ? h("div", { class: "dav-address" + (boxed ? " dav-url" : "") }, h("code", null, url), copyButton(url, `${s.name} ${label} adresi`))
           : h("small", null, value === "wan" ? getShares()?.wan?.reason || "WAN adresi kullanılamıyor." : "Tailscale adresi kullanılamıyor."));

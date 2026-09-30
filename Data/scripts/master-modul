@@ -135,9 +135,6 @@ share_need() {
 }
 
 share_prepare() {
-    if [[ ! -f "$SHARE_STATE_FILE" && -d "$SERVER_ROOT/$SHARE_DIR" && ! -L "$SERVER_ROOT/$SHARE_DIR" ]]; then
-        warn "Eski ortak WebDAV hesabı kullanımdan kalkıyor; Dosyalar → Paylaşımlar bölümünde klasör hesaplarını yeniden tanımlayın. Dosyalar silinmez."
-    fi
     python3 "$SBIN_DIR/master_shares.py" prepare || fail_step "klasör paylaşım kaydı hazırlanamadı"
 }
 

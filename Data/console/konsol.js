@@ -9,7 +9,6 @@
     folder: '<path d="M2.2 5.2c0-.9.7-1.6 1.6-1.6h3.1l1.7 1.9h5.6c.9 0 1.6.7 1.6 1.6v6.1c0 .9-.7 1.6-1.6 1.6H3.8c-.9 0-1.6-.7-1.6-1.6z"/>',
     stack: '<rect x="2.6" y="2.8" width="12.8" height="4.4" rx="1.2"/><rect x="2.6" y="10.8" width="12.8" height="4.4" rx="1.2"/><path d="M5.2 5h.1M5.2 13h.1"/>',
     list: '<path d="M6.6 4.6h8.4M6.6 9h8.4M6.6 13.4h8.4"/><circle cx="3.3" cy="4.6" r=".95" fill="currentColor" stroke="none"/><circle cx="3.3" cy="9" r=".95" fill="currentColor" stroke="none"/><circle cx="3.3" cy="13.4" r=".95" fill="currentColor" stroke="none"/>',
-    terminal: '<rect x="2.2" y="3.2" width="13.6" height="11.6" rx="1.8"/><path d="M5.2 7l2.2 2-2.2 2M9.4 11.4h3.2"/>',
     download: '<path d="M9 2.8v8.4M5.6 7.9L9 11.3l3.4-3.4M3.2 14.6h11.6"/>',
     disk: '<ellipse cx="9" cy="4.6" rx="6" ry="2.2"/><path d="M3 4.6v8.8c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V4.6M3 9c0 1.2 2.7 2.2 6 2.2S15 10.2 15 9"/>',
     server: '<rect x="2.6" y="2.6" width="12.8" height="12.8" rx="2"/><path d="M5.6 6.2h6.8M5.6 9h6.8M5.6 11.8h3.6"/>',
@@ -42,9 +41,7 @@
     search: '<circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.4 15.4"/>',
     close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
     key: '<circle cx="5.8" cy="12" r="3.2"/><path d="M8.1 9.7l6.5-6.5M12.4 5.4l1.9 1.9M10.6 7.2l1.5 1.5"/>',
-    restart: '<path d="M3.6 8.8a5.4 5.4 0 1 0 1.6-3.9"/><path d="M3.4 2.6v3.2h3.2"/>',
     sliders: '<path d="M3 5h7M13.5 5H15M3 13h2.5M9 13h6"/><circle cx="11.8" cy="5" r="1.8"/><circle cx="7.2" cy="13" r="1.8"/>',
-    route: '<circle cx="4.4" cy="13.6" r="1.8"/><circle cx="13.6" cy="4.4" r="1.8"/><path d="M6.2 13.6h4.2a2.6 2.6 0 0 0 0-5.2H7.6a2.6 2.6 0 0 1 0-5.2h4.2"/>',
     chev: '<path d="M7 4.5L11.5 9 7 13.5"/>',
     arrow: '<path d="M3.4 9h11.2M10.6 5l4 4-4 4"/>',
   };
@@ -155,7 +152,7 @@
   const dative = (name) => name + ({ 0: "'a", 1: "'e", 2: "'ye", 3: "'e", 4: "'e", 5: "'e", 6: "'ya", 7: "'ye", 8: "'e", 9: "'a" }[name.slice(-1)] || "'e");
 
   /* ---------- durum ---------- */
-  const S = { wg: null, sys: null, health: null, fs: null, trash: null, actions: [], share: null, offset: 0, rates: new Map() };
+  const S = { wg: null, sys: null, health: null, fs: null, actions: [], share: null, offset: 0, rates: new Map() };
   const now = () => Date.now() / 1000 + S.offset;
   const nets = () => (S.wg ? S.wg.networks : []);
   const netOf = (iface) => nets().find((n) => n.iface === iface);
@@ -168,7 +165,6 @@
   ];
   const providerOf = (ips, fallback) => (DNS_PRESETS.find((d) => d.ips === ips) || { name: fallback || "Özel" }).name;
   const STLABEL = { ok: "Bağlı", idle: "Boşta", never: "Görülmedi", off: "Kapalı", netoff: "Ağ kapalı" };
-  const ORDER = ["ok", "idle", "never", "off", "netoff"];
   function effState(p) {
     if (!p.net.active) return "netoff";
     if (!p.enabled) return "off";
@@ -298,20 +294,17 @@
     tasi: (e) => `Taşındı: ${e.detail}`, cope: (e) => `Çöpe taşındı: ${e.detail}`,
     "geri-yukle": (e) => `Çöpten geri yüklendi: ${e.detail}`, "kalici-sil": (e) => `Kalıcı silindi: ${e.detail}`,
     "cop-bosalt": (e) => `Çöp boşaltıldı (${e.detail} öge)`, indir: (e) => `İndirildi: ${e.detail}`,
-    paylas: (e) => `Paylaşıldı: ${e.detail}`, "paylas-kaldir": (e) => `Paylaşımdan çıkarıldı: ${e.detail}`,
     "modul-kur": (e) => `${modName(e.detail)} kurulumu başlatıldı`, "modul-baslat": (e) => `${modName(e.detail)} başlatıldı`,
     "modul-durdur": (e) => `${modName(e.detail)} durduruldu`,
     "modul-kaldir": (e) => `${modName(e.detail)} kaldırıldı${e.detail.endsWith("+veri") ? " · verisiyle" : ""}`,
-    "modul-parola": (e) => `${modName(e.detail)} için yeni parola üretildi`,
     "modul-hesap": (e) => `${modName(e.detail)} parolası görüntülendi`,
     // DD-183: archive jobs; the result line is written by the server when the job ends.
     "arsiv-olustur": (e) => `ZIP oluşturma başladı: ${e.detail}`, "arsiv-ac": (e) => `Arşiv açma başladı: ${e.detail}`,
     "arsiv-iptal": (e) => `Arşiv işlemi için iptal istendi: ${e.detail}`, "arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`,
-    arsiv: (e) => `Arşiv işlemi başlatıldı (${e.detail})`,
   };
   const evKind = (e) => (e.action.startsWith("modul-") ? "mod" : e.source === "panel" ? "wg" : "fs");
-  const EVICON = { wg: "shield", fs: "folder", sec: "lock", mod: "stack" };
-  const EVLABEL = { wg: "WireGuard", fs: "Dosyalar", sec: "Giriş", mod: "Modüller" };
+  const EVICON = { wg: "shield", fs: "folder", mod: "stack" };
+  const EVLABEL = { wg: "WireGuard", fs: "Dosyalar", mod: "Modüller" };
   function evText(e) {
     const fn = ACTION_TEXT[e.action];
     const text = fn ? fn(e) : `${e.action} ${e.detail}`;
@@ -1381,7 +1374,7 @@
     }).catch(fail);
   }
 
-  /* paylaşımlar (DD-141): tek adres, tek hesap; hepsi aynı kökte görünür */
+  /* hesap satırları ve kopyalama (qBittorrent ilk girişi, klasör paylaşım adresleri) */
   const credRow = (k, v, acts, plain, cls) => h("div", { class: "cred-row" + (cls ? ` ${cls}` : "") }, h("span", { class: "k" }, k),
     h("span", { class: "v" + (plain ? " plain" : "") }, v), h("span", { class: "cred-acts" }, acts));
   // Konsol düz HTTP'den açılır: navigator.clipboard orada çalışmaz, eski yöntemle kopyalanır.
@@ -1484,7 +1477,7 @@
     }
     return h("div", { class: "acct-inner", "data-acct": id }, cred,
       h("div", { class: "acct-meta" },
-        h("span", null, a && a.changed ? `Son değişiklik: ${since(a.changed)}` : ""),
+        h("span", null),
         r ? h("span", { "data-acct-left": id }, `${r.left} sn sonra gizlenir`) : null));
   }
   function paintAccount(id) {
@@ -1639,7 +1632,7 @@
     const m = MOD_META[id];
     return Object.assign({ name: id }, META_FALLBACK, typeof m === "function" ? m() : m || {});
   }
-  const modName = (detail) => { const id = String(detail || "").split(" ")[0]; return ({dosya:"Dosyalar", paylasim:"WebDAV"}[id] || metaOf(id).name); };
+  const modName = (detail) => metaOf(String(detail || "").split(" ")[0]).name;
   const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
   let MODS = null, modTimer = null;
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
@@ -1697,7 +1690,7 @@
   }
   function modPill(m) {
     if (m.busy) {
-      const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor", parola: "Uygulanıyor" }[m.progress && m.progress.action] || "İşleniyor";
+      const label = { kur: "Kuruluyor", baslat: "Başlatılıyor", durdur: "Durduruluyor", kaldir: "Kaldırılıyor" }[m.progress && m.progress.action] || "İşleniyor";
       return h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), label);
     }
     if (!m.installed) return h("span", { class: "hm" }, "Kurulu değil");
@@ -1907,7 +1900,7 @@
     else { hidePass("torrent"); $("torrent-account").replaceChildren(); }
   });
 
-  /* ---------- One workspace, stable legacy bookmarks ---------- */
+  /* ---------- One workspace, hash routes ---------- */
   function setMenu(open) {
     $("menu-toggle").setAttribute("aria-expanded", String(open));
     $("panel-sidebar").classList.toggle("menu-open", open);
@@ -1936,12 +1929,7 @@
   let current = "dosyalar";
   const view = () => current;
   function route() {
-    let raw = location.hash.replace(/^#\/?/, "").split("/");
-    const alias = {uygulamalar:"dosyalar", genel:"dosyalar", gunluk:"ayarlar/log"};
-    if (alias[raw[0]] || (raw[0] === "ayarlar" && raw[1] === "qb")) {
-      history.replaceState(null, "", "#/" + (alias[raw[0]] || "torrent"));
-      raw = location.hash.slice(2).split("/");
-    }
+    const raw = location.hash.replace(/^#\/?/, "").split("/");
     let key = ROUTES[raw[0]] ? raw[0] : "dosyalar";
     setMenu(false);
     // An absent application sends a saved bookmark to App Store.
@@ -1949,7 +1937,6 @@
       history.replaceState(null, "", "#/moduller");
       key = "moduller";
     }
-    // DD-183: the retired "#/dosyalar/arsiv" bookmark opens the Files list.
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
     const v = key === "wireguard" && raw[1] === "ekle" ? "wgadd" : key;

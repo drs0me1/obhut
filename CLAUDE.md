@@ -6,7 +6,7 @@ Working guide for any AI assistant in this repository. Read this first.
 
 Active code lives under `Data/`; the repository root holds only what the
 operator double-clicks — the current portable installer (`<V2_VERSION>.command`)
-`wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs and downloaded WireGuard device profiles/QR codes),
+and `wireguard.command` — plus the Git-ignored `kurulum/` (installer inputs and downloaded WireGuard device profiles/QR codes),
 `versiyon/` (frozen copies of verified working versions), this file and `README.md`. Bare paths in this file and in `Data/docs/` (`install.sh`,
 `config/defaults.env`, `tests/`, `CHANGELOG.md`, …) are relative to `Data/`.
 
@@ -21,7 +21,8 @@ reconcile / self-healing engine by design.
 Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
 Architecture: [`Data/docs/architecture.md`](Data/docs/architecture.md).
 Non-obvious rationale: [`Data/docs/design-decisions.md`](Data/docs/design-decisions.md)
-(`DD-*` entries). Cursor rules for the tree:
+(`DD-*` entries; one-line index in [`Data/docs/decisions-index.md`](Data/docs/decisions-index.md)).
+Cursor rules for the tree:
 `.cursor/rules/master-stack.mdc`.
 
 The installer is destructive: firewall, systemd, network state. Treat every change as production-infrastructure work.
@@ -106,9 +107,9 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
-| `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Shared-account commands are retired; folder accounts use `master_shares.py` (**DD-158**) |
-| `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only (**DD-140**); the old names `wg.`, `dosya.` and `file.` are gone (**DD-154**). Design mockups in `Data/docs/design/` |
-| Built-in WebDAV (`paylasim` internal ID) | **DD-158/159:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Per-folder `/s/<id>/` URLs, separate users, RO/RW, expiry and pause. One Tailscale-facing port via Caddy; no shared account or writable symlink tree. See contract §5–7 for limits and manual recipient ACL requirements. |
+| `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Folder accounts are managed by `master_shares.py` (**DD-158**) |
+| `Data/console/` | Konsol pages (`index.html`, `konsol.js`/`konsol.css` and per-page scripts/styles) at Caddy `panel.<domain>`, tailnet only (**DD-140**). Design mockups in `Data/docs/design/` |
+| Built-in WebDAV (`paylasim` internal ID) | **DD-158/159:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Per-folder `/s/<id>/` URLs, separate users, RO/RW, expiry and pause. One port (`SHARE_PORT`) via Caddy: Tailscale always, WAN IPv4 over HTTP only for shares that opt in (**DD-179**); no shared account or writable symlink tree. See contract §5–7 for limits and manual recipient ACL requirements. |
 | `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, Unix socket `/run/master-wg-panel/api.sock` only — no TCP port since **DD-180** — `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
 | `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
 | `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
@@ -118,18 +119,19 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `Data/templates/` | Caddy, dnsmasq |
 | `Data/scripts/` | Firewall, refresh-tailnet, GRO, wait |
 | `Data/systemd/` | Unit/timer templates |
-| `Data/tests/` | Critical bats suite (`bats Data/tests`) |
+| `Data/tests/` | Bats, Python unittest, Playwright and isolated Linux suites; see `Data/tests/README.md` |
 | `Data/dev/export-installer.sh` | Portable `.command` exporter |
 | `Data/app/` | The current exported `<V2_VERSION>.command` only; the exporter removes older ones (**DD-154**; history is in Git) |
 | `Data/docs/contract.md` | What the installer does / refuses |
 | `Data/docs/architecture.md` | Layout and data flow |
 | `Data/docs/design-decisions.md` | `DD-*` rationale |
-| `Data/docs/archive/` | Historical reviews (v2-27, v2-73) and the original rules source; not current behaviour |
+| `Data/docs/decisions-index.md` | One line per `DD-*` entry |
+| `Data/docs/archive/` | Historical reviews (v2-27, v2-73), the original rules source, retired `DD-*` entries (`design-decisions-retired.md`) and older history moved out of `CHANGELOG.md`/`SESSION.md` (`CHANGELOG-before-v2-145.md`, `SESSION-history.md`); not current behaviour |
 
 ## Constraints
 
-- DD-179 (v153): per-folder WebDAV can opt into HTTP WAN IPv4 or both networks;
-  existing/new shares default to Tailscale. Plaintext-risk acknowledgement,
+- DD-179: per-folder WebDAV can opt into HTTP WAN IPv4 or both networks;
+  new shares default to Tailscale. Plaintext-risk acknowledgement,
   independent scope enforcement and attempt/connection budgets are mandatory.
   Only the WebDAV port may be published; console/admin services remain private.
   See `Data/docs/folder-shares.md` for limits and the scoped expiry/recovery timer.
@@ -141,7 +143,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   live-verified 2026-08-30, including re-run, service restarts and reboot.
 - The fixed base includes Files, folder WebDAV and ZIP/RAR (**DD-159**, **DD-166**).
   The App Store catalogue is only WireGuard and qBittorrent. Public module
-  verbs refuse `dosya`/`paylasim`; their internal templates/registry IDs remain
-  for compatibility with settings and DNS/firewall rendering. No profiles.
+  verbs refuse `dosya`/`paylasim`; these are internal template/registry IDs used
+  by DNS/Caddy/firewall rendering. No profiles.
 - Do not delete or recreate other software's iptables chains (Tailscale's
-  `ts-*`); manage only the project chains. There is no Docker (**DD-152**).
+  `ts-*`); manage only the project chains.

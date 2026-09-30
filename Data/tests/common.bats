@@ -1333,6 +1333,15 @@ EOF
     grep -q 'APT::Periodic::Unattended-Upgrade "1"' <<<"$body"
     grep -q 'atomic_write "\$APT_UNATTENDED_POLICY_FILE"' <<<"$body"
     grep -q 'Automatic-Reboot "false"' <<<"$body"
+    # DD-184: Tailscale and Caddy repositories join the distribution's list, updates at night.
+    grep -qF '"$TAILSCALE_APT_ORIGIN";' <<<"$body"
+    grep -qF '"$CADDY_APT_ORIGIN";' <<<"$body"
+    grep -qx 'TAILSCALE_APT_ORIGIN="origin=Tailscale,label=Tailscale"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'CADDY_APT_ORIGIN="origin=cloudsmith/caddy/stable"' "$V2_ROOT/config/defaults.env"
+    grep -qF 'OnCalendar=*-*-* $APT_UPGRADE_TIME' <<<"$body"
+    grep -qx 'OnCalendar=' <<<"$body"
+    grep -qF 'systemctl restart apt-daily-upgrade.timer' <<<"$body"
+    run ! grep -q 'Automatic-Reboot "true"' "$V2_ROOT/install.sh"
     grep -q 'APT_PERIODIC_FILE="/etc/apt/apt.conf.d/20auto-upgrades"' "$V2_ROOT/config/defaults.env"
     grep -q 'APT_UNATTENDED_POLICY_FILE="/etc/apt/apt.conf.d/5' "$V2_ROOT/config/defaults.env"
     awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh" |
@@ -2002,7 +2011,8 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     run ! grep -qE 'SHARE_ENABLED|share_enabled|share_summary' "$V2_ROOT/scripts/master-modul" "$V2_ROOT/files-panel/master-files-panel"
     run ! grep -qE 'SHARE_CRED_FILE|SHARE_HTPASSWD_FILE' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-modul"
     run ! grep -q 'os.symlink' "$V2_ROOT/files-panel/master-files-panel"
-    grep -q 'self.error(410, RETIRED_SHARE_MESSAGE)' "$V2_ROOT/files-panel/master-files-panel"
+    # Fresh installs only: the retired /api/paylas routes are gone, not answered with 410.
+    run ! grep -qE 'RETIRED_SHARE_MESSAGE|/api/paylas"' "$V2_ROOT/files-panel/master-files-panel"
 }
 
 @test "builtins preserve legacy metadata and do not follow or recreate its marker" {
@@ -2109,8 +2119,10 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     done
     [ "$(pc /api/konsol/moduller/paylasim/parola -H 'X-Konsol: 1' -H 'Content-Type: application/json' --data '{}')" = 404 ]
     [ ! -e "$TMP/sdrun-calls" ]
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["share"] == {"port":61010,"on":True}' "$TMP/body"
+    # The resources reply carries no share or port data (the legacy /api/wg/sistem is gone).
+    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc /api/konsol/kaynaklar -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "share" not in d and "ports" not in d, d' "$TMP/body"
 }
 
 @test "wg panel answers without the WireGuard module and never runs master-wg for it" {
@@ -2128,12 +2140,11 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     [ "$(pc /api/wg/nets/wg0/peers/iphone/profile -H 'X-Konsol: 1')" = 404 ]
     [ "$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')" = "$before" ]
     # The disk card no longer needs the file backend: the root backend measures the user area.
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
+    [ "$(pc /api/konsol/kaynaklar -H 'X-Konsol: 1')" = 200 ]
     python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["root"] == sys.argv[2] and d["disk"]["total"] > 0 and d["disk"]["free"] >= 0, d
-assert not [r for r in d["ports"] if r["scope"] == "wireguard" or r["name"].startswith("WireGuard")], d["ports"]
 ' "$TMP/body" "$TMP"
     # With the module back, the same requests reach master-wg again.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
@@ -2182,22 +2193,7 @@ EOF
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["pass"] == "Tmp9Pass7Word"' "$TMP/body"
     grep -q 'panel: konsol yerel modul-hesap torrent -> ok' "$TMP/panel.log"
     [ "$(pc /api/konsol/moduller/torrent/parola "${json[@]}" --data '{}')" = 404 ]
-    # The ports card shows the interface port only with the module; no torrent peer port at all.
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert [r["scope"] for r in d["ports"] if r["name"] == "qBittorrent arayüzü"] == ["loopback"], d["ports"]
-assert not [r for r in d["ports"] if "eş trafiği" in r["name"] or r["name"] == "Dozzle"], d["ports"]
-assert not [r for r in d["ports"] if r["port"] == 61009], d["ports"]
-' "$TMP/body"
-    # v2-120: the file backend's port is listed only with the Dosya yöneticisi module.
-    printf 'wireguard\tcalisiyor\ntorrent\tcalisiyor\ndosya\tcalisiyor\n' >"$TMP/moduller"
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert [r["scope"] for r in d["ports"] if r["port"] == 61009] == ["loopback"], d["ports"]' "$TMP/body"
-    printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert not [r for r in d["ports"] if "qBittorrent" in r["name"]], d["ports"]' "$TMP/body"
+    # Port rows follow the installed modules; test_resources.py checks them on Panel.ports().
 }
 
 @test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
@@ -2621,21 +2617,18 @@ PY
     grep -q 'dosya: konsol 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
 }
 
-@test "files panel rejects legacy shared-root creation and hides its internal directory" {
+@test "files panel has no shared-root share API and hides its internal directory" {
     files_panel_start
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 410 ]
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 404 ]
     [ ! -e "$TMP/root/.pay/w/Kuzey" ]
     mkdir -p "$TMP/root/.pay"
     printf 'paylasim\n' >"$TMP/root/.pay/acik"
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 410 ]
-    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey"}')" = 410 ]
-    [ "$(fp /api/paylas)" = 410 ]
-    [ "$(fp /api/paylas -I)" = 410 ]
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: attacker.example' -H 'X-Konsol: 1' "http://127.0.0.1:$FPORT/api/paylas")" = 403 ]
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/api/paylas")" = 403 ]
-    [ "$(fp /api/paylas -H 'Sec-Fetch-Site: cross-site')" = 403 ]
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' --data '{}' "http://127.0.0.1:$FPORT/api/paylas")" = 403 ]
-    [ "$(fpost /api/paylas '{}')" = 410 ]
+    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 404 ]
+    [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey"}')" = 404 ]
+    [ "$(fp /api/paylas)" = 404 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: attacker.example' -H 'X-Konsol: 1' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: panel.ayc' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
+    [ "$(fp /api/state -H 'Sec-Fetch-Site: cross-site')" = 403 ]
     [ "$(fp /api/state)" = 200 ]
     python3 -c 'import json,sys; assert "share" not in json.load(open(sys.argv[1]))' "$TMP/body"
     [ "$(cat "$TMP/root/.pay/acik")" = paylasim ]
@@ -3867,7 +3860,9 @@ EOF
     [ ! -e "$V2_ROOT/systemd/caddy-wg@.service" ]
     run ! grep -qE 'Caddyfile.wg|izin verilen WireGuard|Local erişim' "$V2_ROOT/console/konsol.js"
     run ! grep -qE 'CADDY_WG_FILE|caddy-wg@|ensure_caddy_wg' "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-wg" "$V2_ROOT/scripts/master-modul"
-    grep -q 'python3 "$V2_ROOT/panel/master_wg_upgrade.py" "$STATE_FILE"' "$V2_ROOT/install.sh"
+    # Fresh installs only: no upgrade helper rewrites an older WireGuard registry.
+    run ! grep -q 'master_wg_upgrade' "$V2_ROOT/install.sh"
+    [ ! -e "$V2_ROOT/panel/master_wg_upgrade.py" ]
     local s7
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -qF 'wg show "$wg_iface" listen-port' <<<"$s7"
@@ -3936,8 +3931,7 @@ case "$*" in
         '-A MASTER-INPUT -i tailscale0 -c 4 240 -j ACCEPT' '-A MASTER-INPUT -i eth0 -p udp -m udp --dport 41641 -c 0 0 -j ACCEPT' \
         '-A MASTER-INPUT -i eth0 -p tcp -m tcp --dport 22 -c 23 1412 -j ACCEPT' '-A MASTER-INPUT -i eth0 -p udp -m udp --dport 61001 -c 5 300 -j ACCEPT' \
         '-A MASTER-INPUT -i eth0 -p tcp -m tcp --dport 8080 -c 3 180 -j ACCEPT' \
-        '-A MASTER-INPUT -i eth0 -c 1631 190422 -j DROP' '-A MASTER-INPUT -d 10.8.0.1/32 -i wg0 -p tcp -m multiport --dports 61006 -c 2 120 -j ACCEPT' \
-        '-A MASTER-INPUT -d 10.8.0.1/32 -i wg0 -p icmp -m icmp --icmp-type 8 -c 0 0 -j ACCEPT' '-A MASTER-INPUT -i wg0 -c 7 420 -j DROP' \
+        '-A MASTER-INPUT -i eth0 -c 1631 190422 -j DROP' '-A MASTER-INPUT -i wg0 -c 7 420 -j DROP' \
         '-A MASTER-INPUT -c 0 0 -j RETURN' ;;
     *"-S MASTER-FORWARD") printf '%s\n' '-N MASTER-FORWARD' '-A MASTER-FORWARD -i wg0 -o eth0 -c 9 900 -j ACCEPT' \
         '-A MASTER-FORWARD -i wg0 -c 1 60 -j DROP' '-A MASTER-FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -c 9 900 -j ACCEPT' \
@@ -3981,7 +3975,6 @@ assert k("wan", "ssh")[0]["pkts"] == 23 and k("wan", "ssh")[0]["port"] == 22, v4
 assert k("wan", "drop")[0]["pkts"] == 1631
 wgp = k("wan", "wireguard")[0]
 assert (wgp["iface"], wgp["port"], wgp["label"]) == ("wg0", 61001, "Ana ağ"), wgp
-assert k("wg:wg0", "ui")[0]["ports"] == [{"port": 61006, "name": "qbittorrent"}]
 assert k("wg:wg0", "nat")[0]["subnet"] == "10.8.0.0/24" and k("wg:wg0", "egress")[0]["pkts"] == 9
 assert k("ts", "all")[0]["pkts"] == 4 and k("self", "lo")[0]["pkts"] == 157
 # A rule Konsol does not know is shown, not hidden; RETURN is not a rule to show.
@@ -4057,7 +4050,7 @@ PY
     grep -q 'OnUnitActiveSec=2s' "$V2_ROOT/systemd/master-settings-guard.timer"
     grep -q 'master_settings.py --state __STATE_FILE__ guard' "$V2_ROOT/systemd/master-settings-guard.service"
     # Icons the page uses exist (svg() silently falls back to the file icon).
-    for icon in sliders route chev arrow; do grep -qE "^    ${icon}: '" "$js"; done
+    for icon in sliders chev arrow; do grep -qE "^    ${icon}: '" "$js"; done
     grep -q '^\.addr-t \.tr {' "$css"
     # CSP: no inline style in the markup.
     run ! grep -q ' style="' "$html"

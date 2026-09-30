@@ -86,7 +86,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         startPoll();
       }
       await loadSettings(true);
-    } catch (e) { delete qdraft.password; error(e); startPoll(); }
+    } catch (e) { error(e); startPoll(); }
     finally { busy = false; draw(); }
   }
   function review() {
@@ -216,7 +216,6 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       ["Caddy", "Panel ve servislerin web adreslerini sunar."],
       ["dnsmasq", "Yerel alan adlarını DNS ile çözer."],
       ["Paylaşım WebDAV", "Dosyalar uygulamasındaki klasör paylaşımları."],
-      ["Konsol · WireGuard", "Panelin ağ ve sistem yönetimi arka ucu."],
       ["Konsol · dosya", "Panelin dosya ve ZIP işlemleri arka ucu."],
       ["qBittorrent", "Torrent uygulamasının web arayüzü."],
     ];

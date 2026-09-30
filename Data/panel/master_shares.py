@@ -130,12 +130,10 @@ def load(path):
     if len(raw) > 262144:
         raise ShareError("Paylaşım kaydı çok büyük.")
     data = json.loads(raw)
-    if data.get("schema") not in (2, 3) or not isinstance(data.get("items"), list):
+    # Fresh installs write schema 3 only; older registries are not converted.
+    if data.get("schema") != 3 or not isinstance(data.get("items"), list):
         raise ShareError("Paylaşım kaydı desteklenmiyor.")
-    legacy = data["schema"] == 2
     for item in data["items"]:
-        if legacy:
-            item["networks"] = ["tailscale"]
         validate_networks(item.get("networks"))
     data.update(schema=3, limits=dict(DEFAULT_LIMITS))
     return data

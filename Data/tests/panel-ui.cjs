@@ -100,12 +100,12 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await page.locator("#fs-detail:visible").count(),0);
     assert.equal(await page.locator("#resource-mem").innerText(),"%25");
     assert.equal(await page.locator("#resource-disk").innerText(),"%28");
-    assert(!calls.includes("/api/wg/state") && !calls.includes("/api/wg/islemler") && !calls.includes("/api/wg/sistem"));
+    assert(!calls.includes("/api/wg/state") && !calls.includes("/api/wg/islemler"));
     await page.screenshot({path:path.join(shots,"model-a-files.png"),fullPage:true});
-    for (const old of ["#/uygulamalar","#/genel"]) {
-      await navigate(old); await page.waitForURL("**/#/dosyalar");
-    }
-    await navigate("#/gunluk"); await page.waitForURL("**/#/ayarlar/log");
+    // Fresh installs only: retired bookmarks are not rewritten; an unknown hash shows Files.
+    await navigate("#/uygulamalar");
+    await page.getByRole("heading",{name:"Dosyalar",exact:true}).waitFor();
+    await navigate("#/ayarlar/log");
     await page.locator("#log-table").waitFor();
     assert.equal(await page.getByRole("tab").count(),5);
     await page.getByRole("tab",{name:"Sistem",exact:true}).click();
@@ -299,8 +299,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       jobs[0].status="failed"; jobs[0].message="Eksik RAR parçası; sonuç yayımlanmadı.";
       await archiveBar.waitFor({state:"hidden"});
     }
-    // The retired jobs bookmark opens the Files list.
-    await navigate("#/dosyalar/arsiv");
+    await navigate("#/dosyalar");
     await page.getByRole("button",{name:"media ayrıntıları",exact:true}).waitFor();
     await page.getByRole("button",{name:"not-an-archive.txt ayrıntıları",exact:true}).click();
     assert.equal(await page.locator("#fs-detail").getByRole("button",{name:"Arşiv açıcı",exact:true}).count(),0);
@@ -337,7 +336,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await page.locator("#na-label").inputValue(),"Keep my draft");
     for (const width of [1440,1024,736,390,320]) {
       await page.setViewportSize({width,height:950});
-      for (const hash of ["#/dosyalar","#/dosyalar/paylasim","#/dosyalar/arsiv","#/dosyalar/cop","#/moduller","#/ayarlar"]) {
+      for (const hash of ["#/dosyalar","#/dosyalar/paylasim","#/dosyalar/cop","#/moduller","#/ayarlar"]) {
         await navigate(hash);
         await page.waitForTimeout(80);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),`${width}/${hash}`);

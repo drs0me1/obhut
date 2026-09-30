@@ -5,63 +5,11 @@ Implemented by `Data/install.sh` and helpers. Where live code and this
 document diverge, prefer the code and update this file.
 
 This document is the authoritative statement of what the installer does
-and — just as importantly — what it deliberately refuses to do. Removals
-relative to the retired monolith (no reconcile engine, no
-canonical-bundle machinery, no legacy `master-webdav.service`) are decisions, not
-oversights. There is no parallel legacy installer tree.
-
-**Current Files workflow (DD-170):** selecting files opens a contextual
-action dock, not a desktop application launcher. Archive creation produces ZIP;
-the archive opener automatically detects multipart RAR and nested ZIP/RAR. The
-destination defaults to downloads with a folder picker. Depth/size/time limits
-remain enforced internally, without a nesting prompt; source archives are kept.
-
-**v2-153 amendment (DD-179):** folder shares explicitly select Tailscale/WAN
-IPv4/both; existing and new shares default to Tailscale. WAN deliberately uses
-HTTP with explicit plaintext-risk consent. Only selected `/s/<id>/` routes
-are public on SHARE_PORT; no administrative interface is exposed. Separate
-listener scopes, IP attempt limits and backend/edge connection caps apply.
-Expired/paused/removed shares revoke access; the last one removes the WAN
-listener and owned permission. See [folder-shares.md](folder-shares.md) for exact
-limits, failure recovery and the scoped expiry timer. This supersedes older
-tailnet-only WebDAV wording below; all other services remain tailnet-only.
-
-**v2-152 amendment (DD-178):** qBittorrent seed settings are limited to panel
-integration and headless startup. UPnP/automatic mapping, local peer discovery
-and separate temporary storage are user choices, not installer-enforced values.
-Existing profiles and the host firewall policy are unchanged.
-
-**v2-151 amendment (DD-177):** all WireGuard networks and peers are internet-only.
-Local access is retired, including UI/API/CLI selectors, WG host-rule overrides
-and the per-network Caddy listener. Installer upgrades normalize registry policy
-and remove only the retired WG artifacts/rules, preserving keys/profiles/DNS.
-Network settings change only future-peer DNS under revision/install-lock checks;
-they never regenerate keys, change existing profiles or wake a stopped network.
-
-**v2-139 amendment (DD-166):** Files also extracts unencrypted RAR3/RAR5,
-solid/multipart sets and mixed nested ZIP/RAR. Distribution-signed `unrar` and
-`python3-rarfile` are base dependencies. If missing from existing apt sources,
-one managed source enables Debian non-free or Ubuntu universe/multiverse with
-the installed distribution keyring. No operator source is overwritten. The
-[archive contract](desktop-and-archives.md) retains bounded jobs, source
-preservation, safe filesystem writes and atomic publication; it adds an
-unprivileged resource-limited RAR helper, never a shell extraction command.
-
-**v2-130 amendment (DD-160):** Model A replaces Overview, Applications,
-desktop dock and window controls with one responsive sidebar. Files is the
-landing page; optional apps appear only when installed. CPU/RAM/disk use the
-gated, independent `/api/konsol/kaynaklar` endpoint; missing/stale measurements
-are unknown, never fabricated zeroes. Settings owns System/Firewall/Caddy/
-Dnsmasq/Log; qBittorrent owns its account/path form. One shared transactional
-controller retains existing confirmation and rollback guarantees. Legacy
-bookmarks redirect; service/data/security boundaries remain unchanged.
-See [Model A and clean-install acceptance](model-a-clean-install.md).
-
-**v2-129 amendment (DD-159):** Files and folder WebDAV are now installer-owned
-built-ins; only WireGuard/qBittorrent remain in the public App Store catalogue.
-The [desktop and ZIP contract](desktop-and-archives.md) defines the archive API,
-limits, private history and upgrade behavior. This supersedes older optional
-Files/Paylaşım lifecycle references below, not their security or data boundaries.
+and — just as importantly — what it deliberately refuses to do. Companion
+contracts: [folder-shares.md](folder-shares.md) (folder WebDAV),
+[desktop-and-archives.md](desktop-and-archives.md) (Files and archives) and
+[model-a-clean-install.md](model-a-clean-install.md) (Konsol layout and
+clean-install acceptance).
 
 **Relationship to `.cursor/rules/`:** those rules cover the repository and
 govern *how* the work is done — process, Bash conventions, the
@@ -71,10 +19,8 @@ UDP-only decision into TCP+UDP, do not grow
 a general-purpose reconcile engine). This document governs *what the result
 must do*. Where the rules do not specify a feature in detail, this contract
 extends them. Settled disagreements with early rule drafts — dnsmasq
-listening scope, chain name, refresh helper scope, Portainer upstream
-scheme — are recorded as **DD-59** through **DD-62** in
-`design-decisions.md`. Portainer itself was replaced by Dozzle in v2-82
-(**DD-116**), and Dozzle was dropped in v2-118 (**DD-151**).
+listening scope, chain name and refresh helper scope — are recorded as
+**DD-59** through **DD-61** in `design-decisions.md`.
 
 The single active rule source is `.cursor/rules/master-stack.mdc`. The
 original RTF is archived unchanged at
@@ -94,17 +40,17 @@ the ones agreed on 2026-08-05:
 | R6 | Apply IP forwarding and the official Linux exit-node optimisations |
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create the user root `/srv`, downloads `/srv/downloads` and media `/srv/media` (**DD-144**) |
-| R9 | Withdrawn in v2-121 (**DD-152**): Docker Engine and the Compose plugin are not installed; every module is a host systemd service |
-| R10 | No Compose: optional qBittorrent is a host service; Files, per-folder Python WebDAV and bounded archive tools are built in. Dozzle, FileBrowser, rclone sharing and Unpackerr are retired (**DD-146**, **DD-151**, **DD-152**, **DD-158**, **DD-159**) |
-| R11 | Publish every web interface on `127.0.0.1` only |
-| R12 | Publish publicly the WireGuard UDP port of each network (host kernel since v2-86, **DD-120**; formerly wg-easy). The torrent peer port is no longer opened (**DD-151**): qBittorrent makes outgoing connections only |
-| R13 | Ask the operator for a local domain at the start of the installation (since v2-85 read from the installer input file, **DD-119**) |
+| R9 | Withdrawn (**DD-152**) |
+| R10 | Optional qBittorrent is a host service; Files, per-folder Python WebDAV and bounded archive tools are built in (**DD-151**, **DD-158**, **DD-159**) |
+| R11 | Publish every web interface on loopback only (`127.0.0.1`; WebDAV's WAN scope on `SHARE_WAN_BACKEND`, **DD-179**) |
+| R12 | Publish publicly the WireGuard UDP port of each network, only while WireGuard is installed (host kernel, **DD-120**). The torrent peer port is not opened (**DD-151**): qBittorrent makes outgoing connections only |
+| R13 | Read the local domain from the installer input file (**DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
-| R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP |
+| R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP (plus the opt-in WAN WebDAV site, §3.1, **DD-179**) |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP and WAN SSH; confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
-| R19 | Withdrawn in v2-121 (**DD-152**): no Docker, so nothing to filter through `DOCKER-USER`; the firewall never touches that chain |
+| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the opt-in WAN WebDAV port (**DD-179**); confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
+| R19 | Withdrawn (**DD-152**) |
 | R20 | Keep the installation re-runnable |
 
 ---
@@ -118,17 +64,13 @@ the ones agreed on 2026-08-05:
   refuses any other OS or release. The Tailscale apt repo suite is derived
   from `os-release` (`OS_ID`/`OS_CODENAME`), never hardcoded, and its
   `dists/<codename>/Release` is probed before the source file is written
-  (**DD-106**; the Docker repository went with **DD-152**). On a host with
+  (**DD-106**). On a host with
   ufw active the installer stops before any mutation. The
   `iptables`/`ip6tables` backend must be the nft one tailscaled uses, because
   `MASTER-INPUT` is ordered behind its `ts-input` (**DD-152**); stage 0
   asserts this for whichever binaries the host already has and stage 1
   asserts it unconditionally once the package is installed, because a
-  minimal Debian image ships none (**DD-106**, **DD-108**). Live-verified on fresh
-  Ubuntu 24.04.4 (noble) and Ubuntu 26.04.1 (resolute) hosts on
-  2026-08-29/30: full installs passed stages 0–7 and the §14 checks;
-  resolute additionally passed a no-op re-run, Tailscale/Docker restart
-  recovery and a full reboot.
+  minimal Debian image ships none (**DD-106**, **DD-108**).
 - The detected release is **recorded**, not only used (**DD-104**):
   `state.env` carries `OS_ID`, `OS_CODENAME`, `OS_VERSION_ID`, `OS_ARCH`
   and `KERNEL_RELEASE`. A re-run whose recorded identity differs from the
@@ -147,12 +89,19 @@ the ones agreed on 2026-08-05:
 - `apt-get update` + `full-upgrade`, then the package set the stack needs
   (**R1**, **R2**): only what the base itself uses (**DD-153**) — no `gnupg`
   (apt reads the armored Caddy key, `signed-by=…caddy-stable-archive-keyring.asc`),
-  no `gawk` (the distribution's `mawk` is `awk`), no `apache2-utils`, rclone
-  download or `acl` package. Folder WebDAV uses the base Python runtime (DD-158).
+  no `gawk` (the distribution's `mawk` is `awk`). Folder WebDAV uses the base
+  Python runtime (**DD-158**). Distribution-signed `unrar` and `python3-rarfile`
+  are base dependencies of the archive opener: if the existing apt sources lack
+  them, one managed source enables Debian non-free or Ubuntu
+  universe/multiverse with the installed distribution keyring; no operator
+  source is overwritten (**DD-166**).
 - `unattended-upgrades` is installed and enabled for the distribution's own
   origins (Debian stable + security; Ubuntu security), with automatic reboot
-  off; Tailscale and Caddy packages are updated only by a re-run
-  (**DD-113**). WebDAV code updates with the installer (§7).
+  off (**DD-113**). The Tailscale and Caddy repositories are added to its
+  origins (`origin=Tailscale,label=Tailscale`, `origin=cloudsmith/caddy/stable`),
+  and the daily run starts at `APT_UPGRADE_TIME` (04:00) plus a random delay of
+  up to 30 min; an update restarts that service briefly (**DD-184**).
+  WebDAV code updates with the installer (§7).
 - Timezone set to the configured value.
 - Root-only, single-host, `flock`-serialised, wrapped in `systemd-inhibit`
   so a shutdown cannot land mid-transaction.
@@ -167,8 +116,7 @@ the ones agreed on 2026-08-05:
     install. Messages name the line and key, never the value.
   - Stage 0 validates every value, prints them without passwords and asks for
     one confirmation before `config.env` is written. Re-runs still ask about
-    full-upgrade (the image-pull question went with **DD-151**); an
-    interactive TTY stays required.
+    full-upgrade; an interactive TTY stays required.
 - **Nothing but `kurulum.env` reaches the server (DD-143).** The launcher sends
   that one file; no WireGuard configuration, key or profile is read from
   `kurulum/` or uploaded, and nothing is fetched back. `wireguard.command` may
@@ -192,31 +140,21 @@ the ones agreed on 2026-08-05:
 - IPv4 and IPv6 forwarding sysctls, UDP socket buffer floor, and the
   **UDP GRO optimisation** are all preserved (**R6**).
 - The Tailscale IPv4 **and IPv6** are written to `/etc/master-stack/state.env`
-  (**R7**). v1 never persisted the IPv6 address; v2 closes that gap.
+  (**R7**).
 
-### 1.3 No Docker; modules are host services (DD-152)
+### 1.3 Modules are host services (DD-151, DD-152)
 
-- **No Docker (v2-121, DD-152).** The installer adds no Docker apt
-  repository and installs no `docker-ce`, `containerd` or Compose package; it
-  writes no `/etc/docker/daemon.json` and no `docker.service.d` drop-in, and
-  there is no container, image or Compose file. Every module is a systemd
-  service on the host (§1.11) (**R9** withdrawn).
+- Every module and built-in service is a systemd unit on the host (§1.11);
+  there is no container runtime (**DD-152**).
 - The installer's own apt downloads are not kept in `/var/cache/apt/archives`
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
-- Dozzle is gone (**DD-151**): every module card has a Günlük panel reading
-  the unit's journal. There is no image-pull question on re-runs.
-- Unpackerr is dropped (**DD-152**): no watcher/service remains. Files provides
-  an on-demand, bounded archive opener instead (**DD-159**, **DD-166**, **DD-170**).
 - **qBittorrent is a host module (DD-151)**, installed from Konsol (§1.11): the
   distribution's `qbittorrent-nox` runs on the server as the downloads account.
   `modules/torrent/qBittorrent.conf` seeds minimal settings only when absent.
-  The installer holds no account or incoming peer-port setting;
-  `TORRENT_USER`/`TORRENT_PASS` are gone with DD-129's settings sync. Later
+  The installer holds no account or incoming peer-port setting. Later
   account/download-folder edits use the settings worker and qBittorrent profile.
-- There is no FileBrowser (**DD-146**): no service, no account in the input
-  file, no port and no database. Files are managed in Konsol (§1.10). The
-  old name `file.${LOCAL_DOMAIN}` is gone (**DD-154**).
-- Every web interface and WebDAV listens on `127.0.0.1` only (**R11**).
+- Every web interface and WebDAV listens on loopback only (`127.0.0.1`;
+  WebDAV's WAN scope on `SHARE_WAN_BACKEND`, **DD-179**) (**R11**).
 - Module services survive a reboot as enabled systemd units; a module stopped
   from Konsol is disabled and stays stopped (§1.11). systemd's `Restart=`
   handles a crash.
@@ -224,17 +162,18 @@ the ones agreed on 2026-08-05:
 ### 1.4 Directories
 
 - `/srv/downloads`, `/srv/media`, `/srv/media/movies` and
-  `/srv/media/series` are created when absent (**R8**, **DD-144**); there is no
-  Unpackerr work directory since **DD-152**.
+  `/srv/media/series` are created when absent (**R8**, **DD-144**).
 - **The downloads tree is repaired selectively on every run** (**DD-84**):
   entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
   (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
   files not mode `0664` are `chmod`'d. Matching entries are left untouched
   (no full-tree rewrite). qBittorrent and Konsol's file backend share
   read/write that way. WebDAV enforces each account's RO/RW permission (DD-158).
-- The private `.arsiv` work/history tree and retired `.pay` tree are excluded from
-  ordinary ownership/mode repair. `.pay` is no longer created or used for status;
-  existing contents are preserved and blocked, not imported or deleted (DD-171).
+- The private `.arsiv` work/history tree and the reserved `.pay` name
+  (`SHARE_DIR`) are excluded from ordinary ownership/mode repair. `.pay` is
+  never created or read; the file backend hides and refuses it (the name is
+  reserved), WebDAV and qBittorrent cannot access it, and its contents are
+  never deleted (**DD-171**).
   `.cop` and `.pay` are internal areas, not shareable folders.
 
 ### 1.5 DNS and Caddy
@@ -242,16 +181,17 @@ the ones agreed on 2026-08-05:
 - dnsmasq bound to loopback and `tailscale0`, tracking the interface address with
   `interface-name` + `bind-dynamic`, resolving the installed service names to the
   current Tailscale IPv4 (**R14**).
-- Caddy listening on the Tailscale IPv4, port 80, HTTP only, reverse-proxying
-  to loopback upstreams (**R15**, **R16**).
-- The real Konsol page and backend/gate checks verify the HTTP edge. The
-  redundant `health.<domain>` endpoint and DNS record are removed (**DD-157**).
+- Caddy listening on the Tailscale IPv4, port 80 (and `SHARE_PORT` for folder
+  WebDAV), HTTP only, reverse-proxying to loopback upstreams (**R15**, **R16**).
+- The real Konsol page and backend/gate checks verify the HTTP edge; there is
+  no separate health endpoint or DNS name (**DD-157**).
+- While a WAN share is active, Caddy also binds `WAN_IPV4:SHARE_PORT`, over
+  HTTP, for `/s/<id>/` only (**DD-179**, §3.1).
 
 ### 1.6 Firewall
 
-- A host `INPUT` policy (the retired installer had none) and, for WireGuard,
-  a forwarding and NAT policy, all fail-closed (**R18**). There is no Docker
-  forwarding policy since v2-121 (**DD-152**). Full contract in §8 and §9.
+- A host `INPUT` policy and, for WireGuard, a forwarding and NAT policy, all
+  fail-closed (**R18**). Full contract in §8 and §9.
 - The **staging-chain swap** is preserved wherever it applies: rules are
   built in a throwaway chain and swapped in atomically, so there is no
   window in which the host runs with a partial policy.
@@ -262,8 +202,7 @@ the ones agreed on 2026-08-05:
 
 ### 1.7 WebDAV
 
-The share WebDAV is a built-in host service since v2-129 (**DD-159**), using
-the folder-scoped Python backend introduced in v2-128 (**DD-158**).
+The share WebDAV is a built-in host service (**DD-158**, **DD-159**).
 Contract in §5–§7 and `folder-shares.md`.
 
 ### 1.8 Operator guidance
@@ -276,7 +215,7 @@ Contract in §5–§7 and `folder-shares.md`.
 
 - **A fresh install has no WireGuard (DD-143, DD-150).** WireGuard is a Konsol
   module (§1.11). The installer only puts `master-wg` and an empty `/etc/wireguard` (`0700`, the root backend's only
-  writable path, v2-119) in place. Installing the module installs `wireguard-tools`
+  writable path) in place. Installing the module installs `wireguard-tools`
   and `qrencode` (`--no-install-recommends`), loads the kernel module (and
   writes `WG_MODULES_LOAD_FILE`), creates `/etc/wireguard`, re-applies the
   firewall and starts whatever networks the registry already holds. Nothing
@@ -296,10 +235,13 @@ Contract in §5–§7 and `folder-shares.md`.
   network: `defaults.env` and `state.env` carry only the address base
   (`WG_ADDR_BASE4`, `WG_ADDR_BASE6`), the suggested first port and the peer
   profile defaults.
-- **Internet-only (DD-177).** No access selector. API creation/settings reject
-  a supplied `scope` field; CLI creation is `net-add PORT DNS LABEL`, and
-  settings is `--if wgN net-settings DNS REVISION`. Existing networks are
-  upgraded to the same policy; there is no supported host-access override.
+- **Internet-only (DD-177).** No access selector, no WG host-rule override and
+  no per-network Caddy listener. API creation/settings reject a supplied
+  `scope` field; CLI creation is `net-add PORT DNS LABEL`, and settings is
+  `--if wgN net-settings DNS REVISION`. Network settings change only the
+  default DNS for future peers, under revision and install-lock checks; they
+  never regenerate keys, change existing profiles or start a stopped network
+  (**DD-167**).
 - **The server is the source of truth.** `/etc/wireguard/wgN.conf` (`0600`)
   holds that network's key and one `# peer: <name>` + `[Peer]` block per device;
   the registry holds the network's parameters. Nothing is restored from the
@@ -351,10 +293,12 @@ Contract in §5–§7 and `folder-shares.md`.
   dropped before established/ICMPv6/Tailscale accepts. Other peers, VPN networks
   and private/CGNAT/link-local destinations routed via WAN are blocked (§9).
   There is no WG web proxy or listener; administration uses Tailscale.
-- **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
-  `http://panel.${LOCAL_DOMAIN}` (**DD-140**) to list, add and remove peers, show a peer's QR code, download its
-  profile or picture, change its DNS and regenerate a network.
-  - It runs Python 3's standard library only and has no TCP port: it listens
+- **WireGuard web panel (DD-133).** Konsol's WireGuard page at
+  `http://panel.${LOCAL_DOMAIN}` (**DD-140**) uses the API of
+  `master-wg-panel.service` to list, add and remove peers, show a peer's QR
+  code, download its profile or picture, change its DNS and regenerate a
+  network.
+  - The backend runs Python 3's standard library only and has no TCP port: it listens
     on the Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`,
     `0660 root:caddy`), and also checks the connecting process's identity
     (`SO_PEERCRED`: root or Caddy's group, **DD-180**). Caddy exposes it on the
@@ -404,9 +348,9 @@ Contract in §5–§7 and `folder-shares.md`.
   - The same internet-only policy applies to every network and peer.
   - The registry `/etc/wireguard/networks` (one tab-separated line per
     network: interface, port, reserved fixed `inet` field, server and subnet IPv4 and IPv6, default
-    DNS, label) is written by `master-wg` (the upgrade only normalizes the policy field), and read by `master-firewall`
+    DNS, label) is written by `master-wg` and read by `master-firewall`
     and the panel. A malformed or clashing registry stops the firewall
-    before any chain changes.
+    before any chain changes; stage 7 stops on a fixed field other than `inet`.
   - A new network's port may not be a stack port, another network's port or a
     UDP port already listened on; the next free number is taken (from `wg0`, at
     most `WG_NETWORKS_MAX + 1` slots, currently 10).
@@ -427,8 +371,8 @@ Contract in §5–§7 and `folder-shares.md`.
     its key, address and profile intact. `master-wg keepalive AD SANİYE`
     rewrites only the profile's `PersistentKeepalive`.
   - Registered networks and their units survive reboots and installer re-runs.
-    There is no special installer-owned wg0 and no Mac backup/restore. The SSH
-    menu operates on the selected network; downloaded profiles are for devices.
+    There is no special installer-owned wg0. The SSH menu operates on the
+    selected network; downloaded profiles are for devices.
 
 ### 1.10 Konsol and the file backend (DD-139, DD-140, DD-150)
 
@@ -442,17 +386,26 @@ Contract in §5–§7 and `folder-shares.md`.
   `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
   re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
   replies are compressed with zstd/gzip, **DD-181**), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
-  every other `/api/*` to `master-files-panel`. The old names `wg.`, `dosya.`
-  and `file.${LOCAL_DOMAIN}` no longer exist (**DD-154**). Both backends
+  every other `/api/*` to `master-files-panel`. Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**).
-  - Pages: Genel bakış (server card with CPU, memory and disk, WireGuard
-    devices, last actions, ports in use), installed WireGuard, Dosyalar,
-    App Store (§1.11), Günlük and Ayarlar; a launcher and dock wrap them (DD-159).
-  - Ayarlar (**DD-156**, superseding DD-155) has four tabs. `GET
+  - Pages (**DD-160**): Dosyalar (the landing page), App Store (§1.11), the
+    WireGuard and qBittorrent pages only while installed, and Ayarlar, in one
+    responsive sidebar. CPU, memory and disk sit below the sidebar menu, read
+    from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
+    measurements show as unknown, never as zero. An unknown route opens
+    Dosyalar; a page of an absent application opens App Store.
+  - Ayarlar (**DD-156**, superseding DD-155) has five tabs: Sistem, Güvenlik
+    Duvarı, Caddy, Dnsmasq and Günlük. `GET
     /api/konsol/ayarlar` retains the same gates and 5 s cache (`?yenile=1`
     bypasses it); `/durum` reads transaction state and `/klasorler` lists
     allowed existing download folders. No password/hash is returned.
+    - Sistem shows server facts and the read-only health card (`GET
+      /api/konsol/saglik`, cached 30 s, **DD-182**): failed units, Tailscale
+      state and key expiry, `master-firewall --check`, a pending reboot, NTP
+      sync, free space and inodes against the upload reserve, a pending or
+      stuck settings change and a WAN share whose address is gone. It never
+      repairs anything.
     - Güvenlik Duvarı shows real IPv4/IPv6 rules and counters from all
       iptables tables, listening sockets, and the baseline policy check.
       Structured port overrides have family, WAN/tailnet scope,
@@ -489,19 +442,25 @@ Contract in §5–§7 and `folder-shares.md`.
       DNS-only Apply validates, restarts dnsmasq and commits immediately, with
       no 60 s confirmation (**DD-163**). The console's own name cannot be
       disabled; reject that request before writing files or restarting services.
-    - qBittorrent permits username, optional new password (8–256 characters)
-      and the default folder for new torrents. Blank in the UI preserves
-      the password. Only canonical existing non-hidden downloads/media
-      directories may be chosen; write permission is probed as the service
-      UID and narrowly added to its systemd sandbox. Existing files/torrent
-      locations and incomplete paths are not moved. Stop/snapshot/write/
-      restart avoids overwriting a live application's settings.
-      **DD-165:** account-only Save commits immediately in one request, with
-      explicit success/failure feedback and no draft/review/countdown. Other
-      pending drafts are neither submitted nor discarded. Blank preserves a
-      stored password; a temporary startup password can rotate on restart.
-      Stopped services remain stopped. Folder changes retain review/confirmation.
-    `POST /api/konsol/ayarlar/{uygula,onayla,geri-al}` runs an independent
+    - Günlük lists both backends' audit lines from the last 7 days
+      (`/api/wg/islemler`), including archive job results (**DD-183**).
+  - The qBittorrent page (only while installed, **DD-160**) holds its service
+    controls, Web UI link and account/folder form, which uses the same
+    settings transaction as Ayarlar. The form permits username, optional new
+    password (8–256 characters) and the default folder for new torrents.
+    Blank in the UI preserves the password. Only canonical existing non-hidden
+    downloads/media directories may be chosen; write permission is probed as
+    the service UID and narrowly added to its systemd sandbox. Existing
+    files/torrent locations and incomplete paths are not moved.
+    Stop/snapshot/write/restart avoids overwriting a live application's
+    settings. **DD-165:** account-only Save commits immediately in one
+    request, with explicit success/failure feedback and no
+    draft/review/countdown. Other pending drafts are neither submitted nor
+    discarded. Blank preserves a stored password; a temporary startup password
+    can rotate on restart. Stopped services remain stopped. Folder changes
+    retain review/confirmation.
+  - Settings transactions: `POST /api/konsol/ayarlar/{uygula,onayla,geri-al,birak}`
+    runs an independent
     worker with JSON on stdin, never a password on argv/in logs. DNS-only and
     qBittorrent account-only (username/password, no folder or other section)
     requests return `{pending: null, committed: true}` after a durable commit;
@@ -525,15 +484,22 @@ Contract in §5–§7 and `folder-shares.md`.
     console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/domain
     choices across re-runs; `SETTINGS_PENDING_FILE` is root-only recovery data,
     not a portable backup. qBittorrent remains the owner of its profile.
-  - The ports card is built from `state.env`, the module registry and the
-    network registry; nothing is scanned.
   - A peer or a whole network can be switched off and on (§1.9).
 - **Folder shares (DD-158):** Files v09 offers list/cards, details and a WebDAV
   tab. The root backend manages separate accounts, RO/RW, expiry and pause.
   Access and expiry are edited inline in the Shares list (DD-170); Manage edits
-  only folder/account. Partial updates preserve omitted values under the lock
-  and do not rebind a folder unless a path is explicitly supplied.
-  The file backend's legacy share mutations return 410. See §5–7.
+  folder, account and networks (**DD-179**). Partial updates preserve omitted
+  values under the lock and do not rebind a folder unless a path is explicitly
+  supplied. See §5–7.
+- **Archives (DD-166, DD-170):** selecting files opens a contextual action
+  dock. Archive creation produces ZIP; the archive opener automatically
+  detects multipart RAR and nested ZIP/RAR (unencrypted RAR3/RAR5, solid and
+  multipart sets) through an unprivileged, resource-limited RAR helper, never a
+  shell extraction command. The destination defaults to downloads with a
+  folder picker. Depth/size/time limits are enforced internally, without a
+  nesting prompt; source archives are kept. Jobs, limits, private history and
+  atomic publication are specified in
+  [desktop-and-archives.md](desktop-and-archives.md).
 - `master-files-panel.service` serves a file manager API for
   `SERVER_ROOT`: browse, search the current folder, select many items, new
   folder, rename, move, move to trash, restore, delete from the trash, empty
@@ -598,19 +564,18 @@ Contract in §5–§7 and `folder-shares.md`.
   (`DOWNLOADS_SUBDIR/TORRENT_TEMP_DIR`) for existing/user-configured downloads.
   Since DD-178 new profiles do not automatically enable separate temporary
   storage. Keeping this existing path guard does not enable it in qBittorrent.
-- It replaced FileBrowser (**DD-146**).
 
 ### 1.11 App Store and built-ins (DD-148, DD-149, DD-159)
 
 - A clean install includes Files, folder WebDAV and archive tools. Optional applications
   are installed/removed from Konsol → App Store: `wireguard` and `torrent` only.
   qBittorrent also supports start/stop; WireGuard has its own network switches.
-  No Docker or separate unpacker. Public module verbs reject `dosya`/`paylasim`;
+  Public module verbs reject `dosya`/`paylasim`;
   they are protected internal IDs, not installable/removable applications.
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders each module's files to
-    `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for
-    Paylaşım `master-paylasim.service` (the credential-loaded unit), `paylasim.caddy` and `dnsmasq.conf`; for
+    `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for the
+    built-in WebDAV (`paylasim`) `master-paylasim.service` (the credential-loaded unit), `paylasim.caddy` and `dnsmasq.conf`; for
     qBittorrent `qBittorrent.conf` (the first settings), `master-stack.conf`
     (the unit drop-in), `torrent.caddy` and `dnsmasq.conf`;
   - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent,
@@ -631,17 +596,16 @@ Contract in §5–§7 and `folder-shares.md`.
     step total text` separated by tabs; `runtime` is `konsol` or `host`,
     `registry` is `yok`, `calisiyor` or `durduruldu`.
   - `kur ID`, `baslat ID`, `durdur ID`, `kaldir ID [--veri]`, `gunluk ID
-    [LINES]`, `uygula ID`; `hesap torrent [--parola]` reads the temporary login.
-    The old shared-account commands refuse. Any other id, verb or argument is refused before
-    anything runs.
+    [LINES]`, `uygula ID`; `hesap torrent [--parola]` reads the temporary login;
+    the installer's `yerlesik` activates the built-ins (below).
+    Any other id, verb or argument is refused before anything runs.
   - Changes take `RUNTIME_DIR/modul.lock`; a second operation waits up to 5 s
     and then fails.
   - Progress is one line in `RUNTIME_DIR/modul-<id>.ilerleme`:
     `action step total text`, ending with step `bitti` or `hata` and the
     reason. Each step is also written to the journal (`master-modul`).
     `uygula` writes no progress line.
-  - A host application (`torrent`) is a systemd unit; there is no
-    Docker module (**DD-152**). `kur` installs, starts, checks and registers
+  - A host application (`torrent`) is a systemd unit. `kur` installs, starts, checks and registers
     it; on failure it takes back what it did and registers nothing. `durdur`
     disables and stops the unit (it stays stopped after a reboot; the names
     stay). `uygula` re-applies a registered module's files and starts it only
@@ -672,16 +636,14 @@ Contract in §5–§7 and `folder-shares.md`.
     No UPnP/automatic port-mapping, Local Peer Discovery, temporary folder/enable,
     performance, peer-limit or other user-preference override is seeded. Those
     follow the installed qBittorrent version's defaults until the user changes
-    them. Reinstall/reapply preserves the entire existing profile, including any
-    old installer values; it cannot distinguish those from user choices. Explicit
-    account/folder saves in Konsol remain supported. Service sandbox, DNS/Caddy
-    integration and firewall policy are unchanged.
+    them. Reinstall/reapply preserves the entire existing profile; account and
+    folder changes go through Konsol's qBittorrent page (§1.10).
   - `kur` checks that it runs as `DOWNLOADS_UID`, that the trash and share root
     are inaccessible to it, that its API answers `403` without a login on
     `127.0.0.1:TORRENT_UI_PORT` and through `torrent.${LOCAL_DOMAIN}`, and that
     the name resolves; a failed install is taken back.
-  - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name, like
-    Paylaşım's); no WireGuard publication.
+  - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name); no
+    WireGuard publication.
   - No inbound peer port: the firewall opens nothing for it. qBittorrent
     still listens on its own random peer port on every interface; new WAN
     traffic to it is dropped in both families; tailnet access requires an explicit rule.
@@ -694,33 +656,27 @@ Contract in §5–§7 and `folder-shares.md`.
     names and the drop-in and stops the unit but leaves the package installed;
     `--veri` deletes the profile (settings and torrent list) — only under
     `/var/lib` — never a downloaded file.
-- Built-in Paylaşım (**DD-158/159**): prepare a registry only if absent,
-  place/enable the unprivileged service, check UID/anonymous 401, then publish/
-  check Caddy and DNS. An upgrade activates older stopped instances. Unchanged
-  reruns do not rewrite accounts or restart healthy services. Remove individual
-  accounts through Files; module stop/removal is no longer exposed.
+- Built-in WebDAV (`paylasim`, **DD-158/159**): `yerlesik` prepares a registry
+  only if absent, places/enables the unprivileged service, checks UID/anonymous
+  401, then publishes/checks Caddy and DNS. Unchanged reruns do not rewrite
+  accounts or restart healthy services. Remove individual accounts through
+  Files; no module verb stops or removes the service.
 - The root backend (`master-wg-panel`):
   - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
     live, busy, progress}]}`. `busy` is a running `master-modul-<id>.service`,
-    read with `systemctl list-units` (v2-120: `is-active` on a collected
-    transient unit wrote two journal lines per query).
+    read with `systemctl list-units`.
   - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir)`, JSON
     body, `{"veri": true}` honoured for `kaldir` only. The id
     must be in `liste` (else `404`). It starts `systemd-run
     --unit=master-modul-<id>.service --collect master-modul <verb> <id>` and
     answers `202`; while that unit is active the answer is `409`. The audit
     line is `modul-<verb>`.
-  - Retired shared-account hesap/parola endpoints return 404. Folder shares use
-    GET /api/konsol/paylasim and POST kaydet/durum/kaldir below that path.
-    Retired Files `GET/HEAD/POST /api/paylas` and `POST /api/paylas/kaldir`
-    return 410 after the existing Host/header/origin gates; they never inspect
-    or modify legacy data. Files `/api/state` omits its obsolete `share` summary.
+  - `GET /api/konsol/moduller/torrent/hesap` → `{user, temp, host}`; with
+    `?parola=1` also the temporary password while one is in use (audited as
+    `modul-hesap`). Any other or uninstalled module answers `404`.
+  - Folder shares use `GET /api/konsol/paylasim` and `POST
+    /api/konsol/paylasim/{kaydet,durum,kaldir}`.
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
-  - The `SHARE_PORT` row of the ports card and `share.on` in
-    `/api/wg/sistem` follow the Paylaşım module, the `TORRENT_UI_PORT` rows
-    the qBittorrent module and the `FILES_PANEL_PORT` row the Dosya yöneticisi
-    module (v2-120); the ports stay reserved for WireGuard networks either
-    way.
   - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
 - Konsol never retrieves a stored WebDAV password; enter or generate it in the
   folder form. Blank password on edit preserves its hash (DD-158).
@@ -729,26 +685,27 @@ Contract in §5–§7 and `folder-shares.md`.
 
 ## 2. Deliberately excluded features
 
-Each entry names the v1 mechanism, its cost, and why it is gone.
+The installer deliberately does not provide these:
 
-| Excluded | Legacy cost | Why it is excluded |
-|---|---|---|
-| **Canonical generation directory, `SHA256SUMS` manifest, `current` pointer** | ~400 lines, 3 bats suites, 6 DD entries | Served no requirement. The correct way to repair a drifted managed file is to re-run the installer (**R20**), not to have a timer silently revert it. |
-| **Automatic file restore from a canonical copy** | ~90 lines of restore blocks | Same. An operator edit is now an operator's decision; v2 never silently reverts it. |
-| **The 1821-line `master-network-reconcile`** | 33% of the file | Replaced by `refresh-tailnet-config`, which does one thing: react to a Tailscale address change. |
-| **General container self-healing** | `probe_compose_runtime` + 12 probes + restart engine | systemd's `Restart=` handles a module's crashes (Compose's restart policy did until v2-121, **DD-152**). A health probe that restarts services turns every upstream change into a restart loop. |
-| **Restart cooldown stamp files** | ~120 lines, `/run` stamps, 4 duplicated constants | systemd already rate-limits with `StartLimitIntervalSec`/`StartLimitBurst`. A second, parallel accounting system that then exempts itself is not a safety net. |
-| **Image-digest-based recovery** | digest recording + final cross-check | No image is used since v2-121 (**DD-152**). Since v2-128 the folder WebDAV runtime is shipped with the installer; no rclone release download (**DD-158**). |
-| **Disk and inode threshold checks** | ~40 lines | Reports without repairing — that is monitoring, not installation. |
-| **Default-password auditing of FileBrowser** | ~50 lines, a daily login attempt against the container | Nothing to audit: FileBrowser itself was retired in v2-114 (**DD-146**). |
-| **`master-compose.service`** | 24-line unit + ~45 dependency assertions | Not in the first v2 release, and there is no Compose since v2-121 (**DD-152**): every module is its own enabled systemd unit. |
-| **`master-compose` coupled to `tailscaled` via `Requires`/`PartOf`** | — | No module binds to the Tailscale address, so the coupling only meant that restarting `tailscaled` bounced the entire stack. **A Tailscale restart must not restart a module.** |
-| **Host `master-webdav.service` / `webdav.env` / distro `rclone`** | unit + ACL user + apt | Replaced by Compose `webdav` on loopback (**DD-77**), and since v2-121 by the Paylaşım module's `master-paylasim.service` with rclone's pinned release binary, not the distribution package (**DD-152**). The installer never installs the old unit, file or package; it also no longer hunts for them — the migration cleanup was removed in v2-62 (**DD-96**). |
-| **Migration cleanup for older revisions** | `purge_host_webdav_leftovers`, `remove_stale_filebrowser`, retired unit/symlink deletion (~83 lines) | The upgrade path is a fresh install or a re-run that overwrites what the installer owns. A global `apt-get purge`, a `userdel`, or deleting a container the operator may still want is outside the installer's boundary (**DD-96**). |
-| **`master-docker-netfilter-recovery`** | 47-line script + unit | Docker's own chains were re-established by Docker and v2 re-applied only its own chain; since v2-121 there is no Docker at all (**DD-152**). |
-| **DNS/Caddy rollback state machine** | ~155 lines, 19 globals, 7 tests | Fail-closed masking is kept (2 lines); a failed install leaves the optional services *masked*, which is safe. Recovery is a re-run. |
-| **The 25-flag reconcile `--check` surface** | — | Replaced by a small set of checks with one owner each. |
-| **Progress bar, ANSI colour, extra file descriptors 3/4/5** | ~210 lines | Plain timestamped stage lines plus a log file. |
+- **No reconcile or self-healing engine.** `refresh-tailnet-config` reacts to
+  a Tailscale address change and watches only the network edge (§10); there
+  is no general health probe that restarts services and no reconcile
+  `--check` surface. systemd's `Restart=` handles a crash. **A Tailscale
+  restart must not restart a module.**
+- **No canonical copies or automatic restore.** There is no generation
+  directory, `SHA256SUMS` manifest or timer that reverts a managed file. An
+  operator edit is the operator's decision; a drifted file is repaired by a
+  re-run (**R20**).
+- **No restart-cooldown stamp files.** systemd rate-limits restarts with
+  `StartLimitIntervalSec`/`StartLimitBurst`.
+- **No installer disk or inode threshold checks.** The installer does not
+  monitor; Konsol's health card only reports (§1.10, **DD-182**).
+- **No DNS/Caddy rollback state machine.** A failed stage 6 leaves dnsmasq
+  and/or Caddy masked, which is safe; recovery is a re-run (§12).
+- **No migration cleanup.** The upgrade path is a fresh install or a re-run
+  that overwrites what the installer owns. The installer does not hunt for
+  earlier revisions' units, users, packages or data; a global `apt-get
+  purge` or a `userdel` is outside its boundary (**DD-96**).
 
 ---
 
@@ -758,9 +715,8 @@ Three exposure classes, and nothing may straddle them.
 
 ### 3.1 Public (WAN IPv4)
 
-No module gets a WAN port, and there is no Docker publish (**DD-152**). The
-torrent peer port (61005) is gone since v2-118 (**DD-151**): qBittorrent is
-a host module that makes outgoing connections only.
+No module gets a WAN port. qBittorrent has no inbound peer port
+(**DD-151**): it makes outgoing connections only.
 
 **WireGuard is a host listener (DD-120/143):** each registered network's UDP
 port is admitted by the base WAN policy while the application is installed.
@@ -771,16 +727,27 @@ automatically created listener.
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
 console recovery and public-IP SSH keep working.
 
+**Folder WebDAV is an opt-in WAN exception (DD-179):** while at least one
+unpaused, unexpired WAN share exists, Caddy binds `${WAN_IPV4}:${SHARE_PORT}`
+over plain HTTP (the share form requires plaintext-risk consent) and proxies
+only `/s/<id>/` to the WebDAV's WAN scope on `SHARE_WAN_BACKEND`; every other
+path answers `404` and no administrative interface is exposed. New WAN
+sockets to that port are capped per source IP and in total before any
+operator allow rule. Pausing or removing the last WAN share removes the
+listener and the firewall permission at once; expiry does so on the next run
+of `master-share-network.timer`. Exact limits and recovery
+are in [folder-shares.md](folder-shares.md). Every other service stays
+tailnet-only.
+
 The firewall limits NEW WAN traffic to each WireGuard network's UDP port
-(IPv4 only), host SSH and Tailscale's own UDP port (`TAILSCALE_UDP_PORT`).
-(R12 was revised on 2026-08-06/07 for the Docker-published torrent peer
-port; that port went with **DD-151**, Docker with **DD-152**.)
+(IPv4 only), host SSH, Tailscale's own UDP port (`TAILSCALE_UDP_PORT`) and,
+only while a WAN share is active, TCP `${SHARE_PORT}` (IPv4 only).
 
 ### 3.2 Tailnet (Tailscale IPv4) — reachable only over `tailscale0`
 
 | Service | Listen address | Port | Protocol |
 |---|---|---|---|
-| Caddy | `${TAILSCALE_IPV4}` | 80 | TCP, HTTP only |
+| Caddy | `${TAILSCALE_IPV4}` | 80 and `${SHARE_PORT}` (61010, folder WebDAV) | TCP, HTTP only |
 | dnsmasq | `${TAILSCALE_IPV4}` (via `bind-dynamic`) | 53 | UDP + TCP |
 
 dnsmasq also listens on `127.0.0.1:53` (**DD-60**), so the host itself can
@@ -788,6 +755,7 @@ resolve the service names and the installation can verify DNS without
 bringing a tailnet device into the loop. Those two interfaces — `lo` and
 `tailscale0` — are the only ones it binds. No WAN interface, no ordinary
 LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
+
 ### 3.3 Loopback only
 
 | Service | Listen address | Port |
@@ -796,11 +764,13 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Konsol WireGuard backend (`master-wg-panel`) | Unix socket `/run/master-wg-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
 | Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
-| Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` | 61010 (**DD-158**, **DD-159**) |
+| Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` (Tailscale scope) and `SHARE_WAN_BACKEND` `127.0.0.2` (WAN scope) | 61010 (**DD-158**, **DD-159**, **DD-179**) |
 
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 the share WebDAV on `paylas.*:80` and `${TAILSCALE_IPV4}:${SHARE_PORT}`. No
-loopback service names the Tailscale address. No WAN / `0.0.0.0` listener.
+loopback service names the Tailscale address. None of them listens on
+`0.0.0.0` or a WAN address; the only stack-owned WAN TCP listener is Caddy's
+opt-in share site (§3.1).
 
 ### 3.4 Single source of truth
 
@@ -826,11 +796,10 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
-| `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
-| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → `127.0.0.1:61008`, other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/`; while a WAN share is active also `http://${WAN_IPV4}:61010/s/<id>/` (**DD-179**) | `127.0.0.1:61010`; the WAN site → `SHARE_WAN_BACKEND:61010` (**DD-158**, **DD-159**) |
+| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 
-The old names `wg.`, `dosya.` and `file.${LOCAL_DOMAIN}` no longer exist
-(**DD-154**); `health.` is also retired (**DD-157**). `SERVICE_NAMES` is `panel`.
+`SERVICE_NAMES` is `panel`.
 
 Rules:
 
@@ -848,9 +817,9 @@ Rules:
   `dig +short … @127.0.0.1` and `@${TAILSCALE_IPV4}` for every name in
   `SERVICE_NAMES`; both must return `${TAILSCALE_IPV4}`.
 - Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
-  no certificate machinery — the tailnet is the transport security boundary.
-- Every upstream is plain HTTP on loopback. The only HTTPS upstream,
-  Portainer's (**DD-62**), went with Portainer in v2-82 (**DD-116**).
+  no certificate machinery — the tailnet is the transport security boundary;
+  the opt-in WAN share site is deliberately plaintext (**DD-179**).
+- Every upstream is plain HTTP on loopback or the root backend's Unix socket.
 - The base names live in one list (`SERVICE_NAMES`) mirrored in both templates;
   adding a service means editing that list and both templates. A module's
   names live in its own files and come and go with it (**DD-149**).
@@ -861,14 +830,18 @@ Rules:
 
 Selected folders, not a shared symlink root, are published through independent
 accounts and stable /s/<id>/ URLs. RO is the default; RW includes permanent
-delete/overwrite and requires acknowledgement. The binding implementation
-details are in [folder-shares.md](folder-shares.md).
+delete/overwrite and requires acknowledgement. Each share selects Tailscale,
+WAN IPv4 or both (**DD-179**); new shares default to Tailscale, and adding WAN
+requires explicit consent that HTTP over the internet is unencrypted. The
+listener scope, not a request header, decides which shares a request may
+reach; each scope has its own attempt limits and connection budget (§3.1).
+The binding implementation details are in [folder-shares.md](folder-shares.md).
 
 ## 6. WebDAV credentials and permissions (DD-158)
 
 SHARE_STATE_FILE is a 0600 root-owned schema-3 JSON registry of networks, users, salted
-scrypt hashes, folder identity, RO/RW, pause and expiry. No plaintext password
-copy exists. The root API projects only non-secret metadata; fixed workers
+scrypt hashes, folder identity, RO/RW, pause and expiry; any other schema is
+refused. No plaintext password copy exists. The root API projects only non-secret metadata; fixed workers
 receive mutations on stdin under the existing panel gates and operation locks.
 The unprivileged data service receives a LoadCredential copy at start.
 No password enters argv, logs, environment files or browser storage.
@@ -882,29 +855,26 @@ Root administrators and passwordless Konsol remain outside this isolation bounda
 
 ## 7. WebDAV service lifecycle (DD-158)
 
-master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback,
+master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback
+(127.0.0.1 for the Tailscale scope, SHARE_WAN_BACKEND for the WAN scope),
 with no capabilities, system paths read-only, user area writable, internal
-trash/share paths inaccessible, and network restricted to loopback. There is
-no rclone download or shared account. Caddy publishes the existing name and
-Tailscale IP:SHARE_PORT and an explicitly opted-in WAN IPv4:SHARE_PORT site
-(DD-179). No extra port number or Tailscale policy change.
+trash/share paths inaccessible, and network restricted to loopback. Caddy
+publishes the `paylas.` name and Tailscale IP:SHARE_PORT and, while a WAN share
+is active, the WAN IPv4:SHARE_PORT site (DD-179). No extra port number or
+Tailscale policy change.
 
 The installer prepares an empty registry only when absent and enables this
 built-in service. Reruns preserve accounts; public module removal is refused.
-It keeps the existing staged templates for compatibility. Address refresh changes
-Caddy, not WebDAV. Old shared-account URLs are retired; recreating folder
-accounts is required. Existing files remain; no broader route is retained.
+Address refresh changes Caddy, not WebDAV. No route broader than `/s/<id>/`
+exists.
 
-The supported DAV subset, filesystem and concurrency limits, migration and test
+The supported DAV subset, filesystem and concurrency limits and test
 commands are specified in [folder-shares.md](folder-shares.md). Finder/Infuse
 and recipient ACL reachability need separate operator acceptance.
 
 ---
 
 ## 8. Host firewall contract (`INPUT`)
-
-The retired installer filtered only Docker's forwarded traffic and left host
-services exposed to whatever the provider's network allowed.
 
 Base policy (confirmed panel overrides are applied by `MASTER-SETTINGS` before
 Tailscale acceptance; WG host ingress is dropped first in both project chains):
@@ -924,10 +894,13 @@ Tailscale acceptance; WG host ingress is dropped first in both project chains):
    Raw listeners and technical rules stay unfiltered (**DD-173**).
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP for Tailscale and each registered WireGuard network.
+6. Only while a WAN share is active (**DD-179**): new inbound IPv4 TCP on the
+   WAN interface to `${SHARE_PORT}`, after the per-source and total
+   connection-limit rejects that `MASTER-SETTINGS` places before operator rules.
 
 Dropped:
 
-6. Every other new inbound connection arriving on the WAN interface, and any
+7. Every other new inbound connection arriving on the WAN interface, and any
    new tailnet host service connection outside the allowlist/explicit overrides.
 
 Rules:
@@ -939,17 +912,17 @@ Rules:
   (**DD-95**).
 - Boot exposes a measured ~850 ms window between the WAN address becoming
   usable and the policy landing; sshd, which the policy allows anyway, was
-  the only WAN listener in it when measured (Docker then started later,
-  behind the policy; there is no Docker since **DD-152**). Rules
+  the only WAN listener in it when measured. Rules
   are not persisted to disk (**DD-66**), so this window is accepted, not
   closed (**DD-95**).
 - Established/related acceptance precedes the default WAN drop.
 - The WAN interface is the **live default route at apply time**, not the
   `WAN_INTERFACE` recorded in `state.env`. A renamed NIC produces a warning
-  and a correct policy; it no longer makes the unit fail with no policy at
-  all (**DD-94**).
+  and a correct policy, never a failed unit with no policy at all
+  (**DD-94**).
 - There is no **default** WAN permission for WebDAV, Caddy, dnsmasq or an
-  application web interface. Custom firewall allows do not change socket binds.
+  application web interface; WAN WebDAV is only the per-share opt-in of item 6.
+  Custom firewall allows do not change socket binds.
 - The Internet port catalogue lists only configured per-family base permits;
   local/tailnet sockets do not create closed WAN placeholders. WireGuard lists
   the fixed internet-only policy with no editable host port. Explicit WAN/tailnet
@@ -958,17 +931,15 @@ Rules:
 - IPv6 `INPUT` follows the same shape and is equally fail-closed. Tailscale
   IPv6 traffic uses the service allowlist except Caddy/WebDAV (their templates
   bind IPv4 only); WAN IPv6 allows NDP/ICMPv6 essentials, host
-  SSH TCP and Tailscale UDP, and drops other NEW WAN traffic.
+  SSH TCP and Tailscale UDP, and drops other NEW WAN traffic, including the
+  WebDAV share port.
 
 ---
 
-## 9. Forwarding firewall contract (Docker part removed)
+## 9. Forwarding firewall contract (WireGuard)
 
-The Docker part was removed in v2-121 (**DD-152**): Docker is not
-installed, so there is no `MASTER-DOCKER` chain, the firewall never touches
-`DOCKER-USER`, and `CHAIN_DOCKER` is gone from `defaults.env` and
-`state.env`. What remains here is the WireGuard forwarding and NAT policy
-and the shape check shared with §8.
+This section covers the WireGuard forwarding and NAT policy and the shape
+check shared with §8.
 
 **Chain names are fixed** (**DD-59**): `MASTER-INPUT` for the host policy,
 `MASTER-FORWARD` and `MASTER-NAT` for WireGuard (**DD-120**).
@@ -976,7 +947,7 @@ and the shape check shared with §8.
 allowlist/default drop, before the `ts-input` jump (**DD-156**, **DD-172**);
 `MASTER-INPUT` remains behind it. User-created WireGuard endpoint ports remain
 requirements regardless of current peer count or recent activity.
-`MASTER-DOCKER-FILTER` and `MASTER-DOCKER` are not used. The same logical
+The same logical
 names serve IPv4 and IPv6 — separate tables mean no collision — and all are
 declared in `config/defaults.env` and nowhere else.
 
@@ -990,12 +961,11 @@ declared in `config/defaults.env` and nowhere else.
   nft-backend gate stays (§1.1).
 - **Third-party rules already present in `INPUT`, `FORWARD` and
   `POSTROUTING` are never deleted**: the installer adds its jumps and leaves
-  everything else in place. The retired installer's `activate_staging_chain`
-  deleted every other `DOCKER-USER` rule; that behaviour is gone.
+  everything else in place.
 - WireGuard (**DD-120/143/150**), for registered networks while installed:
   - `MASTER-SETTINGS` and `MASTER-INPUT` drop all WG ingress first.
-    Old WG-scoped user rules are removed on upgrade, filtered when read and
-    refused on new writes. They cannot bypass the mandatory policy.
+    WG-scoped user rules are refused; no user rule can bypass the mandatory
+    policy.
   - `MASTER-FORWARD` first drops destinations in `WG_BLOCK_DEST4/6`
     (private, CGNAT, loopback, link-local, multicast/reserved and standard NAT64
     prefixes), then accepts `wgN` → WAN. Other WG ingress is dropped.
@@ -1017,8 +987,8 @@ declared in `config/defaults.env` and nowhere else.
   WAN DROP, it must follow every WAN allow, no unconditional
   `ACCEPT`/`RETURN` may precede it (**DD-94**), and the number of WAN allows
   must equal the allow list exactly — for IPv4 Tailscale's UDP port, host
-  SSH and one UDP port per WireGuard network (none without the module), for
-  IPv6 the first two. `MASTER-FORWARD` must hold four base rules plus the configured blocked-prefix rules per
+  SSH, TCP `${SHARE_PORT}` while a WAN share is active and one UDP port per
+  WireGuard network (none without the module), for IPv6 the first two. `MASTER-FORWARD` must hold four base rules plus the configured blocked-prefix rules per
   network, `MASTER-NAT` one per subnet, and INPUT's entire rule count and
   all IPv6 control types are checked. No managed chain emits a redundant
   terminal `RETURN`; intermediate settings returns remain essential. Any extra WAN pass, whether a blanket
@@ -1037,11 +1007,16 @@ declared in `config/defaults.env` and nowhere else.
 | Unit | After | Coupling | Restart |
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
-| `master-firewall.service` | `network-online.target tailscaled.service` | `PartOf=tailscaled.service` only (no Docker, **DD-152**) | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=10s`, `StartLimitBurst=12` / 300s) |
+| `master-firewall.service` | `network-online.target tailscaled.service` | `PartOf=tailscaled.service` only (**DD-152**) | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=10s`, `StartLimitBurst=12` / 300s) |
 | `refresh-tailnet-config.timer` | — | address poll + firewall watchdog (checked again once Tailscale answers); resets a failed Caddy's start limit before restarting it; reopens failed WireGuard networks (**DD-180**, **DD-182**) | starts oneshot every 5 min (`OnBootSec=2min`) |
-| `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
-| `dnsmasq.service` (drop-in) | `tailscaled.service` | none | package default |
-| `master-paylasim.service` (Paylaşım module) | `network-online.target` | none; loopback listener, enabled while registered `calisiyor` | `on-failure`, `RestartSec=3s` |
+| `caddy.service` (drop-in) | `tailscaled.service master-firewall.service` | `Wants=` both (no `PartOf`); `ExecStartPre=+master-firewall --check` (**DD-179**); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
+| `dnsmasq.service` (drop-in) | `tailscaled.service` | `Wants=tailscaled.service` | `on-failure`, `RestartSec=5s` (drop-in) |
+| `master-wg-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
+| `master-files-panel.service` (built in) | `network-online.target` | none; `127.0.0.1` listener, `RequiresMountsFor=SERVER_ROOT`, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
+| `master-paylasim.service` (built-in WebDAV) | `network-online.target` | none; `127.0.0.1` and `SHARE_WAN_BACKEND` listeners, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
+| `master-share-network.timer` | — | closes expired WAN share projections and recovers interrupted share operations (**DD-179**) | starts oneshot 30 s after boot and 30 s after each run |
+| `master-settings-guard.timer` | — | rollback deadline of an unconfirmed Settings change; active only while one is pending (**DD-181**) | starts oneshot every 2 s while active; once 15 s after boot |
+| `apt-daily-upgrade.timer` (drop-in, **DD-184**) | — | distribution unit; `OnCalendar` at `APT_UPGRADE_TIME` (04:00), `RandomizedDelaySec=30m`, the distribution's `Persistent=true` kept | daily |
 | `wg-quick@wgN.service` (drop-in, **DD-180**) | `master-firewall.service` | `Wants=`; `ExecStartPre=+master-firewall --check`, so a network never forwards without the owned rules | package default; a network left failed is reopened by `refresh-tailnet-config` once the check passes |
 
 The Caddy drop-in also carries
@@ -1061,8 +1036,6 @@ Invariants:
   address change, when Caddy fails and `OnFailure=` starts that oneshot
   (**DD-87**), or when the operator restarts it. The share WebDAV is a host
   service with no tie to `tailscaled`.
-- **There is no Docker trigger** (**DD-152**): no `docker.service`, no
-  `docker.service.d` drop-in and no `PartOf=docker.service`.
 - **The firewall unit orders itself only after `network-online.target` and
   `tailscaled.service`.** Host `INPUT` must land as early as possible
   (**DD-94**).
@@ -1070,8 +1043,9 @@ Invariants:
   `refresh-tailnet-config` — which already runs every 5 minutes — restarts
   `master-firewall` when the unit is `failed` or `--check` fails, after a
   `reset-failed` so an exhausted start limit cannot block the recovery. It
-  skips the round while the oneshot is mid-apply. It inspects the firewall
-  unit and nothing else: no module, file, or binary is reconciled
+  skips the round while the oneshot is mid-apply. Beyond the firewall it only
+  restarts a failed Caddy and reopens failed enabled WireGuard networks
+  (**DD-180**, **DD-182**): no module, file, or binary is reconciled
   (**DD-94**).
 - **No general-purpose repair engine.** The only `OnFailure=` in the stack
   is Caddy → `refresh-tailnet-config` (same oneshot the timer /
@@ -1094,8 +1068,8 @@ Invariants:
 - Existing state that must survive a re-run: the folder share registry
   (IDs, hashes, policies and paused state), qBittorrent's profile (its settings are
   written once, by the module, **DD-151**),
-  every `wgN.conf` and `clients-wgN/` with the networks registry (DD-177 only normalizes the old registry policy column;
-  keys and device profiles are never rewritten), the operator's chosen local domain.
+  every `wgN.conf` and `clients-wgN/` with the networks registry (keys and
+  device profiles are never rewritten), the operator's chosen local domain.
 - Firewall application is idempotent by construction: each chain is rebuilt
   from scratch and swapped in, and each parent jump is inserted only when
   absent.
@@ -1105,11 +1079,8 @@ Invariants:
 - No step is unconditionally expensive: package installation and daemon
   restarts happen only when something actually
   changed.
-- There is no image-refresh question any more: the pull prompt (**DD-99**,
-  with **DD-101**'s disk floor) went with **DD-151**, and no image exists
-  since **DD-152**. Folder WebDAV code is part of the installer (§7).
-  The one operator-driven exception left is the optional full-upgrade
-  question on a re-run (default **hayır**).
+- The only re-run question is the optional full-upgrade (default **hayır**).
+  Folder WebDAV code is part of the installer (§7).
 
 ---
 
@@ -1127,7 +1098,7 @@ the run started.**
 | Caddy installed but not yet configured | Same masking window |
 | Stage 6 aborts midway | dnsmasq and/or Caddy remain masked — i.e. **off**. There is no rollback machinery; recovery is a re-run |
 | Tailscale never comes online | Hard failure before anything is published. The stack is not started against a missing address |
-| Paylaşım account setup fails | `master-modul` stops before the service is started; systemd also refuses a unit whose credential file is missing |
+| WebDAV registry preparation (`master_shares.py prepare`) fails | `master-modul yerlesik` stops before the service is started; systemd also refuses a unit whose credential file (the registry) is missing |
 | Folder account service renewal fails | Previous registry is restored and restart retried; if recovery also fails, report it explicitly. No plaintext password is returned (**DD-158**) |
 | A module's Caddy site or dnsmasq name does not validate | The previous file is put back and a `kur` is taken back (§1.11) |
 | A generated file cannot be written with the intended owner/mode | Hard failure, temporary file removed |
@@ -1180,19 +1151,20 @@ An installer run is successful when every one of these holds on the target host.
    networks are internet-only with no WG service listener.
 6. No module web interface listens on a non-loopback address.
 7. The loopback services of §3.3 (Konsol file backend, built-in WebDAV and the
-   installed qBittorrent UI) listen on `127.0.0.1`
-   only. The root backend and Caddy's admin API have no TCP port; stage 7 checks
+   installed qBittorrent UI) listen on loopback only (`127.0.0.1`; WebDAV
+   also on `SHARE_WAN_BACKEND`). The root backend and Caddy's admin API have no TCP port; stage 7 checks
    the socket modes, that the downloads account cannot connect to either, that
    `127.0.0.1:2019` is closed and that `systemctl reload caddy` still works (**DD-180**).
 8. Main Caddy listens on `${TAILSCALE_IPV4}:80` and
-   `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse); no WG web listener exists.
+   `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse), and on `${WAN_IPV4}:${SHARE_PORT}`
+   only while a WAN share is active; no WG web listener exists.
 9. dnsmasq answers on `${TAILSCALE_IPV4}:53` **and** `127.0.0.1:53`, and on no
    other address; it serves no DHCP.
 
 ### DNS and Caddy
 
 10. Enabled base/installed-module names resolve to `${TAILSCALE_IPV4}` when queried
-    against `${TAILSCALE_IPV4}`; retired `health.` is not a built-in name.
+    against `${TAILSCALE_IPV4}`; `health.` is not a built-in name.
 11. A query for an out-of-domain name against `${TAILSCALE_IPV4}` returns
     `REFUSED` by default (or resolves via configured upstreams when enabled).
 12. `curl -H "Host: panel.${LOCAL_DOMAIN}" http://${TAILSCALE_IPV4}/` returns
@@ -1202,7 +1174,8 @@ An installer run is successful when every one of these holds on the target host.
     that `/api/v2/app/version` answers `403` without a login on loopback and
     through `torrent.${LOCAL_DOMAIN}`; a `200` means a localhost or subnet
     authentication bypass is on (**DD-127**, **DD-151**).
-14. WebDAV listens only on loopback as DOWNLOADS_UID; Caddy owns the tailnet port.
+14. WebDAV listens only on loopback as DOWNLOADS_UID; Caddy owns the tailnet
+    port and, only while a WAN share is active, `${WAN_IPV4}:${SHARE_PORT}`.
 15. Anonymous requests return 401; each account opens only its selected folder.
 16. PROPFIND/read/range succeed; RO write methods are rejected.
 17. RW changes stay inside the share; cross-share Destination and unsafe paths fail.
@@ -1215,38 +1188,35 @@ An installer run is successful when every one of these holds on the target host.
 21. No secret enters environment files, argv, browser storage or audit logs.
 22. The service command line contains only the credential path.
 23. Reruns and reboot preserve IDs, hashes, policies and paused state.
-    No retired shared account/rclone route is retained as a bypass.
 
 ### Firewall
 
 24. The base policy accepts loopback, `ESTABLISHED,RELATED`, Tailscale,
-    WAN SSH/Tailscale UDP and registered WireGuard UDP ports; other NEW WAN
+    WAN SSH/Tailscale UDP, registered WireGuard UDP ports and, only while a
+    WAN share is active, WAN IPv4 TCP `${SHARE_PORT}`; other NEW WAN
     input is dropped. Confirmed `MASTER-SETTINGS` overrides are tested separately.
 25. `INPUT` holds exactly one jump to `MASTER-INPUT`, behind `ts-input`;
     `FORWARD` exactly one to `MASTER-FORWARD` and `nat POSTROUTING` exactly
-    one to `MASTER-NAT`, in both families (replaces the `DOCKER-USER` jump,
-    **DD-152**). `MASTER-SETTINGS` has its own single jump before `ts-input`.
+    one to `MASTER-NAT`, in both families, while WireGuard networks are
+    registered (§9). `MASTER-SETTINGS` has its own single jump before `ts-input`.
 26. A third-party rule planted in `INPUT` or `FORWARD` before the run is
     still present after it.
 27. tailscaled's own chains (`ts-input`, `ts-forward`) are not flushed or
-    deleted (replaces the Docker-chain check, **DD-152**).
-28. `MASTER-FORWARD` permits no NEW WAN traffic into a WireGuard network
-    (replaces the `MASTER-DOCKER` check, **DD-152**).
+    deleted.
+28. `MASTER-FORWARD` permits no NEW WAN traffic into a WireGuard network.
 29. The active SSH session survives policy application.
 
 ### Lifecycle
 
 30. `systemctl restart tailscaled` leaves every installed module running.
 31. `systemctl restart tailscaled` also results in a re-applied firewall
-    policy, `MASTER-INPUT` behind `ts-input` (replaces the Docker restart
-    check, **DD-152**).
+    policy, `MASTER-INPUT` behind `ts-input`.
 32. After a full reboot: every module marked `calisiyor` running, every name resolving,
-    public wg UDP published, WebDAV (with Paylaşım installed) answering
-    `401` via Caddy.
+    public wg UDP published, built-in WebDAV answering `401` via Caddy.
 33. `systemctl --failed` is empty.
 
 ### Idempotency
 
 34. A second complete run changes no byte of any generated file, restarts
-    no module service it did not need to, and preserves the Paylaşım
-    account.
+    no module service it did not need to, and preserves the folder share
+    registry (`SHARE_STATE_FILE`).

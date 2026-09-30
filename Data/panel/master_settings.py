@@ -252,15 +252,7 @@ class Manager:
         self.qdrop = Path(self.e["UNIT_DIR"]) / "qbittorrent-nox@.service.d/90-konsol.conf"
 
     def config(self):
-        config = read_json(self.config_path, DEFAULT)
-        # DD-177: retired tunnel overrides never appear or survive DNS-only saves.
-        config["firewall"] = [r for r in config["firewall"] if not re.fullmatch(r"wg[0-9]", str(r.get("scope", "")))]
-        # An upgrade retires the built-in health name. Do not keep an invisible
-        # disabled entry that would make later DNS drafts fail validation.
-        retired = "health." + self.e["LOCAL_DOMAIN"]
-        if retired in config["dns"]["disabled"] and not any(n["name"] == retired for n in self.dns_names()):
-            config["dns"]["disabled"].remove(retired)
-        return config
+        return read_json(self.config_path, DEFAULT)
 
     def pending(self):
         return read_json(self.pending_path, None)

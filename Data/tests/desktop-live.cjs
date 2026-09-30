@@ -41,7 +41,9 @@ assert(/^archive-test-[a-f0-9]+$/.test(fixture || ""), "Pass the owned live arch
     await page.locator("#archive-name").fill("browser");
     await page.locator("#sh").getByRole("button", {name:"Oluştur", exact:true}).click();
     await page.waitForFunction(() => !document.querySelector("#sh").open);
-    await page.locator(".archive-row").filter({hasText:"browser.zip · Tamamlandı"}).first().getByRole("button",{name:"Sonucu göster"}).click({timeout:60000});
+    // DD-183: no jobs page; the running-job bar goes away and the list (the destination) refreshes.
+    await page.locator("#archive-bar").getByText("browser.zip",{exact:true}).waitFor();
+    await page.locator("#archive-bar").waitFor({state:"hidden", timeout:60000});
     await page.getByRole("button", {name:"browser.zip ayrıntıları", exact:true}).click();
     await page.locator("#fs-detail").getByRole("button", {name:"Arşiv açıcı", exact:true}).click();
     assert.equal(await page.locator("#archive-nested,#archive-layers").count(), 0);
@@ -50,7 +52,8 @@ assert(/^archive-test-[a-f0-9]+$/.test(fixture || ""), "Pass the owned live arch
     await page.locator("#archive-name").fill("browser-expanded");
     await page.screenshot({path:path.join(screenshots,"archive-dialog.png"),fullPage:true});
     await page.locator("#sh").getByRole("button", {name:"Arşivi aç", exact:true}).click();
-    await page.locator(".archive-row").filter({hasText:"browser-expanded · Tamamlandı"}).first().getByRole("button",{name:"Sonucu göster"}).click({timeout:60000});
+    await page.locator("#archive-bar").waitFor({state:"hidden", timeout:60000});
+    await page.getByRole("button", {name:"browser-expanded ayrıntıları", exact:true}).waitFor();
     await page.waitForURL("**/#/dosyalar");
     await page.screenshot({path:path.join(screenshots,"files-desktop.png"),fullPage:true});
     await page.locator("#fs-tabs").getByRole("button", {name:"Paylaşımlar", exact:true}).click();

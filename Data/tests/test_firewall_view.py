@@ -164,12 +164,12 @@ class FirewallViewTests(unittest.TestCase):
             rows = self.p.settings_ports(self.env, [])
         self.assertFalse(any(r["scope"].startswith("wg") or r["name"].startswith("WireGuard ") for r in rows))
 
-    def test_single_port_wg_rule_and_previous_multiport_are_both_readable(self):
-        for matcher in ("-m tcp --dport 61004", "-m multiport --dports 61004"):
-            rows = panel.classify_rules("input", [{"spec": "-d 10.8.0.1/32 -i wg0 -p tcp " + matcher + " -j ACCEPT", "pkts": 3}],
-                                        self.env, self.nets)
-            self.assertEqual(rows[0]["kind"], "ui")
-            self.assertEqual(rows[0]["ports"], [{"port": 61004, "name": "qbittorrent"}])
+    def test_a_wireguard_to_host_accept_is_shown_as_unknown(self):
+        # DD-177: the firewall never emits these; one added by hand must stand out, not look known.
+        for spec in ("-d 10.8.0.1/32 -i wg0 -p tcp -m tcp --dport 61004 -j ACCEPT",
+                     "-d 10.8.0.1/32 -i wg0 -p icmp -m icmp --icmp-type 8 -j ACCEPT"):
+            rows = panel.classify_rules("input", [{"spec": spec, "pkts": 3}], self.env, self.nets)
+            self.assertEqual((rows[0]["group"], rows[0]["kind"]), ("other", "unknown"))
 
     def test_absent_wg_chains_are_expected_only_without_networks(self):
         env = {**self.env, "CHAIN_INPUT": "MASTER-INPUT", "CHAIN_FORWARD": "MASTER-FORWARD", "CHAIN_NAT": "MASTER-NAT"}

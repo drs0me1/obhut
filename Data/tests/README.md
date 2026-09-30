@@ -12,11 +12,16 @@ shellcheck -x -s bash install.sh common.sh scripts/*
 
 Host acceptance (Debian 13 or supported Ubuntu target, after install) is
 separate: DNS loopback vs Tailscale answers, WebDAV PROPFIND/read-only,
-firewall `--check`, and the two public UDP ports.
+firewall `--check`, and the public ports: WAN SSH TCP, Tailscale UDP, each
+registered WireGuard UDP port (if installed) and TCP `SHARE_PORT` only while a
+WAN share is active.
+
+Portable validation should compare the complete embedded file set with runtime
+sources, excluding Python caches, metadata, tests, docs and private input.
 
 ## Folder network selection and WAN admission (v2-153, DD-179)
 
-`test_share_manager_networks.py` covers opt-in, schema-2 migration, immutable
+`test_share_manager_networks.py` covers opt-in, immutable
 credentials/identity/expiry on network edits, public projection, rollback and
 interrupted-change recovery. `test_webdav_networks.py` checks scope before
 hash/filesystem work, header spoofing, sliding failure windows, bounded tables,
@@ -44,16 +49,16 @@ separate; protocol tests do not certify every DAV client.
 
 Serve the real `Data/console` tree locally as below, then run
 `node Data/tests/panel-ui.cjs` from the repository root. It applies the actual
-Caddy CSP and fixtures all API calls: clean/installed sidebar, removed-page
-redirects, qBittorrent lifecycle and own settings, keyboard tabs, five widths,
-resource stale/offline/recovery, ZIP create/cancel/nested-unzip/result routes,
-and async WireGuard new-network bookmarks. No server is modified.
+Caddy CSP and fixtures all API calls: clean/installed sidebar, qBittorrent
+lifecycle and own settings, keyboard tabs, five widths, resource
+stale/offline/recovery, ZIP create/cancel/nested-unzip/result routes, and async
+WireGuard new-network bookmarks. No server is modified.
 App Store checks include compact row height, only one details panel, keyboard
 focus across polls, real-progress fixtures, failures with details closed,
 stop/start/removal and cancellation, default data retention, log HTTP errors
 and safe text rendering, no account reads, and visible status at mobile widths.
 `test_resources.py` covers independent sampling, guest CPU accounting, unknown
-measurements, legacy compatibility and real HTTP Host/header/origin gates.
+measurements and real HTTP Host/header/origin gates.
 
 ## qBittorrent integration-only seed (DD-178, v2-152)
 
@@ -75,24 +80,21 @@ restart persistence of user choices. No torrents are added, no installed config
 is read, no host service is controlled, and fixture passwords are never printed.
 It does not replace clean Debian/Ubuntu installation or service-sandbox tests.
 
-## Legacy cleanup boundaries (DD-171)
+## Reserved `.pay` path (DD-171)
 
-The Bats suite exercises stage 3 with an absent legacy sharing tree, then with
-private existing metadata; reruns must not create markers or repair old modes.
-Built-in fixtures also verify marker symlinks and old account files are untouched,
-current registry preparation is idempotent and public lifecycle actions refuse.
-Retired Files endpoints return 410 only after Host/header/origin checks and never
-advertise a fake active empty list. Current folder-sharing tests remain below.
-Portable validation should compare the complete embedded file set with runtime
-sources, excluding Python caches, metadata, tests, docs and private input.
+The Bats suite checks that stage 3 never creates the reserved `SHARE_DIR`
+(`.pay`), that stage 3 and `master-modul yerlesik` leave an existing one (contents,
+modes, marker symlink) untouched, that registry preparation is idempotent and
+public lifecycle actions refuse, and that the Files backend refuses to list it
+and writes nothing into it. Folder-sharing tests are described below.
 
 ## Built-in ZIP/RAR (DD-159, DD-166, DD-170)
 
 v143 adds automatic nested extraction/default depth-ceiling rollback tests and
 installer-driven default-destination state. The native RAR suite submits without
-legacy depth flags. `panel-ui.cjs` checks the compact form, automatic ZIP suffix,
-default downloads, folder picker navigation/cancel/read-error/retry and failed
-submit draft retention. `files-ui.cjs` checks the bottom selection dock at eight
+the optional depth fields. `panel-ui.cjs` checks the compact form, automatic ZIP
+suffix, default downloads, folder picker navigation/cancel/read-error/retry and
+failed submit draft retention. `files-ui.cjs` checks the bottom selection dock at eight
 widths/both themes, stable breadcrumbs/search, hidden-view/selection lifecycle,
 and notifications never covering its actions. Run browser suites sequentially
 against the simple preview server to avoid parallel request-queue timeouts.
@@ -140,11 +142,9 @@ Do not run live tests against an unauthorized host.
 
 WireGuard internet-only (DD-177): `wireguard-ui.cjs` tests creation/settings with
 no Local selector, DNS-only saves, polling/error/cancel/stopped-network behavior,
-explicit regeneration and four widths/CSP. `test_wg_settings.py` rejects legacy
-scope on both HTTP routes and checks revision/gates. Bats verifies DNS-only
-preservation and rejects old CLI arguments. `test_wg_upgrade.py` tests scoped
-retirement, fresh/repeated runs, invalid/pending/symlink/failure boundaries,
-opaque key/profile preservation and refusal/filtering of old WG overrides.
+explicit regeneration and four widths/CSP. `test_wg_settings.py` rejects a
+supplied `scope` field on both HTTP routes and checks revision/gates. Bats
+verifies DNS-only preservation and rejects access-scope CLI arguments.
 `firewall-linux.py` tests actual IPv4/IPv6 host deny (including prior flows),
 internet forwarding/NAT, private destinations through WAN, and tailnet isolation.
 Veth fixtures pin WG IPv6 neighbors because real WireGuard uses no NDP.
@@ -276,30 +276,11 @@ These checks do not replace a fresh Debian/Ubuntu installer acceptance run.
 `settings-domain-linux.py` needs Caddy, dnsmasq, dig, curl, setpriv and Python,
 but not qBittorrent. It starts the real Caddy and both production API backends
 against scratch files, with private DNS/network interfaces. It checks domain
-apply/rollback/confirm, real Caddy reload, both Host/header gates, retired health
-content, persisted domain and staged templates. Only systemctl is adapted to
+apply/rollback/confirm, real Caddy reload, both Host/header gates, no `health.`
+name or site, persisted domain and staged templates. Only systemctl is adapted to
 those processes; host services and their settings are never touched. Unit tests
 also cover timeout/reboot/crash recovery, state IP preservation, invalid suffixes,
 stale renderings, inactive services and installer saved-domain readback.
-
-## Pitfall: simulating a fresh Docker install on a provisioned host (up to v2-85)
-
-Since v2-86 no Compose network has a fixed subnet, so this no longer applies;
-kept for the record.
-
-Purging Docker (`apt-get purge docker-ce …` and removing `/var/lib/docker`)
-does not remove the old dockerd's kernel bridges. They remain until the next
-reboot, down and unknown to the new dockerd. Networks with dynamic subnets
-avoid them, but the fixed-subnet `wg` network (`WG_BRIDGE_SUBNET` in
-`config/defaults.env`) is created a second time on the same range, and the
-kernel keeps routing that range through the dead bridge. Stage 7 then fails on
-`wg.ayc` with `502` / `connection reset by peer`, a message that points at
-Caddy rather than at the duplicate route (**DD-110**).
-
-**Reboot between the purge and the install.** To diagnose, check whether more
-than one interface carries the `wg` gateway address
-(`ip -o -4 addr show | grep <gateway>`) and which interface
-`ip route get <WireGuard address>` chooses.
 
 ## Acceptance-check lessons (2026-09-11)
 
@@ -309,11 +290,6 @@ than one interface carries the `wg` gateway address
   obligation is `AdvertiseRoutes` containing `0.0.0.0/0` in
   `tailscale debug prefs`; assert that, and report `ExitNodeOption` as
   information.
-- After a reboot, give healthchecks their `start_period` before asserting
-  `healthy`. On Debian 13 the host was back 11 s after boot and filebrowser
-  reached healthy 8 s later; a check that runs the moment SSH returns will
-  report a false failure. Stage 7's own `wait_webdav_healthy` already waits;
-  an external check must too.
 
 ## Pitfall: an early-exiting pipe consumer under `pipefail` (2026-09-12)
 

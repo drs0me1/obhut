@@ -100,8 +100,19 @@ class ResourceTests(unittest.TestCase):
         wg.assert_not_called()
         sample.assert_called_once()
 
-    def test_legacy_system_keeps_ports(self):
-        self.assertIn("ports", self.p.system([]))
+    def test_port_rows_follow_installed_modules(self):
+        modules = Path(self.tmp.name) / "moduller"
+        env = {"MODULES_FILE": str(modules), "TORRENT_UI_PORT": "61006", "FILES_PANEL_PORT": "61009",
+               "SHARE_PORT": "61010", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641"}
+        rows = lambda: {(r["name"], r["scope"]) for r in self.p.ports(env, [])}  # noqa: E731
+        modules.write_text("wireguard\tcalisiyor\n")
+        names = {n for n, _ in rows()}
+        self.assertFalse({n for n in names if "qBittorrent" in n or n.startswith("WireGuard") or "dosya" in n})
+        modules.write_text("torrent\tcalisiyor\ndosya\tcalisiyor\n")
+        self.assertIn(("qBittorrent arayüzü", "loopback"), rows())
+        self.assertIn(("Konsol · dosya arka ucu", "loopback"), rows())
+        self.assertNotIn("share", self.p.system())
+        self.assertNotIn("ports", self.p.system())
 
     def test_http_resources_have_same_host_header_and_origin_gates(self):
         class Handler(panel.Handler):

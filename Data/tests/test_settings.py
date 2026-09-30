@@ -610,13 +610,6 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(settings.SettingsError):
             settings.saved_domain(self.m.config_path)
 
-    def test_retired_health_disabled_preference_does_not_block_dns_drafts(self):
-        settings.save_json(self.m.config_path, dict(copy.deepcopy(settings.DEFAULT), dns=self.dns(disabled=["health.ayc"])))
-        base = Path(self.env["DNSMASQ_CONF_FILE"])
-        base.write_text(base.read_text().replace("interface-name=health.ayc,tailscale0\n", ""))
-        self.assertEqual(self.m.status()["config"]["dns"]["disabled"], [])
-        self.m.validate(self.payload(dns=self.m.config()["dns"]))
-
 
 if __name__ == "__main__":
     unittest.main()

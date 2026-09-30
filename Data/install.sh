@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-157"
+V2_VERSION="2026.08.06-v2-158"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -438,10 +438,11 @@ EOF
 
 # DD-113: dağıtımın güvenlik güncellemeleri kendiliğinden insin. Kaynak
 # süzgeci paketin dağıtım varsayılanı (Debian: stable + security; Ubuntu:
-# security); Tailscale/Caddy depoları eşleşmez, onları yalnız yeniden
-# çalıştırma günceller. Reboot kararı operatörde; Ubuntu'da unattended-upgrades
-# paketi imajla gelir, dosyalar oradakiyle aynı içeriğe yazılır (no-op).
+# security). DD-184: Tailscale ve Caddy depoları da eklenir (dağıtımın
+# listesine eklenir, yerine geçmez); güncelleme gece APT_UPGRADE_TIME'da.
+# Reboot kararı operatörde; Ubuntu'da unattended-upgrades paketi imajla gelir.
 apply_unattended_upgrades() {
+    local timer_changed=0
     atomic_write "$APT_PERIODIC_FILE" 0644 <<EOF
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
@@ -449,9 +450,27 @@ EOF
     atomic_write "$APT_UNATTENDED_POLICY_FILE" 0644 <<EOF
 // master-stack (DD-113): otomatik reboot yok; yeniden başlatma operatörün kararı.
 Unattended-Upgrade::Automatic-Reboot "false";
+// master-stack (DD-184): internete açık Tailscale ve Caddy de kendi depolarından güncellenir.
+Unattended-Upgrade::Origins-Pattern {
+        "$TAILSCALE_APT_ORIGIN";
+        "$CADDY_APT_ORIGIN";
+};
 EOF
+    install -d -m 0755 "${APT_UPGRADE_TIMER_DROPIN%/*}"
+    atomic_write "$APT_UPGRADE_TIMER_DROPIN" 0644 <<EOF
+# master-stack (DD-184): güncellemeler gece; boşta kalan zamanlama boot'ta telafi edilir.
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* $APT_UPGRADE_TIME
+RandomizedDelaySec=30m
+EOF
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || timer_changed=1
+    systemctl daemon-reload
     systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 ||
         log WARN "apt-daily zamanlayıcıları etkinleştirilemedi"
+    # Yeni saat, zamanlayıcı yeniden başlayınca geçerli olur.
+    [[ "$timer_changed" -eq 0 ]] || systemctl restart apt-daily-upgrade.timer >/dev/null 2>&1 ||
+        log WARN "apt-daily-upgrade zamanlayıcısı yeniden başlatılamadı"
 }
 
 # DD-166: distribution-signed RAR dependencies; preserve operator source files.
@@ -809,8 +828,6 @@ stage_4() {
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     systemctl daemon-reload
     systemctl enable --now master-settings-guard.timer
-    # DD-177: scoped, idempotent retirement, under the installer lock.
-    python3 "$V2_ROOT/panel/master_wg_upgrade.py" "$STATE_FILE"
 }
 
 stage_5() {
@@ -1189,6 +1206,11 @@ stage_7() {
         ! systemctl is-active --quiet apt-daily-upgrade.timer; then
         log WARN "otomatik güvenlik güncellemeleri etkin değil (APT::Periodic::Unattended-Upgrade=${periodic:-yok}; $APT_PERIODIC_FILE eziliyor olabilir)"
     fi
+    # DD-184: Tailscale ve Caddy depoları etkin kalıpta mı (başka bir dosya ezmiş olabilir)?
+    local patterns
+    patterns="$(apt-config dump 2>/dev/null | awk '/^Unattended-Upgrade::Origins-Pattern/' || true)"
+    [[ "$patterns" == *"$TAILSCALE_APT_ORIGIN"* && "$patterns" == *"$CADDY_APT_ORIGIN"* ]] ||
+        log WARN "Tailscale/Caddy otomatik güncelleme kalıpları etkin yapılandırmada yok ($APT_UNATTENDED_POLICY_FILE)"
 
     local name resolver ans dig_out code line
     # shellcheck disable=SC2086
@@ -1231,7 +1253,7 @@ stage_7() {
     if [[ "$wg_on" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r wg_iface wg_port wg_policy wg_s4 _; do
             [[ "$wg_iface" =~ ^wg[0-9]$ ]] || continue
-            [[ "$wg_policy" == inet ]] || die "WireGuard kaydı güncellenmedi: $wg_iface"
+            [[ "$wg_policy" == inet ]] || die "WireGuard kaydında beklenmeyen erişim sütunu: $wg_iface ($wg_policy)"
             WG_NET_COUNT=$((WG_NET_COUNT + 1))
             [[ "$(wg show "$wg_iface" listen-port 2>/dev/null || true)" == "$wg_port" ]] ||
                 die "WireGuard $wg_iface dinleme portu kayıttaki $wg_port değil"

@@ -79,19 +79,14 @@ class NetworkManagerTests(unittest.TestCase):
         self.save(networks=["tailscale"])
         with self.assertRaises(s.ShareError): self.save(networks=["wan"])
 
-    def test_schema2_migration_never_infers_public_access(self):
-        old = self.m.read()
-        old["schema"] = 2
-        old["items"][0]["networks"] = ["wan"]
-        s.atomic(self.m.path,old)
-        self.m.prepare()
-        data = self.m.read()
-        self.assertEqual(data["schema"],3)
-        self.assertEqual(data["items"][0]["networks"],["tailscale"])
-        self.assertEqual(data["items"][0]["hash"],self.item["hash"])
+    def test_only_schema3_registries_with_networks_are_accepted(self):
         before=Path(self.m.path).read_bytes()
         self.m.prepare()
         self.assertEqual(before,Path(self.m.path).read_bytes())
+        data = self.m.read()
+        old = copy.deepcopy(data); old["schema"] = 2
+        s.atomic(self.m.path,old)
+        with self.assertRaises(s.ShareError): self.m.read()  # fresh install only: no conversion
         data["items"][0].pop("networks")
         s.atomic(self.m.path,data)
         with self.assertRaises(s.ShareError): self.m.read()

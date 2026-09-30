@@ -254,7 +254,6 @@ def classify_rules(chain_kind, rules, env, networks):
     ts_port = str(env.get("TAILSCALE_UDP_PORT", ""))
     by_iface = {n["iface"]: n for n in networks}
     by_port = {str(n["port"]): n for n in networks}
-    ui_names = {str(env.get("TORRENT_UI_PORT", "")): "qbittorrent"}
     out = []
     for rule in rules:
         o, spec, pkts = rule_opts(rule["spec"]), rule["spec"], rule["pkts"]
@@ -285,12 +284,6 @@ def classify_rules(chain_kind, rules, env, networks):
                              iface=net["iface"], label=net["label"])
                 else:
                     e.update(group="other", kind="unknown")
-            elif i_if in by_iface and j == "ACCEPT" and (o.get("--dport") or o.get("--dports")):
-                ports = [p for p in (o.get("--dport") or o["--dports"]).split(",") if p]
-                e.update(group="wg:" + i_if, kind="ui", proto=o.get("-p", ""), addr=o.get("-d", "").split("/")[0],
-                         ports=[{"port": int(p) if p.isdigit() else p, "name": ui_names.get(p, "")} for p in ports])
-            elif i_if in by_iface and j == "ACCEPT" and o.get("-p") == "icmp":
-                e.update(group="wg:" + i_if, kind="ping", addr=o.get("-d", "").split("/")[0])
             elif i_if in by_iface and j == "DROP":
                 e.update(group="wg:" + i_if, kind="drop")
             else:
@@ -665,7 +658,7 @@ class Panel:
             return None
         return {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize}
 
-    def system(self, networks=None):
+    def system(self):
         env = read_env(self.args.state)
         with self.sys_lock:
             samples = list(self.samples)
@@ -693,16 +686,11 @@ class Panel:
                 "iface": env.get("WAN_INTERFACE", ""), "tailscale": env.get("TAILSCALE_IPV4", ""),
                 "tailscale6": env.get("TAILSCALE_IPV6", ""), "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             },
-            # Legacy API only; the shell never needs WireGuard or port enumeration.
-            **({"ports": self.ports(env, networks)} if networks is not None else {}),
             # DD-150: disk kartı Dosya yöneticisi kurulu değilken de dolsun (kullanıcı alanının diski).
             "root": env.get("SERVER_ROOT", ""),
             # DD-151: qBittorrent modülünün kartı için (yol ve port sabit yazılmasın).
             "torrent": {"port": num_or(env.get("TORRENT_UI_PORT"), 0), "profile": env.get("TORRENT_PROFILE_DIR", "")},
             "disk": self.disk(env.get("SERVER_ROOT", "")),
-            # DD-141: Konsol, Infuse için IP:port adresini bu ikisinden kurar; "on" Paylaşım modülü
-            # kurulu mu (DD-149). Port kurulmadan önce de gelir: kurulum metni onu gösterir.
-            "share": {"port": num_or(env.get("SHARE_PORT"), 0), "on": bool(self.module_state("paylasim", env))},
         }
 
     # -- ayarlar (DD-155): salt okunur; hiçbir şeyi değiştirmez, yalnız istenince okur
@@ -1367,12 +1355,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/wg/state":
             try:
                 self.json(200, self.panel.state())
-            except RuntimeError as err:
-                self.error(502, str(err))
-            return
-        if path == "/api/wg/sistem":
-            try:
-                self.json(200, self.panel.system(self.panel.net_rows()))
             except RuntimeError as err:
                 self.error(502, str(err))
             return

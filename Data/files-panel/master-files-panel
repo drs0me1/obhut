@@ -38,7 +38,6 @@ from master_archives import Archives, ArchiveError, job_source
 
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 # DD-171: --share only reserves the retired hidden directory; never reads its marker.
-RETIRED_SHARE_MESSAGE = "Eski paylaşım API'si kaldırıldı; Dosyalar → Paylaşımlar bölümünü kullanın."
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 MAX_BODY = 262144
@@ -842,8 +841,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                      lock=False)
         elif route == "/api/trash":
             self.run(user, None, lambda: (200, {"items": files.trash_items()}, None), lock=False)
-        elif route == "/api/paylas":
-            self.error(410, RETIRED_SHARE_MESSAGE)
         elif route == "/api/text":
             self.run(user, None, lambda: (200, files.text(files.split(arg("path")), arg("enc") or "auto"), None),
                      lock=False)
@@ -947,9 +944,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if route == "/api/upload":
             self.upload(user)
-            return
-        if route in ("/api/paylas", "/api/paylas/kaldir"):
-            self.error(410, RETIRED_SHARE_MESSAGE)
             return
         data = self.body_json()
         if data is None:
