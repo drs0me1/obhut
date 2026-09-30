@@ -15,6 +15,11 @@ while an unpaused, unexpired, identity-valid WAN share exists. No NAT discovery,
 provider forwarding, IPv6 WAN, wildcard bind, admin/API route or ACL change.
 Manual firewall denials remain effective; the form notes this prerequisite.
 Public results contain labeled URLs; unavailable WAN is not advertised.
+**DD-182:** the address must still be assigned to this host (a probe bind). If
+the provider changes it, WAN is unavailable with "kurulumu yeniden çalıştırın",
+the 30 s guard removes the public site, and a Caddy that could not start on the
+old address is started without it. The installer drops a site bound to a stale
+address before restarting Caddy; stage 7 publishes it with the new address.
 
 The unprivileged process uses separate loopback addresses on SHARE_PORT:
 127.0.0.1 for Tailscale, SHARE_WAN_BACKEND for WAN. Listener scope, not an HTTP
@@ -28,8 +33,24 @@ the selected network, including OPTIONS and unsupported methods.
   300 seconds; 429 includes Retry-After. Missing Authorization is the usual
   uncounted 401 challenge. Unknown accounts and malformed credentials count.
   The 4096-entry table fails closed when full; active blocks are never evicted.
-- Tailscale keeps its independent 16-connection pool. WAN connections close
-  after each response; proxy keepalive is off for that upstream.
+- **DD-180:** the same per-IP rule also applies on the Tailscale listener, keyed
+  on Caddy's X-Share-Client-IP (local probes without it share one key). Per
+  share and listener, 100 bad credentials within an hour close that share for
+  an hour to every address that has not logged in to it since the service
+  started; the recipient already connected keeps working. The service logs only
+  the share ID and the fixed numbers. A wrong user, paused or unknown share
+  also costs one scrypt check, so timing does not reveal which part was wrong.
+- Tailscale keeps its independent pool of 64 connections (16 until DD-181; Caddy
+  keeps up to 32 idle upstream connections). WAN connections close after each
+  response; proxy keepalive is off for that upstream. Every closing reply says
+  `Connection: close`.
+- **DD-181:** a successful login is remembered in memory for 10 minutes (256
+  entries, keyed by share, stored hash and an HMAC of the exact Authorization
+  value), so repeated Infuse/Finder requests skip the scrypt check. A paused
+  share, another password or another listener is checked again; a registry
+  edit restarts the service and clears the memory. Per-IP and per-share limits
+  still apply to every request. Replies are sent without Nagle delay
+  (`TCP_NODELAY`); before DD-181 each request through Caddy waited ~40 ms.
 - Host TCP admission additionally caps new WAN sockets at 16 per source IP and
   64 total, before manual allow rules. Conntrack can temporarily retain closing
   sockets. These are connection counts, not bandwidth caps or DDoS protection.
@@ -136,6 +157,8 @@ filesystem concurrently; this is not an isolation boundary against root.
 
 Supported: OPTIONS, GET/HEAD (single byte ranges and ETags), PROPFIND Depth 0/1,
 PUT (fixed-length/chunked, up to 64 GiB), MKCOL, DELETE, MOVE and **file** COPY.
+PUT and COPY stop with 507 before the filesystem falls under min(5 GiB, 10%)
+free space, and remove their temporary file (**DD-180**).
 Destination must stay in the same share/host. No DAV locks, PROPPATCH or directory
 COPY: these explicitly fail, never report false success. Full WebDAV conformance
 and Finder/Infuse interoperability are **not certified** by protocol tests.

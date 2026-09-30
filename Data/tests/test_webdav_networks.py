@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -37,7 +38,7 @@ class Clock:
 class LimiterTests(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
-        self.limiter = dav.WanLimiter(dict(shares.DEFAULT_LIMITS), self.clock)
+        self.limiter = dav.Limiter(dict(shares.DEFAULT_LIMITS), self.clock)
 
     def bad(self, ip="198.51.100.1"):
         with self.assertRaises(dav.DavError) as caught:
@@ -48,9 +49,11 @@ class LimiterTests(unittest.TestCase):
     def test_defaults_match_runtime_contract(self):
         self.assertEqual(shares.DEFAULT_LIMITS, {
             "wan_connections": 8, "wan_connections_per_ip": 4,
-            "tail_connections": 16, "wan_auth_parallel": 4,
+            "tail_connections": 64, "wan_auth_parallel": 4,
             "auth_failures": 5, "auth_window_seconds": 60,
             "auth_block_seconds": 300, "auth_entries": 4096,
+            "share_failures": 100, "share_window_seconds": 3600,
+            "share_block_seconds": 3600,
             "wan_timeout_seconds": 30,
         })
 
@@ -205,9 +208,8 @@ class NetworkTests(unittest.TestCase):
         thread.join(2)
         self.assertFalse(thread.is_alive())
         self.wait_for(lambda: not server.connections)
-        if server.wan_limiter:
-            self.assertFalse(server.wan_limiter.active)
-            self.assertFalse(any(e["pending"] for e in server.wan_limiter.entries.values()))
+        self.assertFalse(server.limiter.active)
+        self.assertFalse(any(e["pending"] for e in server.limiter.entries.values()))
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + 3
@@ -246,7 +248,7 @@ class NetworkTests(unittest.TestCase):
             self.assertEqual(self.request(server, item)[:2], (200, b"fixture-content"))
         with dav.Server(("127.0.0.1", 0), self.config) as server:
             self.assertEqual(server.scope, "tailscale")
-            self.assertIsNone(server.wan_limiter)
+            self.assertEqual(server.limiter.scope, "tailscale")
 
     def test_same_port_on_two_loopback_addresses(self):
         try:
@@ -314,7 +316,7 @@ class NetworkTests(unittest.TestCase):
             status, _, headers = self.request(auth=None)
             self.assertEqual(status, 401)
             self.assertIn("WWW-Authenticate", headers)
-        self.assertFalse(self.wan.wan_limiter.entries)
+        self.assertFalse(self.wan.limiter.entries)
         for value in ("", "Bearer token", "Basic !!!!", "Basic dXNlcg=="):
             self.assertEqual(self.request(auth=value)[0], 401)
         status, _, headers = self.request(auth="Basic !!!!")
@@ -334,7 +336,7 @@ class NetworkTests(unittest.TestCase):
 
     def test_equivalent_ip_forms_and_spoofed_forwarded_headers_cannot_reset_failures(self):
         clock = Clock()
-        self.wan.wan_limiter.clock = clock
+        self.wan.limiter.clock = clock
         for index in range(5):
             ip = "2001:db8::1" if index % 2 else "2001:0db8:0:0:0:0:0:1"
             self.assertEqual(self.request(auth="bad", ip=ip,
@@ -347,7 +349,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.request(auth="bad", ip="::ffff:198.51.100.1")[0], 429)
 
     def test_full_failure_table_denies_credentials_before_hash_and_recovers(self):
-        limiter = self.wan.wan_limiter
+        limiter = self.wan.limiter
         limiter.limits["auth_entries"] = 1
         clock = Clock()
         limiter.clock = clock
@@ -461,7 +463,7 @@ class NetworkTests(unittest.TestCase):
                 release.set()
             self.assertEqual([f.result()[0] for f in futures], [200] * 4)
         self.assertEqual(self.request()[0], 200)
-        self.assertFalse(self.wan.wan_limiter.entries)
+        self.assertFalse(self.wan.limiter.entries)
 
     def test_per_ip_budget_covers_request_lifetime_after_hash_finishes(self):
         reached = threading.Event()
@@ -491,7 +493,7 @@ class NetworkTests(unittest.TestCase):
             finally:
                 release.set()
             self.assertEqual([f.result()[0] for f in futures], [200] * 4)
-        self.wait_for(lambda: not self.wan.wan_limiter.active)
+        self.wait_for(lambda: not self.wan.limiter.active)
         self.assertEqual(self.request()[0], 200)
 
     def test_global_connection_caps_are_independent_and_close_idle_readers(self):
@@ -507,10 +509,11 @@ class NetworkTests(unittest.TestCase):
                     pass
             self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
             self.wait_for(lambda: not self.tail.connections)
-            for _ in range(16):
+            tail_slots = self.tail.limits["tail_connections"]
+            for _ in range(tail_slots):
                 sock = stack.enter_context(socket.create_connection(self.tail.server_address, timeout=2))
                 sock.sendall(b"GET ")
-            self.wait_for(lambda: len(self.tail.connections) == 16)
+            self.wait_for(lambda: len(self.tail.connections) == tail_slots)
             with socket.create_connection(self.tail.server_address, timeout=2) as overflow:
                 try:
                     self.assertEqual(overflow.recv(1), b"")
@@ -542,7 +545,7 @@ class NetworkTests(unittest.TestCase):
             while sock.recv(4096):
                 pass
         self.wait_for(lambda: not self.wan.connections)
-        self.assertFalse(self.wan.wan_limiter.active)
+        self.assertFalse(self.wan.limiter.active)
         self.assertFalse(list((self.root / "2").glob(".webdav-*")))
         self.assertEqual((self.root / "2/file.txt").read_bytes(), b"fixture-content")
 
@@ -624,6 +627,142 @@ class NetworkTests(unittest.TestCase):
         with contextlib.redirect_stderr(output), contextlib.redirect_stdout(output):
             self.assertEqual(self.request(auth="Basic credential-fixture", path="/private-log-fixture")[0], 401)
         self.assertEqual(output.getvalue(), "")
+
+    def test_tailnet_listener_blocks_repeated_bad_passwords_per_client(self):
+        auth = "Basic " + base64.b64encode(b"fixture-user:wrong").decode()
+        for _ in range(4):
+            self.assertEqual(self.request(self.tail, self.tail_item, auth=auth, ip="100.64.0.8")[0], 401)
+        status, _, headers = self.request(self.tail, self.tail_item, auth=auth, ip="100.64.0.8")
+        self.assertEqual((status, headers.get("Retry-After")), (429, "300"))
+        self.assertEqual(self.request(self.tail, self.tail_item, ip="100.64.0.8")[0], 429)
+        self.assertEqual(self.request(self.tail, self.tail_item, ip="100.64.0.9")[0], 200)
+        # Local readiness probes carry no client header and share one budget.
+        for _ in range(5):
+            self.request(self.tail, self.tail_item, auth=auth, ip=None)
+        self.assertEqual(self.request(self.tail, self.tail_item, ip=None)[0], 429)
+        self.assertEqual(self.request(self.tail, self.tail_item, ip="100.64.0.9")[0], 200)
+        self.assertEqual(self.request(self.tail, self.tail_item, ip="not-an-ip")[0], 400)
+        # A request without credentials is only the challenge: readiness probes keep seeing 401.
+        self.assertEqual(self.request(self.tail, self.tail_item, auth=None, ip=None)[0], 401)
+
+    def test_share_budget_closes_the_share_to_new_addresses_only(self):
+        limiter = self.wan.limiter
+        limiter.limits = dict(limiter.limits, share_failures=3)
+        self.assertEqual(self.request(ip="198.51.100.50")[0], 200)
+        auth = "Basic " + base64.b64encode(b"fixture-user:wrong").decode()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for index in range(3):
+                self.assertEqual(self.request(auth=auth, ip="198.51.100.%d" % (index + 1))[0], 401)
+        self.assertIn(self.wan_item["id"] + " (wan)", output.getvalue())
+        self.assertNotIn("198.51.100", output.getvalue())
+        self.assertNotIn("wrong", output.getvalue())
+        status, _, headers = self.request(ip="198.51.100.60")
+        self.assertEqual((status, headers["Retry-After"]), (429, "3600"))
+        # The recipient who already logged in keeps working; other shares and listeners too.
+        self.assertEqual(self.request(ip="198.51.100.50")[0], 200)
+        self.assertEqual(self.request(item=self.both_item, ip="198.51.100.60")[0], 200)
+        self.assertEqual(self.request(self.tail, self.tail_item, ip="198.51.100.60")[0], 200)
+        with patch.object(limiter, "clock", return_value=limiter.clock() + 3600):
+            self.assertEqual(self.request(ip="198.51.100.60")[0], 200)
+
+    def test_known_addresses_are_bounded_per_share(self):
+        limiter = dav.Limiter(dict(shares.DEFAULT_LIMITS), Clock())
+        for index in range(dav.Limiter.KNOWN_PER_SHARE + 5):
+            with limiter.credentials("198.51.100.%d" % index, "a" * 24):
+                pass
+        known = limiter.shares["a" * 24]["known"]
+        self.assertEqual(len(known), dav.Limiter.KNOWN_PER_SHARE)
+        self.assertNotIn("198.51.100.0", known)
+        self.assertIn("198.51.100.%d" % (dav.Limiter.KNOWN_PER_SHARE + 4), known)
+
+    def test_wrong_user_unknown_or_paused_share_still_costs_one_hash(self):
+        calls = []
+
+        def verify(item, password):
+            calls.append(item)
+            return shares.password_ok(item, password)
+        wrong_user = "Basic " + base64.b64encode(("other-user:" + PASSWORD).encode()).decode()
+        with patch.object(dav, "password_ok", side_effect=verify):
+            self.assertEqual(self.request(self.tail, self.tail_item, auth=wrong_user)[0], 401)
+            self.assertEqual(self.request(self.tail, self.tail_item, path="/s/" + "f" * 24 + "/")[0], 401)
+            self.tail_item["paused"] = True
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 401)
+            self.tail_item["paused"] = False
+            self.assertEqual(self.request(self.wan, self.wan_item, auth=wrong_user)[0], 401)
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
+        self.assertEqual(calls, [self.tail.decoy] * 3 + [self.wan.decoy, self.tail_item])
+        self.assertFalse(shares.password_ok(self.tail.decoy, PASSWORD))
+
+    def test_writes_stop_before_the_disk_reserve(self):
+        body = b"x" * 1024
+        copy_to = (("Destination", "/s/%s/copy.txt" % self.tail_item["id"]),)
+        with patch.object(dav, "disk_room", return_value=False):
+            self.assertEqual(self.request(self.tail, self.tail_item, method="PUT", leaf="new.bin", body=body)[0], 507)
+            self.assertEqual(self.request(self.tail, self.tail_item, method="COPY", headers=copy_to)[0], 507)
+        # Streaming re-checks: space that runs out mid-upload removes the partial file.
+        answers = iter([True, False])
+        with patch.object(dav, "DISK_CHECK_EVERY", 512), \
+                patch.object(dav, "disk_room", side_effect=lambda *_: next(answers)):
+            self.assertEqual(self.request(self.tail, self.tail_item, method="PUT", leaf="late.bin", body=body)[0], 507)
+        for name in ("new.bin", "copy.txt", "late.bin"):
+            self.assertFalse((self.root / "1" / name).exists())
+        self.assertFalse(list((self.root / "1").glob(".webdav-*")))
+        self.assertEqual(self.request(self.tail, self.tail_item, method="PUT", leaf="ok.bin", body=body)[0], 201)
+
+    def test_disk_reserve_is_five_gib_or_a_tenth_of_a_small_disk(self):
+        gib = 1024 ** 3
+
+        def vfs(total, free):
+            return types.SimpleNamespace(f_frsize=1, f_blocks=total, f_bavail=free)
+        with patch.object(dav.os, "fstatvfs", return_value=vfs(1000 * gib, 6 * gib)):
+            self.assertTrue(dav.disk_room(0, gib))
+            self.assertFalse(dav.disk_room(0, 2 * gib))
+        with patch.object(dav.os, "fstatvfs", return_value=vfs(20 * gib, 3 * gib)):
+            self.assertTrue(dav.disk_room(0, gib))
+            self.assertFalse(dav.disk_room(0, gib + 1))
+
+    def test_successful_login_is_remembered_without_weakening_checks(self):
+        calls = []
+
+        def verify(item, password):
+            calls.append(item["id"] if item is not self.tail.decoy else "decoy")
+            return shares.password_ok(item, password)
+        wrong = "Basic " + base64.b64encode(b"fixture-user:wrong").decode()
+        with patch.object(dav, "password_ok", side_effect=verify):
+            for _ in range(3):
+                self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
+            self.assertEqual(calls, [self.tail_item["id"]])
+            # A different password is still hashed and refused; a paused share is not served from memory.
+            self.assertEqual(self.request(self.tail, self.tail_item, auth=wrong)[0], 401)
+            self.tail_item["paused"] = True
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 401)
+            self.tail_item["paused"] = False
+            self.assertEqual(calls, [self.tail_item["id"], self.tail_item["id"], "decoy"])
+            # Entries expire, and each listener keeps its own memory.
+            with patch.object(dav.time, "monotonic", return_value=time.monotonic() + dav.AUTH_CACHE_SECONDS + 1):
+                self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
+            self.assertEqual(self.request(self.wan, self.both_item)[0], 200)
+        self.assertEqual(len(calls), 5)
+        self.assertLessEqual(len(self.tail.auth_cache), dav.AUTH_CACHE_SIZE)
+
+    def test_tailnet_errors_announce_the_close(self):
+        status, _, headers = self.request(self.tail, self.tail_item, auth="Basic !!!!")
+        self.assertEqual((status, headers.get("Connection")), (401, "close"))
+        status, _, headers = self.request(self.tail, self.tail_item)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(headers.get("Connection"), "close")
+
+    def test_accepted_connections_send_without_nagle_delay(self):
+        seen = []
+        original = dav.Handler.setup
+
+        def setup(handler):
+            original(handler)
+            seen.append(handler.connection.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+        with patch.object(dav.Handler, "setup", setup):
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
+        self.assertTrue(seen and all(seen))
 
 
 if __name__ == "__main__":

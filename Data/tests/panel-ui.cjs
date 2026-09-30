@@ -51,6 +51,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         result = {user:"admin",temp:temporaryLogin};
         if (url.searchParams.get("parola") === "1") { passwordReads++; result.pass = temporaryPassword; }
       }
+      else if (p === "/api/konsol/saglik") result = {status:"ok",read_at:1,checks:[{id:"units",name:"Servisler",status:"ok",detail:"Başarısız servis yok"}]};
       else if (p === "/api/konsol/kaynaklar") {
         resourceCount++;
         if (resources === "offline") return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"fixture offline"})});
@@ -261,25 +262,30 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.getByText("Hedef klasör değişti",{exact:true}).waitFor();
     assert.equal(await page.locator("#archive-name").inputValue(),"media-backup");
     await page.locator("#sh").getByRole("button",{name:"Oluştur",exact:true}).click();
-    await page.waitForURL("**/#/dosyalar/arsiv");
+    // DD-183: no jobs page. Files stays open; a bar above the list shows the running job.
+    const archiveBar = page.locator("#archive-bar");
+    await archiveBar.getByText("media-backup.zip",{exact:true}).waitFor();
+    assert.equal(await page.evaluate(() => location.hash),"#/dosyalar");
+    assert.equal(await page.locator("#fs-tabs").getByRole("button",{name:"Arşiv işleri",exact:true}).count(),0);
+    assert.match(await archiveBar.innerText(),/Çalışıyor · İşleniyor/);
     assert.equal(submitted.operation,"zip");
     assert.equal(submitted.name,"media-backup.zip");
     assert.equal(submitted.target,"Belgeler");
     assert.deepEqual(submitted.names,["media"]);
-    await page.getByRole("button",{name:"İptal et",exact:true}).click();
-    await page.getByText("media-backup.zip · İptal edildi",{exact:true}).waitFor();
-    await page.locator("#fs-tabs").getByRole("button",{name:"Dosyalar",exact:true}).click();
+    await archiveBar.getByRole("button",{name:"İptal et",exact:true}).click();
+    await archiveBar.waitFor({state:"hidden"});
+    await page.getByText("media-backup.zip:",{exact:false}).first().waitFor();
     await page.getByRole("button",{name:"sample.zip ayrıntıları",exact:true}).click();
     await page.locator("#fs-detail").getByRole("button",{name:"Arşiv açıcı",exact:true}).click();
     assert.equal(await page.locator("#archive-nested,#archive-layers,.archive-form .archive-limits").count(),0);
     assert.equal(await page.locator("#archive-target").textContent(),"/srv/downloads");
     await page.locator("#sh").getByRole("button",{name:"Arşivi aç",exact:true}).click();
-    await page.waitForURL("**/#/dosyalar/arsiv");
+    await archiveBar.getByText("sample",{exact:true}).waitFor();
     assert.equal(submitted.operation,"unzip"); assert.equal(submitted.nested,undefined); assert.equal(submitted.layers,undefined);
     assert.equal(submitted.target,"downloads");
-    jobs[0].status = "done"; jobs[0].result = "sample";
-    await page.getByRole("button",{name:"Sonucu göster",exact:true}).click();
-    await page.waitForURL("**/#/dosyalar");
+    jobs[0].status = "done"; jobs[0].result = "sample"; jobs[0].message = "Tamamlandı; kaynaklar korundu.";
+    await archiveBar.waitFor({state:"hidden"});
+    await page.getByText("sample: Tamamlandı",{exact:false}).first().waitFor();
     await page.getByRole("button",{name:"media ayrıntıları",exact:true}).waitFor();
     for (const filename of ["sample.rar","sample.r00","sample.part01.rar"]) {
       await page.getByRole("button",{name:filename+" ayrıntıları",exact:true}).click();
@@ -287,12 +293,15 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       assert.equal(await page.locator("#archive-name").inputValue(),"sample");
       assert(!/ZIP|RAR|katman|işlenen veri|10.000/.test(await page.locator("#sh").innerText()));
       await page.locator("#sh").getByRole("button",{name:"Arşivi aç",exact:true}).click();
-      await page.waitForURL("**/#/dosyalar/arsiv");
+      await archiveBar.getByText("sample",{exact:true}).waitFor();
       assert.deepEqual(submitted.names,[filename]);
       assert.equal(submitted.nested,undefined);
       jobs[0].status="failed"; jobs[0].message="Eksik RAR parçası; sonuç yayımlanmadı.";
-      await page.locator("#fs-tabs").getByRole("button",{name:"Dosyalar",exact:true}).click();
+      await archiveBar.waitFor({state:"hidden"});
     }
+    // The retired jobs bookmark opens the Files list.
+    await navigate("#/dosyalar/arsiv");
+    await page.getByRole("button",{name:"media ayrıntıları",exact:true}).waitFor();
     await page.getByRole("button",{name:"not-an-archive.txt ayrıntıları",exact:true}).click();
     assert.equal(await page.locator("#fs-detail").getByRole("button",{name:"Arşiv açıcı",exact:true}).count(),0);
     await page.getByRole("button",{name:longArchiveFolder+" ayrıntıları",exact:true}).click();

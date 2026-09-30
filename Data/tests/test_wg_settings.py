@@ -26,28 +26,15 @@ class NetworkSettingsTests(unittest.TestCase):
             def log_message(self, *_args):
                 pass
         Handler.panel = self.p
-        self.server = panel.Server(("127.0.0.1", 0), Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        self.addCleanup(self.stop)
-        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.server, self.sock = resources.start_unix(self, Handler)
         self.data = dict(dns="9.9.9.9, 2620:fe::fe", revision="a" * 64)
-
-    def stop(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(3)
 
     def request(self, data=None, headers=None, path="/api/wg/nets/wg0/ayarlar"):
         headers = headers if headers is not None else {"X-Konsol":"1"}
         headers = {"Content-Type":"application/json", **headers}
-        req = urllib.request.Request(self.base+path, data=json.dumps(self.data if data is None else data).encode(), headers=headers)
-        try:
-            response = urllib.request.urlopen(req, timeout=3)
-        except urllib.error.HTTPError as error:
-            response = error
-        with response:
-            return response.status, json.load(response)
+        body = json.dumps(self.data if data is None else data).encode()
+        status, _headers, raw = resources.unix_get(self.sock, path, headers, "POST", body)
+        return status, json.loads(raw)
 
     def test_valid_request_delegates_once_without_reset_and_invalidates_settings_cache(self):
         self.p.settings_cache = (1, {"old":True})

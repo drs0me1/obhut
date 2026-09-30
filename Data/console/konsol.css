@@ -140,6 +140,7 @@ h1 { margin: 0; font: 700 28px/1.1 var(--f-display); letter-spacing: -.025em; te
 }
 .hm.ok { background: var(--ok-soft); color: var(--ok); }
 .hm.warn { background: var(--warn-soft); color: var(--warn); }
+.hm.bad { background: var(--danger-soft); color: var(--danger); }
 .hm.accent { background: var(--accent-soft); color: var(--accent); }
 .card h2 { margin: 0; font-size: 15px; font-weight: 600; display: flex; gap: 9px; align-items: center; }
 .card h2 svg { width: 17px; height: 17px; color: var(--accent); }

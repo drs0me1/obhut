@@ -73,7 +73,7 @@ def main():
             e = m.env_read(DATA / "config/defaults.env")
             for key in ("SETTINGS_FILE", "SETTINGS_PENDING_FILE", "SETTINGS_DNS_FILE", "DNSMASQ_CONF_FILE",
                         "DNSMASQ_CONF_DIR", "MODULES_FILE", "MODULES_DIR", "WG_NETWORKS_FILE", "RUNTIME_DIR",
-                        "UNIT_DIR", "TORRENT_PROFILE_DIR", "SBIN_DIR"):
+                        "UNIT_DIR", "TORRENT_PROFILE_DIR", "SBIN_DIR", "SHARE_STATE_FILE"):
                 e[key] = str(root / key.lower())
             e.update(LOCAL_DOMAIN="test", WAN_INTERFACE="eth0", TAILSCALE_IPV4="100.64.0.1")
             for key in ("SBIN_DIR", "RUNTIME_DIR", "DNSMASQ_CONF_DIR"):
@@ -86,6 +86,8 @@ def main():
             e["STATE_FILE"] = str(state)
             state.write_text("".join(k + "=" + shlex.quote(v) + "\n" for k, v in e.items()))
             shutil.copy(DATA / "panel/master_settings.py", Path(e["SBIN_DIR"]) / "master_settings.py")
+            # DD-179: firewall.sh asks master_shares.py whether a WAN share is active.
+            shutil.copy(DATA / "panel/master_shares.py", Path(e["SBIN_DIR"]) / "master_shares.py")
             worker = ["bash", str(DATA / "scripts/firewall.sh")]
             env = dict(os.environ, STATE_FILE=str(state))
             def apply():
@@ -128,7 +130,7 @@ def main():
                     except OSError:
                         return
             allowed_tcp = {int(e[k]) for k in ("SSH_PUBLIC_PORT", "CADDY_HTTP_PORT", "SHARE_PORT", "DNS_PORT")}
-            denied_tcp = {2019, 20902, 59000, 61002, 61003, 61007, int(e["WG_PANEL_PORT"]), int(e["FILES_PANEL_PORT"]), int(e["TORRENT_UI_PORT"])}
+            denied_tcp = {2019, 20902, 59000, 61002, 61003, 61007, 61008, int(e["FILES_PANEL_PORT"]), int(e["TORRENT_UI_PORT"])}
             udp_ports = {int(e[k]) for k in ("DNS_PORT", "TAILSCALE_UDP_PORT", "WG_PORT_DEFAULT")} | {20902, 59000}
             for family in (socket.AF_INET, socket.AF_INET6):
                 for proto, ports in (("tcp", allowed_tcp | denied_tcp), ("udp", udp_ports)):

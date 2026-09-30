@@ -72,6 +72,7 @@
 .as-footer strong { font-size:13px; font-weight:600; }
 .as-rollback { padding:16px; border:1px solid var(--warn); border-radius:9px; background:var(--warn-soft); color:var(--warn); }
 .as-rollback p { font-size:13px; }
+.as-rollback.stuck { border-color:var(--danger); background:var(--danger-soft); color:var(--danger); }
 .as-message { margin:0; font-size:13px; overflow-wrap:anywhere; }
 .as-address + .as-address { margin-top:8px; }
 .as-domain-links { display:grid; gap:8px; padding:16px; border:1px solid var(--line); border-radius:9px; overflow-wrap:anywhere; }

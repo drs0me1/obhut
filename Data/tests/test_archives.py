@@ -1,14 +1,17 @@
 """Real ZIP/filesystem tests; only TemporaryDirectory fixtures are modified."""
+import contextlib
 import importlib.machinery
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import struct
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -63,6 +66,73 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed", result)
         self.assertFalse((self.root / "output").exists())
         self.assertEqual(sorted(p.name for p in (self.root / ".arsiv").iterdir()), ["jobs.json"])
+
+    def test_each_finished_or_interrupted_job_is_reported_once_for_the_log(self):
+        reported = []
+        self.manager = ar.Archives(self.files, ".arsiv", files_module.rename_noreplace, files_module.rmtree_at,
+                                   report=lambda job: reported.append((job["name"], job["status"])))
+        result = self.run_job()
+        self.assertEqual(result["status"], "done", result)
+        self.assertEqual(reported, [("output.zip", "done")])
+        # A job the service did not finish is reported when the service starts again.
+        history = json.loads((self.root / ".arsiv" / "jobs.json").read_text())
+        history[0]["status"] = "running"
+        (self.root / ".arsiv" / "jobs.json").write_text(json.dumps(history))
+        reported.clear()
+        ar.Archives(self.files, ".arsiv", files_module.rename_noreplace, files_module.rmtree_at,
+                    report=lambda job: reported.append((job["name"], job["status"])))
+        self.assertEqual(reported, [("output.zip", "interrupted")])
+
+    def test_log_line_matches_the_console_audit_format(self):
+        job = {"names": ["a.rar", "b", "c", "d"], "name": "cikti", "status": "failed", "message": "Bozuk arşiv."}
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            files_module.report_archive(job)
+            files_module.report_archive(dict(job, status="done", message="Tamamlandı; kaynaklar korundu."))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], 'dosya: konsol - arsiv-sonuc "a.rar, b, c (+1) → cikti: Bozuk arşiv." -> hata')
+        self.assertTrue(lines[1].endswith("-> ok"))
+        pattern = r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$"  # ACTION_RE in master-wg-panel
+        self.assertTrue(all(re.match(pattern, line) for line in lines))
+
+    def test_next_job_waits_for_the_previous_cleanup_instead_of_refusing(self):
+        release = threading.Event()
+        original = self.manager.remove_tree
+        def slow_cleanup(*args):
+            release.wait(3)
+            return original(*args)
+        with patch.object(self.manager, "remove_tree", side_effect=slow_cleanup):
+            first = self.manager.submit(self.request())
+            deadline = time.monotonic() + 5
+            while next(j for j in self.manager.status()["items"] if j["id"] == first["id"])["status"] in ("queued", "running"):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.01)
+            self.assertTrue(self.manager.thread.is_alive())  # "done", still cleaning its staging area
+            threading.Timer(0.2, release.set).start()
+            second = self.manager.submit(self.request(name="second.zip"))
+        self.manager.thread.join(5)
+        self.assertEqual(next(j for j in self.manager.status()["items"] if j["id"] == second["id"])["status"], "done")
+
+    def test_damaged_history_is_set_aside_and_service_starts(self):
+        self.manager.thread = None
+        (self.root / ".arsiv" / "jobs.json").write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            manager = ar.Archives(self.files, ".arsiv", files_module.rename_noreplace, files_module.rmtree_at)
+        self.assertEqual(manager.status()["items"], [])
+        kept = [p.name for p in (self.root / ".arsiv").iterdir() if p.name.startswith("jobs.json.bozuk-")]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual((self.root / ".arsiv" / kept[0]).read_text(), "{not json")
+        self.assertIn(kept[0], err.getvalue())
+        self.assertEqual(json.loads((self.root / ".arsiv" / "jobs.json").read_text()), [])
+
+    def test_compressed_media_is_stored_and_text_is_deflated(self):
+        (self.root / "source" / "Film.MKV").write_bytes(b"\0" * 4096)
+        (self.root / "source" / "kapak.jpg").write_bytes(b"\0" * 4096)
+        result = self.run_job()
+        self.assertEqual(result["status"], "done", result)
+        with zipfile.ZipFile(self.root / "output.zip") as archive:
+            kinds = {info.filename: info.compress_type for info in archive.infolist() if not info.is_dir()}
+        self.assertEqual(kinds, {"source/hello.txt": zipfile.ZIP_DEFLATED, "source/Film.MKV": zipfile.ZIP_STORED,
+                                 "source/kapak.jpg": zipfile.ZIP_STORED})
 
     def test_round_trip_unicode_and_source_preserved(self):
         (self.root / "source" / "Boş klasör").mkdir()

@@ -69,6 +69,9 @@ recover_failed_bound_units() {
     for unit in $BOUND_UNITS; do
         if systemctl is-failed --quiet "$unit"; then
             printf 'refresh-tailnet: %s failed; yeniden başlatılıyor\n' "$unit"
+            # DD-182: a boot race can use up Caddy's start limit (3/600 s); without this the
+            # restart fails with "start request repeated too quickly" for ten minutes.
+            systemctl reset-failed "$unit" 2>/dev/null || true
             systemctl restart "$unit" ||
                 printf 'refresh-tailnet: %s kurtarılamadı\n' "$unit" >&2
         fi
@@ -98,6 +101,24 @@ recover_firewall_if_broken() {
         printf 'refresh-tailnet: firewall yeniden başlatılamadı\n' >&2
 }
 
+recover_failed_wireguard() {
+    # DD-180: WireGuard ağı duvar denetimi geçmeden açılmaz (wg-quick@ drop-in). Duvar
+    # açılışta kurulamamışsa ağ failed kalır; duvar düzelince burada yeniden açılır.
+    # Yalnız etkin (Konsol'dan kapatılmamış) ağlar; Tailscale'i beklemez.
+    local unit units
+    units="$(systemctl list-units --failed --plain --no-legend 'wg-quick@wg*.service' 2>/dev/null |
+        awk '{print $1}')" || return 0
+    [[ -n "$units" ]] || return 0
+    "$FIREWALL_BIN" --check >/dev/null 2>&1 || return 0
+    for unit in $units; do
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
+        systemctl is-enabled --quiet "$unit" 2>/dev/null || continue
+        printf 'refresh-tailnet: %s failed; yeniden açılıyor\n' "$unit"
+        systemctl restart "$unit" ||
+            printf 'refresh-tailnet: %s açılamadı\n' "$unit" >&2
+    done
+}
+
 wait_for_tailscale_ready() {
     command -v tailscale >/dev/null 2>&1 || return 0
     if ! tailscale wait --help >/dev/null 2>&1; then
@@ -114,10 +135,15 @@ wait_for_tailscale_ready() {
 
 # Tailscale durumundan bağımsız çalışmalı: tailnet çökse de firewall toparlanır.
 recover_firewall_if_broken
+recover_failed_wireguard
 
 if ! wait_for_tailscale_ready; then
     exit 0
 fi
+
+# DD-182: the tailnet allowlist includes PeerAPI read from tailscaled. Right after a
+# tailscaled restart the first check above can run before it answers; check again now.
+recover_firewall_if_broken
 
 warn_if_tailnet_unusable
 

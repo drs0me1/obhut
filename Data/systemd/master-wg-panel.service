@@ -1,7 +1,7 @@
 [Unit]
 Description=Konsol WireGuard and system backend (master-stack, DD-133, DD-140)
-# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (panel.<alan> altında /api/wg/*).
-# Sayfa dosyalarını dosya arka ucu sunar. Değişiklikleri master-wg yapar.
+# DD-180: ağ portu yok; yalnız Unix soketi (0660, root ve Caddy grubu). Tailnet'e Caddy açar
+# (panel.<alan> altında /api/wg/* ve /api/konsol/*). Değişiklikleri master-wg yapar.
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
@@ -9,7 +9,10 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen 127.0.0.1:__WG_PANEL_PORT__ --state __STATE_FILE__ --master-wg __SBIN_DIR__/master-wg --master-modul __SBIN_DIR__/master-modul
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__ --state __STATE_FILE__ --master-wg __SBIN_DIR__/master-wg --master-modul __SBIN_DIR__/master-modul
+# Soketin klasörü; Caddy geçebilsin diye 0755, soketin kendisi 0660.
+RuntimeDirectory=__WG_PANEL_RUNTIME__
+RuntimeDirectoryMode=0755
 Environment="PANEL_DNS_DEFAULT=__WG_CLIENT_DNS_DEFAULT__"
 Environment="PANEL_KEEPALIVE_DEFAULT=__WG_CLIENT_KEEPALIVE_DEFAULT__"
 Environment="PANEL_MTU_DEFAULT=__WG_MTU__"

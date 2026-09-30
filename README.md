@@ -45,7 +45,7 @@ chmod 600 kurulum/kurulum.env   # then fill it in
 
 # Developer workstation — rebuild it (writes Data/app/<version>.command and
 # replaces the root copy)
-Data/dev/export-installer.sh --desktop
+Data/dev/export-installer.sh
 # or double-click: Data/dev/export-installer.command
 
 # On the host (after upload; needs the input file in /run/master-stack)
@@ -193,6 +193,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_*.
 ```
 
 ## Working conventions
+
+Version history stays in Git. Commits do not create Desktop copies, separate
+version snapshots or installer exports. When rebuilding the portable installer,
+keep outputs in the repository; copying elsewhere requires an explicit request.
 
 See [`CLAUDE.md`](CLAUDE.md). Change history: [`Data/CHANGELOG.md`](Data/CHANGELOG.md).
 Session continuity: [`Data/SESSION.md`](Data/SESSION.md).

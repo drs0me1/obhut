@@ -354,9 +354,15 @@ Contract in §5–§7 and `folder-shares.md`.
 - **WireGuard web panel (DD-133).** `master-wg-panel.service` serves a page at
   `http://panel.${LOCAL_DOMAIN}` (**DD-140**) to list, add and remove peers, show a peer's QR code, download its
   profile or picture, change its DNS and regenerate a network.
-  - It runs Python 3's standard library only and listens on
-    `127.0.0.1:61008`. Caddy exposes it on the tailnet; nothing exposes it on
-    a WireGuard network or the WAN.
+  - It runs Python 3's standard library only and has no TCP port: it listens
+    on the Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`,
+    `0660 root:caddy`), and also checks the connecting process's identity
+    (`SO_PEERCRED`: root or Caddy's group, **DD-180**). Caddy exposes it on the
+    tailnet; nothing exposes it on a WireGuard network, the WAN or loopback TCP.
+    A request Caddy relays must come from another tailnet device: a Tailscale
+    address that is not the server's own (Caddy writes the real client address).
+    So a compromised downloads-account process (qBittorrent, unrar) reaches it
+    neither directly nor through Caddy's tailnet listener; stage 7 proves both.
   - Every change goes through `master-wg` (`info`, `add`, `remove`, `dns`,
     `reset --onay`, `profile`, `png`): same validation, lock and live apply as
     `wireguard.command`.
@@ -365,7 +371,8 @@ Contract in §5–§7 and `folder-shares.md`.
     prompt and no lockout.
   - Because nothing else guards it, two gates are mandatory and stage 7 proves
     both on both backends: a request with another `Host` than
-    `panel.${LOCAL_DOMAIN}` (or the loopback port) is refused (DNS rebinding),
+    `panel.${LOCAL_DOMAIN}` is refused (DNS rebinding; the root backend accepts
+    no loopback name since **DD-180**),
     and `/api/*` needs the `X-Konsol: 1` header and a same-origin fetch, which a
     page on another site cannot send (CSRF). Adds, removes, DNS changes and regenerations need a
     JSON body; regeneration also needs `confirm` `onayla` (any case, **DD-134**).
@@ -432,8 +439,9 @@ Contract in §5–§7 and `folder-shares.md`.
 
 - **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
   administration page. Caddy serves the page files itself from
-  `CONSOLE_WEB_DIR` (CSP, `no-store`, `nosniff`, `X-Frame-Options: DENY`, no
-  referrer), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
+  `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
+  re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
+  replies are compressed with zstd/gzip, **DD-181**), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
   every other `/api/*` to `master-files-panel`. The old names `wg.`, `dosya.`
   and `file.${LOCAL_DOMAIN}` no longer exist (**DD-154**). Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
@@ -503,8 +511,15 @@ Contract in §5–§7 and `folder-shares.md`.
     Failed immediate applies restore snapshots; interrupted pre-commit writes retain
     guard recovery. The commit marker prevents recovery from undoing a durable
     commit after a crash. The server-side guard timer
-    restores unconfirmed settings after disconnect, timeout or reboot;
-    failed recovery remains pending for retry. Stale revisions and concurrent
+    restores unconfirmed settings after disconnect, timeout or reboot. It runs
+    only while a change is pending (**DD-181**): apply starts it before the
+    pending file exists, an idle run stops it while holding the locks, and at
+    boot it runs once; the unit stays enabled;
+    failed recovery remains pending and is retried after 15, 30, 60 and 120 s.
+    After the fifth failure it is "stuck" (**DD-182**): no more automatic
+    attempts; Konsol shows the last error with "Yeniden dene" and "Bırak"
+    (typed `onayla`; files stay as they are, re-run the installer to apply the
+    saved settings). The installer refuses to run while anything is pending. Stale revisions and concurrent
     installer/module writes are refused. Confirmation cannot preserve a rule
     that blocks the confirming client's new console/DNS connections or the
     console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/domain
@@ -529,6 +544,10 @@ Contract in §5–§7 and `folder-shares.md`.
     place, so a half-written file never appears in the listing and an existing
     name is never overwritten (409). The stream runs without the panel lock;
     only the final rename takes it. The file lands `0664`.
+  - **Disk reserve (DD-180):** an upload is refused before its body (507) and
+    stopped while streaming when free space would fall under min(5 GiB, 10% of
+    the filesystem); the temporary file is removed. WebDAV PUT and file COPY
+    keep the same reserve.
   - The console has no separate upload area: files are dropped onto the list
     itself, appear there as rows and show their progress in the row.
   - It runs Python 3's standard library only and listens on
@@ -541,6 +560,11 @@ Contract in §5–§7 and `folder-shares.md`.
     - The unit has no capabilities and `ProtectSystem=strict` with only
       `DOWNLOADS_PATH` writable, plus `ProtectHome`, `PrivateTmp`,
       `PrivateDevices` and `NoNewPrivileges`.
+    - Because unrar opens untrusted RAR files here (**DD-180**): network only to
+      and from loopback (`IPAddressDeny=any`, `IPAddressAllow=localhost`),
+      `SystemCallFilter=@system-service`, `ProtectProc=invisible`,
+      `PrivateIPC` and `MemoryDenyWriteExecute`. Loopback services (DNS, the
+      qBittorrent WebUI with its password) stay reachable from it.
   - No password, like the WireGuard backend (**DD-147**). `Host` check, CSP,
     `no-store` and the audit log match it (the actor is logged as `konsol` with
     the client address). `/api/*` needs the `X-Konsol: 1` header and a
@@ -769,7 +793,8 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
-| Konsol WireGuard backend (`master-wg-panel`) | `127.0.0.1` | 61008 (**DD-133**, **DD-140**) |
+| Konsol WireGuard backend (`master-wg-panel`) | Unix socket `/run/master-wg-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
+| Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
 | Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` | 61010 (**DD-158**, **DD-159**) |
 
@@ -1013,10 +1038,11 @@ declared in `config/defaults.env` and nowhere else.
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
 | `master-firewall.service` | `network-online.target tailscaled.service` | `PartOf=tailscaled.service` only (no Docker, **DD-152**) | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=10s`, `StartLimitBurst=12` / 300s) |
-| `refresh-tailnet-config.timer` | — | address poll + firewall watchdog | starts oneshot every 5 min (`OnBootSec=2min`) |
+| `refresh-tailnet-config.timer` | — | address poll + firewall watchdog (checked again once Tailscale answers); resets a failed Caddy's start limit before restarting it; reopens failed WireGuard networks (**DD-180**, **DD-182**) | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service` | After only (no `PartOf`); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | none | package default |
 | `master-paylasim.service` (Paylaşım module) | `network-online.target` | none; loopback listener, enabled while registered `calisiyor` | `on-failure`, `RestartSec=3s` |
+| `wg-quick@wgN.service` (drop-in, **DD-180**) | `master-firewall.service` | `Wants=`; `ExecStartPre=+master-firewall --check`, so a network never forwards without the owned rules | package default; a network left failed is reopened by `refresh-tailnet-config` once the check passes |
 
 The Caddy drop-in also carries
 `EnvironmentFile=/etc/master-stack/state.env`, which is how
@@ -1153,9 +1179,11 @@ An installer run is successful when every one of these holds on the target host.
    matches the registry's address/port, `master-wg version` runs, and all
    networks are internet-only with no WG service listener.
 6. No module web interface listens on a non-loopback address.
-7. The loopback services of §3.3 (Konsol backends, built-in WebDAV and the
+7. The loopback services of §3.3 (Konsol file backend, built-in WebDAV and the
    installed qBittorrent UI) listen on `127.0.0.1`
-   only.
+   only. The root backend and Caddy's admin API have no TCP port; stage 7 checks
+   the socket modes, that the downloads account cannot connect to either, that
+   `127.0.0.1:2019` is closed and that `systemctl reload caddy` still works (**DD-180**).
 8. Main Caddy listens on `${TAILSCALE_IPV4}:80` and
    `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse); no WG web listener exists.
 9. dnsmasq answers on `${TAILSCALE_IPV4}:53` **and** `127.0.0.1:53`, and on no

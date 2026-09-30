@@ -45,6 +45,8 @@ h1 { font-size:26px; font-weight:650; }
 .system-facts > div { border-top:1px solid var(--line); padding:15px 4px; display:grid; gap:5px; }
 .system-facts dt { color:var(--muted); font-size:11px; }
 .system-facts dd { margin:0; overflow-wrap:anywhere; font-size:13px; }
+/* DD-182: Sağlık kartı — her satır: durum etiketi, denetim adı, ayrıntı. */
+.health-facts dt { display:flex; align-items:center; gap:8px; color:var(--ink); font-size:12px; }
 .as-tabs { gap:20px; padding:0; }
 .as-tabs button { border-radius:0; padding:12px 0; font-size:13px; border-bottom:2px solid transparent; font-weight:500; cursor:pointer; }
 .as-tabs [aria-selected=true] { background:none; color:var(--ink); border-bottom-color:var(--accent); }
@@ -109,15 +111,11 @@ h1 { font-size:26px; font-weight:650; }
 .fs09-layout.list.with-detail .fs-t > .tr .c-size,.fs09-layout.list.with-detail .fs-t > .tr .c-date { display:none; }
 .fs09-layout.cards #fs-table { grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); }
 .fs09-layout .fs-t > .tr.focused { background:var(--accent-soft); }
-.archive-panel { margin:0 0 20px; border:1px solid var(--line); border-radius:9px; padding:16px; }
-.archive-panel summary { cursor:pointer; font-size:13px; font-weight:600; }
-.archive-row { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 0; border-top:1px solid var(--line); }
-.archive-row:first-child { margin-top:14px; }
-.archive-row > div { flex:1; min-width:160px; display:grid; gap:3px; overflow-wrap:anywhere; }
-.archive-row small { font-size:11px; color:var(--muted); }
-.archive-row strong { font-size:13px; }
-.archive-row.failed strong,.archive-row.interrupted strong { color:var(--danger); }
-.archive-status { font-size:12px; }
+/* DD-183: running archive job, one line above the Files list; no jobs page. */
+.archive-bars { display:grid; gap:8px; margin:0 0 14px; }
+.archive-bar { display:flex; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--line); border-radius:9px; background:var(--surface-2); }
+.archive-bar p { flex:1; min-width:0; margin:0; font-size:12.5px; overflow-wrap:anywhere; }
+.archive-bar .spin { width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; flex:none; }
 .archive-form, .archive-form > * { min-width:0; overflow-wrap:anywhere; }
 .wg-net-settings, .wg-net-fields { min-width:0; }
 .wg-net-fields { display:grid; gap:18px; border:0; padding:0; margin:0; }

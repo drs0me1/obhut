@@ -100,6 +100,38 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     (_form, close) => submitChanges(close));
     dialog.querySelector('[type="submit"]').textContent = "Sunucuda uygula";
   }
+  // DD-182: a rollback that failed five times waits for the operator. Discarding keeps the
+  // files as they are now; re-running the installer re-applies the saved settings.
+  function discard() {
+    if (busy || pending?.phase !== "stuck") return;
+    const word = h("input", { type: "text", autocomplete: "off", spellcheck: "false", required: true });
+    modal("Takılan geri alma bırakılsın mı?", h("div", null,
+      note("Sunucu önceki ayarları beş denemede geri yükleyemedi. Bırakırsanız dosyalar şu anki hâlinde kalır ve bekleyen işlem silinir; kurulum ve uygulama işlemleri yeniden açılır.", true),
+      note("Kaydedilmiş (onaylanmış) ayarları yeniden uygulamak için ardından kurulumu çalıştırın."),
+      field("Onaylamak için onayla yazın", word)),
+    async (_form, close) => {
+      if (word.value.trim().toLocaleLowerCase("tr") !== "onayla") { word.focus(); return; }
+      close(); busy = true; draw();
+      try {
+        await post("/api/konsol/ayarlar/birak", { id: pending.id, confirm: "onayla" });
+        pending = null; qdraft = {}; draft = null; message = "Takılan işlem bırakıldı; kaydedilmiş ayarlar için kurulumu yeniden çalıştırın.";
+        toast(message); loadSettings(true);
+      } catch (e) { error(e); }
+      finally { busy = false; draw(); }
+    });
+  }
+  function rollbackState() {
+    if (pending.phase === "stuck") return [h("strong", null, `Geri alma tamamlanamadı (${pending.attempts} deneme)`),
+      h("p", null, `Son hata: ${pending.error || "bilinmiyor"}. Sunucu kendiliğinden yeniden denemez; kurulum ve uygulama işlemleri beklemede.`),
+      h("div", { class: "as-inline" }, h("button", { type: "button", class: "btn btn-primary", disabled: busy, onclick: () => finish("geri-al") }, "Yeniden dene"),
+        h("button", { type: "button", class: "btn", disabled: busy, onclick: discard }, "Bırak…"))];
+    const retry = pending.phase === "rollback" && pending.attempts
+      ? `Geri alma denendi, tamamlanamadı: ${pending.error || "bilinmiyor"}. ${pending.retry_in ?? 0} sn sonra yeniden denenecek (${pending.attempts}/5).` : "";
+    return [h("strong", null, pending.phase === "awaiting" ? `${pending.seconds} sn içinde bağlantıyı onaylayın` : "Sunucuda işlem sürüyor…"),
+      h("p", null, retry || "Onay verilmezse önceki ayarlar sunucuda geri yüklenir. Sayfayı kapatmak bunu durdurmaz."),
+      h("div", { class: "as-inline" }, h("button", { type: "button", class: "btn btn-primary", disabled: busy || pending.phase !== "awaiting" || pending.seconds <= 0 || (!!pending.domain && location.hostname !== "panel." + pending.domain.new), onclick: () => finish("onayla") }, "Bağlantı çalışıyor · onayla"),
+        h("button", { type: "button", class: "btn", disabled: busy || pending.phase === "applying", onclick: () => finish("geri-al") }, "Geri al"))];
+  }
   async function finish(action) {
     if (busy || !pending) return;
     busy = true; draw();
@@ -430,10 +462,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       && same(draft.firewall, live.manage.config.firewall) && !Object.keys(qdraft).length;
     const restoreFocus = document.activeElement?.getAttribute("role") === "tab" ? document.activeElement.id : "";
     root.replaceChildren(...[tab === "qb" ? null : nav,
-      pending ? h("div", { class: "as-rollback", role: "status" }, h("strong", null, pending.phase === "awaiting" ? `${pending.seconds} sn içinde bağlantıyı onaylayın` : "Sunucuda işlem sürüyor…"),
-        h("p", null, "Onay verilmezse önceki ayarlar sunucuda geri yüklenir. Sayfayı kapatmak bunu durdurmaz."),
-        h("div", { class: "as-inline" }, h("button", { type: "button", class: "btn btn-primary", disabled: busy || pending.phase !== "awaiting" || pending.seconds <= 0 || (!!pending.domain && location.hostname !== "panel." + pending.domain.new), onclick: () => finish("onayla") }, "Bağlantı çalışıyor · onayla"),
-          h("button", { type: "button", class: "btn", disabled: busy || pending.phase === "applying", onclick: () => finish("geri-al") }, "Geri al"))) : null,
+      pending ? h("div", { class: "as-rollback" + (pending.phase === "stuck" ? " stuck" : ""), role: "status" }, ...rollbackState()) : null,
       pending?.domain || migration ? domainLinks(pending?.domain || migration) : null,
       message ? h("p", { class: "as-message", role: "status" }, message) : null, view,
       ready && (list.length || !["system", "log", "qb"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),

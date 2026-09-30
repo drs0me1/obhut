@@ -1,27 +1,25 @@
-/* Built-in ZIP/RAR jobs. Progress is reported by the server, never simulated. */
+/* Built-in ZIP/RAR jobs. Progress is reported by the server, never simulated.
+   DD-183: no jobs page. A running job shows one bar above the Files list (progress and
+   cancel); its start and result are written to Ayarlar → Günlük by the server. */
 "use strict";
-window.createArchiveTools = function ({h, api, post, toast, fail, showDialog, closeDialog, root, downloads, refresh, openFolder}) {
+window.createArchiveTools = function ({h, api, post, toast, fail, showDialog, closeDialog, root, downloads, refresh}) {
   let jobs = [], timer = null, loading = false, started = false;
   const active = (job) => ["queued", "running"].includes(job.status);
   const labels = {queued:"Sırada", running:"Çalışıyor", done:"Tamamlandı", skipped:"Atlandı", failed:"Başarısız", cancelled:"İptal edildi", interrupted:"Kesildi"};
   const containers = new Set();
   const canExtract = name => /\.(zip|rar|[r-z][0-9]{2})$/i.test(name);
   function paint() {
+    const running = jobs.filter(active);
     for (const container of containers) {
       if (!container.isConnected) { containers.delete(container); continue; }
-      const opened = container.firstElementChild?.open;
-      const details = h("details", {class:"archive-panel", open:opened ?? true},
-        h("summary", null, `Arşiv işlemleri · ${jobs.filter(active).length} çalışıyor · ${jobs.length} kayıt`),
-        h("div", {class:"archive-status", "aria-live":"polite"},
-          ...jobs.slice(0,20).map((job) => h("div", {class:`archive-row ${job.status}`},
-            h("div", null, h("strong", null, `${job.name} · ${labels[job.status] || job.status}`),
-              h("small", null, job.message)),
-            active(job) ? h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick: async (e) => {
-              e.currentTarget.disabled = true;
-              try { await post("/api/archives/cancel", {id:job.id}); await load(); } catch (err) { fail(err); await load(); }
-            }}, "İptal et") : job.result ? h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick:() => openFolder(job.operation === "unzip" ? job.result : job.target)}, "Sonucu göster") : null)),
-          !jobs.length ? h("p", {class:"hint-s"}, "Henüz arşiv işlemi yok.") : null));
-      container.replaceChildren(details);
+      container.hidden = !running.length;
+      container.replaceChildren(...running.map((job) => h("div", {class:"archive-bar", role:"status", "aria-live":"polite"},
+        h("span", {class:"spin", "aria-hidden":"true"}),
+        h("p", null, h("strong", null, job.name), ` · ${labels[job.status] || job.status} · ${job.message}`),
+        h("button", {type:"button", class:"btn btn-sm btn-quiet", onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { await post("/api/archives/cancel", {id:job.id}); await load(); } catch (err) { fail(err); await load(); }
+        }}, "İptal et"))));
     }
   }
   async function load(report = false) {
@@ -44,7 +42,7 @@ window.createArchiveTools = function ({h, api, post, toast, fail, showDialog, cl
     }
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && started) load(); });
-  function mount(container) { containers.add(container); paint(); load(true); }
+  function mount(container) { containers.add(container); paint(); if (!started) load(true); }
   function open(operation, path, items) {
     const unzip = operation === "unzip";
     let target = downloads(), browsing = false, working = false, sequence = 0;
@@ -100,8 +98,8 @@ window.createArchiveTools = function ({h, api, post, toast, fail, showDialog, cl
         const response = await post("/api/archives", {operation,path,names:items.map((item) => item.name),target,name:resultName,conflict:conflict.value});
         jobs = [response.job, ...jobs.filter((j) => j.id !== response.job.id)].slice(0,20);
         started = true;
-        closeDialog(); location.hash = "#/dosyalar/arsiv";
-        toast("Arşiv işlemi başladı."); await load(true);
+        closeDialog();
+        toast("Arşiv işlemi başladı; sonucu Ayarlar → Günlük'te de görünür."); await load(true);
       } catch (err) { error.textContent = err.message; error.hidden = false; working = false; submit.disabled = false; choose.disabled = false; }
     }}, field(unzip ? "Sonuç klasörü" : "Arşiv adı", name),
     h("div", {class:"archive-destination"}, h("span", null, "Hedef klasör"), choose, picker),

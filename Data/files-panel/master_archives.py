@@ -34,6 +34,9 @@ DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 RAR_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "master_rar.py")
 RAR_SUFFIX = re.compile(r"\.(?:rar|[r-z][0-9]{2})$", re.I)
+# DD-181: already-compressed media is stored, not deflated again: same size, far less CPU.
+STORED_SUFFIX = re.compile(r"\.(?:mkv|mp4|m4v|avi|mov|webm|ts|m2ts|mp3|m4a|aac|flac|ogg|opus|jpe?g|png|gif|webp|heic|"
+                           r"zip|rar|7z|gz|tgz|bz2|xz|zst|iso|pdf|epub)$", re.I)
 MAX_VOLUMES = 1000
 
 
@@ -47,10 +50,19 @@ class Cancelled(Exception):
     pass
 
 
+def job_source(job):
+    """Günlük satırı için işin kaynağı: seçilen adlar, uzunsa kısaltılmış."""
+    names = job.get("names") or []
+    return ", ".join(names[:3]) + (" (+%d)" % (len(names) - 3) if len(names) > 3 else "")
+
+
 class Archives:
-    def __init__(self, files, workspace, rename, remove_tree):
+    def __init__(self, files, workspace, rename, remove_tree, report=None):
         self.files, self.workspace = files, workspace
         self.rename, self.remove_tree = rename, remove_tree
+        # DD-183: a finished job is reported once (the Files backend writes it to the audit
+        # log, which Konsol → Ayarlar → Günlük shows). Tests pass their own callable.
+        self.report = report or (lambda job: None)
         self.lock = threading.RLock()
         self.jobs, self.cancel_event, self.thread = [], None, None
         with self.root_fd() as root:
@@ -70,14 +82,26 @@ class Archives:
                 self.jobs = [j for j in data if isinstance(j, dict) and JOB_RE.fullmatch(str(j.get("id", "")))]
             except FileNotFoundError:
                 pass
-            except (ValueError, OSError) as err:
+            except ValueError:
+                # DD-182: a damaged history must not keep the Files service from starting.
+                # It is kept beside the new one (private workspace) and history starts empty.
+                aside = "jobs.json.bozuk-%d" % time.time()
+                os.rename("jobs.json", aside, src_dir_fd=fd, dst_dir_fd=fd)
+                print("dosya: arşiv işlem kaydı okunamadı; %s olarak saklandı, geçmiş boş başlıyor" % aside,
+                      file=sys.stderr, flush=True)
+                self.jobs = []
+            except OSError as err:
                 raise ArchiveError(500, "Arşiv işlem kaydı okunamadı; kayıt korunuyor.") from err
+            interrupted = []
             for job in self.jobs:
                 if job.get("status") in ("running", "queued"):
                     job.update(status="interrupted", message="Servis yeniden başladı; kaynaklar korundu. Sonucu hedef klasörde kontrol edin.", finished=int(time.time()))
+                    interrupted.append(job)
                 # Only this worker's validated job directories may be cleaned.
                 self.remove_tree(fd, job["id"])
         self.persist()
+        for job in interrupted:
+            self.report(job)
 
     class fd:
         def __init__(self, value):
@@ -159,6 +183,13 @@ class Archives:
                 if stat.S_ISDIR(info.st_mode) and target[:len(source) + 1] == source + [n]:
                     raise ArchiveError(400, "ZIP hedefi seçilen klasörün içinde olamaz.")
             identity = (os.fstat(dst).st_dev, os.fstat(dst).st_ino)
+        # DD-182: a job shows "done" before its worker has removed its staging area. If
+        # nothing is queued or running, wait briefly for that cleanup instead of refusing.
+        with self.lock:
+            finishing = self.thread if (self.thread and self.thread.is_alive() and not any(
+                j.get("status") in ("queued", "running") for j in self.jobs)) else None
+        if finishing:
+            finishing.join(10)
         with self.lock:
             if self.thread and self.thread.is_alive():
                 raise ArchiveError(409, "Bir arşiv işlemi sürüyor; bitmesini bekleyin veya iptal edin.")
@@ -488,7 +519,7 @@ class Archives:
                 if info.st_nlink != 1 or info.st_size + job["bytes"] > MAX_BYTES:
                     raise ArchiveError(400, "Çok bağlı dosya veya toplam veri sınırını aşan kaynak.")
                 entry = zipfile.ZipInfo(relative)
-                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.compress_type = zipfile.ZIP_STORED if STORED_SUFFIX.search(relative) else zipfile.ZIP_DEFLATED
                 entry.external_attr = (stat.S_IFREG | 0o664) << 16
                 with archive.open(entry, "w") as output:
                     while True:
@@ -535,6 +566,13 @@ class Archives:
 
     def run(self, job, identity, event):
         deadline = time.monotonic() + MAX_SECONDS
+        # DD-181: the job thread (and the unrar it starts) yields CPU to the Files UI and
+        # other services. Linux sets niceness per thread id; elsewhere it is skipped.
+        if sys.platform == "linux":
+            try:
+                os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
+            except OSError:
+                pass
         try:
             with self.lock:
                 job.update(status="running", message="Arşiv oluşturuluyor" if job["operation"] == "zip" else "Arşiv açılıyor")
@@ -587,4 +625,4 @@ class Archives:
                     self.persist()
                 except OSError:
                     job["message"] += " İşlem geçmişi diske yazılamadı; hedefi kontrol edin."
-            print("arsiv: %s %s -> %s" % (job["id"], job["operation"], job["status"]), flush=True)
+            self.report(job)

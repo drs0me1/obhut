@@ -26,6 +26,14 @@ import time
 import urllib.parse
 
 LIMIT = 65536
+# DD-181: the rollback timer runs only while a change is pending (apply starts it, an idle
+# guard stops it under the locks); at boot it runs once to catch a pending change.
+GUARD_TIMER = "master-settings-guard.timer"
+# DD-182: a failing automatic rollback is retried after 15, 30, 60 and 120 s; after the
+# fifth failure it is "stuck" and waits for the operator (retry or discard in Konsol).
+ROLLBACK_ATTEMPTS = 5
+ROLLBACK_BACKOFF = 15
+CONFIRM_WORD = "onayla"
 OFF = "# konsol-off: "
 DEFAULT = {"firewall": [], "dns": {"disabled": [], "records": [], "forward": False, "servers": []}}
 DOMAIN_RE = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -480,6 +488,10 @@ class Manager:
         pending = None
         if p:
             pending = {"id": p["id"], "phase": p["phase"], "seconds": max(0, int(p["until"] - time.monotonic())) if p["boot"] == boot_id() else 0}
+            if p.get("attempts"):
+                pending.update(attempts=p["attempts"], error=p.get("error", ""))
+                if p["phase"] == "rollback" and p.get("retry_boot") == boot_id():
+                    pending["retry_in"] = max(0, int(p.get("retry_at", 0) - time.monotonic()))
             if p["changes"].get("domain"):
                 pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
         q = ini_values(read_regular(self.qconf)[0].decode()) if self.qconf.exists() else {}
@@ -610,7 +622,8 @@ class Manager:
         if change["dns"]:
             require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
                     "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
-        run(["systemctl", "is-active", "--quiet", "master-settings-guard.timer"])
+        run(["systemctl", "start", GUARD_TIMER])
+        run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
         paths = ([*self.dns_paths(), self.dns_file] if change["dns"] else []) + ([self.qdrop] if change["torrent"] else [])
         files_active = False
         if change["domain"]:
@@ -685,15 +698,32 @@ class Manager:
         save_json(self.pending_path, p)
         self.pending_path.unlink()
 
-    def rollback(self):
+    def rollback(self, manual=False):
         p = self.pending()
         if not p:
             return {"ok": True}
         if p["phase"] == "committed" or self.config().get("_transaction") == p["id"]:
             self.pending_path.unlink()
             return {"ok": True}
+        if p["phase"] == "stuck" and not manual:
+            return {"ok": True}  # DD-182: waits for the operator
         p["phase"] = "rollback"
+        p["attempts"] = p.get("attempts", 0) + 1
         save_json(self.pending_path, p)
+        try:
+            self.rollback_steps(p)
+        except (SettingsError, OSError, ValueError, KeyError, TypeError) as err:
+            p["error"] = str(err) if isinstance(err, SettingsError) else "Geri alma adımı tamamlanamadı."
+            if p["attempts"] >= ROLLBACK_ATTEMPTS:
+                p["phase"] = "stuck"
+            else:
+                p.update(retry_at=time.monotonic() + ROLLBACK_BACKOFF * 2 ** (p["attempts"] - 1), retry_boot=boot_id())
+            save_json(self.pending_path, p)
+            raise
+        self.pending_path.unlink()
+        return {"ok": True}
+
+    def rollback_steps(self, p):
         if p["changes"]["torrent"]:
             run(["systemctl", "stop", self.q_unit()], timeout=25)
         self.restore(p["files"])
@@ -710,20 +740,36 @@ class Manager:
             run(["systemctl", "daemon-reload"])
             if p["q_active"]:
                 run(["systemctl", "start", self.q_unit()], timeout=25)
+
+    def discard(self, data):
+        """DD-182: stop a stuck rollback. Files stay as they are now; the installer re-applies
+        the saved (confirmed) settings. Only for "stuck", only with the typed word."""
+        p = self.pending()
+        require(p and p["id"] == data.get("id") and p["phase"] == "stuck", "Bırakılacak takılmış bir işlem yok.")
+        require(str(data.get("confirm", "")).strip().lower() == CONFIRM_WORD, "Bırakmak için onayla yazın.")
         self.pending_path.unlink()
         return {"ok": True}
 
     def guard(self):
         p = self.pending()
-        if p and (p["phase"] in ("rollback", "committed") or p["boot"] != boot_id() or p["until"] <= time.monotonic()):
+        if not p or p["phase"] == "stuck":
+            return {"ok": True}
+        if p["phase"] == "rollback" and p.get("retry_boot") == boot_id() and p.get("retry_at", 0) > time.monotonic():
+            return {"ok": True}  # DD-182: backoff between automatic attempts
+        if p["phase"] in ("rollback", "committed") or p["boot"] != boot_id() or p["until"] <= time.monotonic():
             return self.rollback()
         return {"ok": True}
+
+
+def guard_idle(p):
+    """Nothing for the timer to do: no pending change, or a stuck rollback (DD-182)."""
+    return not p or p["phase"] == "stuck"
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
@@ -736,8 +782,13 @@ def main():
             for row in tailnet_ports(m.e):
                 print(row["family"], row["proto"], row["port"])
             return
-        if args.action == "guard" and not m.pending():
-            return
+        if args.action == "guard" and guard_idle(m.pending()):
+            # Re-check under the locks: an apply holds them from starting the timer
+            # until its pending file exists, so a timer stopped here is never needed.
+            with m.locked():
+                if guard_idle(m.pending()):
+                    run(["systemctl", "stop", "--no-block", GUARD_TIMER], check=False)
+                    return
         if args.action == "rules":
             for rule in m.rules(int(args.value), args.wan):
                 print(shlex.join(rule))
@@ -759,13 +810,13 @@ def main():
             print(json.dumps(m.status(), ensure_ascii=False))
             return
         with m.locked():
-            if args.action in ("apply", "confirm", "rollback"):
+            if args.action in ("apply", "confirm", "rollback", "discard"):
                 raw = sys.stdin.read(LIMIT + 1)
                 require(len(raw) <= LIMIT, "İstek çok büyük.")
                 data = json.loads(raw)
                 if args.action == "rollback":
                     require(not m.pending() or m.pending()["id"] == data.get("id"), "Geri alınacak işlem artık geçerli değil.")
-                    result = m.rollback()
+                    result = m.rollback(manual=True)
                 else:
                     result = getattr(m, args.action)(data)
             else:

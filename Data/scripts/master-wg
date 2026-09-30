@@ -196,7 +196,7 @@ cmd_net_add() {
 
     take_lock
     for p in "ssh:${SSH_PUBLIC_PORT:-}" "qbittorrent:${TORRENT_UI_PORT:-}" \
-        "tailscale:${TAILSCALE_UDP_PORT:-}" "panel:${WG_PANEL_PORT:-}" \
+        "tailscale:${TAILSCALE_UDP_PORT:-}" \
         "dosya-paneli:${FILES_PANEL_PORT:-}" \
         "paylasim:${SHARE_PORT:-}" \
         "dns:53" "http:80" $([[ ! -f "$NETWORKS_FILE" ]] || awk -F'\t' '{print $1 ":" $2}' "$NETWORKS_FILE"); do

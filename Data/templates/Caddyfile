@@ -1,4 +1,6 @@
 {
+	# DD-180: yönetim arayüzü TCP'de değil; klasörü yalnız Caddy'ye açık bir sokette.
+	admin unix/__CADDY_ADMIN_SOCKET__
 	default_bind {$TAILSCALE_IPV4}
 	http_port __CADDY_HTTP_PORT__
 	auto_https off
@@ -11,13 +13,15 @@
 	}
 }
 # Konsol (DD-140, DD-148): tek adres. /api/wg/* ve /api/konsol/* root arka uca (WireGuard,
-# sistem, modüller), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:
+# sistem, modüller; DD-180: Unix soketi), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan sunar:
 # dosya yöneticisi bir modüldür ve kaldırılabilir, Konsol'un kendisi kalmalıdır. Yalnız
 # tailnet'ten; CSRF ve Host denetimi arka uçlarda (DD-147), başlıklar burada.
 http://panel.__LOCAL_DOMAIN__ {
+	# DD-181: sayfa dosyaları ve API yanıtları sıkıştırılır (~270 KB → ~75 KB).
+	encode zstd gzip
 	@kok path /api/wg/* /api/konsol/*
 	handle @kok {
-		reverse_proxy 127.0.0.1:__WG_PANEL_PORT__
+		reverse_proxy unix/__WG_PANEL_SOCKET__
 	}
 	handle /api/* {
 		reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__
@@ -26,7 +30,8 @@ http://panel.__LOCAL_DOMAIN__ {
 		root * __CONSOLE_WEB_DIR__
 		header {
 			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-			Cache-Control "no-store"
+			# DD-181: tarayıcı saklar ama her açılışta sorar; dosya değişmediyse 304 döner.
+			Cache-Control "no-cache"
 			X-Content-Type-Options "nosniff"
 			X-Frame-Options "DENY"
 			Referrer-Policy "no-referrer"

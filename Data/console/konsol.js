@@ -155,7 +155,7 @@
   const dative = (name) => name + ({ 0: "'a", 1: "'e", 2: "'ye", 3: "'e", 4: "'e", 5: "'e", 6: "'ya", 7: "'ye", 8: "'e", 9: "'a" }[name.slice(-1)] || "'e");
 
   /* ---------- durum ---------- */
-  const S = { wg: null, sys: null, fs: null, trash: null, actions: [], share: null, offset: 0, rates: new Map() };
+  const S = { wg: null, sys: null, health: null, fs: null, trash: null, actions: [], share: null, offset: 0, rates: new Map() };
   const now = () => Date.now() / 1000 + S.offset;
   const nets = () => (S.wg ? S.wg.networks : []);
   const netOf = (iface) => nets().find((n) => n.iface === iface);
@@ -217,6 +217,13 @@
     } catch (_err) {
       resourceFailed = true; paintResources();
     } finally { clearTimeout(timeout); resourceBusy = false; }
+  }
+  // DD-182: read-only health checks for Settings → Sistem; the server caches them for 30 s.
+  let healthFailed = false;
+  function loadHealth() {
+    return api("/api/konsol/saglik").then((s) => { S.health = s; healthFailed = false; })
+      .catch(() => { healthFailed = true; })
+      .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
   }
   function loadActions() {
     return api("/api/wg/islemler").then((s) => { S.actions = s.items || []; paintActions(); }).catch(fail);
@@ -297,6 +304,10 @@
     "modul-kaldir": (e) => `${modName(e.detail)} kaldırıldı${e.detail.endsWith("+veri") ? " · verisiyle" : ""}`,
     "modul-parola": (e) => `${modName(e.detail)} için yeni parola üretildi`,
     "modul-hesap": (e) => `${modName(e.detail)} parolası görüntülendi`,
+    // DD-183: archive jobs; the result line is written by the server when the job ends.
+    "arsiv-olustur": (e) => `ZIP oluşturma başladı: ${e.detail}`, "arsiv-ac": (e) => `Arşiv açma başladı: ${e.detail}`,
+    "arsiv-iptal": (e) => `Arşiv işlemi için iptal istendi: ${e.detail}`, "arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`,
+    arsiv: (e) => `Arşiv işlemi başlatıldı (${e.detail})`,
   };
   const evKind = (e) => (e.action.startsWith("modul-") ? "mod" : e.source === "panel" ? "wg" : "fs");
   const EVICON = { wg: "shield", fs: "folder", sec: "lock", mod: "stack" };
@@ -941,7 +952,7 @@
   }
   function fsSetView(v) {
     fsView = v;
-    location.hash = v === "trash" ? "#/dosyalar/cop" : v === "shares" ? "#/dosyalar/paylasim" : v === "archives" ? "#/dosyalar/arsiv" : "#/dosyalar";
+    location.hash = v === "trash" ? "#/dosyalar/cop" : v === "shares" ? "#/dosyalar/paylasim" : "#/dosyalar";
     renderFs();
     if (v === "trash") loadTrash();
     else if (v === "shares") loadShares();
@@ -994,22 +1005,21 @@
 
   function renderFs() {
     renderRail();
-    $("fs-tabs").replaceChildren(...[["files", "Dosyalar"], ["shares", "Paylaşımlar"], ["archives", "Arşiv işleri"], ["trash", "Çöp"]].map(([id, label]) =>
+    $("fs-tabs").replaceChildren(...[["files", "Dosyalar"], ["shares", "Paylaşımlar"], ["trash", "Çöp"]].map(([id, label]) =>
       h("button", { type: "button", "aria-pressed": fsView === id, onclick: () => fsSetView(id) }, label)));
     const body = $("fs-body");
     body.textContent = "";
     body.classList.remove("with-dock");
-    if (fsView === "archives") {
-      const archiveBox = h("div", {id:"archive-jobs"});
-      body.append(archiveBox); archiveTools.mount(archiveBox); return;
-    }
     if (fsView === "trash") { renderTrashList(body); return; }
     if (fsView === "shares") { renderShareList(body); return; }
     if (!fsList) { body.append(h("p", { class: "hint-s" }, "Yükleniyor…")); return; }
     if (!fsList.entries.some((x) => x.name === fsFocus)) fsFocus = "";
-    body.append(h("div", { id: "fs-bar" }), h("div", { class: "fs09-layout " + fsLayout },
+    // DD-183: a running archive job shows here (progress, cancel); results go to Günlük.
+    const archiveBar = h("div", { id: "archive-bar", class: "archive-bars", hidden: true });
+    body.append(archiveBar, h("div", { id: "fs-bar" }), h("div", { class: "fs09-layout " + fsLayout },
       h("div", { id: "fs-rows" }), h("aside", { id: "fs-detail", class: "fs09-detail", "aria-label": "Öge ayrıntıları" })),
       h("div", { id:"fs-dock", class:"fs-dock-wrap", hidden:true }));
+    archiveTools.mount(archiveBar);
     initDrop();
     renderBar();
     renderRows();
@@ -1489,7 +1499,6 @@
   $("sh").addEventListener("close", () => { const pw = $("dav-password"); if (pw) pw.value = ""; });
   const archiveTools = window.createArchiveTools({h, api, post, toast, fail, root:fsRoot, downloads:() => S.fs?.downloads,
     refresh:() => { loadFsState(); if (current === "dosyalar" && fsView === "files") loadFs(); },
-    openFolder:(path) => fsOpen(path ? path.split("/") : []),
     showDialog:(title, content) => { $("sh-body").replaceChildren(shHead(title, "", "box"), content); if (!$("sh").open) $("sh").showModal(); },
     closeDialog:shClose});
   const renderShareList = (body) => sharesPage.list(body);
@@ -1841,10 +1850,22 @@
       rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
       h("div", { class: "card-foot" }, h("span", null, "Panel ve uygulama arayüzleri yalnız Tailscale'dedir. WAN etiketi yalnız seçilen klasör paylaşımlarını gösterir; internet üzerinden HTTP parola ve dosyaları şifrelemez.")));
   }
+  const HEALTH = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Dikkat"], bad: ["bad", "Sorun var"] };
+  function healthCard() {
+    const hs = S.health;
+    const pill = (status) => h("span", {class:"hm " + HEALTH[status][0]}, HEALTH[status][1]);
+    return h("article", {class:"card"},
+      h("div", {class:"card-head"}, h("h2", null, "Sağlık"), h("div", {class:"head-right"}, hs ? pill(hs.status) : null)),
+      hs ? h("dl", {class:"system-facts health-facts"}, ...hs.checks.map((c) =>
+        h("div", {class:"hc-" + c.status}, h("dt", null, pill(c.status), c.name), h("dd", null, c.detail))))
+        : h("p", {class:"hint-s"}, healthFailed ? "Sağlık bilgisi okunamadı; bağlantıyı kontrol edin." : "Sağlık denetleniyor…"),
+      h("p", {class:"hint-s"}, hs ? `Salt okunur · son denetim ${hhmm(hs.read_at)} · en çok 30 sn'de bir yenilenir.` : "Salt okunur."));
+  }
   function systemContent() {
     const s = S.sys;
     const row = (label, value) => h("div", null, h("dt", null, label), h("dd", null, value || "—"));
     return h("div", {class:"as-stack"},
+      healthCard(),
       h("article", {class:"card"}, h("h2", null, "Panel ve sunucu"),
         h("p", {class:"page-note"}, "Debian üzerinde yönetim konsolu. Kaynak kullanımı sol menüde; servis ayrıntıları kendi sekmelerinde."),
         s ? h("dl", {class:"system-facts"},
@@ -1897,7 +1918,7 @@
   const settingsActions = () => [h("span", {class:"hm", id:"cfg-stamp"}, "Okunuyor…"),
     h("button", {type:"button", class:"btn btn-quiet", onclick:() => {
       if (current === "ayarlar" && settingsTab === "log") loadActions();
-      else if (current === "ayarlar" && settingsTab === "system") loadSystem();
+      else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
   const ROUTES = {
@@ -1908,7 +1929,7 @@
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
     ayarlar: { title: "Ayarlar", eyebrow: "Panel ve sunucu yapılandırması", actions:settingsActions,
-      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); loadSettings(); } },
+      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth(); loadSettings(); } },
   };
   const ADD_ROUTE = { title: "Arayüz ekle", eyebrow: "WireGuard · yeni ağ", first: true,
     actions: () => [h("button", { type: "button", class: "btn btn-quiet", "data-go": "#/wireguard" }, svg("back"), "WireGuard")], render: renderAddNet };
@@ -1928,7 +1949,8 @@
       history.replaceState(null, "", "#/moduller");
       key = "moduller";
     }
-    if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : raw[1] === "arsiv" ? "archives" : "files";
+    // DD-183: the retired "#/dosyalar/arsiv" bookmark opens the Files list.
+    if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
     const v = key === "wireguard" && raw[1] === "ekle" ? "wgadd" : key;
     const r = v === "wgadd" ? ADD_ROUTE : ROUTES[key];
@@ -1960,6 +1982,7 @@
     loadSystem();
     if (current === "wireguard" && wgOn()) loadWg();
     if (current === "ayarlar" && settingsTab === "log") loadActions();
+    if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
     if (["moduller","torrent"].includes(current) && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);

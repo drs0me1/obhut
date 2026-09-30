@@ -233,6 +233,18 @@ python3 -m http.server 8766 --bind 127.0.0.1 --directory Data/console
 node Data/tests/settings-ui.cjs
 ```
 
+On the operator Mac (2026-09-30) Node comes from Homebrew and Playwright is a
+global npm package outside the repository, so point the suites at it:
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
+```
+
+The four fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `wireguard-ui`)
+share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
+health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
+bar that replaced the jobs page (DD-183).
+
 `PLAYWRIGHT_MODULE`, `PLAYWRIGHT_CHROMIUM` and `KONSOL_URL` may override the
 module, browser executable and preview URL. The test intercepts APIs with
 fixtures; it never modifies a server. It covers tabs, review/discard, custom

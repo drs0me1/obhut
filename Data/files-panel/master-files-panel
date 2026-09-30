@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from master_archives import Archives, ArchiveError
+from master_archives import Archives, ArchiveError, job_source
 
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 # DD-171: --share only reserves the retired hidden directory; never reads its marker.
@@ -46,6 +46,11 @@ MAX_BODY = 262144
 # kabalıkla ilgili: bir istek en çok bu kadar sürebilir/olabilir.
 UPLOAD_MAX_BYTES = 64 * 1024 * 1024 * 1024
 UPLOAD_CHUNK = 1024 * 1024
+# DD-180: yükleme, dosya sistemi min(5 GB, %10) boş alanın altına inmeden durur; günlük,
+# apt ve durum dosyaları yer bulsun. Aynı sayılar master_webdav.py'de.
+DISK_RESERVE = 5 * 1024 ** 3
+DISK_RESERVE_DIVISOR = 10
+DISK_CHECK_EVERY = 64 * 1024 ** 2
 # Gövde okunmadan hata dönülürse bağlantı sıfırlanır ve Caddy bunu 502'ye çevirir; o yüzden
 # en çok bu kadarı okunup atılır, sonra anlamlı hata gider. Daha büyüğünde bağlantı kapanır.
 UPLOAD_DRAIN_MAX = 256 * 1024 * 1024
@@ -79,6 +84,14 @@ class PanelError(Exception):
         Exception.__init__(self, message)
         self.code = code
         self.message = message
+
+
+def disk_room(fd, incoming=0):
+    """Yazmadan önce ve yazarken: dosya sistemi ayrılan boş alanın altına inmesin (DD-180)."""
+    st = os.fstatvfs(fd)
+    reserve = min(DISK_RESERVE, st.f_blocks * st.f_frsize // DISK_RESERVE_DIVISOR)
+    if st.f_bavail * st.f_frsize - incoming < reserve:
+        raise PanelError(507, "sunucuda yeterli boş alan yok (en az %.1f GB boş kalmalı)" % (reserve / 1024 ** 3))
 
 
 def cmd_check(args):
@@ -464,22 +477,23 @@ class Files:
                 moved.append(name)
         return moved
 
-    def upload_check(self, parts, name):
-        """Gövde okunmadan önceki denetimler: geçerli ad, var olan klasör, boş hedef."""
+    def upload_check(self, parts, name, length=0):
+        """Gövde okunmadan önceki denetimler: geçerli ad, var olan klasör, boş hedef, boş alan."""
         self.check_new_name(parts, name)
         with DirFd(self.open_dir(parts)) as fd:
             try:
                 os.stat(name, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
+                disk_room(fd, length)
                 return
         raise PanelError(409, "“%s” zaten var; üzerine yazılmaz" % name)
 
     def upload(self, parts, name, stream, length):
         """Akışı <parts>/<name> olarak yazar. Geçici ada yazılır, bitince atomik taşınır:
         yarım kalan dosya listeye hiç girmez, var olanın üzerine yazılmaz (DD-145)."""
-        self.upload_check(parts, name)
+        self.upload_check(parts, name, length)
         tmp = ".yukleniyor-%s" % secrets.token_hex(6)
-        written = 0
+        written = since = 0
         with DirFd(self.open_dir(parts)) as fd:
             handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664, dir_fd=fd)
             try:
@@ -492,6 +506,10 @@ class Files:
                         raise PanelError(400, "yükleme yarıda kesildi")
                     os.write(handle, chunk)
                     written += len(chunk)
+                    since += len(chunk)
+                    if since >= DISK_CHECK_EVERY:
+                        since = 0
+                        disk_room(fd)
                 os.fsync(handle)
             except BaseException:
                 os.close(handle)
@@ -629,13 +647,23 @@ def status_for(err):
 
 
 # --------------------------------------------------------------- sunucu
+def report_archive(job):
+    """DD-183: arşiv işinin sonucu, isteğin audit satırıyla aynı biçimde Günlük'e düşer.
+    İş arka planda biter; istemci adresi yoktur ("-")."""
+    ok = job.get("status") in ("done", "skipped", "cancelled")
+    detail = "%s → %s: %s" % (job_source(job), job.get("name", ""), job.get("message", ""))
+    print("dosya: %s - arsiv-sonuc %s -> %s" % (ACTOR, json.dumps(detail, ensure_ascii=False), "ok" if ok else "hata"),
+          flush=True)
+
+
 class Panel:
     def __init__(self, args):
         self.args = args
         self.lock = threading.Lock()
         self.usage_cache = (0.0, None)
         self.files = Files(args.root, args.trash, args.share, getattr(args, "archive_dir", ""))
-        self.archives = Archives(self.files, self.files.archive, rename_noreplace, rmtree_at) if self.files.archive else None
+        self.archives = (Archives(self.files, self.files.archive, rename_noreplace, rmtree_at, report=report_archive)
+                         if self.files.archive else None)
 
     def used(self):
         """İndirilenlerin toplamı; ağaç yürüyüşü USAGE_CACHE_SECONDS boyunca önbellekte."""
@@ -673,6 +701,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "master-files-panel"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    # DD-181: Caddy keeps this loopback connection alive; with Nagle every reply waited
+    # ~40 ms for the peer's delayed ACK (headers and body are separate writes).
+    disable_nagle_algorithm = True
 
     def log_message(self, fmt, *args):  # istek satırları yazılmaz; değişiklikler audit ile
         pass
@@ -842,7 +873,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         files = self.panel.files
         try:
             parts = files.split(raw_path)
-            files.upload_check(parts, name)
+            files.upload_check(parts, name, length)
         except (PanelError, OSError) as err:
             # Yanıt gövde okunmadan giderse bağlantı sıfırlanır ve istemci 502 görür.
             self.drain(length)
@@ -927,11 +958,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         files = self.panel.files
 
         if route in ("/api/archives", "/api/archives/cancel") and self.panel.archives:
+            submit = route == "/api/archives"
+
             def archive_action():
                 manager = self.panel.archives
-                job = manager.submit(data) if route == "/api/archives" else manager.cancel(data.get("id"))
-                return 202, {"job": job}, job["id"]
-            self.run(user, "arsiv", archive_action, lock=False)
+                job = manager.submit(data) if submit else manager.cancel(data.get("id"))
+                # DD-183: readable in Günlük; the result follows as "arsiv-sonuc".
+                return 202, {"job": job}, "%s → %s" % (job_source(job), job["name"])
+            action = ("arsiv-olustur" if data.get("operation") == "zip" else "arsiv-ac") if submit else "arsiv-iptal"
+            names = data.get("names") if isinstance(data.get("names"), list) else []
+            hint = "%s → %s" % (", ".join(str(n) for n in names[:3])[:200], str(data.get("name", ""))[:200]) if submit else ""
+            self.run(user, action, archive_action, lock=False, hint=hint)
             return
 
         def mkdir():

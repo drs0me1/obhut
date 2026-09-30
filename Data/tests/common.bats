@@ -13,6 +13,7 @@ setup() {
 
 teardown() {
     [ -z "${PANEL_PID:-}" ] || kill "$PANEL_PID" 2>/dev/null || true
+    [ -z "${PSOCK:-}" ] || rm -rf "${PSOCK%/*}"
     rm -rf "$TMP"
 }
 
@@ -589,7 +590,7 @@ EOF
     # DD-154: the old names wg., dosya. and file. are gone; the console is panel. only.
     run ! grep -qE '^http://(wg|dosya|file)\.' "$V2_ROOT/templates/Caddyfile"
     run ! grep -qE 'interface-name=(wg|dosya|file)\.' "$V2_ROOT/templates/dnsmasq.conf"
-    grep -A1 '^http://panel.__LOCAL_DOMAIN__ {$' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
+    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
     # DD-151: no base Compose project at all; every container belongs to a module.
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
 }
@@ -658,6 +659,122 @@ assert not missing, missing
     run ! grep -q 'rebind_webdav' "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -q 'BOUND_UNITS="caddy.service"' \
         "$V2_ROOT/scripts/refresh-tailnet-config"
+}
+
+@test "WireGuard networks wait for a checked firewall and the timer reopens failed ones" {
+    local dropin="$V2_ROOT/systemd/wg-quick-master-stack.conf" rt="$V2_ROOT/scripts/refresh-tailnet-config" s4
+    grep -qx 'Wants=master-firewall.service' "$dropin"
+    grep -qx 'After=master-firewall.service' "$dropin"
+    grep -qx 'ExecStartPre=+__SBIN_DIR__/master-firewall --check' "$dropin"
+    s4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF '"$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"' <<<"$s4"
+    # With the firewall recovery and before the tailnet wait: WireGuard does not need Tailscale.
+    [ "$(awk '/^recover_firewall_if_broken$/ {print NR; exit}' "$rt")" -lt \
+        "$(awk '/^recover_failed_wireguard$/ {print NR; exit}' "$rt")" ]
+    [ "$(awk '/^recover_failed_wireguard$/ {print NR; exit}' "$rt")" -lt \
+        "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
+    eval "$(awk '/^recover_failed_wireguard\(\)/,/^}$/' "$rt")"
+    systemctl() {
+        printf '%s\n' "$*" >>"$TMP/calls"
+        case "$1" in
+            list-units) [ ! -e "$TMP/failed" ] || cat "$TMP/failed" ;;
+            is-enabled) [ "$3" != wg-quick@wg1.service ] ;;
+        esac
+    }
+    FIREWALL_BIN="$TMP/fw"
+    printf '#!/bin/sh\necho check >>"%s/calls"\n[ ! -e "%s/fw-broken" ]\n' "$TMP" "$TMP" >"$FIREWALL_BIN"
+    chmod +x "$FIREWALL_BIN"
+    # Nothing failed: the firewall is not even checked.
+    recover_failed_wireguard
+    run ! grep -q '^check$' "$TMP/calls"
+    printf 'wg-quick@wg0.service loaded failed failed WireGuard\nwg-quick@wg1.service loaded failed failed WireGuard\nwg-quick@x;y.service loaded failed failed x\n' >"$TMP/failed"
+    # The firewall is still broken: nothing is reopened.
+    touch "$TMP/fw-broken"
+    : >"$TMP/calls"
+    recover_failed_wireguard
+    grep -qx 'check' "$TMP/calls"
+    run ! grep -q '^restart' "$TMP/calls"
+    # The firewall is fixed: only the enabled network comes back.
+    rm -f "$TMP/fw-broken"
+    : >"$TMP/calls"
+    recover_failed_wireguard
+    [ "$(grep '^restart' "$TMP/calls")" = "restart wg-quick@wg0.service" ]
+}
+
+@test "Caddy's admin API and the root backend are reachable only through private sockets" {
+    local block render
+    grep -qx "$(printf '\tadmin unix/__CADDY_ADMIN_SOCKET__')" "$V2_ROOT/templates/Caddyfile"
+    block="$(awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh")"
+    grep -qF 'local caddy_runtime="${CADDY_ADMIN_SOCKET%/*}"' "$V2_ROOT/install.sh"
+    grep -qx 'RuntimeDirectory=${caddy_runtime#/run/}' <<<"$block"
+    grep -qx 'RuntimeDirectoryMode=0700' <<<"$block"
+    render="$(awk '/render_template "\$V2_ROOT\/templates\/Caddyfile"/,/CADDY_MODULES_DIR="\$CADDY_MODULES_DIR"$/' "$V2_ROOT/install.sh")"
+    grep -qF 'CADDY_ADMIN_SOCKET="$CADDY_ADMIN_SOCKET"' <<<"$render"
+    grep -qF 'WG_PANEL_SOCKET="$WG_PANEL_SOCKET"' <<<"$render"
+    grep -qF 'WG_PANEL_RUNTIME="$(basename -- "${WG_PANEL_SOCKET%/*}")"' "$V2_ROOT/install.sh"
+    grep -qF 'CADDY_GROUP="$CADDY_GROUP"' "$V2_ROOT/install.sh"
+    # The backend refuses TCP outright; the settings view no longer lists a backend port.
+    grep -qF 'fail("panel yalnız bir Unix soketinde dinler' "$V2_ROOT/panel/master-wg-panel"
+    run ! grep -q '"Konsol · WireGuard arka ucu"' "$V2_ROOT/panel/master-wg-panel"
+    grep -q 'SO_PEERCRED' "$V2_ROOT/panel/master-wg-panel"
+}
+
+@test "speed and log-noise settings: compressed Konsol, idle guard, quiet timers, quiet backend, lower torrent priority" {
+    local site s7 unit
+    # DD-181: pages and API replies are compressed; page files revalidate instead of redownloading.
+    site="$(awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
+    grep -qx "$(printf '\tencode zstd gzip')" <<<"$site"
+    grep -q 'Cache-Control "no-cache"' <<<"$site"
+    run ! grep -q 'Cache-Control "no-store"' "$V2_ROOT/templates/Caddyfile"
+    # The WebDAV sites stay uncompressed (video).
+    run ! grep -q 'encode' "$V2_ROOT/modules/paylasim/paylasim.caddy"
+    # PID 1's per-run lines stay out of the journal; the helpers' own messages stay at notice.
+    for unit in master-settings-guard.service master-share-network.service; do
+        grep -qx 'SyslogLevel=notice' "$V2_ROOT/systemd/$unit"
+        grep -qx 'LogLevelMax=notice' "$V2_ROOT/systemd/$unit"
+    done
+    # The guard stops its own timer only when idle; stage 7 therefore checks that it is enabled.
+    grep -qF 'run(["systemctl", "stop", "--no-block", GUARD_TIMER], check=False)' "$V2_ROOT/panel/master_settings.py"
+    grep -qF 'run(["systemctl", "start", GUARD_TIMER])' "$V2_ROOT/panel/master_settings.py"
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -qF 'systemctl is-enabled --quiet master-settings-guard.timer' <<<"$s7"
+    run ! grep -qF 'systemctl is-active --quiet master-settings-guard.timer' <<<"$s7"
+    # The root backend writes audit lines only, no request lines.
+    awk '/    def log_message\(self, fmt, \*args\):/,/pass$/' "$V2_ROOT/panel/master-wg-panel" | grep -q '^        pass$'
+    # qBittorrent yields CPU to Tailscale and Konsol.
+    grep -qx 'Nice=10' "$V2_ROOT/modules/torrent/master-stack.conf"
+    grep -qx 'CPUWeight=50' "$V2_ROOT/modules/torrent/master-stack.conf"
+}
+
+@test "resilience: capped rollback with discard, stale WAN site, watchdog resets, damaged history, health card" {
+    local s6 rt="$V2_ROOT/scripts/refresh-tailnet-config" body
+    # DD-182: five automatic attempts with backoff, then "stuck" until the operator retries or discards.
+    grep -qx 'ROLLBACK_ATTEMPTS = 5' "$V2_ROOT/panel/master_settings.py"
+    grep -qx 'ROLLBACK_BACKOFF = 15' "$V2_ROOT/panel/master_settings.py"
+    grep -qF '"geri-al": "rollback", "birak": "discard"' "$V2_ROOT/panel/master-wg-panel"
+    grep -qF '"/api/konsol/ayarlar/birak", { id: pending.id, confirm: "onayla" }' "$V2_ROOT/console/ayarlar.js"
+    grep -qF 'finish("geri-al") }, "Yeniden dene")' "$V2_ROOT/console/ayarlar.js"
+    grep -q '^\.as-rollback\.stuck ' "$V2_ROOT/console/ayarlar.css"
+    grep -qF 'geri alma takıldıysa: Yeniden dene ya da Bırak' "$V2_ROOT/install.sh"
+    # A WAN share site bound to an address the provider took away goes before Caddy restarts.
+    s6="$(awk '/^stage_6\(\)/,/^ensure_wg_panel\(\)/' "$V2_ROOT/install.sh")"
+    [ "$(grep -n 'rm -f -- "\$wan_site"' <<<"$s6" | cut -d: -f1)" -lt "$(grep -n 'caddy validate --config' <<<"$s6" | cut -d: -f1)" ]
+    grep -qF 'grep -qxF "$(printf '"'"'\tbind %s'"'"' "$WAN_IPV4")" "$wan_site"' <<<"$s6"
+    # The watchdog resets Caddy's start limit and checks the firewall again once Tailscale answers.
+    body="$(awk '/^recover_failed_bound_units\(\)/,/^}$/' "$rt")"
+    [ "$(grep -n 'reset-failed "\$unit"' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl restart "\$unit"' <<<"$body" | cut -d: -f1)" ]
+    [ "$(grep -cx 'recover_firewall_if_broken' "$rt")" -eq 2 ]
+    [ "$(awk '/^recover_firewall_if_broken$/ {n++; if (n == 2) {print NR; exit}}' "$rt")" -gt \
+        "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
+    # A damaged archive history is set aside instead of stopping the Files service.
+    grep -qF 'aside = "jobs.json.bozuk-%d" % time.time()' "$V2_ROOT/files-panel/master_archives.py"
+    # Health card: read-only endpoint, shown on Settings → Sistem, refreshed with the page poll.
+    grep -qF 'if path == "/api/konsol/saglik":' "$V2_ROOT/panel/master-wg-panel"
+    grep -qx 'HEALTH_CACHE_SECONDS = 30' "$V2_ROOT/panel/master-wg-panel"
+    grep -qF 'api("/api/konsol/saglik")' "$V2_ROOT/console/konsol.js"
+    grep -qF 'if (current === "ayarlar" && settingsTab === "system") loadHealth();' "$V2_ROOT/console/konsol.js"
+    grep -q '^\.hm\.bad ' "$V2_ROOT/console/konsol.css"
+    run ! grep -qE 'innerHTML[ =]|localStorage[.(]' <<<"$(awk '/function healthCard\(\)/,/^  }$/' "$V2_ROOT/console/konsol.js")"
 }
 
 @test "refresh timer recovers a broken firewall unit" {
@@ -1569,12 +1686,13 @@ fi
 exit 3
 EOF
     chmod +x "$TMP/pbin/master-modul" "$TMP/pbin/systemd-run" "$TMP/pbin/systemctl"
-    PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-    python3 "$PANEL" serve --listen "127.0.0.1:$PORT" --state "$TMP/state.env" --state-env \
+    # DD-180: no TCP port; a short socket path (macOS allows 104 bytes).
+    PSOCK="$(mktemp -d /tmp/wgp.XXXXXX)/api.sock"
+    python3 "$PANEL" serve --listen "unix:$PSOCK" --state "$TMP/state.env" --state-env \
         --master-wg "$TMP/pbin/master-wg" --master-modul "$TMP/pbin/master-modul" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
-        curl -s -o /dev/null "http://127.0.0.1:$PORT/api/wg/state" && return 0
+        curl -s -o /dev/null --unix-socket "$PSOCK" "http://panel.ayc/api/wg/state" && return 0
         sleep 0.1
     done
     cat "$TMP/panel.log"
@@ -1585,7 +1703,7 @@ EOF
 pc() {
     local path="$1"
     shift
-    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' -H "Host: panel.ayc" "$@" "http://127.0.0.1:$PORT$path"
+    curl -s -o "$TMP/body" -D "$TMP/head" -w '%{http_code}' --unix-socket "$PSOCK" -H "Host: panel.ayc" "$@" "http://panel.ayc$path"
 }
 
 @test "wg panel needs no password but a known host and the panel header before it runs master-wg" {
@@ -1600,7 +1718,19 @@ pc() {
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
     # DNS rebinding: another Host name is refused even with the password.
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "http://127.0.0.1:$PORT/")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'Host: evil.example' "http://panel.ayc/")" = 403 ]
+    # DD-180: the loopback names are no longer trusted Host values.
+    for host in 127.0.0.1:61008 localhost:61008 localhost; do
+        [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'X-Konsol: 1' -H "Host: $host" \
+            "http://panel.ayc/api/wg/state")" = 403 ]
+    done
+    # DD-180: what Caddy relays must come from another tailnet device, never from this host.
+    for ip in 127.0.0.1 203.0.113.5 10.8.0.2 ::1 fe80::1 not-an-ip; do
+        [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H "X-Forwarded-For: $ip")" = 403 ]
+        grep -q 'başka bir Tailscale cihazından' "$TMP/body"
+    done
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: 100.64.0.9')" = 200 ]
+    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: fd7a:115c:a1e0::9')" = 200 ]
     # CSRF: the API needs the panel header and a same-origin fetch.
     [ "$(pc /api/wg/state)" = 403 ]
     [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
@@ -1622,17 +1752,17 @@ assert d["defaults"]["dns"] and d["defaults"]["keepalive"] == 21
 assert "backup" not in d
 PY
     # check (stage 7): no password.
-    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host panel.ayc
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host panel.ayc
     [ "$status" -eq 0 ]
     [ "$output" = "1 ağ, 1 peer" ]
     # DD-143: temiz kurulumda ağ yoktur; check yine geçer.
     touch "$TMP/no-wg"
-    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host panel.ayc
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host panel.ayc
     [ "$status" -eq 0 ]
     [ "$output" = "0 ağ, 0 peer" ]
     rm -f "$TMP/no-wg"
     # A foreign name fails the check (the Host gate stays).
-    run python3 "$PANEL" check --url "http://127.0.0.1:$PORT/api/wg/state" --host evil.example
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host evil.example
     [ "$status" -ne 0 ]
     case "$output" in *"HTTP 403"*) ;; *) false ;; esac
     # The account machinery is gone for good.
@@ -1958,16 +2088,16 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     [ "$(pc /api/konsol/moduller/yok/kur "${json[@]}" --data '{}')" = 404 ]
     [ "$(pc /api/konsol/moduller/torrent/sil "${json[@]}" --data '{}')" = 404 ]
     [ "$(pc /api/konsol/moduller/torrent/kur -H 'Content-Type: application/json' --data '{}')" = 403 ]
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
-        "http://127.0.0.1:$PORT/api/konsol/moduller/torrent/kur")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
+        "http://panel.ayc/api/konsol/moduller/torrent/kur")" = 403 ]
     [ "$(wc -l <"$TMP/sdrun-calls")" = "$before" ]
     [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 200 ]
     grep -qi '^Content-Type: text/plain' "$TMP/head"
     grep -q 'WebUI will be started shortly' "$TMP/body"
-    grep -q 'panel: konsol 127.0.0.1 modul-kur torrent -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-kaldir torrent +veri -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-durdur torrent -> ok' "$TMP/panel.log"
-    grep -q 'panel: konsol 127.0.0.1 modul-baslat torrent -> hata' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel modul-kur torrent -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel modul-kaldir torrent +veri -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel modul-durdur torrent -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel modul-baslat torrent -> hata' "$TMP/panel.log"
 }
 
 @test "wg panel never reveals or rotates a retired shared account even when installed" {
@@ -2050,7 +2180,7 @@ EOF
     python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d == {"user": "admin", "temp": True, "host": "torrent.ayc"}, d' "$TMP/body"
     [ "$(pc '/api/konsol/moduller/torrent/hesap?parola=1' -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["pass"] == "Tmp9Pass7Word"' "$TMP/body"
-    grep -q 'panel: konsol 127.0.0.1 modul-hesap torrent -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel modul-hesap torrent -> ok' "$TMP/panel.log"
     [ "$(pc /api/konsol/moduller/torrent/parola "${json[@]}" --data '{}')" = 404 ]
     # The ports card shows the interface port only with the module; no torrent peer port at all.
     [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 200 ]
@@ -2140,11 +2270,11 @@ assert not [r for r in d["ports"] if r["port"] == 61009], d["ports"]
     [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
     grep -qx 'wg0|net|ac' "$TMP/mwg-calls"
     # The audit log names the action, network and peer, never a password or key.
-    grep -q 'konsol 127.0.0.1 ekle wg0/phone -> ok' "$TMP/panel.log"
-    grep -q 'konsol 127.0.0.1 ag-ekle wg1 -> ok' "$TMP/panel.log"
-    grep -q 'konsol 127.0.0.1 ag-kaldir wg1 -> ok' "$TMP/panel.log"
-    grep -q 'konsol 127.0.0.1 peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
-    grep -q 'konsol 127.0.0.1 ag-durum wg0 kapat -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel ekle wg0/phone -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel ag-ekle wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel ag-kaldir wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel ag-durum wg0 kapat -> ok' "$TMP/panel.log"
     run ! grep -qE 'panel pass|SECRETPRIV|SECRETPSK|QRDATA' "$TMP/panel.log"
 }
 
@@ -2203,19 +2333,26 @@ EOF
 
 @test "installer wires the wg panel: loopback unit, tailnet name, no password, stage 7 gate proof" {
     local unit="$V2_ROOT/systemd/master-wg-panel.service" body s6 s7
-    grep -q -- '--listen 127.0.0.1:__WG_PANEL_PORT__' "$unit"
+    # DD-180: no TCP port; a Unix socket only Caddy's group and root can open.
+    grep -q -- '--listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__' "$unit"
+    grep -qx 'RuntimeDirectory=__WG_PANEL_RUNTIME__' "$unit"
+    grep -qx 'RuntimeDirectoryMode=0755' "$unit"
     grep -q -- '--master-wg __SBIN_DIR__/master-wg' "$unit"
     for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=-/etc/wireguard' 'PrivateTmp=true' \
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'; do
         grep -qx "$line" "$unit"
     done
-    grep -qx 'WG_PANEL_PORT="61008"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'WG_PANEL_SOCKET="/run/master-wg-panel/api.sock"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'CADDY_GROUP="caddy"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'CADDY_ADMIN_SOCKET="/run/caddy/admin.sock"' "$V2_ROOT/config/defaults.env"
+    run ! grep -rq 'WG_PANEL_PORT' "$V2_ROOT/config" "$V2_ROOT/install.sh" "$V2_ROOT/scripts" "$V2_ROOT/panel" \
+        "$V2_ROOT/systemd" "$V2_ROOT/templates"
     # DD-147: no account anywhere — not in the input, the defaults, the unit or the installer.
     run ! grep -qE 'WG_PANEL_(USER|PASS|AUTH_FILE|MIN_PASSWORD_LENGTH|NEW_|ACCOUNT)' \
         "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" "$unit"
     run ! grep -q -- '--auth' "$unit"
-    # The panel port collides with nothing the stage 0 port checks know.
-    grep -q '"panel:\${WG_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
+    # No panel port is reserved any more: it has none.
+    run ! grep -q '"panel:' "$V2_ROOT/scripts/master-wg"
     body="$(awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     # v2-119: the WireGuard folder exists before the backend starts, even without the module.
     [ "$(grep -n 'install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"' <<<"$body" | cut -d: -f1)" -lt \
@@ -2230,12 +2367,22 @@ EOF
     grep -q 'X-Konsol başlığı olmadan HTTP' <<<"$s7"
     grep -q 'yabancı Host ile HTTP' <<<"$s7"
     # DD-159/171: the built-in Files gate is mandatory, never optional.
-    grep -qF 'local gate_port gate_path gates="$FILES_PANEL_PORT:/api/state $WG_PANEL_PORT:/api/wg/state"' <<<"$s7"
+    grep -qF 'for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/wg/state"; do' <<<"$s7"
     run ! grep -q 'files_on' <<<"$s7"
-    grep -q 'for gate_port in \$gates; do' <<<"$s7"
+    # DD-180: the socket modes, a real attempt as the downloads account, no TCP admin port, a reload.
+    grep -qF '"root:${CADDY_GROUP}:660"' <<<"$s7"
+    grep -qF '"caddy:700"' <<<"$s7"
+    grep -qF 'setpriv --reuid="$DOWNLOADS_UID" --regid="$DOWNLOADS_GID" --clear-groups' <<<"$s7"
+    grep -qF 'for sock in "$WG_PANEL_SOCKET" "$CADDY_ADMIN_SOCKET"; do' <<<"$s7"
+    grep -qF '"http://127.0.0.1:2019/config/"' <<<"$s7"
+    grep -qF 'systemctl reload caddy || die' <<<"$s7"
+    # The Caddy tailnet listener is reachable from the host too: that path must end in the backend's 403.
+    grep -qF '"http://${TAILSCALE_IPV4}/api/wg/state" 2>/dev/null || true)"' <<<"$s7"
+    grep -qF '*"başka bir Tailscale cihazından"*' <<<"$s7"
+    grep -qF 'master-wg-panel" check --socket "$WG_PANEL_SOCKET"' <<<"$s7"
     grep -q 'Konsol sayfası tailnet.ten açılmadı' <<<"$s7"
     grep -q 'master-wg-panel" check' <<<"$s7"
-    grep -q 'http://${wg_first_addr}:${WG_PANEL_PORT}/' <<<"$s7"
+    run ! grep -q 'WG_PANEL_PORT' <<<"$s7"
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
     grep -q '"\$REPO_ROOT/panel"' "$V2_ROOT/dev/export-installer.sh"
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
@@ -2687,7 +2834,13 @@ PY
 @test "console includes per-folder accounts as a Files capability" {
     local js="$V2_ROOT/console/konsol.js" dav="$V2_ROOT/console/dosyalar.js"
     grep -qF 'if (fsView === "shares") { renderShareList(body); return; }' "$js"
-    grep -qF '"#/dosyalar/arsiv"' "$js"
+    # DD-183: no archive jobs page; a running job shows as a bar in Files, results go to Günlük.
+    run ! grep -qF '"Arşiv işleri"' "$js"
+    run ! grep -qF 'location.hash = "#/dosyalar/arsiv"' "$V2_ROOT/console/arsiv.js"
+    grep -qF 'archiveTools.mount(archiveBar);' "$js"
+    grep -qF '"arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`' "$js"
+    grep -qF 'print("dosya: %s - arsiv-sonuc %s -> %s"' "$V2_ROOT/files-panel/master-files-panel"
+    grep -qF 'raw[1] === "paylasim" ? "shares" : "files";' "$js"
     grep -qF 'api("/api/konsol/paylasim")' "$js"
     grep -qF 'window.createSharesPage' "$js"
     grep -qF 'permission: permission.value, ack_write: ack.checked' "$dav"
@@ -2710,7 +2863,9 @@ PY
     local unit="$V2_ROOT/systemd/master-files-panel.service" body s6 s7 line
     for line in 'User=__FILES_PANEL_USER__' 'Group=__FILES_PANEL_GROUP__' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
         'ProtectSystem=strict' 'ReadWritePaths=__SERVER_ROOT__' 'ProtectHome=true' 'PrivateTmp=true' 'PrivateDevices=true' \
-        'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' 'UMask=0002'; do
+        'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' 'UMask=0002' \
+        'IPAddressDeny=any' 'IPAddressAllow=localhost' 'SystemCallFilter=@system-service' \
+        'SystemCallErrorNumber=EPERM' 'ProtectProc=invisible' 'PrivateIPC=true' 'MemoryDenyWriteExecute=true'; do
         grep -qx "$line" "$unit"
     done
     grep -q -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__' "$unit"
@@ -2752,7 +2907,7 @@ PY
     grep -q '@kok path /api/wg/\* /api/konsol/\*' "$TMP/site"
     grep -q 'handle @kok {' "$TMP/site"
     grep -q 'handle /api/\* {' "$TMP/site"
-    grep -q 'reverse_proxy 127.0.0.1:__WG_PANEL_PORT__$' "$TMP/site"
+    grep -q 'reverse_proxy unix/__WG_PANEL_SOCKET__$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
     run ! grep -q 'redir ' "$V2_ROOT/templates/Caddyfile"
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
@@ -2824,7 +2979,6 @@ RUNTIME_DIR=$TMP/run
 WG_MTU=1420
 WG_NETWORKS_FILE=$TMP/etc/wireguard/networks
 WG_NETWORKS_MAX=9
-WG_PANEL_PORT=61008
 SSH_PUBLIC_PORT=22
 SHARE_PORT=61010
 TORRENT_UI_PORT=61006
@@ -3061,7 +3215,7 @@ wg_revision() {
     # Refusals change nothing: a port of wg0, of a panel network or of the stack, the range, scope, DNS, label.
     before="$(cat "$wgd/networks")"
     rm -f "$TMP/calls"
-    for args in "61001|1.1.1.1|x" "61021|1.1.1.1|x" "61008|1.1.1.1|x" "61006|1.1.1.1|x" \
+    for args in "61001|1.1.1.1|x" "61021|1.1.1.1|x" "61010|1.1.1.1|x" "61006|1.1.1.1|x" \
         "1000|1.1.1.1|x" "61031|dns.google|x" $'61031|1.1.1.1|a\tb' "61031|1.1.1.1| lead"; do
         IFS='|' read -r a b c <<<"$args"
         run master_wg net-add "$a" "$b" "$c"
@@ -3572,7 +3726,7 @@ EOF
     grep -q '^load_wg_networks$' "$fw"
     awk '/^load_wg_networks$/ {l = NR} /^resolve_wan_interface$/ {r = NR} END { exit !(l && r && l < r) }' "$fw"
     # write_state carries what the firewall and master-wg need (DD-136).
-    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_PANEL_PORT WG_ADDR_BASE4 WG_ADDR_BASE6; do
+    for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_ADDR_BASE4 WG_ADDR_BASE6 WG_PANEL_SOCKET CADDY_ADMIN_SOCKET; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v=\\\$$v$"
     done
     die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
@@ -3759,7 +3913,8 @@ TORRENT_PROFILE_DIR=$TMP/qb
 DOWNLOADS_PATH=$TMP/srv/downloads
 EOF
     rend() {
-        sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e 's/__WG_PANEL_PORT__/61008/g' -e 's/__FILES_PANEL_PORT__/61009/g' \
+        sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e 's#__WG_PANEL_SOCKET__#/run/master-wg-panel/api.sock#g' \
+            -e 's#__CADDY_ADMIN_SOCKET__#/run/caddy/admin.sock#g' -e 's/__FILES_PANEL_PORT__/61009/g' \
             -e 's/__CADDY_HTTP_PORT__/80/g' -e "s#__CONSOLE_WEB_DIR__#$TMP/web#g" -e "s#__CADDY_MODULES_DIR__#$TMP/caddy/moduller#g" \
             -e 's/__SHARE_PORT__/61010/g' -e 's/__TORRENT_UI_PORT__/61006/g' -e 's/__TAILSCALE_IF__/tailscale0/g' \
             -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_TEMP_DIR__/incomplete/g' "$1"
@@ -3841,7 +3996,7 @@ assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e f
 # Web: every address with where it goes, its source and who reaches it.
 web = {e["address"]: e for e in d["web"]["entries"]}
 assert [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]] == [
-    ("/api/wg/* /api/konsol/*", "proxy", "127.0.0.1:61008"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
+    ("/api/wg/* /api/konsol/*", "proxy", "unix//run/master-wg-panel/api.sock"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
 assert "health.ayc" not in web
 assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
 assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"
@@ -3969,7 +4124,10 @@ PY
     grep -q 'dummy-api-password' "$TMP/worker-body"
     run ! grep -q 'dummy-api-password' "$TMP/sdrun-calls" "$TMP/panel.log" "$TMP/body"
     [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" --data '{"id":"sample","client":"100.64.0.9","host":"panel.forged"}')" = 200 ]
-    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "127.0.0.1"' "$TMP/worker-body"
+    # DD-180: without Caddy's X-Forwarded-For the client is the server itself, never a body value.
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "yerel"' "$TMP/worker-body"
+    [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" -H 'X-Forwarded-For: 100.64.0.5' --data '{"id":"sample"}')" = 200 ]
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "100.64.0.5"' "$TMP/worker-body"
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["host"] != "panel.forged"' "$TMP/worker-body"
     [ "$(pc /api/konsol/ayarlar/nested/uygula "${headers[@]}" --data '{}')" = 404 ]
     [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '[]')" = 400 ]

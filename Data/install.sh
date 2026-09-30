@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-153"
+V2_VERSION="2026.08.06-v2-157"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -83,7 +83,8 @@ WG_CLIENTS_DIR=$WG_CLIENTS_DIR
 WG_MTU=$WG_MTU
 WG_NETWORKS_FILE=$WG_NETWORKS_FILE
 WG_NETWORKS_MAX=$WG_NETWORKS_MAX
-WG_PANEL_PORT=$WG_PANEL_PORT
+WG_PANEL_SOCKET=$WG_PANEL_SOCKET
+CADDY_ADMIN_SOCKET=$CADDY_ADMIN_SOCKET
 MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
@@ -347,7 +348,8 @@ stage_0() {
         die "ufw aktif: INPUT politikası iki elden yönetilemez. Önce 'ufw disable' çalıştırın"
     fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
-    [[ ! -f "$SETTINGS_PENDING_FILE" ]] || die "Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın"
+    [[ ! -f "$SETTINGS_PENDING_FILE" ]] ||
+        die "Konsol'da bekleyen ayar işlemi var; Ayarlar'da onaylayın veya geri alın (geri alma takıldıysa: Yeniden dene ya da Bırak)"
 
     # defaults.env değerleri config.env source edilmeden önce alınır.
     local def_domain="$DEFAULT_LOCAL_DOMAIN"
@@ -796,6 +798,11 @@ stage_4() {
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
+    # DD-180: WireGuard ağları duvar denetimi geçmeden açılmaz. Modül kurulu değilse etkisiz;
+    # açık ağlar yeniden başlatılmaz, kural bir sonraki açılışta geçerli olur.
+    install -d -m 0755 "$UNIT_DIR/wg-quick@.service.d"
+    render_template "$V2_ROOT/systemd/wg-quick-master-stack.conf" \
+        "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.service"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
@@ -955,13 +962,22 @@ EOF
         WAN_IPV4="$WAN_IPV4" SHARE_PORT="$SHARE_PORT" \
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        WG_PANEL_PORT="$WG_PANEL_PORT" \
+        CADDY_ADMIN_SOCKET="$CADDY_ADMIN_SOCKET" \
+        WG_PANEL_SOCKET="$WG_PANEL_SOCKET" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
         CADDY_MODULES_DIR="$CADDY_MODULES_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
     # DD-149: modüllerin site dosyaları bu dizinden içe aktarılır; boş dizin geçerlidir.
     install -d -m 0755 -o root -g root "$CADDY_MODULES_DIR"
+    # DD-182: WAN paylaşım sitesi son yayındaki WAN_IPV4'e bağlanır. Sağlayıcı adresi
+    # değiştirdiyse Caddy onunla açılamaz; site burada kalkar, 7. aşama yeni adresle yazar.
+    local wan_site="$CADDY_MODULES_DIR/paylasim-wan.caddy"
+    if [[ -f "$wan_site" ]] && ! grep -qxF "$(printf '\tbind %s' "$WAN_IPV4")" "$wan_site"; then
+        rm -f -- "$wan_site"
+        caddy_changed=1
+        log WARN "WAN IPv4 değişmiş; WAN paylaşım adresi 7. aşamada yeni adresle yazılacak"
+    fi
     ensure_console_pages
     # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
     # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
@@ -998,6 +1014,8 @@ EOF
     # ExecStartPre: state.env TAILSCALE_IPV4 arayüzde olmalı (DD-72/DD-85).
     # StartLimit, adres hiç gelmezse veya stale kalırsa unit'i failed yapar.
     # OnFailure: stale/fail sonrası refresh'i timer beklemeden çalıştırır (DD-87).
+    # DD-180: yönetim arayüzünün soket klasörü yalnız Caddy'ye açık (0700); TCP 2019 yok.
+    local caddy_runtime="${CADDY_ADMIN_SOCKET%/*}"
     atomic_write /etc/systemd/system/caddy.service.d/master-stack.conf 0644 <<EOF
 [Unit]
 Wants=tailscaled.service
@@ -1009,6 +1027,8 @@ StartLimitIntervalSec=600
 StartLimitBurst=3
 
 [Service]
+RuntimeDirectory=${caddy_runtime#/run/}
+RuntimeDirectoryMode=0700
 EnvironmentFile=$STATE_FILE
 ExecStartPre=+$SBIN_DIR/master-firewall --check
 ExecStartPre=$SBIN_DIR/wait-tailnet-addr
@@ -1037,8 +1057,8 @@ EOF
     ensure_files_panel "$OS_CHANGED"
 }
 
-# DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. 127.0.0.1:WG_PANEL_PORT dinler;
-# tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*). DD-147: parola yok, erişim
+# DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. DD-180: TCP yok, WG_PANEL_SOCKET
+# Unix soketinde dinler (0660 root:CADDY_GROUP); tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*). DD-147: parola yok, erişim
 # sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
@@ -1050,7 +1070,9 @@ ensure_wg_panel() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     render_template "$V2_ROOT/systemd/master-wg-panel.service" "$UNIT_DIR/master-wg-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
-        WG_PANEL_PORT="$WG_PANEL_PORT" \
+        WG_PANEL_SOCKET="$WG_PANEL_SOCKET" \
+        WG_PANEL_RUNTIME="$(basename -- "${WG_PANEL_SOCKET%/*}")" \
+        CADDY_GROUP="$CADDY_GROUP" \
         STATE_FILE="$STATE_FILE" \
         WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
         WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
@@ -1134,7 +1156,8 @@ stage_7() {
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
     "$SBIN_DIR/master-firewall" --check
-    systemctl is-active --quiet master-settings-guard.timer || die "Konsol ayar geri alma zamanlayıcısı etkin değil"
+    # DD-181: the timer sleeps while nothing is pending; it must stay enabled for boot and apply.
+    systemctl is-enabled --quiet master-settings-guard.timer || die "Konsol ayar geri alma zamanlayıcısı etkin değil"
     python3 "$SBIN_DIR/master_settings.py" status >/dev/null || die "Konsol ayar durumu okunamadı"
 
     # Drop-in doğru yazılmış olsa bile /etc/sysctl.d'de sonradan sıralanan bir
@@ -1225,20 +1248,53 @@ stage_7() {
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
     [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
-    local gate_port gate_path gates="$FILES_PANEL_PORT:/api/state $WG_PANEL_PORT:/api/wg/state"
-    for gate_port in $gates; do
-        gate_path="${gate_port#*:}"
-        gate_port="${gate_port%%:*}"
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            -H "Host: panel.${LOCAL_DOMAIN}" "http://127.0.0.1:${gate_port}${gate_path}" || true)"
+    # DD-180: root arka ucu TCP'de değil, yalnız Unix soketinde; dosya arka ucu loopback'te.
+    local gate gate_path gate_url gate_via=()
+    for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/wg/state"; do
+        gate_path="${gate#*|}"
+        gate_url="${gate%%|*}"
+        gate_via=()
+        if [[ "$gate_url" == unix:* ]]; then
+            gate_via=(--unix-socket "${gate_url#unix:}")
+            gate_url="http://localhost"
+        fi
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${gate_via[@]}" \
+            -H "Host: panel.${LOCAL_DOMAIN}" "${gate_url}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: X-Konsol başlığı olmadan HTTP $code (beklenen 403)"
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'X-Konsol: 1' \
-            -H "Host: baska.ornek" "http://127.0.0.1:${gate_port}${gate_path}" || true)"
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${gate_via[@]}" -H 'X-Konsol: 1' \
+            -H "Host: baska.ornek" "${gate_url}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
     done
+    # DD-180: indirme hesabıyla çalışan bir program (qBittorrent, unrar) root arka uca ve
+    # Caddy'nin yönetim arayüzüne ulaşamamalı. Soketin izni ve gerçek bir deneme sınanır.
+    [[ "$(stat -c '%U:%G:%a' "$WG_PANEL_SOCKET" 2>/dev/null)" == "root:${CADDY_GROUP}:660" ]] ||
+        die "Konsol arka ucu soketi root:${CADDY_GROUP} 0660 değil: $WG_PANEL_SOCKET"
+    [[ "$(stat -c '%U:%a' "${CADDY_ADMIN_SOCKET%/*}" 2>/dev/null)" == "caddy:700" ]] ||
+        die "Caddy yönetim soketinin klasörü yalnız Caddy'ye açık değil: ${CADDY_ADMIN_SOCKET%/*}"
+    [[ -S "$CADDY_ADMIN_SOCKET" ]] || die "Caddy yönetim soketi yok: $CADDY_ADMIN_SOCKET"
+    local sock
+    for sock in "$WG_PANEL_SOCKET" "$CADDY_ADMIN_SOCKET"; do
+        code="$(setpriv --reuid="$DOWNLOADS_UID" --regid="$DOWNLOADS_GID" --clear-groups \
+            curl -s -o /dev/null -w '%{http_code}' --max-time 3 --unix-socket "$sock" \
+            -H "Host: panel.${LOCAL_DOMAIN}" -H 'X-Konsol: 1' "http://localhost/" 2>/dev/null || true)"
+        [[ "$code" == "000" ]] || die "İndirme hesabı $sock soketine bağlanabildi (HTTP $code)"
+    done
+    # Caddy'nin varsayılan TCP yönetim portu (2019) kapalı; yeniden yükleme soketten çalışır.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:2019/config/" || true)"
+    [[ "$code" == "000" ]] || die "Caddy yönetim arayüzü TCP'de açık (HTTP $code)"
+    systemctl reload caddy || die "Caddy yönetim soketi üzerinden yeniden yüklenemedi"
+    # DD-180: Caddy'nin tailnet adresi sunucunun içinden de açıktır; oradan gelen istek (ör.
+    # indirme hesabıyla çalışan bir program) root arka uçtan 403 almalı. Arka ucun kendi
+    # denetimi soketten yapılır; 403'ün gövdesi isteğin Caddy'den arka uca ulaştığını da gösterir.
+    local self_body
+    self_body="$(setpriv --reuid="$DOWNLOADS_UID" --regid="$DOWNLOADS_GID" --clear-groups \
+        curl -s --max-time 5 -w '\n%{http_code}' -H "Host: panel.${LOCAL_DOMAIN}" -H 'X-Konsol: 1' \
+        "http://${TAILSCALE_IPV4}/api/wg/state" 2>/dev/null || true)"
+    [[ "${self_body##*$'\n'}" == "403" && "$self_body" == *"başka bir Tailscale cihazından"* ]] ||
+        die "Sunucunun içinden Caddy üzerinden root arka uca ulaşıldı (HTTP ${self_body##*$'\n'})"
     local panel_out
-    panel_out="$(python3 "$SBIN_DIR/master-wg-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+    panel_out="$(python3 "$SBIN_DIR/master-wg-panel" check --socket "$WG_PANEL_SOCKET" \
+        --url "http://panel.${LOCAL_DOMAIN}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
         die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
     # DD-159: built-in Files is required, writable and unprivileged.
@@ -1260,11 +1316,6 @@ stage_7() {
         [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
     fi
     # WebDAV registry, unprivileged listener and addresses were verified by yerlesik.
-    if [[ -n "$wg_first_addr" ]]; then
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
-            "http://${wg_first_addr}:${WG_PANEL_PORT}/" || true)"
-        [[ "$code" == "000" ]] || die "Konsol arka ucu WireGuard adresinde yanıt verdi (HTTP $code)"
-    fi
 
     log INFO "Temel doğrulamalar geçti"
 }

@@ -37,6 +37,16 @@ RestrictNamespaces=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
+# DD-180: unrar yabancı RAR dosyasını bu serviste açar. Bir açık doğrudan dışarıya ve Caddy'nin
+# tailnet adresine bağlanamasın (yalnız loopback), başka süreçleri görmesin ve yalnız sıradan servis
+# sistem çağrılarını kullansın. Loopback'teki hizmetler (DNS, qBittorrent arayüzü) açık kalır.
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ProtectProc=invisible
+PrivateIPC=true
+MemoryDenyWriteExecute=true
 MemoryMax=512M
 TasksMax=64
 CPUQuota=100%

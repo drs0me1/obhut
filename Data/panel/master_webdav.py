@@ -7,9 +7,10 @@ ve PROPPATCH desteklenmez; desteklenmeyen işlemler başarılı gibi gösterilme
 """
 import argparse
 import base64
-from collections import deque
+from collections import OrderedDict, deque
 import contextlib
 import email.utils
+import hmac
 import http.server
 import ipaddress
 import math
@@ -28,6 +29,15 @@ from master_shares import DEFAULT_LIMITS, DIR_FLAGS, FILE_FLAGS, ShareError, ide
 
 MAX_UPLOAD = 64 * 1024 ** 3
 CHUNK = 1024 * 1024
+# DD-180: writes stop before the filesystem falls under min(5 GiB, 10%) free, so the
+# journal, apt and state files keep room. Same numbers in master-files-panel.
+DISK_RESERVE = 5 * 1024 ** 3
+DISK_RESERVE_DIVISOR = 10
+DISK_CHECK_EVERY = 64 * 1024 ** 2
+# DD-181: a successful login is remembered in memory so each Infuse/Finder request does
+# not pay one scrypt check (~20-60 ms). Registry edits restart the service and clear it.
+AUTH_CACHE_SECONDS = 600
+AUTH_CACHE_SIZE = 256
 DAV = "{DAV:}"
 ET.register_namespace("d", "DAV:")
 READ_METHODS = ("OPTIONS", "GET", "HEAD", "PROPFIND")
@@ -41,14 +51,23 @@ class DavError(Exception):
         self.retry_after = retry_after
 
 
-class WanLimiter:
-    """Bound in-flight requests, hash work and sliding bad-credential history by IP."""
-    def __init__(self, limits, clock=time.monotonic):
+class Limiter:
+    """Sliding bad-credential history by client IP and by share, on both listeners (DD-180).
+
+    WAN also bounds in-flight requests per IP and parallel hash work. A share that
+    collects share_failures in share_window_seconds is closed for share_block_seconds
+    to addresses that have not logged in to it since the service started.
+    """
+    KNOWN_PER_SHARE = 32
+
+    def __init__(self, limits, clock=time.monotonic, scope="wan"):
         self.limits = limits
         self.clock = clock
+        self.scope = scope
         self.lock = threading.Lock()
         self.active = {}
         self.entries = {}
+        self.shares = {}
         self.auth_slots = threading.BoundedSemaphore(limits["wan_auth_parallel"])
 
     def prune(self, now):
@@ -64,6 +83,33 @@ class WanLimiter:
         entry = self.entries.get(ip)
         if entry and entry["blocked_until"] > now:
             raise DavError(429, retry_after=math.ceil(entry["blocked_until"] - now))
+
+    def share_blocked(self, share, ip, now):
+        record = self.shares.get(share)
+        if record and record["blocked_until"] > now and ip not in record["known"]:
+            raise DavError(429, retry_after=math.ceil(record["blocked_until"] - now))
+
+    def share_result(self, share, ip, now, failed):
+        # Called under lock; share ids come from the registry, so the table is bounded.
+        record = self.shares.setdefault(share, {"failures": deque(), "blocked_until": 0,
+                                                "known": OrderedDict()})
+        if not failed:
+            record["known"][ip] = now
+            record["known"].move_to_end(ip)
+            while len(record["known"]) > self.KNOWN_PER_SHARE:
+                record["known"].popitem(last=False)
+            return
+        failures = record["failures"]
+        while failures and failures[0] <= now - self.limits["share_window_seconds"]:
+            failures.popleft()
+        failures.append(now)
+        if len(failures) >= self.limits["share_failures"] and record["blocked_until"] <= now:
+            failures.clear()
+            record["blocked_until"] = now + self.limits["share_block_seconds"]
+            # Registry id and fixed numbers only; never the address, user or password.
+            print("paylasim: %s (%s) %d dk içinde %d hatalı giriş; yeni adresler %d dk bekletiliyor"
+                  % (share, self.scope, self.limits["share_window_seconds"] // 60,
+                     self.limits["share_failures"], self.limits["share_block_seconds"] // 60), flush=True)
 
     @contextlib.contextmanager
     def request(self, ip):
@@ -83,20 +129,23 @@ class WanLimiter:
                     del self.active[ip]
 
     @contextlib.contextmanager
-    def credentials(self, ip):
+    def credentials(self, ip, share=None):
         with self.lock:
             now = self.clock()
             self.prune(now)
             self.blocked(ip, now)
+            if share is not None:
+                self.share_blocked(share, ip, now)
             if ip not in self.entries:
                 if len(self.entries) >= self.limits["auth_entries"]:
                     raise DavError(429, retry_after=1)
                 self.entries[ip] = {"failures": deque(), "blocked_until": 0, "pending": 0}
             entry = self.entries[ip]
             entry["pending"] += 1
-        failed = False
+        failed = succeeded = False
         try:
             yield
+            succeeded = True
         except DavError as err:
             failed = err.code == 401
             raise
@@ -105,6 +154,8 @@ class WanLimiter:
                 now = self.clock()
                 entry["pending"] -= 1
                 self.prune(now)
+                if share is not None and (failed or succeeded):
+                    self.share_result(share, ip, now, failed)
                 # A request admitted before a block cannot lengthen its TTL.
                 if failed and entry["blocked_until"] <= now:
                     entry["failures"].append(now)
@@ -123,6 +174,12 @@ class WanLimiter:
             self.auth_slots.release()
 
 
+def disk_room(fd, incoming=0):
+    st = os.fstatvfs(fd)
+    reserve = min(DISK_RESERVE, st.f_blocks * st.f_frsize // DISK_RESERVE_DIVISOR)
+    return st.f_bavail * st.f_frsize - incoming >= reserve
+
+
 def check_stat(st, device):
     if st.st_dev != device or not (stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode)):
         raise DavError(403, "Bağlantı veya alt dosya sistemi sunulmaz.")
@@ -138,6 +195,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "Konsol-WebDAV"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    # DD-181: headers and body are separate writes. On Caddy's kept-alive upstream
+    # connection Nagle held the body for the peer's delayed ACK: ~44 ms per request.
+    disable_nagle_algorithm = True
 
     def setup(self):
         super().setup()
@@ -168,6 +228,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def end_headers(self):
         if self.server.scope == "wan":
             self.close_connection = True
+        # DD-181: say so whenever this server closes, or Caddy may reuse the closed connection.
+        if self.close_connection and not any(line.lower().startswith(b"connection:")
+                                             for line in getattr(self, "_headers_buffer", [])):
             self.send_header("Connection", "close")
         self.response_started = True
         super().end_headers()
@@ -205,8 +268,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         supplied = self.headers.get_all("Authorization", [])
         if not supplied:
             raise DavError(401)
-        limiter = self.server.wan_limiter
-        with limiter.credentials(self.client_ip) if limiter else contextlib.nullcontext():
+        with self.server.limiter.credentials(self.client_ip, item["id"] if item else None):
             self.check_credentials(supplied)
         self.live()
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") == "cross-site":
@@ -231,12 +293,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             raise DavError(401)
         item = self.item
-        if (kind.lower() != "basic" or not item or item["paused"] or user != item["username"]
-                or len(password) > 256):
+        # DD-180: an unknown share, a paused share, a wrong user or scheme costs one hash
+        # too, so response time does not reveal which part was wrong.
+        valid = (kind.lower() == "basic" and item is not None and not item["paused"]
+                 and len(password) <= 256
+                 and hmac.compare_digest(user.encode("utf-8"), item["username"].encode("utf-8")))
+        key = None
+        if valid:
+            key = (item["id"], item["hash"],
+                   hmac.new(self.server.auth_key, supplied[0].encode("utf-8"), "sha256").digest())
+            if self.server.remembered(key):
+                return
+        verify = self.server.limiter.verify if self.server.scope == "wan" else password_ok
+        if not verify(item if valid else self.server.decoy, password[:256]) or not valid:
             raise DavError(401)
-        verify = self.server.wan_limiter.verify if self.server.wan_limiter else password_ok
-        if not verify(item, password):
-            raise DavError(401)
+        self.server.remember(key)
 
     def client_address_ip(self):
         values = self.headers.get_all("X-Share-Client-IP", [])
@@ -542,25 +613,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         raise DavError(501, "Klasör COPY desteklenmiyor; dosya kopyalanabilir.")
                     src = os.open(pp[-1], FILE_FLAGS, dir_fd=parent)
                     with os.fdopen(src, "rb") as stream:
-                        check_stat(os.fstat(stream.fileno()), self.device)
-                        self.atomic_put(dfd, dest[-1], iter(lambda: stream.read(CHUNK), b""))
+                        source = os.fstat(stream.fileno())
+                        check_stat(source, self.device)
+                        self.atomic_put(dfd, dest[-1], iter(lambda: stream.read(CHUNK), b""), source.st_size)
                 self.send(204 if existing else 201)
             elif self.command == "PUT":
                 if st and stat.S_ISDIR(st.st_mode):
                     raise DavError(405)
                 if not self.headers.get("Content-Length") and not self.headers.get("Transfer-Encoding"):
                     raise DavError(411)
-                self.atomic_put(parent, pp[-1], self.body_chunks(MAX_UPLOAD))
+                lengths = self.headers.get_all("Content-Length", [])
+                size = int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0
+                self.atomic_put(parent, pp[-1], self.body_chunks(MAX_UPLOAD), size if size <= MAX_UPLOAD else 0)
                 self.send(204 if st else 201)
 
-    def atomic_put(self, parent, name, chunks):
+    def atomic_put(self, parent, name, chunks, size=0):
+        full = DavError(507, "Sunucuda yeterli boş alan yok.")
+        if not disk_room(parent, size):
+            raise full
         temp = ".webdav-" + secrets.token_hex(12)
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o664, dir_fd=parent)
         try:
             with os.fdopen(fd, "wb") as stream:
+                since = 0
                 for chunk in chunks:
                     self.live()
                     stream.write(chunk)
+                    since += len(chunk)
+                    # Chunked bodies declare no size; other writers share the disk too.
+                    if since >= DISK_CHECK_EVERY:
+                        since = 0
+                        if not disk_room(parent):
+                            raise full
                 stream.flush()
                 os.fsync(stream.fileno())
             self.live()
@@ -577,9 +661,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.response_started = False
         budget = contextlib.ExitStack()
         try:
-            if self.server.wan_limiter:
+            if self.server.scope == "wan":
                 self.client_ip = self.client_address_ip()
-                budget.enter_context(self.server.wan_limiter.request(self.client_ip))
+                budget.enter_context(self.server.limiter.request(self.client_ip))
+            else:
+                # DD-180: Caddy always sets it; local readiness probes connect without it.
+                self.client_ip = (self.client_address_ip()
+                                  if self.headers.get_all("X-Share-Client-IP") else "yerel")
             self.authenticate()
             pp = self.path_parts(self.path)
             if self.headers.get("Expect", "").lower() == "100-continue":
@@ -630,11 +718,33 @@ class Server(http.server.ThreadingHTTPServer):
         if any(type(self.limits[key]) is not int or self.limits[key] <= 0 for key in DEFAULT_LIMITS):
             raise ValueError("Geçersiz paylaşım sınırları.")
         self.mutation_lock = mutation_lock if mutation_lock is not None else threading.Lock()
-        self.wan_limiter = WanLimiter(self.limits) if scope == "wan" else None
+        self.limiter = Limiter(self.limits, scope=scope)
+        # Never matches: hashed instead of the real record when the request cannot succeed.
+        self.decoy = {"salt": secrets.token_hex(16), "hash": secrets.token_hex(32)}
+        # Keyed by share, stored hash and an HMAC of the exact Authorization value.
+        self.auth_key = secrets.token_bytes(32)
+        self.auth_cache = OrderedDict()
+        self.auth_lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(self.limits["wan_connections" if scope == "wan" else "tail_connections"])
         self.connections = set()
         self.connection_lock = threading.Lock()
         super().__init__(address, Handler)
+
+    def remembered(self, key):
+        with self.auth_lock:
+            until = self.auth_cache.get(key)
+            if until is not None and until > time.monotonic():
+                self.auth_cache.move_to_end(key)
+                return True
+            self.auth_cache.pop(key, None)
+            return False
+
+    def remember(self, key):
+        with self.auth_lock:
+            self.auth_cache[key] = time.monotonic() + AUTH_CACHE_SECONDS
+            self.auth_cache.move_to_end(key)
+            while len(self.auth_cache) > AUTH_CACHE_SIZE:
+                self.auth_cache.popitem(last=False)
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):

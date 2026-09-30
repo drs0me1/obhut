@@ -43,6 +43,15 @@ At the five-layer ceiling automatic extraction fails atomically, never reporting
 incomplete nested work as success. A corrupt/unsupported inner archive fails the
 whole job; no partial result folder is published.
 
+**DD-183: no jobs page.** Starting a job keeps Files open. While a job is queued
+or running, one bar above the Files list shows its name, state, server message
+and "İptal et"; it disappears when the job ends and a toast reports the result.
+Ayarlar → Günlük records the start (`arsiv-olustur`/`arsiv-ac`: sources → result
+name), a cancel request (`arsiv-iptal`) and the result written by the Files
+backend when the job ends or is found interrupted at startup (`arsiv-sonuc`:
+message; `hata` for failed/interrupted). The old `#/dosyalar/arsiv` bookmark opens
+Files. `GET /api/archives` and the private 20-job history are unchanged.
+
 ZIP Store/Deflate and unencrypted RAR3/RAR5 (including solid archives) are supported,
 not encrypted archives, multipart ZIP, large ZIP64 or 7z. All RAR volumes must be
 in the same folder: `.rar/.r00/.r01…` or `.part01.rar/.part02.rar…`. Selecting a

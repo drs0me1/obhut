@@ -65,7 +65,7 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
-                 "SBIN_DIR": "bin", "WG_NETWORKS_FILE": "etc/networks"}
+                 "SBIN_DIR": "bin", "WG_NETWORKS_FILE": "etc/networks", "SHARE_STATE_FILE": "etc/webdav.json"}
         e.update({k: str(root / v) for k, v in paths.items()})
         e.update(LOCAL_DOMAIN="ayc", WAN_INTERFACE="eth0", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2",
                  TORRENT_UI_PORT="18555", DOWNLOADS_UID="1000", DOWNLOADS_GID="1000")
@@ -82,6 +82,8 @@ def main():
         shutil.copy(DATA / "scripts/firewall.sh", root / "bin/master-firewall")
         (root / "bin/master-firewall").chmod(0o755)
         shutil.copy(DATA / "panel/master_settings.py", root / "bin/master_settings.py")
+        # DD-179: firewall.sh asks master_shares.py whether a WAN share is active.
+        shutil.copy(DATA / "panel/master_shares.py", root / "bin/master_shares.py")
         def render(source):
             text = (DATA / source).read_text()
             for key, value in e.items():
@@ -130,6 +132,8 @@ def main():
                     return result
                 return real_run(argv, **kwargs)
             action = argv[1]
+            if argv[-1] == "master-settings-guard.timer":
+                return subprocess.CompletedProcess(argv, 0, "", "")  # DD-181: apply starts the timer
             name = "qbit" if argv[-1].startswith("qbittorrent-nox@") else "dns"
             if action == "stop":
                 stop(name)

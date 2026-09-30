@@ -41,6 +41,10 @@ class NetworkManagerTests(unittest.TestCase):
                         CADDYFILE=str(self.root/"Caddyfile"), SBIN_DIR=str(self.root))
         self.state = self.root/"state.env"
         self.state.write_text("".join(k+"="+v+"\n" for k,v in self.env.items()))
+        # The fixture WAN address is not on this machine; DD-182's live check is tested separately.
+        self.addCleanup(patch.stopall)
+        self.assigned_patch = patch.object(s, "assigned", return_value=True)
+        self.assigned = self.assigned_patch.start()
         (self.root/"modules").write_text("paylasim\tdurduruldu\n")
         self.m = s.Manager(self.state)
         self.m.change("save", dict(path="alpha",username="reader",password="Test12345",permission="ro",days=7))
@@ -130,6 +134,56 @@ class NetworkManagerTests(unittest.TestCase):
         self.assertEqual(Path(self.m.path).read_bytes(),old)
         self.assertFalse(os.path.exists(self.m.pending))
         self.assertFalse((self.root/"sites/paylasim-wan.caddy").exists())
+
+    def test_vanished_wan_address_closes_publication_with_a_reason(self):
+        self.save(networks=["wan"],ack_wan_http=True)
+        self.running()
+        with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)):
+            self.m.publish()
+            target=self.root/"sites/paylasim-wan.caddy"
+            self.assertTrue(target.exists())
+            self.assigned.return_value=False
+            info=self.m.wan_info()
+            self.assertFalse(info["available"])
+            self.assertIn("8.8.8.8 artık bu sunucuda değil",info["reason"])
+            self.assertFalse(self.m.wan_active())
+            self.m.guard()
+            self.assertFalse(target.exists())
+
+    def test_address_probe_only_reports_missing_for_eaddrnotavail(self):
+        self.assigned_patch.stop()
+        for code,present in ((s.errno.EADDRNOTAVAIL,False),(s.errno.EADDRINUSE,True),(s.errno.EMFILE,True)):
+            with self.subTest(code=code), patch.object(s.socket.socket,"bind",side_effect=OSError(code,"fixture")):
+                self.assertEqual(s.assigned("198.51.100.7"),present)
+        self.assertTrue(s.assigned("127.0.0.1"))
+        self.assertFalse(s.assigned("192.0.2.77"))
+
+    def test_reload_failure_starts_a_stopped_caddy_but_rolls_back_a_running_one(self):
+        self.save(networks=["wan"],ack_wan_http=True)
+        self.running()
+        target=self.root/"sites/paylasim-wan.caddy"
+        marker=self.root/"run/share-network-applied.json"
+        calls=[]
+        def run(argv,**kw):
+            calls.append(argv)
+            if argv[:2]==["systemctl","reload"]:
+                raise subprocess.CalledProcessError(1,argv)
+            if argv[:2]==["systemctl","is-active"]:
+                return subprocess.CompletedProcess(argv,self.caddy)
+            return subprocess.CompletedProcess(argv,0)
+        self.caddy=3  # stopped, e.g. it could not bind an address the provider took away
+        with patch.object(s.subprocess,"run",side_effect=run):
+            self.m.publish()
+        self.assertTrue(target.exists())
+        self.assertFalse(marker.exists())
+        self.assertIn(["systemctl","reset-failed","caddy"],calls)
+        self.assertIn(["systemctl","start","--no-block","caddy"],calls)
+        target.unlink(); calls.clear()
+        self.caddy=0  # running: a failed reload is a real error and the old projection returns
+        with patch.object(s.subprocess,"run",side_effect=run), self.assertRaises(s.ShareError):
+            self.m.publish()
+        self.assertFalse(target.exists())
+        self.assertNotIn(["systemctl","start","--no-block","caddy"],calls)
 
     def test_interrupted_operation_is_recovered_with_credentials_first(self):
         old=self.m.read()

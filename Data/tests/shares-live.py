@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,18 @@ sys.path.insert(0, "/usr/local/sbin")
 import master_shares
 
 env = master_shares.env_read("/etc/master-stack/state.env")
+
+
+class UnixConnection(HTTPConnection):
+    """DD-180: the root backend refuses Konsol requests that Caddy relays from this host."""
+    def __init__(self, path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
 
 
 def http(method, path, data=None, item=None, password=None, extra=None):
@@ -36,7 +49,8 @@ def http(method, path, data=None, item=None, password=None, extra=None):
         headers["Content-Type"] = "application/json"
         data = json.dumps(data)
     headers.update(extra or {})
-    conn = HTTPConnection(address, port, timeout=45)
+    root_api = not item and path.startswith(("/api/konsol/", "/api/wg/"))
+    conn = UnixConnection(env["WG_PANEL_SOCKET"], 45) if root_api else HTTPConnection(address, port, timeout=45)
     try:
         conn.request(method, path, data, headers)
         result = conn.getresponse()

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-# Konsol'un WireGuard ve sistem arka ucu (DD-133, DD-140). Yalnız 127.0.0.1'i
-# dinler; tailnet'e Caddy açar: http://panel.<alan> altında /api/wg/* ve /api/konsol/*.
-# Statik sayfaları Caddy sunar; burası
+# Konsol'un WireGuard ve sistem arka ucu (DD-133, DD-140). Ağ portu açmaz: yalnız bir
+# Unix soketinde dinler (DD-180) ve tailnet'e Caddy açar: http://panel.<alan> altında
+# /api/wg/* ve /api/konsol/*. Statik sayfaları Caddy sunar; burası
 # root çalışır ve sayfa dosyası servis etmez. Bütün WireGuard değişiklikleri
 # master-wg ile yapılır: aynı doğrulama, aynı kilit, aynı "kopmadan uygula".
 # Yalnız Python standart kütüphanesi.
 #
-#   master-wg-panel serve --listen 127.0.0.1:PORT --state FILE
+#   master-wg-panel serve --listen unix:SOKET [--socket-group GRUP] --state FILE
 #                         --master-wg PATH [--allow-host HOST]
-#   master-wg-panel check --url URL --host HOST       /api/wg/state denetimi
+#   master-wg-panel check --url URL --host HOST [--socket SOKET]   /api/wg/state denetimi
+#
+# DD-180: sunucudaki başka bir hesap (ör. indirme hesabıyla çalışan qBittorrent) yerel
+# ağdan bu root arka uca istek atamasın diye TCP yoktur. Sokete dosya izni (0660, root ve
+# Caddy'nin grubu) ve çekirdeğin bildirdiği bağlanan kimlik (SO_PEERCRED) birlikte bakar.
 #
 # Güvenlik (DD-147): Konsol'da parola yoktur; erişim sınırı Tailscale'dir (Caddy
 # yalnız tailnet adresinde dinler). Kalan ve vazgeçilmez korumalar: /api/* için
@@ -16,7 +20,12 @@
 # CSRF), Host denetimi (DNS rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan
 # yanıtlar (profil, QR) yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
 import argparse
+import contextlib
+import datetime
+import errno
+import grp
 import hashlib
+import http.client
 import http.server
 import ipaddress
 import json
@@ -24,6 +33,9 @@ import os
 import platform
 import re
 import socket
+import socketserver
+import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -60,6 +72,10 @@ MASK = "•" * 44
 SYS_POINTS = 12
 # Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
+# DD-182: Sağlık kartı. Salt okunur; sekme açıkken 30 sn'de bir hesaplanır.
+HEALTH_CACHE_SECONDS = 30
+# Tailscale düğüm anahtarının süresi bu kadar gün kala uyarılır.
+KEY_EXPIRY_WARN_DAYS = 14
 ACTIONS_LIMIT = 40
 # Ayarlar okuması: aynı anda gelen yenilemeler iptables'ı yormasın (DD-155, DD-156).
 SETTINGS_CACHE_SECONDS = 5
@@ -78,11 +94,39 @@ PORT_ROWS = (
     ("DNS_PORT", "dnsmasq — yerel adlar", "udp+tcp", "tailscale", 53),
     ("SHARE_PORT", "Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tcp", "tailscale", 0),
     ("TORRENT_UI_PORT", "qBittorrent arayüzü", "tcp", "loopback", 0),
-    ("WG_PANEL_PORT", "Konsol · WireGuard arka ucu", "tcp", "loopback", 0),
     ("FILES_PANEL_PORT", "Konsol · dosya arka ucu", "tcp", "loopback", 0),
 )
 # Satırı bir modülle gelen portlar: modül kurulu değilse o port dinlenmez (DD-149, DD-150, DD-151).
 PORT_MODULES = {"SHARE_PORT": "paylasim", "TORRENT_UI_PORT": "torrent", "FILES_PANEL_PORT": "dosya"}
+
+
+# DD-180: Caddy üzerinden gelen istek yalnız başka bir Tailscale cihazından kabul edilir.
+TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def own_address(ip):
+    """Sunucunun kendi adresi mi? Sıradan bir soket yalnız yerel bir adrese bağlanabilir.
+    Yalnız "adres yerel değil" (EADDRNOTAVAIL) dışarıdan sayılır; başka her hata (port ya da
+    dosya tanıtıcısı tükenmesi) isteği reddettirir. Port ayrılmaz: IP_BIND_ADDRESS_NO_PORT."""
+    if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+        return True
+    try:
+        with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET, socket.SOCK_STREAM) as probe:
+            with contextlib.suppress(OSError):
+                probe.setsockopt(socket.IPPROTO_IP, getattr(socket, "IP_BIND_ADDRESS_NO_PORT", 24), 1)
+            probe.bind((str(ip), 0))
+    except OSError as err:
+        return err.errno != errno.EADDRNOTAVAIL
+    return True
+
+
+def remote_tailnet(value):
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return any(ip in net for net in TAILNET_RANGES) and not own_address(ip)
 
 
 def fail(msg, code=1):
@@ -90,14 +134,39 @@ def fail(msg, code=1):
     sys.exit(code)
 
 
+class UnixConnection(http.client.HTTPConnection):
+    """check --socket: Caddy'yi atlayıp arka ucun kendi soketine sorar (kurulum, testler)."""
+    def __init__(self, path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+
 def cmd_check(args):
-    req = urllib.request.Request(args.url, headers={"Host": args.host, API_HEADER: "1"})
+    headers = {"Host": args.host, API_HEADER: "1"}
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
+        if args.socket:
+            conn = UnixConnection(args.socket, 15)
+            try:
+                conn.request("GET", urllib.parse.urlsplit(args.url).path or "/", headers=headers)
+                resp = conn.getresponse()
+                body = resp.read()
+            finally:
+                conn.close()
+            if resp.status != 200:
+                fail("panel HTTP %d verdi" % resp.status)
+            data = json.loads(body.decode())
+        else:
+            req = urllib.request.Request(args.url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as err:
         fail("panel HTTP %d verdi" % err.code)
-    except (urllib.error.URLError, ValueError, OSError) as err:
+    except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError) as err:
         fail("panel yanıt vermedi (%s)" % err)
     nets = data.get("networks")
     # DD-143: temiz kurulumda hiç ağ yoktur; boş liste de geçerli bir yanıttır.
@@ -341,6 +410,10 @@ class Panel:
         self.cpu_prev = None
         self.actions_cache = (0.0, [])
         self.settings_cache = (0.0, None)
+        self.settings_lock = threading.Lock()
+        self.settings_runs = 0
+        self.health_cache = (0.0, None)
+        self.health_lock = threading.Lock()
 
     # -- master-wg
     def run(self, *argv, binary=False, net=None):
@@ -680,6 +753,126 @@ class Panel:
             view["ok"], view["check"] = False, "denetim çalıştırılamadı"
         return view
 
+    def health(self):
+        """DD-182: tek bakışta sunucunun sağlığı. Hiçbir şeyi değiştirmez."""
+        with self.health_lock:
+            stamp, data = self.health_cache
+            if data is None or time.time() - stamp >= HEALTH_CACHE_SECONDS:
+                data = self.health_compute()
+                self.health_cache = (time.time(), data)
+            return data
+
+    def health_cmd(self, argv, timeout=10):
+        try:
+            proc = subprocess.run(argv, capture_output=True, timeout=timeout, env=self.env(), stdin=subprocess.DEVNULL)
+            return proc.returncode, proc.stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            return None, ""
+
+    def health_compute(self):
+        env = read_env(self.args.state)
+        checks = []
+
+        def add(key, name, status, detail):
+            checks.append({"id": key, "name": name, "status": status, "detail": detail})
+
+        rc, out = self.health_cmd(["systemctl", "list-units", "--failed", "--plain", "--no-legend", "--no-pager"])
+        failed = [line.split()[0] for line in out.splitlines() if line.strip()]
+        if rc is None:
+            add("units", "Servisler", "warn", "systemd okunamadı")
+        else:
+            add("units", "Servisler", "bad" if failed else "ok",
+                ("Başarısız: " + ", ".join(failed[:5]) + (" (+%d)" % (len(failed) - 5) if len(failed) > 5 else ""))
+                if failed else "Başarısız servis yok")
+
+        rc, out = self.health_cmd(["tailscale", "status", "--json"])
+        try:
+            ts = json.loads(out) if rc == 0 else None
+        except ValueError:
+            ts = None
+        if not isinstance(ts, dict):
+            add("tailscale", "Tailscale", "bad", "Durum okunamadı")
+        else:
+            me = ts.get("Self") or {}
+            running, online = ts.get("BackendState") == "Running", bool(me.get("Online"))
+            status, parts = ("ok" if running and online else "bad"), ["çalışıyor" if running else "durum: %s" % ts.get("BackendState", "?"),
+                                                                  "çevrimiçi" if online else "çevrimdışı"]
+            expiry = me.get("KeyExpiry")
+            if expiry:
+                try:
+                    days = (datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                            - datetime.datetime.now(datetime.timezone.utc)).days
+                    parts.append("anahtar %d gün sonra doluyor" % days)
+                    if days < KEY_EXPIRY_WARN_DAYS and status == "ok":
+                        status = "warn"
+                except ValueError:
+                    pass
+            else:
+                parts.append("anahtar süresi dolmuyor")
+            add("tailscale", "Tailscale", status, " · ".join(parts))
+
+        rc, out = self.health_cmd(["master-firewall", "--check"], timeout=30)
+        add("firewall", "Güvenlik duvarı", "ok" if rc == 0 else "bad",
+            "Kurallar beklenen biçimde" if rc == 0 else "Denetim başarısız; 5 dk içinde yeniden uygulanır")
+
+        if os.path.exists("/run/reboot-required"):
+            try:
+                with open("/run/reboot-required.pkgs", encoding="utf-8") as fh:
+                    pkgs = sorted({l.strip() for l in fh if l.strip()})
+            except OSError:
+                pkgs = []
+            add("reboot", "Yeniden başlatma", "warn", "Güncellemeler yeniden başlatma bekliyor"
+                + (" (%s)" % ", ".join(pkgs[:3]) if pkgs else ""))
+        else:
+            add("reboot", "Yeniden başlatma", "ok", "Gerekmiyor")
+
+        rc, out = self.health_cmd(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+        synced = rc == 0 and out.strip() == "yes"
+        add("clock", "Saat", "ok" if synced else "warn",
+            "Eşitlenmiş" if synced else "Eşitlenmemiş; paylaşım süreleri ve güncellemeler etkilenebilir")
+
+        seen = set()
+        for label, path in (("Sistem diski", "/"), ("Kullanıcı alanı", env.get("SERVER_ROOT", ""))):
+            try:
+                st, dev = os.statvfs(path), os.stat(path).st_dev
+            except (OSError, TypeError, ValueError):
+                continue
+            if dev in seen:
+                continue
+            seen.add(dev)
+            total, free = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize
+            # Yüklemelerin bıraktığı pay (DD-180): altına inince yükleme reddedilir.
+            reserve = min(5 * 1024 ** 3, total // 10)
+            inodes = 100 * st.f_favail / st.f_files if st.f_files else 100
+            status = "bad" if free < reserve else "warn" if free < 2 * reserve or inodes < 5 else "ok"
+            add("disk:" + path, label, status, "%s boş (%%%d) · %s" % (
+                human_bytes(free), round(100 * free / total) if total else 0, path))
+
+        try:
+            pending = master_settings.Manager(self.args.state).status()["pending"]
+        except (master_settings.SettingsError, OSError, KeyError, ValueError):
+            pending = None
+        if not pending:
+            add("settings", "Ayar işlemi", "ok", "Bekleyen işlem yok")
+        elif pending["phase"] == "stuck":
+            add("settings", "Ayar işlemi", "bad", "Geri alma takıldı; Ayarlar'da yeniden deneyin ya da bırakın")
+        else:
+            add("settings", "Ayar işlemi", "warn", "Onay ya da geri alma bekleniyor")
+
+        try:
+            shares = master_shares.Manager(self.args.state)
+            wan = shares.wan_info()
+            wanted = any("wan" in i.get("networks", []) and not i.get("paused")
+                         for i in shares.read()["items"])
+            if wanted and not wan["available"]:
+                add("wan", "İnternet paylaşımı", "warn", wan["reason"])
+        except (OSError, ValueError, KeyError, master_shares.ShareError):
+            pass
+
+        order = {"ok": 0, "warn": 1, "bad": 2}
+        worst = max((c["status"] for c in checks), key=order.get, default="ok")
+        return {"status": worst, "checks": checks, "read_at": int(time.time())}
+
     def web_view(self, env, networks):
         ts_ip = env.get("TAILSCALE_IPV4", "")
         files = [(env.get("CADDYFILE", ""), "base")]
@@ -751,10 +944,19 @@ class Panel:
     def settings(self, fresh=False):
         """DD-155: Ayarlar sayfası. Salt okunur: kurallar canlı (sayaçlarıyla), yapılandırma dosyaları
         olduğu gibi; hesap, parola ya da anahtar taşıyan hiçbir dosya okunmaz. "Yenile" önbelleği atlar."""
-        now = time.time()
-        stamp, data = self.settings_cache
-        if not fresh and data is not None and now - stamp < SETTINGS_CACHE_SECONDS:
+        # DD-181: aynı anda gelen yenilemeler tek hesaplamayı paylaşır (iptables/ss/firewall --check).
+        # "Yenile" önbelleği atlar; yalnız beklerken biten bir hesaplama varsa onu kullanır.
+        runs = self.settings_runs
+        with self.settings_lock:
+            stamp, data = self.settings_cache
+            if data is not None and (self.settings_runs != runs if fresh else time.time() - stamp < SETTINGS_CACHE_SECONDS):
+                return data
+            data = self.settings_compute()
+            self.settings_runs += 1
             return data
+
+    def settings_compute(self):
+        now = time.time()
         env = read_env(self.args.state)
         try:
             networks = self.net_rows()
@@ -1007,7 +1209,7 @@ class Panel:
             "endpoint": env.get("WG_ENDPOINT_HOST", ""),
             "max": num_or(env.get("WG_NETWORKS_MAX"), 9) + 1,
             "reserved": sorted({num_or(env.get(k), 0) for k in (
-                "SSH_PUBLIC_PORT", "TORRENT_UI_PORT", "TAILSCALE_UDP_PORT", "WG_PANEL_PORT",
+                "SSH_PUBLIC_PORT", "TORRENT_UI_PORT", "TAILSCALE_UDP_PORT",
                 "FILES_PANEL_PORT", "SHARE_PORT")} - {0} | {53, 80}),
             "defaults": {
                 "dns": os.environ.get("PANEL_DNS_DEFAULT", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"),
@@ -1027,6 +1229,15 @@ def num_or(value, default):
     return int(value) if value and str(value).isdigit() else default
 
 
+def human_bytes(n):
+    """Konsol'un bytes() biçimiyle aynı: 1024 tabanı, virgüllü tek basamak."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit)).replace(".", ",")
+        n /= 1024
+    return ("%.2f TB" % n).replace(".", ",")
+
+
 def mask_profile(text):
     out = []
     for line in text.splitlines():
@@ -1041,18 +1252,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     panel = None
 
-    def log_message(self, fmt, *args):  # isteğin satırı; başlıklar yazılmaz
-        sys.stderr.write("panel: %s %s\n" % (self.client(), fmt % args))
+    def log_message(self, fmt, *args):
+        # DD-181: istek satırı yazılmaz (dosya arka ucu gibi). Açık bir Konsol sekmesi her
+        # 10 sn istek atar; bu satırlar "Son işlemler"in okuduğu audit satırlarını itiyordu.
+        pass
 
     def audit(self, user, action, detail, ok):
         print("panel: %s %s %s %s -> %s" % (user, self.client(), action, detail, "ok" if ok else "hata"), flush=True)
 
+    def parse_request(self):
+        self.body_read = False
+        return super().parse_request()
+
+    def body_pending(self):
+        """DD-180: okunmamış bir gövde, Caddy'nin yeniden kullandığı bağlantıda bir sonraki
+        istek sanılmasın (gövdeye gizlenen istek CSRF kapısını ve adres kuralını aşardı)."""
+        return not self.body_read and bool(self.headers.get("Transfer-Encoding")
+                                           or (self.headers.get("Content-Length") or "0").strip() != "0")
+
     def client(self):
-        peer = self.client_address[0] if self.client_address else "?"
+        # DD-180: sokete yalnız Caddy ve root bağlanabilir; istemcinin adresi Caddy'nin
+        # yazdığı X-Forwarded-For'dadır. Başlığı olmayan istek sunucunun kendisidir.
         forwarded = self.headers.get("X-Forwarded-For", "") if self.headers else ""
-        if peer in ("127.0.0.1", "::1") and forwarded:
-            return forwarded.split(",")[-1].strip()[:64]
-        return peer
+        return forwarded.split(",")[-1].strip()[:64] if forwarded else "yerel"
 
     # -- yanıt
     def send(self, code, body=b"", ctype="application/json; charset=utf-8", extra=None):
@@ -1068,6 +1290,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
+        if self.close_connection or self.body_pending():
+            self.send_header("Connection", "close")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -1076,6 +1300,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send(code, json.dumps(obj, ensure_ascii=False))
 
     def error(self, code, message):
+        # Dosya arka ucuyla aynı: hatadan sonra bağlantı kapanır.
+        self.close_connection = True
         self.json(code, {"error": message})
 
     # -- kapılar
@@ -1086,6 +1312,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if host not in self.allowed_hosts():
             self.error(403, "bu adresten erişilemez")
             return None
+        # DD-180: Caddy her isteğe gerçek istemci adresini yazar (istemcinin yazdığını ezer).
+        # Sunucudaki bir program (ör. indirme hesabıyla çalışan qBittorrent) Caddy'nin tailnet
+        # adresine bağlanıp buraya ulaşamasın: istemci başka bir Tailscale cihazı olmalı.
+        # Başlıksız istek soketin kendisinden gelir (yalnız root ve Caddy'nin grubu).
+        if self.headers.get("X-Forwarded-For") is not None and not remote_tailnet(self.client()):
+            self.error(403, "Konsol yalnız başka bir Tailscale cihazından kullanılır")
+            return None
         if self.path.startswith("/api/"):
             site = self.headers.get("Sec-Fetch-Site")
             if self.headers.get(API_HEADER) != "1" or (site and site not in ("same-origin", "none")):
@@ -1095,8 +1328,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def allowed_hosts(self):
         env = read_env(self.panel.args.state)
-        port = self.server.server_address[1]
-        hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
+        hosts = set()
         if env.get("LOCAL_DOMAIN"):
             hosts.add("panel.%s" % env["LOCAL_DOMAIN"].lower())
         hosts.update(h.lower() for h in self.panel.args.allow_host)
@@ -1111,8 +1343,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         if length <= 0 or length > MAX_BODY:
             return None
+        raw = self.rfile.read(length)
+        self.body_read = len(raw) == length
         try:
-            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return None
         return data if isinstance(data, dict) else None
@@ -1144,6 +1378,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/konsol/kaynaklar":
             self.json(200, self.panel.system())
+            return
+        if path == "/api/konsol/saglik":
+            self.json(200, self.panel.health())
             return
         if path == "/api/konsol/ayarlar":
             self.json(200, self.panel.settings(fresh="yenile" in query))
@@ -1264,7 +1501,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self.json(code, result)
             return
-        actions = {"uygula": "apply", "onayla": "confirm", "geri-al": "rollback"}
+        # DD-182: "birak" ends a stuck rollback (typed "onayla"); the worker checks both.
+        actions = {"uygula": "apply", "onayla": "confirm", "geri-al": "rollback", "birak": "discard"}
         if path in {"/api/konsol/ayarlar/" + name for name in actions}:
             action = actions[path.rsplit("/", 1)[-1]]
             if action == "confirm":
@@ -1419,20 +1657,54 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.error(404, "bulunamadı")
 
 
-class Server(http.server.ThreadingHTTPServer):
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """DD-180: yalnız Unix soketi. Bağlananı dosya izni ve çekirdeğin bildirdiği kimlik sınırlar."""
     daemon_threads = True
-    allow_reuse_address = True
+
+    def __init__(self, path, handler=None, group_gid=None):
+        self.group_gid = group_gid
+        self.uids = {0, os.geteuid()}
+        # Soket dosyası bind anında yalnız sahibine açık doğar; grup izni sonra verilir.
+        old = os.umask(0o177)
+        try:
+            super().__init__(path, handler or Handler)
+        finally:
+            os.umask(old)
+        if group_gid is not None:
+            os.chown(path, -1, group_gid)
+            os.chmod(path, 0o660)
+
+    def verify_request(self, request, client_address):
+        if not hasattr(socket, "SO_PEERCRED"):
+            return True  # Linux dışı (geliştirme): sınır dosya izni
+        size = struct.calcsize("3i")
+        _pid, uid, gid = struct.unpack("3i", request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size))
+        if uid in self.uids or (self.group_gid is not None and gid == self.group_gid):
+            return True
+        print("panel: soket reddedildi (uid %d gid %d)" % (uid, gid), file=sys.stderr, flush=True)
+        return False
 
 
 def cmd_serve(args):
-    host, _, port = args.listen.rpartition(":")
-    if host != "127.0.0.1" or not port.isdigit():
-        fail("panel yalnız yerel adresi dinler (127.0.0.1:PORT)")
+    kind, _, path = args.listen.partition(":")
+    if kind != "unix" or not path.startswith("/") or len(path.encode()) > 100:
+        fail("panel yalnız bir Unix soketinde dinler (unix:/run/.../api.sock)")
+    group_gid = None
+    if args.socket_group:
+        try:
+            group_gid = grp.getgrnam(args.socket_group).gr_gid
+        except KeyError:
+            fail("soket grubu yok: %s" % args.socket_group)
+    try:
+        if stat.S_ISSOCK(os.lstat(path).st_mode):
+            os.unlink(path)  # önceki çalışmadan kalan soket
+    except FileNotFoundError:
+        pass
     Handler.panel = Panel(args)
-    httpd = Server((host, int(port)), Handler)
+    httpd = Server(path, group_gid=group_gid)
     threading.Thread(target=Handler.panel.sample_forever, name="sampler", daemon=True).start()
     threading.Thread(target=Handler.panel.sample_resources_forever, name="resource-sampler", daemon=True).start()
-    print("panel: %s:%s dinleniyor" % (host, port), flush=True)
+    print("panel: %s dinleniyor" % path, flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -1444,6 +1716,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd")
     s = sub.add_parser("serve")
     s.add_argument("--listen", required=True)
+    s.add_argument("--socket-group", dest="socket_group", default="")
     s.add_argument("--state", required=True)
     s.add_argument("--master-wg", dest="master_wg", required=True)
     s.add_argument("--master-modul", dest="master_modul", required=True)
@@ -1453,6 +1726,7 @@ def main():
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)
     c.add_argument("--host", required=True)
+    c.add_argument("--socket", default="")
     args = parser.parse_args()
     if args.cmd == "serve":
         cmd_serve(args)

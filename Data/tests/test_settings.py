@@ -1,7 +1,10 @@
 """Settings worker tests: no root, services or networking required."""
 import base64
+import contextlib
 import copy
+import fcntl
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -267,7 +270,7 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn(phrase, json.dumps(self.m.status()))
         self.assertIn("Unrelated=keep", self.m.qconf.read_text())
         self.assertIn("ReadWritePaths=", self.m.qdrop.read_text())
-        actions = [x[1] for x in self.calls if x[0] == "systemctl"]
+        actions = [x[1] for x in self.calls if x[0] == "systemctl" and x[-1] != "master-settings-guard.timer"]
         self.assertLess(actions.index("stop"), actions.index("start"))
         self.m.rollback()
         self.assertEqual(self.m.qconf.read_bytes(), before)
@@ -404,8 +407,54 @@ class SettingsTests(unittest.TestCase):
         with patch.object(self.m, "dns_test", side_effect=settings.SettingsError("retry")), self.assertRaises(settings.SettingsError):
             self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
         self.assertEqual(self.m.pending()["phase"], "rollback")
+        self.assertEqual((self.m.pending()["attempts"], self.m.pending()["error"]), (1, "retry"))
+        # DD-182: the next automatic attempt waits for the backoff.
+        self.m.guard()
+        self.assertIsNotNone(self.m.pending())
+        self.assertEqual(self.m.status()["pending"]["retry_in"], 15)
+        self.now += 15
         self.m.guard()
         self.assertIsNone(self.m.pending())
+
+    def test_rollback_that_keeps_failing_becomes_stuck_and_waits_for_the_operator(self):
+        self.m.apply(self.payload(firewall=[self.rule()]))
+        self.now += 61
+        with patch.object(self.m, "firewall_apply", side_effect=settings.SettingsError("iptables busy")):
+            waits = []
+            for attempt in range(1, 6):
+                with self.assertRaises(settings.SettingsError):
+                    self.m.guard()
+                p = self.m.pending()
+                self.assertEqual(p["attempts"], attempt)
+                if attempt < 5:
+                    waits.append(p["retry_at"] - self.now)
+                    self.now = p["retry_at"]
+            self.assertEqual(waits, [15, 30, 60, 120])
+            self.assertEqual(self.m.pending()["phase"], "stuck")
+            self.assertEqual(self.m.status()["pending"]["error"], "iptables busy")
+            calls = len(self.calls)
+            self.m.guard()  # no more automatic attempts
+            self.assertEqual(len(self.calls), calls)
+            with self.assertRaises(settings.SettingsError):
+                self.m.rollback(manual=True)  # the operator's retry still runs
+            self.assertEqual((self.m.pending()["phase"], self.m.pending()["attempts"]), ("stuck", 6))
+        self.m.rollback(manual=True)
+        self.assertIsNone(self.m.pending())
+
+    def test_discard_needs_a_stuck_rollback_its_id_and_the_typed_word(self):
+        self.m.apply(self.payload(firewall=[self.rule()]))
+        p = self.m.pending()
+        with self.assertRaises(settings.SettingsError):
+            self.m.discard({"id": p["id"], "confirm": "onayla"})  # awaiting, not stuck
+        p.update(phase="stuck", attempts=5, error="x")
+        settings.save_json(self.m.pending_path, p)
+        for data in ({"id": p["id"]}, {"id": p["id"], "confirm": "evet"}, {"id": "other", "confirm": "onayla"}):
+            with self.assertRaises(settings.SettingsError):
+                self.m.discard(data)
+            self.assertIsNotNone(self.m.pending())
+        self.assertEqual(self.m.discard({"id": p["id"], "confirm": " ONAYLA "}), {"ok": True})
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.m.config()["firewall"], [])  # nothing was committed
 
     def test_timer_must_be_active_before_any_mutation(self):
         self.fail_cmd = "master-settings-guard.timer"
@@ -414,6 +463,41 @@ class SettingsTests(unittest.TestCase):
             self.m.apply(self.payload(torrent={"username": "operator"}))
         self.assertEqual(before, self.m.qconf.read_bytes())
         self.assertIsNone(self.m.pending())
+
+    def test_apply_starts_the_guard_timer_before_the_pending_file(self):
+        start = ["systemctl", "start", "master-settings-guard.timer"]
+        written = []
+        original = settings.save_json
+        with patch.object(settings, "save_json", side_effect=lambda *a, **k: (written.append(len(self.calls)), original(*a, **k))):
+            self.m.apply(self.payload(torrent={"username": "operator"}))
+        self.assertIn(start, self.calls)
+        self.assertLess(self.calls.index(start), written[0])
+
+    def run_guard(self):
+        with patch("sys.argv", ["master_settings.py", "--state", str(self.state), "guard"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            settings.main()
+
+    def test_idle_guard_stops_its_timer_only_when_it_holds_the_locks(self):
+        stop = ["systemctl", "stop", "--no-block", "master-settings-guard.timer"]
+        with open(self.root / "run/settings.lock", "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.run_guard()
+        self.assertNotIn(stop, self.calls)
+        self.run_guard()
+        self.assertIn(stop, self.calls)
+        # Something pending: the timer keeps running.
+        self.calls.clear()
+        self.m.apply(self.payload(firewall=[self.rule()]))
+        self.assertIsNotNone(self.m.pending())
+        self.run_guard()
+        self.assertNotIn(stop, self.calls)
+        # DD-182: a stuck rollback waits for the operator, so the timer sleeps too.
+        p = self.m.pending()
+        p.update(phase="stuck", attempts=5)
+        settings.save_json(self.m.pending_path, p)
+        self.run_guard()
+        self.assertIn(stop, self.calls)
 
     def test_symlinked_parent_cannot_redirect_root_file_access(self):
         link = self.root / "redirect"

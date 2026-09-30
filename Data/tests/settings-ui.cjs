@@ -21,7 +21,12 @@ const data = {
   dns: { listen: ["lo", "tailscale0"] }, torrent: { installed: true, profile: "/var/lib/qbittorrent" },
   manage: { revision: "r1", config: copy(config), pending: null, username: "admin", save: "/srv/downloads/", names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "torrent.ayc", target: "tailscale", source: "torrent" }] },
 };
-let lastApply = null, writes = 0, failApply = false, holdAccount = false, releaseAccount;
+let lastApply = null, writes = 0, failApply = false, holdAccount = false, releaseAccount, discarded = false;
+// DD-182: Settings → Sistem health card fixture; one warning, one problem.
+const health = { status: "bad", read_at: 1790750000, checks: [
+  { id: "units", name: "Servisler", status: "ok", detail: "Başarısız servis yok" },
+  { id: "reboot", name: "Yeniden başlatma", status: "warn", detail: "Güncellemeler yeniden başlatma bekliyor (linux-image-test)" },
+  { id: "settings", name: "Ayar işlemi", status: "bad", detail: "Geri alma takıldı; Ayarlar'da yeniden deneyin ya da bırakın" }] };
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}) });
   try {
@@ -74,12 +79,45 @@ let lastApply = null, writes = 0, failApply = false, holdAccount = false, releas
           data.manage.pending = null; data.manage.revision += "-account";
           result = {pending:null, committed:true};
         }
-      } else if (endpoint.endsWith("/onayla")) { data.manage.pending = null; data.manage.revision = "r2"; result = { ok: true }; }
+      } else if (endpoint === "/api/konsol/saglik") result = health;
+      else if (endpoint.endsWith("/birak")) {
+        const body = route.request().postDataJSON();
+        assert.deepEqual(body, { id: "stuck", confirm: "onayla" }, "Discard sends the typed word and the stuck id");
+        discarded = true; data.manage.pending = null; result = { ok: true };
+      }
+      else if (endpoint.endsWith("/onayla")) { data.manage.pending = null; data.manage.revision = "r2"; result = { ok: true }; }
       else if (endpoint.endsWith("/geri-al")) { data.manage.pending = null; data.manage.config = copy(config); result = { ok: true }; }
       else throw new Error("Unexpected endpoint " + endpoint);
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(result) });
     });
     await page.goto((process.env.KONSOL_URL || "http://127.0.0.1:8766") + "/#/ayarlar");
+    // DD-182: the Sistem tab opens with the read-only health card.
+    const healthCard = page.locator("article.card", { has: page.getByRole("heading", { name: "Sağlık", exact: true }) });
+    await healthCard.getByText("Güncellemeler yeniden başlatma bekliyor (linux-image-test)", { exact: true }).waitFor();
+    assert.equal(await healthCard.locator(".card-head .hm.bad").innerText(), "Sorun var");
+    assert.equal(await healthCard.locator(".health-facts .hm.warn").count(), 1);
+    assert.equal(await healthCard.locator(".health-facts > div").count(), 3);
+    await page.screenshot({ path: path.join(screenshots, "health-card.png"), fullPage: true });
+    // DD-182: a stuck rollback offers retry and a typed discard, never an automatic give-up.
+    data.manage.pending = { id: "stuck", phase: "stuck", seconds: 0, attempts: 5, error: "Komut tamamlanamadı: master-firewall" };
+    await page.reload();
+    await page.getByRole("tab", { name: "Güvenlik Duvarı" }).click();
+    const stuck = page.locator(".as-rollback.stuck");
+    await stuck.getByText("Geri alma tamamlanamadı (5 deneme)", { exact: true }).waitFor();
+    assert.match(await stuck.innerText(), /Son hata: Komut tamamlanamadı: master-firewall/);
+    await stuck.getByRole("button", { name: "Bırak…", exact: true }).click();
+    const dialog = page.locator("dialog.as-dialog");
+    await dialog.getByLabel("Onaylamak için onayla yazın").fill("evet");
+    await dialog.getByRole("button", { name: "Devam et", exact: true }).click();
+    assert(await dialog.isVisible() && !discarded, "A wrong word neither closes the dialog nor calls the server");
+    await dialog.getByLabel("Onaylamak için onayla yazın").fill("ONAYLA");
+    await dialog.getByRole("button", { name: "Devam et", exact: true }).click();
+    await page.getByText("Takılan işlem bırakıldı; kaydedilmiş ayarlar için kurulumu yeniden çalıştırın.", { exact: true }).first().waitFor();
+    assert(discarded);
+    assert.equal(await page.locator(".as-rollback").count(), 0);
+    writes = 0;  // the discard was this block's only write
+    // Continue from a settled page, as the original flow starts (the discard reloads settings).
+    await page.reload();
     await page.getByRole("tab", { name: "Güvenlik Duvarı" }).click();
     const category = name => page.getByRole("tablist",{name:"Trafik kategorileri",exact:true}).getByRole("tab",{name,exact:true});
     assert.equal(await category("Tailscale").getAttribute("aria-selected"),"true");

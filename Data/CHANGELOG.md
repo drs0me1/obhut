@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-09-30 — Archive jobs page removed (v2-157)
+
+- Files no longer has an "Arşiv işleri" tab. A running job shows as one bar above
+  the list with its progress and "İptal et"; starting a job stays in Files (DD-183).
+- Ayarlar → Günlük now shows archive jobs readably: start ("sources → result"),
+  cancel request and the result with the server's message, including jobs found
+  interrupted after a restart. Before, only an opaque job id was logged.
+- **Verified:** deployed to nrm; archives-live (ZIP, nested, conflict, invalid
+  path, cancel) wrote readable arsiv-olustur/ac/iptal/sonuc lines and Konsol's
+  Günlük API returned them. Local mock with recorded nrm replies: no jobs tab,
+  bar with İptal et while running, gone after completion, old bookmark opens
+  Files, no console errors. 163 Bats, 203 Python. With Node/Playwright now on the
+  Mac, all four fixture browser suites pass, updated for the archive bar
+  (panel-ui) and the health card plus typed discard (settings-ui).
+
+### 2026-09-30 — Stuck rollback, WAN address change, watchdog, health card (v2-156)
+
+- A settings rollback that keeps failing is retried after 15/30/60/120 s and
+  then waits as "takıldı": Konsol shows the error with "Yeniden dene" and
+  "Bırak" (typed onayla) instead of retrying every 2 s forever (DD-182).
+- A WAN share whose address the provider changed is closed with a reason; a
+  Caddy that could not start on the old address is started without it, and the
+  installer no longer dies in stage 6 on that address.
+- The Tailscale watchdog resets Caddy's start limit before restarting it and
+  checks the firewall again once Tailscale answers.
+- A damaged archive history is set aside instead of keeping Files from starting.
+- New read-only Sağlık card on Settings → Sistem: failed services, Tailscale and
+  key expiry, firewall, reboot needed, clock sync, disk/inodes, pending settings.
+- A new archive job waits for the previous one to finish removing its staging
+  area instead of answering "işlem sürüyor" right after it showed "done".
+- **Verified on nrm:** installer removed a WAN site bound to a stale address in
+  stage 6 and republished it; a runtime address change closed the site with a
+  reason and a Caddy stuck on the old address came back; five failing rollbacks
+  became "takıldı" (health red, timer idle), then retry and discard (wrong word
+  refused) both worked; damaged history set aside with no restart; reboot into
+  kernel 6.12.111: all units active, wg0 after the firewall, sockets 0660/0700,
+  no TCP 61008/2019, health green after NTP sync. Caddy's start limit could not
+  be reached on Debian 13 (automatic restarts continued), so the reset-failed
+  change is precautionary. Local 163 Bats, 201 Python; Linux unit, namespace,
+  systemd, share/archive/RAR and external WAN suites pass.
+
+### 2026-09-30 — Faster WebDAV logins, quieter journal, compressed Konsol (v2-155)
+
+- WebDAV remembers a successful login for 10 minutes, so Infuse/Finder requests
+  no longer pay one scrypt check each; every limit and check still applies
+  (DD-181). Tailnet WebDAV slots 16 → 64; closing replies say so.
+- WebDAV and Files replies through Caddy no longer wait ~40 ms each for a
+  delayed ACK (Nagle was on for the kept-alive loopback connection).
+- The settings rollback timer runs only while a change is pending (it used to
+  start every 2 s). Both short timers keep systemd's per-run lines out of the
+  journal. The root backend logs audit lines only, no request lines.
+- Konsol pages and API replies are compressed; page files revalidate (304)
+  instead of downloading again. Concurrent settings refreshes share one run.
+- qBittorrent gets lower CPU priority than Tailscale and Konsol; archive jobs
+  run niced and store already-compressed media without re-deflating it.
+- **Verified on nrm (with v2-154):** WebDAV PROPFIND through Caddy 44 → 1 ms;
+  konsol.js 119 → 37 KB (zstd) and 304 on revalidation; guard/share timers wrote
+  0 journal lines in 3 min (was ~200); real apply started and then stopped the
+  timer; an unconfirmed firewall rule was rolled back after 66 s and the timer
+  stopped; qBittorrent nice 10 / CPUWeight 50.
+
+### 2026-09-30 — Private sockets and login, disk and WireGuard safeguards (v2-154)
+
+- The root Konsol backend has no TCP port: a Unix socket for root and Caddy's
+  group (`SO_PEERCRED` checked); Caddy's admin API moves from `127.0.0.1:2019`
+  to a socket in a `0700` folder. What Caddy relays to the root backend must
+  come from another tailnet device, not from the server itself. Downloads-account
+  programs (qBittorrent, unrar) can no longer reach either, directly or through
+  Caddy. Stage 7 proves it and reloads Caddy (DD-180).
+- WebDAV: the 5-failure/60 s IP block also covers Tailscale; 100 failures in
+  an hour close a share for an hour to addresses not yet logged in; wrong user,
+  paused or unknown shares cost the same hash as a real check.
+- WebDAV PUT/COPY and Files uploads stop with 507 before free space falls under
+  min(5 GiB, 10%) and remove their temporary file.
+- Files backend (unrar) sandbox: loopback-only network, system-call filter,
+  hidden processes, private IPC, no writable-executable memory.
+- WireGuard networks start only after `master-firewall --check` passes; the
+  refresh timer reopens a network that failed for that reason.
+- Root backend closes the connection after an error or an unread request body,
+  so a body hidden in a cross-site POST can no longer run as a second request.
+- **Verified on nrm (installed as v2-154, then v2-155):** no TCP 61008/2019;
+  socket modes; downloads uid refused on both sockets and through Caddy (403);
+  a supplementary-caddy-group user refused by SO_PEERCRED; Caddy reload works;
+  tailnet WebDAV 5th bad login → 429 while local probes stay 401; nested
+  RAR/ZIP/RAR extracted by real unrar in the sandbox (exposure 3.0 → 1.4); a
+  broken firewall kept wg0 down until the timer repaired both. Local: 162 Bats
+  (3 macOS skips), 191 Python (4 skips); Linux: 191 Python (1 skip), four
+  namespace suites, real-systemd timer test, share/archive/WAN acceptance pass.
+
 ### 2026-09-29 — Per-folder Tailscale / HTTP WAN sharing (v2-153)
 
 - Select Tailscale, WAN IPv4 or both per folder; one account/ID/permission/expiry.

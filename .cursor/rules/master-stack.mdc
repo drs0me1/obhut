@@ -119,7 +119,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Her profille birlikte QR resmi `kurulum/wireguard/<ad>.png` olarak iner (`master-wg png`, sunucu üretir; izin 600, sunucuya gönderilmez).
 - Otomatik yedek yoktur. Yalnız kullanıcının indirdiği cihaz profili ve QR resmi Mac'te kalır; bunlar sunucu yedeği değildir.
 - DD-177: WireGuard yalnız internete çıkar. UI/API/CLI erişim seçeneği yoktur; WG host trafiği ilk sırada düşürülür, özel hedefler ve diğer VPN ağları engellenir. WG özel port kuralı kabul edilmez; WAN/Tailscale kuralları ayrı kalır.
-- Konsol'un root arka ucu (`Data/panel/`): `master-wg-panel` yalnız `127.0.0.1:61008` dinler, `/api/wg/*` ve `/api/konsol/*` yanıtlar; sayfa sunmaz. Caddy `panel.<alan>` ile yalnız Tailscale'e açılır. Parola yoktur (DD-147); Host, `X-Konsol` ve değişikliklerde aynı kaynak denetimleri korunur. WireGuard işlemleri `master-wg`, ayarlar `master_settings.py`, klasör hesapları `master_shares.py` üzerinden yürür.
+- Konsol'un root arka ucu (`Data/panel/`): `master-wg-panel` TCP portu açmaz; yalnız `/run/master-wg-panel/api.sock` Unix soketini dinler (root ve Caddy grubu, DD-180), `/api/wg/*` ve `/api/konsol/*` yanıtlar; sayfa sunmaz. Caddy `panel.<alan>` ile yalnız Tailscale'e açılır. Parola yoktur (DD-147); Host, `X-Konsol` ve değişikliklerde aynı kaynak denetimleri korunur. WireGuard işlemleri `master-wg`, ayarlar `master_settings.py`, klasör hesapları `master_shares.py` üzerinden yürür.
 - Ağlar (DD-136/143): `master-wg net-add/net-remove` wg0…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını seçili ağda çalıştırır. Firewall bozuk kayıtta hiçbir zinciri değiştirmez; her ağ yalnız `wg-quick@` birimine sahiptir. `wireguard.command` da seçili ağla çalışır.
 - NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
 
@@ -275,12 +275,16 @@ Ana hedef:
 
 Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 
-1. `Data/dev/export-installer.sh --desktop` çalıştır.
+1. `Data/dev/export-installer.sh` çalıştır (`--desktop` kullanma).
 2. Çıktıyı `Data/app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `Data/install.sh` içinden).
 3. Aynı sürümü repo köküne `<V2_VERSION>.command` olarak kopyala; kökteki önceki sürüm kopyası kaldırılır (exporter bunu yapar). Repo kökünde yalnız çift tıklanan dosyalar durur; geri kalan her şey `Data/` altındadır.
-4. `--desktop` ile Masaüstü'ne `<V2_VERSION>.command` kopyala.
+4. Çıktıları yalnız repo içerisinde tut; Masaüstü'ne veya repo dışına kopyalama. Repo dışına kopya yalnız kullanıcının açık isteğiyle alınır.
 5. Ayrı upload/sync betiği kullanma; tek dağıtım birimi bu app dosyasıdır.
 6. Gömülü tarball `app`, `dev`, `tests`, `.cursor` ve `docs` içermez.
+
+Commit işlemi kendiliğinden export, Masaüstü kopyası veya ayrı sürüm arşivi
+oluşturmaz; sürüm geçmişi Git'te tutulur. Önceden alınmış Masaüstü kopyalarına ve
+`versiyon/` arşivlerine dokunma.
 
 ## Modüller (DD-148)
 

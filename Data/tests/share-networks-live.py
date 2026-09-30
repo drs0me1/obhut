@@ -44,10 +44,18 @@ print(json.dumps({'tail':e['TAILSCALE_IPV4'],'wan':e['WAN_IPV4'],'port':int(e['S
  'relative':str(root.relative_to(e['SERVER_ROOT'])),'before':[i['id'] for i in m.read()['items']]}))
 """,dict(root=root))
 
+# DD-180: root backend and Caddy admin are Unix sockets; Konsol refuses requests Caddy relays from the host itself.
+UNIX = """
+import http.client,socket
+class U(http.client.HTTPConnection):
+ def __init__(self,path,timeout): super().__init__('localhost',timeout=timeout); self.p=path
+ def connect(self):
+  self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); self.sock.settimeout(self.timeout); self.sock.connect(self.p)
+"""
+
 def api(action, data):
-    return remote(BOOT+"""
-import http.client
-c=http.client.HTTPConnection(e['TAILSCALE_IPV4'],int(e['CADDY_HTTP_PORT']),timeout=100)
+    return remote(BOOT+UNIX+"""
+c=U(e['WG_PANEL_SOCKET'],100)
 c.request('POST','/api/konsol/paylasim/'+d['action'],json.dumps(d['data']),
  {'Host':'panel.'+e['LOCAL_DOMAIN'],'X-Konsol':'1','Origin':'http://panel.'+e['LOCAL_DOMAIN'],'Content-Type':'application/json'})
 r=c.getresponse(); data=json.loads(r.read()); c.close()
@@ -69,14 +77,14 @@ def request(network, name, method="GET", leaf="sample.txt", extra=None, password
     return result
 
 def check_rules():
-    return remote(BOOT+"""
+    return remote(BOOT+UNIX+"""
 import subprocess,http.client
 p=subprocess.run([e['SBIN_DIR']+'/master-firewall','--check'],capture_output=True)
 assert p.returncode==0
 r=subprocess.run(['iptables','-S',e['CHAIN_SETTINGS']],capture_output=True,text=True,check=True).stdout
 counts=subprocess.run(['iptables','-nvxL',e['CHAIN_INPUT']],capture_output=True,text=True,check=True).stdout
 packets=sum(int(line.split()[0]) for line in counts.splitlines() if 'dpt:'+e['SHARE_PORT'] in line)
-c=http.client.HTTPConnection('127.0.0.1',2019,timeout=3)
+c=U(e['CADDY_ADMIN_SOCKET'],3)
 c.request('GET','/config/apps/http/servers'); servers=json.loads(c.getresponse().read()); c.close()
 public=[v for v in servers.values() if e['WAN_IPV4']+':'+e['SHARE_PORT'] in v.get('listen',[])]
 bounded=bool(public) and all(v.get('read_header_timeout')==10000000000 and v.get('idle_timeout')==30000000000 for v in public)

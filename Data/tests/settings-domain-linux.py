@@ -49,6 +49,8 @@ def main():
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
                  "WG_NETWORKS_FILE": "etc/networks", "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules"}
         e.update({k: str(root / v) for k, v in paths.items()})
+        # DD-180: both private sockets live in the disposable tree, never in the host's /run.
+        e.update(WG_PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
         e.update(LOCAL_DOMAIN="ayc", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),
                  DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", V2_VERSION="test", FILES_PANEL_USER="test", FILES_PANEL_GROUP="test")
         for folder in ("etc", "dns", "profile", "units", "templates/dosya", "templates/torrent", "caddy-modules", "run", "srv/downloads", "srv/media"):
@@ -83,9 +85,14 @@ def main():
                 p.terminate()
                 p.wait(timeout=10)
         def http(host, path="/", port=None, header=True):
-            address = ("127.0.0.1:" + str(port)) if port else e["TAILSCALE_IPV4"]
+            # port: a loopback TCP port, or a Unix socket path for the root backend (DD-180).
             args = ["curl", "--noproxy", "*", "-s", "--max-time", "2", "-o", "/dev/null", "-w", "%{http_code}",
                     "-H", "Host: " + host]
+            if port and str(port).startswith("/"):
+                args += ["--unix-socket", str(port)]
+                address = "localhost"
+            else:
+                address = ("127.0.0.1:" + str(port)) if port else e["TAILSCALE_IPV4"]
             if header:
                 args += ["-H", "X-Konsol: 1"]
             return cmd(*args, "http://" + address + path, check=False)
@@ -105,9 +112,9 @@ def main():
                         "serve", "--listen", "127.0.0.1:" + e["FILES_PANEL_PORT"], "--root", e["SERVER_ROOT"], "--domain=" + domain]
                 ready = lambda: http("panel." + domain, "/api/state", e["FILES_PANEL_PORT"]) == "200"
             else:
-                args = ["python3", str(DATA / "panel/master-wg-panel"), "serve", "--listen", "127.0.0.1:" + e["WG_PANEL_PORT"],
+                args = ["python3", str(DATA / "panel/master-wg-panel"), "serve", "--listen", "unix:" + e["WG_PANEL_SOCKET"],
                         "--state", str(state), "--master-wg", "/bin/false", "--master-modul", "/bin/false"]
-                ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["WG_PANEL_PORT"]) == "200"
+                ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]) == "200"
             processes[name] = subprocess.Popen(args, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(ready)
         def adapter(argv, **kwargs):
@@ -122,6 +129,8 @@ def main():
                 start("files" if unit == "master-files-panel.service" else "dns")
             elif action == "is-active":
                 assert unit in ("master-settings-guard.timer", "master-files-panel.service")
+            elif action == "start":
+                assert unit == "master-settings-guard.timer"  # DD-181: apply starts the timer
             else:
                 assert action == "daemon-reload"
             return subprocess.CompletedProcess(argv, 0, "", "")
@@ -136,8 +145,13 @@ def main():
             # site or health payload. Do not mistake status alone for a route.
             assert cmd("curl", "--noproxy", "*", "-s", "--max-time", "2", "-H", "Host: health." + domain,
                        "http://" + e["TAILSCALE_IPV4"] + "/") == ""
-            for path, port in (("/api/konsol/ayarlar/durum", e["WG_PANEL_PORT"]), ("/api/state", e["FILES_PANEL_PORT"])):
-                assert http("panel." + domain, path) == "200"
+            for path, port in (("/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
+                root_api = port == e["WG_PANEL_SOCKET"]
+                # DD-180: the root backend refuses what Caddy relays from this host (100.64.0.2 is local here);
+                # the reply still proves Caddy routes the new name to it. Direct socket calls are root's own.
+                assert http("panel." + domain, path) == ("403" if root_api else "200")
+                if root_api:
+                    assert http("panel." + domain, path, port) == "200"
                 assert http("panel." + old, path, port) == "403"
                 assert http("panel." + domain, path, header=False) == "403"
         try:

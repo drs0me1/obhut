@@ -2,6 +2,161 @@
 
 ## Design decisions and rationale
 
+### DD-183: No archive jobs page; results in Günlük, running job as a bar (v2-157)
+
+- **Request:** remove the "Arşiv işleri" tab from Files: if the job states are in
+  the log, a separate page is not needed.
+- **Finding:** the log held only the start, as an opaque job id, and never the
+  result; the page was also the only place for progress and cancel, and
+  starting a job navigated to it.
+- **Decision (user chose "Günlük + ince çubuk"):** the Files backend audits the
+  start (`arsiv-olustur`/`arsiv-ac`, "sources → result name"), the cancel
+  request (`arsiv-iptal`) and, from the job worker, the result (`arsiv-sonuc`,
+  client "-", ok for done/skipped/cancelled, hata for failed/interrupted,
+  including jobs found interrupted at startup). Konsol shows a one-line bar
+  above the Files list only while a job is queued/running, with "İptal et";
+  completion keeps the existing toast and list refresh. The "Sonucu göster"
+  button went with the page. API and private history are unchanged.
+
+### DD-182: Capped rollback, WAN address change, watchdog resets, damaged history, health card (v2-156)
+
+- **Source:** the 2026-09-29 resilience review (risks 1, 3, 8, 9, 10) and the
+  health-card proposal. User approved "v2-156 için başla".
+- **Stuck rollback:** an unconfirmed settings change whose rollback keeps
+  failing used to be retried every 2 s forever while the installer, modules and
+  shares refused to run. Automatic attempts now wait 15, 30, 60, 120 s; the
+  fifth failure sets phase `stuck`: the guard stops trying and its timer sleeps.
+  Konsol shows the last error with "Yeniden dene" (a manual attempt) and
+  "Bırak" (only when stuck, typed `onayla`): the pending file is removed and
+  files stay as they are; re-running the installer applies the saved settings.
+  Chosen over an automatic give-up so a person sees why the rollback failed.
+- **WAN address change:** the share site binds WAN_IPV4 from the install; a new
+  provider address made Caddy fail (Konsol included) and the installer die in
+  stage 6. `wan_info()` now also requires the address to be assigned (probe
+  bind without a port; only EADDRNOTAVAIL means gone), so the 30 s guard removes
+  the site. If Caddy is already down, a failed reload starts it with the new
+  projection instead of restoring the old one; the next guard run confirms.
+  Stage 6 removes a site bound to another address before restarting Caddy.
+- **Watchdog:** `reset-failed` before restarting a failed Caddy (a boot race
+  could use up 3 starts/600 s and leave Konsol down ~10 min); the firewall is
+  checked again after `tailscale wait`, since the tailnet allowlist includes
+  PeerAPI read from tailscaled.
+- **Archive history:** invalid `jobs.json` is renamed to
+  `jobs.json.bozuk-<time>` in the private workspace and history starts empty;
+  I/O errors still stop the service (a real disk problem).
+- **Health card:** `GET /api/konsol/saglik`, read-only, cached 30 s, shown on
+  Settings → Sistem: failed units, Tailscale state/online/key expiry (warn
+  under 14 days), `master-firewall --check`, `/run/reboot-required`, NTP sync,
+  free space/inodes of `/` and SERVER_ROOT against the upload reserve, pending
+  or stuck settings change, and a WAN share whose address is gone. No
+  notifications and no automatic repair.
+
+### DD-181: Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol (v2-155)
+
+- **Measured on nrm (2026-09-29):** each WebDAV request re-ran scrypt (~22 ms
+  locally, more on a VPS vCPU; Infuse browsing sends hundreds). The settings
+  guard ran 1266 times an hour and made 77% of the journal; the WAN-share timer
+  added 354 lines an hour. Konsol re-downloaded ~270 KB uncompressed on each
+  load. The root backend logged every request, pushing audit lines out of the
+  400 lines "Son işlemler" reads.
+- **WebDAV:** successful logins are remembered in memory (10 min, 256 entries;
+  key: share, stored hash, HMAC of the Authorization value under a per-process
+  key). No change to what is checked: pause, expiry, scope, per-IP and
+  per-share limits apply to every request. A registry edit restarts the service,
+  which clears the memory. Tailnet slots go from 16 to 64 because Caddy keeps up
+  to 32 idle upstream connections that could hold every slot; every closing
+  reply now says `Connection: close`.
+- **Nagle (found while measuring on nrm):** the WebDAV and Files backends write
+  headers and body separately. On Caddy's kept-alive loopback connection Nagle
+  held the second write for the peer's delayed ACK, so every request through
+  Caddy took ~44 ms (a new connection: 1 ms). Both handlers now set
+  `TCP_NODELAY` (`disable_nagle_algorithm`). The root backend uses a Unix socket
+  and was not affected.
+- **Rollback timer:** apply starts it (under the locks, before the pending
+  file); an idle guard run stops it only while holding the same locks, so it
+  cannot stop a timer an apply still needs. Enabled for boot. Stage 7 checks
+  "enabled", not "active".
+- **Journal:** both 30 s/2 s oneshots set `SyslogLevel=notice` and
+  `LogLevelMax=notice`: PID 1's per-run start/finish lines are dropped, the
+  helpers' own messages are kept. The root backend no longer logs request lines
+  (the Files backend never did); audit lines remain.
+- **Konsol:** `encode zstd gzip` on the panel site; page files use `no-cache`
+  (ETag revalidation) instead of `no-store`. API replies keep `no-store`. The
+  WebDAV sites are not compressed (video).
+- **Settings view:** concurrent refreshes share one computation; "Yenile" still
+  recomputes unless one finished while it waited.
+- **CPU priority:** qBittorrent runs with `Nice=10` and `CPUWeight=50`, so
+  tailscaled (the exit node's throughput limit) and Konsol come first. Archive
+  job threads (and the unrar they start) are niced to 10; already-compressed
+  media is stored, not deflated, in ZIPs.
+- **Not done:** folder-size caching in Files, reusing the WireGuard sampler for
+  `/api/wg/state`, building the settings view from one `iptables-save`.
+
+### DD-180: Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard (v2-154)
+
+- **Finding (2026-09-29 review):** loopback was treated as a trust boundary. The
+  password-less root backend accepted any local process on `127.0.0.1:61008`
+  (its only other gate, `X-Konsol`, is a header a client sets), and Caddy's
+  admin API on `127.0.0.1:2019` was open to every uid; verified from the
+  downloads account on nrm. A code-execution bug in a downloads-uid process
+  (qBittorrent with untrusted peers, unrar with untrusted RARs, the WAN-facing
+  WebDAV) could therefore become root or publish the root backend.
+- **Decision:** the root backend listens only on `WG_PANEL_SOCKET` (`0660
+  root:CADDY_GROUP`, folder `0755` via `RuntimeDirectory`) and also checks
+  `SO_PEERCRED` (root or Caddy's group). Loopback Host names are no longer
+  accepted. Caddy's admin API moves to `CADDY_ADMIN_SOCKET` in a `0700 caddy`
+  runtime folder; `admin off` was rejected because `systemctl reload caddy`
+  (modules, domain rename) needs the API. Stage 7 proves both as the downloads
+  account and reloads Caddy once.
+- **Relayed from the host itself (found by the v2-154 review):** Caddy's
+  tailnet listener is reachable from local programs too, so the socket alone
+  still let the downloads account reach the root backend through Caddy
+  (reproduced: HTTP 200). A request that carries Caddy's X-Forwarded-For is now
+  accepted only from a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48)
+  that is not one of the server's own (a probe bind succeeds only for local
+  addresses; loopback/link-local always count as local). Caddy overwrites the
+  client's header, so it cannot be forged. Stage 7 proves the 403 as the
+  downloads account and runs its own backend check over the socket. The probe
+  does not reserve a port (`IP_BIND_ADDRESS_NO_PORT`) and only
+  `EADDRNOTAVAIL` counts as "not local": port or descriptor exhaustion caused
+  by a local attacker rejects the request instead of letting it through.
+  `net.ipv4.ip_nonlocal_bind=1` would make every client look local (Konsol
+  refuses everything); the installer never sets it.
+- **WebDAV logins:** the per-IP rule (5/60 s → 300 s) now also covers the
+  Tailscale listener, keyed on Caddy's header; local probes share one key and
+  still receive the uncounted 401 challenge. A per-share, per-listener budget
+  (100 failures/hour) closes that share for an hour to addresses that have not
+  logged in since the service started, so distributed guessing is bounded
+  while the connected recipient keeps working. A wrong user, paused or unknown
+  share costs one scrypt check (decoy record), closing the timing oracle. The
+  one-hour lock and forgetting known addresses on restart are accepted
+  trade-offs; a Konsol flag is left to the planned health card.
+- **Disk reserve:** WebDAV PUT/COPY and Files uploads refuse (507) before and
+  while writing when free space would drop under min(5 GiB, 10%). The review
+  suggested max(5%, 5 GiB); a flat 5 GiB protects journald/apt/state on large
+  disks without idling tens of GB, and 10% keeps small disks usable.
+  qBittorrent and archive jobs are outside this reserve.
+- **unrar sandbox:** the Files unit adds `IPAddressDeny=any` with loopback
+  allowed, `SystemCallFilter=@system-service`, `ProtectProc=invisible`,
+  `PrivateIPC` and `MemoryDenyWriteExecute`. This blocks direct egress and the
+  Caddy tailnet path, not loopback services: dnsmasq (which forwards when Konsol
+  DNS forwarding is on), resolved on Ubuntu and the password-protected
+  qBittorrent WebUI remain reachable. A separate network namespace for the RAR
+  helper is left for later.
+- **Request smuggling (pre-existing, found by the review):** the root backend
+  answered rejected POSTs without reading their body on a keep-alive
+  connection, so a body hidden in a cross-site text/plain POST was parsed as a
+  second request that passed the CSRF gate (and could forge the client
+  address). It now closes the connection after every error and whenever a
+  request body was not fully read, as the Files backend already did.
+- **WireGuard:** a template drop-in orders `wg-quick@` after
+  `master-firewall.service` and runs `master-firewall --check` first, as Caddy
+  does. Without owned rules the default FORWARD policy is open and DD-177's
+  private-destination block does not exist. A network that fails for this
+  reason is reopened by `refresh-tailnet-config` once the check passes.
+- **Not changed:** qBittorrent's own sandbox, the Files backend's loopback TCP
+  (uid 1000 already owns its data), HTTP on WAN (DD-179), Konsol identity.
+
 ### DD-179: Per-folder HTTP WAN opt-in with separate admission budgets (v2-153)
 
 - **Decision:** keep HTTP as explicitly requested. A folder selects Tailscale,

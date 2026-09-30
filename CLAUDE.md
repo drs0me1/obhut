@@ -81,6 +81,11 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Smallest possible change. No opportunistic refactors.
 - Show the diff before committing. Commit only when the user asks (unless
   a user rule says otherwise for that turn).
+- Keep version history in Git. A commit must not trigger an installer export,
+  Desktop copy or separate version snapshot. When an export is needed, use
+  `Data/dev/export-installer.sh` without `--desktop`; keep its outputs in the
+  repository. Copy outside the repository only on an explicit user request.
+  Leave existing Desktop copies and frozen versions untouched.
 - Bump `V2_VERSION` in `install.sh` on every behavioural change to the
   installer tree. Record user-facing changes under `[Unreleased]` in
   `CHANGELOG.md` and add a `DD-*` entry when rationale is non-obvious.
@@ -104,7 +109,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Shared-account commands are retired; folder accounts use `master_shares.py` (**DD-158**) |
 | `Data/console/` | Konsol pages (`index.html`, `konsol.css`, `konsol.js`) at Caddy `panel.<domain>`, tailnet only (**DD-140**); the old names `wg.`, `dosya.` and `file.` are gone (**DD-154**). Design mockups in `Data/docs/design/` |
 | Built-in WebDAV (`paylasim` internal ID) | **DD-158/159:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Per-folder `/s/<id>/` URLs, separate users, RO/RW, expiry and pause. One Tailscale-facing port via Caddy; no shared account or writable symlink tree. See contract §5–7 for limits and manual recipient ACL requirements. |
-| `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, `127.0.0.1:61008`, `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
+| `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, Unix socket `/run/master-wg-panel/api.sock` only — no TCP port since **DD-180** — `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
 | `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
 | `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
 | `Data/install.sh` | Orchestrator |

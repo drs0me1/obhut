@@ -7,6 +7,7 @@ eylemler dışında komut çalıştırmaz; JSON kayıt 0600 ve servis LoadCreden
 import argparse
 import contextlib
 import ctypes
+import errno
 import fcntl
 import hashlib
 import hmac
@@ -16,6 +17,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import stat
 import struct
 import subprocess
@@ -28,10 +30,14 @@ ID_RE = re.compile(r"[0-9a-f]{24}\Z")
 USER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,31}\Z")
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+# DD-180: auth_* (per client IP) and share_* (per share, all IPs) apply to both listeners.
+# DD-181: 64 tailnet slots, so Caddy's pool of idle upstream connections cannot fill them.
 DEFAULT_LIMITS = {"wan_connections": 8, "wan_connections_per_ip": 4,
-                  "tail_connections": 16, "wan_auth_parallel": 4,
+                  "tail_connections": 64, "wan_auth_parallel": 4,
                   "auth_failures": 5, "auth_window_seconds": 60,
                   "auth_block_seconds": 300, "auth_entries": 4096,
+                  "share_failures": 100, "share_window_seconds": 3600,
+                  "share_block_seconds": 3600,
                   "wan_timeout_seconds": 30}
 # Edge sockets include unauthenticated/idle connections, before proxy admission.
 WAN_SOCKET_PER_IP = 16
@@ -89,6 +95,19 @@ def identity(fd):
     else:
         birth = [getattr(st, "st_birthtime", 0)]
     return [st.st_dev, st.st_ino, birth]
+
+
+def assigned(address):
+    """DD-182: is this IPv4 address still on this host? Only a local address can be bound;
+    no port is reserved. Errors other than "not local" keep the current behaviour."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            with contextlib.suppress(OSError):
+                probe.setsockopt(socket.IPPROTO_IP, getattr(socket, "IP_BIND_ADDRESS_NO_PORT", 24), 1)
+            probe.bind((address, 0))
+    except OSError as err:
+        return err.errno != errno.EADDRNOTAVAIL
+    return True
 
 
 def password_hash(password, salt=None):
@@ -214,9 +233,13 @@ class Manager:
         except ValueError:
             available = False
         available = available and bool(self.env.get("SHARE_WAN_BACKEND"))
+        reason = "" if available else "WAN paylaşımı için sunucuya atanmış genel IPv4 ve güncel kurulum gerekli."
+        # DD-182: the provider can take the address away; Caddy could then not bind it.
+        if available and not assigned(address):
+            available = False
+            reason = "Sunucunun internet IPv4 adresi değişti (%s artık bu sunucuda değil); kurulumu yeniden çalıştırın." % address
         return {"available": available, "address": address if available else "",
-                "port": int(self.env["SHARE_PORT"]),
-                "reason": "" if available else "WAN paylaşımı için sunucuya atanmış genel IPv4 ve güncel kurulum gerekli."}
+                "port": int(self.env["SHARE_PORT"]), "reason": reason}
 
     def wan_active(self):
         if not self.wan_info()["available"] or self.module_state() != "calisiyor":
@@ -408,7 +431,16 @@ class Manager:
             # Apply restrictions before opening a listener; existing manual denials
             # stay ahead of the base permission. Caddy reload never opens panel ports.
             subprocess.run([os.path.join(e["SBIN_DIR"], "master-firewall")], check=True, timeout=30, capture_output=True, env=env)
-            subprocess.run(["systemctl", "reload", "caddy"], check=True, timeout=30, capture_output=True)
+            try:
+                subprocess.run(["systemctl", "reload", "caddy"], check=True, timeout=30, capture_output=True)
+            except subprocess.CalledProcessError:
+                if subprocess.run(["systemctl", "is-active", "--quiet", "caddy"], timeout=10).returncode == 0:
+                    raise
+                # DD-182: Caddy is down, e.g. it could not bind a WAN address the provider
+                # took away. Start it with this projection; the next guard run confirms it.
+                subprocess.run(["systemctl", "reset-failed", "caddy"], timeout=10, capture_output=True)
+                subprocess.run(["systemctl", "start", "--no-block", "caddy"], timeout=10, capture_output=True)
+                return
             atomic(marker, signature)
         except (OSError, subprocess.SubprocessError):
             write_config(previous)
