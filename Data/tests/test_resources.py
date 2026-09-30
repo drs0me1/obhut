@@ -28,7 +28,12 @@ def unix_get(sock, path, headers, method="GET", body=None):
     conn = panel.UnixConnection(sock, 3)
     try:
         # Like urllib: one request per connection, so an unread body is never parsed as the next request.
-        conn.request(method, path, body=body, headers={"Host": "panel.test", "Connection": "close", **headers})
+        try:
+            conn.request(method, path, body=body, headers={"Host": "panel.test", "Connection": "close", **headers})
+        except BrokenPipeError:
+            # A header gate can send 403 and close before the separate body write.
+            # Still require a real HTTP response; disconnects are not successful tests.
+            pass
         response = conn.getresponse()
         return response.status, dict(response.getheaders()), response.read()
     finally:
@@ -55,8 +60,10 @@ class ResourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        state = Path(self.tmp.name) / "state.env"
-        state.write_text(f"SERVER_ROOT={self.tmp.name}\nLOCAL_DOMAIN=test\nV2_VERSION=test\n")
+        root = Path(self.tmp.name).resolve()
+        state = root / "state.env"
+        (root / "modules").write_text("")
+        state.write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\nMODULES_FILE={root / 'modules'}\n")
         self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[]))
 
     def test_resources_do_not_enumerate_wireguard_ports_or_processes(self):
@@ -130,6 +137,47 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(headers["Cache-Control"], "no-store")
             self.assertNotIn("ports", json.loads(body))
+
+    def test_unix_helper_reads_early_rejection_after_body_write_breaks(self):
+        class Handler(panel.Handler):
+            def body_json(self):
+                raise AssertionError("a rejected body must not be read")
+        Handler.panel = self.p
+        server, sock = start_unix(self, Handler)
+        closed = threading.Event()
+        shutdown = server.shutdown_request
+        send = panel.UnixConnection.send
+        body = b'{}'
+        attempted = []
+
+        def finish(request):
+            shutdown(request)
+            closed.set()
+
+        def send_after_rejection(conn, data):
+            if data == body:
+                self.assertTrue(closed.wait(2), "server did not reject the headers")
+                attempted.append(True)
+                raise BrokenPipeError("server closed before the separate body write")
+            return send(conn, data)
+
+        with patch.object(server, "shutdown_request", side_effect=finish), \
+                patch.object(panel.UnixConnection, "send", new=send_after_rejection), \
+                patch.object(self.p, "run", side_effect=AssertionError("must not mutate")):
+            status, headers, raw = unix_get(sock, "/api/wg/nets", {"Content-Type": "application/json"}, "POST", body)
+        self.assertEqual(attempted, [True])
+        self.assertEqual(status, 403)
+        self.assertEqual(headers["Connection"], "close")
+        self.assertIn("error", json.loads(raw))
+
+    def test_unix_helper_does_not_treat_broken_pipe_without_response_as_success(self):
+        with patch.object(panel, "UnixConnection") as connection:
+            conn = connection.return_value
+            conn.request.side_effect = BrokenPipeError("write closed")
+            conn.getresponse.side_effect = panel.http.client.RemoteDisconnected("no HTTP response")
+            with self.assertRaises(panel.http.client.RemoteDisconnected):
+                unix_get("unused", "/api/wg/nets", {}, "POST", b'{}')
+            conn.close.assert_called_once()
 
     def test_socket_is_private_and_the_group_is_opt_in(self):
         class Handler(panel.Handler):
@@ -217,12 +265,17 @@ class ResourceTests(unittest.TestCase):
 
     def health_with(self, outputs, reboot=False, pending=None):
         def cmd(argv, timeout=10):
+            if argv[:2] == ["systemctl", "show"]:
+                return 0, "\n\n".join("Id=%s\nLoadState=loaded\nActiveState=active\nUnitFileState=enabled" % unit
+                                      for unit in argv[4:])
             return outputs.get(argv[0], (0, ""))
-        real_exists = panel.os.path.exists
         with patch.object(self.p, "health_cmd", side_effect=cmd), \
-                patch.object(panel.os.path, "exists", side_effect=lambda path: reboot if path == "/run/reboot-required" else real_exists(path)), \
-                patch.object(panel.master_settings, "Manager") as manager:
+                patch.object(self.p, "health_reboot", return_value=("warn", "reboot") if reboot else ("ok", "same kernel")), \
+                patch.object(panel.master_settings, "Manager") as manager, \
+                patch.object(panel.master_shares, "Manager") as shares:
             manager.return_value.status.return_value = {"pending": pending}
+            shares.return_value.wan_info.return_value = {"available": True}
+            shares.return_value.read.return_value = {"items": []}
             self.p.health_cache = (0.0, None)
             return self.p.health()
 

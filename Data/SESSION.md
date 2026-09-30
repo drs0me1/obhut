@@ -4,6 +4,226 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Independent WebDAV connection cards, v2-164 (DD-192):**
+- User approved model 3 dual cards and independent Tailscale/HTTPS on/off,
+  RO/RW and expiry, with explicit parallel-agent approval. The shared folder,
+  account and stable URLs remain; Manage edits only shared account/path fields.
+- Schema 4 stores exactly two connection policies. Valid schema 3 migrates
+  without changing identities, credentials, timestamps or effective access.
+  Partial API patches retain omitted fields/other-scope expiry; toggling does
+  not renew. Both off keeps the account. Old global-policy writes require a
+  page refresh. Listener-selected authorization applies through transfer chunks
+  and staged-write commit; existing limits, Caddy gates and restart warning stay.
+- Local: 366 Python cases (4 existing skips), 165 Bats (3 platform skips), six
+  browser fixture suites, Bash/JavaScript syntax, ShellCheck and diff checks.
+  The 36 new policy tests also pass separately on Mac and Debian; full Debian
+  Python suite: 366 cases (1 optional corpus skip). No Linux Bats run this turn.
+  Initial old-fixture/schema/UI assertions were updated, not skipped. Independent
+  backend review found no blocking migration/authorization/isolation issue.
+- Portable deployed with scratch SSH_HOST=nrm/blank LOCAL_DOMAIN, default no
+  full-upgrade and E; exit 0, no packages changed. Archive SHA256:
+  `e970e2f3216751ae7af2560668ac5aa8db94f11082ae4bffeec27f4a9e7f5968`.
+  Both launchers and the complete 49-file embedded/installed runtime tree match
+  source; all six changed active backend/console files also match the package.
+- Actual pre/post normalized-registry SHA256 matches the expected schema-4
+  conversion exactly. Operator media/infuse account, password hash, ID, folder
+  identity and both RO policies retain expiry 1791406188 (7 October). Settings
+  and qBittorrent bytes and qBittorrent PID 1082 remain unchanged.
+- `share-connections-live.py --host nrm` passed through real Caddy/TLS and
+  Tailscale: PROPFIND/read/ranges, opposing RO/RW policies in both directions,
+  independent switches/both off, expiry preservation, WAN-only expiry and old
+  API refusal. Only its temporary account/files were removed; original registry
+  is byte-identical after cleanup. Share changes briefly restarted WebDAV.
+- Installed UI read-only acceptance: three widths/both themes, correct separate
+  controls and Infuse URL/host/port/path, no overflow, browser errors or writes.
+  Fixture UI additionally covers ten widths (320–2560), busy/error/retry and
+  confirmations; desktop/mobile screenshots were inspected.
+- Final health green; eight services active, no failed units. Firewall, Caddy,
+  dnsmasq and systemd unit validation passed. Test account/content cleanup passed;
+  separate isolated test-code/scratch-launcher trees remain under `/tmp` because
+  the tool policy rejected recursive cleanup. They contain no operator inputs.
+- No native Infuse UI, fresh OS, reboot or future certificate renewal tested.
+  No commit requested, no Desktop copy; earlier uncommitted v159–163 preserved.
+
+## Previous Task
+
+**2026-09-30 — Compact Caddy local-domain card, v2-163:**
+- User confirmed `qbit.example.net` works and requested a narrower local-domain
+  section with Tailscale Admin DNS instructions. UI-only change: 620 px card,
+  inline Update, four manual split-DNS steps using live IP and saved suffix.
+- Domain transactions, publication choices and all backend behavior unchanged.
+  No automatic DNS/Cloudflare writes, service preferences or credentials edited.
+- Browser fixture tests pass for five widths/both themes, live-value refresh,
+  unsaved-input isolation, existing confirmation/cancellation, Settings and HTTPS
+  regressions, production CSP. Python: 330 cases (4 skips); syntax/ShellCheck pass.
+- Portable deployed using scratch SSH_HOST=nrm/blank LOCAL_DOMAIN, default no
+  full-upgrade and E, exit 0. SHA256 of the embedded archive:
+  `064096d922770dacd828cf3d8c0c8f1ed775cdc68de6a56a5c2cdcc7acae4b7e`.
+  Both launchers and all 49 source/bundle/installed-tree runtime files match.
+- Live read-only UI: three widths/both themes, correct IP/suffix, two ready
+  certificates, zero errors/writes. Configuration/account/qBittorrent digests
+  and qBittorrent PID 1082 preserved. HTTPS qBit login 200, anonymous API 403,
+  DAV root 404; health green and eight services active/no failed units. Firewall,
+  Caddy, dnsmasq and systemd validate. Initial unit verification used the wrong
+  test name master-dosya; corrected to the existing master-files-panel and passed.
+  No fresh OS/reboot or authenticated-client/transfer acceptance was needed/run.
+- Pre-deploy nrm: v162, private locked Panel, Tailscale+HTTPS qBittorrent
+  `qbit.example.net` and WebDAV `dav.example.net`, both certificates ready. This
+  supersedes the previous task's qBittorrent-private state. Do not run the old
+  `publications-live.py` assumptions against these now-public operator settings.
+- No commit requested; no Desktop copy. Preserve previous uncommitted work.
+
+## Previous Task
+
+**2026-09-30 — Direct HTTPS address table, v2-162 (DD-191):**
+- User approved implementation/deployment, explicitly keeping Panel Tailscale-only
+  with WAN locked until an admin login exists. Fixed table: Panel/qBittorrent/
+  WebDAV, independent private/public gates, domain and per-row Save; no Tunnel.
+- Added `master_publications.py`; Settings owns revision/transaction/certificate
+  validation and rollback. Existing share publisher/guard and module lifecycle
+  project the saved choices, including private 403 routes and one shared TCP443
+  rule. Unsafe/stopped qBittorrent suppresses WAN; native preferences stay intact.
+  Guard inspects persisted native settings, not instantaneous in-memory edits.
+- First-row failure/crash snapshots private Caddy files. Live negative-API test
+  found imported SettingsError class identity mismatch; fixed by registering
+  __main__ as master_settings. Regression checks controlled JSON/400, not 502.
+- Real isolated qBittorrent/Caddy test found native Host port validation rejects
+  external nondefault ports; Host now contains the domain only, X-Forwarded-Host
+  carries the public authority for CSRF. Both 443 and 18443 pass native login,
+  cookie/API, wrong password, CSRF, spoofed Host and Panel isolation checks.
+- Three portable deploys, scratch inputs (SSH_HOST=nrm, blank LOCAL_DOMAIN),
+  no full-upgrade, E, exit0. Final bundle SHA256:
+  `9417674316d19b5289db81ecce8db61a31be87284bbcf7359262a281873cc72d`.
+  All 49 runtime files match source, both launcher copies and installed tree.
+- Tests: 330 Python Mac/Linux (4/1 skips), 165 Bats Mac/Linux (3/1 skips),
+  table browser/CSP at five widths/both themes, existing HTTPS/settings/files/panel/WireGuard
+  browser regressions, live browser, isolated complete
+  firewall packets (new shared/qBit-only HTTPS plus cold failure/recovery), native
+  settings/password suite, native TLS proxy test, syntax/ShellCheck.
+- Live `publications-live.py` tests real API rejection, Tailscale gates across
+  actual module reapply, independent DAV HTTPS and public disable/restore.
+  `https-live.py` passes trusted external TLS, RO/RW, Unicode PUT/MOVE/DELETE,
+  ranges, scope and SHA-verified transfers; short download sample 31.07 MB/s.
+  Test accounts/files cleaned, original account registry byte-identical.
+  Final Settings burst: 8 parallel, 32/32 HTTP200, max 213 ms; health green.
+- Current nrm: v162, healthy core services, WG network/two peers retained,
+  Panel TS-only/locked, qBit TS-only, DAV TS+HTTPS `dav.example.net` (2026-12-29).
+  Optional question about `torrent.example.net` DNS received no answer; it remains
+  unresolved. Do not enable public qBit until a chosen DNS-only A record points
+  to 203.0.113.10. Native bans can cover the proxy address unless operator sets
+  trusted-proxy prefs; no promise of WebDAV-like per-client password budgets.
+- No fresh OS/reboot/native Infuse/future renewal test or public qBit ACME proof.
+  No commit requested or Desktop copy. Previous uncommitted v159–161 preserved.
+
+## Previous Task
+
+**2026-09-30 — Public WebDAV HTTPS managed in Settings, v2-161 (DD-190):**
+- User registered DNS-only `dav.example.net` in Cloudflare and requested installer
+  integration/configuration alongside the local-domain card. Implemented with
+  approved parallel agents: UI, firewall, status/tests and documentation.
+- New `master_https.py` is installed with the bundle. Settings worker owns
+  isolated revision/pending/commit/rollback, validates exact WAN-only DNS and
+  verifies certificate hostname/chain against the assigned IPv4. Caddy owns
+  Let's Encrypt TLS-ALPN keys/renewal; no token, WAN80 or UDP443. Strict SNI/Host
+  is enabled only on the WAN HTTPS server. Private APIs remain tailnet-only.
+- Three modes: absent https key preserves consented legacy HTTP; saved domain
+  selects HTTPS443; explicit empty domain closes WAN without HTTP fallback.
+  HTTPS listener persists for renewal even with zero active folders. Per-folder
+  network/account/permission/expiry and all budgets remain. Tailscale61010 and
+  local domain stay unchanged. Removing/replacing the domain uses graceful
+  Caddy reload, so existing transfers may finish.
+- Exported 48 runtime files; deployed three times via the portable launcher,
+  own scratch SSH_HOST=nrm/blank LOCAL_DOMAIN, default no upgrade, E, exit0.
+  Domain saved through real API; external trusted TLS1.3 certificate expires
+  2026-12-29. HTTPS and Tailscale DAV read/ranges, RO refusal, RW Unicode PUT,
+  absolute MOVE/DELETE, pause and WAN scope tests pass. Test registry cleaned
+  byte-for-byte; no operator credentials/profiles read. Actual disable/re-enable
+  closes WAN443/61010 but preserves TS. Rerun retains the certificate/domain.
+- Tests: 318 Python Mac/Linux (4/1 skips), 165 Bats Mac/Linux (3/1 skips), five browser
+  fixture suites, real live Caddy UI, isolated settings/domain/qBittorrent,
+  syntax/ShellCheck and exact payload parity. Complete isolated firewall packet
+  tests pass (HTTPS ports/limits/renewal and cold failure/recovery included).
+  Test setup corrections only:
+  copied Linux checkout must be 0755 and include root .gitignore; live fixture
+  code needs an escaped newline and cross-scope refusal is 403, not 401.
+- A TLS spoofed-Host test initially got Caddy's empty 200 (zero-byte response,
+  no admin/API leak). Added strict_sni_host; live regression now expects 421.
+  Portable was re-exported/redeployed and HTTPS acceptance repeated afterwards.
+- Client action: replace the previous WAN IP:61010 URL with the HTTPS URL in
+  Files → Shares. Native Infuse, fresh OS/reboot and future renewal not tested.
+  No commit requested; no Desktop copy. Current launcher v2-161; branch quantum
+  still includes uncommitted v159/v160 work, which was preserved.
+
+## Previous Task
+
+**2026-09-30 — Remaining audit stages, v2-160 (DD-187–189):**
+- User explicitly approved parallel subagents. Completed production changes for
+  firewall startup rescue/default deny, descriptor-based installation permissions,
+  install/module locks and the third CLI qBittorrent reader; bounded DAV auth,
+  short PUT/COPY locks, overload handling, sandbox and timeouts; IPv4-only DNS,
+  desired-service/kernel health, input-depth and actionable sharing errors.
+- Deployed three times through the portable launcher (scratch inputs, no full-upgrade,
+  exit 0). Live health initially missed the kernel change because the service's
+  ProtectKernelModules masks `/lib/modules`; fixed using the valid boot-link plus
+  nonempty image/initrd without weakening the sandbox, then redeployed.
+- Linux Bats caught Bash 5.2 template ampersand interpretation: common.sh now
+  temporarily disables/restores patsub_replacement. Cross-platform test stat/hash
+  helpers fixed; interrupted-install test injects the fixture-owned Caddy failure
+  (Debian's absolute DNS helper bypasses the PATH stub). Full test checkout guards
+  require docs/exporter/root launchers too, not just the runtime bundle.
+- Current local suites: 281 Python (4 skips), 165 Bats (3 skips), four browser
+  suites, shellcheck/syntax. Linux: 281 Python (1 optional RAR corpus skip),
+  165 Bats (1 negative-flock skip); real root
+  permission/flock: 28. Settings/DNS/domain/native qBittorrent/systemd tests pass.
+  A Unix test client had a header-rejection/body-write race; it now reads and
+  requires the real 403 after BrokenPipe rather than accepting a disconnect.
+- Live: 320 concurrent API requests all 200, 80 PROPFIND all 207; 2×256 MiB
+  SHA-verified WAN/Tailscale transfer ~59/57 MB/s. 512 MiB memory ceiling reclaims
+  page cache, OOM/oom_kill=0. Original share metadata preserved. qBittorrent bytes
+  matched before reboot but its native reboot changed the digest; old contents
+  were not saved, so do not claim byte-identical profile persistence after boot.
+- Cold-firewall corruption/recovery and secondary-NIC tests passed, including
+  SAFE-FW retry, missing/misordered settings guard and unchanged third-party chains.
+- Reboot to 6.12.111 completed; health is green, eight main services active,
+  two WG peers retained. Post-boot transfers ~59/55 MB/s with OOM=0 and all
+  320 API/80 DAV requests successful. Rerun/reboot share persistence verified;
+  temporary test accounts/files cleaned. /tmp test trees from before reboot
+  were cleared by the OS; final temporary test tools were not installed globally.
+- Implementation stages complete. No fresh Ubuntu image, native Infuse UI or
+  remote WG peer traffic acceptance in this turn. WAN remains HTTP; TCP budgets
+  and account-level Tailscale policy unchanged. No commit requested or created;
+  no Desktop copy. Current exported launcher: 2026.08.06-v2-160.command.
+
+## Previous Task
+
+**2026-09-30 — Sequential audit remediation, stage 1, v2-159 (DD-186):**
+- User accepted implementing the combined Claude/Astra recommendations in
+  order and asked whether Infuse WAN/Tailscale speed tests explain 670 MB.
+- Implemented: backlog 128 on all three server classes (four listeners), safe
+  qBittorrent reads at both root call sites, reserved Files source/destination
+  protection and restore naming. No WAN/TCP/auth budget changes yet.
+- Deployed through the portable launcher, scratch SSH_HOST=nrm/blank domain,
+  full-upgrade default `h`, confirmation `E`, exit 0. No reboot. No Desktop copy.
+- Tests and the controlled cache experiment are recorded in CHANGELOG v2-159;
+  repeat with `tests/backend-hardening-live.py --host nrm`. Existing share
+  registry retained byte-for-byte; disposable test share/files removed.
+- Mac Bats requires physical temp fixture paths; the documented `mktemp`
+  wrapper passed 160 tests with 3 platform skips. Do not loosen production
+  no-follow traversal to accommodate macOS `/var` aliases.
+- **Still open, in order:** (2) firewall boot failure policy, fd-based root
+  permissions repair, canonical install/module locking without nested deadlock;
+  (3) bounded hash admission on both scopes, short wait/cache recheck, HTTP
+  capacity replies, narrower PUT/COPY locks, sandbox/resource limits;
+  (4) IPv4-only DNS/parser, reboot/required-service health, clear downloads
+  conflict errors, depth/error handling and full install/reboot/client acceptance.
+- Do not raise global TCP 64 blindly (counters were zero); coordinate any
+  per-IP/global HTTP changes. Keep Caddy/WireGuard firewall pre-start checks.
+  The old Infuse first-connect delay remains unproven; current reproduction
+  proves cache accounting but cannot identify the old 670 MB composition.
+- No commit requested or created for v2-159. Earlier v2-158 is commit f3f4cf4.
+
+## Previous Task
+
 **2026-09-30 — Auto-updates and maintenance cleanup, v2-158 (DD-184, DD-185):**
 - User went through the five open topics from the analysis: WAN folder sharing
   unchanged; Konsol identity check unchanged (single Tailscale account, all
@@ -17,7 +237,7 @@ Cross-session continuity for this repository.
 - Deployed via the portable launcher with scratch kurulum.env (exit 0); live
   checks and regression batch listed under CHANGELOG v2-158 "Verified on nrm".
   nrm scratch folder removed; no test shares left.
-- Not committed yet.
+- Committed as f3f4cf4 on branch quantum.
 
 ## Previous Task
 

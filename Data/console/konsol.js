@@ -1486,7 +1486,7 @@
   const sharesPage = window.createSharesPage({
     h, svg, post, toast, fail, copyButton, root: fsRoot, getShares: () => S.share,
     setShares: (data) => { S.share = data; renderFs(); },
-    showDialog: (title, content) => { $("sh-body").replaceChildren(shHead(title, "Klasör başına ayrı hesap · yalnız Tailscale", "share"), content); if (!$("sh").open) $("sh").showModal(); },
+    showDialog: (title, content) => { $("sh-body").replaceChildren(shHead(title, "Ortak klasör ve hesap · bağımsız Tailscale / WAN bağlantıları", "share"), content); if (!$("sh").open) $("sh").showModal(); },
     closeDialog: shClose, ask,
   });
   $("sh").addEventListener("close", () => { const pw = $("dav-password"); if (pw) pw.value = ""; });
@@ -1818,7 +1818,7 @@
 
   const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
   function webDesc(e) {
-    if (e.access === "wan") return "İnternet üzerinden seçili klasör paylaşımları · HTTP şifrelemez";
+    if (e.access === "wan") return "İnternet üzerinden seçili klasör paylaşımları · " + (e.scheme === "https" ? "HTTPS" : "HTTP şifrelemez");
     const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
     if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
     return metaOf(e.source).name + extra;
@@ -1835,13 +1835,14 @@
     const rows = w.entries.map((e) => h("div", { class: "tr" },
       h("span", { class: "a" }, e.address, h("small", null, webDesc(e))),
       h("span", { class: "to" }, e.routes.map((r) => webHop(r, e.routes.length > 1))),
-      h("span", { class: "who" }, srcTag(e.source === "paylasim-wan" ? "paylasim" : e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · HTTP" : "Tailscale"))));
+      h("span", { class: "who" }, srcTag(e.source === "paylasim-wan" ? "paylasim" : e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · " + (e.scheme === "https" ? "HTTPS" : "HTTP") : "Tailscale"))));
     fill("cfg-web", 
       h("div", { class: "card-head" }, h("h2", null, svg("globe"), "Web adresleri"),
         h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
       h("div", { class: "table addr-t" }, h("div", { class: "tr head" }, h("span", null, "Adres"), h("span", null, "Nereye gider"), h("span", null, "Kaynak · erişim")), rows),
       rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
-      h("div", { class: "card-foot" }, h("span", null, "Panel ve uygulama arayüzleri yalnız Tailscale'dedir. WAN etiketi yalnız seçilen klasör paylaşımlarını gösterir; internet üzerinden HTTP parola ve dosyaları şifrelemez.")));
+      h("div", { class: "card-foot" }, h("span", null, "Panel ve uygulama arayüzleri yalnız Tailscale'dedir. WAN etiketi internet paylaşımı dinleyicisini gösterir."
+        + (w.entries.some(e => e.access === "wan" && e.scheme !== "https") ? " İnternet üzerinden HTTP parola ve dosyaları şifrelemez." : ""))));
   }
   const HEALTH = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Dikkat"], bad: ["bad", "Sorun var"] };
   function healthCard() {

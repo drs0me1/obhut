@@ -28,7 +28,7 @@ class NetworkManagerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="share-networks-")
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         for name in ("srv/alpha", "run", "sites", "profile"):
             (self.root / name).mkdir(parents=True)
         self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"), MODULES_FILE=str(self.root/"modules"),
@@ -47,7 +47,7 @@ class NetworkManagerTests(unittest.TestCase):
         self.assigned = self.assigned_patch.start()
         (self.root/"modules").write_text("paylasim\tdurduruldu\n")
         self.m = s.Manager(self.state)
-        self.m.change("save", dict(path="alpha",username="reader",password="Test12345",permission="ro",days=7))
+        self.m.change("save", dict(path="alpha",username="reader",password="Test12345"))
         self.item = self.m.read()["items"][0]
 
     def save(self, **fields):
@@ -58,36 +58,58 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_optin_required_and_selections_strict(self):
         before = Path(self.m.path).read_bytes()
-        for nets in ([], None, "wan", ["other"], ["tailscale","tailscale"], ["wan",{}]):
-            with self.subTest(nets=nets), self.assertRaises(s.ShareError):
-                self.save(networks=nets)
+        for connections in ({}, None, "wan", [], {"other": {"enabled": True}},
+                            {"wan": {}}, {"wan": {"enabled": 1}}, {"wan": {"enabled": "true"}}):
+            with self.subTest(connections=connections), self.assertRaises(s.ShareError):
+                self.save(connections=connections)
         for ack in (None, False, 1, "true"):
             with self.assertRaises(s.ShareError):
-                self.save(networks=["wan"],ack_wan_http=ack)
+                self.save(connections={"wan": {"enabled": True}},ack_wan_http=ack)
         self.assertEqual(before,Path(self.m.path).read_bytes())
 
     def test_network_edit_preserves_identity_credentials_and_absolute_expiry(self):
-        row = self.save(networks=["tailscale","wan"],ack_wan_http=True)["items"][0]
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
+        self.running()
+        row = self.m.public()["items"][0]
         after = self.m.read()["items"][0]
-        for key in ("id","salt","hash","identity","expires","paused","permission"):
+        for key in ("id","salt","hash","identity"):
             self.assertEqual(self.item[key],after[key])
+        for scope in ("tailscale", "wan"):
+            for key in ("expires", "permission"):
+                self.assertEqual(self.item["connections"][scope][key], after["connections"][scope][key])
         self.assertEqual(set(row["urls"]),{"tailscale","wan"})
         self.assertTrue(row["urls"]["wan"].startswith("http://8.8.8.8:61010/s/"))
-        row = self.save(networks=["wan"])["items"][0]
+        (self.root/"modules").write_text("paylasim\tdurduruldu\n")
+        stopped = self.save(connections={"tailscale": {"enabled": False}})["items"][0]
+        self.assertEqual(stopped["urls"], {})
+        self.assertFalse(stopped["connections"]["wan"]["active"])
+        self.running()
+        row = self.m.public()["items"][0]
         self.assertEqual(set(row["urls"]),{"wan"})
         self.assertEqual(row["url"],row["urls"]["wan"])
-        self.save(networks=["tailscale"])
-        with self.assertRaises(s.ShareError): self.save(networks=["wan"])
+        (self.root/"modules").write_text("paylasim\tdurduruldu\n")
+        self.save(connections={"tailscale": {"enabled": True}, "wan": {"enabled": False}})
+        with self.assertRaises(s.ShareError): self.save(connections={"wan": {"enabled": True}})
 
-    def test_only_schema3_registries_with_networks_are_accepted(self):
+    def test_schema4_is_stable_schema3_migrates_and_schema2_is_rejected(self):
         before=Path(self.m.path).read_bytes()
         self.m.prepare()
         self.assertEqual(before,Path(self.m.path).read_bytes())
         data = self.m.read()
+        self.assertEqual(data["schema"], 4)
         old = copy.deepcopy(data); old["schema"] = 2
         s.atomic(self.m.path,old)
-        with self.assertRaises(s.ShareError): self.m.read()  # fresh install only: no conversion
-        data["items"][0].pop("networks")
+        with self.assertRaises(s.ShareError): self.m.read()
+        legacy = copy.deepcopy(data); legacy["schema"] = 3
+        policy = legacy["items"][0].pop("connections")["tailscale"]
+        legacy["items"][0].update(networks=["tailscale"], paused=False,
+                                  permission=policy["permission"], expires=policy["expires"])
+        s.atomic(self.m.path, legacy)
+        self.assertEqual(self.m.read(), data)
+        legacy["items"][0].pop("networks")
+        s.atomic(self.m.path, legacy)
+        with self.assertRaises(s.ShareError): self.m.read()
+        data["items"][0].pop("connections")
         s.atomic(self.m.path,data)
         with self.assertRaises(s.ShareError): self.m.read()
 
@@ -95,10 +117,10 @@ class NetworkManagerTests(unittest.TestCase):
         for ip in ("", "192.168.1.2", "100.64.0.3", "127.0.0.1", "224.0.0.1", "::1", "192.0.2.1"):
             self.m.env["WAN_IPV4"] = ip
             self.assertFalse(self.m.wan_info()["available"])
-            with self.assertRaises(s.ShareError): self.save(networks=["wan"],ack_wan_http=True)
+            with self.assertRaises(s.ShareError): self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
 
     def test_last_active_share_closes_publication(self):
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"tailscale": {"enabled": False}, "wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         self.assertTrue(self.m.wan_active())
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)) as run:
@@ -115,7 +137,7 @@ class NetworkManagerTests(unittest.TestCase):
             calls=run.call_count
             self.m.publish()
             self.assertEqual(run.call_count,calls)
-            data=self.m.read(); data["items"][0]["expires"]=time.time()-1; s.atomic(self.m.path,data)
+            data=self.m.read(); data["items"][0]["connections"]["wan"]["expires"]=time.time()-1; s.atomic(self.m.path,data)
             self.assertFalse(self.m.wan_active())
             self.m.guard()
             self.assertFalse(target.exists())
@@ -125,13 +147,13 @@ class NetworkManagerTests(unittest.TestCase):
         self.running()
         old=Path(self.m.path).read_bytes()
         with patch.object(self.m,"restart"), patch.object(s.subprocess,"run",side_effect=[subprocess.CalledProcessError(1,"caddy"),subprocess.CompletedProcess([],0),subprocess.CompletedProcess([],0),subprocess.CompletedProcess([],0)]):
-            with self.assertRaises(s.ShareError): self.save(networks=["wan"],ack_wan_http=True)
+            with self.assertRaises(s.ShareError): self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.assertEqual(Path(self.m.path).read_bytes(),old)
         self.assertFalse(os.path.exists(self.m.pending))
         self.assertFalse((self.root/"sites/paylasim-wan.caddy").exists())
 
     def test_vanished_wan_address_closes_publication_with_a_reason(self):
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)):
             self.m.publish()
@@ -154,7 +176,7 @@ class NetworkManagerTests(unittest.TestCase):
         self.assertFalse(s.assigned("192.0.2.77"))
 
     def test_reload_failure_starts_a_stopped_caddy_but_rolls_back_a_running_one(self):
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         target=self.root/"sites/paylasim-wan.caddy"
         marker=self.root/"run/share-network-applied.json"
@@ -182,7 +204,7 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_interrupted_operation_is_recovered_with_credentials_first(self):
         old=self.m.read()
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         s.atomic(self.m.pending,old)
         with patch.object(self.m,"restart") as restart, patch.object(self.m,"publish") as publish:
@@ -192,18 +214,18 @@ class NetworkManagerTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.m.pending))
 
     def test_pause_and_missing_root_do_not_leave_active_wan(self):
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"tailscale": {"enabled": False}, "wan": {"enabled": True}},ack_wan_http=True)
         self.running()
-        data=self.m.read(); data["items"][0]["paused"]=True; s.atomic(self.m.path,data)
+        data=self.m.read(); data["items"][0]["connections"]["wan"]["enabled"]=False; s.atomic(self.m.path,data)
         self.assertFalse(self.m.wan_active())
-        data["items"][0]["paused"]=False; s.atomic(self.m.path,data)
+        data["items"][0]["connections"]["wan"]["enabled"]=True; s.atomic(self.m.path,data)
         (self.root/"srv/alpha").rename(self.root/"srv/old")
         (self.root/"srv/alpha").mkdir()
         self.assertFalse(self.m.wan_active())
 
     def test_installer_recovery_reloads_credentials_before_clearing_pending(self):
         old=self.m.read()
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         s.atomic(self.m.pending,old)
         with patch.object(self.m,"restart",side_effect=s.ShareError("injected")):
@@ -216,7 +238,7 @@ class NetworkManagerTests(unittest.TestCase):
         self.assertEqual(self.m.read(),old)
 
     def test_panel_caddy_projection_names_wan_and_preserves_proxy_routes(self):
-        self.save(networks=["wan"],ack_wan_http=True)
+        self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
         self.running()
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)):
             self.m.publish()

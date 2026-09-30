@@ -71,8 +71,10 @@ Only Caddy binds the Tailscale address (including Infuse
 `${TAILSCALE_IPV4}:${SHARE_PORT}/s/<id>/`). dnsmasq and the firewall are written against
 the *interface name*, and WebDAV binds loopback only (**DD-98**, **DD-158**).
 That is what makes an address change a Caddy-only restart rather than a
-stack-wide one. The only HTTP listener on the WAN address is Caddy's folder
-share site, present only while a share has opted into WAN (**DD-179**).
+stack-wide one. The legacy WAN HTTP share site exists only while a WAN
+connection is enabled, unexpired and otherwise eligible. Configured HTTPS keeps
+its listener for renewal even with no active folders, subject to the global
+Caddy publication gate (**DD-179/190/191/192**).
 
 Panel choices have a separate owner: `master_settings.py` commits firewall,
 DNS and domain overrides to `/etc/master-stack/ayarlar.json`, which the installer
@@ -186,7 +188,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `scripts/master-wg` | WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
 | `panel/master-wg-panel` | Root `/api/wg/*` and `/api/konsol/*` on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
 | `panel/master_settings.py` | Validate/apply settings, snapshot/rollback/confirm with independent guard, render committed overrides | Arbitrary shell commands, client-visible password hashes |
-| `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
+| `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry with independent Tailscale/WAN policies, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
 | `scripts/master-modul` | Public WireGuard/qBittorrent app lifecycle, registry/progress/locks; installer-only `yerlesik` activates/checks built-in Files/WebDAV and their names, retaining accounts (**DD-159**) | Templates and inputs; user files; public removal of built-ins |
 | `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
 | `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations, `.cop` trash, text and archive jobs | Anything outside `SERVER_ROOT`; WebDAV credentials; WireGuard administration |
@@ -222,7 +224,7 @@ error, not a warning.
 |---|---|---|
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config`, `master_settings.py` (domain) | detected addresses and identification, `0600` |
-| `/etc/master-stack/webdav.json` | `master_shares.py` | Independent accounts, scrypt hashes, folder identity, permission, networks, pause and expiry; 0600 root, systemd credential (DD-158, DD-179) |
+| `/etc/master-stack/webdav.json` | `master_shares.py` | Schema 4: independent folder accounts, scrypt hashes and folder identity; each item's `connections.tailscale` and `connections.wan` owns enabled/permission/expiry; 0600 root, systemd credential (DD-158, DD-192) |
 | `/etc/master-stack/ayarlar.json`, `ayarlar-bekleyen.json` | `master_settings.py` | Committed firewall/DNS/domain choices and pending transaction recovery; the independent guard rolls unconfirmed work back |
 | `/var/lib/qbittorrent/` | qBittorrent (module) | its profile: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**) |
 | `/etc/systemd/system/qbittorrent-nox@.service.d/master-stack.conf` | `master-modul` (qBittorrent) | the unit drop-in: profile, `UMask`, sandbox (**DD-151**) |
@@ -237,7 +239,7 @@ error, not a warning.
 | `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor\|durduruldu`, `0644` (**DD-148**) |
 | `/run/master-stack/modul-<id>.ilerleme`, `modul.lock` | `master-modul` | the last operation's progress line; the module lock (**DD-148**) |
 | `/etc/caddy/moduller/<id>.caddy` | installer (directory), `master-modul` (files) | module sites imported by the base Caddyfile; WebDAV: `paylas.<domain>` and `TAILSCALE_IPV4:SHARE_PORT` (**DD-98**, **DD-158**) |
-| `/etc/caddy/moduller/paylasim-wan.caddy` | `master_shares.py` | the opt-in WAN share site: `WAN_IPV4:SHARE_PORT`, `/s/*` only, present only while an active WAN share exists (**DD-179**); the installer drops it when it is bound to a stale address (**DD-182**) |
+| `/etc/caddy/moduller/paylasim-wan.caddy` | `master_shares.py` | Global-gated WAN WebDAV site, `/s/*` only: legacy `WAN_IPV4:SHARE_PORT` while an eligible WAN connection exists, or configured HTTPS on `SHARE_HTTPS_PORT` retained for renewal without active folders (**DD-179/190/191/192**); stale WAN binding fails closed (**DD-182**) |
 | `/etc/dnsmasq.d/modul-<id>.conf` | `master-modul` | module names; WebDAV: `interface-name=paylas.<domain>,tailscale0` (**DD-148**) |
 | `SERVER_ROOT/.cop/` | installer (folder), file panel (contents) | Trash: `<id>/<item>` plus `<id>.json` (origin, time); outside downloads and excluded from WebDAV/qBittorrent access |
 | `SERVER_ROOT/.arsiv/`, `jobs.json` | unprivileged archive worker | private staging (0700) and last 20 jobs (0600); excluded from installer recursive permission repair; never a backup (**DD-159**) |
@@ -276,25 +278,45 @@ WAN share site, which `master_shares.py` projects from `WAN_IPV4` in
 
 ---
 
-## 4. Folder WebDAV ownership (DD-158)
+## 4. Folder WebDAV ownership (DD-158/DD-192)
 
-Folder form → root API → fixed master_shares.py worker (stdin) → 0600 root
-webdav.json (scrypt hashes, root identity, permission, networks, pause and
-expiry) → systemd LoadCredential → unprivileged master_webdav.py → validated
-descriptors.
+Folder form / connection cards → root API → fixed master_shares.py worker
+(stdin) → 0600 root webdav.json (scrypt hashes, root identity, independent
+Tailscale/WAN enabled/permission/expiry policies) → systemd LoadCredential →
+unprivileged master_webdav.py → validated descriptors.
 
-The file-manager backend sees no credential. Caddy publishes the tailnet name
-and `TAILSCALE_IPV4:SHARE_PORT` and, for shares that opt in, `WAN_IPV4:SHARE_PORT`
-(**DD-179**); /s/<id>/ selects independent accounts. The WebDAV process listens
+Schema 4 has no authoritative shared permission/expiry/pause/networks fields.
+Valid schema 3 loads convert in memory; `prepare` persists the conversion.
+Both policies copy the exact old permission and absolute expiry; only previously
+selected networks on an unpaused share are enabled. IDs, account salt/hash,
+folder identity and creation/change timestamps stay unchanged. Schema 2 and
+schema-4 legacy-policy conflicts are rejected. Nested partial API updates merge
+under operation locks without resetting omitted policies or expiry; old global
+updates and pause calls return a refresh-page error. Shared folder/account/password
+management is separate from connection controls.
+
+The file-manager backend sees no credential. Caddy's global publication gates
+control the tailnet name and `TAILSCALE_IPV4:SHARE_PORT`, and configured WAN HTTPS
+or consent-gated legacy `WAN_IPV4:SHARE_PORT`. `/s/<id>/` selects one folder/account
+shared by both connection policies. The WebDAV process listens
 on `127.0.0.1` (tailnet) and `SHARE_WAN_BACKEND` (WAN) on the same port; the
-listener, not a header, decides which shares a request may reach. Account
-changes restart the active data service, cutting existing transfers. Per-folder
+listener, not a header, selects enabled/permission/expiry enforcement, including
+all DAV writes, live chunks and staged PUT/COPY final publication. Authentication
+cache hits never bypass that authorization. Share edits restart the active data
+service, cutting all existing transfers. Per-folder
 isolation is in the handler, not separate OS sandboxes. No per-share listener
 is needed.
 
 `master_shares.py` also owns the WAN projection: it writes or removes
 `paylasim-wan.caddy`, and `master-share-network.timer` runs its guard every
-30 s to close expired or paused WAN publications and finish interrupted changes.
+30 s to close ineligible legacy HTTP WAN publications and finish interrupted
+changes. It retains configured HTTPS for renewal under the existing global gate.
+
+The public projection feeds two cards, each with switch, permission, expiry,
+address/copy and Infuse details. Each connection adds expired/available/active/reason
+and a candidate URL when its transport is available, even if locally off or expired.
+Global Caddy gates override both cards and explain unavailable routes; `row.urls`
+contains only active connections. A candidate address is not proof of reachability.
 
 See [folder-shares.md](folder-shares.md) for protocol limits, security boundaries
 and tests.

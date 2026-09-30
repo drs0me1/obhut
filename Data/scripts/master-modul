@@ -64,6 +64,9 @@ registry_set() { # ID DURUM (boş durum = kayıttan sil)
     } >"$tmp"
     chmod 0644 "$tmp"
     mv -f -- "$tmp" "$MODULES_FILE"
+    if [[ "$1" == torrent && -f "$SBIN_DIR/master_publications.py" ]]; then
+        python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"
+    fi
 }
 
 # -- ilerleme: tek satır "eylem<TAB>adım<TAB>toplam<TAB>metin"; bitince adım "bitti" ya da "hata"
@@ -101,6 +104,15 @@ warn() {
 
 take_lock() {
     mkdir -p -- "$RUNTIME_DIR"
+    # Canonical order: install -> module. The installer already owns install.lock;
+    # validate and reuse its inherited descriptor without unlocking the parent.
+    if [[ "${V2_LOCK_FD:-}" =~ ^[0-9]+$ &&
+        "/proc/$$/fd/$V2_LOCK_FD" -ef "$RUNTIME_DIR/install.lock" ]]; then
+        flock -n "$V2_LOCK_FD" || die "üst kurulum kilidi doğrulanamadı"
+    else
+        exec 9>"$RUNTIME_DIR/install.lock"
+        flock -w 5 9 || die "başka bir kurulum/ayar işlemi sürüyor; biraz sonra yeniden deneyin"
+    fi
     exec 8>"$RUNTIME_DIR/modul.lock"
     flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
     [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -f "$SETTINGS_PENDING_FILE" ]] ||
@@ -204,9 +216,18 @@ swap_out() { # HEDEF DOĞRULAYICI → 0 kaldırıldı, 1 zaten yok, 2 kaldırıl
 # Bir modülün adları: MODULES_DIR/<id>/<id>.caddy → CADDY_MODULES_DIR/<id>.caddy ve
 # MODULES_DIR/<id>/dnsmasq.conf → DNSMASQ_CONF_DIR/modul-<id>.conf. Hata: FAIL.
 names_on() { # ID
-    local id="$1" rc=0 dns_src dns_tmp=""
+    local id="$1" rc=0 dns_src dns_tmp="" caddy_src caddy_tmp=""
     FAIL=""
-    swap_in "$MODULES_DIR/$id/$id.caddy" "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
+    caddy_src="$MODULES_DIR/$id/$id.caddy"
+    if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+        caddy_tmp="$(mktemp "$RUNTIME_DIR/.caddy-XXXXXX")"
+        cp -- "$caddy_src" "$caddy_tmp"
+        python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" filter-caddy "$id" "$caddy_tmp" ||
+            { rm -f -- "$caddy_tmp"; FAIL="Caddy ağ seçimi okunamadı"; return 1; }
+        caddy_src="$caddy_tmp"
+    fi
+    swap_in "$caddy_src" "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
+    [[ -z "$caddy_tmp" ]] || rm -f -- "$caddy_tmp"
     case "$rc" in
         0) systemctl reload caddy >/dev/null 2>&1 || { FAIL="Caddy yeniden yüklenemedi"; return 1; } ;;
         1) ;;
@@ -247,13 +268,18 @@ names_off() { # ID — kaldırmayı durdurmaz; yalnız uyarır
 }
 
 share_verify_names() {
-    local _ a="" b="" ans=""
+    local _ a="" b="" ans="" expected=401 rc=0
+    if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+        python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" tail-enabled paylasim || rc=$?
+        [[ "$rc" -le 1 ]] || { SHARE_FAIL="Caddy ağ seçimi okunamadı"; return 1; }
+        [[ "$rc" == 0 ]] || expected=403
+    fi
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         a="$(http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/")"
         b="$(http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/")"
         ans="$(dig +short +time=2 +tries=1 "paylas.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
         if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "paylas.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
-        [[ "$a" == 401 && "$b" == 401 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        [[ "$a" == "$expected" && "$b" == "$expected" && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
         sleep 1
     done
     SHARE_FAIL="paylas.$LOCAL_DOMAIN ya da $TAILSCALE_IPV4:$SHARE_PORT açılmadı (ad $a, port $b, DNS '$ans')"
@@ -510,7 +536,20 @@ torrent_first_login() { # [--parola]
     user="$(sed -n 's/.*WebUI administrator username is: *//p' <<<"$log" | tail -n 1)"
     # DD-156: qBittorrent may omit the username in logs once the password is set.
     local configured
-    configured="$(sed -n 's/^WebUI\\Username=//p' "$TORRENT_PROFILE_DIR/qBittorrent/qBittorrent.conf" 2>/dev/null | tail -n 1 || true)"
+    configured="$(python3 - "$SBIN_DIR" "$TORRENT_PROFILE_DIR/qBittorrent/qBittorrent.conf" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from master_settings import SettingsError, read_regular
+try:
+    text = read_regular(sys.argv[2])[0].decode()
+except FileNotFoundError:
+    text = ""
+except (OSError, ValueError, SettingsError):
+    sys.exit(1)
+values = [line.partition("=")[2] for line in text.splitlines() if line.startswith("WebUI\\Username=")]
+print(values[-1] if values else "")
+PY
+    )" || die "qBittorrent ayar dosyası güvenli okunamadı"
     [[ -z "$configured" ]] || user="$configured"
     temp="$(sed -n 's/.*temporary password is provided for this session: *//p' <<<"$log" | tail -n 1)"
     [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || user="admin"
@@ -711,6 +750,9 @@ cmd_uygula() {
             if [[ "$state" == calisiyor ]]; then
                 systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
                 torrent_verify || fail_step "$FAIL"
+            fi
+            if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+                python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"
             fi
             printf '%s\t%s\n' "$id" "$state"
             return 0

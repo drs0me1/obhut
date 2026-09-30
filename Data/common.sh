@@ -87,6 +87,8 @@ acquire_lock() {
     exec {V2_LOCK_FD}>"$lock_file"
     flock -w "$wait_seconds" "$V2_LOCK_FD" ||
         die "kilit alınamadı (${wait_seconds}s): $lock_file"
+    # Child module operations reuse this exact open file description, not a bypass flag.
+    export V2_LOCK_FD
 }
 
 # retry LABEL ATTEMPTS TIMEOUT -- cmd args...
@@ -148,7 +150,13 @@ render_template() {
     local src="${1:?}" dest="${2:?}" mode="${3:?}"
     shift 3
     [[ -f "$src" ]] || die "şablon yok: $src"
-    local content key value
+    local content key value restore_patsub=0
+    # Bash 5.2's replacement & means the matched token; Bash 3.2 has no option.
+    # Keep template values literal without changing the caller's shell setting.
+    if shopt -q patsub_replacement 2>/dev/null; then
+        restore_patsub=1
+        shopt -u patsub_replacement
+    fi
     # $(...) sondaki newline'ları siler; şablonun fmt/EOF newline'ını koru.
     content="$(cat -- "$src"; printf x)"
     content="${content%x}"
@@ -158,6 +166,7 @@ render_template() {
         [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "geçersiz şablon anahtarı: $key"
         content="${content//__${key}__/$value}"
     done
+    if [[ "$restore_patsub" == 1 ]]; then shopt -s patsub_replacement; fi
     if [[ "$content" =~ __[A-Z][A-Z0-9_]*__ ]]; then
         die "şablonda doldurulmamış yer tutucu kaldı: $src"
     fi

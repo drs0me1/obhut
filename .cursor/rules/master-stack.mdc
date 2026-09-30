@@ -90,8 +90,9 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `/srv` (`SERVER_ROOT`)
   - `/srv/downloads` (`DOWNLOADS_PATH`)
   - `/srv/media`
-- Mevcut kullanıcı ağacında sahiplik/izin **seçici** onarılır (DD-84):
-  sapmış UID/GID `chown -h`, sapmış dizin `0775` / dosya `0664`; eşleşen
+- Mevcut kullanıcı ağacında sahiplik/izin **seçici** onarılır (DD-84/DD-187):
+  sabit dosya tanıtıcılarıyla `fchown/fchmod`, sapmış dizin `0775` / dosya `0664`;
+  sembolik bağ, çok bağlantılı dosya ve özel dosyalar atlanır; eşleşen
   girdilere dokunulmaz. Koşulsuz full-tree rewrite yok. `.cop` çöp, `.arsiv`
   özel arşiv alanıdır; `.pay` uyumluluk kalıntısı hâlâ kurulum/izin denetimlerinde
   kullanılır. Bu alanları veri dizini sanıp yayımlama veya körlemesine silme;
@@ -99,10 +100,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### Modül servisleri (Docker yok)
 
-- DD-179: klasör paylaşımları Tailscale/WAN IPv4/ikisi olarak seçilir; eski ve yeni
-  kayıtlar varsayılan Tailscale'dir. WAN açık HTTP için açık onay ister; TLS yoktur.
-  Yalnız WebDAV portu gerektiğinde açılır. Parola/bağlantı sınırları ve ağ bazlı
-  yetki denetimi zorunludur; Konsol/API ve diğer servisler WAN'a açılmaz.
+- DD-179/190: klasör paylaşımları Tailscale/WAN IPv4/ikisi olarak seçilir; yeni
+  kayıtlar varsayılan Tailscale'dir. HTTPS ayarı yoksa mevcut açık onaylı HTTP
+  davranışı korunur; Ayarlar → Caddy'de genel alan adı kaydedilirse WAN HTTPS
+  kullanır. Alan adını açıkça kaldırmak WAN'ı kapatır, HTTP'ye düşürmez.
+  HTTPS dinleyicisi aktif klasör yokken de sertifika yenilemesi için kalır.
+  Parola/bağlantı sınırları ve klasör başına ağ/yetki denetimi zorunludur;
+  Konsol/API WAN'a açılmaz; DD-191 qBittorrent için ayrı ve açık HTTPS seçimi sağlar.
 
 - DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). Her modül sunucuda bir systemd servisidir. Dozzle ve Unpackerr kaldırıldı; arşiv açıcı artık Dosyalar'ın yerleşik, istek üzerine çalışan yeteneğidir (DD-159/166/170).
 - qBittorrent bir host modülüdür (`torrent`, DD-151): Debian `qbittorrent-nox`, indirme hesabıyla `qbittorrent-nox@<kullanıcı>.service` + `master-stack.conf` drop-in'i; profil `/var/lib/qbittorrent`. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/modules/torrent/qBittorrent.conf`), sonra dokunulmaz. DD-178: yalnız indirme yolu, kimlik doğrulamalı loopback WebUI ve başlatma onayı; UPnP/otomatik port yönlendirme, yerel eş keşfi ve ayrı geçici klasör tercihi kullanıcıya aittir. Mevcut profillerdeki eski değerler de otomatik silinmez. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca paket kalır; `--veri` profili siler.
@@ -127,6 +131,13 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 - Tek adres: `panel.<alan>`. Caddy sayfa dosyalarını kendisi sunar; `/api/wg/*` ve `/api/konsol/*` root arka ucuna, diğer dosya API'leri yetkisiz dosya arka ucuna gider. Eski adlar (`wg.`, `dosya.`, `file.`) yoktur. İki arka uçta da panel hesabı/parolası yoktur; aynı Host ve istek güvenlik sınırları uygulanır.
 - Ayarlar salt okunur değildir (DD-156–165): DNS-only Uygula ve qBittorrent hesap kaydı doğrulama sonrası doğrudan kalıcılaşır. Firewall/qBittorrent dizini ve karma taslaklar 60 saniyelik onay/bağımsız geri alma korumasındadır. Alan adı değişimi yeni panel adresinden beş dakika içinde onaylanır. Üçüncü taraf ham firewall zincirleri yalnız okunur; parola özetleri istemciye verilmez.
+- DD-190: genel HTTPS alan adı yerel son ekten ayrı kaydedilir. `master_https.py`
+  DNS ve sertifika denetimini, mevcut Settings worker kalıcı pending/commit ve
+  hata/çökme geri almasını yönetir. Etkinleştirme ancak güven zinciri ve ad
+  doğrulandıktan sonra ek onaysız kalıcılaşır. Sertifika denetimi sunucunun
+  atanmış WAN IPv4'üne sabitlenir; internetten erişimi kanıtlamaz. Bitişe en çok
+  14 gün kaldığında uyarı verilir. Kaldırmada Caddy nazikçe reload edilir;
+  yeni WAN bağlantıları kapanır, mevcut aktarımlar tamamlanabilir.
 - Sayfalar `Data/console/` içindedir (`index.html`, `konsol.css`, `konsol.js`): dış kaynak yüklemez, satır içi kod ya da biçem yoktur, adlar yalnız metin olarak eklenir. Tasarım örnekleri `Data/docs/design/`.
 - Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
 - `Data/files-panel/master-files-panel` yerleşiktir (DD-159): kurulum birimini `MODULES_DIR/dosya/`'ya yazar, `master-modul yerlesik` etkinleştirir. Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur; paylaşım hesabını hiç görmez. `master_archives.py`/`master_rar.py` sınırlı arşiv işlerini aynı yetkisiz süreçte yürütür.
@@ -144,6 +155,10 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - WireGuard (host çekirdeği, ağ başına wg-quick@wgN): yalnız UDP
+  - İsteğe bağlı klasör WebDAV: DD-190 moduna göre WAN IPv4 TCP
+    `SHARE_HTTPS_PORT` veya eski onaylı HTTP için `SHARE_PORT`; yönetim yolu yok.
+  - DD-191 qBittorrent'in kendi girişli WebUI'si: yalnız açık HTTPS tercihiyle,
+    WebDAV ile aynı `SHARE_HTTPS_PORT`; panel/API için izin verilmez.
   - Torrent eş portu yok (DD-151): qBittorrent yalnız dışa bağlanır. Yeniden açmak açık karar ister.
 - Servis adları, portlar ve yollar tek bir yapılandırma kaynağından (`defaults.env`) yönetilmeli.
 
@@ -155,7 +170,8 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `ayc`
   - `ev`
   - `murat`
-- Geçerli yerel son ek tek DNS etiketidir; noktalı alan adı desteği varsayma.
+- Geçerli `LOCAL_DOMAIN` son eki tek DNS etiketidir. DD-190'daki genel HTTPS
+  alan adı ayrı bir tam addır; dnsmasq/yerel son ek kuralını değiştirmez.
 - Alan adı güvenli biçimde doğrulanacak.
 - dnsmasq yalnız DNS hizmeti verecek; DHCP hizmeti vermeyecek.
 - dnsmasq:
@@ -186,10 +202,21 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### Caddy
 
+- DD-191: Adres tablosu WebDAV/qBittorrent için bağımsız Tailscale ve HTTPS
+  seçimi kaydeder; panel satırı arayüz ve API'de özel/kilitli kalır.
+  `master_publications.py` yalnız sabit uygulama kataloğunu işler. qBittorrent
+  WAN için kalıcı parola, giriş atlamalarının kapalı olması, CSRF/Host ve
+  deneme engeli doğrulanır; uygulama tercihleri değiştirilmez. HTTPS adları
+  tek TCP443 ve mevcut soket bütçelerini paylaşır. Eski WebDAV HTTP yayını önce
+  HTTPS'e çevrilmeli veya kapatılmalıdır. Tünel, keyfi upstream ve DNS yazımı yoktur.
 - Caddy host üzerinde systemd servisi olarak çalışacak.
-- Caddy yalnız `TAILSCALE_IPV4` adresinde dinler; WireGuard web dinleyicisi yoktur.
-- Sunulan web uçları HTTP-only'dir; şifreli taşıma Tailscale/WireGuard üzerinden sağlanır.
-- Caddyfile site adresleri açıkça `http://` ile başlayacak; otomatik HTTPS tetiklenmeyecek.
+- Yönetim ve yerel adlar yalnız `TAILSCALE_IPV4` üzerinde açıkça `http://`
+  kullanır; Tailscale WebDAV `SHARE_PORT` değişmez. WireGuard web dinleyicisi yoktur.
+- Genel WebDAV/qBittorrent HTTPS siteleri yalnız atanmış `WAN_IPV4:SHARE_HTTPS_PORT` dinler.
+  Alan adının DNS sonucu tam olarak bu IPv4 olmalı; AAAA veya proxy kabul edilmez.
+  Caddy Let's Encrypt sertifikasını TLS-ALPN/TCP 443 ile alır ve yeniler;
+  HTTP challenge kapalı, `auto_https disable_redirects`, WAN port 80 ve
+  Cloudflare/DNS API tokenı yoktur. `LOCAL_DOMAIN` ve özel DNS adları değişmez.
 - Örnek:
   - `http://panel.${LOCAL_DOMAIN}`
   - `http://torrent.${LOCAL_DOMAIN}` (modül; `CADDY_MODULES_DIR/torrent.caddy`)
@@ -208,6 +235,10 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - public WAN üzerinden yalnız:
     - SSH ve Tailscale UDP portu,
     - WireGuard UDP portları kabul edilecek (torrent eş portu yok, DD-151),
+    - DD-190/191 moduna göre WAN IPv4 WebDAV veya isteğe bağlı qBittorrent HTTPS;
+      aynı HTTPS portunda tek izin, aynı bağlantı bütçesi. HTTP'de aktif WAN
+      klasörü şart, yapılandırılmış HTTPS'te yenileme için boşken de açık,
+      açıkça kapalı modda ikisi de yok. Bağlantı sınırları ve manuel engeller korunur,
   - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
 - Docker yoktur (DD-152): `DOCKER-USER`'a ve `MASTER-DOCKER`'a dair kural yazılmaz.
 - Proje yalnız kendi zincirlerini oluşturabilir:

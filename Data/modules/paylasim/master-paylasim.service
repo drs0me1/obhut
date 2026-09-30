@@ -2,6 +2,8 @@
 Description=Klasör WebDAV (master-stack, DD-158)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=exec
@@ -20,12 +22,15 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+PrivateIPC=true
+ProtectProc=invisible
 InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__
 IPAddressDeny=any
 IPAddressAllow=localhost
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
 MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
 SystemCallArchitectures=native
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -37,6 +42,10 @@ RestrictNamespaces=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
+# 72 connection workers + two listener threads; hashes use those same workers.
+TasksMax=96
+# Includes reclaimable filesystem cache as well as the bounded transfer/hash buffers.
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target

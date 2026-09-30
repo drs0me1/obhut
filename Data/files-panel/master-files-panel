@@ -223,7 +223,7 @@ def read_json_at(dir_fd, name):
         raw = fh.read(65537)
     try:
         data = json.loads(raw.decode("utf-8")) if len(raw) <= 65536 else None
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -290,6 +290,14 @@ class Files:
             raise PanelError(400, "geçersiz ad (boş olamaz, / içeremez, en çok 255 bayt)")
         if not parts and name in (self.trash, self.share, self.archive):
             raise PanelError(400, "bu ad sistem çalışma alanı için ayrılmış")
+
+    def check_source_names(self, parts, names):
+        # Toplu işlem başlamadan hepsini denetle; reddedilen öge kısmi taşıma yaratmasın.
+        for name in names:
+            if not valid_name(name):
+                raise PanelError(400, "geçersiz ad")
+            if not parts and name in (self.trash, self.share, self.archive):
+                raise PanelError(403, "sistem çalışma alanı taşınamaz veya yeniden adlandırılamaz")
 
     def open_dir(self, parts):
         fd = os.open(self.root, O_DIR)
@@ -443,8 +451,7 @@ class Files:
             os.mkdir(name, 0o775, dir_fd=fd)
 
     def rename(self, parts, name, new):
-        if not valid_name(name):
-            raise PanelError(400, "geçersiz ad")
+        self.check_source_names(parts, [name])
         self.check_new_name(parts, new)
         if name == new:
             return
@@ -452,6 +459,8 @@ class Files:
             rename_noreplace(fd, name, fd, new)
 
     def move(self, parts, names, dest):
+        self.check_source_names(parts, names)
+        self.check_source_names(dest, names)
         if dest == parts:
             raise PanelError(400, "seçilenler zaten bu klasörde")
         for name in names:
@@ -532,6 +541,7 @@ class Files:
         return written
 
     def to_trash(self, parts, names):
+        self.check_source_names(parts, names)
         ids = []
         with DirFd(self.open_dir(parts)) as sfd, DirFd(self.trash_dir(create=True)) as cop:
             for name in names:
@@ -586,7 +596,7 @@ class Files:
     def place(self, src_fd, name, dst_fd, dest):
         candidate = name
         for i in range(2, 102):
-            if dest or candidate != self.trash:
+            if dest or candidate not in (self.trash, self.share, self.archive):
                 try:
                     rename_noreplace(src_fd, name, dst_fd, candidate)
                     return candidate
@@ -703,6 +713,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # DD-181: Caddy keeps this loopback connection alive; with Nagle every reply waited
     # ~40 ms for the peer's delayed ACK (headers and body are separate writes).
     disable_nagle_algorithm = True
+    # Caddy's default upstream keepalive is 120s; expire idle sockets after it.
+    # This is inactivity, not a deadline for a progressing upload/download.
+    timeout = 180
 
     def log_message(self, fmt, *args):  # istek satırları yazılmaz; değişiklikler audit ile
         pass
@@ -782,7 +795,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         try:
             data = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return None
         return data if isinstance(data, dict) else None
 
@@ -931,7 +944,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
                 self.close_connection = True
             if remaining:
                 self.close_connection = True
@@ -1021,6 +1034,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 128
 
 
 def cmd_serve(args):

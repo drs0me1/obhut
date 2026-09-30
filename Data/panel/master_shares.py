@@ -14,6 +14,7 @@ import hmac
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -33,7 +34,7 @@ FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 # DD-180: auth_* (per client IP) and share_* (per share, all IPs) apply to both listeners.
 # DD-181: 64 tailnet slots, so Caddy's pool of idle upstream connections cannot fill them.
 DEFAULT_LIMITS = {"wan_connections": 8, "wan_connections_per_ip": 4,
-                  "tail_connections": 64, "wan_auth_parallel": 4,
+                  "tail_connections": 64, "wan_auth_parallel": 4, "tail_auth_parallel": 2,
                   "auth_failures": 5, "auth_window_seconds": 60,
                   "auth_block_seconds": 300, "auth_entries": 4096,
                   "share_failures": 100, "share_window_seconds": 3600,
@@ -42,6 +43,7 @@ DEFAULT_LIMITS = {"wan_connections": 8, "wan_connections_per_ip": 4,
 # Edge sockets include unauthenticated/idle connections, before proxy admission.
 WAN_SOCKET_PER_IP = 16
 WAN_SOCKET_TOTAL = 64
+SCOPES = ("tailscale", "wan")
 
 
 class ShareError(Exception):
@@ -130,12 +132,46 @@ def load(path):
     if len(raw) > 262144:
         raise ShareError("Paylaşım kaydı çok büyük.")
     data = json.loads(raw)
-    # Fresh installs write schema 3 only; older registries are not converted.
-    if data.get("schema") != 3 or not isinstance(data.get("items"), list):
+    return normalize_registry(data)
+
+
+def validate_connection(value):
+    if (not isinstance(value, dict) or set(value) != {"enabled", "permission", "expires"}
+            or type(value["enabled"]) is not bool or value["permission"] not in ("ro", "rw")):
+        raise ShareError("Bağlantı ayarı geçersiz.")
+    expires = value["expires"]
+    if expires is not None and (type(expires) not in (int, float) or expires <= 0
+                                or (isinstance(expires, float) and not math.isfinite(expires))):
+        raise ShareError("Bağlantının bitiş zamanı geçersiz.")
+    return value
+
+
+def normalize_registry(data):
+    """DD-192: one policy per trusted listener; schema-3 access is never widened."""
+    if (not isinstance(data, dict) or type(data.get("schema")) is not int
+            or data["schema"] not in (3, 4) or not isinstance(data.get("items"), list)):
         raise ShareError("Paylaşım kaydı desteklenmiyor.")
     for item in data["items"]:
-        validate_networks(item.get("networks"))
-    data.update(schema=3, limits=dict(DEFAULT_LIMITS))
+        if not isinstance(item, dict):
+            raise ShareError("Paylaşım kaydı desteklenmiyor.")
+        if data["schema"] == 3:
+            networks = validate_networks(item.get("networks"))
+            if "connections" in item or "expires" not in item or type(item.get("paused")) is not bool:
+                raise ShareError("Paylaşım kaydı desteklenmiyor.")
+            item["connections"] = {scope: validate_connection({
+                "enabled": scope in networks and not item["paused"],
+                "permission": item.get("permission"), "expires": item.get("expires")})
+                for scope in SCOPES}
+            for key in ("networks", "paused", "permission", "expires"):
+                item.pop(key, None)
+        elif any(k in item for k in ("networks", "paused", "permission", "expires")):
+            raise ShareError("Paylaşım kaydı çelişkili bağlantı ayarları içeriyor.")
+        connections = item.get("connections")
+        if not isinstance(connections, dict) or set(connections) != set(SCOPES):
+            raise ShareError("Paylaşımın iki bağlantı kaydı da gerekli.")
+        for policy in connections.values():
+            validate_connection(policy)
+    data.update(schema=4, limits=dict(DEFAULT_LIMITS))
     return data
 
 
@@ -175,7 +211,7 @@ class Manager:
 
     def initial(self):
         e = self.env
-        return {"schema": 3, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [], "temp_name": e["TORRENT_TEMP_DIR"],
+        return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [], "temp_name": e["TORRENT_TEMP_DIR"],
                 "blocked": [e["FILES_PANEL_TRASH"], e["SHARE_DIR"],
                             os.path.relpath(e["DOWNLOADS_PATH"], e["SERVER_ROOT"]) + "/" + e["TORRENT_TEMP_DIR"]]}
 
@@ -194,21 +230,20 @@ class Manager:
             return ""
 
     def public(self):
+        from master_publications import config as publication_config
+        from master_settings import SettingsError
         data = self.read()
         result = []
         base = "http://%s:%s" % (self.env["TAILSCALE_IPV4"], self.env["SHARE_PORT"])
         wan = self.wan_info()
+        state = self.module_state()
+        try:
+            tail_enabled = publication_config(self.env)["paylasim"]["tail"]
+        except (SettingsError, ValueError, KeyError, TypeError) as err:
+            raise ShareError("Caddy yayın kaydı okunamadı.") from err
         for item in data["items"]:
-            row = {k: item[k] for k in ("id", "path", "name", "username", "permission", "paused",
-                                       "created", "changed", "expires")}
-            row.update(type="dir", url=base + "/s/" + item["id"] + "/", available=False)
-            row["networks"] = item["networks"]
-            row["urls"] = {}
-            if "tailscale" in item["networks"]:
-                row["urls"]["tailscale"] = row["url"]
-            if "wan" in item["networks"] and wan["available"]:
-                row["urls"]["wan"] = "http://%s:%s/s/%s/" % (wan["address"], wan["port"], item["id"])
-            row["url"] = next(iter(row["urls"].values()), "")
+            row = {k: item[k] for k in ("id", "path", "name", "username", "created", "changed")}
+            row.update(type="dir", available=False, connections={}, urls={})
             try:
                 fd = open_dir(data["root"], parts(item["path"]))
                 try:
@@ -217,13 +252,42 @@ class Manager:
                     os.close(fd)
             except (OSError, ShareError):
                 pass
-            row["expired"] = bool(item["expires"] and time.time() >= item["expires"])
+            for scope, saved in item["connections"].items():
+                transport = tail_enabled if scope == "tailscale" else wan["available"]
+                expired = bool(saved["expires"] and time.time() >= saved["expires"])
+                if not row["available"]:
+                    reason = "Klasör bulunamadı veya değiştirildi."
+                elif state != "calisiyor":
+                    reason = "WebDAV hizmeti çalışmıyor."
+                elif not transport:
+                    reason = "Ayarlar → Caddy bölümünde Tailscale erişimi kapalı." if scope == "tailscale" else wan["reason"]
+                elif expired:
+                    reason = "Süresi doldu; yeniden süre seçin."
+                else:
+                    reason = "Bağlantı kapalı." if not saved["enabled"] else ""
+                url = ""
+                if transport:
+                    origin = base if scope == "tailscale" else (
+                        "https://" + wan["domain"] + (":" + str(wan["port"]) if wan["port"] != 443 else "") if wan["mode"] == "https" else
+                        "http://%s:%s" % (wan["address"], wan["port"]))
+                    url = origin + "/s/" + item["id"] + "/"
+                active = not reason
+                row["connections"][scope] = dict(saved, expired=expired, available=bool(transport),
+                                                  active=active, reason=reason, url=url)
+                if active:
+                    row["urls"][scope] = url
+            row["url"] = next(iter(row["urls"].values()), "")
             result.append(row)
-        state = self.module_state()
         return {"enabled": bool(state), "running": state == "calisiyor", "host": base,
-                "items": result, "max": 32, "wan": wan, "limits": dict(DEFAULT_LIMITS)}
+                "items": result, "max": 32, "wan": wan, "tail_enabled": tail_enabled, "limits": dict(DEFAULT_LIMITS)}
 
     def wan_info(self):
+        from master_https import config
+        from master_settings import SettingsError
+        try:
+            cfg = config(self.env)
+        except (SettingsError, ValueError, KeyError, TypeError) as err:
+            raise ShareError("HTTPS yapılandırması okunamadı; WAN erişimi uygulanmadı.") from err
         address = self.env.get("WAN_IPV4", "")
         try:
             ip = ipaddress.IPv4Address(address)
@@ -236,15 +300,23 @@ class Manager:
         if available and not assigned(address):
             available = False
             reason = "Sunucunun internet IPv4 adresi değişti (%s artık bu sunucuda değil); kurulumu yeniden çalıştırın." % address
+        if cfg["mode"] == "off":
+            available, reason = False, "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin."
         return {"available": available, "address": address if available else "",
-                "port": int(self.env["SHARE_PORT"]), "reason": reason}
+                **cfg, "reason": reason}
 
     def wan_active(self):
-        if not self.wan_info()["available"] or self.module_state() != "calisiyor":
+        wan = self.wan_info()
+        if not wan["available"] or self.module_state() != "calisiyor":
             return False
         data = self.read()
+        # TLS-ALPN issuance/renewal needs the HTTPS listener even with no active
+        # folder. The WAN backend still authenticates and checks each folder.
+        if wan["mode"] == "https":
+            return True
         for item in data["items"]:
-            if "wan" not in item["networks"] or item["paused"] or (item["expires"] and time.time() >= item["expires"]):
+            policy = item["connections"]["wan"]
+            if not policy["enabled"] or (policy["expires"] and time.time() >= policy["expires"]):
                 continue
             try:
                 fd = open_dir(data["root"], parts(item["path"]))
@@ -258,23 +330,32 @@ class Manager:
         return False
 
     def validate_path(self, data, path, exclude=""):
+        # Only the root-side path validator needs the settings file reader.
+        from master_settings import SettingsError, read_regular
+
         pp = parts(path)
         path = "/".join(pp)
         blocked = list(data["blocked"])
         # Respect a user-selected qBittorrent incomplete folder as well as the default.
         conf = os.path.join(self.env["TORRENT_PROFILE_DIR"], "qBittorrent", "qBittorrent.conf")
         try:
-            with open(conf, encoding="utf-8") as stream:
-                for line in stream:
-                    if line.startswith(("Session\\TempPath=", "Downloads\\TempPath=")):
-                        temp = os.path.normpath(line.rstrip().split("=", 1)[1])
-                        if temp.startswith(data["root"] + "/"):
-                            blocked.append(os.path.relpath(temp, data["root"]))
+            raw, _ = read_regular(conf)
+            for line in raw.decode("utf-8").splitlines():
+                if line.startswith(("Session\\TempPath=", "Downloads\\TempPath=")):
+                    temp = os.path.normpath(line.rstrip().split("=", 1)[1])
+                    if temp.startswith(data["root"] + "/"):
+                        blocked.append(os.path.relpath(temp, data["root"]))
         except FileNotFoundError:
             pass
-        others = blocked + [i["path"] for i in data["items"] if i["id"] != exclude]
-        if any(path == p or path.startswith(p + "/") or p.startswith(path + "/") for p in others):
-            raise ShareError("Bu klasör iç/geçici alanla veya başka bir paylaşımla çakışıyor. Bir alt klasör seçin.")
+        except (OSError, SettingsError, UnicodeError) as err:
+            raise ShareError("qBittorrent ayar dosyası güvenli okunamadı; paylaşım değiştirilmedi.") from err
+        for p in blocked:
+            if path == p or path.startswith(p + "/") or p.startswith(path + "/"):
+                raise ShareError("Bu klasör iç/geçici alan “%s” ile çakışıyor. Bu alanı içermeyen bir klasör seçin." % p)
+        for item in data["items"]:
+            p = item["path"]
+            if item["id"] != exclude and (path == p or path.startswith(p + "/") or p.startswith(path + "/")):
+                raise ShareError("Bu klasör mevcut paylaşım “%s” ile çakışıyor. Paylaşımların yolları iç içe olamaz." % p)
         fd = open_dir(data["root"], pp)
         try:
             return path, identity(fd)
@@ -282,6 +363,13 @@ class Manager:
             os.close(fd)
 
     def change(self, action, request):
+        if not isinstance(request, dict):
+            raise ShareError("Geçersiz paylaşım işlemi.")
+        if any(k in request for k in ("permission", "days", "expires", "networks", "paused", "ack_write")) or action == "pause":
+            raise ShareError("Paylaşım ayarları bağlantı bazında değişti; sayfayı yenileyin.")
+        allowed = {"id", "path", "username", "password", "connections", "ack_wan_http"} if action == "save" else {"id"}
+        if set(request) - allowed:
+            raise ShareError("Geçersiz paylaşım alanı.")
         with contextlib.ExitStack() as stack:
             # Same ordering as settings; no module lifecycle/installer race.
             for name in ("install.lock", "modul.lock", "paylasim.lock"):
@@ -311,44 +399,56 @@ class Manager:
                     raise ShareError("Kullanıcı adı 3–32 harf/rakam veya . _ - içermeli.")
                 if any(i["username"].lower() == user.lower() and i["id"] != sid for i in items):
                     raise ShareError("Bu kullanıcı adı başka bir paylaşımda kullanılıyor.")
-                permission = request.get("permission", item["permission"] if item else "ro")
-                if permission not in ("ro", "rw"):
-                    raise ShareError("Geçersiz erişim izni.")
-                if permission == "rw" and (item is None or "permission" in request) and request.get("ack_write") is not True:
-                    raise ShareError("Yazma izninin silmeyi de kapsadığını onaylayın.")
                 password = request.get("password", "")
                 if not isinstance(password, str) or len(password) > 256 or ":" in password or any(ord(c) < 32 for c in password):
                     raise ShareError("Parola geçersiz (en çok 256 karakter; kontrol karakteri ve : yok).")
                 if (password or item is None) and len(password) < 8:
                     raise ShareError("Yeni parola en az 8 karakter olmalı.")
-                days = request.get("days")
-                if days is not None and (type(days) is not int or days not in (0, 1, 7, 30)):
-                    raise ShareError("Süre 1, 7, 30 gün veya süresiz olabilir.")
-                networks = validate_networks(request.get("networks", item["networks"] if item else ["tailscale"]))
-                if "wan" in networks and (item is None or "wan" not in item["networks"]):
-                    if not self.wan_info()["available"]:
-                        raise ShareError(self.wan_info()["reason"])
-                    if request.get("ack_wan_http") is not True:
-                        raise ShareError("WAN üzerinden HTTP'nin parola ve dosyaları şifrelemediğini onaylayın.")
+                now = int(time.time())
+                connections = item["connections"] if item else {
+                    scope: {"enabled": scope == "tailscale", "permission": "ro", "expires": now + 7 * 86400}
+                    for scope in SCOPES}
+                patches = request.get("connections", {})
+                if (not isinstance(patches, dict) or set(patches) - set(SCOPES)
+                        or ("connections" in request and not patches)):
+                    raise ShareError("Geçersiz bağlantı seçimi.")
+                for scope, patch in patches.items():
+                    if (not isinstance(patch, dict) or not patch
+                            or set(patch) - {"enabled", "permission", "days", "ack_write"}):
+                        raise ShareError("Geçersiz bağlantı ayarı.")
+                    policy = connections[scope]
+                    enabled = patch.get("enabled", policy["enabled"])
+                    permission = patch.get("permission", policy["permission"])
+                    if type(enabled) is not bool or permission not in ("ro", "rw"):
+                        raise ShareError("Geçersiz bağlantı izni.")
+                    if permission == "rw" and "permission" in patch and patch.get("ack_write") is not True:
+                        raise ShareError("Yazma izninin silmeyi de kapsadığını bu bağlantı için onaylayın.")
+                    expires = policy["expires"]
+                    if "days" in patch:
+                        days = patch["days"]
+                        if type(days) is not int or days not in (0, 1, 7, 30):
+                            raise ShareError("Süre 1, 7, 30 gün veya süresiz olabilir.")
+                        expires = now + days * 86400 if days else None
+                    if scope == "wan" and enabled and not policy["enabled"]:
+                        info = self.wan_info()
+                        if not info["available"]:
+                            raise ShareError(info["reason"])
+                        if info["mode"] == "http" and request.get("ack_wan_http") is not True:
+                            raise ShareError("WAN üzerinden HTTP'nin parola ve dosyaları şifrelemediğini onaylayın.")
+                    connections[scope] = {"enabled": enabled, "permission": permission, "expires": expires}
                 # List controls change only access/expiry; never rebind a replaced folder
                 # or overwrite credentials from stale browser metadata.
                 if item is None or "path" in request:
                     path, ident = self.validate_path(data, request.get("path"), sid)
                 else:
                     path, ident = item["path"], item["identity"]
-                now = int(time.time())
                 if item is None:
-                    item = {"id": secrets.token_hex(12), "created": now, "paused": False, "expires": None}
+                    item = {"id": secrets.token_hex(12), "created": now}
                     items.append(item)
                 item.update(path=path, identity=ident, name=path.rsplit("/", 1)[-1], username=user,
-                            permission=permission, networks=networks, changed=now)
+                            connections=connections, changed=now)
                 if password:
                     item["salt"], item["hash"] = password_hash(password)
-                if days is not None:
-                    item["expires"] = now + days * 86400 if days else None
-            elif action == "pause" and item is not None and type(request.get("paused")) is bool:
-                item["paused"] = request["paused"]
-                item["changed"] = int(time.time())
             elif action == "remove" and item is not None:
                 items.remove(item)
             else:
@@ -372,7 +472,7 @@ class Manager:
             return self.public()
 
     def publish(self):
-        """Only the WebDAV WAN projection. Caller owns install/module/share locks."""
+        """Fixed DAV/qBittorrent projections. Caller owns install/module/share locks."""
         if not self.env.get("SHARE_WAN_BACKEND"):
             return  # Legacy fixture/installation without the new listener capability.
         e = self.env
@@ -381,25 +481,33 @@ class Manager:
         marker = os.path.join(e["RUNTIME_DIR"], "share-network-applied.json")
         text = ""
         if active:
-            text = ("# Generated folder WAN endpoint (DD-179); no console routes.\n"
-                    "http://:%s {\n\tbind %s\n\t@share path /s/*\n\thandle @share {\n"
-                    "\t\treverse_proxy %s:%s {\n"
-                    "\t\t\theader_up X-Share-Client-IP {http.request.remote.host}\n"
-                    "\t\t\ttransport http {\n\t\t\t\tkeepalive off\n\t\t\t}\n"
-                    "\t\t}\n\t}\n\thandle {\n\t\trespond 404\n\t}\n}\n"
-                    % (e["SHARE_PORT"], e["WAN_IPV4"], e["SHARE_WAN_BACKEND"], e["SHARE_PORT"]))
+            from master_https import site
+            text = site(e, self.wan_info())
+        from master_publications import extra_sites, torrent_active
+        from master_settings import SettingsError, atomic as atomic_text, read_regular
+        try:
+            extras = extra_sites(e)
+            torrent_wan = torrent_active(e)
+            previous_extras = {}
+            for name in extras:
+                try:
+                    previous_extras[name] = read_regular(os.path.join(e["CADDY_MODULES_DIR"], name))[0].decode()
+                except FileNotFoundError:
+                    previous_extras[name] = ""
+        except (SettingsError, OSError, ValueError, KeyError) as err:
+            raise ShareError("Caddy yayın kaydı uygulanamadı.") from err
         try:
             with open(target, encoding="utf-8") as stream:
                 previous = stream.read()
         except FileNotFoundError:
             previous = ""
-        signature = {"config": text, "wan": active}
+        signature = {"config": text, "wan": active, "extra": extras, "torrent_wan": torrent_wan}
         try:
             with open(marker, encoding="utf-8") as stream:
                 applied = json.load(stream)
         except (OSError, ValueError):
             applied = None
-        if previous == text and applied == signature:
+        if previous == text and previous_extras == extras and applied == signature:
             return
         # Always remove the success marker first: interrupted reloads retry, even
         # when the disk projection already matches. Credential rollback is separate.
@@ -422,8 +530,17 @@ class Manager:
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(temp)
         env = dict(os.environ, TAILSCALE_IPV4=e["TAILSCALE_IPV4"], STATE_FILE=self.state)
+        def write_extras(values):
+            for name, content in values.items():
+                path = os.path.join(e["CADDY_MODULES_DIR"], name)
+                if content:
+                    atomic_text(path, content, 0o644)
+                else:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(path)
         try:
             write_config(text)
+            write_extras(extras)
             subprocess.run(["caddy", "validate", "--config", e["CADDYFILE"], "--adapter", "caddyfile"],
                            check=True, timeout=15, capture_output=True, env=env)
             # Apply restrictions before opening a listener; existing manual denials
@@ -440,8 +557,9 @@ class Manager:
                 subprocess.run(["systemctl", "start", "--no-block", "caddy"], timeout=10, capture_output=True)
                 return
             atomic(marker, signature)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, SettingsError, subprocess.SubprocessError):
             write_config(previous)
+            write_extras(previous_extras)
             raise ShareError("WAN dinleyicisi/güvenlik duvarı uygulanamadı.")
 
     def guard(self):
@@ -499,6 +617,7 @@ class Manager:
 
 
 def main():
+    from master_settings import SettingsError
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
     parser.add_argument("action", choices=("prepare", "status", "save", "pause", "remove", "publish", "guard", "wan-firewall"))
@@ -506,7 +625,12 @@ def main():
     try:
         manager = Manager(args.state)
         if args.action == "wan-firewall":
-            print(int(manager.wan_active()), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL)
+            torrent = False
+            if manager.env.get("SHARE_WAN_BACKEND"):
+                from master_publications import torrent_active
+                torrent = torrent_active(manager.env)
+            print(int(manager.wan_active() or torrent), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,
+                  int(manager.env["SHARE_HTTPS_PORT"]) if torrent else manager.wan_info()["port"])
             return
         if args.action in ("publish", "guard"):
             getattr(manager, args.action)()
@@ -516,7 +640,7 @@ def main():
             return
         result = manager.public() if args.action == "status" else manager.change(args.action, json.loads(sys.stdin.read(65537)))
         print(json.dumps(result, ensure_ascii=False))
-    except (ShareError, OSError, ValueError, KeyError) as err:
+    except (ShareError, SettingsError, OSError, ValueError, KeyError, TypeError, RecursionError) as err:
         print(json.dumps({"error": str(err) if isinstance(err, ShareError) else "Paylaşım kaydı işlenemedi; kurulumu kontrol edin."}, ensure_ascii=False))
         sys.exit(1)
 

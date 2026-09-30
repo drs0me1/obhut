@@ -77,22 +77,11 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
 .dav-pair { display:grid; gap:4px; font-size:13px; min-width:0; }
 .dav-pair small { font-size:11px; color:var(--muted); }
 .dav-pair > span { display:flex; gap:6px; align-items:center; }
-.dav-addresses { display:grid; gap:10px; min-width:0; }
-.dav-network-badges { display:flex; flex-wrap:wrap; gap:4px; }
-.dav-network-badges .shchip { margin:0; }
 .dav-address { display:inline-flex; align-items:center; gap:6px; width:fit-content; max-width:100%; min-width:0; }
 .dav-address > code { min-width:0; overflow-wrap:anywhere; user-select:all; }
 .dav-address > .ib { flex:none; }
-.dav-url { padding:9px; background:var(--ground); border:1px solid var(--line); border-radius:6px; font-size:11px; }
 .dav-form { display:grid; gap:15px; min-width:0; }
 .dav-form > * { min-width:0; overflow-wrap:anywhere; }
-.dav-networks { display:grid; gap:10px; margin:0; padding:12px; border:1px solid var(--line); border-radius:7px; font-size:13px; }
-.dav-networks legend { padding:0 4px; }
-.dav-network-choices { display:flex; flex-wrap:wrap; gap:12px 20px; }
-.dav-network-choices .dav-check { align-items:center; min-height:32px; }
-.dav-network-choices input { margin:0; }
-.dav-network-choices label:has(:disabled) { color:var(--muted); }
-.dav-networks p { margin:0; }
 .dav-form > label:not(.dav-check) { display:grid; gap:6px; font-size:13px; }
 .dav-form input:not([type=checkbox]), .dav-form select { width:100%; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:var(--ground); color:var(--ink); font:inherit; }
 .dav-check { display:flex; align-items:flex-start; gap:8px; }
@@ -106,23 +95,46 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
 .dav-empty > svg { width:32px; height:32px; color:var(--accent); }
 .dav-empty h3 { font-size:15px; color:var(--ink); }
 .dav-list-head h2 { margin:0; font-size:18px; }
-.dav-shares { display:grid; margin-top:18px; border:1px solid var(--line); border-radius:9px; background:var(--surface); }
-.dav-share-head, .dav-share-row { display:grid; grid-template-columns:minmax(240px,2fr) minmax(80px,.8fr) 76px minmax(145px,1fr) minmax(145px,1fr) 82px 150px; align-items:center; gap:12px; padding:16px; }
-.dav-share-head { font-size:11px; color:var(--muted); background:var(--surface-2); border-radius:9px 9px 0 0; }
-.dav-share-row { border-top:1px solid var(--line); }
+.dav-shares { display:grid; gap:16px; margin-top:18px; }
+.dav-share-row { min-width:0; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
 .dav-share-row > * { min-width:0; }
-.dav-share-name { overflow-wrap:anywhere; }
+.dav-share-top { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:16px; }
+.dav-share-name { display:flex; align-items:center; gap:10px; min-width:0; overflow-wrap:anywhere; }
+.dav-share-name > div { min-width:0; }
+.dav-share-name .ticon { flex:none; }
 .dav-share-name strong, .dav-share-name small { display:block; }
 .dav-share-name small { color:var(--muted); font-size:11px; margin-top:4px; }
-.dav-share-name .dav-addresses { margin-top:10px; }
-.dav-share-name .dav-pair small { margin:0; }
-.dav-share-name code { font-size:11px; }
+.dav-account { display:grid; gap:4px; flex-basis:100%; min-width:0; font-size:12px; overflow-wrap:anywhere; }
+.dav-account > span { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.dav-account small { color:var(--muted); font-size:11px; }
+.dav-card-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:0 16px 16px; }
+.dav-form > .dav-card-grid { margin:0; }
+.dav-connection { min-width:0; border:1px solid var(--line); border-radius:8px; background:var(--ground); container-type:inline-size; }
+.dav-connection-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px; border-bottom:1px solid var(--line); }
+.dav-connection-head h3 { display:flex; align-items:center; gap:7px; margin:0; font-size:13px; font-weight:600; }
+.dav-connection-head svg { width:17px; height:17px; }
+.dav-connection-head .sw { flex:none; padding:0; }
+.dav-connection-body { display:grid; gap:12px; padding:12px; min-width:0; }
+.dav-connection-body > * { min-width:0; margin:0; overflow-wrap:anywhere; }
+.dav-connection-state { font-size:12px; color:var(--muted); }
+.dav-connection-state.active { color:var(--accent); }
+.dav-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.dav-infuse { font-size:11px; }
+.dav-infuse small { color:var(--muted); }
+.dav-infuse dl { display:grid; gap:6px; margin:10px 0 0; }
+.dav-infuse dl > div { display:grid; grid-template-columns:40px minmax(0,1fr); gap:8px; }
+.dav-infuse dt { color:var(--muted); }
+.dav-infuse dd { margin:0; overflow-wrap:anywhere; font-family:var(--f-mono); }
+.dav-connection .dav-address { font-size:11px; }
 .dav-cell { display:grid; gap:7px; font-size:12px; overflow-wrap:anywhere; }
+.dav-cell > span { color:var(--muted); font-size:11px; }
 .dav-cell select { width:100%; min-width:0; max-width:100%; min-height:36px; padding:7px; border:1px solid var(--line); border-radius:6px; background:var(--ground); color:var(--ink); font:inherit; }
-.dav-cell .shchip { margin:0; width:fit-content; max-width:100%; white-space:normal; }
-.dav-label { display:none; color:var(--muted); font-size:11px; }
+.dav-share-state { margin:0; max-width:100%; white-space:normal; }
 .dav-share-row .dav-actions { gap:6px; }
 .dav-shares[aria-busy="true"] { opacity:.7; }
+.fs09-detail .dav-share-top { padding:12px; }
+.fs09-detail .dav-card-grid { grid-template-columns:minmax(0,1fr); margin:0 10px 10px; }
+@container (max-width:320px) { .dav-controls { grid-template-columns:minmax(0,1fr); } }
 /* Bound confirmation content as well as the native dialog: long names never push actions out. */
 #cf .dlg, #cf .dlg > *, #cf .dlg-head > div { min-width:0; }
 #cf .dlg-head > div { overflow-wrap:anywhere; }
@@ -160,17 +172,10 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
   .fs-t.trash-t .acts > button { min-height:40px; }
 }
 @media(max-width:1100px) { .fs09-layout { grid-template-columns:minmax(0,1fr) 260px; } }
-@media(max-width:1350px) {
-  .dav-share-head { display:none; }
-  .dav-share-row { grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start; }
-  .dav-share-row:first-of-type { border-top:0; }
-  .dav-share-name { grid-column:1/-1; }
-  .dav-label { display:block; }
-  .dav-share-row .dav-actions { align-self:center; }
-}
-@media(max-width:760px) {
-  .dav-share-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .dav-share-row .dav-actions { grid-column:1/-1; }
+@media(max-width:600px) { .dav-card-grid { grid-template-columns:minmax(0,1fr); margin:0 12px 12px; } }
+@media(pointer:coarse) {
+  .dav-connection-head .sw { height:44px; }
+  .dav-share-row .ib { min-width:44px; min-height:44px; }
 }
 @media(max-width:900px) { .fs09-layout { grid-template-columns:minmax(0,1fr); } .fs09-detail { margin-top:2px; } }
 @media(max-width:480px) {
@@ -178,6 +183,6 @@ body:has([data-view="dosyalar"]:not([hidden]) #fs-body.with-dock) .toast { botto
   .fs09-tabs button { font-size:12px; }
   [data-view="dosyalar"] #fs-bar .fs-search { order:2; width:100%; max-width:none; }
   .fs09-layout.cards #fs-table { grid-template-columns:minmax(0,1fr); }
-  .dav-share-row { padding:14px; grid-template-columns:minmax(0,1fr); }
+  .dav-share-top { padding:12px; }
   .fs09-layout .fs-t > .tr { padding:12px 8px; }
 }

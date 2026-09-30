@@ -67,7 +67,7 @@ def read_json(path, default):
             return json.load(fh)
     except FileNotFoundError:
         return copy.deepcopy(default)
-    except (ValueError, OSError) as err:
+    except (ValueError, OSError, RecursionError) as err:
         raise SettingsError("Ayar kaydı okunamadı; üzerine yazılmadı.") from err
 
 
@@ -188,7 +188,7 @@ def tailnet_ports(env):
                 row = dict(family=ip.version, proto="tcp", port=url.port, name="Tailscale PeerAPI")
                 if not any(all(r[k] == row[k] for k in ("family", "proto", "port")) for r in rows):
                     rows.append(row)
-    except (SettingsError, ValueError, TypeError, AttributeError):
+    except (SettingsError, ValueError, TypeError, AttributeError, RecursionError):
         # PeerAPI normally also has a userspace netstack path; never grant an
         # ephemeral port range or abort host protection on a failed status read.
         pass
@@ -239,6 +239,15 @@ def password_hash(password):
     salt = secrets.token_bytes(16)
     key = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, 100000, 64)
     return "@ByteArray(%s:%s)" % (base64.b64encode(salt).decode(), base64.b64encode(key).decode())
+
+
+def dns_interface(value):
+    """The managed interface-name grammar, shared with the read-only DNS view."""
+    match = re.fullmatch(r"([^,\s]+),([^,/\s]+)(?:/([46]))?", value)
+    if match is None:
+        return None
+    name, iface, family = match.groups()
+    return {"name": name, "iface": iface, "family": int(family) if family else None}
 
 
 class Manager:
@@ -301,14 +310,36 @@ class Manager:
             for line in path.read_text().splitlines():
                 line = line.removeprefix(OFF)
                 if line.startswith("interface-name="):
-                    name, _, iface = line.partition("=")[2].partition(",")
-                    names.append({"name": name, "target": "tailscale", "source": source, "iface": iface})
+                    record = dns_interface(line.partition("=")[2])
+                    if record:
+                        target = "tailscale" if record["family"] != 6 else self.e.get("TAILSCALE_IPV6", "")
+                        names.append({**record, "target": target, "source": source})
         return names
 
     def validate(self, data):
-        require(isinstance(data, dict) and set(data) <= {"revision", "firewall", "dns", "torrent", "domain"}, "Bilinmeyen ayar alanı.")
+        require(isinstance(data, dict) and set(data) <= {"revision", "firewall", "dns", "torrent", "domain", "https", "web"}, "Bilinmeyen ayar alanı.")
         require(data.get("revision") == self.revision(), "Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
         c = self.config()
+        if "web" in data:
+            import master_publications
+            require(set(data) == {"revision", "web"}, "Caddy yayınını diğer ayarlardan ayrı kaydedin.")
+            require(not Path(self.e["SHARE_STATE_FILE"] + ".pending").exists(), "Önceki paylaşım işlemi kurtarılıyor.")
+            c = master_publications.validate(self.e, c, data["web"])
+        if "https" in data:
+            import master_https
+            require(set(data) == {"revision", "https"}, "HTTPS alan adını diğer ayarlardan ayrı kaydedin.")
+            item = data["https"]
+            require(isinstance(item, dict) and set(item) == {"domain"}, "HTTPS ayarı geçersiz.")
+            c["https"] = {"domain": master_https.domain(item["domain"])}
+            if "paylasim" in c.get("web", {}):
+                c["web"]["paylasim"].update(domain=c["https"]["domain"], enabled=bool(c["https"]["domain"]))
+            import master_publications
+            master_publications.config(self.e, c)
+            master_https.config(self.e, c)
+            require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
+            require(not Path(self.e["SHARE_STATE_FILE"] + ".pending").exists(), "Önceki paylaşım işlemi kurtarılıyor.")
+            if c["https"]["domain"]:
+                master_https.check_dns(self.e, c["https"]["domain"])
         if "domain" in data:
             require(set(data) == {"revision", "domain"}, "Alan adını diğer ayarlardan ayrı güncelleyin.")
             domain = data["domain"]
@@ -453,7 +484,7 @@ class Manager:
         lines = ["# Konsol (DD-156); kalıcı kaynak SETTINGS_FILE."]
         for r in d["records"]:
             if r["enabled"]:
-                lines.append("interface-name=" + r["name"] + "," + self.e["TAILSCALE_IF"] if r["target"] == "tailscale"
+                lines.append("interface-name=" + r["name"] + "," + self.e["TAILSCALE_IF"] + "/4" if r["target"] == "tailscale"
                              else "host-record=" + r["name"] + "," + r["target"])
         if d["forward"]:
             lines += ["server=" + ip for ip in d["servers"]]
@@ -476,6 +507,8 @@ class Manager:
         return out
 
     def status(self):
+        import master_https
+        import master_publications
         p = self.pending()
         pending = None
         if p:
@@ -486,11 +519,14 @@ class Manager:
                     pending["retry_in"] = max(0, int(p.get("retry_at", 0) - time.monotonic()))
             if p["changes"].get("domain"):
                 pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
+            if p["changes"].get("web"):
+                pending["web"] = True
         q = ini_values(read_regular(self.qconf)[0].decode()) if self.qconf.exists() else {}
         return {"revision": self.revision(), "config": self.current(), "pending": pending,
                 "names": self.dns_names(), "username": q.get(("Preferences", "WebUI\\Username"), "admin"),
                 "save": q.get(("BitTorrent", "Session\\DefaultSavePath"), q.get(("Preferences", "Downloads\\SavePath"), "")),
-                "folders": self.folders()}
+                "folders": self.folders(), "https": master_https.status(self.e),
+                "publications": master_publications.status(self.e)}
 
     def q_unit(self):
         user = pwd.getpwuid(int(self.e["DOWNLOADS_UID"])).pw_name
@@ -605,7 +641,7 @@ class Manager:
     def apply(self, data):
         require(not self.pending(), "Önce bekleyen işlemi onaylayın veya geri alın.")
         candidate = self.validate(data)
-        change = {k: k in data for k in ("firewall", "dns", "torrent", "domain")}
+        change = {k: k in data for k in ("firewall", "dns", "torrent", "domain", "https", "web")}
         require(any(change.values()), "Değişiklik yok.")
         dns_only = change["dns"] and not any(change[k] for k in ("firewall", "torrent", "domain"))
         # Account edits cannot disconnect Konsol. Folder/mixed writes keep the
@@ -618,6 +654,11 @@ class Manager:
         run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
         paths = ([*self.dns_paths(), self.dns_file] if change["dns"] else []) + ([self.qdrop] if change["torrent"] else [])
         files_active = False
+        if change["web"]:
+            # Snapshot private projections too: a first-time row has no saved
+            # web key for the publisher to reconstruct after a failed apply.
+            paths += [Path(self.e["CADDY_MODULES_DIR"]) / (name + ".caddy")
+                      for name in ("torrent", "paylasim")]
         if change["domain"]:
             require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
             paths += [*self.dns_paths(), self.dns_file, *self.domain_paths()]
@@ -629,6 +670,13 @@ class Manager:
              "old_domain": self.e["LOCAL_DOMAIN"], "files_active": files_active}
         save_json(self.pending_path, p)
         try:
+            if change["web"]:
+                self.https_apply()
+                if data["web"]["enabled"]:
+                    import master_https
+                    master_https.wait_certificate(self.e, candidate["web"][data["web"]["service"]]["domain"])
+            if change["https"]:
+                self.https_apply(candidate["https"]["domain"])
             if change["domain"]:
                 self.domain_apply(candidate)
             if change["torrent"]:
@@ -641,7 +689,7 @@ class Manager:
                 self.firewall_apply()
             p = self.pending()
             require(p["until"] > time.monotonic(), "Uygulama zaman aşımına uğradı.")
-            if dns_only or account_only:
+            if dns_only or account_only or change["https"] or change["web"]:
                 self.commit(p)
                 return {"pending": None, "committed": True}
             p.update(phase="awaiting", until=time.monotonic() + (300 if change["domain"] else 60))
@@ -650,6 +698,18 @@ class Manager:
             self.rollback()
             raise
         return {"pending": self.status()["pending"]}
+
+    def https_apply(self, name=None):
+        import master_https
+        import master_shares
+        try:
+            shares = master_shares.Manager(self.state)
+            shares.publish()
+            if name:
+                require(shares.wan_active(), "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
+                master_https.wait_certificate(self.e, name)
+        except master_shares.ShareError as err:
+            raise SettingsError(str(err)) from err
 
     def confirm(self, data):
         p = self.pending()
@@ -716,6 +776,10 @@ class Manager:
         return {"ok": True}
 
     def rollback_steps(self, p):
+        if p["changes"].get("web"):
+            self.restore(p["files"])
+        if p["changes"].get("https") or p["changes"].get("web"):
+            self.https_apply()
         if p["changes"]["torrent"]:
             run(["systemctl", "stop", self.q_unit()], timeout=25)
         self.restore(p["files"])
@@ -806,6 +870,7 @@ def main():
                 raw = sys.stdin.read(LIMIT + 1)
                 require(len(raw) <= LIMIT, "İstek çok büyük.")
                 data = json.loads(raw)
+                require(isinstance(data, dict), "İstek gövdesi JSON nesnesi olmalı.")
                 if args.action == "rollback":
                     require(not m.pending() or m.pending()["id"] == data.get("id"), "Geri alınacak işlem artık geçerli değil.")
                     result = m.rollback(manual=True)
@@ -814,7 +879,7 @@ def main():
             else:
                 result = getattr(m, args.action)()
         print(json.dumps(result, ensure_ascii=False))
-    except (SettingsError, ValueError, KeyError, TypeError, OSError) as err:
+    except (SettingsError, ValueError, KeyError, TypeError, OSError, RecursionError) as err:
         if args.action == "guard" and isinstance(err, SettingsBusy):
             return
         message = str(err) if isinstance(err, SettingsError) else "Ayar işlemi tamamlanamadı; sunucu yapılandırmasını denetleyin."
@@ -825,4 +890,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # Imported helpers must share this worker's exception classes. Loading a
+    # second copy as master_settings made validation errors escape as tracebacks.
+    sys.modules["master_settings"] = sys.modules[__name__]
     main()

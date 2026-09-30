@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-158"
+V2_VERSION="2026.08.06-v2-164"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -89,6 +89,7 @@ MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
+SHARE_HTTPS_PORT=$SHARE_HTTPS_PORT
 SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND
 SHARE_STATE_FILE=$SHARE_STATE_FILE
 TORRENT_TEMP_DIR=$TORRENT_TEMP_DIR
@@ -632,20 +633,10 @@ EOF
 ensure_downloads_tree() {
     local root="$1" uid="$2" gid="$3"
     [[ -d "$root" ]] || die "downloads dizini yok: $root"
-    # Tek geçiş, üç ayrı find değil: büyük kütüphanede ağaç I/O'su üçte bire
-    # iner. "-exec … + -false" grubu her girdide sonraki gruba da bakılmasını
-    # sağlar (GNU virgül operatörü BSD find'da yok; testler iş istasyonunda
-    # koşar). Onarım DD-84 gereği seçici kalır (yalnız sapmış girdiler);
-    # hedef modlarda suid/sgid olmadığından exec sırası sonucu değiştirmez.
-    # -print düzeltilen girdiyi yazar; aynı girdi hem sahip hem mod için
-    # görünebilir, sayı tekilleştirilir. Çıktı: düzeltilen girdi sayısı.
-    # DD-171: retired share data is neither served nor repaired/deleted.
-    find "$root" \( \( -path "$root/${FILES_ARCHIVE_DIR:-.arsiv}" -o -path "$root/${SHARE_DIR:-.pay}" \) -prune \) -o \
-        \( \( ! -uid "$uid" -o ! -gid "$gid" \) \
-        -print -exec chown -h "${uid}:${gid}" {} + -false \) -o \
-        \( -type d ! -perm 0775 -print -exec chmod 0775 {} + -false \) -o \
-        \( -type f ! -perm 0664 -print -exec chmod 0664 {} + \) |
-        sort -u | wc -l | tr -d ' '
+    # No pathname-based chown/chmod of service-writable data. Keep one selective
+    # descriptor walk; links/special files and private work areas stay untouched.
+    python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid" \
+        "${FILES_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -774,7 +765,7 @@ stage_3() {
         "$SERVER_ROOT/$MEDIA_SUBDIR/movies" \
         "$SERVER_ROOT/$MEDIA_SUBDIR/series" \
         "$SERVER_ROOT/$FILES_PANEL_TRASH"; do
-        mkdir -p "$d"
+        python3 "$V2_ROOT/panel/master_permissions.py" --mkdir "$d" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
     done
     local fixed
     fixed="$(ensure_downloads_tree "$SERVER_ROOT" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
@@ -798,6 +789,10 @@ stage_4() {
     atomic_write "$SBIN_DIR/master_shares.py" 0755 <"$V2_ROOT/panel/master_shares.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    atomic_write "$SBIN_DIR/master_https.py" 0755 <"$V2_ROOT/panel/master_https.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    atomic_write "$SBIN_DIR/master_publications.py" 0755 <"$V2_ROOT/panel/master_publications.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
     render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
@@ -976,7 +971,7 @@ EOF
     fi
 
     render_template "$V2_ROOT/templates/Caddyfile" "$CADDYFILE" 0644 \
-        WAN_IPV4="$WAN_IPV4" SHARE_PORT="$SHARE_PORT" \
+        WAN_IPV4="$WAN_IPV4" SHARE_PORT="$SHARE_PORT" SHARE_HTTPS_PORT="$SHARE_HTTPS_PORT" \
         CADDY_HTTP_PORT="$CADDY_HTTP_PORT" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         CADDY_ADMIN_SOCKET="$CADDY_ADMIN_SOCKET" \
@@ -989,12 +984,14 @@ EOF
     install -d -m 0755 -o root -g root "$CADDY_MODULES_DIR"
     # DD-182: WAN paylaşım sitesi son yayındaki WAN_IPV4'e bağlanır. Sağlayıcı adresi
     # değiştirdiyse Caddy onunla açılamaz; site burada kalkar, 7. aşama yeni adresle yazar.
-    local wan_site="$CADDY_MODULES_DIR/paylasim-wan.caddy"
-    if [[ -f "$wan_site" ]] && ! grep -qxF "$(printf '\tbind %s' "$WAN_IPV4")" "$wan_site"; then
-        rm -f -- "$wan_site"
-        caddy_changed=1
-        log WARN "WAN IPv4 değişmiş; WAN paylaşım adresi 7. aşamada yeni adresle yazılacak"
-    fi
+    local wan_site
+    for wan_site in "$CADDY_MODULES_DIR/paylasim-wan.caddy" "$CADDY_MODULES_DIR/torrent-wan.caddy"; do
+        if [[ -f "$wan_site" ]] && ! grep -qxF "$(printf '\tbind %s' "$WAN_IPV4")" "$wan_site"; then
+            rm -f -- "$wan_site"
+            caddy_changed=1
+            log WARN "WAN IPv4 değişmiş; Caddy yayını 7. aşamada yeni adresle yazılacak"
+        fi
+    done
     ensure_console_pages
     # Caddy env yer tutucularını çalışma anında çözer; boş ortamla doğrulamak
     # `http://:` gibi anlamsız bir siteyi geçerli sayardı — gerçek değerlerle
@@ -1141,8 +1138,8 @@ ensure_files_panel() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     atomic_write "$SBIN_DIR/master_rar.py" 0644 <"$V2_ROOT/files-panel/master_rar.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ ! -L "$SERVER_ROOT/$FILES_ARCHIVE_DIR" ]] || die "arşiv çalışma alanı bağlantı olamaz"
-    install -d -m 0700 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" "$SERVER_ROOT/$FILES_ARCHIVE_DIR"
+    python3 "$V2_ROOT/panel/master_permissions.py" --directory-mode 0700 \
+        "$SERVER_ROOT/$FILES_ARCHIVE_DIR" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
     # DD-144, DD-151: qBittorrent modülünün ilk ayarındaki yarım indirme klasörü; panel onu
     # kullanıcı alanının köküne göre bilir (<indirme klasörü>/<geçici>) ve orada uyarır.
     temp_dir="$DOWNLOADS_SUBDIR/$TORRENT_TEMP_DIR"

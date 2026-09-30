@@ -90,7 +90,8 @@ def prepare():
         os.chmod(folder, 0o775)
         data = dict(path=str(folder.relative_to(env["SERVER_ROOT"])), username=root.name + "-" + name,
                     password=state["password"] if name == "reader" else state["writer_password"],
-                    permission="ro" if name == "reader" else "rw", days=7, ack_write=True)
+                    connections={"tailscale": {"permission": "ro" if name == "reader" else "rw",
+                                                "days": 7, "ack_write": True}})
         result = api("kaydet", data)
         item = next(i for i in result["items"] if i["path"] == data["path"])
         state["items"].append(item)
@@ -128,14 +129,17 @@ def prepare():
     assert http("GET", "/api/konsol/paylasim", extra={"X-Konsol": ""})[0] == 403
     state["password"] = secrets.token_hex(20)
     api("kaydet", dict(id=a["id"], path=a["path"], username=a["username"],
-                       permission="ro", password=state["password"], days=None))
+                       password=state["password"]))
     save()
     time.sleep(.3)
     dav(a, p, "GET", "hello.txt", expected=401)
     dav(a, state["password"], "GET", "hello.txt")
-    api("durum", dict(id=b["id"], paused=True))
+    result = api("kaydet", dict(id=b["id"], connections={
+        "tailscale": {"enabled": False}, "wan": {"enabled": False}}))
+    paused = next(i for i in result["items"] if i["id"] == b["id"])
+    assert not paused["urls"] and not any(c["active"] for c in paused["connections"].values())
     time.sleep(.3)
-    dav(b, q, "GET", "hello.txt", expected=401)
+    dav(b, q, "GET", "hello.txt", expected=403)
     state["registry_digest"] = hashlib.sha256(Path(env["SHARE_STATE_FILE"]).read_bytes()).hexdigest()
     save()
     verify(manifest)
@@ -150,7 +154,7 @@ def verify(manifest):
     assert hashlib.sha256(Path(env["SHARE_STATE_FILE"]).read_bytes()).hexdigest() == state["registry_digest"]
     assert Path(env["SHARE_STATE_FILE"]).stat().st_mode & 0o777 == 0o600
     assert dav(a, state["password"], "GET", "hello.txt") == b"abcdefghij"
-    dav(b, state.get("writer_password", state["password"]), "GET", "hello.txt", expected=401)
+    dav(b, state.get("writer_password", state["password"]), "GET", "hello.txt", expected=403)
     pid = subprocess.check_output(["systemctl", "show", "-p", "MainPID", "--value", "master-paylasim"], text=True).strip()
     inspected = b"\n".join(Path("/proc", pid, name).read_bytes() for name in ("cmdline", "environ"))
     inspected += Path(env["SHARE_STATE_FILE"]).read_bytes()
@@ -159,7 +163,7 @@ def verify(manifest):
                                          "-u", "master-wg-panel", "--no-pager", "-o", "cat"])
     for secret in (state["password"], state.get("writer_password", state["password"])):
         assert secret.encode() not in inspected, "Plaintext test credential exposed"
-    print("PASS: IDs/hashes/permissions/expiry/paused state preserved; active reader and paused writer verified.")
+    print("PASS: IDs/hashes/per-connection policies preserved; active reader and disabled writer verified.")
 
 
 def cleanup(manifest):

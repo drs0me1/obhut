@@ -8,6 +8,8 @@ setup() {
     # shellcheck source=../common.sh
     source "$V2_ROOT/common.sh"
     TMP="$(mktemp -d)"
+    # macOS /var is a symlink; no-follow traversal needs the physical fixture root.
+    TMP="$(cd "$TMP" && pwd -P)"
     V2_RETRY_BACKOFF_SECONDS=0
 }
 
@@ -15,6 +17,21 @@ teardown() {
     [ -z "${PANEL_PID:-}" ] || kill "$PANEL_PID" 2>/dev/null || true
     [ -z "${PSOCK:-}" ] || rm -rf "${PSOCK%/*}"
     rm -rf "$TMP"
+}
+
+stat_field() {
+    # GNU/BSD options differ. A failed probe may still print filesystem data;
+    # capture it and publish only the successful platform's value.
+    local value
+    if value="$(stat -c "$1" "$3" 2>/dev/null)"; then
+        printf '%s\n' "$value"
+    else
+        stat -f "$2" "$3"
+    fi
+}
+
+file_sha256() {
+    python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
 }
 
 @test "log does not treat message as format string" {
@@ -373,7 +390,7 @@ EOF
 @test "atomic_write creates file with mode" {
     printf 'x\n' | atomic_write "$TMP/f" 0600
     [ "$(cat "$TMP/f")" = "x" ]
-    [ "$(stat -f '%Lp' "$TMP/f" 2>/dev/null || stat -c '%a' "$TMP/f")" = "600" ]
+    [ "$(stat_field %a %Lp "$TMP/f")" = "600" ]
 }
 
 @test "atomic_write refuses symlink target" {
@@ -394,10 +411,10 @@ EOF
 @test "atomic_write skips replace when content identical" {
     atomic_write "$TMP/f" 0644 <<<"same"
     local before
-    before="$(stat -f '%i' "$TMP/f" 2>/dev/null || stat -c '%i' "$TMP/f")"
+    before="$(stat_field %i %i "$TMP/f")"
     atomic_write "$TMP/f" 0644 <<<"same"
     local after
-    after="$(stat -f '%i' "$TMP/f" 2>/dev/null || stat -c '%i' "$TMP/f")"
+    after="$(stat_field %i %i "$TMP/f")"
     [ "$before" = "$after" ]
     [ "$V2_LAST_ATOMIC_CHANGED" -eq 0 ]
 }
@@ -427,10 +444,24 @@ EOF
     [ "$(tail -c1 "$TMP/o" | wc -l | tr -d ' ')" = "1" ]
 }
 
-@test "render_template keeps ampersand and slash in values" {
+@test "render_template keeps ampersand slash and backslash values and preserves the replacement option" {
+    local value='/a/b&c\dir\&d\\tail' flag before
     printf 'v=__V__\n' >"$TMP/t"
-    render_template "$TMP/t" "$TMP/o" 0644 'V=/a/b&c'
-    [ "$(cat "$TMP/o")" = 'v=/a/b&c' ]
+    render_template "$TMP/t" "$TMP/o" 0644 "V=$value"
+    [ "$(cat "$TMP/o")" = "v=$value" ]
+    # Bash 3.2 still runs the literal-value assertion; newer shells must also
+    # leave both the enabled and disabled caller option states unchanged.
+    if (shopt -s patsub_replacement) 2>/dev/null; then
+        for flag in -s -u; do
+            (
+                shopt "$flag" patsub_replacement
+                before="$(shopt -p patsub_replacement || true)"
+                render_template "$TMP/t" "$TMP/o" 0644 "V=$value"
+                [ "$(cat "$TMP/o")" = "v=$value" ]
+                [ "$(shopt -p patsub_replacement || true)" = "$before" ]
+            )
+        done
+    fi
 }
 
 @test "acquire_lock rejects relative path" {
@@ -501,24 +532,20 @@ EOF
     grep -qx 'Group=__DOWNLOADS_GID__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
 }
 
-@test "downloads tree is chown 1000 for qbittorrent, the share and the console" {
+@test "downloads tree repairs ownership for qbittorrent, the share and the console through safe descriptors" {
     grep -q 'DOWNLOADS_UID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'DOWNLOADS_GID=1000' "$V2_ROOT/config/defaults.env"
     grep -q 'ensure_downloads_tree' "$V2_ROOT/install.sh"
     grep -q 'assert_downloads_path_allowed' "$V2_ROOT/install.sh"
     grep -q 'allowlist dışı' "$V2_ROOT/install.sh"
-    grep -q 'chown -h' "$V2_ROOT/install.sh"
-    grep -q '! -uid' "$V2_ROOT/install.sh"
-    grep -q '! -perm 0775' "$V2_ROOT/install.sh"
-    grep -q '! -perm 0664' "$V2_ROOT/install.sh"
-    # Downloads tree itself is selective find+chown, not chown -R on DOWNLOADS_PATH.
+    # The installer delegates its selective walk to the same helper tested in
+    # test_install_hardening.py (including links, special files and races).
     downloads_tree="$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     [ -n "$downloads_tree" ]
     run ! grep -q 'chown -R' <<<"$downloads_tree"
-    # Single tree walk (v2-71): one find with comma-joined expressions, not
-    # three separate passes over the whole downloads tree.
-    [ "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh" |
-        grep -c 'find "\$root"')" -eq 1 ]
+    grep -qF 'python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid"' <<<"$downloads_tree"
+    grep -qF '"${FILES_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"' <<<"$downloads_tree"
+    run ! grep -qE 'find |chown |chmod ' <<<"$(grep -v '^[[:space:]]*#' <<<"$downloads_tree")"
 }
 
 @test "ensure_downloads_tree single pass fixes deviant modes and keeps compliant ones" {
@@ -536,9 +563,9 @@ EOF
     chmod 0775 "$TMP/dl"
     [ "$(ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)")" = 2 ]
     [ "$(ensure_downloads_tree "$TMP/dl" "$(id -u)" "$(id -g)")" = 0 ]
-    [ "$(stat -f '%Lp' "$TMP/dl/sub" 2>/dev/null || stat -c '%a' "$TMP/dl/sub")" = "775" ]
-    [ "$(stat -f '%Lp' "$TMP/dl/sub/bad" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/bad")" = "664" ]
-    [ "$(stat -f '%Lp' "$TMP/dl/sub/good" 2>/dev/null || stat -c '%a' "$TMP/dl/sub/good")" = "664" ]
+    [ "$(stat_field %a %Lp "$TMP/dl/sub")" = "775" ]
+    [ "$(stat_field %a %Lp "$TMP/dl/sub/bad")" = "664" ]
+    [ "$(stat_field %a %Lp "$TMP/dl/sub/good")" = "664" ]
     run ensure_downloads_tree "$TMP/yok" "$(id -u)" "$(id -g)"
     case "$output" in *"die: downloads dizini yok"*) ;; *) false ;; esac
 }
@@ -666,6 +693,8 @@ assert not missing, missing
     grep -qx 'Wants=master-firewall.service' "$dropin"
     grep -qx 'After=master-firewall.service' "$dropin"
     grep -qx 'ExecStartPre=+__SBIN_DIR__/master-firewall --check' "$dropin"
+    awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
+        grep -qxF 'ExecStartPre=+$SBIN_DIR/master-firewall --check'
     s4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qF '"$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"' <<<"$s4"
     # With the firewall recovery and before the tailnet wait: WireGuard does not need Tailscale.
@@ -995,7 +1024,11 @@ EOF
         grep -qxF "$line" "$unit"
     done
     grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$V2_ROOT/modules/paylasim/paylasim.caddy"
-    grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/modules/paylasim/dnsmasq.conf"
+    # Public TLS has its own port; tailnet WebDAV stays on explicit HTTP.
+    grep -qx 'SHARE_HTTPS_PORT="443"' "$V2_ROOT/config/defaults.env"
+    grep -qxF "$(printf '\tauto_https disable_redirects')" "$V2_ROOT/templates/Caddyfile"
+    grep -qxF "$(printf '\tservers __WAN_IPV4__:__SHARE_HTTPS_PORT__ {')" "$V2_ROOT/templates/Caddyfile"
+    grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/modules/paylasim/dnsmasq.conf"
     [ "$(grep -c '^http://paylas' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
     [ ! -e "$V2_ROOT/modules/paylasim/compose.yaml" ]
 }
@@ -1119,7 +1152,8 @@ EOF
     run ! grep -q 'WAN_INTERFACE:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'SSH_PUBLIC_PORT" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'neighbour-solicitation neighbour-advertisement)' "$V2_ROOT/scripts/firewall.sh"
-    [ "$(grep -c 'for type in "${ICMP6_TYPES\[@\]}"' "$V2_ROOT/scripts/firewall.sh")" -eq 2 ]
+    # Apply, check and the cold-start recovery policy share the same control types.
+    [ "$(grep -c 'for type in "${ICMP6_TYPES\[@\]}"' "$V2_ROOT/scripts/firewall.sh")" -eq 3 ]
     grep -q '^ICMP6_TYPES=(destination-unreachable packet-too-big' "$V2_ROOT/scripts/firewall.sh"
     # Helper does not consume WAN_IPV4 (endpoint hint stays in state.env).
     run ! grep -q 'WAN_IPV4' "$V2_ROOT/scripts/firewall.sh"
@@ -1637,6 +1671,7 @@ WG_CLIENTS_DIR=$TMP/clients
 WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
 MODULES_FILE=$TMP/moduller
 SHARE_PORT=61010
+SHARE_HTTPS_PORT=443
 RCLONE_VERSION=1.75.1
 TAILSCALE_IPV4=100.64.0.7
 SERVER_ROOT=$TMP
@@ -1843,10 +1878,13 @@ share_fixture() {
     printf 'interface-name=paylas.ayc,tailscale0\n' >"$TMP/mods/paylasim/dnsmasq.conf"
     : >"$TMP/caddy/Caddyfile"
     cp "$V2_ROOT/panel/master_shares.py" "$TMP/lib/master_shares.py"
+    cp "$V2_ROOT/panel/master_settings.py" "$TMP/lib/master_settings.py"
+    cp "$V2_ROOT/panel/master_https.py" "$TMP/lib/master_https.py"
     cat >>"$TMP/mstate.env" <<EOF
 SERVER_ROOT=$TMP/srv
 SHARE_DIR=.pay
 SHARE_PORT=61010
+SHARE_HTTPS_PORT=443
 SHARE_STATE_FILE=$TMP/etc/webdav.json
 SBIN_DIR=$TMP/lib
 TORRENT_TEMP_DIR=incomplete
@@ -1946,7 +1984,11 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     grep -qx "$(printf 'paylasim\tcalisiyor')" "$TMP/moduller"
     grep -qx "$(printf 'dosya\tcalisiyor')" "$TMP/moduller"
     [ "$(file_mode "$TMP/etc/webdav.json")" = 0o600 ]
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schema"] == 3 and d["items"] == []' "$TMP/etc/webdav.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schema"] == 4 and d["items"] == []' "$TMP/etc/webdav.json"
+    # An unconfigured HTTPS setting keeps the four-field HTTP firewall record.
+    run python3 "$TMP/lib/master_shares.py" --state "$TMP/mstate.env" wan-firewall
+    [ "$status" -eq 0 ]
+    [ "$output" = '0 16 64 61010' ]
     cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
     cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
     [ ! -e "$TMP/srv/.pay" ]
@@ -1987,12 +2029,16 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
 
 @test "builtins reapply idempotently preserve accounts and recover an interrupted installation" {
     builtin_fixture
-    touch "$TMP/dnsmasq-bad"
+    # The installed Debian dnsmasq systemd-helper bypasses our PATH stub.
+    # Caddy validation is fixture-owned on both platforms and fails after
+    # registry preparation, exercising the same interrupted-install recovery.
+    touch "$TMP/caddy-bad"
     run mm yerlesik
     [ "$status" -ne 0 ]
+    case "$output" in *"Caddy yapılandırması doğrulanmadı"*) ;; *) false ;; esac
     [ "$(grep -c paylasim "$TMP/moduller")" -eq 0 ]
     cp "$TMP/etc/webdav.json" "$TMP/before.json"
-    rm -f "$TMP/dnsmasq-bad"
+    rm -f "$TMP/caddy-bad"
     run mm yerlesik
     [ "$status" -eq 0 ]
     : >"$TMP/systemctl-calls"
@@ -2059,6 +2105,29 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     [ "$(file_mode "$SERVER_ROOT/.pay/kayit.json")" = 0o600 ]
     [ "$(cat "$SERVER_ROOT/.pay/kayit.json")" = 'old private metadata' ]
     [ ! -e "$SERVER_ROOT/.pay/acik" ]
+}
+
+@test "stage 3 refuses a symlink media parent before creating outside directories" {
+    eval "$(awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    detect_wan() { :; }
+    detect_tailscale() { :; }
+    write_state() { V2_LAST_ATOMIC_CHANGED=0; }
+    log() { :; }
+    SERVER_ROOT="$TMP/root" DOWNLOADS_PATH="$TMP/root/downloads" MEDIA_SUBDIR=media
+    FILES_PANEL_TRASH=.cop FILES_ARCHIVE_DIR=.arsiv SHARE_DIR=.pay
+    DOWNLOADS_UID="$(id -u)" DOWNLOADS_GID="$(id -g)"
+    mkdir -p "$SERVER_ROOT" "$TMP/outside"
+    ln -s "$TMP/outside" "$SERVER_ROOT/media"
+    # Match the installer's errexit semantics; never source its stage dispatcher.
+    run -- bash -c 'set -Eeuo pipefail; eval "$1"; eval "$2"; stage_3' _ \
+        "$(declare -f stage_3 ensure_downloads_tree detect_wan detect_tailscale write_state log die)" \
+        "$(declare -p SERVER_ROOT DOWNLOADS_PATH MEDIA_SUBDIR FILES_PANEL_TRASH FILES_ARCHIVE_DIR SHARE_DIR DOWNLOADS_UID DOWNLOADS_GID V2_ROOT)"
+    [ "$status" -ne 0 ]
+    case "$output" in *"güvenli onarılamadı"*) ;; *) false ;; esac
+    [ ! -e "$TMP/outside/movies" ]
+    [ ! -e "$TMP/outside/series" ]
+    [ -L "$SERVER_ROOT/media" ]
 }
 
 @test "wg panel lists modules and starts module work as its own systemd unit" {
@@ -2642,7 +2711,7 @@ PY
     printf 'yuk %s' "$(seq 1 200 | tr -d '\n')" >"$TMP/payload.bin"
     [ "$(fp "/api/upload?path=Filmler&name=arsiv.bin" --data-binary "@$TMP/payload.bin")" = 201 ]
     cmp -s "$TMP/payload.bin" "$TMP/root/Filmler/arsiv.bin"
-    [ "$(stat -f '%Lp' "$TMP/root/Filmler/arsiv.bin" 2>/dev/null || stat -c '%a' "$TMP/root/Filmler/arsiv.bin")" = 664 ]
+    [ "$(stat_field %a %Lp "$TMP/root/Filmler/arsiv.bin")" = 664 ]
     grep -q 'konsol 127.0.0.1 yükle "Filmler/arsiv.bin" -> ok' "$TMP/fpanel.log"
     # Aynı ad ikinci kez: üzerine yazılmaz, dosya bozulmaz.
     printf 'baska icerik' >"$TMP/other.bin"
@@ -2768,7 +2837,7 @@ PY
     [ "$(tail -n 1 "$V2_ROOT/templates/Caddyfile")" = 'import __CADDY_MODULES_DIR__/*.caddy' ]
     s6="$(awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh")"
     awk '/install -d -m 0755 -o root -g root "\$CADDY_MODULES_DIR"/ {a = NR} /caddy validate --config/ {b = NR} END {exit !(a && b && a < b)}' <<<"$s6"
-    for k in SHARE_DIR SHARE_STATE_FILE STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
+    for k in SHARE_DIR SHARE_STATE_FILE SHARE_HTTPS_PORT STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\\\$$k"
     done
     # reapply_modules: a changed module file is applied to an installed module in either state.
@@ -2836,8 +2905,22 @@ PY
     grep -qF 'raw[1] === "paylasim" ? "shares" : "files";' "$js"
     grep -qF 'api("/api/konsol/paylasim")' "$js"
     grep -qF 'window.createSharesPage' "$js"
-    grep -qF 'permission: permission.value, ack_write: ack.checked' "$dav"
-    grep -qF 'days.value === "keep" ? null' "$dav"
+    # Each trusted network has its own card, switch, permission and lifetime.
+    grep -qF 'const scopes = ["tailscale", "wan"];' "$dav"
+    grep -qF 'class: "dav-card-grid" }, ...scopes.map(scope => connection(s, scope))' "$dav"
+    grep -qF 'role: "switch", "aria-checked": c.enabled' "$dav"
+    grep -qF 'id: "dav-" + scope + "-permission"' "$dav"
+    grep -qF 'id: "dav-" + scope + "-days"' "$dav"
+    grep -qF 'data.connections[scope] = { enabled: d.enabled.getAttribute("aria-checked") === "true", permission: d.permission.value, days: Number(d.days.value) };' "$dav"
+    grep -qF 'if (d.permission.value === "rw") data.connections[scope].ack_write = d.ack.checked;' "$dav"
+    grep -qF 'if (value === "rw") patch.ack_write = true;' "$dav"
+    grep -qF 'connections: { [scope]: patch }' "$dav"
+    grep -qF 'if (value === "rw") ask({' "$dav"
+    grep -qF 'onOk: save' "$dav"
+    grep -qF 'connections: { [scope]: { enabled } }' "$dav"
+    grep -qF 'if (value === null || (value === 0 && c.expires == null)) return;' "$dav"
+    grep -qF 'connections: { [scope]: { days: value } }' "$dav"
+    grep -qF 'onOk: () => { body.ack_wan_http = true; return save(); }' "$dav"
     grep -qF 'data.password = ""' "$dav"
     run ! grep -qE 'localStorage|sessionStorage' "$dav"
 }
@@ -2845,6 +2928,7 @@ PY
 @test "installer wires private folder accounts without exposing hashes to the file backend" {
     grep -qx 'LoadCredential=registry:__SHARE_STATE_FILE__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
     grep -qF 'atomic_write "$SBIN_DIR/master_shares.py"' "$V2_ROOT/install.sh"
+    grep -qF 'atomic_write "$SBIN_DIR/master_https.py"' "$V2_ROOT/install.sh"
     grep -qF 'atomic_write "$SBIN_DIR/master_webdav.py"' "$V2_ROOT/install.sh"
     grep -qF 'dosyalar.css dosyalar.js' "$V2_ROOT/install.sh"
     [ "$(cat "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|SHARE_STATE_FILE')" -eq 0 ]
@@ -2903,7 +2987,7 @@ PY
     grep -q 'reverse_proxy unix/__WG_PANEL_SOCKET__$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
     run ! grep -q 'redir ' "$V2_ROOT/templates/Caddyfile"
-    grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__' "$V2_ROOT/templates/dnsmasq.conf"
+    grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/templates/dnsmasq.conf"
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     # DD-144: the trash sits beside the downloads folder, not inside it, so no container
     # that mounts downloads can reach it and the tmpfs curtain is gone.
@@ -2995,7 +3079,7 @@ master_wg() {
     [ "$status" -eq 0 ]
     [ "$output" = $'iphone\t10.8.0.2' ]
     profile="$TMP/etc/wireguard/clients-wg0/iphone.conf"
-    mode="$(stat -c %a "$profile" 2>/dev/null || stat -f %Lp "$profile")"
+    mode="$(stat_field %a %Lp "$profile")"
     [ "$mode" = 600 ]
     grep -qx 'PrivateKey = PRIV01kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk=' "$profile"
     grep -qx 'Address = 10.8.0.2/32, fdcc:ad94:bacf:61a4::2/128' "$profile"
@@ -3190,7 +3274,7 @@ wg_revision() {
     grep -qx 'ListenPort = 61011' "$wgd/wg1.conf"
     grep -qx 'MTU = 1420' "$wgd/wg1.conf"
     grep -q '^PrivateKey = PRIV' "$wgd/wg1.conf"
-    [ "$(stat -f %Lp "$wgd/wg1.conf" 2>/dev/null || stat -c %a "$wgd/wg1.conf")" = 600 ]
+    [ "$(stat_field %a %Lp "$wgd/wg1.conf")" = 600 ]
     [ -d "$wgd/clients-wg1" ]
     [ "$(sed -n 2p "$wgd/networks")" = $'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t1.1.1.1, 1.0.0.1\tİş ağı' ]
     [ ! -e "$wgd/caddy-wg-wg1.env" ]
@@ -3314,7 +3398,7 @@ wg_revision() {
     master_wg add iphone 1.1.1.1 21 1420 >/dev/null
     profile="$TMP/etc/wireguard/clients-wg0/iphone.conf"
     rest_before="$(grep -v '^DNS = ' "$profile")"
-    conf_before="$(shasum <"$WG0_CONF")"
+    conf_before="$(file_sha256 "$WG0_CONF")"
     rm -f "$TMP/calls"
     run master_wg dns iphone "2a07:a8c0::df:877b , 2a07:a8c1::df:877b"
     [ "$status" -eq 0 ]
@@ -3322,13 +3406,13 @@ wg_revision() {
     grep -qx 'DNS = 2a07:a8c0::df:877b, 2a07:a8c1::df:877b' "$profile"
     [ "$(grep -c '^DNS = ' "$profile")" = 1 ]
     [ "$(grep -v '^DNS = ' "$profile")" = "$rest_before" ]
-    [ "$(shasum <"$WG0_CONF")" = "$conf_before" ]
-    mode="$(stat -c %a "$profile" 2>/dev/null || stat -f %Lp "$profile")"
+    [ "$(file_sha256 "$WG0_CONF")" = "$conf_before" ]
+    mode="$(stat_field %a %Lp "$profile")"
     [ "$mode" = 600 ]
     # DNS is client-side only: nothing is applied to the interface.
     run ! grep -qE 'syncconf|systemctl restart' "$TMP/calls"
     # Bad input changes nothing.
-    before="$(shasum <"$profile")"
+    before="$(file_sha256 "$profile")"
     run master_wg dns iphone "dns.google"
     [ "$status" -ne 0 ]
     run master_wg dns iphone " , "
@@ -3338,7 +3422,7 @@ wg_revision() {
     case "$output" in *"adında bir peer yok"*) ;; *) false ;; esac
     run master_wg dns iphone
     [ "$status" -ne 0 ]
-    [ "$(shasum <"$profile")" = "$before" ]
+    [ "$(file_sha256 "$profile")" = "$before" ]
     [ -z "$(find "$TMP/etc/wireguard/clients-wg0" -name '.peer-*')" ]
     # The menu default (DD-131) is valid and written back exactly as defaults.env has it.
     default_dns="$(awk -F'"' '/^WG_CLIENT_DNS_DEFAULT=/{print $2; exit}' "$V2_ROOT/config/defaults.env")"
@@ -3469,6 +3553,9 @@ EOF
 torrent_fixture() {
     # DD-151: the qBittorrent host module against fakes (apt, systemd, journal, curl, dig, Caddy, dnsmasq).
     konsol_fixture
+    # The real CLI imports the shared no-follow reader for its username lookup.
+    cp "$V2_ROOT/panel/master_settings.py" "$TMP/sbin/master_settings.py"
+    cp "$V2_ROOT/panel/master_https.py" "$TMP/sbin/master_https.py"
     mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof"
     printf '[Service]\nUMask=0002\n' >"$TMP/mods/torrent/master-stack.conf"
     sed -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_UI_PORT__/61006/g' \
@@ -3583,6 +3670,31 @@ EOF
     [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
 }
 
+@test "master-modul account refuses a FIFO profile promptly without leaking journal credentials" {
+    torrent_fixture
+    mkdir -p "$TMP/qbprof/qBittorrent"
+    mkfifo "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    # Python bounds the real CLI on macOS too, where util-linux timeout is absent.
+    run env PATH="$TMP/mbin:$PATH" STATE_FILE="$TMP/mstate.env" \
+        python3 - "$V2_ROOT/scripts/master-modul" <<'PY'
+import os, signal, subprocess, sys
+p = subprocess.Popen(["bash", sys.argv[1], "hesap", "torrent", "--parola"],
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate(timeout=5)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.communicate(timeout=5)
+    raise
+assert p.returncode != 0, (out, err)
+assert out == "", out
+assert "qBittorrent ayar dosyası güvenli okunamadı" in err, err
+assert "Tmp9Pass7Word" not in err and "Traceback" not in err, err
+PY
+    [ "$status" -eq 0 ]
+    [ -p "$TMP/qbprof/qBittorrent/qBittorrent.conf" ]
+}
+
 @test "installer protects the archive workspace and wires bounded nonroot ZIP jobs" {
     eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     mkdir -p "$TMP/root/.arsiv" "$TMP/root/media"
@@ -3593,6 +3705,7 @@ EOF
     ensure_downloads_tree "$TMP/root" "$(id -u)" "$(id -g)" >/dev/null
     [ "$(file_mode "$TMP/root/.arsiv")" = 0o700 ]
     [ "$(file_mode "$TMP/root/.arsiv/jobs.json")" = 0o600 ]
+    grep -qF 'python3 "$V2_ROOT/panel/master_permissions.py" --directory-mode 0700' "$V2_ROOT/install.sh"
     grep -qF -- '--archive-dir=__FILES_ARCHIVE_DIR__' "$V2_ROOT/systemd/master-files-panel.service"
     grep -qx 'MemoryMax=512M' "$V2_ROOT/systemd/master-files-panel.service"
     grep -qx 'CPUQuota=100%' "$V2_ROOT/systemd/master-files-panel.service"
@@ -3911,6 +4024,7 @@ EOF
         sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e 's#__WG_PANEL_SOCKET__#/run/master-wg-panel/api.sock#g' \
             -e 's#__CADDY_ADMIN_SOCKET__#/run/caddy/admin.sock#g' -e 's/__FILES_PANEL_PORT__/61009/g' \
             -e 's/__CADDY_HTTP_PORT__/80/g' -e "s#__CONSOLE_WEB_DIR__#$TMP/web#g" -e "s#__CADDY_MODULES_DIR__#$TMP/caddy/moduller#g" \
+            -e 's/__WAN_IPV4__/203.0.113.7/g' -e 's/__SHARE_HTTPS_PORT__/443/g' \
             -e 's/__SHARE_PORT__/61010/g' -e 's/__TORRENT_UI_PORT__/61006/g' -e 's/__TAILSCALE_IF__/tailscale0/g' \
             -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_TEMP_DIR__/incomplete/g' "$1"
     }
@@ -3996,6 +4110,7 @@ assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"
 assert "10.8.0.1:61006" not in web
 assert not [a for a in web if a.startswith(("wg.", "dosya.", "file."))]
 assert len(d["web"]["raw"]) == 3
+assert not any(token in json.dumps(d["web"]["raw"]) for token in ("__WAN_IPV4__", "__SHARE_PORT__", "__SHARE_HTTPS_PORT__"))
 # Names: the base's and each module's, all on the Tailscale address.
 names = {n["name"]: n for n in d["dns"]["names"]}
 assert set(names) == {"panel.ayc", "paylas.ayc", "torrent.ayc"}, names
@@ -4058,7 +4173,6 @@ PY
 }
 
 @test "settings API keeps its gates, hides hashes, lists all rules and passes mutations privately to a worker" {
-    TMP="$(cd "$TMP" && pwd -P)"
     panel_start
     settings_fixture
     mkdir -p "$TMP/srv/media" "$TMP/run" "$TMP/units" "$TMP/templates"
@@ -4096,6 +4210,8 @@ EOF
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["manage"]["username"] == "admin" and d["manage"]["pending"] is None, d["manage"]
+tls = d["manage"]["https"]
+assert (tls["domain"], tls["mode"], tls["scheme"], tls["port"], tls["status"]) == ("", "http", "http", 61010, "http"), tls
 assert "GIZLI" not in json.dumps(d)
 assert any(r["spec"] == "Politika: DROP" for r in d["firewall"]["rules"]["rows"])
 assert any(r["owner"] == "Tailscale" and r["packets"] == 2 for r in d["firewall"]["rules"]["rows"])

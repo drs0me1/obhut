@@ -4,19 +4,18 @@
 Root: unshare --net --fork python3 Data/tests/settings-domain-linux.py
 Only systemctl is adapted to disposable processes. No real host units touched.
 """
-import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 from unittest.mock import patch
 
 DATA = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("settings", DATA / "panel/master_settings.py")
-settings = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(settings)
+sys.path.insert(0, str(DATA / "panel"))
+import master_settings as settings
 real_run = settings.run
 
 
@@ -51,7 +50,7 @@ def main():
         e.update({k: str(root / v) for k, v in paths.items()})
         # DD-180: both private sockets live in the disposable tree, never in the host's /run.
         e.update(WG_PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
-        e.update(LOCAL_DOMAIN="ayc", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),
+        e.update(LOCAL_DOMAIN="ayc", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),
                  DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", V2_VERSION="test", FILES_PANEL_USER="test", FILES_PANEL_GROUP="test")
         for folder in ("etc", "dns", "profile", "units", "templates/dosya", "templates/torrent", "caddy-modules", "run", "srv/downloads", "srv/media"):
             (root / folder).mkdir(parents=True, exist_ok=True)

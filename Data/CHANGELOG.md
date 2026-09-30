@@ -6,6 +6,213 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Per-connection WebDAV policies and dual-card Shares (v2-164)
+
+- Each folder keeps one ID/account while Tailscale and WAN independently control
+  enabled state, RO/RW and expiry (DD-192). Both off is valid. New shares use
+  Tailscale on/RO/seven days and WAN off/RO/seven days.
+- Schema 4 stores both connection policies. Valid schema 3 converts in memory
+  and `prepare` persists it without rotating accounts, changing identity/timestamps
+  or renewing expiry. Schema 2 and conflicting legacy fields in schema 4 fail
+  closed. Stale global-policy updates and pause requests require a page refresh.
+- Nested partial saves preserve omitted values under the locks. Explicit RW needs
+  acknowledgement in the selected scope; toggles never renew expiry. The receiving
+  listener enforces its policy on DAV writes, transfer chunks and staged uploads,
+  including cached logins.
+- Shares shows two cards with independent controls, address/copy and Infuse
+  details, HTTPS or honest legacy-HTTP labeling, and global Caddy gate reasons.
+  Candidate card URLs may remain while off; `row.urls` lists only active scopes.
+  Shared account/path/password management remains separate. Share edits still
+  restart active WebDAV and interrupt all transfers; configured HTTPS renewal
+  remains available with no active folders under its existing global gate.
+- **Verification (reported by the main implementation task):** 36 new tests
+  passed on macOS/Debian; full Python 366 (four macOS skips, one Linux skip);
+  Bats 165 (three skips); six browser fixture suites passed, including Files at
+  ten widths in both themes, with screenshots reviewed. Portable deployment on
+  `nrm` exited 0; schema-3 migration matched the expected normalized schema 4
+  exactly, preserving credentials, identities, IDs and absolute expiry. Settings
+  and qBittorrent bytes and qBittorrent PID stayed unchanged. Real HTTPS/Tailscale
+  connection acceptance passed with byte-identical registry cleanup; read-only
+  installed UI passed at three widths/two themes with zero errors or API writes.
+  See [SESSION.md](SESSION.md) for exact evidence and final host health; native
+  client acceptance is not implied.
+
+### 2026-09-30 — Compact local-domain settings and DNS guide (v2-163)
+
+- Limit the Caddy local-domain card to 620 px, with its input and Update button
+  on one row. Keep the publication table full-width and the mobile layout fluid.
+- Add four manual Tailscale Admin DNS steps below the input, linking to the DNS
+  console and showing the current server IP and saved local suffix. Unsaved
+  edits do not change the guide. No Tailscale account/API changes are made.
+- Preserve local-domain validation/confirmation/rollback and all independent
+  HTTPS settings. The operator has now enabled `qbit.example.net` successfully.
+- **Verified locally:** publication-table browser/CSP tests at five widths in
+  both themes, dynamic guide values, cancelled domain-change flow, existing
+  Settings and HTTPS UI regressions; 330 Python cases (4 platform/optional skips),
+  JavaScript/Bash syntax, ShellCheck and exact 49-file portable payload parity.
+- **nrm:** portable upgrade with scratch inputs, default no full-upgrade and E,
+  exit 0. Read-only live browser checks pass at three widths in both themes;
+  current IP/suffix and both ready certificates appear without browser errors.
+  Settings/share/qBittorrent file digests and qBittorrent PID are unchanged.
+  External trusted HTTPS returns qBittorrent login 200, anonymous API 403 and
+  WebDAV root 404. Health is green; eight services active, no failed units;
+  Caddy, dnsmasq, firewall and systemd validation pass. No fresh OS/reboot,
+  authenticated client/transfer test, commit or Desktop copy for this UI change.
+
+### 2026-09-30 — Independent Caddy address table (v2-162)
+
+- Settings → Caddy now lists Panel, qBittorrent and WebDAV with independent
+  Tailscale/Internet choices, public domain, certificate state and per-row Save.
+  Panel stays private and locked in both UI/API. Local-domain configuration
+  remains separate; the effective Caddy configuration is a collapsed detail.
+  Responsive rows support both themes (DD-191).
+- Direct HTTPS only; no Tunnel, DNS API, arbitrary upstream or new daemon.
+  Native qBittorrent login, CSRF/Host protection and login-attempt limits are
+  prerequisites, not silently rewritten preferences. Public names share one
+  TCP443 permission and the existing connection budgets. Legacy DAV HTTP must
+  be disabled or converted before enabling public qBittorrent.
+- Off retains the domain without HTTP fallback. Private off answers 403 and
+  survives module reapply. Folder accounts/network permissions are unchanged;
+  disabled global networks no longer produce copyable share URLs. Transaction
+  snapshots restore private routes after first-save failure/crash too.
+- Real API rejection exposed duplicate Python exception classes when the
+  Settings CLI imported itself via helpers; fixed module identity and added a
+  subprocess regression. Native proxy tests caught nondefault-port Host
+  rejection: upstream Host omits the public port, while X-Forwarded-Host keeps
+  the external authority for CSRF without weakening either protection.
+- **Verified:** 330 Python cases on macOS/Linux (4/1 skips), 165 Bats on both
+  (3/1 skips), publication-table browser/CSP tests at five widths in both themes,
+  existing HTTPS/settings/files/panel/WireGuard browser regressions,
+  actual nrm page with no browser errors, syntax/ShellCheck and exact 49-file
+  source/bundle/installed-tree parity. Linux firewall packet tests cover
+  qBittorrent-only/shared HTTPS, stopped/unsafe-auth closure, manual denies and
+  cold recovery. Real native password/settings and isolated Caddy/qBittorrent
+  login/cookie/CSRF/Host/Panel-isolation tests pass on ports 443 and 18443.
+- **nrm:** three portable runs with scratch SSH_HOST=nrm/blank LOCAL_DOMAIN,
+  default no full-upgrade, E, exit 0. Actual private off/on, module reapply and
+  public DAV off/on preserve effective choices, verified TLS and folder-account
+  bytes. External HTTPS/Tailscale PROPFIND, RO/RW, Unicode PUT, absolute MOVE,
+  DELETE, ranges and SHA-verified download pass (31.07 MB/s on a short 32 MiB
+  sample; not a speed ceiling). Temporary test accounts/files were removed.
+- Final state: Panel private/locked; qBittorrent private; WebDAV Tailscale plus
+  `dav.example.net` HTTPS, certificate expiry 2026-12-29. `torrent.example.net` has no
+  DNS record yet, so its public DNS/ACME path was not enabled or claimed tested.
+  Caddy/dnsmasq/firewall checks pass, no failed units. Final Settings API burst
+  (8 parallel, 32 requests) returns 32/32 HTTP200, slowest 213 ms; health is green.
+  No fresh OS, reboot,
+  native Infuse or future renewal test; no commit or Desktop copy.
+
+### 2026-09-30 — Panel-managed public WebDAV HTTPS (v2-161)
+
+- Settings → Caddy gains a separate public-domain card with DNS guidance,
+  save/disable actions, certificate status and expiry. Local names and private
+  administration stay unchanged. Only the public WebDAV endpoint moves to HTTPS;
+  Files → Shares shows its new copyable address (DD-190).
+- DNS must resolve exactly to the assigned public IPv4, without AAAA or proxy.
+  Caddy obtains/renews Let's Encrypt certificates using TLS-ALPN on TCP 443;
+  no DNS token, WAN port 80, UDP 443 or new daemon. The HTTPS listener requires
+  matching Host/SNI. Account scope, password throttles and connection limits stay.
+- Existing revision/lock/pending recovery owns the operation. Save commits after
+  verified certificate chain/hostname; failure restores the prior setting.
+  Explicit removal closes WAN without HTTP downgrade; accounts and Tailscale
+  URLs survive. The configured HTTPS listener stays for renewal with no active
+  folders. Certificate health is a local probe, not public-reachability proof.
+- **Verified:** 318 Python cases on macOS/Linux (4/1 skips); 165 Bats on macOS/Linux
+  (3/1 skips), five fixture browser suites, shell syntax/ShellCheck and exact
+  48-file portable parity. Linux settings/DNS/domain/native qBittorrent tests
+  pass. Isolated firewall packets cover HTTPS renewal/limits, legacy closure,
+  Tailscale/WG preservation and cold corruption/recovery. DNS/certificate
+  failure, pending crash recovery, stale/mixed requests,
+  renewal with paused folders and no-plaintext fallback have regression coverage.
+- **nrm:** three portable runs, scratch inputs, no full-upgrade, confirmation E,
+  exit 0. Saved `dav.example.net` through the real Settings API; trusted TLS 1.3,
+  Let's Encrypt certificate expires 2026-12-29. External HTTPS PROPFIND, RO/RW,
+  GET/Range, Unicode PUT, absolute MOVE, DELETE, pause and network isolation pass.
+  Private paths return 404; mismatched TLS/Host returns 421. A SHA-verified
+  ~32 MiB transfer measured 29.53 MB/s (short acceptance run, not a speed ceiling).
+- Actual disable/re-enable closes both WAN ports without breaking Tailscale;
+  rerun preserves the domain/certificate. Original share registry remains
+  byte-identical after temporary test-account cleanup. Live Caddy page has no
+  browser errors, health is green and Caddy/dnsmasq/firewall validation passes.
+  No fresh OS, reboot, native Infuse UI or real future certificate renewal was
+  exercised. The old WAN HTTP URL no longer works after HTTPS is enabled;
+  clients must use the newly displayed HTTPS address. No commit or Desktop copy.
+
+### 2026-09-30 — Remaining audit stages: boot safety, WebDAV and health (v2-160)
+
+- Firewall retains valid owned protection on registry errors; a cold boot gets
+  a narrow rescue guard while strict health/pre-start checks still fail. Both
+  INPUT policies deny otherwise unhandled interfaces (DD-187).
+- Installer creates/repairs user directories through no-follow descriptors,
+  skipping special/multiply-linked files and private trees. Module mutations
+  share the install lock without nested deadlock; CLI account lookup also uses
+  the safe qBittorrent reader.
+- Full Linux shell verification found Bash 5.2's `patsub_replacement` changing
+  literal ampersands in templates. Rendering now temporarily disables that
+  option and restores the caller's setting; Bash 3.2 remains supported.
+- Separate bounded scrypt pools, short wait/cache recheck and overload 503 with
+  Retry-After preserve credential throttles. PUT/COPY stage outside the global
+  mutation lock and revalidate before atomic publication. WebDAV sandbox,
+  process/memory/start limits and proxy/backend idle ordering are tightened
+  (DD-188); TCP/request budgets and explicit HTTP WAN remain unchanged.
+- IPv4-only generated DNS, accurate parser projection, desired-service health,
+  Debian kernel reboot detection, controlled deep-JSON errors and actionable
+  incomplete-folder versus share-overlap messages (DD-189).
+- **Verified:** 281 Python tests on macOS (4 skips) and Linux (1 optional RAR
+  corpus skip); 165 Bats on both (Mac 3 skips, Linux 1 negative-flock skip),
+  four fixture browser suites, shell syntax/shellcheck and complete 47-file
+  portable parity. Real Linux ownership/flock: 28 tests. Isolated firewall
+  (including cold settings/share/WG corruption, preserved denies, retry/recovery,
+  second NIC and third-party rules), settings, domain/DNS, native qBittorrent
+  defaults and transient systemd recovery all pass.
+- **nrm:** three portable runs, exit 0; rebooted from 6.12.107 to
+  6.12.111+deb13-amd64. Core/optional services and firewall healthy, two WG peers
+  retained; kernel warning before reboot becomes green after. All three service
+  names return A only, not unusable AAAA. Caddy/dnsmasq/unit validation passed.
+- After reboot, 320 burst API requests all 200; 80 parallel PROPFIND all 207;
+  WAN 59.36 MB/s and Tailscale 55.22 MB/s on separate SHA-verified 256 MiB
+  transfers. Peak DAV cgroup usage reaches its 512 MiB cap by reclaiming cache,
+  not growing anonymous memory (~35 MB); OOM and oom_kill remain zero.
+- Temporary RO/RW accounts prove password rotation, isolation, pause, Unicode,
+  ranges and persistence across rerun/reboot; cleaned afterwards. Original share
+  account metadata is identical. qBittorrent config bytes stayed identical across
+  installer reruns but its digest changed across the native service reboot;
+  the pre-boot contents were not saved, so byte-for-byte profile persistence is
+  not claimed. Native fixture tests do prove preservation of chosen preferences.
+  No Desktop copy or commit. No fresh Ubuntu installation, native Infuse UI or remote WG-client
+  session was tested; HTTP WAN and account-level Tailscale policy are unchanged.
+
+### 2026-09-30 — Audit stage 1: burst admission and filesystem guards (v2-159)
+
+- The Konsol Unix socket, Files and both WebDAV listeners now queue up to
+  128 pending connections instead of Python's default 5. This addresses the
+  observed Unix-socket admission failures; WAN request, login and TCP limits
+  are unchanged (DD-186).
+- Both root readers of the service-owned qBittorrent configuration use the
+  existing descriptor-safe, bounded regular-file reader. Symlink components,
+  FIFOs and other special files are rejected without waiting for input. A
+  missing profile still works; an unsafe profile prevents share changes.
+- Files rejects root `.cop`, `.pay` and `.arsiv` sources before a rename,
+  move or trash batch starts. Moving a nested reserved name into the root is
+  also refused; restoring an old trash entry chooses a harmless alternate name.
+- Regression tests cover actual socket bursts, bounded FIFO rejection,
+  symlink parents, oversized files, mixed selections and ordinary file actions.
+- **Verified:** portable payload matches all 46 runtime files; deployed to nrm
+  using scratch inputs, default no full-upgrade and `E` (exit 0). All four
+  backend listeners report backlog 128; services active and firewall check
+  passes. Local Python: 206 tests (4 skips); Linux Python: 206 (1 skip).
+  Mac Bats: 163 (3 skips), with physical temporary paths for the no-follow
+  fixtures. Shell syntax, shellcheck and diff whitespace checks pass.
+  Live: Konsol and Files each 100/100 HTTP 200 at 20 parallel fresh client
+  connections; direct Unix socket 120/120 at 24 parallel. Separate 256 MiB
+  downloads: WAN 59.72 MB/s, Tailscale 57.53 MB/s, both SHA256 verified;
+  each network passed 40 PROPFINDs at four parallel and byte ranges.
+  Service memory grew from 15.3 MB to 559.2 MB, including 523.0 MB file cache
+  and 34.4 MB anonymous memory. This demonstrates the speed-test/cache
+  mechanism, not the cause of the historical 670 MB peak. Test account/files
+  removed, existing share registry byte-for-byte unchanged. No reboot or
+  fresh-OS/native Infuse test in this stage.
+
 ### 2026-09-30 — Tailscale/Caddy auto-updates and maintenance cleanup (v2-158)
 
 - Unattended upgrades now also install Tailscale and Caddy updates from their

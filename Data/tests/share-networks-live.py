@@ -95,7 +95,8 @@ print(json.dumps({'ip_limit':'share-ip' in r,'total_limit':'share-total' in r,
 try:
     for name,nets in (('tail',['tailscale']),('wan',['wan']),('both',['tailscale','wan'])):
         d=dict(path=metadata['relative']+'/'+name,username=root+'-'+name,password=passwords[name],
-               permission='rw' if name=='both' else 'ro',ack_write=True,days=1,networks=nets,ack_wan_http=True)
+               connections={scope:dict(enabled=scope in nets,permission='rw' if name=='both' else 'ro',
+                                       ack_write=True,days=1) for scope in ('tailscale','wan')},ack_wan_http=True)
         result=api('kaydet',d)
         items[name]=next(i for i in result['items'] if i['username']==d['username'])
     rules=check_rules()
@@ -145,7 +146,7 @@ try:
                 %(items['both']['id'],index,metadata['wan'],metadata['port'],auth)).encode())
             sockets.append(conn)
         time.sleep(1)
-        request('wan','wan',expected=429)
+        request('wan','wan',expected=503)
         request('tail','tail')
         print('PASS: four simultaneous WAN requests cap this client; tailnet remains available',flush=True)
     finally:
@@ -160,7 +161,7 @@ try:
     assert check_rules()['wan_packets']>initial_wan_packets,'Public requests did not traverse the WAN ingress rule'
     print('PASS: WAN ingress packet counter confirms requests came through the actual external interface',flush=True)
     for name in ('wan','both'):
-        api('durum',dict(id=items[name]['id'],paused=True))
+        api('kaydet',dict(id=items[name]['id'],connections={'wan':{'enabled':False}}))
     rules=check_rules(); assert not any(rules.values()),rules
     try:
         c=socket.create_connection((metadata['wan'],metadata['port']),timeout=2)
@@ -169,16 +170,18 @@ try:
         c.close(); raise AssertionError('Public listener still reachable after last share paused')
     request('tail','tail')
     print('PASS: last WAN pause removes public listener, permission and TCP limit rules; tailnet share survives',flush=True)
+    request('tail','both')
     # Only this test-owned share gets a short expiry; production API keeps day presets.
-    api('durum',dict(id=items['both']['id'],paused=False))
+    api('kaydet',dict(id=items['both']['id'],connections={'wan':{'enabled':True}},ack_wan_http=True))
     remote(BOOT+"""
 data=m.read(); item=next(i for i in data['items'] if i['id']==d['id'])
 assert item['path'].startswith(d['relative']+'/')
-item['expires']=int(time.time())+3
+item['connections']['wan']['expires']=int(time.time())+3
 s.atomic(m.path,data); m.restart(); m.publish()
 print('{}')
 """,dict(id=items['both']['id'],relative=metadata['relative']))
     time.sleep(4)
+    request('tail','both')
     try:
         request('wan','both',expected=403)
     except OSError: pass  # Timer may already have removed the listener.

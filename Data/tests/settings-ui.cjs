@@ -172,6 +172,7 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     assert.match(await page.locator(".as-rules").innerText(), /Salt okunur · bu panelden değiştirilmez/);
     assert.equal(await page.locator(".as-rules").getByRole("switch").count(),0);
     await page.getByRole("tab", { name: "Caddy", exact: true }).click();
+    await page.locator(".as-web-details > summary").click();
     assert.match(await page.locator("#cfg-web").innerText(), /panel.ayc/);
     await page.getByRole("tab", { name: "Dnsmasq", exact: true }).click();
     assert(await page.getByRole("switch", {name:"panel.ayc", exact:true}).isDisabled());

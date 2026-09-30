@@ -49,7 +49,7 @@ class LimiterTests(unittest.TestCase):
     def test_defaults_match_runtime_contract(self):
         self.assertEqual(shares.DEFAULT_LIMITS, {
             "wan_connections": 8, "wan_connections_per_ip": 4,
-            "tail_connections": 64, "wan_auth_parallel": 4,
+            "tail_connections": 64, "wan_auth_parallel": 4, "tail_auth_parallel": 2,
             "auth_failures": 5, "auth_window_seconds": 60,
             "auth_block_seconds": 300, "auth_entries": 4096,
             "share_failures": 100, "share_window_seconds": 3600,
@@ -95,7 +95,7 @@ class LimiterTests(unittest.TestCase):
             for _ in range(5):
                 self.bad(ip)
         original = copy.deepcopy(self.limiter.entries)
-        self.assertEqual(self.bad("198.51.100.3").code, 429)
+        self.assertEqual(self.bad("198.51.100.3").code, 503)
         self.assertEqual(self.limiter.entries, original)
         self.clock.advance(300)
         self.assertEqual(self.bad("198.51.100.3").code, 401)
@@ -105,7 +105,7 @@ class LimiterTests(unittest.TestCase):
         self.limiter.limits["auth_entries"] = 1
         with self.limiter.credentials("198.51.100.1"):
             self.clock.advance(61)
-            self.assertEqual(self.bad("198.51.100.2").code, 429)
+            self.assertEqual(self.bad("198.51.100.2").code, 503)
         self.assertFalse(self.limiter.entries)
         self.bad()
         self.clock.advance(60)
@@ -127,9 +127,10 @@ class LimiterTests(unittest.TestCase):
             with self.limiter.request("198.51.100.1"):
                 raise RuntimeError("fixture")
         self.assertFalse(self.limiter.active)
-        with patch.object(dav, "password_ok", side_effect=ValueError("fixture")):
-            with self.assertRaises(ValueError):
-                self.limiter.verify({}, "fixture")
+        with self.assertRaises(ValueError):
+            with self.limiter.hashing() as admitted:
+                self.assertTrue(admitted)
+                raise ValueError("fixture")
         with contextlib.ExitStack() as stack:
             for _ in range(self.limiter.limits["wan_auth_parallel"]):
                 self.assertTrue(self.limiter.auth_slots.acquire(False))
@@ -154,7 +155,7 @@ class LimiterTests(unittest.TestCase):
             self.assertEqual(sorted(f.result() for f in futures), [401, 401, 401, 429])
         self.assertEqual(len(self.limiter.entries), 1)
         self.assertEqual(self.limiter.entries["198.51.100.1"]["pending"], 0)
-        self.assertEqual(self.bad("198.51.100.2").code, 429)
+        self.assertEqual(self.bad("198.51.100.2").code, 503)
 
 
 class NetworkTests(unittest.TestCase):
@@ -169,7 +170,7 @@ class NetworkTests(unittest.TestCase):
         fqdn.start()
         self.addCleanup(fqdn.stop)
         self.root = Path(self.tmp.name)
-        self.config = {"schema": 3, "root": str(self.root), "items": [],
+        self.config = {"schema": 4, "root": str(self.root), "items": [],
                        "limits": dict(shares.DEFAULT_LIMITS), "temp_name": "incomplete"}
         for index, networks in enumerate((["tailscale"], ["wan"], ["tailscale", "wan"]), 1):
             folder = self.root / str(index)
@@ -183,8 +184,9 @@ class NetworkTests(unittest.TestCase):
             self.config["items"].append({
                 "id": "%024x" % index, "path": str(index), "name": str(index),
                 "username": "fixture-user", "salt": self.salt, "hash": self.digest,
-                "identity": folder_identity, "networks": networks, "permission": "rw",
-                "paused": False, "expires": None,
+                "identity": folder_identity, "created": int(time.time()), "changed": int(time.time()),
+                "connections": {scope: {"enabled": scope in networks, "permission": "rw", "expires": None}
+                                for scope in ("tailscale", "wan")},
             })
         self.tail_item, self.wan_item, self.both_item = self.config["items"]
         self.mutation_lock = threading.Lock()
@@ -275,18 +277,28 @@ class NetworkTests(unittest.TestCase):
             verify.assert_not_called()
             open_dir.assert_not_called()
 
-    def test_invalid_or_absent_networks_fail_closed(self):
+    def test_invalid_or_absent_connections_fail_closed(self):
         missing = object()
-        invalid = (missing, None, [], "wan", ["WAN"], ["wan", "other"], ["wan", "wan"],
-                   [False], [["wan"]], {"wan": True})
+        invalid = (missing, None, [], "wan", ["wan"], {"wan": True}, {},
+                   {"tailscale": {}, "wan": {}},
+                   {scope: {"enabled": 1, "permission": "rw", "expires": None} for scope in ("tailscale", "wan")})
+        for connections in invalid:
+            config = copy.deepcopy(self.config)
+            if connections is missing:
+                config["items"][2].pop("connections")
+            else:
+                config["items"][2]["connections"] = connections
+            with self.subTest(connections=connections), self.assertRaises(shares.ShareError):
+                shares.normalize_registry(config)
+        # The request boundary also denies an absent policy before authentication or IO.
         with patch.object(dav, "password_ok") as verify, patch.object(dav, "open_dir") as open_dir:
-            for networks in invalid:
-                if networks is missing:
-                    self.both_item.pop("networks")
+            for connections in (missing, {}):
+                if connections is missing:
+                    self.both_item.pop("connections")
                 else:
-                    self.both_item["networks"] = networks
+                    self.both_item["connections"] = connections
                 for server in (self.tail, self.wan):
-                    with self.subTest(networks=networks, scope=server.scope):
+                    with self.subTest(connections=connections, scope=server.scope):
                         self.assertEqual(self.request(server, self.both_item, method="OPTIONS")[0], 403)
             verify.assert_not_called()
             open_dir.assert_not_called()
@@ -356,7 +368,7 @@ class NetworkTests(unittest.TestCase):
         for _ in range(5):
             self.request(auth="bad")
         with patch.object(dav, "password_ok") as verify:
-            self.assertEqual(self.request(ip="198.51.100.2")[0], 429)
+            self.assertEqual(self.request(ip="198.51.100.2")[0], 503)
             verify.assert_not_called()
         self.assertEqual(self.request(ip="198.51.100.2", auth=None)[0], 401)
         clock.advance(300)
@@ -364,10 +376,11 @@ class NetworkTests(unittest.TestCase):
         self.assertFalse(limiter.entries)
 
     def test_expiry_readonly_and_descriptor_bounds_still_apply_to_wan(self):
-        self.wan_item["expires"] = time.time() - 1
+        policy = self.wan_item["connections"]["wan"]
+        policy["expires"] = time.time() - 1
         self.assertEqual(self.request()[0], 403)
-        self.wan_item["expires"] = None
-        self.wan_item["permission"] = "ro"
+        policy["expires"] = None
+        policy["permission"] = "ro"
         for method in dav.WRITE_METHODS:
             self.assertEqual(self.request(method=method, body=b"denied")[0], 403)
         for leaf in ("../1/file.txt", "%2e%2e/1/file.txt", "a%2fb", ".secret", "incomplete/x"):
@@ -456,7 +469,7 @@ class NetworkTests(unittest.TestCase):
             futures = [pool.submit(self.request, ip="198.51.100.%d" % i) for i in range(1, 5)]
             try:
                 self.assertTrue(reached.wait(3))
-                self.assertEqual(self.request(ip="198.51.100.5")[0], 429)
+                self.assertEqual(self.request(ip="198.51.100.5")[0], 503)
                 self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
                 self.assertEqual(peak, 4)
             finally:
@@ -487,7 +500,7 @@ class NetworkTests(unittest.TestCase):
             futures = [pool.submit(self.request) for _ in range(4)]
             try:
                 self.assertTrue(reached.wait(3))
-                self.assertEqual(self.request()[0], 429)
+                self.assertEqual(self.request()[0], 503)
                 self.assertEqual(self.request(ip="198.51.100.2")[0], 200)
                 self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
             finally:
@@ -503,10 +516,11 @@ class NetworkTests(unittest.TestCase):
                 sock.sendall(b"GET ")
             self.wait_for(lambda: len(self.wan.connections) == 8)
             with socket.create_connection(self.wan.server_address, timeout=2) as overflow:
-                try:
-                    self.assertEqual(overflow.recv(1), b"")
-                except ConnectionResetError:
-                    pass
+                response = http.client.HTTPResponse(overflow)
+                response.begin()
+                self.assertEqual(response.status, 503)
+                self.assertEqual(response.getheader("Retry-After"), "1")
+                response.read()
             self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
             self.wait_for(lambda: not self.tail.connections)
             tail_slots = self.tail.limits["tail_connections"]
@@ -515,10 +529,11 @@ class NetworkTests(unittest.TestCase):
                 sock.sendall(b"GET ")
             self.wait_for(lambda: len(self.tail.connections) == tail_slots)
             with socket.create_connection(self.tail.server_address, timeout=2) as overflow:
-                try:
-                    self.assertEqual(overflow.recv(1), b"")
-                except ConnectionResetError:
-                    pass
+                response = http.client.HTTPResponse(overflow)
+                response.begin()
+                self.assertEqual(response.status, 503)
+                self.assertEqual(response.getheader("Retry-After"), "1")
+                response.read()
             self.wan.server_close()
             self.tail.server_close()
             self.wait_for(lambda: not self.wan.connections and not self.tail.connections)
@@ -676,7 +691,7 @@ class NetworkTests(unittest.TestCase):
         self.assertNotIn("198.51.100.0", known)
         self.assertIn("198.51.100.%d" % (dav.Limiter.KNOWN_PER_SHARE + 4), known)
 
-    def test_wrong_user_unknown_or_paused_share_still_costs_one_hash(self):
+    def test_wrong_user_and_unknown_share_cost_one_hash_disabled_scope_costs_none(self):
         calls = []
 
         def verify(item, password):
@@ -686,12 +701,13 @@ class NetworkTests(unittest.TestCase):
         with patch.object(dav, "password_ok", side_effect=verify):
             self.assertEqual(self.request(self.tail, self.tail_item, auth=wrong_user)[0], 401)
             self.assertEqual(self.request(self.tail, self.tail_item, path="/s/" + "f" * 24 + "/")[0], 401)
-            self.tail_item["paused"] = True
-            self.assertEqual(self.request(self.tail, self.tail_item)[0], 401)
-            self.tail_item["paused"] = False
+            self.tail_item["connections"]["tailscale"]["enabled"] = False
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 403)
+            self.assertEqual(calls, [self.tail.decoy] * 2)
+            self.tail_item["connections"]["tailscale"]["enabled"] = True
             self.assertEqual(self.request(self.wan, self.wan_item, auth=wrong_user)[0], 401)
             self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
-        self.assertEqual(calls, [self.tail.decoy] * 3 + [self.wan.decoy, self.tail_item])
+        self.assertEqual(calls, [self.tail.decoy] * 2 + [self.wan.decoy, self.tail_item])
         self.assertFalse(shares.password_ok(self.tail.decoy, PASSWORD))
 
     def test_writes_stop_before_the_disk_reserve(self):
@@ -733,17 +749,17 @@ class NetworkTests(unittest.TestCase):
             for _ in range(3):
                 self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
             self.assertEqual(calls, [self.tail_item["id"]])
-            # A different password is still hashed and refused; a paused share is not served from memory.
+            # A different password is still hashed; a disabled connection bypasses the cache and hash.
             self.assertEqual(self.request(self.tail, self.tail_item, auth=wrong)[0], 401)
-            self.tail_item["paused"] = True
-            self.assertEqual(self.request(self.tail, self.tail_item)[0], 401)
-            self.tail_item["paused"] = False
-            self.assertEqual(calls, [self.tail_item["id"], self.tail_item["id"], "decoy"])
+            self.tail_item["connections"]["tailscale"]["enabled"] = False
+            self.assertEqual(self.request(self.tail, self.tail_item)[0], 403)
+            self.tail_item["connections"]["tailscale"]["enabled"] = True
+            self.assertEqual(calls, [self.tail_item["id"], self.tail_item["id"]])
             # Entries expire, and each listener keeps its own memory.
             with patch.object(dav.time, "monotonic", return_value=time.monotonic() + dav.AUTH_CACHE_SECONDS + 1):
                 self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
             self.assertEqual(self.request(self.wan, self.both_item)[0], 200)
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 4)
         self.assertLessEqual(len(self.tail.auth_cache), dav.AUTH_CACHE_SIZE)
 
     def test_tailnet_errors_announce_the_close(self):

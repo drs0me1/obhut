@@ -10,14 +10,235 @@ bash -n install.sh common.sh scripts/*
 shellcheck -x -s bash install.sh common.sh scripts/*
 ```
 
+The Bats fixture resolves its temporary directory with `pwd -P`: macOS `/var`
+is a symlink and production no-follow readers correctly reject it. No shell
+wrapper or relaxed production traversal is needed.
+Mode/inode checks capture only successful GNU/BSD stat output; hashes use the
+fixture's Python helper. Linux Bats needs the source guards' docs, exporter,
+root `.gitignore`, root launcher and `Data/app` copy too, not only the runtime
+tarball. Copy only these allowlisted test inputs; never include private
+`kurulum/` or WG profiles.
+For a root-created test checkout under `mktemp -d`, set that checkout directory
+to mode `0755` (`chmod 0755 /absolute/path/to/test-checkout`): non-root fixture
+processes must traverse it. Do not relax private input/credential permissions.
+Template tests exercise literal ampersands/backslashes and preservation of
+Bash 5.2's `patsub_replacement` setting (Bash 3.2 has no such option).
+
 Host acceptance (Debian 13 or supported Ubuntu target, after install) is
 separate: DNS loopback vs Tailscale answers, WebDAV PROPFIND/read-only,
 firewall `--check`, and the public ports: WAN SSH TCP, Tailscale UDP, each
-registered WireGuard UDP port (if installed) and TCP `SHARE_PORT` only while a
-WAN share is active.
+registered WireGuard UDP port (if installed), plus the mode-selected WAN IPv4
+WebDAV port: legacy HTTP `SHARE_PORT` only while a WAN share is active, or
+configured HTTPS `SHARE_HTTPS_PORT` retained for renewal with no active folders.
+Explicit HTTPS disable closes both WAN ports; Tailscale HTTP is unchanged.
+With DD-191, an independently enabled qBittorrent publication keeps the shared
+HTTPS port open; disable both rows to close it. A Tailscale row switch gates
+that named route, not the shared Caddy listener.
 
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
+
+## Per-connection WebDAV policies and dual-card Shares (v2-164, DD-192)
+
+From the repository root:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_share_connections.py'
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_webdav_connections.py'
+```
+
+These fixtures cover exact schema-3 migration and idempotent schema-4 preparation,
+malformed/conflicting policies, independent defaults, nested partial saves under
+locks, preserved omitted expiry, both-off, per-scope RW acknowledgement, legacy
+HTTP consent, global publication gates and candidate-versus-active URLs. Protocol
+checks cover both RO/RW directions, listener/header isolation, cached authentication,
+all DAV writes, disabled/expired scopes, live chunks and staged-publication checks.
+`files-ui.cjs` checks the two-card controls and scoped payloads with intercepted
+APIs; its responsive matrix covers ten widths from 320 to 2560 in both themes.
+
+Optional read-only acceptance against the installed console (Playwright required):
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/share-connections-browser.cjs
+# Override the default http://panel.ayc when needed:
+KONSOL_URL=http://panel.example PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/share-connections-browser.cjs
+```
+
+This requires at least one existing share and creates none. Every API mutation
+(any method other than GET/HEAD) is aborted and fails the check. It checks two
+cards, four selects and two switches per share, address/Infuse host-port-path
+consistency and copy-button presence, no overflow at 1440/900/390 in both themes,
+and no browser errors. It does not exercise actual clipboard writes. Screenshots
+go to an OS temporary directory, not the Desktop.
+
+Opt-in **mutating** acceptance from an authorized Tailscale client against a
+disposable host with schema 4, working public HTTPS and both global routes enabled:
+
+```bash
+python3 Data/tests/share-connections-live.py --host nrm
+```
+
+It creates one temporary folder/account and checks independent RO/RW in both
+directions, listing/ranges, scope-header spoof rejection, both switches/both-off,
+preserved peer expiry and stale global-policy/pause API rejection. WAN-only expiry
+is accelerated only for its fixture using an atomic registry write under
+`install.lock` → `modul.lock` → `paylasim.lock`, then restart/publication. Cleanup
+removes only its own account/files and verifies the original registry is
+byte-identical by SHA-256. Credentials remain in memory/SSH stdin and are not
+printed; Caddy settings are not changed. **Share edits restart active WebDAV and
+interrupt all transfers/playback.** Run outside active playback and do not edit
+real shares concurrently.
+
+The main implementation task reports: 36 new tests passed on macOS and Debian;
+full Python suite 366 tests (macOS four skips, Linux one); Bats 165 tests (three
+skips); six browser fixture suites passed with screenshots reviewed. After a
+successful portable deployment on `nrm`, both opt-in scripts above passed: live
+HTTPS/Tailscale policies and byte-identical cleanup, and installed UI at three
+widths/two themes with zero errors or API writes. See [SESSION.md](../SESSION.md)
+for exact run evidence and final host health. These results do not certify native
+Infuse/Finder clients or a fresh supported-OS installation.
+
+## Caddy publication table (v2-162, DD-191)
+
+`test_publications.py` covers immutable Panel, exact catalogue/payloads,
+independent DAV network gates, remembered off domains, native qBittorrent auth
+requirements, duplicate/DNS rejection, first-row certificate failure, crash
+rollback and module projection persistence. It reuses isolated transaction
+fixtures and does not claim real ACME issuance.
+
+`PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/publications-ui.cjs`
+starts its own local static server and runs the actual console with intercepted
+APIs/CSP. It checks draft-only switches, single-click saves after typing, locked
+Panel, validation, pending/failure/retry, reload and five widths in both themes.
+Screenshots go to an OS temporary directory, not the Desktop.
+
+`python3 Data/tests/publications-live.py --host nrm` is an opt-in **mutating**
+test for a provisioned disposable host with verified DAV HTTPS and private
+qBittorrent already installed. It rejects Panel WAN/duplicate/missing DNS
+through the real API, toggles each private route across module reapply, and
+disables/restores DAV HTTPS. It restores effective network choices and checks
+the folder-account digest. It may interrupt transfers, never enables a new
+public hostname and never changes application credentials.
+
+On a Linux host with Caddy, qBittorrent, OpenSSL, iproute2 and setpriv:
+
+```bash
+unshare --net --fork python3 Data/tests/publications-proxy-linux.py --port 443
+unshare --net --fork python3 Data/tests/publications-proxy-linux.py --port 18443
+```
+
+This refuses the host network namespace and uses a temporary profile and local
+test certificate (no ACME or trust-store change). The generated Caddy route is
+real: native login/cookies, API access, incorrect password, CSRF, overwritten
+forwarded Host, strict SNI/Host and Panel isolation are tested on both ports.
+Host omits the public port for native listener validation; X-Forwarded-Host
+keeps the external authority for CSRF. This does not certify public DNS/ACME.
+`firewall-linux.py` additionally tests qBittorrent-only and shared DAV HTTPS
+permissions, one shared port rule, and stopped/unsafe-native-auth closure.
+
+## Public WebDAV HTTPS (v2-161, DD-190)
+
+From the repository root, run the local tests without a live domain:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_https_*.py'
+```
+
+`test_https_settings.py` covers full-domain/DNS validation (exact assigned WAN
+IPv4, no AAAA/proxy), pinned chain/hostname verification, durable commit,
+failure/crash rollback, explicit off without HTTP downgrade, retained renewal
+listener after last-share pause, preserved accounts/local domain and legacy
+HTTP consent. `test_https_panel.py` covers status/expiry warnings at 14 days or
+less, unknown/error handling, selected firewall ports, Caddy scheme/source
+parsing and the existing gated Settings API. These are fixtures, not real
+Let's Encrypt issuance or public-reachability tests.
+
+With the local console preview below running on port 8766 and Playwright installed:
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/settings-https-ui.cjs
+```
+
+This runs the production Settings/Shares UI with intercepted APIs and the actual
+Caddy CSP: isolated HTTPS/local-domain drafts, validation, long pending saves,
+duplicate blocking, ready/pending/error/expiry displays, failure/retry, explicit
+disable/cancel, persisted off, scheme-specific share links and HTTP consent.
+It checks four widths in both themes. It does not modify a server.
+
+External acceptance is opt-in, from an authorized Tailscale client to a disposable
+host. Supply a real public domain whose DNS resolves only to that host's assigned
+WAN IPv4, with no AAAA/proxy, and permit inbound TCP 443. Settings' pinned local
+certificate probe does not itself prove that external path. From the repository root:
+
+```bash
+# Requires the matching domain already saved and certificate status ready:
+python3 Data/tests/https-live.py --host nrm --domain dav.example.com
+# Alternatively, deliberately save the real domain through Settings first:
+python3 Data/tests/https-live.py --host nrm --domain dav.example.com --configure
+```
+
+Replace the example domain; the script uses public TCP 443. `--configure` is a
+real, persistent Settings change: **the domain remains saved after cleanup**.
+Without that flag, the script requires the matching saved domain to be ready.
+It verifies public TLS trust, denies `/` and administrative routes, checks old
+WAN HTTP closed, and creates three temporary shares: RO and RW on both networks,
+plus Tailscale-only. It exercises HTTPS/Tailscale reads, PROPFIND, ranges, download
+integrity, RO rejection, WAN scope, PUT/MOVE/DELETE and pause. Cleanup removes only
+its accounts/files and checks the original registry digest; credentials stay in
+memory/SSH stdin and are not printed. Account creation/pause/removal restarts
+WebDAV and interrupts current transfers: run outside active playback and do not
+edit real shares concurrently. Domain disable/re-enable, reboot, supported-OS
+fresh installs and native-client acceptance are separate tests.
+
+This runbook describes test scope, not completed results. Record actual runs in
+`CHANGELOG.md`/`SESSION.md`.
+
+## Remaining audit stages (v2-160, DD-187–189)
+
+`test_install_hardening.py` checks descriptor-based selective permission repair,
+unsafe parents, replacement races, hard links, special files and excluded trees.
+`install-hardening-linux.py` adds real root ownership and competing/inherited
+flock tests; run as root in a temporary test tree, never by sourcing install.sh.
+`firewall-linux.py` adds cold malformed-registry rescue, valid-policy/manual-deny
+preservation, secondary-interface default drop and successful recovery in isolated
+network namespaces. It does not alter the host's policy.
+
+`test_stage3_webdav.py` covers separate auth pools, short waits/cache rechecks,
+503 versus credential 429, bounded overload replies, slow PUT/COPY independence,
+late target/source/parent/share/expiry/precondition conflicts and stage cleanup.
+`test_stage3_files.py` covers deep JSON and socket inactivity; share-path tests
+distinguish incomplete/internal roots from existing-share overlap.
+`test_stage4_dns_json.py` covers `/4` projection and explicit IPv6 records plus
+controlled deep HTTP/worker JSON. `test_stage4_health.py` tests required/inactive
+and deliberately stopped units, unknown probes and kernel boot-link evidence.
+
+Live acceptance must additionally validate Caddy/dnsmasq/systemd, cgroup OOM
+events under WAN/Tailscale transfers, real A/AAAA replies and health before/after
+reboot. Synthetic clients do not certify native Infuse or a fresh Ubuntu image.
+
+## Backend admission and filesystem guards (v2-159, DD-186)
+
+`test_backend_hardening.py` opens 24 real sockets per server before starting
+the accept loop, isolating the listen backlog from HTTP processing limits.
+Temporary fixtures exercise both qBittorrent readers against FIFOs (with a
+subprocess deadline), final/parent symlinks, directories and oversized files.
+Files tests cover reserved sources, all-selection validation before mutation,
+reserved destination promotion, safe restore and ordinary file operations.
+Run this suite on Linux too; no host configuration or credentials are used.
+The backlog test is not a throughput benchmark or a substitute for cold-cache
+Infuse concurrency tests. Existing WAN budgets are intentionally unchanged.
+
+`backend-hardening-live.py --host nrm` runs 100 requests per API with 20
+parallel fresh client connections and 120 direct cold Unix-socket requests.
+It then creates a disposable RO WAN+Tailscale share, reads two 256 MiB files
+with SHA256 verification, samples cgroup `anon`/`file`/`current`/`peak`, and
+checks parallel PROPFIND and ranges on each network. Only the test files'
+clean cache pages are evicted before reading, not the host cache. Cleanup
+removes the temporary account/files and compares the original registry digest.
+This restarts WebDAV twice; use an authorized test host outside active playback.
+The measured cache increase does not prove the cause of a historical peak.
+This script targets legacy HTTP WAN mode (no HTTPS setting); use `https-live.py`
+for the configured HTTPS path, without disabling HTTPS just to run this suite.
 
 ## Folder network selection and WAN admission (v2-153, DD-179)
 
@@ -30,7 +251,8 @@ expect-continue/pipeline behavior. Run on Linux as well: macOS skips the test
 that binds the same port on a second loopback address. `share-networks.bats`
 checks deployment wiring and conditional firewall/edge limits.
 
-With explicit disposable-host authorization, run from an external client:
+With explicit disposable-host authorization, run from an external client against
+legacy HTTP WAN mode (no HTTPS setting; use `https-live.py` for HTTPS):
 
 ```bash
 python3 Data/tests/share-networks-live.py --host nrm
@@ -240,7 +462,7 @@ global npm package outside the repository, so point the suites at it:
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
 ```
 
-The four fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `wireguard-ui`)
+The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`)
 share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
 health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
 bar that replaced the jobs page (DD-183).

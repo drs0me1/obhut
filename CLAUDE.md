@@ -109,7 +109,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Folder accounts are managed by `master_shares.py` (**DD-158**) |
 | `Data/console/` | Konsol pages (`index.html`, `konsol.js`/`konsol.css` and per-page scripts/styles) at Caddy `panel.<domain>`, tailnet only (**DD-140**). Design mockups in `Data/docs/design/` |
-| Built-in WebDAV (`paylasim` internal ID) | **DD-158/159:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Per-folder `/s/<id>/` URLs, separate users, RO/RW, expiry and pause. One port (`SHARE_PORT`) via Caddy: Tailscale always, WAN IPv4 over HTTP only for shares that opt in (**DD-179**); no shared account or writable symlink tree. See contract §5–7 for limits and manual recipient ACL requirements. |
+| Built-in WebDAV (`paylasim` internal ID) | **DD-158/159/192:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Each folder's `/s/<id>/` and account are shared by two independent Tailscale/WAN policies: enabled, RO/RW and expiry. Shares shows two cards; Manage edits the shared folder/account/password. Caddy serves Tailscale HTTP on `SHARE_PORT`; optional public HTTPS uses `SHARE_HTTPS_PORT` and `master_https.py` (**DD-179/190**). No cross-folder shared account or writable symlink tree. See contract §3 and §5–7 for publication modes, limits and manual recipient ACL requirements. |
 | `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, Unix socket `/run/master-wg-panel/api.sock` only — no TCP port since **DD-180** — `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
 | `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
 | `/etc/wireguard/networks` (host) | Panel networks registry written by `master-wg net-add/net-remove`, read by `master-firewall` and the panel (**DD-136**) |
@@ -130,10 +130,32 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 
 ## Constraints
 
-- DD-179: per-folder WebDAV can opt into HTTP WAN IPv4 or both networks;
-  new shares default to Tailscale. Plaintext-risk acknowledgement,
-  independent scope enforcement and attempt/connection budgets are mandatory.
-  Only the WebDAV port may be published; console/admin services remain private.
+- DD-179/190/192: each folder has independent Tailscale/WAN connection policies;
+  both off is valid. New shares use Tailscale on/RO/seven days and WAN off/RO/seven
+  days. Schema 4 stores only nested `connections` policies; valid schema 3 loads
+  migrate in memory without changing IDs, credentials, folder identity, timestamps
+  or absolute expiry, and `prepare` persists schema 4. Schema 2 and conflicting
+  legacy fields fail closed. Nested partial saves preserve omitted fields under
+  locks; explicit RW requires same-scope acknowledgement. Old global-policy and
+  pause requests require a page refresh. Share edits still restart active WebDAV
+  and interrupt transfers. Settings → Caddy optionally configures a
+  public domain for Let's Encrypt TLS-ALPN on `SHARE_HTTPS_PORT` (443), with
+  DNS resolving only to the assigned WAN IPv4. No WAN port 80 or DNS API token.
+  Absent HTTPS configuration retains consent-gated HTTP on `SHARE_PORT` (61010);
+  explicitly clearing the domain closes WAN, never downgrades to HTTP.
+  Configured HTTPS keeps its listener for renewal even with no active folders.
+  Independent scope/auth enforcement and attempt/connection budgets remain
+  mandatory; Konsol/admin backends stay private. DD-191 adds an independent
+  Tailscale/HTTPS table for WebDAV and qBittorrent through `master_publications.py`.
+  Its global gates override the DD-192 cards and supply an unavailable reason.
+  Available transports may show candidate card URLs while locally off/expired;
+  `row.urls` contains only active connections. Each listener enforces its own
+  policy on writes, live chunks and staged publication, including cached logins.
+  The panel row is immutable/private. qBittorrent WAN requires its permanent
+  native login, CSRF/Host checks and login-attempt ban; no preferences are
+  rewritten. Both public names share TCP443 and its existing socket budgets.
+  No Tunnel, arbitrary upstreams or automatic DNS writes. Certificate readiness is a
+  local pinned-IP trust/hostname check, not proof of public reachability.
   See `Data/docs/folder-shares.md` for limits and the scoped expiry/recovery timer.
 
 - Root-only, single-host. Inputs come from `kurulum/kurulum.env`; the

@@ -46,10 +46,10 @@ the ones agreed on 2026-08-05:
 | R12 | Publish publicly the WireGuard UDP port of each network, only while WireGuard is installed (host kernel, **DD-120**). The torrent peer port is not opened (**DD-151**): qBittorrent makes outgoing connections only |
 | R13 | Read the local domain from the installer input file (**DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
-| R15 | Have Caddy listen on the Tailscale IPv4 only, over HTTP (plus the opt-in WAN WebDAV site, §3.1, **DD-179**) |
+| R15 | Have Caddy serve selected private HTTP routes on the Tailscale IPv4, plus optional WAN WebDAV/qBittorrent publications; Panel remains private (§3.1, **DD-179/190/191**) |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the opt-in WAN WebDAV port (**DD-179**); confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
+| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the selected optional WAN Caddy publication port (**DD-179/190/191**); confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
 | R19 | Withdrawn (**DD-152**) |
 | R20 | Keep the installation re-runnable |
 
@@ -141,6 +141,11 @@ the ones agreed on 2026-08-05:
   **UDP GRO optimisation** are all preserved (**R6**).
 - The Tailscale IPv4 **and IPv6** are written to `/etc/master-stack/state.env`
   (**R7**).
+- Exit-node recipient restrictions belong to the tailnet policy: grant
+  `autogroup:internet`, not broad private-network access, and review existing
+  grants because allows are additive. This selector excludes private/link-local
+  destinations, including the usual metadata address. The installer does not
+  edit the account's ACL/grants. See Tailscale's [selector definition](https://tailscale.com/docs/reference/targets-and-selectors).
 
 ### 1.3 Modules are host services (DD-151, DD-152)
 
@@ -163,12 +168,15 @@ the ones agreed on 2026-08-05:
 
 - `/srv/downloads`, `/srv/media`, `/srv/media/movies` and
   `/srv/media/series` are created when absent (**R8**, **DD-144**).
-- **The downloads tree is repaired selectively on every run** (**DD-84**):
-  entries whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
-  (defaults `1000:1000`) are `chown -h`'d; directories not mode `0775` and
-  files not mode `0664` are `chmod`'d. Matching entries are left untouched
+- **The downloads tree is repaired selectively on every run** (**DD-84/DD-187**):
+  pinned descriptors apply `fchown`/`fchmod` only to directories and single-link
+  regular files whose UID/GID differ from `DOWNLOADS_UID`/`DOWNLOADS_GID`
+  (defaults `1000:1000`) or modes differ from `0775`/`0664`. All path components
+  are opened without following symlinks; links and special files are skipped.
+  Matching entries are left untouched
   (no full-tree rewrite). qBittorrent and Konsol's file backend share
-  read/write that way. WebDAV enforces each account's RO/RW permission (DD-158).
+  read/write that way. WebDAV enforces each connection's RO/RW permission
+  within the folder account (DD-158/DD-192).
 - The private `.arsiv` work/history tree and the reserved `.pay` name
   (`SHARE_DIR`) are excluded from ordinary ownership/mode repair. `.pay` is
   never created or read; the file backend hides and refuses it (the name is
@@ -185,8 +193,13 @@ the ones agreed on 2026-08-05:
   WebDAV), HTTP only, reverse-proxying to loopback upstreams (**R15**, **R16**).
 - The real Konsol page and backend/gate checks verify the HTTP edge; there is
   no separate health endpoint or DNS name (**DD-157**).
-- While a WAN share is active, Caddy also binds `WAN_IPV4:SHARE_PORT`, over
-  HTTP, for `/s/<id>/` only (**DD-179**, §3.1).
+- Optional WAN WebDAV uses HTTPS on `WAN_IPV4:SHARE_HTTPS_PORT` when a public
+  domain is saved in Settings → Caddy; with no HTTPS setting, existing
+  consent-gated HTTP on `WAN_IPV4:SHARE_PORT` remains. Explicitly clearing
+  the domain closes WAN, not downgrades it (**DD-179/190**, §3.1).
+- DD-191 additionally allows qBittorrent HTTPS on that same port, guarded by
+  its native mandatory login and security checks. Legacy WebDAV HTTP must first
+  be converted or disabled. No Panel, Files API or Caddy admin publication.
 
 ### 1.6 Firewall
 
@@ -406,6 +419,11 @@ Contract in §5–§7 and `folder-shares.md`.
       sync, free space and inodes against the upload reserve, a pending or
       stuck settings change and a WAN share whose address is gone. It never
       repairs anything.
+      **DD-189:** required core units and running optional modules are checked
+      for actual activity; deliberately stopped WG networks/modules stay valid.
+      Absent reboot flags also trigger a same-flavor distribution boot-link,
+      image/initrd comparison (module paths are hidden by the service sandbox).
+      Unknown probes are warnings, never green.
     - Güvenlik Duvarı shows real IPv4/IPv6 rules and counters from all
       iptables tables, listening sockets, and the baseline policy check.
       Structured port overrides have family, WAN/tailnet scope,
@@ -434,6 +452,36 @@ Contract in §5–§7 and `folder-shares.md`.
       cannot edit those account settings. Confirmation must arrive through
       the new panel Host within five minutes; otherwise the guard restores
       the previous domain. No old-name alias or arbitrary Caddy editor is added.
+    - **Publication table (DD-191):** Panel stays Tailscale-only and cannot be
+      edited by the API. WebDAV and installed qBittorrent have independent
+      Tailscale/WAN toggles, a public hostname and a per-row Save. Toggles edit
+      a draft, not the server. Tailscale off produces a 403 Caddy route without
+      stopping the service; shared listener ports can remain. Per-folder
+      connection policies/authentication remain mandatory (DD-192); cards show
+      why a global gate prevents access. Disabled WAN names are kept
+      for re-enabling; no plaintext fallback. qBittorrent requires permanent
+      native password/login, CSRF/Host checks and active attempt bans; its own
+      preferences remain unchanged. Stopped/uninstalled modules are not published.
+      Both active HTTPS names share one port/permission and its socket budget.
+      Known private/public projections survive reruns and use Settings snapshots
+      on failure/crash. There is no public Panel switch, Tunnel or arbitrary proxy.
+    - The separate **public HTTPS domain** field per row (**DD-190/191**) accepts
+      a full domain, not a URL/IP/port/path/wildcard. Public DNS must resolve
+      to exactly the assigned `WAN_IPV4`, with no AAAA or proxy. It does not
+      alter `LOCAL_DOMAIN`, dnsmasq or Tailscale Admin DNS. Caddy owns Let's
+      Encrypt issuance/renewal through TLS-ALPN on TCP `SHARE_HTTPS_PORT`
+      (443), with HTTP challenge and automatic port-80 redirects disabled;
+      no DNS provider token is needed. The standalone save uses durable
+      pending state and commits only after chain/hostname verification.
+      Failure or pre-commit crash restores the previous projection. Explicit
+      removal saves an empty domain and closes WAN without an HTTP fallback;
+      Caddy reload is graceful, so existing transfers may finish. The status
+      probe connects locally to the assigned WAN IP, pinned independently
+      of the domain's DNS, and verifies the name with SNI: readiness does
+      not prove internet reachability. Settings shows certificate expiry;
+      health warns when at most 14 days remain. Folder network/auth rules,
+      all private admin/API boundaries remain unchanged; DD-191 can separately
+      disable the WebDAV/qBittorrent private route.
     - Dnsmasq permits on/off for managed names, exact custom names within
       `LOCAL_DOMAIN`, and optional public upstream IPs. Missing/disabled
       private names stay local. Base/module collisions and local/self
@@ -461,12 +509,14 @@ Contract in §5–§7 and `folder-shares.md`.
     retain review/confirmation.
   - Settings transactions: `POST /api/konsol/ayarlar/{uygula,onayla,geri-al,birak}`
     runs an independent
-    worker with JSON on stdin, never a password on argv/in logs. DNS-only and
+    worker with JSON on stdin, never a password on argv/in logs. DNS-only,
     qBittorrent account-only (username/password, no folder or other section)
-    requests return `{pending: null, committed: true}` after a durable commit;
+    and standalone HTTPS requests return `{pending: null, committed: true}`
+    after a durable commit (HTTPS enablement first verifies the certificate);
     only the server determines eligibility from the supplied change sections.
     Other requests retain review and a 60 s confirmation window (300 s for a
-    domain change), including mixed DNS/firewall or DNS/qBittorrent requests.
+    local-domain change), including mixed DNS/firewall or DNS/qBittorrent
+    requests. HTTPS cannot be combined with another settings section.
     Failed immediate applies restore snapshots; interrupted pre-commit writes retain
     guard recovery. The commit marker prevents recovery from undoing a durable
     commit after a crash. The server-side guard timer
@@ -481,16 +531,24 @@ Contract in §5–§7 and `folder-shares.md`.
     saved settings). The installer refuses to run while anything is pending. Stale revisions and concurrent
     installer/module writes are refused. Confirmation cannot preserve a rule
     that blocks the confirming client's new console/DNS connections or the
-    console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/domain
-    choices across re-runs; `SETTINGS_PENDING_FILE` is root-only recovery data,
+    console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/local-domain
+    and public-HTTPS choices across re-runs; `SETTINGS_PENDING_FILE` is root-only recovery data,
     not a portable backup. qBittorrent remains the owner of its profile.
+  - Both root qBittorrent readers use descriptor-relative no-follow,
+    nonblocking regular-file reads (**DD-186**): 64 KiB for the panel's
+    allowlisted view and 1 MiB for share path checks. A missing profile is
+    allowed; an unsafe/unreadable profile prevents share changes.
   - A peer or a whole network can be switched off and on (§1.9).
-- **Folder shares (DD-158):** Files v09 offers list/cards, details and a WebDAV
-  tab. The root backend manages separate accounts, RO/RW, expiry and pause.
-  Access and expiry are edited inline in the Shares list (DD-170); Manage edits
-  folder, account and networks (**DD-179**). Partial updates preserve omitted
-  values under the lock and do not rebind a folder unless a path is explicitly
-  supplied. See §5–7.
+- **Folder shares (DD-158/DD-192):** each Shares entry has two connection cards,
+  Tailscale and WAN, with independent switches, RO/RW, expiry, address/copy and
+  Infuse connection details. WAN is labeled HTTPS when configured, or HTTP (WAN)
+  with the plaintext warning in legacy mode. General Caddy gates override both
+  cards and explain unavailable access. Manage edits the shared folder/account/
+  password separately. Partial connection updates preserve all omitted values
+  under the locks, including exact expiry, and never rebind a folder unless a
+  path is explicitly supplied. Both switches may be off. Share edits still
+  restart active WebDAV and interrupt all transfers; retain the UI warning.
+  See §5–7.
 - **Archives (DD-166, DD-170):** selecting files opens a contextual action
   dock. Archive creation produces ZIP; the archive opener automatically
   detects multipart RAR and nested ZIP/RAR (unencrypted RAR3/RAR5, solid and
@@ -541,6 +599,10 @@ Contract in §5–§7 and `folder-shares.md`.
     symbolic link is listed but never followed, and `..` and `/` are refused.
   - Rename and move use `renameat2(RENAME_NOREPLACE)`. An existing target
     refuses the operation, and a folder cannot move into itself.
+    Root `.cop`, `.pay` and `.arsiv` sources are rejected before any item in a
+    move/trash batch is changed; nested reserved names cannot be moved into
+    the root. Restore chooses an alternate name for a reserved root name
+    (**DD-186**).
   - Names over 255 bytes or with `/` are refused; new names may not contain
     control characters or leading and trailing spaces.
 - Delete moves the item into `DOWNLOADS_PATH/.cop/<id>/` with a small origin
@@ -675,7 +737,8 @@ Contract in §5–§7 and `folder-shares.md`.
     `?parola=1` also the temporary password while one is in use (audited as
     `modul-hesap`). Any other or uninstalled module answers `404`.
   - Folder shares use `GET /api/konsol/paylasim` and `POST
-    /api/konsol/paylasim/{kaydet,durum,kaldir}`.
+    /api/konsol/paylasim/{kaydet,kaldir}`. The old `.../durum` global-pause
+    request is rejected with a refresh message (DD-192, §6).
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
   - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
 - Konsol never retrieves a stored WebDAV password; enter or generate it in the
@@ -700,12 +763,15 @@ The installer deliberately does not provide these:
   `StartLimitIntervalSec`/`StartLimitBurst`.
 - **No installer disk or inode threshold checks.** The installer does not
   monitor; Konsol's health card only reports (§1.10, **DD-182**).
-- **No DNS/Caddy rollback state machine.** A failed stage 6 leaves dnsmasq
-  and/or Caddy masked, which is safe; recovery is a re-run (§12).
+- **No installer-stage DNS/Caddy rollback state machine.** A failed stage 6
+  leaves dnsmasq and/or Caddy masked, which is safe; recovery is a re-run (§12).
+  Later Settings changes use their separate durable transaction (§1.10).
 - **No migration cleanup.** The upgrade path is a fresh install or a re-run
   that overwrites what the installer owns. The installer does not hunt for
   earlier revisions' units, users, packages or data; a global `apt-get
-  purge` or a `userdel` is outside its boundary (**DD-96**).
+  purge` or a `userdel` is outside its boundary (**DD-96**). The narrow
+  schema-3 → schema-4 WebDAV registry conversion in §6 is explicitly supported
+  by DD-192; schema 2 remains unsupported.
 
 ---
 
@@ -727,21 +793,39 @@ automatically created listener.
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
 console recovery and public-IP SSH keep working.
 
-**Folder WebDAV is an opt-in WAN exception (DD-179):** while at least one
-unpaused, unexpired WAN share exists, Caddy binds `${WAN_IPV4}:${SHARE_PORT}`
-over plain HTTP (the share form requires plaintext-risk consent) and proxies
-only `/s/<id>/` to the WebDAV's WAN scope on `SHARE_WAN_BACKEND`; every other
-path answers `404` and no administrative interface is exposed. New WAN
-sockets to that port are capped per source IP and in total before any
-operator allow rule. Pausing or removing the last WAN share removes the
-listener and the firewall permission at once; expiry does so on the next run
-of `master-share-network.timer`. Exact limits and recovery
-are in [folder-shares.md](folder-shares.md). Every other service stays
-tailnet-only.
+**Folder WebDAV is an opt-in WAN exception (DD-179/190):** Caddy binds only
+the assigned, globally routable `${WAN_IPV4}`. The saved HTTPS setting determines
+the public listener and firewall permission:
+
+| Setting | WAN publication |
+|---|---|
+| No `https` key | Existing plaintext-consent HTTP on `${SHARE_PORT}` (61010), only while an enabled, unexpired, identity-valid WAN connection exists |
+| Nonempty `https.domain` | HTTPS on `${SHARE_HTTPS_PORT}` (443), retained for certificate issuance/renewal even with no active folders, while WebDAV is registered as running and its registry/address are valid |
+| Explicit empty `https.domain` | WAN off; no HTTP downgrade and no WAN URL advertised |
+
+For the configured public Host, only `/s/*` reaches the WAN scope on
+`SHARE_WAN_BACKEND`; paths outside `/s/*`, including `/api/*`, answer `404`.
+Only the WAN HTTPS `servers` block enables
+[`strict_sni_host on`](https://caddyserver.com/docs/caddyfile/options#strict_sni_host):
+a Host/TLS-SNI mismatch returns `421`, not that site's path-level `404`.
+Per-folder authentication/identity and the WAN connection's enabled,
+permission and expiry checks remain mandatory (DD-192). The global WebDAV
+publication gates in §1.10 take precedence over folder switches. New WAN sockets to the
+selected port are capped per source IP and in total before any operator allow
+rule; manual denials still apply. In legacy HTTP mode, disabling/removing the last active WAN connection
+removes the listener/permission synchronously and expiry does so on the next
+`master-share-network.timer` run. HTTPS retains them for renewal, without
+publishing any otherwise unauthorized folder. Explicit domain removal closes
+new WAN connections through a graceful Caddy reload; existing transfers may
+finish. Exact limits and recovery are in [folder-shares.md](folder-shares.md).
+Every administrative service remains private.
 
 The firewall limits NEW WAN traffic to each WireGuard network's UDP port
-(IPv4 only), host SSH, Tailscale's own UDP port (`TAILSCALE_UDP_PORT`) and,
-only while a WAN share is active, TCP `${SHARE_PORT}` (IPv4 only).
+(IPv4 only), host SSH, Tailscale's own UDP port (`TAILSCALE_UDP_PORT`) and the
+mode-selected WebDAV TCP port above (IPv4 only). Public HTTPS permits only
+HTTP/1.1 and HTTP/2 (`protocols h1 h2`); no HTTP/3, UDP 443 listener/permission
+or WAN TCP 80 is added. No NAT discovery, provider forwarding or DNS API write
+is performed.
 
 ### 3.2 Tailnet (Tailscale IPv4) — reachable only over `tailscale0`
 
@@ -796,7 +880,8 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
-| `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/`; while a WAN share is active also `http://${WAN_IPV4}:61010/s/<id>/` (**DD-179**) | `127.0.0.1:61010`; the WAN site → `SHARE_WAN_BACKEND:61010` (**DD-158**, **DD-159**) |
+| `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
+| Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
 | `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 
 `SERVICE_NAMES` is `panel`.
@@ -816,9 +901,10 @@ Rules:
   `${TAILSCALE_IPV4}` — not `127.0.0.1` or `NXDOMAIN`. Stage 7 measures
   `dig +short … @127.0.0.1` and `@${TAILSCALE_IPV4}` for every name in
   `SERVICE_NAMES`; both must return `${TAILSCALE_IPV4}`.
-- Every Caddy site is explicitly `http://`. No automatic HTTPS, no ACME,
-  no certificate machinery — the tailnet is the transport security boundary;
-  the opt-in WAN share site is deliberately plaintext (**DD-179**).
+- Private Caddy sites remain explicitly `http://`; Tailscale is their transport
+  security boundary. Only the optional public WebDAV domain uses HTTPS/ACME
+  (**DD-190**): Let's Encrypt via TLS-ALPN on TCP 443, HTTP challenge disabled,
+  `auto_https disable_redirects`, no WAN port-80 listener or DNS API token.
 - Every upstream is plain HTTP on loopback or the root backend's Unix socket.
 - The base names live in one list (`SERVICE_NAMES`) mirrored in both templates;
   adding a service means editing that list and both templates. A module's
@@ -826,32 +912,85 @@ Rules:
 
 ---
 
-## 5. Folder WebDAV: purpose (DD-158)
+## 5. Folder WebDAV: purpose (DD-158/DD-192)
 
 Selected folders, not a shared symlink root, are published through independent
-accounts and stable /s/<id>/ URLs. RO is the default; RW includes permanent
-delete/overwrite and requires acknowledgement. Each share selects Tailscale,
-WAN IPv4 or both (**DD-179**); new shares default to Tailscale, and adding WAN
-requires explicit consent that HTTP over the internet is unencrypted. The
-listener scope, not a request header, decides which shares a request may
-reach; each scope has its own attempt limits and connection budget (§3.1).
+accounts and stable `/s/<id>/` URLs. Each folder has independent `tailscale`
+and `wan` policies for enabled state, RO/RW and absolute expiry. Both connections
+use the same folder, ID, username and password; either or both may be disabled.
+New shares default to Tailscale enabled, RO, seven days, and WAN disabled, RO,
+seven days. RW includes permanent deletion/overwrite and requires explicit
+acknowledgement for that connection. Enabling or re-enabling WAN in legacy
+HTTP mode requires `ack_wan_http: true`; HTTPS needs no plaintext acknowledgement.
+The listener scope, not a request header, chooses the applicable policy; each
+scope has its own attempt limits and connection budget (§3.1). Global Caddy
+publication gates can restrict access but cannot widen a folder policy.
 The binding implementation details are in [folder-shares.md](folder-shares.md).
 
-## 6. WebDAV credentials and permissions (DD-158)
+## 6. WebDAV credentials and permissions (DD-158/DD-192)
 
-SHARE_STATE_FILE is a 0600 root-owned schema-3 JSON registry of networks, users, salted
-scrypt hashes, folder identity, RO/RW, pause and expiry; any other schema is
-refused. No plaintext password copy exists. The root API projects only non-secret metadata; fixed workers
-receive mutations on stdin under the existing panel gates and operation locks.
-The unprivileged data service receives a LoadCredential copy at start.
-No password enters argv, logs, environment files or browser storage.
+`SHARE_STATE_FILE` is a 0600 root-owned schema-4 JSON registry. Each item has
+exactly two connection policies, `connections.tailscale` and `connections.wan`,
+each with `{enabled: bool, permission: "ro"|"rw", expires: Unix-seconds|null}`.
+`null` means unlimited. There is no authoritative shared `permission`, `expires`,
+`paused` or `networks` field; schema-4 items containing any of those legacy fields
+are rejected as conflicting, even if their values appear to agree.
 
-Each request authenticates against exactly one share. Directory descriptors,
-nofollow and birth-time/inode checks enforce its root. Expiry is checked on
-requests and transfer chunks, not listings. PUT replaces only after completion.
-Account changes restart the active data service and interrupt all transfers;
-stopped services stay stopped. Remove revokes only access, not shared files.
-Root administrators and passwordless Konsol remain outside this isolation boundary.
+Loading schema 3 validates and converts it in memory without writing the file:
+both policies copy the exact shared permission and absolute expiry, including
+expired values and `null`; each is enabled only if its network was selected and
+the share was not paused. IDs, paths, names, usernames, salts/hashes, folder
+identity, `created` and `changed` are preserved. No account is rotated and no
+expiry is renewed. `prepare` persists schema 4; subsequent unchanged preparation
+is a no-op. Schema 2 and other unsupported/malformed registries fail closed.
+
+`POST /api/konsol/paylasim/kaydet` accepts nested partial `connections` with
+one or both scopes. Each supplied scope patch accepts only
+`{enabled?, permission?, days?, ack_write?}`. `enabled` is boolean,
+`permission` is `ro` or `rw`, and `days` is integer `0`, `1`, `7` or `30`:
+zero stores `null`; other values start that scope's duration at save time.
+Omitted scopes and fields, including absolute expiry, are read from the current
+registry under install/module/share locks and preserved. Switching on never
+renews an expired connection. Every explicit `permission: "rw"` requires
+`ack_write: true` in the same scope patch, even for an existing RW grant or an
+off connection; unrelated edits preserving RW need no new acknowledgement.
+Both connections off is valid and retains the account. Folder/path, username
+and password are managed separately; blank or omitted password on edit preserves
+the hash, and an omitted path never rebinds the folder identity.
+
+Old shared-policy save fields (`permission`, `days`, `expires`, `networks`,
+`paused`, top-level `ack_write`) and the old `POST .../durum`/`pause` operation
+are rejected without applying a change, with a message asking to refresh the
+page. They are never translated into updates to both policies.
+
+`GET /api/konsol/paylasim` projects non-secret rows. Each `row.connections[scope]`
+contains its saved policy plus `expired`, `available`, `active`, `reason` and
+`url`. Connection `available` describes the global publication/transport gate;
+row-level `available` describes the folder identity. `active` additionally
+requires the connection enabled, unexpired, the folder valid and the WebDAV
+service registered as running. `reason` explains denial, including global Caddy
+gates. `url` is a candidate address when the transport is available, even with
+the connection off or expired; it is empty when the global gate/transport is
+unavailable. `row.urls` contains only active connections (`row.url` selects the
+first active address). A candidate address is not proof of access or reachability.
+
+No plaintext password copy exists. Fixed workers receive mutations on stdin
+under the existing panel gates and operation locks. The unprivileged data service
+receives a `LoadCredential` copy at start. No password enters argv, logs,
+environment files or browser storage; salts/hashes and filesystem identity are
+not returned to the browser.
+
+Each request authenticates against exactly one share and enforces the trusted
+listener's policy, including after an authentication-cache hit. `PUT`, `MKCOL`,
+`DELETE`, `MOVE` and file `COPY` all require RW on that listener; Tailscale RW
+never grants WAN write access, or vice versa. Enabled/expiry checks apply to
+requests and live transfer chunks, with permission checks on writes. Staged
+PUT/COPY revalidate that policy and the filesystem/preconditions under the
+mutation lock before atomic publication. Directory descriptors, nofollow and
+birth-time/inode checks enforce the root. Share edits restart the active data
+service and interrupt **all** transfers; stopped services stay stopped. Remove
+revokes both connections and their account, never shared files. Root administrators
+and passwordless Konsol remain outside this isolation boundary.
 
 ## 7. WebDAV service lifecycle (DD-158)
 
@@ -859,9 +998,10 @@ master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback
 (127.0.0.1 for the Tailscale scope, SHARE_WAN_BACKEND for the WAN scope),
 with no capabilities, system paths read-only, user area writable, internal
 trash/share paths inaccessible, and network restricted to loopback. Caddy
-publishes the `paylas.` name and Tailscale IP:SHARE_PORT and, while a WAN share
-is active, the WAN IPv4:SHARE_PORT site (DD-179). No extra port number or
-Tailscale policy change.
+publishes the `paylas.` name and Tailscale IP:SHARE_PORT over HTTP. The optional
+WAN site follows §3.1: legacy HTTP on SHARE_PORT, HTTPS on SHARE_HTTPS_PORT or
+off (DD-179/190). HTTPS stays available for renewal with zero active folders;
+folder authorization still fails closed. No Tailscale policy change.
 
 The installer prepares an empty registry only when absent and enables this
 built-in service. Reruns preserve accounts; public module removal is refused.
@@ -894,8 +1034,9 @@ Tailscale acceptance; WG host ingress is dropped first in both project chains):
    Raw listeners and technical rules stay unfiltered (**DD-173**).
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP for Tailscale and each registered WireGuard network.
-6. Only while a WAN share is active (**DD-179**): new inbound IPv4 TCP on the
-   WAN interface to `${SHARE_PORT}`, after the per-source and total
+6. When the WAN projection in §3.1 is enabled (**DD-179/190**): new inbound
+   IPv4 TCP on the WAN interface to the selected `${SHARE_PORT}` or
+   `${SHARE_HTTPS_PORT}`, after the per-source and total
    connection-limit rejects that `MASTER-SETTINGS` places before operator rules.
 
 Dropped:
@@ -921,7 +1062,9 @@ Rules:
   and a correct policy, never a failed unit with no policy at all
   (**DD-94**).
 - There is no **default** WAN permission for WebDAV, Caddy, dnsmasq or an
-  application web interface; WAN WebDAV is only the per-share opt-in of item 6.
+  application web interface; WAN WebDAV and optional qBittorrent HTTPS are
+  conditional publications (DD-191). Explicit HTTPS retains its renewal port without active
+  folders, but never removes per-folder opt-in/authentication.
   Custom firewall allows do not change socket binds.
 - The Internet port catalogue lists only configured per-family base permits;
   local/tailnet sockets do not create closed WAN placeholders. WireGuard lists
@@ -933,6 +1076,12 @@ Rules:
   bind IPv4 only); WAN IPv6 allows NDP/ICMPv6 essentials, host
   SSH TCP and Tailscale UDP, and drops other NEW WAN traffic, including the
   WebDAV share port.
+- Both policies finish with an unconditional DROP for otherwise unhandled
+  interfaces (**DD-187**). On registry-validation failure an apply keeps the
+  existing owned default-deny policy; a cold family receives a narrow rescue
+  guard (SSH/Tailscale transport, established/loopback/IPv6 control only).
+  This is still a failed firewall, not a successful degraded configuration:
+  Caddy/WireGuard pre-start checks remain closed. `--check` is read-only.
 
 ---
 
@@ -987,7 +1136,7 @@ declared in `config/defaults.env` and nowhere else.
   WAN DROP, it must follow every WAN allow, no unconditional
   `ACCEPT`/`RETURN` may precede it (**DD-94**), and the number of WAN allows
   must equal the allow list exactly — for IPv4 Tailscale's UDP port, host
-  SSH, TCP `${SHARE_PORT}` while a WAN share is active and one UDP port per
+  SSH, the conditional WebDAV TCP port from §3.1 and one UDP port per
   WireGuard network (none without the module), for IPv6 the first two. `MASTER-FORWARD` must hold four base rules plus the configured blocked-prefix rules per
   network, `MASTER-NAT` one per subnet, and INPUT's entire rule count and
   all IPv6 control types are checked. No managed chain emits a redundant
@@ -1014,7 +1163,7 @@ declared in `config/defaults.env` and nowhere else.
 | `master-wg-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
 | `master-files-panel.service` (built in) | `network-online.target` | none; `127.0.0.1` listener, `RequiresMountsFor=SERVER_ROOT`, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
 | `master-paylasim.service` (built-in WebDAV) | `network-online.target` | none; `127.0.0.1` and `SHARE_WAN_BACKEND` listeners, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
-| `master-share-network.timer` | — | closes expired WAN share projections and recovers interrupted share operations (**DD-179**) | starts oneshot 30 s after boot and 30 s after each run |
+| `master-share-network.timer` | — | closes expired legacy HTTP WAN projections, retains configured HTTPS for renewal and recovers interrupted share operations (**DD-179/190**) | starts oneshot 30 s after boot and 30 s after each run |
 | `master-settings-guard.timer` | — | rollback deadline of an unconfirmed Settings change; active only while one is pending (**DD-181**) | starts oneshot every 2 s while active; once 15 s after boot |
 | `apt-daily-upgrade.timer` (drop-in, **DD-184**) | — | distribution unit; `OnCalendar` at `APT_UPGRADE_TIME` (04:00), `RandomizedDelaySec=30m`, the distribution's `Persistent=true` kept | daily |
 | `wg-quick@wgN.service` (drop-in, **DD-180**) | `master-firewall.service` | `Wants=`; `ExecStartPre=+master-firewall --check`, so a network never forwards without the owned rules | package default; a network left failed is reopened by `refresh-tailnet-config` once the check passes |
@@ -1066,10 +1215,11 @@ Invariants:
   inputs are unchanged. This is verifiable: `sha256sum` the generated set
   before and after a second run.
 - Existing state that must survive a re-run: the folder share registry
-  (IDs, hashes, policies and paused state), qBittorrent's profile (its settings are
+  (IDs, hashes and both connection policies), qBittorrent's profile (its settings are
   written once, by the module, **DD-151**),
   every `wgN.conf` and `clients-wgN/` with the networks registry (keys and
-  device profiles are never rewritten), the operator's chosen local domain.
+  device profiles are never rewritten), the operator's chosen local domain
+  and public HTTPS setting (including explicit WAN-off).
 - Firewall application is idempotent by construction: each chain is rebuilt
   from scratch and swapped in, and each parent jump is inserted only when
   absent.
@@ -1100,6 +1250,7 @@ the run started.**
 | Tailscale never comes online | Hard failure before anything is published. The stack is not started against a missing address |
 | WebDAV registry preparation (`master_shares.py prepare`) fails | `master-modul yerlesik` stops before the service is started; systemd also refuses a unit whose credential file (the registry) is missing |
 | Folder account service renewal fails | Previous registry is restored and restart retried; if recovery also fails, report it explicitly. No plaintext password is returned (**DD-158**) |
+| Public HTTPS apply fails or crashes before commit | Restore the previous saved projection using durable Settings pending/guard recovery; report incomplete rollback. An initial failed enablement may restore the previously consented HTTP mode, but a committed HTTPS configuration never silently falls back to HTTP on certificate failure (**DD-190**) |
 | A module's Caddy site or dnsmasq name does not validate | The previous file is put back and a `kur` is taken back (§1.11) |
 | A generated file cannot be written with the intended owner/mode | Hard failure, temporary file removed |
 
@@ -1156,8 +1307,9 @@ An installer run is successful when every one of these holds on the target host.
    the socket modes, that the downloads account cannot connect to either, that
    `127.0.0.1:2019` is closed and that `systemctl reload caddy` still works (**DD-180**).
 8. Main Caddy listens on `${TAILSCALE_IPV4}:80` and
-   `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse), and on `${WAN_IPV4}:${SHARE_PORT}`
-   only while a WAN share is active; no WG web listener exists.
+   `${TAILSCALE_IPV4}:${SHARE_PORT}` (Infuse). WAN publication follows §3.1:
+   active-folder legacy HTTP, configured HTTPS retained for renewal, or off;
+   no WG web listener exists.
 9. dnsmasq answers on `${TAILSCALE_IPV4}:53` **and** `127.0.0.1:53`, and on no
    other address; it serves no DHCP.
 
@@ -1175,11 +1327,13 @@ An installer run is successful when every one of these holds on the target host.
     through `torrent.${LOCAL_DOMAIN}`; a `200` means a localhost or subnet
     authentication bypass is on (**DD-127**, **DD-151**).
 14. WebDAV listens only on loopback as DOWNLOADS_UID; Caddy owns the tailnet
-    port and, only while a WAN share is active, `${WAN_IPV4}:${SHARE_PORT}`.
+    port and the optional mode-selected WAN listener (§3.1).
 15. Anonymous requests return 401; each account opens only its selected folder.
 16. PROPFIND/read/range succeed; RO write methods are rejected.
 17. RW changes stay inside the share; cross-share Destination and unsafe paths fail.
-18. Pause, expiry, rotation and removal revoke access as specified in §6.
+18. Each connection's disable/expiry revokes that scope independently; password
+    rotation and removal affect both, as specified in §6. Cached authentication
+    and staged uploads cannot bypass the applicable policy.
 19. URLs include /s/<id>/; native-client acceptance is a separate test.
 
 ### WebDAV credential handling (§6)
@@ -1187,13 +1341,14 @@ An installer run is successful when every one of these holds on the target host.
 20. SHARE_STATE_FILE remains 0600 root, with hashes only.
 21. No secret enters environment files, argv, browser storage or audit logs.
 22. The service command line contains only the credential path.
-23. Reruns and reboot preserve IDs, hashes, policies and paused state.
+23. Reruns and reboot preserve IDs, hashes and both connection policies;
+    schema-3 preparation persists the lossless schema-4 conversion in §6.
 
 ### Firewall
 
 24. The base policy accepts loopback, `ESTABLISHED,RELATED`, Tailscale,
-    WAN SSH/Tailscale UDP, registered WireGuard UDP ports and, only while a
-    WAN share is active, WAN IPv4 TCP `${SHARE_PORT}`; other NEW WAN
+    WAN SSH/Tailscale UDP, registered WireGuard UDP ports and the conditional
+    WAN IPv4 WebDAV TCP port of §3.1; other NEW WAN
     input is dropped. Confirmed `MASTER-SETTINGS` overrides are tested separately.
 25. `INPUT` holds exactly one jump to `MASTER-INPUT`, behind `ts-input`;
     `FORWARD` exactly one to `MASTER-FORWARD` and `nat POSTROUTING` exactly

@@ -31,6 +31,8 @@ import ipaddress
 import json
 import os
 import platform
+from pathlib import Path
+import pwd
 import re
 import socket
 import socketserver
@@ -47,6 +49,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import master_settings
 import master_shares
+import master_publications
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
@@ -74,8 +77,14 @@ SYS_POINTS = 12
 ACTIONS_CACHE_SECONDS = 15
 # DD-182: Sağlık kartı. Salt okunur; sekme açıkken 30 sn'de bir hesaplanır.
 HEALTH_CACHE_SECONDS = 30
+# Always-on core; the settings guard timer deliberately sleeps while idle (DD-181).
+HEALTH_UNITS = ("tailscaled.service", "caddy.service", "dnsmasq.service",
+                "master-firewall.service", "master-wg-panel.service",
+                "master-files-panel.service", "master-paylasim.service",
+                "refresh-tailnet-config.timer", "master-share-network.timer")
 # Tailscale düğüm anahtarının süresi bu kadar gün kala uyarılır.
 KEY_EXPIRY_WARN_DAYS = 14
+CERT_EXPIRY_WARN_DAYS = 14
 ACTIONS_LIMIT = 40
 # Ayarlar okuması: aynı anda gelen yenilemeler iptables'ı yormasın (DD-155, DD-156).
 SETTINGS_CACHE_SECONDS = 5
@@ -272,6 +281,8 @@ def classify_rules(chain_kind, rules, env, networks):
                 e.update(group="ts", kind="all")
             elif i_if == wan and j == "DROP" and "-p" not in o:
                 e.update(group="wan", kind="drop")
+            elif spec.strip() == "-j DROP":
+                e.update(group="self", kind="default-drop")
             elif i_if == wan and j == "ACCEPT" and o.get("--dport"):
                 port, proto = o["--dport"], o.get("-p", "")
                 if port == ssh and proto == "tcp":
@@ -318,10 +329,11 @@ def parse_caddy(text, ts_ip, source):
         line = raw.split("#", 1)[0].strip() if raw.lstrip().startswith("#") else raw.strip()
         if not line:
             continue
-        if depth == 0 and line.endswith("{") and line.startswith("http://"):
-            addrs = [a.strip().replace("http://", "").replace("{$TAILSCALE_IPV4}", ts_ip)
+        if depth == 0 and line.endswith("{") and line.startswith(("http://", "https://")):
+            scheme = line.split("://", 1)[0]
+            addrs = [re.sub(r"^https?://", "", a.strip()).replace("{$TAILSCALE_IPV4}", ts_ip)
                      for a in line[:-1].split(",") if a.strip()]
-            cur = {"addresses": addrs, "routes": [], "source": source}
+            cur = {"addresses": addrs, "routes": [], "source": source, "scheme": scheme}
             sites.append(cur)
             depth, ctx, matchers = 1, [""], {}
             continue
@@ -372,8 +384,17 @@ def parse_dnsmasq(text, source):
         elif key == "local" and value.startswith("/") and value.endswith("/"):
             got["domains"].append(value.strip("/"))
         elif key == "interface-name" and "," in value:
-            name, _, iface = value.partition(",")
-            got["names"].append({"name": name, "iface": iface, "source": source})
+            record = master_settings.dns_interface(value)
+            if record:
+                got["names"].append({**record, "source": source})
+        elif key == "host-record" and "," in value:
+            name, _, address = value.partition(",")
+            try:
+                ip = ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            got["names"].append({"name": name, "iface": "", "family": ip.version,
+                                 "address": str(ip), "source": source})
         elif key == "dhcp-range":
             got["dhcp"] = True
     return got
@@ -381,8 +402,10 @@ def parse_dnsmasq(text, source):
 
 def read_torrent_conf(path):
     """qBittorrent.conf'tan yalnız TORRENT_KEYS; bölüm başlıkları ve öbür anahtarlar atlanır."""
-    text = read_text(path)
-    if text is None:
+    try:
+        raw, _ = master_settings.read_regular(path, SETTINGS_TEXT_LIMIT)
+        text = raw.decode("utf-8", "replace")
+    except (OSError, master_settings.SettingsError):
         return None
     got = {}
     for raw in text.splitlines():
@@ -757,6 +780,129 @@ class Panel:
         except (OSError, subprocess.TimeoutExpired):
             return None, ""
 
+    def health_units(self, env):
+        """Check desired state, including inactive units absent from --failed."""
+        required, networks, unknown, problems = list(HEALTH_UNITS), [], [], []
+        try:
+            raw, _ = master_settings.read_regular(env["MODULES_FILE"], SETTINGS_TEXT_LIMIT)
+            modules = {}
+            for line in raw.decode("utf-8").splitlines():
+                fields = line.split("\t")
+                if len(fields) != 2 or not MODULE_ID_RE.fullmatch(fields[0]) or fields[0] in modules or fields[1] not in ("calisiyor", "durduruldu"):
+                    raise ValueError("module registry")
+                modules[fields[0]] = fields[1]
+            if modules.get("torrent") == "calisiyor":
+                user = pwd.getpwuid(int(env["DOWNLOADS_UID"])).pw_name
+                if not re.fullmatch(r"[a-z_][a-z0-9_-]*", user):
+                    raise ValueError("service user")
+                required.append("qbittorrent-nox@%s.service" % user)
+            if modules.get("wireguard") == "calisiyor":
+                try:
+                    raw, _ = master_settings.read_regular(env["WG_NETWORKS_FILE"], SETTINGS_TEXT_LIMIT)
+                except FileNotFoundError:
+                    raw = b""  # Installed without any network yet.
+                seen = set()
+                for line in raw.decode("utf-8").splitlines():
+                    f = line.split("\t")
+                    if len(f) != 9 or not IFACE_RE.fullmatch(f[0]) or f[0] in seen or f[2] != "inet":
+                        raise ValueError("network registry")
+                    seen.add(f[0])
+                    networks.append("wg-quick@%s.service" % f[0])
+        except (OSError, ValueError, KeyError, master_settings.SettingsError):
+            unknown.append("Modül/ağ kaydı veya servis kullanıcısı okunamadı")
+
+        rc, out = self.health_cmd(["systemctl", "list-units", "--failed", "--plain", "--no-legend", "--no-pager"])
+        if rc != 0:
+            unknown.append("Başarısız servisler okunamadı")
+        else:
+            problems.extend(line.split()[0] for line in out.splitlines() if line.strip())
+        rc, out = self.health_cmd(["systemctl", "show", "--no-pager",
+                                   "--property=Id,LoadState,ActiveState,UnitFileState", *required, *networks])
+        units = {}
+        if rc == 0:
+            for block in out.strip().split("\n\n"):
+                props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+                if props.get("Id"):
+                    units[props["Id"]] = props
+        for unit in required + networks:
+            props = units.get(unit, {})
+            if not props.get("LoadState") or not props.get("ActiveState"):
+                unknown.append(unit)
+                continue
+            if props["LoadState"] != "loaded":
+                problems.append(unit)
+                continue
+            if unit in networks:
+                enabled = props.get("UnitFileState")
+                if enabled == "disabled":
+                    continue  # Konsol's network off switch disables the unit.
+                if enabled not in ("enabled", "enabled-runtime"):
+                    unknown.append(unit)
+                    continue
+            if props["ActiveState"] != "active":
+                problems.append(unit)
+        parts = []
+        if problems:
+            parts.append("Çalışmayan/başarısız: " + ", ".join(dict.fromkeys(problems)))
+        if unknown:
+            parts.append("Doğrulanamadı: " + ", ".join(unknown))
+        return ("bad" if problems else "warn" if unknown else "ok",
+                " · ".join(parts) if parts else "Gerekli servisler çalışıyor; başarısız servis yok")
+
+    def health_reboot(self, root=Path("/")):
+        """Distribution default boot links, not the newest installed package name.
+
+        Debian maintains /vmlinuz; Ubuntu also uses /boot/vmlinuz (link_in_boot).
+        Missing/broken links or incomplete boot artifacts are unknown. A custom
+        bootloader without these links needs an operator check, not a version guess.
+        Use the nonempty image/initrd pair: ProtectKernelModules deliberately
+        hides /lib/modules in this service, so its absence is not boot evidence.
+        """
+        try:
+            (root / "run/reboot-required").stat()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return "warn", "Yeniden başlatma gereksinimi okunamadı"
+        else:
+            text = read_text(str(root / "run/reboot-required.pkgs")) or ""
+            pkgs = sorted({line.strip() for line in text.splitlines() if line.strip()})
+            return "warn", "Güncellemeler yeniden başlatma bekliyor" + (" (%s)" % ", ".join(pkgs[:3]) if pkgs else "")
+
+        running = platform.release()
+        # Preserve the full flavor (generic, cloud-amd64, aws, etc.).
+        release_re = r"\d[\w.+~]*(?:-\d[\w.+~]*)?-([a-zA-Z][\w-]*)"
+        current = re.fullmatch(release_re, running)
+        unknown = ("warn", "Açılış çekirdeği doğrulanamadı; yeniden başlatma gereksinimi bilinmiyor")
+        if current is None:
+            return unknown
+        for location in ("vmlinuz", "boot/vmlinuz"):
+            link = root / location
+            try:
+                info = link.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return unknown
+            try:
+                if not stat.S_ISLNK(info.st_mode):
+                    return unknown
+                image = link.resolve(strict=True)
+                match = re.fullmatch(r"vmlinuz-(" + release_re + r")", image.name)
+                if match is None or match[2] != current[1] or image.parent != (root / "boot").resolve():
+                    return unknown
+                release = match[1]
+                for artifact in (image, image.parent / ("initrd.img-" + release)):
+                    info = artifact.stat()
+                    if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+                        return unknown
+            except (OSError, RuntimeError):
+                return unknown
+            if release != running:
+                return "warn", "Açılış bağlantısındaki çekirdek farklı: %s → %s; yeniden başlatma bekliyor" % (running, release)
+            return "ok", "Yeniden başlatma işareti yok; çalışan ve açılış bağlantısındaki çekirdek aynı (%s)" % running
+        return unknown
+
     def health_compute(self):
         env = read_env(self.args.state)
         checks = []
@@ -764,37 +910,32 @@ class Panel:
         def add(key, name, status, detail):
             checks.append({"id": key, "name": name, "status": status, "detail": detail})
 
-        rc, out = self.health_cmd(["systemctl", "list-units", "--failed", "--plain", "--no-legend", "--no-pager"])
-        failed = [line.split()[0] for line in out.splitlines() if line.strip()]
-        if rc is None:
-            add("units", "Servisler", "warn", "systemd okunamadı")
-        else:
-            add("units", "Servisler", "bad" if failed else "ok",
-                ("Başarısız: " + ", ".join(failed[:5]) + (" (+%d)" % (len(failed) - 5) if len(failed) > 5 else ""))
-                if failed else "Başarısız servis yok")
+        add("units", "Servisler", *self.health_units(env))
 
         rc, out = self.health_cmd(["tailscale", "status", "--json"])
         try:
             ts = json.loads(out) if rc == 0 else None
-        except ValueError:
+        except (ValueError, RecursionError):
             ts = None
-        if not isinstance(ts, dict):
+        if not isinstance(ts, dict) or not isinstance(ts.get("Self"), dict):
             add("tailscale", "Tailscale", "bad", "Durum okunamadı")
         else:
             me = ts.get("Self") or {}
-            running, online = ts.get("BackendState") == "Running", bool(me.get("Online"))
+            running, online = ts.get("BackendState") == "Running", me.get("Online") is True
             status, parts = ("ok" if running and online else "bad"), ["çalışıyor" if running else "durum: %s" % ts.get("BackendState", "?"),
                                                                   "çevrimiçi" if online else "çevrimdışı"]
             expiry = me.get("KeyExpiry")
-            if expiry:
+            if expiry is not None:
                 try:
                     days = (datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
                             - datetime.datetime.now(datetime.timezone.utc)).days
                     parts.append("anahtar %d gün sonra doluyor" % days)
                     if days < KEY_EXPIRY_WARN_DAYS and status == "ok":
                         status = "warn"
-                except ValueError:
-                    pass
+                except (ValueError, TypeError, AttributeError, OverflowError):
+                    parts.append("anahtar süresi okunamadı")
+                    if status == "ok":
+                        status = "warn"
             else:
                 parts.append("anahtar süresi dolmuyor")
             add("tailscale", "Tailscale", status, " · ".join(parts))
@@ -803,27 +944,20 @@ class Panel:
         add("firewall", "Güvenlik duvarı", "ok" if rc == 0 else "bad",
             "Kurallar beklenen biçimde" if rc == 0 else "Denetim başarısız; 5 dk içinde yeniden uygulanır")
 
-        if os.path.exists("/run/reboot-required"):
-            try:
-                with open("/run/reboot-required.pkgs", encoding="utf-8") as fh:
-                    pkgs = sorted({l.strip() for l in fh if l.strip()})
-            except OSError:
-                pkgs = []
-            add("reboot", "Yeniden başlatma", "warn", "Güncellemeler yeniden başlatma bekliyor"
-                + (" (%s)" % ", ".join(pkgs[:3]) if pkgs else ""))
-        else:
-            add("reboot", "Yeniden başlatma", "ok", "Gerekmiyor")
+        add("reboot", "Yeniden başlatma", *self.health_reboot())
 
         rc, out = self.health_cmd(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
         synced = rc == 0 and out.strip() == "yes"
         add("clock", "Saat", "ok" if synced else "warn",
-            "Eşitlenmiş" if synced else "Eşitlenmemiş; paylaşım süreleri ve güncellemeler etkilenebilir")
+            "Eşitlenmiş" if synced else "Eşitlenmemiş; paylaşım süreleri ve güncellemeler etkilenebilir"
+            if rc == 0 and out.strip() == "no" else "Saat eşitleme durumu okunamadı")
 
         seen = set()
         for label, path in (("Sistem diski", "/"), ("Kullanıcı alanı", env.get("SERVER_ROOT", ""))):
             try:
                 st, dev = os.statvfs(path), os.stat(path).st_dev
             except (OSError, TypeError, ValueError):
+                add("disk:" + path, label, "warn", "Disk ölçümü okunamadı")
                 continue
             if dev in seen:
                 continue
@@ -831,31 +965,65 @@ class Panel:
             total, free = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize
             # Yüklemelerin bıraktığı pay (DD-180): altına inince yükleme reddedilir.
             reserve = min(5 * 1024 ** 3, total // 10)
-            inodes = 100 * st.f_favail / st.f_files if st.f_files else 100
-            status = "bad" if free < reserve else "warn" if free < 2 * reserve or inodes < 5 else "ok"
+            inodes = 100 * st.f_favail / st.f_files if st.f_files > 0 else None
+            status = "bad" if free < reserve or inodes == 0 else "warn" if total <= 0 or free < 2 * reserve or inodes is None or inodes < 5 else "ok"
             add("disk:" + path, label, status, "%s boş (%%%d) · %s" % (
-                human_bytes(free), round(100 * free / total) if total else 0, path))
+                human_bytes(free), round(100 * free / total) if total else 0, path)
+                + (" · inode ölçümü okunamadı" if inodes is None else " · inode %%%d boş" % inodes))
 
+        https = None
         try:
-            pending = master_settings.Manager(self.args.state).status()["pending"]
-        except (master_settings.SettingsError, OSError, KeyError, ValueError):
-            pending = None
-        if not pending:
-            add("settings", "Ayar işlemi", "ok", "Bekleyen işlem yok")
-        elif pending["phase"] == "stuck":
-            add("settings", "Ayar işlemi", "bad", "Geri alma takıldı; Ayarlar'da yeniden deneyin ya da bırakın")
-        else:
-            add("settings", "Ayar işlemi", "warn", "Onay ya da geri alma bekleniyor")
+            managed = master_settings.Manager(self.args.state).status()
+            https = managed.get("https")
+            pending = managed["pending"]
+            if pending is None:
+                add("settings", "Ayar işlemi", "ok", "Bekleyen işlem yok")
+            elif pending["phase"] == "stuck":
+                add("settings", "Ayar işlemi", "bad", "Geri alma takıldı; Ayarlar'da yeniden deneyin ya da bırakın")
+            else:
+                add("settings", "Ayar işlemi", "warn", "Onay ya da geri alma bekleniyor")
+        except (master_settings.SettingsError, OSError, KeyError, ValueError, TypeError, AttributeError, RecursionError):
+            add("settings", "Ayar işlemi", "warn", "Ayar işlemi durumu okunamadı")
 
+        https_configured = False
         try:
             shares = master_shares.Manager(self.args.state)
             wan = shares.wan_info()
-            wanted = any("wan" in i.get("networks", []) and not i.get("paused")
-                         for i in shares.read()["items"])
-            if wanted and not wan["available"]:
+            https_configured = wan.get("mode") == "https"
+            wanted = any(i["connections"]["wan"]["enabled"] for i in shares.read()["items"])
+            if (wanted or https_configured) and not wan["available"]:
                 add("wan", "İnternet paylaşımı", "warn", wan["reason"])
-        except (OSError, ValueError, KeyError, master_shares.ShareError):
-            pass
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, master_shares.ShareError):
+            add("wan", "İnternet paylaşımı", "warn", "Paylaşım durumu okunamadı")
+
+        # The settings status uses master_https's local, chain/hostname-verified probe.
+        # A configured HTTPS listener also renews certificates without active shares.
+        if https is not None or https_configured:
+            try:
+                mode = https["mode"]
+                if mode not in ("http", "https", "off"):
+                    raise ValueError("HTTPS mode")
+                if mode == "https":
+                    status = "ok" if https["status"] == "ready" else "warn"
+                    if not isinstance(https["domain"], str) or not https["domain"]:
+                        raise ValueError("HTTPS domain")
+                    parts = [https["domain"], https.get("message") or
+                             ("Sertifika yerelde doğrulandı" if status == "ok" else "Sertifika henüz hazır değil")]
+                    if status == "ok":
+                        expiry = https["expires"]
+                        if type(expiry) not in (int, float):
+                            raise ValueError("certificate expiry")
+                        until = datetime.datetime.fromtimestamp(expiry, datetime.timezone.utc)
+                        remaining = expiry - time.time()
+                        if remaining <= CERT_EXPIRY_WARN_DAYS * 86400:
+                            status = "warn"
+                        parts.append("Sertifikanın süresi dolmuş" if remaining <= 0 else
+                                     "Sertifika %d gün sonra doluyor (%s UTC)" %
+                                     (int(remaining // 86400), until.strftime("%d.%m.%Y")))
+                    parts.append("Yerel sertifika denetimi; internetten erişim sınanmadı")
+                    add("https", "İnternet paylaşımı · HTTPS", status, " · ".join(parts))
+            except (KeyError, ValueError, TypeError, OverflowError, OSError):
+                add("https", "İnternet paylaşımı · HTTPS", "warn", "Sertifika durumu veya süresi okunamadı")
 
         order = {"ok": 0, "warn": 1, "bad": 2}
         worst = max((c["status"] for c in checks), key=order.get, default="ok")
@@ -876,11 +1044,11 @@ class Panel:
             raws.append({"file": path, "text": text})
             for site in parse_caddy(text, ts_ip, source):
                 for addr in site["addresses"]:
-                    public_share = source == "paylasim-wan"
+                    public_share = source in ("paylasim-wan", "torrent-wan")
                     if public_share and addr.startswith(":"):
                         addr = env.get("WAN_IPV4", "") + addr
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
-                                    "access": "wan" if public_share else "tailscale"})
+                                    "access": "wan" if public_share else "tailscale", "scheme": site["scheme"]})
         return {"entries": entries, "raw": raws}
 
     def dns_view(self, env):
@@ -901,9 +1069,12 @@ class Panel:
             view["domains"] += [x for x in got["domains"] if x not in view["domains"]]
             view["names"] += got["names"]
             view["dhcp"] = view["dhcp"] or got["dhcp"]
-        ts_if, ts_ip = env.get("TAILSCALE_IF", "tailscale0"), env.get("TAILSCALE_IPV4", "")
+        ts_if = env.get("TAILSCALE_IF", "tailscale0")
         for n in view["names"]:
-            n["address"] = ts_ip if n["iface"] == ts_if else ""
+            if n["iface"]:
+                families = (n["family"],) if n["family"] else (4, 6)
+                addresses = [env.get("TAILSCALE_IPV%d" % family, "") for family in families] if n["iface"] == ts_if else []
+                n["address"] = ", ".join(a for a in addresses if a)
         return view
 
     def torrent_view(self, env):
@@ -1065,10 +1236,23 @@ class Panel:
         tail_keys = {(r["family"], r["proto"], r["port"]) for r in tailnet}
         tail_keys.update((f, "udp", n["port"]) for n in networks for f in (4, 6))
         try:
-            if master_shares.Manager(self.args.state).wan_active():
-                rows.append({"name": "Paylaşım WebDAV · WAN", "family": 4, "proto": "tcp",
-                             "port": int(env["SHARE_PORT"]), "scope": "wan", "baseline": True})
+            shares = master_shares.Manager(self.args.state)
+            if shares.wan_active():
+                wan = shares.wan_info()
+                rows.append({"name": "Paylaşım WebDAV %s · WAN" % wan["scheme"].upper(), "family": 4, "proto": "tcp",
+                             "port": int(wan["port"]), "scope": "wan", "baseline": True})
         except (OSError, ValueError, KeyError, master_shares.ShareError):
+            pass
+        try:
+            if master_publications.torrent_active(env):
+                port = int(env["SHARE_HTTPS_PORT"])
+                shared = next((r for r in rows if r["scope"] == "wan" and r["port"] == port), None)
+                if shared:
+                    shared["name"] = "Caddy HTTPS · qBittorrent + WebDAV · WAN"
+                else:
+                    rows.append({"name": "Caddy HTTPS · qBittorrent · WAN", "family": 4, "proto": "tcp",
+                                 "port": port, "scope": "wan", "baseline": True})
+        except (OSError, ValueError, KeyError, master_settings.SettingsError):
             pass
         for p in self.ports(env, networks):
             scope = {"internet": "wan", "tailscale": "tail", "loopback": "lo"}[p["scope"]]
@@ -1112,9 +1296,11 @@ class Panel:
         try:
             p = subprocess.run(argv, input=json.dumps(data), capture_output=True, text=True, timeout=155, env=self.env())
             result = json.loads(p.stdout)
+            if not isinstance(result, dict):
+                raise ValueError("worker response is not an object")
             self.settings_cache = (0, None)
             return (400 if p.returncode else 200), result
-        except (OSError, subprocess.TimeoutExpired, ValueError):
+        except (OSError, subprocess.TimeoutExpired, ValueError, RecursionError):
             if shares:
                 return 502, {"error": "İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin."}
             return 502, {"error": "İşlem sonucu alınamadı. Ayarlar sayfasını yenileyin; onaysız işlem sunucuda geri alınır."}
@@ -1335,7 +1521,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.body_read = len(raw) == length
         try:
             data = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return None
         return data if isinstance(data, dict) else None
 
@@ -1642,6 +1828,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     """DD-180: yalnız Unix soketi. Bağlananı dosya izni ve çekirdeğin bildirdiği kimlik sınırlar."""
     daemon_threads = True
+    request_queue_size = 128
 
     def __init__(self, path, handler=None, group_gid=None):
         self.group_gid = group_gid

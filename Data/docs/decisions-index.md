@@ -159,7 +159,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-155 | Konsol shows the server's settings, read-only | live; parts superseded by DD-156 | design-decisions.md |
 | DD-156 | Transactional settings management in Konsol | live | design-decisions.md |
 | DD-157 | Rename the local domain as a confirmed transaction | live | design-decisions.md |
-| DD-158 | Independent folder accounts and descriptor-safe WebDAV | live | design-decisions.md |
+| DD-158 | Independent folder accounts and descriptor-safe WebDAV | live; connection policy extended by DD-192 | design-decisions.md |
 | DD-159 | Desktop shell with protected Files, sharing and bounded ZIP | live | design-decisions.md |
 | DD-160 | Model A, one admin workspace and independent resources | live | design-decisions.md |
 | DD-161 | Compact App Store with optional details | live | design-decisions.md |
@@ -170,7 +170,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-166 | Bounded multipart and nested RAR in Files | live | design-decisions.md |
 | DD-167 | Edit a WireGuard network without regenerating it | live | design-decisions.md |
 | DD-168 | Eight-character minimum for service passwords | live | design-decisions.md |
-| DD-169 | Compact trash confirmation and inline share controls | live | design-decisions.md |
+| DD-169 | Compact trash confirmation and inline share controls | live; Shares layout superseded by DD-192 | design-decisions.md |
 | DD-170 | Contextual Files dock and automatic archive extraction | live | design-decisions.md |
 | DD-171 | Remove dead sharing lifecycle without deleting legacy data | live | design-decisions.md |
 | DD-172 | Minimum tailnet host ingress without changing VPN requirements | live | design-decisions.md |
@@ -180,10 +180,17 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-176 | Local access by default when creating a WireGuard network | superseded by DD-177 | archive/design-decisions-retired.md |
 | DD-177 | Retire Local access; WireGuard is internet-only | live | design-decisions.md |
 | DD-178 | Seed qBittorrent integration, not user preferences | live | design-decisions.md |
-| DD-179 | Per-folder HTTP WAN opt-in with separate admission budgets | live | design-decisions.md |
+| DD-179 | Per-folder HTTP WAN opt-in with separate admission budgets | live; HTTP-only boundary superseded by DD-190, shared policy by DD-192 | design-decisions.md |
 | DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live | design-decisions.md |
 | DD-181 | Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol | live | design-decisions.md |
 | DD-182 | Capped rollback, WAN address change, watchdog resets, damaged history, health card | live | design-decisions.md |
 | DD-183 | No archive jobs page; results in Günlük, running job as a bar | live | design-decisions.md |
 | DD-184 | Tailscale and Caddy join unattended upgrades, at night | live | design-decisions.md |
-| DD-185 | Fresh-install-only cleanup and a documentation index | live | design-decisions.md |
+| DD-185 | Fresh-install-only cleanup and a documentation index | live; narrow schema-3 migration exception in DD-192 | design-decisions.md |
+| DD-186 | Audit stage 1: listen queues, safe configuration reads and reserved sources | live | design-decisions.md |
+| DD-187 | Audit stage 2: boot recovery guard, pinned permissions and canonical locks | live | design-decisions.md |
+| DD-188 | Audit stage 3: bounded authentication, short write locks and resource sandbox | live | design-decisions.md |
+| DD-189 | Audit stage 4: desired-service/kernel health and IPv4 DNS projection | live | design-decisions.md |
+| DD-190 | Optional public WebDAV HTTPS without widening private administration | live | design-decisions.md |
+| DD-191 | Fixed publication table with independent private and public gates | live | design-decisions.md |
+| DD-192 | Per-connection WebDAV policies and dual-card Shares | live | design-decisions.md |

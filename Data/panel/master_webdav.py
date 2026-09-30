@@ -9,6 +9,7 @@ import argparse
 import base64
 from collections import OrderedDict, deque
 import contextlib
+import copy
 import email.utils
 import hmac
 import http.server
@@ -38,6 +39,8 @@ DISK_CHECK_EVERY = 64 * 1024 ** 2
 # not pay one scrypt check (~20-60 ms). Registry edits restart the service and clear it.
 AUTH_CACHE_SECONDS = 600
 AUTH_CACHE_SIZE = 256
+AUTH_WAIT_SECONDS = 0.2
+TAIL_TIMEOUT_SECONDS = 60
 DAV = "{DAV:}"
 ET.register_namespace("d", "DAV:")
 READ_METHODS = ("OPTIONS", "GET", "HEAD", "PROPFIND")
@@ -54,7 +57,8 @@ class DavError(Exception):
 class Limiter:
     """Sliding bad-credential history by client IP and by share, on both listeners (DD-180).
 
-    WAN also bounds in-flight requests per IP and parallel hash work. A share that
+    Both listeners bound parallel hash work independently; WAN also bounds requests
+    per IP. A share that
     collects share_failures in share_window_seconds is closed for share_block_seconds
     to addresses that have not logged in to it since the service started.
     """
@@ -68,7 +72,8 @@ class Limiter:
         self.active = {}
         self.entries = {}
         self.shares = {}
-        self.auth_slots = threading.BoundedSemaphore(limits["wan_auth_parallel"])
+        self.auth_slots = threading.BoundedSemaphore(
+            limits["wan_auth_parallel" if scope == "wan" else "tail_auth_parallel"])
 
     def prune(self, now):
         # Called under lock. Never evict an active block or an unfinished attempt.
@@ -118,7 +123,7 @@ class Limiter:
             self.prune(now)
             self.blocked(ip, now)
             if self.active.get(ip, 0) >= self.limits["wan_connections_per_ip"]:
-                raise DavError(429, retry_after=1)
+                raise DavError(503, retry_after=1)
             self.active[ip] = self.active.get(ip, 0) + 1
         try:
             yield
@@ -138,7 +143,7 @@ class Limiter:
                 self.share_blocked(share, ip, now)
             if ip not in self.entries:
                 if len(self.entries) >= self.limits["auth_entries"]:
-                    raise DavError(429, retry_after=1)
+                    raise DavError(503, retry_after=1)
                 self.entries[ip] = {"failures": deque(), "blocked_until": 0, "pending": 0}
             entry = self.entries[ip]
             entry["pending"] += 1
@@ -165,13 +170,16 @@ class Limiter:
                         entry["blocked_until"] = now + self.limits["auth_block_seconds"]
                 self.blocked(ip, now)
 
-    def verify(self, item, password):
-        if not self.auth_slots.acquire(blocking=False):
-            raise DavError(429, retry_after=1)
+    @contextlib.contextmanager
+    def hashing(self):
+        # Wait only briefly, within the listener's bounded connection pool. The
+        # caller checks the successful-login cache again even after a timeout.
+        admitted = self.auth_slots.acquire(timeout=AUTH_WAIT_SECONDS)
         try:
-            return password_ok(item, password)
+            yield admitted
         finally:
-            self.auth_slots.release()
+            if admitted:
+                self.auth_slots.release()
 
 
 def disk_room(fd, incoming=0):
@@ -191,6 +199,12 @@ def etag(st):
     return '"%x-%x-%x"' % (st.st_ino, st.st_size, st.st_mtime_ns)
 
 
+def file_version(st):
+    # Include ctime: a replacement/in-place edit may keep the size and mtime.
+    return ((st.st_dev, st.st_ino, st.st_mode, st.st_nlink, st.st_size,
+             st.st_mtime_ns, st.st_ctime_ns) if st is not None else None)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "Konsol-WebDAV"
     sys_version = ""
@@ -202,7 +216,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(self.server.limits["wan_timeout_seconds"]
-                                   if self.server.scope == "wan" else 60)
+                                   if self.server.scope == "wan" else TAIL_TIMEOUT_SECONDS)
 
     def handle(self):
         try:
@@ -251,8 +265,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def live(self):
-        if self.item["expires"] and time.time() >= self.item["expires"]:
-            raise DavError(403, "Paylaşımın süresi doldu.")
+        policy = self.item["connections"][self.server.scope]
+        if not policy["enabled"]:
+            raise DavError(403, "Bu bağlantı kapalı.")
+        if policy["expires"] and time.time() >= policy["expires"]:
+            raise DavError(403, "Bu bağlantının süresi doldu.")
+        if self.command in WRITE_METHODS and policy["permission"] != "rw":
+            raise DavError(403, "Bu bağlantı salt okunur.")
 
     def authenticate(self):
         match = re.match(r"^/s/([0-9a-f]{24})(?:/|$)", self.path)
@@ -260,24 +279,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                           if match and i["id"] == match.group(1)), None)
         item = self.item
         if item:
-            networks = item.get("networks")
-            if (not isinstance(networks, list) or not networks
-                    or any(n not in ("tailscale", "wan") for n in networks)
-                    or len(networks) != len(set(networks)) or self.server.scope not in networks):
+            policy = item.get("connections", {}).get(self.server.scope)
+            if not policy or not policy.get("enabled"):
                 raise DavError(403)
         supplied = self.headers.get_all("Authorization", [])
         if not supplied:
             raise DavError(401)
         with self.server.limiter.credentials(self.client_ip, item["id"] if item else None):
             self.check_credentials(supplied)
+        self.authorized = copy.deepcopy(item)
         self.live()
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") == "cross-site":
             raise DavError(403)
         self.prefix = "/s/" + item["id"] + "/"
         if self.command not in READ_METHODS + WRITE_METHODS:
             raise DavError(405)
-        if item["permission"] == "ro" and self.command not in READ_METHODS:
-            raise DavError(403, "Bu hesap salt okunur.")
         # Chosen root is re-opened O_NOFOLLOW for every request, then identity checked.
         self.rootfd = open_dir(self.server.config["root"], parts(item["path"]))
         if identity(self.rootfd) != item["identity"]:
@@ -293,9 +309,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             raise DavError(401)
         item = self.item
-        # DD-180: an unknown share, a paused share, a wrong user or scheme costs one hash
+        # DD-180: an unknown share, a wrong user or scheme costs one hash
         # too, so response time does not reveal which part was wrong.
-        valid = (kind.lower() == "basic" and item is not None and not item["paused"]
+        valid = (kind.lower() == "basic" and item is not None
                  and len(password) <= 256
                  and hmac.compare_digest(user.encode("utf-8"), item["username"].encode("utf-8")))
         key = None
@@ -304,10 +320,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                    hmac.new(self.server.auth_key, supplied[0].encode("utf-8"), "sha256").digest())
             if self.server.remembered(key):
                 return
-        verify = self.server.limiter.verify if self.server.scope == "wan" else password_ok
-        if not verify(item if valid else self.server.decoy, password[:256]) or not valid:
-            raise DavError(401)
-        self.server.remember(key)
+        with self.server.limiter.hashing() as admitted:
+            if valid and self.server.remembered(key):
+                return
+            if not admitted:
+                raise DavError(503, retry_after=1)
+            if not password_ok(item if valid else self.server.decoy, password[:256]) or not valid:
+                raise DavError(401)
+            # Publish success before releasing the slot: waiting requests can use it.
+            self.server.remember(key)
 
     def client_address_ip(self):
         values = self.headers.get_all("X-Share-Client-IP", [])
@@ -578,7 +599,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def write(self, pp):
         if not pp:
             raise DavError(403, "Paylaşım kökü değiştirilemez.")
+        if self.command in ("PUT", "COPY"):
+            self.staged_write(pp)
+            return
         with self.server.mutation_lock, contextlib.ExitStack() as stack:
+            self.recheck_share()
             parent = self.folder(pp[:-1])
             stack.callback(os.close, parent)
             st = self.target_stat(parent, pp[-1])
@@ -586,12 +611,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.command == "MKCOL":
                 if self.body(65536):
                     raise DavError(415)
+                self.recheck_share()
                 os.mkdir(pp[-1], 0o775, dir_fd=parent)
                 self.send(201)
             elif self.command == "DELETE":
                 self.remove_tree(parent, pp[-1], [100000])
                 self.send(204)
-            elif self.command in ("MOVE", "COPY"):
+            elif self.command == "MOVE":
                 if st is None:
                     raise DavError(404)
                 dest = self.path_parts(self.headers.get("Destination", ""), destination=True)
@@ -605,29 +631,106 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if existing and self.headers.get("Overwrite") == "F":
                     raise DavError(412)
                 self.live()
-                if self.command == "MOVE":
-                    os.rename(pp[-1], dest[-1], src_dir_fd=parent, dst_dir_fd=dfd)
-                else:
-                    # Deliberately refuse directory COPY instead of partial recursive success.
+                os.rename(pp[-1], dest[-1], src_dir_fd=parent, dst_dir_fd=dfd)
+                self.send(204 if existing else 201)
+
+    def recheck_share(self):
+        self.live()
+        current = next((i for i in self.server.config["items"]
+                        if i["id"] == self.authorized["id"]), None)
+        if (current != self.authorized or not current["connections"][self.server.scope]["enabled"]
+                or current["connections"][self.server.scope]["permission"] != "rw"):
+            raise DavError(403, "Paylaşım izni değişti; yeniden deneyin.")
+        try:
+            fd = open_dir(self.server.config["root"], parts(current["path"]))
+        except OSError as err:
+            raise DavError(410, "Paylaşım klasörü taşındı veya değiştirildi.") from err
+        try:
+            if identity(fd) != self.authorized["identity"] or identity(self.rootfd) != identity(fd):
+                raise DavError(410, "Paylaşım klasörü taşındı veya değiştirildi.")
+        finally:
+            os.close(fd)
+
+    def recheck_parent(self, pp, held):
+        # A descriptor alone is insufficient: MOVE/DELETE may have detached its
+        # directory while the body was arriving. Walk from the verified live root.
+        try:
+            fresh = self.folder(pp)
+        except OSError as err:
+            raise DavError(409, "Hedef veya kaynak klasörü taşındı; yeniden deneyin.") from err
+        try:
+            if identity(fresh) != identity(held):
+                raise DavError(409, "Hedef veya kaynak klasörü değişti; yeniden deneyin.")
+        finally:
+            os.close(fresh)
+
+    def staged_write(self, pp):
+        with contextlib.ExitStack() as stack:
+            with self.server.mutation_lock:
+                self.recheck_share()
+                parent = self.folder(pp[:-1])
+                stack.callback(os.close, parent)
+                st = self.target_stat(parent, pp[-1])
+                self.preconditions(st)
+                if self.command == "COPY":
+                    if st is None:
+                        raise DavError(404)
                     if stat.S_ISDIR(st.st_mode):
                         raise DavError(501, "Klasör COPY desteklenmiyor; dosya kopyalanabilir.")
+                    dest = self.path_parts(self.headers.get("Destination", ""), destination=True)
+                    if not dest or dest == pp or dest[:len(pp)] == pp:
+                        raise DavError(403)
+                    if self.headers.get("Overwrite", "T") not in ("T", "F"):
+                        raise DavError(400)
+                    dfd = self.folder(dest[:-1])
+                    stack.callback(os.close, dfd)
+                    existing = self.target_stat(dfd, dest[-1])
+                    if existing and self.headers.get("Overwrite") == "F":
+                        raise DavError(412)
                     src = os.open(pp[-1], FILE_FLAGS, dir_fd=parent)
-                    with os.fdopen(src, "rb") as stream:
-                        source = os.fstat(stream.fileno())
-                        check_stat(source, self.device)
-                        self.atomic_put(dfd, dest[-1], iter(lambda: stream.read(CHUNK), b""), source.st_size)
-                self.send(204 if existing else 201)
-            elif self.command == "PUT":
-                if st and stat.S_ISDIR(st.st_mode):
-                    raise DavError(405)
-                if not self.headers.get("Content-Length") and not self.headers.get("Transfer-Encoding"):
-                    raise DavError(411)
-                lengths = self.headers.get_all("Content-Length", [])
-                size = int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0
-                self.atomic_put(parent, pp[-1], self.body_chunks(MAX_UPLOAD), size if size <= MAX_UPLOAD else 0)
-                self.send(204 if st else 201)
+                    stream = stack.enter_context(os.fdopen(src, "rb"))
+                    source = os.fstat(src)
+                    check_stat(source, self.device)
+                    if file_version(source) != file_version(st):
+                        raise DavError(409, "Kaynak dosya değişti; yeniden deneyin.")
+                    chunks, size = iter(lambda: stream.read(CHUNK), b""), source.st_size
+                else:
+                    if st and stat.S_ISDIR(st.st_mode):
+                        raise DavError(405)
+                    if not self.headers.get("Content-Length") and not self.headers.get("Transfer-Encoding"):
+                        raise DavError(411)
+                    lengths = self.headers.get_all("Content-Length", [])
+                    size = int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0
+                    size = size if size <= MAX_UPLOAD else 0
+                    dest, dfd, existing = pp, parent, st
+                    chunks = self.body_chunks(MAX_UPLOAD)
+            # No global mutation lock while receiving/copying or fsyncing the data.
+            with self.staged_file(dfd, chunks, size) as temp:
+                with self.server.mutation_lock:
+                    self.recheck_share()
+                    self.recheck_parent(pp[:-1], parent)
+                    self.recheck_parent(dest[:-1], dfd)
+                    current = self.target_stat(parent, pp[-1])
+                    self.preconditions(current)
+                    if file_version(current) != file_version(st):
+                        raise DavError(409, "Dosya işlem sırasında değişti; yeniden deneyin.")
+                    if self.command == "COPY":
+                        # Check both the path and the still-open source descriptor.
+                        if file_version(os.fstat(src)) != file_version(source):
+                            raise DavError(409, "Kaynak dosya işlem sırasında değişti.")
+                        target = self.target_stat(dfd, dest[-1])
+                        if target and self.headers.get("Overwrite") == "F":
+                            raise DavError(412)
+                        if file_version(target) != file_version(existing):
+                            raise DavError(409, "Hedef dosya işlem sırasında değişti.")
+                    if not disk_room(dfd):
+                        raise DavError(507, "Sunucuda yeterli boş alan yok.")
+                    os.rename(temp, dest[-1], src_dir_fd=dfd, dst_dir_fd=dfd)
+                os.fsync(dfd)
+        self.send(204 if existing else 201)
 
-    def atomic_put(self, parent, name, chunks, size=0):
+    @contextlib.contextmanager
+    def staged_file(self, parent, chunks, size=0):
         full = DavError(507, "Sunucuda yeterli boş alan yok.")
         if not disk_room(parent, size):
             raise full
@@ -647,9 +750,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             raise full
                 stream.flush()
                 os.fsync(stream.fileno())
-            self.live()
-            os.rename(temp, name, src_dir_fd=parent, dst_dir_fd=parent)
-            os.fsync(parent)
+            yield temp
         finally:
             try:
                 os.unlink(temp, dir_fd=parent)
@@ -673,7 +774,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.headers.get("Expect", "").lower() == "100-continue":
                 self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
             if self.command == "OPTIONS":
-                self.send(200, headers={"DAV": "1", "Allow": ", ".join(READ_METHODS + (WRITE_METHODS if self.item["permission"] == "rw" else ()))})
+                self.send(200, headers={"DAV": "1", "Allow": ", ".join(READ_METHODS + (WRITE_METHODS if self.item["connections"][self.server.scope]["permission"] == "rw" else ()))})
             elif self.command in ("GET", "HEAD"):
                 self.get(pp)
             elif self.command == "PROPFIND":
@@ -704,6 +805,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 128
     def __init__(self, address, config, scope="tailscale", mutation_lock=None):
         if scope not in ("tailscale", "wan"):
             raise ValueError("Geçersiz paylaşım ağı.")
@@ -748,7 +850,16 @@ class Server(http.server.ThreadingHTTPServer):
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
-            request.close()
+            # Best-effort overload response, with no parsing, waiting or new thread.
+            # One small nonblocking send bounds work even when the peer never reads.
+            try:
+                request.setblocking(False)
+                request.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                             b"Retry-After: 1\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
             return
         with self.connection_lock:
             self.connections.add(request)

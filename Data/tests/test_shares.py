@@ -26,7 +26,7 @@ class SharesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="webdav-test-")
         self.addCleanup(self.tmp.cleanup)
-        self.base = Path(self.tmp.name)
+        self.base = Path(self.tmp.name).resolve()
         for folder in ("srv/alpha", "srv/beta", "srv/downloads/incomplete", "srv/.pay", "srv/.cop", "run", "profile"):
             (self.base / folder).mkdir(parents=True, exist_ok=True)
         self.root = self.base / "srv"
@@ -59,8 +59,8 @@ class SharesTests(unittest.TestCase):
         self.thread.join(2)
 
     def save(self, path, user, permission, **kw):
-        return self.manager.change("save", dict(path=path, username=user, permission=permission,
-                                  password=PASSWORD, ack_write=True, days=0, **kw))
+        return self.manager.change("save", dict(path=path, username=user, password=PASSWORD,
+                                  connections={"tailscale": {"permission": permission, "ack_write": True, "days": 0}}, **kw))
 
     def request(self, method, item=None, leaf="", body=None, headers=None, username=None, password=PASSWORD):
         item = item or self.a
@@ -129,12 +129,13 @@ class SharesTests(unittest.TestCase):
         self.assertEqual(self.request("PUT", self.b, "private.txt", b"new", {"If-Match": '"wrong"'})[0], 412)
 
     def test_pause_expiry_password_rotation_without_listing(self):
-        self.a["paused"] = True
-        self.assertEqual(self.request("GET", leaf="movie.txt")[0], 401)
-        self.a["paused"] = False
-        self.a["expires"] = time.time() - 1
+        policy = self.a["connections"]["tailscale"]
+        policy["enabled"] = False
         self.assertEqual(self.request("GET", leaf="movie.txt")[0], 403)
-        self.a["expires"] = None
+        policy["enabled"] = True
+        policy["expires"] = time.time() - 1
+        self.assertEqual(self.request("GET", leaf="movie.txt")[0], 403)
+        policy["expires"] = None
         self.a["salt"], self.a["hash"] = shares.password_hash("new-test-password")
         self.assertEqual(self.request("GET", leaf="movie.txt")[0], 401)
 
@@ -145,7 +146,7 @@ class SharesTests(unittest.TestCase):
         self.assertEqual(self.request("GET", leaf="movie.txt")[0], 410)
         status = self.manager.public()
         self.assertFalse(status["items"][0]["available"])
-        self.manager.change("save", dict(id=self.a["id"], path="old-alpha", username="reader", permission="ro", password="", days=None))
+        self.manager.change("save", dict(id=self.a["id"], path="old-alpha", username="reader", password=""))
         self.assertEqual(self.manager.read()["items"][0]["id"], self.a["id"])
 
     def test_interrupted_put_preserves_existing_target(self):
@@ -168,7 +169,7 @@ class SharesTests(unittest.TestCase):
         self.assertNotIn('"hash"', public)
         self.assertNotIn('"salt"', public)
         before = self.manager.read()["items"][0]["hash"]
-        self.manager.change("save", dict(id=self.a["id"], path="alpha", username="reader", permission="ro", password="", days=None))
+        self.manager.change("save", dict(id=self.a["id"], path="alpha", username="reader", password=""))
         self.assertEqual(self.manager.read()["items"][0]["hash"], before)
 
     def test_overlap_reserved_user_and_input_validation(self):
@@ -176,8 +177,9 @@ class SharesTests(unittest.TestCase):
         for path in ("", ".cop", ".pay", "downloads", "downloads/incomplete", "alpha/sub", "../elsewhere"):
             with self.subTest(path=path), self.assertRaises((shares.ShareError, OSError)):
                 self.save(path, "third", "ro")
-        for change in ({"username": "writer"}, {"permission": "rw", "ack_write": False}, {"password": "short"}, {"days": -1}):
-            request = dict(id=self.a["id"], path="alpha", username="reader", permission="ro", password="", days=None)
+        for change in ({"username": "writer"}, {"connections": {"tailscale": {"permission": "rw", "ack_write": False}}},
+                       {"password": "short"}, {"connections": {"tailscale": {"days": -1}}}):
+            request = dict(id=self.a["id"], path="alpha", username="reader", password="")
             request.update(change)
             with self.assertRaises(shares.ShareError):
                 self.manager.change("save", request)
@@ -191,7 +193,7 @@ class SharesTests(unittest.TestCase):
 
     def test_password_length_boundaries_create_edit_and_blank_preservation(self):
         (self.root / "gamma").mkdir()
-        request = dict(path="gamma", username="third", permission="ro", days=0)
+        request = dict(path="gamma", username="third", connections={"tailscale": {"permission": "ro", "days": 0}})
         before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
         for phrase in ("", "x" * 7, "x" * 257, "1234567\n", "1234:678", None):
             with self.subTest(phrase=phrase), self.assertRaises(shares.ShareError):
@@ -208,7 +210,7 @@ class SharesTests(unittest.TestCase):
 
     def test_eight_character_password_authenticates_and_retains_readonly_boundary(self):
         self.manager.change("save", dict(id=self.a["id"], path="alpha", username="reader",
-                                        permission="ro", password="Pass8!xy", days=None))
+                                        password="Pass8!xy"))
         self.a.update(self.manager.read()["items"][0])
         self.assertEqual(self.request("GET", leaf="movie.txt", password="Pass8!xy")[:2], (200, b"abcdefghij"))
         self.assertEqual(self.request("PROPFIND", password="Pass8!xy", headers={"Depth":"1"})[0], 207)
@@ -223,26 +225,29 @@ class SharesTests(unittest.TestCase):
         Path(self.env["SETTINGS_PENDING_FILE"]).unlink()
         with open(self.base / "run/install.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            with self.assertRaises(shares.ShareError):
-                self.manager.change("pause", {"id": self.a["id"], "paused": True})
+            with self.assertRaisesRegex(shares.ShareError, "Başka bir kurulum/ayar işlemi"):
+                self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"enabled": False}}})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
 
     def test_inline_access_and_duration_preserve_other_fields(self):
         sid = self.a["id"]
-        self.manager.change("pause", {"id": sid, "paused": True})
+        self.manager.change("save", {"id": sid, "connections": {"tailscale": {"enabled": False}}})
         before = self.manager.read()["items"][0]
         for fields in ({"permission": "rw", "ack_write": True}, {"days": 7}, {"days": 0}, {"permission": "ro"}):
             with self.subTest(fields=fields):
-                self.manager.change("save", dict(id=sid, **fields))
+                self.manager.change("save", dict(id=sid, connections={"tailscale": fields}))
                 item = self.manager.read()["items"][0]
-                for key in ("id", "path", "name", "username", "identity", "salt", "hash", "created", "paused"):
+                for key in ("id", "path", "name", "username", "identity", "salt", "hash", "created"):
                     self.assertEqual(item[key], before[key], key)
+                self.assertEqual(item["connections"]["wan"], before["connections"]["wan"])
+                policy, previous = item["connections"]["tailscale"], before["connections"]["tailscale"]
+                self.assertFalse(policy["enabled"])
                 if "permission" in fields:
-                    self.assertEqual(item["permission"], fields["permission"])
-                    self.assertEqual(item["expires"], before["expires"])
+                    self.assertEqual(policy["permission"], fields["permission"])
+                    self.assertEqual(policy["expires"], previous["expires"])
                 else:
-                    self.assertEqual(item["permission"], before["permission"])
-                    self.assertEqual(item["expires"], item["changed"] + 7 * 86400 if fields["days"] else None)
+                    self.assertEqual(policy["permission"], previous["permission"])
+                    self.assertEqual(policy["expires"], item["changed"] + 7 * 86400 if fields["days"] else None)
                 before = item
         self.assertEqual(self.manager.read()["items"][1], self.b)
 
@@ -251,32 +256,32 @@ class SharesTests(unittest.TestCase):
         for fields in ({"permission":"rw"}, {"permission":"rw","ack_write":1}, {"permission":"bad"},
                        {"days":True}, {"days":-1}, {"days":"7"}, {"days":2}):
             with self.subTest(fields=fields), self.assertRaises(shares.ShareError):
-                self.manager.change("save", dict(id=self.a["id"], **fields))
+                self.manager.change("save", dict(id=self.a["id"], connections={"tailscale": fields}))
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
         (self.base / "modules").write_text("paylasim\tcalisiyor\n")
         with patch.object(self.manager, "restart", side_effect=[shares.ShareError("injected"), None]), self.assertRaises(shares.ShareError):
-            self.manager.change("save", {"id": self.a["id"], "days": 1})
+            self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"days": 1}}})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
 
     def test_inline_options_never_rebind_replaced_or_missing_directory(self):
         (self.root / "alpha").rename(self.root / "old-alpha")
-        self.manager.change("save", {"id": self.a["id"], "days": 7})
+        self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"days": 7}}})
         self.assertFalse(self.manager.public()["items"][0]["available"])
         (self.root / "alpha").mkdir()
         (self.root / "alpha/movie.txt").write_text("wrong target")
-        self.manager.change("save", {"id": self.a["id"], "permission": "rw", "ack_write": True})
+        self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"permission": "rw", "ack_write": True}}})
         self.a.update(self.manager.read()["items"][0])
         self.assertFalse(self.manager.public()["items"][0]["available"])
         self.assertEqual(self.request("GET", leaf="movie.txt")[0], 410)
 
     def test_account_edit_preserves_latest_access_expiry_and_paused_state(self):
         sid = self.b["id"]
-        self.manager.change("save", {"id": sid, "days": 30})
-        self.manager.change("pause", {"id": sid, "paused": True})
+        self.manager.change("save", {"id": sid, "connections": {"tailscale": {"days": 30}}})
+        self.manager.change("save", {"id": sid, "connections": {"tailscale": {"enabled": False}}})
         before = self.manager.read()["items"][1]
         self.manager.change("save", {"id":sid, "path":"beta", "username":"renamed-writer", "password":""})
         after = self.manager.read()["items"][1]
-        for key in ("permission", "expires", "paused", "identity", "salt", "hash"):
+        for key in ("connections", "identity", "salt", "hash"):
             self.assertEqual(after[key], before[key], key)
         self.assertEqual(after["username"], "renamed-writer")
 
@@ -285,7 +290,7 @@ class SharesTests(unittest.TestCase):
         (self.base / "modules").write_text("paylasim\tcalisiyor\n")
         results = [subprocess.CalledProcessError(1, "systemctl"), None]
         with patch.object(self.manager, "restart", side_effect=results), self.assertRaises(shares.ShareError):
-            self.manager.change("pause", {"id": self.a["id"], "paused": True})
+            self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"enabled": False}}})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
 
     def test_explicit_restarts_reset_the_crash_counter_and_wait_for_http(self):

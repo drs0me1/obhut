@@ -10,8 +10,12 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   let live = null, draft = null, qdraft = {}, tab = "system", family = 4, scope = "tail", mode = "ports", wgNetwork = "all";
   let pending = null, busy = false, poll = null, message = "", baseRevision = "";
   let domainInput = "", migration = null;
+  let httpsInput = null, httpsBusy = "";
+  const webDrafts = {};
+  let webBusy = "";
   const dirty = () => live?.manage?.config && draft && (!same(draft.firewall, live.manage.config.firewall) || !same(draft.dns, live.manage.config.dns) || Object.keys(qdraft).length);
   const locked = () => busy || !!pending;
+  const httpsApplying = () => pending?.phase === "applying" && (!!httpsBusy || !!webBusy || pending.web || live?.manage?.https?.status === "pending");
   const btn = (text, action, primary = false, available = false) => h("button", { type: "button", class: "btn btn-sm" + (primary ? " btn-primary" : ""), disabled: !available && locked(), onclick: action }, text);
   const note = (text, warn = false) => h("p", { class: "as-note" + (warn ? " warn" : "") }, text);
   const badge = (text, good = false) => h("span", { class: "as-badge" + (good ? " good" : "") }, text);
@@ -148,9 +152,11 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       try {
         const s = await api("/api/konsol/ayarlar/durum");
         const was = pending; pending = s.pending;
+        if (s.https && live?.manage) live.manage.https = s.https;
+        if (s.publications && live?.manage) live.manage.publications = s.publications;
         if (was && !pending) { draft = null; qdraft = {}; message = "İşlem tamamlandı; sunucudaki ayarlar yeniden okunuyor."; loadSettings(true); }
         draw();
-      } catch (_e) { message = pending ? "Sunucuya erişilemiyor. Onay verilmezse sunucu değişiklikleri geri alır." : "Sunucuya erişilemiyor. İşlemin sonucunu ayarları yenileyerek kontrol edin."; draw(); }
+      } catch (_e) { message = pending && !httpsApplying() ? "Sunucuya erişilemiyor. Onay verilmezse sunucu değişiklikleri geri alır." : "Sunucuya erişilemiyor. İşlemin sonucunu ayarları yenileyerek kontrol edin."; draw(); }
       if (pending) startPoll();
     }, 2000);
   }
@@ -325,6 +331,66 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     } catch (e) { message = `${e.message} Yeni adresi kontrol edin; onaylanmayan işlem otomatik geri alınır.`; }
     finally { busy = false; draw(); }
   }
+  async function saveHttps(domain, close = () => {}) {
+    if (locked() || live.manage.https?.status === "pending" || dirty()) return;
+    close(); busy = true; httpsBusy = domain ? "save" : "disable";
+    message = domain ? "Sertifika hazırlanıyor…" : "WAN erişimi kapatılıyor…"; draw();
+    try {
+      const result = await post("/api/konsol/ayarlar/uygula", { revision: baseRevision, https: { domain } });
+      if (!result.committed || result.pending) throw new Error("Sunucu kalıcı kaydı doğrulamadı.");
+      httpsInput = null;
+      message = domain ? "İnternet paylaşımı alan adı kaydedildi." : "Yeni WAN bağlantıları kapatıldı. Devam eden aktarımlar tamamlanabilir.";
+      toast(message);
+    } catch (e) {
+      error(new Error(`${e.message} Sonucu Yenile ile kontrol edin.`));
+    } finally {
+      await loadSettings(true);
+      httpsBusy = ""; busy = false; draw();
+    }
+  }
+  function httpsCard() {
+    const state = live.manage.https || { domain: "", mode: "http", status: "http" };
+    const preparing = httpsBusy === "save" || state.status === "pending";
+    const disabled = locked() || state.status === "pending" || !!dirty();
+    const input = h("input", { name: "https-domain", value: httpsInput ?? state.domain, type: "text", required: true,
+      maxlength: 253, placeholder: "dav.example.com", disabled, autocapitalize: "none", autocomplete: "off", spellcheck: false,
+      oninput: (e) => { httpsInput = e.target.value; e.target.setCustomValidity(""); } });
+    const form = h("form", { class: "as-body", onsubmit: (e) => {
+      e.preventDefault();
+      if (disabled) return;
+      const domain = input.value.trim().toLowerCase();
+      const valid = domain.length <= 253 && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(domain);
+      input.setCustomValidity(valid ? "" : "Tam alan adını girin; örneğin dav.example.com. URL, IP, port veya yol eklemeyin.");
+      if (!input.reportValidity()) return;
+      if (domain === state.domain && state.status === "ready") { toast("HTTPS alan adı zaten bu değerde."); return; }
+      httpsInput = domain; saveHttps(domain);
+    } }, field("İnternet alan adı", input, "Tam alan adı; https://, port veya /yol eklemeyin."),
+    h("div", { class: "as-inline" }, h("button", { type: "submit", class: "btn btn-primary", disabled }, preparing ? "Sertifika hazırlanıyor…" : "Kaydet"),
+      state.mode !== "off" ? h("button", { type: "button", class: "btn btn-quiet", disabled, onclick: () => {
+        const dialog = modal("WAN erişimini kapat", h("div", { class: "as-stack" },
+          note("Yeni WAN bağlantıları kapanır. Devam eden aktarımlar tamamlanabilir. Tailscale paylaşımları korunur."),
+          note("Alan adı kaldırılır; HTTP üzerinden WAN erişimi açılmaz.", true)), (_form, close) => saveHttps("", close));
+        dialog.querySelector('[type="submit"]').textContent = "WAN erişimini kapat";
+      } }, httpsBusy === "disable" ? "WAN erişimi kapatılıyor…" : "WAN erişimini kapat") : null));
+    const labels = { ready: "Sertifika hazır", pending: "Sertifika hazırlanıyor…", disabled: "WAN kapalı", error: "Sertifika hatası", http: "Eski HTTP erişimi" };
+    const ready = !httpsBusy && state.mode === "https" && !!state.domain && state.status === "ready";
+    const expires = state.expires ? new Date(state.expires * 1000) : null;
+    const result = card("İnternet paylaşımı · HTTPS", "İnternete açılan WebDAV klasörleri için", form,
+      h("dl", { class: "as-https-status", role: "status", "aria-live": "polite" },
+        h("div", null, h("dt", null, "Kayıtlı alan adı"), h("dd", null, h("code", null, state.domain || "—"))),
+        h("div", null, h("dt", null, "Sertifika durumu"), h("dd", null, badge(httpsBusy === "disable" ? "WAN erişimi kapatılıyor…" : preparing ? labels.pending : labels[state.status] || "Durum bilinmiyor", ready))),
+        h("div", null, h("dt", null, "Sertifika bitişi"), h("dd", null, expires && Number.isFinite(expires.getTime())
+          ? h("time", { datetime: expires.toISOString() }, expires.toLocaleString("tr-TR")) : "—")),
+        h("div", null, h("dt", null, "Beklenen DNS A kaydı · WAN IPv4"), h("dd", null, h("code", null, state.wan_ip || live.wan?.ipv4 || "WAN IPv4 okunamadı")))),
+      state.message ? note(state.message, state.status === "error") : null,
+      preparing ? note("Sertifika hazırlığı yaklaşık bir dakika sürebilir; işlem tamamlanana kadar bekleyin.") : null,
+      note("DNS sağlayıcınızda bu tam alan adının A kaydını yukarıdaki WAN IPv4 adresine yönlendirin. Sadece DNS (DNS only) kullanın; proxy kapalı olmalı."),
+      note(`Sertifika hazır durumu yalnız sertifikayı doğrular; internetten erişim sınanmış değildir.${state.mode === "https" && state.port ? ` HTTPS portu: ${state.port}.` : ""}`),
+      state.mode === "http" ? note("HTTPS henüz yapılandırılmadı. Mevcut WAN paylaşımları HTTP kullanır; parola ve veriler şifrelenmez.", true) : null,
+      dirty() ? note("Önce diğer ayar taslaklarını uygulayın veya vazgeçin.", true) : null);
+    result.id = "as-https-card"; result.setAttribute("aria-busy", !!httpsBusy || state.status === "pending");
+    return result;
+  }
   function caddy() {
     const input = h("input", { name: "domain", value: domainInput || live.domain, required: true, maxlength: 63,
       pattern: "[a-z0-9]([a-z0-9\\-]{0,61}[a-z0-9])?", disabled: locked(), autocapitalize: "none", spellcheck: false,
@@ -341,11 +407,95 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         note("Uygulamadan sonra aşağıdaki yeni adresi açıp 5 dakika içinde onaylayın. Aksi halde sunucu eski ada döner. Dosya yöneticisi açıksa kısa süre yeniden başlar; devam eden dosya aktarımlarını önce bitirin."),
         h("code", null, domainUrl(domain))), (_form, close) => submitDomain(domain, close));
       dialog.querySelector('[type="submit"]').textContent = "Alan adını güncelle";
-    } }, field("Yerel alan adı", input, "Örneğin ayc yerine ev. Yalnız küçük harf, rakam ve tire; nokta veya http:// eklemeyin."),
-    h("div", null, h("button", { type: "submit", class: "btn btn-primary", disabled: locked() || !!dirty() }, "Güncelle")));
-    return h("div", { class: "as-stack" }, card("Yerel alan adı", `Geçerli adres: panel.${live.domain}`, form,
-      note("Bu yerel ad değişikliği internet alan adı satın almaz veya HTTPS açmaz. DNS kayıtlarının açık/kapalı durumu ve hedefleri korunur. IP ile kullanılan paylaşım bağlantıları değişmez."),
-      dirty() ? note("Alan adını değiştirmeden önce diğer ayar taslaklarını tamamlayın.", true) : null), h("article", { class: "card", id: "cfg-web" }));
+    } }, h("div", { class: "as-domain-row" }, field("Yerel alan adı", input),
+      h("button", { type: "submit", class: "btn btn-primary", disabled: locked() || !!dirty() }, "Güncelle")),
+    h("small", null, "Örn. ayc veya ev · küçük harf, rakam ve tire. HTTPS alan adları değişmez."));
+    const local = card("Yerel alan adı", `Geçerli adres: panel.${live.domain}`, form,
+      h("section", { class: "as-tailnet-guide", "aria-labelledby": "as-tailnet-guide-title" },
+        h("h3", { id: "as-tailnet-guide-title" }, "Tailscale Admin · DNS tanımı"),
+        h("ol", null,
+          h("li", null, h("a", { href: "https://login.tailscale.com/admin/dns", target: "_blank", rel: "noopener noreferrer" }, "Tailscale Admin → DNS"),
+            " sayfasında Nameservers → Add nameserver → Custom seçin."),
+          h("li", null, "Nameserver IP: ", h("code", null, live.tailscale || "Tailscale IP okunamadı")),
+          h("li", null, "Restrict to search domain (Split DNS) seçeneğini açın. Alan adı: ", h("code", null, live.domain)),
+          h("li", null, "Save ile kaydedin. Bağlanan cihazda Tailscale ve Tailscale DNS ayarlarını kullanma seçeneği açık olsun.")),
+        h("small", null, "Bu adımlar Admin panelinde elle yapılır; yalnız kayıtlı yerel alan içindir.")),
+      dirty() ? note("Alan adını değiştirmeden önce diğer ayar taslaklarını tamamlayın.", true) : null);
+    local.classList.add("as-local-domain");
+    return h("div", { class: "as-stack" }, local,
+      live.manage.publications ? publications() : httpsCard(),
+      h("details", { class: "as-web-details" }, h("summary", null, "Etkin Caddy yapılandırması"), h("article", { class: "card", id: "cfg-web" })));
+  }
+  async function savePublication(row, item) {
+    if (locked() || dirty()) return;
+    busy = true; webBusy = row.service; message = "Yayın ve sertifika doğrulanıyor…"; draw();
+    try {
+      const result = await post("/api/konsol/ayarlar/uygula", { revision: baseRevision, web: { service: row.service, ...item } });
+      if (!result.committed || result.pending) throw new Error("Sunucu kalıcı kaydı doğrulamadı.");
+      delete webDrafts[row.service];
+      message = `${row.name} erişim ayarları kaydedildi.`; toast(message);
+    } catch (e) { error(new Error(`${e.message} Sonucu Yenile ile kontrol edin.`)); }
+    finally { await loadSettings(true); webBusy = ""; busy = false; draw(); }
+  }
+  function publications() {
+    const rows = live.manage.publications;
+    const labels = { ready: "Sertifika hazır", pending: "Sertifika hazırlanıyor…", error: "Yayın doğrulanamadı", disabled: "İnternet kapalı", locked: "Giriş sistemi gerekli", http: "Eski HTTP erişimi" };
+    const cell = (name, ...children) => h("td", { "data-label": name }, ...children);
+    const content = table(["Uygulama", "Tailscale", "İnternet", "HTTPS alan adı", "Durum / işlem"], rows.map(row => {
+      const saved = { tail: row.tail, enabled: row.enabled, domain: row.domain };
+      const current = webDrafts[row.service] || saved;
+      const changed = !same(current, saved), panel = row.service === "panel";
+      const disabled = panel || !row.installed || locked() || !!dirty();
+      let saveButton, discardButton, draftNote;
+      const edit = (key, value) => {
+        const next = { ...(webDrafts[row.service] || current), [key]: value };
+        if (same(next, saved)) delete webDrafts[row.service]; else webDrafts[row.service] = next;
+      };
+      const name = row.name;
+      const domain = h("input", { type:"text", value:current.domain, maxlength:253, disabled,
+        placeholder: row.service === "paylasim" ? "dav.example.com" : panel ? "Kullanılamaz" : "torrent.example.com",
+        "aria-label":name + " HTTPS alan adı", autocapitalize:"none", autocomplete:"off", spellcheck:false,
+        oninput:e => {
+          edit("domain", e.target.value); e.target.setCustomValidity("");
+          const changed = !same(webDrafts[row.service] || saved, saved);
+          if (saveButton) saveButton.disabled = disabled || (!changed && row.status !== "error");
+          if (discardButton) discardButton.hidden = !changed;
+          if (draftNote) draftNote.textContent = changed ? "Taslak · henüz uygulanmadı" : "";
+        } });
+      const save = () => {
+        if (disabled) return;
+        const item = { ...(webDrafts[row.service] || current), domain: domain.value.trim().toLowerCase().replace(/\.$/, "") };
+        const valid = (!item.domain && !item.enabled) || /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]+)$/.test(item.domain);
+        domain.setCustomValidity(valid ? "" : "Tam alan adını girin; URL, IP, port veya yol eklemeyin.");
+        if (!domain.reportValidity()) return;
+        if (item.enabled && rows.some(other => other.service !== row.service && other.enabled && other.domain === item.domain)) {
+          domain.setCustomValidity("Bu HTTPS alan adı başka bir uygulamada kullanılıyor."); domain.reportValidity(); return;
+        }
+        savePublication(row, item);
+      };
+      const address = row.enabled && row.domain && row.status === "ready" ? "https://" + row.domain
+        + (live.manage.https?.port && live.manage.https.port !== 443 ? ":" + live.manage.https.port : "") : "";
+      draftNote = h("small", null, changed ? "Taslak · henüz uygulanmadı" : "");
+      saveButton = !panel && row.installed ? h("button", {type:"button", class:"btn btn-sm", disabled:disabled || (!changed && row.status !== "error"), onclick:save}, "Kaydet") : null;
+      discardButton = !panel && row.installed ? h("button", {type:"button", class:"btn btn-sm btn-quiet", hidden:!changed, disabled:locked(), onclick:() => { delete webDrafts[row.service]; draw(); }}, "Vazgeç") : null;
+      return h("tr", { class:changed ? "changed" : "", "data-publication":row.service },
+        cell("Uygulama", h("strong", null, name), h("code", null, row.local), h("small", null,
+          panel ? "Yalnız Tailscale · korunur" : !row.installed ? "Kurulu değil" : row.service === "paylasim" ? "Klasör hesabı + ağ izni" : "Uygulamanın kendi girişi")),
+        cell("Tailscale", toggle(name + " Tailscale erişimi", current.tail, on => edit("tail", on), "as-web-tail-" + row.service, disabled)),
+        cell("İnternet", toggle(name + " internet erişimi", current.enabled, on => edit("enabled", on), "as-web-wan-" + row.service, disabled)),
+        cell("HTTPS alan adı", domain, address ? (row.service === "paylasim" ? h("small", null, address + "/s/…/ · tam adres Paylaşımlar’da")
+          : h("a", { href:address, target:"_blank", rel:"noopener" }, address)) : h("small", null, panel ? "İnternet yayını kilitli" : "Doğrudan HTTPS · DNS only")),
+        cell("Durum / işlem", badge(webBusy === row.service ? "Uygulanıyor…" : labels[row.status] || "Durum bilinmiyor", !webBusy && row.status === "ready"),
+          draftNote, saveButton, discardButton,
+          row.expires ? h("small", null, "Sertifika: ", h("time", {datetime:new Date(row.expires * 1000).toISOString()}, new Date(row.expires * 1000).toLocaleDateString("tr-TR"))) : null,
+          row.message ? h("small", null, row.message) : null));
+    }), "as-publications");
+    const box = card("Adresler ve erişim", "Tailscale ve internet yayını birbirinden bağımsızdır", content,
+      note(`DNS A kaydı: ${live.wan?.ipv4 || "WAN IPv4 okunamadı"} · proxy kapalı (DNS only) · HTTPS TCP ${live.manage.https?.port || 443}.`),
+      note("WebDAV’ın ana ağ seçimi klasör izinlerini genişletmez. Kapalı ağdaki yeni istekler reddedilir; devam eden aktarımlar tamamlanabilir. Sertifika hazır olması internetten erişimin test edildiği anlamına gelmez."),
+      rows.some(row => row.mode === "http") ? note("Eski WebDAV WAN erişimi HTTP kullanıyor. HTTPS alan adı kaydedin; kapatınca HTTP’ye otomatik dönülmez.", true) : null);
+    box.id = "as-publications"; box.setAttribute("aria-busy", !!webBusy || !!pending?.web);
+    return box;
   }
   function addDns() {
     let targetType = "tailscale";
@@ -461,10 +611,10 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       && same(draft.firewall, live.manage.config.firewall) && !Object.keys(qdraft).length;
     const restoreFocus = document.activeElement?.getAttribute("role") === "tab" ? document.activeElement.id : "";
     root.replaceChildren(...[tab === "qb" ? null : nav,
-      pending ? h("div", { class: "as-rollback" + (pending.phase === "stuck" ? " stuck" : ""), role: "status" }, ...rollbackState()) : null,
+      pending && !httpsApplying() ? h("div", { class: "as-rollback" + (pending.phase === "stuck" ? " stuck" : ""), role: "status" }, ...rollbackState()) : null,
       pending?.domain || migration ? domainLinks(pending?.domain || migration) : null,
       message ? h("p", { class: "as-message", role: "status" }, message) : null, view,
-      ready && (list.length || !["system", "log", "qb"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
+      ready && (list.length || !["system", "log", "qb", "web"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
         h("small", null, directDns ? "Uygula ile DNS ayarları doğrudan kaydedilir; süreli onay gerekmez." : "İnceleyip uygulayana kadar sunucu değişmez.")), h("div", { class: "as-inline" },
         h("button", { type: "button", class: "btn btn-quiet", disabled: locked() || !list.length, onclick: reset }, "Vazgeç"),
         h("button", { type: "button", class: "btn btn-primary", disabled: locked() || !list.length, onclick: directDns ? () => submitChanges(() => {}) : review }, directDns ? "Uygula" : "İncele ve uygula"))) : null].filter(Boolean));
@@ -476,7 +626,8 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     }
     if (restoreFocus && tab !== "qb") document.getElementById(restoreFocus.startsWith("as-fw-tab-") ? "as-fw-tab-" + scope : "as-tab-" + tab)?.focus();
   }
-  window.addEventListener("beforeunload", (e) => { if ((dirty() || (domainInput && domainInput !== live?.domain)) && !pending && !migration) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", (e) => { if ((dirty() || (domainInput && domainInput !== live?.domain)
+    || httpsBusy || webBusy || Object.keys(webDrafts).length || (httpsInput !== null && httpsInput !== (live?.manage?.https?.domain || ""))) && !pending && !migration) { e.preventDefault(); e.returnValue = ""; } });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       root.querySelectorAll('input[type="password"]').forEach((x) => { x.value = ""; });

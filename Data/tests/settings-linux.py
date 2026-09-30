@@ -5,7 +5,6 @@ Run as root: unshare --net --fork python3 Data/tests/settings-linux.py
 Never uses the installed stack's configuration or controls its services.
 """
 import copy
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +12,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -21,9 +21,8 @@ import urllib.request
 from unittest.mock import patch
 
 DATA = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("settings", DATA / "panel/master_settings.py")
-settings = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(settings)
+sys.path.insert(0, str(DATA / "panel"))
+import master_settings as settings
 real_run = settings.run
 
 
@@ -84,6 +83,8 @@ def main():
         shutil.copy(DATA / "panel/master_settings.py", root / "bin/master_settings.py")
         # DD-179: firewall.sh asks master_shares.py whether a WAN share is active.
         shutil.copy(DATA / "panel/master_shares.py", root / "bin/master_shares.py")
+        shutil.copy(DATA / "panel/master_https.py", root / "bin/master_https.py")
+        shutil.copy(DATA / "panel/master_publications.py", root / "bin/master_publications.py")
         def render(source):
             text = (DATA / source).read_text()
             for key, value in e.items():

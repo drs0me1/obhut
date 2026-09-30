@@ -13,7 +13,254 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-192: Per-connection WebDAV policies and dual-card Shares (v2-164)
+
+- **Decision:** retain one folder, stable share ID and account/password while
+  giving Tailscale and WAN independent enabled state, RO/RW and absolute expiry.
+  This permits Tailscale RW with WAN RO, or the reverse, without overlapping
+  folder grants or duplicated accounts. Both off is valid and keeps the account.
+  New shares default to Tailscale enabled/RO/seven days and WAN off/RO/seven days.
+- **One policy source:** schema 4 stores `connections.tailscale` and
+  `connections.wan`, each exactly `{enabled: bool, permission: "ro"|"rw",
+  expires: Unix-seconds|null}`. Shared `permission`, `expires`, `paused` and
+  `networks` are removed; their presence in a schema-4 item is a conflict and
+  fails closed. Valid schema 3 converts in memory, copying the exact shared
+  permission/expiry to both policies, enabled only for a previously selected
+  network when not paused. IDs, path/account, salt/hash, folder identity and
+  `created`/`changed` stay unchanged; `prepare` persists schema 4. This is a
+  narrow exception to DD-185, not restored schema-2 support or general cleanup.
+- **Partial writes:** `POST /api/konsol/paylasim/kaydet` accepts one or both
+  nested scope patches with `enabled?`, `permission?`, `days?` (0/1/7/30) and
+  `ack_write?`. Read omitted values under the existing operation locks; never
+  reset the other scope or extend an omitted expiry. Toggling does not renew an
+  expired connection. Explicit RW requires `ack_write: true` in that same scope,
+  even when already RW or off. Shared account/path/password edits stay separate.
+  Old global-policy fields and `.../durum`/`pause` requests are rejected with a
+  refresh-page message, so a stale browser cannot silently rewrite both policies.
+- **Enforcement:** the receiving loopback listener selects the policy, never a
+  client header. Every DAV write, live transfer chunk and staged PUT/COPY final
+  publication enforces the applicable enabled/permission/expiry checks. A cached
+  password success cannot bypass authorization. Descriptor/root checks, budgets,
+  rollback and secret handling remain mandatory.
+- **UI and state:** each Shares entry has two cards with its own switch,
+  permission, expiry, address/copy and Infuse details. WAN is HTTPS when
+  configured; legacy HTTP is labeled honestly with its plaintext warning and
+  consent. Manage edits the shared folder/account/password. Public connection
+  state adds `expired`, `available` (global gate), `active`, `reason` and `url`.
+  An available transport can supply a candidate URL even while the card is off
+  or expired; `row.urls` contains only active connections. A card explains why a
+  DD-191 global Caddy gate blocks access and cannot override that gate.
+- **Retained lifecycle:** configured HTTPS keeps its renewal listener with no
+  active folders, subject to the global publication gate and DD-190 prerequisites.
+  Share edits still restart active WebDAV and interrupt all transfers; retain
+  that warning. This does not add hot reload, new listeners or a new ACL model.
+- **Verification:** see [the test runbook](../tests/README.md) for fixture and
+  opt-in live/UI checks, and [SESSION.md](../SESSION.md) for the main implementation
+  task's exact v2-164 results and host health. Main reports successful `nrm`
+  deployment, exact migration preservation, real HTTPS/Tailscale acceptance with
+  byte-identical registry cleanup, and read-only installed UI acceptance.
+
+### DD-191: Fixed publication table with independent private and public gates (v2-162)
+
+- **Amended by DD-192:** folder gates are now per-connection policies. Cards
+  expose candidate addresses while locally off, but globally disabled routes
+  still have no advertised address and `row.urls` contains only active scopes.
+
+- **Decision:** extend DD-190 to a real Settings → Caddy table, not a general
+  proxy editor. The fixed catalogue is Panel, qBittorrent and WebDAV. Panel
+  Tailscale is on and WAN is locked in both UI and API until a separate login
+  design exists. No Cloudflare Tunnel, arbitrary upstream or DNS API token.
+- `master_publications.py` reads saved `web.<service>` rows containing `tail`,
+  `enabled` and `domain`. A disabled public name is remembered, never converted
+  to plaintext HTTP. Existing DD-190 HTTPS settings migrate on first row save;
+  the old HTTPS endpoint remains compatible. Two enabled rows cannot share a
+  hostname. qBittorrent HTTPS cannot coexist with legacy WebDAV HTTP: convert
+  that row to HTTPS or explicitly turn its WAN gate off first.
+- Both public names use the same assigned IPv4/TCP `SHARE_HTTPS_PORT`, strict
+  SNI/Host and existing socket limits. qBittorrent upstream remains fixed to
+  loopback `TORRENT_UI_PORT`; its permanent native password, mandatory local
+  login, disabled subnet bypass, CSRF/Host checks and login-attempt ban are
+  prerequisites. An anonymous API probe must return 403. Preferences, peer
+  discovery and UPnP are not rewritten. Native application bans may cover
+  the proxy address unless the operator configures trusted reverse proxies;
+  these are not WebDAV's per-client password budgets.
+- Saving is an isolated revision-checked Settings transaction. DNS is checked
+  before mutation and certificate trust/name before commit. Private projections
+  are snapshotted too: first-row failure or process crash must restore the old
+  route even when no saved `web` row existed. No extra timed user confirmation.
+- Disabling a Tailscale publication renders an explicit 403 route (including
+  WebDAV by IP); it does not stop the app or remove shared Caddy ports. Folder
+  network/account/RO/RW/expiry remains a second gate. No folder records change,
+  and Files omits URLs for globally disabled networks. Graceful Caddy reload
+  permits in-flight transfers to finish; account edits still restart WebDAV.
+- The existing narrowly scoped publication guard and module lifecycle refresh
+  known projections; unchanged output is a no-op. Module reapply and installer
+  consume saved choices. Stopped/removed qBittorrent loses its WAN site; unsafe
+  native auth configuration also suppresses it on the next guard run. This is
+  not instantaneous monitoring of qBittorrent's in-memory preferences.
+- Unit/browser fixtures are not public reachability or native-client proof.
+  Live acceptance must separately check DNS, real TLS, both network gates,
+  private API isolation, rerun persistence and unchanged folder accounts.
+
+### DD-190: Optional public WebDAV HTTPS without widening private administration (v2-161)
+
+- **Decision:** Settings → Caddy accepts a separate full public domain for
+  folder WebDAV. `master_https.py` interprets the saved mode, checks DNS and
+  certificates and generates the WAN site; `master_settings.py` owns the
+  existing revision/lock/pending/commit workflow, and `master_shares.py` owns
+  publication. This supersedes DD-179's HTTP-only boundary, not its per-folder
+  network selection, authentication, limits or private administration boundary.
+- **DNS and transport:** the name must resolve to exactly the host's assigned,
+  globally routable `WAN_IPV4`, with no AAAA or proxy. Caddy owns Let's Encrypt
+  keys, issuance and renewal through TLS-ALPN on TCP `SHARE_HTTPS_PORT` (443).
+  HTTP challenge is disabled and `auto_https disable_redirects` avoids a WAN
+  port-80 listener. No Cloudflare/DNS API token, DNS write, NAT discovery, new
+  certificate daemon or public IPv6 publication. Private names and Tailscale
+  HTTP on `SHARE_PORT` (61010) remain unchanged.
+- **Host/SNI boundary:** only the WAN HTTPS `servers` block enables
+  [`strict_sni_host on`](https://caddyserver.com/docs/caddyfile/options#strict_sni_host),
+  rejecting a request whose Host differs from its TLS SNI with 421. Previously,
+  an unmatched/spoofed Host could receive Caddy's empty default 200; it exposed
+  neither an API nor private content. This makes rejection explicit without
+  changing private HTTP listeners. `protocols h1 h2` permits only HTTP/1.1 and
+  HTTP/2 over TCP; HTTP/3 is disabled and no UDP 443 listener or firewall
+  permission is added.
+- **Three deliberate modes:** no `https` key preserves the existing explicitly
+  consented HTTP WAN behavior. A nonempty domain selects HTTPS; an explicitly
+  empty domain selects off, never HTTP fallback. Accounts, network selections,
+  IDs, hashes, permissions and expiry are not rewritten by this setting.
+  In HTTPS mode the listener/permission remains for renewal even with no active
+  folders, while the assigned address, valid registry and running registration
+  remain available. Every folder still authenticates and enforces its network,
+  identity, permission, pause and expiry. For the configured public Host, only
+  `/s/*` is proxied; other paths, including the administrative APIs, return 404.
+- **Save is a transaction, not a second connectivity confirmation:** reject
+  mixed/stale requests; record durable pending state before publication;
+  commit only after a trusted chain and matching hostname verify. Caddy/firewall
+  or certificate failure restores the previous saved projection. The independent
+  Settings guard recovers a pre-commit crash; the durable commit marker protects
+  a completed save. Restoring the prior mode after a failed first enablement
+  can restore its consented HTTP endpoint; a committed HTTPS setting never
+  silently downgrades when a certificate later fails. Explicit removal closes
+  new WAN connections through graceful Caddy reload; existing transfers may
+  finish. Account mutations still restart DAV and interrupt transfers.
+- **Status is narrowly evidenced:** connect locally to the assigned WAN IPv4,
+  with the domain used for SNI and chain/hostname verification, never as an
+  arbitrary connection target. Report expiry and warn at 14 days or less.
+  “Ready” proves that local certificate check, not public DNS propagation,
+  provider firewall reachability or native-client compatibility. Public access
+  requires separate external acceptance.
+- **Coverage and limits:** `test_https_settings.py`, `test_https_panel.py` and
+  `settings-https-ui.cjs` exercise transactions, rollback/recovery, mode-specific
+  URLs/ports, certificate status and the private UI/API boundary. Opt-in
+  `https-live.py` uses three temporary shares and pause, removes its own fixtures
+  and checks the original registry digest; `--configure` deliberately leaves
+  the real public domain saved. Run instructions are in `tests/README.md`;
+  execution results belong in `CHANGELOG.md`/`SESSION.md`, not inferred here.
+
+### DD-189: Audit stage 4 distinguishes unknown health and IPv4-only names (v2-160)
+
+- Generated `interface-name` records for IPv4-bound services use `/4`. Both
+  DNS readers understand the suffix; explicitly supplied IPv6 host records
+  remain IPv6. Returning an unusable AAAA is not a reachability improvement.
+- Health checks the desired core services/timers and running optional modules,
+  including enabled WG networks, not merely systemd's failed list. Deliberately
+  stopped optional services are not failures. Unreadable probes/registries show
+  unknown/warning instead of success. Deep JSON is a controlled input error.
+- `/run/reboot-required` remains authoritative when present. Without it, compare
+  the running kernel with the distribution's `/vmlinuz` or `/boot/vmlinuz`
+  target, requiring matching flavor and a nonempty boot image/initrd pair. No
+  lexical package-version guess; missing, broken or custom boot evidence is
+  unknown. `ProtectKernelModules` hides module directories inside the panel;
+  their invisibility is not treated as a missing kernel and the sandbox stays
+  unchanged. The comparison is a distribution boot-link check, not a certification
+  of an administrator's custom bootloader choice. Reboot remains manual.
+
+### DD-188: Audit stage 3 bounds authentication and shortens write locks (v2-160)
+
+- WAN and Tailscale have separate four-slot/two-slot scrypt budgets. A request
+  waits up to 200 ms and rechecks the successful-login cache before hashing.
+  Exhausted processing capacity yields 503 plus Retry-After; bad-password
+  throttling remains 429. Full connection pools send a best-effort nonblocking
+  503 without spawning another worker. No unbounded admission queue is added.
+- PUT/COPY receive/copy/fsync a private sibling outside the mutation lock.
+  Final publication rechecks share identity, permission, scope, expiry, pinned
+  parents, source/target versions and HTTP preconditions under the lock. A
+  conflict removes the temporary result; it never silently replaces a concurrent
+  write. Existing disk reserve, size limits and atomic publication remain.
+- WebDAV adds syscall/process/IPC isolation, TasksMax=96, MemoryMax=512M and a
+  5-per-10-minute automatic start budget. Explicit operator renewals still reset
+  start throttling. Page cache counts toward MemoryMax and is reclaimable; a
+  historical memory peak is not evidence of a process leak.
+- Tailnet proxy keepalive becomes 30 s, below the backend's 60 s idle limit;
+  WAN remains nonpersistent upstream. Files gets a 180 s inactivity timeout
+  (longer than its proxy keepalive) and controlled deep-JSON rejection.
+- Keep TCP 16/IP, 64 total and HTTP 4/IP, 8 WAN/64 tailnet workers for now.
+  Zero measured TCP overflow does not justify removing the resource ceiling;
+  these budgets are not volumetric DDoS protection. Account edits still restart
+  DAV and interrupt transfers. HTTP WAN risks and the local proxy-header trust
+  boundary remain explicit; this package does not add TLS or a hot-reload engine.
+
+### DD-187: Audit stage 2 keeps boot failure closed and pins privileged paths (v2-160)
+
+- **Registry failure:** validation remains strict. An apply with unreadable
+  settings/share/WireGuard data preserves an existing owned default-deny policy
+  and manual denials. If none exists, a small owned guard before `ts-input`
+  allows loopback, established replies, SSH, Tailscale transport and essential
+  IPv6 control traffic; unknown WG interfaces cannot forward. The command still
+  fails, so the firewall health/pre-start gates cannot call recovery healthy.
+  A subsequent successful apply removes these temporary owned guards. Read-only
+  `--check` never repairs or mutates, and third-party chains remain untouched.
+- **Other interfaces:** both INPUT policies end with an unconditional DROP,
+  after the explicit WAN DROP. An extra interface no longer falls through to
+  the host's ACCEPT policy; explicit operator rules remain authoritative.
+- **Privileged paths:** installer directory creation, private archive mode and
+  selective data-tree repair use pinned directory descriptors and no-follow
+  traversal. Only directories and single-link regular files are changed, only
+  where UID/GID/mode differs. Symlinks, special files, hard links and the reserved
+  top-level `.pay`/private `.arsiv` trees are not traversed by ordinary repair.
+  This replaces path-based `find -exec chown/chmod` (DD-53/DD-84 implementation).
+- **Lock order:** module mutations take install then module locks. A child
+  invoked by the locked installer reuses its inherited flock descriptor only
+  after checking the descriptor's inode against the canonical install lock;
+  an environment flag alone is not a bypass. Standalone modules acquire it.
+- **Third qBittorrent read:** the CLI's first-login username lookup also reuses
+  the bounded no-follow reader; FIFO input cannot hold the module/install locks.
+- **Linux verification follow-up:** Bash 5.2 enables `patsub_replacement`, unlike
+  macOS Bash 3.2. Template rendering temporarily disables it, then restores the
+  caller's option, so literal `&` and backslashes are not interpreted as a match.
+
+### DD-186: Audit stage 1 separates admission queues from workload limits (v2-159)
+
+- **Evidence:** the v2-158 review found Caddy 502s from `EAGAIN` on the root
+  backend's Unix socket. All three Python server classes inherited a listen
+  backlog of 5. No TCP listen overflow was observed, so a larger TCP backlog
+  is preventive, not proof of the first Infuse delay's cause.
+- **Decision:** set `request_queue_size = 128` on all three server classes.
+  This queues pending connections; it does not raise WebDAV's simultaneous
+  request/hash budgets, the firewall TCP limits or bandwidth. Capacity tuning
+  and authentication admission belong to a separate, measured stage.
+- **Service-owned configuration:** reuse `master_settings.read_regular` in
+  both qBittorrent readers: descriptor-relative no-follow traversal,
+  nonblocking open, regular-file check and bounded reads. The panel retains
+  its 64 KiB limit and allowlist; sharing uses the helper's 1 MiB limit and
+  fails closed on unsafe/unreadable input. Missing profiles remain allowed.
+- **Internal directory sources:** listing/path guards and destination-name
+  checks did not protect root `.cop`, `.pay` and `.arsiv` as mutation sources.
+  Validate every selected source before any rename/move/trash work; also
+  disallow promoting a nested reserved name into the root. Trash restore uses
+  an alternate name instead of creating a reserved root entry. This is an
+  administrative Files API guard, not an anonymous WAN authentication issue.
+- **Scope:** no share/account changes, migrations, automatic reboot, WAN
+  exposure changes or new dependencies. The historical 670 MB memory peak
+  may include page cache but cannot be attributed retrospectively without
+  that invocation's `memory.stat` samples.
+
 ### DD-185: Fresh-install-only cleanup and a documentation index (v2-158)
+
+- **Narrow exception in DD-192:** valid schema-3 WebDAV registries now convert
+  to schema 4 without changing identity/account or renewing expiry. Schema 2
+  and the other retired migrations below remain unsupported.
 
 - **Request:** the user accepted the 2026-09-29 maintenance recommendation: trim
   the documentation first, then delete code that only served upgrades from
@@ -216,6 +463,10 @@ with its status and the file that holds it.
   (uid 1000 already owns its data), HTTP on WAN (DD-179), Konsol identity.
 
 ### DD-179: Per-folder HTTP WAN opt-in with separate admission budgets (v2-153)
+
+- **Amended by DD-190/DD-192:** HTTPS is optional; connection policies are
+  independent in schema 4, both may be off, and valid schema 3 converts safely.
+  The shared-policy/schema wording below records the earlier implementation.
 
 - **Changed in v2-158:** the schema-2 registry migration is removed; only a
   schema-3 `webdav.json` is accepted. New shares still default to Tailscale only.
@@ -3506,6 +3757,10 @@ failure with an early, named one.
 
 ### DD-169: Compact trash confirmation and inline share controls (2026-09-28)
 
+- **Shares layout superseded by DD-192:** two connection cards replace the
+  shared permission/duration columns. Partial updates, per-scope RW consent,
+  exact expiry preservation and separate account management retain this rationale.
+
 - **Decision (v2-142):** remove move-to-trash explanations/path/size and show
   only a short question, filename (ellipsized with full tooltip) or count,
   Cancel and Move. Bound dialog content so long names cannot push buttons out.
@@ -3741,6 +3996,9 @@ failure with an early, named one.
 - Exact limits, API and recovery caveats: `desktop-and-archives.md`.
 
 ### DD-158: Independent folder accounts and descriptor-safe WebDAV (2026-09-25)
+
+- **Extended by DD-192:** the account/folder remains shared between its two
+  connections; enabled state, permission and expiry are now per connection.
 
 - **Decision (v2-128):** implement Files v09 and replace the single shared
   account with a bounded folder registry, separate users, RO/RW and stable IDs.

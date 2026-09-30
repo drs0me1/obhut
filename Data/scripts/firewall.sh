@@ -56,17 +56,23 @@ ICMP6_TYPES=(destination-unreachable packet-too-big time-exceeded parameter-prob
 
 # DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun
 # yarattığı ayrıcalıklı bir ağ yoktur ve kayıt boş olabilir (sunucu kurulur, ağı Konsol
-# oluşturur). Her şey uygulanmadan önce okunur ve doğrulanır: bozuk bir kayıt hiçbir
-# zinciri değiştirmeden durdurur. Diziler: arayüz, UDP portu, alt ağ IPv4/IPv6.
+# oluşturur). Önce kayıtlar doğrulanır. Bozuk kayıt mevcut korumayı tutar; korumasız
+# açılışta yalnız kurtarma erişimi bırakılır. Diziler: arayüz, UDP portu, alt ağ IPv4/IPv6.
 WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
-SHARE_WAN_ACTIVE=0 SHARE_SOCKET_IP=0 SHARE_SOCKET_TOTAL=0
+SHARE_WAN_ACTIVE=0 SHARE_SOCKET_IP=0 SHARE_SOCKET_TOTAL=0 SHARE_WAN_PORT=0
 load_share_wan() {
-    local values
+    local values pattern
     [[ -n "${SHARE_WAN_BACKEND:-}" ]] || return 0
     values="$(python3 "$SBIN_DIR/master_shares.py" --state "$STATE_FILE" wan-firewall)" ||
         die "WebDAV WAN kaydı okunamadı; kurallar değiştirilmedi"
-    read -r SHARE_WAN_ACTIVE SHARE_SOCKET_IP SHARE_SOCKET_TOTAL <<<"$values"
-    [[ "$SHARE_WAN_ACTIVE" =~ ^[01]$ && "$SHARE_SOCKET_IP" =~ ^[0-9]+$ && "$SHARE_SOCKET_TOTAL" =~ ^[0-9]+$ ]] ||
+    # Exactly one four-field record; a missing port must never reopen legacy HTTP.
+    pattern='^[01][[:blank:]]+[1-9][0-9]{0,9}[[:blank:]]+[1-9][0-9]{0,9}[[:blank:]]+[1-9][0-9]{0,4}$'
+    [[ "$values" =~ $pattern ]] || die "WebDAV WAN sınırları veya portu geçersiz"
+    read -r SHARE_WAN_ACTIVE SHARE_SOCKET_IP SHARE_SOCKET_TOTAL SHARE_WAN_PORT <<<"$values"
+    [[ "$SHARE_WAN_PORT" -le 65535 &&
+        ( "$SHARE_WAN_PORT" == "${SHARE_PORT:-}" || "$SHARE_WAN_PORT" == "${SHARE_HTTPS_PORT:-}" ) ]] ||
+        die "WebDAV WAN portu geçersiz"
+    [[ "$SHARE_SOCKET_IP" -le "$SHARE_SOCKET_TOTAL" && "$SHARE_SOCKET_TOTAL" -le 4294967295 ]] ||
         die "WebDAV WAN sınırları geçersiz"
 }
 # DD-150: WireGuard bir Konsol modülüdür. Modül kayıtta yoksa ağ kaydı (anahtarlarla birlikte
@@ -281,9 +287,10 @@ apply_input4() {
         "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${WG_PORTS[i]}" -j ACCEPT
     done
     if [[ "$SHARE_WAN_ACTIVE" == 1 ]]; then
-        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SHARE_PORT" -j ACCEPT
+        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SHARE_WAN_PORT" -j ACCEPT
     fi
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -j DROP
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
@@ -305,6 +312,7 @@ apply_input6() {
         --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -j DROP
+    "$bin" -w 5 -A "$staging" -j DROP
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
@@ -458,7 +466,7 @@ check_chain_shape() {
 wan_allow_pairs() {
     printf '%s\n' "udp $TAILSCALE_UDP_PORT" "tcp $SSH_PUBLIC_PORT"
     [[ "$1" == v4 ]] || return 0
-    [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_PORT"
+    [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_WAN_PORT"
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
     [[ "${#WG_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${WG_PORTS[@]}"
     # DD-151: qBittorrent'e gelen eş portu açılmaz.
@@ -478,7 +486,7 @@ check_wan_allow_count() {
 }
 
 check_input_chain() {
-    local bin="$1" family="$2" n=0 proto port i type expected=4
+    local bin="$1" family="$2" n=0 proto port i type expected=5
     check_jump_exactly_one "$bin" INPUT "$CHAIN_INPUT"
     check_no_staging_artifacts "$bin"
     check_ts_input_precedence "$bin"
@@ -486,6 +494,9 @@ check_input_chain() {
     check_rule "$bin" "$CHAIN_INPUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     check_rule "$bin" "$CHAIN_INPUT" -i "$TAILSCALE_IF" -j ACCEPT
     check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
+    check_rule "$bin" "$CHAIN_INPUT" -j DROP
+    [[ "$("$bin" -w 5 -S "$CHAIN_INPUT" | tail -n 1)" == "-A $CHAIN_INPUT -j DROP" ]] ||
+        die "$bin: son koşulsuz DROP yerinde değil"
     while read -r proto port; do
         [[ -n "$proto" ]] || continue
         check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" \
@@ -582,9 +593,9 @@ load_settings_rules() {
     if [[ "$SHARE_WAN_ACTIVE" == 1 ]]; then
         # Before operator ACCEPT rules: cap even unauthenticated idle TCP sockets.
         # Existing manual DENY rules remain effective; no third-party chains touched.
-        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_PORT -m connlimit --connlimit-above $SHARE_SOCKET_TOTAL --connlimit-mask 0 --connlimit-saddr -m comment --comment konsol-base:share-total -j REJECT --reject-with tcp-reset"
+        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_WAN_PORT -m connlimit --connlimit-above $SHARE_SOCKET_TOTAL --connlimit-mask 0 --connlimit-saddr -m comment --comment konsol-base:share-total -j REJECT --reject-with tcp-reset"
         core4="$line"$'\n'
-        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_PORT -m connlimit --connlimit-above $SHARE_SOCKET_IP --connlimit-mask 32 --connlimit-saddr -m comment --comment konsol-base:share-ip -j REJECT --reject-with tcp-reset"
+        line="-i $WAN_INTERFACE -p tcp --dport $SHARE_WAN_PORT -m connlimit --connlimit-above $SHARE_SOCKET_IP --connlimit-mask 32 --connlimit-saddr -m comment --comment konsol-base:share-ip -j REJECT --reject-with tcp-reset"
         SETTINGS4="$core4$line"$'\n'"$SETTINGS4"
         core4=""
     fi
@@ -668,15 +679,59 @@ check_settings_rules() {
     [[ "$actual_ids" == "$ids" ]] || die "$bin: Konsol kullanıcı kurallarının sırası bozuk"
 }
 
+# An unreadable registry must not leave a fresh boot unfiltered. Existing owned
+# policies (including manual denies) stay intact. A cold family gets a minimal
+# recovery guard BEFORE ts-input; full --check still fails, keeping Caddy/WG shut.
+startup_failure() {
+    local rc=$? bin guard type
+    trap - EXIT
+    [[ "$rc" -ne 0 && "$MODE" == apply ]] || return "$rc"
+    for bin in iptables ip6tables; do
+        if "$bin" -w 5 -C INPUT -j "$CHAIN_INPUT" 2>/dev/null &&
+            "$bin" -w 5 -C "$CHAIN_INPUT" -j DROP 2>/dev/null &&
+            { [[ -z "${SETTINGS_FILE:-}" ]] || [[ "$(input_line "$bin" "$CHAIN_SETTINGS")" == 1 ]]; }; then
+            continue
+        fi
+        guard="${CHAIN_STAGING_PREFIX}SAFE"
+        if ! "$bin" -w 5 -C INPUT -j "$guard" 2>/dev/null; then
+            "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || continue
+            "$bin" -w 5 -A "$guard" -i wg+ -j DROP || continue
+            "$bin" -w 5 -A "$guard" -i lo -j ACCEPT || continue
+            "$bin" -w 5 -A "$guard" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || continue
+            "$bin" -w 5 -A "$guard" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT || continue
+            "$bin" -w 5 -A "$guard" -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT || continue
+            if [[ "$bin" == ip6tables ]]; then
+                for type in "${ICMP6_TYPES[@]}"; do
+                    "$bin" -w 5 -A "$guard" -p ipv6-icmp --icmpv6-type "$type" -j ACCEPT || return "$rc"
+                done
+            fi
+            "$bin" -w 5 -A "$guard" -j DROP || continue
+            "$bin" -w 5 -I INPUT 1 -j "$guard" || continue
+        fi
+        # Even an unknown/pre-existing WG interface cannot forward on a cold boot.
+        guard="${CHAIN_STAGING_PREFIX}SAFE-FW"
+        if ! "$bin" -w 5 -C FORWARD -j "$guard" 2>/dev/null; then
+            "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || continue
+            "$bin" -w 5 -A "$guard" -i wg+ -j DROP || continue
+            "$bin" -w 5 -A "$guard" -o wg+ -j DROP || continue
+            "$bin" -w 5 -I FORWARD 1 -j "$guard" || continue
+        fi
+        printf 'firewall: UYARI kayıt okunamadı; %s yalnız kurtarma erişiminde. Kayıt düzeltilmeli.\n' "$bin" >&2
+    done
+    return "$rc"
+}
+
 if [[ -n "${RUNTIME_DIR:-}" ]]; then
     mkdir -p "$RUNTIME_DIR"
     exec 7>"$RUNTIME_DIR/firewall.lock"
     flock -w 5 7 || die "başka bir firewall işlemi sürüyor"
 fi
+trap startup_failure EXIT
 load_wg_networks
 load_share_wan
 resolve_wan_interface
 load_settings_rules
+trap - EXIT
 
 if [[ "$MODE" == check ]]; then
     resolve_wan_interface
