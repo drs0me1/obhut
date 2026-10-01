@@ -11,6 +11,8 @@ const settings = {read_at:Date.now()/1000,domain:"ayc",tailscale:"100.64.0.2",ts
   torrent:{installed:true,profile:"/var/lib/qbittorrent"},
   manage:{revision:"r1",config,pending:null,username:"admin",save:"/srv/downloads/",names:[]}};
 const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "host",live:"-"}));
+// DD-195 (v2-168): the backend names both qBittorrent addresses; the public one only while published.
+modules[1].urls = {tailscale:"http://torrent.ayc",internet:null};
 const calls = [], errors = [], jobs = [];
 const temporaryPassword = "FixtureTemp8!";
 let passwordReads = 0, temporaryLogin = true;
@@ -30,7 +32,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.clock.install();
     page.on("pageerror", e => errors.push(e.message));
     page.on("console", msg => { if (/violates.*Content Security Policy|Refused to/.test(msg.text())) errors.push(msg.text()); });
-    await page.route("**/api/**", async route => {
+    const apiHandler = async route => {
       const req = route.request(), url = new URL(req.url()), p = url.pathname;
       calls.push(p);
       let result;
@@ -83,7 +85,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         return route.fulfill({status:404,body:"unexpected fixture request"});
       }
       await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(result)});
-    });
+    };
+    await page.route("**/api/**", apiHandler);
     const navigate = async hash => { await page.evaluate(h => { location.hash = h; }, hash); await page.waitForTimeout(50); };
     const refreshResources = async () => {
       const before = resourceCount;
@@ -227,6 +230,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#cf-go").click();
     await page.locator("#torrent-status").getByRole("button",{name:"Başlat",exact:true}).click();
     await page.locator("#torrent-status").getByRole("button",{name:"Durdur",exact:true}).waitFor();
+    assert.equal(await page.locator("#torrent-open").getAttribute("href"),"http://torrent.ayc","tailnet Konsol links the tailnet name");
+    assert.equal(await page.locator("#foot-access").innerText(),"Tailscale");
     await navigate("#/moduller");
     await detail.getByRole("button",{name:"Kaldır",exact:true}).click();
     assert.equal(await page.locator("#mod-veri").isChecked(),false);
@@ -366,6 +371,30 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#menu-toggle").click();
     await page.screenshot({path:path.join(shots,"model-a-mobile-dark.png"),fullPage:true});
     assert.deepEqual(errors,[]);
-    console.log("PASS: Model A routes/navigation, compact Store rows/details/progress/failure/focus/logs/no credentials/lifecycle, qBittorrent opt-in password/30s expiry/hidden-tab/card-close/navigation/no storage, shared settings, keyboard/5 widths/dark, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, production CSP. Screenshots: " + shots);
+    // Konsol on its public HTTPS address (DD-195): qBittorrent opens by its own public name,
+    // or the page points to Settings → Caddy while that publication is off.
+    Object.assign(modules[1], {installed:true,state:"calisiyor",live:"running",busy:false,progress:null,urls:{tailscale:"http://torrent.ayc",internet:"https://qbit.example.net"}});
+    const secure = await context.newPage();
+    secure.on("pageerror", e => errors.push(e.message));
+    secure.on("console", msg => { if (/violates.*Content Security Policy|Refused to/.test(msg.text())) errors.push(msg.text()); });
+    await secure.route("**/*", async route => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith("/api/")) return apiHandler(route);
+      const response = await route.fetch({url:base + url.pathname + url.search});
+      await route.fulfill({response,headers:{...response.headers(),"content-security-policy":csp}});
+    });
+    await secure.goto("https://konsol.example/#/torrent");
+    await secure.locator("#torrent-open").waitFor();
+    assert.equal(await secure.locator("#torrent-open").getAttribute("href"),"https://qbit.example.net");
+    assert.equal(await secure.locator("#foot-access").innerText(),"İnternet · HTTPS");
+    await secure.locator("details:has(#torrent-account) > summary").click();
+    await secure.locator("#torrent-account").getByText("qbit.example.net",{exact:true}).waitFor();
+    modules[1].urls.internet = null;
+    await secure.reload();
+    await secure.locator("#torrent-open-note").waitFor();
+    assert.equal(await secure.locator("#torrent-open").count(),0,"no tailnet link on the public address");
+    assert.equal(await secure.locator("#torrent-open-note").getByRole("link").getAttribute("href"),"#/ayarlar/web");
+    await secure.close();
+    console.log("PASS: Model A routes/navigation, compact Store rows/details/progress/failure/focus/logs/no credentials/lifecycle, qBittorrent opt-in password/30s expiry/hidden-tab/card-close/navigation/no storage, shared settings, keyboard/5 widths/dark, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, public-address qBittorrent link/hint, production CSP. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch(err => {console.error(err); process.exit(1);});

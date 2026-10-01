@@ -121,6 +121,26 @@ class ResourceTests(unittest.TestCase):
         self.assertNotIn("share", self.p.system())
         self.assertNotIn("ports", self.p.system())
 
+    def test_module_listing_carries_qbittorrent_addresses(self):
+        # DD-195 (v2-168): the tailnet name always; the public name only while that publication is active.
+        state = Path(self.p.args.state)
+        state.write_text(state.read_text() + "SHARE_HTTPS_PORT=443\n")
+        rows = {"torrent": {"tail": True, "enabled": True, "domain": "qbit.example.net"}}
+        listing = (0, "torrent\thost\tcalisiyor\trunning\t-\t-\t-\t-\nwireguard\tkonsol\tyok\t-\t-\t-\t-\t-\n", "")
+        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "config", return_value=rows), \
+                patch.object(panel.master_publications, "torrent_active", return_value=True):
+            items = {m["id"]: m for m in self.p.modules()}
+            self.assertEqual(items["torrent"]["urls"], {"tailscale": "http://torrent.test", "internet": "https://qbit.example.net"})
+            self.assertNotIn("urls", items["wireguard"])
+        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "torrent_active", return_value=False):
+            self.assertEqual(self.p.modules()[0]["urls"], {"tailscale": "http://torrent.test", "internet": None})
+        # A broken publication record never hides the module list.
+        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "config", side_effect=panel.master_settings.SettingsError("bozuk")):
+            self.assertIsNone(self.p.modules()[0]["urls"]["internet"])
+
     def test_http_resources_have_same_host_header_and_origin_gates(self):
         class Handler(panel.Handler):
             def log_message(self, *_args):

@@ -574,10 +574,28 @@ class Panel:
             progress = None
             if action != "-":
                 progress = {"action": action, "step": step, "total": num_or(total, 0), "text": "" if text == "-" else text}
-            items.append({"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
-                          "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
-                          "busy": self.module_busy(mid, busy), "progress": progress})
+            item = {"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
+                    "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
+                    "busy": self.module_busy(mid, busy), "progress": progress}
+            if mid == "torrent" and item["installed"]:
+                item["urls"] = self.torrent_urls()
+            items.append(item)
         return items
+
+    def torrent_urls(self):
+        """DD-195: Konsol opened on its public address links qBittorrent's own public name
+        (Settings → Caddy row on and verified); the tailnet name is for the tailnet address."""
+        env = read_env(self.args.state)
+        urls = {"tailscale": "http://torrent.%s" % env["LOCAL_DOMAIN"] if env.get("LOCAL_DOMAIN") else None,
+                "internet": None}
+        try:
+            rows = master_publications.config(env)
+            if master_publications.torrent_active(env, rows):
+                port = int(env["SHARE_HTTPS_PORT"])
+                urls["internet"] = "https://%s%s" % (rows["torrent"]["domain"], "" if port == 443 else ":%d" % port)
+        except (master_settings.SettingsError, OSError, ValueError, KeyError):
+            pass
+        return urls
 
     def module_spawn(self, mid, action, with_data):
         """master-modul'ü ayrı bir systemd birimi olarak başlatır: işlem sayfa kapansa da sürer."""

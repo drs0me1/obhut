@@ -4,6 +4,15 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — qBittorrent link follows the Konsol address, v2-168 (DD-195 amendment):**
+- User published Panel (`panel.example.net`) and qBittorrent (`qbit.example.net`) themselves,
+  then could not open qBittorrent from the HTTPS Konsol: the link was `torrent.<domain>`.
+- `/api/konsol/moduller` torrent item now carries `urls` (tailscale always, internet while
+  `torrent_active`); the page picks by `location.protocol`, else a Settings → Caddy hint.
+- Uncommitted on top of c5f9288.
+
+## Previous Task
+
 **2026-10-01 — Konsol over public HTTPS, v2-167 (DD-195):**
 - User created the first Konsol account on nrm (works), then asked to make the
   panel's Caddy address openable over HTTPS too.
@@ -20,7 +29,7 @@ Cross-session continuity for this repository.
 - Deployed twice to nrm (exit 0, account preserved); all Mac/Linux/live suites
   pass. Pending: `panel-public-live.py --domain <name>` once the user creates a
   DNS-only A record (no AAAA) for the panel name → 203.0.113.10.
-- v2-166 and v2-167 are both uncommitted.
+- Committed with v2-166 as c5f9288.
 
 ## Previous Task
 

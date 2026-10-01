@@ -62,6 +62,12 @@ installer cleanup; `publications-ui.cjs`
 drives the editable Panel row and the typed `onayla` dialog; `giris-ui.cjs` the
 Tailscale/internet label.
 
+v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
+(tailnet name always; the public name only while that publication is active or
+`null`); `panel-ui.cjs` opens Konsol on an `https://` origin with intercepted
+requests and checks that the qBittorrent page links the public name, falls back
+to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
+
 ```bash
 python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
 ```

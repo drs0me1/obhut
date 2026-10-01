@@ -1473,8 +1473,11 @@
       loadAccount(id);
     } else {
       // DD-151: qBittorrent'in geçici parolası yalnız bu açılışın günlüğündedir.
+      // DD-195: the address follows the Konsol address the browser is using.
+      const url = id === "torrent" ? torrentUrl((MODS || []).find((x) => x.id === id)) : "";
+      const address = url ? url.replace(/^[a-z]+:\/\//, "") : a.host;
       cred.append(...[
-        a.host ? credRow("Adres", a.host, [copyButton(a.host, "Adres")]) : null,
+        address ? credRow("Adres", address, [copyButton(address, "Adres")]) : null,
         credRow("Kullanıcı", a.user, [copyButton(a.user, "Kullanıcı")]),
         a.temp ? credRow("Geçici", r ? r.pass : "•".repeat(9), [
           h("button", { type: "button", class: "ib", title: r ? "Gizle" : "Günlükten göster", "aria-label": r ? "Geçici parolayı gizle" : "Geçici parolayı göster",
@@ -1949,18 +1952,28 @@
     if (stamp) stamp.textContent = CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
     settingsPage.render(CFG, current === "torrent" ? "qb" : settingsTab);
   }
+  // DD-195: on the public (HTTPS) Konsol address qBittorrent opens on its own public name,
+  // which Settings → Caddy must have turned on; on the tailnet address its tailnet name.
+  const publicPanel = () => location.protocol === "https:";
+  function torrentUrl(m) {
+    const urls = m?.urls || {};
+    if (publicPanel()) return urls.internet || "";
+    return urls.tailscale || (S.sys?.domain ? location.protocol + "//torrent." + S.sys.domain : "");
+  }
   function renderTorrentStatus() {
     const m = (MODS || []).find((x) => x.id === "torrent");
     const box = $("torrent-status");
     if (!m?.installed) { box.replaceChildren(h("p", {class:"hint-s"}, "Kurulum durumu okunuyor…")); return; }
-    const running = m.state === "calisiyor";
+    const running = m.state === "calisiyor", url = torrentUrl(m);
     box.replaceChildren(modPill(m),
       h("button", {type:"button", class:"btn btn-quiet", disabled:!!m.busy, onclick:() => {
         if (!running) { modAct(m, "baslat"); return; }
         ask({title:"qBittorrent durdurulsun mu?", calm:true, go:"Durdur", items:[["pause","Süren indirmeler duraklar. Başlatana kadar servis kapalı kalır."]],
           onOk:() => modAct(m, "durdur")});
       }}, svg(running ? "pause" : "play"), running ? "Durdur" : "Başlat"),
-      S.sys?.domain && running ? h("a", {class:"btn btn-primary", href:location.protocol + "//torrent." + S.sys.domain, target:"_blank", rel:"noopener"}, "Web arayüzünü aç ↗") : null,
+      running && url ? h("a", {class:"btn btn-primary", id:"torrent-open", href:url, target:"_blank", rel:"noopener"}, "Web arayüzünü aç ↗") : null,
+      running && !url && publicPanel() ? h("p", {class:"hint-s", id:"torrent-open-note"}, "İnternetten açmak için qBittorrent'in internet yayınını açın: ",
+        h("a", {href:"#/ayarlar/web"}, "Ayarlar → Caddy")) : null,
       h("a", {class:"linkbtn", href:"#/moduller"}, "App Store’da yönet"));
   }
   $("torrent-account").parentElement.addEventListener("toggle", (e) => {

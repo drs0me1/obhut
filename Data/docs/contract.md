@@ -445,7 +445,10 @@ Contract in §5–§7 and `folder-shares.md`.
   session (**DD-194**).
   - Pages (**DD-160**): Dosyalar (the landing page), App Store (§1.11), the
     WireGuard and qBittorrent pages only while installed, and Ayarlar, in one
-    responsive sidebar. CPU, memory and disk sit below the sidebar menu, read
+    responsive sidebar. The qBittorrent page links the app by its tailnet name
+    on the tailnet address and by its own public HTTPS name on Konsol's public
+    address, only while that publication is active; otherwise it points to
+    Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
     from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
     measurements show as unknown, never as zero. An unknown route opens
     Dosyalar; a page of an absent application opens App Store.

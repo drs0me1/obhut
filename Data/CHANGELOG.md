@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — qBittorrent link follows the Konsol address (v2-168)
+
+- Konsol opened on its public HTTPS address linked qBittorrent by its tailnet
+  name, which the internet cannot reach. The module listing now carries both
+  addresses (`urls.tailscale`, `urls.internet`); the qBittorrent page's "Web
+  arayüzünü aç" button and the first-login card's address use the public name
+  when Konsol itself is on HTTPS and the qBittorrent row in Settings → Caddy is
+  on and verified. Otherwise the page says to turn that row on, with a link to
+  Settings → Caddy (DD-195 amendment). The tailnet address is unchanged.
+- **Verified:** Mac — 399 Python, 168 Bats, seven browser suites including a
+  new `https://` origin scenario. Linux (nrm) — 399 Python, 168 Bats. nrm — one
+  portable run with scratch inputs (exit 0); on the public Konsol address the
+  module listing names `https://qbit.example.net` for qBittorrent and that name
+  answers; the public sign-in page keeps HSTS and the session redirect.
+
 ### 2026-10-01 — Konsol over public HTTPS (v2-167)
 
 - The Panel row in Settings → Caddy now has an internet switch and an HTTPS name

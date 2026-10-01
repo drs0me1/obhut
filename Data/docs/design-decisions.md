@@ -69,6 +69,12 @@ with its status and the file that holds it.
 - **Unchanged:** Settings changes that need a timed confirmation (firewall, local
   domain) are still confirmed only from a Tailscale address, so a public session
   cannot make them permanent. No Tunnel, no DNS writes, no IPv6 listener.
+- **Amendment (v2-168, user report):** opened on its public address, Konsol
+  linked qBittorrent as `torrent.<domain>`, unreachable from the internet. The
+  module listing now carries `urls.tailscale` and `urls.internet` (the latter
+  only while the qBittorrent publication is active, DD-191); the page picks by
+  its own scheme and otherwise points to Settings → Caddy. Konsol never proxies
+  qBittorrent under its own name: the app keeps its Host/CSRF checks and login.
 
 ### DD-194: Konsol sign-in with a one-time setup code (v2-166)
 
