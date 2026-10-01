@@ -681,19 +681,27 @@ Contract in §5–§7 and `folder-shares.md`.
   Since DD-178 new profiles do not automatically enable separate temporary
   storage. Keeping this existing path guard does not enable it in qBittorrent.
 
-### 1.11 App Store and built-ins (DD-148, DD-149, DD-159)
+### 1.11 App Store and built-ins (DD-148, DD-149, DD-159, DD-197)
 
 - A clean install includes Files, folder WebDAV and archive tools. Optional applications
-  are installed/removed from Konsol → App Store: `wireguard` and `torrent` only.
-  qBittorrent also supports start/stop; WireGuard has its own network switches.
-  Public module verbs reject `dosya`/`paylasim`;
-  they are protected internal IDs, not installable/removable applications.
+  are installed/removed from Konsol → App Store. The catalogue is the set of packages
+  under `Data/magaza/<id>/` whose manifest is not built-in: today `wireguard` and
+  `torrent`. qBittorrent also supports start/stop; WireGuard has its own network switches.
+  Public verbs reject `dosya`/`paylasim`: they are built-ins, not installable/removable
+  applications.
+- **Package (DD-197).** `Data/magaza/<id>/` holds the manifest `paket.env` (`PAKET_AD`,
+  `PAKET_SIRA`, `PAKET_CALISMA`, `PAKET_DURDURULABILIR`, `PAKET_HESAP`, `PAKET_APT`,
+  `PAKET_ARACLAR`, `PAKET_EKLER`, `PAKET_ADLAR`, `PAKET_GUNLUK`, `PAKET_KUR_ADIM`,
+  `PAKET_YAYIN`, `PAKET_UYGULA_HEP`, `PAKET_UYGULA_NEDEN`, `PAKET_YERLESIK`), the hook
+  file `kanca` (`paket_kur`, `paket_kaldir`, `paket_uygula`, `paket_baslat`, `paket_durdur`,
+  `paket_birim`, `paket_hesap`, `paket_veri_sil`, `paket_gunluk_suz`, `paket_ozet`) and the
+  package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds. The engine
+  reads the manifest with a strict line pattern (never sourced) and sources the hooks.
 - The installer, on every run:
-  - installs `/usr/local/sbin/master-modul` and renders each module's files to
-    `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): for the
-    built-in WebDAV (`paylasim`) `master-paylasim.service` (the credential-loaded unit), `paylasim.caddy` and `dnsmasq.conf`; for
-    qBittorrent `qBittorrent.conf` (the first settings), `master-stack.conf`
-    (the unit drop-in), `torrent.caddy` and `dnsmasq.conf`;
+  - installs `/usr/local/sbin/master-modul` and renders every package folder to
+    `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): a file with
+    `__KEY__` placeholders is filled from the installer's variable of that name (a
+    missing variable stops the install), other files are copied, executables keep 0755;
   - creates `MODULES_FILE` (`/etc/master-stack/moduller`) empty when absent,
     and `CADDY_MODULES_DIR` (`/etc/caddy/moduller`), which the base Caddyfile
     imports (`import …/*.caddy`, after the global options); the file backend's
@@ -701,46 +709,39 @@ Contract in §5–§7 and `folder-shares.md`.
   - invokes `master-modul yerlesik` to enable/check Files and WebDAV, preserve
     their account/history state, and restart only changed/inactive services;
   - never automatically installs/removes optional apps. When a rendered file
-    changed and the optional module is registered
-    (`calisiyor` or `durduruldu`), stage 7 first runs
-    `master-modul uygula <id>`; WireGuard is re-applied on every run while
-    installed. A failure is a warning, not a stop.
+    changed, or the manifest says `PAKET_UYGULA_HEP=1`, and the package is registered
+    (`calisiyor` or `durduruldu`), stage 7 first runs `master-modul uygula <id>`.
+    A failure is a warning, not a stop.
   - always checks built-in Files/WebDAV; checks WireGuard networks only while
-    the optional application is installed.
-- `master-modul` (root):
-  - `liste` prints, per catalogued module, `id runtime registry live action
-    step total text` separated by tabs; `runtime` is `konsol` or `host`,
-    `registry` is `yok`, `calisiyor` or `durduruldu`.
-  - `kur ID`, `baslat ID`, `durdur ID`, `kaldir ID [--veri]`, `gunluk ID
-    [LINES]`, `uygula ID`; `hesap torrent [--parola]` reads the temporary login;
-    the installer's `yerlesik` activates the built-ins (below).
+    the optional application is installed. The summary names each package from its
+    manifest with one line from its `paket_ozet` hook.
+- `master-modul` (root) knows no application:
+  - `liste` prints, per catalogued package in `PAKET_SIRA` order, `id runtime registry
+    live action step total text` separated by tabs; `runtime` is `PAKET_CALISMA`,
+    `registry` is `yok`, `calisiyor` or `durduruldu`, `live` comes from the package's
+    `paket_birim` unit when it has one.
+  - `kur ID`, `baslat ID`, `durdur ID` (only `PAKET_DURDURULABILIR=1`), `kaldir ID
+    [--veri]`, `gunluk ID [LINES]`, `uygula ID`; `hesap ID [--parola]` (only
+    `PAKET_HESAP=1`); the installer's `yerlesik` activates the built-ins (below).
     Any other id, verb or argument is refused before anything runs.
+  - Apt packages, tools (`SBIN_DIR`, 0755), unit drop-ins (`UNIT_DIR`, 0644) and names
+    are placed and removed by the engine's helpers, which the hooks call in the order
+    the package needs. After `kaldir` the engine removes every declared artifact and
+    fails the operation if any remains; `--veri` additionally runs `paket_veri_sil`.
   - Changes take `RUNTIME_DIR/modul.lock`; a second operation waits up to 5 s
     and then fails.
   - Progress is one line in `RUNTIME_DIR/modul-<id>.ilerleme`:
-    `action step total text`, ending with step `bitti` or `hata` and the
-    reason. Each step is also written to the journal (`master-modul`).
-    `uygula` writes no progress line.
-  - A host application (`torrent`) is a systemd unit. `kur` installs, starts, checks and registers
-    it; on failure it takes back what it did and registers nothing. `durdur`
-    disables and stops the unit (it stays stopped after a reboot; the names
-    stay). `uygula` re-applies a registered module's files and starts it only
-    if it is registered as running.
-  - `--veri` deletes only the module's own data. User files are never module
-    data.
-- Built-in Files (`dosya`, **DD-159**): `yerlesik` places its unit, enables and
-  checks it as `DOWNLOADS_UID`, verifies Caddy and the `X-Konsol` gate. Public
-  module operations cannot remove it or empty its trash. Archive behavior is
-  specified in `desktop-and-archives.md`.
-- WireGuard (`wireguard`, **DD-150**): `kur` in four steps — packages, kernel
-  module, firewall hook (the module is registered, then `master-firewall` is
+- WireGuard (`wireguard`, **DD-150**, package hooks since **DD-197**): `kur` in five
+  steps — packages, tools (`master-wg` and the `wg-quick@` drop-in from the manifest),
+  kernel module, firewall hook (the module is registered, then `master-firewall` is
   restarted), networks from the registry. `kaldir` closes the networks,
   unregisters the module, re-applies the firewall and removes
   `WG_MODULES_LOAD_FILE`; `--veri` also empties `WG_CONF_DIR`. `uygula`
   (every installer run while installed) makes sure of the packages, the kernel
   module and the networks. `gunluk` reads `journalctl -u wg-quick@*`.
-- qBittorrent (`torrent`, **DD-151**): `kur` in four steps — package
-  (`qbittorrent-nox`), service unit, service start, name.
+- qBittorrent (`torrent`, **DD-151**, package hooks since **DD-197**): `kur` in four
+  steps — package (`qbittorrent-nox`), service unit (the manifest's drop-in), service
+  start, name.
   - It runs as `qbittorrent-nox@<downloads account>.service`, the package's
     template unit plus the drop-in `UNIT_DIR/qbittorrent-nox@.service.d/master-stack.conf`:
     profile in `TORRENT_PROFILE_DIR` (`/var/lib/qbittorrent`), `UMask=0002`,

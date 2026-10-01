@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-170"
+V2_VERSION="2026.08.06-v2-171"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -672,63 +672,63 @@ PANEL_HELPERS_CHANGED=0
 module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
     awk -F'\t' -v i="$1" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true
 }
+# DD-197: bir paketin repo klasörü olduğu gibi işlenir. __KEY__ içeren dosya şablondur ve
+# kurulumun aynı adlı değişkeniyle doldurulur; öbürleri kopyalanır. Çalıştırılabilir dosyalar
+# (araçlar) 0755, geri kalanı 0644. 0: bir dosya değişti, 1: hepsi aynıydı.
+render_package_dir() { # ID
+    local id="$1" src dst name mode changed=0 key
+    local -a args
+    install -d -m 0755 -o root -g root "$MODULES_DIR/$id"
+    for src in "$V2_ROOT/magaza/$id"/*; do
+        [[ -f "$src" ]] || continue
+        name="${src##*/}"
+        dst="$MODULES_DIR/$id/$name"
+        mode=0644
+        [[ ! -x "$src" ]] || mode=0755
+        args=()
+        while IFS= read -r key; do
+            [[ -n "$key" ]] || continue
+            [[ -n "${!key+x}" ]] || die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"
+            args+=("$key=${!key}")
+        done < <(grep -oE '__[A-Z][A-Z0-9_]*__' "$src" | sort -u | sed 's/^__//; s/__$//')
+        if [[ ${#args[@]} -gt 0 ]]; then
+            render_template "$src" "$dst" "$mode" "${args[@]}"
+        else
+            atomic_write "$dst" "$mode" <"$src"
+        fi
+        [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || changed=1
+    done
+    [[ "$changed" -eq 1 ]]
+}
+
+paket_bildirim_oku() { # ID ANAHTAR → değer (repo bildirimi; `source` edilmez)
+    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$V2_ROOT/magaza/$1/paket.env" | head -n 1
+}
+
+# Katalog sırası: yerleşik olmayan paketler, PAKET_SIRA'ya göre.
+paket_katalog() {
+    local dir id
+    for dir in "$V2_ROOT"/magaza/*/; do
+        id="${dir%/}"; id="${id##*/}"
+        [[ -f "$dir/paket.env" ]] || continue
+        [[ "$(paket_bildirim_oku "$id" PAKET_YERLESIK)" == 1 ]] && continue
+        printf '%s\t%s\n' "$(paket_bildirim_oku "$id" PAKET_SIRA)" "$id"
+    done | sort -n | cut -f2 | tr '\n' ' '
+}
+
 ensure_module_files() {
-    local changed=0
+    local dir id
     install -d -m 0755 -o root -g root "$MODULES_DIR"
-    # DD-158: klasör WebDAV birimi, Caddy sitesi ve dnsmasq adı.
-    # Canlı kopyaları master-modul koyar; kullanıcı kayıtları yeniden üretilmez.
-    install -d -m 0755 -o root -g root "$MODULES_DIR/paylasim"
-    render_template "$V2_ROOT/magaza/paylasim/master-paylasim.service" "$MODULES_DIR/paylasim/master-paylasim.service" 0644 \
-        SERVER_ROOT="$SERVER_ROOT" \
-        SHARE_DIR="$SHARE_DIR" \
-        SHARE_PORT="$SHARE_PORT" \
-        SHARE_WAN_BACKEND="$SHARE_WAN_BACKEND" \
-        SHARE_STATE_FILE="$SHARE_STATE_FILE" \
-        SBIN_DIR="$SBIN_DIR" \
-        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
-        DOWNLOADS_UID="$DOWNLOADS_UID" \
-        DOWNLOADS_GID="$DOWNLOADS_GID"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/magaza/paylasim/paylasim.caddy" "$MODULES_DIR/paylasim/paylasim.caddy" 0644 \
-        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        SHARE_PORT="$SHARE_PORT"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/magaza/paylasim/dnsmasq.conf" "$MODULES_DIR/paylasim/dnsmasq.conf" 0644 \
-        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        TAILSCALE_IF="$TAILSCALE_IF"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
-    # DD-151: qBittorrent — ilk ayar (profil boşken bir kez), servis eki, Caddy sitesi, dnsmasq adı.
-    changed=0
-    install -d -m 0755 -o root -g root "$MODULES_DIR/torrent"
-    render_template "$V2_ROOT/magaza/torrent/qBittorrent.conf" "$MODULES_DIR/torrent/qBittorrent.conf" 0644 \
-        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
-        TORRENT_TEMP_DIR="$TORRENT_TEMP_DIR" \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT"
-    render_template "$V2_ROOT/magaza/torrent/master-stack.conf" "$MODULES_DIR/torrent/master-stack.conf" 0644 \
-        TORRENT_PROFILE_DIR="$TORRENT_PROFILE_DIR" \
-        DOWNLOADS_PATH="$DOWNLOADS_PATH" \
-        SERVER_ROOT="$SERVER_ROOT" \
-        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
-        SHARE_DIR="$SHARE_DIR"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/magaza/torrent/torrent.caddy" "$MODULES_DIR/torrent/torrent.caddy" 0644 \
-        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        TORRENT_UI_PORT="$TORRENT_UI_PORT"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/magaza/torrent/dnsmasq.conf" "$MODULES_DIR/torrent/dnsmasq.conf" 0644 \
-        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
-        TAILSCALE_IF="$TAILSCALE_IF"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED torrent"
-    # DD-196: WireGuard paketinin araçları (master-wg, wg-quick@ birim eki) kurulumda yalnız buraya
-    # işlenir; sunucuya master-modul kur/uygula koyar, kaldir geri alır. Kuruluysa her çalıştırmada
-    # uygulanır (paketler bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
-    install -d -m 0755 -o root -g root "$MODULES_DIR/wireguard"
-    atomic_write "$MODULES_DIR/wireguard/master-wg" 0755 <"$V2_ROOT/magaza/wireguard/master-wg"
-    render_template "$V2_ROOT/magaza/wireguard/wg-quick-master-stack.conf" \
-        "$MODULES_DIR/wireguard/wg-quick-master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"
-    MODULES_CHANGED="$MODULES_CHANGED wireguard"
+    # Her paket (yerleşik WebDAV dahil) MODULES_DIR/<id>/ altına işlenir; canlı kopyaları
+    # master-modul koyar, kullanıcı kayıtları yeniden üretilmez (DD-158). Değişen ya da her
+    # kurulumda uygulanan (PAKET_UYGULA_HEP=1) paket MODULES_CHANGED'e girer.
+    for dir in "$V2_ROOT"/magaza/*/; do
+        id="${dir%/}"; id="${id##*/}"
+        [[ -f "$dir/paket.env" ]] || die "paket bildirimi yok: $dir"
+        if render_package_dir "$id" || [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]; then
+            MODULES_CHANGED="$MODULES_CHANGED $id"
+        fi
+    done
     if [[ ! -f "$MODULES_FILE" ]]; then
         atomic_write "$MODULES_FILE" 0644 </dev/null
     fi
@@ -744,8 +744,8 @@ reapply_modules() {
         [[ "$id" != dosya && "$id" != paylasim ]] || continue
         state="$(module_state "$id")"
         [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
-        if [[ "$id" == wireguard ]]; then
-            log INFO "Modül wireguard: yeniden uygulanıyor (her kurulumda: paketler, çekirdek modülü, ağlar)"
+        if [[ "$(sed -n 's/^PAKET_UYGULA_HEP=//p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null)" == 1 ]]; then
+            log INFO "Modül $id: yeniden uygulanıyor (her kurulumda: $(sed -n 's/^PAKET_UYGULA_NEDEN="\(.*\)"$/\1/p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null))"
         else
             log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
         fi
@@ -1378,15 +1378,20 @@ stage_7() {
     log INFO "Temel doğrulamalar geçti"
 }
 
-# Özet: yerleşik yetenekler ve isteğe bağlı uygulamalar; kurulu olanın adresi.
+# Özet: yerleşik yetenekler ve mağaza paketleri (DD-197: ad ve bilgi paketten); kurulu olanın adresi.
 summary_modules() {
-    local id name info st
-    for id in dosya wireguard torrent paylasim; do
+    local id name info st ids
+    ids="$(paket_katalog)"
+    for id in dosya $ids paylasim; do
         case "$id" in
             dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
-            wireguard) name="WireGuard"; info="${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer" ;;
-            torrent) name="qBittorrent"; info="http://torrent.${LOCAL_DOMAIN}; ilk giriş bilgisi kartında" ;;
             paylasim) name="Paylaşım"; info="Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ;;
+            *)
+                name="$(paket_bildirim_oku "$id" PAKET_AD)"
+                # Paketin kancası tek satır bilgi verir; alt kabukta, hiçbir şey çalıştırmadan.
+                info="$( [[ -f "$V2_ROOT/magaza/$id/kanca" ]] && ( source "$V2_ROOT/magaza/$id/kanca" 2>/dev/null;
+                    declare -F paket_ozet >/dev/null 2>&1 && paket_ozet ) 2>/dev/null || true )"
+                ;;
         esac
         case "$(module_state "$id")" in
             calisiyor) st="kurulu" ;;

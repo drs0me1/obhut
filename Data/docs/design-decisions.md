@@ -13,6 +13,55 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-197: The store engine and package format, phase 1a (v2-171)
+
+- **Scope (user, 2026-10-01: "Faz 1'e başla"):** the first half of phase 1 of the
+  store model (DD-196): the engine and the package format. The second half (phase
+  1b) makes firewall, health, port catalogue and publication rows derive from
+  package declarations; phase 2 renames the backend and loads Konsol pages from
+  packages.
+- **Package format.** A package is `Data/magaza/<id>/`, rendered by the installer to
+  `MODULES_DIR/<id>/`. It holds:
+  - `paket.env`, the manifest: `PAKET_AD`, `PAKET_SIRA` (catalogue order),
+    `PAKET_CALISMA` (`host`/`konsol`), `PAKET_DURDURULABILIR`, `PAKET_HESAP`,
+    `PAKET_APT` (Debian packages), `PAKET_ARACLAR` (files placed in `SBIN_DIR`
+    0755), `PAKET_EKLER` (`source:unit.d/file` drop-ins placed under `UNIT_DIR`),
+    `PAKET_ADLAR` (has `<id>.caddy` and `dnsmasq.conf` names), `PAKET_GUNLUK`
+    (journal unit patterns), `PAKET_KUR_ADIM` (progress total), `PAKET_YAYIN`
+    (registry changes republish Caddy), `PAKET_UYGULA_HEP`/`PAKET_UYGULA_NEDEN`
+    (re-applied on every installer run, and why) and `PAKET_YERLESIK` (built-in:
+    outside the catalogue, never removable). The engine reads it line by line
+    with a strict pattern and never sources it.
+  - `kanca`, the hooks: a bash file the engine sources, defining only `paket_*`
+    functions: `paket_kur`, `paket_kaldir`, `paket_uygula STATE`, `paket_baslat`,
+    `paket_durdur`, `paket_birim` (the unit name), `paket_hesap`, `paket_veri_sil`,
+    `paket_gunluk_suz` (log filter) and `paket_ozet` (installer summary). Hooks run
+    as root like the engine did before; packages come only from this repository.
+  - Slot files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools and seeds.
+    Any file with `__KEY__` placeholders is a template filled from the installer's
+    own variable of that name; a missing variable stops the install.
+- **Engine.** `master-modul` knows no application: the catalogue is the set of
+  rendered package folders with a manifest, ordered by `PAKET_SIRA`; `liste`,
+  `kur`, `baslat`, `durdur`, `kaldir [--veri]`, `gunluk`, `hesap` and `uygula`
+  keep their names, locks, progress file and output format. Apt packages, tools,
+  drop-ins and names are placed and removed by engine helpers the hooks call in
+  the order the package needs (`paket_apt`, `paket_araclar_koy`, `paket_ekler_koy`,
+  `paket_adlar_ac`, their `kaldir`/`kapat` counterparts, `progress_step`,
+  `registry_set`, `firewall_apply`). After `kaldir` the engine removes every
+  declared artifact itself and fails the operation if any trace remains
+  (`paket_iz_kontrol`), so a package cannot leave a tool, drop-in or name behind.
+  Built-in Files and WebDAV keep their installer-only `yerlesik` path; `paylasim`
+  carries a manifest with `PAKET_YERLESIK=1` so the renderer treats it like any
+  package while the catalogue excludes it.
+- **Installer.** `render_package_dir` renders or copies every file of every
+  package folder (executables 0755); `ensure_module_files` marks a package for
+  `uygula` when a file changed or the manifest says always. Summary lines take the
+  name from the manifest and one line from the package's `paket_ozet` hook.
+- **Unchanged for now:** Konsol's `MOD_META` texts and routes, the backend's
+  `ACCOUNT_MODULES`/`PORT_MODULES`/health units and `master_publications`'
+  module ids, the firewall's WireGuard registry logic, the `WG_*` state keys.
+  Those are phase 1b and phase 2.
+
 ### DD-196: The store model, phase 0 (v2-170)
 
 - **Request (user, 2026-10-01):** after a clean install without WireGuard, Konsol's log

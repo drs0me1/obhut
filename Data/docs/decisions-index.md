@@ -198,3 +198,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-194 | Konsol sign-in with a one-time setup code | live; public sign-in rules added by DD-195 | design-decisions.md |
 | DD-195 | Konsol over public HTTPS through the publication table | live | design-decisions.md |
 | DD-196 | The store model, phase 0 | live | design-decisions.md |
+| DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |

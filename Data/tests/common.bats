@@ -127,8 +127,10 @@ EOF
     [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 7 ]
     grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
     grep -qF -- '-o DPkg::Lock::Timeout=300 "$@"' "$V2_ROOT/scripts/master-modul"
-    grep -qx 'WG_PACKAGES="wireguard-tools qrencode"' "$V2_ROOT/scripts/master-modul"
-    grep -qx '            apt_install qbittorrent-nox || fail_step "$FAIL"' "$V2_ROOT/scripts/master-modul"
+    # DD-197: packages are declared in each package's manifest; the engine installs them.
+    grep -qx 'PAKET_APT="wireguard-tools qrencode"' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qx 'PAKET_APT="qbittorrent-nox"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qx '    paket_apt || fail_step "$FAIL"' "$V2_ROOT/magaza/torrent/kanca"
     # retry runs a function in a child bash that does not inherit arrays, so
     # the masked-quiet installs take APT_OPTS as arguments (DD-125).
     [ "$(grep -cF 'apt_get_install_masked_quiet "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 2 ]
@@ -552,7 +554,7 @@ EOF
 
 @test "qBittorrent and WebDAV run as the downloads uid" {
     # DD-151: the package's template unit runs as the downloads account's own name.
-    body="$(awk '/^torrent_unit_name\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
+    body="$(awk '/^torrent_unit_name\(\)/,/^}$/' "$V2_ROOT/magaza/torrent/kanca")"
     grep -qF 'getent passwd "$DOWNLOADS_UID"' <<<"$body"
     grep -qF "printf 'qbittorrent-nox@%s.service\n'" <<<"$body"
     # DD-152: the share service reads the shared files as their owner, never as root.
@@ -723,10 +725,13 @@ assert not missing, missing
     grep -qx 'ExecStartPre=+__SBIN_DIR__/master-firewall --check' "$dropin"
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -qxF 'ExecStartPre=+$SBIN_DIR/master-firewall --check'
-    # DD-196: the drop-in is rendered into the package folder; master-modul places it on install only.
-    grep -qF '"$MODULES_DIR/wireguard/wg-quick-master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"' "$V2_ROOT/install.sh"
+    # DD-196/197: the drop-in is rendered into the package folder by the generic renderer
+    # (its __SBIN_DIR__ comes from the installer's variable); master-modul places it on install only.
+    grep -q '__SBIN_DIR__' "$dropin"
+    grep -q '^render_package_dir()' "$V2_ROOT/install.sh"
     run ! grep -qF '"$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644' "$V2_ROOT/install.sh"
-    grep -qF 'mv -f -- "$tmp" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"' "$V2_ROOT/scripts/master-modul"
+    grep -qx 'PAKET_EKLER="wg-quick-master-stack.conf:wg-quick@.service.d/master-stack.conf"' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qF 'cp -- "$src" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"' "$V2_ROOT/scripts/master-modul"
     # With the firewall recovery and before the tailnet wait: WireGuard does not need Tailscale.
     [ "$(awk '/^recover_firewall_if_broken$/ {print NR; exit}' "$rt")" -lt \
         "$(awk '/^recover_failed_wireguard$/ {print NR; exit}' "$rt")" ]
@@ -1669,10 +1674,10 @@ EOF
     # never makes a key or a network of its own either.
     [ "$(grep -cE '^ensure_wireguard(_ready)?\(\)|^ensure_wg_networks_running\(\)' "$V2_ROOT/install.sh")" -eq 0 ]
     local ready
-    ready="$(awk '/^wg_packages\(\)/,/^firewall_apply\(\)/' "$V2_ROOT/scripts/master-modul")"
+    ready="$(awk '/^wg_layer\(\)/,/^paket_kur\(\)/' "$V2_ROOT/magaza/wireguard/kanca")"
     [ -n "$ready" ]
     run ! grep -qE 'wg genkey|syncconf|PrivateKey' <<<"$ready"
-    grep -qx 'WG_PACKAGES="wireguard-tools qrencode"' "$V2_ROOT/scripts/master-modul"
+    grep -qx 'PAKET_APT="wireguard-tools qrencode"' "$V2_ROOT/magaza/wireguard/paket.env"
 }
 
 @test "wireguard.command talks to the server only: picks a network, no backup, no upload" {
@@ -1852,8 +1857,14 @@ PY
 }
 
 modul_fixture() {
-    # DD-148: master-modul with a fake flock and logger.
+    # DD-148: master-modul with a fake flock and logger. DD-197: the catalogue is whatever
+    # package folders carry a manifest; the fixture copies the repo's manifests and hooks.
+    local id
     mkdir -p "$TMP/mbin" "$TMP/mods" "$TMP/run" "$TMP/dl"
+    for id in wireguard torrent; do
+        mkdir -p "$TMP/mods/$id"
+        cp "$V2_ROOT/magaza/$id/paket.env" "$V2_ROOT/magaza/$id/kanca" "$TMP/mods/$id/"
+    done
     cat >"$TMP/mstate.env" <<EOF
 MODULES_FILE=$TMP/moduller
 MODULES_DIR=$TMP/mods
@@ -1900,10 +1911,13 @@ mm() {
 @test "master-modul keeps lifecycle changes locked and deletes only owned data" {
     [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 6 ]
     grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
-    grep -qF '[[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0' "$V2_ROOT/scripts/master-modul"
-    run ! grep -qE 'files_drop_data|share_drop_data|share_marker' "$V2_ROOT/scripts/master-modul"
-    grep -qF 'find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/scripts/master-modul"
-    [ "$(grep -c 'find -L' "$V2_ROOT/scripts/master-modul")" -eq 0 ]
+    # DD-197: data removal lives in each package's hook, still bounded to the package's own paths.
+    grep -qF '[[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0' "$V2_ROOT/magaza/torrent/kanca"
+    run ! grep -qE 'files_drop_data|share_drop_data|share_marker' "$V2_ROOT/scripts/master-modul" "$V2_ROOT"/magaza/*/kanca
+    grep -qF 'find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' "$V2_ROOT/magaza/wireguard/kanca"
+    [ "$(cat "$V2_ROOT/scripts/master-modul" "$V2_ROOT"/magaza/*/kanca | grep -c 'find -L')" -eq 0 ]
+    # The engine knows no application: no package id in its code paths.
+    run ! grep -qE 'torrent_|wg_|qbittorrent|wireguard' "$V2_ROOT/scripts/master-modul"
 }
 
 share_fixture() {
@@ -2518,15 +2532,19 @@ EOF
     s4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     run ! grep -qF '"$SBIN_DIR/master-wg" 0755' <<<"$s4"
     run ! grep -q 'wg-quick@.service.d' <<<"$s4"
-    grep -qF 'atomic_write "$MODULES_DIR/wireguard/master-wg" 0755 <"$V2_ROOT/magaza/wireguard/master-wg"' "$V2_ROOT/install.sh"
+    [ -x "$V2_ROOT/magaza/wireguard/master-wg" ]
+    grep -qF '[[ ! -x "$src" ]] || mode=0755' "$V2_ROOT/install.sh"
     run ! grep -q 'install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"' "$V2_ROOT/install.sh"
-    # The package puts them in place on install/reapply and takes them away on removal.
+    # The package puts them in place on install/reapply and takes them away on removal (DD-197:
+    # declared in the manifest, placed and removed by the engine's generic helpers).
     modul="$V2_ROOT/scripts/master-modul"
-    grep -qF 'mv -f -- "$tmp" "$SBIN_DIR/master-wg"' "$modul"
-    awk '/^cmd_kur\(\)/,/^}$/' "$modul" | grep -q 'wg_tools || fail_step'
-    awk '/^cmd_uygula\(\)/,/^}$/' "$modul" | grep -q 'wg_tools || fail_step'
-    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '            wg_tools_remove'
-    grep -qF 'rm -f -- "$SBIN_DIR/master-wg" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"' "$modul"
+    grep -qx 'PAKET_ARACLAR="master-wg"' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qF 'cp -- "$src" "$tmp" && chmod 0755 "$tmp" && mv -f -- "$tmp" "$dst"' "$modul"
+    awk '/^paket_kur\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/kanca" | grep -q 'paket_araclar_koy || fail_step'
+    awk '/^paket_uygula\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/kanca" | grep -q 'paket_ekler_koy || fail_step'
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_araclar_kaldir'
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_ekler_kaldir'
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_iz_kontrol'
     # Stage 7: the tool is checked only with the package, and must be absent without it; the probe is package-neutral.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -qF 'die "WireGuard kurulu değilken aracı ya da birim eki sunucuda kalmış"' <<<"$s7"
@@ -2935,9 +2953,10 @@ PY
     grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
-    for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf; do
-        grep -qF "render_template \"\$V2_ROOT/magaza/torrent/$f\" \"\$MODULES_DIR/torrent/$f\" 0644" "$V2_ROOT/install.sh"
+    for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf paket.env kanca; do
+        [ -f "$V2_ROOT/magaza/torrent/$f" ]
     done
+    grep -q '__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/torrent.caddy"
     grep -qx 'WebUI\\Address=127.0.0.1' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'WebUI\\Port=__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'Session\\DefaultSavePath=__DOWNLOADS_PATH__/' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
@@ -2972,6 +2991,7 @@ PY
 }
 
 @test "installer prepares optional modules and reapplies installed ones separately from builtins" {
+    local render
     # DD-148: the installer writes module files and an empty registry; Konsol installs.
     grep -qx 'MODULES_FILE="/etc/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
     grep -qx 'MODULES_DIR="/usr/local/share/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
@@ -2983,12 +3003,16 @@ PY
     grep -qx '    ensure_module_files' <<<"$stage4"
     body="$(awk '/^ensure_module_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     run ! grep -q 'unpackerr' <<<"$body"
-    # DD-149, DD-152: the share module's unit, Caddy site and dnsmasq name; one change marks it once.
-    for f in master-paylasim.service paylasim.caddy dnsmasq.conf; do
-        grep -qF "render_template \"\$V2_ROOT/magaza/paylasim/$f\" \"\$MODULES_DIR/paylasim/$f\" 0644" <<<"$body"
-    done
-    grep -qF '[[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"' <<<"$body"
+    # DD-197: every package folder is rendered generically; placeholders come from the installer's own variables.
+    grep -qF 'render_package_dir "$id" || [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]' <<<"$body"
+    grep -qF 'MODULES_CHANGED="$MODULES_CHANGED $id"' <<<"$body"
     grep -qF 'atomic_write "$MODULES_FILE" 0644 </dev/null' <<<"$body"
+    render="$(awk '/^render_package_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF "grep -oE '__[A-Z][A-Z0-9_]*__' \"\$src\"" <<<"$render"
+    grep -qF 'die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"' <<<"$render"
+    grep -qF '[[ ! -x "$src" ]] || mode=0755' <<<"$render"
+    for id in wireguard torrent paylasim; do [ -f "$V2_ROOT/magaza/$id/paket.env" ]; done
+    grep -qx 'PAKET_YERLESIK=1' "$V2_ROOT/magaza/paylasim/paket.env"
     # The installer never installs, stops or removes a module on its own.
     [ "$(grep -cE 'master-modul" (kur|kaldir|durdur|baslat|parola)' "$V2_ROOT/install.sh")" -eq 0 ]
     # Module site files: the base Caddyfile imports the directory stage 6 creates before validating.
@@ -4161,6 +4185,8 @@ PY
 @test "installer summary names each module's state and says why WireGuard is re-applied" {
     # v2-120: an installed module is not "installed from Konsol"; its address is shown instead.
     eval "$(awk '/^summary_modules\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^paket_bildirim_oku\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    eval "$(awk '/^paket_katalog\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     module_state() { case "$1" in torrent) echo calisiyor ;; paylasim) echo durduruldu ;; esac; }
     SERVER_ROOT=/srv LOCAL_DOMAIN=ayc TAILSCALE_IPV4=100.64.0.7 SHARE_PORT=61010 WG_NET_COUNT=1 WG_PEER_COUNT=2
     run summary_modules
@@ -4173,7 +4199,10 @@ PY
     # DD-196: the WireGuard usage note is printed only with the package installed.
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(wg_summary_note)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
-    awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'
+    # DD-197: the always-reapply flag and its reason come from the package manifest.
+    grep -qx 'PAKET_UYGULA_HEP=1' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qx 'PAKET_UYGULA_HEP=0' "$V2_ROOT/magaza/torrent/paket.env"
+    awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'yeniden uygulanıyor (her kurulumda: '
 }
 
 settings_fixture() {

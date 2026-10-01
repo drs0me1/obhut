@@ -4,6 +4,17 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Store engine and package format, phase 1a, v2-171 (DD-197):**
+- `master-modul` rewritten as a manifest-driven engine; `magaza/<id>/paket.env` +
+  `kanca` hold each package's declaration and lifecycle; installer renders package
+  folders generically (`render_package_dir`), summary from manifests/hooks.
+- Deployed to nrm (v2-171); qBittorrent reapply and a full WireGuard cycle verified.
+  Note: nrm's Tailscale IPv4 is now 100.77.205.10 after the user's clean install.
+- Phase 1b next: firewall/health/ports/publication rows from package declarations.
+- Uncommitted on top of 662f785.
+
+## Previous Task
+
 **2026-10-01 — Store model phase 0, v2-170 (DD-196):**
 - User reported WireGuard rows/errors in Konsol's log without the package; asked for a
   fully independent App Store and a store design. Model proposed and approved; folder
@@ -13,7 +24,7 @@ Cross-session continuity for this repository.
   description, Caddy `--environ`, tailnet timer, module log route. The live removal test
   exposed a pre-existing bug (`kaldir wireguard` never closed networks on real systemd:
   `list-unit-files` exit 1 aborted the listing); fixed with a Bats regression. Deployed to
-  nrm (v2-170), kur/net-add/kaldir cycle clean. Uncommitted.
+  nrm (v2-170), kur/net-add/kaldir cycle clean. Committed as 662f785.
 - Next: phase 1 (manifest + hooks + declarative firewall/health/ports/publications),
   phase 2 (backend/API rename, Konsol pages from packages).
 

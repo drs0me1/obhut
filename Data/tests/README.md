@@ -68,6 +68,13 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-171 (DD-197, store phase 1a): the Bats fixtures copy each package's
+`paket.env` and `kanca` from `magaza/` into the fake `MODULES_DIR`, so the
+module tests run the real engine against the real hooks; the engine itself is
+checked to contain no application id. Installer tests check the generic
+renderer (`render_package_dir`), the manifest-driven reapply flag and the
+summary built from manifests and `paket_ozet`.
+
 v2-170 (DD-196, store phase 0): the Bats test "store phase 0" checks the repo
 layout (`magaza/`, the WireGuard tool and drop-in inside the package), that the
 base installer neither installs nor keeps them, that `master-modul` places and

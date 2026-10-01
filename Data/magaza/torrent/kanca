@@ -1,0 +1,199 @@
+# qBittorrent paketinin kancaları (DD-151, DD-197). master-modul bu dosyayı `source` eder ve
+# yalnız paket_* işlevlerini çağırır. Debian paketi (qbittorrent-nox) sunucunun kendisinde,
+# indirme klasörünün sahibi olarak çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir
+# kez en az ayar yazılır (indirme yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum
+# bunları korur (DD-178). Hesap/dizin değişikliklerini Konsol ayar işçisi yapar; ilk giriş
+# geçici paroladır. İnternete eş portu açılmaz; paket kaldırılınca bile sunucuda kalır.
+# shellcheck shell=bash
+
+paket_gerekli() {
+    need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR UNIT_DIR \
+        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
+    torrent_unit_name >/dev/null || fail_step "uid $DOWNLOADS_UID için kullanıcı yok; kurulumu yeniden çalıştırın"
+}
+
+torrent_unit_name() { # örnek adı, indirme klasörünün sahibinin kullanıcı adıdır
+    local user
+    user="$(getent passwd "$DOWNLOADS_UID" 2>/dev/null | cut -d: -f1 || true)"
+    [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+    printf 'qbittorrent-nox@%s.service\n' "$user"
+}
+
+paket_birim() {
+    torrent_unit_name
+}
+
+# Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır.
+torrent_profile() {
+    local conf_dir="$TORRENT_PROFILE_DIR/qBittorrent" tmp
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" -- "$TORRENT_PROFILE_DIR" "$conf_dir"
+    [[ ! -e "$conf_dir/qBittorrent.conf" ]] || return 0
+    [[ -f "$MODULES_DIR/torrent/qBittorrent.conf" ]] ||
+        fail_step "modül dosyası yok ($MODULES_DIR/torrent/qBittorrent.conf); kurulumu yeniden çalıştırın"
+    tmp="$(mktemp "$conf_dir/.qBittorrent.conf.XXXXXX")"
+    cp -- "$MODULES_DIR/torrent/qBittorrent.conf" "$tmp"
+    chmod 0640 "$tmp"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$tmp"
+    mv -f -- "$tmp" "$conf_dir/qBittorrent.conf"
+}
+
+# Servis ayakta, root değil indirme sahibi olarak çalışıyor, çöp ve paylaşım kökü ona kapalı.
+# --ilk: yeni kurulumda arayüz de sınanır (127.0.0.1'de girişsiz 403; sonra ayarlar kullanıcının).
+torrent_verify() { # [--ilk]
+    local unit _ uid code paths ok=0
+    FAIL=""
+    unit="$(torrent_unit_name)"
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$unit" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$unit" || { FAIL="qBittorrent servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$unit")"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    paths="$(systemctl show -p InaccessiblePaths --value "$unit" 2>/dev/null || true)"
+    [[ "$paths" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* && "$paths" == *"$SERVER_ROOT/$SHARE_DIR"* ]] ||
+        { FAIL="qBittorrent çöp ve paylaşım klasörünü görebiliyor"; return 1; }
+    [[ "${1:-}" == --ilk ]] || return 0
+    for _ in $(seq 1 20); do
+        code="$(http_code "http://127.0.0.1:$TORRENT_UI_PORT/api/v2/app/version")"
+        if [[ "$code" == 403 ]]; then ok=1; break; fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta girişsiz 403 vermedi ($code)"; return 1; }
+}
+
+torrent_verify_names() {
+    local _ code="" ans=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        code="$(http_code -H "Host: torrent.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/api/v2/app/version")"
+        ans="$(dig +short +time=2 +tries=1 "torrent.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "torrent.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
+        [[ "$code" == 403 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        sleep 1
+    done
+    FAIL="torrent.$LOCAL_DOMAIN açılmadı (arayüz $code, DNS '$ans')"
+    return 1
+}
+
+torrent_off() { # servis durur ve açılışta başlamaz
+    local unit
+    unit="$(torrent_unit_name)" || return 0
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+}
+
+# Başarısız kurulum ve kaldırma aynı yoldan geri alınır: adlar, servis, birim eki. Paket kalır.
+torrent_rollback() {
+    paket_adlar_kapat
+    torrent_off
+    paket_ekler_kaldir
+}
+
+# --veri: profil (ayarlar ve torrent listesi). İndirilen dosyalara dokunulmaz.
+torrent_drop_data() {
+    [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
+    rm -rf -- "$TORRENT_PROFILE_DIR"
+    rm -f -- "$UNIT_DIR/qbittorrent-nox@.service.d/90-konsol.conf"
+}
+
+# Geçici parola qBittorrent'in bu açılıştaki günlüğündedir; parola arayüzde ayarlandıysa yoktur.
+torrent_first_login() { # [--parola]
+    local unit inv log user temp
+    unit="$(torrent_unit_name)" || die "hesap yok"
+    systemctl is-active --quiet "$unit" || die "qBittorrent çalışmıyor"
+    inv="$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)"
+    [[ "$inv" =~ ^[0-9a-f]{32}$ ]] || die "qBittorrent günlüğü okunamadı"
+    log="$(journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" 2>/dev/null || true)"
+    user="$(sed -n 's/.*WebUI administrator username is: *//p' <<<"$log" | tail -n 1)"
+    # DD-156: qBittorrent may omit the username in logs once the password is set.
+    local configured
+    configured="$(python3 - "$SBIN_DIR" "$TORRENT_PROFILE_DIR/qBittorrent/qBittorrent.conf" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from master_settings import SettingsError, read_regular
+try:
+    text = read_regular(sys.argv[2])[0].decode()
+except FileNotFoundError:
+    text = ""
+except (OSError, ValueError, SettingsError):
+    sys.exit(1)
+values = [line.partition("=")[2] for line in text.splitlines() if line.startswith("WebUI\\Username=")]
+print(values[-1] if values else "")
+PY
+    )" || die "qBittorrent ayar dosyası güvenli okunamadı"
+    [[ -z "$configured" ]] || user="$configured"
+    temp="$(sed -n 's/.*temporary password is provided for this session: *//p' <<<"$log" | tail -n 1)"
+    [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || user="admin"
+    if [[ ! "$temp" =~ ^[A-Za-z0-9]{6,64}$ ]]; then
+        printf '%s\tayarli\n' "$user"
+    elif [[ "${1:-}" == --parola ]]; then
+        printf '%s\tgecici\t%s\n' "$user" "$temp"
+    else
+        printf '%s\tgecici\n' "$user"
+    fi
+}
+
+paket_kur() {
+    paket_gerekli
+    progress_step 1 "Paket kuruluyor"
+    paket_apt || fail_step "$FAIL"
+    progress_step 2 "Servis birimi"
+    paket_ekler_koy || fail_step "$FAIL"
+    torrent_profile
+    progress_step 3 "Servis başlatılıyor"
+    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 ||
+        { torrent_rollback; fail_step "qBittorrent başlatılamadı"; }
+    torrent_verify --ilk || { torrent_rollback; fail_step "$FAIL"; }
+    progress_step 4 "Ad"
+    paket_adlar_ac || { torrent_rollback; fail_step "$FAIL"; }
+    torrent_verify_names || { torrent_rollback; fail_step "$FAIL"; }
+}
+
+paket_baslat() {
+    paket_gerekli
+    paket_ekler_koy || fail_step "$FAIL"
+    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+    torrent_verify || fail_step "$FAIL"
+    paket_adlar_ac || fail_step "$FAIL"
+}
+
+paket_durdur() { # servis durur; adlar kalır
+    paket_gerekli
+    torrent_off
+}
+
+paket_kaldir() {
+    paket_gerekli
+    torrent_rollback
+}
+
+paket_veri_sil() {
+    torrent_drop_data
+}
+
+paket_uygula() { # KAYIT_DURUMU
+    local state="$1"
+    paket_gerekli
+    paket_ekler_koy || fail_step "$FAIL"
+    [[ "$EKLER_DEGISTI" == 0 ]] || systemctl try-restart "$(torrent_unit_name)" >/dev/null 2>&1 || true
+    paket_adlar_ac || fail_step "$FAIL"
+    if [[ "$state" == calisiyor ]]; then
+        systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+        torrent_verify || fail_step "$FAIL"
+    fi
+    if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+        python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"
+    fi
+}
+
+paket_hesap() { # [--parola]
+    torrent_first_login "$@"
+}
+
+# Geçici parola satırı gösterilmez: Konsol onu yalnız istenince, ayrıca verir.
+paket_gunluk_suz() {
+    sed 's/\(temporary password is provided for this session:\).*/\1 ••••/'
+}
+
+paket_ozet() {
+    printf 'http://torrent.%s; ilk giriş bilgisi kartında' "$LOCAL_DOMAIN"
+}

@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Store engine and package format, phase 1a (v2-171)
+
+- `master-modul` is now a package engine that knows no application (DD-197).
+  Each package under `magaza/<id>/` carries a manifest (`paket.env`) and a hook
+  file (`kanca`); the catalogue, runtime, start/stop and account capabilities,
+  apt packages, tools, unit drop-ins, names and log units come from the
+  manifest. The engine places and removes the declared artifacts itself and
+  refuses to finish a removal that left any of them behind.
+- The installer renders every package folder generically: files with `__KEY__`
+  placeholders are filled from its own variables, executables keep 0755, and a
+  package is re-applied when a file changed or its manifest says always. The
+  summary takes names and info lines from the packages.
+- WireGuard and qBittorrent lifecycles moved verbatim into their hooks; the
+  built-in WebDAV got a manifest marked built-in. Commands, locks, progress and
+  `liste` output are unchanged for Konsol.
+- **Verified:** Mac — 400 Python, 169 Bats (fixtures now run the real engine
+  against the real hooks), ShellCheck. Linux (nrm) — 400 Python, 169 Bats. nrm —
+  portable run with scratch inputs (exit 0, no warnings): every package folder
+  carries its manifest and hooks, qBittorrent was re-applied and kept running
+  with its name and login state, and a real `kur wireguard`, `master-wg net-add`,
+  `kaldir --veri` cycle left no tool, drop-in, modules-load file, key, registry
+  row or interface behind, with the firewall check clean.
+
 ### 2026-10-01 — Store model, phase 0: the base owns no WireGuard (v2-170)
 
 - Konsol → Ayarlar → Günlük labelled every root-backend event "WireGuard", so
