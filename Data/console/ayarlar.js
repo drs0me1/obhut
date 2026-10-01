@@ -427,9 +427,9 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         if (item.enabled && rows.some(other => other.service !== row.service && other.enabled && other.domain === item.domain)) {
           domain.setCustomValidity("Bu HTTPS alan adı başka bir uygulamada kullanılıyor."); domain.reportValidity(); return;
         }
-        if (panel && item.enabled && rows.some(other => other.mode === "http")) {
-          // Same rule as qBittorrent (DD-191): the shared HTTPS port cannot coexist with legacy WebDAV HTTP.
-          domain.setCustomValidity("Önce WebDAV için HTTPS alan adı kaydedin veya eski HTTP internet erişimini kapatın."); domain.reportValidity(); return;
+        if (item.enabled && row.service !== "paylasim" && rows.some(other => other.mode === "http" && other.wan_active)) {
+          // One WAN port (v2-169): folders shared over plaintext HTTP right now block HTTPS publications; WebDAV's mode alone does not.
+          domain.setCustomValidity("WebDAV internet paylaşımı şu an eski HTTP ile açık. Önce WebDAV için HTTPS alan adı kaydedin ya da o klasörlerin internet bağlantısını kapatın."); domain.reportValidity(); return;
         }
         if (panel && item.enabled && (!row.enabled || item.domain !== row.domain)) { confirmPanel(row, item); return; }
         if (panel && row.enabled && location.protocol === "https:" && (!item.enabled || item.domain !== row.domain)) {
@@ -460,7 +460,8 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     const box = card("Adresler ve erişim", "Tailscale ve internet yayını birbirinden bağımsızdır", content,
       note(`DNS A kaydı: ${live.wan?.ipv4 || "WAN IPv4 okunamadı"} · proxy kapalı (DNS only) · HTTPS TCP ${live.manage.https?.https_port || 443}.`),
       note("WebDAV’ın ana ağ seçimi klasör izinlerini genişletmez. Kapalı ağdaki yeni istekler reddedilir; devam eden aktarımlar tamamlanabilir. Sertifika hazır olması internetten erişimin test edildiği anlamına gelmez."),
-      rows.some(row => row.mode === "http") ? note("Eski WebDAV WAN erişimi HTTP kullanıyor. HTTPS alan adı kaydedin; kapatınca HTTP’ye otomatik dönülmez.", true) : null);
+      rows.some(row => row.mode === "http" && row.wan_active) ? note("Eski WebDAV WAN erişimi HTTP kullanıyor. HTTPS alan adı kaydedin; kapatınca HTTP’ye otomatik dönülmez.", true)
+        : rows.some(row => row.mode === "http") ? note("WebDAV için HTTPS alan adı kaydedilmedi; internet paylaşımı açılırsa eski HTTP kullanılır. qBittorrent veya Panel internet yayını açıkken WebDAV internet erişimi HTTPS alan adı ister.") : null);
     box.id = "as-publications"; box.setAttribute("aria-busy", !!webBusy || !!pending?.web);
     return box;
   }

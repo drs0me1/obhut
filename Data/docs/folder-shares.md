@@ -16,7 +16,9 @@ qBittorrent may share the HTTPS port with a different hostname and its own
 native login, not the WebDAV account. TCP limits apply to their shared public
 port; WebDAV's request/password budgets still apply only to WebDAV. If both
 publications are off, no public Caddy listener is generated. For qBittorrent
-HTTPS, first convert legacy WebDAV HTTP to HTTPS or disable that HTTP gate.
+HTTPS while folders are shared over legacy WebDAV HTTP, first save an HTTPS name
+or close those folders' internet connections; with a qBittorrent or Panel row on,
+legacy HTTP internet access stays unavailable until an HTTPS name is saved (v2-169).
 These choices persist through module reapply and installer reruns.
 
 The DD-190 text below also describes the compatible older HTTPS-only API;

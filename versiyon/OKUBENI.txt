@@ -17,6 +17,11 @@ Bir sürüme dönmek
 
 Sürümler (en yeni üstte)
 ------------------------
+  2026.08.06-v2-168  2026-10-01   commit 7038240
+    Docker'sız Konsol: Dosyalar, klasör WebDAV, ZIP/RAR, App Store (WireGuard,
+    qBittorrent); kullanıcı adı/parola ile giriş (DD-194); WebDAV, qBittorrent
+    ve Panel için isteğe bağlı internet HTTPS yayını (DD-190/191/195). Sunucuda
+    (nrm) kurulu, üç yayın da çalışır halde kaydedildi.
   2026.08.06-v2-98   2026-09-15   commit a4fc938
     WireGuard menüsü: ekle/çıkar/QR/yedek/DNS değiştir/wg0 yeniden üret,
     otomatik yedek, her profille QR resmi (.png). qBittorrent ayarları

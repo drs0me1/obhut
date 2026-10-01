@@ -91,9 +91,9 @@ def main():
                 text = text.replace("__" + key + "__", value)
             return text
         Path(e["DNSMASQ_CONF_FILE"]).write_text(render("templates/dnsmasq.conf"))
-        (root / "dns/modul-torrent.conf").write_text(render("modules/torrent/dnsmasq.conf"))
+        (root / "dns/modul-torrent.conf").write_text(render("magaza/torrent/dnsmasq.conf"))
         m = settings.Manager(state)
-        settings.atomic(m.qconf, render("modules/torrent/qBittorrent.conf") + "WebUI\\Username=initial\nWebUI\\Password_PBKDF2=" + settings.password_hash("test-initial-password") + "\n", 0o640, (1000, 1000))
+        settings.atomic(m.qconf, render("magaza/torrent/qBittorrent.conf") + "WebUI\\Username=initial\nWebUI\\Password_PBKDF2=" + settings.password_hash("test-initial-password") + "\n", 0o640, (1000, 1000))
         processes = {}
         def stop(name):
             p = processes.pop(name, None)

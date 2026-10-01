@@ -310,10 +310,21 @@
     // DD-183: archive jobs; the result line is written by the server when the job ends.
     "arsiv-olustur": (e) => `ZIP oluşturma başladı: ${e.detail}`, "arsiv-ac": (e) => `Arşiv açma başladı: ${e.detail}`,
     "arsiv-iptal": (e) => `Arşiv işlemi için iptal istendi: ${e.detail}`, "arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`,
+    // DD-194/196: Konsol account, settings and share events have their own words and source.
+    "oturum-kur": () => "Konsol hesabı oluşturuldu", giris: () => "Konsol girişi", cikis: () => "Konsol çıkışı",
+    "parola-degis": () => "Konsol parolası değiştirildi",
+    "ayar-apply": () => "Ayarlar uygulandı", "ayar-confirm": () => "Ayar değişikliği onaylandı",
+    "ayar-rollback": () => "Ayarlar geri alındı", "ayar-discard": () => "Takılan ayar işlemi bırakıldı",
+    "paylasim-save": () => "Klasör paylaşımı kaydedildi", "paylasim-pause": () => "Klasör paylaşımının durumu değişti",
+    "paylasim-remove": () => "Klasör paylaşımı kaldırıldı",
   };
-  const evKind = (e) => (e.action.startsWith("modul-") ? "mod" : e.source === "panel" ? "wg" : "fs");
-  const EVICON = { wg: "shield", fs: "folder", mod: "stack" };
-  const EVLABEL = { wg: "WireGuard", fs: "Dosyalar", mod: "Modüller" };
+  // DD-196: only WireGuard's own actions are WireGuard; the root backend also carries the Konsol
+  // account, Settings, Shares and App Store events.
+  const WG_ACTIONS = new Set(["ekle", "cikar", "dns", "keepalive", "ag-ayarlar", "peer-durum", "ag-durum", "ag-ekle", "ag-kaldir", "yeniden-uret", "qr", "profil"]);
+  const evKind = (e) => e.action.startsWith("modul-") ? "mod" : e.source !== "panel" ? "fs"
+    : WG_ACTIONS.has(e.action) ? "wg" : e.action.startsWith("ayar-") ? "ayar" : e.action.startsWith("paylasim-") ? "paylasim" : "konsol";
+  const EVICON = { konsol: "key", ayar: "sliders", paylasim: "share", fs: "folder", mod: "stack", wg: "shield" };
+  const EVLABEL = { konsol: "Konsol", ayar: "Ayarlar", paylasim: "Paylaşımlar", fs: "Dosyalar", mod: "Uygulamalar", wg: "WireGuard" };
   function evText(e) {
     const fn = ACTION_TEXT[e.action];
     const text = fn ? fn(e) : `${e.action} ${e.detail}`;
@@ -1601,7 +1612,10 @@
   /* ---------- Günlük ---------- */
   let logFilter = "all";
   function renderLog() {
-    $("log-filter").replaceChildren(...[["all", "Tümü"], ["wg", "WireGuard"], ["fs", "Dosyalar"], ["mod", "Modüller"]].map(([k, label]) =>
+    // Filter chips for the kinds present; a kind no event carries (an absent package) is not offered.
+    const present = new Set(S.actions.map(evKind));
+    const chips = [["all", "Tümü"], ...Object.entries(EVLABEL).filter(([k]) => present.has(k) || k === logFilter)];
+    $("log-filter").replaceChildren(...chips.map(([k, label]) =>
       h("button", { type: "button", class: "fchip", "aria-pressed": logFilter === k, onclick: () => { logFilter = k; renderLog(); } }, label)));
     const list = S.actions.filter((e) => logFilter === "all" || evKind(e) === logFilter);
     $("log-table").replaceChildren(...(list.length ? list.map((e) => evRow(e, true))

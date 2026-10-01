@@ -13,6 +13,49 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-196: The store model, phase 0 (v2-170)
+
+- **Request (user, 2026-10-01):** after a clean install without WireGuard, Konsol's log
+  still showed "WireGuard" rows and errors. The user asked for a fully independent App
+  Store: an app sets up everything it needs on install and takes it all away on removal,
+  and for a structural "store" design. They approved the model below and the folder name
+  `magaza`, and asked to start with phase 0.
+- **Finding:** the rows were mislabelled base events. Konsol's log called every root-backend
+  event that was not a module action "WireGuard" (sign-ins, settings, shares), and failed
+  sign-ins became "WireGuard errors". Beyond that, the base owned real WireGuard pieces
+  with the package absent: the `master-wg` tool and the `wg-quick@` drop-in were installed
+  unconditionally, `/etc/wireguard` was created by the base, the root backend's unit was
+  described as the "WireGuard backend", the installer probed it through `/api/wg/state`,
+  the summary always printed "WireGuard: 0 ağ, 0 peer", Caddy's `--environ` dumped every
+  `WG_*` variable of `state.env` into the journal, and the five-minute tailnet timer scanned
+  for `wg-quick@` units.
+- **Model (approved):** the base knows no app. A package is a folder under `Data/magaza/<id>/`
+  that will carry a manifest, lifecycle hooks (`kur`, `kaldir`, `baslat`, `durdur`, `uygula`,
+  `saglik`, `hesap`, `gunluk`, `firewall`) and slot files (`<id>.caddy`, `dnsmasq.conf`,
+  units, `konsol.js`). One root engine runs the hooks, keeps the registry with each package's
+  footprint and verifies that a removal leaves nothing behind. Firewall, health, port catalogue,
+  publication rows and Konsol pages derive from installed packages' declarations, validated
+  against a narrow vocabulary; packages never write rules themselves. The catalogue stays in
+  this repository; no remote store, no third-party packages.
+- **Phase 0 (this version):** the repo folder `modules/` became `magaza/`; `master-wg` and
+  `wg-quick-master-stack.conf` moved into `magaza/wireguard/`. The installer only renders
+  them into `MODULES_DIR/wireguard/`; `master-modul kur`/`uygula wireguard` place the tool
+  and the drop-in, `kaldir` removes them (the key folder is data, removed with `--veri`),
+  and a re-run removes a tool or drop-in left by an older base install when the package is
+  absent. Stage 7 checks the tool only with the package and its absence without it, and
+  probes the backend with `/api/konsol/kaynaklar`. The unit is "Konsol root backend"; Caddy
+  starts without `--environ`; the tailnet timer and the module log route look at WireGuard
+  only while it is installed; the summary and the confirmation screen name WireGuard only
+  as a package. Konsol's log labels events by source (Konsol, Ayarlar, Paylaşımlar, Dosyalar,
+  Uygulamalar, WireGuard) with words for sign-in, settings and share events, and offers filter
+  chips only for kinds present.
+- **Still base, by design for now:** `WG_*` keys in `state.env` and `defaults.env` (the
+  firewall reads the network registry and block lists), the service and socket names
+  `master-wg-panel`, the `/api/wg/*` route and the `wireguard_installed` gates. Phase 1 moves
+  the hooks and declarations into the package folders and makes the firewall, health and port
+  views manifest-driven; phase 2 renames the backend and API and loads Konsol pages from
+  packages. Each phase is a fresh-install change; no compatibility code for earlier state.
+
 ### DD-195: Konsol over public HTTPS through the publication table (v2-167)
 
 - **Request (user, 2026-10-01):** after creating the first Konsol account, "panel
@@ -61,7 +104,8 @@ with its status and the file that holds it.
   row's Tailscale switch is fixed on. Turning the internet on, or changing the
   public name, carries `confirm: onayla`, which the server checks as well as the
   page. Like qBittorrent it shares TCP 443 and the WebDAV socket budgets and
-  cannot coexist with legacy WebDAV HTTP (the page says so before the dialog).
+  cannot run beside folders shared over legacy WebDAV HTTP right now (v2-169: the
+  live listener, not WebDAV's mode; the page says so before the dialog).
   The 30 s share guard re-runs the projection outside a pending Settings
   transaction, so a reset account (`master-konsol sifirla`) or a lost WAN address
   removes the public site and, if nothing else needs it, closes TCP 443; the
@@ -246,6 +290,13 @@ with its status and the file that holds it.
 
 - **Amended by DD-195:** the Panel row's internet switch and name are editable;
   its Tailscale switch stays fixed on. See DD-195 for the extra backend gate.
+- **Amended (v2-169, user report):** a fresh install refused the first HTTPS
+  publication because WebDAV without a saved name is "legacy HTTP mode". The
+  real constraint is Caddy's single WAN port, so the rule now follows the live
+  listener: enabling qBittorrent or Panel HTTPS is refused only while folders
+  are actually shared over plaintext HTTP; while an HTTPS row is on, legacy HTTP
+  WebDAV internet access is unavailable (cards name the reason) until an HTTPS
+  name is saved. Folder connections are never rewritten.
 - **Amended by DD-194:** a Konsol sign-in now exists; publishing the panel on the
   internet remains a separate, not yet taken decision, so its WAN row stays locked.
 - **Amended by DD-192:** folder gates are now per-connection policies. Cards
@@ -260,8 +311,9 @@ with its status and the file that holds it.
   `enabled` and `domain`. A disabled public name is remembered, never converted
   to plaintext HTTP. Existing DD-190 HTTPS settings migrate on first row save;
   the old HTTPS endpoint remains compatible. Two enabled rows cannot share a
-  hostname. qBittorrent HTTPS cannot coexist with legacy WebDAV HTTP: convert
-  that row to HTTPS or explicitly turn its WAN gate off first.
+  hostname. qBittorrent HTTPS cannot run while folders are shared over legacy
+  WebDAV HTTP: convert that row to HTTPS or close those folders' internet
+  connections first (v2-169; earlier the mode alone blocked it).
 - Both public names use the same assigned IPv4/TCP `SHARE_HTTPS_PORT`, strict
   SNI/Host and existing socket limits. qBittorrent upstream remains fixed to
   loopback `TORRENT_UI_PORT`; its permanent native password, mandatory local

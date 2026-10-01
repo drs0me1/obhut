@@ -183,6 +183,12 @@ def cmd_check(args):
         fail("panel HTTP %d verdi" % err.code)
     except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError, RecursionError) as err:
         fail("panel yanıt vermedi (%s)" % err)
+    if urllib.parse.urlsplit(args.url).path.endswith("/api/konsol/kaynaklar"):
+        # DD-196: kurulumun yoklaması paketten bağımsız sistem uç noktasını kullanır.
+        if not isinstance(data.get("version"), str) or not isinstance(data.get("read_at"), (int, float)):
+            fail("panel yanıtı beklenen biçimde değil")
+        print("sürüm %s" % data["version"])
+        return
     nets = data.get("networks")
     # DD-143: temiz kurulumda hiç ağ yoktur; boş liste de geçerli bir yanıttır.
     if not isinstance(nets, list) or not all(isinstance(n.get("peers"), list) for n in nets):
@@ -1771,6 +1777,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/gunluk$", path)
         if m:
+            # DD-196: kurulu olmayan paketin günlüğü yoktur; istek paketin dosyalarına uzanmaz.
+            if not self.panel.module_state(m.group(1)):
+                self.error(404, "bu modül kurulu değil")
+                return
             rc, out, message = self.panel.modul("gunluk", m.group(1), "80")
             if rc != 0:
                 self.error(404 if "bilinmeyen modül" in message else 502, message or "günlük okunamadı")

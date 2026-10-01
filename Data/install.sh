@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-168"
+V2_VERSION="2026.08.06-v2-170"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -424,7 +424,6 @@ stage_0() {
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
   Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve arşiv aracı
   App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
   Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
@@ -679,7 +678,7 @@ ensure_module_files() {
     # DD-158: klasör WebDAV birimi, Caddy sitesi ve dnsmasq adı.
     # Canlı kopyaları master-modul koyar; kullanıcı kayıtları yeniden üretilmez.
     install -d -m 0755 -o root -g root "$MODULES_DIR/paylasim"
-    render_template "$V2_ROOT/modules/paylasim/master-paylasim.service" "$MODULES_DIR/paylasim/master-paylasim.service" 0644 \
+    render_template "$V2_ROOT/magaza/paylasim/master-paylasim.service" "$MODULES_DIR/paylasim/master-paylasim.service" 0644 \
         SERVER_ROOT="$SERVER_ROOT" \
         SHARE_DIR="$SHARE_DIR" \
         SHARE_PORT="$SHARE_PORT" \
@@ -690,11 +689,11 @@ ensure_module_files() {
         DOWNLOADS_UID="$DOWNLOADS_UID" \
         DOWNLOADS_GID="$DOWNLOADS_GID"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/modules/paylasim/paylasim.caddy" "$MODULES_DIR/paylasim/paylasim.caddy" 0644 \
+    render_template "$V2_ROOT/magaza/paylasim/paylasim.caddy" "$MODULES_DIR/paylasim/paylasim.caddy" 0644 \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         SHARE_PORT="$SHARE_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/modules/paylasim/dnsmasq.conf" "$MODULES_DIR/paylasim/dnsmasq.conf" 0644 \
+    render_template "$V2_ROOT/magaza/paylasim/dnsmasq.conf" "$MODULES_DIR/paylasim/dnsmasq.conf" 0644 \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         TAILSCALE_IF="$TAILSCALE_IF"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
@@ -702,28 +701,33 @@ ensure_module_files() {
     # DD-151: qBittorrent — ilk ayar (profil boşken bir kez), servis eki, Caddy sitesi, dnsmasq adı.
     changed=0
     install -d -m 0755 -o root -g root "$MODULES_DIR/torrent"
-    render_template "$V2_ROOT/modules/torrent/qBittorrent.conf" "$MODULES_DIR/torrent/qBittorrent.conf" 0644 \
+    render_template "$V2_ROOT/magaza/torrent/qBittorrent.conf" "$MODULES_DIR/torrent/qBittorrent.conf" 0644 \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         TORRENT_TEMP_DIR="$TORRENT_TEMP_DIR" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT"
-    render_template "$V2_ROOT/modules/torrent/master-stack.conf" "$MODULES_DIR/torrent/master-stack.conf" 0644 \
+    render_template "$V2_ROOT/magaza/torrent/master-stack.conf" "$MODULES_DIR/torrent/master-stack.conf" 0644 \
         TORRENT_PROFILE_DIR="$TORRENT_PROFILE_DIR" \
         DOWNLOADS_PATH="$DOWNLOADS_PATH" \
         SERVER_ROOT="$SERVER_ROOT" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/modules/torrent/torrent.caddy" "$MODULES_DIR/torrent/torrent.caddy" 0644 \
+    render_template "$V2_ROOT/magaza/torrent/torrent.caddy" "$MODULES_DIR/torrent/torrent.caddy" 0644 \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         TORRENT_UI_PORT="$TORRENT_UI_PORT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    render_template "$V2_ROOT/modules/torrent/dnsmasq.conf" "$MODULES_DIR/torrent/dnsmasq.conf" 0644 \
+    render_template "$V2_ROOT/magaza/torrent/dnsmasq.conf" "$MODULES_DIR/torrent/dnsmasq.conf" 0644 \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         TAILSCALE_IF="$TAILSCALE_IF"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED torrent"
-    # DD-150: WireGuard'ın işlenen dosyası yok; kuruluysa her çalıştırmada uygulanır (paketler
-    # bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
+    # DD-196: WireGuard paketinin araçları (master-wg, wg-quick@ birim eki) kurulumda yalnız buraya
+    # işlenir; sunucuya master-modul kur/uygula koyar, kaldir geri alır. Kuruluysa her çalıştırmada
+    # uygulanır (paketler bir sürüm yükseltmesinden sonra, kayıttaki ağlar açık).
+    install -d -m 0755 -o root -g root "$MODULES_DIR/wireguard"
+    atomic_write "$MODULES_DIR/wireguard/master-wg" 0755 <"$V2_ROOT/magaza/wireguard/master-wg"
+    render_template "$V2_ROOT/magaza/wireguard/wg-quick-master-stack.conf" \
+        "$MODULES_DIR/wireguard/wg-quick-master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"
     MODULES_CHANGED="$MODULES_CHANGED wireguard"
     if [[ ! -f "$MODULES_FILE" ]]; then
         atomic_write "$MODULES_FILE" 0644 </dev/null
@@ -748,6 +752,15 @@ reapply_modules() {
         "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
             log WARN "Uygulama $id yeniden uygulanamadı; Konsol → App Store'dan bakın"
     done
+    # DD-196: kurulu olmayan paketin aracı ve birim eki sunucuda durmaz (önceki sürümlerin
+    # temel kurulumda bıraktıkları dahil). Anahtar klasörü veridir; kaldir --veri siler.
+    if [[ -z "$(module_state wireguard)" ]] &&
+        [[ -e "$SBIN_DIR/master-wg" || -e "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" ]]; then
+        rm -f -- "$SBIN_DIR/master-wg" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"
+        rmdir -- "$UNIT_DIR/wg-quick@.service.d" 2>/dev/null || true
+        systemctl daemon-reload
+        log INFO "WireGuard kurulu değil; aracı ve birim eki sunucudan kaldırıldı"
+    fi
 }
 
 stage_3() {
@@ -780,7 +793,6 @@ stage_3() {
 stage_4() {
     log INFO "Aşama 4/7 — betikler ve şablonlar"
     # DD-152: Docker yok; modüller sunucuda systemd servisi olarak çalışır.
-    atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
     atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
     atomic_write "$SBIN_DIR/master_settings.py" 0755 <"$V2_ROOT/panel/master_settings.py"
     if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
@@ -817,11 +829,6 @@ stage_4() {
     atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
         <"$V2_ROOT/systemd/master-firewall.service"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
-    # DD-180: WireGuard ağları duvar denetimi geçmeden açılmaz. Modül kurulu değilse etkisiz;
-    # açık ağlar yeniden başlatılmaz, kural bir sonraki açılışta geçerli olur.
-    install -d -m 0755 "$UNIT_DIR/wg-quick@.service.d"
-    render_template "$V2_ROOT/systemd/wg-quick-master-stack.conf" \
-        "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.service"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
@@ -1050,6 +1057,9 @@ StartLimitBurst=3
 RuntimeDirectory=${caddy_runtime#/run/}
 RuntimeDirectoryMode=0700
 EnvironmentFile=$STATE_FILE
+# DD-196: paket birimi --environ ile tüm ortamı (state.env) günlüğe döker; burada dökülmez.
+ExecStart=
+ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile
 ExecStartPre=+$SBIN_DIR/master-firewall --check
 ExecStartPre=$SBIN_DIR/wait-tailnet-addr
 TimeoutStartSec=150s
@@ -1085,10 +1095,8 @@ EOF
 ensure_wg_panel() {
     local changed="${1:-0}" f out
     [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
-    # Arka ucun yazabildiği tek kalıcı yer. DD-150'den beri WireGuard modülü (paketiyle
-    # birlikte) sonradan kurulur; klasör burada açılmazsa arka uç başlamaz (v2-119).
-    install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
-    # DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği ikinci yer.
+    # DD-196: WireGuard'ın anahtar klasörünü paket açar; birim onu yoksa atlar (ReadWritePaths -).
+    # DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği kalıcı yer.
     install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"
     atomic_write "$SBIN_DIR/master-wg-panel" 0755 <"$V2_ROOT/panel/master-wg-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
@@ -1108,7 +1116,7 @@ ensure_wg_panel() {
     if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-wg-panel.service; then
         systemctl restart master-wg-panel.service
     else
-        log INFO "WireGuard paneli aynı; yeniden başlatılmadı"
+        log INFO "Konsol arka ucu aynı; yeniden başlatılmadı"
     fi
 }
 
@@ -1249,15 +1257,19 @@ stage_7() {
 
     # DD-177: registered networks retain ports/addresses; internet-only policy.
     local wg_iface wg_policy wg_s4 wg_port
-    "$SBIN_DIR/master-wg" version >/dev/null ||
-        die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
     WG_PEER_COUNT=0
     WG_NET_COUNT=0
-    # DD-150: ağlar ve çekirdek modülü yalnız WireGuard modülü kuruluyken denetlenir.
+    # DD-150/196: araç, ağlar ve çekirdek modülü yalnız WireGuard paketi kuruluyken denetlenir;
+    # kurulu değilken sunucuda ne master-wg ne de wg-quick@ birim eki bulunmalı.
     local wg_on=0
     [[ -z "$(module_state wireguard)" ]] || wg_on=1
     if [[ "$wg_on" -eq 1 ]]; then
+        "$SBIN_DIR/master-wg" version >/dev/null ||
+            die "master-wg çalışmıyor ($SBIN_DIR/master-wg)"
         [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard modül dosyası yok: $WG_MODULES_LOAD_FILE"
+    else
+        [[ ! -e "$SBIN_DIR/master-wg" && ! -e "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" ]] ||
+            die "WireGuard kurulu değilken aracı ya da birim eki sunucuda kalmış"
     fi
     if [[ "$wg_on" -eq 1 && -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
         while IFS=$'\t' read -r wg_iface wg_port wg_policy wg_s4 _; do
@@ -1334,14 +1346,14 @@ stage_7() {
     local self_body
     self_body="$(setpriv --reuid="$DOWNLOADS_UID" --regid="$DOWNLOADS_GID" --clear-groups \
         curl -s --max-time 5 -w '\n%{http_code}' -H "Host: panel.${LOCAL_DOMAIN}" -H 'X-Konsol: 1' \
-        "http://${TAILSCALE_IPV4}/api/wg/state" 2>/dev/null || true)"
+        "http://${TAILSCALE_IPV4}/api/konsol/kaynaklar" 2>/dev/null || true)"
     [[ "${self_body##*$'\n'}" == "403" && "$self_body" == *"başka bir Tailscale cihazından"* ]] ||
         die "Sunucunun içinden Caddy üzerinden root arka uca ulaşıldı (HTTP ${self_body##*$'\n'})"
     local panel_out
     panel_out="$(python3 "$SBIN_DIR/master-wg-panel" check --socket "$WG_PANEL_SOCKET" \
-        --url "http://panel.${LOCAL_DOMAIN}/api/wg/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
-        die "Konsol WireGuard arka ucu yanıt vermedi: $panel_out"
-    log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
+        --url "http://panel.${LOCAL_DOMAIN}/api/konsol/kaynaklar" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+        die "Konsol arka ucu yanıt vermedi: $panel_out"
+    log INFO "Konsol arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
     # DD-159: built-in Files is required, writable and unprivileged.
     local files_out files_uid
     # DD-194: Caddy'den geçen yol oturum ister; arka ucun kendisi loopback'ten sınanır.
@@ -1359,7 +1371,7 @@ stage_7() {
     if [[ -n "$wg_first_addr" ]]; then
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
             "http://${wg_first_addr}:${FILES_PANEL_PORT}/" || true)"
-        [[ "$code" == "000" ]] || die "Konsol WireGuard adresinde yanıt verdi (HTTP $code)"
+        [[ "$code" == "000" ]] || die "Konsol, WireGuard ağının adresinde yanıt verdi (HTTP $code)"
     fi
     # WebDAV registry, unprivileged listener and addresses were verified by yerlesik.
 
@@ -1385,6 +1397,13 @@ summary_modules() {
     done
 }
 
+# DD-196: paket notu yalnız paket kuruluyken.
+wg_summary_note() {
+    [[ -n "$(module_state wireguard)" ]] || return 0
+    printf '\n  WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.'
+    printf '\n  Ağlar: WireGuard → Yapılandır. Peer ve QR: Konsol ya da Mac'"'"'te wireguard.command.'
+}
+
 print_summary() {
     log INFO "Kurulum tamam — v$V2_VERSION"
     cat <<EOF
@@ -1393,7 +1412,6 @@ WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
 Tailscale:    $TAILSCALE_IPV4 ${TAILSCALE_IPV6:-"(IPv6 yok)"}
 Domain:       $LOCAL_DOMAIN
 Kullanıcı alanı: $SERVER_ROOT (indirmeler $DOWNLOADS_PATH, kütüphane $SERVER_ROOT/$MEDIA_SUBDIR)
-WireGuard:    ${WG_NET_COUNT:-0} ağ, ${WG_PEER_COUNT:-0} peer (endpoint: $WG_ENDPOINT_HOST; modül ve ağlar Konsol'dan)
 State:        $STATE_FILE
 Log:          $V2_LOG_FILE
 
@@ -1406,9 +1424,7 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; kullanıc�
   İnternetten HTTPS isteğe bağlı: Ayarlar → Caddy → Panel (önce DNS A kaydı; ilk hesap yalnız Tailscale'den).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
-$(summary_modules)
-  WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
-  Ağlar: WireGuard → Yapılandır. Peer ve QR: Konsol ya da Mac'te wireguard.command.
+$(summary_modules)$(wg_summary_note)
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF
     konsol_login_summary

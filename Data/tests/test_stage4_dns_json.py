@@ -30,8 +30,8 @@ class DnsTests(unittest.TestCase):
         self.p = panel.Panel(types.SimpleNamespace())
 
     def test_published_templates_limit_answers_without_changing_dns_listeners(self):
-        for relative, name in (("templates/dnsmasq.conf", "panel"), ("modules/paylasim/dnsmasq.conf", "paylas"),
-                               ("modules/torrent/dnsmasq.conf", "torrent")):
+        for relative, name in (("templates/dnsmasq.conf", "panel"), ("magaza/paylasim/dnsmasq.conf", "paylas"),
+                               ("magaza/torrent/dnsmasq.conf", "torrent")):
             text = (DATA / relative).read_text().replace("__LOCAL_DOMAIN__", "ayc").replace("__TAILSCALE_IF__", "tailscale0")
             record = panel.parse_dnsmasq(text, "base")["names"]
             self.assertEqual(record, [dict(name=name + ".ayc", iface="tailscale0", family=4, source="base")])

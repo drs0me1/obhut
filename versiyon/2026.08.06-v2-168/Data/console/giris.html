@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Konsol · Giriş</title>
+<link rel="stylesheet" href="/konsol.css">
+<link rel="stylesheet" href="/giris.css">
+<script src="/giris.js" defer></script>
+</head>
+<body>
+<main class="login" id="main-content">
+  <div class="brand"><span class="wordmark">Konsol<span class="dot">.</span></span><small id="login-access">Sunucu yönetimi</small></div>
+  <section class="card login-card" aria-labelledby="login-title">
+    <h1 id="login-title">Giriş</h1>
+    <p class="hint-s" id="login-note" role="status">Oturum durumu okunuyor…</p>
+
+    <form id="form-login" class="login-form" hidden>
+      <label for="login-user">Kullanıcı adı</label>
+      <input id="login-user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="32">
+      <label for="login-pass">Parola</label>
+      <input id="login-pass" name="password" type="password" autocomplete="current-password" required maxlength="256">
+      <p class="err-s" id="login-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary" id="login-submit">Giriş yap</button>
+    </form>
+
+    <form id="form-setup" class="login-form" hidden>
+      <label for="setup-code">Kurulum kodu</label>
+      <input id="setup-code" name="one-time-code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" required maxlength="20" placeholder="ABCD-EFGH-JKMN">
+      <label for="setup-user">Kullanıcı adı</label>
+      <input id="setup-user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{2,31}">
+      <label for="setup-pass">Parola</label>
+      <input id="setup-pass" name="new-password" type="password" autocomplete="new-password" required minlength="10" maxlength="256">
+      <label for="setup-pass2">Parola (tekrar)</label>
+      <input id="setup-pass2" name="confirm-password" type="password" autocomplete="new-password" required minlength="10" maxlength="256">
+      <p class="hint-s">Parola en az 10 karakter. Kayıt sunucuda yalnız özet olarak tutulur; tarayıcıya yazılmaz.</p>
+      <p class="err-s" id="setup-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary" id="setup-submit">Hesabı oluştur</button>
+    </form>
+  </section>
+  <p class="hint-s login-foot">Oturum 7 gün açık kalır. Parolayı unutursanız sunucuda: <span class="mono">sudo master-konsol sifirla</span></p>
+</main>
+</body>
+</html>

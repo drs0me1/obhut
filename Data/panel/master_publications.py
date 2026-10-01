@@ -40,9 +40,28 @@ def config(env, value=None):
         rows[key] = dict(item, domain=name)
     names = [r["domain"] for r in rows.values() if r["enabled"] and r["domain"]]
     require(len(names) == len(set(names)), "İki uygulama aynı HTTPS alan adını kullanamaz.")
-    require(not (rows["torrent"]["enabled"] or rows["panel"]["enabled"]) or dav["mode"] != "http",
-            "Önce WebDAV için HTTPS kaydedin veya eski HTTP WAN erişimini kapatın.")
     return rows
+
+
+def https_apps_enabled(env, rows=None):
+    """A saved qBittorrent or Panel internet row: Caddy's one WAN port is then TCP 443 (v2-169)."""
+    rows = config(env) if rows is None else rows
+    return rows["torrent"]["enabled"] or rows["panel"]["enabled"]
+
+
+def legacy_http_active(env):
+    """Folders shared over the internet with plaintext HTTP right now (no HTTPS name saved)."""
+    from master_shares import Manager, ShareError
+    if tls.config(env)["mode"] != "http":
+        return False
+    try:
+        return Manager.from_env(env).wan_active()
+    except (ShareError, OSError, ValueError, KeyError):
+        return False
+
+
+LEGACY_HTTP_BUSY = ("WebDAV internet paylaşımı şu an eski HTTP ile açık. Önce WebDAV için HTTPS alan adı "
+                    "kaydedin ya da o klasörlerin internet bağlantısını kapatın.")
 
 
 def module_states(env):
@@ -152,11 +171,15 @@ def validate(env, saved, request):
                 require(request.get("confirm") == "onayla", "Panel'i internete açmak için onayla yazın.")
             # The first account is created only over Tailscale with the one-time code.
             require(konsol_account(env), "Önce Konsol hesabını Tailscale üzerinden oluşturun.")
+            require(not legacy_http_active(env), LEGACY_HTTP_BUSY)
             tls.check_dns(env, item["domain"])
         return saved
     require(service in module_states(env), "Önce uygulamayı kurun.")
     if item["enabled"]:
         require(module_states(env).get(service) == "calisiyor", "Önce uygulamayı başlatın.")
+        if service == "torrent":
+            # Not WebDAV's mode: only folders actually shared over plaintext HTTP block the port.
+            require(not legacy_http_active(env), LEGACY_HTTP_BUSY)
         if service == "torrent":
             try:
                 torrent_security(env, rows[service]["domain"], probe=True)
@@ -233,6 +256,10 @@ def status(env):
         if service == "paylasim":
             info = tls.status(env)
             row.update({k: info[k] for k in ("status", "message", "expires", "mode")})
+            row["wan_active"] = legacy_http_active(env) if info["mode"] == "http" else None
+            if info["mode"] == "http" and https_apps_enabled(env, rows):
+                row["message"] = ("HTTPS alan adı tanımlanmadı. qBittorrent veya Panel internet yayını açıkken "
+                                  "WebDAV internet erişimi için HTTPS alan adı gerekir.")
         elif row["enabled"]:
             row.update(status="error", message="qBittorrent yayını veya sertifikası doğrulanamadı.")
             if not row["running"]:

@@ -155,7 +155,7 @@ the ones agreed on 2026-08-05:
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
 - **qBittorrent is a host module (DD-151)**, installed from Konsol (§1.11): the
   distribution's `qbittorrent-nox` runs on the server as the downloads account.
-  `modules/torrent/qBittorrent.conf` seeds minimal settings only when absent.
+  `magaza/torrent/qBittorrent.conf` seeds minimal settings only when absent.
   The installer holds no account or incoming peer-port setting. Later
   account/download-folder edits use the settings worker and qBittorrent profile.
 - Every web interface and WebDAV listens on loopback only (`127.0.0.1`;
@@ -201,8 +201,11 @@ the ones agreed on 2026-08-05:
   consent-gated HTTP on `WAN_IPV4:SHARE_PORT` remains. Explicitly clearing
   the domain closes WAN, not downgrades it (**DD-179/190**, §3.1).
 - DD-191 additionally allows qBittorrent HTTPS on that same port, guarded by
-  its native mandatory login and security checks. Legacy WebDAV HTTP must first
-  be converted or disabled. No Caddy admin publication.
+  its native mandatory login and security checks. Caddy opens one WAN port for
+  these publications: enabling an HTTPS publication is refused while folders
+  are shared over legacy WebDAV HTTP, and while an HTTPS publication row is on,
+  legacy HTTP WebDAV internet access is unavailable until an HTTPS name is saved
+  (v2-169). No Caddy admin publication.
 - DD-195 allows Konsol itself on that port (`moduller/panel-wan.caddy`). The
   public site imports the same `(konsol)` snippet as the tailnet site, so the
   Konsol session check covers its pages, Files API and root API alike; Caddy

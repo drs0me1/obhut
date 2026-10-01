@@ -20,7 +20,7 @@ const data = {
       { service: "panel", name: "Panel", local: "panel.ayc", tail: true, enabled: false, domain: "", installed: true, running: true, account: true, status: "disabled", message: "İnternet yayını kapalı. Tailscale adresi her zaman açık kalır." },
       { service: "torrent", name: "qBittorrent", local: "torrent.ayc", tail: true, enabled: false, domain: "", installed: false, running: false, status: "disabled", message: "İnternet yayını kapalı." },
       { service: "paylasim", name: "WebDAV", local: "paylas.ayc", tail: true, enabled: true, domain: "", installed: true, running: true, status: "http", mode: "http",
-        message: "HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.", expires: null }] },
+        wan_active: false, message: "HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.", expires: null }] },
 };
 const dav = () => data.manage.publications.find(r => r.service === "paylasim");
 const share = {id:"a".repeat(24),name:"media",path:"media",username:"fixture-user",available:true,
@@ -131,6 +131,10 @@ function setHttps(domain, status = "ready", enabled = !!domain) {
     assert.match(await table.innerText(), /192\.0\.2\.1/);
     assert.match(await table.innerText(), /DNS only/);
     assert.match(await table.innerText(), /HTTPS TCP 443\b/, "Legacy HTTP shows the configured HTTPS port, not SHARE_PORT");
+    // v2-169: nothing is shared over plaintext HTTP yet, so only the plain note shows and nothing blocks HTTPS rows.
+    assert.match(await table.innerText(), /internet paylaşımı açılırsa eski HTTP kullanılır/);
+    assert.doesNotMatch(await table.innerText(), /Eski WebDAV WAN erişimi HTTP kullanıyor/);
+    dav().wan_active = true; await refresh();
     assert.match(await table.innerText(), /Eski WebDAV WAN erişimi HTTP kullanıyor/);
     assert.equal(await row.locator(".good").count(), 0);
     await page.locator(".as-web-details > summary").click();

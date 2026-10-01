@@ -1,0 +1,825 @@
+#!/usr/bin/env bash
+# Konsol modül yöneticisi (DD-148). Temiz kurulum yalnız temeli kurar; modülleri Konsol
+# buradan kurar, başlatır, durdurur ve kaldırır. Konsol'un root arka ucu bu betiği
+# `systemd-run` ile ayrı bir birim olarak çalıştırır: işlem sayfa kapansa da sürer ve
+# ilerleme RUNTIME_DIR/modul-<id>.ilerleme dosyasından okunur. Aynı anda tek modül
+# işlemi yapılır (kilit). İndirilen dosyalar korunur; --veri yalnız isteğe bağlı
+# uygulamanın ayarlarını siler. Yerleşik Dosyalar/WebDAV kaldırılamaz (DD-159/171).
+#
+#   master-modul liste                  id runtime kayıt canlı eylem adım toplam metin (sekmeyle)
+#   master-modul kur ID
+#   master-modul baslat ID
+#   master-modul durdur ID
+#   master-modul kaldir ID [--veri]     --veri: modülün ayar/günlük verisi de silinir
+#   master-modul gunluk ID [SATIR]
+#
+# WireGuard uygulaması kurulur/kaldırılır; ağları kendi sayfasından açılır/kapatılır.
+#   master-modul hesap torrent [--parola]  "kullanıcı<TAB>gecici|ayarli" (+ <TAB>geçici parola)
+#   master-modul uygula ID              kurulumun yeniden çalışması: kurulu modülün dosyalarını uygular
+set -Eeuo pipefail
+umask 022
+
+STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+[[ -r "$STATE_FILE" ]] ||
+    die "state.env okunamıyor ($STATE_FILE): kurulum yapılmamış ya da root değilsiniz"
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+: "${MODULES_FILE:?}"
+: "${MODULES_DIR:?}"
+: "${RUNTIME_DIR:?}"
+: "${DOWNLOADS_PATH:?}"
+
+# Katalog: Konsol'daki sıra. Her modülün çalışma yeri (host | konsol) ve adımları aşağıdaki
+# case bloklarında tanımlıdır. Docker yok (DD-152): her modül sunucuda bir systemd servisidir.
+CATALOG="wireguard torrent"
+ID_RE='^[a-z]{2,16}$'
+
+runtime_of() {
+    case "$1" in
+        wireguard) printf 'konsol\n' ;;
+        torrent) printf 'host\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_id() {
+    [[ "$1" =~ $ID_RE ]] && [[ " $CATALOG " == *" $1 "* ]] || die "bilinmeyen modül: '$1'"
+}
+
+# -- kayıt: satır başına "id<TAB>durum" (calisiyor | durduruldu); yoksa kurulu değil
+registry_get() {
+    [[ -f "$MODULES_FILE" ]] || return 1
+    awk -F'\t' -v i="$1" '$1 == i {print $2; f = 1; exit} END {exit !f}' "$MODULES_FILE"
+}
+registry_set() { # ID DURUM (boş durum = kayıttan sil)
+    local tmp
+    mkdir -p -- "$(dirname -- "$MODULES_FILE")"
+    tmp="$(mktemp "$MODULES_FILE.XXXXXX")"
+    {
+        [[ ! -f "$MODULES_FILE" ]] || awk -F'\t' -v i="$1" '$1 != i' "$MODULES_FILE"
+        [[ -z "$2" ]] || printf '%s\t%s\n' "$1" "$2"
+    } >"$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$MODULES_FILE"
+    if [[ "$1" == torrent && -f "$SBIN_DIR/master_publications.py" ]]; then
+        python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"
+    fi
+}
+
+# -- ilerleme: tek satır "eylem<TAB>adım<TAB>toplam<TAB>metin"; bitince adım "bitti" ya da "hata"
+progress_file() { printf '%s/modul-%s.ilerleme\n' "$RUNTIME_DIR" "$1"; }
+progress() { # ID EYLEM ADIM TOPLAM METİN
+    local f
+    f="$(progress_file "$1")"
+    mkdir -p -- "$RUNTIME_DIR"
+    printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" >"$f.tmp"
+    mv -f -- "$f.tmp" "$f"
+    command -v logger >/dev/null 2>&1 && logger -t master-modul -- "$1 $2: $5" || true
+}
+
+CUR_ID="" CUR_ACTION=""
+on_error() {
+    local rc=$?
+    # Komut ikamesindeki (alt kabuk) bir hata ilerlemeye "hata" yazmasın: yalnız ana kabuk yazar.
+    [[ "${BASHPID:-$$}" == "$$" ]] || exit "$rc"
+    [[ -z "$CUR_ID" ]] || progress "$CUR_ID" "$CUR_ACTION" hata 0 "${LAST_ERROR:-işlem başarısız (çıkış $rc)}"
+    exit "$rc"
+}
+trap on_error ERR
+
+fail_step() { # METİN — ilerlemeye yazar ve çıkar
+    LAST_ERROR="$1"
+    [[ -z "$CUR_ID" ]] || progress "$CUR_ID" "$CUR_ACTION" hata 0 "$1"
+    trap - ERR
+    die "$1"
+}
+
+warn() {
+    printf 'UYARI: %s\n' "$*" >&2
+    command -v logger >/dev/null 2>&1 && logger -t master-modul -- "UYARI: $*" || true
+}
+
+take_lock() {
+    mkdir -p -- "$RUNTIME_DIR"
+    # Canonical order: install -> module. The installer already owns install.lock;
+    # validate and reuse its inherited descriptor without unlocking the parent.
+    if [[ "${V2_LOCK_FD:-}" =~ ^[0-9]+$ &&
+        "/proc/$$/fd/$V2_LOCK_FD" -ef "$RUNTIME_DIR/install.lock" ]]; then
+        flock -n "$V2_LOCK_FD" || die "üst kurulum kilidi doğrulanamadı"
+    else
+        exec 9>"$RUNTIME_DIR/install.lock"
+        flock -w 5 9 || die "başka bir kurulum/ayar işlemi sürüyor; biraz sonra yeniden deneyin"
+    fi
+    exec 8>"$RUNTIME_DIR/modul.lock"
+    flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
+    [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -f "$SETTINGS_PENDING_FILE" ]] ||
+        die "Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın"
+}
+
+# Birim "active" olur olmaz işlem henüz root olabilir: systemd User='a exec'ten hemen önce geçer.
+# uid, beklenen uid'ye dönene dek birkaç kez okunur (en çok ~5 sn); son okunan yazılır.
+unit_uid() { # BİRİM
+    local _ uid=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)" 2>/dev/null | tr -d ' ' || true)"
+        [[ "$uid" != "$DOWNLOADS_UID" ]] || break
+        sleep 0.5
+    done
+    printf '%s\n' "$uid"
+}
+
+http_code() { # URL ya da curl argümanları; yanıt yoksa 000
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" 2>/dev/null || true
+}
+
+# ------------------------------------------------------- klasör paylaşımı (DD-158)
+SHARE_UNIT="master-paylasim.service"
+SHARE_FAIL=""
+
+share_need() {
+    local k
+    for k in SERVER_ROOT SHARE_DIR SHARE_PORT SHARE_STATE_FILE STATE_DIR SBIN_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID; do
+        [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
+    done
+}
+
+share_prepare() {
+    python3 "$SBIN_DIR/master_shares.py" prepare || fail_step "klasör paylaşım kaydı hazırlanamadı"
+}
+
+share_place_unit() {
+    place_unit "$MODULES_DIR/paylasim/$SHARE_UNIT" "$SHARE_UNIT"
+}
+
+share_verify() {
+    local _ uid code=""
+    SHARE_FAIL=""
+    for _ in $(seq 1 20); do
+        code="$(http_code "http://127.0.0.1:$SHARE_PORT/")"
+        [[ "$code" != 401 ]] || break
+        sleep 1
+    done
+    systemctl is-active --quiet "$SHARE_UNIT" || { SHARE_FAIL="paylaşım servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$SHARE_UNIT")"
+    [[ "$uid" == "$DOWNLOADS_UID" && "$code" == 401 ]] ||
+        { SHARE_FAIL="paylaşım uid/adres/giriş kapısı doğrulanamadı"; return 1; }
+}
+
+# -- adlar: Caddy sitesi ve dnsmasq adı. Geçici dosyalar noktayla başlar: Caddy'nin içe aktarma
+# kalıbı ve dnsmasq'ın dizin okuması onları atlar. Caddy yeniden yüklenir (Konsol'u da o sunar;
+# hatalı yapılandırmada eskisini korur), dnsmasq yeniden başlar (SIGHUP adları okumaz).
+caddy_validate() {
+    TAILSCALE_IPV4="$TAILSCALE_IPV4" caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1
+}
+dnsmasq_check() {
+    if [[ -n "${SETTINGS_FILE:-}" ]]; then
+        python3 "$SBIN_DIR/master_settings.py" project-dns || return 1
+    fi
+    if [[ -x /usr/share/dnsmasq/systemd-helper ]]; then
+        /usr/share/dnsmasq/systemd-helper checkconfig >/dev/null 2>&1
+    else
+        dnsmasq --test --conf-dir="$DNSMASQ_CONF_DIR,.dpkg-dist,.dpkg-old,.dpkg-new" >/dev/null 2>&1
+    fi
+}
+
+swap_in() { # KAYNAK HEDEF DOĞRULAYICI → 0 değişti, 1 aynı, 2 doğrulanmadı (eskisi geri), 3 kaynak yok
+    local src="$1" dst="$2" dir base bak="" tmp
+    [[ -f "$src" ]] || return 3
+    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 1; fi
+    dir="$(dirname -- "$dst")" base="$(basename -- "$dst")"
+    install -d -m 0755 -- "$dir"
+    if [[ -f "$dst" ]]; then
+        bak="$(mktemp "$dir/.$base.eski-XXXXXX")"
+        cp -- "$dst" "$bak"
+    fi
+    tmp="$(mktemp "$dir/.$base.yeni-XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dst"
+    if ! "$3"; then
+        if [[ -n "$bak" ]]; then mv -f -- "$bak" "$dst"; else rm -f -- "$dst"; fi
+        return 2
+    fi
+    [[ -z "$bak" ]] || rm -f -- "$bak"
+    return 0
+}
+
+swap_out() { # HEDEF DOĞRULAYICI → 0 kaldırıldı, 1 zaten yok, 2 kaldırıldı ama yapılandırma doğrulanmadı
+    [[ -e "$1" || -L "$1" ]] || return 1
+    rm -f -- "$1"
+    "$2" || return 2
+}
+
+# Bir modülün adları: MODULES_DIR/<id>/<id>.caddy → CADDY_MODULES_DIR/<id>.caddy ve
+# MODULES_DIR/<id>/dnsmasq.conf → DNSMASQ_CONF_DIR/modul-<id>.conf. Hata: FAIL.
+names_on() { # ID
+    local id="$1" rc=0 dns_src dns_tmp="" caddy_src caddy_tmp=""
+    FAIL=""
+    caddy_src="$MODULES_DIR/$id/$id.caddy"
+    if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+        caddy_tmp="$(mktemp "$RUNTIME_DIR/.caddy-XXXXXX")"
+        cp -- "$caddy_src" "$caddy_tmp"
+        python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" filter-caddy "$id" "$caddy_tmp" ||
+            { rm -f -- "$caddy_tmp"; FAIL="Caddy ağ seçimi okunamadı"; return 1; }
+        caddy_src="$caddy_tmp"
+    fi
+    swap_in "$caddy_src" "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
+    [[ -z "$caddy_tmp" ]] || rm -f -- "$caddy_tmp"
+    case "$rc" in
+        0) systemctl reload caddy >/dev/null 2>&1 || { FAIL="Caddy yeniden yüklenemedi"; return 1; } ;;
+        1) ;;
+        2) FAIL="Caddy yapılandırması doğrulanmadı ($id)"; return 1 ;;
+        *) FAIL="modül dosyası yok ($MODULES_DIR/$id/$id.caddy); kurulumu yeniden çalıştırın"; return 1 ;;
+    esac
+    rc=0
+    dns_src="$MODULES_DIR/$id/dnsmasq.conf"
+    if [[ -n "${SETTINGS_FILE:-}" ]]; then
+        dns_tmp="$(mktemp "$RUNTIME_DIR/.dns-XXXXXX")"
+        cp -- "$dns_src" "$dns_tmp"
+        python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp" || { rm -f -- "$dns_tmp"; return 1; }
+        dns_src="$dns_tmp"
+    fi
+    swap_in "$dns_src" "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
+    [[ -z "$dns_tmp" ]] || rm -f -- "$dns_tmp"
+    case "$rc" in
+        0) systemctl restart dnsmasq >/dev/null 2>&1 || { FAIL="dnsmasq yeniden başlatılamadı"; return 1; } ;;
+        1) ;;
+        2) FAIL="dnsmasq yapılandırması doğrulanmadı ($id)"; return 1 ;;
+        *) FAIL="modül dosyası yok ($MODULES_DIR/$id/dnsmasq.conf); kurulumu yeniden çalıştırın"; return 1 ;;
+    esac
+}
+
+names_off() { # ID — kaldırmayı durdurmaz; yalnız uyarır
+    local id="$1" rc=0
+    swap_out "$CADDY_MODULES_DIR/$id.caddy" caddy_validate || rc=$?
+    case "$rc" in
+        0) systemctl reload caddy >/dev/null 2>&1 || warn "Caddy yeniden yüklenemedi" ;;
+        2) warn "$id sitesi kaldırıldı ama Caddy yapılandırması doğrulanmıyor" ;;
+    esac
+    rc=0
+    swap_out "$DNSMASQ_CONF_DIR/modul-$id.conf" dnsmasq_check || rc=$?
+    case "$rc" in
+        0) systemctl restart dnsmasq >/dev/null 2>&1 || warn "dnsmasq yeniden başlatılamadı" ;;
+        2) warn "$id adı kaldırıldı ama dnsmasq yapılandırması doğrulanmıyor" ;;
+    esac
+}
+
+share_verify_names() {
+    local _ a="" b="" ans="" expected=401 rc=0
+    if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+        python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" tail-enabled paylasim || rc=$?
+        [[ "$rc" -le 1 ]] || { SHARE_FAIL="Caddy ağ seçimi okunamadı"; return 1; }
+        [[ "$rc" == 0 ]] || expected=403
+    fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        a="$(http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/")"
+        b="$(http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/")"
+        ans="$(dig +short +time=2 +tries=1 "paylas.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "paylas.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
+        [[ "$a" == "$expected" && "$b" == "$expected" && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        sleep 1
+    done
+    SHARE_FAIL="paylas.$LOCAL_DOMAIN ya da $TAILSCALE_IPV4:$SHARE_PORT açılmadı (ad $a, port $b, DNS '$ans')"
+    return 1
+}
+
+# -------------------------------------------------------- dosya yöneticisi (DD-150)
+# Servis birimini kurulum MODULES_DIR/dosya/ altına yazar; modül onu UNIT_DIR'e koyar ve açar.
+FILES_UNIT="master-files-panel.service"
+FAIL=""
+
+need_keys() { # ANAHTAR…
+    local k
+    for k in "$@"; do
+        [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
+    done
+}
+
+files_need() {
+    need_keys SERVER_ROOT FILES_PANEL_PORT FILES_PANEL_TRASH UNIT_DIR SBIN_DIR DOWNLOADS_UID LOCAL_DOMAIN TAILSCALE_IPV4
+}
+
+# Kurulumun işlediği birim UNIT_DIR'e konur. 0: yeni yazıldı (daemon-reload yapıldı), 1: aynıydı.
+place_unit() { # KAYNAK BİRİM
+    local src="$1" dst="$UNIT_DIR/$2" tmp
+    [[ -f "$src" ]] || fail_step "modül dosyası yok ($src); kurulumu yeniden çalıştırın"
+    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 1; fi
+    tmp="$(mktemp "$UNIT_DIR/.$2.XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dst"
+    systemctl daemon-reload
+}
+
+files_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
+    place_unit "$MODULES_DIR/dosya/$FILES_UNIT" "$FILES_UNIT"
+}
+
+# Servis ayakta, kullanıcı alanının sahibi olarak (root değil) çalışıyor ve yanıt veriyor;
+# başlıksız istek 403 alıyor. Kurulumun eski aşama 7 denetimleri (DD-139). DD-194: Caddy'den
+# geçen yol Konsol oturumu ister ve sunucunun içinden gelen isteği reddeder (DD-180); servisin
+# kendisi loopback portundan sınanır.
+files_verify() {
+    local _ uid ok=0 code
+    FAIL=""
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$FILES_UNIT" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$FILES_UNIT" || { FAIL="dosya servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$FILES_UNIT")"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="dosya servisi uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    for _ in $(seq 1 10); do
+        if python3 "$SBIN_DIR/master-files-panel" check --url "http://127.0.0.1:$FILES_PANEL_PORT/api/state" \
+            --host "panel.$LOCAL_DOMAIN" >/dev/null 2>&1; then
+            ok=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || { FAIL="dosya servisi yerel portunda yanıt vermedi"; return 1; }
+    code="$(http_code -H "Host: panel.$LOCAL_DOMAIN" "http://127.0.0.1:$FILES_PANEL_PORT/api/state")"
+    [[ "$code" == 403 ]] || { FAIL="dosya servisi başlıksız isteğe $code verdi (beklenen 403)"; return 1; }
+}
+
+# ---------------------------------------------------------------- WireGuard (DD-150)
+# Kurulum yalnız aracı (master-wg), birim şablonlarını ve güvenlik duvarını koyar; paketler,
+# çekirdek modülü ve ağların açılması bu modüldedir. Güvenlik duvarı ağları yalnız modül
+# kuruluyken açar (master-firewall kayda bakar).
+WG_PACKAGES="wireguard-tools qrencode"
+
+wg_need() {
+    need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE
+}
+
+# Eksik Debian paketlerini önerileri olmadan kurar; kurulu olanlara dokunmaz. Hata: FAIL.
+apt_install() { # PAKET…
+    local out pkg missing=0
+    for pkg in "$@"; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || missing=1
+    done
+    [[ "$missing" == 1 ]] || return 0
+    if ! out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        -o DPkg::Lock::Timeout=300 "$@" 2>&1)"; then
+        # Liste eskimiş olabilir: bir kez güncellenip yeniden denenir.
+        out="$(apt-get -o DPkg::Lock::Timeout=300 update 2>&1 &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                -o DPkg::Lock::Timeout=300 "$@" 2>&1)" ||
+            { FAIL="paketler kurulamadı: $(tail -n 1 <<<"$out")"; return 1; }
+    fi
+}
+
+wg_packages() {
+    # shellcheck disable=SC2086
+    apt_install $WG_PACKAGES
+}
+
+wg_layer() {
+    local tmp
+    modprobe wireguard >/dev/null 2>&1 || { FAIL="çekirdek WireGuard modülü yüklenemedi"; return 1; }
+    tmp="$(mktemp "$(dirname -- "$WG_MODULES_LOAD_FILE")/.wireguard.XXXXXX")"
+    printf 'wireguard\n' >"$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$WG_MODULES_LOAD_FILE"
+    install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
+}
+
+# Kayıttaki ağlar açılır (anahtarlar ve profiller /etc/wireguard'da durur); açılamayan uyarıdır.
+wg_networks_up() {
+    local iface count=0
+    [[ -f "$WG_NETWORKS_FILE" ]] || { printf '0\n'; return 0; }
+    while IFS=$'\t' read -r iface _; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        count=$((count + 1))
+        systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1 || warn "$iface açılamadı"
+    done <"$WG_NETWORKS_FILE"
+    printf '%s\n' "$count"
+}
+
+wg_networks_down() {
+    local unit
+    while IFS= read -r unit; do
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
+        systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
+    done < <(
+        systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
+        systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
+        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"}' "$WG_NETWORKS_FILE"
+    )
+}
+
+firewall_apply() {
+    systemctl reset-failed master-firewall.service >/dev/null 2>&1 || true
+    systemctl restart master-firewall.service >/dev/null 2>&1
+}
+
+# --veri: ağ anahtarları, cihaz profilleri ve ağ kaydı. Klasör kalır.
+wg_drop_data() {
+    [[ -d "$WG_CONF_DIR" && ! -L "$WG_CONF_DIR" ]] || return 0
+    find "$WG_CONF_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+# ------------------------------------------------------------------ qBittorrent (DD-151)
+# Debian paketi (qbittorrent-nox) sunucunun kendisinde, indirme klasörünün sahibi olarak
+# çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
+# yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur (DD-178).
+# Hesap/dizin değişikliklerini Konsol ayar işçisi yapar; ilk giriş geçici paroladır. İnternete eş
+# portu açılmaz; paket kaldırılınca bile sunucuda kalır (yalnız servis kapanır).
+TORRENT_DROPIN_DIR="qbittorrent-nox@.service.d"
+
+torrent_need() {
+    need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR UNIT_DIR \
+        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
+    torrent_unit_name >/dev/null || fail_step "uid $DOWNLOADS_UID için kullanıcı yok; kurulumu yeniden çalıştırın"
+}
+
+torrent_unit_name() { # örnek adı, indirme klasörünün sahibinin kullanıcı adıdır
+    local user
+    user="$(getent passwd "$DOWNLOADS_UID" 2>/dev/null | cut -d: -f1 || true)"
+    [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+    printf 'qbittorrent-nox@%s.service\n' "$user"
+}
+
+torrent_dropin() { # 0: yeni yazıldı, 1: aynıydı
+    local src="$MODULES_DIR/torrent/master-stack.conf" dir="$UNIT_DIR/$TORRENT_DROPIN_DIR" tmp
+    [[ -f "$src" ]] || fail_step "modül dosyası yok ($src); kurulumu yeniden çalıştırın"
+    if [[ -f "$dir/master-stack.conf" ]] && cmp -s -- "$src" "$dir/master-stack.conf"; then return 1; fi
+    install -d -m 0755 -- "$dir"
+    tmp="$(mktemp "$dir/.master-stack.conf.XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dir/master-stack.conf"
+    systemctl daemon-reload
+}
+
+# Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır.
+torrent_profile() {
+    local conf_dir="$TORRENT_PROFILE_DIR/qBittorrent" tmp
+    install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" -- "$TORRENT_PROFILE_DIR" "$conf_dir"
+    [[ ! -e "$conf_dir/qBittorrent.conf" ]] || return 0
+    [[ -f "$MODULES_DIR/torrent/qBittorrent.conf" ]] ||
+        fail_step "modül dosyası yok ($MODULES_DIR/torrent/qBittorrent.conf); kurulumu yeniden çalıştırın"
+    tmp="$(mktemp "$conf_dir/.qBittorrent.conf.XXXXXX")"
+    cp -- "$MODULES_DIR/torrent/qBittorrent.conf" "$tmp"
+    chmod 0640 "$tmp"
+    chown "$DOWNLOADS_UID:$DOWNLOADS_GID" "$tmp"
+    mv -f -- "$tmp" "$conf_dir/qBittorrent.conf"
+}
+
+# Servis ayakta, root değil indirme sahibi olarak çalışıyor, çöp ve paylaşım kökü ona kapalı.
+# --ilk: yeni kurulumda arayüz de sınanır (127.0.0.1'de girişsiz 403; sonra ayarlar kullanıcının).
+torrent_verify() { # [--ilk]
+    local unit _ uid code paths ok=0
+    FAIL=""
+    unit="$(torrent_unit_name)"
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet "$unit" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "$unit" || { FAIL="qBittorrent servisi başlamadı"; return 1; }
+    uid="$(unit_uid "$unit")"
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    paths="$(systemctl show -p InaccessiblePaths --value "$unit" 2>/dev/null || true)"
+    [[ "$paths" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* && "$paths" == *"$SERVER_ROOT/$SHARE_DIR"* ]] ||
+        { FAIL="qBittorrent çöp ve paylaşım klasörünü görebiliyor"; return 1; }
+    [[ "${1:-}" == --ilk ]] || return 0
+    for _ in $(seq 1 20); do
+        code="$(http_code "http://127.0.0.1:$TORRENT_UI_PORT/api/v2/app/version")"
+        if [[ "$code" == 403 ]]; then ok=1; break; fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta girişsiz 403 vermedi ($code)"; return 1; }
+}
+
+torrent_verify_names() {
+    local _ code="" ans=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        code="$(http_code -H "Host: torrent.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/api/v2/app/version")"
+        ans="$(dig +short +time=2 +tries=1 "torrent.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${SETTINGS_FILE:-}" ]] && ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "torrent.$LOCAL_DOMAIN"; then ans="$TAILSCALE_IPV4"; fi
+        [[ "$code" == 403 && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        sleep 1
+    done
+    FAIL="torrent.$LOCAL_DOMAIN açılmadı (arayüz $code, DNS '$ans')"
+    return 1
+}
+
+torrent_off() { # servis durur ve açılışta başlamaz
+    local unit
+    unit="$(torrent_unit_name)" || return 0
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+}
+
+torrent_rollback() {
+    names_off torrent
+    torrent_off
+    rm -f -- "$UNIT_DIR/$TORRENT_DROPIN_DIR/master-stack.conf"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+# --veri: profil (ayarlar ve torrent listesi). İndirilen dosyalara dokunulmaz.
+torrent_drop_data() {
+    [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
+    rm -rf -- "$TORRENT_PROFILE_DIR"
+    rm -f -- "$UNIT_DIR/$TORRENT_DROPIN_DIR/90-konsol.conf"
+}
+
+# Geçici parola qBittorrent'in bu açılıştaki günlüğündedir; parola arayüzde ayarlandıysa yoktur.
+torrent_first_login() { # [--parola]
+    local unit inv log user temp
+    unit="$(torrent_unit_name)" || die "hesap yok"
+    systemctl is-active --quiet "$unit" || die "qBittorrent çalışmıyor"
+    inv="$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)"
+    [[ "$inv" =~ ^[0-9a-f]{32}$ ]] || die "qBittorrent günlüğü okunamadı"
+    log="$(journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" 2>/dev/null || true)"
+    user="$(sed -n 's/.*WebUI administrator username is: *//p' <<<"$log" | tail -n 1)"
+    # DD-156: qBittorrent may omit the username in logs once the password is set.
+    local configured
+    configured="$(python3 - "$SBIN_DIR" "$TORRENT_PROFILE_DIR/qBittorrent/qBittorrent.conf" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from master_settings import SettingsError, read_regular
+try:
+    text = read_regular(sys.argv[2])[0].decode()
+except FileNotFoundError:
+    text = ""
+except (OSError, ValueError, SettingsError):
+    sys.exit(1)
+values = [line.partition("=")[2] for line in text.splitlines() if line.startswith("WebUI\\Username=")]
+print(values[-1] if values else "")
+PY
+    )" || die "qBittorrent ayar dosyası güvenli okunamadı"
+    [[ -z "$configured" ]] || user="$configured"
+    temp="$(sed -n 's/.*temporary password is provided for this session: *//p' <<<"$log" | tail -n 1)"
+    [[ "$user" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || user="admin"
+    if [[ ! "$temp" =~ ^[A-Za-z0-9]{6,64}$ ]]; then
+        printf '%s\tayarli\n' "$user"
+    elif [[ "${1:-}" == --parola ]]; then
+        printf '%s\tgecici\t%s\n' "$user" "$temp"
+    else
+        printf '%s\tgecici\n' "$user"
+    fi
+}
+
+# ------------------------------------------------------------------- komutlar
+cmd_liste() {
+    local id rt reg live unit action step total text
+    for id in $CATALOG; do
+        rt="$(runtime_of "$id")"
+        reg="$(registry_get "$id" || printf 'yok')"
+        live="-"
+        if [[ "$reg" != yok ]]; then
+            unit=""
+            case "$id" in
+                torrent) unit="$(torrent_unit_name 2>/dev/null || true)" ;;
+            esac
+            if [[ -n "$unit" ]]; then
+                if systemctl is-active --quiet "$unit" 2>/dev/null; then live=running; else live=exited; fi
+            fi
+        fi
+        action="-" step="-" total="-" text="-"
+        if [[ -f "$(progress_file "$id")" ]]; then
+            IFS=$'\t' read -r action step total text <"$(progress_file "$id")" || true
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$rt" "$reg" "$live" \
+            "${action:--}" "${step:--}" "${total:--}" "${text:--}"
+    done
+}
+
+cmd_kur() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=kur
+    take_lock
+    ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
+    case "$id" in
+        wireguard)
+            wg_need
+            progress "$id" kur 1 4 "Paketler kuruluyor"
+            wg_packages || fail_step "$FAIL"
+            progress "$id" kur 2 4 "Çekirdek modülü"
+            wg_layer || fail_step "$FAIL"
+            progress "$id" kur 3 4 "Güvenlik duvarı kancası"
+            # Güvenlik duvarı ağları kayda bakarak açar: kayıt önce yazılır.
+            registry_set "$id" calisiyor
+            firewall_apply || { registry_set "$id" ""; firewall_apply || true; fail_step "güvenlik duvarı uygulanamadı"; }
+            progress "$id" kur 4 4 "WireGuard sayfası açılıyor"
+            wg_networks_up >/dev/null
+            ;;
+        torrent)
+            torrent_need
+            progress "$id" kur 1 4 "Paket kuruluyor"
+            apt_install qbittorrent-nox || fail_step "$FAIL"
+            progress "$id" kur 2 4 "Servis birimi"
+            torrent_dropin || true
+            torrent_profile
+            progress "$id" kur 3 4 "Servis başlatılıyor"
+            systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 ||
+                { torrent_rollback; fail_step "qBittorrent başlatılamadı"; }
+            torrent_verify --ilk || { torrent_rollback; fail_step "$FAIL"; }
+            progress "$id" kur 4 4 "Ad"
+            names_on torrent || { torrent_rollback; fail_step "$FAIL"; }
+            torrent_verify_names || { torrent_rollback; fail_step "$FAIL"; }
+            ;;
+    esac
+    registry_set "$id" calisiyor
+    progress "$id" kur bitti 0 "kuruldu"
+    printf '%s\tcalisiyor\n' "$id"
+}
+
+cmd_baslat() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=baslat
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
+    progress "$id" baslat 1 1 "Başlatılıyor"
+    case "$(runtime_of "$id")" in
+        host)
+            case "$id" in
+                torrent)
+                    torrent_need
+                    torrent_dropin || true
+                    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+                    torrent_verify || fail_step "$FAIL"
+                    names_on torrent || fail_step "$FAIL"
+                    ;;
+            esac
+            ;;
+    esac
+    registry_set "$id" calisiyor
+    progress "$id" baslat bitti 0 "başladı"
+    printf '%s\tcalisiyor\n' "$id"
+}
+
+cmd_durdur() {
+    local id="$1"
+    CUR_ID="$id" CUR_ACTION=durdur
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    [[ "$(runtime_of "$id")" != konsol ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
+    progress "$id" durdur 1 1 "Durduruluyor"
+    case "$(runtime_of "$id")" in
+        host)
+            # Açılışta da kapalı kalır; ad kalır (başlatılınca geri gelir).
+            case "$id" in
+                torrent) torrent_need; torrent_off ;;
+            esac
+            ;;
+    esac
+    registry_set "$id" durduruldu
+    progress "$id" durdur bitti 0 "durduruldu"
+    printf '%s\tdurduruldu\n' "$id"
+}
+
+cmd_kaldir() {
+    local id="$1" data="$2"
+    CUR_ID="$id" CUR_ACTION=kaldir
+    take_lock
+    registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
+    progress "$id" kaldir 1 1 "Kaldırılıyor"
+    case "$id" in
+        torrent)
+            torrent_need
+            torrent_rollback
+            ;;
+        wireguard)
+            wg_need
+            wg_networks_down
+            rm -f -- "$WG_MODULES_LOAD_FILE"
+            # Kayıt önce silinir: güvenlik duvarı WireGuard portlarını ve kurallarını kaldırır.
+            registry_set "$id" ""
+            firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
+            ;;
+    esac
+    if [[ "$data" == 1 ]]; then
+        case "$id" in
+            wireguard) wg_drop_data ;;
+            torrent) torrent_drop_data ;;
+        esac
+    fi
+    registry_set "$id" ""
+    progress "$id" kaldir bitti 0 "kaldırıldı"
+    printf '%s\tyok\n' "$id"
+}
+
+cmd_gunluk() {
+    local id="$1" lines="${2:-60}"
+    [[ "$lines" =~ ^[0-9]{1,4}$ ]] || die "satır sayısı geçersiz"
+    case "$id" in
+        wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
+        torrent)
+            torrent_unit_name >/dev/null || { printf '(günlük yok)\n'; return 0; }
+            # Geçici parola satırı gösterilmez: Konsol onu yalnız istenince, ayrıca verir.
+            journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>&1 |
+                sed 's/\(temporary password is provided for this session:\).*/\1 ••••/' || printf '(günlük yok)\n'
+            ;;
+    esac
+}
+
+# Salt okunur: Konsol'un root arka ucu kendi korumalı alanında çalıştırır (kilit ve ilerleme yok).
+cmd_hesap() {
+    local with="$1"
+    torrent_need
+    if [[ "$with" == 1 ]]; then torrent_first_login --parola; else torrent_first_login; fi
+}
+
+# Kurulumun yeniden çalışması: dosyası değişen kurulu modülü uygular; durdurulan modül durur,
+# kurulu olmayan hiç dokunulmadan kalır. İlerleme dosyasına yazmaz (Konsol son sonucu görür).
+cmd_uygula() {
+    local id="$1" state
+    take_lock
+    state="$(registry_get "$id" || true)"
+    if [[ -z "$state" ]]; then
+        printf '%s\tyok\n' "$id"
+        return 0
+    fi
+    case "$id" in
+        wireguard)
+            wg_need
+            wg_packages || fail_step "$FAIL"
+            wg_layer || fail_step "$FAIL"
+            wg_networks_up >/dev/null
+            printf '%s\t%s\n' "$id" "$state"
+            return 0
+            ;;
+        torrent)
+            torrent_need
+            torrent_dropin && systemctl try-restart "$(torrent_unit_name)" >/dev/null 2>&1 || true
+            names_on torrent || fail_step "$FAIL"
+            if [[ "$state" == calisiyor ]]; then
+                systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+                torrent_verify || fail_step "$FAIL"
+            fi
+            if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
+                python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"
+            fi
+            printf '%s\t%s\n' "$id" "$state"
+            return 0
+            ;;
+    esac
+}
+
+# Installer-only lifecycle for built-ins; they are absent from the public
+# catalog and cannot be stopped/removed through a module API or CLI action.
+# Keep internal registry IDs for firewall/settings compatibility, not disk markers.
+cmd_yerlesik() {
+    local changed=" ${1:-} " files_changed=0 share_changed=0
+    take_lock
+    files_need
+    share_need
+    share_prepare
+    files_place_unit && files_changed=1
+    share_place_unit && share_changed=1
+    systemctl enable --quiet "$FILES_UNIT" "$SHARE_UNIT"
+    if [[ "$changed" == *" dosya "* || "$files_changed" == 1 ]] || ! systemctl is-active --quiet "$FILES_UNIT"; then
+        systemctl reset-failed "$FILES_UNIT"
+        systemctl restart "$FILES_UNIT"
+    fi
+    if [[ "$changed" == *" paylasim "* || "$share_changed" == 1 ]] || ! systemctl is-active --quiet "$SHARE_UNIT"; then
+        systemctl reset-failed "$SHARE_UNIT"
+        systemctl restart "$SHARE_UNIT"
+    fi
+    files_verify || fail_step "$FAIL"
+    share_verify || fail_step "$SHARE_FAIL"
+    names_on paylasim || fail_step "$FAIL"
+    share_verify_names || fail_step "$SHARE_FAIL"
+    [[ "$(registry_get dosya || true)" == calisiyor ]] || registry_set dosya calisiyor
+    [[ "$(registry_get paylasim || true)" == calisiyor ]] || registry_set paylasim calisiyor
+    printf 'Yerleşik Dosyalar + WebDAV doğrulandı.\n'
+}
+
+main() {
+    local cmd="${1:-}"
+    case "$cmd" in
+        liste) cmd_liste ;;
+        yerlesik) cmd_yerlesik "${2:-}" ;;
+        kur | baslat | durdur | gunluk | kaldir | hesap | uygula)
+            [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
+            valid_id "$2"
+            case "$cmd" in
+                hesap) [[ "$2" == torrent ]] || die "bu modülde hesap yok: '$2'" ;;
+            esac
+            case "$cmd" in
+                kur) cmd_kur "$2" ;;
+                baslat) cmd_baslat "$2" ;;
+                durdur) cmd_durdur "$2" ;;
+                gunluk) cmd_gunluk "$2" "${3:-60}" ;;
+                kaldir)
+                    [[ "${3:-}" == "" || "${3:-}" == --veri ]] || die "kullanım: master-modul kaldir ID [--veri]"
+                    cmd_kaldir "$2" "$([[ "${3:-}" == --veri ]] && echo 1 || echo 0)"
+                    ;;
+                hesap)
+                    [[ "${3:-}" == "" || "${3:-}" == --parola ]] || die "kullanım: master-modul hesap ID [--parola]"
+                    cmd_hesap "$([[ "${3:-}" == --parola ]] && echo 1 || echo 0)"
+                    ;;
+                uygula) [[ $# -eq 2 ]] || die "kullanım: master-modul uygula ID"; cmd_uygula "$2" ;;
+            esac
+            ;;
+        *) die "kullanım: master-modul liste | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
+    esac
+}
+
+main "$@"

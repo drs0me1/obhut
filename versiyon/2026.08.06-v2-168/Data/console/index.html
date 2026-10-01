@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Konsol</title>
+<link rel="stylesheet" href="/konsol.css">
+<link rel="stylesheet" href="/ayarlar.css">
+<link rel="stylesheet" href="/dosyalar.css">
+<link rel="stylesheet" href="/panel.css">
+<script src="/arsiv.js" defer></script>
+<script src="/dosyalar.js" defer></script>
+<script src="/ayarlar.js" defer></script>
+<script src="/konsol.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">İçeriğe geç</a>
+<header class="mobile-brand">
+  <span class="wordmark"><span id="brand-host-m">sunucu</span><span class="dot">.</span></span>
+  <button type="button" class="btn btn-quiet" id="menu-toggle" aria-controls="panel-sidebar" aria-expanded="false">Menü</button>
+</header>
+<div class="shell">
+  <aside class="side" id="panel-sidebar" aria-label="Sunucu konsolu">
+    <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
+    <nav class="nav" aria-label="Bölümler">
+      <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
+      <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
+      <span class="side-label" id="installed-label" hidden>Kurulu uygulamalar</span>
+      <a href="#/torrent" data-route="torrent" data-icon="download" hidden>qBittorrent</a>
+      <a href="#/wireguard" data-route="wireguard" data-icon="shield" hidden>WireGuard</a>
+      <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders" class="settings-link">Ayarlar</a>
+    </nav>
+    <section class="resources" aria-label="Sunucu kaynakları">
+      <p class="resource-status" id="resource-status" role="status">Kaynaklar okunuyor…</p>
+      <div class="resource"><div><span>İşlemci</span><strong id="resource-cpu">—</strong></div><progress id="bar-cpu" max="100" value="0" aria-label="İşlemci kullanımı" hidden></progress><small id="detail-cpu">Örnek bekleniyor</small></div>
+      <div class="resource"><div><span>RAM</span><strong id="resource-mem">—</strong></div><progress id="bar-mem" max="100" value="0" aria-label="Bellek kullanımı" hidden></progress><small id="detail-mem">—</small></div>
+      <div class="resource"><div><span>Disk</span><strong id="resource-disk">—</strong></div><progress id="bar-disk" max="100" value="0" aria-label="Disk kullanımı" hidden></progress><small id="detail-disk">—</small></div>
+    </section>
+    <div class="side-foot"><span id="foot-access">Tailscale</span><span class="mono" id="foot-ts">—</span><span class="mono" id="foot-version">—</span><button type="button" class="linkbtn" id="logout">Çıkış yap</button></div>
+  </aside>
+  <main class="main" id="main-content" tabindex="-1">
+    <div class="content">
+      <header class="topbar">
+        <div><p class="eyebrow" id="eyebrow">Sunucu yönetimi</p><h1 id="title">Dosyalar</h1></div>
+        <div class="top-actions" id="top-actions"></div>
+      </header>
+
+      <!-- WIREGUARD -->
+      <section data-view="wireguard" hidden>
+        <div class="wg-empty" id="wg-empty" hidden></div>
+        <div class="netwrap" id="wg-wrap">
+          <nav class="nettabs" id="wg-tabs" role="tablist" aria-label="WireGuard ağları"></nav>
+          <div class="netpanel first" id="wg-panel" role="tabpanel">
+            <div class="offbar" id="wg-offbar" hidden></div>
+            <dl class="summary" id="wg-summary"></dl>
+            <div class="table wg-t" id="wg-table"></div>
+            <button type="button" class="addrow" id="wg-add"></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ARAYÜZ EKLE -->
+      <section data-view="wgadd" hidden>
+        <div class="addpage">
+          <div class="addform">
+            <article class="card">
+              <div class="card-head"><h2 data-icon="shield">Ağ</h2><span class="hint-s">Sıradaki boş ağ kendiliğinden seçildi</span></div>
+              <div class="ident-row" id="na-ident"></div>
+              <div class="field">
+                <label for="na-label">Etiket</label>
+                <input type="text" id="na-label" maxlength="24" autocomplete="off" spellcheck="false" placeholder="ör. Misafir, İş, Çocuklar">
+                <small class="hint-s">Yalnız Konsol'da görünür; boş bırakılabilir.</small>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-head"><h2 data-icon="stack">Port</h2><span class="hint-s">Sunucunun internete açtığı UDP portu</span></div>
+              <div class="field">
+                <label for="na-port">UDP portu</label>
+                <input type="number" id="na-port" min="1024" max="65535" autocomplete="off">
+                <small class="err-s" id="na-port-err" hidden></small>
+                <small class="hint-s" id="na-port-hint">1024–65535 arasında, kullanılmayan bir UDP portu. Kullanılan port reddedilir; sıradaki boş port yazılır.</small>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-head"><h2 data-icon="server">Varsayılan DNS</h2><span class="hint-s">Bu ağa eklenen cihazlara önerilir</span></div>
+              <div class="sugg" id="na-sugg" role="radiogroup" aria-label="Varsayılan DNS"></div>
+            </article>
+          </div>
+          <aside class="addside">
+            <article class="card">
+              <div class="card-head"><h2>Oluşturulacak ağ</h2></div>
+              <div id="na-preview"></div>
+              <ul class="will" id="na-will"></ul>
+              <div class="infoline-s" data-icon="info"><span>Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.</span></div>
+              <div class="dlg-foot">
+                <button class="btn btn-quiet" type="button" data-go="#/wireguard">Vazgeç</button>
+                <button class="btn btn-primary" type="button" id="na-create" disabled>Arayüzü oluştur</button>
+              </div>
+            </article>
+          </aside>
+        </div>
+      </section>
+
+      <!-- DOSYALAR -->
+      <section data-view="dosyalar" hidden>
+        <nav id="fs-tabs" class="fs09-tabs" aria-label="Dosya bölümleri"></nav>
+        <!-- Folder shortcuts, selection actions and uploads share one workspace. -->
+        <div class="fswrap">
+          <nav class="fsrail" id="fs-rail" aria-label="Klasörler"></nav>
+          <div class="fspanel" id="fs-panel"><div id="fs-body" class="fs-body"></div></div>
+        </div>
+      </section>
+
+      <!-- Optional applications; built-in services live in Settings. -->
+      <section data-view="moduller" hidden>
+        <div class="store-list" id="mod-grid" aria-label="Uygulamalar"></div>
+        <section class="store-detail" id="mod-detail" aria-labelledby="mod-detail-title" hidden></section>
+      </section>
+
+      <section data-view="torrent" hidden>
+        <div id="torrent-status" class="app-toolbar"></div>
+        <details class="card app-account"><summary>İlk giriş bilgileri</summary><div id="torrent-account"></div></details>
+        <div id="torrent-settings"></div>
+      </section>
+
+      <section data-view="ayarlar" hidden>
+        <div id="settings-page" aria-label="Sunucu ayarları"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- genel amaçlı pencere: peer ekle, QR, dosya görüntüleyici -->
+<dialog id="sh" aria-labelledby="sh-title"><div class="dlg" id="sh-body"></div></dialog>
+
+<dialog id="pe" aria-labelledby="pe-title">
+  <form class="dlg" id="pe-form" novalidate>
+    <div class="dlg-head">
+      <div><h3 id="pe-title">Düzenle</h3><p id="pe-sub"></p></div>
+      <button class="dlg-x" type="button" id="pe-x" aria-label="Kapat"></button>
+    </div>
+    <div class="field">
+      <span class="lbl" id="pe-dns-lbl">DNS sunucuları</span>
+      <div class="sugg" id="pe-sugg" role="radiogroup" aria-labelledby="pe-dns-lbl"></div>
+    </div>
+    <div class="field">
+      <label for="pe-ka">PersistentKeepalive (saniye)</label>
+      <div class="ka-row"><input type="number" id="pe-ka" min="0" max="65535" autocomplete="off"><div class="chips-s" id="pe-ka-chips"></div></div>
+      <small class="hint-s">Cihaz boştayken bağlantıyı açık tutmak için kaç saniyede bir paket yollasın. 0 = kapalı; mobil ağlarda 21 önerilir.</small>
+    </div>
+    <div class="infoline-s" data-icon="info"><span>Anahtar ve adres değişmez. Kaydedince cihazda yeni QR'ı okutun: eski tüneli silip yenisini ekleyin.</span></div>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" id="pe-cancel">Vazgeç</button>
+      <button class="btn btn-primary" type="submit" id="pe-save" disabled>Kaydet</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="cf" aria-labelledby="cf-title">
+  <form class="dlg" id="cf-form" novalidate>
+    <div class="dlg-head">
+      <div><h3 id="cf-title">Onay</h3><p id="cf-sub"></p></div>
+      <button class="dlg-x" type="button" id="cf-x" aria-label="Kapat"></button>
+    </div>
+    <ul class="conseq" id="cf-list"></ul>
+    <div id="cf-extra"></div>
+    <div class="confirm-row" id="cf-word-row">
+      <label for="cf-word">Onay için <strong>onayla</strong> yazın</label>
+      <input type="text" id="cf-word" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-quiet" type="button" id="cf-cancel">Vazgeç</button>
+      <button class="btn btn-danger" type="submit" id="cf-go" disabled>Tamam</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

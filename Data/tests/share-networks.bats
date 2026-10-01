@@ -5,7 +5,7 @@ setup() { V2_ROOT="$(cd -- "$BATS_TEST_DIRNAME/.." && pwd)"; }
 @test "WAN sharing is a separate loopback on the existing port and boot waits for firewall" {
     grep -qx 'SHARE_WAN_BACKEND="127.0.0.2"' "$V2_ROOT/config/defaults.env"
     grep -qx 'SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND' "$V2_ROOT/install.sh"
-    grep -qF -- '--wan-listen=__SHARE_WAN_BACKEND__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qF -- '--wan-listen=__SHARE_WAN_BACKEND__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
     grep -qF 'ExecStartPre=+$SBIN_DIR/master-firewall --check' "$V2_ROOT/install.sh"
     grep -qx 'After=master-firewall.service' "$V2_ROOT/install.sh"
 }
@@ -14,7 +14,7 @@ setup() { V2_ROOT="$(cd -- "$BATS_TEST_DIRNAME/.." && pwd)"; }
     grep -qF 'servers __WAN_IPV4__:__SHARE_PORT__ {' "$V2_ROOT/templates/Caddyfile"
     grep -q 'read_header 10s' "$V2_ROOT/templates/Caddyfile"
     grep -q 'idle 30s' "$V2_ROOT/templates/Caddyfile"
-    grep -qF 'header_up X-Share-Client-IP {http.request.remote.host}' "$V2_ROOT/modules/paylasim/paylasim.caddy"
+    grep -qF 'header_up X-Share-Client-IP {http.request.remote.host}' "$V2_ROOT/magaza/paylasim/paylasim.caddy"
 }
 
 @test "WAN connection admission precedes operator overrides and is conditional" {

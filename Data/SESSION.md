@@ -4,12 +4,36 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Store model phase 0, v2-170 (DD-196):**
+- User reported WireGuard rows/errors in Konsol's log without the package; asked for a
+  fully independent App Store and a store design. Model proposed and approved; folder
+  name `magaza`; phase 0 started.
+- Done: log labels by source; `modules/` → `magaza/`; `master-wg` + wg-quick drop-in moved
+  to `magaza/wireguard/` and installed/removed by master-modul; stage 7, summary, unit
+  description, Caddy `--environ`, tailnet timer, module log route. The live removal test
+  exposed a pre-existing bug (`kaldir wireguard` never closed networks on real systemd:
+  `list-unit-files` exit 1 aborted the listing); fixed with a Bats regression. Deployed to
+  nrm (v2-170), kur/net-add/kaldir cycle clean. Uncommitted.
+- Next: phase 1 (manifest + hooks + declarative firewall/health/ports/publications),
+  phase 2 (backend/API rename, Konsol pages from packages).
+
+## Previous Task
+
+**2026-10-01 — HTTPS publications vs legacy WebDAV HTTP, v2-169:**
+- User's fresh v2-168 install refused Panel HTTPS: "Önce WebDAV için HTTPS kaydedin…"
+  because WebDAV without a saved name is legacy HTTP mode (DD-191 rule on the mode).
+- Now: `legacy_http_active()` (live plaintext WAN folders) gates torrent/panel saves;
+  `wan_info()` makes legacy HTTP unavailable while an HTTPS row is on
+  (`https_apps_enabled`). Firewall stays single-port. Committed as v2-169.
+
+## Previous Task
+
 **2026-10-01 — qBittorrent link follows the Konsol address, v2-168 (DD-195 amendment):**
 - User published Panel (`panel.example.net`) and qBittorrent (`qbit.example.net`) themselves,
   then could not open qBittorrent from the HTTPS Konsol: the link was `torrent.<domain>`.
 - `/api/konsol/moduller` torrent item now carries `urls` (tailscale always, internet while
   `torrent_active`); the page picks by `location.protocol`, else a Settings → Caddy hint.
-- Uncommitted on top of c5f9288.
+- Committed as 7038240.
 
 ## Previous Task
 

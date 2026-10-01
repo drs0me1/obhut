@@ -216,7 +216,7 @@ EOF
     # Both are written to state.env; the endpoint is the detected IPv4; no literal address remains.
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'WAN_IPV6=\$WAN_IPV6'
     awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh" | grep -qx '    WG_ENDPOINT_HOST="\$WAN_IPV4"'
-    run grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-wg" \
+    run grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$V2_ROOT/install.sh" "$V2_ROOT/magaza/wireguard/master-wg" \
         "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/config/defaults.env"
     # DNS provider prefixes (DD-140 presets) are data, not addresses of this server.
     printf '%s\n' "$output" | grep -vE '10\.8\.|127\.0\.0\.|0\.0\.0\.0|1\.1\.1\.|1\.0\.0\.|9\.9\.9\.|149\.112\.112\.|94\.140\.1[45]\.|8\.8\.[84]\.|45\.90\.[23]0\.|100\.100\.100\.100|100\.64\.0\.0|255\.' >"$TMP/literals" || true
@@ -529,7 +529,7 @@ EOF
 @test "firewall opens no torrent peer port and has no Docker chain" {
     # DD-151: qBittorrent runs on the host and makes outgoing connections only.
     local fw="$V2_ROOT/scripts/firewall.sh"
-    [ "$(cat "$fw" "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/scripts/master-wg" \
+    [ "$(cat "$fw" "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/magaza/wireguard/master-wg" \
         "$V2_ROOT/panel/master-wg-panel" | grep -c 'TORRENT_PUBLIC_PORT')" -eq 0 ]
     # DD-152: no Docker — no MASTER-DOCKER chain, no DOCKER-USER jump, no wait for dockerd.
     [ "$(grep -vE '^[[:space:]]*#' "$fw" | grep -ciE 'docker')" -eq 0 ]
@@ -556,8 +556,8 @@ EOF
     grep -qF 'getent passwd "$DOWNLOADS_UID"' <<<"$body"
     grep -qF "printf 'qbittorrent-nox@%s.service\n'" <<<"$body"
     # DD-152: the share service reads the shared files as their owner, never as root.
-    grep -qx 'User=__DOWNLOADS_UID__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
-    grep -qx 'Group=__DOWNLOADS_GID__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qx 'User=__DOWNLOADS_UID__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
+    grep -qx 'Group=__DOWNLOADS_GID__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
 }
 
 @test "downloads tree repairs ownership for qbittorrent, the share and the console through safe descriptors" {
@@ -717,14 +717,16 @@ assert not missing, missing
 }
 
 @test "WireGuard networks wait for a checked firewall and the timer reopens failed ones" {
-    local dropin="$V2_ROOT/systemd/wg-quick-master-stack.conf" rt="$V2_ROOT/scripts/refresh-tailnet-config" s4
+    local dropin="$V2_ROOT/magaza/wireguard/wg-quick-master-stack.conf" rt="$V2_ROOT/scripts/refresh-tailnet-config" s4
     grep -qx 'Wants=master-firewall.service' "$dropin"
     grep -qx 'After=master-firewall.service' "$dropin"
     grep -qx 'ExecStartPre=+__SBIN_DIR__/master-firewall --check' "$dropin"
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" |
         grep -qxF 'ExecStartPre=+$SBIN_DIR/master-firewall --check'
-    s4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -qF '"$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"' <<<"$s4"
+    # DD-196: the drop-in is rendered into the package folder; master-modul places it on install only.
+    grep -qF '"$MODULES_DIR/wireguard/wg-quick-master-stack.conf" 0644 SBIN_DIR="$SBIN_DIR"' "$V2_ROOT/install.sh"
+    run ! grep -qF '"$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644' "$V2_ROOT/install.sh"
+    grep -qF 'mv -f -- "$tmp" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"' "$V2_ROOT/scripts/master-modul"
     # With the firewall recovery and before the tailnet wait: WireGuard does not need Tailscale.
     [ "$(awk '/^recover_firewall_if_broken$/ {print NR; exit}' "$rt")" -lt \
         "$(awk '/^recover_failed_wireguard$/ {print NR; exit}' "$rt")" ]
@@ -741,6 +743,14 @@ assert not missing, missing
     FIREWALL_BIN="$TMP/fw"
     printf '#!/bin/sh\necho check >>"%s/calls"\n[ ! -e "%s/fw-broken" ]\n' "$TMP" "$TMP" >"$FIREWALL_BIN"
     chmod +x "$FIREWALL_BIN"
+    # DD-196: without the package in the registry, failed units are not even listed.
+    MODULES_FILE="$TMP/moduller"
+    : >"$MODULES_FILE"
+    printf 'wg-quick@wg0.service loaded failed failed WireGuard\n' >"$TMP/failed"
+    recover_failed_wireguard
+    [ ! -e "$TMP/calls" ]
+    rm -f "$TMP/failed"
+    printf 'wireguard\tcalisiyor\n' >"$MODULES_FILE"
     # Nothing failed: the firewall is not even checked.
     recover_failed_wireguard
     run ! grep -q '^check$' "$TMP/calls"
@@ -784,7 +794,7 @@ assert not missing, missing
     grep -q 'Cache-Control "no-cache"' <<<"$site"
     run ! grep -q 'Cache-Control "no-store"' "$V2_ROOT/templates/Caddyfile"
     # The WebDAV sites stay uncompressed (video).
-    run ! grep -q 'encode' "$V2_ROOT/modules/paylasim/paylasim.caddy"
+    run ! grep -q 'encode' "$V2_ROOT/magaza/paylasim/paylasim.caddy"
     # PID 1's per-run lines stay out of the journal; the helpers' own messages stay at notice.
     for unit in master-settings-guard.service master-share-network.service; do
         grep -qx 'SyslogLevel=notice' "$V2_ROOT/systemd/$unit"
@@ -799,8 +809,8 @@ assert not missing, missing
     # The root backend writes audit lines only, no request lines.
     awk '/    def log_message\(self, fmt, \*args\):/,/pass$/' "$V2_ROOT/panel/master-wg-panel" | grep -q '^        pass$'
     # qBittorrent yields CPU to Tailscale and Konsol.
-    grep -qx 'Nice=10' "$V2_ROOT/modules/torrent/master-stack.conf"
-    grep -qx 'CPUWeight=50' "$V2_ROOT/modules/torrent/master-stack.conf"
+    grep -qx 'Nice=10' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    grep -qx 'CPUWeight=50' "$V2_ROOT/magaza/torrent/master-stack.conf"
 }
 
 @test "resilience: capped rollback with discard, stale WAN site, watchdog resets, damaged history, health card" {
@@ -885,7 +895,7 @@ assert not missing, missing
     [ "$(grep -n 'udp \$TAILSCALE_UDP_PORT' <<<"$pairs" | cut -d: -f1)" -lt \
         "$(grep -n 'v4' <<<"$pairs" | head -1 | cut -d: -f1)" ]
     # DD-143: port çakışması denetimi artık master-wg net-add'de (ağları o kurar).
-    grep -q '"tailscale:\${TAILSCALE_UDP_PORT:-}"' "$V2_ROOT/scripts/master-wg"
+    grep -q '"tailscale:\${TAILSCALE_UDP_PORT:-}"' "$V2_ROOT/magaza/wireguard/master-wg"
 }
 
 @test "refresh-tailnet warns when the tailnet is unusable" {
@@ -1042,7 +1052,7 @@ EOF
 }
 
 @test "the only WebDAV is a credential-loaded unprivileged host service behind Caddy" {
-    local unit="$V2_ROOT/modules/paylasim/master-paylasim.service"
+    local unit="$V2_ROOT/magaza/paylasim/master-paylasim.service"
     grep -qxF 'ExecStart=/usr/bin/python3 __SBIN_DIR__/master_webdav.py --registry=%d/registry --port=__SHARE_PORT__ --wan-listen=__SHARE_WAN_BACKEND__' "$unit"
     for line in 'LoadCredential=registry:__SHARE_STATE_FILE__' 'User=__DOWNLOADS_UID__' \
         'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
@@ -1051,14 +1061,14 @@ EOF
         'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__'; do
         grep -qxF "$line" "$unit"
     done
-    grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$V2_ROOT/modules/paylasim/paylasim.caddy"
+    grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$V2_ROOT/magaza/paylasim/paylasim.caddy"
     # Public TLS has its own port; tailnet WebDAV stays on explicit HTTP.
     grep -qx 'SHARE_HTTPS_PORT="443"' "$V2_ROOT/config/defaults.env"
     grep -qxF "$(printf '\tauto_https disable_redirects')" "$V2_ROOT/templates/Caddyfile"
     grep -qxF "$(printf '\tservers __WAN_IPV4__:__SHARE_HTTPS_PORT__ {')" "$V2_ROOT/templates/Caddyfile"
-    grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/modules/paylasim/dnsmasq.conf"
+    grep -qx 'interface-name=paylas.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/magaza/paylasim/dnsmasq.conf"
     [ "$(grep -c '^http://paylas' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
-    [ ! -e "$V2_ROOT/modules/paylasim/compose.yaml" ]
+    [ ! -e "$V2_ROOT/magaza/paylasim/compose.yaml" ]
 }
 
 @test "IPv6 INPUT is checked with the same WAN-scoped shape" {
@@ -1336,7 +1346,7 @@ EOF
         run ! grep -q "^${key}=" "$V2_ROOT/config/defaults.env"
     done
     # DNS_PORT and CADDY_HTTP_PORT exist and are read where ports are checked (DD-143: master-wg).
-    grep -q '"dns:53" "http:80"' "$V2_ROOT/scripts/master-wg"
+    grep -q '"dns:53" "http:80"' "$V2_ROOT/magaza/wireguard/master-wg"
     grep -q 'CADDY_HTTP_PORT' "$V2_ROOT/install.sh"
 }
 
@@ -1345,7 +1355,7 @@ EOF
     local code
     code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/config/defaults.env" \
         "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf" \
-        "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/scripts/firewall.sh" "$V2_ROOT/scripts/master-wg" \
+        "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/scripts/firewall.sh" "$V2_ROOT/magaza/wireguard/master-wg" \
         "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/index.html" \
         "$V2_ROOT/config/kurulum.env.example")"
     run ! grep -qi 'filebrowser' <<<"$code"
@@ -2198,6 +2208,9 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
         "http://panel.ayc/api/konsol/moduller/torrent/kur")" = 403 ]
     [ "$(wc -l <"$TMP/sdrun-calls")" = "$before" ]
+    # DD-196: a module's log exists only while it is installed; the fixture registers torrent first.
+    [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 404 ]
+    printf 'torrent\tcalisiyor\n' >>"$(awk -F= '$1 == "MODULES_FILE" {print $2}' "$TMP/state.env")"
     [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 200 ]
     grep -qi '^Content-Type: text/plain' "$TMP/head"
     grep -q 'WebUI will be started shortly' "$TMP/body"
@@ -2494,6 +2507,49 @@ EOF
     grep -qF 'secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""' "$V2_ROOT/panel/master-wg-panel"
 }
 
+@test "store phase 0: the base owns no WireGuard; the package installs and removes its tool and drop-in" {
+    local s4 s7 modul
+    # DD-196: repo layout — packages live under magaza/, the WireGuard tool among them.
+    [ -f "$V2_ROOT/magaza/wireguard/master-wg" ]
+    [ -f "$V2_ROOT/magaza/wireguard/wg-quick-master-stack.conf" ]
+    [ ! -e "$V2_ROOT/modules" ] && [ ! -e "$V2_ROOT/scripts/master-wg" ] && [ ! -e "$V2_ROOT/systemd/wg-quick-master-stack.conf" ]
+    grep -qF '"$REPO_ROOT/magaza"' "$V2_ROOT/dev/export-installer.sh"
+    # The installer renders the package files only; nothing WireGuard reaches sbin or systemd from the base.
+    s4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    run ! grep -qF '"$SBIN_DIR/master-wg" 0755' <<<"$s4"
+    run ! grep -q 'wg-quick@.service.d' <<<"$s4"
+    grep -qF 'atomic_write "$MODULES_DIR/wireguard/master-wg" 0755 <"$V2_ROOT/magaza/wireguard/master-wg"' "$V2_ROOT/install.sh"
+    run ! grep -q 'install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"' "$V2_ROOT/install.sh"
+    # The package puts them in place on install/reapply and takes them away on removal.
+    modul="$V2_ROOT/scripts/master-modul"
+    grep -qF 'mv -f -- "$tmp" "$SBIN_DIR/master-wg"' "$modul"
+    awk '/^cmd_kur\(\)/,/^}$/' "$modul" | grep -q 'wg_tools || fail_step'
+    awk '/^cmd_uygula\(\)/,/^}$/' "$modul" | grep -q 'wg_tools || fail_step'
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '            wg_tools_remove'
+    grep -qF 'rm -f -- "$SBIN_DIR/master-wg" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"' "$modul"
+    # Stage 7: the tool is checked only with the package, and must be absent without it; the probe is package-neutral.
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -qF 'die "WireGuard kurulu değilken aracı ya da birim eki sunucuda kalmış"' <<<"$s7"
+    grep -qF -- '--url "http://panel.${LOCAL_DOMAIN}/api/konsol/kaynaklar"' <<<"$s7"
+    run ! grep -q 'Konsol WireGuard arka ucu' <<<"$s7"
+    # Re-runs converge: a tool left by an older base install goes when the package is absent.
+    awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'WireGuard kurulu değil; aracı ve birim eki sunucudan kaldırıldı'
+    # Summary and confirmation screen mention WireGuard only as a package.
+    run ! grep -q '^WireGuard:    ' "$V2_ROOT/install.sh"
+    run ! grep -q 'WireGuard:     ağı Konsol kurar' "$V2_ROOT/install.sh"
+    grep -q '^wg_summary_note()' "$V2_ROOT/install.sh"
+    # Caddy no longer dumps state.env into the journal; the backend is named generically.
+    awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" | grep -qxF 'ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile'
+    grep -qx 'Description=Konsol root backend (master-stack, DD-133, DD-140, DD-196)' "$V2_ROOT/systemd/master-wg-panel.service"
+    # The 5-minute timer and the module log route look at WireGuard only while it is installed.
+    grep -qF "grep -qx \$'wireguard\\tcalisiyor'" "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -qF 'self.error(404, "bu modül kurulu değil")' "$V2_ROOT/panel/master-wg-panel"
+    # Konsol's log labels each event by its real source; only WireGuard actions say WireGuard.
+    grep -qF 'const WG_ACTIONS = new Set(' "$V2_ROOT/console/konsol.js"
+    run ! grep -qF 'e.source === "panel" ? "wg" : "fs"' "$V2_ROOT/console/konsol.js"
+    grep -qF '"parola-degis": () => "Konsol parolası değiştirildi"' "$V2_ROOT/console/konsol.js"
+}
+
 @test "installer wires the wg panel: loopback unit, tailnet name, Konsol sign-in, stage 7 gate proof" {
     local unit="$V2_ROOT/systemd/master-wg-panel.service" body s6 s7
     # DD-180: no TCP port; a Unix socket only Caddy's group and root can open.
@@ -2516,11 +2572,11 @@ EOF
         "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" "$unit"
     run ! grep -q -- '--auth' "$unit"
     # No panel port is reserved any more: it has none.
-    run ! grep -q '"panel:' "$V2_ROOT/scripts/master-wg"
+    run ! grep -q '"panel:' "$V2_ROOT/magaza/wireguard/master-wg"
     body="$(awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    # v2-119: the WireGuard folder exists before the backend starts, even without the module.
-    [ "$(grep -n 'install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"' <<<"$body" | cut -d: -f1)" -lt \
-        "$(grep -n 'systemctl restart master-wg-panel.service' <<<"$body" | cut -d: -f1)" ]
+    # DD-196: the WireGuard key folder belongs to the package; the base backend starts without it.
+    run ! grep -q 'WG_CONF_DIR' <<<"$body"
+    grep -qx 'ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__' "$unit"
     # DD-140: this backend serves no page files any more; the console pages come from the file backend.
     run ! grep -q -- '--web' "$V2_ROOT/systemd/master-wg-panel.service"
     run ! grep -qE 'index\.html|panel\.css|panel\.js' <<<"$body"
@@ -2541,7 +2597,7 @@ EOF
     grep -qF '"http://127.0.0.1:2019/config/"' <<<"$s7"
     grep -qF 'systemctl reload caddy || die' <<<"$s7"
     # The Caddy tailnet listener is reachable from the host too: that path must end in the backend's 403.
-    grep -qF '"http://${TAILSCALE_IPV4}/api/wg/state" 2>/dev/null || true)"' <<<"$s7"
+    grep -qF '"http://${TAILSCALE_IPV4}/api/konsol/kaynaklar" 2>/dev/null || true)"' <<<"$s7"
     grep -qF '*"başka bir Tailscale cihazından"*' <<<"$s7"
     grep -qF 'master-wg-panel" check --socket "$WG_PANEL_SOCKET"' <<<"$s7"
     grep -q 'Konsol giriş sayfası tailnet.ten açılmadı' <<<"$s7"
@@ -2566,7 +2622,7 @@ EOF
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
     # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
-    grep -q 'UDP $port kullanılıyor' "$V2_ROOT/scripts/master-wg"
+    grep -q 'UDP $port kullanılıyor' "$V2_ROOT/magaza/wireguard/master-wg"
     # The console polls every ten seconds and skips the work while the tab is hidden.
     grep -q 'if (document.hidden) return;' "$V2_ROOT/console/konsol.js"
 }
@@ -2874,25 +2930,25 @@ PY
     [ ! -e "$V2_ROOT/templates/qBittorrent.conf" ]
     [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/templates/Caddyfile" \
         "$V2_ROOT/templates/dnsmasq.conf" "$V2_ROOT/scripts/firewall.sh" \
-        "$V2_ROOT/scripts/master-wg" "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" \
+        "$V2_ROOT/magaza/wireguard/master-wg" "$V2_ROOT/panel/master-wg-panel" "$V2_ROOT/console/konsol.js" \
         "$V2_ROOT/console/index.html" | grep -ciE 'dozzle|COMPOSE_DIR|QBITTORRENT_(IMAGE|DATA_DIR|CONF_FILE)|PULL_IMAGES|bcrypt_matches|validate_account')" -eq 0 ]
     grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
     for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf; do
-        grep -qF "render_template \"\$V2_ROOT/modules/torrent/$f\" \"\$MODULES_DIR/torrent/$f\" 0644" "$V2_ROOT/install.sh"
+        grep -qF "render_template \"\$V2_ROOT/magaza/torrent/$f\" \"\$MODULES_DIR/torrent/$f\" 0644" "$V2_ROOT/install.sh"
     done
-    grep -qx 'WebUI\\Address=127.0.0.1' "$V2_ROOT/modules/torrent/qBittorrent.conf"
-    grep -qx 'WebUI\\Port=__TORRENT_UI_PORT__' "$V2_ROOT/modules/torrent/qBittorrent.conf"
-    grep -qx 'Session\\DefaultSavePath=__DOWNLOADS_PATH__/' "$V2_ROOT/modules/torrent/qBittorrent.conf"
+    grep -qx 'WebUI\\Address=127.0.0.1' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
+    grep -qx 'WebUI\\Port=__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
+    grep -qx 'Session\\DefaultSavePath=__DOWNLOADS_PATH__/' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     # DD-178: only panel integration/headless startup keys may be seeded. In
     # particular do not force UPnP, discovery, temporary storage or performance.
     expected="$(printf '%s\n' Accepted 'Session\DefaultSavePath' 'Downloads\SavePath' \
         'WebUI\Address' 'WebUI\LocalHostAuth' 'WebUI\Port' | LC_ALL=C sort)"
-    actual="$(awk -F= '/=/ {print $1}' "$V2_ROOT/modules/torrent/qBittorrent.conf" | LC_ALL=C sort)"
+    actual="$(awk -F= '/=/ {print $1}' "$V2_ROOT/magaza/torrent/qBittorrent.conf" | LC_ALL=C sort)"
     [ "$actual" = "$expected" ]
-    grep -qx 'Accepted=true' "$V2_ROOT/modules/torrent/qBittorrent.conf"
-    grep -qx 'WebUI\\LocalHostAuth=true' "$V2_ROOT/modules/torrent/qBittorrent.conf"
+    grep -qx 'Accepted=true' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
+    grep -qx 'WebUI\\LocalHostAuth=true' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'TORRENT_PROFILE_DIR="/var/lib/qbittorrent"' "$V2_ROOT/config/defaults.env"
 }
 
@@ -2921,7 +2977,7 @@ PY
     grep -qx 'MODULES_DIR="/usr/local/share/master-stack/moduller"' "$V2_ROOT/config/defaults.env"
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'MODULES_FILE=\$MODULES_FILE'
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'MODULES_DIR=\$MODULES_DIR'
-    grep -qF '"$REPO_ROOT/modules"' "$V2_ROOT/dev/export-installer.sh"
+    grep -qF '"$REPO_ROOT/magaza"' "$V2_ROOT/dev/export-installer.sh"
     stage4="$(awk '/^stage_4\(\)/,/^stage_5\(\)/' "$V2_ROOT/install.sh")"
     grep -qF 'atomic_write "$SBIN_DIR/master-modul" 0755' <<<"$stage4"
     grep -qx '    ensure_module_files' <<<"$stage4"
@@ -2929,7 +2985,7 @@ PY
     run ! grep -q 'unpackerr' <<<"$body"
     # DD-149, DD-152: the share module's unit, Caddy site and dnsmasq name; one change marks it once.
     for f in master-paylasim.service paylasim.caddy dnsmasq.conf; do
-        grep -qF "render_template \"\$V2_ROOT/modules/paylasim/$f\" \"\$MODULES_DIR/paylasim/$f\" 0644" <<<"$body"
+        grep -qF "render_template \"\$V2_ROOT/magaza/paylasim/$f\" \"\$MODULES_DIR/paylasim/$f\" 0644" <<<"$body"
     done
     grep -qF '[[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"' <<<"$body"
     grep -qF 'atomic_write "$MODULES_FILE" 0644 </dev/null' <<<"$body"
@@ -3028,14 +3084,14 @@ PY
 }
 
 @test "installer wires private folder accounts without exposing hashes to the file backend" {
-    grep -qx 'LoadCredential=registry:__SHARE_STATE_FILE__' "$V2_ROOT/modules/paylasim/master-paylasim.service"
+    grep -qx 'LoadCredential=registry:__SHARE_STATE_FILE__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
     grep -qF 'atomic_write "$SBIN_DIR/master_shares.py"' "$V2_ROOT/install.sh"
     grep -qF 'atomic_write "$SBIN_DIR/master_https.py"' "$V2_ROOT/install.sh"
     grep -qF 'atomic_write "$SBIN_DIR/master_webdav.py"' "$V2_ROOT/install.sh"
     grep -qF 'dosyalar.css dosyalar.js' "$V2_ROOT/install.sh"
     [ "$(cat "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|SHARE_STATE_FILE')" -eq 0 ]
-    grep -qx 'ReadWritePaths=__TORRENT_PROFILE_DIR__ __DOWNLOADS_PATH__' "$V2_ROOT/modules/torrent/master-stack.conf"
-    grep -qx 'InaccessiblePaths=-__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__' "$V2_ROOT/modules/torrent/master-stack.conf"
+    grep -qx 'ReadWritePaths=__TORRENT_PROFILE_DIR__ __DOWNLOADS_PATH__' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    grep -qx 'InaccessiblePaths=-__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__' "$V2_ROOT/magaza/torrent/master-stack.conf"
 }
 
 @test "installer wires the files panel: downloads uid, sandbox, no password, tailnet name, hidden trash, stage 7 proof" {
@@ -3076,8 +3132,8 @@ PY
     s6="$(awk '/^stage_6\(\)/,/^ensure_wg_panel\(\)/' "$V2_ROOT/install.sh")"
     grep -q '^    ensure_files_panel "\$OS_CHANGED"$' <<<"$s6"
     # The port collides with nothing: stage 0, master-wg net-add and the wg panel know it.
-    grep -q '"dosya-paneli:\${FILES_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
-    grep -q '"dosya-paneli:${FILES_PANEL_PORT:-}"' "$V2_ROOT/scripts/master-wg"
+    grep -q '"dosya-paneli:\${FILES_PANEL_PORT:-}"' "$V2_ROOT/magaza/wireguard/master-wg"
+    grep -q '"dosya-paneli:${FILES_PANEL_PORT:-}"' "$V2_ROOT/magaza/wireguard/master-wg"
     grep -q '"FILES_PANEL_PORT", "SHARE_PORT")}' "$V2_ROOT/panel/master-wg-panel"
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'FILES_PANEL_PORT=\$FILES_PANEL_PORT'
     # Tailnet only through Caddy; nothing on the WireGuard edge.
@@ -3171,7 +3227,7 @@ EOF
 }
 
 master_wg() {
-    PATH="$TMP/bin:$PATH" STATE_FILE="$TMP/state.env" bash "$V2_ROOT/scripts/master-wg" "$@"
+    PATH="$TMP/bin:$PATH" STATE_FILE="$TMP/state.env" bash "$V2_ROOT/magaza/wireguard/master-wg" "$@"
 }
 
 @test "master-wg adds a peer generated on the server, applies it live and keeps the profile root-side" {
@@ -3267,7 +3323,7 @@ EOF
     run master_wg png
     [ "$status" -ne 0 ]
     # Binary output is refused on a terminal.
-    body="$(awk '/^cmd_png\(\)/,/^}$/' "$V2_ROOT/scripts/master-wg")"
+    body="$(awk '/^cmd_png\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/master-wg")"
     grep -q '\[\[ ! -t 1 \]\] || die' <<<"$body"
 }
 
@@ -3639,7 +3695,8 @@ case "\$*" in
     "is-active --quiet master-files-panel.service") [ -e "$TMP/files-active" ] ;;
     "show -p MainPID --value master-files-panel.service") echo 4242 ;;
     "enable --now --quiet wg-quick@"*) echo "up \${4%.service}" >>"$TMP/order" ;;
-    list-unit-files*) [ ! -e "$TMP/wg-units" ] || cat "$TMP/wg-units" ;;
+    # Like real systemd: a listing that matches nothing exits 1.
+    list-unit-files*) if [ -s "$TMP/wg-units" ]; then cat "$TMP/wg-units"; else exit 1; fi ;;
 esac
 exit 0
 EOF
@@ -3661,7 +3718,7 @@ torrent_fixture() {
     mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof"
     printf '[Service]\nUMask=0002\n' >"$TMP/mods/torrent/master-stack.conf"
     sed -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_UI_PORT__/61006/g' \
-        "$V2_ROOT/modules/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
+        "$V2_ROOT/magaza/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
     printf 'http://torrent.ayc {\n\treverse_proxy 127.0.0.1:61006\n}\n' >"$TMP/mods/torrent/torrent.caddy"
     printf 'interface-name=torrent.ayc,tailscale0\n' >"$TMP/mods/torrent/dnsmasq.conf"
     : >"$TMP/caddy/Caddyfile"
@@ -3819,8 +3876,15 @@ PY
     printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfdcc::1\tfdcc::/112\t1.1.1.1\tAna\n' >"$TMP/etc/wireguard/networks"
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc::1:1\tfdcc::1:0/112\t9.9.9.9\t\n' >>"$TMP/etc/wireguard/networks"
     printf '[Interface]\n' >"$TMP/etc/wireguard/wg0.conf"
+    # DD-196: the installer only renders the package's tool and drop-in; the package places them.
+    mkdir -p "$TMP/mods/wireguard"
+    cp "$V2_ROOT/magaza/wireguard/master-wg" "$TMP/mods/wireguard/master-wg"
+    printf '[Unit]\nfixture\n' >"$TMP/mods/wireguard/wg-quick-master-stack.conf"
     run mm kur wireguard
     [ "$status" -eq 0 ]
+    [ -x "$TMP/sbin/master-wg" ] && cmp -s "$TMP/sbin/master-wg" "$V2_ROOT/magaza/wireguard/master-wg"
+    [ "$(cat "$TMP/units/wg-quick@.service.d/master-stack.conf")" = "$(printf '[Unit]\nfixture')" ]
+    grep -qx 'daemon-reload' "$TMP/systemctl-calls"
     grep -qx "$(printf 'wireguard\tcalisiyor')" "$TMP/moduller"
     grep -q -- 'install -y --no-install-recommends -o DPkg::Lock::Timeout=300 wireguard-tools qrencode' "$TMP/apt-calls"
     grep -qx 'wireguard' "$TMP/modprobe-calls"
@@ -3846,17 +3910,26 @@ PY
     [ ! -e "$TMP/modload/master-stack-wireguard.conf" ]
     [ -f "$TMP/etc/wireguard/wg0.conf" ]
     [ "$(grep -c wireguard "$TMP/moduller")" -eq 0 ]
+    # The tool and the drop-in leave with the package; the keys stay.
+    [ ! -e "$TMP/sbin/master-wg" ] && [ ! -e "$TMP/units/wg-quick@.service.d" ]
     : >"$TMP/apt-calls"
     run mm kur wireguard
     [ "$status" -eq 0 ]
     [ ! -s "$TMP/apt-calls" ]
-    # --veri: keys, profiles and the registry go; the folder stays.
+    [ -x "$TMP/sbin/master-wg" ]
+    # --veri: keys, profiles and the registry go; the folder stays. With no unit listing at all
+    # (systemctl exits 1), the registry's networks are still closed (v2-170 fix).
+    rm -f "$TMP/wg-units"
+    : >"$TMP/systemctl-calls"
     run mm kaldir wireguard --veri
     [ "$status" -eq 0 ]
+    grep -qx 'disable --now --quiet wg-quick@wg0.service' "$TMP/systemctl-calls"
+    grep -qx 'disable --now --quiet wg-quick@wg1.service' "$TMP/systemctl-calls"
     [ -d "$TMP/etc/wireguard" ]
     [ -z "$(ls -A "$TMP/etc/wireguard")" ]
+    [ ! -e "$TMP/sbin/master-wg" ]
     # master-wg says so instead of touching anything while the module is absent.
-    grep -qF 'die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"' "$V2_ROOT/scripts/master-wg"
+    grep -qF 'die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"' "$V2_ROOT/magaza/wireguard/master-wg"
 }
 
 @test "wireguard.command generates on the server, sends no key and keeps to bash 3.2" {
@@ -3921,9 +3994,9 @@ PY
     run ! grep -qE '^[^#]*wg0\.conf' "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env"
     # master-wg keeps WG_CONF_FILE as the selected network's path, derived from the
     # base; it must not inherit one from the environment.
-    grep -q ': "${WG_CONF_DIR:?}"' "$V2_ROOT/scripts/master-wg"
-    grep -q '^BASE_CONF_DIR="\$WG_CONF_DIR"$' "$V2_ROOT/scripts/master-wg"
-    grep -q '^WG_CONF_FILE=""$' "$V2_ROOT/scripts/master-wg"
+    grep -q ': "${WG_CONF_DIR:?}"' "$V2_ROOT/magaza/wireguard/master-wg"
+    grep -q '^BASE_CONF_DIR="\$WG_CONF_DIR"$' "$V2_ROOT/magaza/wireguard/master-wg"
+    grep -q '^WG_CONF_FILE=""$' "$V2_ROOT/magaza/wireguard/master-wg"
 }
 
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
@@ -4074,7 +4147,7 @@ PY
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     [ ! -e "$V2_ROOT/systemd/caddy-wg@.service" ]
     run ! grep -qE 'Caddyfile.wg|izin verilen WireGuard|Local erişim' "$V2_ROOT/console/konsol.js"
-    run ! grep -qE 'CADDY_WG_FILE|caddy-wg@|ensure_caddy_wg' "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-wg" "$V2_ROOT/scripts/master-modul"
+    run ! grep -qE 'CADDY_WG_FILE|caddy-wg@|ensure_caddy_wg' "$V2_ROOT/install.sh" "$V2_ROOT/magaza/wireguard/master-wg" "$V2_ROOT/scripts/master-modul"
     # Fresh installs only: no upgrade helper rewrites an older WireGuard registry.
     run ! grep -q 'master_wg_upgrade' "$V2_ROOT/install.sh"
     [ ! -e "$V2_ROOT/panel/master_wg_upgrade.py" ]
@@ -4097,7 +4170,8 @@ PY
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
     [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
-    awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)'
+    # DD-196: the WireGuard usage note is printed only with the package installed.
+    awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(wg_summary_note)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
     awk '/^reapply_modules\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q 'Modül wireguard: yeniden uygulanıyor (her kurulumda'
 }
@@ -4131,12 +4205,12 @@ EOF
             -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_TEMP_DIR__/incomplete/g' "$1"
     }
     rend "$V2_ROOT/templates/Caddyfile" >"$TMP/caddy/Caddyfile"
-    rend "$V2_ROOT/modules/paylasim/paylasim.caddy" >"$TMP/caddy/moduller/paylasim.caddy"
-    rend "$V2_ROOT/modules/torrent/torrent.caddy" >"$TMP/caddy/moduller/torrent.caddy"
+    rend "$V2_ROOT/magaza/paylasim/paylasim.caddy" >"$TMP/caddy/moduller/paylasim.caddy"
+    rend "$V2_ROOT/magaza/torrent/torrent.caddy" >"$TMP/caddy/moduller/torrent.caddy"
     rend "$V2_ROOT/templates/dnsmasq.conf" >"$TMP/dnsmasq.d/local-services.conf"
-    rend "$V2_ROOT/modules/paylasim/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-paylasim.conf"
-    rend "$V2_ROOT/modules/torrent/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-torrent.conf"
-    rend "$V2_ROOT/modules/torrent/qBittorrent.conf" >"$TMP/qb/qBittorrent/qBittorrent.conf"
+    rend "$V2_ROOT/magaza/paylasim/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-paylasim.conf"
+    rend "$V2_ROOT/magaza/torrent/dnsmasq.conf" >"$TMP/dnsmasq.d/modul-torrent.conf"
+    rend "$V2_ROOT/magaza/torrent/qBittorrent.conf" >"$TMP/qb/qBittorrent/qBittorrent.conf"
     printf 'Session\\Port=45410\nWebUI\\Username=admin\nWebUI\\Password_PBKDF2="@ByteArray(GIZLIOZET:GIZLITUZ)"\n' >>"$TMP/qb/qBittorrent/qBittorrent.conf"
     printf 'dosya\tcalisiyor\nwireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/iptables" <<'EOF'

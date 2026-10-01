@@ -68,6 +68,19 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-170 (DD-196, store phase 0): the Bats test "store phase 0" checks the repo
+layout (`magaza/`, the WireGuard tool and drop-in inside the package), that the
+base installer neither installs nor keeps them, that `master-modul` places and
+removes them, the package-neutral stage-7 probe, the Caddy unit without
+`--environ`, the backend's unit name and Konsol's log labels by source.
+
+v2-169: `test_publications.py` adds the fresh-install case: with WebDAV in
+legacy HTTP mode, Panel/qBittorrent HTTPS is refused only while a folder is
+actually shared over plaintext HTTP, publishes once that connection is closed,
+keeps legacy HTTP unavailable (cards and the WebDAV row say why) while the
+HTTPS row is on, and reopens it when the row is turned off; the firewall port
+follows. `settings-https-ui.cjs` checks both notes (`wan_active` on/off).
+
 ```bash
 python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
 ```
@@ -212,6 +225,7 @@ On a Linux host with Caddy, qBittorrent, OpenSSL, iproute2 and setpriv:
 ```bash
 unshare --net --fork python3 Data/tests/publications-proxy-linux.py --port 443
 unshare --net --fork python3 Data/tests/publications-proxy-linux.py --port 18443
+# exits 3 without changes when the host has no qbittorrent-nox package
 ```
 
 This refuses the host network namespace and uses a temporary profile and local

@@ -28,6 +28,11 @@ def cmd(*args):
 
 
 def main():
+    import shutil
+    if not shutil.which("qbittorrent-nox"):
+        # A host without the App Store module cannot start the isolated qBittorrent.
+        print("SKIP: qbittorrent-nox is not installed on this host; nothing was changed.", file=sys.stderr)
+        sys.exit(3)
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, choices=(443, 18443), default=18443)
     args = parser.parse_args()
@@ -49,7 +54,7 @@ def main():
         name, password = "torrent.example.net", "Fixture-only-Password-8"
         settings.save_json(e["SETTINGS_FILE"], {"https":{"domain":""}, "web":{"torrent":{"tail":True,"enabled":True,"domain":name}}})
         (root / "templates/torrent/torrent.caddy").write_text("http://torrent.ayc {\n respond 403\n}\n")
-        text = (DATA / "modules/torrent/qBittorrent.conf").read_text()
+        text = (DATA / "magaza/torrent/qBittorrent.conf").read_text()
         for key, value in dict(e, DOWNLOADS_PATH=str(root / "downloads")).items():
             text = text.replace("__" + key + "__", value)
         text += "WebUI\\Username=fixture\nWebUI\\Password_PBKDF2=" + settings.password_hash(password) + "\n"

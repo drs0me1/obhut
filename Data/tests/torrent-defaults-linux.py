@@ -104,7 +104,7 @@ def main():
     assert os.geteuid() == 0, "Root required for the disposable uid-1000 fixture"
     assert os.readlink("/proc/self/ns/net") != os.readlink("/proc/1/ns/net"), "Refusing host network namespace"
     subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=10)
-    template = (DATA / "modules/torrent/qBittorrent.conf").read_text()
+    template = (DATA / "magaza/torrent/qBittorrent.conf").read_text()
     with tempfile.TemporaryDirectory(prefix="konsol-torrent-defaults-") as tmp:
         root = Path(tmp)
         root.chmod(0o755)

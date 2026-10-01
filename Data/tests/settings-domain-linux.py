@@ -69,10 +69,10 @@ def main():
             return text
         for target, source in {
             "Caddyfile": "templates/Caddyfile", "dns/base.conf": "templates/dnsmasq.conf",
-            "dns/modul-torrent.conf": "modules/torrent/dnsmasq.conf",
-            "templates/torrent/dnsmasq.conf": "modules/torrent/dnsmasq.conf",
-            "caddy-modules/torrent.caddy": "modules/torrent/torrent.caddy",
-            "templates/torrent/torrent.caddy": "modules/torrent/torrent.caddy",
+            "dns/modul-torrent.conf": "magaza/torrent/dnsmasq.conf",
+            "templates/torrent/dnsmasq.conf": "magaza/torrent/dnsmasq.conf",
+            "caddy-modules/torrent.caddy": "magaza/torrent/torrent.caddy",
+            "templates/torrent/torrent.caddy": "magaza/torrent/torrent.caddy",
             "templates/dosya/master-files-panel.service": "systemd/master-files-panel.service",
             "units/master-files-panel.service": "systemd/master-files-panel.service",
         }.items():

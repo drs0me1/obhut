@@ -57,7 +57,7 @@ path or chain name is declared once (`config/defaults.env`), and each question
                              │
         ┌────────────┬───────┴────────┬──────────────┐
         ▼            ▼                ▼              ▼
-    modules/<id>  dnsmasq conf     Caddyfile     firewall
+    magaza/<id>   dnsmasq conf     Caddyfile     firewall
                   (lo +          (TAILSCALE_    (in memory)
                    tailscale0)    IPV4:80)
         │            │                │              │
@@ -130,7 +130,7 @@ reality.
     ├── templates/                     Caddyfile, dnsmasq.conf
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
     ├── systemd/                       units, timers and drop-ins
-    ├── modules/<id>/                  WebDAV (paylasim) and qBittorrent (torrent) templates
+    ├── magaza/<id>/                   store packages: WebDAV (paylasim), qBittorrent (torrent), WireGuard (wireguard) files
     ├── panel/                         Konsol root backend (master-wg-panel), settings and share workers, WebDAV service
     ├── files-panel/                   unprivileged file/archive backend (Python), API only
     ├── console/                       Konsol pages, styles and scripts (one origin, no external loads)
@@ -185,7 +185,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
 | `config/defaults.env` | Declare every constant exactly once: ports, paths, chain names, interface name, the WebDAV registry path | How any of them is used |
 | `templates/Caddyfile` | The base HTTP sites and their upstreams (loopback, root backend socket), the admin API socket (**DD-180**), the timeouts of the optional WAN share listeners (**DD-179/190**), scoped proxy logging (**DD-193**), plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
-| `scripts/master-wg` | WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
+| `magaza/wireguard/master-wg` | Installed on the host only with the WireGuard package (**DD-196**). WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
 | `panel/master-wg-panel` | Root `/api/wg/*` and `/api/konsol/*` on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
 | `panel/master_settings.py` | Validate/apply settings, snapshot/rollback/confirm with independent guard, render committed overrides | Arbitrary shell commands, client-visible password hashes |
 | `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry with independent Tailscale/WAN policies, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
@@ -194,7 +194,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `panel/master_https.py`, `panel/master_publications.py` | Public-name validation, DNS check and pinned certificate probe; the fixed Panel/qBittorrent/WebDAV publication table, its private 403 stubs (address line taken from the module template) and the public qBittorrent and Konsol sites (**DD-190/191/193/195**) | ACME keys or renewal (Caddy owns them), DNS writes, arbitrary upstreams |
 | `panel/master_permissions.py` | Installer-only descriptor-pinned creation and selective owner/mode repair of the user data tree (**DD-187**) | Symlinks, special or hard-linked files, the private `.arsiv`/`.pay` trees |
 | `scripts/master-modul` | Public WireGuard/qBittorrent app lifecycle, registry/progress/locks; installer-only `yerlesik` activates/checks built-in Files/WebDAV and their names, retaining accounts (**DD-159**) | Templates and inputs; user files; public removal of built-ins |
-| `modules/<id>/` | One module's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**) | Whether the module is installed |
+| `magaza/<id>/` | One package's files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
 | `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations, `.cop` trash, text and archive jobs | Anything outside `SERVER_ROOT`; WebDAV credentials; WireGuard administration |
 | `files-panel/master_archives.py`, `files-panel/master_rar.py` | Single bounded ZIP creation or ZIP/RAR extraction job; descriptor-safe paths, resource-limited RAR subprocess, private staging, atomic publication and history | Root privileges, shell extraction, backups or resumable jobs |
 | `console/panel.css`, `console/arsiv.js` | Model A shell styling and archive dialogs plus the running-job bar with cancellation (no jobs page; results in Günlük, **DD-183**), using the real file API | OS sessions, fake progress, service credentials |
@@ -449,7 +449,7 @@ The `Data/` tree is executable: `install.sh` runs the seven stages on a
 Debian 13 or Ubuntu 24.04/26.04 LTS host. `dev/export-installer.sh` embeds a
 runtime-only tarball — only `install.sh`, `common.sh` and the runtime
 directories (`config`, `templates`, `scripts`, `systemd`, `panel`,
-`files-panel`, `console`, `modules`) — into `app/<V2_VERSION>.command`, copied
+`files-panel`, `console`, `magaza`) — into `app/<V2_VERSION>.command`, copied
 to the repository root as the one installer there, which uploads and starts
 install over `ssh -t`.
 

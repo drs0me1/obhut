@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Store model, phase 0: the base owns no WireGuard (v2-170)
+
+- Konsol → Ayarlar → Günlük labelled every root-backend event "WireGuard", so
+  failed sign-ins and settings saves looked like WireGuard errors. Events are
+  now labelled Konsol, Ayarlar, Paylaşımlar, Dosyalar, Uygulamalar or WireGuard
+  by their real source, sign-in/settings/share events have their own words, and
+  filter chips appear only for kinds present (DD-196).
+- The repo folder `modules/` is now `magaza/`, and the WireGuard tool and
+  `wg-quick@` drop-in live in `magaza/wireguard/`. The installer renders them
+  into the package folder only; App Store install places them, removal takes
+  them away, and a re-run removes leftovers when the package is absent. Stage 7
+  requires the tool only with the package and its absence without it.
+- The root backend's unit is "Konsol root backend"; the installer probes it
+  through `/api/konsol/kaynaklar`; Caddy starts without `--environ`, so
+  `state.env` is no longer dumped into the journal; the five-minute tailnet
+  timer and the module log route look at WireGuard only while it is installed;
+  the install summary and confirmation screen mention WireGuard only as a
+  package.
+- Fixed (found by the live removal test): `master-modul kaldir wireguard` never
+  closed the networks on a real host. `systemctl list-unit-files` exits 1 when
+  nothing matches, which ended the shutdown listing before the registry was
+  read, so `wg0` stayed up with its unit enabled while keys and registry were
+  gone. Each source is now read independently; the Bats fixture's systemctl
+  exits like the real one.
+- **Verified:** Mac — 400 Python, 169 Bats, panel and settings browser suites,
+  ShellCheck. Linux (nrm) — 400 Python, 169 Bats, firewall, domain, torrent
+  defaults and install-hardening suites. nrm — the fresh v2-169 host re-run
+  with scratch inputs (exit 0, no warnings, account kept): the re-run removed
+  the tool and drop-in the older base had left, the backend unit is named
+  generically, Caddy runs without `--environ`, and the journal since the
+  install carries no WireGuard line from our units. Then `master-modul kur
+  wireguard`, `master-wg net-add`, and `kaldir --veri` on the real host: unit
+  inactive and disabled, `wg0` gone, tool, drop-in, keys, registry row, UDP
+  rule and forward chain gone, firewall check clean.
+
+### 2026-10-01 — HTTPS publications no longer depend on WebDAV's mode (v2-169)
+
+- On a fresh install, publishing Panel (or qBittorrent) over HTTPS failed with
+  "Önce WebDAV için HTTPS kaydedin veya eski HTTP WAN erişimini kapatın" although
+  no folder was shared on the internet: WebDAV without a saved HTTPS name counts
+  as legacy HTTP mode, and the DD-191 rule looked at that mode. The real limit is
+  Caddy's single WAN port. The rule now checks the live listener: enabling an
+  HTTPS publication is refused only while folders are actually shared over
+  plaintext HTTP, with a message naming both ways out. While a qBittorrent or
+  Panel internet row is on, legacy HTTP WebDAV internet access stays closed and
+  the folder cards say that an HTTPS name is needed; saved folder connections are
+  not changed.
+- Settings → Caddy shows whether legacy HTTP is live (`wan_active` on the WebDAV
+  row) and words its note accordingly.
+- **Verified:** Mac — 400 Python, 168 Bats, browser suites (publications,
+  HTTPS settings with both notes, files, settings). Linux (nrm) — 400 Python,
+  168 Bats, firewall and domain suites; the qBittorrent proxy suite needs the
+  qbittorrent-nox package, which the fresh host does not have, and now exits 3
+  there. nrm — the user's fresh install re-run with scratch inputs (exit 0, no
+  warnings, account kept); `panel-public-live.py` then published Panel on
+  `panel.example.net` from exactly the refused state (WebDAV in legacy HTTP mode,
+  nothing shared) and restored the row.
+
 ### 2026-10-01 — qBittorrent link follows the Konsol address (v2-168)
 
 - Konsol opened on its public HTTPS address linked qBittorrent by its tailnet

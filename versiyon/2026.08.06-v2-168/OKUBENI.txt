@@ -1,0 +1,44 @@
+2026.08.06-v2-168 — çalışan sürüm
+=================================
+
+Kaydedildi: 2026-10-01, commit 7038240 ("Link qBittorrent by its public name
+from the public Konsol address (v2-168)"). Bu klasör o commit'in birebir
+kopyasıdır (Data/app hariç).
+
+İçinde
+  2026.08.06-v2-168.command  taşınabilir kurulum (Data/ gömülü; kurulum/ yanında olmalı)
+  wireguard.command          WireGuard peer menüsü (sunucuda aynı sürüm kurulu olmalı)
+  README.md, Data/           kaynak, testler, belgeler (Data/docs/: sözleşme, mimari, kararlar)
+
+Bu sürümde
+  - Debian 13 / Ubuntu 24.04–26.04; Tailscale çıkış noktası, dnsmasq, Caddy,
+    kalıcı güvenlik duvarı. Docker yok; her servis sunucuda systemd birimi.
+  - Konsol (http://panel.<alan>): Dosyalar, klasör WebDAV paylaşımları, ZIP/RAR,
+    App Store (WireGuard, qBittorrent), Ayarlar. Kullanıcı adı ve parola ile
+    giriş (DD-194): ilk hesap kurulumun sonunda terminalde gösterilen tek
+    kullanımlık kodla açılır; oturum 7 gün. Sıfırlama: sudo master-konsol sifirla.
+  - Ayarlar → Caddy: WebDAV, qBittorrent ve Panel için bağımsız Tailscale /
+    internet (HTTPS, Let's Encrypt TLS-ALPN, TCP 443) yayını (DD-190/191/195).
+    Panel internete açılırken "onayla" yazılır; Tailscale adresi hep açık kalır.
+    İnternetten açılan Konsol, qBittorrent'i kendi genel adıyla açar (v2-168).
+  - Klasör paylaşımları: klasör başına hesap, Tailscale ve WAN için ayrı
+    izin/RO-RW/süre (DD-192). qBittorrent: yalnız giden bağlantı, eş portu yok.
+  - WireGuard: ağlar Konsol'dan kurulur (wg0…wg9), cihazlar yalnız internete
+    çıkar; peer ve QR Konsol'dan ya da Mac'te wireguard.command ile.
+
+Çalıştığının kanıtı (2026-10-01, nrm, Debian 13)
+  - v2-168 taşınabilir kurulumla kuruldu (çıkış 0, uyarı yok); operatörün Konsol
+    hesabı ve oturumu korundu. caddy, master-wg-panel, master-files-panel,
+    master-paylasim, master-firewall, tailscaled aktif.
+  - Panel (panel.example.net), qBittorrent (qbit.example.net) ve WebDAV (dav.example.net)
+    internette HTTPS ile yayında; sertifikalar doğrulandı, HSTS açık.
+  - Mac: 399 Python, 168 Bats, 7 tarayıcı paketi. nrm Linux: 399 Python, 168 Bats,
+    domain/firewall/settings/torrent/systemd/hardening/proxy paketleri.
+  - Canlı: publications-live, backend-hardening-live (WebDAV ~57 MB/s) geçti.
+
+Bilinen sınır
+  - İnternete açılan Panel tek parolanın arkasında tam yönetimdir; uzun ve
+    tekil bir Konsol parolası kullanın. Güvenlik duvarı ve alan adı değişiklikleri
+    yalnız Tailscale üzerinden onaylanır.
+  - Bu kopyada kurulum/ (SSH adı, yerel alan, indirilen profiller) yoktur;
+    o klasör yalnız repo kökünde durur.

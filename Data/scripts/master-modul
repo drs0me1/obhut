@@ -352,7 +352,7 @@ files_verify() {
 WG_PACKAGES="wireguard-tools qrencode"
 
 wg_need() {
-    need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE
+    need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE SBIN_DIR UNIT_DIR MODULES_DIR
 }
 
 # Eksik Debian paketlerini önerileri olmadan kurar; kurulu olanlara dokunmaz. Hata: FAIL.
@@ -387,6 +387,32 @@ wg_layer() {
     install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
 }
 
+# DD-196: paketin araçları sunucuya yalnız kurulunca gelir: master-wg ve wg-quick@ birim eki
+# (ağ, duvar denetimi geçmeden açılmaz; DD-180). Kaynak, kurulumun işlediği paket klasörüdür.
+wg_tools() {
+    local src="$MODULES_DIR/wireguard" changed=0 tmp
+    [[ -f "$src/master-wg" && -f "$src/wg-quick-master-stack.conf" ]] ||
+        { FAIL="WireGuard paket dosyaları yok ($src); kurulumu yeniden çalıştırın"; return 1; }
+    if ! cmp -s -- "$src/master-wg" "$SBIN_DIR/master-wg"; then
+        tmp="$(mktemp "$SBIN_DIR/.master-wg.XXXXXX")"
+        cp -- "$src/master-wg" "$tmp" && chmod 0755 "$tmp" && mv -f -- "$tmp" "$SBIN_DIR/master-wg"
+    fi
+    install -d -m 0755 -o root -g root -- "$UNIT_DIR/wg-quick@.service.d"
+    if ! cmp -s -- "$src/wg-quick-master-stack.conf" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"; then
+        tmp="$(mktemp "$UNIT_DIR/wg-quick@.service.d/.master-stack.XXXXXX")"
+        cp -- "$src/wg-quick-master-stack.conf" "$tmp" && chmod 0644 "$tmp" &&
+            mv -f -- "$tmp" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"
+        changed=1
+    fi
+    [[ "$changed" == 0 ]] || systemctl daemon-reload
+}
+
+wg_tools_remove() {
+    rm -f -- "$SBIN_DIR/master-wg" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf"
+    rmdir -- "$UNIT_DIR/wg-quick@.service.d" 2>/dev/null || true
+    systemctl daemon-reload
+}
+
 # Kayıttaki ağlar açılır (anahtarlar ve profiller /etc/wireguard'da durur); açılamayan uyarıdır.
 wg_networks_up() {
     local iface count=0
@@ -401,13 +427,17 @@ wg_networks_up() {
 
 wg_networks_down() {
     local unit
+    # systemctl exits 1 when a listing matches nothing; with set -e and pipefail that ended the
+    # process substitution before the registry was read, so no network was closed (found on a
+    # real host in v2-170). Each source is read on its own and may be empty.
     while IFS= read -r unit; do
         [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
         systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
     done < <(
-        systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
-        systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null | awk '{print $1}'
-        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"}' "$WG_NETWORKS_FILE"
+        { systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        { systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        [[ ! -f "$WG_NETWORKS_FILE" ]] || awk -F'\t' '$1 ~ /^wg[0-9]$/ {print "wg-quick@" $1 ".service"}' "$WG_NETWORKS_FILE" || true
+        true
     )
 }
 
@@ -597,15 +627,17 @@ cmd_kur() {
     case "$id" in
         wireguard)
             wg_need
-            progress "$id" kur 1 4 "Paketler kuruluyor"
+            progress "$id" kur 1 5 "Paketler kuruluyor"
             wg_packages || fail_step "$FAIL"
-            progress "$id" kur 2 4 "Çekirdek modülü"
+            progress "$id" kur 2 5 "Araçlar"
+            wg_tools || fail_step "$FAIL"
+            progress "$id" kur 3 5 "Çekirdek modülü"
             wg_layer || fail_step "$FAIL"
-            progress "$id" kur 3 4 "Güvenlik duvarı kancası"
+            progress "$id" kur 4 5 "Güvenlik duvarı kancası"
             # Güvenlik duvarı ağları kayda bakarak açar: kayıt önce yazılır.
             registry_set "$id" calisiyor
-            firewall_apply || { registry_set "$id" ""; firewall_apply || true; fail_step "güvenlik duvarı uygulanamadı"; }
-            progress "$id" kur 4 4 "WireGuard sayfası açılıyor"
+            firewall_apply || { registry_set "$id" ""; firewall_apply || true; wg_tools_remove; fail_step "güvenlik duvarı uygulanamadı"; }
+            progress "$id" kur 5 5 "WireGuard sayfası açılıyor"
             wg_networks_up >/dev/null
             ;;
         torrent)
@@ -692,6 +724,8 @@ cmd_kaldir() {
             # Kayıt önce silinir: güvenlik duvarı WireGuard portlarını ve kurallarını kaldırır.
             registry_set "$id" ""
             firewall_apply || warn "güvenlik duvarı yeniden uygulanamadı"
+            # DD-196: araç ve birim eki paketle gider; anahtar klasörü veridir (--veri).
+            wg_tools_remove
             ;;
     esac
     if [[ "$data" == 1 ]]; then
@@ -709,11 +743,11 @@ cmd_gunluk() {
     local id="$1" lines="${2:-60}"
     [[ "$lines" =~ ^[0-9]{1,4}$ ]] || die "satır sayısı geçersiz"
     case "$id" in
-        wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>&1 || printf '(günlük yok)\n' ;;
+        wireguard) journalctl -u 'wg-quick@*' -n "$lines" --no-pager -o cat 2>/dev/null || printf '(günlük yok)\n' ;;
         torrent)
             torrent_unit_name >/dev/null || { printf '(günlük yok)\n'; return 0; }
             # Geçici parola satırı gösterilmez: Konsol onu yalnız istenince, ayrıca verir.
-            journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>&1 |
+            journalctl -u "$(torrent_unit_name)" -n "$lines" --no-pager -o cat 2>/dev/null |
                 sed 's/\(temporary password is provided for this session:\).*/\1 ••••/' || printf '(günlük yok)\n'
             ;;
     esac
@@ -740,6 +774,7 @@ cmd_uygula() {
         wireguard)
             wg_need
             wg_packages || fail_step "$FAIL"
+            wg_tools || fail_step "$FAIL"
             wg_layer || fail_step "$FAIL"
             wg_networks_up >/dev/null
             printf '%s\t%s\n' "$id" "$state"

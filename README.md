@@ -81,7 +81,7 @@ only the runtime files and their archive SHA-256. It uploads them to
     ├── common.sh           # shared helpers
     ├── config/defaults.env # single source of truth for ports/paths/chain names
     ├── templates/          # Caddyfile, dnsmasq.conf
-    ├── modules/            # app and built-in service templates
+    ├── magaza/             # store packages: app and built-in service files (DD-196)
     ├── scripts/            # firewall, refresh-tailnet, GRO, wait, master-wg, master-modul
     ├── panel/              # Konsol root API, settings/share workers, WebDAV server
     ├── files-panel/        # file and archive backend

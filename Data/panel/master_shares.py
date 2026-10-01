@@ -209,6 +209,15 @@ class Manager:
         self.path = self.env["SHARE_STATE_FILE"]
         self.pending = self.path + ".pending"
 
+    @classmethod
+    def from_env(cls, env):
+        """Read-only views for callers that hold the parsed state (master_publications)."""
+        manager = cls.__new__(cls)
+        manager.state, manager.env = "", dict(env)
+        manager.path = env["SHARE_STATE_FILE"]
+        manager.pending = manager.path + ".pending"
+        return manager
+
     def initial(self):
         e = self.env
         return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [], "temp_name": e["TORRENT_TEMP_DIR"],
@@ -306,6 +315,18 @@ class Manager:
             reason = "Sunucunun internet IPv4 adresi değişti (%s artık bu sunucuda değil); kurulumu yeniden çalıştırın." % address
         if cfg["mode"] == "off":
             available, reason = False, "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin."
+        elif available and cfg["mode"] == "http":
+            # One WAN port for Caddy publications (contract §3.1): while qBittorrent or Konsol is
+            # published over HTTPS (TCP 443), legacy plaintext WebDAV on SHARE_PORT stays closed.
+            from master_publications import https_apps_enabled
+            try:
+                conflict = https_apps_enabled(self.env)
+            except (SettingsError, ValueError, KeyError, TypeError) as err:
+                raise ShareError("HTTPS yapılandırması okunamadı; WAN erişimi uygulanmadı.") from err
+            if conflict:
+                available = False
+                reason = ("qBittorrent veya Panel internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
+                          "Ayarlar → Caddy bölümünde kaydedin.")
         return {"available": available, "address": address if available else "",
                 **cfg, "reason": reason}
 

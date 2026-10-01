@@ -119,9 +119,8 @@ class PublicationTests(unittest.TestCase):
             self.m.validate(self.panel(confirm="evet"))
         with self.assertRaises(settings.SettingsError):
             self.m.validate(self.payload(confirm="onayla"))
-        # Like qBittorrent, it shares the HTTPS port and never joins legacy plaintext WebDAV.
-        with self.assertRaises(settings.SettingsError):
-            pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
+        # Saved rows alone never conflict (v2-169): the live listener decides, see the fresh-install test.
+        pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
         store = self.make_account()
         self.assertEqual(self.wan_firewall()[0], "1")  # WebDAV over HTTPS already listens
         self.assertTrue(self.m.apply(self.panel())["committed"])
@@ -153,6 +152,54 @@ class PublicationTests(unittest.TestCase):
         row = pubs.status(self.env)[0]
         self.assertEqual(row["status"], "error")
         self.assertIn("Tailscale üzerinden oluşturulur", row["message"])
+
+    def legacy_http(self):
+        # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in legacy consent-gated HTTP mode.
+        cfg = self.m.config()
+        cfg.pop("https", None)
+        cfg.pop("web", None)
+        settings.save_json(self.m.config_path, cfg)
+        self.assertEqual(tls.config(self.env)["mode"], "http")
+
+    def test_fresh_install_publishes_panel_without_a_webdav_name(self):
+        # v2-169: WebDAV's mode alone does not block; folders live on plaintext HTTP do.
+        self.legacy_http()
+        self.make_account()
+        self.s.publish()
+        self.assertTrue(self.s.wan_active(), "setUp shares media/alpha over legacy HTTP")
+        self.assertTrue(pubs.legacy_http_active(self.env))
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.panel())
+        self.assertIn("eski HTTP ile açık", str(err.exception))
+        with patch.object(pubs, "torrent_security"), self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.payload(service="torrent", domain="torrent.example.net"))
+        self.assertIn("eski HTTP ile açık", str(err.exception))
+        row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
+        self.assertEqual((row["mode"], row["wan_active"]), ("http", True))
+        # Closing that folder's internet connection frees the port; no WebDAV name is needed.
+        item = self.s.read()["items"][0]
+        self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": False}}})
+        self.assertFalse(pubs.legacy_http_active(self.env))
+        self.assertTrue(self.m.apply(self.panel())["committed"])
+        self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
+        # While the HTTPS row is on, legacy HTTP stays closed and the cards say why; nothing is rewritten.
+        info = self.s.wan_info()
+        self.assertFalse(info["available"])
+        self.assertIn("HTTPS alan adı gerekir", info["reason"])
+        with self.assertRaises(fixtures.shares.ShareError):
+            self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
+        self.assertFalse(self.s.wan_active())
+        row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
+        self.assertEqual((row["status"], row["wan_active"]), ("http", False))
+        self.assertIn("HTTPS alan adı gerekir", row["message"])
+        # Turning the Panel row off reopens legacy HTTP for the folders (a plain re-enable).
+        self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
+        self.assertTrue(self.s.wan_info()["available"])
+        self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
+        self.assertTrue(self.s.wan_active())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "61010"])
 
     def test_panel_certificate_failure_rolls_back_the_public_site(self):
         self.make_account()
@@ -265,7 +312,7 @@ class PublicationTests(unittest.TestCase):
         values = {"__LOCAL_DOMAIN__": "ev", "__SHARE_PORT__": "61010", "__TORRENT_UI_PORT__": "61006"}
         for service in ("paylasim", "torrent"):
             with self.subTest(service=service):
-                source = (settings.Path(__file__).resolve().parents[1] / "modules" / service / (service + ".caddy")).read_text()
+                source = (settings.Path(__file__).resolve().parents[1] / "magaza" / service / (service + ".caddy")).read_text()
                 for key, value in values.items():
                     source = source.replace(key, value)
                 first = next(line for line in source.splitlines() if line.startswith("http"))

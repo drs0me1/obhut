@@ -160,6 +160,10 @@ h1 { margin: 0; font: 700 28px/1.1 var(--f-display); letter-spacing: -.025em; te
 .ev .ico svg { width: 15px; height: 15px; }
 .ico.wg { background: var(--accent-soft); color: var(--accent); }
 .ico.fs { background: var(--video-soft); color: var(--video); }
+/* DD-196: events by source. */
+.ico.konsol, .ico.ayar { background: var(--surface-2, var(--line)); color: var(--ink); }
+.ico.paylasim { background: var(--ok-soft); color: var(--ok); }
+.ico.mod { background: var(--warn-soft); color: var(--warn); }
 .ev p { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .ev p small { display: block; font-size: 12px; color: var(--muted); }
 
