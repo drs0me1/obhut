@@ -18,14 +18,19 @@ Environment="PANEL_KEEPALIVE_DEFAULT=__WG_CLIENT_KEEPALIVE_DEFAULT__"
 Environment="PANEL_MTU_DEFAULT=__WG_MTU__"
 Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0077
-# master-wg root ister (wg syncconf, /etc/wireguard). Yazabildiği tek kalıcı yer
-# /etc/wireguard; /run (kilit) ProtectSystem=full altında yazılabilir kalır. Klasörü kurulum
-# açar (DD-150: WireGuard modülü sonradan kurulur); yine de yoksa Konsol açılır ('-').
+# DD-195: her istek bir iş parçacığı ve birkaç dosya tanıtıcısı tutar; Caddy her sitede en
+# çok 16 bağlantı açar. Tanıtıcı sınırı yine de dolmasın: kendi adresi denetimi dolunca
+# kapalı kalır ve Tailscale'i de reddederdi.
+LimitNOFILE=8192
+# master-wg root ister (wg syncconf, /etc/wireguard). Yazabildiği kalıcı yerler
+# /etc/wireguard ve Konsol hesap klasörü (DD-194); /run (kilit) ProtectSystem=full altında
+# yazılabilir kalır. Klasörleri kurulum açar (DD-150: WireGuard modülü sonradan kurulur);
+# yine de yoksa Konsol açılır ('-') ve giriş "kurulumu yeniden çalıştırın" der.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=-/etc/wireguard
+ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

@@ -9,7 +9,7 @@ const data = { read_at:1790790000, version:"fixture", domain:"ayc", tailscale:"1
   web:{entries:[],raw:[]}, dns:{listen:["lo","tailscale0"]}, torrent:{installed:true},
   manage:{revision:"r1",pending:null, config:{firewall:[],dns:{disabled:[],records:[],forward:false,servers:[]}},names:[],
     https:{mode:"https",domain:"dav.example.net",port:443,status:"ready"}, publications:[
-      {service:"panel",name:"Panel",local:"panel.ayc",tail:true,enabled:false,domain:"",installed:true,status:"locked",message:"Yönetici girişi gerekli."},
+      {service:"panel",name:"Panel",local:"panel.ayc",tail:true,enabled:false,domain:"",installed:true,running:true,account:true,status:"disabled",message:"İnternet yayını kapalı. Tailscale adresi her zaman açık kalır."},
       {service:"torrent",name:"qBittorrent",local:"torrent.ayc",tail:true,enabled:false,domain:"",installed:true,running:true,status:"disabled"},
       {service:"paylasim",name:"WebDAV",local:"paylas.ayc",tail:true,enabled:true,domain:"dav.example.net",installed:true,running:true,status:"ready",expires:1800000000}
     ]}};
@@ -35,7 +35,7 @@ const server = http.createServer((req,res) => {
       else if(url.pathname==="/api/konsol/ayarlar/uygula") {
         const body=route.request().postDataJSON(); writes.push(body);
         assert.deepEqual(Object.keys(body).sort(),["revision","web"]); assert.equal(body.revision,data.manage.revision);
-        assert.notEqual(body.web.service,"panel");
+        if(body.web.service==="panel") assert.equal(body.web.tail,true,"Konsol's tailnet address never closes");
         if(hold) await new Promise(resolve=>{release=resolve;});
         if(failure) { const error=failure;failure="";return route.fulfill({status:400,contentType:"application/json",body:JSON.stringify({error})}); }
         const row=data.manage.publications.find(r=>r.service===body.web.service);
@@ -77,9 +77,12 @@ const server = http.createServer((req,res) => {
     data.domain="ayc"; data.tailscale="100.64.0.2";
     await page.reload(); await table.waitFor();
     assert.equal(await table.locator("tbody tr").count(),3);
-    for(const sw of await row("panel").getByRole("switch").all()) assert(await sw.isDisabled());
-    assert(await row("panel").getByRole("textbox").isDisabled());
-    assert.equal(await row("panel").getByRole("button",{name:"Kaydet"}).count(),0);
+    // DD-195: only Panel's tailnet switch is fixed; its internet address is editable.
+    const panelTail=row("panel").getByRole("switch",{name:"Panel Tailscale erişimi"});
+    assert(await panelTail.isDisabled()); assert.equal(await panelTail.getAttribute("aria-checked"),"true");
+    assert(!(await row("panel").getByRole("switch",{name:"Panel internet erişimi"}).isDisabled()));
+    assert(!(await row("panel").getByRole("textbox").isDisabled()));
+    assert.equal(await row("panel").getByRole("textbox").getAttribute("placeholder"),"panel.example.com");
     // Single click saves a typed domain: blur must not redraw away the clicked button.
     await row("torrent").getByRole("textbox").fill("torrent.example.net");
     await save("torrent").click(); await settled();
@@ -109,6 +112,29 @@ const server = http.createServer((req,res) => {
     assert.deepEqual(writes.at(-1).web,{service:"paylasim",tail:false,enabled:false,domain:"dav.example.net"});
     await page.reload(); await table.waitFor();
     assert.equal(await row("paylasim").getByRole("textbox").inputValue(),"dav.example.net");
+    // Publishing Konsol needs the typed word; the dialog names the address and the DNS target.
+    const before=writes.length, confirm=page.locator("dialog.as-dialog");
+    await row("panel").getByRole("textbox").fill("konsol.example.net");
+    await row("panel").getByRole("switch",{name:"Panel internet erişimi"}).click();
+    await save("panel").click();
+    assert.match(await confirm.innerText(),/https:\/\/konsol\.example\.net/);
+    assert.match(await confirm.innerText(),/konsol\.example\.net → 192\.0\.2\.1/);
+    assert.match(await confirm.innerText(),/Tailscale girişi etkilenmez/);
+    await confirm.getByRole("textbox").fill("evet");
+    await confirm.getByRole("button",{name:"Devam et",exact:true}).click();
+    assert.equal(writes.length,before,"Only the typed word publishes Konsol");
+    await confirm.getByRole("button",{name:"Vazgeç",exact:true}).click();
+    assert.equal(writes.length,before); assert.equal(await confirm.count(),0);
+    await save("panel").click();
+    await confirm.getByRole("textbox").fill(" ONAYLA ");
+    await confirm.getByRole("button",{name:"Devam et",exact:true}).click(); await settled();
+    assert.deepEqual(writes.at(-1).web,{service:"panel",tail:true,enabled:true,domain:"konsol.example.net",confirm:"onayla"});
+    assert.equal(await row("panel").getByRole("link").getAttribute("href"),"https://konsol.example.net");
+    // Closing it from the tailnet address is a plain save.
+    await row("panel").getByRole("switch",{name:"Panel internet erişimi"}).click();
+    await save("panel").click(); await settled();
+    assert.equal(await confirm.count(),0);
+    assert.deepEqual(writes.at(-1).web,{service:"panel",tail:true,enabled:false,domain:"konsol.example.net"});
     for(const colorScheme of ["light","dark"]) {
       await page.emulateMedia({colorScheme});
       for(const width of [1440,1024,736,390,320]) {

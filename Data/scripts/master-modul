@@ -318,8 +318,10 @@ files_place_unit() { # 0: birim yeni yazıldı, 1: aynıydı
     place_unit "$MODULES_DIR/dosya/$FILES_UNIT" "$FILES_UNIT"
 }
 
-# Servis ayakta, kullanıcı alanının sahibi olarak (root değil) çalışıyor ve Caddy üzerinden
-# yanıt veriyor; başlıksız istek 403 alıyor. Kurulumun eski aşama 7 denetimleri (DD-139).
+# Servis ayakta, kullanıcı alanının sahibi olarak (root değil) çalışıyor ve yanıt veriyor;
+# başlıksız istek 403 alıyor. Kurulumun eski aşama 7 denetimleri (DD-139). DD-194: Caddy'den
+# geçen yol Konsol oturumu ister ve sunucunun içinden gelen isteği reddeder (DD-180); servisin
+# kendisi loopback portundan sınanır.
 files_verify() {
     local _ uid ok=0 code
     FAIL=""
@@ -331,14 +333,14 @@ files_verify() {
     uid="$(unit_uid "$FILES_UNIT")"
     [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="dosya servisi uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
     for _ in $(seq 1 10); do
-        if python3 "$SBIN_DIR/master-files-panel" check --url "http://$TAILSCALE_IPV4/api/state" \
+        if python3 "$SBIN_DIR/master-files-panel" check --url "http://127.0.0.1:$FILES_PANEL_PORT/api/state" \
             --host "panel.$LOCAL_DOMAIN" >/dev/null 2>&1; then
             ok=1
             break
         fi
         sleep 1
     done
-    [[ "$ok" == 1 ]] || { FAIL="dosya servisi Konsol adresinde yanıt vermedi"; return 1; }
+    [[ "$ok" == 1 ]] || { FAIL="dosya servisi yerel portunda yanıt vermedi"; return 1; }
     code="$(http_code -H "Host: panel.$LOCAL_DOMAIN" "http://127.0.0.1:$FILES_PANEL_PORT/api/state")"
     [[ "$code" == 403 ]] || { FAIL="dosya servisi başlıksız isteğe $code verdi (beklenen 403)"; return 1; }
 }

@@ -12,6 +12,9 @@ import json
 import secrets
 import shlex
 import subprocess
+import time
+
+import konsol_session
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", required=True)
@@ -30,12 +33,17 @@ def remote(code):
 meta = remote("print(json.dumps({k:e[k] for k in ('TAILSCALE_IPV4','LOCAL_DOMAIN','CADDY_HTTP_PORT','SHARE_PORT','SHARE_HTTPS_PORT')}))")
 
 
+# DD-194: Konsol through Caddy needs a session; a short root-issued one, closed at the end.
+COOKIE = konsol_session.open_session(ssh)
+
+
 def request(path, data=None, host=None, port=None):
     conn = http.client.HTTPConnection(meta["TAILSCALE_IPV4"], port or int(meta["CADDY_HTTP_PORT"]), timeout=145)
     try:
         conn.request("POST" if data is not None else "GET", path,
                      json.dumps(data) if data is not None else None,
-                     {"Host": host or "panel." + meta["LOCAL_DOMAIN"], "X-Konsol": "1", "Content-Type": "application/json"})
+                     {"Host": host or "panel." + meta["LOCAL_DOMAIN"], "X-Konsol": "1", "Content-Type": "application/json",
+                      **({} if host else {"Cookie": COOKIE})})
         response = conn.getresponse()
         return response.status, response.read()
     finally:
@@ -51,14 +59,22 @@ def status():
 def save(row, **updates):
     item = {k: row[k] for k in ("service", "tail", "enabled", "domain")}
     item.update(updates)
-    code, body = request("/api/konsol/ayarlar/uygula", {"revision": status()["revision"], "web": item})
+    for attempt in range(10):
+        code, body = request("/api/konsol/ayarlar/uygula", {"revision": status()["revision"], "web": item})
+        # The share/settings guard timers hold the operation locks briefly; retry only that answer.
+        if code == 400 and "sürüyor" in body.decode(errors="replace") and attempt < 9:
+            time.sleep(3)
+            continue
+        break
     assert code == 200, (code, body.decode()[:300])
     assert json.loads(body) == {"committed": True, "pending": None}
 
 
 before = status()
 rows = {r["service"]: r for r in before["publications"]}
-assert rows["panel"]["tail"] and not rows["panel"]["enabled"] and rows["panel"]["status"] == "locked"
+# DD-195: Panel may be public, but its tailnet address never closes; this test never changes it.
+assert rows["panel"]["tail"] and rows["panel"]["status"] in ("disabled", "ready", "error")
+panel_before = {k: rows["panel"][k] for k in ("tail", "enabled", "domain")}
 assert rows["paylasim"]["enabled"] and rows["paylasim"]["status"] == "ready", "Requires existing verified DAV HTTPS"
 assert rows["torrent"]["installed"], "Requires installed qBittorrent"
 torrent_public = rows["torrent"]["enabled"]
@@ -66,13 +82,18 @@ torrent_public = rows["torrent"]["enabled"]
 probe_name = rows["torrent"]["domain"] or rows["paylasim"]["domain"]
 digest = remote("print(json.dumps(hashlib.sha256(pathlib.Path(e['SHARE_STATE_FILE']).read_bytes()).hexdigest()))")
 try:
-    for item in (dict(service="panel", tail=True, enabled=True, domain="panel.example.net"),
-                 dict(service="torrent", tail=True, enabled=True, domain=rows["paylasim"]["domain"]),
-                 dict(service="paylasim", tail=True, enabled=True, domain="missing-" + secrets.token_hex(5) + ".example.net")):
+    # Each refusal names its real cause (DD-195: the typed word and the account come before DNS).
+    missing = "panel-" + secrets.token_hex(5) + ".example.net"
+    for item, expected in ((dict(service="panel", tail=False, enabled=False, domain=""), "Tailscale erişimi kapatılamaz"),
+                           (dict(service="panel", tail=True, enabled=True, domain=missing), "onayla yazın"),
+                           (dict(service="panel", tail=True, enabled=True, domain=missing, confirm="onayla"),
+                            "DNS" if rows["panel"]["account"] else "Konsol hesabını"),
+                           (dict(service="torrent", tail=True, enabled=True, domain=rows["paylasim"]["domain"]), "aynı HTTPS alan adını"),
+                           (dict(service="paylasim", tail=True, enabled=True, domain="missing-" + secrets.token_hex(5) + ".example.net"), "DNS")):
         code, body = request("/api/konsol/ayarlar/uygula", {"revision": status()["revision"], "web": item})
-        assert code == 400 and "error" in json.loads(body), code
+        assert code == 400 and expected in json.loads(body)["error"], (code, body.decode()[:200])
         assert status()["pending"] is None
-    print("PASS: Panel WAN, duplicate domain and missing DNS rejected by real API", flush=True)
+    print("PASS: Panel tailnet-off/word/account-or-DNS, duplicate domain and DAV missing DNS rejected with their real causes", flush=True)
     result = remote("import master_publications as pubs; pubs.torrent_security(e,%s,probe=True); print(json.dumps(True))" % json.dumps(probe_name))
     assert result is True
     print("PASS: native qBittorrent permanent-auth checks and anonymous API refusal", flush=True)
@@ -116,8 +137,17 @@ try:
             conn.close()
     print("PASS: public DAV off remembers domain, removes only its WAN site and preserves private DAV", flush=True)
 finally:
+    # Restore every row even if one fails, so the operator's choices never stay changed.
+    failures = []
     for service in ("torrent", "paylasim"):
-        save(rows[service])
+        try:
+            save(rows[service])
+        except AssertionError as err:
+            failures.append((service, str(err)[:200]))
+    assert not failures, failures
     assert status()["pending"] is None
+    after = {r["service"]: r for r in status()["publications"]}["panel"]
+    assert {k: after[k] for k in ("tail", "enabled", "domain")} == panel_before, "Panel row changed"
     assert remote("print(json.dumps(hashlib.sha256(pathlib.Path(e['SHARE_STATE_FILE']).read_bytes()).hexdigest()))") == digest
+    konsol_session.close_session(ssh, COOKIE)
     print("CLEANUP: original effective network choices restored; folder accounts unchanged", flush=True)

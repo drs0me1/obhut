@@ -26,7 +26,9 @@ def request(method, path, data=None, extra=None):
         headers["Content-Type"] = "application/json"
         data = json.dumps(data)
     headers.update(extra or {})
-    conn = HTTPConnection(env["TAILSCALE_IPV4"], 80, timeout=20)
+    # DD-194: through Caddy every Konsol path needs a session and host-local callers are
+    # refused (DD-180); this host-side test talks to the Files backend on loopback.
+    conn = HTTPConnection("127.0.0.1", int(env["FILES_PANEL_PORT"]), timeout=20)
     try:
         conn.request(method, path, data, headers)
         response = conn.getresponse()

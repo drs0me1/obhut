@@ -19,7 +19,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
   const button = (text, icon, fn) => h("button", { type: "button", class: "btn btn-sm btn-quiet", disabled: busy, onclick: fn }, svg(icon), text);
   function warning() {
     return h("details", { class: "dav-boundary" }, h("summary", null, svg("shield"), "Paylaşmadan önce erişim sınırını kontrol edin"),
-      h("p", null, "Alıcıya yalnız WebDAV portunu açın; Konsol ve SSH yalnız yöneticide kalmalı. Konsol parolasızdır: panele ulaşan kişi tüm dosyaları yönetebilir. Tailscale ACL/grants kuralları burada değiştirilmez."),
+      h("p", null, "Alıcıya yalnız WebDAV portunu açın; Konsol ve SSH yalnız yöneticide kalmalı. Konsol hesabıyla giren kişi tüm dosyaları yönetebilir; Konsol parolasını paylaşmayın. Tailscale ACL/grants kuralları burada değiştirilmez."),
       h("p", null, "Tailscale bağlantısı şifreli tünelde taşınır. " + (wanScheme() === "http" ? "WAN üzerinden HTTP, parola ve verileri şifrelemeden gönderir. " : "") + "Dosya kilidi isteyen istemciler bu adresle uyumlu olmayabilir; Infuse/Finder uyumu istemcide ayrıca sınanmalıdır."));
   }
   function update(action, body) {

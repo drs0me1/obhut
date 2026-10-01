@@ -1,4 +1,5 @@
-/* Read-only installed DD-192 UI acceptance; refuses every API mutation. */
+/* Read-only installed DD-192 UI acceptance; refuses every API mutation.
+   DD-194: pass a session as KONSOL_COOKIE (sudo master-konsol oturum-ac); it is never printed. */
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
@@ -6,7 +7,10 @@ const shots = fs.mkdtempSync(path.join(os.tmpdir(), "share-connections-live-"));
 (async () => {
   const browser = await chromium.launch({headless:true});
   try {
-    const page = await browser.newPage({viewport:{width:1440,height:1050}});
+    const base = process.env.KONSOL_URL || "http://panel.ayc";
+    const context = await browser.newContext({viewport:{width:1440,height:1050}});
+    if (process.env.KONSOL_COOKIE) await context.addCookies([{name:"konsol_oturum", value:process.env.KONSOL_COOKIE, url:base}]);
+    const page = await context.newPage();
     const errors = [], writes = [];
     page.on("pageerror", err => errors.push(err.message));
     await page.route("**/api/**", route => {
@@ -16,7 +20,7 @@ const shots = fs.mkdtempSync(path.join(os.tmpdir(), "share-connections-live-"));
       }
       return route.continue();
     });
-    await page.goto((process.env.KONSOL_URL || "http://panel.ayc") + "/#/dosyalar/paylasim");
+    await page.goto(base + "/#/dosyalar/paylasim");
     await page.locator(".dav-share-row").first().waitFor();
     assert(await page.locator(".dav-share-row").count() > 0, "Requires an existing share; creates none");
     for (const row of await page.locator(".dav-share-row").all()) {

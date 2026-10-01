@@ -6,6 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Konsol over public HTTPS (v2-167)
+
+- The Panel row in Settings → Caddy now has an internet switch and an HTTPS name
+  like qBittorrent and WebDAV (DD-195). Its Tailscale switch stays on. Enabling
+  it needs an existing Konsol account, a DNS-only A record and the typed word
+  `onayla`; the dialog states that a public Konsol is full administration behind
+  one password.
+- Caddy keeps the Konsol routes in one `(konsol)` snippet. The tailnet site and
+  the generated public site (`moduller/panel-wan.caddy`, TLS-ALPN, HSTS) both
+  import it, so the session check, sign-in exceptions, CSP and backends are the
+  same. Backends always see `Host: panel.<domain>`; Caddy alone writes
+  `X-Konsol-Kanal`.
+- The root backend accepts the public channel only while the publication is
+  active and never from the server's own addresses. The one-time setup code is
+  refused there; the session cookie is `Secure` over HTTPS. Twenty failed public
+  sign-ins within ten minutes close public sign-in for fifteen minutes while
+  Tailscale sign-in stays open. One password check per address, two at once.
+- The public site shares TCP 443 and the WebDAV socket budgets; it stays open
+  even with WebDAV's WAN off. The 30-second guard removes it after an account
+  reset or a lost WAN address. Firewall and local-domain changes are still
+  confirmed only over Tailscale.
+- Review follow-ups before release: each Caddy site opens at most 16 backend
+  connections and the unit raises the descriptor limit, so an internet flood
+  cannot make the backend refuse Tailscale; the shared sign-in budget is checked
+  again after waiting for a hash slot; the typed `onayla` is verified by the
+  server; timed confirmations require the Tailscale channel (100.64/10 is also
+  carrier NAT) and the domain check reads the browser's real name; the page
+  explains legacy WebDAV HTTP before the dialog and warns when renaming from the
+  public address.
+- Fixed: the installer's confirmation screen still said Konsol had no password.
+- New tests: Panel row and site in `test_publications.py`, public channel and
+  budget in `test_konsol_auth.py`, snippet wiring in `common.bats`, the editable
+  row in `publications-ui.cjs`, opt-in `panel-public-live.py`.
+- **Verified:** Mac — 398 Python (4 platform skips), 168 Bats, seven browser
+  fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm) — 398 Python
+  (1 optional skip), 168 Bats, domain (real Caddy), firewall, settings,
+  qBittorrent defaults, settings-systemd, install-hardening and both
+  publication-proxy suites. The snippet, `{args[0]}`, `header_up` inside
+  `forward_auth`, `max_conns_per_host` and a generated public Konsol site were
+  validated with nrm's Caddy 2.11.4.
+- **nrm:** two portable runs with scratch inputs, both exit 0 with no warnings;
+  the operator's Konsol account and sessions survived. `publications-live` and
+  `backend-hardening-live` pass; a spoofed `X-Konsol-Kanal` on the tailnet site
+  is overwritten by Caddy. The public acceptance (`panel-public-live.py`) still
+  needs a real DNS-only name for the panel and has not run yet.
+
+### 2026-10-01 — Konsol sign-in with a one-time setup code (v2-166)
+
+- Konsol asks for a user name and password again (DD-194). Every page, file and
+  API request is checked by the root backend through Caddy's `forward_auth`; only
+  the sign-in page and its API are open. A missing session goes to the sign-in
+  page and returns to the same Konsol page afterwards.
+- The first account is created on the sign-in page with a one-time code that the
+  installer prints at the very end while no account exists (24 hours, single use,
+  never written to `install.log`). The input file still holds no account.
+- Sessions last seven days (HttpOnly, SameSite=Strict cookie). Settings → Sistem
+  shows the account with a password change that ends every other session, and
+  the sidebar has "Çıkış yap". Five failed attempts from one address within a
+  minute block it for five minutes.
+- Server command `sudo master-konsol sifirla` deletes the account and sessions
+  and prints a new code; `durum` shows the state.
+- Stage 7 now checks the open sign-in page, that host-local page requests are
+  refused and that the session check answers 401/302; the Files self-check uses
+  its loopback port. The Panel row in Settings → Caddy stays Tailscale-only.
+- Live tests use a short root-issued session (`master-konsol oturum-ac`) for
+  Konsol calls through Caddy; host-side tests use the loopback Files backend.
+  New: `test_konsol_auth.py`, `giris-ui.cjs`, `konsol-login-live.py`.
+- **Verified:** Mac — 391 Python (4 platform skips), 167 Bats (3 skips), seven
+  browser fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm) — 391
+  Python (1 optional skip), 167 Bats (1 skip), domain (real Caddy), firewall,
+  settings, qBittorrent defaults, settings-systemd and install-hardening suites.
+  The panel site with `forward_auth` was validated by nrm's Caddy before release.
+- **nrm:** the first two portable runs stopped at stage 7 — master-modul still
+  checked Files through Caddy, then the sign-in files were missing from the
+  installed page list; both fixed (and a Bats guard now requires every console
+  file to be installed). Third run with scratch inputs exit 0. The one-time code
+  appears only at the end of the terminal output: not in `install.log`, not in
+  the journal. Share registry, qBittorrent profile, WireGuard registry and
+  qBittorrent PID unchanged. Live: `konsol-login-live.py` (open sign-in files;
+  302/401 for every page, file and API without a session; code creates the
+  account once; sign-in, password change ending other sessions, old password
+  refused, sign-out; 429 after five failures), share-connections, publications,
+  backend-hardening over HTTPS WAN and Tailscale (100/100 Konsol and Files
+  requests at 20 parallel with a session; 256 MiB SHA-verified 52.9/57.3 MB/s) and
+  the read-only installed-UI browser suite with a session all pass. The test
+  account was removed; the host waits for the operator's own first account.
+- `publications-live.py` once hit a transient settings lock while restoring and
+  left public WebDAV off for a few minutes; it was restored at once, and the test
+  now retries that answer and restores every row independently.
+
 ### 2026-10-01 — Cross-review fixes for v2-159..v2-164 (v2-165)
 
 - Saving an internet publication in Settings → Caddy now fails at once with the

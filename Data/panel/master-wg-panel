@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Konsol'un WireGuard ve sistem arka ucu (DD-133, DD-140). Ağ portu açmaz: yalnız bir
-# Unix soketinde dinler (DD-180) ve tailnet'e Caddy açar: http://panel.<alan> altında
+# Unix soketinde dinler (DD-180); Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
+# adına (DD-195) açar: her ikisinde
 # /api/wg/* ve /api/konsol/*. Statik sayfaları Caddy sunar; burası
 # root çalışır ve sayfa dosyası servis etmez. Bütün WireGuard değişiklikleri
 # master-wg ile yapılır: aynı doğrulama, aynı kilit, aynı "kopmadan uygula".
@@ -14,10 +15,11 @@
 # ağdan bu root arka uca istek atamasın diye TCP yoktur. Sokete dosya izni (0660, root ve
 # Caddy'nin grubu) ve çekirdeğin bildirdiği bağlanan kimlik (SO_PEERCRED) birlikte bakar.
 #
-# Güvenlik (DD-147): Konsol'da parola yoktur; erişim sınırı Tailscale'dir (Caddy
-# yalnız tailnet adresinde dinler). Kalan ve vazgeçilmez korumalar: /api/* için
-# X-Konsol başlığı ve aynı köken (başka bir sitenin tarayıcı üzerinden istek atması,
-# CSRF), Host denetimi (DNS rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan
+# Güvenlik: Caddy tailnet adresinde ve yalnız açıkça yayınlanınca bir genel HTTPS adında dinler;
+# DD-194'ten beri her panel isteği için
+# bu arka uca oturum sorar (/oturum-denetle; hesap ve oturumlar master_auth.py'de). Ayrıca:
+# /api/* için X-Konsol başlığı ve aynı köken (başka bir sitenin tarayıcı üzerinden istek
+# atması, CSRF), Host denetimi (DNS rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan
 # yanıtlar (profil, QR) yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
 import argparse
 import contextlib
@@ -47,6 +49,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import master_auth
 import master_settings
 import master_shares
 import master_publications
@@ -109,7 +112,10 @@ PORT_ROWS = (
 PORT_MODULES = {"SHARE_PORT": "paylasim", "TORRENT_UI_PORT": "torrent", "FILES_PANEL_PORT": "dosya"}
 
 
-# DD-180: Caddy üzerinden gelen istek yalnız başka bir Tailscale cihazından kabul edilir.
+# DD-180: Caddy'nin Tailscale sitesinden gelen istek yalnız başka bir Tailscale cihazından
+# kabul edilir. DD-195: internet sitesini Caddy X-Konsol-Kanal: internet ile işaretler.
+CHANNEL_HEADER = "X-Konsol-Kanal"
+PUBLIC_CACHE_SECONDS = 5
 TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 
@@ -321,11 +327,53 @@ def classify_rules(chain_kind, rules, env, networks):
     return out
 
 
-def parse_caddy(text, ts_ip, source):
-    """Kurulumun işlediği Caddy dosyalarından siteler: adresler ve her yolun nereye gittiği.
-    Genel bir Caddyfile ayrıştırıcısı değildir; şablonlarımızın biçimini okur."""
-    sites, cur, depth, ctx, matchers = [], None, 0, [""], {}
+def caddy_line(raw):
+    return raw.split("#", 1)[0].strip() if raw.lstrip().startswith("#") else raw.strip()
+
+
+def split_snippets(text):
+    """(ad) { ... } parçalarını ayırır: (parçasız satırlar, {ad: satırlar}). DD-195: Konsol'un
+    yolları bir parçadadır; Tailscale ve internet siteleri onu `import konsol <kanal>` ile alır."""
+    lines, snippets, depth, name = [], {}, 0, None
     for raw in (text or "").splitlines():
+        line = caddy_line(raw)
+        start = re.fullmatch(r"\(([A-Za-z0-9_-]+)\)\s*\{", line) if depth == 0 else None
+        if start:
+            name, depth = start.group(1), 1
+            snippets[name] = []
+            continue
+        if line.endswith("{"):
+            depth += 1
+        elif line == "}":
+            depth = max(0, depth - 1)
+            if name is not None and depth == 0:
+                name = None
+                continue
+        (snippets[name] if name is not None else lines).append(raw)
+    return lines, snippets
+
+
+def expand_imports(lines, snippets):
+    out = []
+    for raw in lines:
+        tokens = caddy_line(raw).split()
+        if len(tokens) >= 2 and tokens[0] == "import" and tokens[1] in snippets:
+            args = tokens[2:]
+            out += [re.sub(r"\{args\[(\d+)\]\}", lambda m: args[int(m[1])] if int(m[1]) < len(args) else "", inner)
+                    for inner in snippets[tokens[1]]]
+        else:
+            out.append(raw)
+    return out
+
+
+def parse_caddy(text, ts_ip, source, snippets=None):
+    """Kurulumun işlediği Caddy dosyalarından siteler: adresler ve her yolun nereye gittiği.
+    Genel bir Caddyfile ayrıştırıcısı değildir; şablonlarımızın biçimini okur. Parçalar
+    (snippet) bu dosyadan ve verilen ana dosyadan açılır."""
+    lines, own = split_snippets(text)
+    lines = expand_imports(lines, {**(snippets or {}), **own})
+    sites, cur, depth, ctx, matchers = [], None, 0, [""], {}
+    for raw in lines:
         line = raw.split("#", 1)[0].strip() if raw.lstrip().startswith("#") else raw.strip()
         if not line:
             continue
@@ -430,6 +478,30 @@ class Panel:
         self.settings_runs = 0
         self.health_cache = (0.0, None)
         self.health_lock = threading.Lock()
+        # DD-194: sign-in failures per client address (DD-195: plus one public budget).
+        self.attempts = master_auth.Attempts()
+        self.public_cache = (-PUBLIC_CACHE_SECONDS, False)
+        self.public_lock = threading.Lock()
+
+    def public_open(self):
+        """DD-195: is Konsol published on the internet right now (name, WAN IPv4, account)?
+        Read at most every few seconds; a removed account or publication closes the door."""
+        now = time.monotonic()
+        with self.public_lock:
+            at, value = self.public_cache
+            if now - at >= PUBLIC_CACHE_SECONDS:
+                try:
+                    value = master_publications.panel_active(read_env(self.args.state))
+                except (OSError, ValueError, KeyError, master_settings.SettingsError):
+                    value = False
+                self.public_cache = (now, value)
+            return value
+
+    def auth(self):
+        directory = read_env(self.args.state).get("KONSOL_AUTH_DIR")
+        if not directory:
+            raise master_auth.AuthError("Konsol hesap ayarı eksik; kurulumu yeniden çalıştırın.", 503)
+        return master_auth.Store(directory)
 
     # -- master-wg
     def run(self, *argv, binary=False, net=None):
@@ -1040,14 +1112,15 @@ class Panel:
             files += [(os.path.join(mod_dir, n), n[:-len(".caddy")]) for n in sorted(os.listdir(mod_dir))
                       if n.endswith(".caddy") and not n.startswith(".")]
         entries, raws = [], []
+        snippets = split_snippets(read_text(files[0][0]))[1]
         for path, source in files:
             text = read_text(path)
             if text is None:
                 continue
             raws.append({"file": path, "text": text})
-            for site in parse_caddy(text, ts_ip, source):
+            for site in parse_caddy(text, ts_ip, source, snippets):
                 for addr in site["addresses"]:
-                    public_share = source in ("paylasim-wan", "torrent-wan")
+                    public_share = source in ("paylasim-wan", "torrent-wan", "panel-wan")
                     if public_share and addr.startswith(":"):
                         addr = env.get("WAN_IPV4", "") + addr
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
@@ -1247,13 +1320,16 @@ class Panel:
         except (OSError, ValueError, KeyError, master_shares.ShareError):
             pass
         try:
-            if master_publications.torrent_active(env):
+            # qBittorrent and Konsol (DD-195) share WebDAV's HTTPS port and budgets.
+            apps = [name for name, active in (("qBittorrent", master_publications.torrent_active),
+                                              ("Konsol", master_publications.panel_active)) if active(env)]
+            if apps:
                 port = int(env["SHARE_HTTPS_PORT"])
                 shared = next((r for r in rows if r["scope"] == "wan" and r["port"] == port), None)
                 if shared:
-                    shared["name"] = "Caddy HTTPS · qBittorrent + WebDAV · WAN"
+                    shared["name"] = "Caddy HTTPS · %s + WebDAV · WAN" % " + ".join(apps)
                 else:
-                    rows.append({"name": "Caddy HTTPS · qBittorrent · WAN", "family": 4, "proto": "tcp",
+                    rows.append({"name": "Caddy HTTPS · %s · WAN" % " + ".join(apps), "family": 4, "proto": "tcp",
                                  "port": port, "scope": "wan", "baseline": True})
         except (OSError, ValueError, KeyError, master_settings.SettingsError):
             pass
@@ -1453,6 +1529,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         forwarded = self.headers.get("X-Forwarded-For", "") if self.headers else ""
         return forwarded.split(",")[-1].strip()[:64] if forwarded else "yerel"
 
+    def channel(self):
+        """DD-195: hangi Caddy sitesinden gelindi? Başlığı yalnız Caddy yazar (istemcininki ezilir)."""
+        if self.headers.get("X-Forwarded-For") is None:
+            return "yerel"
+        return "internet" if self.headers.get(CHANNEL_HEADER) == "internet" else "tailscale"
+
     # -- yanıt
     def send(self, code, body=b"", ctype="application/json; charset=utf-8", extra=None):
         if isinstance(body, str):
@@ -1484,7 +1566,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # -- kapılar
     def gate(self):
         """Host ve (API için) köken denetimi. İşlemi yapanın günlük adı ya da None (yanıt gönderildi).
-        DD-147: parola yok; erişim sınırı Tailscale. Bu iki denetim o yüzden kalır."""
+        DD-194: oturumu Caddy her panel isteği için /oturum-denetle ile sorar; bu iki denetim
+        (DNS rebinding ve başka sitenin tarayıcıdan attığı istek) oturumdan bağımsız kalır."""
         host = (self.headers.get("Host") or "").lower()
         if host not in self.allowed_hosts():
             self.error(403, "bu adresten erişilemez")
@@ -1493,7 +1576,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Sunucudaki bir program (ör. indirme hesabıyla çalışan qBittorrent) Caddy'nin tailnet
         # adresine bağlanıp buraya ulaşamasın: istemci başka bir Tailscale cihazı olmalı.
         # Başlıksız istek soketin kendisinden gelir (yalnız root ve Caddy'nin grubu).
-        if self.headers.get("X-Forwarded-For") is not None and not remote_tailnet(self.client()):
+        # DD-195: internet sitesi yalnız yayın açıkken (alan adı, WAN IPv4, Konsol hesabı) ve
+        # istemci sunucunun kendi adresi değilken kabul edilir.
+        channel = self.channel()
+        if channel == "internet":
+            if not self.panel.public_open() or not self.public_client():
+                self.error(403, "Konsol'un internet yayını kapalı")
+                return None
+        elif channel == "tailscale" and not remote_tailnet(self.client()):
             self.error(403, "Konsol yalnız başka bir Tailscale cihazından kullanılır")
             return None
         if self.path.startswith("/api/"):
@@ -1502,6 +1592,87 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.error(403, "istek reddedildi (yalnız panel sayfasından)")
                 return None
         return ACTOR
+
+    def public_client(self):
+        try:
+            ip = ipaddress.ip_address(self.client())
+        except ValueError:
+            return False
+        return not own_address(getattr(ip, "ipv4_mapped", None) or ip)
+
+    # -- Konsol oturumu (DD-194)
+    def cookie_token(self):
+        for header in self.headers.get_all("Cookie") or []:
+            for part in header.split(";"):
+                name, sep, value = part.strip().partition("=")
+                if sep and name == master_auth.COOKIE:
+                    return value.strip()
+        return None
+
+    def session_cookie(self, token):
+        # HTTP inside the tailnet (Tailscale encrypts the transport), so no Secure flag there.
+        # DD-195: over HTTPS (the public address) the browser never sends it over plain HTTP.
+        value, age = (token, master_auth.SESSION_SECONDS) if token else ("", 0)
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d%s" % (master_auth.COOKIE, value, age, secure)
+
+    def session_gate(self):
+        """Caddy forward_auth target for every protected panel request (pages, files, API)."""
+        try:
+            user = self.panel.auth().user_for(self.cookie_token())
+        except master_auth.AuthError as err:
+            self.error(err.status, str(err))
+            return
+        except OSError:
+            self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
+            return
+        if user:
+            self.send(204)
+        elif (self.headers.get("X-Forwarded-Uri") or "").startswith("/api/"):
+            self.close_connection = True
+            self.json(401, {"error": "Oturum gerekli; yeniden giriş yapın.", "giris": True})
+        else:
+            self.send(302, extra={"Location": "/giris.html"})
+
+    def account_post(self, path, data):
+        action = path.rsplit("/", 1)[-1]
+        name = {"kur": "oturum-kur", "giris": "giris", "cikis": "cikis", "parola": "parola-degis"}[action]
+        client = self.client()
+        public = self.channel() == "internet"
+        self.close_connection = True
+        try:
+            store = self.panel.auth()
+            if action == "cikis":
+                store.logout(self.cookie_token())
+                self.audit(ACTOR, name, "-", True)
+                self.send(200, json.dumps({"durum": "cikis"}), extra={"Set-Cookie": self.session_cookie(None)})
+                return
+            if public and action == "kur":
+                # DD-195: the one-time code is used only on the tailnet address.
+                raise master_auth.AuthError("İlk hesap yalnız Tailscale üzerinden oluşturulur.", 403)
+            with self.panel.attempts.attempt(client, public):
+                try:
+                    if action == "kur":
+                        token = store.create(data.get("kod"), data.get("kullanici"), data.get("parola"))
+                    elif action == "giris":
+                        token = store.login(data.get("kullanici"), data.get("parola"))
+                    else:
+                        store.change_password(self.cookie_token(), data.get("eski"), data.get("yeni"))
+                        token = None
+                except master_auth.AuthError as err:
+                    if err.status == 401:
+                        self.panel.attempts.failed(client, public)
+                    raise
+            self.audit(ACTOR, name, "-", True)
+            self.send(200, json.dumps({"durum": "acik"}),
+                      extra={"Set-Cookie": self.session_cookie(token)} if token else None)
+        except master_auth.AuthError as err:
+            if err.status in (401, 429):
+                self.audit(ACTOR, name, "-", False)
+            self.send(err.status, json.dumps({"error": str(err)}, ensure_ascii=False),
+                      extra={"Retry-After": str(err.retry_after)} if err.retry_after else None)
+        except OSError:
+            self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
 
     def allowed_hosts(self):
         env = read_env(self.panel.args.state)
@@ -1535,6 +1706,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlsplit(self.path).path
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if path == "/oturum-denetle":
+            self.session_gate()
+            return
+        if path == "/api/konsol/oturum":
+            try:
+                self.json(200, dict(self.panel.auth().status(self.cookie_token()), kanal=self.channel()))
+            except master_auth.AuthError as err:
+                self.error(err.status, str(err))
+            except OSError:
+                self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
+            return
         if path == "/api/konsol/paylasim":
             try:
                 self.json(200, master_shares.Manager(self.panel.args.state).public())
@@ -1665,6 +1847,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
             return
+        if path in ("/api/konsol/oturum/kur", "/api/konsol/oturum/giris",
+                    "/api/konsol/oturum/cikis", "/api/konsol/hesap/parola"):
+            self.account_post(path, data)
+            return
         share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
         if path in {"/api/konsol/paylasim/" + name for name in share_actions}:
             code, result = self.panel.settings_run(share_actions[path.rsplit("/", 1)[-1]], data, shares=True)
@@ -1678,7 +1864,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             action = actions[path.rsplit("/", 1)[-1]]
             if action == "confirm":
                 data["client"] = self.client()
-                data["host"] = self.headers.get("Host", "").lower()
+                # DD-195: Caddy pins Host to panel.<alan>; the name the browser used is
+                # X-Forwarded-Host, and the channel says which Caddy site carried it.
+                data["host"] = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").lower()
+                data["kanal"] = self.channel()
             code, result = self.panel.settings_run(action, data)
             self.audit(user, "ayar-" + action, "ayarlar", code == 200)
             self.close_connection = True

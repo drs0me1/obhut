@@ -148,7 +148,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-144 | The user area is a fixed /srv, not an asked-for path | live | design-decisions.md |
 | DD-145 | The console uploads into the list; no separate upload area | live | design-decisions.md |
 | DD-146 | Retire FileBrowser; Konsol is the file manager | historical | archive/design-decisions-retired.md |
-| DD-147 | Konsol without a password; Tailscale joins by link only | live | design-decisions.md |
+| DD-147 | Konsol without a password; Tailscale joins by link only | partly superseded (DD-194) | design-decisions.md |
 | DD-148 | A clean install is the base; Konsol installs modules | live | design-decisions.md |
 | DD-149 | Paylaşım is a module with a generated account | live; parts superseded by DD-158 | design-decisions.md |
 | DD-150 | Dosya yöneticisi and WireGuard are Konsol modules | live | design-decisions.md |
@@ -192,6 +192,8 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-188 | Audit stage 3: bounded authentication, short write locks and resource sandbox | live | design-decisions.md |
 | DD-189 | Audit stage 4: desired-service/kernel health and IPv4 DNS projection | live | design-decisions.md |
 | DD-190 | Optional public WebDAV HTTPS without widening private administration | live | design-decisions.md |
-| DD-191 | Fixed publication table with independent private and public gates | live | design-decisions.md |
+| DD-191 | Fixed publication table with independent private and public gates | live; Panel row opened by DD-195 | design-decisions.md |
 | DD-192 | Per-connection WebDAV policies and dual-card Shares | live | design-decisions.md |
 | DD-193 | Cross-review follow-ups for v2-159..v2-164 | live | design-decisions.md |
+| DD-194 | Konsol sign-in with a one-time setup code | live; public sign-in rules added by DD-195 | design-decisions.md |
+| DD-195 | Konsol over public HTTPS through the publication table | live | design-decisions.md |

@@ -376,15 +376,32 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     } catch (e) { error(new Error(`${e.message} Sonucu Yenile ile kontrol edin.`)); }
     finally { await loadSettings(true); webBusy = ""; busy = false; draw(); }
   }
+  // DD-195: publishing Konsol itself needs an explicit, typed decision.
+  function confirmPanel(row, item) {
+    const word = h("input", { type: "text", autocomplete: "off", spellcheck: "false", required: true });
+    modal("Panel internete açılsın mı?", h("div", null,
+      note(`https://${item.domain} adresinde Konsol giriş sayfası internete açılır. Konsol hesabıyla giren herkes sunucuyu yönetebilir: güvenlik duvarı, WireGuard, dosyalar ve uygulamalar.`, true),
+      row.enabled && location.protocol === "https:" ? note("Bu sayfayı eski internet adresinden açtınız; kaydettiğinizde bu bağlantı kesilir. Konsol Tailscale adresinden ve yeni addan açık kalır.", true) : null,
+      h("ul", { class: "as-changes" },
+        h("li", null, "Uzun ve başka yerde kullanmadığınız bir Konsol parolası kullanın; gerekirse önce Sistem → Konsol hesabı bölümünden değiştirin."),
+        h("li", null, "İnternetten çok sayıda hatalı giriş olursa internet girişi 15 dakika kapanır; Tailscale girişi etkilenmez."),
+        h("li", null, "İlk hesap yalnız Tailscale üzerinden oluşturulur. Güvenlik duvarı ve alan adı değişiklikleri de yalnız Tailscale’den onaylanır."),
+        h("li", null, `DNS: ${item.domain} → ${live.wan?.ipv4 || "WAN IPv4"} · A kaydı, proxy kapalı (DNS only), AAAA kaydı yok.`)),
+      field("Onaylamak için onayla yazın", word)),
+    (_form, close) => {
+      if (word.value.trim().toLocaleLowerCase("tr") !== "onayla") { word.focus(); return; }
+      close(); savePublication(row, { ...item, confirm: "onayla" });
+    });
+  }
   function publications() {
     const rows = live.manage.publications;
-    const labels = { ready: "Sertifika hazır", pending: "Sertifika hazırlanıyor…", error: "Yayın doğrulanamadı", disabled: "İnternet kapalı", locked: "Giriş sistemi gerekli", http: "Eski HTTP erişimi" };
+    const labels = { ready: "Sertifika hazır", pending: "Sertifika hazırlanıyor…", error: "Yayın doğrulanamadı", disabled: "İnternet kapalı", http: "Eski HTTP erişimi" };
     const cell = (name, ...children) => h("td", { "data-label": name }, ...children);
     const content = table(["Uygulama", "Tailscale", "İnternet", "HTTPS alan adı", "Durum / işlem"], rows.map(row => {
       const saved = { tail: row.tail, enabled: row.enabled, domain: row.domain };
       const current = webDrafts[row.service] || saved;
       const changed = !same(current, saved), panel = row.service === "panel";
-      const disabled = panel || !row.installed || locked() || !!dirty();
+      const disabled = !row.installed || locked() || !!dirty();
       let saveButton, discardButton, draftNote;
       const edit = (key, value) => {
         const next = { ...(webDrafts[row.service] || current), [key]: value };
@@ -392,7 +409,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       };
       const name = row.name;
       const domain = h("input", { type:"text", value:current.domain, maxlength:253, disabled,
-        placeholder: row.service === "paylasim" ? "dav.example.com" : panel ? "Kullanılamaz" : "torrent.example.com",
+        placeholder: row.service === "paylasim" ? "dav.example.com" : panel ? "panel.example.com" : "torrent.example.com",
         "aria-label":name + " HTTPS alan adı", autocapitalize:"none", autocomplete:"off", spellcheck:false,
         oninput:e => {
           edit("domain", e.target.value); e.target.setCustomValidity("");
@@ -410,20 +427,31 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         if (item.enabled && rows.some(other => other.service !== row.service && other.enabled && other.domain === item.domain)) {
           domain.setCustomValidity("Bu HTTPS alan adı başka bir uygulamada kullanılıyor."); domain.reportValidity(); return;
         }
+        if (panel && item.enabled && rows.some(other => other.mode === "http")) {
+          // Same rule as qBittorrent (DD-191): the shared HTTPS port cannot coexist with legacy WebDAV HTTP.
+          domain.setCustomValidity("Önce WebDAV için HTTPS alan adı kaydedin veya eski HTTP internet erişimini kapatın."); domain.reportValidity(); return;
+        }
+        if (panel && item.enabled && (!row.enabled || item.domain !== row.domain)) { confirmPanel(row, item); return; }
+        if (panel && row.enabled && location.protocol === "https:" && (!item.enabled || item.domain !== row.domain)) {
+          // This page itself came through the public address; it closes with the save.
+          modal("İnternet adresi kapansın mı?", note("Bu sayfayı internet adresinden açtınız. Kaydettiğinizde bu bağlantı kesilir; Konsol Tailscale adresinden açık kalır.", true),
+            (_form, close) => { close(); savePublication(row, item); });
+          return;
+        }
         savePublication(row, item);
       };
       const address = row.enabled && row.domain && row.status === "ready" ? "https://" + row.domain
         + (live.manage.https?.port && live.manage.https.port !== 443 ? ":" + live.manage.https.port : "") : "";
       draftNote = h("small", null, changed ? "Taslak · henüz uygulanmadı" : "");
-      saveButton = !panel && row.installed ? h("button", {type:"button", class:"btn btn-sm", disabled:disabled || (!changed && row.status !== "error"), onclick:save}, "Kaydet") : null;
-      discardButton = !panel && row.installed ? h("button", {type:"button", class:"btn btn-sm btn-quiet", hidden:!changed, disabled:locked(), onclick:() => { delete webDrafts[row.service]; draw(); }}, "Vazgeç") : null;
+      saveButton = row.installed ? h("button", {type:"button", class:"btn btn-sm", disabled:disabled || (!changed && row.status !== "error"), onclick:save}, "Kaydet") : null;
+      discardButton = row.installed ? h("button", {type:"button", class:"btn btn-sm btn-quiet", hidden:!changed, disabled:locked(), onclick:() => { delete webDrafts[row.service]; draw(); }}, "Vazgeç") : null;
       return h("tr", { class:changed ? "changed" : "", "data-publication":row.service },
         cell("Uygulama", h("strong", null, name), h("code", null, row.local), h("small", null,
-          panel ? "Yalnız Tailscale · korunur" : !row.installed ? "Kurulu değil" : row.service === "paylasim" ? "Klasör hesabı + ağ izni" : "Uygulamanın kendi girişi")),
-        cell("Tailscale", toggle(name + " Tailscale erişimi", current.tail, on => edit("tail", on), "as-web-tail-" + row.service, disabled)),
+          panel ? "Konsol hesabı · Tailscale her zaman açık" : !row.installed ? "Kurulu değil" : row.service === "paylasim" ? "Klasör hesabı + ağ izni" : "Uygulamanın kendi girişi")),
+        cell("Tailscale", toggle(name + " Tailscale erişimi", current.tail, on => edit("tail", on), "as-web-tail-" + row.service, disabled || panel)),
         cell("İnternet", toggle(name + " internet erişimi", current.enabled, on => edit("enabled", on), "as-web-wan-" + row.service, disabled)),
         cell("HTTPS alan adı", domain, address ? (row.service === "paylasim" ? h("small", null, address + "/s/…/ · tam adres Paylaşımlar’da")
-          : h("a", { href:address, target:"_blank", rel:"noopener" }, address)) : h("small", null, panel ? "İnternet yayını kilitli" : "Doğrudan HTTPS · DNS only")),
+          : h("a", { href:address, target:"_blank", rel:"noopener" }, address)) : h("small", null, "Doğrudan HTTPS · DNS only")),
         cell("Durum / işlem", badge(webBusy === row.service ? "Uygulanıyor…" : labels[row.status] || "Durum bilinmiyor", !webBusy && row.status === "ready"),
           draftNote, saveButton, discardButton,
           row.expires ? h("small", null, "Sertifika: ", h("time", {datetime:new Date(row.expires * 1000).toISOString()}, new Date(row.expires * 1000).toLocaleDateString("tr-TR"))) : null,

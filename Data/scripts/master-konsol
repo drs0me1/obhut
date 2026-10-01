@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# DD-194: Konsol hesabı (root). Komutlar: durum | kod | sifirla | oturum-ac [--sure N] | oturum-kapat
+#   sudo master-konsol sifirla   hesabı ve tüm oturumları siler, yeni tek kullanımlık kod yazar
+set -euo pipefail
+exec /usr/bin/python3 "$(dirname -- "$(readlink -f -- "$0")")/master_auth.py" "$@"

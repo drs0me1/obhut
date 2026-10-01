@@ -46,7 +46,8 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
-                 "WG_NETWORKS_FILE": "etc/networks", "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules"}
+                 "WG_NETWORKS_FILE": "etc/networks", "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules",
+                 "KONSOL_AUTH_DIR": "etc/konsol"}
         e.update({k: str(root / v) for k, v in paths.items()})
         # DD-180: both private sockets live in the disposable tree, never in the host's /run.
         e.update(WG_PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
@@ -56,6 +57,7 @@ def main():
             (root / folder).mkdir(parents=True, exist_ok=True)
         for p in [root / "srv", *(root / "srv").rglob("*")]:
             os.chown(p, 1000, 1000)
+        (root / "etc/konsol").mkdir(mode=0o700)  # DD-194: never the host's account folder
         (root / "etc/modules").write_text("dosya\tcalisiyor\ntorrent\tcalisiyor\n")
         (root / "etc/networks").write_text("")
         state = root / "state.env"
@@ -105,7 +107,7 @@ def main():
                 ready = lambda: dig("panel." + domain) == e["TAILSCALE_IPV4"]
             elif name == "caddy":
                 args = ["caddy", "run", "--config", e["CADDYFILE"], "--adapter", "caddyfile"]
-                ready = lambda: http("panel." + domain) == "200"
+                ready = lambda: http("panel." + domain, "/giris.html") == "200"
             elif name == "files":
                 args = ["setpriv", "--reuid=1000", "--regid=1000", "--clear-groups", "python3", str(DATA / "files-panel/master-files-panel"),
                         "serve", "--listen", "127.0.0.1:" + e["FILES_PANEL_PORT"], "--root", e["SERVER_ROOT"], "--domain=" + domain]
@@ -139,18 +141,25 @@ def main():
             assert dig("panel." + domain) == e["TAILSCALE_IPV4"]
             assert dig("panel." + old) != e["TAILSCALE_IPV4"]
             assert dig("health." + domain) == ""
-            assert http("panel." + domain) == "200"
+            # DD-194: the sign-in page is open; Konsol itself asks the root backend through
+            # forward_auth, which refuses this host-local caller (DD-180) under the new name.
+            assert http("panel." + domain, "/giris.html") == "200"
+            assert http("panel." + domain) == "403"
+            # DD-195: the refusal is the address rule, so the snippet's rewritten backend
+            # Host (panel.<new>) passed the backend's Host check first.
+            assert "Tailscale cihazından" in cmd("curl", "--noproxy", "*", "-s", "--max-time", "2", "-H", "Host: panel." + domain,
+                                                 "http://" + e["TAILSCALE_IPV4"] + "/", check=False)
             # Caddy may return an empty 200 for an unmatched Host; there is no
             # site or health payload. Do not mistake status alone for a route.
             assert cmd("curl", "--noproxy", "*", "-s", "--max-time", "2", "-H", "Host: health." + domain,
                        "http://" + e["TAILSCALE_IPV4"] + "/") == ""
             for path, port in (("/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
                 root_api = port == e["WG_PANEL_SOCKET"]
-                # DD-180: the root backend refuses what Caddy relays from this host (100.64.0.2 is local here);
-                # the reply still proves Caddy routes the new name to it. Direct socket calls are root's own.
-                assert http("panel." + domain, path) == ("403" if root_api else "200")
-                if root_api:
-                    assert http("panel." + domain, path, port) == "200"
+                # DD-180/194: Caddy's session check refuses what it relays from this host (100.64.0.2
+                # is local here); the reply still proves the new name reaches the root backend.
+                # Direct calls (root socket, loopback Files port) answer the new name.
+                assert http("panel." + domain, path) == "403"
+                assert http("panel." + domain, path, port) == "200"
                 assert http("panel." + old, path, port) == "403"
                 assert http("panel." + domain, path, header=False) == "403"
         try:
@@ -165,7 +174,7 @@ def main():
                     proof("ev", "ayc")
                     with m.locked():
                         if confirm:
-                            m.confirm({"id": m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev"})
+                            m.confirm({"id": m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev", "kanal": "tailscale"})
                         else:
                             m.rollback()
                             proof("ayc", "ev")

@@ -72,7 +72,7 @@ class SettingsTests(unittest.TestCase):
         return dict(copy.deepcopy(settings.DEFAULT["dns"]), **kwargs)
 
     def confirm(self):
-        return self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9"})
+        return self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "kanal": "tailscale"})
 
     def test_defaults_and_no_secrets_in_status(self):
         s = self.m.status()
@@ -511,7 +511,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(before, self.m.qconf.read_bytes())
 
     def domain_fixture(self):
-        (self.root / "Caddyfile").write_text('http://panel.ayc {\n respond "test"\n}\n# leave /some.ayc unchanged\n')
+        (self.root / "Caddyfile").write_text('(konsol) {\n\treverse_proxy x {\n\t\theader_up Host panel.ayc\n\t}\n}\n'
+                                             'http://panel.ayc {\n respond "test"\n}\n# leave /some.ayc unchanged\n')
         for rel in ("caddy-modules", "templates/dosya"):
             (self.root / rel).mkdir(exist_ok=True)
         unit = "[Service]\nExecStart=/bin/backend --domain=ayc --version=test\n"
@@ -530,6 +531,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.m.status()["pending"]["seconds"], 300)
         self.assertEqual(settings.env_read(self.state)["LOCAL_DOMAIN"], "ev")
         self.assertIn("http://panel.ev", (self.root / "Caddyfile").read_text())
+        self.assertIn("\t\theader_up Host panel.ev\n", (self.root / "Caddyfile").read_text())
         self.assertIn("/some.ayc", (self.root / "Caddyfile").read_text())
         self.assertIn("http://paylas.ev, http://{$TAILSCALE_IPV4}:61010", (self.root / "caddy-modules/paylasim.caddy").read_text())
         self.assertIn("torrent.ev", (self.root / "templates/torrent/dnsmasq.conf").read_text())
@@ -540,8 +542,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.m.current()["dns"]["servers"], ["1.1.1.1"])
         for host in ("panel.ayc", "127.0.0.1", "panel.ev.evil", ""):
             with self.subTest(host=host), self.assertRaises(settings.SettingsError):
-                self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": host})
-        self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev"})
+                self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": host, "kanal": "tailscale"})
+        # DD-195: the public Konsol site may not confirm, even from a 100.64/10 (CGNAT) address.
+        with self.assertRaises(settings.SettingsError):
+            self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev", "kanal": "internet"})
+        self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev", "kanal": "tailscale"})
         self.assertEqual(settings.saved_domain(self.m.config_path), "ev")
         self.assertIn(["systemctl", "reload", "caddy.service"], self.calls)
         self.assertNotIn(["systemctl", "restart", "master-wg-panel.service"], self.calls)

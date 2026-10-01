@@ -4,7 +4,8 @@
 
 Settings → Caddy now lists Panel, qBittorrent and WebDAV. The WebDAV row saves
 Tailscale and Internet independently; a disabled HTTPS domain is remembered.
-Panel remains private and locked. The global WebDAV choice only restricts
+Panel's Tailscale address always stays; its optional public HTTPS name (DD-195)
+shares TCP 443 and the socket budgets below. The global WebDAV choice only restricts
 folder connection policies; it never widens them or changes accounts. Both
 connection cards remain visible and explain a disabled global gate; no address
 is advertised through that gate. Private off returns 403, including the
@@ -317,7 +318,8 @@ Connection limits are listed above; 10,000 entries per PROPFIND listing.
 
 ## Network prerequisite
 
-Konsol is passwordless and administrative. Recipients must be allowed only the
+Konsol is administrative: its single account (DD-194) manages every folder and
+share. Never give recipients the Konsol password. Recipients must be allowed only the
 WebDAV port, with Konsol/SSH restricted to administrators in Tailscale ACL/grants.
 Review broader existing grants; adding a narrow allow does not remove them.
 The installer does not change account policy. Private HTTP is carried inside the

@@ -152,7 +152,7 @@ def main():
                 return m.apply(dict(revision=m.revision(), **data))
         def confirm():
             with m.locked():
-                m.confirm({"id": m.pending()["id"], "client": "100.64.0.9"})
+                m.confirm({"id": m.pending()["id"], "client": "100.64.0.9", "kanal": "tailscale"})
         forwarded = []
         upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         upstream.bind(("9.9.9.9", 53))

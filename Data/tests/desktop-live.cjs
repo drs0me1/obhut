@@ -1,5 +1,6 @@
 /* Model A disposable-host browser acceptance. ZIP writes only inside ARCHIVE_FIXTURE.
-   Optional app lifecycle is explicitly enabled with TEST_APP_LIFECYCLE=1. */
+   Optional app lifecycle is explicitly enabled with TEST_APP_LIFECYCLE=1.
+   DD-194: pass a session as KONSOL_COOKIE (sudo master-konsol oturum-ac); it is never printed. */
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
@@ -9,7 +10,10 @@ assert(/^archive-test-[a-f0-9]+$/.test(fixture || ""), "Pass the owned live arch
 (async () => {
   const browser = await chromium.launch({headless:true, ...(process.env.PLAYWRIGHT_CHROMIUM ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM} : {})});
   try {
-    const page = await browser.newPage({viewport:{width:1440,height:1000}});
+    const base = process.env.KONSOL_URL || "http://panel.ayc/";
+    const context = await browser.newContext({viewport:{width:1440,height:1000}});
+    if (process.env.KONSOL_COOKIE) await context.addCookies([{name:"konsol_oturum", value:process.env.KONSOL_COOKIE, url:base}]);
+    const page = await context.newPage();
     const errors = [];
     const go = async name => {
       if (await page.locator("#menu-toggle").isVisible() && await page.locator("#menu-toggle").getAttribute("aria-expanded") !== "true") await page.locator("#menu-toggle").click();
@@ -19,7 +23,7 @@ assert(/^archive-test-[a-f0-9]+$/.test(fixture || ""), "Pass the owned live arch
       await page.waitForFunction(() => document.querySelector('#menu-toggle').getAttribute('aria-expanded') === 'false');
     };
     page.on("pageerror", e => errors.push(e.message));
-    await page.goto(process.env.KONSOL_URL || "http://panel.ayc/");
+    await page.goto(base);
     await page.getByRole("heading", {name:"Dosyalar", exact:true}).waitFor();
     await page.getByRole("button", {name:fixture + " ayrıntıları", exact:true}).click();
     await page.getByRole("button", {name:"Klasörü aç", exact:true}).click();

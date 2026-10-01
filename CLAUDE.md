@@ -46,7 +46,11 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   changes, wipes, and reboots without per-turn approval. Drive the installer
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults). The input file holds no accounts:
-  Konsol has none (**DD-147**), folder shares are managed in Konsol and qBittorrent's
+  the Konsol account is the operator's, created at first visit with the
+  installer's one-time code (**DD-194**) — never create or keep one on their
+  behalf; scripted checks use `sudo master-konsol oturum-ac` sessions, and
+  `konsol-login-live.py` runs only while no account exists and resets afterwards.
+  Folder shares are managed in Konsol and qBittorrent's
   first login is a temporary password from its journal (**DD-151**). Add and
   remove test peers with `master-wg`/`wireguard.command` (never print a
   profile; QR codes of test peers only). Answer the
@@ -108,7 +112,8 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/scripts/master-wg` | Server-side peer tool installed to `/usr/local/sbin` |
 | `Data/scripts/master-modul`, `Data/modules/<id>/` | Module helper (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`, `hesap torrent` for its temporary login) and module templates the installer renders to `/usr/local/share/master-stack/moduller/`; registry `/etc/master-stack/moduller`. Folder accounts are managed by `master_shares.py` (**DD-158**) |
-| `Data/console/` | Konsol pages (`index.html`, `konsol.js`/`konsol.css` and per-page scripts/styles) at Caddy `panel.<domain>`, tailnet only (**DD-140**). Design mockups in `Data/docs/design/` |
+| `Data/console/` | Konsol pages (`index.html`, `konsol.js`/`konsol.css` and per-page scripts/styles; `giris.html`/`.js`/`.css` sign-in and first account) at Caddy `panel.<domain>` on the tailnet, optionally a public HTTPS name (**DD-140**, **DD-194**, **DD-195**). Design mockups in `Data/docs/design/` |
+| `Data/panel/master_auth.py`, `Data/scripts/master-konsol` | Konsol account and sessions (**DD-194**): scrypt hash, SHA-256 session tokens, one-time setup code in `KONSOL_AUTH_DIR` (0700 root); Caddy `forward_auth` asks the root backend's `/oturum-denetle` before every protected panel request. Root CLI: `master-konsol durum|kod|sifirla|oturum-ac|oturum-kapat` |
 | Built-in WebDAV (`paylasim` internal ID) | **DD-158/159/192:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Each folder's `/s/<id>/` and account are shared by two independent Tailscale/WAN policies: enabled, RO/RW and expiry. Shares shows two cards; Manage edits the shared folder/account/password. Caddy serves Tailscale HTTP on `SHARE_PORT`; optional public HTTPS uses `SHARE_HTTPS_PORT` and `master_https.py` (**DD-179/190**). No cross-folder shared account or writable symlink tree. See contract §3 and §5–7 for publication modes, limits and manual recipient ACL requirements. |
 | `Data/panel/` | Konsol's WireGuard and system backend (`master-wg-panel`, Python stdlib, root, Unix socket `/run/master-wg-panel/api.sock` only — no TCP port since **DD-180** — `/api/wg/*` and `/api/konsol/*`) built on `master-wg`; networks wg0…wg9, peer and network switches (**DD-133**, **DD-136**, **DD-140**) |
 | `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
@@ -145,15 +150,19 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   explicitly clearing the domain closes WAN, never downgrades to HTTP.
   Configured HTTPS keeps its listener for renewal even with no active folders.
   Independent scope/auth enforcement and attempt/connection budgets remain
-  mandatory; Konsol/admin backends stay private. DD-191 adds an independent
+  mandatory; the Konsol backends themselves stay private (socket/loopback). DD-191 adds an independent
   Tailscale/HTTPS table for WebDAV and qBittorrent through `master_publications.py`.
   Its global gates override the DD-192 cards and supply an unavailable reason.
   Available transports may show candidate card URLs while locally off/expired;
   `row.urls` contains only active connections. Each listener enforces its own
   policy on writes, live chunks and staged publication, including cached logins.
-  The panel row is immutable/private. qBittorrent WAN requires its permanent
+  DD-195: the Panel row's Tailscale switch is fixed on; its optional public HTTPS
+  name imports the same `(konsol)` Caddy snippet (session check, Host pinned to
+  `panel.<domain>`, Caddy-written `X-Konsol-Kanal`), needs an existing Konsol
+  account, refuses the setup code and adds a shared public sign-in budget.
+  qBittorrent WAN requires its permanent
   native login, CSRF/Host checks and login-attempt ban; no preferences are
-  rewritten. Both public names share TCP443 and its existing socket budgets.
+  rewritten. All public names share TCP443 and its existing socket budgets.
   No Tunnel, arbitrary upstreams or automatic DNS writes. Certificate readiness is a
   local pinned-IP trust/hostname check, not proof of public reachability.
   See `Data/docs/folder-shares.md` for limits and the scoped expiry/recovery timer.

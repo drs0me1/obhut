@@ -3,9 +3,10 @@
 # gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
 # oku, indir, yükle ve arşivle. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri
 # root arka ucuna (master-wg-panel) gider. Klasör paylaşım hesapları orada yönetilir.
-# Yalnız 127.0.0.1'i dinler; tailnet'e Caddy açar (http://panel.<alan>). Parola yoktur
-# (DD-147): erişim sınırı Tailscale. Servis root değil, kullanıcı alanının sahibi olarak
-# çalışır. Yalnız Python standart kütüphanesi.
+# Yalnız 127.0.0.1'i dinler; Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
+# adına (DD-195) açar. Konsol oturumunu
+# Caddy root arka uca sorar (DD-194); bu servis oturum görmez. Servis root değil, kullanıcı
+# alanının sahibi olarak çalışır. Yalnız Python standart kütüphanesi.
 #
 #   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN [--trash AD]
 #                            [--domain ALAN] [--version SÜRÜM] [--temp-dir AD] [--allow-host HOST]
@@ -770,7 +771,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def gate(self, route):
         """Host ve API için köken denetimi. İşlemi yapanın günlük adı ya da None (yanıt gönderildi).
-        DD-147: parola yok; erişim sınırı Tailscale. Bu iki denetim o yüzden kalır."""
+        DD-194: oturumu Caddy denetler; bu iki denetim oturumdan bağımsız kalır."""
         host = (self.headers.get("Host") or "").lower()
         if host not in self.allowed_hosts():
             self.error(403, "bu adresten erişilemez")

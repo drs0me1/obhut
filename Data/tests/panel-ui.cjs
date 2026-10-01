@@ -52,6 +52,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         if (url.searchParams.get("parola") === "1") { passwordReads++; result.pass = temporaryPassword; }
       }
       else if (p === "/api/konsol/saglik") result = {status:"ok",read_at:1,checks:[{id:"units",name:"Servisler",status:"ok",detail:"Başarısız servis yok"}]};
+      else if (p === "/api/konsol/oturum") result = {durum:"acik",kullanici:"fixture",oturum_gun:7};
       else if (p === "/api/konsol/kaynaklar") {
         resourceCount++;
         if (resources === "offline") return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"fixture offline"})});

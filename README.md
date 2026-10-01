@@ -102,7 +102,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. Its own page shows first-login information on request |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); internet only for folders that turn WAN on: HTTPS on a public name set in Settings → Caddy (**DD-190/191**), or legacy consented HTTP when none is set (**DD-179**) | Separate account per folder; Tailscale and WAN each have their own on/off, RO/RW and expiry (**DD-192**). Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
-| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
+| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); user name and password, account created at first visit on the tailnet with the installer's one-time code (**DD-194**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
 
 qBittorrent's first profile contains only panel integration and headless-startup
 settings (**DD-178**): download path, authenticated loopback WebUI and startup
@@ -152,7 +152,7 @@ Confirmed firewall/DNS/domain choices survive installer re-runs.
 
 Files shows a list or cards and a right-hand details pane (below on mobile).
 See [folder WebDAV boundaries](Data/docs/folder-shares.md) before
-sharing with other people: recipients must not reach passwordless Konsol/SSH.
+sharing with other people: recipients must not reach Konsol/SSH or get the Konsol password.
 Native Finder/Infuse compatibility and fresh Ubuntu acceptance are separate tests.
 
 Konsol is one sidebar workspace, not an OS session. Files has its own contextual
@@ -173,8 +173,10 @@ See [Files and archive boundaries](Data/docs/desktop-and-archives.md) and
 ## Rebuilding a host
 
 `kurulum/` supplies installation inputs, not server data:
-- `kurulum/kurulum.env` holds only the SSH host and the domain; Konsol has
-  no account (**DD-147**) and the modules make or show their own.
+- `kurulum/kurulum.env` holds only the SSH host and the domain. The Konsol
+  account is created at the first visit with the one-time code the installer
+  prints (**DD-194**; forgotten: `sudo master-konsol sifirla`), and the modules
+  make or show their own.
 - qBittorrent keeps its settings and torrent list on the server only; a
   fresh install starts it with minimal settings and a new login (**DD-151**).
 - WireGuard is not part of that: a fresh install has no WireGuard at all

@@ -19,6 +19,8 @@ class PublicationTests(unittest.TestCase):
     def setUp(self):
         fixtures.HttpsSettingsTests.setUp(self)
         self.env["TORRENT_UI_PORT"] = "61006"
+        self.env["KONSOL_AUTH_DIR"] = str(self.root / "konsol")
+        (self.root / "konsol").mkdir(mode=0o700)
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.m = settings.Manager(self.state)
         self.s.env.update(self.env)
@@ -35,11 +37,17 @@ class PublicationTests(unittest.TestCase):
         self.qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=@ByteArray(fixture)\nWebUI\\LocalHostAuth=true\n")
         self.m.apply({"revision": self.m.revision(), "https": {"domain": "dav.example.net"}})
 
-    def payload(self, service="paylasim", tail=True, enabled=True, domain="dav.example.net"):
-        return {"revision": self.m.revision(), "web": dict(service=service, tail=tail, enabled=enabled, domain=domain)}
+    def payload(self, service="paylasim", tail=True, enabled=True, domain="dav.example.net", **extra):
+        return {"revision": self.m.revision(), "web": dict(service=service, tail=tail, enabled=enabled, domain=domain, **extra)}
 
-    def test_panel_and_unknown_upstreams_rejected(self):
-        for service in ("panel", "wireguard", "localhost:2019", [], None):
+    def panel(self, **changes):
+        # Enabling the console publicly also carries the typed word (DD-195).
+        item = dict(enabled=True, domain="konsol.example.net", confirm="onayla")
+        item.update(changes)
+        return self.payload(service="panel", **item)
+
+    def test_unknown_upstreams_rejected(self):
+        for service in ("wireguard", "localhost:2019", "dosya", [], None):
             with self.subTest(service=service), self.assertRaises(settings.SettingsError):
                 self.m.validate(self.payload(service=service))
         payload = self.payload(); payload["web"]["upstream"] = "localhost:2019"
@@ -47,7 +55,7 @@ class PublicationTests(unittest.TestCase):
             self.m.validate(payload)
 
     def test_real_worker_reports_imported_validation_errors_as_json(self):
-        for payload in (self.payload(service="panel"), self.payload(domain="https://bad.example.net")):
+        for payload in (self.payload(service="wireguard"), self.payload(domain="https://bad.example.net")):
             p = REAL_RUN([sys.executable, settings.__file__, "--state", str(self.state), "apply"],
                          input=json.dumps(payload), text=True, capture_output=True, timeout=10)
             self.assertEqual(p.returncode, 1)
@@ -71,6 +79,95 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertIn("qBittorrent", rows[0]["name"])
             self.assertNotIn("WebDAV", rows[0]["name"])
+            # DD-195: Konsol joins the same single row.
+            with patch.object(pubs, "panel_active", return_value=True):
+                rows = instance.settings_ports(self.env, [])
+            self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · qBittorrent + Konsol + WebDAV · WAN"])
+
+    def make_account(self):
+        import master_auth
+        store = master_auth.Store(self.env["KONSOL_AUTH_DIR"])
+        code, _ = store.issue_code()
+        store.create(code, "yonetici", "fixture-password-10")
+        return store
+
+    def wan_firewall(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with patch.object(sys, "argv", ["master_shares.py", "--state", str(self.state), "wan-firewall"]), \
+                contextlib.redirect_stdout(out):
+            fixtures.shares.main()
+        return out.getvalue().split()
+
+    def test_panel_publication_needs_an_account_and_keeps_its_tailnet_address(self):
+        # DD-195: the tailnet address is the management path that always remains.
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.payload(service="panel", tail=False, enabled=False, domain=""))
+        self.assertIn("Tailscale", str(err.exception))
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.apply(self.panel())
+        self.assertIn("Konsol hesabını", str(err.exception))
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.panel(domain="dav.example.net"))
+        # The typed word is checked on the server, only for the panel row.
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
+        self.assertIn("onayla", str(err.exception))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.panel(confirm="evet"))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(confirm="onayla"))
+        # Like qBittorrent, it shares the HTTPS port and never joins legacy plaintext WebDAV.
+        with self.assertRaises(settings.SettingsError):
+            pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
+        store = self.make_account()
+        self.assertEqual(self.wan_firewall()[0], "1")  # WebDAV over HTTPS already listens
+        self.assertTrue(self.m.apply(self.panel())["committed"])
+        # Keeping it on with the same name needs no new word; a new name does.
+        self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(service="panel", domain="konsol2.example.net"))
+        site = (self.root / "sites/panel-wan.caddy").read_text()
+        self.assertIn("https://konsol.example.net:443 {\n\tbind 8.8.8.8\n", site)
+        self.assertIn("disable_http_challenge", site)
+        self.assertIn('\theader Strict-Transport-Security "max-age=31536000"\n', site)
+        self.assertTrue(site.endswith("\timport konsol internet\n}\n"))
+        self.assertNotIn("reverse_proxy", site, "only the shared signed-in routes, no other upstream")
+        self.assertTrue(pubs.panel_active(self.env))
+        with patch.object(tls, "certificate", return_value=1_900_000_000):
+            row = pubs.status(self.env)[0]
+        self.assertEqual((row["service"], row["status"], row["expires"], row["tail"], row["account"]),
+                         ("panel", "ready", 1_900_000_000, True, True))
+        # WebDAV's public address closes; the Konsol site alone keeps TCP 443 and its budgets.
+        self.assertTrue(self.m.apply(self.payload(enabled=False))["committed"])
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
+        # A reset account closes the public door at the next publish (the 30-second guard).
+        store.reset()
+        self.assertFalse(pubs.panel_active(self.env))
+        self.s.publish()
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall()[0], "0")
+        row = pubs.status(self.env)[0]
+        self.assertEqual(row["status"], "error")
+        self.assertIn("Tailscale üzerinden oluşturulur", row["message"])
+
+    def test_panel_certificate_failure_rolls_back_the_public_site(self):
+        self.make_account()
+        with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("cert failed")):
+            with self.assertRaises(settings.SettingsError):
+                self.m.apply(self.panel())
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertNotIn("panel", self.m.config().get("web", {}))
+        self.assertFalse(self.m.pending_path.exists())
+        # Turning it off again removes the site and keeps the remembered name.
+        self.m.apply(self.panel())
+        self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
+        self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertEqual(pubs.config(self.env)["panel"], {"tail": True, "enabled": False, "domain": "konsol.example.net"})
 
     def test_tail_disabled_preserves_wan_and_folder_accounts(self):
         accounts = self.s.path and Path(self.s.path).read_bytes()

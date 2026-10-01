@@ -645,7 +645,7 @@ EOF
     # DD-154: the old names wg., dosya. and file. are gone; the console is panel. only.
     run ! grep -qE '^http://(wg|dosya|file)\.' "$V2_ROOT/templates/Caddyfile"
     run ! grep -qE 'interface-name=(wg|dosya|file)\.' "$V2_ROOT/templates/dnsmasq.conf"
-    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
+    awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
     # DD-151: no base Compose project at all; every container belongs to a module.
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
 }
@@ -779,7 +779,7 @@ assert not missing, missing
 @test "speed and log-noise settings: compressed Konsol, idle guard, quiet timers, quiet backend, lower torrent priority" {
     local site s7 unit
     # DD-181: pages and API replies are compressed; page files revalidate instead of redownloading.
-    site="$(awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
+    site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
     grep -qx "$(printf '\tencode zstd gzip')" <<<"$site"
     grep -q 'Cache-Control "no-cache"' <<<"$site"
     run ! grep -q 'Cache-Control "no-store"' "$V2_ROOT/templates/Caddyfile"
@@ -2424,14 +2424,84 @@ EOF
     run ! grep -q 'a < 180' "$V2_ROOT/console/konsol.js"
 }
 
-@test "installer wires the wg panel: loopback unit, tailnet name, no password, stage 7 gate proof" {
+@test "Konsol sign-in: Caddy asks the root backend for every protected path and the code stays off the log" {
+    local site body summary s7
+    # DD-194: only the sign-in page, its files and the sign-in API are open.
+    # DD-195: the routes live in one snippet; the tailnet site only imports it.
+    [ "$(awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")" = \
+        "$(printf 'http://panel.__LOCAL_DOMAIN__ {\n\timport konsol tailscale\n}')" ]
+    site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
+    grep -qxF "$(printf '\t@korumali not path /giris.html /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
+    grep -qxF "$(printf '\tforward_auth @korumali unix/__WG_PANEL_SOCKET__ {')" <<<"$site"
+    grep -qxF "$(printf '\t\turi /oturum-denetle')" <<<"$site"
+    # forward_auth precedes the routes, so no handle block can bypass it.
+    [ "$(grep -n 'forward_auth' <<<"$site" | cut -d: -f1)" -lt "$(grep -n '@kok path' <<<"$site" | cut -d: -f1)" ]
+    # The sign-in page loads only open files, and nothing from elsewhere or inline.
+    [ "$(grep -oE '(href|src)="[^"]+"' "$V2_ROOT/console/giris.html" | sort -u | tr '\n' ' ')" = 'href="/giris.css" href="/konsol.css" src="/giris.js" ' ]
+    run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/giris.html"
+    run ! grep -qE 'localStorage|sessionStorage|innerHTML' "$V2_ROOT/console/giris.js"
+    # Every console file is installed (the sign-in page once 404'd on a real host).
+    local pages f
+    pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    for f in "$V2_ROOT"/console/*; do grep -qw "${f##*/}" <<<"$pages"; done
+    grep -qx 'KONSOL_AUTH_DIR="/etc/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'KONSOL_AUTH_DIR=$KONSOL_AUTH_DIR' "$V2_ROOT/install.sh"
+    run ! grep -q 'KONSOL' "$V2_ROOT/config/kurulum.env.example"
+    # Helpers installed; the 0700 folder exists before the backend restarts with write access to it.
+    grep -qF 'atomic_write "$SBIN_DIR/master_auth.py" 0755 <"$V2_ROOT/panel/master_auth.py"' "$V2_ROOT/install.sh"
+    grep -qF 'atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"' "$V2_ROOT/install.sh"
+    body="$(awk '/^ensure_wg_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ "$(grep -n 'install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"' <<<"$body" | cut -d: -f1)" -lt \
+        "$(grep -n 'systemctl restart master-wg-panel.service' <<<"$body" | cut -d: -f1)" ]
+    grep -qF 'KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR"' <<<"$body"
+    # Stage 7: the open page, a refused host-local page request and both session answers.
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    grep -qF '"http://${TAILSCALE_IPV4}/giris.html"' <<<"$s7"
+    grep -qF 'for probe in "/api/wg/state|401" "/|302"; do' <<<"$s7"
+    grep -qF '"http://localhost/oturum-denetle"' <<<"$s7"
+    grep -qF -- '--url "http://127.0.0.1:${FILES_PANEL_PORT}/api/state"' <<<"$s7"
+    # The one-time code goes to the operator's terminal with printf, never through log().
+    summary="$(awk '/^konsol_login_summary\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'master_auth.py" --state "$STATE_FILE" kod' <<<"$summary"
+    grep -qF "printf '\\nKonsol ilk giriş kodu: %s" <<<"$summary"
+    run ! grep -qE '^[[:space:]]*log ' <<<"$summary"
+    grep -q '^    konsol_login_summary$' "$V2_ROOT/install.sh"
+    [ -x "$V2_ROOT/scripts/master-konsol" ]
+}
+
+@test "public Konsol: one snippet, Caddy-written channel, pinned backend Host, managed cleanup" {
+    local snippet
+    # DD-195: both Konsol sites share the signed-in routes; only Caddy names the channel.
+    snippet="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
+    [ "$(grep -c "$(printf '\theader_up X-Konsol-Kanal {args\\[0\\]}')" <<<"$snippet")" -eq 2 ]
+    [ "$(grep -c 'header_up Host panel.__LOCAL_DOMAIN__$' <<<"$snippet")" -eq 3 ]
+    awk '/forward_auth @korumali/,/^\t}$/' <<<"$snippet" | grep -qF 'header_up X-Konsol-Kanal {args[0]}'
+    # Each site opens at most 16 backend connections (session check and root API alike).
+    [ "$(grep -c "$(printf '\t\t\tmax_conns_per_host 16')" <<<"$snippet")" -eq 2 ]
+    [ "$(grep -c '^\s*header_up X-Forwarded-Host {host}$' <<<"$snippet")" -eq 1 ]
+    grep -qx 'LimitNOFILE=8192' "$V2_ROOT/systemd/master-wg-panel.service"
+    [ "$(grep -c '^import konsol ' "$V2_ROOT/templates/Caddyfile")" -eq 0 ]
+    grep -qxF "$(printf '\timport konsol tailscale')" "$V2_ROOT/templates/Caddyfile"
+    # The public site is generated, never templated, and imports the same snippet.
+    grep -qF '"\timport konsol internet\n}\n"' "$V2_ROOT/panel/master_publications.py"
+    grep -qF 'header Strict-Transport-Security' "$V2_ROOT/panel/master_publications.py"
+    # A local domain change also renames the Host the backends check.
+    grep -qF 'r"(?m)^(\t+header_up Host panel\.)" + old + r"$"' "$V2_ROOT/panel/master_settings.py"
+    # A changed WAN IPv4 drops the stale public site like the other WAN sites.
+    awk '/for wan_site in/,/; do$/' "$V2_ROOT/install.sh" | grep -qF '"$CADDY_MODULES_DIR/panel-wan.caddy"'
+    # The backend trusts the internet mark only while the publication is active.
+    grep -qF 'if not self.panel.public_open() or not self.public_client():' "$V2_ROOT/panel/master-wg-panel"
+    grep -qF 'secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""' "$V2_ROOT/panel/master-wg-panel"
+}
+
+@test "installer wires the wg panel: loopback unit, tailnet name, Konsol sign-in, stage 7 gate proof" {
     local unit="$V2_ROOT/systemd/master-wg-panel.service" body s6 s7
     # DD-180: no TCP port; a Unix socket only Caddy's group and root can open.
     grep -q -- '--listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__' "$unit"
     grep -qx 'RuntimeDirectory=__WG_PANEL_RUNTIME__' "$unit"
     grep -qx 'RuntimeDirectoryMode=0755' "$unit"
     grep -q -- '--master-wg __SBIN_DIR__/master-wg' "$unit"
-    for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=-/etc/wireguard' 'PrivateTmp=true' \
+    for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__' 'PrivateTmp=true' \
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'; do
         grep -qx "$line" "$unit"
     done
@@ -2440,7 +2510,8 @@ EOF
     grep -qx 'CADDY_ADMIN_SOCKET="/run/caddy/admin.sock"' "$V2_ROOT/config/defaults.env"
     run ! grep -rq 'WG_PANEL_PORT' "$V2_ROOT/config" "$V2_ROOT/install.sh" "$V2_ROOT/scripts" "$V2_ROOT/panel" \
         "$V2_ROOT/systemd" "$V2_ROOT/templates"
-    # DD-147: no account anywhere — not in the input, the defaults, the unit or the installer.
+    # DD-194: the Konsol account is created at the first visit; the input file, defaults and unit
+    # carry none of the retired DD-140 account settings.
     run ! grep -qE 'WG_PANEL_(USER|PASS|AUTH_FILE|MIN_PASSWORD_LENGTH|NEW_|ACCOUNT)' \
         "$V2_ROOT/config/defaults.env" "$V2_ROOT/config/kurulum.env.example" "$V2_ROOT/install.sh" "$unit"
     run ! grep -q -- '--auth' "$unit"
@@ -2473,7 +2544,7 @@ EOF
     grep -qF '"http://${TAILSCALE_IPV4}/api/wg/state" 2>/dev/null || true)"' <<<"$s7"
     grep -qF '*"başka bir Tailscale cihazından"*' <<<"$s7"
     grep -qF 'master-wg-panel" check --socket "$WG_PANEL_SOCKET"' <<<"$s7"
-    grep -q 'Konsol sayfası tailnet.ten açılmadı' <<<"$s7"
+    grep -q 'Konsol giriş sayfası tailnet.ten açılmadı' <<<"$s7"
     grep -q 'master-wg-panel" check' <<<"$s7"
     run ! grep -q 'WG_PANEL_PORT' <<<"$s7"
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
@@ -2546,7 +2617,7 @@ fpost() {
     grep -qi "^Content-Security-Policy: default-src 'none'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
-    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
+    awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
     grep -q 'root \* __CONSOLE_WEB_DIR__' "$TMP/site"
     grep -qx '		file_server' "$TMP/site"
     grep -q "Content-Security-Policy \"default-src 'none'; script-src 'self'" "$TMP/site"
@@ -3008,12 +3079,12 @@ PY
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'FILES_PANEL_PORT=\$FILES_PANEL_PORT'
     # Tailnet only through Caddy; nothing on the WireGuard edge.
     # DD-140: one address; /api/wg/* to the WireGuard backend, the rest (pages included) here.
-    awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
+    awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
     grep -q '@kok path /api/wg/\* /api/konsol/\*' "$TMP/site"
     grep -q 'handle @kok {' "$TMP/site"
     grep -q 'handle /api/\* {' "$TMP/site"
-    grep -q 'reverse_proxy unix/__WG_PANEL_SOCKET__$' "$TMP/site"
-    grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__$' "$TMP/site"
+    grep -q 'reverse_proxy unix/__WG_PANEL_SOCKET__ {$' "$TMP/site"
+    grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__ {$' "$TMP/site"
     run ! grep -q 'redir ' "$V2_ROOT/templates/Caddyfile"
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/templates/dnsmasq.conf"
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
@@ -4263,9 +4334,14 @@ PY
     [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" --data '{"id":"sample","client":"100.64.0.9","host":"panel.forged"}')" = 200 ]
     # DD-180: without Caddy's X-Forwarded-For the client is the server itself, never a body value.
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "yerel"' "$TMP/worker-body"
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["kanal"] == "yerel"' "$TMP/worker-body"
     [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" -H 'X-Forwarded-For: 100.64.0.5' --data '{"id":"sample"}')" = 200 ]
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "100.64.0.5"' "$TMP/worker-body"
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["host"] != "panel.forged"' "$TMP/worker-body"
+    # DD-195: the channel and the browser's real name come from Caddy's headers, never the body.
+    [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" -H 'X-Forwarded-For: 100.64.0.5' -H 'X-Konsol-Kanal: internet' \
+        -H 'X-Forwarded-Host: Konsol.Example.NET' --data '{"id":"sample","kanal":"tailscale"}')" = 403 ]
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["kanal"] == "tailscale"' "$TMP/worker-body"
     [ "$(pc /api/konsol/ayarlar/nested/uygula "${headers[@]}" --data '{}')" = 404 ]
     [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '[]')" = 400 ]
 }

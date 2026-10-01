@@ -480,7 +480,7 @@ class Manager:
             return self.public()
 
     def publish(self):
-        """Fixed DAV/qBittorrent projections. Caller owns install/module/share locks."""
+        """Fixed DAV/qBittorrent/Konsol projections. Caller owns install/module/share locks."""
         if not self.env.get("SHARE_WAN_BACKEND"):
             return  # Legacy fixture/installation without the new listener capability.
         e = self.env
@@ -491,11 +491,12 @@ class Manager:
         if active:
             from master_https import site
             text = site(e, self.wan_info())
-        from master_publications import extra_sites, torrent_active
+        from master_publications import extra_sites, panel_active, torrent_active
         from master_settings import SettingsError, atomic as atomic_text, read_regular
         try:
             extras = extra_sites(e)
             torrent_wan = torrent_active(e)
+            panel_wan = panel_active(e)
             previous_extras = {}
             for name in extras:
                 try:
@@ -509,7 +510,7 @@ class Manager:
                 previous = stream.read()
         except FileNotFoundError:
             previous = ""
-        signature = {"config": text, "wan": active, "extra": extras, "torrent_wan": torrent_wan}
+        signature = {"config": text, "wan": active, "extra": extras, "torrent_wan": torrent_wan, "panel_wan": panel_wan}
         try:
             with open(marker, encoding="utf-8") as stream:
                 applied = json.load(stream)
@@ -633,12 +634,13 @@ def main():
     try:
         manager = Manager(args.state)
         if args.action == "wan-firewall":
-            torrent = False
+            # qBittorrent and Konsol (DD-195) share the HTTPS port with WebDAV and its budgets.
+            https_apps = False
             if manager.env.get("SHARE_WAN_BACKEND"):
-                from master_publications import torrent_active
-                torrent = torrent_active(manager.env)
-            print(int(manager.wan_active() or torrent), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,
-                  int(manager.env["SHARE_HTTPS_PORT"]) if torrent else manager.wan_info()["port"])
+                from master_publications import panel_active, torrent_active
+                https_apps = torrent_active(manager.env) or panel_active(manager.env)
+            print(int(manager.wan_active() or https_apps), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,
+                  int(manager.env["SHARE_HTTPS_PORT"]) if https_apps else manager.wan_info()["port"])
             return
         if args.action in ("publish", "guard"):
             getattr(manager, args.action)()

@@ -17,6 +17,8 @@ import shlex
 import subprocess
 import time
 
+import konsol_session
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', required=True)
 args = parser.parse_args()
@@ -49,10 +51,14 @@ print(json.dumps({
 assert meta['wan_available'] and meta['wan_mode'] in ('http', 'https'), 'Requires an available WAN share transport'
 
 
+# DD-194: Konsol through Caddy needs a session; a short root-issued one, closed at the end.
+COOKIE = konsol_session.open_session(SSH)
+
+
 def panel_get(path):
     c = http.client.HTTPConnection(meta['tail'], meta['panel_port'], timeout=20)
     try:
-        c.request('GET', path, headers={'Host': meta['host'], 'X-Konsol': '1',
+        c.request('GET', path, headers={'Host': meta['host'], 'X-Konsol': '1', 'Cookie': COOKIE,
                                        'Connection': 'close'})
         r = c.getresponse(); body = r.read()
         if r.status == 200:
@@ -189,5 +195,6 @@ if root.exists(): shutil.rmtree(root)
 print(json.dumps({'fixture_removed':not root.exists(),
  'existing_registry_unchanged':hashlib.sha256(pathlib.Path(m.path).read_bytes()).hexdigest()==d['before']}))
 ''', dict(name=name, before=meta['before']))
+    konsol_session.close_session(SSH, COOKIE)
     print('Cleanup:', result, flush=True)
     assert all(result.values())

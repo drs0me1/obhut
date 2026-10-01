@@ -13,6 +13,118 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-195: Konsol over public HTTPS through the publication table (v2-167)
+
+- **Request (user, 2026-10-01):** after creating the first Konsol account, "panel
+  sayfası için caddy adresini de https olarak açabilelim" — the Panel row of
+  Settings → Caddy gets an internet switch and a public name like qBittorrent and
+  WebDAV. The tailnet address stays the always-open management path.
+- **Trade-off (flagged):** a public Konsol is full administration (firewall,
+  WireGuard, files, App Store) behind one password and no second factor. The
+  operator chooses it explicitly; the dialog asks for the typed word `onayla` and
+  recommends a long, unique password. Tailscale-only stays the default.
+- **One set of routes:** the panel site's routes move into the Caddy snippet
+  `(konsol)`. `http://panel.<domain>` imports it as `tailscale`; the generated
+  `moduller/panel-wan.caddy` (`https://<name>:SHARE_HTTPS_PORT`, bound to the WAN
+  IPv4, TLS-ALPN, HSTS one year) imports it as `internet`. Both therefore have the
+  same `forward_auth` session check, sign-in exceptions, CSP and backends; there is
+  no other upstream. Backends always see `Host: panel.<domain>` (a local-domain
+  change rewrites those lines too), so their DNS-rebinding checks are unchanged.
+- **Channel, written only by Caddy:** the snippet sets `X-Konsol-Kanal` on
+  `forward_auth` and the root backend route, overwriting anything a client sent.
+  The root backend keeps DD-180 for `tailscale` (the client must be another
+  tailnet device). For `internet` it requires an active publication (re-read at
+  most every 5 s: enabled row, assigned global WAN IPv4, existing Konsol account)
+  and a client that is not one of the server's own addresses. A request without
+  the mark from a non-tailnet address is refused as before. Timed Settings
+  confirmations also require the `tailscale` channel, not only a 100.64.0.0/10
+  address (that range is carrier NAT space too), and the domain-change check
+  reads the browser's real name from Caddy's `X-Forwarded-Host`, because `Host`
+  is now pinned.
+- **Load from the internet:** every public request costs one `forward_auth`
+  round trip to the single Python root backend, and HTTP/2 lets one connection
+  carry many requests. Each site therefore opens at most 16 connections to the
+  backend (`max_conns_per_host`, session check and root API separately), and the
+  unit raises `LimitNOFILE`: with exhausted descriptors the own-address probe
+  fails closed and would have refused Tailscale too. Scanners can still keep the
+  public sign-in locked (20 failures per 15 minutes); that is the accepted cost.
+- **Sign-in over the internet:** the one-time setup code is refused (403); the
+  first account is created only on the tailnet address, and enabling the row
+  requires an existing account. The session cookie gets `Secure` whenever Caddy
+  reports HTTPS. Failures over the internet also count in one shared budget:
+  20 within 600 s close public sign-in for 900 s (429 + Retry-After) while
+  Tailscale sign-in stays open; existing sessions keep working. Each address may
+  run one password check at a time and at most two scrypt checks (16 MiB each)
+  run at once, because one HTTP/2 connection can carry many requests.
+- **Publication lifecycle:** a Settings transaction like qBittorrent's: DNS check
+  before mutation, listener check, certificate wait, rollback on failure. The
+  row's Tailscale switch is fixed on. Turning the internet on, or changing the
+  public name, carries `confirm: onayla`, which the server checks as well as the
+  page. Like qBittorrent it shares TCP 443 and the WebDAV socket budgets and
+  cannot coexist with legacy WebDAV HTTP (the page says so before the dialog).
+  The 30 s share guard re-runs the projection outside a pending Settings
+  transaction, so a reset account (`master-konsol sifirla`) or a lost WAN address
+  removes the public site and, if nothing else needs it, closes TCP 443; the
+  backend refuses within 5 s before that.
+- **Unchanged:** Settings changes that need a timed confirmation (firewall, local
+  domain) are still confirmed only from a Tailscale address, so a public session
+  cannot make them permanent. No Tunnel, no DNS writes, no IPv6 listener.
+
+### DD-194: Konsol sign-in with a one-time setup code (v2-166)
+
+- **Amended by DD-195:** Konsol can also be published over HTTPS. The public site
+  shares this `forward_auth` check; there the setup code is refused, the cookie is
+  `Secure`, and public failures also count in one shared budget.
+- **Request (user, 2026-10-01):** "panel girişine kullanıcı adı ve parola" — option B
+  (Konsol's own sign-in page) with option 1 (a one-time code shown at the end of the
+  install), seven-day sessions. This reverses DD-147's "no password" for Konsol; its
+  other part (Tailscale joins by the login link only) is unchanged.
+- **Threat model:** protects Konsol from someone using one of the operator's tailnet
+  devices or a device shared into the tailnet, and is the prerequisite for any later
+  public panel (still locked, DD-191). It does not protect the server itself: Tailscale
+  SSH (`--ssh`) and the public SSH port keep their own access rules; WebDAV and
+  qBittorrent keep their own logins.
+- **Enforcement point:** Caddy's `forward_auth` on the panel site asks the root backend
+  (`GET /oturum-denetle` over its Unix socket) before every request except the sign-in
+  page, its three files and the sign-in API. Pages, Files API, archive downloads and the
+  root API are therefore covered in one place, including the Files backend, which never
+  sees sessions. A missing session answers 302 to `/giris.html` for pages and 401
+  `{giris: true}` for `/api/*`, which Konsol turns into the same redirect. The backend's
+  existing Host, `X-Konsol`, same-origin and DD-180 local-caller rules stay in front of
+  the session check, so host-local programs going through Caddy are still refused.
+- **Records:** `KONSOL_AUTH_DIR` (`/etc/master-stack/konsol`, 0700 root) holds the account
+  (`hesap.json`: user name, scrypt n=16384 hash with salt), sessions (`oturumlar.json`:
+  SHA-256 of a 256-bit token, creation and absolute expiry, at most 16) and the setup code
+  (`kurulum-kodu.json`: scrypt hash, 24-hour expiry). Files are 0600, read without
+  following links and bounded; writes are atomic under one `flock`. The root backend gets
+  write access to that folder only (`ReadWritePaths`); sessions survive service restarts.
+- **First account:** when no account exists the installer runs `master-konsol kod` at the
+  very end and prints the code with `printf` to the operator's terminal only — never through
+  `log()`, so it is not in `install.log`; the launcher keeps no local transcript. Each such
+  run replaces the previous code. The code (12 characters without 0/O/1/I/L) is single use;
+  the account name (3–32 characters) and password (10–256, no control characters) are
+  chosen on `/giris.html`. `kurulum.env` still holds no account.
+- **Sessions:** cookie `konsol_oturum`, `HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`,
+  no `Secure` because the panel is HTTP inside the tailnet (Tailscale encrypts the
+  transport). Seven days from sign-in, not renewed by use. Changing the password keeps the
+  browser that changed it and ends every other session; sign-out ends the current one.
+- **Attempt limit:** sign-in, setup-code and current-password failures share the WebDAV
+  numbers (DD-180): five per client address within 60 s block that address for 300 s
+  (429 with Retry-After); the table is bounded and fails closed. A wrong user name costs
+  the same scrypt check as a wrong password. The limit is in memory; a backend restart
+  clears it. The audit journal records only the action, address and result.
+- **Recovery and automation:** `sudo master-konsol sifirla` deletes the account and all
+  sessions and prints a new code; `durum` shows the state. `oturum-ac --sure N` (60–3600 s)
+  prints a short root-issued session token for scripted checks; live tests read it over
+  SSH, keep it in memory and close it with `oturum-kapat` (stdin). Root can already do
+  everything on the host, so this adds no new authority.
+- **Installer checks:** stage 7 loads `/giris.html` through Caddy, proves a host-local page
+  request reaches the backend and gets 403 (DD-180), and asks `/oturum-denetle` over the
+  socket for 401 (API) and 302 (page). The Files self-check now uses its loopback port.
+- **Not done:** no multi-user roles, no account in `kurulum.env`, no session list in the UI,
+  no public panel publication. Host-side test helpers use the loopback Files backend or the
+  root socket instead of Caddy.
+
 ### DD-193: Cross-review follow-ups for v2-159..v2-164 (v2-165)
 
 - **Request:** after reading v2-159..v2-164 (implemented with another assistant),
@@ -126,6 +238,10 @@ with its status and the file that holds it.
 
 ### DD-191: Fixed publication table with independent private and public gates (v2-162)
 
+- **Amended by DD-195:** the Panel row's internet switch and name are editable;
+  its Tailscale switch stays fixed on. See DD-195 for the extra backend gate.
+- **Amended by DD-194:** a Konsol sign-in now exists; publishing the panel on the
+  internet remains a separate, not yet taken decision, so its WAN row stays locked.
 - **Amended by DD-192:** folder gates are now per-connection policies. Cards
   expose candidate addresses while locally off, but globally disabled routes
   still have no advertised address and `row.urls` contains only active scopes.
@@ -4642,6 +4758,9 @@ failure with an early, named one.
   depend on that backend.
 
 ### DD-147: Konsol without a password; Tailscale joins by link only (2026-09-16)
+
+- **Superseded in part by DD-194 (2026-10-01):** Konsol has a user name/password sign-in
+  again, enforced by Caddy's forward_auth. Joining Tailscale by the login link is unchanged.
 
 - **Context:** the user is turning Konsol into the place where modules are
   installed with one click and service accounts live (Hesaplar design v03). A

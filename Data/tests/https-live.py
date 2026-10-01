@@ -16,6 +16,8 @@ import subprocess
 import time
 import urllib.parse
 
+import konsol_session
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", required=True)
 parser.add_argument("--domain", required=True)
@@ -36,10 +38,14 @@ def remote(code, data=None):
 meta = remote("print(json.dumps({'tail':e['TAILSCALE_IPV4'],'wan':e['WAN_IPV4'],'port':int(e['SHARE_PORT']),'panel_port':int(e['CADDY_HTTP_PORT']),'host':'panel.'+e['LOCAL_DOMAIN'],'digest':hashlib.sha256(pathlib.Path(m.path).read_bytes()).hexdigest()}))")
 
 
+# DD-194: Konsol through Caddy needs a session; a short root-issued one, closed at the end.
+COOKIE = konsol_session.open_session(ssh)
+
+
 def api(path, data=None):
     conn = http.client.HTTPConnection(meta["tail"], meta["panel_port"], timeout=150)
     try:
-        headers = {"Host": meta["host"], "X-Konsol": "1"}
+        headers = {"Host": meta["host"], "X-Konsol": "1", "Cookie": COOKIE}
         if data is not None:
             headers["Content-Type"] = "application/json"
         conn.request("POST" if data is not None else "GET", path, json.dumps(data) if data is not None else None, headers)
@@ -140,6 +146,7 @@ print(json.dumps({'sha256':hashlib.sha256(big.read_bytes()).hexdigest(),'size':b
 finally:
     for item, _ in reversed(items):
         api("/api/konsol/paylasim/kaldir", {"id": item["id"]})
+    konsol_session.close_session(ssh, COOKIE)
     if root_created:
         remote("""
 import shutil

@@ -12,6 +12,8 @@ import secrets
 import shlex
 import subprocess
 
+import konsol_session
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", required=True)
 args = parser.parse_args()
@@ -41,10 +43,14 @@ print(json.dumps({'tail':e['TAILSCALE_IPV4'],'port':int(e['SHARE_PORT']),
 """)
 
 
+# DD-194: Konsol through Caddy needs a session; a short root-issued one, closed at the end.
+COOKIE = konsol_session.open_session(ssh)
+
+
 def api(data=None, action="kaydet", expected=200):
     conn = http.client.HTTPConnection(meta["tail"], meta["panel_port"], timeout=160)
     try:
-        headers = {"Host": meta["host"], "X-Konsol": "1", "Content-Type": "application/json"}
+        headers = {"Host": meta["host"], "X-Konsol": "1", "Content-Type": "application/json", "Cookie": COOKIE}
         conn.request("GET" if data is None else "POST", "/api/konsol/paylasim" + ("/" + action if data is not None else ""),
                      json.dumps(data) if data is not None else None, headers)
         response = conn.getresponse()
@@ -162,4 +168,5 @@ if root.exists(): shutil.rmtree(root)
 assert hashlib.sha256(pathlib.Path(m.path).read_bytes()).hexdigest()==d['digest']
 print(json.dumps({'clean':True}))
 """, {"name": name, "digest": meta["digest"]})
+    konsol_session.close_session(ssh, COOKIE)
     print("CLEANUP: own account/files removed; operator registry byte-identical", flush=True)

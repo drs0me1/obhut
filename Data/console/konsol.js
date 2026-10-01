@@ -82,6 +82,9 @@
   const fail = (err) => toast(err && err.message ? err.message : String(err));
 
   /* ---------- API ---------- */
+  // DD-194: an expired or missing session sends the browser to the sign-in page, which
+  // returns to the same Konsol page afterwards.
+  const toLogin = () => location.replace("/giris.html" + (location.hash.startsWith("#/") ? location.hash : ""));
   function api(path, opts) {
     opts = opts || {};
     const headers = { "X-Konsol": "1" };
@@ -91,6 +94,10 @@
       init.body = JSON.stringify(opts.body);
     }
     return fetch(path, init).then((res) => {
+      if (res.status === 401) return res.json().catch(() => ({})).then((j) => {
+        if (j.giris) toLogin();
+        throw new Error(j.error || "Oturum gerekli; yeniden giriş yapın.");
+      });
       if (opts.blob) {
         if (!res.ok) return res.json().catch(() => ({})).then((j) => { throw new Error(j.error || `HTTP ${res.status}`); });
         return res.blob();
@@ -275,6 +282,8 @@
     document.title = s.host + " · Konsol";
     $("foot-version").textContent = s.version || "—";
     $("foot-ts").textContent = s.net.tailscale || "—";
+    // DD-195: the tailnet address is HTTP; only the public Konsol address is HTTPS.
+    $("foot-access").textContent = location.protocol === "https:" ? "İnternet · HTTPS" : "Tailscale";
     paintResources();
     if (current === "ayarlar" && settingsTab === "system") renderSettings();
     if (current === "torrent") renderTorrentStatus();
@@ -1823,7 +1832,8 @@
 
   const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
   function webDesc(e) {
-    if (e.access === "wan") return "İnternet üzerinden seçili klasör paylaşımları · " + (e.scheme === "https" ? "HTTPS" : "HTTP şifrelemez");
+    if (e.access === "wan") return ({ "panel-wan": "Sunucu yönetim paneli · internet girişi", "torrent-wan": "qBittorrent · kendi girişiyle" }[e.source]
+      || "İnternet üzerinden seçili klasör paylaşımları") + " · " + (e.scheme === "https" ? "HTTPS" : "HTTP şifrelemez");
     const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
     if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
     return metaOf(e.source).name + extra;
@@ -1840,13 +1850,13 @@
     const rows = w.entries.map((e) => h("div", { class: "tr" },
       h("span", { class: "a" }, e.address, h("small", null, webDesc(e))),
       h("span", { class: "to" }, e.routes.map((r) => webHop(r, e.routes.length > 1))),
-      h("span", { class: "who" }, srcTag(e.source === "paylasim-wan" ? "paylasim" : e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · " + (e.scheme === "https" ? "HTTPS" : "HTTP") : "Tailscale"))));
+      h("span", { class: "who" }, srcTag({ "paylasim-wan": "paylasim", "torrent-wan": "torrent", "panel-wan": "base" }[e.source] || e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · " + (e.scheme === "https" ? "HTTPS" : "HTTP") : "Tailscale"))));
     fill("cfg-web", 
       h("div", { class: "card-head" }, h("h2", null, svg("globe"), "Web adresleri"),
         h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
       h("div", { class: "table addr-t" }, h("div", { class: "tr head" }, h("span", null, "Adres"), h("span", null, "Nereye gider"), h("span", null, "Kaynak · erişim")), rows),
       rawBox("Ham yapılandırma", "Caddyfile · moduller/*.caddy", w.raw.map((f) => `# ${f.file}\n${f.text.trim()}`).join("\n\n")),
-      h("div", { class: "card-foot" }, h("span", null, "Panel ve uygulama arayüzleri yalnız Tailscale'dedir. WAN etiketi internet paylaşımı dinleyicisini gösterir."
+      h("div", { class: "card-foot" }, h("span", null, "Panel'in Tailscale adresi her zaman açıktır. WAN etiketi Ayarlar → Caddy ile açılan internet yayınını gösterir."
         + (w.entries.some(e => e.access === "wan" && e.scheme !== "https") ? " İnternet üzerinden HTTP parola ve dosyaları şifrelemez." : ""))));
   }
   const HEALTH = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Dikkat"], bad: ["bad", "Sorun var"] };
@@ -1860,11 +1870,63 @@
         : h("p", {class:"hint-s"}, healthFailed ? "Sağlık bilgisi okunamadı; bağlantıyı kontrol edin." : "Sağlık denetleniyor…"),
       h("p", {class:"hint-s"}, hs ? `Salt okunur · son denetim ${hhmm(hs.read_at)} · en çok 30 sn'de bir yenilenir.` : "Salt okunur."));
   }
+  // DD-194: the signed-in Konsol account, read once per page for Settings → Sistem.
+  let konsolAccount = null, konsolAccountBusy = false;
+  function loadKonsolAccount() {
+    if (konsolAccountBusy) return;
+    konsolAccountBusy = true;
+    api("/api/konsol/oturum").then((s) => { konsolAccount = s; }).catch(() => { konsolAccount = { durum: "bilinmiyor" }; })
+      .finally(() => { konsolAccountBusy = false; if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
+  }
+  async function logout() {
+    try { await post("/api/konsol/oturum/cikis", {}); } catch (_err) { /* oturum zaten bitmiş olabilir */ }
+    location.replace("/giris.html");
+  }
+  function openPasswordDialog() {
+    // In the shared dialog, outside the Settings view that re-renders every 10 s.
+    const field = (id, label, auto, min) => h("label", { for: id }, label,
+      h("input", { type: "password", id, autocomplete: auto, required: true, minlength: min, maxlength: 256 }));
+    const error = h("p", { class: "err-s", role: "alert", hidden: true });
+    const submit = h("button", { type: "submit", class: "btn btn-primary" }, svg("key"), "Parolayı değiştir");
+    const form = h("form", { class: "dav-form", id: "konsol-password", onsubmit: async (e) => {
+      e.preventDefault();
+      const [old, next, again] = ["acc-old", "acc-new", "acc-again"].map($);
+      again.setCustomValidity(next.value === again.value ? "" : "Yeni parolalar aynı değil.");
+      if (submit.disabled || !form.reportValidity()) return;
+      submit.disabled = true; error.hidden = true;
+      try {
+        await post("/api/konsol/hesap/parola", { eski: old.value, yeni: next.value });
+        shClose(); toast("Konsol parolası değişti; diğer oturumlar kapatıldı.");
+      } catch (err) { old.value = ""; error.textContent = err.message; error.hidden = false; }
+      finally { submit.disabled = false; }
+    } },
+    field("acc-old", "Mevcut parola", "current-password", null),
+    field("acc-new", "Yeni parola (en az 10 karakter)", "new-password", 10),
+    field("acc-again", "Yeni parola (tekrar)", "new-password", 10),
+    h("p", { class: "hint-s" }, "Bu tarayıcı açık kalır; diğer tüm oturumlar kapanır."),
+    error, h("div", { class: "dav-actions" }, submit, h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç")));
+    form.addEventListener("input", (e) => { if (e.target.id === "acc-again") e.target.setCustomValidity(""); });
+    $("sh").addEventListener("close", () => form.querySelectorAll("input").forEach((i) => { i.value = ""; }), { once: true });
+    $("sh-body").replaceChildren(shHead("Konsol parolası", "Konsol girişi · Tailscale ve varsa internet adresi", "key"), form);
+    if (!$("sh").open) $("sh").showModal();
+    $("acc-old").focus();
+  }
+  function accountCard() {
+    if (!konsolAccount) loadKonsolAccount();
+    const user = konsolAccount?.kullanici;
+    return h("article", { class: "card", id: "konsol-account" }, h("h2", null, "Konsol hesabı"),
+      h("p", { class: "page-note" }, user ? `Giriş yapan: ${user}. Oturum ${konsolAccount.oturum_gun || 7} gün açık kalır.`
+        : konsolAccount ? "Hesap bilgisi okunamadı." : "Hesap bilgisi okunuyor…"),
+      h("div", { class: "top-actions" },
+        h("button", { type: "button", class: "btn btn-quiet", disabled: !user, onclick: openPasswordDialog }, svg("key"), "Parolayı değiştir"),
+        h("button", { type: "button", class: "btn btn-quiet", onclick: logout }, "Çıkış yap")));
+  }
   function systemContent() {
     const s = S.sys;
     const row = (label, value) => h("div", null, h("dt", null, label), h("dd", null, value || "—"));
     return h("div", {class:"as-stack"},
       healthCard(),
+      accountCard(),
       h("article", {class:"card"}, h("h2", null, "Panel ve sunucu"),
         h("p", {class:"page-note"}, "Debian üzerinde yönetim konsolu. Kaynak kullanımı sol menüde; servis ayrıntıları kendi sekmelerinde."),
         s ? h("dl", {class:"system-facts"},
@@ -1980,6 +2042,7 @@
     if (["moduller","torrent"].includes(current) && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
   setInterval(() => { if (!document.hidden) paintResources(); }, 1000);
+  $("logout").addEventListener("click", logout);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { paintResources(); loadSystem(); loadModules(); } });
   loadFsState();
 })();

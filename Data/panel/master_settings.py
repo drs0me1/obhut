@@ -602,6 +602,8 @@ class Manager:
             patterns = [r"(?m)^((?:# konsol-off: )?interface-name=[^,\n]+\.)" + old + r"(?=,)",
                         r"(?m)^(local=/)" + old + r"(?=/$)",
                         r"(?m)^(http://[a-z0-9.-]+\.)" + old + r"(?=[:\s,{]|$)",
+                        # DD-195: the shared Konsol routes name the backends' Host.
+                        r"(?m)^(\t+header_up Host panel\.)" + old + r"$",
                         r"(--domain=)" + old + r"(?=\s|$)"]
             for pattern in patterns:
                 text = re.sub(pattern, lambda m: m[1] + new, text)
@@ -711,6 +713,10 @@ class Manager:
                     import master_publications
                     require(master_publications.torrent_active(self.e),
                             "qBittorrent internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin.")
+                elif service == "panel":
+                    import master_publications
+                    require(master_publications.panel_active(self.e),
+                            "Panel internet yayını açılamadı; Konsol hesabını ve sunucunun WAN IPv4 adresini kontrol edin.")
                 elif not shares.wan_active():
                     raise SettingsError(shares.wan_info()["reason"] or
                                         "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
@@ -728,8 +734,10 @@ class Manager:
             client = ipaddress.ip_address(data.get("client", ""))
         except ValueError as err:
             raise SettingsError("Yönetim istemcisinin adresi doğrulanamadı.") from err
-        require(client in ipaddress.ip_network("100.64.0.0/10") or client in ipaddress.ip_network("fd7a:115c:a1e0::/48"),
-                "Onay Tailscale üzerinden Konsol'dan gelmeli.")
+        # DD-195: 100.64.0.0/10 is also carrier NAT space, so the Caddy site matters too:
+        # a confirmation through the public Konsol address is refused.
+        require((client in ipaddress.ip_network("100.64.0.0/10") or client in ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+                and data.get("kanal") == "tailscale", "Onay Tailscale üzerinden Konsol'dan gelmeli.")
         if p["changes"].get("domain"):
             require(data.get("host") == "panel." + p["candidate"]["domain"], "Alan adı değişikliğini yeni Konsol adresinden onaylayın.")
             self.dns_test()

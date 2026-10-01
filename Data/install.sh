@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-165"
+V2_VERSION="2026.08.06-v2-167"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -84,6 +84,7 @@ WG_MTU=$WG_MTU
 WG_NETWORKS_FILE=$WG_NETWORKS_FILE
 WG_NETWORKS_MAX=$WG_NETWORKS_MAX
 WG_PANEL_SOCKET=$WG_PANEL_SOCKET
+KONSOL_AUTH_DIR=$KONSOL_AUTH_DIR
 CADDY_ADMIN_SOCKET=$CADDY_ADMIN_SOCKET
 MODULES_FILE=$MODULES_FILE
 MODULES_DIR=$MODULES_DIR
@@ -426,7 +427,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   WireGuard:     ağı Konsol kurar (kurulum ağ yaratmaz; DD-143)
   Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve arşiv aracı
   App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
-  Konsol:        parolasız; yalnız Tailscale'den açılır (DD-147)
+  Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
   Tailscale:     $ts_note
   full-upgrade:  $yes_no_upgrade
 
@@ -793,6 +794,10 @@ stage_4() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     atomic_write "$SBIN_DIR/master_publications.py" 0755 <"$V2_ROOT/panel/master_publications.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    # DD-194: Konsol hesabı/oturumları; master-konsol root CLI'si aynı modülü çalıştırır.
+    atomic_write "$SBIN_DIR/master_auth.py" 0755 <"$V2_ROOT/panel/master_auth.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
     render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
@@ -985,7 +990,8 @@ EOF
     # DD-182: WAN paylaşım sitesi son yayındaki WAN_IPV4'e bağlanır. Sağlayıcı adresi
     # değiştirdiyse Caddy onunla açılamaz; site burada kalkar, 7. aşama yeni adresle yazar.
     local wan_site
-    for wan_site in "$CADDY_MODULES_DIR/paylasim-wan.caddy" "$CADDY_MODULES_DIR/torrent-wan.caddy"; do
+    for wan_site in "$CADDY_MODULES_DIR/paylasim-wan.caddy" "$CADDY_MODULES_DIR/torrent-wan.caddy" \
+        "$CADDY_MODULES_DIR/panel-wan.caddy"; do
         if [[ -f "$wan_site" ]] && ! grep -qxF "$(printf '\tbind %s' "$WAN_IPV4")" "$wan_site"; then
             rm -f -- "$wan_site"
             caddy_changed=1
@@ -1072,14 +1078,18 @@ EOF
 }
 
 # DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. DD-180: TCP yok, WG_PANEL_SOCKET
-# Unix soketinde dinler (0660 root:CADDY_GROUP); tailnet'e Caddy açar (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*). DD-147: parola yok, erişim
-# sınırı Tailscale. Yalnız betik ya da unit değişince servis yeniden başlar.
+# Unix soketinde dinler (0660 root:CADDY_GROUP); Caddy tailnet'e ve isteğe bağlı genel HTTPS adına açar
+# (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*; DD-195). DD-194: Konsol
+# girişini ve Caddy'nin her panel isteği için sorduğu oturumu da bu arka uç denetler.
+# Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
     local changed="${1:-0}" f out
     [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
     # Arka ucun yazabildiği tek kalıcı yer. DD-150'den beri WireGuard modülü (paketiyle
     # birlikte) sonradan kurulur; klasör burada açılmazsa arka uç başlamaz (v2-119).
     install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
+    # DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği ikinci yer.
+    install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"
     atomic_write "$SBIN_DIR/master-wg-panel" 0755 <"$V2_ROOT/panel/master-wg-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     render_template "$V2_ROOT/systemd/master-wg-panel.service" "$UNIT_DIR/master-wg-panel.service" 0644 \
@@ -1088,6 +1098,7 @@ ensure_wg_panel() {
         WG_PANEL_RUNTIME="$(basename -- "${WG_PANEL_SOCKET%/*}")" \
         CADDY_GROUP="$CADDY_GROUP" \
         STATE_FILE="$STATE_FILE" \
+        KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR" \
         WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
         WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
         WG_MTU="$WG_MTU"
@@ -1107,7 +1118,8 @@ ensure_wg_panel() {
 ensure_console_pages() {
     local f
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
-    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js; do
+    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
+        giris.html giris.js giris.css; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
 }
@@ -1260,13 +1272,27 @@ stage_7() {
         done <"$WG_NETWORKS_FILE"
     fi
 
-    # DD-140, DD-147: Konsol tailnet'ten parolasız açılır. Parola olmadığı için asıl korumalar
-    # sınanır: X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı
-    # istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel WireGuard
-    # adresinde dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
+    # DD-194: Konsol girişi. Giriş sayfası açıktır; geri kalan her panel isteği (sayfa, Dosyalar,
+    # API) Caddy'nin forward_auth'u ile root arka uçtan oturum ister. Sunucunun kendisinden gelen
+    # istek orada reddedilir (DD-180); oturumsuz API 401 alır, sayfa giriş sayfasına yönlenir.
+    # Ayrıca X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı istek)
+    # ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel WireGuard adresinde
+    # dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/" || true)"
-    [[ "$code" == "200" ]] || die "Konsol sayfası tailnet'ten açılmadı (HTTP $code)"
+        -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/giris.html" || true)"
+    [[ "$code" == "200" ]] || die "Konsol giriş sayfası tailnet'ten açılmadı (HTTP $code)"
+    local page_body probe
+    page_body="$(curl -s --max-time 5 -w '\n%{http_code}' -H "Host: panel.${LOCAL_DOMAIN}" \
+        "http://${TAILSCALE_IPV4}/" 2>/dev/null || true)"
+    [[ "${page_body##*$'\n'}" == "403" && "$page_body" == *"başka bir Tailscale cihazından"* ]] ||
+        die "Konsol sayfası oturum denetiminden geçmeden açıldı (HTTP ${page_body##*$'\n'})"
+    for probe in "/api/wg/state|401" "/|302"; do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --unix-socket "$WG_PANEL_SOCKET" \
+            -H "Host: panel.${LOCAL_DOMAIN}" -H "X-Forwarded-Uri: ${probe%%|*}" \
+            "http://localhost/oturum-denetle" || true)"
+        [[ "$code" == "${probe#*|}" ]] ||
+            die "Konsol oturum denetimi ${probe%%|*} için HTTP $code döndü (beklenen ${probe#*|})"
+    done
     # DD-180: root arka ucu TCP'de değil, yalnız Unix soketinde; dosya arka ucu loopback'te.
     local gate gate_path gate_url gate_via=()
     for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/wg/state"; do
@@ -1318,8 +1344,9 @@ stage_7() {
     log INFO "Konsol WireGuard arka ucu açıldı: http://panel.${LOCAL_DOMAIN} ($panel_out)"
     # DD-159: built-in Files is required, writable and unprivileged.
     local files_out files_uid
+    # DD-194: Caddy'den geçen yol oturum ister; arka ucun kendisi loopback'ten sınanır.
     files_out="$(python3 "$SBIN_DIR/master-files-panel" check \
-        --url "http://${TAILSCALE_IPV4}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
+        --url "http://127.0.0.1:${FILES_PANEL_PORT}/api/state" --host "panel.${LOCAL_DOMAIN}" 2>&1)" ||
         die "Konsol dosya arka ucu yanıt vermedi: $files_out"
     log INFO "Konsol dosya arka ucu açıldı: $files_out"
     files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
@@ -1375,15 +1402,32 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; parolasız, yalnız Tailscale)
+Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; kullanıcı adı ve parolayla)
+  İnternetten HTTPS isteğe bağlı: Ayarlar → Caddy → Panel (önce DNS A kaydı; ilk hesap yalnız Tailscale'den).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
 $(summary_modules)
   WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
   Ağlar: WireGuard → Yapılandır. Peer ve QR: Konsol ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
-
 EOF
+    konsol_login_summary
+}
+
+# DD-194: hesap yoksa tek kullanımlık ilk giriş kodu yalnız bu ekrana (Mac terminaline)
+# yazılır; log ile değil printf ile, kurulum günlüğüne düşmez. Sonraki kurulum yeni kod verir.
+konsol_login_summary() {
+    local code rc=0
+    code="$(python3 "$SBIN_DIR/master_auth.py" --state "$STATE_FILE" kod 2>/dev/null)" || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        printf 'Konsol girişi: kendi kullanıcı adınız ve parolanızla. Unutursanız sunucuda: sudo master-konsol sifirla\n\n'
+    elif [[ "$rc" -eq 0 && -n "$code" ]]; then
+        printf '\nKonsol ilk giriş kodu: %s  (tek kullanımlık, 24 saat geçerli)\n' "$code"
+        printf '  http://panel.%s adresini açın; kodu girip kullanıcı adınızı ve parolanızı belirleyin.\n' "$LOCAL_DOMAIN"
+        printf '  Kod kaybolur ya da süresi dolarsa sunucuda: sudo master-konsol sifirla\n\n'
+    else
+        printf '\nUYARI: Konsol ilk giriş kodu üretilemedi. Sunucuda: sudo master-konsol sifirla\n\n'
+    fi
 }
 
 main() {

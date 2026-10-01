@@ -46,7 +46,7 @@ the ones agreed on 2026-08-05:
 | R12 | Publish publicly the WireGuard UDP port of each network, only while WireGuard is installed (host kernel, **DD-120**). The torrent peer port is not opened (**DD-151**): qBittorrent makes outgoing connections only |
 | R13 | Read the local domain from the installer input file (**DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
-| R15 | Have Caddy serve selected private HTTP routes on the Tailscale IPv4, plus optional WAN WebDAV/qBittorrent publications; Panel remains private (§3.1, **DD-179/190/191**) |
+| R15 | Have Caddy serve selected private HTTP routes on the Tailscale IPv4, plus optional WAN WebDAV/qBittorrent/Konsol HTTPS publications; Konsol's tailnet address always stays (§3.1, **DD-179/190/191/195**) |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
 | R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the selected optional WAN Caddy publication port (**DD-179/190/191**); confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
@@ -202,7 +202,13 @@ the ones agreed on 2026-08-05:
   the domain closes WAN, not downgrades it (**DD-179/190**, §3.1).
 - DD-191 additionally allows qBittorrent HTTPS on that same port, guarded by
   its native mandatory login and security checks. Legacy WebDAV HTTP must first
-  be converted or disabled. No Panel, Files API or Caddy admin publication.
+  be converted or disabled. No Caddy admin publication.
+- DD-195 allows Konsol itself on that port (`moduller/panel-wan.caddy`). The
+  public site imports the same `(konsol)` snippet as the tailnet site, so the
+  Konsol session check covers its pages, Files API and root API alike; Caddy
+  marks the channel (`X-Konsol-Kanal: internet`) and pins the backend Host to
+  `panel.${LOCAL_DOMAIN}`. HSTS is one year. Enabling needs an existing Konsol
+  account; the setup code is refused over the internet.
 
 ### 1.6 Firewall
 
@@ -226,6 +232,13 @@ Contract in §5–§7 and `folder-shares.md`.
 - The manual Tailscale admin steps are printed at the end (**R17**, §13).
 - No service accounts come from installer input; folder accounts are set in
   Files and qBittorrent manages its own account (**DD-147/151/158**).
+- **Konsol sign-in (DD-194):** while no Konsol account exists, the summary ends
+  with a one-time code (single use, 24 hours, written with `printf` only — not to
+  `install.log`). Each such run replaces the previous code. The operator opens
+  `panel.${LOCAL_DOMAIN}`, enters the code and chooses the user name (3–32
+  characters) and password (10–256). `sudo master-konsol sifirla` deletes the
+  account and all sessions and prints a new code; `master-konsol durum` shows
+  the state.
 
 ### 1.9 WireGuard (DD-120, DD-124)
 
@@ -326,11 +339,34 @@ Contract in §5–§7 and `folder-shares.md`.
   - Every change goes through `master-wg` (`info`, `add`, `remove`, `dns`,
     `reset --onay`, `profile`, `png`): same validation, lock and live apply as
     `wireguard.command`.
-  - **No password** (**DD-147**): Konsol opens for any device on the tailnet;
-    narrowing that is a Tailscale ACL matter. There is no account, no login
-    prompt and no lockout.
-  - Because nothing else guards it, two gates are mandatory and stage 7 proves
-    both on both backends: a request with another `Host` than
+  - **Sign-in (DD-194):** Caddy's `forward_auth` asks this backend
+    (`GET /oturum-denetle` on its socket) before every panel request except
+    `/giris.html`, `/giris.js`, `/giris.css`, `/konsol.css` and
+    `/api/konsol/oturum[/*]`. Without a valid `konsol_oturum` cookie a page
+    gets 302 to `/giris.html` and `/api/*` gets 401 `{giris: true}`. Routes:
+    `GET /api/konsol/oturum` (state: `kurulum` + `kod`, `giris` or `acik` +
+    user), `POST /api/konsol/oturum/{kur,giris,cikis}` and, with a session,
+    `POST /api/konsol/hesap/parola` (keeps the current session, ends the
+    others). The cookie is `HttpOnly; SameSite=Strict; Path=/`, seven days from
+    sign-in. Five failed sign-in, setup-code or current-password attempts from
+    one address within 60 s block it for 300 s (429, Retry-After). Records live
+    in `KONSOL_AUTH_DIR` (0700 root): scrypt password hash, SHA-256 of session
+    tokens, scrypt hash of the setup code. Tailscale ACLs still decide which
+    devices reach the tailnet address at all.
+  - **Public address (DD-195):** a request marked `internet` by Caddy is accepted
+    only while the Panel publication is active (enabled row, assigned global
+    WAN IPv4, existing account; re-read at most every 5 s) and the client is not
+    one of the server's own addresses. There `kur` answers 403, the cookie adds
+    `Secure`, and failures also count in one shared public budget: 20 within
+    600 s close public sign-in for 900 s while Tailscale sign-in stays open. Each
+    address runs one password check at a time; at most two run at once.
+    `GET /api/konsol/oturum` also reports `kanal` (`tailscale`/`internet`).
+    Timed Settings confirmations (firewall, local domain) need a Tailscale
+    address and the `tailscale` channel; the domain check compares Caddy's
+    `X-Forwarded-Host`. Each Caddy site opens at most 16 connections to this
+    backend.
+  - Two gates stay mandatory under the session check and stage 7 proves both
+    on both backends: a request with another `Host` than
     `panel.${LOCAL_DOMAIN}` is refused (DNS rebinding; the root backend accepts
     no loopback name since **DD-180**),
     and `/api/*` needs the `X-Konsol: 1` header and a same-origin fetch, which a
@@ -398,13 +434,15 @@ Contract in §5–§7 and `folder-shares.md`.
   unit. Files is always present in Konsol, independent of the app catalogue.
 
 - **One console (DD-140).** `http://panel.${LOCAL_DOMAIN}` is the only
-  administration page. Caddy serves the page files itself from
+  tailnet administration page; Settings → Caddy can add one public HTTPS name
+  for the same console (**DD-195**). Caddy serves the page files itself from
   `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
   re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
   replies are compressed with zstd/gzip, **DD-181**), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
   every other `/api/*` to `master-files-panel`. Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
-  (**DD-147**).
+  (**DD-147**); every path except the sign-in page and API also needs a Konsol
+  session (**DD-194**).
   - Pages (**DD-160**): Dosyalar (the landing page), App Store (§1.11), the
     WireGuard and qBittorrent pages only while installed, and Ayarlar, in one
     responsive sidebar. CPU, memory and disk sit below the sidebar menu, read
@@ -455,8 +493,11 @@ Contract in §5–§7 and `folder-shares.md`.
       cannot edit those account settings. Confirmation must arrive through
       the new panel Host within five minutes; otherwise the guard restores
       the previous domain. No old-name alias or arbitrary Caddy editor is added.
-    - **Publication table (DD-191):** Panel stays Tailscale-only and cannot be
-      edited by the API. WebDAV and installed qBittorrent have independent
+    - **Publication table (DD-191, DD-195):** Panel's Tailscale switch is fixed
+      on; its internet switch and HTTPS name are editable, need an existing
+      Konsol account and, when turning on or renaming, `confirm: onayla`
+      (typed in the page, checked by the server). WebDAV and
+      installed qBittorrent have independent
       Tailscale/WAN toggles, a public hostname and a per-row Save. Toggles edit
       a draft, not the server. Tailscale off produces a 403 Caddy route without
       stopping the service; shared listener ports can remain. Per-folder
@@ -465,9 +506,10 @@ Contract in §5–§7 and `folder-shares.md`.
       for re-enabling; no plaintext fallback. qBittorrent requires permanent
       native password/login, CSRF/Host checks and active attempt bans; its own
       preferences remain unchanged. Stopped/uninstalled modules are not published.
-      Both active HTTPS names share one port/permission and its socket budget.
+      All active HTTPS names share one port/permission and its socket budget.
       Known private/public projections survive reruns and use Settings snapshots
-      on failure/crash. There is no public Panel switch, Tunnel or arbitrary proxy.
+      on failure/crash. A reset account or lost WAN address removes the public
+      Panel site at the next 30 s guard run. No Tunnel or arbitrary proxy.
     - The separate **public HTTPS domain** field per row (**DD-190/191**) accepts
       a full domain, not a URL/IP/port/path/wildcard. Public DNS must resolve
       to exactly the assigned `WAN_IPV4`, with no AAAA or proxy. It does not
@@ -593,7 +635,9 @@ Contract in §5–§7 and `folder-shares.md`.
       `SystemCallFilter=@system-service`, `ProtectProc=invisible`,
       `PrivateIPC` and `MemoryDenyWriteExecute`. Loopback services (DNS, the
       qBittorrent WebUI with its password) stay reachable from it.
-  - No password, like the WireGuard backend (**DD-147**). `Host` check, CSP,
+  - It sees no sessions: Caddy checks the Konsol session with the root backend
+    before proxying (**DD-194**); the stage-7 self-check uses its loopback port.
+    `Host` check, CSP,
     `no-store` and the audit log match it (the actor is logged as `konsol` with
     the client address). `/api/*` needs the `X-Konsol: 1` header and a
     same-origin fetch; only a download, opened as a link, needs no header, and a
@@ -744,7 +788,7 @@ Contract in §5–§7 and `folder-shares.md`.
     /api/konsol/paylasim/{kaydet,kaldir}`. The old `.../durum` global-pause
     request is rejected with a refresh message (DD-192, §6).
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
-  - The same Host and `X-Konsol` gates as `/api/wg/*` apply (**DD-147**).
+  - The same Host, `X-Konsol` and session gates as `/api/wg/*` apply (**DD-147**, **DD-194**).
 - Konsol never retrieves a stored WebDAV password; enter or generate it in the
   folder form. Blank password on edit preserves its hash (DD-158).
 
@@ -822,7 +866,14 @@ removes the listener/permission synchronously and expiry does so on the next
 publishing any otherwise unauthorized folder. Explicit domain removal closes
 new WAN connections through a graceful Caddy reload; existing transfers may
 finish. Exact limits and recovery are in [folder-shares.md](folder-shares.md).
-Every administrative service remains private.
+
+**qBittorrent and Konsol HTTPS are opt-in WAN publications on the same port
+(DD-191, DD-195):** each has its own public name in Settings → Caddy, shares
+`${SHARE_HTTPS_PORT}`, strict SNI and the per-source/total socket budgets above,
+and keeps `${SHARE_HTTPS_PORT}` admitted while active even when WebDAV's WAN is
+off. Konsol's public site requires an existing Konsol account and keeps every
+session, Host, CSRF and channel check (§1.9). The root backend socket, the Files
+loopback port and Caddy's admin socket are never published themselves.
 
 The firewall limits NEW WAN traffic to each WireGuard network's UDP port
 (IPv4 only), host SSH, Tailscale's own UDP port (`TAILSCALE_UDP_PORT`) and the
@@ -886,7 +937,8 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
 | `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
 | Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
-| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| Public Konsol domain (optional, **DD-195**) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}` (`import konsol internet`) | the same routes as `panel.${LOCAL_DOMAIN}`, with backend Host `panel.${LOCAL_DOMAIN}` |
 
 `SERVICE_NAMES` is `panel`.
 
@@ -994,7 +1046,7 @@ mutation lock before atomic publication. Directory descriptors, nofollow and
 birth-time/inode checks enforce the root. Share edits restart the active data
 service and interrupt **all** transfers; stopped services stay stopped. Remove
 revokes both connections and their account, never shared files. Root administrators
-and passwordless Konsol remain outside this isolation boundary.
+and the Konsol administrator account remain outside this isolation boundary.
 
 ## 7. WebDAV service lifecycle (DD-158)
 
@@ -1038,7 +1090,8 @@ Tailscale acceptance; WG host ingress is dropped first in both project chains):
    Raw listeners and technical rules stay unfiltered (**DD-173**).
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP for Tailscale and each registered WireGuard network.
-6. When the WAN projection in §3.1 is enabled (**DD-179/190**): new inbound
+6. When the WAN projection in §3.1 is enabled (**DD-179/190**), or a
+   qBittorrent/Konsol HTTPS publication is active (**DD-191/195**): new inbound
    IPv4 TCP on the WAN interface to the selected `${SHARE_PORT}` or
    `${SHARE_HTTPS_PORT}`, after the per-source and total
    connection-limit rejects that `MASTER-SETTINGS` places before operator rules.
@@ -1066,8 +1119,8 @@ Rules:
   and a correct policy, never a failed unit with no policy at all
   (**DD-94**).
 - There is no **default** WAN permission for WebDAV, Caddy, dnsmasq or an
-  application web interface; WAN WebDAV and optional qBittorrent HTTPS are
-  conditional publications (DD-191). Explicit HTTPS retains its renewal port without active
+  application web interface; WAN WebDAV and optional qBittorrent and Konsol
+  HTTPS are conditional publications (DD-191, DD-195). Explicit HTTPS retains its renewal port without active
   folders, but never removes per-folder opt-in/authentication.
   Custom firewall allows do not change socket binds.
 - The Internet port catalogue lists only configured per-family base permits;

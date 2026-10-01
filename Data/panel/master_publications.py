@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Fixed Caddy publication catalogue. No arbitrary upstreams, panel WAN or tunnels.
+"""Fixed Caddy publication catalogue. No arbitrary upstreams or tunnels.
 
 Settings owns transactions; the existing share publisher applies the small
 projection under its locks. qBittorrent preferences are inspected, never rewritten.
+DD-195: Konsol may also be published over HTTPS; its tailnet address always stays,
+and the public site imports the same signed-in routes as the tailnet site.
 """
 import argparse
 import fnmatch
@@ -14,7 +16,9 @@ import sys
 import master_https as tls
 from master_settings import SettingsError, atomic, ini_values, read_regular, require
 
-IDS = ("torrent", "paylasim")
+# Module rows own a private site file; the panel row only adds the optional public one.
+MODULE_IDS = ("torrent", "paylasim")
+IDS = MODULE_IDS + ("panel",)
 
 
 def config(env, value=None):
@@ -23,17 +27,20 @@ def config(env, value=None):
     require(isinstance(web, dict) and set(web) <= set(IDS), "Caddy yayın kaydı geçersiz.")
     dav = tls.config(env, value)
     rows = {"torrent": {"tail": True, "enabled": False, "domain": ""},
-            "paylasim": {"tail": True, "enabled": dav["mode"] != "off", "domain": dav["domain"]}}
+            "paylasim": {"tail": True, "enabled": dav["mode"] != "off", "domain": dav["domain"]},
+            "panel": {"tail": True, "enabled": False, "domain": ""}}
     for key, item in web.items():
         require(isinstance(item, dict) and set(item) == {"tail", "enabled", "domain"}
                 and type(item["tail"]) is bool and type(item["enabled"]) is bool,
                 "Caddy ağ seçimi geçersiz.")
         name = tls.domain(item["domain"])
         require(not item["enabled"] or bool(name), "İnternet yayını için HTTPS alan adı gerekli.")
+        # The tailnet address is the management path that always remains.
+        require(key != "panel" or item["tail"], "Panel'in Tailscale erişimi kapatılamaz.")
         rows[key] = dict(item, domain=name)
     names = [r["domain"] for r in rows.values() if r["enabled"] and r["domain"]]
     require(len(names) == len(set(names)), "İki uygulama aynı HTTPS alan adını kullanamaz.")
-    require(not rows["torrent"]["enabled"] or dav["mode"] != "http",
+    require(not (rows["torrent"]["enabled"] or rows["panel"]["enabled"]) or dav["mode"] != "http",
             "Önce WebDAV için HTTPS kaydedin veya eski HTTP WAN erişimini kapatın.")
     return rows
 
@@ -96,12 +103,38 @@ def torrent_active(env, rows=None):
         return False
 
 
+def konsol_account(env):
+    """True only when the operator's Konsol account exists (DD-194)."""
+    import master_auth
+    try:
+        return master_auth.Store(env["KONSOL_AUTH_DIR"]).account() is not None
+    except (master_auth.AuthError, OSError, KeyError):
+        return False
+
+
+def wan_ready(env):
+    from master_shares import assigned
+    ip = ipaddress.IPv4Address(env["WAN_IPV4"])
+    return ip.is_global and not ip.is_multicast and assigned(str(ip))
+
+
+def panel_active(env, rows=None):
+    """Public Konsol only with a saved name, an assigned WAN IPv4 and an existing account."""
+    try:
+        rows = config(env) if rows is None else rows
+        return rows["panel"]["enabled"] and wan_ready(env) and konsol_account(env)
+    except (SettingsError, OSError, ValueError, KeyError):
+        return False
+
+
 def validate(env, saved, request):
-    require(isinstance(request, dict) and set(request) == {"service", "tail", "enabled", "domain"},
+    fields = {"service", "tail", "enabled", "domain"}
+    require(isinstance(request, dict) and fields <= set(request) <= fields | {"confirm"},
             "Caddy yayın alanları geçersiz.")
     service = request["service"]
-    require(service != "panel", "Panel yalnız Tailscale üzerinden kullanılabilir; bu yayın düzenlenemez.")
     require(isinstance(service, str) and service in IDS, "Bilinmeyen Caddy yayını.")
+    require("confirm" not in request or service == "panel", "Caddy yayın alanları geçersiz.")
+    before = config(env, saved)[service]
     require(type(request["tail"]) is bool and type(request["enabled"]) is bool,
             "Ağ seçimleri açık veya kapalı olmalı.")
     item = {k: request[k] for k in ("tail", "enabled", "domain")}
@@ -112,6 +145,15 @@ def validate(env, saved, request):
     if service == "paylasim":
         saved.pop("https", None)
     rows = config(env, saved)
+    if service == "panel":
+        if item["enabled"]:
+            # Publishing the console is the operator's typed decision, checked here too.
+            if not before["enabled"] or before["domain"] != item["domain"]:
+                require(request.get("confirm") == "onayla", "Panel'i internete açmak için onayla yazın.")
+            # The first account is created only over Tailscale with the one-time code.
+            require(konsol_account(env), "Önce Konsol hesabını Tailscale üzerinden oluşturun.")
+            tls.check_dns(env, item["domain"])
+        return saved
     require(service in module_states(env), "Önce uygulamayı kurun.")
     if item["enabled"]:
         require(module_states(env).get(service) == "calisiyor", "Önce uygulamayı başlatın.")
@@ -144,7 +186,7 @@ def private_site(env, service, source):
 def extra_sites(env):
     rows, states = config(env), module_states(env)
     result = {}
-    for service in IDS:
+    for service in MODULE_IDS:
         # Unconfigured installations retain the original module projection.
         if service not in tls.settings(env).get("web", {}):
             continue
@@ -167,14 +209,23 @@ def extra_sites(env):
                 "\t}\n}\n" % (rows["torrent"]["domain"], env["SHARE_HTTPS_PORT"], env["WAN_IPV4"],
                                     tls.tls_block(), env["TORRENT_UI_PORT"], rows["torrent"]["domain"], authority))
     result["torrent-wan.caddy"] = text
+    result["panel-wan.caddy"] = panel_site(env, rows) if panel_active(env, rows) else ""
     return result
+
+
+def panel_site(env, rows):
+    # The snippet keeps backend Host checks and writes the channel the backend
+    # trusts; no other route, upstream or module is reachable through this name.
+    return ("# Managed public Konsol (DD-195): same sign-in and routes as the tailnet site.\n"
+            "https://%s:%s {\n\tbind %s\n%s"
+            "\theader Strict-Transport-Security \"max-age=31536000\"\n"
+            "\timport konsol internet\n}\n"
+            % (rows["panel"]["domain"], env["SHARE_HTTPS_PORT"], env["WAN_IPV4"], tls.tls_block()))
 
 
 def status(env):
     rows, states = config(env), module_states(env)
-    out = [{"service": "panel", "name": "Panel", "local": "panel." + env["LOCAL_DOMAIN"],
-            "tail": True, "enabled": False, "domain": "", "installed": True,
-            "status": "locked", "message": "Yönetici girişi geliştirilene kadar yalnız Tailscale."}]
+    out = [panel_status(env, rows)]
     for service, name, local in (("torrent", "qBittorrent", "torrent"), ("paylasim", "WebDAV", "paylas")):
         row = dict(rows[service], service=service, name=name, local=local + "." + env["LOCAL_DOMAIN"],
                    installed=service in states, running=states.get(service) == "calisiyor", expires=None,
@@ -204,11 +255,30 @@ def status(env):
     return out
 
 
+def panel_status(env, rows):
+    row = dict(rows["panel"], service="panel", name="Panel", local="panel." + env["LOCAL_DOMAIN"],
+               installed=True, running=True, expires=None, account=konsol_account(env),
+               status="disabled", message="İnternet yayını kapalı. Tailscale adresi her zaman açık kalır.")
+    if not row["enabled"]:
+        return row
+    row.update(status="error", message="Panel yayını veya sertifikası doğrulanamadı.")
+    if not row["account"]:
+        row["message"] = "Konsol hesabı yok; internet yayını kapalı. İlk hesap yalnız Tailscale üzerinden oluşturulur."
+    elif panel_active(env, rows):
+        try:
+            row.update(expires=tls.certificate(env, row["domain"]), status="ready", message="Sertifika doğrulandı.")
+        except (OSError, ValueError, KeyError, SettingsError):
+            pass
+    else:
+        row["message"] = "Sunucunun internet IPv4 adresi kullanılamıyor; internet yayını kapalı."
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default="/etc/master-stack/state.env")
     parser.add_argument("action", choices=("filter-caddy", "tail-enabled"))
-    parser.add_argument("service", choices=IDS)
+    parser.add_argument("service", choices=MODULE_IDS)
     parser.add_argument("path", nargs="?")
     args = parser.parse_args()
     from master_settings import env_read

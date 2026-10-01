@@ -22,6 +22,9 @@ const data = {
   manage: { revision: "r1", config: copy(config), pending: null, username: "admin", save: "/srv/downloads/", names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "torrent.ayc", target: "tailscale", source: "torrent" }] },
 };
 let lastApply = null, writes = 0, failApply = false, holdAccount = false, releaseAccount, discarded = false;
+// DD-194: Konsol account fixture (sign-in state, password change and sign-out).
+let sessionState = "acik", passwordFail = "", loggedOut = false;
+const passwordWrites = [];
 // DD-182: Settings → Sistem health card fixture; one warning, one problem.
 const health = { status: "bad", read_at: 1790750000, checks: [
   { id: "units", name: "Servisler", status: "ok", detail: "Başarısız servis yok" },
@@ -80,6 +83,16 @@ const health = { status: "bad", read_at: 1790750000, checks: [
           result = {pending:null, committed:true};
         }
       } else if (endpoint === "/api/konsol/saglik") result = health;
+      else if (endpoint === "/api/konsol/oturum") result = sessionState === "acik" ? {durum:"acik",kullanici:"fixture",oturum_gun:7} : {durum:"giris"};
+      else if (endpoint === "/api/konsol/hesap/parola") {
+        passwordWrites.push(route.request().postDataJSON());
+        if (passwordFail) {
+          const error = passwordFail; passwordFail = "";
+          return route.fulfill({status:401, contentType:"application/json", body:JSON.stringify({error})});
+        }
+        result = {durum:"acik"};
+      }
+      else if (endpoint === "/api/konsol/oturum/cikis") { loggedOut = true; result = {durum:"cikis"}; }
       else if (endpoint.endsWith("/birak")) {
         const body = route.request().postDataJSON();
         assert.deepEqual(body, { id: "stuck", confirm: "onayla" }, "Discard sends the typed word and the stuck id");
@@ -98,6 +111,29 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     assert.equal(await healthCard.locator(".health-facts .hm.warn").count(), 1);
     assert.equal(await healthCard.locator(".health-facts > div").count(), 3);
     await page.screenshot({ path: path.join(screenshots, "health-card.png"), fullPage: true });
+    // DD-194: the Konsol account card; the password change runs in the shared dialog, which
+    // the 10-second Settings refresh cannot redraw while typing.
+    const account = page.locator("#konsol-account");
+    await account.getByText("Giriş yapan: fixture. Oturum 7 gün açık kalır.", { exact: true }).waitFor();
+    await account.getByRole("button", { name: "Parolayı değiştir", exact: true }).click();
+    const passwordForm = page.locator("#konsol-password");
+    const changePassword = passwordForm.getByRole("button", { name: "Parolayı değiştir", exact: true });
+    await page.locator("#acc-old").fill("old-password-1");
+    await page.locator("#acc-new").fill("new-password-12");
+    await page.locator("#acc-again").fill("new-password-13");
+    await changePassword.click();
+    assert.equal(passwordWrites.length, 0, "Different new passwords stay in the browser");
+    await page.locator("#acc-again").fill("new-password-12");
+    passwordFail = "Mevcut parola hatalı.";
+    await changePassword.click();
+    await passwordForm.getByText("Mevcut parola hatalı.", { exact: true }).waitFor();
+    assert.equal(await page.locator("#acc-old").inputValue(), "", "A rejected current password is cleared");
+    assert.equal(page.url().includes("giris.html"), false, "A wrong current password is not a sign-out");
+    await page.locator("#acc-old").fill("old-password-1");
+    await changePassword.click();
+    await page.getByText("Konsol parolası değişti; diğer oturumlar kapatıldı.", { exact: true }).first().waitFor();
+    assert.equal(await page.locator("#sh").evaluate((d) => d.open), false);
+    assert.deepEqual(passwordWrites, [{ eski: "old-password-1", yeni: "new-password-12" }, { eski: "old-password-1", yeni: "new-password-12" }]);
     // DD-182: a stuck rollback offers retry and a typed discard, never an automatic give-up.
     data.manage.pending = { id: "stuck", phase: "stuck", seconds: 0, attempts: 5, error: "Komut tamamlanamadı: master-firewall" };
     await page.reload();
@@ -461,8 +497,15 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     data.firewall.listeners = null;
     await page.getByRole("button",{name:"Yenile",exact:true}).click();
     await page.getByText("Dinleyici durumu bilinmiyor.",{exact:true}).waitFor();
+    // DD-194: sidebar sign-out ends the session and lands on the sign-in page.
+    await page.setViewportSize({ width: 1400, height: 900 });
+    sessionState = "giris";
+    await page.locator("#logout").click();
+    await page.waitForURL((url) => url.pathname === "/giris.html");
+    await page.locator("#form-login").waitFor();
+    assert(loggedOut);
     assert.deepEqual(errors, []);
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
-    console.log("PASS: network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, credentials/path, qBittorrent field/heading/action alignment and long paths in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
+    console.log("PASS: Konsol account card/password dialog/sign-out, network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, credentials/path, qBittorrent field/heading/action alignment and long paths in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

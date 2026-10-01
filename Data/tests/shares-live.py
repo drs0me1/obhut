@@ -39,7 +39,9 @@ class UnixConnection(HTTPConnection):
 
 def http(method, path, data=None, item=None, password=None, extra=None):
     headers = {"Host": "panel." + env["LOCAL_DOMAIN"], "X-Konsol": "1"}
-    address, port = env["TAILSCALE_IPV4"], 80
+    # DD-194: Caddy's Konsol paths need a session and refuse host-local callers (DD-180);
+    # this host-side test uses the Files backend on loopback and the root socket.
+    address, port = "127.0.0.1", int(env["FILES_PANEL_PORT"])
     if item:
         address, port = env["TAILSCALE_IPV4"], int(env["SHARE_PORT"])
         headers = {"Host": address + ":" + str(port), "Authorization": "Basic " + base64.b64encode(

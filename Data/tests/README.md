@@ -41,6 +41,81 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Public Konsol over HTTPS (v2-167, DD-195)
+
+`test_publications.py` covers the Panel row: the tailnet switch cannot close, an
+account and the server-checked word `onayla` are required when turning on or
+renaming, DNS/duplicate/legacy-HTTP checks, the generated
+`panel-wan.caddy` (WAN bind, TLS-ALPN, HSTS, only `import konsol internet`), its
+certificate status, the shared TCP 443 firewall output with WebDAV's WAN off,
+removal at the next publish after an account reset and rollback after a
+certificate failure. `test_konsol_auth.py` covers the shared public failure
+budget, one password check per address and two at once, and the root backend's
+channel rules on a Unix socket: closed publication, refused setup code, `Secure`
+cookie, own-address and unmarked clients refused, `kanal` in the session state and
+the 5-second publication cache, and the budget re-check after a hash slot.
+`test_settings.py` checks that a local-domain change rewrites the snippet's
+backend Host and that a confirmation through the public channel is refused.
+`common.bats` checks the snippet, the Caddy-written channel header, the backend
+connection cap, the forwarded host and channel on confirmations, and the
+installer cleanup; `publications-ui.cjs`
+drives the editable Panel row and the typed `onayla` dialog; `giris-ui.cjs` the
+Tailscale/internet label.
+
+```bash
+python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
+```
+
+`panel-public-live.py` is opt-in and **mutating**: it needs the operator's existing
+Konsol account and a name with a DNS-only A record to the host's WAN IPv4 (no
+AAAA). It publishes Panel on that name through the real Settings API, checks HSTS,
+the sign-in page, session protection of pages/Files/root APIs, the refused setup
+code, one wrong sign-in and a root-issued automation session over the public
+address, then restores the Panel row exactly and checks that the name no longer
+reaches Konsol. It exits 3 without changes when there is no account or Panel is
+already public.
+
+## Konsol sign-in (v2-166, DD-194)
+
+`test_konsol_auth.py` covers the account store (one-time code format/expiry/single
+use, user and password rules, scrypt-only storage, decoy work for unknown users,
+session expiry/limit/malformed tokens, password change keeping only the current
+session, reset, automation sessions, unsafe directory/symlink/FIFO/oversized/corrupt
+records), the per-address attempt limit, the root CLI and the real root-backend
+endpoints on a Unix socket: `/oturum-denetle` answers (302 page, 401 API, 204 with a
+session, 403 for host-local or foreign Host), cookie attributes, 429 with
+Retry-After, sign-out and password change, and audit lines without secrets.
+`common.bats` checks the Caddy `forward_auth` matcher and order, the open sign-in
+files, installer wiring/stage-7 probes and that the code is printed, never logged.
+
+`giris-ui.cjs` (shared preview on port 8766) drives `giris.html` with intercepted
+APIs and the production CSP: first account with and without a valid code, client
+checks, wrong code, sign-in failure/limit/success, return to the original page, the
+signed-in shortcut and Konsol's redirect after a 401. `settings-ui.cjs` covers the
+account card, the password dialog and sidebar sign-out.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/giris-ui.cjs
+python3 Data/tests/konsol-login-live.py --host nrm
+```
+
+`konsol-login-live.py` is an opt-in **mutating** test for an authorized host that
+has **no** Konsol account yet (it exits 3 otherwise and changes nothing). It issues
+its own code over SSH, creates a temporary account through the real Caddy path,
+checks page/file/API protection, sign-in/out, password change and the attempt
+limit, then resets the account and restarts the root backend to clear the limit.
+The operator then gets a new code with `sudo master-konsol sifirla`. Codes,
+passwords and tokens are never printed.
+
+Live tests that call Konsol through Caddy from the Mac (`share-connections-live`,
+`https-live`, `publications-live`, `backend-hardening-live`) open a short
+root-issued session with `master-konsol oturum-ac` via `konsol_session.py` and close
+it at the end. Host-side tests (`shares-live.py`, `archives-live.py`) use the
+loopback Files backend and the root socket instead, because Caddy refuses
+host-local Konsol callers (DD-180). The browser live suites
+(`share-connections-browser.cjs`, `desktop-live.cjs`) take a session value in
+`KONSOL_COOKIE`.
+
 ## Per-connection WebDAV policies and dual-card Shares (v2-164, DD-192)
 
 From the repository root:
@@ -474,8 +549,8 @@ global npm package outside the repository, so point the suites at it:
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
 ```
 
-The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`)
-share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
+The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`,
+`giris-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
 health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
 bar that replaced the jobs page (DD-183).
 
