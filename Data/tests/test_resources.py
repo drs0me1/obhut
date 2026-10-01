@@ -139,20 +139,29 @@ class ResourceTests(unittest.TestCase):
         state = Path(self.p.args.state)
         state.write_text(state.read_text() + "SHARE_HTTPS_PORT=443\n")
         rows = {"torrent": {"tail": True, "enabled": True, "domain": "qbit.example.net"}}
+        # DD-199: the package declares its publication; the manifest gives the local and public names.
+        pkgs = {"torrent": {"name": "qBittorrent", "local": "torrent", "upstream": "127.0.0.1:61006", "check": "", "order": 20}}
         listing = (0, "torrent\thost\tcalisiyor\trunning\t-\t-\t-\t-\nwireguard\tkonsol\tyok\t-\t-\t-\t-\t-\n", "")
         with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "packages", return_value=pkgs), \
                 patch.object(panel.master_publications, "config", return_value=rows), \
-                patch.object(panel.master_publications, "torrent_active", return_value=True):
+                patch.object(panel.master_publications, "package_active", return_value=True):
             items = {m["id"]: m for m in self.p.modules()}
             self.assertEqual(items["torrent"]["urls"], {"tailscale": "http://torrent.test", "internet": "https://qbit.example.net"})
             self.assertNotIn("urls", items["wireguard"])
         with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "torrent_active", return_value=False):
+                patch.object(panel.master_publications, "packages", return_value=pkgs), \
+                patch.object(panel.master_publications, "package_active", return_value=False):
             self.assertEqual(self.p.modules()[0]["urls"], {"tailscale": "http://torrent.test", "internet": None})
-        # A broken publication record never hides the module list.
+        # A broken publication record never hides the module list or the tailnet name.
         with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "packages", return_value=pkgs), \
                 patch.object(panel.master_publications, "config", side_effect=panel.master_settings.SettingsError("bozuk")):
             self.assertIsNone(self.p.modules()[0]["urls"]["internet"])
+        # A package without a publication row has no addresses to show.
+        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
+                patch.object(panel.master_publications, "packages", return_value={}):
+            self.assertNotIn("urls", self.p.modules()[0])
 
     def test_http_resources_have_same_host_header_and_origin_gates(self):
         class Handler(panel.Handler):

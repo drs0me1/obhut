@@ -8,6 +8,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import ssl
 import subprocess
@@ -54,6 +55,10 @@ def main():
         name, password = "torrent.example.net", "Fixture-only-Password-8"
         settings.save_json(e["SETTINGS_FILE"], {"https":{"domain":""}, "web":{"torrent":{"tail":True,"enabled":True,"domain":name}}})
         (root / "templates/torrent/torrent.caddy").write_text("http://torrent.ayc {\n respond 403\n}\n")
+        # DD-199: the row, its upstream and its checks come from the package's manifest and module.
+        (root / "templates/torrent/paket.env").write_text(
+            (DATA / "magaza/torrent/paket.env").read_text().replace("__TORRENT_UI_PORT__", e["TORRENT_UI_PORT"]))
+        shutil.copy(DATA / "magaza/torrent/yayin.py", root / "templates/torrent/yayin.py")
         text = (DATA / "magaza/torrent/qBittorrent.conf").read_text()
         for key, value in dict(e, DOWNLOADS_PATH=str(root / "downloads")).items():
             text = text.replace("__" + key + "__", value)
@@ -101,7 +106,7 @@ def main():
                     last = str(err)
                 assert time.monotonic()<until, ("Isolated apps did not become ready",last,[p.poll() for p in processes])
                 time.sleep(.1)
-            pubs.torrent_security(e, name, probe=True)
+            pubs.security_check(e, "torrent", name, probe=True)
             assert request("/api/v2/app/version")[0] == 403
             assert request("/api/v2/auth/login",dict(username="fixture",password="bad"))[1] == b"Fails."
             code, body, cookie = request("/api/v2/auth/login",dict(username="fixture",password=password))

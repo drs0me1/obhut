@@ -13,6 +13,37 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-199: Publication rows from package declarations, phase 1b (v2-173)
+
+- **Scope:** the last base piece that named an application: Settings → Caddy. The
+  built-in WebDAV row and the Konsol row stay fixed (they belong to the base); every
+  other row comes from a package manifest.
+- **Declaration.** A package publishes by setting `PAKET_YAYIN=1`, `PAKET_YAYIN_AD`
+  (row name), `PAKET_YAYIN_YEREL` (local name, `<local>.<domain>` on the tailnet),
+  `PAKET_YAYIN_UPSTREAM` (must be `127.0.0.1:PORT`; a placeholder is filled by the
+  installer) and optionally `PAKET_YAYIN_DENETIM`, a Python file inside the package
+  folder with `security(env, name, probe)`. A manifest that declares publication
+  without a loopback upstream produces no row at all: the catalogue never guesses an
+  upstream, and no tunnel or arbitrary host can be declared.
+- **Engine side.** `master_publications.packages(env)` reads the rendered manifests
+  (shared `master_settings.read_manifests`, line pattern, never sourced) and builds
+  the rows, the private 403 stubs, the generated `<id>-wan.caddy` sites (one name,
+  TLS-ALPN, the loopback upstream, `Host`/`X-Forwarded-Host`/`X-Forwarded-For`
+  headers) and the status messages from the declared name. The security module is
+  loaded from the package folder as a regular file, cached by mtime; a missing,
+  broken or failing module closes the row instead of exposing the app. Saved rows
+  of a package that no longer ships stay in the file unused, and its leftover
+  public site is removed at the next publish.
+- **Consumers.** Settings transactions snapshot every module site, `https_apply`
+  waits for the certificate only when the package is active, the share publisher
+  signs its projection with the active publication names, the firewall helper opens
+  TCP 443 while any publication is active, and Konsol's module listing carries each
+  publishing package's tailnet and public addresses. qBittorrent's checks moved
+  verbatim into `magaza/torrent/yayin.py`; nothing in the base names it any more.
+- **Still base:** the WebDAV row's HTTPS machinery (`master_https`, `master_shares`)
+  and the Konsol row (DD-195). Phase 2 moves Konsol's App Store texts and pages into
+  packages and renames the backend.
+
 ### DD-198: Firewall, health and port catalogue from package declarations, phase 1b (v2-172)
 
 - **Scope (user, 2026-10-01):** the second half of phase 1 of the store model

@@ -151,7 +151,8 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   Configured HTTPS keeps its listener for renewal even with no active folders.
   Independent scope/auth enforcement and attempt/connection budgets remain
   mandatory; the Konsol backends themselves stay private (socket/loopback). DD-191 adds an independent
-  Tailscale/HTTPS table for WebDAV and qBittorrent through `master_publications.py`.
+  Tailscale/HTTPS table for WebDAV and for packages that declare a publication in their manifest
+  (`PAKET_YAYIN_*`, loopback upstream only, optional check module; DD-199) through `master_publications.py`.
   Its global gates override the DD-192 cards and supply an unavailable reason.
   Available transports may show candidate card URLs while locally off/expired;
   `row.urls` contains only active connections. Each listener enforces its own

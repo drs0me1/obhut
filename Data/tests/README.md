@@ -68,6 +68,14 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-173 (DD-199, store phase 1b): `test_publications.py` renders the qBittorrent
+manifest and copies `yayin.py` into the fixture `MODULES_DIR`, so rows, sites and
+checks come from the package; it also covers a failing, unparsable and missing
+check module (row closed, app never exposed) and a manifest without a loopback
+upstream (no row). `publications-proxy-linux.py` does the same against real
+Caddy and qBittorrent, and `firewall-linux.py` copies the manifest and module so
+the shared TCP 443 permission still follows an active qBittorrent row.
+
 v2-172 (DD-198, store phase 1b): the firewall Bats test and `firewall-linux.py`
 copy the WireGuard package's hook into the fake `MODULES_DIR` and drive the
 firewall through its `vpn` declarations (malformed or clashing declarations stop

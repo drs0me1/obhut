@@ -316,7 +316,7 @@ class Manager:
         if cfg["mode"] == "off":
             available, reason = False, "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin."
         elif available and cfg["mode"] == "http":
-            # One WAN port for Caddy publications (contract §3.1): while qBittorrent or Konsol is
+            # One WAN port for Caddy publications (contract §3.1): while a package or Konsol is
             # published over HTTPS (TCP 443), legacy plaintext WebDAV on SHARE_PORT stays closed.
             from master_publications import https_apps_enabled
             try:
@@ -325,7 +325,7 @@ class Manager:
                 raise ShareError("HTTPS yapılandırması okunamadı; WAN erişimi uygulanmadı.") from err
             if conflict:
                 available = False
-                reason = ("qBittorrent veya Panel internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
+                reason = ("Bir uygulamanın veya Panel'in internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
                           "Ayarlar → Caddy bölümünde kaydedin.")
         return {"available": available, "address": address if available else "",
                 **cfg, "reason": reason}
@@ -501,7 +501,7 @@ class Manager:
             return self.public()
 
     def publish(self):
-        """Fixed DAV/qBittorrent/Konsol projections. Caller owns install/module/share locks."""
+        """DAV, package and Konsol projections (DD-199). Caller owns install/module/share locks."""
         if not self.env.get("SHARE_WAN_BACKEND"):
             return  # Legacy fixture/installation without the new listener capability.
         e = self.env
@@ -512,12 +512,11 @@ class Manager:
         if active:
             from master_https import site
             text = site(e, self.wan_info())
-        from master_publications import extra_sites, panel_active, torrent_active
+        from master_publications import extra_sites, https_apps_active
         from master_settings import SettingsError, atomic as atomic_text, read_regular
         try:
             extras = extra_sites(e)
-            torrent_wan = torrent_active(e)
-            panel_wan = panel_active(e)
+            apps_wan = https_apps_active(e)
             previous_extras = {}
             for name in extras:
                 try:
@@ -531,7 +530,7 @@ class Manager:
                 previous = stream.read()
         except FileNotFoundError:
             previous = ""
-        signature = {"config": text, "wan": active, "extra": extras, "torrent_wan": torrent_wan, "panel_wan": panel_wan}
+        signature = {"config": text, "wan": active, "extra": extras, "apps_wan": apps_wan}
         try:
             with open(marker, encoding="utf-8") as stream:
                 applied = json.load(stream)
@@ -655,11 +654,11 @@ def main():
     try:
         manager = Manager(args.state)
         if args.action == "wan-firewall":
-            # qBittorrent and Konsol (DD-195) share the HTTPS port with WebDAV and its budgets.
+            # Published packages and Konsol (DD-195/199) share the HTTPS port with WebDAV and its budgets.
             https_apps = False
             if manager.env.get("SHARE_WAN_BACKEND"):
-                from master_publications import panel_active, torrent_active
-                https_apps = torrent_active(manager.env) or panel_active(manager.env)
+                from master_publications import https_apps_active
+                https_apps = bool(https_apps_active(manager.env))
             print(int(manager.wan_active() or https_apps), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,
                   int(manager.env["SHARE_HTTPS_PORT"]) if https_apps else manager.wan_info()["port"])
             return

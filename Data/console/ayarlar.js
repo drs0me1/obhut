@@ -409,7 +409,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       };
       const name = row.name;
       const domain = h("input", { type:"text", value:current.domain, maxlength:253, disabled,
-        placeholder: row.service === "paylasim" ? "dav.example.com" : panel ? "panel.example.com" : "torrent.example.com",
+        placeholder: row.service === "paylasim" ? "dav.example.com" : panel ? "panel.example.com" : `${row.local.split(".")[0]}.example.com`,
         "aria-label":name + " HTTPS alan adı", autocapitalize:"none", autocomplete:"off", spellcheck:false,
         oninput:e => {
           edit("domain", e.target.value); e.target.setCustomValidity("");

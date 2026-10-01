@@ -103,6 +103,39 @@ def read_regular(path, limit=1024 * 1024):
             return data, info
 
 
+# DD-197/198: a package manifest (MODULES_DIR/<id>/paket.env) is parsed line by line with the
+# engine's pattern and never executed. Malformed manifests are left out: no guessing.
+MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: -]*))$')
+MANIFEST_ID_RE = re.compile(r"^[a-z]{2,16}$")
+
+
+def read_manifests(env, limit=65536):
+    """{id: {PAKET_KEY: value}} for every rendered package folder with a readable manifest."""
+    result = {}
+    base = env.get("MODULES_DIR", "")
+    if not base or not os.path.isdir(base):
+        return result
+    for name in sorted(os.listdir(base)):
+        if not MANIFEST_ID_RE.fullmatch(name):
+            continue
+        try:
+            raw, _ = read_regular(os.path.join(base, name, "paket.env"), limit)
+        except (OSError, ValueError, SettingsError):
+            continue
+        values = {}
+        for line in raw.decode("utf-8", "replace").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = MANIFEST_LINE_RE.match(line)
+            if not m:
+                values = None
+                break
+            values[m.group(1)] = m.group(2) if m.group(2) is not None else (m.group(3) or "")
+        if values is not None:
+            result[name] = values
+    return result
+
+
 def atomic(path, content, mode=0o600, owner=None):
     path = Path(path)
     require(not path.is_symlink(), "Sembolik bağlantı hedefi reddedildi.")
@@ -657,10 +690,11 @@ class Manager:
         paths = ([*self.dns_paths(), self.dns_file] if change["dns"] else []) + ([self.qdrop] if change["torrent"] else [])
         files_active = False
         if change["web"]:
+            import master_publications
             # Snapshot private projections too: a first-time row has no saved
             # web key for the publisher to reconstruct after a failed apply.
             paths += [Path(self.e["CADDY_MODULES_DIR"]) / (name + ".caddy")
-                      for name in ("torrent", "paylasim")]
+                      for name in master_publications.module_ids(self.e)]
         if change["domain"]:
             require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
             paths += [*self.dns_paths(), self.dns_file, *self.domain_paths()]
@@ -709,12 +743,13 @@ class Manager:
             if name:
                 # Without the listener the certificate wait can only time out after a
                 # minute with a DNS/CAA hint; report the actual cause instead (DD-193).
-                if service == "torrent":
-                    import master_publications
-                    require(master_publications.torrent_active(self.e),
-                            "qBittorrent internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin.")
+                import master_publications
+                packages = master_publications.packages(self.e)
+                if service in packages:
+                    require(master_publications.package_active(self.e, service),
+                            "%s internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin."
+                            % packages[service]["name"])
                 elif service == "panel":
-                    import master_publications
                     require(master_publications.panel_active(self.e),
                             "Panel internet yayını açılamadı; Konsol hesabını ve sunucunun WAN IPv4 adresini kontrol edin.")
                 elif not shares.wan_active():

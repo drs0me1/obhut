@@ -200,8 +200,10 @@ the ones agreed on 2026-08-05:
   domain is saved in Settings → Caddy; with no HTTPS setting, existing
   consent-gated HTTP on `WAN_IPV4:SHARE_PORT` remains. Explicitly clearing
   the domain closes WAN, not downgrades it (**DD-179/190**, §3.1).
-- DD-191 additionally allows qBittorrent HTTPS on that same port, guarded by
-  its native mandatory login and security checks. Caddy opens one WAN port for
+- DD-191/199 additionally allow a package's HTTPS publication on that same port,
+  declared in its manifest (`PAKET_YAYIN_*`: name, local name, loopback upstream,
+  optional check module) and guarded by the application's own mandatory login and
+  the package's checks; today qBittorrent. Caddy opens one WAN port for
   these publications: enabling an HTTPS publication is refused while folders
   are shared over legacy WebDAV HTTP, and while an HTTPS publication row is on,
   legacy HTTP WebDAV internet access is unavailable until an HTTPS name is saved
@@ -499,11 +501,11 @@ Contract in §5–§7 and `folder-shares.md`.
       cannot edit those account settings. Confirmation must arrive through
       the new panel Host within five minutes; otherwise the guard restores
       the previous domain. No old-name alias or arbitrary Caddy editor is added.
-    - **Publication table (DD-191, DD-195):** Panel's Tailscale switch is fixed
-      on; its internet switch and HTTPS name are editable, need an existing
+    - **Publication table (DD-191, DD-195, DD-199):** Panel's Tailscale switch is
+      fixed on; its internet switch and HTTPS name are editable, need an existing
       Konsol account and, when turning on or renaming, `confirm: onayla`
-      (typed in the page, checked by the server). WebDAV and
-      installed qBittorrent have independent
+      (typed in the page, checked by the server). WebDAV and every installed
+      package that declares a publication (today qBittorrent) have independent
       Tailscale/WAN toggles, a public hostname and a per-row Save. Toggles edit
       a draft, not the server. Tailscale off produces a 403 Caddy route without
       stopping the service; shared listener ports can remain. Per-folder

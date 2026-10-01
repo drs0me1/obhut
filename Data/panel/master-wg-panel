@@ -106,38 +106,7 @@ PORT_ROWS = (
     ("CADDY_HTTP_PORT", "Caddy — panel ve öbür adresler", "tcp", "tailscale", 80),
     ("DNS_PORT", "dnsmasq — yerel adlar", "udp+tcp", "tailscale", 53),
 )
-# Paket bildirimi satırı (master-modul ile aynı kalıp; dosya hiçbir zaman source edilmez).
-MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: -]*))$')
 PORT_SCOPES = ("internet", "tailscale", "loopback")
-
-
-def read_manifests(env):
-    """{id: {PAKET_KEY: value}} for every rendered package folder with a manifest."""
-    result = {}
-    base = env.get("MODULES_DIR", "")
-    if not base or not os.path.isdir(base):
-        return result
-    for name in sorted(os.listdir(base)):
-        if not MODULE_ID_RE.fullmatch(name):
-            continue
-        try:
-            raw, _ = master_settings.read_regular(os.path.join(base, name, "paket.env"), SETTINGS_TEXT_LIMIT)
-        except (FileNotFoundError, NotADirectoryError):
-            continue
-        except (OSError, ValueError, master_settings.SettingsError):
-            continue
-        values = {}
-        for line in raw.decode("utf-8", "replace").splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            m = MANIFEST_LINE_RE.match(line)
-            if not m:
-                values = None
-                break
-            values[m.group(1)] = m.group(2) if m.group(2) is not None else (m.group(3) or "")
-        if values is not None:
-            result[name] = values
-    return result
 
 
 def manifest_ports(manifest):
@@ -625,24 +594,29 @@ class Panel:
             item = {"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
                     "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
                     "busy": self.module_busy(mid, busy), "progress": progress}
-            if mid == "torrent" and item["installed"]:
-                item["urls"] = self.torrent_urls()
+            if item["installed"]:
+                urls = self.package_urls(mid)
+                if urls:
+                    item["urls"] = urls
             items.append(item)
         return items
 
-    def torrent_urls(self):
-        """DD-195: Konsol opened on its public address links qBittorrent's own public name
-        (Settings → Caddy row on and verified); the tailnet name is for the tailnet address."""
+    def package_urls(self, mid):
+        """DD-195/199: a package with a publication row has a tailnet name and, while its row is
+        on and verified, its own public name; Konsol picks by the address the browser used."""
         env = read_env(self.args.state)
-        urls = {"tailscale": "http://torrent.%s" % env["LOCAL_DOMAIN"] if env.get("LOCAL_DOMAIN") else None,
+        info = master_publications.packages(env).get(mid)
+        if not info:
+            return None
+        urls = {"tailscale": "http://%s.%s" % (info["local"], env["LOCAL_DOMAIN"]) if env.get("LOCAL_DOMAIN") else None,
                 "internet": None}
         try:
             rows = master_publications.config(env)
-            if master_publications.torrent_active(env, rows):
+            if master_publications.package_active(env, mid, rows):
                 port = int(env["SHARE_HTTPS_PORT"])
-                urls["internet"] = "https://%s%s" % (rows["torrent"]["domain"], "" if port == 443 else ":%d" % port)
+                urls["internet"] = "https://%s%s" % (rows[mid]["domain"], "" if port == 443 else ":%d" % port)
         except (master_settings.SettingsError, OSError, ValueError, KeyError):
-            pass
+            pass  # a broken publication record never hides the module list or its tailnet name
         return urls
 
     def module_spawn(self, mid, action, with_data):
@@ -805,7 +779,7 @@ class Panel:
             if port:
                 rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
         # DD-198: a package's ports exist only while it is registered (built-ins included).
-        for mid, manifest in read_manifests(env).items():
+        for mid, manifest in master_settings.read_manifests(env).items():
             if not self.module_state(mid, env):
                 continue
             for key, name, proto, scope in manifest_ports(manifest):
@@ -1186,7 +1160,7 @@ class Panel:
             raws.append({"file": path, "text": text})
             for site in parse_caddy(text, ts_ip, source, snippets):
                 for addr in site["addresses"]:
-                    public_share = source in ("paylasim-wan", "torrent-wan", "panel-wan")
+                    public_share = source.endswith("-wan")  # generated public sites (DD-191/195/199)
                     if public_share and addr.startswith(":"):
                         addr = env.get("WAN_IPV4", "") + addr
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
@@ -1386,9 +1360,8 @@ class Panel:
         except (OSError, ValueError, KeyError, master_shares.ShareError):
             pass
         try:
-            # qBittorrent and Konsol (DD-195) share WebDAV's HTTPS port and budgets.
-            apps = [name for name, active in (("qBittorrent", master_publications.torrent_active),
-                                              ("Konsol", master_publications.panel_active)) if active(env)]
+            # Published packages and Konsol (DD-195/199) share WebDAV's HTTPS port and budgets.
+            apps = master_publications.https_apps_active(env)
             if apps:
                 port = int(env["SHARE_HTTPS_PORT"])
                 shared = next((r for r in rows if r["scope"] == "wan" and r["port"] == port), None)

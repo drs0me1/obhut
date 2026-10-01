@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Publication rows from package declarations, phase 1b (v2-173)
+
+- Settings → Caddy no longer names qBittorrent (DD-199). A package publishes by
+  declaring a row name, a local name, a loopback upstream and an optional check
+  module in its manifest; `master_publications` builds rows, private stubs,
+  public sites and status messages from that, loads the check module from the
+  package folder and closes the row when the module is missing, broken or
+  failing. A declaration without a loopback upstream produces no row.
+- qBittorrent's native-login checks moved verbatim into `magaza/torrent/yayin.py`.
+  The settings worker, share publisher, firewall helper and Konsol module
+  listing use the generic package functions; the WebDAV and Konsol rows stay
+  fixed. The manifest reader is shared by the backend and the publication module.
+- **Verified:** Mac — 400 Python, 169 Bats, settings browser suites. Linux (nrm) —
+  400 Python, both qBittorrent proxy suites (real Caddy and qBittorrent against
+  the package's manifest and check module), firewall and domain suites. nrm —
+  portable run with scratch inputs (exit 0, no warnings); the rendered package
+  folder carries the manifest with its filled upstream and the check module,
+  the table lists Panel, qBittorrent and WebDAV from the package catalogue, and
+  turning the qBittorrent row on through the real API ran the package's checks,
+  obtained the certificate and reached the module listing's public address; the
+  row was then restored to its previous off state.
+
 ### 2026-10-01 — Firewall, health and ports from package declarations, phase 1b (v2-172)
 
 - `master-firewall` no longer knows WireGuard (DD-198). Installed packages

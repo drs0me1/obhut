@@ -2987,7 +2987,7 @@ PY
     # DD-195 (v2-168): the link follows the Konsol address in use; the backend supplies both names.
     grep -qF 'if (publicPanel()) return urls.internet || "";' "$js"
     grep -qF 'id:"torrent-open", href:url,' "$js"
-    grep -qF 'item["urls"] = self.torrent_urls()' "$V2_ROOT/panel/master-wg-panel"
+    grep -qF 'urls = self.package_urls(mid)' "$V2_ROOT/panel/master-wg-panel"
     grep -q 'data-route="torrent".*hidden' "$html"
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
     grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"

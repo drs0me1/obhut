@@ -32,6 +32,11 @@ class PublicationTests(unittest.TestCase):
             source = "# fixture\n%s {\n\trespond 401\n}\n" % addresses
             (directory / (service + ".caddy")).write_text(source)
             (self.root / "sites" / (service + ".caddy")).write_text(source)
+        # DD-199: the qBittorrent row comes from the package's rendered manifest and check module.
+        repo = Path(__file__).resolve().parents[1] / "magaza/torrent"
+        (self.root / "templates/torrent/paket.env").write_text(
+            (repo / "paket.env").read_text().replace("__TORRENT_UI_PORT__", self.env["TORRENT_UI_PORT"]))
+        (self.root / "templates/torrent/yayin.py").write_bytes((repo / "yayin.py").read_bytes())
         self.qconf = self.root / "profile/qBittorrent/qBittorrent.conf"
         self.qconf.parent.mkdir()
         self.qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=@ByteArray(fixture)\nWebUI\\LocalHostAuth=true\n")
@@ -67,7 +72,7 @@ class PublicationTests(unittest.TestCase):
         panel = test_resources.panel
         import types
         instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
-        with patch.object(pubs, "torrent_active", return_value=True), \
+        with patch.object(pubs, "https_apps_active", return_value=["qBittorrent"]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
                 patch.object(instance, "ports", return_value=[]):
             rows = instance.settings_ports(self.env, [])
@@ -79,10 +84,15 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertIn("qBittorrent", rows[0]["name"])
             self.assertNotIn("WebDAV", rows[0]["name"])
-            # DD-195: Konsol joins the same single row.
-            with patch.object(pubs, "panel_active", return_value=True):
-                rows = instance.settings_ports(self.env, [])
-            self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · qBittorrent + Konsol + WebDAV · WAN"])
+        # DD-195/199: Konsol joins the same single row; the names come from the package manifests.
+        with patch.object(pubs, "https_apps_active", return_value=["qBittorrent", "Konsol"]), \
+                patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
+                patch.object(instance, "ports", return_value=[]):
+            rows = instance.settings_ports(self.env, [])
+        self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · qBittorrent + Konsol + WebDAV · WAN"])
+        self.assertEqual(pubs.https_apps_active(self.env), [])
+        with patch.object(pubs, "package_active", return_value=True), patch.object(pubs, "panel_active", return_value=True):
+            self.assertEqual(pubs.https_apps_active(self.env), ["qBittorrent", "Konsol"])
 
     def make_account(self):
         import master_auth
@@ -171,7 +181,7 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(settings.SettingsError) as err:
             self.m.validate(self.panel())
         self.assertIn("eski HTTP ile açık", str(err.exception))
-        with patch.object(pubs, "torrent_security"), self.assertRaises(settings.SettingsError) as err:
+        with patch.object(pubs, "security_check"), self.assertRaises(settings.SettingsError) as err:
             self.m.validate(self.payload(service="torrent", domain="torrent.example.net"))
         self.assertIn("eski HTTP ile açık", str(err.exception))
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
@@ -275,7 +285,7 @@ class PublicationTests(unittest.TestCase):
     def test_torrent_https_stops_with_module_and_keeps_own_auth(self):
         before = self.qconf.read_bytes()
         # Only the real network probe is mocked; static qBittorrent auth gates run below.
-        with patch.object(pubs, "torrent_security"):
+        with patch.object(pubs, "security_check"):
             self.m.apply(self.payload(service="torrent", domain="torrent.example.net"))
         site = self.root / "sites/torrent-wan.caddy"
         self.assertIn("https://torrent.example.net:443", site.read_text())
@@ -293,17 +303,42 @@ class PublicationTests(unittest.TestCase):
 
     def test_unsafe_native_auth_fails_closed(self):
         original = self.qconf.read_text()
-        pubs.torrent_security(self.env, "torrent.example.net")
+        pubs.security_check(self.env, "torrent", "torrent.example.net")
         for key, value in (("LocalHostAuth", "false"), ("AuthSubnetWhitelistEnabled", "true"),
                            ("CSRFProtection", "false"), ("HostHeaderValidation", "false"),
                            ("MaxAuthenticationFailCount", "0"), ("BanDuration", "0"), ("ServerDomains", "another.example.net")):
             with self.subTest(key=key):
                 self.qconf.write_text(original + "WebUI\\%s=%s\n" % (key, value))
                 with self.assertRaises(settings.SettingsError):
-                    pubs.torrent_security(self.env, "torrent.example.net")
+                    pubs.security_check(self.env, "torrent", "torrent.example.net")
         self.qconf.write_text("[Preferences]\n")
         with self.assertRaises(settings.SettingsError):
-            pubs.torrent_security(self.env, "torrent.example.net")
+            pubs.security_check(self.env, "torrent", "torrent.example.net")
+        # The check module is the package's; a missing or broken one closes the row instead of exposing the app.
+        self.qconf.write_text(original)
+        module_path = self.root / "templates/torrent/yayin.py"
+        module_original = module_path.read_bytes()
+        module_path.write_text("def security(env, name, probe=False):\n    raise RuntimeError('x')\n")
+        with self.assertRaises(RuntimeError):
+            pubs.security_check(self.env, "torrent", "torrent.example.net")
+        self.assertFalse(pubs.package_active(self.env, "torrent"))
+        module_path.write_text("this is not python\n")
+        with self.assertRaises(settings.SettingsError):
+            pubs.security_check(self.env, "torrent", "torrent.example.net")
+        module_path.unlink()
+        with self.assertRaises(settings.SettingsError) as err:
+            pubs.security_check(self.env, "torrent", "torrent.example.net")
+        self.assertIn("yayın denetimi yok", str(err.exception))
+        module_path.write_bytes(module_original)
+        pubs.security_check(self.env, "torrent", "torrent.example.net")
+        # A manifest without a loopback upstream never produces a row.
+        manifest = self.root / "templates/torrent/paket.env"
+        kept = manifest.read_text()
+        manifest.write_text(kept.replace('PAKET_YAYIN_UPSTREAM="127.0.0.1:61006"', 'PAKET_YAYIN_UPSTREAM="10.0.0.5:61006"'))
+        self.assertNotIn("torrent", pubs.packages(self.env))
+        self.assertNotIn("torrent", pubs.config(self.env))
+        manifest.write_text(kept)
+        self.assertEqual(pubs.packages(self.env)["torrent"]["upstream"], "127.0.0.1:61006")
 
     def test_private_403_stub_uses_exactly_the_module_template_addresses(self):
         # DD-193: no hard-coded host names; the real templates are the single source.
@@ -326,7 +361,7 @@ class PublicationTests(unittest.TestCase):
             pubs.private_site(self.env, "torrent", "# no site block\n")
 
     def test_stopped_or_unsafe_torrent_row_reports_the_actual_cause(self):
-        with patch.object(pubs, "torrent_security"):
+        with patch.object(pubs, "security_check"):
             self.m.apply(self.payload(service="torrent", domain="torrent.example.net"))
         (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tdurduruldu\n")
         row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
@@ -346,12 +381,12 @@ class PublicationTests(unittest.TestCase):
         cases = (("paylasim", "dav.example.net", "WAN HTTPS dinleyicisi açılamadı",
                   patch.object(master_shares.Manager, "wan_active", return_value=False)),
                  ("torrent", "torrent.example.net", "qBittorrent internet yayını açılamadı",
-                  patch.object(pubs, "torrent_active", return_value=False)))
+                  patch.object(pubs, "package_active", return_value=False)))
         for service, domain, message, blocked in cases:
             with self.subTest(service=service):
                 before = self.m.config()
                 tls.wait_certificate.reset_mock()
-                with blocked, patch.object(pubs, "torrent_security"), \
+                with blocked, patch.object(pubs, "security_check"), \
                         self.assertRaises(settings.SettingsError) as error:
                     self.m.apply(self.payload(service=service, domain=domain, tail=False))
                 self.assertIn(message, str(error.exception))

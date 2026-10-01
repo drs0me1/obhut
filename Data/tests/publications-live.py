@@ -94,7 +94,7 @@ try:
         assert code == 400 and expected in json.loads(body)["error"], (code, body.decode()[:200])
         assert status()["pending"] is None
     print("PASS: Panel tailnet-off/word/account-or-DNS, duplicate domain and DAV missing DNS rejected with their real causes", flush=True)
-    result = remote("import master_publications as pubs; pubs.torrent_security(e,%s,probe=True); print(json.dumps(True))" % json.dumps(probe_name))
+    result = remote("import master_publications as pubs; pubs.security_check(e,'torrent',%s,probe=True); print(json.dumps(True))" % json.dumps(probe_name))
     assert result is True
     print("PASS: native qBittorrent permanent-auth checks and anonymous API refusal", flush=True)
     # Every address of the module template must answer 403 when Tailscale is off (DD-193).

@@ -4,13 +4,23 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Publication rows from declarations, phase 1b, v2-173 (DD-199):**
+- `master_publications.py` rewritten around `packages(env)` (manifest keys PAKET_YAYIN_*);
+  `magaza/torrent/yayin.py` holds qBittorrent's checks; `read_manifests` moved to
+  `master_settings`; settings/shares/panel consumers generic. Deployed to nrm (v2-173);
+  the qBittorrent row was turned on briefly through the real API during verification and
+  restored to off. Uncommitted on top of 5b3ee5d.
+- Next: phase 2 (Konsol App Store texts/pages from packages, backend rename).
+
+## Previous Task
+
 **2026-10-01 — Firewall/health/ports from declarations, phase 1b, v2-172 (DD-198):**
 - firewall.sh: `package_declarations` + `load_package_rules` (vocabulary `vpn …`), VPN_*
   arrays; wireguard kanca gained `paket_firewall` and `paket_saglik`; engine `saglik` verb;
   backend health units from `master-modul saglik`, port rows from `PAKET_PORTLAR`; dosya
   manifest. Publications (Settings → Caddy) still hard-coded: next version.
 - Deployed to nrm (v2-172); declaration-driven firewall/health/ports verified live.
-- Uncommitted on top of 8f8987f.
+- Committed as 5b3ee5d.
 
 ## Previous Task
 

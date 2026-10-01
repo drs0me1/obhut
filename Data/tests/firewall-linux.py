@@ -105,6 +105,11 @@ def main():
             (Path(e["MODULES_DIR"]) / "wireguard").mkdir(parents=True)
             for name in ("paket.env", "kanca"):
                 shutil.copy(DATA / "magaza/wireguard" / name, Path(e["MODULES_DIR"]) / "wireguard" / name)
+            # DD-199: qBittorrent's publication row exists only through its package manifest and check module.
+            (Path(e["MODULES_DIR"]) / "torrent").mkdir()
+            (Path(e["MODULES_DIR"]) / "torrent/paket.env").write_text(
+                (DATA / "magaza/torrent/paket.env").read_text().replace("__TORRENT_UI_PORT__", e["TORRENT_UI_PORT"]))
+            shutil.copy(DATA / "magaza/torrent/yayin.py", Path(e["MODULES_DIR"]) / "torrent/yayin.py")
             modules = Path(e["MODULES_FILE"])
             networks = Path(e["WG_NETWORKS_FILE"])
             module_record = "wireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n"
