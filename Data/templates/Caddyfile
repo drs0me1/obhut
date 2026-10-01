@@ -4,6 +4,16 @@
 	default_bind {$TAILSCALE_IPV4}
 	http_port __CADDY_HTTP_PORT__
 	auto_https disable_redirects
+	# DD-193: a media player closing a probe or stream mid-response is normal and
+	# was logged as a proxy WARN each time. Proxy messages keep ERROR and above;
+	# dial/5xx failures are logged by http.log.error in the default logger.
+	log default {
+		exclude http.handlers.reverse_proxy
+	}
+	log proxy {
+		include http.handlers.reverse_proxy
+		level ERROR
+	}
 	# DD-179: only the optional public DAV socket; tailnet streams are unchanged.
 	servers __WAN_IPV4__:__SHARE_PORT__ {
 		timeouts {

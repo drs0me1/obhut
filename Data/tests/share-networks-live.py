@@ -4,6 +4,7 @@
 Run on the operator Mac: python3 Data/tests/share-networks-live.py --host nrm
 Uses SSH only for fixture/API management; DAV requests use the actual WAN/tail IP.
 Secrets remain in process memory and SSH stdin, never argv/output.
+Legacy HTTP WAN mode only (no HTTPS setting); other hosts exit 3 before any change.
 """
 import argparse
 import base64
@@ -13,6 +14,7 @@ import secrets
 import shlex
 import socket
 import subprocess
+import sys
 import time
 
 parser=argparse.ArgumentParser()
@@ -32,6 +34,11 @@ import master_shares as s
 m=s.Manager('/etc/master-stack/state.env'); e=m.env
 d=json.load(sys.stdin)
 """
+mode=remote(BOOT+"print(json.dumps(m.wan_info()['mode']))",{})
+if mode!="http":
+    print("SKIP: legacy HTTP WAN mode required; this host's WAN mode is %r. "
+          "Use share-connections-live.py or https-live.py instead." % mode, file=sys.stderr)
+    sys.exit(3)
 root="wan-test-"+secrets.token_hex(5)
 metadata=remote(BOOT+"""
 root=pathlib.Path(e['DOWNLOADS_PATH'])/d['root']; root.mkdir()

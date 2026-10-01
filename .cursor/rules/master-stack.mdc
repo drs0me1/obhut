@@ -100,10 +100,11 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 ### Modül servisleri (Docker yok)
 
-- DD-179/190: klasör paylaşımları Tailscale/WAN IPv4/ikisi olarak seçilir; yeni
-  kayıtlar varsayılan Tailscale'dir. HTTPS ayarı yoksa mevcut açık onaylı HTTP
-  davranışı korunur; Ayarlar → Caddy'de genel alan adı kaydedilirse WAN HTTPS
-  kullanır. Alan adını açıkça kaldırmak WAN'ı kapatır, HTTP'ye düşürmez.
+- DD-179/190/192: her klasörün Tailscale ve WAN bağlantısı ayrı açılır/kapanır,
+  RO/RW ve süresi ayrıdır; yeni kayıtlar Tailscale açık (yayını açıksa), WAN
+  kapalı, RO, 7 gün. HTTPS ayarı yoksa mevcut açık onaylı HTTP davranışı korunur;
+  Ayarlar → Caddy tablosunda genel alan adı kaydedilirse WAN HTTPS kullanır.
+  Tablodan İnternet'i kapatmak WAN'ı kapatır (ad hatırlanır), HTTP'ye düşürmez.
   HTTPS dinleyicisi aktif klasör yokken de sertifika yenilemesi için kalır.
   Parola/bağlantı sınırları ve klasör başına ağ/yetki denetimi zorunludur;
   Konsol/API WAN'a açılmaz; DD-191 qBittorrent için ayrı ve açık HTTPS seçimi sağlar.
@@ -142,7 +143,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
 - `Data/files-panel/master-files-panel` yerleşiktir (DD-159): kurulum birimini `MODULES_DIR/dosya/`'ya yazar, `master-modul yerlesik` etkinleştirir. Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur; paylaşım hesabını hiç görmez. `master_archives.py`/`master_rar.py` sınırlı arşiv işlerini aynı yetkisiz süreçte yürütür.
 - Sunucudaki tek WebDAV paylaşımdır (DD-142): indirme klasörünün tamamını yayımlayan `webdav` servisi, `webdav.<alan>` adı, 61003 portu ve `WEBDAV_*` girdi anahtarları kaldırıldı.
-- DD-158: eski ortak hesap ve sembolik bağlantılı kök kaldırıldı. URL `/s/<id>/`; klasör başına hesap/RO-RW/süre/duraklatma Dosyalar → WebDAV'dan yönetilir. Düz parola saklanmaz. Paylaşımı kaldırmak dosyayı silmez; RW silme kalıcıdır. Tailscale ACL/grants otomatik değişmez; alıcı Konsol/SSH'ye erişmemeli. Yerel istemci uyumu ayrıca test edilir.
+- DD-158: eski ortak hesap ve sembolik bağlantılı kök kaldırıldı. URL `/s/<id>/`; klasör başına hesap; Tailscale ve WAN için ayrı aç-kapa, RO-RW ve süre (DD-192) Dosyalar → Paylaşımlar'dan yönetilir. Düz parola saklanmaz. Paylaşımı kaldırmak dosyayı silmez; RW silme kalıcıdır. Tailscale ACL/grants otomatik değişmez; alıcı Konsol/SSH'ye erişmemeli. Yerel istemci uyumu ayrıca test edilir.
 - Dosya ve WebDAV servisleri root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Dosya servisi `SERVER_ROOT` altında, WebDAV yalnız tanımlı klasör sınırında çalışır. qBittorrent yalnız indirme alanına ve onaylı hedeflere yazabilir.
 - Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
 - Çöp (`.cop`) ve paylaşım kökü `/srv/downloads` dışındadır; qBittorrent onları görmez, Paylaşım çöpü boş görür (DD-144, DD-152). `master-modul kur` bunu sınar.

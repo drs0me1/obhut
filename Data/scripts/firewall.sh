@@ -679,11 +679,43 @@ check_settings_rules() {
     [[ "$actual_ids" == "$ids" ]] || die "$bin: Konsol kullanıcı kurallarının sırası bozuk"
 }
 
+# Each recovery chain is all-or-nothing: an incomplete INPUT guard is never
+# attached, so a failed accept rule cannot lock out SSH. A later good apply
+# purges the unattached chain with the other staging leftovers.
+startup_input_guard() {
+    local bin="$1" guard="${CHAIN_STAGING_PREFIX}SAFE" type
+    ! "$bin" -w 5 -C INPUT -j "$guard" 2>/dev/null || return 0
+    "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || return 1
+    "$bin" -w 5 -A "$guard" -i wg+ -j DROP || return 1
+    "$bin" -w 5 -A "$guard" -i lo -j ACCEPT || return 1
+    "$bin" -w 5 -A "$guard" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+    "$bin" -w 5 -A "$guard" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT || return 1
+    "$bin" -w 5 -A "$guard" -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT || return 1
+    if [[ "$bin" == ip6tables ]]; then
+        for type in "${ICMP6_TYPES[@]}"; do
+            "$bin" -w 5 -A "$guard" -p ipv6-icmp --icmpv6-type "$type" -j ACCEPT || return 1
+        done
+    fi
+    "$bin" -w 5 -A "$guard" -j DROP || return 1
+    "$bin" -w 5 -I INPUT 1 -j "$guard"
+}
+
+# Even an unknown/pre-existing WG interface cannot forward on a cold boot. This
+# does not depend on the INPUT guard having been attached.
+startup_forward_guard() {
+    local bin="$1" guard="${CHAIN_STAGING_PREFIX}SAFE-FW"
+    ! "$bin" -w 5 -C FORWARD -j "$guard" 2>/dev/null || return 0
+    "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || return 1
+    "$bin" -w 5 -A "$guard" -i wg+ -j DROP || return 1
+    "$bin" -w 5 -A "$guard" -o wg+ -j DROP || return 1
+    "$bin" -w 5 -I FORWARD 1 -j "$guard"
+}
+
 # An unreadable registry must not leave a fresh boot unfiltered. Existing owned
 # policies (including manual denies) stay intact. A cold family gets a minimal
 # recovery guard BEFORE ts-input; full --check still fails, keeping Caddy/WG shut.
 startup_failure() {
-    local rc=$? bin guard type
+    local rc=$? bin
     trap - EXIT
     [[ "$rc" -ne 0 && "$MODE" == apply ]] || return "$rc"
     for bin in iptables ip6tables; do
@@ -692,31 +724,13 @@ startup_failure() {
             { [[ -z "${SETTINGS_FILE:-}" ]] || [[ "$(input_line "$bin" "$CHAIN_SETTINGS")" == 1 ]]; }; then
             continue
         fi
-        guard="${CHAIN_STAGING_PREFIX}SAFE"
-        if ! "$bin" -w 5 -C INPUT -j "$guard" 2>/dev/null; then
-            "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || continue
-            "$bin" -w 5 -A "$guard" -i wg+ -j DROP || continue
-            "$bin" -w 5 -A "$guard" -i lo -j ACCEPT || continue
-            "$bin" -w 5 -A "$guard" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || continue
-            "$bin" -w 5 -A "$guard" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT || continue
-            "$bin" -w 5 -A "$guard" -p udp --dport "$TAILSCALE_UDP_PORT" -j ACCEPT || continue
-            if [[ "$bin" == ip6tables ]]; then
-                for type in "${ICMP6_TYPES[@]}"; do
-                    "$bin" -w 5 -A "$guard" -p ipv6-icmp --icmpv6-type "$type" -j ACCEPT || return "$rc"
-                done
-            fi
-            "$bin" -w 5 -A "$guard" -j DROP || continue
-            "$bin" -w 5 -I INPUT 1 -j "$guard" || continue
+        if startup_input_guard "$bin"; then
+            printf 'firewall: UYARI kayıt okunamadı; %s yalnız kurtarma erişiminde. Kayıt düzeltilmeli.\n' "$bin" >&2
+        else
+            printf 'firewall: HATA kayıt okunamadı ve %s kurtarma girişi kurulamadı; giriş filtrelenmiyor.\n' "$bin" >&2
         fi
-        # Even an unknown/pre-existing WG interface cannot forward on a cold boot.
-        guard="${CHAIN_STAGING_PREFIX}SAFE-FW"
-        if ! "$bin" -w 5 -C FORWARD -j "$guard" 2>/dev/null; then
-            "$bin" -w 5 -N "$guard" 2>/dev/null || "$bin" -w 5 -F "$guard" || continue
-            "$bin" -w 5 -A "$guard" -i wg+ -j DROP || continue
-            "$bin" -w 5 -A "$guard" -o wg+ -j DROP || continue
-            "$bin" -w 5 -I FORWARD 1 -j "$guard" || continue
-        fi
-        printf 'firewall: UYARI kayıt okunamadı; %s yalnız kurtarma erişiminde. Kayıt düzeltilmeli.\n' "$bin" >&2
+        startup_forward_guard "$bin" ||
+            printf 'firewall: HATA %s kurtarma yönlendirme engeli kurulamadı.\n' "$bin" >&2
     done
     return "$rc"
 }

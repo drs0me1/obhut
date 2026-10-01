@@ -135,8 +135,9 @@ class ReservedNamesTests(unittest.TestCase):
         for name in (".cop", ".pay", ".arsiv"):
             source = self.root / "dest" / name
             source.mkdir()
-            with self.subTest(name=name), self.assertRaises(files.PanelError):
+            with self.subTest(name=name), self.assertRaises(files.PanelError) as error:
                 self.files.move(["dest"], [name], [])
+            self.assertIn("kök klasöre", str(error.exception))
             self.assertTrue(source.is_dir())
 
     def test_ordinary_rename_move_trash_and_restore_still_work(self):

@@ -1,7 +1,9 @@
 """Opt-in nrm/publication acceptance. Restores effective network choices.
 
 Runs real Settings writes and module reapply; transfers/services can interrupt.
-Never changes app credentials or enables a new public hostname.
+Never changes app credentials or enables a new public hostname. Works with a
+private or an already public qBittorrent; the operator's names are read from
+the host, never written here.
 """
 import argparse
 import hashlib
@@ -58,7 +60,10 @@ before = status()
 rows = {r["service"]: r for r in before["publications"]}
 assert rows["panel"]["tail"] and not rows["panel"]["enabled"] and rows["panel"]["status"] == "locked"
 assert rows["paylasim"]["enabled"] and rows["paylasim"]["status"] == "ready", "Requires existing verified DAV HTTPS"
-assert rows["torrent"]["installed"] and not rows["torrent"]["enabled"], "Test expects private qBittorrent"
+assert rows["torrent"]["installed"], "Requires installed qBittorrent"
+torrent_public = rows["torrent"]["enabled"]
+# Names come from the host. example.net is reserved and never resolves below its apex.
+probe_name = rows["torrent"]["domain"] or rows["paylasim"]["domain"]
 digest = remote("print(json.dumps(hashlib.sha256(pathlib.Path(e['SHARE_STATE_FILE']).read_bytes()).hexdigest()))")
 try:
     for item in (dict(service="panel", tail=True, enabled=True, domain="panel.example.net"),
@@ -68,18 +73,20 @@ try:
         assert code == 400 and "error" in json.loads(body), code
         assert status()["pending"] is None
     print("PASS: Panel WAN, duplicate domain and missing DNS rejected by real API", flush=True)
-    result = remote("import master_publications as pubs; pubs.torrent_security(e,'torrent.example.net',probe=True); print(json.dumps(True))")
+    result = remote("import master_publications as pubs; pubs.torrent_security(e,%s,probe=True); print(json.dumps(True))" % json.dumps(probe_name))
     assert result is True
     print("PASS: native qBittorrent permanent-auth checks and anonymous API refusal", flush=True)
-    for service, hostname, port in (("torrent", "torrent." + meta["LOCAL_DOMAIN"], None),
-                                    ("paylasim", meta["TAILSCALE_IPV4"], int(meta["SHARE_PORT"]))):
+    # Every address of the module template must answer 403 when Tailscale is off (DD-193).
+    for service, targets in (("torrent", [("torrent." + meta["LOCAL_DOMAIN"], None)]),
+                             ("paylasim", [(meta["TAILSCALE_IPV4"], int(meta["SHARE_PORT"])),
+                                           ("paylas." + meta["LOCAL_DOMAIN"], None)])):
         save(rows[service], tail=False)
-        assert request("/", host=hostname, port=port)[0] == 403
+        assert all(request("/", host=h, port=p)[0] == 403 for h, p in targets)
         # Real lifecycle consumes the choice, not the original always-on template.
         command = "master-modul uygula torrent" if service == "torrent" else "master-modul yerlesik"
         proc = subprocess.run(ssh + [command], capture_output=True, timeout=90)
         assert proc.returncode == 0, "Module reapply failed (private output withheld)"
-        assert request("/", host=hostname, port=port)[0] == 403
+        assert all(request("/", host=h, port=p)[0] == 403 for h, p in targets)
         assert status()["publications"][0]["tail"] is True
         if service == "paylasim":
             conn = http.client.HTTPSConnection(rows[service]["domain"], int(meta["SHARE_HTTPS_PORT"]), timeout=15)
@@ -90,15 +97,24 @@ try:
             finally:
                 conn.close()
         save(rows[service])
-        assert request("/", host=hostname, port=port)[0] == (200 if service == "torrent" else 401)
+        assert all(request("/", host=h, port=p)[0] == (200 if service == "torrent" else 401) for h, p in targets)
         print("PASS: %s private off/403, real module reapply, on/restore; Panel preserved" % service, flush=True)
     save(rows["paylasim"], enabled=False)
     current = next(r for r in status()["publications"] if r["service"] == "paylasim")
     assert not current["enabled"] and current["domain"] == rows["paylasim"]["domain"]
     assert request("/", host=meta["TAILSCALE_IPV4"], port=int(meta["SHARE_PORT"]))[0] == 401
-    saved = remote("import master_publications as pubs; print(json.dumps(pubs.extra_sites(e).get('torrent-wan.caddy')=='' and not (pathlib.Path(e['CADDY_MODULES_DIR'])/'paylasim-wan.caddy').exists()))")
-    assert saved
-    print("PASS: public off remembers domain, removes WAN site and preserves private DAV", flush=True)
+    saved = remote("import master_publications as pubs; print(json.dumps([pubs.extra_sites(e).get('torrent-wan.caddy')!='', (pathlib.Path(e['CADDY_MODULES_DIR'])/'paylasim-wan.caddy').exists()]))")
+    assert saved == [torrent_public, False], saved
+    if torrent_public:
+        # A public qBittorrent keeps its own HTTPS site on the shared port.
+        conn = http.client.HTTPSConnection(rows["torrent"]["domain"], int(meta["SHARE_HTTPS_PORT"]), timeout=15)
+        try:
+            conn.request("GET", "/")
+            response = conn.getresponse(); response.read()
+            assert response.status == 200, response.status
+        finally:
+            conn.close()
+    print("PASS: public DAV off remembers domain, removes only its WAN site and preserves private DAV", flush=True)
 finally:
     for service in ("torrent", "paylasim"):
         save(rows[service])

@@ -85,6 +85,10 @@ connection's permission cannot authorize it.
   restarts the service and clears the memory. Per-IP and per-share limits still
   apply to every request. Replies are sent without Nagle delay
   (`TCP_NODELAY`).
+- **DD-193:** concurrent requests with the same exact Authorization value on the
+  same share and listener share one verification: they wait up to 2 s for the
+  one in progress and reuse its success. A failed or slow first check makes each
+  of them check itself through the normal bounded path above.
 - Host TCP admission additionally caps new WAN sockets at 16 per source IP and
   64 total, before manual allow rules. Conntrack can temporarily retain closing
   sockets. These are connection counts, not bandwidth caps or DDoS protection.
@@ -147,12 +151,16 @@ resolved target. “Certificate ready” is **not proof of internet reachability
 Settings shows expiry, and health warns at 14 days or less remaining. Check public
 DNS, CAA and inbound TCP 443 separately if issuance or external access fails.
 
-“WAN erişimini kapat” explicitly saves the empty domain. It removes the public
-site/permission through a graceful Caddy reload, closing new WAN connections;
-existing transfers may finish. This is distinct from account mutations, which
-restart WebDAV and interrupt all transfers. Tailscale HTTP on port 61010 and
-private names remain unchanged in every mode. Saving another valid public domain
-is the way to re-enable WAN after an explicit disable.
+Public WebDAV HTTPS is edited in Settings → Caddy → “Adresler ve erişim”
+(**DD-191**, **DD-193**). Turning the WebDAV internet switch off and saving it
+removes the public site/permission through a graceful Caddy reload, closing new
+WAN connections; existing transfers may finish. The name is remembered for a
+later re-enable. The API form `{"https": {"domain": ""}}` (test tooling) has the
+same effect without remembering the name. This is distinct from account
+mutations, which restart WebDAV and interrupt all transfers. Tailscale HTTP on
+port 61010 and private names remain unchanged in every mode. A save that enables
+internet access first checks that the listener is up and fails at once with the
+cause otherwise, instead of waiting for a certificate.
 
 The Files layout is implemented in `console/konsol.js`, `dosyalar.js`
 and `dosyalar.css`: list by default, optional cards, selected-item details on

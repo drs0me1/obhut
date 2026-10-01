@@ -194,3 +194,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-190 | Optional public WebDAV HTTPS without widening private administration | live | design-decisions.md |
 | DD-191 | Fixed publication table with independent private and public gates | live | design-decisions.md |
 | DD-192 | Per-connection WebDAV policies and dual-card Shares | live | design-decisions.md |
+| DD-193 | Cross-review follow-ups for v2-159..v2-164 | live | design-decisions.md |

@@ -4,3 +4,6 @@
 
 # Private installer inputs and downloaded WireGuard profiles/QR codes (DD-143).
 /kurulum/
+
+# Python bytecode left by local test runs; the exporter already excludes it.
+__pycache__/

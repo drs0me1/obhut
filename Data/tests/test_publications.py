@@ -23,10 +23,11 @@ class PublicationTests(unittest.TestCase):
         self.m = settings.Manager(self.state)
         self.s.env.update(self.env)
         (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tcalisiyor\n")
-        for service, name in (("paylasim", "paylas"), ("torrent", "torrent")):
+        for service, addresses in (("paylasim", "http://paylas.ayc, http://{$TAILSCALE_IPV4}:61010"),
+                                   ("torrent", "http://torrent.ayc")):
             directory = self.root / "templates" / service
             directory.mkdir()
-            source = "http://%s.ayc {\n\trespond 401\n}\n" % name
+            source = "# fixture\n%s {\n\trespond 401\n}\n" % addresses
             (directory / (service + ".caddy")).write_text(source)
             (self.root / "sites" / (service + ".caddy")).write_text(source)
         self.qconf = self.root / "profile/qBittorrent/qBittorrent.conf"
@@ -159,6 +160,60 @@ class PublicationTests(unittest.TestCase):
         self.qconf.write_text("[Preferences]\n")
         with self.assertRaises(settings.SettingsError):
             pubs.torrent_security(self.env, "torrent.example.net")
+
+    def test_private_403_stub_uses_exactly_the_module_template_addresses(self):
+        # DD-193: no hard-coded host names; the real templates are the single source.
+        self.m.apply(self.payload(service="torrent", tail=False, enabled=False, domain=""))
+        self.m.apply(self.payload(tail=False))
+        values = {"__LOCAL_DOMAIN__": "ev", "__SHARE_PORT__": "61010", "__TORRENT_UI_PORT__": "61006"}
+        for service in ("paylasim", "torrent"):
+            with self.subTest(service=service):
+                source = (settings.Path(__file__).resolve().parents[1] / "modules" / service / (service + ".caddy")).read_text()
+                for key, value in values.items():
+                    source = source.replace(key, value)
+                first = next(line for line in source.splitlines() if line.startswith("http"))
+                stub = pubs.private_site(self.env, service, source)
+                self.assertEqual(stub.splitlines()[1], first)
+                self.assertIn("\trespond 403\n", stub)
+                self.assertNotIn("reverse_proxy", stub)
+        extra = "# x\nhttp://torrent.ev, http://torrent-alt.ev {\n\treverse_proxy 127.0.0.1:1\n}\n"
+        self.assertIn("http://torrent.ev, http://torrent-alt.ev {", pubs.private_site(self.env, "torrent", extra))
+        with self.assertRaises(settings.SettingsError):
+            pubs.private_site(self.env, "torrent", "# no site block\n")
+
+    def test_stopped_or_unsafe_torrent_row_reports_the_actual_cause(self):
+        with patch.object(pubs, "torrent_security"):
+            self.m.apply(self.payload(service="torrent", domain="torrent.example.net"))
+        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tdurduruldu\n")
+        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
+        self.assertEqual(row["status"], "error")
+        self.assertIn("durdurulmuş", row["message"])
+        (self.root / "modules").write_text("paylasim\tcalisiyor\n")
+        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
+        self.assertIn("kurulu değil", row["message"])
+        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tcalisiyor\n")
+        self.qconf.write_text(self.qconf.read_text() + "WebUI\\AuthSubnetWhitelistEnabled=true\n")
+        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
+        self.assertIn("giriş atlama", row["message"])
+
+    def test_unavailable_listener_fails_fast_without_certificate_wait(self):
+        # DD-193: no minute-long certificate wait when no public listener could open.
+        import master_shares
+        cases = (("paylasim", "dav.example.net", "WAN HTTPS dinleyicisi açılamadı",
+                  patch.object(master_shares.Manager, "wan_active", return_value=False)),
+                 ("torrent", "torrent.example.net", "qBittorrent internet yayını açılamadı",
+                  patch.object(pubs, "torrent_active", return_value=False)))
+        for service, domain, message, blocked in cases:
+            with self.subTest(service=service):
+                before = self.m.config()
+                tls.wait_certificate.reset_mock()
+                with blocked, patch.object(pubs, "torrent_security"), \
+                        self.assertRaises(settings.SettingsError) as error:
+                    self.m.apply(self.payload(service=service, domain=domain, tail=False))
+                self.assertIn(message, str(error.exception))
+                tls.wait_certificate.assert_not_called()
+                self.assertEqual(self.m.config(), before)
+                self.assertFalse(self.m.pending_path.exists())
 
     def test_reapply_projects_saved_private_choice_and_uninstall_removes_site(self):
         self.m.apply(self.payload(service="torrent", tail=False, enabled=False, domain=""))

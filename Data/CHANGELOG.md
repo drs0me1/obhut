@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Cross-review fixes for v2-159..v2-164 (v2-165)
+
+- Saving an internet publication in Settings → Caddy now fails at once with the
+  real cause when its listener cannot open, instead of waiting a minute for a
+  certificate and suggesting a DNS/CAA problem (DD-193).
+- Cold-boot recovery firewall: the INPUT and FORWARD guards are independent and
+  each is all-or-nothing, so a failed rule can neither lock out SSH nor skip the
+  WireGuard forwarding block.
+- New folder shares start with Tailscale on only while WebDAV is published on
+  Tailscale; turning a folder's Tailscale connection on is refused while that
+  publication is closed (same rule as WAN). The create form starts that switch
+  off and locked.
+- Concurrent requests with the same credentials (an Infuse library scan) share
+  one password check instead of competing for the hash slots, so a cold first
+  connection no longer gets 503 replies. Limits are unchanged.
+- The unreachable standalone HTTPS card is removed; public WebDAV HTTPS is edited
+  in the address table, which now names the HTTPS port in legacy HTTP mode too.
+  A save's refresh no longer draws data read before the save. A closed WAN share
+  card says “WAN” instead of “HTTPS”.
+- Caddy no longer logs a warning each time a media player closes a stream;
+  proxy errors and failed upstream connections are still logged.
+- Installer runs no longer leave a copy of every rendered template in the
+  server's `/tmp` (a Bash 5-only cleanup bug; the files were root-only and
+  vanished at reboot).
+- Smaller: private 403 routes follow the module templates' addresses; clearer
+  qBittorrent publication, Files and health messages; deep JSON handled in two
+  more parse sites; `__pycache__/` ignored by Git.
+- Live tests: `publications-live.py` no longer contains the operator's domain and
+  works with a public qBittorrent; `backend-hardening-live.py` follows the
+  host's WAN mode; `share-networks-live.py` skips (exit 3) on HTTPS hosts.
+- **Verified:** Mac — 374 Python (4 platform skips), 166 Bats (3 skips), six
+  browser fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm, Bash
+  5.2) — 374 Python (1 optional skip), 166 Bats (1 skip), firewall (including
+  cold rescue), settings, domain, qBittorrent defaults, publication proxy on 443
+  and 18443, settings-systemd and install-hardening suites. The scoped Caddy
+  logging validated against nrm's Caddy 2.11.4 before release.
+- **nrm:** portable run with scratch inputs (SSH_HOST=nrm, blank LOCAL_DOMAIN,
+  default no full-upgrade, `E`), exit 0. Share registry, qBittorrent profile and
+  WireGuard registry digests and qBittorrent PID unchanged; installed helpers
+  match source; no new `/tmp` file. Live: share-connections, publications
+  (private 403 on every template address, DAV public off/on, restored choices)
+  and backend-hardening over HTTPS WAN (57.9 MB/s) and Tailscale (56.9 MB/s,
+  SHA-verified, OOM 0) pass; `share-networks-live.py` skipped with exit 3. A
+  cold identical-login burst returned 8/8 (Tailscale) and 4/4 (WAN) HTTP 207,
+  no 503; six mid-stream client resets wrote no Caddy log line. Health green.
+  137 leaked template copies and old test trees were removed from `/tmp`.
+
 ### 2026-10-01 — Per-connection WebDAV policies and dual-card Shares (v2-164)
 
 - Each folder keeps one ID/account while Tailscale and WAN independently control

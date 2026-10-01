@@ -175,7 +175,7 @@ def cmd_check(args):
                 data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as err:
         fail("panel HTTP %d verdi" % err.code)
-    except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError) as err:
+    except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError, RecursionError) as err:
         fail("panel yanıt vermedi (%s)" % err)
     nets = data.get("networks")
     # DD-143: temiz kurulumda hiç ağ yoktur; boş liste de geçerli bir yanıttır.
@@ -993,7 +993,10 @@ class Panel:
             wanted = any(i["connections"]["wan"]["enabled"] for i in shares.read()["items"])
             if (wanted or https_configured) and not wan["available"]:
                 add("wan", "İnternet paylaşımı", "warn", wan["reason"])
-        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, master_shares.ShareError):
+        except master_shares.ShareError as err:
+            # The share manager's reason is operator-facing (e.g. unsupported registry).
+            add("wan", "İnternet paylaşımı", "warn", "Paylaşım durumu okunamadı: " + str(err))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             add("wan", "İnternet paylaşımı", "warn", "Paylaşım durumu okunamadı")
 
         # The settings status uses master_https's local, chain/hostname-verified probe.
@@ -1335,7 +1338,7 @@ class Panel:
             if detail.startswith('"') and detail.endswith('"'):
                 try:
                     detail = json.loads(detail)
-                except ValueError:
+                except (ValueError, RecursionError):
                     pass
             rows.append({"at": when, "source": m.group(1), "user": m.group(2), "client": m.group(3),
                          "action": m.group(4), "detail": detail[:200], "ok": m.group(6) == "ok"})

@@ -130,17 +130,22 @@ atomic_write() {
     [[ -d "$dir" ]] || die "atomic_write: dizin yok: $dir"
     local tmp
     tmp="$(mktemp "$dir/.installer-XXXXXX")"
-    # shellcheck disable=SC2064
-    trap "rm -f -- '$tmp'" RETURN
-    cat >"$tmp"
-    chmod "$mode" "$tmp"
+    # No RETURN trap (DD-193): Bash traps are global, so one set here replaced the
+    # caller's own cleanup trap and kept firing afterwards. Clean up explicitly.
+    if ! cat >"$tmp" || ! chmod "$mode" "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
     if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
-        rm -f "$tmp"
+        rm -f -- "$tmp"
         chmod "$mode" "$dest" 2>/dev/null || true
         V2_LAST_ATOMIC_CHANGED=0
         return 0
     fi
-    mv -f "$tmp" "$dest"
+    if ! mv -f "$tmp" "$dest"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
     V2_LAST_ATOMIC_CHANGED=1
 }
 
@@ -170,12 +175,9 @@ render_template() {
     if [[ "$content" =~ __[A-Z][A-Z0-9_]*__ ]]; then
         die "şablonda doldurulmamış yer tutucu kaldı: $src"
     fi
-    local awtmp
-    awtmp="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f -- '$awtmp'" RETURN
-    printf '%s' "$content" >"$awtmp"
-    atomic_write "$dest" "$mode" <"$awtmp"
+    # Stream straight into atomic_write: the old /tmp copy relied on a RETURN trap
+    # that atomic_write's own trap replaced, leaking one file per call on Bash 5.
+    atomic_write "$dest" "$mode" < <(printf '%s' "$content")
 }
 
 # read_input_file FILE "ALANLAR" "BOŞ_OLAMAYAN_ALANLAR"

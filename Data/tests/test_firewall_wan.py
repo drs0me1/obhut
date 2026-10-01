@@ -38,7 +38,10 @@ fixture_table() {
             args="${args//ESTABLISHED,RELATED/RELATED,ESTABLISHED}"
             grep -qxF -- "-A $args" <<<"$LISTING"
             ;;
-        *) printf '%s %s %s\n' "$bin" "$op" "$*" >>"$CALLS" ;;
+        *)
+            [[ -z "${FAIL_CALL:-}" || "$bin $op $*" != *"$FAIL_CALL"* ]] || return 1
+            printf '%s %s %s\n' "$bin" "$op" "$*" >>"$CALLS"
+            ;;
     esac
 }
 iptables() { fixture_table iptables "$@"; }
@@ -180,6 +183,21 @@ class FirewallWANTests(unittest.TestCase):
                             self.assertIn(binary + " -I FORWARD 1 -j MASTER-NEXT-SAFE-FW", calls)
                         self.assertNotIn("--dport 443", calls)
                         self.assertNotIn("--dport 61010", calls)
+
+    def test_incomplete_rescue_input_is_not_attached_but_forward_guard_still_is(self):
+        # A failed ICMPv6 accept must neither abort the remaining families nor attach a
+        # partial INPUT chain (DD-193); the independent FORWARD guard is still installed.
+        result = self.shell("MODE=apply\ntrap startup_failure EXIT\nload_share_wan",
+                            WAN_RESULT="1 16 64", FAIL_CALL="ip6tables -A MASTER-NEXT-SAFE -p ipv6-icmp --icmpv6-type packet-too-big")
+        self.assertNotEqual(result.returncode, 0)
+        calls = self.calls.read_text()
+        self.assertIn("iptables -I INPUT 1 -j MASTER-NEXT-SAFE", calls)
+        self.assertIn("iptables -I FORWARD 1 -j MASTER-NEXT-SAFE-FW", calls)
+        self.assertNotIn("ip6tables -I INPUT 1 -j MASTER-NEXT-SAFE", calls)
+        self.assertNotIn("ip6tables -A MASTER-NEXT-SAFE -j DROP", calls)
+        self.assertIn("ip6tables -I FORWARD 1 -j MASTER-NEXT-SAFE-FW", calls)
+        self.assertIn("ip6tables kurtarma girişi kurulamadı", result.stderr)
+        self.assertIn("iptables yalnız kurtarma erişiminde", result.stderr)
 
 
 if __name__ == "__main__":

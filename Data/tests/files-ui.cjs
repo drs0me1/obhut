@@ -336,6 +336,17 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
     await permission("tailscale").selectOption("ro"); await ready();
     await permission("tailscale").selectOption("rw"); await page.clock.fastForward(11000);
     assert(await page.locator("#cf").isVisible()); await page.locator("#cf-cancel").click();
+    // DD-193: with Tailscale publication closed the create form starts that switch off and locked.
+    shares.tail_enabled = false; await refreshShares();
+    await page.locator("#fs-tabs").getByRole("button",{name:"Dosyalar",exact:true}).click();
+    await page.getByRole("button",{name:"Belgeler ve uzun klasör adı ayrıntıları",exact:true}).click();
+    await page.getByRole("button",{name:"WebDAV ile paylaş",exact:true}).click();
+    assert.equal(await tailscale.getAttribute("aria-checked"),"false");
+    assert(await tailscale.isDisabled());
+    assert.match(await page.locator('#sh .dav-connection[data-network="tailscale"]').innerText(),/Tailscale yayını kapalı/);
+    await page.locator("#sh").getByRole("button",{name:"Vazgeç",exact:true}).click(); await closed();
+    shares.tail_enabled = true;
+    await page.locator("#fs-tabs").getByRole("button",{name:"Paylaşımlar",exact:true}).click();
     // Creation supports paused, WAN-only and dual accounts, independent permissions/expiry.
     for (const selected of [[],["wan"],["tailscale","wan"]]) {
       shares.wan = {...wanStatus};

@@ -1,4 +1,5 @@
-/* Production Settings/Shares UI with intercepted APIs; no live mutations. */
+/* Production Settings/Shares UI with intercepted APIs; no live mutations.
+   DD-193: public WebDAV HTTPS is edited only in the Settings → Caddy address table. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
@@ -11,8 +12,17 @@ const data = {
     { address: "192.0.2.1:61010", source: "paylasim-wan", access: "wan", routes: [] }], raw: [] },
   dns: { listen: ["lo", "tailscale0"] }, torrent: { installed: false },
   manage: { revision: "r1", pending: null, config: { firewall: [], dns: { disabled: [], records: [], forward: false, servers: [] } },
-    names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "paylas.ayc", target: "tailscale", source: "paylasim" }] },
+    names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "paylas.ayc", target: "tailscale", source: "paylasim" }],
+    // Unconfigured host: legacy consented HTTP on SHARE_PORT, the HTTPS port is still 443.
+    https: { domain: "", mode: "http", scheme: "http", port: 61010, https_port: 443, status: "http",
+      message: "HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.", expires: null, wan_ip: "192.0.2.1" },
+    publications: [
+      { service: "panel", name: "Panel", local: "panel.ayc", tail: true, enabled: false, domain: "", installed: true, status: "locked", message: "Yönetici girişi geliştirilene kadar yalnız Tailscale." },
+      { service: "torrent", name: "qBittorrent", local: "torrent.ayc", tail: true, enabled: false, domain: "", installed: false, running: false, status: "disabled", message: "İnternet yayını kapalı." },
+      { service: "paylasim", name: "WebDAV", local: "paylas.ayc", tail: true, enabled: true, domain: "", installed: true, running: true, status: "http", mode: "http",
+        message: "HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.", expires: null }] },
 };
+const dav = () => data.manage.publications.find(r => r.service === "paylasim");
 const share = {id:"a".repeat(24),name:"media",path:"media",username:"fixture-user",available:true,
   connections:{tailscale:{enabled:true,permission:"ro",expires:null},wan:{enabled:false,permission:"ro",expires:null}}};
 const shares = {enabled:true,running:true,tail_enabled:true,max:32,host:"http://100.64.0.2:61010",items:[share],
@@ -33,14 +43,18 @@ function projectShares() {
 }
 const applies = [], shareWrites = [], endpoints = [], errors = [];
 let holdApply = false, releaseApply, failApply = "", incompleteApply = false;
-function setHttps(domain, status = "ready") {
-  data.manage.https = { domain, mode: domain ? "https" : "off", status: domain ? status : "disabled", port: 443,
-    message: domain ? "Sertifika doğrulandı." : "WAN erişimi kapalı.", expires: domain ? 1798000000 : null, wan_ip: "192.0.2.2" };
-  shares.wan = { available: !!domain && status === "ready", scheme: domain ? "https" : "", mode: domain ? "https" : "off", domain, port: 443,
-    reason: domain ? "" : "WAN erişimi kapalı." };
+// Mirrors master_publications.status(): enabled=false keeps the name, mode becomes off.
+function setHttps(domain, status = "ready", enabled = !!domain) {
+  const on = enabled && !!domain;
+  data.manage.https = { domain: on ? domain : "", mode: on ? "https" : "off", scheme: on ? "https" : "", port: 443, https_port: 443,
+    status: on ? status : "disabled", message: on ? "Sertifika doğrulandı." : "İnternet paylaşımı kapalı.", expires: on ? 1798000000 : null, wan_ip: "192.0.2.2" };
+  Object.assign(dav(), { enabled, domain, status: data.manage.https.status, mode: data.manage.https.mode,
+    message: data.manage.https.message, expires: data.manage.https.expires });
+  shares.wan = { available: on && status === "ready", scheme: on ? "https" : "", mode: on ? "https" : "off", domain: on ? domain : "", port: 443,
+    reason: on ? "" : "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin." };
   projectShares();
   data.web.entries = data.web.entries.filter(e => e.access !== "wan");
-  if (domain) data.web.entries.push({ address: domain + ":443", source: "paylasim-wan", access: "wan", scheme: "https", routes: [] });
+  if (on) data.web.entries.push({ address: domain + ":443", source: "paylasim-wan", access: "wan", scheme: "https", routes: [] });
 }
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}) });
@@ -69,9 +83,11 @@ function setHttps(domain, status = "ready") {
           return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error }) });
         }
         if (incompleteApply) { incompleteApply = false; result = { pending: null }; }
-        else if (body.https) {
-          assert.deepEqual(Object.keys(body).sort(), ["https", "revision"]);
-          setHttps(body.https.domain); data.manage.revision += "-https";
+        else if (body.web) {
+          assert.deepEqual(Object.keys(body).sort(), ["revision", "web"]);
+          assert.equal(body.web.service, "paylasim");
+          assert.deepEqual(Object.keys(body.web).sort(), ["domain", "enabled", "service", "tail"]);
+          setHttps(body.web.domain, "ready", body.web.enabled); data.manage.revision += "-web";
           result = { committed: true, pending: null };
         } else if (body.domain) {
           assert.deepEqual(Object.keys(body).sort(), ["domain", "revision"]);
@@ -96,88 +112,97 @@ function setHttps(domain, status = "ready") {
     });
     const url = process.env.KONSOL_URL || "http://127.0.0.1:8766";
     await page.goto(url + "/#/ayarlar/web");
-    const card = page.locator("#as-https-card"), input = card.getByRole("textbox", { name: "İnternet alan adı", exact: true });
-    const save = card.getByRole("button", { name: "Kaydet", exact: true });
+    const table = page.locator("#as-publications"), row = table.locator('[data-publication="paylasim"]');
+    const input = row.getByRole("textbox", { name: "WebDAV HTTPS alan adı", exact: true });
+    const wanSwitch = row.getByRole("switch", { name: "WebDAV internet erişimi", exact: true });
+    const save = row.getByRole("button", { name: "Kaydet", exact: true });
     const local = page.getByRole("textbox", { name: "Yerel alan adı", exact: true });
-    const settled = () => page.waitForFunction(() => document.querySelector('#as-https-card')?.getAttribute('aria-busy') === 'false');
+    const settled = () => page.waitForFunction(() => document.querySelector("#as-publications")?.getAttribute("aria-busy") === "false");
     const refresh = async () => {
       const response = page.waitForResponse(r => r.url().includes("/api/konsol/ayarlar?yenile=1"));
       await page.getByRole("button", { name: "Yenile", exact: true }).click();
       await response; await settled();
     };
-    await card.getByText("Eski HTTP erişimi", { exact: true }).waitFor();
+    assert.equal(await page.locator("#as-https-card").count(), 0, "The table is the only public-HTTPS editor");
+    await row.getByText("Eski HTTP erişimi", { exact: true }).waitFor();
     assert.equal(await local.inputValue(), "ayc");
     assert.equal(await input.inputValue(), "");
-    assert.match(await card.innerText(), /192\.0\.2\.1/);
-    assert.match(await card.innerText(), /DNS only/);
-    assert.equal(await card.locator(".good").count(), 0);
+    assert.equal(await wanSwitch.getAttribute("aria-checked"), "true");
+    assert.match(await table.innerText(), /192\.0\.2\.1/);
+    assert.match(await table.innerText(), /DNS only/);
+    assert.match(await table.innerText(), /HTTPS TCP 443\b/, "Legacy HTTP shows the configured HTTPS port, not SHARE_PORT");
+    assert.match(await table.innerText(), /Eski WebDAV WAN erişimi HTTP kullanıyor/);
+    assert.equal(await row.locator(".good").count(), 0);
     await page.locator(".as-web-details > summary").click();
     assert.match(await page.locator("#cfg-web").innerText(), /WAN · HTTP/);
     assert.match(await page.locator("#cfg-web").innerText(), /HTTP parola ve dosyaları şifrelemez/);
-    for (const invalid of ["", "https://dav.example.com", "dav.example.com/path", "dav.example.com:443", "user@dav.example.com", "*.example.com", "127.0.0.1", "ayc", "-dav.example.com", "a".repeat(64) + ".example.com"]) {
+    // An unchanged empty name cannot be saved; every malformed name stays in the browser.
+    assert(await save.isDisabled());
+    for (const invalid of ["https://dav.example.com", "dav.example.com/path", "dav.example.com:443", "user@dav.example.com", "*.example.com", "127.0.0.1", "ayc", "-dav.example.com", "a".repeat(64) + ".example.com"]) {
       await input.fill(invalid); await save.click();
       assert.equal(applies.length, 0, invalid);
       assert.equal(await input.evaluate(el => el.checkValidity()), false, invalid);
     }
-    // DNS drafts and the independent HTTPS field survive navigation; writes remain separate.
+    // DNS drafts and the independent publication draft survive navigation; writes remain separate.
     await input.fill("dav.example.com");
     await page.getByRole("tab", { name: "Dnsmasq", exact: true }).click();
     await page.getByRole("switch", { name: "paylas.ayc", exact: true }).click();
     await page.getByRole("tab", { name: "Caddy", exact: true }).click();
     assert.equal(await input.inputValue(), "dav.example.com"); assert(await save.isDisabled());
     assert(await page.getByRole("button", { name: "Güncelle", exact: true }).isDisabled());
-    await page.getByRole("button", { name: "Vazgeç", exact: true }).click();
+    await page.locator(".as-footer").getByRole("button", { name: "Vazgeç", exact: true }).click();
     await input.fill(" DAV.Example.COM ");
     // Hold the request and advance browser time past the certificate provisioning interval.
     await page.clock.install(); holdApply = true;
     await save.click();
-    await card.getByRole("button", { name: "Sertifika hazırlanıyor…", exact: true }).waitFor();
-    await page.waitForFunction(() => document.querySelector('#as-https-card')?.getAttribute('aria-busy') === 'true');
-    assert(await input.isDisabled()); assert(await local.isDisabled());
-    await card.locator("form").evaluate(el => el.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await row.getByText("Uygulanıyor…", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector("#as-publications")?.getAttribute("aria-busy") === "true");
+    assert(await input.isDisabled()); assert(await local.isDisabled()); assert(await save.isDisabled());
+    await save.click({ force: true });
     await page.clock.fastForward(75000);
-    assert.equal(applies.length, 1, "One POST despite duplicate submission and 75 seconds of provisioning");
-    assert.deepEqual(applies[0], { revision: "r1", https: { domain: "dav.example.com" } });
-    assert(await card.getByRole("button", { name: "Sertifika hazırlanıyor…", exact: true }).isDisabled());
+    assert.equal(applies.length, 1, "One POST despite a repeated click and 75 seconds of provisioning");
+    assert.deepEqual(applies[0], { revision: "r1", web: { service: "paylasim", tail: true, enabled: true, domain: "dav.example.com" } });
     assert.equal(await page.locator("dialog[open], .as-rollback, .as-domain-links").count(), 0);
     assert.equal(typeof releaseApply, "function"); holdApply = false; releaseApply(); await settled();
-    await card.getByText("Sertifika hazır", { exact: true }).waitFor();
-    assert.equal(await card.locator(".good").count(), 1);
-    assert.equal(await card.locator("time").getAttribute("datetime"), new Date(1798000000 * 1000).toISOString());
-    assert.match(await card.innerText(), /192\.0\.2\.2/);
-    assert.match(await card.innerText(), /internetten erişim sınanmış değildir/);
+    await row.getByText("Sertifika hazır", { exact: true }).waitFor();
+    assert.equal(await row.locator(".good").count(), 1);
+    assert.equal(await row.locator("time").getAttribute("datetime"), new Date(1798000000 * 1000).toISOString());
+    assert.match(await row.innerText(), /https:\/\/dav\.example\.com\/s\/…\//);
+    assert.match(await table.innerText(), /internetten erişimin test edildiği anlamına gelmez/);
+    assert.doesNotMatch(await table.innerText(), /Eski WebDAV WAN erişimi HTTP/);
     await page.locator(".as-web-details > summary").click();
     assert.match(await page.locator("#cfg-web").innerText(), /WAN · HTTPS/);
     assert(!/HTTP şifrelemez|HTTP parola/.test(await page.locator("#cfg-web").innerText()));
     assert.equal(await local.inputValue(), "ayc");
-    await save.click(); assert.equal(applies.length, 1, "Unchanged ready certificate is not reprovisioned");
+    assert(await save.isDisabled(), "An unchanged ready certificate is not reprovisioned");
     // Request failures retain the edited domain and show the actual certificate state on refresh.
     await input.fill("next.example.com"); failApply = "DNS A kaydı beklenen WAN adresiyle eşleşmiyor.";
     await save.click(); await settled();
     assert.match(await page.locator(".as-message").innerText(), /DNS A kaydı/);
     assert.equal(await input.inputValue(), "next.example.com");
-    assert.equal(data.manage.https.domain, "dav.example.com");
+    assert.equal(dav().domain, "dav.example.com");
     assert.equal(await page.locator(".as-rollback, .as-domain-links").count(), 0);
     incompleteApply = true; await save.click(); await settled();
     assert.match(await page.locator(".as-message").innerText(), /kalıcı kaydı doğrulamadı/);
     await save.click(); await settled();
-    assert.equal(data.manage.https.domain, "next.example.com");
+    assert.equal(dav().domain, "next.example.com");
     // A pending certificate from a fresh response is not a local-domain rollback transaction.
-    setHttps("next.example.com", "pending"); data.manage.https.expires = null; data.manage.https.message = "Sertifika bekleniyor.";
-    data.manage.pending = { id: "https-change", phase: "applying", seconds: 150 };
+    setHttps("next.example.com", "pending"); dav().expires = null; dav().message = "Sertifika bekleniyor.";
+    data.manage.pending = { id: "web-change", phase: "applying", seconds: 150, web: true };
     await page.getByRole("button", { name: "Yenile", exact: true }).click();
-    await card.getByText("Sertifika bekleniyor.", { exact: true }).waitFor();
-    assert(await input.isDisabled()); assert.equal(await card.locator(".good, time").count(), 0);
+    await row.getByText("Sertifika bekleniyor.", { exact: true }).waitFor();
+    await row.getByText("Sertifika hazırlanıyor…", { exact: true }).waitFor();
+    assert(await input.isDisabled()); assert.equal(await row.locator(".good, time").count(), 0);
     assert.equal(await page.locator(".as-rollback").count(), 0);
-    await page.reload(); await card.getByText("Sertifika bekleniyor.", { exact: true }).waitFor();
+    await page.reload(); await row.getByText("Sertifika bekleniyor.", { exact: true }).waitFor();
     assert.equal(await page.locator(".as-rollback, .as-domain-links").count(), 0);
     assert(await input.isDisabled());
     data.manage.pending = null;
-    setHttps("next.example.com", "error"); data.manage.https.expires = null;
-    data.manage.https.message = "Sertifika alınamadı: <img src=x onerror=alert(1)>";
+    setHttps("next.example.com", "error"); dav().expires = null;
+    dav().message = "Sertifika alınamadı: <img src=x onerror=alert(1)>";
     await refresh();
-    await card.getByText(data.manage.https.message, { exact: true }).waitFor();
-    assert.equal(await card.locator("img, .good").count(), 0); assert(!(await save.isDisabled()));
+    await row.getByText(dav().message, { exact: true }).waitFor();
+    assert.equal(await row.locator("img, .good").count(), 0); assert(!(await save.isDisabled()), "An error row can be retried");
     setHttps("next.example.com"); await refresh();
     await page.clock.fastForward(5000);
     for (const colorScheme of ["light", "dark"]) {
@@ -188,28 +213,26 @@ function setHttps(domain, status = "ready") {
         await page.screenshot({ path: path.join(shots, `https-${colorScheme}-${width}.png`), fullPage: true });
       }
     }
-    // Removing a domain is an explicit action; blank Save and cancellation are harmless.
-    await input.fill(""); const beforeRemoval = applies.length;
-    await save.click(); assert.equal(applies.length, beforeRemoval);
-    const disable = card.getByRole("button", { name: "WAN erişimini kapat", exact: true });
-    await disable.click(); const dialog = page.locator("dialog.as-dialog");
-    assert.match(await dialog.innerText(), /HTTP üzerinden WAN erişimi açılmaz/);
-    assert.match(await dialog.innerText(), /Yeni WAN bağlantıları kapanır\. Devam eden aktarımlar tamamlanabilir\. Tailscale paylaşımları korunur\./);
-    await dialog.getByRole("button", { name: "Vazgeç", exact: true }).click();
+    await page.setViewportSize({ width: 1400, height: 1000 });
+    // Turning the internet switch off is a draft; Save closes WAN and remembers the name.
+    await wanSwitch.click(); const beforeRemoval = applies.length;
     assert.equal(applies.length, beforeRemoval);
-    await disable.click(); failApply = "WAN kapatma sınama hatası.";
-    await dialog.getByRole("button", { name: "WAN erişimini kapat", exact: true }).click(); await settled();
+    await row.getByRole("button", { name: "Vazgeç", exact: true }).click();
+    assert.equal(await wanSwitch.getAttribute("aria-checked"), "true");
+    await wanSwitch.click(); failApply = "WAN kapatma sınama hatası.";
+    await save.click(); await settled();
     assert.equal(data.manage.https.mode, "https"); assert.match(await page.locator(".as-message").innerText(), /WAN kapatma sınama hatası/);
-    await disable.click(); await dialog.getByRole("button", { name: "WAN erişimini kapat", exact: true }).click(); await settled();
-    assert.deepEqual(applies.at(-1).https, { domain: "" });
-    await card.getByText("WAN kapalı", { exact: true }).waitFor();
-    assert.equal(await disable.count(), 0); assert.equal(await input.inputValue(), "");
-    assert.equal(await card.locator(".good, time").count(), 0);
-    await page.reload(); await card.getByText("WAN kapalı", { exact: true }).waitFor();
-    assert(!/Eski HTTP erişimi/.test(await card.innerText()));
+    await save.click(); await settled();
+    assert.deepEqual(applies.at(-1).web, { service: "paylasim", tail: true, enabled: false, domain: "next.example.com" });
+    await row.getByText("İnternet kapalı", { exact: true }).waitFor();
+    assert.equal(await input.inputValue(), "next.example.com", "The disabled public name is remembered");
+    assert.equal(await row.locator(".good, time").count(), 0);
+    await page.reload(); await row.getByText("İnternet kapalı", { exact: true }).waitFor();
+    assert(!/Eski HTTP erişimi/.test(await table.innerText()));
     // Original local-domain validation, confirmation and new-host-only approval remain intact.
     await local.fill("bad.example"); assert.equal(await local.evaluate(el => el.checkValidity()), false);
     await local.fill("ev"); await page.getByRole("button", { name: "Güncelle", exact: true }).click();
+    const dialog = page.locator("dialog.as-dialog");
     assert.match(await dialog.innerText(), /Restrict to domain/);
     assert.match(await dialog.innerText(), /5 dakika/);
     await dialog.getByRole("button", { name: "Alan adını güncelle", exact: true }).click();
@@ -217,7 +240,7 @@ function setHttps(domain, status = "ready") {
     assert.deepEqual(Object.keys(applies.at(-1)).sort(), ["domain", "revision"]);
     assert(await page.getByRole("button", { name: "Bağlantı çalışıyor · onayla", exact: true }).isDisabled());
     assert.equal(await page.getByRole("link", { name: "Yeni Konsol'u aç: panel.ev", exact: true }).getAttribute("href"), "http://panel.ev/#/ayarlar");
-    assert(await save.isDisabled());
+    assert(await row.getByRole("switch", { name: "WebDAV internet erişimi", exact: true }).isDisabled());
     await page.getByRole("button", { name: "Geri al", exact: true }).click();
     await page.waitForFunction(() => !document.querySelector(".as-rollback"));
     // Shared-account management has no network fields; switches send independent patches.
@@ -246,7 +269,8 @@ function setHttps(domain, status = "ready") {
     assert(!/WAN üzerinden HTTP,/.test(await page.locator(".dav-boundary").innerText()));
     await page.screenshot({path:path.join(shots,"shares-https-mobile.png"),fullPage:true});
     setHttps(""); await page.reload(); await pair.waitFor();
-    assert.match(await pair.innerText(),/WAN erişimi kapalı/);
+    assert.match(await pair.innerText(),/İnternet paylaşımı kapalı/);
+    assert.equal((await pair.locator("h3").textContent()).trim(),"WAN","A closed WAN card is neither HTTP nor HTTPS");
     assert.equal(await pair.locator(".dav-address").count(),0);
     assert.equal(await pair.getByRole("switch").getAttribute("aria-checked"),"true");
     assert(!(await pair.getByRole("switch").isDisabled()));
@@ -270,7 +294,8 @@ function setHttps(domain, status = "ready") {
     }
     assert.deepEqual(errors, []);
     assert.equal(endpoints.filter(p => p.endsWith("/onayla")).length, 0);
+    assert.equal(applies.filter(a => "https" in a).length, 0, "The browser never writes the legacy https key");
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
-    console.log("PASS: HTTPS validation, isolated revision payload, 75-second busy/duplicate guard, ready/pending/error/expiry, error retry, explicit removal/cancel/failure/off persistence, local-domain regression, HTTPS/HTTP/off share networks and acknowledgements, production CSP, 4 widths/both themes. Screenshots: " + shots);
+    console.log("PASS: table-only public HTTPS editor, validation, isolated revision payload, 75-second busy/repeat guard, ready/pending/error/expiry, error retry, draft switch/discard/failure/off with remembered name, legacy-HTTP port note, local-domain regression, HTTPS/HTTP/off share cards and acknowledgements, production CSP, 4 widths/both themes. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch(err => { console.error(err); process.exit(1); });

@@ -5,7 +5,8 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
   const durations = [["1", "1 gün"], ["7", "7 gün"], ["30", "30 gün"], ["0", "Süresiz"]];
   const permissions = [["ro", "Salt okunur"], ["rw", "Okuma ve yazma"]];
   const wanScheme = () => getShares()?.wan?.scheme ?? (getShares()?.wan?.mode === "off" ? "" : getShares()?.wan?.mode || "http");
-  const label = (scope) => scope === "tailscale" ? "Tailscale" : wanScheme() === "http" ? "HTTP (WAN)" : "HTTPS";
+  // A closed WAN (scheme "") is neither HTTP nor HTTPS; say only which network it is.
+  const label = (scope) => scope === "tailscale" ? "Tailscale" : { http: "HTTP (WAN)", https: "HTTPS" }[wanScheme()] || "WAN";
   const expiry = (c) => c.expires == null ? "Süresiz" : new Date(c.expires * 1000).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
   const stateText = (s) => {
     const connections = scopes.map(scope => s.connections?.[scope]).filter(Boolean);
@@ -73,7 +74,7 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     try { if (c.url) endpoint = new URL(c.url); } catch (_) { /* Bozuk adresi bağlantı bilgisi olarak göstermeyin. */ }
     if (endpoint && !["http:", "https:"].includes(endpoint.protocol)) endpoint = null;
     return h("section", { class: "dav-connection", "data-network": scope, "aria-label": s.name + " " + name },
-      h("div", { class: "dav-connection-head" }, h("h3", null, svg(scope === "tailscale" ? "shield" : wanScheme() === "http" ? "globe" : "lock"), name),
+      h("div", { class: "dav-connection-head" }, h("h3", null, svg(scope === "tailscale" ? "shield" : wanScheme() === "https" ? "lock" : "globe"), name),
         h("button", { type: "button", class: "sw", role: "switch", "aria-checked": c.enabled, disabled: busy || (!c.enabled && !c.available),
           "aria-label": s.name + " " + name + " bağlantısı", title: c.enabled ? "Bağlantıyı kapat" : "Bağlantıyı aç", onclick: () => toggle(s, scope) })),
       h("div", { class: "dav-connection-body" },
@@ -113,7 +114,8 @@ window.createSharesPage = function ({ h, svg, post, toast, fail, copyButton, get
     const draft = {};
     const cards = !existing ? h("div", { class: "dav-card-grid" }, ...scopes.map(scope => {
       const name = label(scope), available = scope === "tailscale" ? getShares()?.tail_enabled !== false : getShares()?.wan?.available === true;
-      const enabled = h("button", { type: "button", class: "sw", role: "switch", id: "dav-" + scope, "aria-label": name + " bağlantısı", "aria-checked": scope === "tailscale" });
+      // Start Tailscale on only while Settings → Caddy publishes it; the server refuses otherwise.
+      const enabled = h("button", { type: "button", class: "sw", role: "switch", id: "dav-" + scope, "aria-label": name + " bağlantısı", "aria-checked": scope === "tailscale" && available });
       const permission = h("select", { id: "dav-" + scope + "-permission", "aria-label": name + " erişim izni" },
         ...permissions.map(([value, text]) => h("option", { value }, text)));
       const days = h("select", { id: "dav-" + scope + "-days", "aria-label": name + " paylaşım süresi" },

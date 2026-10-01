@@ -1795,14 +1795,19 @@
   }
 
   /* ---------- Ayarlar (DD-156) ---------- */
-  let CFG = null, cfgBusy = false;
+  let CFG = null, cfgBusy = null, cfgAgain = false;
   const hhmm = (sec) => new Date(sec * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
   // replaceChildren boş öğeyi "null" metni olarak basar: yalnız gerçek öğeler konur.
   const fill = (id, ...kids) => $(id).replaceChildren(...kids.flat(Infinity).filter(Boolean));
   function loadSettings(fresh) {
-    if (cfgBusy) return;
-    cfgBusy = true;
-    return api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar").then((d) => { CFG = d; renderSettings(); }).catch(fail).finally(() => { cfgBusy = false; });
+    // A forced refresh asked for during a load (e.g. right after a save) runs once
+    // that load ends; callers awaiting it never draw a reply read before their change.
+    if (cfgBusy) { if (fresh === true) cfgAgain = true; return cfgBusy; }
+    cfgBusy = api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar").then((d) => { CFG = d; renderSettings(); }).catch(fail).finally(() => {
+      cfgBusy = null;
+      if (cfgAgain) { cfgAgain = false; return loadSettings(true); }
+    });
+    return cfgBusy;
   }
   const srcTag = (source) => source === "base" ? h("span", { class: "tag base first" }, "Temel")
     : h("span", { class: "tag mod first" }, metaOf(source).name);

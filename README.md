@@ -101,7 +101,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 |---------|----------|------|
 | qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. Its own page shows first-login information on request |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
-| Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); WAN IPv4 (HTTP) only for shares that opt in (**DD-179**) | Separate account per folder, RO/RW, expiry and pause. Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
+| Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); internet only for folders that turn WAN on: HTTPS on a public name set in Settings → Caddy (**DD-190/191**), or legacy consented HTTP when none is set (**DD-179**) | Separate account per folder; Tailscale and WAN each have their own on/off, RO/RW and expiry (**DD-192**). Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
 | Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` (tailnet only, no password, **DD-147**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
 
 qBittorrent's first profile contains only panel integration and headless-startup

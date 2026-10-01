@@ -464,6 +464,34 @@ EOF
     fi
 }
 
+@test "template rendering leaves no temporary files and no global RETURN trap" {
+    # Bash 5 leaked one TMPDIR file per render_template call: atomic_write's RETURN
+    # trap replaced the caller's cleanup trap (DD-193). Bash 3.2 hid the leak.
+    run ! grep -qE '^[[:space:]]*trap .*RETURN' "$V2_ROOT/common.sh"
+    mkdir -p "$TMP/rt-tmp" "$TMP/rt-out"
+    printf 'v=__V__\n' >"$TMP/t"
+    run bash -c '
+        set -Eeuo pipefail
+        source "$1/common.sh"
+        export TMPDIR="$2/rt-tmp"
+        caller() {
+            trap "echo caller-trap >>\"$2/rt-trap\"" RETURN
+            render_template "$2/t" "$2/rt-out/a" 0644 V=1
+            render_template "$2/t" "$2/rt-out/b" 0644 V=2
+            printf "same\n" | atomic_write "$2/rt-out/c" 0600
+        }
+        caller "$@"
+        trap - RETURN
+        render_template "$2/t" "$2/rt-out/d" 0644 V=4
+        [ -z "$(trap -p RETURN)" ]
+    ' _ "$V2_ROOT" "$TMP"
+    [ "$status" -eq 0 ]
+    [ -z "$(ls -A "$TMP/rt-tmp")" ]
+    [ "$(cat "$TMP/rt-out/b")" = "v=2" ]
+    [ "$(cat "$TMP/rt-trap")" = "caller-trap" ]
+    [ -z "$(find "$TMP/rt-out" -name '.installer-*')" ]
+}
+
 @test "acquire_lock rejects relative path" {
     run acquire_lock "rel/lock" 1
     [ "$status" -ne 0 ]

@@ -291,13 +291,14 @@ class Files:
         if not parts and name in (self.trash, self.share, self.archive):
             raise PanelError(400, "bu ad sistem çalışma alanı için ayrılmış")
 
-    def check_source_names(self, parts, names):
+    def check_source_names(self, parts, names, destination=False):
         # Toplu işlem başlamadan hepsini denetle; reddedilen öge kısmi taşıma yaratmasın.
         for name in names:
             if not valid_name(name):
                 raise PanelError(400, "geçersiz ad")
             if not parts and name in (self.trash, self.share, self.archive):
-                raise PanelError(403, "sistem çalışma alanı taşınamaz veya yeniden adlandırılamaz")
+                raise PanelError(403, "kök klasöre sistem çalışma alanı adıyla taşınamaz" if destination
+                                 else "sistem çalışma alanı taşınamaz veya yeniden adlandırılamaz")
 
     def open_dir(self, parts):
         fd = os.open(self.root, O_DIR)
@@ -460,7 +461,7 @@ class Files:
 
     def move(self, parts, names, dest):
         self.check_source_names(parts, names)
-        self.check_source_names(dest, names)
+        self.check_source_names(dest, names, destination=True)
         if dest == parts:
             raise PanelError(400, "seçilenler zaten bu klasörde")
         for name in names:

@@ -465,11 +465,16 @@ class NetworkTests(unittest.TestCase):
                 with count_lock:
                     active -= 1
 
+        # Distinct spellings of the valid credentials are separate single-flight keys
+        # (DD-193), so each request needs its own hash slot.
+        token = base64.b64encode((self.wan_item["username"] + ":" + PASSWORD).encode()).decode()
+        spellings = ["Basic", "basic", "BASIC", "bAsic", "baSic"]
         with ThreadPoolExecutor(max_workers=4) as pool, patch.object(dav, "password_ok", side_effect=verify):
-            futures = [pool.submit(self.request, ip="198.51.100.%d" % i) for i in range(1, 5)]
+            futures = [pool.submit(self.request, ip="198.51.100.%d" % i, auth=spellings[i - 1] + " " + token)
+                       for i in range(1, 5)]
             try:
                 self.assertTrue(reached.wait(3))
-                self.assertEqual(self.request(ip="198.51.100.5")[0], 503)
+                self.assertEqual(self.request(ip="198.51.100.5", auth=spellings[4] + " " + token)[0], 503)
                 self.assertEqual(self.request(self.tail, self.tail_item)[0], 200)
                 self.assertEqual(peak, 4)
             finally:

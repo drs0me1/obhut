@@ -224,6 +224,30 @@ class ShareConnectionTests(unittest.TestCase):
         self.assertEqual((created["created"], created["changed"]), (NOW, NOW))
         self.assertTrue(shares.password_ok(created, PASSWORD))
 
+    def test_closed_tailscale_publication_blocks_new_and_reenabled_tail_connections(self):
+        # DD-193: the folder switch cannot be turned on while Settings → Caddy keeps
+        # WebDAV off on Tailscale; an existing policy stays as saved and can be closed.
+        web = {"paylasim": {"tail": False, "enabled": False, "domain": ""}}
+        Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"web": web}))
+        self.manager.change("save", {"path": "beta", "username": "new-reader", "password": PASSWORD})
+        created = next(i for i in self.disk()["items"] if i["path"] == "beta")
+        self.assertEqual(created["connections"]["tailscale"], connection(False))
+        self.assertTrue(self.disk()["items"][0]["connections"]["tailscale"]["enabled"])
+        self.restart.reset_mock()
+        self.publish.reset_mock()
+        with self.assertRaises(shares.ShareError) as error:
+            self.manager.change("save", {"id": created["id"], "connections": {"tailscale": {"enabled": True}}})
+        self.assertIn("Ayarlar → Caddy", str(error.exception))
+        self.restart.assert_not_called()
+        self.save(connections={"tailscale": {"enabled": False}})
+        self.restart.reset_mock()
+        self.publish.reset_mock()
+        self.assert_rejected({"connections": {"tailscale": {"enabled": True}}})
+        web["paylasim"]["tail"] = True
+        Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"web": web}))
+        self.save(connections={"tailscale": {"enabled": True}})
+        self.assertTrue(self.disk()["items"][0]["connections"]["tailscale"]["enabled"])
+
     def test_partial_patch_preserves_other_scope_credentials_and_absolute_expiry(self):
         self.item["connections"] = {"tailscale": connection(True, "rw", NOW + 111),
                                     "wan": connection(True, "ro", NOW + 222)}

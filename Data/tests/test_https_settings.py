@@ -161,6 +161,14 @@ class HttpsSettingsTests(unittest.TestCase):
         self.s.env["SHARE_HTTPS_PORT"] = "8443"
         self.assertIn(":8443/s/", self.s.public()["items"][0]["urls"]["wan"])
 
+    def test_status_names_the_https_port_even_in_legacy_http_mode(self):
+        # DD-193: legacy HTTP reports SHARE_PORT as "port"; the table needs the HTTPS port.
+        env = dict(self.env, SHARE_HTTPS_PORT="8443")
+        self.assertEqual((tls.status(env)["port"], tls.status(env)["https_port"]), (61010, 8443))
+        self.m.apply(self.payload())
+        with patch.object(tls, "certificate", return_value=1900000000):
+            self.assertEqual((tls.status(env)["port"], tls.status(env)["https_port"]), (8443, 8443))
+
     def test_crash_recovery_restores_only_uncommitted_https(self):
         def crash(*_):
             raise KeyboardInterrupt()

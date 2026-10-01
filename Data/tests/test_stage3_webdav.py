@@ -56,13 +56,19 @@ class Stage3WebDAVTests(unittest.TestCase):
                         with lock:
                             active -= 1
 
+                # Distinct spellings of the same valid credentials are separate keys, so
+                # single flight (DD-193) cannot merge them: each needs its own hash slot.
+                token = base64.b64encode((item["username"] + ":" + fixture.PASSWORD).encode()).decode()
+                spellings = ["Basic", "basic", "BASIC", "bAsic", "baSic", "basIc"]
                 with ThreadPoolExecutor(max_workers=cap) as pool, patch.object(dav, "password_ok", verify):
-                    futures = [pool.submit(self.request, server, item, ip="198.51.100.%d" % n)
+                    futures = [pool.submit(self.request, server, item, ip="198.51.100.%d" % n,
+                                           auth=spellings[n - 10] + " " + token)
                                for n in range(10, 10 + cap)]
                     try:
                         self.assertTrue(entered.wait(2))
                         start = time.monotonic()
-                        code, _, headers = self.request(server, item, ip="198.51.100.200")
+                        code, _, headers = self.request(server, item, ip="198.51.100.200",
+                                                        auth=spellings[-1] + " " + token)
                         self.assertEqual((code, headers.get("Retry-After")), (503, "1"))
                         self.assertLess(time.monotonic() - start, 1)
                         self.assertEqual(self.request(other, other_item)[0], 200)
@@ -112,11 +118,12 @@ class Stage3WebDAVTests(unittest.TestCase):
                         for _ in range(held):
                             slots.release()
 
-    def test_waiter_uses_success_published_by_a_real_hash(self):
+    def test_concurrent_identical_logins_share_one_real_hash(self):
+        # DD-193 single flight: the follower waits on the leader, not on a hash slot.
         self.tail.limiter.auth_slots = threading.BoundedSemaphore(1)
-        entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+        entered, release, joined = threading.Event(), threading.Event(), threading.Event()
         original_verify = dav.password_ok
-        original_acquire = self.tail.limiter.auth_slots.acquire
+        original_join = self.tail.join_flight
         calls = []
 
         def verify(item, password):
@@ -125,23 +132,86 @@ class Stage3WebDAVTests(unittest.TestCase):
             self.assertTrue(release.wait(2))
             return original_verify(item, password)
 
-        def acquire(*args, **kwargs):
-            if entered.is_set():
-                waiting.set()
-            return original_acquire(*args, **kwargs)
+        def join(key):
+            leader, event = original_join(key)
+            if not leader:
+                joined.set()
+            return leader, event
 
         with ThreadPoolExecutor(max_workers=2) as pool, patch.object(dav, "password_ok", verify), \
-                patch.object(self.tail.limiter.auth_slots, "acquire", acquire):
+                patch.object(self.tail, "join_flight", join):
             first = pool.submit(self.request, self.tail, self.tail_item)
             try:
                 self.assertTrue(entered.wait(2))
                 second = pool.submit(self.request, self.tail, self.tail_item)
-                self.assertTrue(waiting.wait(2))
+                self.assertTrue(joined.wait(2))
             finally:
                 release.set()
             self.assertEqual(first.result(timeout=2)[0], 200)
             self.assertEqual(second.result(timeout=2)[0], 200)
         self.assertEqual(len(calls), 1)
+        self.assertEqual(self.tail.auth_flights, {})
+
+    def test_identical_login_burst_hashes_once_and_never_answers_503(self):
+        # An Infuse-like burst with one cold login: one slot, a slow hash, eight requests.
+        for server, item in ((self.wan, self.wan_item), (self.tail, self.tail_item)):
+            with self.subTest(scope=server.scope):
+                server.auth_cache.clear()
+                server.limiter.auth_slots = threading.BoundedSemaphore(1)
+                release, calls = threading.Event(), []
+                original = dav.password_ok
+
+                def verify(record, password):
+                    calls.append(record)
+                    self.assertTrue(release.wait(3))
+                    return original(record, password)
+
+                with ThreadPoolExecutor(max_workers=8) as pool, patch.object(dav, "password_ok", verify):
+                    # WAN admits four requests per address; spread the burst over two.
+                    futures = [pool.submit(self.request, server, item, ip="198.51.100.%d" % (20 + n % 2))
+                               for n in range(8)]
+                    time.sleep(.5)
+                    release.set()
+                    codes = [f.result(timeout=4)[0] for f in futures]
+                self.assertEqual(codes, [200] * 8)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(server.auth_flights, {})
+
+    def test_follower_checks_itself_after_a_failed_or_slow_leader(self):
+        self.tail.limiter.auth_slots = threading.BoundedSemaphore(1)
+        wrong = "Basic " + base64.b64encode((self.tail_item["username"] + ":wrong-password").encode()).decode()
+        for slow in (False, True):
+            with self.subTest(slow=slow):
+                entered, release, calls = threading.Event(), threading.Event(), []
+                original = dav.password_ok
+
+                def verify(record, password):
+                    calls.append(record)
+                    entered.set()
+                    self.assertTrue(release.wait(3))
+                    return original(record, password)
+
+                auth = wrong if not slow else True
+                with ThreadPoolExecutor(max_workers=2) as pool, patch.object(dav, "password_ok", verify), \
+                        patch.object(dav, "AUTH_FLIGHT_SECONDS", .1 if slow else 2):
+                    first = pool.submit(self.request, self.tail, self.tail_item, ip="198.51.100.31", auth=auth)
+                    self.assertTrue(entered.wait(2))
+                    second = pool.submit(self.request, self.tail, self.tail_item, ip="198.51.100.32", auth=auth)
+                    if slow:
+                        # The leader still holds the only slot: the follower gives up waiting
+                        # on it and gets the normal bounded-capacity answer.
+                        code, _, headers = second.result(timeout=2)
+                        self.assertEqual((code, headers.get("Retry-After")), (503, "1"))
+                        release.set()
+                        self.assertEqual(first.result(timeout=2)[0], 200)
+                    else:
+                        time.sleep(.2)
+                        release.set()
+                        self.assertEqual([first.result(timeout=3)[0], second.result(timeout=3)[0]], [401, 401])
+                        self.assertEqual(len(calls), 2)
+                self.assertEqual(self.tail.auth_flights, {})
+                self.tail.auth_cache.clear()
+                self.tail.limiter.entries.clear()
 
     def test_hash_error_releases_slots_without_creating_bad_credential_history(self):
         for server, item in ((self.wan, self.wan_item), (self.tail, self.tail_item)):

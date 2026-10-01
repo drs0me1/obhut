@@ -4,6 +4,35 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Cross-review fixes, v2-165 (DD-193):**
+- Claude re-read v2-159..v2-164 (another assistant's work, commit b4fdc2f) with
+  six parallel readers and reported open items; user: "tümünü düzeltmeye başla".
+- Fixed: fail-fast `web` publication saves (listener check before the
+  certificate wait); independent all-or-nothing firewall rescue guards; Tailscale
+  publication gate for new/re-enabled folder connections (backend + create form);
+  single-flight WebDAV logins; removed the unreachable HTTPS card (table is the
+  only editor, `https_port` in status); queued forced settings refresh; WAN-off
+  card label; scoped Caddy proxy logging (validated with nrm's Caddy 2.11.4);
+  template-derived 403 stubs; qBittorrent row causes; deep JSON in two panel
+  sites; health WAN reason; Files destination message; `.gitignore`.
+- Found while inspecting nrm's /tmp (137 root-only template copies): Bash 5
+  RETURN-trap clobbering in common.sh leaked one /tmp file per render_template
+  call (reproduced old=3 left/new=0 on nrm's bash 5.2; Mac bash 3.2 hides it).
+  Fixed without traps; Bats regression added.
+- Test tooling: publications-live.py without operator literals and with public
+  qBittorrent support; backend-hardening-live.py in HTTPS mode;
+  share-networks-live.py exit 3 on non-HTTP hosts; settings-https-ui.cjs
+  rewritten for the table. Docs: DD-193, amendments to DD-187/188/190, contract,
+  architecture, folder-shares, README, test runbook, Cursor rules.
+- Verified locally and on nrm (Linux Bats via a copied Homebrew bats-core in
+  /tmp/v165/test-tools, removed afterwards); results in CHANGELOG v2-165. nrm
+  runs v2-165; operator choices unchanged: WebDAV Tailscale + `dav.example.net`,
+  qBittorrent Tailscale only (its public row was already off, name remembered).
+  Deploy used a recreated scratch launcher folder (the old one was gone).
+- Not committed yet.
+
+## Previous Task
+
 **2026-10-01 — Independent WebDAV connection cards, v2-164 (DD-192):**
 - User approved model 3 dual cards and independent Tailscale/HTTPS on/off,
   RO/RW and expiry, with explicit parallel-agent approval. The shared folder,
@@ -43,7 +72,8 @@ Cross-session continuity for this repository.
   separate isolated test-code/scratch-launcher trees remain under `/tmp` because
   the tool policy rejected recursive cleanup. They contain no operator inputs.
 - No native Infuse UI, fresh OS, reboot or future certificate renewal tested.
-  No commit requested, no Desktop copy; earlier uncommitted v159–163 preserved.
+  No Desktop copy. v2-159..v2-164 were committed together as b4fdc2f on branch
+  quantum (2026-10-01 00:47).
 
 ## Previous Task
 

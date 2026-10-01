@@ -190,7 +190,10 @@ the ones agreed on 2026-08-05:
   `interface-name` + `bind-dynamic`, resolving the installed service names to the
   current Tailscale IPv4 (**R14**).
 - Caddy listening on the Tailscale IPv4, port 80 (and `SHARE_PORT` for folder
-  WebDAV), HTTP only, reverse-proxying to loopback upstreams (**R15**, **R16**).
+  WebDAV), plain HTTP inside the tailnet (Tailscale encrypts the transport),
+  reverse-proxying to loopback upstreams (**R15**, **R16**). Public HTTPS is the
+  separate WAN listener below. Client aborts are not logged as proxy warnings;
+  proxy errors and failed upstream dials still are (**DD-193**).
 - The real Konsol page and backend/gate checks verify the HTTP edge; there is
   no separate health endpoint or DNS name (**DD-157**).
 - Optional WAN WebDAV uses HTTPS on `WAN_IPV4:SHARE_HTTPS_PORT` when a public
@@ -511,7 +514,8 @@ Contract in §5–§7 and `folder-shares.md`.
     runs an independent
     worker with JSON on stdin, never a password on argv/in logs. DNS-only,
     qBittorrent account-only (username/password, no folder or other section)
-    and standalone HTTPS requests return `{pending: null, committed: true}`
+    and standalone HTTPS or Caddy publication-row (`web`) requests return
+    `{pending: null, committed: true}`
     after a durable commit (HTTPS enablement first verifies the certificate);
     only the server determines eligibility from the supplied change sections.
     Other requests retain review and a 60 s confirmation window (300 s for a

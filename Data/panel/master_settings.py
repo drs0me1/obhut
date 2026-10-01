@@ -671,10 +671,9 @@ class Manager:
         save_json(self.pending_path, p)
         try:
             if change["web"]:
-                self.https_apply()
-                if data["web"]["enabled"]:
-                    import master_https
-                    master_https.wait_certificate(self.e, candidate["web"][data["web"]["service"]]["domain"])
+                row = data["web"]
+                self.https_apply(candidate["web"][row["service"]]["domain"] if row["enabled"] else None,
+                                 row["service"])
             if change["https"]:
                 self.https_apply(candidate["https"]["domain"])
             if change["domain"]:
@@ -699,14 +698,22 @@ class Manager:
             raise
         return {"pending": self.status()["pending"]}
 
-    def https_apply(self, name=None):
+    def https_apply(self, name=None, service="paylasim"):
         import master_https
         import master_shares
         try:
             shares = master_shares.Manager(self.state)
             shares.publish()
             if name:
-                require(shares.wan_active(), "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
+                # Without the listener the certificate wait can only time out after a
+                # minute with a DNS/CAA hint; report the actual cause instead (DD-193).
+                if service == "torrent":
+                    import master_publications
+                    require(master_publications.torrent_active(self.e),
+                            "qBittorrent internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin.")
+                elif not shares.wan_active():
+                    raise SettingsError(shares.wan_info()["reason"] or
+                                        "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
                 master_https.wait_certificate(self.e, name)
         except master_shares.ShareError as err:
             raise SettingsError(str(err)) from err

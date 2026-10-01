@@ -160,6 +160,8 @@ class HealthTests(unittest.TestCase):
             data, checks = self.compute(**kwargs)
             self.assertNotEqual(data["status"], "ok")
             self.assertEqual(checks[key]["status"], "warn")
+            if key == "wan":
+                self.assertIn("bad registry", checks[key]["detail"])
         self.outputs["master-firewall"] = (1, "degraded policy; invalid registry")
         data, checks = self.compute()
         self.assertEqual((data["status"], checks["firewall"]["status"]), ("bad", "bad"))

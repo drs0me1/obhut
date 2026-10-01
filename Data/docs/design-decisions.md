@@ -13,6 +13,70 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-193: Cross-review follow-ups for v2-159..v2-164 (v2-165)
+
+- **Request:** after reading v2-159..v2-164 (implemented with another assistant),
+  the user asked to fix every open item of that review.
+- **Publication saves fail fast:** a `web` row that enables internet access now
+  checks the real listener before waiting for a certificate: WebDAV through
+  `wan_active()` (with `wan_info()`'s reason), qBittorrent through
+  `torrent_active()`. An unavailable WAN used to cost the full 60 s certificate
+  wait and end with a misleading DNS/CAA hint.
+- **Recovery chains:** `startup_input_guard` and `startup_forward_guard` are
+  separate and all-or-nothing. An incomplete INPUT guard is never attached, so a
+  failed accept rule cannot lock out SSH; the FORWARD guard no longer depends on
+  it. A failed ICMPv6 rule used `return` while every other step skipped the
+  family. The command still fails and a later good apply purges leftovers.
+- **Tailscale gate in shares:** a new folder starts with Tailscale on only while
+  Settings → Caddy publishes WebDAV on Tailscale, and an off→on folder switch is
+  refused while that gate is closed — the same rule as WAN and the UI. A policy
+  that is already on stays on (the gate still blocks access) and can be turned off.
+- **Single-flight logins:** requests carrying the byte-identical Authorization
+  value for the same share and listener wait up to 2 s for the verification in
+  progress and reuse its success; a failed or slow leader makes each follower
+  check itself under the normal bounded path. A cold Infuse burst therefore costs
+  one scrypt check instead of competing for the WAN 4 / Tailscale 2 slots. Slot
+  counts, the 200 ms slot wait, 503/429 replies and all budgets are unchanged;
+  different credentials (or spellings) still need their own slot, and decoy
+  hashes still occupy slots by design (DD-180).
+- **One HTTPS editor:** the standalone public-HTTPS card could not appear (the
+  panel always returns the DD-191 table) and its browser test exercised a path no
+  host showed; it is removed with its CSS. The table edits public WebDAV HTTPS;
+  turning its internet switch off remembers the name. The stored `https` key and
+  its API writer stay (data model and `https-live.py --configure`).
+  `master_https.status()` adds `https_port`, so the table names the HTTPS port in
+  legacy HTTP mode too, where `port` is `SHARE_PORT`.
+- **Console details:** a forced settings refresh requested while another load is
+  in flight now runs after it, so a save never redraws pre-commit data. A closed
+  WAN share card is labelled "WAN" with a neutral icon instead of HTTPS/lock; the
+  create form starts Tailscale off and locked while its publication is closed.
+- **Caddy journal:** the default logger excludes `http.handlers.reverse_proxy`; a
+  named logger keeps that namespace at ERROR and above. Media players closing a
+  probe or stream no longer log a WARN per request; dial errors and 5xx answers
+  are still logged by `http.log.error`. Trade-off: an upstream that truncates a
+  response is no longer reported by Caddy; the backend's journal and health stay.
+- **Installer temp-file leak (found while cleaning the test host):**
+  `render_template` removed its `/tmp` copy through a `RETURN` trap, but Bash
+  traps are global and `atomic_write` set its own `RETURN` trap, replacing it.
+  On Bash 5 (Debian/Ubuntu) every rendered template left a root-only 0600 file
+  in `/tmp` until reboot; Bash 3.2 on the Mac hid it. Neither function uses a
+  trap any more: `render_template` streams into `atomic_write`, which cleans up
+  explicitly and returns non-zero on a write failure. A Bats test checks Bash 5
+  leaves no file and that a caller's own `RETURN` trap still runs.
+- **Smaller fixes:** 403 stubs take the module template's address line instead
+  of hard-coded names (single source); an unknown publication service gets its
+  own message; stopped, uninstalled or unsafe qBittorrent rows name the cause;
+  the two remaining panel JSON parse sites catch deep nesting; the health WAN
+  card shows the share manager's reason; Files names the reserved-destination case.
+- **Test tooling:** `publications-live.py` reads the operator's names from the
+  host (missing-DNS probe under reserved `example.net`) and accepts an already
+  public qBittorrent; `backend-hardening-live.py` uses the host's WAN mode;
+  `share-networks-live.py` exits 3 before any change unless legacy HTTP is
+  active; `settings-https-ui.cjs` drives the table.
+- **Unchanged on purpose:** TCP/HTTP budgets (DD-188), restart on share save
+  (DD-158/192), the refresh-page refusal of `durum`/`pause` (DD-192) and the
+  schema-3 migration.
+
 ### DD-192: Per-connection WebDAV policies and dual-card Shares (v2-164)
 
 - **Decision:** retain one folder, stable share ID and account/password while
@@ -104,6 +168,9 @@ with its status and the file that holds it.
 
 ### DD-190: Optional public WebDAV HTTPS without widening private administration (v2-161)
 
+- **Amended by DD-193:** the separate Settings card is gone; the DD-191 table is
+  the only editor. The stored `https` key and its API writer remain.
+
 - **Decision:** Settings → Caddy accepts a separate full public domain for
   folder WebDAV. `master_https.py` interprets the saved mode, checks DNS and
   certificates and generates the WAN site; `master_settings.py` owns the
@@ -153,9 +220,9 @@ with its status and the file that holds it.
 - **Coverage and limits:** `test_https_settings.py`, `test_https_panel.py` and
   `settings-https-ui.cjs` exercise transactions, rollback/recovery, mode-specific
   URLs/ports, certificate status and the private UI/API boundary. Opt-in
-  `https-live.py` uses three temporary shares and pause, removes its own fixtures
-  and checks the original registry digest; `--configure` deliberately leaves
-  the real public domain saved. Run instructions are in `tests/README.md`;
+  `https-live.py` uses three temporary shares and turns their connections off,
+  removes its own fixtures and checks the original registry digest;
+  `--configure` deliberately leaves the real public domain saved. Run instructions are in `tests/README.md`;
   execution results belong in `CHANGELOG.md`/`SESSION.md`, not inferred here.
 
 ### DD-189: Audit stage 4 distinguishes unknown health and IPv4-only names (v2-160)
@@ -177,6 +244,9 @@ with its status and the file that holds it.
   of an administrator's custom bootloader choice. Reboot remains manual.
 
 ### DD-188: Audit stage 3 bounds authentication and shortens write locks (v2-160)
+
+- **Amended by DD-193:** identical concurrent credentials first share one
+  verification (single flight); only then do requests compete for a slot.
 
 - WAN and Tailscale have separate four-slot/two-slot scrypt budgets. A request
   waits up to 200 ms and rechecks the successful-login cache before hashing.
@@ -202,6 +272,9 @@ with its status and the file that holds it.
   boundary remain explicit; this package does not add TLS or a hot-reload engine.
 
 ### DD-187: Audit stage 2 keeps boot failure closed and pins privileged paths (v2-160)
+
+- **Amended by DD-193:** the INPUT and FORWARD recovery guards are independent
+  and each is all-or-nothing; an incomplete INPUT guard is never attached.
 
 - **Registry failure:** validation remains strict. An apply with unreadable
   settings/share/WireGuard data preserves an existing owned default-deny policy

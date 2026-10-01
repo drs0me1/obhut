@@ -229,18 +229,22 @@ class Manager:
         except FileNotFoundError:
             return ""
 
-    def public(self):
+    def tail_available(self):
+        """DD-191 global gate: Settings → Caddy can close WebDAV on Tailscale."""
         from master_publications import config as publication_config
         from master_settings import SettingsError
+        try:
+            return bool(publication_config(self.env)["paylasim"]["tail"])
+        except (SettingsError, ValueError, KeyError, TypeError) as err:
+            raise ShareError("Caddy yayın kaydı okunamadı.") from err
+
+    def public(self):
         data = self.read()
         result = []
         base = "http://%s:%s" % (self.env["TAILSCALE_IPV4"], self.env["SHARE_PORT"])
         wan = self.wan_info()
         state = self.module_state()
-        try:
-            tail_enabled = publication_config(self.env)["paylasim"]["tail"]
-        except (SettingsError, ValueError, KeyError, TypeError) as err:
-            raise ShareError("Caddy yayın kaydı okunamadı.") from err
+        tail_enabled = self.tail_available()
         for item in data["items"]:
             row = {k: item[k] for k in ("id", "path", "name", "username", "created", "changed")}
             row.update(type="dir", available=False, connections={}, urls={})
@@ -405,8 +409,10 @@ class Manager:
                 if (password or item is None) and len(password) < 8:
                     raise ShareError("Yeni parola en az 8 karakter olmalı.")
                 now = int(time.time())
+                # DD-193: a new folder starts on Tailscale only while that transport is published.
                 connections = item["connections"] if item else {
-                    scope: {"enabled": scope == "tailscale", "permission": "ro", "expires": now + 7 * 86400}
+                    scope: {"enabled": scope == "tailscale" and self.tail_available(), "permission": "ro",
+                            "expires": now + 7 * 86400}
                     for scope in SCOPES}
                 patches = request.get("connections", {})
                 if (not isinstance(patches, dict) or set(patches) - set(SCOPES)
@@ -429,6 +435,8 @@ class Manager:
                         if type(days) is not int or days not in (0, 1, 7, 30):
                             raise ShareError("Süre 1, 7, 30 gün veya süresiz olabilir.")
                         expires = now + days * 86400 if days else None
+                    if scope == "tailscale" and enabled and not policy["enabled"] and not self.tail_available():
+                        raise ShareError("Ayarlar → Caddy bölümünde WebDAV için Tailscale erişimi kapalı; önce orada açın.")
                     if scope == "wan" and enabled and not policy["enabled"]:
                         info = self.wan_info()
                         if not info["available"]:

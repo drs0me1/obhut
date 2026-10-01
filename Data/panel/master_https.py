@@ -110,7 +110,9 @@ def wait_certificate(env, name, seconds=60):
 
 def status(env):
     cfg = config(env)
-    result = dict(cfg, wan_ip=env.get("WAN_IPV4", ""), expires=None)
+    # In legacy HTTP mode "port" is SHARE_PORT; the UI still names the HTTPS port to open.
+    result = dict(cfg, wan_ip=env.get("WAN_IPV4", ""), expires=None,
+                  https_port=int(env.get("SHARE_HTTPS_PORT", 443)))
     if cfg["mode"] == "http":
         return dict(result, status="http", message="HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.")
     if cfg["mode"] == "off":

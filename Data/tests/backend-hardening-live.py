@@ -3,6 +3,7 @@
 Creates/removes one RO WAN+Tailscale share and two 256 MiB test files. Existing
 shares remain configured, but WebDAV restarts during fixture setup/cleanup.
 Run from an external tailnet client, never against an unauthorized host.
+WAN uses the host's mode: legacy HTTP on SHARE_PORT or HTTPS on its public name.
 """
 import argparse
 import base64
@@ -38,10 +39,14 @@ def remote(code, data=None):
     return json.loads(p.stdout)
 
 
-meta = remote('''print(json.dumps({
+meta = remote('''w = m.wan_info()
+print(json.dumps({
  'tail': e['TAILSCALE_IPV4'], 'wan': e['WAN_IPV4'], 'port': int(e['SHARE_PORT']),
+ 'wan_mode': w['mode'], 'wan_domain': w['domain'], 'wan_port': int(w['port'] or 0),
+ 'wan_available': w['available'],
  'panel_port': int(e['CADDY_HTTP_PORT']), 'host': 'panel.'+e['LOCAL_DOMAIN'],
  'before': hashlib.sha256(pathlib.Path(m.path).read_bytes()).hexdigest()}))''')
+assert meta['wan_available'] and meta['wan_mode'] in ('http', 'https'), 'Requires an available WAN share transport'
 
 
 def panel_get(path):
@@ -105,7 +110,12 @@ print(json.dumps(out))
 
 
 def dav(network, method='GET', leaf='', headers=None, expected=200):
-    c = http.client.HTTPConnection(meta[network], meta['port'], timeout=20)
+    if network == 'tail':
+        c = http.client.HTTPConnection(meta['tail'], meta['port'], timeout=20)
+    elif meta['wan_mode'] == 'https':
+        c = http.client.HTTPSConnection(meta['wan_domain'], meta['wan_port'], timeout=20)
+    else:
+        c = http.client.HTTPConnection(meta['wan'], meta['wan_port'], timeout=20)
     start = time.monotonic()
     auth = base64.b64encode((name + ':' + password).encode()).decode()
     h = {'Authorization': 'Basic ' + auth, 'Connection': 'close'}

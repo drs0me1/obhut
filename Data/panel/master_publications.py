@@ -100,8 +100,8 @@ def validate(env, saved, request):
     require(isinstance(request, dict) and set(request) == {"service", "tail", "enabled", "domain"},
             "Caddy yayın alanları geçersiz.")
     service = request["service"]
-    require(isinstance(service, str) and service in IDS,
-            "Panel yalnız Tailscale üzerinden kullanılabilir; bu yayın düzenlenemez.")
+    require(service != "panel", "Panel yalnız Tailscale üzerinden kullanılabilir; bu yayın düzenlenemez.")
+    require(isinstance(service, str) and service in IDS, "Bilinmeyen Caddy yayını.")
     require(type(request["tail"]) is bool and type(request["enabled"]) is bool,
             "Ağ seçimleri açık veya kapalı olmalı.")
     item = {k: request[k] for k in ("tail", "enabled", "domain")}
@@ -124,15 +124,21 @@ def validate(env, saved, request):
     return saved
 
 
+def site_addresses(source):
+    """Address line of a module's single site block (DD-193: the template is the source)."""
+    for line in source.splitlines():
+        if line.startswith(("http://", "https://")) and line.rstrip().endswith("{"):
+            return line.rstrip()[:-1].strip()
+    raise SettingsError("Uygulamanın Caddy site adresi okunamadı.")
+
+
 def private_site(env, service, source):
     if config(env)[service]["tail"]:
         return source
-    # A disabled named route explicitly refuses requests, including DAV by IP.
-    host = ("torrent" if service == "torrent" else "paylas") + "." + env["LOCAL_DOMAIN"]
-    addresses = "http://" + host
-    if service == "paylasim":
-        addresses += ", http://{$TAILSCALE_IPV4}:" + env["SHARE_PORT"]
-    return "# Caddy Tailscale publication disabled; application remains running.\n%s {\n\trespond 403\n}\n" % addresses
+    # A disabled route refuses requests on exactly the template's addresses,
+    # including WebDAV by Tailscale IP:port for clients without DNS.
+    return ("# Caddy Tailscale publication disabled; application remains running.\n%s {\n\trespond 403\n}\n"
+            % site_addresses(source))
 
 
 def extra_sites(env):
@@ -178,10 +184,21 @@ def status(env):
             row.update({k: info[k] for k in ("status", "message", "expires", "mode")})
         elif row["enabled"]:
             row.update(status="error", message="qBittorrent yayını veya sertifikası doğrulanamadı.")
-            if torrent_active(env, rows):
+            if not row["running"]:
+                # Name the actual cause; a stopped app is not a certificate problem.
+                row["message"] = ("qBittorrent kurulu değil; internet yayını kapalı." if not row["installed"] else
+                                  "qBittorrent durdurulmuş; başlatıldığında internet yayını yeniden açılır.")
+            elif torrent_active(env, rows):
                 try:
                     row.update(expires=tls.certificate(env, row["domain"]), status="ready", message="Sertifika doğrulandı.")
                 except (OSError, ValueError, KeyError, SettingsError):
+                    pass
+            else:
+                try:
+                    torrent_security(env, row["domain"])
+                except SettingsError as err:
+                    row["message"] = str(err)
+                except (OSError, ValueError, KeyError):
                     pass
         out.append(row)
     return out

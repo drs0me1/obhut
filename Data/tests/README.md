@@ -10,6 +10,9 @@ bash -n install.sh common.sh scripts/*
 shellcheck -x -s bash install.sh common.sh scripts/*
 ```
 
+`bats tests` runs every Bats file (`common.bats` and `share-networks.bats`);
+`bats tests/common.bats`, used in some sections below, runs only the first.
+
 The Bats fixture resolves its temporary directory with `pwd -P`: macOS `/var`
 is a symlink and production no-follow readers correctly reject it. No shell
 wrapper or relaxed production traversal is needed.
@@ -113,12 +116,15 @@ Panel, validation, pending/failure/retry, reload and five widths in both themes.
 Screenshots go to an OS temporary directory, not the Desktop.
 
 `python3 Data/tests/publications-live.py --host nrm` is an opt-in **mutating**
-test for a provisioned disposable host with verified DAV HTTPS and private
-qBittorrent already installed. It rejects Panel WAN/duplicate/missing DNS
-through the real API, toggles each private route across module reapply, and
-disables/restores DAV HTTPS. It restores effective network choices and checks
-the folder-account digest. It may interrupt transfers, never enables a new
-public hostname and never changes application credentials.
+test for a provisioned disposable host with verified DAV HTTPS and qBittorrent
+installed (private or already public). It reads the public names from the host
+and probes a missing name under the reserved `example.net`. It rejects Panel
+WAN/duplicate/missing DNS through the real API, toggles each private route across
+module reapply (every template address must answer 403, DD-193), and
+disables/restores DAV HTTPS; a public qBittorrent must keep serving meanwhile.
+It restores effective network choices and checks the folder-account digest. It
+may interrupt transfers, never enables a new public hostname and never changes
+application credentials.
 
 On a Linux host with Caddy, qBittorrent, OpenSSL, iproute2 and setpriv:
 
@@ -160,10 +166,13 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/settings-https-ui.
 ```
 
 This runs the production Settings/Shares UI with intercepted APIs and the actual
-Caddy CSP: isolated HTTPS/local-domain drafts, validation, long pending saves,
-duplicate blocking, ready/pending/error/expiry displays, failure/retry, explicit
-disable/cancel, persisted off, scheme-specific share links and HTTP consent.
-It checks four widths in both themes. It does not modify a server.
+Caddy CSP. Since DD-193 public WebDAV HTTPS is edited only in the “Adresler ve
+erişim” table, so the suite drives that row: isolated publication/local-domain
+drafts, validation, long pending saves, repeated-click blocking,
+ready/pending/error/expiry displays, failure/retry, draft switch/discard,
+persisted off with the remembered name, the legacy-HTTP port note,
+scheme-specific share links (a closed WAN card is labelled “WAN”) and HTTP
+consent. It checks four widths in both themes. It does not modify a server.
 
 External acceptance is opt-in, from an authorized Tailscale client to a disposable
 host. Supply a real public domain whose DNS resolves only to that host's assigned
@@ -183,9 +192,10 @@ Without that flag, the script requires the matching saved domain to be ready.
 It verifies public TLS trust, denies `/` and administrative routes, checks old
 WAN HTTP closed, and creates three temporary shares: RO and RW on both networks,
 plus Tailscale-only. It exercises HTTPS/Tailscale reads, PROPFIND, ranges, download
-integrity, RO rejection, WAN scope, PUT/MOVE/DELETE and pause. Cleanup removes only
-its accounts/files and checks the original registry digest; credentials stay in
-memory/SSH stdin and are not printed. Account creation/pause/removal restarts
+integrity, RO rejection, WAN scope, PUT/MOVE/DELETE and both connections off.
+Cleanup removes only its accounts/files and checks the original registry digest;
+credentials stay in memory/SSH stdin and are not printed. Account creation,
+connection changes and removal restart
 WebDAV and interrupts current transfers: run outside active playback and do not
 edit real shares concurrently. Domain disable/re-enable, reboot, supported-OS
 fresh installs and native-client acceptance are separate tests.
@@ -204,7 +214,8 @@ preservation, secondary-interface default drop and successful recovery in isolat
 network namespaces. It does not alter the host's policy.
 
 `test_stage3_webdav.py` covers separate auth pools, short waits/cache rechecks,
-503 versus credential 429, bounded overload replies, slow PUT/COPY independence,
+single-flight sharing of identical concurrent logins and its failed/slow-leader
+fallbacks (DD-193), 503 versus credential 429, bounded overload replies, slow PUT/COPY independence,
 late target/source/parent/share/expiry/precondition conflicts and stage cleanup.
 `test_stage3_files.py` covers deep JSON and socket inactivity; share-path tests
 distinguish incomplete/internal roots from existing-share overlap.
@@ -237,8 +248,8 @@ clean cache pages are evicted before reading, not the host cache. Cleanup
 removes the temporary account/files and compares the original registry digest.
 This restarts WebDAV twice; use an authorized test host outside active playback.
 The measured cache increase does not prove the cause of a historical peak.
-This script targets legacy HTTP WAN mode (no HTTPS setting); use `https-live.py`
-for the configured HTTPS path, without disabling HTTPS just to run this suite.
+The WAN half follows the host's mode (DD-193): HTTPS on the configured public
+name, or legacy HTTP on `SHARE_PORT`; a host with WAN off is refused up front.
 
 ## Folder network selection and WAN admission (v2-153, DD-179)
 
@@ -252,7 +263,8 @@ that binds the same port on a second loopback address. `share-networks.bats`
 checks deployment wiring and conditional firewall/edge limits.
 
 With explicit disposable-host authorization, run from an external client against
-legacy HTTP WAN mode (no HTTPS setting; use `https-live.py` for HTTPS):
+legacy HTTP WAN mode (no HTTPS setting; use `https-live.py` for HTTPS). On any
+other host it prints `SKIP` and exits 3 before creating anything (DD-193):
 
 ```bash
 python3 Data/tests/share-networks-live.py --host nrm

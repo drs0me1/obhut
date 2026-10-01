@@ -136,7 +136,7 @@ print(json.dumps({'sha256':hashlib.sha256(big.read_bytes()).hexdigest(),'size':b
         "tailscale": {"enabled": False}, "wan": {"enabled": False}}})
     assert request("GET", path + "hello.txt", *reader)[0] == 403
     assert request("GET", path + "hello.txt", *reader, tail=True)[0] == 403
-    print("PASS: HTTPS writes, absolute MOVE destination, deletion and pause", flush=True)
+    print("PASS: HTTPS writes, absolute MOVE destination, deletion and both connections off", flush=True)
 finally:
     for item, _ in reversed(items):
         api("/api/konsol/paylasim/kaldir", {"id": item["id"]})

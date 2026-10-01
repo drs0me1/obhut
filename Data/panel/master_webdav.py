@@ -40,6 +40,9 @@ DISK_CHECK_EVERY = 64 * 1024 ** 2
 AUTH_CACHE_SECONDS = 600
 AUTH_CACHE_SIZE = 256
 AUTH_WAIT_SECONDS = 0.2
+# DD-193: concurrent requests carrying the same credentials share one verification
+# (Infuse opens several connections at once) instead of competing for hash slots.
+AUTH_FLIGHT_SECONDS = 2
 TAIL_TIMEOUT_SECONDS = 60
 DAV = "{DAV:}"
 ET.register_namespace("d", "DAV:")
@@ -315,20 +318,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
                  and len(password) <= 256
                  and hmac.compare_digest(user.encode("utf-8"), item["username"].encode("utf-8")))
         key = None
+        leader = False
         if valid:
             key = (item["id"], item["hash"],
                    hmac.new(self.server.auth_key, supplied[0].encode("utf-8"), "sha256").digest())
             if self.server.remembered(key):
                 return
-        with self.server.limiter.hashing() as admitted:
-            if valid and self.server.remembered(key):
-                return
-            if not admitted:
-                raise DavError(503, retry_after=1)
-            if not password_ok(item if valid else self.server.decoy, password[:256]) or not valid:
-                raise DavError(401)
-            # Publish success before releasing the slot: waiting requests can use it.
-            self.server.remember(key)
+            leader, flight = self.server.join_flight(key)
+            if not leader:
+                # Same exact credentials are being verified now: reuse that success.
+                # A failure or timeout falls through to this request's own check.
+                flight.wait(AUTH_FLIGHT_SECONDS)
+                if self.server.remembered(key):
+                    return
+        try:
+            with self.server.limiter.hashing() as admitted:
+                if valid and self.server.remembered(key):
+                    return
+                if not admitted:
+                    raise DavError(503, retry_after=1)
+                if not password_ok(item if valid else self.server.decoy, password[:256]) or not valid:
+                    raise DavError(401)
+                # Publish success before releasing the slot: waiting requests can use it.
+                self.server.remember(key)
+        finally:
+            if leader:
+                self.server.land_flight(key)
 
     def client_address_ip(self):
         values = self.headers.get_all("X-Share-Client-IP", [])
@@ -826,6 +841,7 @@ class Server(http.server.ThreadingHTTPServer):
         # Keyed by share, stored hash and an HMAC of the exact Authorization value.
         self.auth_key = secrets.token_bytes(32)
         self.auth_cache = OrderedDict()
+        self.auth_flights = {}
         self.auth_lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(self.limits["wan_connections" if scope == "wan" else "tail_connections"])
         self.connections = set()
@@ -847,6 +863,23 @@ class Server(http.server.ThreadingHTTPServer):
             self.auth_cache.move_to_end(key)
             while len(self.auth_cache) > AUTH_CACHE_SIZE:
                 self.auth_cache.popitem(last=False)
+
+    def join_flight(self, key):
+        """(leader, event): the first request for a key verifies; others wait on it.
+        Entries live only while a verification runs, so the table is bounded by
+        this listener's connection slots."""
+        with self.auth_lock:
+            event = self.auth_flights.get(key)
+            if event is None:
+                event = self.auth_flights[key] = threading.Event()
+                return True, event
+            return False, event
+
+    def land_flight(self, key):
+        with self.auth_lock:
+            event = self.auth_flights.pop(key, None)
+        if event is not None:
+            event.set()
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
