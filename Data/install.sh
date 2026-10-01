@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-171"
+V2_VERSION="2026.08.06-v2-172"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1389,6 +1389,7 @@ summary_modules() {
             *)
                 name="$(paket_bildirim_oku "$id" PAKET_AD)"
                 # Paketin kancası tek satır bilgi verir; alt kabukta, hiçbir şey çalıştırmadan.
+                # shellcheck source=/dev/null
                 info="$( [[ -f "$V2_ROOT/magaza/$id/kanca" ]] && ( source "$V2_ROOT/magaza/$id/kanca" 2>/dev/null;
                     declare -F paket_ozet >/dev/null 2>&1 && paket_ozet ) 2>/dev/null || true )"
                 ;;

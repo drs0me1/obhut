@@ -199,3 +199,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-195 | Konsol over public HTTPS through the publication table | live | design-decisions.md |
 | DD-196 | The store model, phase 0 | live | design-decisions.md |
 | DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |
+| DD-198 | Firewall, health and port catalogue from package declarations, phase 1b | live | design-decisions.md |

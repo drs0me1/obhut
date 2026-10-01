@@ -61,7 +61,15 @@ class FirewallViewTests(unittest.TestCase):
                 self.assertIsNone(self.p.listeners(self.env, []))
 
     def test_known_service_names_are_retained_across_scopes(self):
-        with patch.object(self.p, "module_state", return_value="calisiyor"):
+        # DD-198: the Files backend's loopback row is declared by the built-in dosya manifest.
+        import shutil
+        import tempfile
+        mods = Path(tempfile.mkdtemp(prefix="fw-view-mods-")).resolve()
+        self.addCleanup(shutil.rmtree, mods, True)
+        (mods / "dosya").mkdir()
+        shutil.copy(Path(__file__).resolve().parents[1] / "magaza/dosya/paket.env", mods / "dosya/paket.env")
+        with patch.object(self.p, "module_state", return_value="calisiyor"), \
+                patch.dict(self.env, {"MODULES_DIR": str(mods)}):
             rows = self.p.settings_ports(self.env, [], [{"family": 4, "proto": "tcp", "port": 61009},
                                                        {"family": 4, "proto": "tcp", "port": 54321}])
         keys = [(r["family"], r["proto"], r["port"], r["scope"]) for r in rows]

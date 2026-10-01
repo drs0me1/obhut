@@ -101,6 +101,10 @@ def main():
             cmd("ip", "addr", "add", e["WAN_IPV4"] + "/32", "dev", "lo")
             for key in ("SBIN_DIR", "RUNTIME_DIR", "DNSMASQ_CONF_DIR"):
                 Path(e[key]).mkdir()
+            # DD-198: the firewall asks the installed WireGuard package for its "vpn" declarations.
+            (Path(e["MODULES_DIR"]) / "wireguard").mkdir(parents=True)
+            for name in ("paket.env", "kanca"):
+                shutil.copy(DATA / "magaza/wireguard" / name, Path(e["MODULES_DIR"]) / "wireguard" / name)
             modules = Path(e["MODULES_FILE"])
             networks = Path(e["WG_NETWORKS_FILE"])
             module_record = "wireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n"
@@ -490,7 +494,7 @@ time.sleep(600)
                 assert result.returncode != 0, (label, result.stdout, result.stderr)
                 assert {"settings": "WebDAV WAN kaydı okunamadı",
                         "share": "WebDAV WAN kaydı okunamadı",
-                        "WireGuard": "WireGuard ağ kaydı bozuk",
+                        "WireGuard": "güvenlik duvarı bildirimi bozuk",
                         "share port": "WebDAV WAN portu geçersiz",
                         "old helper": "WebDAV WAN sınırları veya portu geçersiz"}[label] in result.stderr, result.stderr
                 before_check = snapshot()

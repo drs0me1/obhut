@@ -19,6 +19,7 @@
 #   master-modul gunluk ID [SATIR]
 #   master-modul hesap ID [--parola]    yalnız PAKET_HESAP=1 olan paketlerde
 #   master-modul uygula ID              kurulumun yeniden çalışması: kurulu paketin dosyalarını uygular
+#   master-modul saglik                 kurulu paketlerin gerekli birimleri: id birim tür (gerekli | ag)
 set -Eeuo pipefail
 umask 022
 
@@ -62,7 +63,7 @@ paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
     [[ "$PAKET_SIRA" =~ ^[0-9]{1,4}$ && "$PAKET_KUR_ADIM" =~ ^[0-9]{1,2}$ ]] || die "paket bildirimi geçersiz: $PAKET_ID"
 }
 
-HOOK_FUNCS="paket_gerekli paket_kur paket_kaldir paket_uygula paket_baslat paket_durdur paket_birim paket_hesap paket_veri_sil paket_gunluk_suz paket_ozet"
+HOOK_FUNCS="paket_gerekli paket_kur paket_kaldir paket_uygula paket_baslat paket_durdur paket_birim paket_hesap paket_veri_sil paket_gunluk_suz paket_ozet paket_firewall paket_saglik"
 
 paket_yukle() { # ID → bildirim + kanca işlevleri
     local dir="$MODULES_DIR/$1"
@@ -615,6 +616,25 @@ cmd_gunluk() {
     fi
 }
 
+# DD-198: Sağlık kartı için kurulu (calisiyor) paketlerin birimleri. Tür "gerekli": çalışmalı;
+# "ag": Konsol'dan kapatılmış (disabled) olabilir. Kancası bozuk kayıt görürse çıkış kodu sıfır
+# olmaz ve kart "doğrulanamadı" der. Kilit ve ilerleme yok.
+cmd_saglik() {
+    local id unit rc=0 out
+    for id in $CATALOG; do
+        [[ "$(registry_get "$id" || true)" == calisiyor ]] || continue
+        paket_yukle "$id"
+        if kanca_var paket_saglik; then
+            out="$(paket_saglik)" || { rc=1; printf '%s\thata\tbozuk\n' "$id"; continue; }
+            [[ -z "$out" ]] || while IFS= read -r unit; do printf '%s\t%s\n' "$id" "$unit"; done <<<"$out"
+        elif kanca_var paket_birim; then
+            unit="$(paket_birim 2>/dev/null || true)"
+            [[ -z "$unit" ]] || printf '%s\t%s\tgerekli\n' "$id" "$unit"
+        fi
+    done
+    return "$rc"
+}
+
 # Salt okunur: Konsol'un root arka ucu kendi korumalı alanında çalıştırır (kilit ve ilerleme yok).
 cmd_hesap() { # ID PAROLA(0|1)
     [[ "$PAKET_HESAP" == 1 ]] || die "bu modülde hesap yok: '$1'"
@@ -668,6 +688,7 @@ main() {
     local cmd="${1:-}"
     case "$cmd" in
         liste) cmd_liste ;;
+        saglik) cmd_saglik ;;
         yerlesik) cmd_yerlesik "${2:-}" ;;
         kur | baslat | durdur | gunluk | kaldir | hesap | uygula)
             [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
@@ -689,7 +710,7 @@ main() {
                 uygula) [[ $# -eq 2 ]] || die "kullanım: master-modul uygula ID"; cmd_uygula "$2" ;;
             esac
             ;;
-        *) die "kullanım: master-modul liste | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
+        *) die "kullanım: master-modul liste | saglik | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
     esac
 }
 

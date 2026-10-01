@@ -98,18 +98,60 @@ TORRENT_KEYS = ("Session\\DefaultSavePath", "Session\\TempPath", "Session\\TempP
                 "Downloads\\SavePath", "Downloads\\TempPath", "WebUI\\Address", "WebUI\\Port")
 ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
 # Settings service-port metadata: produced from configuration, no scanning.
-# (state.env anahtarı, ad, protokol, kapsam, varsayılan)
+# Temel satırlar (state.env anahtarı, ad, protokol, kapsam, varsayılan); paketlerinkiler
+# bildirimlerinden gelir (DD-198: PAKET_PORTLAR, yalnız kayıtlı paketler için).
 PORT_ROWS = (
     ("TAILSCALE_UDP_PORT", "Tailscale", "udp", "internet", 0),
     ("SSH_PUBLIC_PORT", "SSH", "tcp", "internet", 0),
     ("CADDY_HTTP_PORT", "Caddy — panel ve öbür adresler", "tcp", "tailscale", 80),
     ("DNS_PORT", "dnsmasq — yerel adlar", "udp+tcp", "tailscale", 53),
-    ("SHARE_PORT", "Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tcp", "tailscale", 0),
-    ("TORRENT_UI_PORT", "qBittorrent arayüzü", "tcp", "loopback", 0),
-    ("FILES_PANEL_PORT", "Konsol · dosya arka ucu", "tcp", "loopback", 0),
 )
-# Satırı bir modülle gelen portlar: modül kurulu değilse o port dinlenmez (DD-149, DD-150, DD-151).
-PORT_MODULES = {"SHARE_PORT": "paylasim", "TORRENT_UI_PORT": "torrent", "FILES_PANEL_PORT": "dosya"}
+# Paket bildirimi satırı (master-modul ile aynı kalıp; dosya hiçbir zaman source edilmez).
+MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: -]*))$')
+PORT_SCOPES = ("internet", "tailscale", "loopback")
+
+
+def read_manifests(env):
+    """{id: {PAKET_KEY: value}} for every rendered package folder with a manifest."""
+    result = {}
+    base = env.get("MODULES_DIR", "")
+    if not base or not os.path.isdir(base):
+        return result
+    for name in sorted(os.listdir(base)):
+        if not MODULE_ID_RE.fullmatch(name):
+            continue
+        try:
+            raw, _ = master_settings.read_regular(os.path.join(base, name, "paket.env"), SETTINGS_TEXT_LIMIT)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, ValueError, master_settings.SettingsError):
+            continue
+        values = {}
+        for line in raw.decode("utf-8", "replace").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = MANIFEST_LINE_RE.match(line)
+            if not m:
+                values = None
+                break
+            values[m.group(1)] = m.group(2) if m.group(2) is not None else (m.group(3) or "")
+        if values is not None:
+            result[name] = values
+    return result
+
+
+def manifest_ports(manifest):
+    """PAKET_PORTLAR entries "KEY:proto:scope:name" separated by ';'; malformed entries are skipped."""
+    rows = []
+    for entry in (manifest.get("PAKET_PORTLAR") or "").split(";"):
+        parts = entry.strip().split(":", 3)
+        if len(parts) != 4:
+            continue
+        key, proto, scope, name = (part.strip() for part in parts)
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or proto not in ("tcp", "udp", "udp+tcp") or scope not in PORT_SCOPES or not name:
+            continue
+        rows.append((key, name, proto, scope))
+    return rows
 
 
 # DD-180: Caddy'nin Tailscale sitesinden gelen istek yalnız başka bir Tailscale cihazından
@@ -753,18 +795,23 @@ class Panel:
         return ""
 
     def ports(self, env, networks):
-        """Kullanımdaki portlar: state.env ve ağ kaydından; hiçbir yeri taramaz."""
+        """Kullanımdaki portlar: state.env, ağ kaydı ve kayıtlı paketlerin bildirimleri; hiçbir yeri taramaz."""
         rows = []
-        on = {key: bool(self.module_state(mid, env)) for key, mid in PORT_MODULES.items()}
         for net in networks:
             rows.append({"port": net["port"], "proto": "udp", "scope": "internet",
                          "name": "WireGuard %s%s" % (net["iface"], " · %s" % net["label"] if net["label"] else "")})
         for key, name, proto, scope, default in PORT_ROWS:
-            if key in on and not on[key]:
-                continue
             port = num_or(env.get(key), default)
             if port:
                 rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
+        # DD-198: a package's ports exist only while it is registered (built-ins included).
+        for mid, manifest in read_manifests(env).items():
+            if not self.module_state(mid, env):
+                continue
+            for key, name, proto, scope in manifest_ports(manifest):
+                port = num_or(env.get(key), 0)
+                if port:
+                    rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
         return rows
 
     @staticmethod
@@ -887,25 +934,20 @@ class Panel:
                 if len(fields) != 2 or not MODULE_ID_RE.fullmatch(fields[0]) or fields[0] in modules or fields[1] not in ("calisiyor", "durduruldu"):
                     raise ValueError("module registry")
                 modules[fields[0]] = fields[1]
-            if modules.get("torrent") == "calisiyor":
-                user = pwd.getpwuid(int(env["DOWNLOADS_UID"])).pw_name
-                if not re.fullmatch(r"[a-z_][a-z0-9_-]*", user):
-                    raise ValueError("service user")
-                required.append("qbittorrent-nox@%s.service" % user)
-            if modules.get("wireguard") == "calisiyor":
-                try:
-                    raw, _ = master_settings.read_regular(env["WG_NETWORKS_FILE"], SETTINGS_TEXT_LIMIT)
-                except FileNotFoundError:
-                    raw = b""  # Installed without any network yet.
-                seen = set()
-                for line in raw.decode("utf-8").splitlines():
-                    f = line.split("\t")
-                    if len(f) != 9 or not IFACE_RE.fullmatch(f[0]) or f[0] in seen or f[2] != "inet":
-                        raise ValueError("network registry")
-                    seen.add(f[0])
-                    networks.append("wg-quick@%s.service" % f[0])
         except (OSError, ValueError, KeyError, master_settings.SettingsError):
-            unknown.append("Modül/ağ kaydı veya servis kullanıcısı okunamadı")
+            unknown.append("Modül kaydı okunamadı")
+        # DD-198: the packages name their own units through master-modul saglik
+        # ("id<TAB>unit<TAB>gerekli|ag"); a hook that cannot read its registry fails the call.
+        rc, out = self.health_cmd([self.args.master_modul, "saglik"])
+        if rc != 0:
+            unknown.append("Paket servisleri okunamadı")
+        else:
+            for line in out.splitlines():
+                fields = line.split("\t")
+                if len(fields) != 3 or not re.fullmatch(r"[A-Za-z0-9@._-]+\.(service|timer|socket)", fields[1]) or fields[2] not in ("gerekli", "ag"):
+                    unknown.append("Paket servis listesi okunamadı")
+                    break
+                (networks if fields[2] == "ag" else required).append(fields[1])
 
         rc, out = self.health_cmd(["systemctl", "list-units", "--failed", "--plain", "--no-legend", "--no-pager"])
         if rc != 0:

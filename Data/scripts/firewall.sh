@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Host INPUT + WireGuard FORWARD/NAT politikası. Staging zincir, atomik swap.
+# Host INPUT + VPN FORWARD/NAT politikası. Staging zincir, atomik swap.
 # Üçüncü taraf kurallar silinmez. Docker yoktur (DD-152): DOCKER-USER'a dokunulmaz.
+# DD-198: paketler güvenlik duvarına dokunmaz. Kurulu (calisiyor) bir paketin kancası sabit bir
+# sözlükte bildirir, kuralları yalnız bu betik yazar ve denetler. Sözlük: "vpn ARAYÜZ UDP_PORT
+# AĞ4 AĞ6" — WAN UDP ucu, tailnet izni, internet-only yönlendirme (DD-177) ve NAT. Bozuk ya da
+# bilinmeyen bir satır hiçbir kuralı değiştirmez; korumasız açılışta kurtarma erişimi kalır.
 set -Eeuo pipefail
 
 STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
@@ -54,11 +58,9 @@ ICMP6_TYPES=(destination-unreachable packet-too-big time-exceeded parameter-prob
     echo-request echo-reply router-solicitation router-advertisement
     neighbour-solicitation neighbour-advertisement)
 
-# DD-136, DD-143: bütün WireGuard ağları kayıttan (WG_NETWORKS_FILE) gelir; kurulumun
-# yarattığı ayrıcalıklı bir ağ yoktur ve kayıt boş olabilir (sunucu kurulur, ağı Konsol
-# oluşturur). Önce kayıtlar doğrulanır. Bozuk kayıt mevcut korumayı tutar; korumasız
-# açılışta yalnız kurtarma erişimi bırakılır. Diziler: arayüz, UDP portu, alt ağ IPv4/IPv6.
-WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
+# Kurulu paketlerin bildirimlerinden türeyen VPN ağları: arayüz, UDP portu, alt ağ IPv4/IPv6.
+# Önce bildirimler doğrulanır. Bozuk bildirim mevcut korumayı tutar.
+VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
 SHARE_WAN_ACTIVE=0 SHARE_SOCKET_IP=0 SHARE_SOCKET_TOTAL=0 SHARE_WAN_PORT=0
 load_share_wan() {
     local values pattern
@@ -75,31 +77,42 @@ load_share_wan() {
     [[ "$SHARE_SOCKET_IP" -le "$SHARE_SOCKET_TOTAL" && "$SHARE_SOCKET_TOTAL" -le 4294967295 ]] ||
         die "WebDAV WAN sınırları geçersiz"
 }
-# DD-150: WireGuard bir Konsol modülüdür. Modül kayıtta yoksa ağ kaydı (anahtarlarla birlikte
-# korunmuş olabilir) yok sayılır: hiçbir WireGuard portu ya da kuralı açılmaz.
-wg_module_on() {
-    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] || return 1
-    awk -F'\t' '$1 == "wireguard" && $2 == "calisiyor" {f = 1} END {exit !f}' "$MODULES_FILE"
+# DD-150/198: yalnız kayıtta "calisiyor" olan paketlerin kancası okunur; kaldırılmış bir paketin
+# korunan kaydı (anahtarlarla birlikte) yok sayılır: hiçbir portu ya da kuralı açılmaz.
+# Her satır "<id> <sözcük> <alanlar…>" biçiminde toplanır; kanca yalnız işlev tanımlar.
+package_declarations() {
+    local id state kanca
+    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" && -n "${MODULES_DIR:-}" ]] || return 0
+    while IFS=$'\t' read -r id state; do
+        [[ "$id" =~ ^[a-z]{2,16}$ && "$state" == calisiyor ]] || continue
+        kanca="$MODULES_DIR/$id/kanca"
+        [[ -f "$kanca" && ! -L "$kanca" ]] || continue
+        # shellcheck source=/dev/null
+        ( source "$kanca" && if declare -F paket_firewall >/dev/null; then paket_firewall; fi ) 2>/dev/null |
+            sed "s/^/$id /" ||
+            die "paket güvenlik duvarı bildirimi okunamadı ($id); hiçbir kural değiştirilmedi"
+    done <"$MODULES_FILE"
 }
-load_wg_networks() {
-    local iface port scope s4 n4 s6 n6 rest i j
-    WG_IFACES=() WG_PORTS=() WG_NET4=() WG_NET6=()
-    if wg_module_on && [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
-        while IFS=$'\t' read -r iface port scope s4 n4 s6 n6 rest; do
-            [[ -n "$iface" ]] || continue
-            [[ "$iface" =~ ^wg[0-9]$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
-                "$scope" == inet &&
-                "$s4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/24$ &&
-                "$s6" =~ ^[0-9a-f:]+$ && "$n6" =~ ^[0-9a-f:]+/112$ ]] ||
-                die "WireGuard ağ kaydı bozuk ($WG_NETWORKS_FILE: '$iface'); hiçbir kural değiştirilmedi"
-            WG_IFACES+=("$iface") WG_PORTS+=("$port")
-            WG_NET4+=("$n4") WG_NET6+=("$n6")
-        done <"$WG_NETWORKS_FILE"
-    fi
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        for ((j = i + 1; j < ${#WG_IFACES[@]}; j++)); do
-            [[ "${WG_IFACES[i]}" != "${WG_IFACES[j]}" && "${WG_PORTS[i]}" != "${WG_PORTS[j]}" ]] ||
-                die "WireGuard ağ kaydında tekrar eden arayüz ya da port (${WG_IFACES[j]}); hiçbir kural değiştirilmedi"
+load_package_rules() {
+    local id word iface port n4 n6 rest i j
+    VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
+    while read -r id word iface port n4 n6 rest; do
+        [[ -n "$id" ]] || continue
+        case "$word" in
+            vpn)
+                [[ "$iface" =~ ^[a-z][a-z0-9]{1,14}$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
+                    "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ && "$n6" =~ ^[0-9a-f:]+/[0-9]{1,3}$ && -z "$rest" ]] ||
+                    die "güvenlik duvarı bildirimi bozuk ($id: '$word $iface $port'); hiçbir kural değiştirilmedi"
+                VPN_IFACES+=("$iface") VPN_PORTS+=("$port")
+                VPN_NET4+=("$n4") VPN_NET6+=("$n6")
+                ;;
+            *) die "güvenlik duvarı bildiriminde bilinmeyen sözcük ($id: '$word'); hiçbir kural değiştirilmedi" ;;
+        esac
+    done < <(package_declarations)
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        for ((j = i + 1; j < ${#VPN_IFACES[@]}; j++)); do
+            [[ "${VPN_IFACES[i]}" != "${VPN_IFACES[j]}" && "${VPN_PORTS[i]}" != "${VPN_PORTS[j]}" ]] ||
+                die "güvenlik duvarı bildiriminde tekrar eden arayüz ya da port (${VPN_IFACES[j]}); hiçbir kural değiştirilmedi"
         done
     done
 }
@@ -272,8 +285,8 @@ check_rule_count() {
 apply_input4() {
     local bin=iptables staging i
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN-")"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -j DROP
     done
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -283,8 +296,8 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
         --dport "$TAILSCALE_UDP_PORT" -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SSH_PUBLIC_PORT" -j ACCEPT
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${WG_PORTS[i]}" -j ACCEPT
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp --dport "${VPN_PORTS[i]}" -j ACCEPT
     done
     if [[ "$SHARE_WAN_ACTIVE" == 1 ]]; then
         "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p tcp --dport "$SHARE_WAN_PORT" -j ACCEPT
@@ -298,8 +311,8 @@ apply_input6() {
     local bin=ip6tables staging i type
     command -v "$bin" >/dev/null || die "ip6tables gerekli"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN6-")"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -j DROP
     done
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -316,32 +329,32 @@ apply_input6() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-# DD-177: internet-only. Deny private destinations even when routed via WAN.
+# DD-177/198: declared VPN networks are internet-only. Deny private destinations even when routed via WAN.
 # All ingress guards precede return-path permits (including between WG networks).
 apply_forward() {
     local bin="$1" prefix="$2" staging i dest blocked="$WG_BLOCK_DEST4"
     [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
-    if [[ "${#WG_IFACES[@]}" -eq 0 ]]; then
+    if [[ "${#VPN_IFACES[@]}" -eq 0 ]]; then
         remove_named "$bin" FORWARD "$CHAIN_FORWARD"
         return 0
     fi
     staging="$(create_staging "$bin" "$prefix")"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
         for dest in $blocked; do
-            "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -d "$dest" -j DROP
+            "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -d "$dest" -j DROP
         done
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -o "$WAN_INTERFACE" -j ACCEPT
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+        "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -o "$WAN_INTERFACE" -j ACCEPT
+        "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -j DROP
     done
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -o "${WG_IFACES[i]}" \
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -o "${VPN_IFACES[i]}" \
             -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        "$bin" -w 5 -A "$staging" -o "${WG_IFACES[i]}" -j DROP
+        "$bin" -w 5 -A "$staging" -o "${VPN_IFACES[i]}" -j DROP
     done
     activate_named "$bin" FORWARD "$staging" "$CHAIN_FORWARD"
 }
 
-# DD-120: WireGuard alt ağı WAN'a çıkarken maskelenir (wg-quick PostUp'ı yok;
+# DD-120: VPN alt ağı WAN'a çıkarken maskelenir (wg-quick PostUp'ı yok;
 # kural sahibi bu betik, DD-16/DD-17).
 apply_nat() {
     local bin="$1" prefix="$2" subnet staging
@@ -468,7 +481,7 @@ wan_allow_pairs() {
     [[ "$1" == v4 ]] || return 0
     [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_WAN_PORT"
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
-    [[ "${#WG_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${WG_PORTS[@]}"
+    [[ "${#VPN_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${VPN_PORTS[@]}"
     # DD-151: qBittorrent'e gelen eş portu açılmaz.
     return 0
 }
@@ -512,11 +525,11 @@ check_input_chain() {
         done
         expected=$((expected + ${#ICMP6_TYPES[@]}))
     fi
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        check_rule "$bin" "$CHAIN_INPUT" -i "${WG_IFACES[i]}" -j DROP
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        check_rule "$bin" "$CHAIN_INPUT" -i "${VPN_IFACES[i]}" -j DROP
         expected=$((expected + 1))
         check_before "$bin" "$CHAIN_INPUT" "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
-            "-i ${WG_IFACES[i]} -j DROP"
+            "-i ${VPN_IFACES[i]} -j DROP"
     done
     check_rule_count "$bin" "$CHAIN_INPUT" "$expected"
 }
@@ -540,13 +553,13 @@ check_before() {
 check_forward_chain() {
     local bin="$1" i w dest blocked="$WG_BLOCK_DEST4" count=0
     [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
-    if [[ "${#WG_IFACES[@]}" -eq 0 ]]; then
+    if [[ "${#VPN_IFACES[@]}" -eq 0 ]]; then
         check_absent "$bin" FORWARD "$CHAIN_FORWARD"
         return 0
     fi
     check_jump_exactly_one "$bin" FORWARD "$CHAIN_FORWARD"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        w="${WG_IFACES[i]}"
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        w="${VPN_IFACES[i]}"
         for dest in $blocked; do
             check_rule "$bin" "$CHAIN_FORWARD" -i "$w" -d "$dest" -j DROP
             count=$((count + 1))
@@ -562,7 +575,7 @@ check_forward_chain() {
             "-i $WAN_INTERFACE -o $w -m conntrack --ctstate RELATED,ESTABLISHED "
     done
     # Fazladan kural (ör. -i wg0 -j ACCEPT) -C ile görünmez; sayı birebir tutmalı.
-    check_rule_count "$bin" "$CHAIN_FORWARD" "$((4 * ${#WG_IFACES[@]} + count))"
+    check_rule_count "$bin" "$CHAIN_FORWARD" "$((4 * ${#VPN_IFACES[@]} + count))"
 }
 
 check_nat_chain() {
@@ -606,9 +619,9 @@ load_settings_rules() {
         line="-i $TAILSCALE_IF -p $proto --dport $port -m comment --comment konsol-base:tail-$proto-$port -j RETURN"
         if [[ "$family" == 4 ]]; then core4+="$line"$'\n'; else core6+="$line"$'\n'; fi
     done <<<"$ports"
-    # User-created WireGuard endpoints are requirements, including access over
-    # tailnet. Do not infer obsolescence from peer counts or traffic counters.
-    for port in ${WG_PORTS[@]+"${WG_PORTS[@]}"}; do
+    # Declared VPN endpoints are requirements, including access over tailnet.
+    # Do not infer obsolescence from peer counts or traffic counters.
+    for port in ${VPN_PORTS[@]+"${VPN_PORTS[@]}"}; do
         line="-i $TAILSCALE_IF -p udp --dport $port -m comment --comment konsol-base:wg-$port -j RETURN"
         core4+="$line"$'\n'; core6+="$line"$'\n'
     done
@@ -627,8 +640,8 @@ apply_settings_rules() {
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}USER-")"
     # Before established/ICMP and ts-input: no old flow or override bypass.
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        "$bin" -w 5 -A "$staging" -i "${WG_IFACES[i]}" -j DROP
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -j DROP
     done
     "$bin" -w 5 -A "$staging" -i lo -j RETURN
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
@@ -653,8 +666,8 @@ check_settings_rules() {
     [[ -n "${SETTINGS_FILE:-}" ]] || return 0
     check_jump_exactly_one "$bin" INPUT "$CHAIN_SETTINGS"
     [[ "$(input_line "$bin" "$CHAIN_SETTINGS")" == 1 ]] || die "$bin: Konsol kuralları INPUT başında değil"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        check_rule "$bin" "$CHAIN_SETTINGS" -i "${WG_IFACES[i]}" -j DROP
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        check_rule "$bin" "$CHAIN_SETTINGS" -i "${VPN_IFACES[i]}" -j DROP
         expected=$((expected + 1))
     done
     check_rule "$bin" "$CHAIN_SETTINGS" -i lo -j RETURN
@@ -669,12 +682,12 @@ check_settings_rules() {
     listing="$("$bin" -w 5 -S "$CHAIN_SETTINGS" | grep "^-A $CHAIN_SETTINGS " || true)"
     actual="$(grep -c . <<<"$listing" || true)"
     [[ "$actual" -eq "$expected" ]] || die "$bin: Konsol zincirinde beklenmeyen kural var"
-    for ((i = 0; i < ${#WG_IFACES[@]}; i++)); do
-        [[ "$(sed -n "$((i + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i ${WG_IFACES[i]} -j DROP" ]] ||
-            die "$bin: WireGuard engeli Konsol zincirinin başında değil"
+    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
+        [[ "$(sed -n "$((i + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i ${VPN_IFACES[i]} -j DROP" ]] ||
+            die "$bin: VPN engeli Konsol zincirinin başında değil"
     done
-    [[ "$(sed -n "$((${#WG_IFACES[@]} + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i lo -j RETURN" &&
-        "$(sed -n "$((${#WG_IFACES[@]} + 2))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ]] || die "$bin: Konsol koruma kurallarının sırası bozuk"
+    [[ "$(sed -n "$((${#VPN_IFACES[@]} + 1))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -i lo -j RETURN" &&
+        "$(sed -n "$((${#VPN_IFACES[@]} + 2))p" <<<"$listing")" == "-A $CHAIN_SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ]] || die "$bin: Konsol koruma kurallarının sırası bozuk"
     actual_ids="$(sed -n 's/.*--comment "\{0,1\}\(konsol\(-base\)\{0,1\}:[a-zA-Z0-9_-]*\)"\{0,1\}.*/\1/p' <<<"$listing" | tr '\n' ' ')"
     [[ "$actual_ids" == "$ids" ]] || die "$bin: Konsol kullanıcı kurallarının sırası bozuk"
 }
@@ -741,7 +754,7 @@ if [[ -n "${RUNTIME_DIR:-}" ]]; then
     flock -w 5 7 || die "başka bir firewall işlemi sürüyor"
 fi
 trap startup_failure EXIT
-load_wg_networks
+load_package_rules
 load_share_wan
 resolve_wan_interface
 load_settings_rules
@@ -753,8 +766,8 @@ if [[ "$MODE" == check ]]; then
     check_input_chain ip6tables v6
     check_forward_chain iptables
     check_forward_chain ip6tables
-    check_nat_chain iptables_nat ${WG_NET4[@]+"${WG_NET4[@]}"}
-    check_nat_chain ip6tables_nat ${WG_NET6[@]+"${WG_NET6[@]}"}
+    check_nat_chain iptables_nat ${VPN_NET4[@]+"${VPN_NET4[@]}"}
+    check_nat_chain ip6tables_nat ${VPN_NET6[@]+"${VPN_NET6[@]}"}
     check_settings_rules iptables "$SETTINGS4"
     check_settings_rules ip6tables "$SETTINGS6"
     printf 'firewall: kritik politikalar yerinde\n'
@@ -768,8 +781,8 @@ apply_input6
 ensure_ts_input_precedence ip6tables
 apply_forward iptables "${CHAIN_STAGING_PREFIX}FW-"
 apply_forward ip6tables "${CHAIN_STAGING_PREFIX}FW6-"
-apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" ${WG_NET4[@]+"${WG_NET4[@]}"}
-apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" ${WG_NET6[@]+"${WG_NET6[@]}"}
+apply_nat iptables_nat "${CHAIN_STAGING_PREFIX}NAT-" ${VPN_NET4[@]+"${VPN_NET4[@]}"}
+apply_nat ip6tables_nat "${CHAIN_STAGING_PREFIX}NAT6-" ${VPN_NET6[@]+"${VPN_NET6[@]}"}
 apply_settings_rules iptables "$SETTINGS4"
 apply_settings_rules ip6tables "$SETTINGS6"
 purge_staging_leftovers iptables

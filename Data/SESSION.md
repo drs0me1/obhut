@@ -4,14 +4,23 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-01 — Firewall/health/ports from declarations, phase 1b, v2-172 (DD-198):**
+- firewall.sh: `package_declarations` + `load_package_rules` (vocabulary `vpn …`), VPN_*
+  arrays; wireguard kanca gained `paket_firewall` and `paket_saglik`; engine `saglik` verb;
+  backend health units from `master-modul saglik`, port rows from `PAKET_PORTLAR`; dosya
+  manifest. Publications (Settings → Caddy) still hard-coded: next version.
+- Deployed to nrm (v2-172); declaration-driven firewall/health/ports verified live.
+- Uncommitted on top of 8f8987f.
+
+## Previous Task
+
 **2026-10-01 — Store engine and package format, phase 1a, v2-171 (DD-197):**
 - `master-modul` rewritten as a manifest-driven engine; `magaza/<id>/paket.env` +
   `kanca` hold each package's declaration and lifecycle; installer renders package
   folders generically (`render_package_dir`), summary from manifests/hooks.
 - Deployed to nrm (v2-171); qBittorrent reapply and a full WireGuard cycle verified.
   Note: nrm's Tailscale IPv4 is now 100.77.205.10 after the user's clean install.
-- Phase 1b next: firewall/health/ports/publication rows from package declarations.
-- Uncommitted on top of 662f785.
+- Committed as 8f8987f.
 
 ## Previous Task
 

@@ -64,7 +64,7 @@ class ResourceTests(unittest.TestCase):
         state = root / "state.env"
         (root / "modules").write_text("")
         state.write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\nMODULES_FILE={root / 'modules'}\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[]))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], master_modul="/fixture/master-modul"))
 
     def test_resources_do_not_enumerate_wireguard_ports_or_processes(self):
         with patch.object(self.p, "net_rows", side_effect=AssertionError("WG")), \
@@ -109,7 +109,13 @@ class ResourceTests(unittest.TestCase):
 
     def test_port_rows_follow_installed_modules(self):
         modules = Path(self.tmp.name) / "moduller"
-        env = {"MODULES_FILE": str(modules), "TORRENT_UI_PORT": "61006", "FILES_PANEL_PORT": "61009",
+        # DD-198: package port rows come from the rendered manifests, only while registered.
+        mods_dir = Path(self.tmp.name).resolve() / "mods"  # the no-follow reader refuses a symlinked /var
+        repo = Path(__file__).resolve().parents[1] / "magaza"
+        for mid in ("wireguard", "torrent", "paylasim", "dosya"):
+            (mods_dir / mid).mkdir(parents=True)
+            (mods_dir / mid / "paket.env").write_bytes((repo / mid / "paket.env").read_bytes())
+        env = {"MODULES_FILE": str(modules), "MODULES_DIR": str(mods_dir), "TORRENT_UI_PORT": "61006", "FILES_PANEL_PORT": "61009",
                "SHARE_PORT": "61010", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641"}
         rows = lambda: {(r["name"], r["scope"]) for r in self.p.ports(env, [])}  # noqa: E731
         modules.write_text("wireguard\tcalisiyor\n")
@@ -118,6 +124,13 @@ class ResourceTests(unittest.TestCase):
         modules.write_text("torrent\tcalisiyor\ndosya\tcalisiyor\n")
         self.assertIn(("qBittorrent arayüzü", "loopback"), rows())
         self.assertIn(("Konsol · dosya arka ucu", "loopback"), rows())
+        self.assertNotIn(("Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tailscale"), rows())
+        modules.write_text("paylasim\tcalisiyor\n")
+        self.assertIn(("Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tailscale"), rows())
+        # A malformed manifest line disables that package's rows instead of guessing.
+        (mods_dir / "torrent" / "paket.env").write_text('PAKET_PORTLAR="x"\nbroken line\n')
+        modules.write_text("torrent\tcalisiyor\n")
+        self.assertFalse({n for n, _ in rows() if "qBittorrent" in n})
         self.assertNotIn("share", self.p.system())
         self.assertNotIn("ports", self.p.system())
 

@@ -13,6 +13,44 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-198: Firewall, health and port catalogue from package declarations, phase 1b (v2-172)
+
+- **Scope (user, 2026-10-01):** the second half of phase 1 of the store model
+  (DD-196/197): the base derives firewall rules, health units and the port
+  catalogue from what installed packages declare. Publication rows (Settings →
+  Caddy) follow in the next version; Konsol metadata and the backend rename are
+  phase 2.
+- **Firewall.** Packages never write rules. `master-firewall` reads the registry
+  and, for every package in state `calisiyor` whose `kanca` defines
+  `paket_firewall`, sources the hook in a subshell and collects its output lines.
+  The vocabulary is deliberately one word today: `vpn IFACE UDP_PORT NET4 NET6`,
+  which means a WAN UDP endpoint, a tailnet permit for that port, internet-only
+  forwarding (DD-177 destination blocks from `WG_BLOCK_DEST4/6`) and NAT for the
+  subnets. Every line is validated against strict patterns, interfaces and ports
+  must be unique across packages, and a malformed or unknown line stops the run
+  before any chain changes, exactly as a corrupt registry did before. The
+  WireGuard package's hook prints one `vpn` line per network of its own registry
+  and a deliberately invalid line for a non-`inet` scope. `--check` recomputes
+  expectations from the same declarations. The recovery guards keep the static
+  `-i wg+ DROP`; a package cannot change recovery behaviour. No WAN TCP word
+  exists: web interfaces reach the internet only through Caddy's publication port.
+- **Health.** `master-modul saglik` prints `id<TAB>unit<TAB>gerekli|ag` for every
+  installed package: `paket_saglik` when the hook defines it (WireGuard: one
+  `wg-quick@wgN.service` per network, type `ag`, which may be disabled from
+  Konsol), otherwise the unit from `paket_birim` as `gerekli`. A hook that finds
+  a corrupt registry fails the call and the card says the package services could
+  not be verified. The backend keeps its base units and its registry format check
+  and no longer knows qBittorrent's or WireGuard's units.
+- **Port catalogue.** `PAKET_PORTLAR="KEY:proto:scope:name;…"` in a manifest adds
+  rows to Settings → Güvenlik Duvarı while the package is registered; `dosya` got
+  a manifest (built-in) for its loopback row and `paylasim` declares the WebDAV
+  port. The backend reads manifests with the engine's line pattern (never
+  sourcing them) and skips a malformed manifest's rows instead of guessing. The
+  base rows are only Tailscale, SSH, Caddy and dnsmasq.
+- **Trust:** hooks run as root in the firewall and the engine, like `master-modul`
+  did before DD-197; packages come only from this repository, and the firewall's
+  validation treats their output as data.
+
 ### DD-197: The store engine and package format, phase 1a (v2-171)
 
 - **Scope (user, 2026-10-01: "Faz 1'e başla"):** the first half of phase 1 of the

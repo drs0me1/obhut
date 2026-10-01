@@ -52,7 +52,7 @@ check_jump_exactly_one() { :; }
 check_no_staging_artifacts() { :; }
 check_ts_input_precedence() { :; }
 input_line() { printf '1\n'; }
-WG_IFACES=(wg0) WG_PORTS=(61001) WG_NET4=(10.8.0.0/24) WG_NET6=(fd00:3::/112)
+VPN_IFACES=(wg0) VPN_PORTS=(61001) VPN_NET4=(10.8.0.0/24) VPN_NET6=(fd00:3::/112)
 '''
 
 

@@ -25,16 +25,35 @@ class HealthTests(unittest.TestCase):
                     "DOWNLOADS_UID": "1000", "SERVER_ROOT": str(self.root)}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), state_env=False, master_modul="/fixture/master-modul"))
         self.props = {}
+        # DD-198: the engine's saglik output is derived from the fixture registry files, like the real hooks.
+        self.saglik_rc = 0
         self.failed = (0, "")
         self.show = None
         self.calls = []
         self.outputs = {"tailscale": (0, json.dumps({"BackendState": "Running", "Self": {"Online": True}})),
                         "master-firewall": (0, ""), "timedatectl": (0, "yes\n")}
 
+    def saglik(self):
+        if self.saglik_rc:
+            return self.saglik_rc, ""
+        lines = []
+        registry = self.modules.read_text() if self.modules.exists() else ""
+        if "torrent\tcalisiyor" in registry.splitlines():
+            lines.append("torrent\tqbittorrent-nox@downloads.service\tgerekli")
+        if "wireguard\tcalisiyor" in registry.splitlines() and self.networks.exists():
+            for line in self.networks.read_text().splitlines():
+                f = line.split("\t")
+                if len(f) != 9 or f[2] != "inet":
+                    return 1, "wireguard\thata\tbozuk\n"
+                lines.append("wireguard\twg-quick@%s.service\tag" % f[0])
+        return 0, "".join(l + "\n" for l in lines)
+
     def cmd(self, argv, timeout=10):
         self.calls.append((argv, timeout))
+        if argv == ["/fixture/master-modul", "saglik"]:
+            return self.saglik()
         if argv[:2] == ["systemctl", "list-units"]:
             return self.failed
         if argv[:2] == ["systemctl", "show"]:
@@ -101,9 +120,10 @@ class HealthTests(unittest.TestCase):
                 self.assertEqual(unit in self.calls[-1][0], expected == "bad")
         self.props[unit]["ActiveState"] = "active"
         self.assertEqual(self.units()[0], "ok")
-        with patch.object(self.p, "health_cmd", side_effect=self.cmd), \
-                patch.object(panel.pwd, "getpwuid", side_effect=KeyError("uid")):
-            self.assertEqual(self.p.health_units(self.env)[0], "warn")
+        # The engine failing to list package units is "unknown", never healthy.
+        self.saglik_rc = 1
+        self.assertEqual(self.units()[0], "warn")
+        self.saglik_rc = 0
 
     def test_wg_enabled_networks_required_disabled_networks_stay_stopped(self):
         self.modules.write_text("wireguard\tcalisiyor\n")

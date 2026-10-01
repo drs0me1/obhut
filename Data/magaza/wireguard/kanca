@@ -97,6 +97,36 @@ paket_uygula() { # KAYIT_DURUMU
     wg_networks_up >/dev/null
 }
 
+# DD-198: güvenlik duvarına bildirim. Kayıttaki her ağ bir "vpn" satırıdır: WAN UDP ucu,
+# tailnet izni, internet-only yönlendirme ve NAT'ı master-firewall yazar. Kayıt dışı bir kapsam
+# ya da eksik alan, duvarın reddedeceği bir satır üretir (hiçbir kural değişmez).
+paket_firewall() {
+    local iface port scope n4 n6 rest
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    while IFS=$'\t' read -r iface port scope _ n4 _ n6 rest; do
+        [[ -n "$iface" ]] || continue
+        if [[ "$scope" == inet ]]; then
+            printf 'vpn %s %s %s %s\n' "$iface" "$port" "$n4" "$n6"
+        else
+            printf 'vpn %s kapsam-%s\n' "$iface" "${scope:-yok}"
+        fi
+    done <"$WG_NETWORKS_FILE"
+}
+
+# DD-198: Sağlık kartı. Kayıttaki her ağın birimi; Konsol'dan kapatılan ağ "ag" türüyle
+# devre dışı kalabilir. Bozuk kayıt satırı hata döndürür (kart "doğrulanamadı" der).
+paket_saglik() {
+    local line
+    local -a f
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        IFS=$'\t' read -r -a f <<<"$line"
+        [[ "${#f[@]}" -eq 9 && "${f[0]}" =~ ^wg[0-9]$ && "${f[2]}" == inet ]] || return 1
+        printf 'wg-quick@%s.service\tag\n' "${f[0]}"
+    done <"$WG_NETWORKS_FILE"
+}
+
 # Kurulum özeti için tek satır (kurulumun 7. aşaması sayıları verir).
 paket_ozet() {
     printf '%s ağ, %s peer' "${WG_NET_COUNT:-0}" "${WG_PEER_COUNT:-0}"

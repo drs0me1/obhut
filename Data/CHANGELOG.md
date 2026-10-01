@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-01 — Firewall, health and ports from package declarations, phase 1b (v2-172)
+
+- `master-firewall` no longer knows WireGuard (DD-198). Installed packages
+  declare their needs through a `paket_firewall` hook in a one-word vocabulary
+  (`vpn IFACE UDP_PORT NET4 NET6`); the firewall validates every line, keeps
+  interfaces and ports unique, writes and checks the rules itself, and a
+  malformed or unknown line changes nothing, as a corrupt registry did before.
+- The health card asks `master-modul saglik` which units installed packages
+  require; WireGuard's networks and qBittorrent's unit come from their hooks.
+- Settings → Güvenlik Duvarı port rows for qBittorrent, WebDAV and the Files
+  backend come from `PAKET_PORTLAR` in the manifests; the built-in Files got a
+  manifest. Base rows are only Tailscale, SSH, Caddy and dnsmasq.
+- **Verified:** Mac — 400 Python, 169 Bats, ShellCheck. Linux (nrm) — 400
+  Python, firewall, settings and domain suites. nrm — portable run with scratch
+  inputs (exit 0, no warnings); then on the real host: `master-firewall --check`
+  clean, `master-modul saglik` names qBittorrent's unit, a WireGuard install plus
+  `net-add` produced the UDP permit, 13 forward rules, NAT and the tailnet permit
+  from the package's declaration with the check clean, a corrupt registry line
+  made the firewall refuse without changing a rule, and `kaldir --veri` removed
+  every rule again. Settings → Güvenlik Duvarı shows the manifest-declared port
+  rows and the health card reads the package units.
+
 ### 2026-10-01 — Store engine and package format, phase 1a (v2-171)
 
 - `master-modul` is now a package engine that knows no application (DD-197).

@@ -543,7 +543,10 @@ EOF
     grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
     # DD-143: WireGuard ağları state.env'den değil kayıttan gelir; boş kayıt geçerlidir.
     run ! grep -qE 'WG_PORT_DEFAULT:\?|WG_INTERFACE:\?|WG_ADDR_BASE4:\?' "$V2_ROOT/scripts/firewall.sh"
-    grep -q 'WG_NETWORKS_FILE' "$V2_ROOT/scripts/firewall.sh"
+    # DD-198: the firewall reads package declarations; the WireGuard registry is the package's.
+    run ! grep -q 'WG_NETWORKS_FILE' "$V2_ROOT/scripts/firewall.sh"
+    grep -q 'WG_NETWORKS_FILE' "$V2_ROOT/magaza/wireguard/kanca"
+    grep -q '^package_declarations()' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_BLOCK_DEST4:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'CHAIN_STAGING_PREFIX' "$V2_ROOT/install.sh"
@@ -1181,7 +1184,7 @@ EOF
     grep -q 'ESTABLISHED,RELATED -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     # DD-120: WireGuard is not a Docker publish any more; the port lives in INPUT.
     run ! grep -q -- '--ctorigdstport "$WG_PUBLIC_PORT"' "$V2_ROOT/scripts/firewall.sh"
-    grep -qF -- '--dport "${WG_PORTS[i]}" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
+    grep -qF -- '--dport "${VPN_PORTS[i]}" -j ACCEPT' "$V2_ROOT/scripts/firewall.sh"
     [ "$(grep -c 'TORRENT_PUBLIC_PORT' "$V2_ROOT/scripts/firewall.sh")" -eq 0 ]
 }
 
@@ -4025,11 +4028,15 @@ PY
 
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
     local fw="$V2_ROOT/scripts/firewall.sh" f
-    for f in wg_module_on load_wg_networks apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
+    # DD-198: the rules come from the installed package's firewall declaration ("vpn …" lines).
+    for f in package_declarations load_package_rules apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
         eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
     done
-    grep -q '^load_wg_networks$' "$fw"
-    awk '/^load_wg_networks$/ {l = NR} /^resolve_wan_interface$/ {r = NR} END { exit !(l && r && l < r) }' "$fw"
+    grep -q '^load_package_rules$' "$fw"
+    awk '/^load_package_rules$/ {l = NR} /^resolve_wan_interface$/ {r = NR} END { exit !(l && r && l < r) }' "$fw"
+    MODULES_DIR="$TMP/mods"
+    mkdir -p "$MODULES_DIR/wireguard"
+    cp "$V2_ROOT/magaza/wireguard/kanca" "$MODULES_DIR/wireguard/kanca"
     # write_state carries what the firewall and master-wg need (DD-136).
     for v in WG_NETWORKS_FILE WG_NETWORKS_MAX WG_MTU WG_ADDR_BASE4 WG_ADDR_BASE6 WG_PANEL_SOCKET CADDY_ADMIN_SOCKET; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -q "^$v=\\\$$v$"
@@ -4050,37 +4057,37 @@ PY
     WG_NETWORKS_FILE="$TMP/networks"
     # DD-143: wg0 da kayıttan gelir; kayıt boşsa hiç WireGuard kuralı olmaz.
     : >"$WG_NETWORKS_FILE"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     apply_input4
     run ! grep -q ' wg' "$TMP/in4"
     rm -f "$TMP/in4" "$TMP/in6" "$TMP/nat4" "$TMP/nat6"
     printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\n' >"$WG_NETWORKS_FILE"
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\n' >>"$WG_NETWORKS_FILE"
     printf 'wg2\t61021\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t1.1.1.1\t\n' >>"$WG_NETWORKS_FILE"
-    load_wg_networks
-    [ "${WG_IFACES[*]}" = "wg0 wg1 wg2" ]
+    load_package_rules
+    [ "${VPN_IFACES[*]}" = "wg0 wg1 wg2" ]
     # DD-175: missing, empty or stopped module records never revive preserved networks.
     rm "$MODULES_FILE"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     : >"$MODULES_FILE"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     printf 'wireguard\tdurduruldu\n' >"$MODULES_FILE"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     printf 'dosya\tcalisiyor\n' >"$MODULES_FILE"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     printf 'wireguard\tcalisiyor\n' >>"$MODULES_FILE"
-    load_wg_networks
-    [ "${WG_IFACES[*]}" = "wg0 wg1 wg2" ]
+    load_package_rules
+    [ "${VPN_IFACES[*]}" = "wg0 wg1 wg2" ]
     apply_input4
     apply_forward iptables FW-
     apply_input6
-    apply_nat iptables_nat NAT- "${WG_NET4[@]}"
-    apply_nat ip6tables_nat NAT6- "${WG_NET6[@]}"
+    apply_nat iptables_nat NAT- "${VPN_NET4[@]}"
+    apply_nat ip6tables_nat NAT6- "${VPN_NET6[@]}"
     # WAN: one UDP port per network, before the single WAN DROP.
     for port in 61001 61011 61021; do
         grep -qx -- "-A MASTER-NEXT-IN- -i eth0 -p udp --dport $port -j ACCEPT" "$TMP/in4"
@@ -4111,19 +4118,19 @@ PY
     # A broken or clashing registry stops before any chain is touched.
     rm -f "$TMP/in4"
     printf 'wg3\t61031\tall\t10.8.3.1\t10.8.3.0/24\tfdcc::3:1\tfdcc::3:0/112\t1.1.1.1\t\n' >>"$WG_NETWORKS_FILE"
-    run load_wg_networks
+    run load_package_rules
     [ "$status" -ne 0 ]
-    case "$output" in *"ağ kaydı bozuk"*"hiçbir kural değiştirilmedi"*) ;; *) false ;; esac
+    case "$output" in *"bildirimi bozuk"*"hiçbir kural değiştirilmedi"*) ;; *) false ;; esac
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\t\n' >"$WG_NETWORKS_FILE"
     printf 'wg2\t61011\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t\n' >>"$WG_NETWORKS_FILE"
-    run load_wg_networks
+    run load_package_rules
     [ "$status" -ne 0 ]
     case "$output" in *"tekrar eden"*) ;; *) false ;; esac
     [ ! -e "$TMP/in4" ]
     # DD-143: kayıt dosyası hiç yoksa ağ da yoktur.
     WG_NETWORKS_FILE="$TMP/none"
-    load_wg_networks
-    [ "${#WG_IFACES[@]}" -eq 0 ]
+    load_package_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
     # No wg-quick PostUp rules: the firewall script owns netfilter (DD-16/DD-17).
     run ! grep -q 'PostUp' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
     run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
@@ -4137,7 +4144,7 @@ PY
     check_jump_exactly_one() { :; }
     check_rule() { :; }
     CHAIN_FORWARD=MASTER-FORWARD WAN_INTERFACE=eth0
-    WG_IFACES=(wg0)
+    VPN_IFACES=(wg0)
     WG_BLOCK_DEST4="" WG_BLOCK_DEST6=""
     good='-A MASTER-FORWARD -i wg0 -o eth0 -j ACCEPT
 -A MASTER-FORWARD -i wg0 -j DROP
@@ -4158,7 +4165,7 @@ PY
     [ "$status" -ne 0 ]
     case "$output" in *"beklenen 4"*) ;; *) false ;; esac
     # DD-175: two networks need four rules each, without a redundant RETURN.
-    WG_IFACES=(wg0 wg1)
+    VPN_IFACES=(wg0 wg1)
     RULES="$(printf '%s\n' "$good"; printf '%s\n' "$good" | sed 's/wg0/wg1/g')"
     run check_forward_chain iptables
     [ "$status" -eq 0 ]

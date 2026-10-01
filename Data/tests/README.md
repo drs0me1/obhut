@@ -68,6 +68,14 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-172 (DD-198, store phase 1b): the firewall Bats test and `firewall-linux.py`
+copy the WireGuard package's hook into the fake `MODULES_DIR` and drive the
+firewall through its `vpn` declarations (malformed or clashing declarations stop
+before any chain changes); `test_stage4_health.py` derives the fake
+`master-modul saglik` output from the fixture registry; `test_resources.py` and
+`test_firewall_view.py` build port rows from copied manifests, including a
+malformed manifest whose rows are skipped.
+
 v2-171 (DD-197, store phase 1a): the Bats fixtures copy each package's
 `paket.env` and `kanca` from `magaza/` into the fake `MODULES_DIR`, so the
 module tests run the real engine against the real hooks; the engine itself is
