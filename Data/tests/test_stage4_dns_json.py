@@ -131,7 +131,7 @@ class JsonTests(unittest.TestCase):
         headers = {"X-Konsol": "1", "Content-Type": "application/json"}
         self.assertLess(len(DEEP), panel.MAX_BODY)
         with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")):
-            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/wg/nets"):
+            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/uygulama/wireguard/nets"):
                 status, response_headers, body = resources.unix_get(sock, endpoint, headers, "POST", DEEP)
                 self.assertEqual(status, 400)
                 self.assertEqual(response_headers["Connection"], "close")

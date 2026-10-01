@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-02 — Konsol pages and application API from packages, phase 2a (v2-174)
+
+- The Konsol shell and the root backend no longer know WireGuard (DD-200). A
+  package declares `PAKET_KONSOL` (App Store texts, page declaration and journal
+  words in `konsol.json`, rendered by the installer), `PAKET_SAYFA` (its page files,
+  placed under `CONSOLE_WEB_DIR/uygulama/<id>/` on install and removed with the
+  package) and `PAKET_API` (a Python module the root backend loads from the
+  package folder while the package is registered and serves at
+  `/api/uygulama/<id>/*` behind the existing gates). WireGuard's page, stylesheet
+  and API moved into `magaza/wireguard/`; qBittorrent's App Store texts into
+  `magaza/torrent/konsol.json`.
+- Konsol builds the "Kurulu uygulamalar" links and sections from the package
+  declarations, loads an installed package's page on demand, unmounts it on
+  removal and labels journal lines of package APIs (`<id>:<verb>`) with the
+  package's own words. `/api/wg/*` is gone; the audit list is
+  `/api/konsol/islemler`; Settings → Güvenlik Duvarı names its VPN category after
+  the installed package (`vpn_installed`, `vpn_name`).
+- Backend unit: no `--master-wg` argument and no WireGuard environment lines;
+  `WG_CLIENT_DNS_DEFAULT`/`WG_CLIENT_KEEPALIVE_DEFAULT` are written to `state.env`.
+  Stage 7 probes the package-neutral resources endpoint only.
+- Found live and fixed before release: the installer did not write
+  `CONSOLE_WEB_DIR` to `state.env` (the engine needs it for the page files), and the
+  WireGuard hook placed the page after the registry line, so a failed step could
+  leave a half-registered package; the page now goes in before the registry, and
+  the last package's empty `uygulama/` folder is removed with it. The Linux lock
+  tests (`install-hardening-linux.py`) gained the real torrent manifest; their
+  fixture had carried no catalogue since the engine became manifest-driven.
+- **Verified:** Mac — 403 Python, 169 Bats, all fixture browser suites
+  (wireguard-ui, panel-ui, files-ui, settings-ui, settings-https-ui,
+  publications-ui, giris-ui). Linux (nrm) — 403 Python, 169 Bats, firewall,
+  settings, settings-domain, torrent-defaults, publications-proxy and
+  install-hardening suites. nrm — portable run with scratch inputs (exit 0, no
+  warnings); live acceptance through Caddy with a root-issued session: the module
+  listing carries both packages' texts; without WireGuard its page file is 404
+  (302 without a session) and its API 404/409; `kur` placed `sayfa.js`/`sayfa.css`
+  (0644 root) and Caddy served them behind the session; network, peer, masked
+  profile, QR, peer switch and DNS settings worked through
+  `/api/uygulama/wireguard/*`; `master-firewall --check` passed; the journal
+  carried `wireguard:<verb>` lines; Settings showed the VPN category, networks
+  and port rows from the package; `kaldir --veri` removed the page, the API and
+  the VPN category with the firewall check still clean.
+
 ### 2026-10-01 — Publication rows from package declarations, phase 1b (v2-173)
 
 - Settings → Caddy no longer names qBittorrent (DD-199). A package publishes by

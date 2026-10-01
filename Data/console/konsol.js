@@ -1,6 +1,7 @@
-/* Konsol (DD-140): WireGuard ve dosya arka uçlarının tek arayüzü.
-   Değişiklikler sunucuda master-wg ve dosya paneli ile yapılır; bu dosya yalnız
-   API'yi çağırır. Sayfa CSP altında çalışır: satır içi biçem ve betik yok. */
+/* Konsol (DD-140, DD-200): root ve dosya arka uçlarının tek arayüzü; hiçbir uygulamayı
+   tanımaz. App Store metinleri ve uygulama sayfaları paketlerden gelir (konsol.json,
+   /uygulama/<id>/sayfa.js); bu dosya yalnız API'yi çağırır ve sayfalara küçük bir
+   arayüz (window.Konsol) verir. Sayfa CSP altında çalışır: satır içi biçem ve betik yok. */
 (() => {
   "use strict";
   const ICON = {
@@ -110,8 +111,6 @@
   }
   const post = (path, body) => api(path, { method: "POST", body: body || {} });
   const enc = encodeURIComponent;
-  const netPath = (iface, tail) => `/api/wg/nets/${enc(iface)}${tail || ""}`;
-  const peerPath = (iface, name, tail) => `${netPath(iface)}/peers/${enc(name)}${tail || ""}`;
 
   /* ---------- biçimleme ---------- */
   const GiB = 1073741824, MiB = 1048576, KiB = 1024;
@@ -146,67 +145,11 @@
     if (d.toDateString() === today.toDateString()) return "Dün";
     return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
   }
-  function normDns(v) {
-    const parts = v.split(",").map((t) => t.replace(/\s+/g, "")).filter(Boolean);
-    if (!parts.length) return null;
-    for (const t of parts) {
-      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(t) && !/^[0-9a-f]*:[0-9a-f:]*$/i.test(t)) return null;
-    }
-    return parts.join(", ");
-  }
-  const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
-  const kaText = (ka) => (ka ? `${ka} sn` : "kapalı");
-  const dative = (name) => name + ({ 0: "'a", 1: "'e", 2: "'ye", 3: "'e", 4: "'e", 5: "'e", 6: "'ya", 7: "'ye", 8: "'e", 9: "'a" }[name.slice(-1)] || "'e");
 
   /* ---------- durum ---------- */
-  const S = { wg: null, sys: null, health: null, fs: null, actions: [], share: null, offset: 0, rates: new Map() };
+  const S = { sys: null, health: null, fs: null, actions: [], share: null, offset: 0 };
   const now = () => Date.now() / 1000 + S.offset;
-  const nets = () => (S.wg ? S.wg.networks : []);
-  const netOf = (iface) => nets().find((n) => n.iface === iface);
-  const DNS_PRESETS = [
-    { name: "Cloudflare", tag: "Hızlı; kurulumun varsayılanı", ips: "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001" },
-    { name: "Cloudflare Aile", tag: "Zararlı ve yetişkin içerik engelli", ips: "1.1.1.3, 1.0.0.3, 2606:4700:4700::1113" },
-    { name: "Quad9", tag: "Zararlı site engelli", ips: "9.9.9.9, 149.112.112.112, 2620:fe::fe" },
-    { name: "AdGuard", tag: "Reklam ve izleyici engelli", ips: "94.140.14.14, 94.140.15.15, 2a10:50c0::ad1:ff" },
-    { name: "Google", tag: "", ips: "8.8.8.8, 8.8.4.4, 2001:4860:4860::8888" },
-  ];
-  const providerOf = (ips, fallback) => (DNS_PRESETS.find((d) => d.ips === ips) || { name: fallback || "Özel" }).name;
-  const STLABEL = { ok: "Bağlı", idle: "Boşta", never: "Görülmedi", off: "Kapalı", netoff: "Ağ kapalı" };
-  function effState(p) {
-    if (!p.net.active) return "netoff";
-    if (!p.enabled) return "off";
-    if (p.online) return "ok";
-    if (p.handshake && now() - p.handshake < 86400) return "idle";
-    return "never";
-  }
-  const stClass = (st) => (st === "off" || st === "netoff" ? "off" : st);
-  const labelOf = (n) => n.label || (n.iface === "wg0" ? "Ana ağ" : "Etiketsiz");
-
-  /* aktarım hızı: iki örnek arasındaki fark */
-  function trackRates(state) {
-    const at = state.now;
-    state.networks.forEach((n) => n.peers.forEach((p) => {
-      const key = `${n.iface}/${p.name}`, prev = S.rates.get(key);
-      let down = 0, up = 0;
-      if (prev && at > prev.at && p.rx >= prev.rx) {
-        down = (p.rx - prev.rx) / (at - prev.at);
-        up = (p.tx - prev.tx) / (at - prev.at);
-      }
-      S.rates.set(key, { at, rx: p.rx, tx: p.tx, down, up });
-      p.down = down;
-      p.up = up;
-    }));
-  }
-
   /* ---------- yükleme ---------- */
-  function loadWg() {
-    return api("/api/wg/state").then((s) => {
-      S.offset = s.now - Date.now() / 1000;
-      trackRates(s);
-      S.wg = s;
-      paintWg();
-    }).catch(fail);
-  }
   let resourceBusy = false, resourceReceived = 0, resourceFailed = false;
   async function loadSystem() {
     if (resourceBusy) return;
@@ -229,7 +172,7 @@
       .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
   }
   function loadActions() {
-    return api("/api/wg/islemler").then((s) => { S.actions = s.items || []; paintActions(); }).catch(fail);
+    return api("/api/konsol/islemler").then((s) => { S.actions = s.items || []; paintActions(); }).catch(fail);
   }
   function loadFsState() {
     return api("/api/state").then((s) => { S.fs = s; paintFsState(); }).catch(fail);
@@ -244,12 +187,6 @@
     })
       .catch((e) => { if (S.share === previous && !sharesPage.interacting()) { S.share = null; fail(e); } });
   }
-  const paintWg = () => {
-    if (view() !== "wireguard") return;
-    if (!document.querySelector('[data-view="wgadd"]').hidden) {
-      if (NA.i === null) renderAddNet();
-    } else renderWg();
-  };
   const paintActions = () => { if (current === "ayarlar" && settingsTab === "log") renderLog(); };
   const paintFsState = () => { if (current === "dosyalar") renderRail(); };
 
@@ -290,15 +227,8 @@
   }
 
   /* ---------- Audit log, shown only in Settings ---------- */
+  // Paket API'lerinin satırları "<id>:<eylem>" diye gelir ve metni paketin konsol.json şablonundan alır.
   const ACTION_TEXT = {
-    ekle: (e) => `${e.detail} eklendi`, cikar: (e) => `${e.detail} silindi`,
-    dns: (e) => `${e.detail} için DNS değişti`, keepalive: (e) => `${e.detail.split(" ")[0]} için keepalive ${e.detail.split(" ")[1] || ""} sn`,
-    "ag-ayarlar": (e) => `${e.detail} varsayılan DNS ayarı güncellendi`,
-    "peer-durum": (e) => `${e.detail.split(" ")[0]} ${e.detail.endsWith("kapat") ? "kapatıldı" : "açıldı"}`,
-    "ag-durum": (e) => `${e.detail.split(" ")[0]} ağı ${e.detail.endsWith("kapat") ? "kapatıldı" : "açıldı"}`,
-    "ag-ekle": (e) => `${e.detail} ağı oluşturuldu`, "ag-kaldir": (e) => `${e.detail} ağı kaldırıldı`,
-    "yeniden-uret": (e) => `${e.detail} yeniden üretildi`, qr: (e) => `${e.detail} QR kodu görüntülendi`,
-    profil: (e) => `${e.detail} profili indirildi`,
     klasor: (e) => `Yeni klasör: ${e.detail}`, ad: (e) => `Yeniden adlandırıldı: ${e.detail}`,
     tasi: (e) => `Taşındı: ${e.detail}`, cope: (e) => `Çöpe taşındı: ${e.detail}`,
     "geri-yukle": (e) => `Çöpten geri yüklendi: ${e.detail}`, "kalici-sil": (e) => `Kalıcı silindi: ${e.detail}`,
@@ -318,375 +248,34 @@
     "paylasim-save": () => "Klasör paylaşımı kaydedildi", "paylasim-pause": () => "Klasör paylaşımının durumu değişti",
     "paylasim-remove": () => "Klasör paylaşımı kaldırıldı",
   };
-  // DD-196: only WireGuard's own actions are WireGuard; the root backend also carries the Konsol
-  // account, Settings, Shares and App Store events.
-  const WG_ACTIONS = new Set(["ekle", "cikar", "dns", "keepalive", "ag-ayarlar", "peer-durum", "ag-durum", "ag-ekle", "ag-kaldir", "yeniden-uret", "qr", "profil"]);
+  // DD-196/200: the root backend carries the Konsol account, Settings, Shares and App Store
+  // events; a package API's events are "<id>:<verb>" and take their words from the package.
   const evKind = (e) => e.action.startsWith("modul-") ? "mod" : e.source !== "panel" ? "fs"
-    : WG_ACTIONS.has(e.action) ? "wg" : e.action.startsWith("ayar-") ? "ayar" : e.action.startsWith("paylasim-") ? "paylasim" : "konsol";
-  const EVICON = { konsol: "key", ayar: "sliders", paylasim: "share", fs: "folder", mod: "stack", wg: "shield" };
-  const EVLABEL = { konsol: "Konsol", ayar: "Ayarlar", paylasim: "Paylaşımlar", fs: "Dosyalar", mod: "Uygulamalar", wg: "WireGuard" };
+    : e.action.includes(":") ? e.action.split(":")[0] : e.action.startsWith("ayar-") ? "ayar" : e.action.startsWith("paylasim-") ? "paylasim" : "konsol";
+  const EVICON = { konsol: "key", ayar: "sliders", paylasim: "share", fs: "folder", mod: "stack" };
+  const EVLABEL = { konsol: "Konsol", ayar: "Ayarlar", paylasim: "Paylaşımlar", fs: "Dosyalar", mod: "Uygulamalar" };
+  const evIcon = (k) => EVICON[k] || metaOf(k).icon;
+  const evLabel = (k) => EVLABEL[k] || metaOf(k).name;
   function evText(e) {
     const fn = ACTION_TEXT[e.action];
-    const text = fn ? fn(e) : `${e.action} ${e.detail}`;
+    let text;
+    if (fn) text = fn(e);
+    else if (e.action.includes(":")) {
+      const [id, verb] = e.action.split(":"), tpl = metaOf(id).gunluk[verb], words = e.detail.split(" ");
+      text = typeof tpl === "string" ? tpl.replace(/\{(detail|\d)\}/g, (_, key) => (key === "detail" ? e.detail : words[Number(key)] || ""))
+        : `${metaOf(id).name}: ${verb} ${e.detail}`;
+    } else text = `${e.action} ${e.detail}`;
     return e.ok ? text : `${text} — başarısız`;
   }
   function evRow(e, full) {
     const k = evKind(e);
     return h("div", { class: "ev" + (e.ok ? "" : " bad") }, h("time", null, stamp(e.at)),
-      h("span", { class: `ico ${k}` }, svg(EVICON[k])),
-      h("p", null, evText(e), h("small", null, full ? EVLABEL[k] : `${EVLABEL[k]} · ${e.user}`)),
+      h("span", { class: `ico ${EVICON[k] ? k : "app"}` }, svg(evIcon(k))),
+      h("p", null, evText(e), h("small", null, full ? evLabel(k) : `${evLabel(k)} · ${e.user}`)),
       full ? h("span", { class: "who" }, `${e.user} · ${e.client}`) : null);
   }
-  /* ---------- WireGuard ---------- */
-  let wgNet = "wg0";
-  try { wgNet = localStorage.getItem("konsol-net") || "wg0"; } catch (e) { /* özel pencere */ }
-  function selectNet(iface) {
-    wgNet = iface;
-    try { localStorage.setItem("konsol-net", iface); } catch (e) { /* özel pencere */ }
-    renderWg();
-  }
-  function renderWg() {
-    if (!S.wg) return;
-    if (!nets().length) { renderWgEmpty(); return; }
-    $("wg-wrap").hidden = false;
-    $("wg-empty").hidden = true;
-    if (!netOf(wgNet)) wgNet = nets()[0].iface;
-    const tabs = $("wg-tabs");
-    tabs.textContent = "";
-    nets().forEach((n) => {
-      const online = n.peers.filter((p) => effState(Object.assign({ net: n }, p)) === "ok").length;
-      const sel = wgNet === n.iface;
-      tabs.append(h("div", { class: "nettab" + (sel ? " sel" : "") + (n.active ? "" : " off") },
-        h("button", { type: "button", class: "nt-main", role: "tab", "aria-selected": sel, onclick: () => selectNet(n.iface) },
-          h("span", { class: "nt-top" }, h("span", { class: "nt-if" }, n.iface), h("span", { class: "nt-lab" }, labelOf(n))),
-          h("small", null, "UDP ", h("span", { class: "mono" }, n.port), ` · ${n.subnet4} · Yalnız internet`),
-          h("span", { class: "nt-cnt" + (n.active && online ? " on" : "") }, h("span", { class: "dotmark" }),
-            n.active ? `${online}/${n.peers.length} bağlı` : "Kapalı")),
-        h("span", { class: "nt-actions" },
-          h("button", { type: "button", class: "nt-act", title: `${n.iface} ayarları: DNS ve yeniden üret`, "aria-label": `${n.iface} arayüz ayarları`, onclick: () => openNetSettings(n) }, svg("sliders")),
-          // DD-143: her ağ eşittir; wg0 da kaldırılabilir (son ağ kalkınca sayfa Yapılandır'a döner).
-          h("button", { type: "button", class: "nt-act del", title: `${n.iface} arayüzünü kaldır`, "aria-label": `${n.iface} arayüzünü kaldır`, onclick: () => askDeleteNet(n) }, svg("trash")),
-          h("button", { type: "button", class: "vsw", role: "switch", "aria-checked": n.active, title: n.active ? "Arayüzü kapat" : "Arayüzü aç",
-            "aria-label": `${n.iface} arayüzü`, onclick: () => toggleNet(n) }))));
-    });
-    const next = nextNetId();
-    tabs.append(h("button", { type: "button", class: "nettab add", "data-go": next ? "#/wireguard/ekle" : null, disabled: !next },
-      h("span", { class: "nt-top" }, svg("plus"), h("span", { class: "nt-lab" }, "Arayüz ekle")),
-      h("small", null, next ? `wg${next} · ayrı anahtar, port ve alt ağ` : "En çok 9 ek ağ oluşturulabilir")));
-
-    const n = netOf(wgNet);
-    if (!n) return;
-    const list = n.peers.map((p) => Object.assign({ net: n }, p));
-    const online = list.filter((p) => effState(p) === "ok").length, offCount = list.filter((p) => !p.enabled).length;
-    const panel = $("wg-panel");
-    panel.classList.toggle("first", nets().length > 0 && wgNet === nets()[0].iface);
-    panel.classList.toggle("off", !n.active);
-    const bar = $("wg-offbar");
-    bar.hidden = n.active;
-    bar.replaceChildren(h("div", null, h("strong", null, `${n.iface} kapalı. `),
-      h("span", null, `Cihazlar bağlanamaz. Anahtarlar, cihazlar ve profiller duruyor; açınca kendiliğinden bağlanırlar.`)),
-      h("button", { type: "button", class: "btn btn-primary btn-sm", onclick: () => toggleNet(n) }, "Arayüzü aç"));
-    $("wg-summary").replaceChildren(
-      h("div", null, h("dt", null, "Bağlı"), h("dd", null, n.active ? `${online} ` : "Kapalı ",
-        h("small", null, n.active ? `/ ${list.length} cihaz${offCount ? ` · ${offCount} kapalı` : ""}` : `${list.length} cihaz bekliyor`))),
-      h("div", null, h("dt", null, "Port"), h("dd", null, `${n.port} `, h("small", null, n.active ? "UDP açık" : "UDP dinlenmiyor"))),
-      h("div", null, h("dt", null, "Erişim"), h("dd", null, h("small", { class: "plain" }, "Yalnız internet"))),
-      h("div", null, h("dt", null, "Adres"), h("dd", null, h("small", { class: "plain mono" }, `${n.server4}/24`))));
-    $("wg-table").replaceChildren(
-      h("div", { class: "tr head" }, h("span", { class: "c-sw" }, "Açık"), h("span", null, "Durum"), h("span", null, "Cihaz"),
-        h("span", { class: "c-addr" }, "Adres"), h("span", { class: "c-hs" }, "Son görülme"), h("span", { class: "c-traffic" }, "Trafik"), h("span", { class: "c-dns" }, "")),
-      ...list.map((p) => {
-        const st = effState(p), cut = st === "off" || st === "netoff";
-        return h("div", { class: "tr" + (cut ? " p-off" : "") },
-          h("span", { class: "c-sw" }, h("button", { type: "button", class: "sw", role: "switch", "aria-checked": p.enabled, disabled: !n.active,
-            title: !n.active ? "Önce arayüzü açın" : p.enabled ? "Bağlantıyı kapat" : "Bağlantıyı aç",
-            "aria-label": `${p.name} bağlantısı`, onclick: () => togglePeer(n, p) })),
-          h("span", { class: `status ${stClass(st)}` }, h("span", { class: "dotmark" }), STLABEL[st]),
-          h("span", { class: "who2" }, h("strong", null, p.name),
-            h("small", null, `DNS ${providerOf(p.dns, p.provider)} · keepalive ${kaText(p.keepalive)}`)),
-          h("span", { class: "addr c-addr" }, h("span", { class: "mono" }, p.ipv4), h("span", { class: "mono v6" }, p.ipv6)),
-          h("span", { class: "c-hs" }, cut ? "—" : since(p.handshake)),
-          h("span", { class: "traffic c-traffic" }, h("span", null, h("i", null, "↓ "), bytes(p.rx)), h("span", null, h("i", null, "↑ "), bytes(p.tx))),
-          h("span", { class: "acts c-dns" },
-            h("button", { type: "button", class: "ib", title: "QR ve profil", "aria-label": `${p.name} QR ve profil`, disabled: !p.profile, onclick: () => openQr(n, p) }, svg("qr")),
-            h("button", { type: "button", class: "ib del", title: "Sil", "aria-label": `${p.name} sil`, onclick: () => askPeerDelete(n, p) }, svg("trash")),
-            h("button", { type: "button", class: "ib more-btn", title: "Diğer", "aria-label": `${p.name} için diğer işlemler`, "aria-haspopup": "menu", "aria-expanded": false,
-              onclick: (e) => openRowMenu(e.currentTarget, n, p) }, svg("more"))));
-      }));
-    if (!list.length) {
-      $("wg-table").append(h("div", { class: "empty-row" }, h("strong", null, "Bu ağda henüz cihaz yok"),
-        h("span", null, "Aşağıdaki Peer ekle ile ilk cihazı ekleyin; QR hemen hazır olur.")));
-    }
-    const add = $("wg-add");
-    add.onclick = () => openPeerAdd(n);
-    add.replaceChildren(h("span", { class: "plus" }, svg("plus")),
-      h("span", null, h("strong", null, "Peer ekle"),
-        h("small", null, `${n.iface} · ${labelOf(n)} ağına yeni cihaz; anahtarlar sunucuda üretilir, QR hemen hazır olur`)));
-  }
-
-  // DD-143: kurulum WireGuard ağı yaratmaz; ilk ağı buradan kurulur.
-  function renderWgEmpty() {
-    $("wg-wrap").hidden = true;
-    $("wg-empty").hidden = false;
-    $("wg-empty").replaceChildren(
-      h("div", { class: "empty-card" },
-        h("span", { class: "empty-ico" }, svg("shield")),
-        h("h2", null, "WireGuard yapılandırılmadı"),
-        h("p", null, "Sunucu kurulumu WireGuard ağı oluşturmaz. İlk ağı burada kurarsınız: anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur."),
-        h("ul", { class: "conseq calm" },
-          h("li", null, svg("shield"), h("span", null, "wg0 · 10.8.0.0/24 · sunucu 10.8.0.1")),
-          h("li", null, svg("lock"), h("span", null, "Cihazlar yalnız internete çıkar; sunucu servislerine ve diğer ağlara erişemez.")),
-          h("li", null, svg("plus"), h("span", null, "Kurduktan sonra bu sayfadan cihaz (peer) eklersiniz; QR hemen hazır olur."))),
-        h("button", { type: "button", class: "btn btn-primary", onclick: () => { location.hash = "#/wireguard/ekle"; } },
-          svg("plus"), "Yapılandır")));
-  }
-
-  function togglePeer(n, p) {
-    post(peerPath(n.iface, p.name, "/durum"), { on: !p.enabled })
-      .then(() => loadWg())
-      .then(() => toast(p.enabled
-        ? `${p.name} kapatıldı: bağlantısı kesildi, profili ve adresi duruyor.`
-        : `${p.name} açıldı: cihaz birkaç saniye içinde kendiliğinden bağlanır.`))
-      .catch(fail);
-  }
-
-  function toggleNet(n) {
-    const list = n.peers, online = list.filter((p) => effState(Object.assign({ net: n }, p)) === "ok").length;
-    if (!n.active) {
-      post(netPath(n.iface, "/durum"), { on: true })
-        .then(() => loadWg()).then(() => toast(`${n.iface} açıldı: UDP ${n.port} dinleniyor, cihazlar birkaç saniye içinde bağlanır.`))
-        .catch(fail);
-      return;
-    }
-    ask({
-      title: `${n.iface} · ${labelOf(n)} kapatılsın mı?`, sub: `UDP ${n.port} · ${n.subnet4} · Yalnız internet`, calm: true,
-      items: [
-        ["shield", online ? `${online} bağlı cihazın bağlantısı hemen kesilir; ${list.length} cihazın hiçbiri bağlanamaz.` : `Bu ağdaki ${list.length} cihaz bağlanamaz.`],
-        ["lock", "Arayüz durdurulur; açınca aynı anahtar ve adreslerle geri gelir."],
-        ["refresh", n.iface === "wg0"
-          ? "Anahtar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da kapalı kalır; kurulum yeniden çalışınca wg0 yeniden açılır."
-          : "Anahtar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da kapalı kalır."],
-      ],
-      go: "Arayüzü kapat",
-      onOk: () => post(netPath(n.iface, "/durum"), { on: false })
-        .then(() => loadWg()).then(() => toast(`${n.iface} kapatıldı: ${list.length} cihazın bağlantısı kesildi.`)).catch(fail),
-    });
-  }
-
-  function openNetSettings(n) {
-    let busy = false, picker;
-    const error = h("p", {class:"err-s", role:"alert", hidden:true});
-    const dnsBox = h("div", {class:"sugg", role:"radiogroup", "aria-label":"Varsayılan DNS"});
-    const save = h("button", {type:"submit", class:"btn btn-primary", id:"wn-save"}, "Ayarları kaydet");
-    const fields = h("fieldset", {class:"wg-net-fields"},
-      h("div", {class:"field"}, h("span", {class:"lbl"}, "Varsayılan DNS"), dnsBox,
-        h("small", {class:"hint-s"}, "Yalnız yeni eklenecek cihazlara önerilir. Mevcut cihazların DNS ayarı ve QR/profili değişmez; cihazın Düzenle menüsünden ayrıca değiştirilebilir.")),
-      h("p", {class:"hint-s"}, "Kaydet anahtarları, cihazları, portu ve adresleri değiştirmez. Kapalı bir ağı başlatmaz."), error,
-      h("div", {class:"dlg-foot"}, h("button", {type:"button", class:"btn btn-quiet", onclick:shClose}, "Vazgeç"), save),
-      h("div", {class:"wg-net-danger"}, h("p", null, "Yeniden üret tüm cihaz profillerini siler ve sunucu anahtarını değiştirir. Kaydedilmemiş DNS seçimi bu işlemde uygulanmaz."),
-        h("button", {type:"button", class:"btn btn-sm btn-danger", onclick:()=>{shClose(); askRegen(netOf(n.iface) || n);}}, svg("refresh"), "Anahtarı yeniden üret")));
-    function update() {
-      const dns = picker.value();
-      save.disabled = busy || !picker.check() || !dns || dns === n.dns;
-    }
-    const form = h("form", {class:"wg-net-settings", onsubmit:async event=>{
-      event.preventDefault();
-      if (save.disabled) return;
-      busy=true; fields.disabled=true; error.hidden=true; update();
-      try {
-        await post(netPath(n.iface,"/ayarlar"), {dns:picker.value(),revision:n.revision});
-        shClose(); await loadWg();
-        toast(`${n.iface} ayarları kaydedildi. Mevcut anahtarlar ve cihaz profilleri korundu.`);
-      } catch (err) { error.textContent=err.message; error.hidden=false; }
-      finally {busy=false; fields.disabled=false; update();}
-    }}, fields);
-    $("sh-body").replaceChildren(shHead(`${n.iface} · Arayüz ayarları`, `${labelOf(n)} · UDP ${n.port} · ${n.subnet4}`, "sliders"), form);
-    picker = makeDnsPicker(dnsBox,"wn-dns",{badge:ips=>ips===n.dns?"kayıtlı":"",onChange:update});
-    picker.set(n.dns); update(); $("sh").showModal(); dnsBox.querySelector("button")?.focus();
-  }
-
-  function askRegen(n) {
-    const names = n.peers.map((p) => p.name);
-    ask({
-      title: `${n.iface} · ${labelOf(n)} yeniden üretilsin mi?`, sub: `UDP ${n.port} · ${n.subnet4} · Yalnız internet`, word: true, danger: true,
-      items: [
-        ["refresh", "Yeni sunucu anahtarı üretilir; port, adresler ve erişim aynı kalır."],
-        ["shield", names.length ? `${names.length} cihazın profili ve QR kodu silinir (${names.join(", ")}); eski profillerle bağlanılamaz.` : "Bu ağda cihaz yok."],
-        ["plus", "Cihazları Peer ekle ile yeniden eklemek gerekir. Geri alınamaz."],
-      ],
-      go: "Yeniden üret",
-      onOk: () => post(netPath(n.iface, "/reset"), { confirm: "onayla" })
-        .then((r) => loadWg().then(() => toast(`${n.iface} yeniden üretildi: ${r.peers} cihaz silindi, yeni sunucu anahtarı etkin.`))).catch(fail),
-    });
-  }
-
-  function askDeleteNet(n) {
-    const names = n.peers.map((p) => p.name);
-    const last = nets().length === 1;
-    ask({
-      title: `${n.iface} · ${labelOf(n)} kaldırılsın mı?`, sub: `UDP ${n.port} · ${n.subnet4} · Yalnız internet`, word: true, danger: true,
-      items: [
-        ["shield", names.length ? `${names.length} cihazın bağlantısı kesilir; profilleri ve QR kodları silinir (${names.join(", ")}).` : "Bu ağda cihaz yok."],
-        ["lock", `UDP ${n.port} kapanır; bu ağın güvenlik duvarı kuralları kaldırılır.`],
-        ["trash", "Sunucu anahtarı silinir. Geri alınamaz; aynı ağ yeniden eklenirse cihazlara yeni profil gerekir."],
-        last ? ["plus", "Bu son ağ: kaldırınca WireGuard yapılandırılmamış duruma döner, yeni ağı Yapılandır ile kurarsınız."] : null,
-      ].filter(Boolean),
-      go: "Arayüzü kaldır",
-      onOk: () => post(netPath(n.iface, "/remove"), { confirm: "onayla" }).then((r) => {
-        if (wgNet === n.iface) wgNet = "";
-        return loadWg().then(() => toast(`${n.iface} kaldırıldı: ${r.peers} cihaz silindi, UDP ${n.port} kapandı.`));
-      }).catch(fail),
-    });
-  }
-
-  function askPeerDelete(n, p) {
-    ask({
-      title: `“${p.name}” silinsin mi?`, sub: `${n.iface} · ${p.ipv4} · ${p.ipv6}`, danger: true,
-      items: [
-        ["shield", "Bağlantısı hemen kesilir."],
-        ["qr", "Profili ve QR kodu silinir; bu cihazı yeniden bağlamak için yeniden eklemek gerekir."],
-        ["refresh", `${p.ipv4} adresi boşa çıkar ve yeni cihazlara verilebilir.`],
-      ],
-      go: "Peer'ı sil",
-      onOk: () => post(peerPath(n.iface, p.name, "/remove")).then(() => loadWg()).then(() => toast(`“${p.name}” silindi.`)).catch(fail),
-    });
-  }
-
-  /* satır menüsü (…) */
-  const rowMenu = h("div", { class: "popmenu", id: "rowmenu", role: "menu", hidden: true });
-  document.body.append(rowMenu);
-  let menuBtn = null;
-  function closeRowMenu() {
-    if (rowMenu.hidden) return;
-    rowMenu.hidden = true;
-    if (menuBtn) menuBtn.setAttribute("aria-expanded", "false");
-    menuBtn = null;
-  }
-  function openRowMenu(btn, n, p) {
-    if (menuBtn === btn) { closeRowMenu(); return; }
-    closeRowMenu();
-    menuBtn = btn;
-    btn.setAttribute("aria-expanded", "true");
-    rowMenu.replaceChildren(
-      h("button", { type: "button", role: "menuitem", onclick: () => { closeRowMenu(); openEdit(n, p); } },
-        svg("pencil"), h("span", null, "Düzenle"), h("small", null, "DNS ve keepalive")),
-      h("button", { type: "button", role: "menuitem", disabled: !p.profile, onclick: () => { closeRowMenu(); downloadProfile(n, p); } },
-        svg("download"), h("span", null, "Profili indir"), h("small", null, "gizli anahtar içerir")));
-    rowMenu.hidden = false;
-    const r = btn.getBoundingClientRect();
-    rowMenu.style.left = `${Math.max(8, Math.min(window.innerWidth - 218, r.right - 210))}px`;
-    rowMenu.style.top = `${Math.min(window.innerHeight - 90, r.bottom + 6)}px`;
-    rowMenu.querySelector("button").focus();
-  }
-  document.addEventListener("click", (e) => { if (!e.target.closest("#rowmenu") && !e.target.closest(".more-btn")) closeRowMenu(); }, true);
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    closeRowMenu();
-    if (current === "dosyalar" && fsSel.size && !document.querySelector("dialog[open]")) clearSel();
-  });
-  window.addEventListener("resize", closeRowMenu);
-  window.addEventListener("scroll", closeRowMenu, true);
-
-  /* ---------- DNS seçici ---------- */
-  function makeDnsPicker(box, idp, opts) {
-    const st = { choice: DNS_PRESETS[0].ips, custom: "" };
-    const value = () => (st.choice === "custom" ? normDns(st.custom) : st.choice);
-    function check() {
-      const bad = st.choice === "custom" && st.custom.trim() !== "" && !value();
-      const err = $(`${idp}-err`), inp = $(`${idp}-custom`);
-      if (err) err.hidden = !bad;
-      if (inp) inp.setAttribute("aria-invalid", String(bad));
-      return !bad;
-    }
-    function render() {
-      box.replaceChildren(...DNS_PRESETS.map((d) => {
-        const sel = st.choice === d.ips;
-        return h("button", { type: "button", class: "sug" + (sel ? " on" : ""), role: "radio", "aria-checked": sel,
-          onclick: () => { st.choice = d.ips; render(); opts.onChange(); } },
-          h("strong", null, d.name), h("span", { class: "badge" }, opts.badge(d.ips)),
-          d.tag ? h("span", { class: "tagline" }, d.tag) : null, h("span", { class: "ips" }, d.ips));
-      }));
-      const isCustom = st.choice === "custom";
-      const custom = h("div", { class: "sug custom" + (isCustom ? " on" : "") },
-        h("button", { type: "button", class: "sug-head", role: "radio", "aria-checked": isCustom,
-          onclick: () => { if (!isCustom) { st.choice = "custom"; render(); opts.onChange(); } $(`${idp}-custom`).focus(); } },
-          h("strong", null, "Custom"), h("span", { class: "badge" }, opts.badge(null)),
-          h("span", { class: "tagline" }, "Kendi DNS adreslerinizi yazın; birden çoksa virgülle ayırın")));
-      if (isCustom) {
-        custom.append(h("div", { class: "cwrap" },
-          h("input", { type: "text", id: `${idp}-custom`, value: st.custom, placeholder: "ör. 192.168.1.10, fd00::53", autocomplete: "off", spellcheck: "false",
-            "aria-label": "Custom DNS adresleri", oninput: (e) => { st.custom = e.target.value; opts.onChange(); } }),
-          h("small", { class: "err-s", id: `${idp}-err`, hidden: true }, "Geçerli IPv4 ya da IPv6 adreslerini virgülle ayırarak yazın.")));
-      }
-      box.append(custom);
-    }
-    function set(ips) {
-      const preset = DNS_PRESETS.find((d) => d.ips === ips);
-      st.choice = preset ? preset.ips : "custom";
-      st.custom = preset ? "" : ips || "";
-      render();
-    }
-    return { set, value, check, render };
-  }
-
-  /* ---------- düzenle penceresi ---------- */
-  let editing = null;
-  const peDns = makeDnsPicker($("pe-sugg"), "pe-dns", {
-    badge: (ips) => {
-      if (!editing) return "";
-      const isPreset = DNS_PRESETS.some((d) => d.ips === editing.p.dns);
-      if (ips === null) return isPreset ? "" : "şu an";
-      return ips === editing.p.dns ? "şu an" : ips === editing.n.dns ? "ağın varsayılanı" : "";
-    },
-    onChange: () => validateEdit(),
-  });
-  function openEdit(n, p) {
-    editing = { n, p };
-    $("pe-title").textContent = `${p.name} · düzenle`;
-    $("pe-sub").textContent = `${n.iface} · ${p.ipv4} · şu an DNS ${providerOf(p.dns, p.provider)}, keepalive ${kaText(p.keepalive)}`;
-    $("pe-ka").value = String(p.keepalive);
-    peDns.set(p.dns);
-    validateEdit();
-    $("pe").showModal();
-    const on = $("pe-sugg").querySelector('[aria-checked="true"]');
-    if (on) on.focus();
-  }
-  function renderKaChips() {
-    const v = $("pe-ka").value.trim();
-    $("pe-ka-chips").replaceChildren(...[["0", "Kapalı"], ["21", "21 sn · önerilen"], ["25", "25 sn"]].map(([val, label]) =>
-      h("button", { type: "button", "aria-pressed": v === val, onclick: () => { $("pe-ka").value = val; validateEdit(); } }, label)));
-  }
-  function validateEdit() {
-    if (!editing) return;
-    const p = editing.p;
-    const dnsOk = peDns.check(), dns = peDns.value();
-    const kaRaw = $("pe-ka").value.trim(), ka = /^\d+$/.test(kaRaw) ? Number(kaRaw) : NaN, kaOk = ka >= 0 && ka <= 65535;
-    $("pe-ka").setAttribute("aria-invalid", String(!kaOk));
-    $("pe-save").disabled = !dnsOk || !dns || !kaOk || (dns === p.dns && ka === p.keepalive);
-    renderKaChips();
-  }
+  /* ---------- ortak pencere (#sh): uygulama sayfaları, paylaşım ve arşiv formları, dosya görüntüleyici ---------- */
   const xIcon = (btn) => { btn.append(svg("plus")); btn.firstChild.style.transform = "rotate(45deg)"; };
-  xIcon($("pe-x"));
-  $("pe-ka").addEventListener("input", validateEdit);
-  const closeEdit = () => { $("pe").close(); editing = null; };
-  $("pe-x").addEventListener("click", closeEdit);
-  $("pe-cancel").addEventListener("click", closeEdit);
-  $("pe-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    if ($("pe-save").disabled || !editing) return;
-    const { n, p } = editing, dns = peDns.value(), ka = Number($("pe-ka").value.trim());
-    const jobs = [];
-    if (dns !== p.dns) jobs.push(() => post(peerPath(n.iface, p.name, "/dns"), { dns }));
-    if (ka !== p.keepalive) jobs.push(() => post(peerPath(n.iface, p.name, "/keepalive"), { keepalive: ka }));
-    closeEdit();
-    jobs.reduce((chain, job) => chain.then(job), Promise.resolve())
-      .then(() => loadWg())
-      .then(() => toast(`${p.name} güncellendi: DNS ${providerOf(dns)}, keepalive ${kaText(ka)}. Cihazda yeni QR'ı okutun.`,
-        { label: "QR'ı göster", fn: () => openQr(netOf(n.iface), (netOf(n.iface).peers.find((x) => x.name === p.name) || p)) }))
-      .catch(fail);
-  });
-
-  /* ---------- peer ekle ve QR ---------- */
   const shClose = () => $("sh").close();
   function shHead(title, sub, icon) {
     const x = h("button", { type: "button", class: "dlg-x", "aria-label": "Kapat", onclick: shClose });
@@ -695,189 +284,12 @@
       h("div", { class: "okhead" }, h("span", { class: "okico plain" }, svg(icon)),
         h("div", null, h("h3", { id: "sh-title" }, title), h("p", null, sub))), x);
   }
-  let PA = null;
-  function openPeerAdd(n) {
-    PA = { n, name: "", dns: n.dns || (S.wg.defaults && S.wg.defaults.dns) || DNS_PRESETS[0].ips, ka: (S.wg.defaults && S.wg.defaults.keepalive) || 21 };
-    renderPeerAdd();
-    $("sh").showModal();
-    const inp = $("pa-name");
-    if (inp) inp.focus();
-  }
-  function renderPeerAdd() {
-    const n = PA.n;
-    const nameErr = PA.name && !NAME_RE.test(PA.name) ? "Harf, rakam, nokta, alt çizgi ve tire; en çok 32 karakter." : "";
-    const taken = n.peers.some((p) => p.name === PA.name) ? "Bu ağda aynı adlı bir cihaz zaten var." : "";
-    const err = nameErr || taken;
-    const body = $("sh-body");
-    body.replaceChildren(
-      shHead(`${dative(n.iface)} peer ekle`, `${labelOf(n)} · ${n.subnet4} · anahtarlar sunucuda üretilir`, "shield"),
-      h("div", { class: "field" },
-        h("label", { for: "pa-name" }, "Cihaz adı"),
-        h("input", { type: "text", id: "pa-name", value: PA.name, maxlength: "32", autocomplete: "off", spellcheck: "false",
-          placeholder: "ör. iphone, macbook, tv-salon", "aria-invalid": String(!!err),
-          oninput: (e) => { PA.name = e.target.value.trim(); updatePeerAdd(); } }),
-        h("small", { class: "err-s", id: "pa-err", hidden: !err }, err),
-        h("small", { class: "hint-s" }, "Profil dosyasının adı da bu olur.")),
-      h("div", { class: "field" },
-        h("span", { class: "lbl" }, "DNS sunucuları"),
-        h("div", { class: "sugg", id: "pa-sugg", role: "radiogroup", "aria-label": "DNS sunucuları" })),
-      h("div", { class: "field" },
-        h("label", { for: "pa-ka" }, "PersistentKeepalive (saniye)"),
-        h("div", { class: "ka-row" }, h("input", { type: "number", id: "pa-ka", min: "0", max: "65535", value: String(PA.ka), autocomplete: "off",
-          oninput: (e) => { PA.ka = e.target.value.trim(); updatePeerAdd(); } }),
-          h("div", { class: "chips-s" }, ...[["0", "Kapalı"], ["21", "21 sn · önerilen"], ["25", "25 sn"]].map(([val, label]) =>
-            h("button", { type: "button", "aria-pressed": String(PA.ka) === val, onclick: () => { PA.ka = val; renderPeerAdd(); } }, label)))),
-        h("small", { class: "hint-s" }, "0 = kapalı; mobil ağlarda 21 önerilir.")),
-      h("div", { class: "dlg-foot" },
-        h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç"),
-        h("button", { type: "button", class: "btn btn-primary", id: "pa-go", onclick: createPeer }, svg("plus"), "Peer ekle")));
-    PA.picker = makeDnsPicker($("pa-sugg"), "pa-dns", {
-      badge: (ips) => (ips === n.dns ? "ağın varsayılanı" : ips === DNS_PRESETS[0].ips ? "önerilen" : ""),
-      onChange: () => updatePeerAdd(),
-    });
-    PA.picker.set(PA.dns);
-    updatePeerAdd();
-  }
-  function updatePeerAdd() {
-    const n = PA.n;
-    const nameOk = NAME_RE.test(PA.name) && !n.peers.some((p) => p.name === PA.name);
-    const ka = /^\d+$/.test(String(PA.ka)) ? Number(PA.ka) : NaN;
-    const dns = PA.picker.value(), dnsOk = PA.picker.check();
-    const err = $("pa-err");
-    if (err) {
-      const text = PA.name && !NAME_RE.test(PA.name) ? "Harf, rakam, nokta, alt çizgi ve tire; en çok 32 karakter."
-        : n.peers.some((p) => p.name === PA.name) ? "Bu ağda aynı adlı bir cihaz zaten var." : "";
-      err.textContent = text;
-      err.hidden = !text;
-    }
-    const go = $("pa-go");
-    if (go) go.disabled = !nameOk || !dns || !dnsOk || !(ka >= 0 && ka <= 65535);
-  }
-  function createPeer() {
-    const n = PA.n, name = PA.name, dns = PA.picker.value(), ka = Number(PA.ka);
-    const mtu = (S.wg.defaults && S.wg.defaults.mtu) || 1420;
-    $("pa-go").disabled = true;
-    post(netPath(n.iface, "/peers"), { name, dns, keepalive: ka, mtu })
-      .then(() => loadWg())
-      .then(() => {
-        const fresh = netOf(n.iface), peer = fresh && fresh.peers.find((p) => p.name === name);
-        if (fresh && peer) openQr(fresh, peer, true);
-        toast(`“${name}” eklendi.`);
-      })
-      .catch((e) => { fail(e); updatePeerAdd(); });
-  }
-
-  function openQr(n, p, fresh) {
-    $("sh-body").replaceChildren(
-      shHead(`${p.name} · QR`, `${n.iface} · ${p.ipv4} · ${providerOf(p.dns, p.provider)} DNS`, "qr"),
-      h("div", { class: "qrbox", id: "qr-box" }, h("p", { class: "hint-s" }, "QR hazırlanıyor…")),
-      h("div", { class: "infoline-s" }, svg("lock"),
-        h("span", null, "QR ve profil cihazın gizli anahtarını taşır. Yalnız cihazın kendisine okutun; ekran görüntüsü almayın.")),
-      h("div", { class: "dlg-foot" },
-        h("button", { type: "button", class: "btn btn-quiet", onclick: () => downloadProfile(n, p) }, svg("download"), "Profili indir"),
-        h("button", { type: "button", class: "btn btn-primary", onclick: shClose }, fresh ? "Bitti" : "Kapat")));
+  function shShow(title, sub, icon, ...content) {
+    $("sh-body").replaceChildren(shHead(title, sub, icon), ...content);
     if (!$("sh").open) $("sh").showModal();
-    api(peerPath(n.iface, p.name, "/qr.png"), { blob: true }).then((blob) => {
-      const url = URL.createObjectURL(blob);
-      const img = h("img", { src: url, alt: `${p.name} için WireGuard QR kodu` });
-      img.addEventListener("load", () => URL.revokeObjectURL(url));
-      const box = $("qr-box");
-      if (box) box.replaceChildren(img);
-    }).catch((e) => {
-      const box = $("qr-box");
-      if (box) box.replaceChildren(h("p", { class: "err-s" }, e.message));
-    });
   }
-  function downloadProfile(n, p) {
-    api(peerPath(n.iface, p.name, "/profile"), { blob: true }).then((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = h("a", { href: url, download: `${p.name}.conf` });
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    }).catch(fail);
-  }
-
-  /* ---------- arayüz ekle ---------- */
-  function nextNetId() {
-    const max = (S.wg && S.wg.max ? S.wg.max : 10) - 1;
-    for (let i = 0; i <= max; i++) if (!netOf(`wg${i}`)) return i;
-    return null;
-  }
-  const PORT_START = 61020;
-  function firstPort() {
-    const def = S.wg && S.wg.defaults ? S.wg.defaults.port : 0;
-    return def && !portOwner(def) ? def : suggestPort();
-  }
-  function portOwner(port) {
-    const n = nets().find((x) => x.port === port);
-    if (n) return n.iface;
-    return (S.wg && S.wg.reserved || []).includes(port) ? "sunucu" : null;
-  }
-  function suggestPort() {
-    let port = PORT_START;
-    while (portOwner(port)) port++;
-    return port;
-  }
-  const NA = { i: null };
-  const naDns = makeDnsPicker($("na-sugg"), "na-dns", { badge: (ips) => (ips === DNS_PRESETS[0].ips ? "önerilen" : ""), onChange: () => updateAddNet() });
-  function renderAddNet() {
-    if (!S.wg) return;
-    const i = nextNetId();
-    if (i == null) { location.hash = "#/wireguard"; toast("En çok 9 ek ağ oluşturulabilir."); return; }
-    NA.i = i;
-    $("na-label").value = "";
-    $("na-port").value = String(nets().length ? suggestPort() : firstPort());
-    $("na-ident").replaceChildren(h("span", { class: "big" }, `wg${i}`),
-      h("span", { class: "mono" }, `10.8.${i}.0/24`), h("span", { class: "mono" }, `sunucu 10.8.${i}.1`));
-    naDns.set(DNS_PRESETS[0].ips);
-    updateAddNet();
-    $("na-label").focus();
-  }
-  function addNetDraft() {
-    const i = NA.i, label = $("na-label").value.trim();
-    const raw = $("na-port").value.trim(), port = /^\d+$/.test(raw) ? Number(raw) : NaN;
-    let portErr = "";
-    if (!(port >= 1024 && port <= 65535)) portErr = "1024 ile 65535 arasında bir port yazın.";
-    else if (portOwner(port)) portErr = `UDP ${port} kullanımda (${portOwner(port)}); bu port reddedildi, başka bir port yazın.`;
-    return { i, id: `wg${i}`, label, port, portErr,
-      subnet: `10.8.${i}.0/24`, dns: naDns.value(), dnsOk: naDns.check() };
-  }
-  function updateAddNet() {
-    if (NA.i == null) return;
-    const d = addNetDraft();
-    $("na-port-err").textContent = d.portErr;
-    $("na-port-err").hidden = !d.portErr;
-    $("na-port").setAttribute("aria-invalid", String(!!d.portErr));
-    $("na-preview").replaceChildren(h("div", { class: "nettab sel preview" },
-      h("div", { class: "nt-main" },
-        h("span", { class: "nt-top" }, h("span", { class: "nt-if" }, d.id), h("span", { class: "nt-lab" }, d.label || "Etiketsiz")),
-        h("small", null, "UDP ", h("span", { class: "mono" }, Number.isNaN(d.port) ? "—" : d.port), ` · ${d.subnet} · Yalnız internet`),
-        h("span", { class: "nt-cnt" }, h("span", { class: "dotmark" }), "0/0 bağlı"))));
-    const will = [
-      "Yeni sunucu anahtarı üretilir.",
-      `UDP ${Number.isNaN(d.port) ? "…" : d.port} internete açılır; güvenlik duvarı kuralları kurulur.`,
-      `Yeni cihazlara ${d.dns ? providerOf(d.dns) : "seçilen"} DNS önerilir.`,
-    ];
-    $("na-will").replaceChildren(...will.map((text) => h("li", null, svg("check"), h("span", null, text))));
-    $("na-create").disabled = !!d.portErr || !d.dns || !d.dnsOk;
-  }
-  $("na-label").addEventListener("input", updateAddNet);
-  $("na-port").addEventListener("input", updateAddNet);
-  $("na-create").addEventListener("click", () => {
-    const d = addNetDraft();
-    if (d.portErr || !d.dns || !d.dnsOk) return;
-    $("na-create").disabled = true;
-    post("/api/wg/nets", { port: String(d.port), dns: d.dns, label: d.label })
-      .then((r) => {
-        wgNet = r.iface;
-        return loadWg().then(() => {
-          location.hash = "#/wireguard";
-          toast(`${r.iface} oluşturuldu: UDP ${r.port} açık. Şimdi Peer ekle ile cihaz ekleyin.`);
-        });
-      })
-      .catch((e) => { fail(e); updateAddNet(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && current === "dosyalar" && fsSel.size && !document.querySelector("dialog[open]")) clearSel();
   });
 
   /* ---------- onay penceresi ---------- */
@@ -1614,7 +1026,9 @@
   function renderLog() {
     // Filter chips for the kinds present; a kind no event carries (an absent package) is not offered.
     const present = new Set(S.actions.map(evKind));
-    const chips = [["all", "Tümü"], ...Object.entries(EVLABEL).filter(([k]) => present.has(k) || k === logFilter)];
+    const labels = Object.assign({}, EVLABEL);
+    present.forEach((k) => { if (!labels[k]) labels[k] = evLabel(k); });
+    const chips = [["all", "Tümü"], ...Object.entries(labels).filter(([k]) => present.has(k) || k === logFilter)];
     $("log-filter").replaceChildren(...chips.map(([k, label]) =>
       h("button", { type: "button", class: "fchip", "aria-pressed": logFilter === k, onclick: () => { logFilter = k; renderLog(); } }, label)));
     const list = S.actions.filter((e) => logFilter === "all" || evKind(e) === logFilter);
@@ -1622,52 +1036,59 @@
       : [h("div", { class: "empty-row" }, h("strong", null, "Kayıt yok"), h("span", null, "Konsol'dan yapılan değişiklikler burada görünür."))]));
   }
 
-  /* ---------- Modüller (DD-148) ---------- */
-  // Katalog sunucudan gelir (master-modul liste); burada yalnız görünüm bilgisi durur. Adres ve
-  // port gibi değerler sunucudan (S.sys) gelir, burada yazılı değildir.
-  const MOD_META = {
-    torrent: () => {
-      const sys = S.sys || {}, d = sys.domain || "…", root = sys.root || "/srv";
-      const prof = (sys.torrent && sys.torrent.profile) || "…";
-      return { name: "qBittorrent", sub: "Torrent indirmelerini yönetin.", icon: "download", tone: "t-video", firstLogin: true,
-        desc: "Debian paketiyle sunucunun kendisinde çalışır. İlk kurulumda en az ayarı bir kez yazar; sonra ayarlarına dokunmaz.",
-        will: [["box", "Debian paketi qbittorrent-nox; apt güncellemeleriyle yenilenir"], ["globe", `torrent.${d} adı eklenir (arayüz yalnız sunucuda dinler)`],
-          ["folder", `İndirme yeri ${root}/downloads, profil ${prof}`], ["info", "İnternete eş portu açılmaz; yalnız giden bağlantılar"]],
-        facts: ["qbittorrent-nox · Debian", "arayüz yalnız sunucu"],
-        steps: [["Paket kuruluyor", "apt · qbittorrent-nox"], ["Servis birimi", `profil ${prof} · indirmeler ${root}/downloads`], ["Servis başlatılıyor", "systemd"], ["Ad", `torrent.${d}`]],
-        link: `torrent.${d}`, logSrc: "journalctl -u qbittorrent-nox@…",
-        removeWhat: [["box", "Servis durur ve açılışta başlamaz; paket sunucuda kalır."], ["globe", `torrent.${d} adı kalkar.`]],
-        removeLabel: "Profili ve torrent listesini de sil",
-        removeKeep: `indirilenler ${root}/downloads'ta kalır; profil ve torrent listesi korunur.`,
-        removeDrop: "Profil ve torrent listesi de silinir. İndirilen dosyalara dokunulmaz.",
-        stopNote: "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder." };
-    },
-    wireguard: { name: "WireGuard", sub: "Cihazlarınız için VPN bağlantısı.", icon: "shield", tone: "t-dir", noStop: true,
-      desc: "Çekirdek WireGuard katmanını kurar ve Konsol'a WireGuard sayfasını ekler. Ağları ve cihazları o sayfadan kurarsınız.",
-      will: [["box", "Paketler: wireguard-tools, qrencode · çekirdek modülü"], ["shield", "Güvenlik duvarına WireGuard kancası eklenir"], ["shield", "WireGuard sayfası açılır (ilk ağ: Yapılandır)"]],
-      facts: ["Debian paketleri + Konsol modülü", "port ağ kurulunca açılır"],
-      steps: [["Paketler kuruluyor", "apt · wireguard-tools, qrencode"], ["Çekirdek modülü", "modprobe wireguard"], ["Güvenlik duvarı kancası", ""], ["WireGuard sayfası açılıyor", ""]],
-      page: ["#/wireguard", "shield", "WireGuard sayfasına git"], logSrc: "journalctl -u wg-quick@*",
-      removeWhat: [["shield", "Bütün ağlar kapanır, UDP portları ve kurallar kalkar."], ["folder", "WireGuard sayfası kalkar."]],
-      removeLabel: "Ağ anahtarlarını ve profilleri de sil",
-      removeKeep: "ağ anahtarları ve cihaz profilleri /etc/wireguard'da korunur; yeniden kurunca ağlar geri gelir.",
-      removeDrop: "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir." },
-  };
-  const META_FALLBACK = { sub: "", icon: "box", tone: "t-text", desc: "", will: [], facts: [], steps: [], removeWhat: [], removeKeep: "", removeDrop: "", stopNote: "" };
+  /* ---------- Modüller (DD-148, DD-200) ---------- */
+  // Katalog ve her paketin App Store metinleri sunucudan gelir (master-modul liste + paketin
+  // konsol.json'u); burada hiçbir uygulama adı yazılı değildir. Metinler yalnız metin düğümü olur.
+  const ROUTE_RE = /^[a-z]{2,16}$/;
+  const SHELL_ROUTES = new Set(["dosyalar", "moduller", "ayarlar"]);
+  const META_FALLBACK = { alt: "", simge: "box", ton: "t-text", aciklama: "", neler: [], notlar: [], kaldir: {}, durdur_notu: "", gunluk_kaynak: "", sayfa: {}, gunluk: {} };
+  const pairs = (v) => (Array.isArray(v) ? v.filter((x) => Array.isArray(x) && x.length === 2 && typeof x[1] === "string").map(([ic, t]) => [ICON[ic] ? ic : "info", t]) : []);
   function metaOf(id) {
-    const m = MOD_META[id];
-    return Object.assign({ name: id }, META_FALLBACK, typeof m === "function" ? m() : m || {});
+    const m = (MODS || []).find((x) => x.id === id);
+    const k = Object.assign({}, META_FALLBACK, m && m.konsol && typeof m.konsol === "object" ? m.konsol : {});
+    const text = (v) => (typeof v === "string" ? v : "");
+    const rm = k.kaldir && typeof k.kaldir === "object" ? k.kaldir : {};
+    const page = k.sayfa && typeof k.sayfa === "object" ? k.sayfa : {};
+    return {
+      name: text(k.ad) || id, sub: text(k.alt), icon: ICON[k.simge] ? k.simge : "box", tone: /^t-[a-z]+$/.test(k.ton) ? k.ton : "t-text",
+      desc: text(k.aciklama), will: pairs(k.neler), facts: Array.isArray(k.notlar) ? k.notlar.filter((t) => typeof t === "string") : [],
+      removeWhat: pairs(rm.neler), removeLabel: text(rm.veri_etiket), removeKeep: text(rm.veri_kalir), removeDrop: text(rm.veri_silinir),
+      stopNote: text(k.durdur_notu), logSrc: text(k.gunluk_kaynak),
+      rota: ROUTE_RE.test(text(page.rota)) && !SHELL_ROUTES.has(page.rota) ? page.rota : "", baslik: text(page.baslik), ustbilgi: text(page.ustbilgi), detay: text(page.detay),
+      gunluk: k.gunluk && typeof k.gunluk === "object" ? k.gunluk : {},
+    };
   }
   const modName = (detail) => metaOf(String(detail || "").split(" ")[0]).name;
   const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
   let MODS = null, modTimer = null;
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
-  // Files is built in; optional application pages follow the server registry.
-  const wgOn = () => modOn("wireguard");
+  // Files is built in; application pages follow the server registry and each package's declaration.
+  function appRoutes() {
+    const out = {};
+    (MODS || []).forEach((m) => {
+      const meta = metaOf(m.id);
+      if (meta.rota && !out[meta.rota]) out[meta.rota] = { id: m.id, installed: !!m.installed, baslik: meta.baslik || meta.name, ustbilgi: meta.ustbilgi, icon: meta.icon };
+    });
+    return out;
+  }
   function paintNav() {
-    document.querySelectorAll('[data-route="wireguard"]').forEach((a) => { a.hidden = !wgOn(); });
-    document.querySelectorAll('[data-route="torrent"]').forEach((a) => { a.hidden = !modOn("torrent"); });
-    $("installed-label").hidden = !wgOn() && !modOn("torrent");
+    const label = $("installed-label"), routes = appRoutes();
+    document.querySelectorAll(".nav a[data-app]").forEach((a) => {
+      const r = routes[a.dataset.route];
+      if (!r || !r.installed || r.id !== a.dataset.app) a.remove();
+    });
+    let after = label;
+    Object.entries(routes).forEach(([rota, r]) => {
+      if (!r.installed) return;
+      let a = document.querySelector(`.nav a[data-app="${r.id}"]`);
+      if (!a) {
+        a = h("a", { href: "#/" + rota, "data-route": rota, "data-app": r.id }, svg(r.icon), r.baslik);
+        after.after(a);
+      }
+      if (rota === current) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+      after = a;
+    });
+    label.hidden = !document.querySelector(".nav a[data-app]");
   }
   const modLogs = {};
   const modLogLoading = new Set();
@@ -1682,7 +1103,7 @@
     if (p.step !== "bitti") return;
     if (want === "kur") toast(`${meta.name} kuruldu.`);
     else if (want === "kaldir") toast(`${meta.name} kaldırıldı.`);
-    if (want === "kur" && m.id === "torrent") CFG = null;
+    if (want === "kur") CFG = null;
   }
   function loadModules() {
     return api("/api/konsol/moduller").then((r) => {
@@ -1696,8 +1117,10 @@
         if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
       });
       paintNav();
-      if ((current === "wireguard" && !wgOn()) || (current === "torrent" && !modOn("torrent"))) location.hash = "#/moduller";
-      if (!wgOn()) S.wg = null;
+      ensurePages();
+      const owner = appRoutes()[current];
+      if (owner && !owner.installed) location.hash = "#/moduller";
+      else if (pendingRoute) route();
       if (current === "moduller") renderModules();
       if (current === "torrent") renderTorrentStatus();
       clearTimeout(modTimer);
@@ -1740,7 +1163,7 @@
           }}, "Ayrıntı"),
         m.installed
           ? h("button", {type:"button", class:"btn btn-sm btn-primary", id:`mod-open-${m.id}`, disabled,
-              "data-go":meta.page ? meta.page[0] : "#/torrent"}, "Aç")
+              "data-go":meta.rota ? "#/" + meta.rota : "#/moduller"}, "Aç")
           : h("button", {type:"button", class:"btn btn-sm btn-primary", id:`mod-install-${m.id}`, disabled,
               onclick:() => modAct(m, "kur")}, "Kur")),
       m.busy ? h("p", {class:"store-progress", role:"status"}, p.text || "İşlem sunucuda sürüyor…")
@@ -1762,10 +1185,10 @@
         h("p", {class:"hint-s"}, "Sayfadan çıkabilirsiniz; işlem sunucuda sürer."));
     }
     if (m.installed) {
-      if (meta.firstLogin) kids.push(h("a", {href:"#/torrent", class:"linkbtn"}, "qBittorrent ayarları ve ilk giriş bilgileri"));
+      if (meta.detay && meta.rota) kids.push(h("a", {href:"#/" + meta.rota, class:"linkbtn"}, meta.detay));
       const running = m.state === "calisiyor";
       kids.push(h("div", {class:"store-detail-actions"},
-        meta.noStop ? null : h("button", {type:"button", class:"btn btn-sm btn-quiet", id:`mod-service-${m.id}`, disabled:!!m.busy, onclick:() => {
+        !m.durdurulabilir ? null : h("button", {type:"button", class:"btn btn-sm btn-quiet", id:`mod-service-${m.id}`, disabled:!!m.busy, onclick:() => {
           if (!running) { modAct(m, "baslat"); return; }
           ask({title:`${meta.name} durdurulsun mu?`, sub:"Kurulu kalır; istediğinizde başlatırsınız", calm:true, go:"Durdur",
             items:[["pause",meta.stopNote],["info","Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]], onOk:() => modAct(m,"durdur")});
@@ -1802,7 +1225,7 @@
     if ($("mod-sum")) $("mod-sum").textContent = `${n} kurulu · ${MODS.length - n} kurulabilir`;
     const selected = MODS.find(m => m.id === modSelected);
     if (!selected) modSelected = null;
-    const key = JSON.stringify([MODS, modSelected, modLogs, [...modLogLoading], S.sys?.domain, S.sys?.root, S.sys?.torrent]);
+    const key = JSON.stringify([MODS, modSelected, modLogs, [...modLogLoading]]);
     if (key === modRenderKey) return;
     modRenderKey = key;
     const focused = document.activeElement;
@@ -2009,8 +1432,8 @@
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
+  // Konsol'un kendi sayfaları; qBittorrent sayfası şimdilik buradadır (metinleri paketten).
   const ROUTES = {
-    wireguard: { title: "WireGuard", eyebrow: "Cihazlar ve ağlar", actions: () => [], render: () => { renderWg(); if (wgOn()) loadWg(); } },
     torrent: { title:"qBittorrent", eyebrow:"Hesap, indirme dizini ve servis", actions:settingsActions,
       render:() => { renderTorrentStatus(); renderSettings(); loadSettings(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
@@ -2019,34 +1442,116 @@
     ayarlar: { title: "Ayarlar", eyebrow: "Panel ve sunucu yapılandırması", actions:settingsActions,
       render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth(); loadSettings(); } },
   };
-  const ADD_ROUTE = { title: "Arayüz ekle", eyebrow: "WireGuard · yeni ağ", first: true,
-    actions: () => [h("button", { type: "button", class: "btn btn-quiet", "data-go": "#/wireguard" }, svg("back"), "WireGuard")], render: renderAddNet };
   let current = "dosyalar";
   const view = () => current;
+
+  /* ---------- Paket sayfaları (DD-200) ---------- */
+  // Kurulu bir paketin sayfası paketle gelir: dosyaları /uygulama/<id>/ altından yüklenir ve
+  // betik window.Konsol.sayfa(id, fabrika) ile kaydolur. Konsol rotayı, başlığı ve bölümü sağlar;
+  // sayfanın verisi ve API yolları (/api/uygulama/<id>/*) paketin kendisindedir.
+  const PAGES = {};            // rota → { id, page }
+  const FACTORIES = {};        // id → fabrika (kaldırılıp yeniden kurulunca betik yeniden yüklenmez)
+  const PAGE_FILES = new Set();
+  const PAGE_FILE_RE = /^[a-z][a-z0-9_.-]{0,40}\.(js|css)$/;
+  let pendingRoute = false;
+  const PAGE_API = Object.freeze({
+    h, svg, $, api, post, enc, toast, fail, ask, bytes, since,
+    clock: { sync: (serverNow) => { if (Number.isFinite(serverNow)) S.offset = serverNow - Date.now() / 1000; }, now },
+    dialog: { show: shShow, close: shClose },
+    route: () => current, header: () => paintHeader(), go: (hash) => { location.hash = hash; },
+  });
+  function sectionFor(rota) {
+    let section = document.querySelector(`.content > section[data-view="${rota}"]`);
+    if (!section) {
+      section = h("section", { "data-view": rota, hidden: true }, h("p", { class: "hint-s" }, "Sayfa yükleniyor…"));
+      document.querySelector(".content").append(section);
+    }
+    return section;
+  }
+  function mountPage(id) {
+    const m = (MODS || []).find((x) => x.id === id), meta = metaOf(id);
+    if (!m || !m.installed || !meta.rota || PAGES[meta.rota] || !FACTORIES[id]) return;
+    const section = sectionFor(meta.rota);
+    let page;
+    try {
+      page = FACTORIES[id](PAGE_API);
+      section.replaceChildren();
+      if (page && page.mount) page.mount(section);
+    } catch (e) {
+      section.replaceChildren(h("p", { class: "err-s" }, `${meta.name} sayfası yüklenemedi.`));
+      return;
+    }
+    PAGES[meta.rota] = { id, page: page || {} };
+    if (current === meta.rota) route();
+  }
+  function unmountPage(rota) {
+    const entry = PAGES[rota];
+    if (!entry) return;
+    try { if (entry.page.unmount) entry.page.unmount(); } catch (e) { /* kapanan sayfanın hatası Konsol'u durdurmaz */ }
+    delete PAGES[rota];
+    document.querySelector(`.content > section[data-view="${rota}"]`)?.remove();
+  }
+  function registerPage(id, factory) {
+    if (!ROUTE_RE.test(String(id)) || typeof factory !== "function") return;
+    FACTORIES[id] = factory;
+    mountPage(id);
+  }
+  function ensurePages() {
+    (MODS || []).forEach((m) => {
+      const meta = metaOf(m.id);
+      if (!meta.rota) return;
+      if (!m.installed) { if (PAGES[meta.rota] && PAGES[meta.rota].id === m.id) unmountPage(meta.rota); return; }
+      (Array.isArray(m.sayfa) ? m.sayfa : []).forEach((f) => {
+        if (typeof f !== "string" || !PAGE_FILE_RE.test(f)) return;
+        const url = `/uygulama/${enc(m.id)}/${f}`;
+        if (PAGE_FILES.has(url)) return;
+        PAGE_FILES.add(url);
+        document.head.append(f.endsWith(".css") ? h("link", { rel: "stylesheet", href: url }) : h("script", { src: url, defer: true }));
+      });
+      if (FACTORIES[m.id] && !PAGES[meta.rota]) mountPage(m.id);
+    });
+  }
+  window.Konsol = Object.freeze({ sayfa: registerPage });
+
+  const text = (v, sub) => (typeof v === "function" ? v(sub) : v);
+  function headerFor(key, sub) {
+    const r = ROUTES[key] || (PAGES[key] && PAGES[key].page), app = appRoutes()[key];
+    return { title: r && r.title != null ? text(r.title, sub) : app ? app.baslik : "",
+      eyebrow: (r && r.eyebrow != null ? text(r.eyebrow, sub) : app ? app.ustbilgi : "") || "",
+      actions: r && r.actions ? r.actions(sub) || [] : [] };
+  }
+  function paintHeader() {
+    const raw = location.hash.replace(/^#\/?/, "").split("/");
+    const hd = headerFor(current, raw[0] === current ? raw[1] : undefined);
+    $("title").textContent = hd.title;
+    $("eyebrow").textContent = hd.eyebrow;
+    $("eyebrow").hidden = !hd.eyebrow;
+    $("top-actions").replaceChildren(...hd.actions);
+  }
   function route() {
     const raw = location.hash.replace(/^#\/?/, "").split("/");
-    let key = ROUTES[raw[0]] ? raw[0] : "dosyalar";
+    const apps = appRoutes();
+    // Before the module list arrives an application bookmark is kept and shown once the list is known.
+    pendingRoute = !MODS && !SHELL_ROUTES.has(raw[0]) && !ROUTES[raw[0]] && ROUTE_RE.test(raw[0]);
+    let key = ROUTES[raw[0]] || apps[raw[0]] || pendingRoute ? raw[0] : "dosyalar";
     setMenu(false);
     // An absent application sends a saved bookmark to App Store.
-    if (MODS && ((key === "torrent" && !modOn("torrent")) || (key === "wireguard" && !wgOn()))) {
+    if (MODS && apps[key] && !apps[key].installed) {
       history.replaceState(null, "", "#/moduller");
       key = "moduller";
     }
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
-    const v = key === "wireguard" && raw[1] === "ekle" ? "wgadd" : key;
-    const r = v === "wgadd" ? ADD_ROUTE : ROUTES[key];
     if (key !== current) hideAllPass();
     current = key;
-    document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== v; });
+    if (!ROUTES[key]) sectionFor(key);
+    document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== key; });
     document.querySelectorAll("[data-route]").forEach((a) => {
       if (a.dataset.route === key) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
-    $("title").textContent = v === "wgadd" && S.wg && !nets().length ? "WireGuard'ı yapılandır" : r.title;
-    $("eyebrow").textContent = r.eyebrow;
-    $("eyebrow").hidden = !r.eyebrow;
-    $("top-actions").replaceChildren(...r.actions());
-    if (r.render) r.render();
+    paintHeader();
+    const r = ROUTES[key] || (PAGES[key] && PAGES[key].page);
+    if (r && r.render) r.render(raw[1]);
     window.scrollTo({ top: 0 });
   }
   window.addEventListener("hashchange", route);
@@ -2058,11 +1563,11 @@
   /* Keep the shell independent; poll expensive application data only on its page. */
   loadSystem();
   route();
-  loadModules().then(() => { if (current === "wireguard" && wgOn()) loadWg(); });
+  loadModules();
   setInterval(() => {
     if (document.hidden) return;
     loadSystem();
-    if (current === "wireguard" && wgOn()) loadWg();
+    if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }

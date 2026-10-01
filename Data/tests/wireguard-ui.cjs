@@ -4,6 +4,10 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
 const shots=fs.mkdtempSync(path.join(os.tmpdir(),'konsol-wg-settings-'));
 const csp=fs.readFileSync(path.join(__dirname,'../templates/Caddyfile'),'utf8').match(/Content-Security-Policy "([^"]+)"/)[1];
 const dns='1.1.1.1, 1.0.0.1, 2606:4700:4700::1001';
+// DD-200: the page and its App Store texts come from the package folder, served as /uygulama/wireguard/*.
+const magaza=path.join(__dirname,'../magaza');
+const meta=id=>JSON.parse(fs.readFileSync(path.join(magaza,id,'konsol.json'),'utf8').replace(/__[A-Z_]+__/g,'x'));
+const API='/api/uygulama/wireguard';
 const nets=[0,1].map(i=>({iface:`wg${i}`,port:61001+i,server4:`10.8.${i}.1`,subnet4:`10.8.${i}.0/24`,server6:`fd00::${i}:1`,subnet6:`fd00::${i}:0/112`,dns,label:i?'Kapalı ağ':'Ana ağ',active:!i,count:1,revision:String(i+1).repeat(64),
  peers:[{name:'fixture',ipv4:`10.8.${i}.2`,ipv6:`fd00::${i}:2`,enabled:true,profile:true,dns,keepalive:21,rx:0,tx:0,handshake:0,online:false}]}));
 const writes=[], errors=[]; let failure=false, stateReads=0;
@@ -16,13 +20,17 @@ const creationTemplate=structuredClone(nets[0]);
   page.on('console',m=>{if(/violates.*Content Security Policy|Refused to/.test(m.text()))errors.push(m.text());});
   await page.route('**/*',async route=>{
    const req=route.request(), p=new URL(req.url()).pathname;
+   if(p.startsWith('/uygulama/')){
+    const file=path.join(magaza,p.slice('/uygulama/'.length));
+    return route.fulfill({status:200,contentType:p.endsWith('.css')?'text/css':'application/javascript',body:fs.readFileSync(file,'utf8')});
+   }
    if(!p.startsWith('/api/')){
     if(req.resourceType()!=='document')return route.continue();
     const response=await route.fetch(); return route.fulfill({response,headers:{...response.headers(),'content-security-policy':csp}});
    }
    let data={};
    if(req.method()==='POST') {
-    if(p==='/api/wg/nets') {
+    if(p===API+'/nets') {
      const body=req.postDataJSON(); writes.push({p,...body});
      assert.equal(Object.hasOwn(body,'scope'),false,'new networks use the server default');
      if(failure)return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'Ağ eklenemedi'})});
@@ -31,18 +39,18 @@ const creationTemplate=structuredClone(nets[0]);
      nets.push(net);
      return route.fulfill({status:201,contentType:'application/json',body:JSON.stringify({iface:net.iface,port:net.port})});
     }
-    assert.match(p,/^\/api\/wg\/nets\/wg[01]\/ayarlar$/,'settings never calls reset or peer mutation');
+    assert.match(p,/^\/api\/uygulama\/wireguard\/nets\/wg[01]\/ayarlar$/,'settings never calls reset or peer mutation');
     const body=req.postDataJSON(); writes.push({p,...body});
     assert.equal(Object.hasOwn(body,'scope'),false);
     const net=nets.find(n=>p.includes('/'+n.iface+'/'));
     if(failure||net.revision!==body.revision)return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Ağ ayarları değişmiş; pencereyi kapatıp yeniden açın'})});
     Object.assign(net,{dns:body.dns,revision:'b'.repeat(64)}); data={iface:net.iface};
-   } else if(p==='/api/wg/state') {stateReads++; data={host:'fixture',version:'test',installed:true,networks:nets,now:Date.now()/1000,max:10,defaults:{dns,keepalive:21,mtu:1420,port:61001},reserved:[]};}
-   else if(p==='/api/konsol/moduller') data={items:[{id:'wireguard',installed:true,state:'calisiyor',runtime:'konsol',live:'running'},{id:'torrent',installed:false,state:'yok',runtime:'host',live:'-'}]};
+   } else if(p===API+'/state') {stateReads++; data={host:'fixture',version:'test',installed:true,networks:nets,now:Date.now()/1000,max:10,defaults:{dns,keepalive:21,mtu:1420,port:61001},reserved:[]};}
+   else if(p==='/api/konsol/moduller') data={items:[{id:'wireguard',installed:true,state:'calisiyor',runtime:'konsol',live:'running',durdurulabilir:false,konsol:meta('wireguard'),sayfa:['sayfa.js','sayfa.css']},{id:'torrent',installed:false,state:'yok',runtime:'host',live:'-',durdurulabilir:true,konsol:meta('torrent')}]};
    else if(p==='/api/konsol/kaynaklar')data={host:'fixture',domain:'ayc',version:'test',root:'/srv',read_at:Date.now()/1000,sampled_at:null,cpu:[],mem:null,disk:null,net:{}};
    else if(p==='/api/konsol/paylasim')data={items:[],enabled:true};
    else if(p==='/api/state')data={root:'/srv',temp:'downloads/incomplete',trash:{count:0,size:0},disk:{total:100,free:80}};
-   else if(['/api/wg/islemler','/api/archives','/api/trash'].includes(p))data={items:[]};
+   else if(['/api/konsol/islemler','/api/archives','/api/trash'].includes(p))data={items:[]};
    else if(p==='/api/list')data={path:'',entries:[]};
    else errors.push('unexpected endpoint '+p);
    return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
@@ -57,7 +65,7 @@ const creationTemplate=structuredClone(nets[0]);
   await dialog.getByRole('radio',{name:/^Quad9/}).click();
   assert.equal(writes.length,0,'DNS choice must not submit form');
   const previous=stateReads;
-  await page.waitForResponse(r=>new URL(r.url()).pathname==='/api/wg/state'&&stateReads>previous);
+  await page.waitForResponse(r=>new URL(r.url()).pathname===API+'/state'&&stateReads>previous);
   assert.equal(await dialog.getByRole('radio',{name:/^Quad9/}).getAttribute('aria-checked'),'true','poll must preserve draft');
   assert.equal(await dialog.getByRole('switch').count(),0);
   for(const width of [1440,736,390,320]) {
@@ -69,7 +77,7 @@ const creationTemplate=structuredClone(nets[0]);
   await page.screenshot({path:path.join(shots,'network-mobile.png'),fullPage:true});
   await page.locator('#wn-save').click();
   await page.waitForFunction(()=>!document.querySelector('#sh').open);
-  assert.deepEqual(writes[0],{p:'/api/wg/nets/wg0/ayarlar',dns:'9.9.9.9, 149.112.112.112, 2620:fe::fe',revision:'1'.repeat(64)});
+  assert.deepEqual(writes[0],{p:API+'/nets/wg0/ayarlar',dns:'9.9.9.9, 149.112.112.112, 2620:fe::fe',revision:'1'.repeat(64)});
   assert.equal(nets[0].peers[0].dns,dns);
   await page.locator('#wg-add').click();
   assert.equal(await dialog.getByRole('radio',{name:/^Quad9/}).getAttribute('aria-checked'),'true','new peers use saved network DNS');
@@ -105,7 +113,10 @@ const creationTemplate=structuredClone(nets[0]);
   await page.screenshot({path:path.join(shots,'network-desktop-dark.png'),fullPage:true});
   await dialog.getByRole('button',{name:'Vazgeç',exact:true}).click();
   await page.evaluate(()=>{location.hash='#/wireguard/ekle';});
-  const creation=page.locator('[data-view="wgadd"]');
+  const creation=page.locator('#wg-ekle');
+  // The shell shows the page's title; the first network is a "configure" step (DD-143).
+  assert.equal(await page.locator('#title').innerText(),'Arayüz ekle');
+  assert.deepEqual(await page.locator('.nav a[data-app]').allTextContents(),['WireGuard']);
   await creation.waitFor({state:'visible'});
   assert.equal(await page.locator('#na-local, #na-local-row, #na-local-desc').count(),0);
   assert.equal(await creation.getByRole('switch').count(),0);
@@ -117,7 +128,7 @@ const creationTemplate=structuredClone(nets[0]);
   await page.locator('#na-label').fill('Yeni ağ');
   await creation.getByRole('radio',{name:/^Quad9/}).click();
   const createPoll=stateReads;
-  await page.waitForResponse(r=>new URL(r.url()).pathname==='/api/wg/state'&&stateReads>createPoll);
+  await page.waitForResponse(r=>new URL(r.url()).pathname===API+'/state'&&stateReads>createPoll);
   assert.equal(await page.locator('#na-label').inputValue(),'Yeni ağ');
   assert.equal(await creation.getByRole('radio',{name:/^Quad9/}).getAttribute('aria-checked'),'true');
   for(const width of [1440,736,390,320]) {
@@ -131,7 +142,7 @@ const creationTemplate=structuredClone(nets[0]);
   assert.equal(await page.locator('#na-label').inputValue(),'Yeni ağ');
   failure=false; await page.locator('#na-create').click();
   await page.waitForURL('**/#/wireguard');
-  assert.deepEqual(writes[4],{p:'/api/wg/nets',port:'61020',dns:'9.9.9.9, 149.112.112.112, 2620:fe::fe',label:'Yeni ağ'});
+  assert.deepEqual(writes[4],{p:API+'/nets',port:'61020',dns:'9.9.9.9, 149.112.112.112, 2620:fe::fe',label:'Yeni ağ'});
   assert.equal(Object.hasOwn(nets[2],'scope'),false);
   await open('wg2');
   assert.equal(await dialog.getByRole('switch').count(),0);
@@ -141,6 +152,7 @@ const creationTemplate=structuredClone(nets[0]);
   await page.reload();
   await page.getByRole('button',{name:'Yapılandır',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#na-port').value==='61001');
+  assert.equal(await page.locator('#title').innerText(),"WireGuard'ı yapılandır");
   assert.equal(await page.locator('#na-port').inputValue(),'61001');
   await creation.getByRole('button',{name:'Vazgeç',exact:true}).click();
   assert.equal(writes.length,5);

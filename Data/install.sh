@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-173"
+V2_VERSION="2026.08.06-v2-174"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -109,6 +109,9 @@ WG_BLOCK_DEST4="$WG_BLOCK_DEST4"
 WG_BLOCK_DEST6="$WG_BLOCK_DEST6"
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
+WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT"
+WG_CLIENT_KEEPALIVE_DEFAULT=$WG_CLIENT_KEEPALIVE_DEFAULT
+CONSOLE_WEB_DIR=$CONSOLE_WEB_DIR
 RUNTIME_DIR=$RUNTIME_DIR
 TORRENT_UI_PORT=$TORRENT_UI_PORT
 TORRENT_PROFILE_DIR=$TORRENT_PROFILE_DIR
@@ -1087,9 +1090,9 @@ EOF
     ensure_files_panel "$OS_CHANGED"
 }
 
-# DD-133, DD-140: Konsol'un WireGuard ve sistem arka ucu. DD-180: TCP yok, WG_PANEL_SOCKET
+# DD-133, DD-140, DD-200: Konsol'un root arka ucu. DD-180: TCP yok, WG_PANEL_SOCKET
 # Unix soketinde dinler (0660 root:CADDY_GROUP); Caddy tailnet'e ve isteğe bağlı genel HTTPS adına açar
-# (panel.LOCAL_DOMAIN altında /api/wg/* ve /api/konsol/*; DD-195). DD-194: Konsol
+# (panel.LOCAL_DOMAIN altında /api/konsol/* ve /api/uygulama/*; DD-195). DD-194: Konsol
 # girişini ve Caddy'nin her panel isteği için sorduğu oturumu da bu arka uç denetler.
 # Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_wg_panel() {
@@ -1106,10 +1109,7 @@ ensure_wg_panel() {
         WG_PANEL_RUNTIME="$(basename -- "${WG_PANEL_SOCKET%/*}")" \
         CADDY_GROUP="$CADDY_GROUP" \
         STATE_FILE="$STATE_FILE" \
-        KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR" \
-        WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT" \
-        WG_CLIENT_KEEPALIVE_DEFAULT="$WG_CLIENT_KEEPALIVE_DEFAULT" \
-        WG_MTU="$WG_MTU"
+        KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-wg-panel.service
@@ -1124,11 +1124,20 @@ ensure_wg_panel() {
 # Stage 7 applies changed worker/unit files through master-modul yerlesik (DD-159).
 # Caddy directly serves the console's static assets.
 ensure_console_pages() {
-    local f
+    local f dir id
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
         giris.html giris.js giris.css; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
+    done
+    # DD-200: kurulu paketlerin sayfa dosyaları uygulama/<id>/ altındadır (master-modul koyar ve
+    # kaldırır). Kayıtta olmayan bir paketin klasörü sunucuda durmaz.
+    for dir in "$CONSOLE_WEB_DIR"/uygulama/*/; do
+        [[ -d "$dir" ]] || continue
+        id="${dir%/}"; id="${id##*/}"
+        [[ -z "$(module_state "$id")" ]] || continue
+        rm -rf -- "$dir"
+        log INFO "Konsol: kurulu olmayan $id paketinin sayfa dosyaları kaldırıldı"
     done
 }
 
@@ -1298,7 +1307,7 @@ stage_7() {
         "http://${TAILSCALE_IPV4}/" 2>/dev/null || true)"
     [[ "${page_body##*$'\n'}" == "403" && "$page_body" == *"başka bir Tailscale cihazından"* ]] ||
         die "Konsol sayfası oturum denetiminden geçmeden açıldı (HTTP ${page_body##*$'\n'})"
-    for probe in "/api/wg/state|401" "/|302"; do
+    for probe in "/api/konsol/kaynaklar|401" "/|302"; do
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --unix-socket "$WG_PANEL_SOCKET" \
             -H "Host: panel.${LOCAL_DOMAIN}" -H "X-Forwarded-Uri: ${probe%%|*}" \
             "http://localhost/oturum-denetle" || true)"
@@ -1307,7 +1316,7 @@ stage_7() {
     done
     # DD-180: root arka ucu TCP'de değil, yalnız Unix soketinde; dosya arka ucu loopback'te.
     local gate gate_path gate_url gate_via=()
-    for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/wg/state"; do
+    for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/konsol/kaynaklar"; do
         gate_path="${gate#*|}"
         gate_url="${gate%%|*}"
         gate_via=()

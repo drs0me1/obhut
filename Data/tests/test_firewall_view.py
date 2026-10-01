@@ -84,16 +84,17 @@ class FirewallViewTests(unittest.TestCase):
     def test_settings_network_metadata_is_public_only_and_includes_stopped_install(self):
         nets = [{**n, "private_key": "must-not-leak"} for n in self.nets]
         with patch.object(panel, "read_env", return_value=self.env), \
-             patch.object(self.p, "net_rows", return_value=nets), \
-             patch.object(self.p, "module_state", return_value="durduruldu"), \
+             patch.object(self.p, "package_networks", return_value=nets), \
+             patch.object(self.p, "vpn_apps", return_value=["WireGuard"]), \
              patch.object(self.p, "firewall_view", return_value={}), \
              patch.object(self.p, "web_view", return_value={}), \
              patch.object(self.p, "dns_view", return_value={}), \
              patch.object(self.p, "torrent_view", return_value={}):
             fw = self.p.settings(fresh=True)["firewall"]
-        self.assertTrue(fw["wireguard_installed"])
+        self.assertTrue(fw["vpn_installed"])
+        self.assertEqual(fw["vpn_name"], "WireGuard")
         self.assertEqual(len(fw["networks"]), 2)
-        self.assertEqual(set(fw["networks"][0]), {"iface", "label", "active", "server4", "server6"})
+        self.assertEqual(set(fw["networks"][0]), {"app", "iface", "label", "active", "server4", "server6"})
         self.assertFalse(fw["networks"][1]["active"])
 
     def test_wireguard_endpoints_have_no_tunnel_host_service(self):

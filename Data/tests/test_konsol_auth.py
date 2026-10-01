@@ -364,7 +364,7 @@ class PanelEndpointTests(unittest.TestCase):
         self.assertEqual(status, 200)
         attributes = [part.strip() for part in headers["Set-Cookie"].split(";")]
         self.assertEqual(attributes[1:], ["Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=%d" % auth.SESSION_SECONDS])
-        self.assertEqual(self.gate("/api/wg/state", self.cookie(headers))[0], 204)
+        self.assertEqual(self.gate("/api/konsol/kaynaklar", self.cookie(headers))[0], 204)
         self.assertEqual(self.gate("/", self.cookie(headers))[0], 204)
         status, _, body = self.call("/api/konsol/oturum", {"X-Konsol": "1", "Cookie": self.cookie(headers)})
         self.assertEqual(json.loads(body)["kullanici"], "yonetici")
@@ -435,7 +435,7 @@ class PanelEndpointTests(unittest.TestCase):
             self.assertEqual([part.strip() for part in headers["Set-Cookie"].split(";")][1:],
                              ["Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=%d" % auth.SESSION_SECONDS, "Secure"])
             cookie = self.cookie(headers)
-            self.assertEqual(self.public("/oturum-denetle", cookie, uri="/api/wg/state")[0], 204)
+            self.assertEqual(self.public("/oturum-denetle", cookie, uri="/api/konsol/kaynaklar")[0], 204)
             status, _, body = self.public("/api/konsol/oturum", cookie)
             self.assertEqual((json.loads(body)["kanal"], json.loads(body)["durum"]), ("internet", "acik"))
             # A program on this server cannot use the public door either (DD-180).

@@ -10,7 +10,11 @@ const settings = {read_at:Date.now()/1000,domain:"ayc",tailscale:"100.64.0.2",ts
   firewall:{ok:true,ports:[],listeners:[],rules:{errors:[],rows:[]}}, web:{entries:[],raw:[]}, dns:{listen:["lo","tailscale0"]},
   torrent:{installed:true,profile:"/var/lib/qbittorrent"},
   manage:{revision:"r1",config,pending:null,username:"admin",save:"/srv/downloads/",names:[]}};
-const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "host",live:"-"}));
+// DD-200: App Store texts, the page declaration and the page files come from each package folder.
+const magaza = path.join(__dirname,"../magaza");
+const meta = id => JSON.parse(fs.readFileSync(path.join(magaza,id,"konsol.json"),"utf8").replace(/__[A-Z_]+__/g,"x"));
+const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "host",live:"-",
+  durdurulabilir:id === "torrent",konsol:meta(id)}));
 // DD-195 (v2-168): the backend names both qBittorrent addresses; the public one only while published.
 modules[1].urls = {tailscale:"http://torrent.ayc",internet:null};
 const calls = [], errors = [], jobs = [];
@@ -23,7 +27,12 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
   const browser = await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM} : {})});
   try {
     const context = await browser.newContext({viewport:{width:1440,height:1000}});
+    const packageFile = route => {
+      const p = new URL(route.request().url()).pathname, file = path.join(magaza,p.slice("/uygulama/".length));
+      return route.fulfill({status:200,contentType:p.endsWith(".css") ? "text/css" : "application/javascript",body:fs.readFileSync(file,"utf8")});
+    };
     await context.route("**/*", async route => {
+      if (new URL(route.request().url()).pathname.startsWith("/uygulama/")) return packageFile(route);
       if (route.request().resourceType() !== "document") return route.continue();
       const response = await route.fetch();
       await route.fulfill({response,headers:{...response.headers(),"content-security-policy":csp}});
@@ -68,9 +77,9 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         result = {path:url.searchParams.get("path") || "",entries:[entry("media"),entry("downloads"),entry("Belgeler"),entry(longArchiveFolder),...["sample.zip","sample.rar","sample.r00","sample.part01.rar","not-an-archive.txt"].map(name=>entry(name,"file"))]};
       }
       else if (p === "/api/konsol/paylasim") result = {enabled:true,running:true,max:32,host:"http://100.64.0.2:61010",items:[]};
-      else if (p === "/api/trash" || p === "/api/wg/islemler") result = {items:[]};
+      else if (p === "/api/trash" || p === "/api/konsol/islemler") result = {items:[]};
       else if (p === "/api/konsol/ayarlar") result = settings;
-      else if (p === "/api/wg/state") result = {now:Date.now()/1000,installed:true,networks:[],reserved:[]};
+      else if (p === "/api/uygulama/wireguard/state") result = {now:Date.now()/1000,networks:[],reserved:[],max:10,defaults:{dns:"1.1.1.1",keepalive:21,mtu:1420,port:61001}};
       else if (p === "/api/archives") {
         if (req.method() === "POST") {
           submitted = req.postDataJSON();
@@ -104,7 +113,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await page.locator("#fs-detail:visible").count(),0);
     assert.equal(await page.locator("#resource-mem").innerText(),"%25");
     assert.equal(await page.locator("#resource-disk").innerText(),"%28");
-    assert(!calls.includes("/api/wg/state") && !calls.includes("/api/wg/islemler"));
+    assert(!calls.includes("/api/uygulama/wireguard/state") && !calls.includes("/api/konsol/islemler"));
+    assert.equal(await page.locator('script[src^="/uygulama/"]').count(),0,"no package page is loaded while none is installed");
     await page.screenshot({path:path.join(shots,"model-a-files.png"),fullPage:true});
     // Fresh installs only: retired bookmarks are not rewritten; an unknown hash shows Files.
     await navigate("#/uygulamalar");
@@ -334,12 +344,17 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     resources = "normal"; await refreshResources();
     await page.waitForFunction(() => document.querySelector("#resource-cpu").textContent === "%18");
     // A direct bookmark must populate the new-network form after its async first fetch.
-    modules[0].installed = true; modules[0].state = "calisiyor";
+    modules[0].installed = true; modules[0].state = "calisiyor"; modules[0].sayfa = ["sayfa.js","sayfa.css"];
     await page.goto(base + "/?deep-link-test=1#/wireguard/ekle");
     await page.waitForFunction(() => document.querySelector("#na-port").value !== "");
     await page.locator("#na-label").fill("Keep my draft");
     await refreshResources();
     assert.equal(await page.locator("#na-label").inputValue(),"Keep my draft");
+    // The page, its stylesheet and its sidebar link come from the package (DD-200).
+    assert.equal(await page.locator('script[src="/uygulama/wireguard/sayfa.js"]').count(),1);
+    assert.equal(await page.locator('link[href="/uygulama/wireguard/sayfa.css"]').count(),1);
+    assert.deepEqual(await page.locator(".nav a[data-app]").allTextContents(),["WireGuard"]);
+    assert.equal(await page.locator("#eyebrow").innerText(),"WireGuard · yeni ağ");
     for (const width of [1440,1024,736,390,320]) {
       await page.setViewportSize({width,height:950});
       for (const hash of ["#/dosyalar","#/dosyalar/paylasim","#/dosyalar/cop","#/moduller","#/ayarlar"]) {

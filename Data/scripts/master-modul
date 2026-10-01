@@ -8,9 +8,10 @@
 # Data/magaza/<id>/ dosyalarını işleyip oraya koyar): paket.env bildirimi (PAKET_* anahtarları)
 # ve `source` edilen kanca dosyası (paket_kur, paket_kaldir, paket_uygula, paket_baslat,
 # paket_durdur, paket_birim, paket_hesap, paket_veri_sil, paket_gunluk_suz, paket_ozet).
-# Bildirimdeki araçlar (SBIN_DIR), birim ekleri (UNIT_DIR), adlar (Caddy + dnsmasq) ve apt
-# paketleri motorun yardımcılarıyla konur ve kaldırılır; kaldırma sonunda hiçbir iz kalmadığı
-# denetlenir. Yerleşik Dosyalar/WebDAV (dosya, paylasim) katalogda değildir ve kaldırılamaz.
+# Bildirimdeki araçlar (SBIN_DIR), birim ekleri (UNIT_DIR), adlar (Caddy + dnsmasq), Konsol
+# sayfa dosyaları (CONSOLE_WEB_DIR/uygulama/<id>, DD-200) ve apt paketleri motorun
+# yardımcılarıyla konur ve kaldırılır; kaldırma sonunda hiçbir iz kalmadığı denetlenir.
+# Yerleşik Dosyalar/WebDAV (dosya, paylasim) katalogda değildir ve kaldırılamaz.
 #
 #   master-modul liste                  id runtime kayıt canlı eylem adım toplam metin (sekmeyle)
 #   master-modul kur ID
@@ -45,6 +46,7 @@ paket_sifirla() {
     PAKET_ID="" PAKET_AD="" PAKET_SIRA=50 PAKET_CALISMA=host PAKET_DURDURULABILIR=0 PAKET_HESAP=0
     PAKET_APT="" PAKET_ARACLAR="" PAKET_EKLER="" PAKET_ADLAR=0 PAKET_GUNLUK="" PAKET_KUR_ADIM=1
     PAKET_YAYIN=0 PAKET_UYGULA_HEP=0 PAKET_UYGULA_NEDEN="" PAKET_YERLESIK=0
+    PAKET_KONSOL="" PAKET_SAYFA="" PAKET_API=""
 }
 
 paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
@@ -445,6 +447,31 @@ paket_araclar_kaldir() {
     done
 }
 
+# DD-200: Konsol sayfa dosyaları (PAKET_SAYFA: .js/.css adları) yalnız kuruluyken Caddy'nin
+# sunduğu CONSOLE_WEB_DIR/uygulama/<id>/ altında durur; Konsol onları kurulu paket için yükler.
+paket_sayfa_koy() {
+    local name src dst dir tmp
+    [[ -n "$PAKET_SAYFA" ]] || return 0
+    need_keys CONSOLE_WEB_DIR
+    dir="$CONSOLE_WEB_DIR/uygulama/$PAKET_ID"
+    install -d -m 0755 -o root -g root -- "$dir"
+    for name in $PAKET_SAYFA; do
+        [[ "$name" =~ ^[a-z][a-z0-9_.-]{0,40}\.(js|css)$ ]] || { FAIL="paket sayfa dosyası adı geçersiz: $name"; return 1; }
+        src="$MODULES_DIR/$PAKET_ID/$name" dst="$dir/$name"
+        [[ -f "$src" ]] || { FAIL="paket dosyası yok ($src); kurulumu yeniden çalıştırın"; return 1; }
+        if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then continue; fi
+        tmp="$(mktemp "$dir/.$name.XXXXXX")"
+        cp -- "$src" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"
+    done
+}
+
+paket_sayfa_kaldir() {
+    [[ -n "${CONSOLE_WEB_DIR:-}" ]] || return 0
+    rm -rf -- "$CONSOLE_WEB_DIR/uygulama/$PAKET_ID"
+    # Son paket de gidince üst klasör kalmaz (boş değilse başka paketindir, kalır).
+    rmdir -- "$CONSOLE_WEB_DIR/uygulama" 2>/dev/null || true
+}
+
 ekler_hedef() { # "kaynak:hedef" → hedefin UNIT_DIR altındaki yolu
     local pair="$1" dst="${1#*:}"
     [[ "$pair" == *:* && "$dst" =~ ^[A-Za-z0-9@._-]+(/[A-Za-z0-9@._-]+)?$ ]] || return 1
@@ -502,6 +529,8 @@ paket_iz_kontrol() {
         [[ ! -e "$CADDY_MODULES_DIR/$PAKET_ID.caddy" ]] || left="$left $CADDY_MODULES_DIR/$PAKET_ID.caddy"
         [[ ! -e "$DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf" ]] || left="$left $DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf"
     fi
+    [[ -z "${CONSOLE_WEB_DIR:-}" || ! -e "$CONSOLE_WEB_DIR/uygulama/$PAKET_ID" ]] ||
+        left="$left $CONSOLE_WEB_DIR/uygulama/$PAKET_ID"
     [[ -z "$left" ]] || fail_step "kaldırma eksik kaldı:$left"
 }
 
@@ -591,6 +620,7 @@ cmd_kaldir() {
     paket_adlar_kapat
     paket_araclar_kaldir
     paket_ekler_kaldir
+    paket_sayfa_kaldir
     registry_set "$id" ""
     paket_iz_kontrol
     progress "$id" kaldir bitti 0 "kaldırıldı"

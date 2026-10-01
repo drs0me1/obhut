@@ -87,6 +87,11 @@ class LockTests(unittest.TestCase):
                       MODULES_DIR=self.root / "modules", DOWNLOADS_PATH=self.root / "downloads",
                       SETTINGS_PENDING_FILE=self.root / "pending.json")
         self.state.write_text("".join(k + "=" + shlex.quote(str(v)) + "\n" for k, v in values.items()))
+        # DD-197: the catalogue is the set of rendered package folders; the engine validates the
+        # id before it takes the locks, so the fixture needs the real torrent manifest and hooks.
+        (self.root / "modules" / "torrent").mkdir(parents=True)
+        for name in ("paket.env", "kanca"):
+            shutil.copy(DATA / "magaza" / "torrent" / name, self.root / "modules" / "torrent" / name)
         self.env = dict(os.environ, STATE_FILE=str(self.state))
         self.env.pop("V2_LOCK_FD", None)
         self.module_cmd = ["bash", str(DATA / "scripts/master-modul"), "uygula", "torrent"]

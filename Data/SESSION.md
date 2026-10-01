@@ -4,6 +4,29 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-02 — Konsol pages and application API from packages, phase 2a, v2-174 (DD-200):**
+- Done: `magaza/wireguard/api.py` (package API module behind `/api/uygulama/wireguard/*`,
+  sampler, `networks()` for Settings), `magaza/wireguard/sayfa.js` + `sayfa.css` (the
+  WireGuard page, cut out of the shell), `magaza/*/konsol.json` (App Store texts, page
+  declaration, journal templates; installer renders placeholders), manifest keys
+  `PAKET_KONSOL`/`PAKET_SAYFA`/`PAKET_API`; engine `paket_sayfa_koy/kaldir` + trace check;
+  generic root backend (package dispatcher, `konsol`/`sayfa`/`durdurulabilir` in the module
+  listing, `/api/konsol/islemler`, generic `hesap`, `vpn_installed`/`vpn_name`, no
+  `--master-wg`, no PANEL_* unit env; `WG_CLIENT_*` defaults in state.env); konsol.js page
+  registry (`window.Konsol.sayfa`, dynamic nav, templated package log lines); Caddy
+  `/api/uygulama/*`; stage 7 probes `/api/konsol/kaynaklar`; docs (DD-200, contract,
+  architecture, CLAUDE.md, cursor rules, tests/README, CHANGELOG).
+- Verified: Mac 403 Python / 169 Bats / all fixture browser suites; nrm Linux suites all
+  green (install-hardening fixture gained the torrent manifest); v2-174 deployed to nrm
+  twice (two live-found engine fixes: CONSOLE_WEB_DIR in state.env, page before registry);
+  DD-200 live acceptance (`scratchpad/live-dd200.py`) passed end to end; nrm left with
+  WireGuard removed (dosya, paylasim, torrent registered), Konsol account untouched.
+- Uncommitted on top of 34d4237; exported `app/2026.08.06-v2-174.command`. Phase 2b (later): backend/socket rename, `WG_*` keys out
+  of the base, qBittorrent page + settings form into its package, launcher text, master-wg
+  port list.
+
+## Previous Task
+
 **2026-10-01 — Publication rows from declarations, phase 1b, v2-173 (DD-199):**
 - `master_publications.py` rewritten around `packages(env)` (manifest keys PAKET_YAYIN_*);
   `magaza/torrent/yayin.py` holds qBittorrent's checks; `read_manifests` moved to

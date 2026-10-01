@@ -650,7 +650,7 @@ EOF
     # DD-154: the old names wg., dosya. and file. are gone; the console is panel. only.
     run ! grep -qE '^http://(wg|dosya|file)\.' "$V2_ROOT/templates/Caddyfile"
     run ! grep -qE 'interface-name=(wg|dosya|file)\.' "$V2_ROOT/templates/dnsmasq.conf"
-    awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/wg/\* /api/konsol/\*$'
+    awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/uygulama/\* /api/konsol/\*$'
     # DD-151: no base Compose project at all; every container belongs to a module.
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
 }
@@ -1700,7 +1700,7 @@ EOF
 }
 
 panel_start() {
-    # Konsol'un WireGuard arka ucu, her çağrıyı günlükleyen sahte master-wg ile (DD-133, DD-143).
+    # Konsol'un root arka ucu; WireGuard paketi her çağrıyı günlükleyen sahte master-wg ile (DD-133, DD-143, DD-200).
     PANEL="$V2_ROOT/panel/master-wg-panel"
     mkdir -p "$TMP/pbin" "$TMP/clients"
     printf '[Interface]\n' >"$TMP/wg0.conf"
@@ -1721,8 +1721,20 @@ SHARE_HTTPS_PORT=443
 RCLONE_VERSION=1.75.1
 TAILSCALE_IPV4=100.64.0.7
 SERVER_ROOT=$TMP
+MODULES_DIR=$TMP/mods
+WG_CLIENT_DNS_DEFAULT="1.1.1.1, 1.0.0.1, 2606:4700:4700::1001"
+WG_CLIENT_KEEPALIVE_DEFAULT=21
+WG_MTU=1420
 EOF
-    # DD-150: WireGuard is a module; these tests run with it installed.
+    # DD-200: the rendered package folders the backend reads: manifests, the WireGuard API module
+    # and the Konsol metadata, with placeholders filled the way the installer fills them.
+    mkdir -p "$TMP/mods/wireguard" "$TMP/mods/torrent"
+    cp "$V2_ROOT/magaza/wireguard/paket.env" "$V2_ROOT/magaza/wireguard/api.py" "$TMP/mods/wireguard/"
+    sed "s#__WG_CONF_DIR__#$TMP#g" "$V2_ROOT/magaza/wireguard/konsol.json" >"$TMP/mods/wireguard/konsol.json"
+    sed 's/__TORRENT_UI_PORT__/61006/g' "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
+    sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e "s#__DOWNLOADS_PATH__#$TMP/downloads#g" -e "s#__TORRENT_PROFILE_DIR__#$TMP/qb#g" \
+        "$V2_ROOT/magaza/torrent/konsol.json" >"$TMP/mods/torrent/konsol.json"
+    # DD-150: WireGuard is a package; these tests run with it installed.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/master-wg" <<EOF
 #!/bin/bash
@@ -1779,10 +1791,10 @@ EOF
     # DD-180: no TCP port; a short socket path (macOS allows 104 bytes).
     PSOCK="$(mktemp -d /tmp/wgp.XXXXXX)/api.sock"
     python3 "$PANEL" serve --listen "unix:$PSOCK" --state "$TMP/state.env" --state-env \
-        --master-wg "$TMP/pbin/master-wg" --master-modul "$TMP/pbin/master-modul" >"$TMP/panel.log" 2>&1 &
+        --master-modul "$TMP/pbin/master-modul" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
-        curl -s -o /dev/null --unix-socket "$PSOCK" "http://panel.ayc/api/wg/state" && return 0
+        curl -s -o /dev/null --unix-socket "$PSOCK" "http://panel.ayc/api/konsol/kaynaklar" && return 0
         sleep 0.1
     done
     cat "$TMP/panel.log"
@@ -1803,7 +1815,7 @@ pc() {
     # Konsol sayfasını dosya arka ucu verir; burada kök 404'tür.
     [ "$(pc /)" = 404 ]
     run ! grep -qi '^WWW-Authenticate' "$TMP/head"
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1')" = 200 ]
     grep -qi "^Content-Security-Policy: default-src 'none'; base-uri 'none'" "$TMP/head"
     grep -qi '^Cache-Control: no-store' "$TMP/head"
     grep -qi '^X-Frame-Options: DENY' "$TMP/head"
@@ -1812,22 +1824,22 @@ pc() {
     # DD-180: the loopback names are no longer trusted Host values.
     for host in 127.0.0.1:61008 localhost:61008 localhost; do
         [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'X-Konsol: 1' -H "Host: $host" \
-            "http://panel.ayc/api/wg/state")" = 403 ]
+            "http://panel.ayc/api/uygulama/wireguard/state")" = 403 ]
     done
     # DD-180: what Caddy relays must come from another tailnet device, never from this host.
     for ip in 127.0.0.1 203.0.113.5 10.8.0.2 ::1 fe80::1 not-an-ip; do
-        [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H "X-Forwarded-For: $ip")" = 403 ]
+        [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' -H "X-Forwarded-For: $ip")" = 403 ]
         grep -q 'başka bir Tailscale cihazından' "$TMP/body"
     done
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: 100.64.0.9')" = 200 ]
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: fd7a:115c:a1e0::9')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: 100.64.0.9')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' -H 'X-Forwarded-For: fd7a:115c:a1e0::9')" = 200 ]
     # CSRF: the API needs the panel header and a same-origin fetch.
-    [ "$(pc /api/wg/state)" = 403 ]
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
+    [ "$(pc /api/uygulama/wireguard/state)" = 403 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: cross-site')" = 403 ]
     # Only the background sampler's read-only calls (DD-137) may have run.
     touch "$TMP/mwg-calls"
     run ! grep -qvE '^(wg[0-9]|yok)\|(nets|info)$' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' -H 'Sec-Fetch-Site: same-origin')" = 200 ]
     python3 - "$TMP/body" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -1841,18 +1853,15 @@ assert d["defaults"]["dns"] and d["defaults"]["keepalive"] == 21
 # DD-136: the panel does not track the Mac backup.
 assert "backup" not in d
 PY
-    # check (stage 7): no password.
-    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host panel.ayc
+    # check (stage 7): no password; the probe is the package-neutral resources endpoint (DD-196/200).
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/konsol/kaynaklar" --host panel.ayc
     [ "$status" -eq 0 ]
-    [ "$output" = "1 ağ, 1 peer" ]
-    # DD-143: temiz kurulumda ağ yoktur; check yine geçer.
-    touch "$TMP/no-wg"
-    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host panel.ayc
-    [ "$status" -eq 0 ]
-    [ "$output" = "0 ağ, 0 peer" ]
-    rm -f "$TMP/no-wg"
+    [ "$output" = "sürüm 2026.08.06-v2-test" ]
+    # A package route is no probe target: anything but the resources answer fails the check.
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/uygulama/wireguard/state" --host panel.ayc
+    [ "$status" -ne 0 ]
     # A foreign name fails the check (the Host gate stays).
-    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/wg/state" --host evil.example
+    run python3 "$PANEL" check --socket "$PSOCK" --url "http://panel.ayc/api/konsol/kaynaklar" --host evil.example
     [ "$status" -ne 0 ]
     case "$output" in *"HTTP 403"*) ;; *) false ;; esac
     # The account machinery is gone for good.
@@ -2246,8 +2255,8 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     done
     [ "$(pc /api/konsol/moduller/paylasim/parola -H 'X-Konsol: 1' -H 'Content-Type: application/json' --data '{}')" = 404 ]
     [ ! -e "$TMP/sdrun-calls" ]
-    # The resources reply carries no share or port data (the legacy /api/wg/sistem is gone).
-    [ "$(pc /api/wg/sistem -H 'X-Konsol: 1')" = 404 ]
+    # The resources reply carries no share or port data (the legacy /api/uygulama/wireguard/sistem is gone).
+    [ "$(pc /api/uygulama/wireguard/sistem -H 'X-Konsol: 1')" = 404 ]
     [ "$(pc /api/konsol/kaynaklar -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "share" not in d and "ports" not in d, d' "$TMP/body"
 }
@@ -2256,15 +2265,15 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json') before
-    # DD-150: WireGuard is a module; without it the page gets an empty, marked state.
+    # DD-150/DD-200: WireGuard is a package; without it no page is served and its API answers 404/409.
     : >"$TMP/moduller"
     before="$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')"
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["installed"] is False and d["networks"] == [], d' "$TMP/body"
-    [ "$(pc /api/wg/nets "${json[@]}" --data '{"port":"61011","dns":"1.1.1.1","label":""}')" = 409 ]
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1')" = 404 ]
+    grep -q 'WireGuard kurulu değil' "$TMP/body"
+    [ "$(pc /api/uygulama/wireguard/nets "${json[@]}" --data '{"port":"61011","dns":"1.1.1.1","label":""}')" = 409 ]
     grep -q 'WireGuard kurulu değil; Konsol → App Store' "$TMP/body"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/add "${json[@]}" --data '{}')" = 409 ]
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/profile -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/add "${json[@]}" --data '{}')" = 409 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/profile -H 'X-Konsol: 1')" = 404 ]
     [ "$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')" = "$before" ]
     # The disk card no longer needs the file backend: the root backend measures the user area.
     [ "$(pc /api/konsol/kaynaklar -H 'X-Konsol: 1')" = 200 ]
@@ -2273,31 +2282,59 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["root"] == sys.argv[2] and d["disk"]["total"] > 0 and d["disk"]["free"] >= 0, d
 ' "$TMP/body" "$TMP"
-    # With the module back, the same requests reach master-wg again.
+    # With the package back, the API module loads again and the same requests reach master-wg.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
-    [ "$(pc /api/wg/state -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["installed"] is True and d["networks"], d' "$TMP/body"
+    [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["networks"] and d["defaults"]["keepalive"] == 21, d' "$TMP/body"
+    # The module listing carries the package's App Store texts and, while installed, its page files (DD-200).
+    printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
+    cat >"$TMP/pbin/master-modul" <<EOF
+#!/bin/bash
+case "\$1" in
+    liste) printf 'wireguard\tkonsol\tcalisiyor\t-\t-\t-\t-\t-\ntorrent\thost\tyok\t-\t-\t-\t-\t-\n' ;;
+    *) exit 1 ;;
+esac
+EOF
+    [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
+    python3 - "$TMP/body" <<'PY'
+import json, sys
+items = {m["id"]: m for m in json.load(open(sys.argv[1]))["items"]}
+assert items["wireguard"]["konsol"]["ad"] == "WireGuard" and items["wireguard"]["sayfa"] == ["sayfa.js", "sayfa.css"], items["wireguard"]
+assert items["wireguard"]["durdurulabilir"] is False and items["torrent"]["durdurulabilir"] is True
+assert items["torrent"]["konsol"]["sayfa"]["rota"] == "torrent" and "sayfa" not in items["torrent"], items["torrent"]
+assert "torrent.ayc" in items["torrent"]["konsol"]["neler"][1][1]
+PY
 }
 
-@test "console always includes Files while WireGuard follows its optional application" {
-    local js="$V2_ROOT/console/konsol.js"
-    grep -qF 'const wgOn = () => modOn("wireguard");' "$js"
-    grep -q 'href="#/dosyalar" data-route="dosyalar"' "$V2_ROOT/console/index.html"
-    grep -qF 'document.querySelectorAll('"'"'[data-route="wireguard"]'"'"').forEach((a) => { a.hidden = !wgOn(); });' "$js"
-    # A page whose module is absent is not opened; the backends are not asked.
-    grep -qF 'if (MODS && ((key === "torrent" && !modOn("torrent")) || (key === "wireguard" && !wgOn()))) {' "$js"
+@test "console always includes Files while application pages follow the installed packages" {
+    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
+    grep -q 'href="#/dosyalar" data-route="dosyalar"' "$html"
+    # DD-200: the shell names no application; links, sections and App Store texts come from packages.
+    run ! grep -qi 'wireguard' "$js" "$html" "$V2_ROOT/console/konsol.css"
+    run ! grep -q 'data-route="torrent"' "$html"
+    grep -qF 'a = h("a", { href: "#/" + rota, "data-route": rota, "data-app": r.id }, svg(r.icon), r.baslik);' "$js"
+    grep -qF 'window.Konsol = Object.freeze({ sayfa: registerPage });' "$js"
+    grep -qF 'const url = `/uygulama/${enc(m.id)}/${f}`;' "$js"
+    # A page whose package is absent is not opened; the backends are not asked.
+    grep -qF 'if (MODS && apps[key] && !apps[key].installed) {' "$js"
     grep -qF 'api("/api/konsol/kaynaklar", { signal: controller.signal })' "$js"
-    grep -qF 'loadModules().then(() => { if (current === "wireguard" && wgOn()) loadWg(); });' "$js"
+    grep -qF 'if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();' "$js"
     # Built-ins never enter the optional application catalogue.
     run ! grep -qF 'requires: "dosya",' "$js"
     # Konsol modules are opened from the row, never stopped from details.
     run ! grep -qF 'dosya: () => {' "$js"
-    grep -qF 'wireguard: { name: "WireGuard"' "$js"
-    grep -qF '"data-go":meta.page ? meta.page[0] : "#/torrent"' "$js"
-    grep -qF 'meta.noStop ? null : h("button"' "$js"
+    grep -qF '"data-go":meta.rota ? "#/" + meta.rota : "#/moduller"' "$js"
+    grep -qF '!m.durdurulabilir ? null : h("button"' "$js"
     # Host measurements remain independent of optional applications.
     grep -qF 'fresh && s.disk?.total > 0' "$js"
-    run ! grep -qE 'data-view="(genel|uygulamalar|gunluk)"|desktop-dock|window-min' "$V2_ROOT/console/index.html"
+    run ! grep -qE 'data-view="(genel|uygulamalar|gunluk)"|desktop-dock|window-min' "$html"
+    # The WireGuard page is the package's: it registers itself and uses only its own API prefix.
+    local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
+    grep -qF 'window.Konsol.sayfa("wireguard", (k) => {' "$sayfa"
+    grep -qF 'const BASE = "/api/uygulama/wireguard";' "$sayfa"
+    run ! grep -qE '/api/(wg|konsol)/' "$sayfa"
+    grep -qx 'PAKET_SAYFA="sayfa.js sayfa.css"' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qx 'PAKET_API="api.py"' "$V2_ROOT/magaza/wireguard/paket.env"
 }
 
 @test "wg panel shows qBittorrent's first login only on request and never offers a new password for it" {
@@ -2327,77 +2364,79 @@ EOF
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
     local auth=(-H 'X-Konsol: 1') json=(-H 'Content-Type: application/json')
-    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"phone","dns":"1.1.1.1, 1.0.0.1","keepalive":"21","mtu":"1420"}')" = 201 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"phone","dns":"1.1.1.1, 1.0.0.1","keepalive":"21","mtu":"1420"}')" = 201 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"name": "phone", "ipv4": "10.8.0.3"}' "$TMP/body"
     grep -qx 'wg0|add|phone|1.1.1.1, 1.0.0.1|21|1420' "$TMP/mwg-calls"
     # Bad names, interfaces, bodies and confirmations never reach master-wg; its refusals come back as messages.
     : >"$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"../x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
-    [ "$(pc /api/wg/nets/eth0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
-    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" -d 'name=phone')" = 400 ]
-    [ "$(pc '/api/wg/nets/wg0/peers/..%2Fx/remove' "${auth[@]}" "${json[@]}" -d '{}')" = 400 ]
-    [ "$(pc /api/wg/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"evet"}')" = 400 ]
-    [ "$(pc /api/wg/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"SIL"}')" = 400 ]
-    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"all","dns":"9.9.9.9","label":""}')" = 400 ]
-    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"abc","dns":"9.9.9.9","label":""}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"../x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/eth0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers "${auth[@]}" -d 'name=phone')" = 400 ]
+    [ "$(pc '/api/uygulama/wireguard/nets/wg0/peers/..%2Fx/remove' "${auth[@]}" "${json[@]}" -d '{}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"evet"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"SIL"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","scope":"all","dns":"9.9.9.9","label":""}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":"abc","dns":"9.9.9.9","label":""}')" = 400 ]
     [ ! -s "$TMP/mwg-calls" ]
-    [ "$(pc /api/wg/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"dup","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"dup","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 400 ]
     grep -q "zaten var" "$TMP/body"
-    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61001","dns":"9.9.9.9","label":"x"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":"61001","dns":"9.9.9.9","label":"x"}')" = 400 ]
     grep -q "UDP 61001 kullanılıyor (wg0)" "$TMP/body"
     # A new network: master-wg net-add, then it is listed with its label and takes its own peers.
-    [ "$(pc /api/wg/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","dns":"9.9.9.9","label":"Misafir"}')" = 201 ]
+    [ "$(pc /api/uygulama/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":"61011","dns":"9.9.9.9","label":"Misafir"}')" = 201 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg1", "port": 61011}' "$TMP/body"
     grep -qx 'yok|net-add|61011|9.9.9.9|Misafir' "$TMP/mwg-calls"
-    pc /api/wg/state "${auth[@]}" >/dev/null
+    pc /api/uygulama/wireguard/state "${auth[@]}" >/dev/null
     python3 -c 'import json, sys; n = json.load(open(sys.argv[1]))["networks"][1]; assert (n["iface"], n["label"], n["dns"], n["peers"]) == ("wg1", "Misafir", "9.9.9.9", []), n' "$TMP/body"
     grep -qx 'wg1|info' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg1/peers "${auth[@]}" "${json[@]}" -d '{"name":"guest","dns":"9.9.9.9","keepalive":"0","mtu":"1420"}')" = 201 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/peers "${auth[@]}" "${json[@]}" -d '{"name":"guest","dns":"9.9.9.9","keepalive":"0","mtu":"1420"}')" = 201 ]
     grep -qx 'wg1|add|guest|9.9.9.9|0|1420' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg1/peers/guest/dns "${auth[@]}" "${json[@]}" -d '{"dns":"1.1.1.1"}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/peers/guest/dns "${auth[@]}" "${json[@]}" -d '{"dns":"1.1.1.1"}')" = 200 ]
     grep -qx 'wg1|dns|guest|1.1.1.1' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg1/peers/guest/remove "${auth[@]}" "${json[@]}" -d '{}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/peers/guest/remove "${auth[@]}" "${json[@]}" -d '{}')" = 200 ]
     grep -qx 'wg1|remove|guest' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg1/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"Onayla"}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"Onayla"}')" = 200 ]
     grep -qx 'wg1|reset|--onay' "$TMP/mwg-calls"
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"peers": 4, "profiles": 4}' "$TMP/body"
-    [ "$(pc /api/wg/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
     grep -qx 'yok|net-remove|wg1|--onay' "$TMP/mwg-calls"
     # The masked preview carries no secret; the download and the QR only when asked.
-    [ "$(pc '/api/wg/nets/wg0/peers/iphone/profile?masked=1' "${auth[@]}")" = 200 ]
+    [ "$(pc '/api/uygulama/wireguard/nets/wg0/peers/iphone/profile?masked=1' "${auth[@]}")" = 200 ]
     grep -q '^PrivateKey = •' "$TMP/body"
     grep -q '^Endpoint = 203.0.113.7:61001$' "$TMP/body"
     run ! grep -qE 'SECRETPRIV|SECRETPSK' "$TMP/body"
     grep -qx 'wg0|profile|iphone' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
     grep -q 'SECRETPRIV' "$TMP/body"
     grep -qi '^Content-Disposition: attachment; filename="iphone.conf"' "$TMP/head"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/qr.png "${auth[@]}")" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/qr.png "${auth[@]}")" = 200 ]
     grep -qi '^Content-Type: image/png' "$TMP/head"
     [ "$(head -c 4 "$TMP/body" | od -An -tx1 | tr -d ' \n')" = 89504e47 ]
-    # The old routes are gone: every WireGuard call now lives under /api/wg.
+    # The old routes are gone: every WireGuard call now lives under the package's /api/uygulama/wireguard (DD-200).
+    [ "$(pc /api/wg/state "${auth[@]}")" = 404 ]
     [ "$(pc /api/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 404 ]
     [ "$(pc /api/state "${auth[@]}")" = 404 ]
     [ "$(pc /api/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":"1420"}')" = 404 ]
     # DD-140: peer and network switches and keepalive go to master-wg.
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
     grep -qx 'wg0|peer|iphone|kapat' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
     grep -qx 'wg0|peer|iphone|ac' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"25"}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"25"}')" = 200 ]
     grep -qx 'wg0|keepalive|iphone|25' "$TMP/mwg-calls"
-    [ "$(pc /api/wg/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"x"}')" = 400 ]
-    [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"x"}')" = 400 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
     grep -qx 'wg0|net|kapat' "$TMP/mwg-calls"
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg0", "active": False}' "$TMP/body"
-    [ "$(pc /api/wg/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
+    [ "$(pc /api/uygulama/wireguard/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
     grep -qx 'wg0|net|ac' "$TMP/mwg-calls"
     # The audit log names the action, network and peer, never a password or key.
-    grep -q 'konsol yerel ekle wg0/phone -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel ag-ekle wg1 -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel ag-kaldir wg1 -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel peer-durum wg0/iphone kapat -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel ag-durum wg0 kapat -> ok' "$TMP/panel.log"
+    # DD-200: package events carry the package id; the details read as the sentence Konsol shows.
+    grep -q 'konsol yerel wireguard:ekle wg0/phone -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel wireguard:ag-ekle wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel wireguard:ag-kaldir wg1 -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel wireguard:peer-durum wg0/iphone kapatıldı -> ok' "$TMP/panel.log"
+    grep -q 'konsol yerel wireguard:ag-durum wg0 kapatıldı -> ok' "$TMP/panel.log"
     run ! grep -qE 'panel pass|SECRETPRIV|SECRETPSK|QRDATA' "$TMP/panel.log"
 }
 
@@ -2421,7 +2460,7 @@ EOF
     chmod +x "$TMP/pbin/master-wg.new"
     mv -f "$TMP/pbin/master-wg.new" "$TMP/pbin/master-wg"
     online() {
-        pc /api/wg/state -H 'X-Konsol: 1' >/dev/null
+        pc /api/uygulama/wireguard/state -H 'X-Konsol: 1' >/dev/null
         python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); p = d["networks"][0]["peers"][0]; print(p["online"], p["active_at"] is not None, d["active_window"])' "$TMP/body"
     }
     # Just seen, fresh handshake: connected until it has been watched for a whole window.
@@ -2450,8 +2489,8 @@ EOF
     sleep 0.8
     [ "$(online)" = "True False 2" ]
     # The page shows the server's verdict; the handshake only separates idle from never seen.
-    grep -q 'if (p.online) return "ok";' "$V2_ROOT/console/konsol.js"
-    run ! grep -q 'a < 180' "$V2_ROOT/console/konsol.js"
+    grep -q 'if (p.online) return "ok";' "$V2_ROOT/magaza/wireguard/sayfa.js"
+    run ! grep -q 'a < 180' "$V2_ROOT/magaza/wireguard/sayfa.js"
 }
 
 @test "Konsol sign-in: Caddy asks the root backend for every protected path and the code stays off the log" {
@@ -2487,7 +2526,7 @@ EOF
     # Stage 7: the open page, a refused host-local page request and both session answers.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -qF '"http://${TAILSCALE_IPV4}/giris.html"' <<<"$s7"
-    grep -qF 'for probe in "/api/wg/state|401" "/|302"; do' <<<"$s7"
+    grep -qF 'for probe in "/api/konsol/kaynaklar|401" "/|302"; do' <<<"$s7"
     grep -qF '"http://localhost/oturum-denetle"' <<<"$s7"
     grep -qF -- '--url "http://127.0.0.1:${FILES_PANEL_PORT}/api/state"' <<<"$s7"
     # The one-time code goes to the operator's terminal with printf, never through log().
@@ -2525,7 +2564,7 @@ EOF
 }
 
 @test "store phase 0: the base owns no WireGuard; the package installs and removes its tool and drop-in" {
-    local s4 s7 modul
+    local s4 s7 modul kur
     # DD-196: repo layout — packages live under magaza/, the WireGuard tool among them.
     [ -f "$V2_ROOT/magaza/wireguard/master-wg" ]
     [ -f "$V2_ROOT/magaza/wireguard/wg-quick-master-stack.conf" ]
@@ -2548,6 +2587,14 @@ EOF
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_araclar_kaldir'
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_ekler_kaldir'
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_iz_kontrol'
+    # DD-200: the Konsol page files are declared, placed before the registry is written (a
+    # failed step leaves no half-registered package) and removed with the package; the engine
+    # needs CONSOLE_WEB_DIR from state.env, so the installer writes it (found live on nrm).
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'CONSOLE_WEB_DIR=\$CONSOLE_WEB_DIR'
+    kur="$(awk '/^paket_kur\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/kanca")"
+    [ "$(grep -n 'paket_sayfa_koy || fail_step' <<<"$kur" | cut -d: -f1)" -lt "$(grep -n 'registry_set "$PAKET_ID" calisiyor' <<<"$kur" | cut -d: -f1)" ]
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_sayfa_kaldir'
+    grep -q 'CONSOLE_WEB_DIR/uygulama/$PAKET_ID' "$modul"
     # Stage 7: the tool is checked only with the package, and must be absent without it; the probe is package-neutral.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -qF 'die "WireGuard kurulu değilken aracı ya da birim eki sunucuda kalmış"' <<<"$s7"
@@ -2566,7 +2613,7 @@ EOF
     grep -qF "grep -qx \$'wireguard\\tcalisiyor'" "$V2_ROOT/scripts/refresh-tailnet-config"
     grep -qF 'self.error(404, "bu modül kurulu değil")' "$V2_ROOT/panel/master-wg-panel"
     # Konsol's log labels each event by its real source; only WireGuard actions say WireGuard.
-    grep -qF 'const WG_ACTIONS = new Set(' "$V2_ROOT/console/konsol.js"
+    grep -qF 'e.action.includes(":") ? e.action.split(":")[0]' "$V2_ROOT/console/konsol.js"
     run ! grep -qF 'e.source === "panel" ? "wg" : "fs"' "$V2_ROOT/console/konsol.js"
     grep -qF '"parola-degis": () => "Konsol parolası değiştirildi"' "$V2_ROOT/console/konsol.js"
 }
@@ -2577,7 +2624,10 @@ EOF
     grep -q -- '--listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__' "$unit"
     grep -qx 'RuntimeDirectory=__WG_PANEL_RUNTIME__' "$unit"
     grep -qx 'RuntimeDirectoryMode=0755' "$unit"
-    grep -q -- '--master-wg __SBIN_DIR__/master-wg' "$unit"
+    # DD-200: the backend knows no package tool; package API modules find theirs beside master-modul.
+    run ! grep -q -- '--master-wg' "$unit"
+    grep -q -- '--master-modul __SBIN_DIR__/master-modul' "$unit"
+    run ! grep -q 'PANEL_DNS_DEFAULT\|PANEL_KEEPALIVE_DEFAULT\|PANEL_MTU_DEFAULT' "$unit"
     for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__' 'PrivateTmp=true' \
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'; do
         grep -qx "$line" "$unit"
@@ -2608,7 +2658,7 @@ EOF
     grep -q 'X-Konsol başlığı olmadan HTTP' <<<"$s7"
     grep -q 'yabancı Host ile HTTP' <<<"$s7"
     # DD-159/171: the built-in Files gate is mandatory, never optional.
-    grep -qF 'for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/wg/state"; do' <<<"$s7"
+    grep -qF 'for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${WG_PANEL_SOCKET}|/api/konsol/kaynaklar"; do' <<<"$s7"
     run ! grep -q 'files_on' <<<"$s7"
     # DD-180: the socket modes, a real attempt as the downloads account, no TCP admin port, a reload.
     grep -qF '"root:${CADDY_GROUP}:660"' <<<"$s7"
@@ -2629,17 +2679,19 @@ EOF
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     # The console page loads nothing from elsewhere and runs no inline code.
     run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/index.html"
-    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css"
+    local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
+    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$sayfa" "$V2_ROOT/magaza/wireguard/sayfa.css"
     grep -q '"X-Konsol": "1"' "$V2_ROOT/console/konsol.js"
-    # DD-136/DD-140: network cards and "Arayüz ekle" as its own page.
-    grep -q 'id="wg-tabs"' "$V2_ROOT/console/index.html"
-    grep -q 'data-view="wgadd"' "$V2_ROOT/console/index.html"
-    grep -q 'id="na-create"' "$V2_ROOT/console/index.html"
+    # DD-136/DD-140/DD-200: network cards and "Arayüz ekle" as its own view, both built by the package's page.
+    grep -q 'id: "wg-tabs"' "$sayfa"
+    grep -q 'id: "wg-ekle"' "$sayfa"
+    grep -q 'id: "na-create"' "$sayfa"
+    run ! grep -qE 'wg-tabs|wgadd|na-create' "$V2_ROOT/console/index.html"
     # DD-143: her ağ kartında kaldırma var; wg0 ayrıcalıklı değil.
-    run ! grep -q 'base ? null' "$V2_ROOT/console/konsol.js"
-    grep -q 'arayüzünü kaldır' "$V2_ROOT/console/konsol.js"
-    grep -q 'Bu son ağ' "$V2_ROOT/console/konsol.js"
-    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$V2_ROOT/panel/master-wg-panel" "$unit"
+    run ! grep -q 'base ? null' "$sayfa"
+    grep -q 'arayüzünü kaldır' "$sayfa"
+    grep -q 'Bu son ağ' "$sayfa"
+    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$sayfa" "$V2_ROOT/panel/master-wg-panel" "$unit"
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
     # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
@@ -2976,11 +3028,15 @@ PY
 
 @test "console shows qBittorrent's first login and its interface link" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    grep -qF 'return { name: "qBittorrent", sub: "Torrent indirmelerini yönetin.", icon: "download", tone: "t-video", firstLogin: true,' "$js"
+    # DD-200: the App Store texts come from the package's konsol.json; the shell's store code names no application.
+    local meta="$V2_ROOT/magaza/torrent/konsol.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ad"]=="qBittorrent" and d["sayfa"]["rota"]=="torrent" and d["durdur_notu"] and d["kaldir"]["veri_etiket"], d' "$meta"
+    grep -qx 'PAKET_KONSOL="konsol.json"' "$V2_ROOT/magaza/torrent/paket.env"
+    run ! grep -qE 'MOD_META|firstLogin|noStop|Torrent indirmelerini' "$js"
     # DD-152: the Unpackerr application and its "recommended together" hint are gone.
     # The removed Unpackerr app stays absent; the built-in Files action now uses this label.
     run ! grep -qE 'recommends|unpackerr' "$js"
-    grep -qF 'qBittorrent ayarları' "$js"
+    grep -qF 'qBittorrent ayarları' "$meta"
     grep -qF 'accountBlock("torrent")' "$js"
     grep -qF 'const REVEAL_SECONDS = 30;' "$js"
     grep -qF 'if (document.hidden) hideAllPass();' "$js"
@@ -2988,7 +3044,8 @@ PY
     grep -qF 'if (publicPanel()) return urls.internet || "";' "$js"
     grep -qF 'id:"torrent-open", href:url,' "$js"
     grep -qF 'urls = self.package_urls(mid)' "$V2_ROOT/panel/master-wg-panel"
-    grep -q 'data-route="torrent".*hidden' "$html"
+    run ! grep -q 'data-route="torrent"' "$html"
+    grep -q 'id="installed-label" hidden' "$html"
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
     grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
 }
@@ -3161,12 +3218,12 @@ PY
     # The port collides with nothing: stage 0, master-wg net-add and the wg panel know it.
     grep -q '"dosya-paneli:\${FILES_PANEL_PORT:-}"' "$V2_ROOT/magaza/wireguard/master-wg"
     grep -q '"dosya-paneli:${FILES_PANEL_PORT:-}"' "$V2_ROOT/magaza/wireguard/master-wg"
-    grep -q '"FILES_PANEL_PORT", "SHARE_PORT")}' "$V2_ROOT/panel/master-wg-panel"
+    grep -qF 'reserved = {p["port"] for p in self.ctx.ports(env) if p.get("port")}' "$V2_ROOT/magaza/wireguard/api.py"
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'FILES_PANEL_PORT=\$FILES_PANEL_PORT'
     # Tailnet only through Caddy; nothing on the WireGuard edge.
-    # DD-140: one address; /api/wg/* to the WireGuard backend, the rest (pages included) here.
+    # DD-140/DD-200: one address; /api/konsol/* and the packages' /api/uygulama/* to the root backend, the rest (pages included) here.
     awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" >"$TMP/site"
-    grep -q '@kok path /api/wg/\* /api/konsol/\*' "$TMP/site"
+    grep -q '@kok path /api/uygulama/\* /api/konsol/\*' "$TMP/site"
     grep -q 'handle @kok {' "$TMP/site"
     grep -q 'handle /api/\* {' "$TMP/site"
     grep -q 'reverse_proxy unix/__WG_PANEL_SOCKET__ {$' "$TMP/site"
@@ -3907,9 +3964,14 @@ PY
     mkdir -p "$TMP/mods/wireguard"
     cp "$V2_ROOT/magaza/wireguard/master-wg" "$TMP/mods/wireguard/master-wg"
     printf '[Unit]\nfixture\n' >"$TMP/mods/wireguard/wg-quick-master-stack.conf"
+    # DD-200: the Konsol page files are placed under CONSOLE_WEB_DIR/uygulama/<id> on install only.
+    cp "$V2_ROOT/magaza/wireguard/sayfa.js" "$V2_ROOT/magaza/wireguard/sayfa.css" "$TMP/mods/wireguard/"
+    printf 'CONSOLE_WEB_DIR=%s\n' "$TMP/web" >>"$TMP/mstate.env"
     run mm kur wireguard
     [ "$status" -eq 0 ]
     [ -x "$TMP/sbin/master-wg" ] && cmp -s "$TMP/sbin/master-wg" "$V2_ROOT/magaza/wireguard/master-wg"
+    cmp -s "$TMP/web/uygulama/wireguard/sayfa.js" "$V2_ROOT/magaza/wireguard/sayfa.js"
+    [ "$(python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$TMP/web/uygulama/wireguard/sayfa.css")" = 0o644 ]
     [ "$(cat "$TMP/units/wg-quick@.service.d/master-stack.conf")" = "$(printf '[Unit]\nfixture')" ]
     grep -qx 'daemon-reload' "$TMP/systemctl-calls"
     grep -qx "$(printf 'wireguard\tcalisiyor')" "$TMP/moduller"
@@ -3937,8 +3999,8 @@ PY
     [ ! -e "$TMP/modload/master-stack-wireguard.conf" ]
     [ -f "$TMP/etc/wireguard/wg0.conf" ]
     [ "$(grep -c wireguard "$TMP/moduller")" -eq 0 ]
-    # The tool and the drop-in leave with the package; the keys stay.
-    [ ! -e "$TMP/sbin/master-wg" ] && [ ! -e "$TMP/units/wg-quick@.service.d" ]
+    # The tool, the drop-in and the Konsol page leave with the package; the keys stay.
+    [ ! -e "$TMP/sbin/master-wg" ] && [ ! -e "$TMP/units/wg-quick@.service.d" ] && [ ! -e "$TMP/web/uygulama" ]
     : >"$TMP/apt-calls"
     run mm kur wireguard
     [ "$status" -eq 0 ]
@@ -4299,7 +4361,7 @@ v4 = fw["v4"]["entries"]
 k = lambda g, kind: [e for e in v4 if e["group"] == g and e["kind"] == kind]
 assert k("wan", "ssh")[0]["pkts"] == 23 and k("wan", "ssh")[0]["port"] == 22, v4
 assert k("wan", "drop")[0]["pkts"] == 1631
-wgp = k("wan", "wireguard")[0]
+wgp = k("wan", "vpn")[0]
 assert (wgp["iface"], wgp["port"], wgp["label"]) == ("wg0", 61001, "Ana ağ"), wgp
 assert k("wg:wg0", "nat")[0]["subnet"] == "10.8.0.0/24" and k("wg:wg0", "egress")[0]["pkts"] == 9
 assert k("ts", "all")[0]["pkts"] == 4 and k("self", "lo")[0]["pkts"] == 157
@@ -4315,7 +4377,7 @@ assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e f
 # Web: every address with where it goes, its source and who reaches it.
 web = {e["address"]: e for e in d["web"]["entries"]}
 assert [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]] == [
-    ("/api/wg/* /api/konsol/*", "proxy", "unix//run/master-wg-panel/api.sock"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
+    ("/api/uygulama/* /api/konsol/*", "proxy", "unix//run/master-wg-panel/api.sock"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
 assert "health.ayc" not in web
 assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
 assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"

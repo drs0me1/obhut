@@ -6,7 +6,9 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const tabs = [["system", "Sistem"], ["fw", "Güvenlik Duvarı"], ["web", "Caddy"], ["dns", "Dnsmasq"], ["log", "Günlük"]];
-  const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", wg: "WireGuard", lo: "Sunucu içi" }[s] || s);
+  // DD-200: the VPN category is named after the installed package that declares networks.
+  const vpnName = () => (live && live.firewall && live.firewall.vpn_name) || "VPN";
+  const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", wg: vpnName(), lo: "Sunucu içi" }[s] || s);
   let live = null, draft = null, qdraft = {}, tab = "system", family = 4, scope = "tail", mode = "ports", wgNetwork = "all";
   let pending = null, busy = false, poll = null, message = "", baseRevision = "";
   let domainInput = "", migration = null;
@@ -239,7 +241,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     return "Ham kuraldaki eşleşme ve hedef seçenekleri geçerlidir.";
   }
   function firewall() {
-    const groups = ["tail", "wan", ...(live.firewall.wireguard_installed ? ["wg"] : []), "lo"];
+    const groups = ["tail", "wan", ...(live.firewall.vpn_installed ? ["wg"] : []), "lo"];
     if (!groups.includes(scope)) scope = "tail";
     if (wgNetwork !== "all" && !wgScopes().includes(wgNetwork)) wgNetwork = "all";
     const chooseScope = (key) => { scope = key; mode = "ports"; draw(); document.getElementById("as-fw-tab-" + key)?.focus(); };
@@ -254,12 +256,12 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     const descriptions = {
       tail:"Tailscale ağından sunucuya gelen bağlantılar. Gerekli servisler ve tanımlı VPN portları izinlidir; diğer portlar açık bir kullanıcı kuralı olmadıkça engellenir.",
       wan:"İnternet arayüzünden gelen bağlantılar. SSH ve VPN bağlantı portları burada yer alır; listede olmayan portlar varsayılan olarak engellenir.",
-      wg:"WireGuard cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. VPN’in UDP bağlantı portu İnternet sekmesindedir. Yönlendirme ve NAT kuralları Teknik kurallar görünümündedir.",
+      wg:`${vpnName()} cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. VPN’in UDP bağlantı portu İnternet sekmesindedir. Yönlendirme ve NAT kuralları Teknik kurallar görünümündedir.`,
       lo:"Sunucunun kendi iç bağlantıları (loopback). Servislerin arka uçları burada çalışır; bu izinler korunur ve değiştirilemez."
     };
     const toolbar = h("div", { class: "as-toolbar as-fw-controls" },
       field("Adres ailesi", select([[4, "IPv4"], [6, "IPv6"]], family, (v) => { family = Number(v); draw(); })),
-      mode === "ports" && scope === "wg" && wgScopes().length ? field("WireGuard ağı", select([["all", "Tüm WireGuard ağları"], ...wgScopes().map((s) => {
+      mode === "ports" && scope === "wg" && wgScopes().length ? field(`${vpnName()} ağı`, select([["all", `Tüm ${vpnName()} ağları`], ...wgScopes().map((s) => {
         const net = (live.firewall.networks || []).find(n => n.iface === s);
         return [s, `${s}${net?.label ? " · " + net.label : ""}${net && !net.active ? " · durduruldu" : ""}`];
       })], wgNetwork, (v) => { wgNetwork = v; draw(); })) : null,
@@ -308,7 +310,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       !live.firewall.ok ? note(live.firewall.check || "Güvenlik duvarı denetimi uyardı.", true) : null,
       h("div", {id:"as-fw-content", ...(mode === "ports" ? {role:"tabpanel", "aria-labelledby":"as-fw-tab-" + scope} : {})},
         mode === "ports" ? note(descriptions[scope]) : null,
-        mode === "ports" && scope === "wg" && !wgScopes().length ? note("Henüz yönetilebilir bir WireGuard ağı yok. WireGuard uygulamasından ağ oluşturun veya durdurulmuş modülü başlatın.") : content),
+        mode === "ports" && scope === "wg" && !wgScopes().length ? note(`Henüz yönetilebilir bir ${vpnName()} ağı yok. ${vpnName()} uygulamasından ağ oluşturun veya durdurulmuş modülü başlatın.`) : content),
       scope !== "wg" || mode !== "ports" ? note("Dinleme ve izin ayrıdır; bu ağda dinlemesi erişim garantisi değildir. Tailscale ACL, kaynak kısıtları ve diğer kurallar da etkilidir. Yenile, güncel durumu yeniden okur.") : null,
       ["wan", "tail"].includes(scope) && mode === "ports" ? note("Aç/kapa yalnız yeni bağlantıların iznini değiştirir; servisi başlatmaz. Mevcut bağlantılar korunur. Dar ekranda tabloyu yatay kaydırabilirsiniz.") : null);
   }

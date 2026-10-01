@@ -6,10 +6,12 @@ const os = require("node:os");
 const path = require("node:path");
 const screenshots = fs.mkdtempSync(path.join(os.tmpdir(), "konsol-v136-ui-"));
 const copy = (x) => JSON.parse(JSON.stringify(x));
+// DD-200: the qBittorrent sidebar link and store texts come from the package's konsol.json.
+const torrentMeta = JSON.parse(fs.readFileSync(path.join(__dirname, "../magaza/torrent/konsol.json"), "utf8").replace(/__[A-Z_]+__/g, "x"));
 const config = { firewall: [{id:"fixture-ci",name:"CI",family:4,scope:"wan",proto:"tcp",port:9443,source:"192.0.2.0/24",allow:false}], dns: { disabled: [], records: [], forward: false, servers: [] } };
 const data = {
   read_at: 1780000000, version: "2026.08.06-v2-134", domain: "ayc", tailscale: "100.64.0.2", ts_if: "tailscale0", wan: { iface: "eth0", ipv4: "192.0.2.1" },
-  firewall: { ok: true, check: "ok", wireguard_installed:false, networks:[], ports: [{ name: "SSH", family: 4, scope: "wan", port: 22, proto: "tcp", baseline: true },
+  firewall: { ok: true, check: "ok", vpn_installed:false, vpn_name:"", networks:[], ports: [{ name: "SSH", family: 4, scope: "wan", port: 22, proto: "tcp", baseline: true },
       { name: "Caddy", family: 4, scope: "tail", port: 80, proto: "tcp", baseline: true }, { name: "Caddy", family: 4, scope: "wan", port: 80, proto: "tcp", baseline: false },
       { name: "Konsol · dosya arka ucu", family: 4, scope: "lo", port: 61009, proto: "tcp", baseline: true },
       { name: "SSH", family: 6, scope: "wan", port: 22, proto: "tcp", baseline: true }],
@@ -47,9 +49,9 @@ const health = { status: "bad", read_at: 1790750000, checks: [
       if (route.request().method() === "POST") writes++;
       const url = new URL(route.request().url()), endpoint = url.pathname;
       let result = {};
-      if (endpoint === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: "calisiyor", runtime: "host", live: "running" }] };
+      if (endpoint === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: "calisiyor", runtime: "host", live: "running", durdurulabilir: true, konsol: torrentMeta }] };
       else if (endpoint === "/api/konsol/kaynaklar") result = { host: "test", version: data.version, domain: "ayc", os: "Debian 13", kernel: "test", uptime: 120, cores: 2, cpu: [1], mem: { total: 1000, used: 200, graph: [20] }, net: { wan: "192.0.2.1", tailscale: data.tailscale }, root: "/srv", disk: { total: 1000, free: 800 }, ports: [{ port: 22, proto: "tcp", scope: "internet", name: "SSH" }] };
-      else if (endpoint === "/api/wg/islemler") result = { items: [] };
+      else if (endpoint === "/api/konsol/islemler") result = { items: [] };
       else if (endpoint === "/api/state") result = {root:"/srv", temp:"downloads/incomplete", disk:{total:10000,free:8000}, trash:{count:0,size:0}};
       else if (endpoint === "/api/list") result = {path:"",entries:[]};
       else if (endpoint === "/api/archives") result = {items:[], limits:{bytes:2147483648,entries:10000,layers:5,seconds:900}};
@@ -429,7 +431,8 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     await page.screenshot({ path: path.join(screenshots, "mobile-dark.png"), fullPage: true });
     // Installation state controls the VPN category, independently of network count.
     await page.getByRole("tab", { name: "Güvenlik Duvarı", exact: true }).click();
-    data.firewall.wireguard_installed = true;
+    // DD-200: the category takes the installed package's name from the backend (vpn_name).
+    data.firewall.vpn_installed = true; data.firewall.vpn_name = "WireGuard";
     await page.getByRole("button", {name:"Yenile",exact:true}).click();
     await category("WireGuard").click();
     assert.match(await page.locator("#as-fw-content").innerText(),/Henüz yönetilebilir bir WireGuard ağı yok/);
@@ -480,7 +483,7 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     assert.equal(writes,beforeRuleWrites,"Custom rule checks only stage drafts");
     data.manage.config.firewall = beforeRules.filter(r => r.id !== "fixture-wg1");
     await category("WireGuard").click();
-    data.firewall.wireguard_installed = false;
+    data.firewall.vpn_installed = false; data.firewall.vpn_name = "";
     data.firewall.networks = [];
     data.firewall.ports = data.firewall.ports.filter(r => !r.scope.startsWith("wg") && r.port !== 51820);
     await page.getByRole("button",{name:"Yenile",exact:true}).click();

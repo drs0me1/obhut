@@ -494,8 +494,15 @@ Do not run live tests against an unauthorized host.
 
 WireGuard internet-only (DD-177): `wireguard-ui.cjs` tests creation/settings with
 no Local selector, DNS-only saves, polling/error/cancel/stopped-network behavior,
-explicit regeneration and four widths/CSP. `test_wg_settings.py` rejects a
-supplied `scope` field on both HTTP routes and checks revision/gates. Bats
+explicit regeneration and four widths/CSP. Since DD-200 the page is the package's
+(`magaza/wireguard/sayfa.js`): the suite serves `/uygulama/wireguard/*` from the
+`magaza/` folder through Playwright routes and uses `/api/uygulama/wireguard/*`;
+`panel-ui.cjs` does the same for the WireGuard deep link and reads both packages'
+`konsol.json` for the App Store texts. `test_wg_settings.py` drives the package's
+API module through the root backend's dispatcher: it rejects a supplied `scope`
+field on both routes, checks revision/gates, the `master-wg` argument lines and
+the `wireguard:<verb>` audit prefix; `test_resources.py` covers the module listing's
+`konsol`/`sayfa` fields and the API module's load/unload with the registry. Bats
 verifies DNS-only preservation and rejects access-scope CLI arguments.
 `firewall-linux.py` tests actual IPv4/IPv6 host deny (including prior flows),
 internet forwarding/NAT, private destinations through WAN, and tailnet isolation.

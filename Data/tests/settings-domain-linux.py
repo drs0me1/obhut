@@ -114,7 +114,7 @@ def main():
                 ready = lambda: http("panel." + domain, "/api/state", e["FILES_PANEL_PORT"]) == "200"
             else:
                 args = ["python3", str(DATA / "panel/master-wg-panel"), "serve", "--listen", "unix:" + e["WG_PANEL_SOCKET"],
-                        "--state", str(state), "--master-wg", "/bin/false", "--master-modul", "/bin/false"]
+                        "--state", str(state), "--master-modul", "/bin/false"]
                 ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]) == "200"
             processes[name] = subprocess.Popen(args, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(ready)

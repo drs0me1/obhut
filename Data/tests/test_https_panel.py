@@ -185,7 +185,7 @@ class HttpsPanelTests(unittest.TestCase):
         self.assertEqual((rows["other"]["scheme"], rows["other"]["access"]), ("https", "tailscale"))
 
     def test_settings_returns_manager_https_metadata_unchanged(self):
-        with patch.object(self.p, "net_rows", return_value=[]), \
+        with patch.object(self.p, "package_networks", return_value=[]), \
                 patch.object(self.p, "module_state", return_value=""), \
                 patch.object(self.p, "firewall_view", return_value={}), \
                 patch.object(self.p, "web_view", return_value={}), \

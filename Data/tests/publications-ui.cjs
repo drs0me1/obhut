@@ -42,7 +42,7 @@ const server = http.createServer((req,res) => {
         Object.assign(row,body.web,{status:body.web.enabled?"ready":"disabled"});
         data.manage.revision="r"+(writes.length+1); result={committed:true,pending:null};
       } else if(url.pathname==="/api/konsol/moduller") result={items:[]};
-      else if(url.pathname==="/api/wg/state") result={networks:[],defaults:{}};
+      else if(url.pathname==="/api/konsol/islemler") result={items:[]};
       else if(url.pathname==="/api/state") result={roots:[],path:"",capabilities:{}};
       else if(url.pathname==="/api/list") result={path:"",entries:[]};
       else if(url.pathname==="/api/konsol/kaynaklar") result={mem:{},net:{},cpu:[],torrent:{}};

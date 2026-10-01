@@ -75,7 +75,7 @@ try:
     for page in ("/", "/konsol.js", "/index.html"):
         status, headers, _ = call("GET", page, api=False)
         assert (status, headers.get("location")) == (302, "/giris.html"), (page, status)
-    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/wg/state"):
+    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/uygulama/wireguard/state"):
         status, _, body = call("GET", api)
         assert status == 401 and json.loads(body)["giris"] is True, (api, status)
     assert json.loads(call("GET", "/api/konsol/oturum")[2]) == {"durum": "kurulum", "kod": True}

@@ -13,6 +13,58 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-200: Konsol pages and application API from packages, phase 2a (v2-174)
+
+- **Scope (user, 2026-10-01: "faz 2 ye başla"):** the first half of phase 2 of the store
+  model (DD-196): Konsol's App Store texts, an installed application's page and its
+  root-backend API come from the package. The base shell and the root backend no
+  longer contain the word WireGuard. The second half (phase 2b) renames the backend and
+  socket (`master-wg-panel` → a neutral name), moves the `WG_*` state keys and the
+  qBittorrent page/settings form into their package, and fixes the launcher text and
+  `master-wg`'s port-collision list. Each phase is a fresh-install change.
+- **Declaration.** Three optional manifest keys: `PAKET_KONSOL="konsol.json"` (App
+  Store texts, the page declaration `sayfa {rota, baslik, ustbilgi, detay}` and the
+  journal templates `gunluk {verb: "…{detail}…{0}…"}`; a JSON object rendered by the
+  installer, so `__LOCAL_DOMAIN__`-style placeholders are filled), `PAKET_SAYFA="sayfa.js
+  sayfa.css"` (the page files) and `PAKET_API="api.py"` (the backend module). Names are
+  plain file names; folder paths and other extensions are refused.
+- **Page files.** `master-modul` copies the declared page files to
+  `CONSOLE_WEB_DIR/uygulama/<id>/` on `kur`/`uygula` (`paket_sayfa_koy`, 0644 root) and
+  removes the folder on `kaldir`; the trace check fails a removal that leaves it. Caddy
+  serves them like the shell's own files, behind the same session gate and CSP
+  (`script-src 'self'`). The installer removes an `uygulama/<id>/` folder whose package
+  is not registered. Konsol loads `/uygulama/<id>/<file>` only for an installed package
+  whose listing carries `sayfa`; the script registers with `window.Konsol.sayfa(id,
+  factory)` and receives a small, frozen API (`h`, `svg`, `api`, `post`, `ask`, the
+  shared dialog, the clock, the current route and a header repaint). The shell creates
+  the section and the sidebar link from `konsol.json`, keeps a bookmark of an
+  application until the module list arrives, sends a bookmark of an absent application
+  to App Store and unmounts the page when the package is removed; a package that is
+  removed and reinstalled is mounted again from the already loaded factory.
+- **API module.** The root backend loads `MODULES_DIR/<id>/<PAKET_API>` with importlib
+  only while the package is registered `calisiyor` (regular file, cached by mtime; a
+  changed file is reloaded, a removed package's object is stopped). `/api/uygulama/<id>/*`
+  passes the existing Host, CSRF, channel and session gates first and is then handed to
+  `module.create(ctx).handle(request)`. The module sees only `ctx` (state.env, its own
+  tool beside `master-modul`, a subprocess runner with the backend's environment, the
+  read-only port catalogue, `error(code, text)`, a settings-cache reset and a journal
+  line) and the request (method, sub-path, query, JSON body, actor, `audit(verb, detail,
+  ok)`). Audit lines are `<id>:<verb>`; Konsol labels the event by the package and reads
+  the sentence from the package's templates. A missing, broken or failing module answers
+  404/409/502 for that package alone. An absent package: `409 <Ad> kurulu değil; Konsol →
+  App Store'dan kurun` on POST, 404 on GET.
+- **What the base still knows about VPNs.** Settings → Güvenlik Duvarı keeps its VPN
+  category: the networks come from the package modules' `networks()` hook (validated
+  fields, no keys), the tab is named after the first such package (`vpn_name`), the port
+  rows carry a structural `vpn` flag instead of a name prefix, and the rule kind is `vpn`.
+  The resources sampler also refreshes the package API list every 10 s so a package's own
+  sampler (WireGuard's connected-peer window, DD-137) runs before any page asks.
+- **Still base, by design for now (phase 2b):** the unit and socket names, the `WG_*`
+  keys in `state.env` (`WG_CLIENT_DNS_DEFAULT`/`WG_CLIENT_KEEPALIVE_DEFAULT` joined them
+  so the package reads its defaults from state instead of unit environment lines), the
+  qBittorrent page and its Settings form, `master-wg`'s port-collision list and the
+  launcher's intro text.
+
 ### DD-199: Publication rows from package declarations, phase 1b (v2-173)
 
 - **Scope:** the last base piece that named an application: Settings → Caddy. The

@@ -102,7 +102,7 @@ function setHttps(domain, status = "ready", enabled = !!domain) {
         if ("username" in body) share.username = body.username;
         for (const [scope,patch] of Object.entries(body.connections || {})) Object.assign(share.connections[scope],patch);
         result = projectShares();
-      } else if (endpoint === "/api/konsol/moduller" || endpoint === "/api/wg/islemler" || endpoint === "/api/archives") result = { items: [] };
+      } else if (endpoint === "/api/konsol/moduller" || endpoint === "/api/konsol/islemler" || endpoint === "/api/archives") result = { items: [] };
       else if (endpoint === "/api/konsol/kaynaklar") result = { host: "fixture", version: "fixture", domain: "ayc", os: "Debian 13", kernel: "fixture", uptime: 100,
         cores: 2, cpu: [1], mem: { total: 1000, used: 200, graph: [20] }, net: { wan: data.wan.ipv4, tailscale: data.tailscale }, root: "/srv", disk: { total: 1000, free: 800 }, ports: [] };
       else if (endpoint === "/api/state") result = { root: "/srv", downloads: "downloads", disk: { total: 1000, free: 800 }, trash: { count: 0, size: 0 } };

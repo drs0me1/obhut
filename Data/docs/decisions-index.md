@@ -201,3 +201,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |
 | DD-198 | Firewall, health and port catalogue from package declarations, phase 1b | live | design-decisions.md |
 | DD-199 | Publication rows from package declarations, phase 1b | live | design-decisions.md |
+| DD-200 | Konsol pages and application API from packages, phase 2a | live | design-decisions.md |

@@ -1,6 +1,6 @@
 # WireGuard paketinin kancaları (DD-150, DD-197). master-modul bu dosyayı `source` eder ve
 # yalnız paket_* işlevlerini çağırır. Motorun yardımcıları: progress_step, paket_apt,
-# paket_araclar_koy/kaldir, paket_ekler_koy/kaldir, registry_set, firewall_apply, need_keys,
+# paket_araclar_koy/kaldir, paket_ekler_koy/kaldir, paket_sayfa_koy, registry_set, firewall_apply, need_keys,
 # fail_step, warn, FAIL. Kurulum yalnız bu klasörü işler; sunucuya ne gireceğine paket karar verir.
 # shellcheck shell=bash
 
@@ -59,6 +59,9 @@ paket_kur() {
     progress_step 2 "Araçlar"
     paket_araclar_koy || fail_step "$FAIL"
     paket_ekler_koy || fail_step "$FAIL"
+    # DD-200: Konsol sayfası paketle gelir; dosyaları kayıt yazılmadan önce yerleşir ki
+    # başarısız bir kurulum yarım kayıt bırakmasın.
+    paket_sayfa_koy || fail_step "$FAIL"
     progress_step 3 "Çekirdek modülü"
     wg_layer || fail_step "$FAIL"
     progress_step 4 "Güvenlik duvarı kancası"
@@ -69,6 +72,7 @@ paket_kur() {
         firewall_apply || true
         paket_araclar_kaldir
         paket_ekler_kaldir
+        paket_sayfa_kaldir
         fail_step "güvenlik duvarı uygulanamadı"
     }
     progress_step 5 "WireGuard sayfası açılıyor"
@@ -93,6 +97,7 @@ paket_uygula() { # KAYIT_DURUMU
     paket_apt || fail_step "$FAIL"
     paket_araclar_koy || fail_step "$FAIL"
     paket_ekler_koy || fail_step "$FAIL"
+    paket_sayfa_koy || fail_step "$FAIL"
     wg_layer || fail_step "$FAIL"
     wg_networks_up >/dev/null
 }

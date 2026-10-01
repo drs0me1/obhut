@@ -1,8 +1,8 @@
 [Unit]
 Description=Konsol root backend (master-stack, DD-133, DD-140, DD-196)
 # DD-180: ağ portu yok; yalnız Unix soketi (0660, root ve Caddy grubu). Caddy panel.<alan>
-# altında /api/konsol/* ve, paket kuruluysa, /api/wg/* için buraya gelir. WireGuard
-# değişikliklerini paketin aracı master-wg yapar (DD-196: paket kurulu değilken araç yoktur).
+# altında /api/konsol/* ve /api/uygulama/* için buraya gelir. DD-200: kurulu paketlerin API
+# modülleri paket klasöründen yüklenir; uygulama değişikliklerini paketin kendi aracı yapar.
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
@@ -10,23 +10,20 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__ --state __STATE_FILE__ --master-wg __SBIN_DIR__/master-wg --master-modul __SBIN_DIR__/master-modul
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__ --state __STATE_FILE__ --master-modul __SBIN_DIR__/master-modul
 # Soketin klasörü; Caddy geçebilsin diye 0755, soketin kendisi 0660.
 RuntimeDirectory=__WG_PANEL_RUNTIME__
 RuntimeDirectoryMode=0755
-Environment="PANEL_DNS_DEFAULT=__WG_CLIENT_DNS_DEFAULT__"
-Environment="PANEL_KEEPALIVE_DEFAULT=__WG_CLIENT_KEEPALIVE_DEFAULT__"
-Environment="PANEL_MTU_DEFAULT=__WG_MTU__"
 Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0077
 # DD-195: her istek bir iş parçacığı ve birkaç dosya tanıtıcısı tutar; Caddy her sitede en
 # çok 16 bağlantı açar. Tanıtıcı sınırı yine de dolmasın: kendi adresi denetimi dolunca
 # kapalı kalır ve Tailscale'i de reddederdi.
 LimitNOFILE=8192
-# master-wg root ister (wg syncconf, /etc/wireguard). Yazabildiği kalıcı yerler
-# /etc/wireguard ve Konsol hesap klasörü (DD-194); /run (kilit) ProtectSystem=full altında
-# yazılabilir kalır. Klasörleri kurulum açar (DD-150: WireGuard modülü sonradan kurulur);
-# yine de yoksa Konsol açılır ('-') ve giriş "kurulumu yeniden çalıştırın" der.
+# Paket araçları root ister (ör. WireGuard: wg syncconf, /etc/wireguard). Yazabildiği kalıcı
+# yerler /etc/wireguard ve Konsol hesap klasörü (DD-194); /run (kilit) ProtectSystem=full
+# altında yazılabilir kalır. Klasörleri kurulum ya da paket açar; yoksa atlanır ('-') ve giriş
+# "kurulumu yeniden çalıştırın" der.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

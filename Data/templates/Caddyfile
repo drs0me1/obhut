@@ -30,10 +30,11 @@
 		}
 	}
 }
-# Konsol (DD-140, DD-148): /api/wg/* ve /api/konsol/* root arka uca (WireGuard, sistem,
-# modüller; DD-180: Unix soketi), öbür /api/* dosya arka ucuna gider. Sayfaları Caddy doğrudan
-# sunar: dosya yöneticisi bir modüldür ve kaldırılabilir, Konsol'un kendisi kalmalıdır. CSRF ve
-# Host denetimi arka uçlarda (DD-147), başlıklar burada.
+# Konsol (DD-140, DD-148, DD-200): /api/konsol/* ve /api/uygulama/* root arka uca (sistem,
+# modüller ve kurulu paketlerin API'leri; DD-180: Unix soketi), öbür /api/* dosya arka ucuna
+# gider. Sayfaları Caddy doğrudan sunar; kurulu bir paketin sayfa dosyaları CONSOLE_WEB_DIR
+# altında uygulama/<id>/ klasöründedir ve aynı oturum kapısından geçer. CSRF ve Host denetimi
+# arka uçlarda (DD-147), başlıklar burada.
 # DD-195: yollar tek parçada; Tailscale sitesi ve isteğe bağlı internet (HTTPS) sitesi aynı
 # korumayı içe aktarır. Arka uçlar Host olarak her zaman panel.<alan> görür. Hangi kapıdan
 # gelindiğini (X-Konsol-Kanal) yalnız Caddy yazar; istemcinin gönderdiği değer ezilir.
@@ -54,7 +55,7 @@
 			max_conns_per_host 16
 		}
 	}
-	@kok path /api/wg/* /api/konsol/*
+	@kok path /api/uygulama/* /api/konsol/*
 	handle @kok {
 		reverse_proxy unix/__WG_PANEL_SOCKET__ {
 			header_up Host panel.__LOCAL_DOMAIN__

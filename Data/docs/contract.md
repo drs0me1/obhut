@@ -256,8 +256,9 @@ Contract in §5–§7 and `folder-shares.md`.
   generates a key, writes a `.conf` or brings up an interface of its own.
 - Without the module `master-firewall` ignores the network registry (no
   WireGuard port or rule), `master-wg` refuses every command but `version`,
-  and the root backend answers `/api/wg/state` with `installed: false` and
-  refuses changes with `409`. Removing the module closes every network
+  and the root backend serves no WireGuard route: `/api/uygulama/wireguard/*`
+  answers `404` (GET) or `409` (POST) and Konsol shows no WireGuard page or link
+  (**DD-200**). Removing the module closes every network
   (`wg-quick@` disabled) and keeps `/etc/wireguard`, so a
   reinstall brings the networks back; `--veri` also deletes the keys, the
   device profiles and the registry.
@@ -327,11 +328,13 @@ Contract in §5–§7 and `folder-shares.md`.
   dropped before established/ICMPv6/Tailscale accepts. Other peers, VPN networks
   and private/CGNAT/link-local destinations routed via WAN are blocked (§9).
   There is no WG web proxy or listener; administration uses Tailscale.
-- **WireGuard web panel (DD-133).** Konsol's WireGuard page at
-  `http://panel.${LOCAL_DOMAIN}` (**DD-140**) uses the API of
-  `master-wg-panel.service` to list, add and remove peers, show a peer's QR
-  code, download its profile or picture, change its DNS and regenerate a
-  network.
+- **WireGuard web panel (DD-133, DD-200).** Konsol's WireGuard page at
+  `http://panel.${LOCAL_DOMAIN}` (**DD-140**) is the package's own
+  (`magaza/wireguard/sayfa.js`, served from `CONSOLE_WEB_DIR/uygulama/wireguard/`
+  while installed) and talks to the package's API module, which the root backend
+  loads from the package folder and serves at `/api/uygulama/wireguard/*`: list,
+  add and remove peers, show a peer's QR code, download its profile or picture,
+  change its DNS and regenerate a network.
   - The backend runs Python 3's standard library only and has no TCP port: it listens
     on the Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`,
     `0660 root:caddy`), and also checks the connecting process's identity
@@ -443,14 +446,18 @@ Contract in §5–§7 and `folder-shares.md`.
   for the same console (**DD-195**). Caddy serves the page files itself from
   `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
   re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
-  replies are compressed with zstd/gzip, **DD-181**), sends `/api/wg/*` and `/api/konsol/*` to `master-wg-panel` and
+  replies are compressed with zstd/gzip, **DD-181**), sends `/api/konsol/*` and `/api/uygulama/*` to `master-wg-panel` and
   every other `/api/*` to `master-files-panel`. Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**); every path except the sign-in page and API also needs a Konsol
   session (**DD-194**).
-  - Pages (**DD-160**): Dosyalar (the landing page), App Store (§1.11), the
-    WireGuard and qBittorrent pages only while installed, and Ayarlar, in one
-    responsive sidebar. The qBittorrent page links the app by its tailnet name
+  - Pages (**DD-160**, **DD-200**): Dosyalar (the landing page), App Store (§1.11),
+    the installed applications' pages and Ayarlar, in one responsive sidebar. An
+    application's link, section, App Store texts and journal words come from its
+    package's `konsol.json`; its page script and stylesheet are loaded from
+    `/uygulama/<id>/` only while the package is installed and register through
+    `window.Konsol.sayfa`. The qBittorrent page is still the shell's own (phase 2b
+    moves it). The qBittorrent page links the app by its tailnet name
     on the tailnet address and by its own public HTTPS name on Konsol's public
     address, only while that publication is active; otherwise it points to
     Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
@@ -544,7 +551,8 @@ Contract in §5–§7 and `folder-shares.md`.
       no 60 s confirmation (**DD-163**). The console's own name cannot be
       disabled; reject that request before writing files or restarting services.
     - Günlük lists both backends' audit lines from the last 7 days
-      (`/api/wg/islemler`), including archive job results (**DD-183**).
+      (`/api/konsol/islemler`), including archive job results (**DD-183**); a
+      package API's events are `<id>:<verb>` lines, labelled by the package.
   - The qBittorrent page (only while installed, **DD-160**) holds its service
     controls, Web UI link and account/folder form, which uses the same
     settings transaction as Ayarlar. The form permits username, optional new
@@ -683,7 +691,7 @@ Contract in §5–§7 and `folder-shares.md`.
   Since DD-178 new profiles do not automatically enable separate temporary
   storage. Keeping this existing path guard does not enable it in qBittorrent.
 
-### 1.11 App Store and built-ins (DD-148, DD-149, DD-159, DD-197)
+### 1.11 App Store and built-ins (DD-148, DD-149, DD-159, DD-197, DD-200)
 
 - A clean install includes Files, folder WebDAV and archive tools. Optional applications
   are installed/removed from Konsol → App Store. The catalogue is the set of packages
@@ -694,10 +702,13 @@ Contract in §5–§7 and `folder-shares.md`.
 - **Package (DD-197).** `Data/magaza/<id>/` holds the manifest `paket.env` (`PAKET_AD`,
   `PAKET_SIRA`, `PAKET_CALISMA`, `PAKET_DURDURULABILIR`, `PAKET_HESAP`, `PAKET_APT`,
   `PAKET_ARACLAR`, `PAKET_EKLER`, `PAKET_ADLAR`, `PAKET_GUNLUK`, `PAKET_KUR_ADIM`,
-  `PAKET_YAYIN`, `PAKET_UYGULA_HEP`, `PAKET_UYGULA_NEDEN`, `PAKET_YERLESIK`), the hook
+  `PAKET_YAYIN`, `PAKET_UYGULA_HEP`, `PAKET_UYGULA_NEDEN`, `PAKET_YERLESIK`, and the Konsol
+  keys `PAKET_KONSOL` (App Store texts and page declaration), `PAKET_SAYFA` (page files)
+  and `PAKET_API` (backend module), **DD-200**), the hook
   file `kanca` (`paket_kur`, `paket_kaldir`, `paket_uygula`, `paket_baslat`, `paket_durdur`,
   `paket_birim`, `paket_hesap`, `paket_veri_sil`, `paket_gunluk_suz`, `paket_ozet`) and the
-  package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds. The engine
+  package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds,
+  `konsol.json`, `sayfa.js`/`sayfa.css`, `api.py`. The engine
   reads the manifest with a strict line pattern (never sourced) and sources the hooks.
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders every package folder to
@@ -726,7 +737,8 @@ Contract in §5–§7 and `folder-shares.md`.
     [--veri]`, `gunluk ID [LINES]`, `uygula ID`; `hesap ID [--parola]` (only
     `PAKET_HESAP=1`); the installer's `yerlesik` activates the built-ins (below).
     Any other id, verb or argument is refused before anything runs.
-  - Apt packages, tools (`SBIN_DIR`, 0755), unit drop-ins (`UNIT_DIR`, 0644) and names
+  - Apt packages, tools (`SBIN_DIR`, 0755), unit drop-ins (`UNIT_DIR`, 0644), names and
+    Konsol page files (`CONSOLE_WEB_DIR/uygulama/<id>/`, 0644, **DD-200**)
     are placed and removed by the engine's helpers, which the hooks call in the order
     the package needs. After `kaldir` the engine removes every declared artifact and
     fails the operation if any remains; `--veri` additionally runs `paket_veri_sil`.
@@ -782,22 +794,28 @@ Contract in §5–§7 and `folder-shares.md`.
   Files; no module verb stops or removes the service.
 - The root backend (`master-wg-panel`):
   - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
-    live, busy, progress}]}`. `busy` is a running `master-modul-<id>.service`,
-    read with `systemctl list-units`.
+    live, busy, progress, durdurulabilir, konsol?, sayfa?, urls?}]}`. `busy` is a running
+    `master-modul-<id>.service`, read with `systemctl list-units`; `konsol` is the
+    package's rendered `konsol.json` (every catalogued package), `sayfa` the declared
+    page files (installed packages only), `urls` its publication addresses (**DD-200**).
+  - `/api/uygulama/<id>/*` (any method) → the installed package's API module after the
+    same gates; `404`/`409` while the package is absent (**DD-200**).
   - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir)`, JSON
     body, `{"veri": true}` honoured for `kaldir` only. The id
     must be in `liste` (else `404`). It starts `systemd-run
     --unit=master-modul-<id>.service --collect master-modul <verb> <id>` and
     answers `202`; while that unit is active the answer is `409`. The audit
     line is `modul-<verb>`.
-  - `GET /api/konsol/moduller/torrent/hesap` → `{user, temp, host}`; with
+  - `GET /api/konsol/moduller/<id>/hesap` → `{user, temp, host}` for an installed
+    package with `PAKET_HESAP=1` (the engine's `hesap` line `user<TAB>gecici|ayarli[<TAB>pass]`;
+    `host` is the package's publication name); with
     `?parola=1` also the temporary password while one is in use (audited as
     `modul-hesap`). Any other or uninstalled module answers `404`.
   - Folder shares use `GET /api/konsol/paylasim` and `POST
     /api/konsol/paylasim/{kaydet,kaldir}`. The old `.../durum` global-pause
     request is rejected with a refresh message (DD-192, §6).
   - `GET /api/konsol/moduller/<id>/gunluk` → the last 80 log lines as text.
-  - The same Host, `X-Konsol` and session gates as `/api/wg/*` apply (**DD-147**, **DD-194**).
+  - The same Host, `X-Konsol` and session gates as every root route apply (**DD-147**, **DD-194**).
 - Konsol never retrieves a stored WebDAV password; enter or generate it in the
   folder form. Blank password on edit preserves its hash (DD-158).
 
@@ -909,7 +927,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
-| Konsol WireGuard backend (`master-wg-panel`) | Unix socket `/run/master-wg-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
+| Konsol root backend (`master-wg-panel`; package API modules inside it, **DD-200**) | Unix socket `/run/master-wg-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
 | Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
 | Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` (Tailscale scope) and `SHARE_WAN_BACKEND` `127.0.0.2` (WAN scope) | 61010 (**DD-158**, **DD-159**, **DD-179**) |
@@ -946,7 +964,7 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
 | `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
 | Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
-| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR`; `/api/wg/*` and `/api/konsol/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR` (installed packages' pages under `uygulama/<id>/`); `/api/konsol/*` and `/api/uygulama/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 | Public Konsol domain (optional, **DD-195**) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}` (`import konsol internet`) | the same routes as `panel.${LOCAL_DOMAIN}`, with backend Host `panel.${LOCAL_DOMAIN}` |
 
 `SERVICE_NAMES` is `panel`.

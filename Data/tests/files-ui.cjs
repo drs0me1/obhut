@@ -107,7 +107,7 @@ const shareWrites = [], deleted = [], longFile = "x".repeat(251) + ".iso";
       if (p === "/api/konsol/moduller") result = { items: ["wireguard", "torrent"].map((id) => ({ id, installed: false, state: "yok", runtime: id === "wireguard" ? "konsol" : "host", live: "-" })) };
       else if (p === "/api/archives") result = {items:[], limits:{bytes:2147483648,entries:10000,layers:5,seconds:900}};
       else if (p === "/api/konsol/kaynaklar") result = { host: "nrm", version: "v128", domain: "ayc", os: "Debian 13", kernel: "test", uptime: 300, cores: 2, cpu: [1], mem: { total: 10000, used: 200, graph: [20] }, net: { wan: "192.0.2.1", tailscale: "100.64.0.2" }, root: "/srv", disk: { total: 100000, free: 80000 }, ports: [{ port: 22, proto: "tcp", scope: "internet", name: "SSH" }] };
-      else if (p === "/api/wg/islemler") result = { items: [] };
+      else if (p === "/api/konsol/islemler") result = { items: [] };
       else if (p === "/api/state") result = { root: "/srv", downloads:"downloads", temp: "downloads/incomplete", disk: { total: 100000, free: 80000 }, trash: { count: 0, size: 0 } };
       else if (p === "/api/list") result = { path: url.searchParams.get("path") || "", entries: [
         ...(url.searchParams.get("path") ? ["movies", "series"] : ["media", "downloads", "Belgeler ve uzun klasör adı"]).map((name) => ({ name, type: "dir", count: 2, size: 1024, mtime: Date.now() / 1000 })),
