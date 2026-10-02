@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-02 — CasaOS-inspired skin and an overview page for Konsol (v2-178)
+
+- Konsol wears a CasaOS-inspired skin (DD-204): a wallpaper (inline SVG, no external
+  asset) behind translucent glass surfaces, pill buttons, rounded application tiles with
+  tinted icons; light and dark follow the system; reduced-transparency readers and engines
+  without `backdrop-filter` get opaque surfaces.
+- New landing page **Genel bakış**: clock with host/OS/kernel/uptime, CPU/RAM rings with
+  the health pill, storage with trash size, CPU history, and tiles for Dosyalar, every
+  installed application (icon and tone from its package), Paylaşımlar, App Store and
+  Ayarlar — all from the existing endpoints. An unknown route opens it.
+- App Store entries are tiles (same markup and controls, new layout).
+- **Verified:** Mac — 409 Python, 171 Bats, browser suites `panel-ui`, `files-ui`,
+  `settings-ui`, `torrent-ui`, `wireguard-ui`, `publications-ui`, `settings-https-ui`,
+  `giris-ui`. nrm — portable installer run over v2-177 (exit 0); live Playwright look
+  at `panel.ayc` with a root-opened session: Genel bakış lands, tiles Dosyalar ·
+  qBittorrent (running) · Paylaşımlar · App Store · Ayarlar, health pill shows the host's
+  real pending-reboot warning, `backdrop-filter` active, no CSP report in the console;
+  light/dark/mobile and App Store screenshots reviewed.
+
 ### 2026-10-02 — Package-declared folders, settings and backend write paths, phase 3 (v2-177)
 
 - Packages declare the folders they write into (`PAKET_KLASORLER`; qBittorrent's

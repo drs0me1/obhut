@@ -5,9 +5,12 @@ Read [`contract.md`](contract.md) first — that document says *what* the instal
 does; this one says *where each part of it lives* and *how data moves*.
 Operator entry point: [`README.md`](../../README.md).
 
-**Konsol (DD-160):** [Model A](model-a-clean-install.md) is a single-workspace
-admin panel: sidebar with resource meters, App Store, installed app pages and
-tabbed Settings. `panel.css` styles the sidebar and resource meters. Host CPU
+**Konsol (DD-160, DD-204):** [Model A](model-a-clean-install.md) is a single-workspace
+admin panel: sidebar with resource meters, an overview landing page (widgets and
+application tiles), App Store as tiles, installed app pages and tabbed Settings.
+`panel.css` carries the CasaOS-inspired skin — palette, glass tokens, wallpaper
+colours, tiles — over `konsol.css`'s base rules; the wallpaper itself is inline SVG in
+`index.html`. Host CPU
 sampling runs independently of WireGuard; the resources API
 (`/api/konsol/kaynaklar`) does not enumerate networks or ports or invoke external
 commands. Settings renders the base's tabs only; an application's settings belong to its

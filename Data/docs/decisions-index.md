@@ -205,3 +205,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-201 | A neutral backend, package-owned settings and self-checking packages, phase 2b | live | design-decisions.md |
 | DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |
 | DD-203 | Package-declared folders, settings and backend write paths, phase 3 | live | design-decisions.md |
+| DD-204 | CasaOS-inspired skin and an overview page for Konsol | live | design-decisions.md |

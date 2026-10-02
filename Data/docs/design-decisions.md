@@ -13,6 +13,48 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-204: CasaOS-inspired skin and an overview page for Konsol (v2-178)
+
+- **Scope (user, 2026-10-02: "casaos yapısına internetten bak … panel yapısını tema olarak
+  casaos temasına uydurabilir miyiz", then "tasarım çok güzel olmuş uygulayalım" on the
+  frozen mockup `docs/design/konsol-casa-v01.html`):** Konsol takes the look of CasaOS — a
+  wallpaper behind translucent, blurred ("glass") surfaces, rounded application tiles with
+  big tinted icons, an overview with widgets — while keeping its own navigation model.
+  CasaOS (studied from casaos.zimaspace.com, the `CasaOS-UI` Vue source and its published
+  screenshots; the public demo needs a login the assistant does not enter) is a single
+  launcher page: a top bar with account/settings/terminal menus, a widget column, a search
+  box and an icon grid; Files and the App Store open as modals. Konsol has deep pages (five
+  Settings tabs, package pages), so the sidebar stays and the launcher idea becomes a new
+  landing page. This is option C of the analysis: A (theme) plus tiles and an overview.
+- **Theme (CSS only, `panel.css`).** The Model A override sheet now carries the palette
+  (blue-teal accent, blue-grey neutrals, light and dark), the glass tokens (`--glass`,
+  `--glass-2`, `--glass-line`, `--glass-shadow`, `--blur`, `--radius`) and the wallpaper
+  colours (`--sky1/2`, `--m1…4`). `index.html` paints the wallpaper with a fixed `.wall`
+  (gradient + inline SVG ridges, `fill="url(#…)"` as an attribute) behind a transparent body;
+  no external asset, so the CSP (`img-src 'self'`, `style-src 'self'`) is untouched. Sidebar,
+  cards, tables, dialogs, rails and store entries are glass; buttons are pills.
+  `prefers-reduced-transparency` and engines without `backdrop-filter` get opaque surfaces
+  and no wallpaper. The Files panel is translucent without blur on purpose: a
+  `backdrop-filter` there would become the containing block of the fixed selection dock
+  (found by `files-ui.cjs`). Eyebrows stay untransformed (Model A).
+- **Overview (`genel`, the landing page).** A shell route like Dosyalar/App Store/Ayarlar:
+  four widgets — clock with host/OS/kernel/uptime, system status with CPU/RAM rings and the
+  health checks' pill, storage with the disk bar and trash size, CPU history as a sparkline
+  from the backend's samples — and the tiles: Dosyalar, every installed application (name,
+  icon and tone from its `konsol.json`, state as text and dot, link to its page), Paylaşımlar,
+  App Store (installed/installable counts) and Ayarlar. Everything comes from the existing
+  endpoints (`kaynaklar`, `saglik`, `/api/state`, `paylasim`, `moduller`); the page computes
+  nothing and polls only while shown. SVG rings and sparklines are built from templates like
+  the icons (no namespace URL literal, no inline style). An unknown route opens the overview;
+  DD-160 made Dosyalar the landing page and Model A removed the old overview — this brings a
+  smaller, data-driven one back by the user's choice.
+- **App Store as tiles.** The rows keep their markup, ids, buttons, progress lines and the
+  details panel (`panel-ui.cjs` still drives them); only CSS lays them out as tiles with the
+  same icon shape as the overview. The compact-row height check became a tile check.
+- **Not done, deliberately:** no theme/wallpaper switch in production (the mockup's demo
+  controls were for evaluation; the system colour scheme decides), no operator wallpaper
+  upload (needs a backend and storage), no CasaOS artwork or icons.
+
 ### DD-203: Package-declared folders, settings and backend write paths, phase 3 (v2-177)
 
 - **Scope (user, 2026-10-02: "Faz 3 tamamla, kalan kozmetik temizliği de yap"):** the crumbs

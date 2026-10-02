@@ -17,6 +17,17 @@
 </head>
 <body>
 <a class="skip-link" href="#main-content">İçeriğe geç</a>
+<!-- DD-204: duvar kâğıdı — dış görsel yok (CSP img-src 'self'); gradyan ve bu SVG. Renkler panel.css token'larından. -->
+<div class="wall" aria-hidden="true">
+  <svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" focusable="false">
+    <defs><radialGradient id="wall-glow" cx="30%" cy="22%" r="45%"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
+    <rect class="glow" fill="url(#wall-glow)" width="1600" height="900"/>
+    <path class="m1" d="M0 640 220 470 380 560 560 400 760 520 980 360 1180 500 1400 410 1600 540V900H0z"/>
+    <path class="m2" d="M0 720 180 600 340 660 520 540 700 640 900 520 1080 620 1300 540 1600 660V900H0z"/>
+    <path class="m3" d="M0 800 200 710 400 760 600 680 820 760 1040 690 1260 760 1600 720V900H0z"/>
+    <path class="m4" d="M0 900V850l260-50 300 40 320-30 340 40 380-20V900z"/>
+  </svg>
+</div>
 <header class="mobile-brand">
   <span class="wordmark"><span id="brand-host-m">sunucu</span><span class="dot">.</span></span>
   <button type="button" class="btn btn-quiet" id="menu-toggle" aria-controls="panel-sidebar" aria-expanded="false">Menü</button>
@@ -25,6 +36,7 @@
   <aside class="side" id="panel-sidebar" aria-label="Sunucu konsolu">
     <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
     <nav class="nav" aria-label="Bölümler">
+      <a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
       <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
       <!-- DD-200: installed application links follow this label; konsol.js builds them from each package's declaration. -->
@@ -42,11 +54,18 @@
   <main class="main" id="main-content" tabindex="-1">
     <div class="content">
       <header class="topbar">
-        <div><p class="eyebrow" id="eyebrow">Sunucu yönetimi</p><h1 id="title">Dosyalar</h1></div>
+        <div><p class="eyebrow" id="eyebrow">Sunucu yönetimi</p><h1 id="title">Genel bakış</h1></div>
         <div class="top-actions" id="top-actions"></div>
       </header>
 
       <!-- Application pages (DD-200): sections are created by konsol.js for installed packages. -->
+
+      <!-- GENEL BAKIŞ (DD-204): saat, durum, depolama, işlemci geçmişi ve uygulama kareleri; konsol.js doldurur. -->
+      <section data-view="genel" hidden>
+        <div class="widgets" id="genel-widgets" aria-label="Sunucu durumu"></div>
+        <div class="section-title"><h2>Uygulamalar</h2><span class="hint-s" id="genel-sum"></span></div>
+        <div class="tiles" id="genel-tiles" aria-label="Uygulamalar"></div>
+      </section>
 
       <!-- DOSYALAR -->
       <section data-view="dosyalar" hidden>

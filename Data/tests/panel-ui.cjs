@@ -108,20 +108,32 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       assert(resourceCount > before);
     };
     await page.goto(base + "/");
-    await page.getByRole("button", {name:"media ayrıntıları",exact:true}).waitFor();
+    // DD-204: the landing page is Genel bakış — widgets from the shell's own APIs and tiles for
+    // Konsol's sections and installed applications; nothing is computed in the page.
+    await page.locator("#genel-tiles .tile").first().waitFor();
     await page.waitForFunction(() => document.querySelector("#resource-cpu").textContent === "%18");
+    assert.equal(await page.locator("#title").innerText(),"Genel bakış");
+    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Genel bakış","Dosyalar","App Store","Ayarlar"]);
+    assert.equal(await page.locator('[data-view="uygulamalar"],.desktop-dock,#window-min').count(),0);
+    assert.deepEqual(await page.locator("#genel-tiles .tile strong").allTextContents(),["Dosyalar","Paylaşımlar","App Store","Ayarlar"],"no application tile while none is installed");
+    assert.equal(await page.locator('#genel-tiles .tile[data-tile="moduller"] small').innerText(),"0 kurulu · 2 kurulabilir");
+    await page.locator("#genel-health").filter({hasText:"Sağlıklı"}).waitFor();
+    assert.equal(await page.locator("#genel-widgets .rings .big").count(),2);
+    assert.equal(await page.locator("#genel-widgets .rings .big b").first().innerText(),"%18","the overview ring shows the same measurement as the sidebar");
+    assert.equal(await page.locator("#genel-widgets .spark").count(),0,"a single sample draws no history line");
+    assert(!calls.includes("/api/uygulama/wireguard/state") && !calls.includes("/api/konsol/islemler"));
+    assert.equal(await page.locator('script[src^="/uygulama/"]').count(),0,"no package page is loaded while none is installed");
+    await page.screenshot({path:path.join(shots,"model-a-overview.png"),fullPage:true});
+    await page.locator('#genel-tiles .tile[data-tile="dosyalar"]').click();
+    await page.getByRole("button", {name:"media ayrıntıları",exact:true}).waitFor();
     assert.equal(await page.locator("#title").innerText(),"Dosyalar");
-    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Dosyalar","App Store","Ayarlar"]);
-    assert.equal(await page.locator('[data-view="genel"],[data-view="uygulamalar"],.desktop-dock,#window-min').count(),0);
     assert.equal(await page.locator("#fs-detail:visible").count(),0);
     assert.equal(await page.locator("#resource-mem").innerText(),"%25");
     assert.equal(await page.locator("#resource-disk").innerText(),"%28");
-    assert(!calls.includes("/api/uygulama/wireguard/state") && !calls.includes("/api/konsol/islemler"));
-    assert.equal(await page.locator('script[src^="/uygulama/"]').count(),0,"no package page is loaded while none is installed");
     await page.screenshot({path:path.join(shots,"model-a-files.png"),fullPage:true});
-    // Fresh installs only: retired bookmarks are not rewritten; an unknown hash shows Files.
+    // Fresh installs only: retired bookmarks are not rewritten; an unknown hash shows the overview.
     await navigate("#/uygulamalar");
-    await page.getByRole("heading",{name:"Dosyalar",exact:true}).waitFor();
+    await page.getByRole("heading",{name:"Genel bakış",exact:true}).waitFor();
     await navigate("#/ayarlar/log");
     await page.locator("#log-table").waitFor();
     assert.equal(await page.getByRole("tab").count(),5);
@@ -142,7 +154,9 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await page.locator("#mod-sum").innerText(),"0 kurulu · 2 kurulabilir");
     assert.equal(await page.locator("#eyebrow").isVisible(),false);
     assert.equal(await detail.isVisible(),false);
-    assert((await card.boundingBox()).height <= 80, "Collapsed desktop rows stay compact");
+    // DD-204: App Store entries are tiles (icon, name, state, two buttons); the collapsed tile stays compact.
+    const tileBox = await card.boundingBox();
+    assert(tileBox.height <= 240 && tileBox.width <= 260, `Collapsed tiles stay compact: ${JSON.stringify(tileBox)}`);
     await page.screenshot({path:path.join(shots,"store-list.png"),fullPage:true});
     await toggle.focus(); await toggle.press("Enter");
     assert.equal(await toggle.getAttribute("aria-expanded"),"true");
@@ -245,6 +259,17 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#torrent-status").getByRole("button",{name:"Durdur",exact:true}).waitFor();
     assert.equal(await page.locator("#torrent-open").getAttribute("href"),"http://torrent.ayc","tailnet Konsol links the tailnet name");
     assert.equal(await page.locator("#foot-access").innerText(),"Tailscale");
+    // DD-204: the overview shows the installed application as a tile and links its page.
+    await navigate("#/genel");
+    const appTile = page.locator('#genel-tiles .tile[data-tile="torrent"]');
+    await appTile.waitFor();
+    assert.equal(await appTile.locator("strong").innerText(),"qBittorrent");
+    assert.equal(await appTile.locator("small").innerText(),"çalışıyor");
+    assert.equal(await appTile.locator(".dot.on").count(),1);
+    assert(await appTile.locator(".ico.t-video").count() === 1, "the tile uses the package's declared tone");
+    await appTile.click();
+    await page.getByRole("textbox",{name:"Kullanıcı adı",exact:true}).waitFor();
+    await navigate("#/torrent");
     await navigate("#/moduller");
     await detail.getByRole("button",{name:"Kaldır",exact:true}).click();
     assert.equal(await page.locator("#mod-veri").isChecked(),false);
@@ -361,7 +386,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await page.locator("#eyebrow").innerText(),"WireGuard · yeni ağ");
     for (const width of [1440,1024,736,390,320]) {
       await page.setViewportSize({width,height:950});
-      for (const hash of ["#/dosyalar","#/dosyalar/paylasim","#/dosyalar/cop","#/moduller","#/ayarlar"]) {
+      for (const hash of ["#/genel","#/dosyalar","#/dosyalar/paylasim","#/dosyalar/cop","#/moduller","#/ayarlar"]) {
         await navigate(hash);
         await page.waitForTimeout(80);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),`${width}/${hash}`);

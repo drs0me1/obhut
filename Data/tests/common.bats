@@ -2335,7 +2335,8 @@ PY
     grep -qF '!m.durdurulabilir ? null : h("button"' "$js"
     # Host measurements remain independent of optional applications.
     grep -qF 'fresh && s.disk?.total > 0' "$js"
-    run ! grep -qE 'data-view="(genel|uygulamalar|gunluk)"|desktop-dock|window-min' "$html"
+    # DD-204 brought an overview back (data-view="genel"); the dock/window shell and the old pages stay gone.
+    run ! grep -qE 'data-view="(uygulamalar|gunluk)"|desktop-dock|window-min' "$html"
     # The WireGuard page is the package's: it registers itself and uses only its own API prefix.
     local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
     grep -qF 'window.Konsol.sayfa("wireguard", (k) => {' "$sayfa"
@@ -2698,7 +2699,7 @@ EOF
     # The console page loads nothing from elsewhere and runs no inline code.
     run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/index.html"
     local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
-    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$sayfa" "$V2_ROOT/magaza/wireguard/sayfa.css"
+    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css" "$sayfa" "$V2_ROOT/magaza/wireguard/sayfa.css"
     grep -q '"X-Konsol": "1"' "$V2_ROOT/console/konsol.js"
     # DD-136/DD-140/DD-200: network cards and "Arayüz ekle" as its own view, both built by the package's page.
     grep -q 'id: "wg-tabs"' "$sayfa"
@@ -3114,6 +3115,34 @@ PY
     grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
+@test "console skin (DD-204): wallpaper and glass from tokens, an overview page with tiles, no external asset" {
+    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css"
+    # The overview is the landing page and a shell route; the wallpaper is inline SVG with no inline style.
+    grep -q '<a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>' "$html"
+    grep -q '<section data-view="genel" hidden>' "$html"
+    grep -q '<div class="wall" aria-hidden="true">' "$html"
+    run ! grep -q ' style="' "$html"
+    run ! grep -qE 'url\(|@import|https?://' "$css"
+    grep -qF 'const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "ayarlar"]);' "$js"
+    grep -qF 'let current = "genel";' "$js"
+    grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
+    # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
+    grep -qF 'genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,' "$js"
+    grep -qF 'return tile(meta.rota ? "#/" + meta.rota : "#/moduller", meta.icon, meta.tone, meta.name, state, dot);' "$js"
+    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css"
+    # Glass tokens, opaque fallbacks for reduced transparency and engines without backdrop-filter.
+    for token in -- '--glass:' '--glass-line:' '--blur:' '--radius:' '--sky1:' '--m4:'; do [ "$token" = -- ] || grep -q -- "$token" "$css"; done
+    grep -q 'prefers-reduced-transparency:reduce' "$css"
+    grep -q '@supports not (backdrop-filter:blur(1px))' "$css"
+    grep -q 'backdrop-filter:blur(var(--blur))' "$css"
+    grep -qx 'body { font-size:14px; background:transparent; }' "$css"
+    # The App Store rows keep their ids and controls; only the shape changed to tiles.
+    grep -q '^\.store-list { display:grid;' "$css"
+    grep -qF 'h("article", { class:"store-row", id:`modc-${m.id}`' "$js"
+    # Icons the overview uses exist (svg() silently falls back to the file icon).
+    for icon in home clock folder share stack sliders refresh; do grep -qE "^    ${icon}: '" "$js"; done
+}
+
 @test "installer prepares optional modules and reapplies installed ones separately from builtins" {
     local render
     # DD-148: the installer writes module files and an empty registry; Konsol installs.
@@ -3309,7 +3338,7 @@ PY
     grep -q '"\$REPO_ROOT/files-panel"' "$V2_ROOT/dev/export-installer.sh"
     # The console page inserts names only as text; the one innerHTML builds icons from a fixed table.
     [ "$(grep -c 'innerHTML' "$V2_ROOT/console/konsol.js")" -eq 1 ]
-    grep -q 't.innerHTML = .<svg' "$V2_ROOT/console/konsol.js"
+    grep -q "const svg = (name) => svgFrom('<svg" "$V2_ROOT/console/konsol.js"
     # One page, no login: both backends answer only on panel.<domain> and log the same actor.
     grep -q 'ACTOR = "konsol"' "$V2_ROOT/files-panel/master-files-panel"
     grep -q 'ACTOR = "konsol"' "$V2_ROOT/panel/master-panel"

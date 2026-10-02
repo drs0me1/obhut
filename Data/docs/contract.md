@@ -456,8 +456,13 @@ Contract in §5–§7 and `folder-shares.md`.
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**); every path except the sign-in page and API also needs a Konsol
   session (**DD-194**).
-  - Pages (**DD-160**, **DD-200**): Dosyalar (the landing page), App Store (§1.11),
-    the installed applications' pages and Ayarlar, in one responsive sidebar. An
+  - Pages (**DD-160**, **DD-200**, **DD-204**): Genel bakış (the landing page since
+    **DD-204**: clock, CPU/RAM rings, health pill, storage bar and CPU history from the
+    shell's own endpoints, plus tiles for Dosyalar, every installed application,
+    Paylaşımlar, App Store and Ayarlar), Dosyalar, App Store (§1.11, laid out as tiles),
+    the installed applications' pages and Ayarlar, in one responsive sidebar. The skin is
+    a wallpaper (inline SVG, no external asset) behind translucent surfaces; readers who
+    ask for reduced transparency get opaque surfaces. An
     application's link, section, App Store texts and journal words come from its
     package's `konsol.json`; its page script and stylesheet are loaded from
     `/uygulama/<id>/` only while the package is installed and register through
@@ -468,7 +473,7 @@ Contract in §5–§7 and `folder-shares.md`.
     Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
     from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
     measurements show as unknown, never as zero. An unknown route opens
-    Dosyalar; a page of an absent application opens App Store.
+    Genel bakış; a page of an absent application opens App Store.
   - Ayarlar (**DD-156**, superseding DD-155) has five tabs: Sistem, Güvenlik
     Duvarı, Caddy, Dnsmasq and Günlük. `GET
     /api/konsol/ayarlar` retains the same gates and 5 s cache (`?yenile=1`

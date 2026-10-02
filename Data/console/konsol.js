@@ -1,4 +1,4 @@
-/* Konsol (DD-140, DD-200, DD-202): root ve dosya arka uçlarının tek arayüzü; hiçbir
+/* Konsol (DD-140, DD-200, DD-202, DD-204): root ve dosya arka uçlarının tek arayüzü; hiçbir
    uygulamayı tanımaz. App Store metinleri ve uygulama sayfaları paketlerden gelir
    (konsol.json, /uygulama/<id>/sayfa.js); bu dosya yalnız API'yi çağırır ve sayfalara küçük
    bir arayüz (window.Konsol) verir. Sayfa CSP altında çalışır: satır içi biçem ve betik yok. */
@@ -31,6 +31,7 @@
     pencil: '<path d="M11.8 3.2l3 3-8.4 8.4H3.4v-3z"/><path d="M10.2 4.8l3 3"/>',
     up: '<path d="M9 14.4V3.8M4.8 8L9 3.8 13.2 8"/>',
     home: '<path d="M2.8 8.6L9 3.2l6.2 5.4"/><path d="M4.6 7.2v7.4h8.8V7.2"/>',
+    clock: '<circle cx="9" cy="9" r="6.6"/><path d="M9 5.4V9l2.4 1.6"/>',
     restore: '<path d="M3.6 8.8a5.4 5.4 0 1 0 1.6-3.9"/><path d="M3.4 2.6v3.2h3.2"/>',
     share: '<circle cx="4.8" cy="9" r="2"/><circle cx="13.2" cy="4.6" r="2"/><circle cx="13.2" cy="13.4" r="2"/><path d="M6.6 8.1l4.8-2.6M6.6 9.9l4.8 2.6"/>',
     eye: '<path d="M1.8 9S4.4 4.2 9 4.2 16.2 9 16.2 9 13.6 13.8 9 13.8 1.8 9 1.8 9z"/><circle cx="9" cy="9" r="2.2"/>',
@@ -46,11 +47,10 @@
     chev: '<path d="M7 4.5L11.5 9 7 13.5"/>',
     arrow: '<path d="M3.4 9h11.2M10.6 5l4 4-4 4"/>',
   };
-  const svg = (name) => {
-    const t = document.createElement("template");
-    t.innerHTML = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.file) + "</svg>";
-    return t.content.firstChild;
-  };
+  // Tek şablon noktası: simgeler, Genel bakış'ın halkaları ve çizgi grafiği buradan üretilir; içine
+  // yalnız bu dosyanın kendi işaretlemesi ve sayılar girer.
+  const svgFrom = (markup) => { const t = document.createElement("template"); t.innerHTML = markup; return t.content.firstChild; };
+  const svg = (name) => svgFrom('<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.file) + "</svg>");
   const $ = (id) => document.getElementById(id);
   function h(tag, attrs, ...kids) {
     const e = document.createElement(tag);
@@ -169,7 +169,7 @@
   function loadHealth() {
     return api("/api/konsol/saglik").then((s) => { S.health = s; healthFailed = false; })
       .catch(() => { healthFailed = true; })
-      .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
+      .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); if (current === "genel") renderOverview(); });
   }
   function loadActions() {
     return api("/api/konsol/islemler").then((s) => { S.actions = s.items || []; paintActions(); }).catch(fail);
@@ -183,21 +183,25 @@
     const previous = S.share;
     return api("/api/konsol/paylasim").then((s) => {
       if (S.share !== previous || sharesPage.interacting()) return;
-      S.share = s; if (current === "dosyalar") renderFs();
+      S.share = s; if (current === "dosyalar") renderFs(); if (current === "genel") renderOverview();
     })
       .catch((e) => { if (S.share === previous && !sharesPage.interacting()) { S.share = null; fail(e); } });
   }
   const paintActions = () => { if (current === "ayarlar" && settingsTab === "log") renderLog(); };
-  const paintFsState = () => { if (current === "dosyalar") renderRail(); };
+  const paintFsState = () => { if (current === "dosyalar") renderRail(); if (current === "genel") renderOverview(); };
 
   /* ---------- Independent host resources (DD-160) ---------- */
-  function paintResources() {
+  function resourceValues() {
     const s = S.sys, age = s ? (performance.now() - resourceReceived) / 1000 : Infinity;
     const fresh = !!s && !resourceFailed && age <= 30;
     const cpuFresh = fresh && Number.isFinite(s.sampled_at) && s.read_at - s.sampled_at + age <= 30;
     const cpu = cpuFresh && s.cpu.length ? s.cpu[s.cpu.length - 1] : null;
     const mem = fresh && s.mem.total > 0 ? 100 * s.mem.used / s.mem.total : null;
     const disk = fresh && s.disk?.total > 0 ? 100 * (s.disk.total - s.disk.free) / s.disk.total : null;
+    return { s, fresh, cpuFresh, cpu, mem, disk };
+  }
+  function paintResources() {
+    const { s, fresh, cpuFresh, cpu, mem, disk } = resourceValues();
     for (const [id, value] of [["cpu", cpu], ["mem", mem], ["disk", disk]]) {
       const known = Number.isFinite(value);
       $("resource-" + id).textContent = known ? "%" + Math.round(value) : "—";
@@ -223,6 +227,7 @@
     $("foot-access").textContent = location.protocol === "https:" ? "İnternet · HTTPS" : "Tailscale";
     paintResources();
     if (current === "ayarlar" && settingsTab === "system") renderSettings();
+    if (current === "genel") renderOverview();
   }
 
   /* ---------- Audit log, shown only in Settings ---------- */
@@ -959,7 +964,7 @@
   // Katalog ve her paketin App Store metinleri sunucudan gelir (master-modul liste + paketin
   // konsol.json'u); burada hiçbir uygulama adı yazılı değildir. Metinler yalnız metin düğümü olur.
   const ROUTE_RE = /^[a-z]{2,16}$/;
-  const SHELL_ROUTES = new Set(["dosyalar", "moduller", "ayarlar"]);
+  const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "ayarlar"]);
   const META_FALLBACK = { alt: "", simge: "box", ton: "t-text", aciklama: "", neler: [], notlar: [], kaldir: {}, durdur_notu: "", gunluk_kaynak: "", sayfa: {}, gunluk: {} };
   const pairs = (v) => (Array.isArray(v) ? v.filter((x) => Array.isArray(x) && x.length === 2 && typeof x[1] === "string").map(([ic, t]) => [ICON[ic] ? ic : "info", t]) : []);
   function metaOf(id) {
@@ -1041,6 +1046,7 @@
       if (owner && !owner.installed) location.hash = "#/moduller";
       else if (pendingRoute) route();
       if (current === "moduller") renderModules();
+      if (current === "genel") renderOverview();
       if (PAGES[current] && PAGES[current].page.modules) PAGES[current].page.modules(MODS);
       clearTimeout(modTimer);
       if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
@@ -1324,15 +1330,101 @@
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
+  /* ---------- Genel bakış (DD-204): kaynak, sağlık, depolama ve uygulama kareleri ---------- */
+  // Hiçbir veri burada hesaplanmaz: kaynaklar /api/konsol/kaynaklar, sağlık /api/konsol/saglik,
+  // disk ve çöp /api/state, paylaşımlar /api/konsol/paylasim, kareler modül listesinden.
+  // Halka ve çizgi grafiği de simgeler gibi şablondan üretilir; içine yalnız sayı yazılır.
+  const ring = (pct) => {
+    const dash = Number.isFinite(pct) ? (113.1 * Math.max(0, Math.min(100, pct)) / 100).toFixed(1) + " 113.1" : "0 113.1";
+    return svgFrom(`<svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" stroke-dasharray="${dash}"/></svg>`);
+  };
+  const spark = (values) => {
+    const w = 200, hgt = 56, n = values.length;
+    const pts = values.map((v, i) => [n > 1 ? w * i / (n - 1) : w, hgt - 4 - Math.max(0, Math.min(100, Number(v) || 0)) / 100 * (hgt - 8)]);
+    const line = pts.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join(" ");
+    const body = pts.length > 1 ? `<path class="fill" d="${line} L${w} ${hgt} L0 ${hgt} Z"/><path d="${line}"/>` : "";
+    return svgFrom(`<svg class="spark" viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" aria-hidden="true">${body}</svg>`);
+  };
+  const uptimeText = (sec) => { const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
+    return d ? `${d} g ${hh} sa` : hh ? `${hh} sa ${mm} dk` : `${mm} dk`; };
+  const HEALTH_PILL = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Uyarı var"], bad: ["bad", "Sorun var"] };
+  function overviewWidgets() {
+    const { s, fresh, cpu, mem, disk } = resourceValues();
+    const d = new Date(now() * 1000);
+    const clock = h("article", { class: "card widget", "aria-label": "Saat ve sunucu" },
+      h("div", { class: "clock", id: "genel-clock" }, d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })),
+      h("div", { class: "hint-s" }, d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })),
+      h("div", { class: "hint-s" }, s ? `${s.host} · ${s.os} · ${s.kernel}` : "Sunucu bilgisi okunuyor…"),
+      h("div", { class: "hint-s" }, s && fresh ? `Çalışma süresi ${uptimeText(s.uptime)} · Tailscale ${s.net.tailscale || "—"}` : "Güncel ölçüm yok"));
+    const hs = S.health, pill = hs && HEALTH_PILL[hs.status] ? HEALTH_PILL[hs.status] : null;
+    const issues = hs ? hs.checks.filter((c) => c.status !== "ok") : [];
+    const status = h("article", { class: "card widget", "aria-label": "Sistem durumu" },
+      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Sistem durumu"), h("small", { class: "hint-s" }, hs ? "Son denetim " + hhmm(hs.read_at) : healthFailed ? "Sağlık bilgisi okunamadı" : "Denetleniyor…")),
+        pill ? h("span", { class: "hm " + pill[0], id: "genel-health" }, pill[1]) : h("span", { class: "hm", id: "genel-health" }, "—")),
+      h("div", { class: "rings" },
+        h("div", { class: "big" }, ring(cpu), h("b", null, Number.isFinite(cpu) ? "%" + Math.round(cpu) : "—"), "İşlemci"),
+        h("div", { class: "big" }, ring(mem), h("b", null, Number.isFinite(mem) ? "%" + Math.round(mem) : "—"), "RAM"),
+        h("div", { class: "hint-s" }, ...(hs ? (issues.length ? issues : hs.checks).slice(0, 3).map((c) => h("span", { class: "line" + (c.status === "ok" ? "" : " " + c.status) }, c.detail || c.name)) : [h("span", { class: "line" }, "Sağlık denetimi bekleniyor")]))));
+    const fs = S.fs, free = s && s.disk ? s.disk.free : null, total = s && s.disk ? s.disk.total : null;
+    const storage = h("article", { class: "card widget", "aria-label": "Depolama" },
+      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Depolama"), h("small", { class: "hint-s" }, (s && s.root) || "/srv")),
+        h("span", { class: "hm" + (Number.isFinite(disk) && disk >= 90 ? " warn" : "") }, Number.isFinite(disk) ? `${bytes(total - free)} / ${bytes(total)}` : "—")),
+      (() => { const bar = h("progress", { class: "bar", max: "100", "aria-label": "Disk kullanımı" }); bar.value = Number.isFinite(disk) ? disk : 0; return bar; })(),
+      h("div", { class: "hint-s" }, Number.isFinite(disk) ? `${bytes(free)} boş` + (fs && fs.trash ? ` · çöp ${fs.trash.count} öge, ${bytes(fs.trash.size)}` : "") : "Güncel ölçüm yok"));
+    const samples = s && Array.isArray(s.cpu) ? s.cpu : [];
+    const history = h("article", { class: "card widget", "aria-label": "İşlemci geçmişi" },
+      h("div", { class: "card-head" }, h("div", null, h("h2", null, "İşlemci"), h("small", { class: "hint-s" }, s ? `${s.cores} çekirdek · son ${Math.round(samples.length * (s.interval || 1))} sn` : "—")),
+        h("span", { class: "hm" }, Number.isFinite(cpu) ? "%" + Math.round(cpu) : "—")),
+      samples.length > 1 ? spark(samples) : h("p", { class: "hint-s" }, "Örnekler toplanıyor…"));
+    return [clock, status, storage, history];
+  }
+  const TONE_FALLBACK = { dosyalar: "t-files", paylasim: "t-share", moduller: "t-store", ayarlar: "t-settings" };
+  function tile(href, icon, tone, name, sub, dot, key) {
+    return h("a", { class: "tile card", href, "data-tile": key || href.replace(/^#\//, "").split("/")[0] },
+      dot ? h("span", { class: "dot " + dot, "aria-hidden": "true" }) : null,
+      h("span", { class: "ico " + tone }, svg(icon)), h("strong", null, name), h("small", null, sub));
+  }
+  function overviewTiles() {
+    const shares = S.share && Array.isArray(S.share.items) ? S.share.items.length : null;
+    const installed = (MODS || []).filter((m) => m.installed);
+    const apps = installed.map((m) => {
+      const meta = metaOf(m.id);
+      const state = m.busy ? "işleniyor" : m.state === "durduruldu" ? "durduruldu" : (m.runtime === "host" && m.live !== "running") || m.live === "exited" ? "çalışmıyor" : "çalışıyor";
+      const dot = m.busy ? "warn" : state === "çalışıyor" ? "on" : state === "durduruldu" ? "off" : "warn";
+      return tile(meta.rota ? "#/" + meta.rota : "#/moduller", meta.icon, meta.tone, meta.name, state, dot);
+    });
+    return [
+      tile("#/dosyalar", "folder", TONE_FALLBACK.dosyalar, "Dosyalar", S.fs && S.fs.root ? S.fs.root : "kullanıcı alanı"),
+      ...apps,
+      tile("#/dosyalar/paylasim", "share", TONE_FALLBACK.paylasim, "Paylaşımlar", shares == null ? "klasör WebDAV" : shares === 1 ? "1 paylaşım" : `${shares} paylaşım`, null, "paylasim"),
+      tile("#/moduller", "stack", TONE_FALLBACK.moduller, "App Store", MODS ? `${installed.length} kurulu · ${MODS.length - installed.length} kurulabilir` : "okunuyor…"),
+      tile("#/ayarlar", "sliders", TONE_FALLBACK.ayarlar, "Ayarlar", "sistem, güvenlik duvarı, Caddy, DNS"),
+    ];
+  }
+  function renderOverview() {
+    if (current !== "genel") return;
+    $("genel-widgets").replaceChildren(...overviewWidgets());
+    $("genel-tiles").replaceChildren(...overviewTiles());
+    const installed = (MODS || []).filter((m) => m.installed).length;
+    $("genel-sum").textContent = MODS ? (installed ? `${installed} kurulu uygulama ve Konsol bölümleri` : "Konsol bölümleri; uygulamalar App Store’dan kurulur") : "";
+    const stamp = $("genel-stamp");
+    if (stamp) stamp.textContent = S.sys ? "Son okuma " + hhmm(S.sys.read_at) : "Okunuyor…";
+  }
+  const overviewActions = () => [h("span", { class: "hm", id: "genel-stamp" }, "Okunuyor…"),
+    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadHealth(); loadModules(); loadFsState(); loadShares(); } }, svg("refresh"), "Yenile")];
+
   // Konsol'un kendi sayfaları; uygulama sayfaları paketlerden gelir (DD-200/202).
   const ROUTES = {
+    genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,
+      render: () => { renderOverview(); loadHealth(); loadFsState(); loadShares(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
     ayarlar: { title: "Ayarlar", eyebrow: "Panel ve sunucu yapılandırması", actions:settingsActions,
       render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth(); loadSettings(); } },
   };
-  let current = "dosyalar";
+  // DD-204: açılış sayfası Genel bakış (DD-160'ta Dosyalar'dı).
+  let current = "genel";
   const view = () => current;
 
   /* ---------- Paket sayfaları (DD-200) ---------- */
@@ -1427,7 +1519,7 @@
     const apps = appRoutes();
     // Before the module list arrives an application bookmark is kept and shown once the list is known.
     pendingRoute = !MODS && !SHELL_ROUTES.has(raw[0]) && !ROUTES[raw[0]] && ROUTE_RE.test(raw[0]);
-    let key = ROUTES[raw[0]] || apps[raw[0]] || pendingRoute ? raw[0] : "dosyalar";
+    let key = ROUTES[raw[0]] || apps[raw[0]] || pendingRoute ? raw[0] : "genel";
     setMenu(false);
     // An absent application sends a saved bookmark to App Store.
     if (MODS && apps[key] && !apps[key].installed) {
@@ -1464,9 +1556,10 @@
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
-    if (current === "moduller" && !(MODS || []).some((m) => m.busy)) loadModules();
+    if (current === "genel") { loadHealth(); loadFsState(); loadShares(); }
+    if ((current === "moduller" || current === "genel") && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
-  setInterval(() => { if (!document.hidden) paintResources(); }, 1000);
+  setInterval(() => { if (!document.hidden) { paintResources(); if (current === "genel") { const c = $("genel-clock"); if (c) c.textContent = new Date(now() * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }); } } }, 1000);
   $("logout").addEventListener("click", logout);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { paintResources(); loadSystem(); loadModules(); } });
   loadFsState();

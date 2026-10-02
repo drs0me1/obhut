@@ -4,6 +4,27 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-02 — CasaOS-inspired skin and overview page, v2-178 (DD-204, uncommitted on top of 6d86100):**
+- Analysis of CasaOS (site, CasaOS-UI source, screenshots; demo login not entered) → frozen mockup
+  `docs/design/konsol-casa-v01.html` (option C) → user approved ("tasarım çok güzel olmuş uygulayalım").
+- `panel.css` rewritten: palette + glass/wallpaper tokens, glass surfaces, pill buttons, tiles,
+  widgets, App Store rows as tiles (markup unchanged), reduced-transparency/no-backdrop fallbacks;
+  Files panel without blur (fixed dock containing-block pitfall). `index.html`: `.wall` SVG, nav
+  "Genel bakış", `data-view="genel"` section. `konsol.js`: route `genel` (landing), widgets from
+  kaynaklar/saglik/state/paylasim, tiles from MODS + konsol.json tones, template-built SVG rings
+  and sparkline, 10 s polling on the page.
+- Tests: Bats DD-204 skin test (+ guard pattern relaxed for `genel`), panel-ui landing/overview/tile
+  checks (compact-row → tile check), other fixture suites unchanged.
+- nrm: v2-178 deployed over v2-177 (`Kurulum tamam`, exit 0; torrent stays registered and
+  running). `scratchpad/live-dd204.cjs` (Playwright, `--host-resolver-rules` → 100.77.205.10,
+  session from `master-konsol oturum-ac` passed as the Cookie header, closed afterwards):
+  landing = Genel bakış, tiles Dosyalar/qBittorrent/Paylaşımlar/App Store/Ayarlar, health pill
+  "Uyarı var" (real: kernel 6.12.107 → 6.12.111 reboot pending), `backdrop-filter` active,
+  no CSP errors; light/dark/mobile/App Store screenshots reviewed — glass, wallpaper, tiles
+  and the sidebar resource bars render as in the mockup. Not committed yet.
+
+## Previous Task
+
 **2026-10-02 — Package-declared folders, settings and backend write paths, phase 3, v2-177
 (DD-203; committed as 845d337 on branch quantum):**
 - `PAKET_KLASORLER` + `klasorler.py` (torrent): file backend `--protected "rel=owner;…"` →
