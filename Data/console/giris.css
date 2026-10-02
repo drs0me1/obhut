@@ -11,7 +11,6 @@
   background: var(--surface); color: var(--ink); font: inherit; font-size: 16px; min-width: 0;
 }
 .login-form input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
-.login-form input#setup-code { font-family: var(--f-mono); letter-spacing: .08em; text-transform: uppercase; }
 .login-form .btn { margin-top: 8px; width: 100%; min-height: 44px; }
 .login-form .btn:disabled { opacity: .6; cursor: progress; }
 .login-foot { width: min(100%, 400px); text-align: center; overflow-wrap: anywhere; }

@@ -152,7 +152,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-148 | A clean install is the base; Konsol installs modules | live | design-decisions.md |
 | DD-149 | Paylaşım is a module with a generated account | live; parts superseded by DD-158 | design-decisions.md |
 | DD-150 | Dosya yöneticisi and WireGuard are Konsol modules | live | design-decisions.md |
-| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live | design-decisions.md |
+| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209 | design-decisions.md |
 | DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live | design-decisions.md |
 | DD-153 | The base installs only what the base uses | live | design-decisions.md |
 | DD-154 | One console name, one current export | live | design-decisions.md |
@@ -195,7 +195,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-191 | Fixed publication table with independent private and public gates | live; Panel row opened by DD-195 | design-decisions.md |
 | DD-192 | Per-connection WebDAV policies and dual-card Shares | live | design-decisions.md |
 | DD-193 | Cross-review follow-ups for v2-159..v2-164 | live | design-decisions.md |
-| DD-194 | Konsol sign-in with a one-time setup code | live; public sign-in rules added by DD-195 | design-decisions.md |
+| DD-194 | Konsol sign-in with a one-time setup code | live for the public name; public rules by DD-195, tailnet sign-in and the code removed by DD-205 | design-decisions.md |
 | DD-195 | Konsol over public HTTPS through the publication table | live | design-decisions.md |
 | DD-196 | The store model, phase 0 | live | design-decisions.md |
 | DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |
@@ -206,3 +206,8 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |
 | DD-203 | Package-declared folders, settings and backend write paths, phase 3 | live | design-decisions.md |
 | DD-204 | CasaOS-inspired skin and an overview page for Konsol | live | design-decisions.md |
+| DD-205 | No sign-in on the tailnet; the account is the public name's credential | live | design-decisions.md |
+| DD-206 | Overview edit mode, a server-side layout and a network card | live | design-decisions.md |
+| DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
+| DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
+| DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |

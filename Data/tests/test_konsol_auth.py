@@ -1,5 +1,6 @@
-"""Konsol sign-in (DD-194): account, sessions, one-time code, limits and the root backend
-endpoints that Caddy's forward_auth calls. Temporary directories only; no host changes."""
+"""Konsol sign-in (DD-194, DD-205): account, sessions, limits and the root backend endpoints
+that Caddy's forward_auth calls — the tailnet passes without a session, the internet signs in.
+Temporary directories only; no host changes."""
 import contextlib
 import io
 import json
@@ -38,50 +39,34 @@ class StoreTests(unittest.TestCase):
         auth.decoy()  # made once, outside the timing comparison below
 
     def setup_account(self, user="yonetici", password=PASSWORD):
-        code, _ = self.store.issue_code()
-        return self.store.create(code, user, password)
+        """DD-205: creating the account opens no session; tests that need one sign in."""
+        self.store.create(user, password)
+        return self.store.login(user, password)
 
-    def test_code_is_typeable_single_use_and_stored_only_as_a_hash(self):
-        code, until = self.store.issue_code()
-        self.assertRegex(code, r"^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$")
-        self.assertEqual(until, self.clock.now + auth.SETUP_SECONDS)
-        stored = (self.dir / auth.SETUP_FILE).read_text()
-        self.assertNotIn(code.replace("-", ""), stored)
-        self.assertEqual(oct((self.dir / auth.SETUP_FILE).stat().st_mode & 0o777), "0o600")
-        self.assertEqual(self.store.status(None), {"durum": "kurulum", "kod": True})
-        token = self.store.create(" " + code.lower() + " ", "yonetici", PASSWORD)
-        self.assertEqual(self.store.user_for(token), "yonetici")
-        self.assertFalse((self.dir / auth.SETUP_FILE).exists())
+    def test_account_is_created_once_without_a_code_and_stored_only_as_a_hash(self):
+        self.assertEqual(self.store.status(None), {"durum": "kurulum"})
+        self.assertIsNone(self.store.create("yonetici", PASSWORD))
+        stored = (self.dir / auth.ACCOUNT_FILE).read_text()
+        self.assertNotIn(PASSWORD, stored)
+        self.assertEqual(oct((self.dir / auth.ACCOUNT_FILE).stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.store.sessions(), {}, "no session is opened: the tailnet needs none")
+        self.assertFalse((self.dir / "kurulum-kodu.json").exists(), "there is no setup code any more")
+        # The name goes only to a trusted caller (the tailnet) while no session is open.
+        self.assertEqual(self.store.status(None), {"durum": "giris"})
+        self.assertEqual(self.store.status(None, reveal=True), {"durum": "giris", "kullanici": "yonetici"})
         with self.assertRaises(auth.AuthError) as err:
-            self.store.create(code, "ikinci", PASSWORD)
+            self.store.create("ikinci", PASSWORD)
         self.assertEqual(err.exception.status, 409)
-        with self.assertRaises(auth.AuthError) as err:
-            self.store.issue_code()
-        self.assertEqual(err.exception.status, 409)
+        self.assertEqual(self.store.account()["kullanici"], "yonetici")
 
-    def test_wrong_expired_or_missing_code_never_creates_an_account(self):
-        with self.assertRaises(auth.AuthError) as err:
-            self.store.create("ABCD-EFGH-JKMN", "yonetici", PASSWORD)
-        self.assertEqual((err.exception.status, str(err.exception)), (401, auth.NO_CODE))
-        code, until = self.store.issue_code()
-        with self.assertRaises(auth.AuthError) as err:
-            self.store.create("ZZZZ-ZZZZ-ZZZZ", "yonetici", PASSWORD)
-        self.assertEqual(err.exception.status, 401)
-        self.clock.now = until
-        with self.assertRaises(auth.AuthError) as err:
-            self.store.create(code, "yonetici", PASSWORD)
-        self.assertEqual(err.exception.status, 401)
-        self.assertIsNone(self.store.account())
-        self.assertEqual(self.store.status(None), {"durum": "kurulum", "kod": False})
-
-    def test_user_and_password_rules_are_checked_before_the_code(self):
-        code, _ = self.store.issue_code()
+    def test_user_and_password_rules_are_checked_before_anything_is_written(self):
         for user, password in (("ab", PASSWORD), ("-bad", PASSWORD), ("ok-user", "ninechars"),
                                ("ok-user", "x" * 257), ("ok-user", "tab\tpassword-10"), (None, PASSWORD)):
             with self.subTest(user=user, password=len(str(password))), self.assertRaises(auth.AuthError) as err:
-                self.store.create(code, user, password)
+                self.store.create(user, password)
             self.assertEqual(err.exception.status, 400)
-        self.assertTrue((self.dir / auth.SETUP_FILE).exists())
+        self.assertIsNone(self.store.account())
+        self.assertEqual(self.store.status(None), {"durum": "kurulum"})
 
     def test_login_logout_and_status(self):
         first = self.setup_account()
@@ -150,13 +135,37 @@ class StoreTests(unittest.TestCase):
             self.store.login("yonetici", PASSWORD)
         self.assertTrue(self.store.login("yonetici", "new-password-123"))
 
-    def test_reset_removes_account_and_sessions_and_issues_a_new_code(self):
+    def test_set_password_asks_no_current_password_and_ends_every_session(self):
+        # DD-205: from the tailnet the device is the credential; internet browsers sign in again.
+        mine = self.setup_account()
+        other = self.store.login("yonetici", PASSWORD)
+        for bad in ("short", "x" * 257, None):
+            with self.subTest(new=bad), self.assertRaises(auth.AuthError) as err:
+                self.store.set_password(bad)
+            self.assertEqual(err.exception.status, 400)
+        self.assertEqual(self.store.user_for(mine), "yonetici")
+        self.store.set_password("new-password-123")
+        self.assertIsNone(self.store.user_for(mine))
+        self.assertIsNone(self.store.user_for(other))
+        with self.assertRaises(auth.AuthError):
+            self.store.login("yonetici", PASSWORD)
+        self.assertTrue(self.store.login("yonetici", "new-password-123"))
+        self.store.reset()
+        with self.assertRaises(auth.AuthError) as err:
+            self.store.set_password("new-password-123")
+        self.assertEqual((err.exception.status, str(err.exception)), (409, auth.NO_ACCOUNT))
+
+    def test_reset_removes_account_and_sessions(self):
         token = self.setup_account()
-        code, _ = self.store.reset()
+        self.assertIsNone(self.store.reset())
         self.assertIsNone(self.store.account())
         self.assertIsNone(self.store.user_for(token))
-        self.assertEqual(self.store.status(None), {"durum": "kurulum", "kod": True})
-        self.assertEqual(self.store.user_for(self.store.create(code, "yeni-yonetici", PASSWORD)), "yeni-yonetici")
+        self.assertEqual(self.store.status(None), {"durum": "kurulum"})
+        with self.assertRaises(auth.AuthError) as err:
+            self.store.login("yonetici", PASSWORD)
+        self.assertEqual((err.exception.status, str(err.exception)), (409, auth.NO_ACCOUNT))
+        self.store.create("yeni-yonetici", PASSWORD)
+        self.assertEqual(self.store.user_for(self.store.login("yeni-yonetici", PASSWORD)), "yeni-yonetici")
 
     def test_automation_session_is_short_and_works_before_the_first_sign_in(self):
         for seconds in (59, auth.AUTOMATION_MAX_SECONDS + 1, "600"):
@@ -288,13 +297,12 @@ class CliTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def test_root_commands(self):
-        self.assertEqual(self.run_cli("kod", root=False)[0], 1)
+        self.assertEqual(self.run_cli("durum", root=False)[0], 1)
         with patch.object(auth.Store, "check_dir", return_value=None):
-            code, out, _ = self.run_cli("kod")
-            self.assertEqual(code, 0)
-            self.assertRegex(out.strip(), r"^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$")
-            self.store.create(out.strip(), "yonetici", PASSWORD)
-            self.assertEqual(self.run_cli("kod")[:2], (2, ""))
+            code, out, _ = self.run_cli("durum")
+            self.assertEqual((code, out.strip()), (0, auth.NO_ACCOUNT))
+            self.assertEqual(self.run_cli("kod")[0], 2, "the setup-code verb is gone (DD-205)")
+            self.store.create("yonetici", PASSWORD)
             self.assertIn("Konsol hesabı: yonetici", self.run_cli("durum")[1])
             code, token, _ = self.run_cli("oturum-ac", "--sure", "300")
             self.assertEqual(self.store.user_for(token.strip()), "yonetici")
@@ -304,8 +312,10 @@ class CliTests(unittest.TestCase):
             code, out, _ = self.run_cli("sifirla")
             self.assertEqual(code, 0)
             self.assertIn("http://panel.ev", out)
+            self.assertIn("Ayarlar → Sistem", out)
+            self.assertNotRegex(out, r"[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}")
             self.assertIsNone(self.store.account())
-            self.assertIn("kurulum kodu geçerli", self.run_cli("durum")[1])
+            self.assertEqual(self.run_cli("durum")[1].strip(), auth.NO_ACCOUNT)
 
 
 class PanelEndpointTests(unittest.TestCase):
@@ -345,34 +355,56 @@ class PanelEndpointTests(unittest.TestCase):
         return headers["Set-Cookie"].split(";", 1)[0]
 
     def gate(self, uri, cookie=None):
+        """forward_auth as the tailnet site sends it: Caddy's X-Forwarded-For names another device."""
         headers = {"X-Forwarded-For": "100.64.0.9", "X-Forwarded-Uri": uri}
         if cookie:
             headers["Cookie"] = "theme=dark; " + cookie
         return self.call("/oturum-denetle", headers)
 
-    def test_forward_auth_answers_pages_api_and_sessions(self):
-        status, headers, _ = self.gate("/#/ayarlar")
+    def local(self, uri, cookie=None):
+        """forward_auth without Caddy's forwarding headers (a direct socket caller): a session is required."""
+        headers = {"X-Forwarded-Uri": uri}
+        if cookie:
+            headers["Cookie"] = "theme=dark; " + cookie
+        return self.call("/oturum-denetle", headers)
+
+    def test_forward_auth_passes_the_tailnet_without_a_session_and_needs_one_elsewhere(self):
+        # DD-205: another Tailscale device needs no sign-in; its sign-in page goes back to Konsol.
+        self.assertEqual(self.gate("/#/ayarlar")[0], 204)
+        self.assertEqual(self.gate("/api/konsol/kaynaklar?yenile=1")[0], 204)
+        status, headers, _ = self.gate("/giris.html")
+        self.assertEqual((status, headers["Location"]), (302, "/"))
+        self.assertEqual(self.gate("/giris.html?x=1")[0], 302)
+        # Without Caddy's forwarding headers a session is required, except for the sign-in page itself.
+        status, headers, _ = self.local("/#/ayarlar")
         self.assertEqual((status, headers["Location"]), (302, "/giris.html"))
-        status, _, body = self.gate("/api/konsol/kaynaklar?yenile=1")
+        status, _, body = self.local("/api/konsol/kaynaklar?yenile=1")
         self.assertEqual((status, json.loads(body)["giris"]), (401, True))
+        self.assertEqual(self.local("/giris.html")[0], 204)
         # Host-local callers through Caddy stay refused (DD-180) before any session check.
         status, _, body = self.call("/oturum-denetle", {"X-Forwarded-For": "127.0.0.1", "X-Forwarded-Uri": "/"})
         self.assertEqual(status, 403)
         self.assertEqual(self.call("/oturum-denetle", {"Host": "evil.test", "X-Forwarded-Uri": "/"})[0], 403)
-        code, _ = self.store.issue_code()
-        status, headers, _ = self.post("/api/konsol/oturum/kur", {"kod": code, "kullanici": "yonetici", "parola": PASSWORD})
+        # The account is created from the tailnet: no code, no session cookie.
+        status, headers, body = self.post("/api/konsol/oturum/kur", {"kullanici": "yonetici", "parola": PASSWORD})
+        self.assertEqual((status, json.loads(body)), (200, {"durum": "kuruldu"}))
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual(self.post("/api/konsol/oturum/kur", {"kullanici": "ikinci", "parola": PASSWORD})[0], 409)
+        # The tailnet sees the account name without a session; a sign-in still works and sets the cookie.
+        status, _, body = self.call("/api/konsol/oturum", {"X-Konsol": "1", "X-Forwarded-For": "100.64.0.9"})
+        self.assertEqual(json.loads(body), {"durum": "giris", "kullanici": "yonetici", "kanal": "tailscale"})
+        status, headers, _ = self.post("/api/konsol/oturum/giris", {"kullanici": "yonetici", "parola": PASSWORD})
         self.assertEqual(status, 200)
         attributes = [part.strip() for part in headers["Set-Cookie"].split(";")]
         self.assertEqual(attributes[1:], ["Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=%d" % auth.SESSION_SECONDS])
-        self.assertEqual(self.gate("/api/konsol/kaynaklar", self.cookie(headers))[0], 204)
-        self.assertEqual(self.gate("/", self.cookie(headers))[0], 204)
+        self.assertEqual(self.local("/api/konsol/kaynaklar", self.cookie(headers))[0], 204)
+        self.assertEqual(self.local("/", self.cookie(headers))[0], 204)
         status, _, body = self.call("/api/konsol/oturum", {"X-Konsol": "1", "Cookie": self.cookie(headers)})
         self.assertEqual(json.loads(body)["kullanici"], "yonetici")
         self.assertEqual(self.call("/api/konsol/oturum", {})[0], 403, "the status API keeps the X-Konsol gate")
 
     def test_sign_in_failures_are_limited_and_never_logged_with_secrets(self):
-        code, _ = self.store.issue_code()
-        self.store.create(code, "yonetici", PASSWORD)
+        self.store.create("yonetici", PASSWORD)
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
             for _ in range(auth.FAILURES):
@@ -391,22 +423,40 @@ class PanelEndpointTests(unittest.TestCase):
         self.assertNotIn("yonetici", log)
 
     def test_logout_and_password_change_endpoints(self):
-        code, _ = self.store.issue_code()
-        _, first, _ = self.post("/api/konsol/oturum/kur", {"kod": code, "kullanici": "yonetici", "parola": PASSWORD})
+        self.store.create("yonetici", PASSWORD)
+        _, first, _ = self.post("/api/konsol/oturum/giris", {"kullanici": "yonetici", "parola": PASSWORD})
         _, second, _ = self.post("/api/konsol/oturum/giris", {"kullanici": "yonetici", "parola": PASSWORD})
         mine, other = self.cookie(first), self.cookie(second)
-        self.assertEqual(self.post("/api/konsol/hesap/parola", {"eski": "wrong-old-password", "yeni": "new-password-123"},
-                                   cookie=mine)[0], 401)
-        status, headers, _ = self.post("/api/konsol/hesap/parola", {"eski": PASSWORD, "yeni": "new-password-123"}, cookie=mine)
-        self.assertEqual(status, 200)
+        # DD-205, tailnet: no current password and no session; every session ends.
+        self.assertEqual(self.post("/api/konsol/hesap/parola", {"yeni": "short"})[0], 400)
+        status, headers, body = self.post("/api/konsol/hesap/parola", {"yeni": "new-password-123"})
+        self.assertEqual((status, json.loads(body)), (200, {"durum": "degisti"}))
         self.assertNotIn("Set-Cookie", headers)
-        self.assertEqual(self.gate("/", mine)[0], 204)
-        self.assertEqual(self.gate("/", other)[0], 302)
-        status, headers, _ = self.post("/api/konsol/oturum/cikis", {}, cookie=mine)
-        self.assertEqual(status, 200)
-        self.assertTrue(headers["Set-Cookie"].startswith("konsol_oturum=; "))
-        self.assertIn("Max-Age=0", headers["Set-Cookie"])
-        self.assertEqual(self.gate("/api/x", mine)[0], 401)
+        self.assertEqual(self.local("/", mine)[0], 302)
+        self.assertEqual(self.local("/", other)[0], 302)
+        self.assertEqual(self.post("/api/konsol/oturum/giris", {"kullanici": "yonetici", "parola": PASSWORD})[0], 401)
+        _, third, _ = self.post("/api/konsol/oturum/giris", {"kullanici": "yonetici", "parola": "new-password-123"})
+        mine = self.cookie(third)
+        # Internet: the current password and this browser's session are required; the other sessions end.
+        with patch.object(self.p, "public_open", return_value=True):
+            _, fourth, _ = self.public("/api/konsol/oturum/giris", body={"kullanici": "yonetici", "parola": "new-password-123"})
+            other = self.cookie(fourth)
+            self.assertEqual(self.public("/api/konsol/hesap/parola", other, body={"yeni": "new-password-456"})[0], 401)
+            self.assertEqual(self.public("/api/konsol/hesap/parola", other,
+                                         body={"eski": "wrong-old-password", "yeni": "new-password-456"})[0], 401)
+            self.assertEqual(self.public("/api/konsol/hesap/parola",
+                                         body={"eski": "new-password-123", "yeni": "new-password-456"})[0], 401)
+            status, headers, body = self.public("/api/konsol/hesap/parola", other,
+                                                body={"eski": "new-password-123", "yeni": "new-password-456"})
+            self.assertEqual((status, json.loads(body)), (200, {"durum": "degisti"}))
+            self.assertNotIn("Set-Cookie", headers)
+            self.assertEqual(self.public("/oturum-denetle", other, uri="/")[0], 204)
+            self.assertEqual(self.local("/", mine)[0], 302)
+            status, headers, _ = self.public("/api/konsol/oturum/cikis", other, body={})
+            self.assertEqual(status, 200)
+            self.assertTrue(headers["Set-Cookie"].startswith("konsol_oturum=; "))
+            self.assertIn("Max-Age=0", headers["Set-Cookie"])
+            self.assertEqual(self.public("/oturum-denetle", other, uri="/api/x")[0], 401)
 
     def public(self, path, cookie=None, client="203.0.113.7", body=None, uri=None):
         # Headers exactly as the public Caddy site writes them (DD-195).
@@ -418,18 +468,24 @@ class PanelEndpointTests(unittest.TestCase):
         return self.call(path, headers, "POST" if body is not None else "GET", body)
 
     def test_public_channel_needs_the_publication_and_signs_in_with_a_secure_cookie(self):
-        code, _ = self.store.issue_code()
         # Closed publication: every public request is refused before any session check.
         status, _, body = self.public("/oturum-denetle", uri="/")
         self.assertEqual((status, json.loads(body)["error"]), (403, "Konsol'un internet yayını kapalı"))
         with patch.object(self.p, "public_open", return_value=True):
-            # The one-time code is never usable from the internet.
-            status, _, body = self.public("/api/konsol/oturum/kur", body={"kod": code, "kullanici": "yonetici", "parola": PASSWORD})
+            # The account is never created from the internet (DD-195/DD-205).
+            status, _, body = self.public("/api/konsol/oturum/kur", body={"kullanici": "yonetici", "parola": PASSWORD})
             self.assertEqual(status, 403)
             self.assertIn("Tailscale", json.loads(body)["error"])
             self.assertIsNone(self.store.account())
-            self.assertEqual(self.post("/api/konsol/oturum/kur", {"kod": code, "kullanici": "yonetici", "parola": PASSWORD})[0], 200)
+            status, _, body = self.public("/api/konsol/oturum")
+            self.assertEqual(json.loads(body), {"durum": "kurulum", "kanal": "internet"})
+            self.assertEqual(self.post("/api/konsol/oturum/kur", {"kullanici": "yonetici", "parola": PASSWORD})[0], 200)
             self.assertEqual(self.public("/oturum-denetle", uri="/")[0], 302)
+            self.assertEqual(self.public("/oturum-denetle", uri="/giris.html")[0], 204, "the sign-in page is open on the internet site")
+            self.assertEqual(self.public("/oturum-denetle", uri="/api/konsol/kaynaklar")[0], 401)
+            # An anonymous internet visitor never learns the account name (DD-205).
+            status, _, body = self.public("/api/konsol/oturum")
+            self.assertEqual(json.loads(body), {"durum": "giris", "kanal": "internet"})
             status, headers, _ = self.public("/api/konsol/oturum/giris", body={"kullanici": "yonetici", "parola": PASSWORD})
             self.assertEqual(status, 200)
             self.assertEqual([part.strip() for part in headers["Set-Cookie"].split(";")][1:],
@@ -447,7 +503,7 @@ class PanelEndpointTests(unittest.TestCase):
                                                            "X-Konsol-Kanal": "tailscale", "Cookie": cookie})[0], 403)
             status, _, body = self.call("/api/konsol/oturum", {"X-Konsol": "1", "X-Forwarded-For": "100.64.0.9",
                                                                "X-Konsol-Kanal": "tailscale"})
-            self.assertEqual(json.loads(body)["kanal"], "tailscale")
+            self.assertEqual(json.loads(body), {"durum": "giris", "kullanici": "yonetici", "kanal": "tailscale"})
         # Closing the publication closes even a signed-in public browser.
         self.assertEqual(self.public("/oturum-denetle", cookie, uri="/")[0], 403)
         # Tailnet sign-ins carry no Secure flag (plain HTTP inside Tailscale).
@@ -455,8 +511,7 @@ class PanelEndpointTests(unittest.TestCase):
         self.assertNotIn("Secure", headers["Set-Cookie"])
 
     def test_public_failures_count_in_the_shared_budget(self):
-        code, _ = self.store.issue_code()
-        self.store.create(code, "yonetici", PASSWORD)
+        self.store.create("yonetici", PASSWORD)
         printed = io.StringIO()
         with patch.object(self.p, "public_open", return_value=True), patch.object(auth, "PUBLIC_FAILURES", 3), \
                 contextlib.redirect_stdout(printed):
@@ -479,7 +534,7 @@ class PanelEndpointTests(unittest.TestCase):
 
     def test_missing_account_directory_setting_is_a_controlled_error(self):
         with patch.object(panel, "read_env", return_value={"LOCAL_DOMAIN": "test"}):
-            status, _, body = self.gate("/")
+            status, _, body = self.local("/")
         self.assertEqual(status, 503)
         self.assertIn("kurulumu yeniden", json.loads(body)["error"])
 

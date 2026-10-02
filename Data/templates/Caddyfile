@@ -41,10 +41,12 @@
 (konsol) {
 	# DD-181: sayfa dosyaları ve API yanıtları sıkıştırılır (~270 KB → ~75 KB).
 	encode zstd gzip
-	# DD-194: giriş sayfası, onun dosyaları ve giriş API'si açıktır. Geri kalan her istek
-	# (sayfalar, Dosyalar ve tüm API) önce root arka uca oturum sorar: yoksa sayfa
-	# /giris.html'e yönlenir, API 401 alır. Sunucunun içinden gelen istek yine reddedilir (DD-180).
-	@korumali not path /giris.html /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*
+	# DD-194/DD-205: giriş sayfasının dosyaları ve giriş API'si açıktır. Geri kalan her istek
+	# (giriş sayfası dahil sayfalar, Dosyalar ve tüm API) önce root arka uca sorar: Tailscale
+	# sitesinde yanıt hep "geç"tir ve /giris.html Konsol'a yönlenir (cihazı Tailscale doğrular);
+	# internet sitesinde oturum yoksa sayfa /giris.html'e yönlenir, API 401 alır. Sunucunun
+	# içinden gelen istek yine reddedilir (DD-180).
+	@korumali not path /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*
 	# Her site root arka uca en çok 16 bağlantı açar: internetten gelen istek seli arka
 	# ucun iş parçacıklarını ve dosya tanıtıcılarını tüketip Tailscale'i de kapatamaz.
 	forward_auth @korumali unix/__PANEL_SOCKET__ {

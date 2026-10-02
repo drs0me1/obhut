@@ -49,6 +49,10 @@ paket_sifirla() {
     PAKET_KONSOL="" PAKET_SAYFA="" PAKET_API=""
     # DD-203: yazdığı klasörler (mutlak), onları bildiren Python modülü, root arka ucun yazma yolları.
     PAKET_KLASORLER="" PAKET_KLASOR_MODUL="" PAKET_ARKAUC_YOLLAR=""
+    # DD-206: Genel bakış ağ kartı için trafik toplamlarını ölçen Python modülü (root arka uç yükler).
+    PAKET_TRAFIK=""
+    # DD-209: Podman birimi (paketteki quadlet dosyasının adı) ve özetiyle sabitlenmiş imajı.
+    PAKET_KONTEYNER="" PAKET_IMAJ=""
 }
 
 paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
@@ -63,7 +67,7 @@ paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
             die "paket bildirimi bozuk: $dir/paket.env"
         printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
     done <"$dir/paket.env"
-    [[ "$PAKET_CALISMA" =~ ^(host|konsol)$ ]] || die "paket çalışma biçimi geçersiz: $PAKET_ID"
+    [[ "$PAKET_CALISMA" =~ ^(host|konsol|konteyner)$ ]] || die "paket çalışma biçimi geçersiz: $PAKET_ID"
     [[ "$PAKET_SIRA" =~ ^[0-9]{1,4}$ && "$PAKET_KUR_ADIM" =~ ^[0-9]{1,2}$ ]] || die "paket bildirimi geçersiz: $PAKET_ID"
 }
 
@@ -509,6 +513,64 @@ paket_ekler_kaldir() {
     [[ "$removed" == 0 ]] || systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
+# DD-209: Podman birimi. PAKET_KONTEYNER paketteki quadlet dosyasının adıdır (ör. ad.container);
+# KONTEYNER_BIRIM_DIR altına 0644 konur, systemd'nin Podman üreticisi aynı adlı .service birimini
+# yazar. Üretilen birim etkinleştirilemez: açılışta başlama dosyanın [Install] bölümündendir, durdurma
+# dosyayı kaldırır. Dosyanın yanındaki AD.d/ ekleri (ör. Konsol'un seçtiği klasör) paketin kancasınındır.
+konteyner_hedef() {
+    [[ "$PAKET_KONTEYNER" =~ ^[a-z][a-z0-9-]{1,30}\.container$ && -n "${KONTEYNER_BIRIM_DIR:-}" ]] || return 1
+    printf '%s/%s\n' "$KONTEYNER_BIRIM_DIR" "$PAKET_KONTEYNER"
+}
+
+# shellcheck disable=SC2034  # kancalar okur (birim değiştiyse konteyner yeniden kurulur)
+KONTEYNER_DEGISTI=0
+paket_konteyner_koy() {
+    local src dst tmp
+    KONTEYNER_DEGISTI=0
+    [[ -n "$PAKET_KONTEYNER" ]] || return 0
+    dst="$(konteyner_hedef)" || { FAIL="paket konteyner birimi tanımı geçersiz: $PAKET_KONTEYNER"; return 1; }
+    src="$MODULES_DIR/$PAKET_ID/$PAKET_KONTEYNER"
+    [[ -f "$src" ]] || { FAIL="paket dosyası yok ($src); kurulumu yeniden çalıştırın"; return 1; }
+    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 0; fi
+    install -d -m 0755 -- "$KONTEYNER_BIRIM_DIR"
+    tmp="$(mktemp "$KONTEYNER_BIRIM_DIR/.$PAKET_KONTEYNER.XXXXXX")"
+    cp -- "$src" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"
+    # shellcheck disable=SC2034
+    KONTEYNER_DEGISTI=1
+    systemctl daemon-reload
+}
+
+paket_konteyner_kaldir() {
+    local dst
+    dst="$(konteyner_hedef)" || return 0
+    [[ -e "$dst" ]] || return 0
+    rm -f -- "$dst"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+# DD-209: paketin imajı yalnız özetiyle (@sha256) kabul edilir; yerelde varsa ağa çıkılmaz. Hata: FAIL.
+paket_imaj_cek() {
+    local out
+    [[ -n "$PAKET_IMAJ" ]] || return 0
+    [[ "$PAKET_IMAJ" =~ ^[a-z0-9.-]+(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$ ]] ||
+        { FAIL="paket imajı özetiyle sabitlenmemiş: $PAKET_IMAJ"; return 1; }
+    command -v podman >/dev/null 2>&1 || { FAIL="Podman yok; kurulumu yeniden çalıştırın"; return 1; }
+    ! podman image exists "$PAKET_IMAJ" 2>/dev/null || return 0
+    out="$(timeout 900 podman pull -q "$PAKET_IMAJ" 2>&1)" ||
+        { FAIL="imaj indirilemedi: $(tail -n 1 <<<"$out")"; return 1; }
+}
+
+# --veri: imaj da gider. `podman rmi AD@sha256:…` özeti etiket sanar ("tag not known"); imaj kimliğiyle
+# silinir. Başka bir etiketi ya da onu kullanan bir konteyneri olan imaj zorla silinmez, yerinde kalır.
+paket_imaj_sil() {
+    local id
+    [[ -n "$PAKET_IMAJ" ]] && command -v podman >/dev/null 2>&1 || return 0
+    id="$(podman image inspect --format '{{.Id}}' "$PAKET_IMAJ" 2>/dev/null)" || return 0
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || return 0
+    podman rmi "$id" >/dev/null 2>&1 ||
+        warn "imaj silinemedi (başka bir etiketi ya da onu kullanan bir konteyner var): $PAKET_IMAJ"
+}
+
 paket_adlar_ac() {
     [[ "$PAKET_ADLAR" == 1 ]] || return 0
     names_on "$PAKET_ID"
@@ -527,6 +589,7 @@ paket_iz_kontrol() {
         dst="$(ekler_hedef "$pair")" || continue
         [[ ! -e "$dst" ]] || left="$left $dst"
     done
+    if dst="$(konteyner_hedef)"; then [[ ! -e "$dst" ]] || left="$left $dst"; fi
     if [[ "$PAKET_ADLAR" == 1 ]]; then
         [[ ! -e "$CADDY_MODULES_DIR/$PAKET_ID.caddy" ]] || left="$left $CADDY_MODULES_DIR/$PAKET_ID.caddy"
         [[ ! -e "$DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf" ]] || left="$left $DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf"
@@ -567,6 +630,26 @@ cmd_liste() {
     done
 }
 
+# DD-207: paketin bildirdiği, Konsol'un root arka ucunun yazdığı yollar (PAKET_ARKAUC_YOLLAR). systemd
+# onları yalnız arka uç başlarken varsa yazılabilir bağlar; kurulum hepsini önceden açar. Bir yol
+# arka uç çalışırken silinip yeniden oluştuysa (ör. elle apt purge) arka ucun gördüğü kopya salt
+# okunurdur: yol yoksa açılır, arka ucun bağlamalarında rw değilse arka uç bir kez yeniden başlar.
+arkauc_yollari_hazirla() {
+    local p pid missing=0
+    for p in $PAKET_ARKAUC_YOLLAR; do
+        [[ "$p" == /* ]] || continue
+        [[ -d "$p" ]] || install -d -m 0700 -o root -g root -- "$p"
+    done
+    pid="$(systemctl show -p MainPID --value master-panel.service 2>/dev/null || true)"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+    for p in $PAKET_ARKAUC_YOLLAR; do
+        [[ "$p" == /* ]] || continue
+        awk -v p="$p" '$5 == p && $6 ~ /(^|,)rw(,|$)/ {f = 1} END {exit !f}' \
+            "${PANEL_MOUNTINFO:-/proc/$pid/mountinfo}" 2>/dev/null || missing=1
+    done
+    [[ "$missing" == 0 ]] || systemctl restart master-panel.service >/dev/null 2>&1 || true
+}
+
 cmd_kur() {
     local id="$1"
     CUR_ID="$id" CUR_ACTION=kur
@@ -574,6 +657,7 @@ cmd_kur() {
     ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
     kanca_gerekli paket_kur
     paket_kur
+    arkauc_yollari_hazirla
     registry_set "$id" calisiyor
     progress "$id" kur bitti 0 "kuruldu"
     printf '%s\tcalisiyor\n' "$id"
@@ -588,6 +672,7 @@ cmd_baslat() {
     kanca_gerekli paket_baslat
     progress "$id" baslat 1 1 "Başlatılıyor"
     paket_baslat
+    arkauc_yollari_hazirla
     registry_set "$id" calisiyor
     progress "$id" baslat bitti 0 "başlatıldı"
     printf '%s\tcalisiyor\n' "$id"
@@ -622,6 +707,7 @@ cmd_kaldir() {
     paket_adlar_kapat
     paket_araclar_kaldir
     paket_ekler_kaldir
+    paket_konteyner_kaldir
     paket_sayfa_kaldir
     registry_set "$id" ""
     paket_iz_kontrol
@@ -684,6 +770,7 @@ cmd_uygula() {
     fi
     kanca_gerekli paket_uygula
     paket_uygula "$state"
+    arkauc_yollari_hazirla
     printf '%s\t%s\n' "$id" "$state"
 }
 

@@ -1,36 +1,50 @@
-# qBittorrent paketinin kancaları (DD-151, DD-197). master-modul bu dosyayı `source` eder ve
-# yalnız paket_* işlevlerini çağırır. Debian paketi (qbittorrent-nox) sunucunun kendisinde,
-# indirme klasörünün sahibi olarak çalışır. Ayarlara yalnız ilk kurulumda, profil boşken bir
-# kez en az ayar yazılır (indirme yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum
-# bunları korur (DD-178). Hesap/dizin değişikliklerini paketin kendi çalışanı (ayar.py, Konsol
-# API'si api.py üzerinden) yapar; Konsol sayfası (sayfa.js/css) paketle gelir ve kuruluyken
-# CONSOLE_WEB_DIR/uygulama/torrent altında durur (DD-200, DD-202); ilk giriş geçici paroladır.
-# İnternete eş portu açılmaz; paket kaldırılınca bile sunucuda kalır.
+# qBittorrent paketinin kancaları (DD-151, DD-197, DD-209). master-modul bu dosyayı `source` eder
+# ve yalnız paket_* işlevlerini çağırır. qBittorrent tabandaki Podman'da, özetiyle sabit
+# linuxserver/qbittorrent imajıyla çalışır; birimi paketteki qbittorrent.container'dan (quadlet)
+# üretilir. Süreç indirme klasörünün sahibi olarak çalışır, konteyner yalnız profili ve indirme
+# klasörünü görür. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
+# yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur (DD-178). Hesap/dizin
+# değişikliklerini paketin kendi çalışanı (ayar.py, Konsol API'si api.py üzerinden) yapar; Konsol
+# sayfası (sayfa.js/css) paketle gelir ve kuruluyken CONSOLE_WEB_DIR/uygulama/torrent altında durur
+# (DD-200, DD-202); ilk giriş geçici paroladır. İnternete eş portu açılmaz. Kaldırılınca imaj
+# sunucuda kalır; `kaldir --veri` profili ve imajı siler.
 # shellcheck shell=bash
-# DD-203: paketin kendi ayarları (arayüz portu, profil klasörü) kendi klasöründedir.
+# DD-203: paketin kendi ayarları (arayüz portu, profil klasörü, konteyner adı, imaj) kendi klasöründedir.
 # shellcheck source=/dev/null
 [[ -z "${MODULES_DIR:-}" || ! -f "$MODULES_DIR/torrent/torrent.env" ]] || source "$MODULES_DIR/torrent/torrent.env"
 
 paket_gerekli() {
-    [[ -n "${TORRENT_UI_PORT:-}" && -n "${TORRENT_PROFILE_DIR:-}" ]] ||
+    [[ -n "${TORRENT_UI_PORT:-}" && -n "${TORRENT_PROFILE_DIR:-}" && "${TORRENT_CONTAINER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ ]] ||
         fail_step "paket ayarı eksik (torrent.env); kurulumu yeniden çalıştırın"
-    need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR UNIT_DIR \
+    need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR KONTEYNER_BIRIM_DIR \
         SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
-    torrent_unit_name >/dev/null || fail_step "uid $DOWNLOADS_UID için kullanıcı yok; kurulumu yeniden çalıştırın"
+    command -v podman >/dev/null 2>&1 || fail_step "Podman yok; kurulumu yeniden çalıştırın"
 }
 
-torrent_unit_name() { # örnek adı, indirme klasörünün sahibinin kullanıcı adıdır
-    local user
-    user="$(getent passwd "$DOWNLOADS_UID" 2>/dev/null | cut -d: -f1 || true)"
-    [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
-    printf 'qbittorrent-nox@%s.service\n' "$user"
+torrent_unit_name() { # Podman üreticisinin yazdığı birim: konteyner adı + .service
+    printf '%s.service\n' "$TORRENT_CONTAINER"
 }
 
 paket_birim() {
     torrent_unit_name
 }
 
-# Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır.
+# Eski sürümlerin Debian servisi (qbittorrent-nox@) açık ya da etkinse aynı portu tutar; yeni kurulum
+# kuralı gereği taşınmaz, elle kapatılır (DD-209).
+torrent_eski_yok() {
+    local unit link
+    unit="$(systemctl list-units --all --plain --no-legend 'qbittorrent-nox@*.service' 2>/dev/null |
+        awk '$3 == "active" {print $1; exit}' || true)"
+    for link in "$UNIT_DIR"/*.wants/qbittorrent-nox@*.service; do
+        [[ -e "$link" || -L "$link" ]] || continue
+        unit="${unit:-${link##*/}}"
+    done
+    [[ -z "$unit" ]] || fail_step "eski qBittorrent servisi ($unit) açık; önce: systemctl disable --now $unit"
+}
+
+# Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır. Konteyner ilk
+# açılışta kendi varsayılanını (her adreste dinleyen arayüz) yalnız dosya yoksa koyar: bu adım
+# konteyner ilk kez başlamadan önce çalışır.
 torrent_profile() {
     local conf_dir="$TORRENT_PROFILE_DIR/qBittorrent" tmp
     install -d -m 0750 -o "$DOWNLOADS_UID" -g "$DOWNLOADS_GID" -- "$TORRENT_PROFILE_DIR" "$conf_dir"
@@ -44,29 +58,46 @@ torrent_profile() {
     mv -f -- "$tmp" "$conf_dir/qBittorrent.conf"
 }
 
-# Servis ayakta, root değil indirme sahibi olarak çalışıyor, çöp ve paylaşım kökü ona kapalı.
-# --ilk: yeni kurulumda arayüz de sınanır (127.0.0.1'de girişsiz 403; sonra ayarlar kullanıcının).
+# Servis ayakta; qBittorrent süreci indirme sahibi olarak çalışıyor; konteyner çöpü, paylaşım kökünü
+# ve kullanıcı alanının tamamını görmüyor; arayüz yalnız 127.0.0.1'de dinliyor.
+# --ilk: yeni kurulumda arayüz girişsiz 403 vermeli (sonra ayarlar kullanıcının).
 torrent_verify() { # [--ilk]
-    local unit _ uid code paths ok=0
+    local unit _ uid="" code="000" mounts m listen
     FAIL=""
     unit="$(torrent_unit_name)"
-    for _ in $(seq 1 20); do
+    for _ in $(seq 1 60); do
         systemctl is-active --quiet "$unit" && break
         sleep 1
     done
     systemctl is-active --quiet "$unit" || { FAIL="qBittorrent servisi başlamadı"; return 1; }
-    uid="$(unit_uid "$unit")"
-    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
-    paths="$(systemctl show -p InaccessiblePaths --value "$unit" 2>/dev/null || true)"
-    [[ "$paths" == *"$SERVER_ROOT/$FILES_PANEL_TRASH"* && "$paths" == *"$SERVER_ROOT/$SHARE_DIR"* ]] ||
-        { FAIL="qBittorrent çöp ve paylaşım klasörünü görebiliyor"; return 1; }
-    [[ "${1:-}" == --ilk ]] || return 0
-    for _ in $(seq 1 20); do
-        code="$(http_code "http://127.0.0.1:$TORRENT_UI_PORT/api/v2/app/version")"
-        if [[ "$code" == 403 ]]; then ok=1; break; fi
+    for _ in $(seq 1 30); do
+        uid="$(podman top "$TORRENT_CONTAINER" huid comm 2>/dev/null | awk '$2 == "qbittorrent-nox" {print $1; exit}' || true)"
+        [[ -z "$uid" ]] || break
         sleep 1
     done
-    [[ "$ok" == 1 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta girişsiz 403 vermedi ($code)"; return 1; }
+    [[ "$uid" == "$DOWNLOADS_UID" ]] || { FAIL="qBittorrent uid '$uid' ile çalışıyor (beklenen $DOWNLOADS_UID)"; return 1; }
+    mounts="$(podman inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$TORRENT_CONTAINER" 2>/dev/null || true)"
+    [[ $'\n'"$mounts"$'\n' == *$'\n'"$DOWNLOADS_PATH"$'\n'* ]] || { FAIL="indirme klasörü konteynere bağlanmamış"; return 1; }
+    while IFS= read -r m; do
+        [[ -n "$m" ]] || continue
+        case "$m/" in
+            / | "$SERVER_ROOT/" | "$SERVER_ROOT/$FILES_PANEL_TRASH/"* | "$SERVER_ROOT/$SHARE_DIR/"*)
+                FAIL="qBittorrent konteyneri korunan bir klasörü görüyor ($m)"; return 1 ;;
+        esac
+    done <<<"$mounts"
+    for _ in $(seq 1 40); do
+        code="$(http_code "http://127.0.0.1:$TORRENT_UI_PORT/api/v2/app/version")"
+        if [[ "${1:-}" == --ilk ]]; then [[ "$code" != 403 ]] || break; else [[ "$code" == 000 ]] || break; fi
+        sleep 1
+    done
+    if [[ "${1:-}" == --ilk ]]; then
+        [[ "$code" == 403 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta girişsiz 403 vermedi ($code)"; return 1; }
+    else
+        [[ "$code" != 000 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta yanıt vermedi"; return 1; }
+    fi
+    # Network=host: loopback dışındaki her dinleme adresi sunucunun kendisi olurdu.
+    listen="$(ss -Hltn "sport = :$TORRENT_UI_PORT" 2>/dev/null | awk '$4 !~ /^127\.0\.0\.1:/ {print $4}' | head -n 3 | tr '\n' ' ' || true)"
+    [[ -z "$listen" ]] || { FAIL="qBittorrent arayüzü loopback dışında da dinliyor ($listen)"; return 1; }
 }
 
 torrent_verify_names() {
@@ -82,25 +113,42 @@ torrent_verify_names() {
     return 1
 }
 
-torrent_off() { # servis durur ve açılışta başlamaz
-    local unit
-    unit="$(torrent_unit_name)" || return 0
-    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+# Konteyner birimi konur ve servis başlar; birim değiştiyse (ör. yeni imaj) konteyner yeniden kurulur.
+torrent_on() {
+    torrent_profile
+    paket_konteyner_koy || return 1
+    if [[ "$KONTEYNER_DEGISTI" == 1 ]]; then
+        systemctl restart "$(torrent_unit_name)" >/dev/null 2>&1 || { FAIL="qBittorrent başlatılamadı"; return 1; }
+    else
+        systemctl start "$(torrent_unit_name)" >/dev/null 2>&1 || { FAIL="qBittorrent başlatılamadı"; return 1; }
+    fi
 }
 
-# Başarısız kurulum ve kaldırma aynı yoldan geri alınır: adlar, servis, birim eki. Paket kalır.
+# Servis durur ve açılışta başlamaz: üretilen birim etkinleştirilip kapatılamaz, birim dosyası gider.
+torrent_off() {
+    systemctl stop "$(torrent_unit_name)" >/dev/null 2>&1 || true
+    # Zorla kapatılmış bir birim dosyası gidince de "failed" kalır ve Sağlık kartına düşerdi.
+    systemctl reset-failed "$(torrent_unit_name)" >/dev/null 2>&1 || true
+    paket_konteyner_kaldir
+}
+
+# Başarısız kurulum ve kaldırma aynı yoldan geri alınır: adlar, servis, konteyner birimi, sayfa.
+# İmaj ve profil kalır.
 torrent_rollback() {
     paket_adlar_kapat
     torrent_off
-    paket_ekler_kaldir
     paket_sayfa_kaldir
 }
 
-# --veri: profil (ayarlar ve torrent listesi). İndirilen dosyalara dokunulmaz.
+# --veri: profil (ayarlar ve torrent listesi), Konsol'un eklediği dizin bağlaması ve imaj.
+# İndirilen dosyalara dokunulmaz.
 torrent_drop_data() {
+    local ek="$KONTEYNER_BIRIM_DIR/$TORRENT_CONTAINER.container.d"
+    rm -f -- "$ek/90-konsol.conf"
+    rmdir -- "$ek" 2>/dev/null || true
+    paket_imaj_sil
     [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
     rm -rf -- "$TORRENT_PROFILE_DIR"
-    rm -f -- "$UNIT_DIR/qbittorrent-nox@.service.d/90-konsol.conf"
 }
 
 # Geçici parola qBittorrent'in bu açılıştaki günlüğündedir; parola arayüzde ayarlandıysa yoktur.
@@ -142,13 +190,14 @@ PY
 
 paket_kur() {
     paket_gerekli
-    progress_step 1 "Paket kuruluyor"
-    paket_apt || fail_step "$FAIL"
-    progress_step 2 "Servis birimi"
-    paket_ekler_koy || fail_step "$FAIL"
+    torrent_eski_yok
+    progress_step 1 "İmaj indiriliyor"
+    paket_imaj_cek || fail_step "$FAIL"
+    progress_step 2 "Konteyner birimi"
     torrent_profile
+    paket_konteyner_koy || { torrent_rollback; fail_step "$FAIL"; }
     progress_step 3 "Servis başlatılıyor"
-    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 ||
+    systemctl start "$(torrent_unit_name)" >/dev/null 2>&1 ||
         { torrent_rollback; fail_step "qBittorrent başlatılamadı"; }
     torrent_verify --ilk || { torrent_rollback; fail_step "$FAIL"; }
     progress_step 4 "Ad"
@@ -161,13 +210,14 @@ paket_kur() {
 
 paket_baslat() {
     paket_gerekli
-    paket_ekler_koy || fail_step "$FAIL"
-    systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+    torrent_eski_yok
+    paket_imaj_cek || fail_step "$FAIL"
+    torrent_on || fail_step "$FAIL"
     torrent_verify || fail_step "$FAIL"
     paket_adlar_ac || fail_step "$FAIL"
 }
 
-paket_durdur() { # servis durur; adlar kalır
+paket_durdur() { # servis durur, açılışta başlamaz; adlar kalır
     paket_gerekli
     torrent_off
 }
@@ -184,13 +234,15 @@ paket_veri_sil() {
 paket_uygula() { # KAYIT_DURUMU
     local state="$1"
     paket_gerekli
-    paket_ekler_koy || fail_step "$FAIL"
     paket_sayfa_koy || fail_step "$FAIL"
-    [[ "$EKLER_DEGISTI" == 0 ]] || systemctl try-restart "$(torrent_unit_name)" >/dev/null 2>&1 || true
     paket_adlar_ac || fail_step "$FAIL"
     if [[ "$state" == calisiyor ]]; then
-        systemctl enable --now "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent başlatılamadı"
+        torrent_eski_yok
+        paket_imaj_cek || fail_step "$FAIL"
+        torrent_on || fail_step "$FAIL"
         torrent_verify || fail_step "$FAIL"
+    else
+        torrent_off
     fi
     if [[ -f "$SBIN_DIR/master_publications.py" ]]; then
         python3 "$SBIN_DIR/master_shares.py" publish || fail_step "Caddy yayınları güncellenemedi"

@@ -321,7 +321,7 @@ Connection limits are listed above; 10,000 entries per PROPFIND listing.
 
 ## Network prerequisite
 
-Konsol is administrative: its single account (DD-194) manages every folder and
+Konsol is administrative: any tailnet device, or the single internet account (DD-194, DD-205), manages every folder and
 share. Never give recipients the Konsol password. Recipients must be allowed only the
 WebDAV port, with Konsol/SSH restricted to administrators in Tailscale ACL/grants.
 Review broader existing grants; adding a narrow allow does not remove them.

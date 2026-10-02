@@ -51,7 +51,7 @@ certificate status, the shared TCP 443 firewall output with WebDAV's WAN off,
 removal at the next publish after an account reset and rollback after a
 certificate failure. `test_konsol_auth.py` covers the shared public failure
 budget, one password check per address and two at once, and the root backend's
-channel rules on a Unix socket: closed publication, refused setup code, `Secure`
+channel rules on a Unix socket: closed publication, refused account creation, `Secure`
 cookie, own-address and unmarked clients refused, `kanal` in the session state and
 the 5-second publication cache, and the budget re-check after a hash slot.
 `test_settings.py` checks that a local-domain change rewrites the snippet's
@@ -145,24 +145,79 @@ address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
 already public.
 
-## Konsol sign-in (v2-166, DD-194)
+## Podman in the base and qBittorrent in Podman (v2-186, DD-208, DD-209)
 
-`test_konsol_auth.py` covers the account store (one-time code format/expiry/single
-use, user and password rules, scrypt-only storage, decoy work for unknown users,
-session expiry/limit/malformed tokens, password change keeping only the current
-session, reset, automation sessions, unsafe directory/symlink/FIFO/oversized/corrupt
+`test_containers.py` drives `panel/master_containers.py` with canned `podman` JSON: the list
+(containers, host network, ps ports, images, storage size), a calm answer when podman is
+missing or fails, `inspect` mapping (sorted mounts, port bindings, three labels, health, never
+the environment), log masking of password/token/key values with a bounded tail, name and path
+gates and RFC 3339 parsing; a route test runs the real backend handler on a Unix socket (shared
+gates, 400/404 answers, no write route: POST → 404, no podman write verb).
+`konteynerler-ui.cjs` renders Settings → Konteynerler with fixture APIs under the production CSP
+(six tabs, no sidebar application, list, detail with mounts/ports/labels as text, log tail and
+masked lines, runtime error and empty states, the deep link `#/ayarlar/konteynerler/<name>`, the
+open detail surviving a tab switch, no settings read and no non-GET request, widths, dark theme).
+`common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
+files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
+no `/etc/containers` literal in the engine), the qBittorrent quadlet (host network, `Pull=never`,
+two same-path mounts, no `NoNewPrivileges`), and the qBittorrent lifecycle against a fake
+`podman`/`systemctl`/`ss`: pull once by digest, seed before the first start, host uid / mount /
+loopback-listener checks with rollback, stop removes the quadlet, a changed quadlet restarts,
+`--veri` removes the image by id, an active old `qbittorrent-nox@` unit is refused.
+`test_torrent_api.py` covers the worker's quadlet drop-in (same-path `Volume=` only outside the
+downloads tree, unmountable names refused, the wait for the interface after a restart) and
+`settings-linux.py` runs the same worker against a real qBittorrent with a scratch
+`KONTEYNER_BIRIM_DIR`.
+
+## Backend write paths (v2-184, DD-207)
+
+`common.bats` checks that the installer lists declared write paths one per line, creates them
+before the backend (re)starts and restarts a backend whose mount table lacks a writable mount
+for one (fixture mountinfo: present rw, missing, read-only, no running backend); that the store
+engine creates a missing path and restarts the backend only when needed after `kur`, `baslat`
+and `uygula`; and that `master-wg` refuses writing commands on a read-only folder with the
+Turkish remedy while reading still works (skipped when the runner is root). `wireguard-ui.cjs`
+checks the new-network screen is one card no wider than the windows.
+
+## Overview edit mode and network card (v2-183, DD-206)
+
+`test_overview.py` covers the layout's shape check, the root backend's layout endpoints
+(save, read back, reset, 0600 file next to the account records, audit lines, refused bodies,
+a damaged record read as the defaults, the X-Konsol and Host gates), the WAN rate sampler
+(deltas, the 1.5 s step, counter resets, a stale baseline, interface name checks, a new
+interface), `/api/konsol/ag` with package traffic modules in a temporary catalogue (installed,
+stopped, unregistered, undeclared and built-in packages; broken modules reported once; the
+2 s cache; no bytecode in the package folder; the 120 s window) and both packages'
+`trafik.py` (qBittorrent's real `AllStats` line from nrm, large totals through a Qt-style
+escaper, no file yet and damaged records; the WireGuard registry and interface counters). `panel-ui.cjs` drives the overview: three widgets, the clock card's
+facts, the network card's rates/chart/app totals and its 2 s polling on the page clock, then
+Düzenle — wiggle and reduced motion, arrow moves with focus kept, a mouse drag, widget widths
+measured against the four columns, hide/show, Bitti's request body, no polling while hidden,
+another device's saved order, Escape and Varsayılan. `common.bats` pins the edit bar, the grid
+spans, the server-side storage and the package declarations.
+
+## Konsol sign-in (v2-166, DD-194; v2-181, DD-205)
+
+`test_konsol_auth.py` covers the account store (creation without a code and without a
+session, user and password rules, scrypt-only storage, the name revealed only to a
+trusted caller, decoy work for unknown users, session expiry/limit/malformed tokens,
+password change keeping only the current session, the tailnet password change ending
+every session, reset, automation sessions, unsafe directory/symlink/FIFO/oversized/corrupt
 records), the per-address attempt limit, the root CLI and the real root-backend
-endpoints on a Unix socket: `/oturum-denetle` answers (302 page, 401 API, 204 with a
-session, 403 for host-local or foreign Host), cookie attributes, 429 with
-Retry-After, sign-out and password change, and audit lines without secrets.
-`common.bats` checks the Caddy `forward_auth` matcher and order, the open sign-in
-files, installer wiring/stage-7 probes and that the code is printed, never logged.
+endpoints on a Unix socket: `/oturum-denetle` answers by channel (tailnet 204 without a
+cookie and `/giris.html` → `/`; without Caddy's headers 302 page, 401 API, 204 with a
+session and an open sign-in page; 403 for host-local or foreign Host), account creation
+from the tailnet only, cookie attributes, 429 with Retry-After, sign-out and both
+password changes, and audit lines without secrets. `common.bats` checks the Caddy
+`forward_auth` matcher and order, the open sign-in files, the backend's channel
+branches, installer wiring/stage-7 probes and that no setup code remains anywhere.
 
 `giris-ui.cjs` (shared preview on port 8766) drives `giris.html` with intercepted
-APIs and the production CSP: first account with and without a valid code, client
-checks, wrong code, sign-in failure/limit/success, return to the original page, the
-signed-in shortcut and Konsol's redirect after a 401. `settings-ui.cjs` covers the
-account card, the password dialog and sidebar sign-out.
+APIs and the production CSP: internet sign-in failure/limit/success, return to the
+original page, the no-account notice, the tailnet and signed-in shortcuts back to
+Konsol and Konsol's redirect after a 401. `settings-ui.cjs` covers the account card on
+both channels (signed-in user with current password and sign-out; internet account, new
+password only, account creation, no sign-out) and the sidebar sign-out.
 
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/giris-ui.cjs
@@ -170,12 +225,12 @@ python3 Data/tests/konsol-login-live.py --host nrm
 ```
 
 `konsol-login-live.py` is an opt-in **mutating** test for an authorized host that
-has **no** Konsol account yet (it exits 3 otherwise and changes nothing). It issues
-its own code over SSH, creates a temporary account through the real Caddy path,
-checks page/file/API protection, sign-in/out, password change and the attempt
-limit, then resets the account and restarts the root backend to clear the limit.
-The operator then gets a new code with `sudo master-konsol sifirla`. Codes,
-passwords and tokens are never printed.
+has **no** Konsol account yet (it exits 3 otherwise and changes nothing). From the
+Mac, a tailnet device, it checks that Konsol, Files and the root API open without a
+sign-in and that the sign-in page goes back to Konsol, creates a temporary internet
+account through the real Caddy path, changes its password from the tailnet, signs
+in/out with it, checks the attempt limit, then resets the account and restarts the
+root backend to clear the limit. Passwords and tokens are never printed.
 
 Live tests that call Konsol through Caddy from the Mac (`share-connections-live`,
 `https-live`, `publications-live`, `backend-hardening-live`) open a short

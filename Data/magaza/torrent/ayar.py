@@ -11,6 +11,11 @@ the base settings worker), JSON on stdin, JSON on stdout, exit 1 with {"error"} 
 Every change is direct (DD-165): validate, stop the service if it runs, snapshot the files,
 write, start again, verify; a failure restores the snapshot and starts the service again.
 No pending/confirmation window: a wrong account or folder cannot lock the operator out.
+
+DD-209: qBittorrent runs in a Podman container whose unit Podman's systemd generator writes from
+the package's quadlet file. The profile is the container's /config (same files, same paths on the
+host); a download folder outside the downloads tree is bind-mounted at the same path through the
+quadlet drop-in <container>.container.d/90-konsol.conf, so the paths qBittorrent stores are host paths.
 """
 import argparse
 import base64
@@ -18,12 +23,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import secrets
 import shutil
+import socket
 import stat
 import sys
+import time
 
 
 def _lib_dir():
@@ -50,7 +56,11 @@ def package_env(env):
     merged.update(settings.env_read(os.path.join(PACKAGE_DIR, "torrent.env")))
     return merged
 CONF = "qBittorrent/qBittorrent.conf"
-DROP_IN = "qbittorrent-nox@.service.d/90-konsol.conf"
+DROP_IN = "90-konsol.conf"
+CONTAINER_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
+# A bind mount is "SRC:DST" in the quadlet; systemd expands % and splits on whitespace elsewhere.
+MOUNTABLE_RE = re.compile(r"/[^\s:%\\\"']+")
+STOP_TIMEOUT = 75   # the quadlet's StopTimeout (45 s) plus the container teardown
 
 
 def ini_values(text):
@@ -104,14 +114,40 @@ def conf_path(env):
     return Path(env["TORRENT_PROFILE_DIR"]) / CONF
 
 
+def container_name(env):
+    name = env.get("TORRENT_CONTAINER", "")
+    settings.require(bool(CONTAINER_RE.fullmatch(name)), "Konteyner adı geçersiz.")
+    return name
+
+
 def drop_in_path(env):
-    return Path(env["UNIT_DIR"]) / DROP_IN
+    return Path(env["KONTEYNER_BIRIM_DIR"]) / (container_name(env) + ".container.d") / DROP_IN
 
 
 def unit_name(env):
-    user = pwd.getpwuid(int(env["DOWNLOADS_UID"])).pw_name
-    settings.require(bool(re.fullmatch(r"[a-z_][a-z0-9_-]*", user)), "Servis kullanıcısı geçersiz.")
-    return "qbittorrent-nox@" + user + ".service"
+    return container_name(env) + ".service"
+
+
+def wait_ui(env, seconds=40):
+    """The container's unit is active before qBittorrent listens (its s6 init starts first); a change
+    counts only once the interface answers on loopback, otherwise the previous settings return."""
+    port = int(env.get("TORRENT_UI_PORT", "0") or 0)
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise settings.SettingsError("qBittorrent arayüzü yeniden başlatmadan sonra açılmadı.")
+            time.sleep(1)
+
+
+def inside(path, root):
+    if not path or not root:
+        return False
+    real, base = os.path.realpath(path), os.path.realpath(root)
+    return real == base or real.startswith(base.rstrip("/") + "/")
 
 
 def read_conf(path, limit=LIMIT):
@@ -131,18 +167,12 @@ def durum(env):
         return {"error": "qBittorrent'in ayar dosyası okunamadı", "profile": profile}
     q = ini_values(text)
     downloads = env.get("DOWNLOADS_PATH", "")
-
-    def inside(path):
-        if not path or not downloads:
-            return False
-        real, root = os.path.realpath(path), os.path.realpath(downloads)
-        return real == root or real.startswith(root.rstrip("/") + "/")
     save = q.get(("BitTorrent", "Session\\DefaultSavePath")) or q.get(("Preferences", "Downloads\\SavePath"), "")
     temp = q.get(("BitTorrent", "Session\\TempPath")) or q.get(("Preferences", "Downloads\\TempPath"), "")
     port = q.get(("BitTorrent", "Session\\Port"), "")
-    return {"profile": profile, "downloads": downloads, "save": save, "save_inside": inside(save),
+    return {"profile": profile, "downloads": downloads, "save": save, "save_inside": inside(save, downloads),
             "temp": temp, "temp_on": q.get(("BitTorrent", "Session\\TempPathEnabled"), "").lower() == "true",
-            "temp_inside": inside(temp),
+            "temp_inside": inside(temp, downloads),
             "ui": "%s:%s" % (q.get(("Preferences", "WebUI\\Address"), ""), q.get(("Preferences", "WebUI\\Port"), "")),
             "peer_port": int(port) if port.isdigit() else 0,
             "username": q.get(("Preferences", "WebUI\\Username"), "admin")}
@@ -165,7 +195,8 @@ def restore(path, snap):
 
 
 def change(env, updates, drop_in=None):
-    """Stop/snapshot/write/start; a failure restores the files and starts the service again."""
+    """Stop/snapshot/write/start; a failure restores the files and starts the service again.
+    drop_in: None keeps the quadlet drop-in, "" removes it, text replaces it."""
     unit = unit_name(env)
     conf = conf_path(env)
     settings.require(conf.is_file() and not conf.is_symlink(), "qBittorrent kurulu değil.")
@@ -173,17 +204,21 @@ def change(env, updates, drop_in=None):
     saved = {conf: None, drop_in_path(env): None}
     try:
         # Stop first: qBittorrent writes its settings back on shutdown.
-        settings.run(["systemctl", "stop", unit], timeout=25)
+        settings.run(["systemctl", "stop", unit], timeout=STOP_TIMEOUT)
         saved[conf] = snapshot(conf)
         if drop_in is not None:
             saved[drop_in_path(env)] = snapshot(drop_in_path(env))
-            settings.atomic(drop_in_path(env), drop_in, 0o644)
+            if drop_in:
+                settings.atomic(drop_in_path(env), drop_in, 0o644)
+            else:
+                restore(drop_in_path(env), None)
             settings.run(["systemctl", "daemon-reload"])
         text = settings.read_regular(conf)[0].decode()
         settings.atomic(conf, ini_patch(text, updates), 0o640, (int(env["DOWNLOADS_UID"]), int(env["DOWNLOADS_GID"])))
         if active:
-            settings.run(["systemctl", "start", unit], timeout=25)
+            settings.run(["systemctl", "start", unit], timeout=60)
             settings.run(["systemctl", "is-active", "--quiet", unit])
+            wait_ui(env)
     except Exception:
         for path, snap in saved.items():
             if snap is not None or path.exists():
@@ -191,7 +226,7 @@ def change(env, updates, drop_in=None):
         if drop_in is not None:
             settings.run(["systemctl", "daemon-reload"], check=False)
         if active:
-            settings.run(["systemctl", "start", unit], timeout=25, check=False)
+            settings.run(["systemctl", "start", unit], timeout=60, check=False)
         raise
 
 
@@ -217,8 +252,16 @@ def dizin(env, data, state):
     path = str(settings.Manager(state).safe_dir(data["save"], writable=True)).rstrip("/") + "/"
     updates = {("BitTorrent", "Session\\DefaultSavePath"): '"' + path + '"',
                ("Preferences", "Downloads\\SavePath"): '"' + path + '"'}
-    # One narrow extra write path for the sandboxed service; downloads + temp stay available.
-    change(env, updates, '[Service]\nReadWritePaths="' + path.rstrip("/") + '"\n')
+    # The container sees the downloads tree; a folder outside it (the library) is one narrow extra
+    # bind mount at the same path, so the stored path means the same inside and outside.
+    folder = path.rstrip("/")
+    if inside(folder, env.get("DOWNLOADS_PATH", "")):
+        drop_in = ""
+    else:
+        settings.require(bool(MOUNTABLE_RE.fullmatch(folder)),
+                         "Bu klasör adı konteynere bağlanamaz (boşluk, ':' ya da '%' içeriyor); adını değiştirin ya da indirme klasöründen seçin.")
+        drop_in = "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"
+    change(env, updates, drop_in)
     return {"ok": True, "save": path}
 
 

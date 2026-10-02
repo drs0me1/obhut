@@ -235,6 +235,7 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .rt-chip svg { width: 12px; height: 12px; }
 .rt-chip.host { color: var(--ok); }
 .rt-chip.konsol { color: var(--video); }
+.rt-chip.konteyner { color: var(--accent); }
 .hm .spin { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .hm .spin { animation: none; } }

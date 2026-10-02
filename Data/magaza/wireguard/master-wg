@@ -618,6 +618,16 @@ if [[ "${1:-}" != version && -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] &&
     die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"
 fi
 
+# DD-207: Konsol'un root arka ucu bu aracı kendi korumalı alanında çalıştırır; orada BASE_CONF_DIR,
+# arka uç klasör yokken başladıysa salt okunur görünür. Yazan bir komut önce açıkça söyler.
+yazilabilir() {
+    [[ ! -e "$BASE_CONF_DIR" || -w "$BASE_CONF_DIR" ]] ||
+        die "$BASE_CONF_DIR bu işlem için salt okunur görünüyor. Konsol arka ucunu yeniden başlatın (sudo systemctl restart master-panel) ya da kurulumu yeniden çalıştırın"
+}
+case "${1:-}" in
+    net-add|net-remove|add|remove|dns|keepalive|peer|net|net-settings|reset) yazilabilir ;;
+esac
+
 case "${1:-}" in
     version) printf '%s\n' "$V2_VERSION" ;;
     nets) [[ -z "$WG_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;

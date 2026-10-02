@@ -24,9 +24,11 @@ const data = {
   manage: { revision: "r1", config: copy(config), pending: null, names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "torrent.ayc", target: "tailscale", source: "torrent" }] },
 };
 let lastApply = null, writes = 0, failApply = false, discarded = false;
-// DD-194: Konsol account fixture (sign-in state, password change and sign-out).
-let sessionState = "acik", passwordFail = "", loggedOut = false;
-const passwordWrites = [];
+// DD-194/DD-205: Konsol account fixture. The backend names the channel: on the internet address the
+// card shows the signed-in user, the password dialog asks the current password and the sidebar
+// signs out; on the tailnet there is no sign-in — accountOverride switches the fixture there.
+let sessionState = "acik", passwordFail = "", loggedOut = false, accountOverride = null;
+const passwordWrites = [], createWrites = [];
 // DD-182: Settings → Sistem health card fixture; one warning, one problem.
 const health = { status: "bad", read_at: 1790750000, checks: [
   { id: "units", name: "Servisler", status: "ok", detail: "Başarısız servis yok" },
@@ -49,7 +51,7 @@ const health = { status: "bad", read_at: 1790750000, checks: [
       if (route.request().method() === "POST") writes++;
       const url = new URL(route.request().url()), endpoint = url.pathname;
       let result = {};
-      if (endpoint === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: "calisiyor", runtime: "host", live: "running", durdurulabilir: true, konsol: torrentMeta }] };
+      if (endpoint === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: "calisiyor", runtime: "konteyner", live: "running", durdurulabilir: true, konsol: torrentMeta }] };
       else if (endpoint === "/api/konsol/kaynaklar") result = { host: "test", version: data.version, domain: "ayc", os: "Debian 13", kernel: "test", uptime: 120, cores: 2, cpu: [1], mem: { total: 1000, used: 200, graph: [20] }, net: { wan: "192.0.2.1", tailscale: data.tailscale }, root: "/srv", disk: { total: 1000, free: 800 }, ports: [{ port: 22, proto: "tcp", scope: "internet", name: "SSH" }] };
       else if (endpoint === "/api/konsol/islemler") result = { items: [] };
       else if (endpoint === "/api/state") result = {root:"/srv", protected:[{path:"downloads/incomplete",owner:"Deneme Uygulaması"}], disk:{total:10000,free:8000}, trash:{count:0,size:0}};
@@ -78,7 +80,8 @@ const health = { status: "bad", read_at: 1790750000, checks: [
           result = {pending:null, committed:true};
         }
       } else if (endpoint === "/api/konsol/saglik") result = health;
-      else if (endpoint === "/api/konsol/oturum") result = sessionState === "acik" ? {durum:"acik",kullanici:"fixture",oturum_gun:7} : {durum:"giris"};
+      else if (endpoint === "/api/konsol/oturum") result = accountOverride || (sessionState === "acik" ? {durum:"acik",kullanici:"fixture",oturum_gun:7,kanal:"internet"} : {durum:"giris",kanal:"internet"});
+      else if (endpoint === "/api/konsol/oturum/kur") { createWrites.push(route.request().postDataJSON()); result = {durum:"kuruldu"}; }
       else if (endpoint === "/api/konsol/hesap/parola") {
         passwordWrites.push(route.request().postDataJSON());
         if (passwordFail) {
@@ -129,6 +132,50 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     await page.getByText("Konsol parolası değişti; diğer oturumlar kapatıldı.", { exact: true }).first().waitFor();
     assert.equal(await page.locator("#sh").evaluate((d) => d.open), false);
     assert.deepEqual(passwordWrites, [{ eski: "old-password-1", yeni: "new-password-12" }, { eski: "old-password-1", yeni: "new-password-12" }]);
+    assert(await page.locator("#logout").isVisible(), "the sidebar signs out on the internet address");
+    // DD-205: on the tailnet address there is no sign-in — the card shows the internet account, the
+    // password dialog asks no current password, and the sidebar has no sign-out.
+    accountOverride = { durum: "giris", kullanici: "fixture", kanal: "tailscale" };
+    await page.reload();
+    await account.getByText("İnternet hesabı: fixture. Tailscale'den giriş parolasızdır; internet adresi bu hesapla açılır.", { exact: true }).waitFor();
+    assert.equal(await account.getByRole("button", { name: "Çıkış yap", exact: true }).count(), 0);
+    assert(await page.locator("#logout").isHidden(), "no sidebar sign-out on the tailnet");
+    await account.getByRole("button", { name: "Parolayı değiştir", exact: true }).click();
+    await passwordForm.waitFor();
+    assert.equal(await page.locator("#acc-old").count(), 0, "no current password on the tailnet");
+    await page.locator("#acc-new").fill("new-password-77");
+    await page.locator("#acc-again").fill("new-password-78");
+    await changePassword.click();
+    assert.equal(passwordWrites.length, 2, "different new passwords stay in the browser");
+    await page.locator("#acc-again").fill("new-password-77");
+    await changePassword.click();
+    await page.getByText("Konsol parolası değişti; internet oturumları kapatıldı.", { exact: true }).first().waitFor();
+    assert.deepEqual(passwordWrites.at(-1), { yeni: "new-password-77" });
+    // No account yet: the card creates the internet account (user name + password, no code).
+    accountOverride = { durum: "kurulum", kanal: "tailscale" };
+    await page.reload();
+    await account.getByText(/hesap olmadan internet yayını açılmaz/).waitFor();
+    await account.getByRole("button", { name: "İnternet hesabı oluştur", exact: true }).click();
+    const createForm = page.locator("#konsol-create"), createButton = createForm.getByRole("button", { name: "Hesabı oluştur", exact: true });
+    await createForm.waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement.id), "acc-user");
+    await page.locator("#acc-user").fill("-kotu");
+    await page.locator("#acc-new").fill("fixture-password-1");
+    await page.locator("#acc-again").fill("fixture-password-1");
+    await createButton.click();
+    assert.equal(createWrites.length, 0, "an invalid user name never leaves the browser");
+    await page.locator("#acc-user").fill("yonetici");
+    await page.locator("#acc-again").fill("fixture-password-2");
+    await createButton.click();
+    assert.equal(createWrites.length, 0, "different passwords never leave the browser");
+    await page.locator("#acc-again").fill("fixture-password-1");
+    await createButton.click();
+    await page.getByText("Konsol hesabı oluşturuldu; internet adresi bu hesapla açılır.", { exact: true }).first().waitFor();
+    assert.deepEqual(createWrites, [{ kullanici: "yonetici", parola: "fixture-password-1" }]);
+    assert.equal(await page.locator("#sh").evaluate((d) => d.open), false);
+    accountOverride = null;
+    await page.reload();
+    await account.getByText("Giriş yapan: fixture. Oturum 7 gün açık kalır.", { exact: true }).waitFor();
     // DD-182: a stuck rollback offers retry and a typed discard, never an automatic give-up.
     data.manage.pending = { id: "stuck", phase: "stuck", seconds: 0, attempts: 5, error: "Komut tamamlanamadı: master-firewall" };
     await page.reload();
@@ -391,6 +438,6 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     assert(loggedOut);
     assert.deepEqual(errors, []);
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
-    console.log("PASS: Konsol account card/password dialog/sign-out, network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, no application section (the qBittorrent form is torrent-ui.cjs) in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
+    console.log("PASS: Konsol account card (internet: signed-in user, current password, sign-out; tailnet: internet account, new password only, account creation, no sign-out), network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, no application section (the qBittorrent form is torrent-ui.cjs) in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

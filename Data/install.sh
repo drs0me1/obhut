@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-178"
+V2_VERSION="2026.08.06-v2-186"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -88,6 +88,7 @@ SHARE_DIR=$SHARE_DIR
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
+KONTEYNER_BIRIM_DIR=$KONTEYNER_BIRIM_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
@@ -310,6 +311,17 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
+# DD-208: Podman tabanın parçasıdır (App Store'un konteyner çalışma ortamı). Daemon yok: Debian'ın
+# podman.socket, podman.service ve podman-auto-update.timer birimleri kapalı gelir, kurulum açmaz.
+# Aşama 1 kurar ve burada zorunlu denetler; aşama 7 yeniden denetler.
+check_podman() {
+    local out
+    out="$(podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}' 2>&1)" ||
+        die "Podman çalışmıyor: ${out##*$'\n'}"
+    [[ "$out" =~ ^[0-9]+\.[0-9]+ ]] || die "Podman sürümü okunamadı: $out"
+    PODMAN_VERSION="${out%% *}"
+}
+
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
@@ -410,7 +422,7 @@ stage_0() {
 Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve arşiv aracı
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, arşiv aracı ve Podman (konteyner ortamı)
   App Store:    $(paket_katalog_adlar); isteğe bağlı kurulur
   Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
   Tailscale:     $ts_note
@@ -519,6 +531,11 @@ stage_1() {
         dnsutils unattended-upgrades python3 python3-rarfile unrar
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
+    # DD-208: konteyner çalışma ortamı, önerileri olmadan (buildah, criu, slirp4netns gelmez).
+    # Uygulamalar Network=host kullanır; netavark Ubuntu noble'da bağımlılık olmadığı için açıkça adlanır.
+    retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+        podman netavark
+    check_podman
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
 }
@@ -690,17 +707,38 @@ paket_korunan_klasorler() {
 
 # DD-203: root arka ucun yazabileceği yollar paketlerin bildiriminden (PAKET_ARKAUC_YOLLAR, mutlak);
 # kurulu olsun olmasın '-' ile verilir (yoksa atlanır), böylece bir kurulum birimi yeniden başlatmaz.
-paket_arkauc_yollar() {
-    local manifest id p out=""
+paket_arkauc_klasorler() { # bir satıra bir mutlak yol, katalog sırasıyla
+    local manifest id p
     for manifest in "$MODULES_DIR"/*/paket.env; do
         [[ -f "$manifest" ]] || continue
         id="${manifest%/paket.env}"; id="${id##*/}"
         for p in $(paket_islenmis_oku "$id" PAKET_ARKAUC_YOLLAR); do
             [[ "$p" == /* ]] || continue
-            out="${out:+$out }-$p"
+            printf '%s\n' "$p"
         done
     done
+    return 0
+}
+
+paket_arkauc_yollar() {
+    local p out=""
+    while IFS= read -r p; do
+        out="${out:+$out }-$p"
+    done < <(paket_arkauc_klasorler)
     printf '%s' "$out"
+}
+
+# DD-207: systemd, ReadWritePaths'te "-" ile yazılan bir klasörü arka uç başlarken yoksa atlar; klasör
+# sonradan oluşsa da (ör. WireGuard'ın ilk ağı) arka ucun gördüğü kopya salt okunur kalır. Çalışan
+# arka ucun bağlamalarında her bildirilen klasör yazılabilir (rw) bir bağlama noktası olmalı.
+panel_yollari_bagli() { # [MOUNTINFO]
+    local pid info p
+    pid="$(systemctl show -p MainPID --value master-panel.service 2>/dev/null || true)"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    info="${1:-/proc/$pid/mountinfo}"
+    while IFS= read -r p; do
+        awk -v p="$p" '$5 == p && $6 ~ /(^|,)rw(,|$)/ {f = 1} END {exit !f}' "$info" 2>/dev/null || return 1
+    done < <(paket_arkauc_klasorler)
 }
 
 # Kataloğun adları ("A ve B"), özetler için.
@@ -780,7 +818,8 @@ paket_denetle_calistir() { # ID
         die "$(paket_bildirim_oku "$id" PAKET_AD): ${out##*$'\n'}"
 }
 
-# DD-201: kurulu olmayan paketin bildirdiği araçlar ve birim ekleri sunucuda yoksa 0.
+# DD-201: kurulu olmayan paketin bildirdiği araçlar, birim ekleri ve konteyner birimi (DD-209)
+# sunucuda yoksa 0.
 paket_iz_yok() { # ID
     local id="$1" name pair
     for name in $(paket_bildirim_oku "$id" PAKET_ARACLAR); do
@@ -789,6 +828,8 @@ paket_iz_yok() { # ID
     for pair in $(paket_bildirim_oku "$id" PAKET_EKLER); do
         [[ ! -e "$UNIT_DIR/${pair#*:}" ]] || return 1
     done
+    name="$(paket_bildirim_oku "$id" PAKET_KONTEYNER)"
+    [[ -z "$name" || ! -e "$KONTEYNER_BIRIM_DIR/$name" ]] || return 1
     return 0
 }
 
@@ -841,6 +882,8 @@ reapply_modules() {
             dst="$UNIT_DIR/${pair#*:}"
             [[ ! -e "$dst" ]] || { rm -f -- "$dst"; rmdir -- "$(dirname -- "$dst")" 2>/dev/null || true; pruned=1; }
         done
+        name="$(paket_bildirim_oku "$pkg" PAKET_KONTEYNER)"
+        [[ -z "$name" || ! -e "$KONTEYNER_BIRIM_DIR/$name" ]] || { rm -f -- "$KONTEYNER_BIRIM_DIR/$name"; pruned=1; }
         [[ "$pruned" -eq 0 ]] || {
             systemctl daemon-reload
             log INFO "$(paket_bildirim_oku "$pkg" PAKET_AD) kurulu değil; aracı ve birim eki sunucudan kaldırıldı"
@@ -893,6 +936,9 @@ stage_4() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     # DD-194: Konsol hesabı/oturumları; master-konsol root CLI'si aynı modülü çalıştırır.
     atomic_write "$SBIN_DIR/master_auth.py" 0755 <"$V2_ROOT/panel/master_auth.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    # DD-208: Ayarlar → Konteynerler (Podman'ın salt okunur görünümü) arka ucun yardımcısıdır.
+    atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
@@ -1179,9 +1225,12 @@ EOF
 ensure_panel() {
     local changed="${1:-0}" f out
     [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
-    # DD-196/203: paket araçlarının yazdığı klasörleri (PAKET_ARKAUC_YOLLAR) paket açar; birim onları
-    # yoksa atlar (ReadWritePaths -). DD-194: hesap ve oturum kayıtları; arka ucun /etc altında
-    # yazabildiği kalıcı yer.
+    # DD-196/203/207: paket araçlarının yazdığı klasörler (PAKET_ARKAUC_YOLLAR) arka uç başlamadan
+    # açılır; systemd yalnız o an var olan klasörü yazılabilir bağlar (ReadWritePaths -). Paket kurulu
+    # değilse boş kalır. DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği kalıcı yer.
+    while IFS= read -r f; do
+        [[ -d "$f" ]] || install -d -m 0700 -o root -g root -- "$f"
+    done < <(paket_arkauc_klasorler)
     install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"
     atomic_write "$SBIN_DIR/master-panel" 0755 <"$V2_ROOT/panel/master-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
@@ -1196,7 +1245,9 @@ ensure_panel() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-panel.service
-    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-panel.service; then
+    # DD-207: çalışan arka uç bir klasörü salt okunur görüyorsa (klasör o başladıktan sonra oluştu)
+    # yeniden başlar; böylece yeniden kurulum böyle bir sunucuyu da onarır.
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-panel.service || ! panel_yollari_bagli; then
         systemctl restart master-panel.service
     else
         log INFO "Konsol arka ucu aynı; yeniden başlatılmadı"
@@ -1210,7 +1261,7 @@ ensure_console_pages() {
     local f dir id
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
-        giris.html giris.js giris.css; do
+        konteynerler.css konteynerler.js giris.html giris.js giris.css; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
     # DD-200: kurulu paketlerin sayfa dosyaları uygulama/<id>/ altındadır (master-modul koyar ve
@@ -1281,6 +1332,7 @@ stage_7() {
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
     "$SBIN_DIR/master-firewall" --check
+    check_podman
     # DD-181: the timer sleeps while nothing is pending; it must stay enabled for boot and apply.
     systemctl is-enabled --quiet master-settings-guard.timer || die "Konsol ayar geri alma zamanlayıcısı etkin değil"
     python3 "$SBIN_DIR/master_settings.py" status >/dev/null || die "Konsol ayar durumu okunamadı"
@@ -1358,16 +1410,18 @@ stage_7() {
         fi
     done
 
-    # DD-194: Konsol girişi. Giriş sayfası açıktır; geri kalan her panel isteği (sayfa, Dosyalar,
-    # API) Caddy'nin forward_auth'u ile root arka uçtan oturum ister. Sunucunun kendisinden gelen
-    # istek orada reddedilir (DD-180); oturumsuz API 401 alır, sayfa giriş sayfasına yönlenir.
-    # Ayrıca X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı istek)
-    # ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel VPN adresinde
+    # DD-194/DD-205: Konsol girişi. Giriş sayfasının dosyaları açıktır; geri kalan her panel isteği
+    # (sayfa, Dosyalar, API) Caddy'nin forward_auth'u ile root arka uca sorulur. Tailscale sitesinde
+    # başka bir Tailscale cihazı oturumsuz geçer (cihazı Tailscale doğrular) ve /giris.html Konsol'a
+    # yönlenir; sunucunun kendisinden gelen istek reddedilir (DD-180). Caddy'nin yönlendirme
+    # başlıkları olmadan (internet sitesinde olduğu gibi) oturumsuz API 401 alır, sayfa giriş
+    # sayfasına yönlenir. Ayrıca X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan
+    # attığı istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel VPN adresinde
     # dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/giris.html" || true)"
-    [[ "$code" == "200" ]] || die "Konsol giriş sayfası tailnet'ten açılmadı (HTTP $code)"
-    local page_body probe
+        -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/giris.js" || true)"
+    [[ "$code" == "200" ]] || die "Konsol giriş sayfasının dosyası tailnet'ten açılmadı (HTTP $code)"
+    local page_body probe tail_probe
     page_body="$(curl -s --max-time 5 -w '\n%{http_code}' -H "Host: panel.${LOCAL_DOMAIN}" \
         "http://${TAILSCALE_IPV4}/" 2>/dev/null || true)"
     [[ "${page_body##*$'\n'}" == "403" && "$page_body" == *"başka bir Tailscale cihazından"* ]] ||
@@ -1378,6 +1432,17 @@ stage_7() {
             "http://localhost/oturum-denetle" || true)"
         [[ "$code" == "${probe#*|}" ]] ||
             die "Konsol oturum denetimi ${probe%%|*} için HTTP $code döndü (beklenen ${probe#*|})"
+    done
+    # DD-205: başka bir Tailscale cihazı (Caddy'nin yazdığı X-Forwarded-For) oturumsuz geçer; giriş
+    # sayfası ona Konsol'u gösterir. Deneme adresi sunucunun kendi tailnet adresinden türetilir
+    # (son bölüm farklı, aynı 100.64.0.0/10 aralığında); sabit bir adres yazılmaz.
+    tail_probe="${TAILSCALE_IPV4%.*}.$(( (${TAILSCALE_IPV4##*.} + 1) % 254 + 1 ))"
+    for probe in "/api/konsol/kaynaklar|204" "/giris.html|302"; do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --unix-socket "$PANEL_SOCKET" \
+            -H "Host: panel.${LOCAL_DOMAIN}" -H "X-Forwarded-For: $tail_probe" -H "X-Forwarded-Uri: ${probe%%|*}" \
+            "http://localhost/oturum-denetle" || true)"
+        [[ "$code" == "${probe#*|}" ]] ||
+            die "Konsol Tailscale kapısı ${probe%%|*} için HTTP $code döndü (beklenen ${probe#*|})"
     done
     # DD-180: root arka ucu TCP'de değil, yalnız Unix soketinde; dosya arka ucu loopback'te.
     local gate gate_path gate_url gate_via=()
@@ -1496,30 +1561,15 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; kullanıcı adı ve parolayla)
-  İnternetten HTTPS isteğe bağlı: Ayarlar → Caddy → Panel (önce DNS A kaydı; ilk hesap yalnız Tailscale'den).
+Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; Tailscale'den parolasız)
+  İnternetten HTTPS isteğe bağlı: önce Ayarlar → Sistem → Konsol hesabı (kullanıcı adı + parola),
+  sonra Ayarlar → Caddy → Panel (DNS A kaydı gerekir).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
+Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Ayarlar → Konteynerler)
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
 $(summary_modules)$(summary_notes)
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF
-    konsol_login_summary
-}
-
-# DD-194: hesap yoksa tek kullanımlık ilk giriş kodu yalnız bu ekrana (Mac terminaline)
-# yazılır; log ile değil printf ile, kurulum günlüğüne düşmez. Sonraki kurulum yeni kod verir.
-konsol_login_summary() {
-    local code rc=0
-    code="$(python3 "$SBIN_DIR/master_auth.py" --state "$STATE_FILE" kod 2>/dev/null)" || rc=$?
-    if [[ "$rc" -eq 2 ]]; then
-        printf 'Konsol girişi: kendi kullanıcı adınız ve parolanızla. Unutursanız sunucuda: sudo master-konsol sifirla\n\n'
-    elif [[ "$rc" -eq 0 && -n "$code" ]]; then
-        printf '\nKonsol ilk giriş kodu: %s  (tek kullanımlık, 24 saat geçerli)\n' "$code"
-        printf '  http://panel.%s adresini açın; kodu girip kullanıcı adınızı ve parolanızı belirleyin.\n' "$LOCAL_DOMAIN"
-        printf '  Kod kaybolur ya da süresi dolarsa sunucuda: sudo master-konsol sifirla\n\n'
-    else
-        printf '\nUYARI: Konsol ilk giriş kodu üretilemedi. Sunucuda: sudo master-konsol sifirla\n\n'
-    fi
 }
 
 main() {

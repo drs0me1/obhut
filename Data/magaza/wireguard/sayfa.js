@@ -225,8 +225,7 @@
     const save = h("button", {type:"submit", class:"btn btn-primary", id:"wn-save"}, "Ayarları kaydet");
     const fields = h("fieldset", {class:"wg-net-fields"},
       h("div", {class:"field"}, h("span", {class:"lbl"}, "Varsayılan DNS"), dnsBox,
-        h("small", {class:"hint-s"}, "Yalnız yeni eklenecek cihazlara önerilir. Mevcut cihazların DNS ayarı ve QR/profili değişmez; cihazın Düzenle menüsünden ayrıca değiştirilebilir.")),
-      h("p", {class:"hint-s"}, "Kaydet anahtarları, cihazları, portu ve adresleri değiştirmez. Kapalı bir ağı başlatmaz."), error,
+        h("small", {class:"hint-s"}, "Yalnız yeni eklenecek cihazlara önerilir. Mevcut cihazların DNS ayarı ve QR/profili değişmez; cihazın Düzenle menüsünden ayrıca değiştirilebilir. Kaydet anahtarları, cihazları, portu ve adresleri değiştirmez; kapalı bir ağı başlatmaz.")), error,
       h("div", {class:"dlg-foot"}, h("button", {type:"button", class:"btn btn-quiet", onclick:shClose}, "Vazgeç"), save),
       h("div", {class:"wg-net-danger"}, h("p", null, "Yeniden üret tüm cihaz profillerini siler ve sunucu anahtarını değiştirir. Kaydedilmemiş DNS seçimi bu işlemde uygulanmaz."),
         h("button", {type:"button", class:"btn btn-sm btn-danger", onclick:()=>{shClose(); askRegen(netOf(n.iface) || n);}}, svg("refresh"), "Anahtarı yeniden üret")));
@@ -342,7 +341,7 @@
         return h("button", { type: "button", class: "sug" + (sel ? " on" : ""), role: "radio", "aria-checked": sel,
           onclick: () => { st.choice = d.ips; render(); opts.onChange(); } },
           h("strong", null, d.name), h("span", { class: "badge" }, opts.badge(d.ips)),
-          d.tag ? h("span", { class: "tagline" }, d.tag) : null, h("span", { class: "ips" }, d.ips));
+          h("span", { class: "meta" }, d.tag ? h("span", { class: "tagline" }, d.tag + " · ") : null, h("span", { class: "ips" }, d.ips)));
       }));
       const isCustom = st.choice === "custom";
       const custom = h("div", { class: "sug custom" + (isCustom ? " on" : "") },
@@ -554,7 +553,7 @@
     $("na-label").value = "";
     $("na-port").value = String(nets().length ? suggestPort() : firstPort());
     $("na-ident").replaceChildren(h("span", { class: "big" }, `wg${i}`),
-      h("span", { class: "mono" }, `10.8.${i}.0/24`), h("span", { class: "mono" }, `sunucu 10.8.${i}.1`));
+      h("span", { class: "mono" }, `10.8.${i}.0/24`), h("span", { class: "mono" }, `sunucu 10.8.${i}.1`), h("span", { class: "hint-s" }, "Yalnız internet"));
     naDns.set(DNS_PRESETS[0].ips);
     updateAddNet();
     $("na-label").focus();
@@ -574,11 +573,6 @@
     $("na-port-err").textContent = d.portErr;
     $("na-port-err").hidden = !d.portErr;
     $("na-port").setAttribute("aria-invalid", String(!!d.portErr));
-    $("na-preview").replaceChildren(h("div", { class: "nettab sel preview" },
-      h("div", { class: "nt-main" },
-        h("span", { class: "nt-top" }, h("span", { class: "nt-if" }, d.id), h("span", { class: "nt-lab" }, d.label || "Etiketsiz")),
-        h("small", null, "UDP ", h("span", { class: "mono" }, Number.isNaN(d.port) ? "—" : d.port), ` · ${d.subnet} · Yalnız internet`),
-        h("span", { class: "nt-cnt" }, h("span", { class: "dotmark" }), "0/0 bağlı"))));
     const will = [
       "Yeni sunucu anahtarı üretilir.",
       `UDP ${Number.isNaN(d.port) ? "…" : d.port} internete açılır; güvenlik duvarı kuralları kurulur.`,
@@ -613,35 +607,31 @@
           h("dl", { class: "summary", id: "wg-summary" }),
           h("div", { class: "table wg-t", id: "wg-table" }),
           h("button", { type: "button", class: "addrow", id: "wg-add" }))),
-      // Arayüz ekle: ayrı görünüm (#/wireguard/ekle).
+      // Arayüz ekle (#/wireguard/ekle): tek kart, pencerelerle aynı genişlikte. Sıradaki boş ağ
+      // kendiliğinden seçilir; etiket ve port yan yana, DNS seçicisi pencerelerdekiyle aynı.
       h("div", { class: "addpage", id: "wg-ekle", hidden: true },
-        h("div", { class: "addform" },
-          h("article", { class: "card" },
-            h("div", { class: "card-head" }, h("h2", null, svg("shield"), "Ağ"), h("span", { class: "hint-s" }, "Sıradaki boş ağ kendiliğinden seçildi")),
-            h("div", { class: "ident-row", id: "na-ident" }),
+        h("article", { class: "card addcard", "aria-labelledby": "na-title" },
+          h("div", { class: "card-head" }, h("h2", { id: "na-title" }, svg("shield"), "Yeni ağ"), h("span", { class: "hint-s" }, "Sıradaki boş ağ seçildi")),
+          h("div", { class: "ident-row", id: "na-ident" }),
+          h("div", { class: "add-fields" },
             h("div", { class: "field" },
               h("label", { for: "na-label" }, "Etiket"),
-              h("input", { type: "text", id: "na-label", maxlength: "24", autocomplete: "off", spellcheck: "false", placeholder: "ör. Misafir, İş, Çocuklar" }),
-              h("small", { class: "hint-s" }, "Yalnız Konsol'da görünür; boş bırakılabilir."))),
-          h("article", { class: "card" },
-            h("div", { class: "card-head" }, h("h2", null, svg("stack"), "Port"), h("span", { class: "hint-s" }, "Sunucunun internete açtığı UDP portu")),
+              h("input", { type: "text", id: "na-label", maxlength: "24", autocomplete: "off", spellcheck: "false", placeholder: "ör. Misafir, İş" }),
+              h("small", { class: "hint-s" }, "Yalnız Konsol'da görünür; boş bırakılabilir.")),
             h("div", { class: "field" },
               h("label", { for: "na-port" }, "UDP portu"),
               h("input", { type: "number", id: "na-port", min: "1024", max: "65535", autocomplete: "off" }),
               h("small", { class: "err-s", id: "na-port-err", hidden: true }),
-              h("small", { class: "hint-s", id: "na-port-hint" }, "1024–65535 arasında, kullanılmayan bir UDP portu. Kullanılan port reddedilir; sıradaki boş port yazılır."))),
-          h("article", { class: "card" },
-            h("div", { class: "card-head" }, h("h2", null, svg("server"), "Varsayılan DNS"), h("span", { class: "hint-s" }, "Bu ağa eklenen cihazlara önerilir")),
-            h("div", { class: "sugg", id: "na-sugg", role: "radiogroup", "aria-label": "Varsayılan DNS" }))),
-        h("aside", { class: "addside" },
-          h("article", { class: "card" },
-            h("div", { class: "card-head" }, h("h2", null, "Oluşturulacak ağ")),
-            h("div", { id: "na-preview" }),
-            h("ul", { class: "will", id: "na-will" }),
-            h("div", { class: "infoline-s" }, svg("info"), h("span", null, "Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.")),
-            h("div", { class: "dlg-foot" },
-              h("button", { class: "btn btn-quiet", type: "button", "data-go": "#/wireguard" }, "Vazgeç"),
-              h("button", { class: "btn btn-primary", type: "button", id: "na-create", disabled: true }, "Arayüzü oluştur"))))));
+              h("small", { class: "hint-s", id: "na-port-hint" }, "1024–65535; kullanılmayan port."))),
+          h("div", { class: "field" },
+            h("span", { class: "lbl", id: "na-dns-lbl" }, "Varsayılan DNS"),
+            h("div", { class: "sugg", id: "na-sugg", role: "radiogroup", "aria-labelledby": "na-dns-lbl" }),
+            h("small", { class: "hint-s" }, "Bu ağa eklenen cihazlara önerilir.")),
+          h("ul", { class: "will", id: "na-will" }),
+          h("div", { class: "infoline-s" }, svg("info"), h("span", null, "Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.")),
+          h("div", { class: "dlg-foot" },
+            h("button", { class: "btn btn-quiet", type: "button", "data-go": "#/wireguard" }, "Vazgeç"),
+            h("button", { class: "btn btn-primary", type: "button", id: "na-create", disabled: true }, "Arayüzü oluştur")))));
     naDns = makeDnsPicker($("na-sugg"), "na-dns", { badge: (ips) => (ips === DNS_PRESETS[0].ips ? "önerilen" : ""), onChange: () => updateAddNet() });
     $("na-label").addEventListener("input", updateAddNet);
     $("na-port").addEventListener("input", updateAddNet);

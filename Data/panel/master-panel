@@ -17,7 +17,8 @@
 #
 # Güvenlik: Caddy tailnet adresinde ve yalnız açıkça yayınlanınca bir genel HTTPS adında dinler;
 # DD-194'ten beri her panel isteği için
-# bu arka uca oturum sorar (/oturum-denetle; hesap ve oturumlar master_auth.py'de). Ayrıca:
+# bu arka uca oturum sorar (/oturum-denetle; hesap ve oturumlar master_auth.py'de); DD-205: Tailscale
+# sitesinde yanıt hep "geç"tir (cihazı Tailscale doğrular), internet sitesi oturum ister. Ayrıca:
 # /api/* için X-Konsol başlığı ve aynı köken (başka bir sitenin tarayıcı üzerinden istek
 # atması, CSRF), Host denetimi (DNS rebinding), sıkı CSP, no-store. Gizli anahtar taşıyan
 # yanıtlar (profil, QR) yalnız açıkça istenince verilir ve günlüğe içerik yazılmaz.
@@ -51,6 +52,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import master_auth
+import master_containers
 import master_settings
 import master_shares
 import master_publications
@@ -121,6 +123,44 @@ def manifest_ports(manifest):
 CHANNEL_HEADER = "X-Konsol-Kanal"
 PUBLIC_CACHE_SECONDS = 5
 TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+# DD-206: Genel bakış'ın ağ kartı. WAN arayüzünün bayt sayaçları dosyadan okunur (dış komut yok):
+# arka plan örnekleyicisi her SAMPLE_SECONDS'te, kart açıkken her istekte en çok NET_STEP_SECONDS
+# arayla bir hız noktası ekler; son NET_WINDOW_SECONDS saniye geri verilir. Uygulama toplamlarını
+# paketlerin kendi modülleri (PAKET_TRAFIK) ölçer; en çok TRAFFIC_CACHE_SECONDS'te bir okunur.
+NET_STEP_SECONDS = 1.5
+NET_WINDOW_SECONDS = 120
+NET_POINTS = 160
+TRAFFIC_CACHE_SECONDS = 2
+IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
+# DD-206: Genel bakış düzeni (kare sırası, widget genişliği ve görünürlüğü) KONSOL_AUTH_DIR/duzen.json.
+# Yalnız biçim denetlenir: anahtarlar Konsol'un ve paketlerin kare ve widget adlarıdır, tanımadığını
+# kabuk yok sayar. Dosya yoksa varsayılan düzen geçerlidir.
+LAYOUT_FILE = "duzen.json"
+LAYOUT_KEY_RE = re.compile(r"^[a-z]{2,16}$")
+LAYOUT_MAX_TILES = 32
+LAYOUT_MAX_WIDGETS = 8
+LAYOUT_SPANS = (1, 2, 3, 4)
+
+
+def clean_layout(value):
+    """DD-206: the overview layout as stored; ValueError (Turkish, for the operator) when malformed."""
+    if not isinstance(value, dict) or not set(value) <= {"schema", "kareler", "widgetlar"} or value.get("schema", 1) != 1:
+        raise ValueError("Düzen kaydı geçersiz.")
+    tiles, widgets = value.get("kareler", []), value.get("widgetlar", [])
+    if (not isinstance(tiles, list) or len(tiles) > LAYOUT_MAX_TILES or len(set(map(str, tiles))) != len(tiles)
+            or not all(isinstance(k, str) and LAYOUT_KEY_RE.fullmatch(k) for k in tiles)):
+        raise ValueError("Kare sırası geçersiz.")
+    if not isinstance(widgets, list) or len(widgets) > LAYOUT_MAX_WIDGETS:
+        raise ValueError("Widget listesi geçersiz.")
+    seen, clean = set(), []
+    for item in widgets:
+        if (not isinstance(item, dict) or set(item) != {"id", "genislik", "gizli"} or not isinstance(item["id"], str)
+                or not LAYOUT_KEY_RE.fullmatch(item["id"]) or item["id"] in seen
+                or type(item["genislik"]) is not int or item["genislik"] not in LAYOUT_SPANS or type(item["gizli"]) is not bool):
+            raise ValueError("Widget ayarı geçersiz.")
+        seen.add(item["id"])
+        clean.append({"id": item["id"], "genislik": item["genislik"], "gizli": item["gizli"]})
+    return {"schema": 1, "kareler": list(tiles), "widgetlar": clean}
 
 
 def own_address(ip):
@@ -456,6 +496,13 @@ class Panel:
         self.attempts = master_auth.Attempts()
         self.public_cache = (-PUBLIC_CACHE_SECONDS, False)
         self.public_lock = threading.Lock()
+        # DD-206: WAN hız noktaları ve paketlerin trafik toplamları (kısa önbellek).
+        self.net_lock = threading.Lock()
+        self.net_prev = None
+        self.net_points = []
+        self.traffic_lock = threading.Lock()
+        self.traffic_cache = (-TRAFFIC_CACHE_SECONDS, None)
+        self.traffic_errors = set()
 
     def public_open(self):
         """DD-195: is Konsol published on the internet right now (name, WAN IPv4, account)?
@@ -721,6 +768,7 @@ class Panel:
         while True:
             try:
                 self.sample_system()
+                self.net_sample(read_env(self.args.state))
                 self.package_apis()
             except Exception as err:
                 print("panel: sistem ölçülemedi (%s)" % err, flush=True)
@@ -751,6 +799,115 @@ class Panel:
         with self.sys_lock:
             self.samples.append({"t": int(time.time()), "cpu": round(cpu, 1), "mem": mem})
             del self.samples[:-SYS_POINTS]
+
+    # -- ağ (DD-206)
+    @staticmethod
+    def net_counters(iface):
+        """WAN arayüzünün alınan ve gönderilen bayt sayaçları (çekirdeğin sysfs dosyalarından)."""
+        values = []
+        for name in ("rx_bytes", "tx_bytes"):
+            with open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb") as fh:
+                values.append(int(fh.read(32).strip()))
+        return values
+
+    def net_sample(self, env):
+        """Adds a rate point (bytes/s) when at least NET_STEP_SECONDS passed since the last reading;
+        returns the measured interface name ("" when state.env names none)."""
+        iface = env.get("WAN_INTERFACE", "")
+        if not IFACE_RE.fullmatch(iface) or iface in (".", ".."):
+            return ""
+        try:
+            rx, tx = self.net_counters(iface)
+        except (OSError, ValueError):
+            return iface
+        mono = time.monotonic()
+        with self.net_lock:
+            prev = self.net_prev
+            if prev is not None and prev[0] == iface:
+                span = mono - prev[1]
+                if span < NET_STEP_SECONDS:
+                    return iface
+                # A baseline older than three background samples (a stalled sampler) gives no point.
+                if span <= 3 * max(SAMPLE_SECONDS, NET_STEP_SECONDS):
+                    self.net_points.append({"t": int(time.time()), "rx": int(max(0, rx - prev[2]) / span),
+                                            "tx": int(max(0, tx - prev[3]) / span)})
+                    del self.net_points[:-NET_POINTS]
+            elif prev is not None:
+                self.net_points = []  # another interface: its history does not belong here
+            self.net_prev = (iface, mono, rx, tx)
+        return iface
+
+    def network(self):
+        """GET /api/konsol/ag: WAN rate history (last NET_WINDOW_SECONDS) and the packages' totals."""
+        env = read_env(self.args.state)
+        iface = self.net_sample(env)
+        now = int(time.time())
+        with self.net_lock:
+            points = [p for p in self.net_points if p["t"] >= now - NET_WINDOW_SECONDS]
+        last = points[-1] if points else None
+        return {"read_at": now, "iface": iface, "window": NET_WINDOW_SECONDS,
+                "sampled_at": last["t"] if last else None, "rx": last["rx"] if last else None,
+                "tx": last["tx"] if last else None, "points": [[p["t"], p["rx"], p["tx"]] for p in points],
+                "apps": self.traffic(env)}
+
+    def traffic(self, env):
+        """DD-206: per installed package that declares PAKET_TRAFIK, its own module's totals:
+        {"down", "up"} as the application's users see them, "since" (counting start) or "at" (when
+        the application last saved all-time figures), epoch seconds. A failing module leaves only
+        its own numbers empty; the error is printed once per package and kind."""
+        now = time.monotonic()
+        with self.traffic_lock:
+            at, cached = self.traffic_cache
+            if cached is not None and now - at < TRAFFIC_CACHE_SECONDS:
+                return cached
+            items = []
+            for mid, manifest in master_settings.read_manifests(env).items():
+                name, state = manifest.get("PAKET_TRAFIK", ""), self.module_state(mid, env)
+                if not name or not state or manifest.get("PAKET_YERLESIK") == "1":
+                    continue
+                label = (manifest.get("PAKET_AD") or mid) + " trafik ölçümü"
+                item = {"id": mid, "name": manifest.get("PAKET_AD") or mid, "state": state, "down": None, "up": None, "since": None, "at": None}
+                if state == "calisiyor":
+                    try:
+                        module = master_settings.load_package_module(env, mid, name, "trafik", label)
+                        value = module.trafik(dict(env))
+                        if value is not None and not isinstance(value, dict):
+                            raise TypeError("trafik() sözlük döndürmeli")
+                        for key in ("down", "up", "since", "at"):
+                            v = (value or {}).get(key)
+                            if type(v) is int and v >= 0:
+                                item[key] = v
+                    except Exception as err:  # the package's module is data for us
+                        mark = (mid, type(err).__name__)
+                        if mark not in self.traffic_errors:
+                            self.traffic_errors.add(mark)
+                            print("panel: %s okunamadı (%s)" % (label, type(err).__name__), flush=True)
+                items.append(item)
+            self.traffic_cache = (now, items)
+            return items
+
+    # -- Genel bakış düzeni (DD-206)
+    def layout(self):
+        """The saved overview layout, or None for the defaults (also when the record is damaged)."""
+        try:
+            value = self.auth().read(LAYOUT_FILE)
+            return clean_layout(value) if value is not None else None
+        except (master_auth.AuthError, ValueError, OSError):
+            return None
+
+    def save_layout(self, data):
+        """POST /api/konsol/duzen: {"duzen": {...}} saves, {"sifirla": true} returns to the defaults."""
+        store = self.auth()
+        if data == {"sifirla": True}:
+            with store.locked():
+                store.remove(LAYOUT_FILE)
+            return "sifirla", None
+        if set(data) != {"duzen"}:
+            raise ValueError("Düzen isteği geçersiz.")
+        value = clean_layout(data["duzen"])
+        with store.locked():
+            store.write(LAYOUT_FILE, value)
+        return "kaydet", value
 
     def meminfo(self):
         info = {}
@@ -1673,7 +1830,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d%s" % (master_auth.COOKIE, value, age, secure)
 
     def session_gate(self):
-        """Caddy forward_auth target for every protected panel request (pages, files, API)."""
+        """Caddy forward_auth target for every protected panel request (pages, files, API).
+        DD-205: the tailnet site asks for no sign-in — gate() already required another Tailscale
+        device (DD-180) — and sends its sign-in page back to Konsol. The internet site (and a
+        caller without Caddy's forwarding headers) needs a session, except for the sign-in page."""
+        page = (self.headers.get("X-Forwarded-Uri") or "").split("?", 1)[0]
+        if self.channel() == "tailscale":
+            if page == "/giris.html":
+                self.send(302, extra={"Location": "/"})
+            else:
+                self.send(204)
+            return
         try:
             user = self.panel.auth().user_for(self.cookie_token())
         except master_auth.AuthError as err:
@@ -1682,9 +1849,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
             return
-        if user:
+        if user or page == "/giris.html":
             self.send(204)
-        elif (self.headers.get("X-Forwarded-Uri") or "").startswith("/api/"):
+        elif page.startswith("/api/"):
             self.close_connection = True
             self.json(401, {"error": "Oturum gerekli; yeniden giriş yapın.", "giris": True})
         else:
@@ -1692,7 +1859,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def account_post(self, path, data):
         action = path.rsplit("/", 1)[-1]
-        name = {"kur": "oturum-kur", "giris": "giris", "cikis": "cikis", "parola": "parola-degis"}[action]
+        name = {"kur": "hesap-kur", "giris": "giris", "cikis": "cikis", "parola": "parola-degis"}[action]
         client = self.client()
         public = self.channel() == "internet"
         self.close_connection = True
@@ -1704,23 +1871,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send(200, json.dumps({"durum": "cikis"}), extra={"Set-Cookie": self.session_cookie(None)})
                 return
             if public and action == "kur":
-                # DD-195: the one-time code is used only on the tailnet address.
-                raise master_auth.AuthError("İlk hesap yalnız Tailscale üzerinden oluşturulur.", 403)
+                # DD-195/DD-205: the account is created only from a Tailscale device (gate() proved one).
+                raise master_auth.AuthError("Konsol hesabı yalnız Tailscale adresinden oluşturulur.", 403)
             with self.panel.attempts.attempt(client, public):
                 try:
+                    token, result = None, "acik"
                     if action == "kur":
-                        token = store.create(data.get("kod"), data.get("kullanici"), data.get("parola"))
+                        store.create(data.get("kullanici"), data.get("parola"))
+                        result = "kuruldu"
                     elif action == "giris":
                         token = store.login(data.get("kullanici"), data.get("parola"))
-                    else:
+                    elif public:
+                        # The internet address asks for the current password and keeps this browser's session.
                         store.change_password(self.cookie_token(), data.get("eski"), data.get("yeni"))
-                        token = None
+                        result = "degisti"
+                    else:
+                        # DD-205: the Tailscale device is the credential; no current password, every session ends.
+                        store.set_password(data.get("yeni"))
+                        result = "degisti"
                 except master_auth.AuthError as err:
                     if err.status == 401:
                         self.panel.attempts.failed(client, public)
                     raise
             self.audit(ACTOR, name, "-", True)
-            self.send(200, json.dumps({"durum": "acik"}),
+            self.send(200, json.dumps({"durum": result}),
                       extra={"Set-Cookie": self.session_cookie(token)} if token else None)
         except master_auth.AuthError as err:
             if err.status in (401, 429):
@@ -1767,7 +1941,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/konsol/oturum":
             try:
-                self.json(200, dict(self.panel.auth().status(self.cookie_token()), kanal=self.channel()))
+                # DD-205: the user name is shown to the tailnet (trusted device), not to an anonymous internet visitor.
+                self.json(200, dict(self.panel.auth().status(self.cookie_token(), reveal=self.channel() != "internet"), kanal=self.channel()))
             except master_auth.AuthError as err:
                 self.error(err.status, str(err))
             except OSError:
@@ -1782,8 +1957,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/konsol/kaynaklar":
             self.json(200, self.panel.system())
             return
+        if path == "/api/konsol/ag":
+            self.json(200, self.panel.network())
+            return
+        if path == "/api/konsol/duzen":
+            self.json(200, {"duzen": self.panel.layout()})
+            return
         if path == "/api/konsol/saglik":
             self.json(200, self.panel.health())
+            return
+        # DD-208: Ayarlar → Konteynerler; tabandaki Podman'ın salt okunur görünümü. Yazma yolu yoktur.
+        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk)$", path)
+        if m:
+            view = master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout))
+            try:
+                if m.group(1) == "liste":
+                    body = view.liste()
+                else:
+                    name = master_containers.name_of(query.get("ad", [""])[0])
+                    body = view.ayrinti(name) if m.group(1) == "ayrinti" else view.gunluk(name, query.get("satir", ["200"])[0])
+            except master_containers.ContainerError as err:
+                self.error(err.status, str(err))
+                return
+            self.json(200, body)
             return
         if path == "/api/konsol/ayarlar":
             self.json(200, self.panel.settings(fresh="yenile" in query))
@@ -1896,6 +2092,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path in ("/api/konsol/oturum/kur", "/api/konsol/oturum/giris",
                     "/api/konsol/oturum/cikis", "/api/konsol/hesap/parola"):
             self.account_post(path, data)
+            return
+        if path == "/api/konsol/duzen":
+            try:
+                detail, value = self.panel.save_layout(data)
+            except ValueError as err:
+                self.error(400, str(err))
+                return
+            except master_auth.AuthError as err:
+                self.error(err.status, str(err))
+                return
+            except OSError:
+                self.error(503, "Düzen kaydedilemedi; kurulumu yeniden çalıştırın.")
+                return
+            self.audit(user, "duzen", detail, True)
+            self.json(200, {"duzen": value})
             return
         share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
         if path in {"/api/konsol/paylasim/" + name for name in share_actions}:

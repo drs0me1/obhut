@@ -3,23 +3,23 @@
   "alt": "Torrent indirmelerini yönetin.",
   "simge": "download",
   "ton": "t-video",
-  "aciklama": "Debian paketiyle sunucunun kendisinde çalışır. İlk kurulumda en az ayarı bir kez yazar; sonra ayarlarına dokunmaz.",
+  "aciklama": "Sunucudaki Podman'da konteyner olarak çalışır. İlk kurulumda en az ayarı bir kez yazar; sonra ayarlarına dokunmaz.",
   "neler": [
-    ["box", "Debian paketi qbittorrent-nox; apt güncellemeleriyle yenilenir"],
+    ["box", "linuxserver/qbittorrent imajı __TORRENT_SURUM__, özetiyle sabit; kurulum günceller"],
     ["globe", "torrent.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler)"],
     ["folder", "İndirme yeri __DOWNLOADS_PATH__, profil __TORRENT_PROFILE_DIR__"],
     ["info", "İnternete eş portu açılmaz; yalnız giden bağlantılar"]
   ],
-  "notlar": ["qbittorrent-nox · Debian", "arayüz yalnız sunucu"],
-  "gunluk_kaynak": "journalctl -u qbittorrent-nox@…",
+  "notlar": ["Podman konteyneri · __TORRENT_CONTAINER__", "arayüz yalnız sunucu"],
+  "gunluk_kaynak": "journalctl -u __TORRENT_CONTAINER__.service",
   "kaldir": {
     "neler": [
-      ["box", "Servis durur ve açılışta başlamaz; paket sunucuda kalır."],
+      ["box", "Konteyner durur ve açılışta başlamaz; imaj sunucuda kalır."],
       ["globe", "torrent.__LOCAL_DOMAIN__ adı kalkar."]
     ],
-    "veri_etiket": "Profili ve torrent listesini de sil",
+    "veri_etiket": "Profili, torrent listesini ve imajı da sil",
     "veri_kalir": "indirilenler __DOWNLOADS_PATH__ altında kalır; profil ve torrent listesi korunur.",
-    "veri_silinir": "Profil ve torrent listesi de silinir. İndirilen dosyalara dokunulmaz."
+    "veri_silinir": "Profil, torrent listesi ve konteyner imajı da silinir. İndirilen dosyalara dokunulmaz."
   },
   "durdur_notu": "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder.",
   "sayfa": {"rota": "torrent", "baslik": "qBittorrent", "ustbilgi": "Hesap, indirme dizini ve servis", "detay": "qBittorrent ayarları ve ilk giriş bilgileri"},

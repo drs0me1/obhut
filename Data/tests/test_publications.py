@@ -100,8 +100,7 @@ class PublicationTests(unittest.TestCase):
     def make_account(self):
         import master_auth
         store = master_auth.Store(self.env["KONSOL_AUTH_DIR"])
-        code, _ = store.issue_code()
-        store.create(code, "yonetici", "fixture-password-10")
+        store.create("yonetici", "fixture-password-10")  # DD-205: no code; the tailnet device is the credential
         return store
 
     def wan_firewall(self):
@@ -120,7 +119,7 @@ class PublicationTests(unittest.TestCase):
         self.assertIn("Tailscale", str(err.exception))
         with self.assertRaises(settings.SettingsError) as err:
             self.m.apply(self.panel())
-        self.assertIn("Konsol hesabını", str(err.exception))
+        self.assertIn("Konsol hesabı bölümünde", str(err.exception))
         self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
         with self.assertRaises(settings.SettingsError):
             self.m.validate(self.panel(domain="dav.example.net"))
@@ -164,7 +163,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(self.wan_firewall()[0], "0")
         row = pubs.status(self.env)[0]
         self.assertEqual(row["status"], "error")
-        self.assertIn("Tailscale üzerinden oluşturulur", row["message"])
+        self.assertIn("Konsol hesabı bölümünde oluşturun", row["message"])
 
     def legacy_http(self):
         # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in legacy consent-gated HTTP mode.

@@ -4,7 +4,9 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 (noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, host
 dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
 the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
-are built in (**DD-159**, **DD-166**). No Docker (**DD-152**), no reconcile engine.
+are built in (**DD-159**, **DD-166**). Podman is part of the base as the App Store's
+container runtime, with a read-only Settings → Konteynerler view (**DD-208**); no Docker
+(**DD-152**), no reconcile engine.
 
 **Current version:** the name of the `<version>.command` at the repository root
 (`V2_VERSION` in `Data/install.sh`).
@@ -99,10 +101,10 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 | Service | Exposure | Role |
 |---------|----------|------|
-| qBittorrent (host app, **DD-151**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store; torrent downloads. Its own page shows first-login information on request |
+| qBittorrent (Podman container, **DD-151**, **DD-209**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store (the linuxserver image, pinned by digest, host network); torrent downloads. Its own page shows first-login information on request and links to its container in Settings → Konteynerler |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); internet only for folders that turn WAN on: HTTPS on a public name set in Settings → Caddy (**DD-190/191**), or legacy consented HTTP when none is set (**DD-179**) | Separate account per folder; Tailscale and WAN each have their own on/off, RO/RW and expiry (**DD-192**). Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
-| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); user name and password, account created at first visit on the tailnet with the installer's one-time code (**DD-194**) | one sidebar: Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
+| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); no sign-in on the tailnet; the public name asks for the Konsol account created in Settings over Tailscale (**DD-194**, **DD-205**) | one sidebar: Genel bakış (clock, status and network widgets, application tiles; an edit mode for order, widget width and visibility, **DD-206**), Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
 
 qBittorrent's first profile contains only panel integration and headless-startup
 settings (**DD-178**): download path, authenticated loopback WebUI and startup
@@ -124,8 +126,8 @@ There is no Local access option in creation, settings, API or CLI.
 WG cannot reach host services, other VPN networks or private destinations routed
 through WAN. Firewall overrides are available only for WAN and Tailscale.
 
-Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq and
-Log tabs. qBittorrent's account/new-download folder is on its own application
+Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq,
+Konteynerler (**DD-208**) and Log tabs. qBittorrent's account/new-download folder is on its own application
 page. Account-only Save commits directly (**DD-165**); folder edits share the
 existing draft/review/rollback controller with Settings.
 Firewall uses full tables with service/address explanations, source CIDRs,
@@ -174,9 +176,9 @@ See [Files and archive boundaries](Data/docs/desktop-and-archives.md) and
 
 `kurulum/` supplies installation inputs, not server data:
 - `kurulum/kurulum.env` holds only the SSH host and the domain. The Konsol
-  account is created at the first visit with the one-time code the installer
-  prints (**DD-194**; forgotten: `sudo master-konsol sifirla`), and the modules
-  make or show their own.
+  account (the public name's credential; the tailnet asks for no sign-in) is
+  created in Settings over Tailscale (**DD-205**; forgotten: set a new password
+  there, or `sudo master-konsol sifirla`), and the modules make or show their own.
 - qBittorrent keeps its settings and torrent list on the server only; a
   fresh install starts it with minimal settings and a new login (**DD-151**).
 - WireGuard is not part of that: a fresh install has no WireGuard at all

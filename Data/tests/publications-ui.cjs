@@ -45,6 +45,7 @@ const server = http.createServer((req,res) => {
       else if(url.pathname==="/api/konsol/islemler") result={items:[]};
       else if(url.pathname==="/api/state") result={roots:[],path:"",capabilities:{}};
       else if(url.pathname==="/api/list") result={path:"",entries:[]};
+      else if(url.pathname==="/api/konsol/oturum") result={durum:"giris",kullanici:"fixture",kanal:"tailscale"};  // DD-205
       else if(url.pathname==="/api/konsol/kaynaklar") result={mem:{},net:{},cpu:[],torrent:{}};
       else throw new Error("Unexpected endpoint: "+url.pathname);
       await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(result)});

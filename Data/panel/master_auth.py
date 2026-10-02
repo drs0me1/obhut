@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Konsol hesabı ve oturumları (DD-194). Yalnız root; hiçbir şey sunucu dışına çıkmaz.
+"""Konsol hesabı ve oturumları (DD-194, DD-205). Yalnız root; hiçbir şey sunucu dışına çıkmaz.
 
-Parola yalnız scrypt özeti, oturum belirteci yalnız SHA-256 özeti olarak saklanır. Kök
-backend (master-panel) bu modülü içe aktarır ve Caddy'nin her panel isteği için sorduğu
-oturum denetimini yapar. `master-konsol` (root CLI) aynı dosyaları aynı kilitle değiştirir:
-tek kullanımlık ilk giriş kodu, sıfırlama ve kısa ömürlü otomasyon oturumu.
+Tailscale adresinde oturum sorulmaz: cihazı Tailscale doğrular, kök backend Caddy'nin oturum
+sorusuna orada hep "geç" der. Hesap (kullanıcı adı + parola) internet adresinin anahtarıdır;
+operatör onu Tailscale'den Ayarlar → Sistem → Konsol hesabı bölümünde oluşturur. Parola yalnız
+scrypt özeti, oturum belirteci yalnız SHA-256 özeti olarak saklanır. Kök backend (master-panel)
+bu modülü içe aktarır; `master-konsol` (root CLI) aynı dosyaları aynı kilitle değiştirir:
+durum, sıfırlama ve kısa ömürlü otomasyon oturumu.
 """
 import argparse
 import fcntl
@@ -24,12 +26,10 @@ from contextlib import contextmanager
 
 ACCOUNT_FILE = "hesap.json"
 SESSIONS_FILE = "oturumlar.json"
-SETUP_FILE = "kurulum-kodu.json"
 LOCK_FILE = ".kilit"
 COOKIE = "konsol_oturum"
 # User decision (2026-10-01): a sign-in lasts seven days; it is not renewed by use.
 SESSION_SECONDS = 7 * 86400
-SETUP_SECONDS = 24 * 3600
 AUTOMATION_MAX_SECONDS = 3600
 MAX_SESSIONS = 16
 FILE_LIMIT = 64 * 1024
@@ -38,8 +38,6 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 HEX_RE = re.compile(r"[0-9a-f]+\Z")
 PASSWORD_MIN = 10
 PASSWORD_MAX = 256
-# No 0/O, 1/I/L: the code is read from a terminal and typed on another device.
-CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 # Same budget as WebDAV logins (DD-180): five failures per address within 60 s
 # close that address for five minutes. The table is bounded and fails closed.
 FAILURES = 5
@@ -56,8 +54,7 @@ PUBLIC_BLOCK_SECONDS = 900
 # check needs 16 MiB, and one HTTP/2 connection can carry many requests.
 HASH_SLOTS = 2
 HASH_WAIT_SECONDS = 10
-NO_CODE = ("Geçerli kurulum kodu yok. Sunucuda `sudo master-konsol sifirla` ile yeni kod alın "
-           "veya kurulumu yeniden çalıştırın.")
+NO_ACCOUNT = "Konsol hesabı yok; Tailscale adresinden Ayarlar → Sistem → Konsol hesabı bölümünde oluşturun."
 BAD_LOGIN = "Kullanıcı adı veya parola hatalı."
 
 
@@ -126,12 +123,8 @@ def valid_password(password):
     return password
 
 
-def normalize_code(code):
-    return re.sub(r"[\s-]", "", code).upper()[:64] if isinstance(code, str) else ""
-
-
 class Store:
-    """Account, sessions and the one-time code in one root-only 0700 directory."""
+    """Account and sessions in one root-only 0700 directory."""
 
     def __init__(self, directory, clock=time.time):
         self.dir = str(directory)
@@ -244,14 +237,6 @@ class Store:
         self.save_sessions(sessions)
         return token
 
-    def setup_record(self):
-        value = self.read(SETUP_FILE)
-        if value is None:
-            return None
-        if not hashed_record(value) or type(value.get("bitis")) is not int:
-            raise AuthError("Konsol kurulum kodu kaydı bozuk; `sudo master-konsol sifirla` ile yenileyin.", 503)
-        return value if value["bitis"] > self.clock() else None
-
     # -- checks (every Konsol request; never writes)
     def user_for(self, token):
         key = token_key(token)
@@ -261,57 +246,43 @@ class Store:
         # A root-issued automation session may exist before the operator's first sign-in.
         return account["kullanici"] if account else "otomasyon"
 
-    def status(self, token):
+    def status(self, token, reveal=False):
+        """State for the sign-in page and the account card. The user name goes out with an open
+        session or to a trusted caller (DD-205: the tailnet address), never to an anonymous
+        internet visitor."""
         account = self.account()
         if account is None:
-            return {"durum": "kurulum", "kod": self.setup_record() is not None}
+            return {"durum": "kurulum"}
         key = token_key(token)
         if key is not None and key in self.sessions():
             return {"durum": "acik", "kullanici": account["kullanici"],
                     "oturum_gun": SESSION_SECONDS // 86400}
-        return {"durum": "giris"}
+        return {"durum": "giris", "kullanici": account["kullanici"]} if reveal else {"durum": "giris"}
 
     # -- changes
-    def _issue_code(self):
-        if self.account() is not None:
-            raise AuthError("Konsol hesabı zaten var. Sıfırlamak için: sudo master-konsol sifirla", 409)
-        raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(12))
-        record = make_record(raw)
-        record["bitis"] = int(self.clock()) + SETUP_SECONDS
-        self.write(SETUP_FILE, record)
-        return "-".join(raw[i:i + 4] for i in range(0, 12, 4)), record["bitis"]
-
-    def issue_code(self):
-        with self.locked():
-            return self._issue_code()
-
     def reset(self):
+        """Deletes the account and every session; the internet address closes with it (DD-195)."""
         with self.locked():
-            for name in (ACCOUNT_FILE, SESSIONS_FILE, SETUP_FILE):
+            for name in (ACCOUNT_FILE, SESSIONS_FILE):
                 self.remove(name)
-            return self._issue_code()
 
-    def create(self, code, user, password):
+    def create(self, user, password):
+        """DD-205: no code. The request reached the backend from another Tailscale device, which is
+        the credential; the backend refuses this over the internet. No session is opened: the
+        tailnet needs none and the internet address signs in with the new password."""
         valid_user(user)
         valid_password(password)
         with self.locked():
             if self.account() is not None:
-                raise AuthError("Konsol hesabı zaten oluşturulmuş; giriş yapın.", 409)
-            setup = self.setup_record()
-            if setup is None:
-                raise AuthError(NO_CODE, 401)
-            if not matches(setup, normalize_code(code)):
-                raise AuthError("Kurulum kodu hatalı.", 401)
+                raise AuthError("Konsol hesabı zaten var; parolayı değiştirin ya da `sudo master-konsol sifirla` ile sıfırlayın.", 409)
             record = make_record(password)
             self.write(ACCOUNT_FILE, {"schema": 1, "kullanici": user, "salt": record["salt"],
                                       "hash": record["hash"], "degisim": int(self.clock())})
-            self.remove(SETUP_FILE)
-            return self.new_session(self.sessions())
 
     def login(self, user, password):
         account = self.account()
         if account is None:
-            raise AuthError("Önce Konsol hesabını kurulum koduyla oluşturun.", 409)
+            raise AuthError(NO_ACCOUNT, 409)
         if not isinstance(user, str) or not isinstance(password, str) or len(password) > PASSWORD_MAX:
             raise AuthError(BAD_LOGIN, 401)
         same = hmac.compare_digest(user.encode("utf-8"), account["kullanici"].encode("utf-8"))
@@ -348,6 +319,19 @@ class Store:
             # Every other sign-in ends; the browser that changed the password stays.
             self.save_sessions({key: sessions[key]})
 
+    def set_password(self, new):
+        """DD-205: from the tailnet the current password is not asked (the device is the
+        credential) and no session is needed; every session ends, so internet browsers sign in again."""
+        valid_password(new)
+        with self.locked():
+            account = self.account()
+            if account is None:
+                raise AuthError(NO_ACCOUNT, 409)
+            record = make_record(new)
+            account.update(salt=record["salt"], hash=record["hash"], degisim=int(self.clock()))
+            self.write(ACCOUNT_FILE, account)
+            self.save_sessions({})
+
     def automation_session(self, seconds):
         if type(seconds) is not int or not 60 <= seconds <= AUTOMATION_MAX_SECONDS:
             raise AuthError("Süre 60–%d saniye olmalı." % AUTOMATION_MAX_SECONDS)
@@ -356,7 +340,7 @@ class Store:
 
 
 class Attempts:
-    """Per-address failure window for sign-in, setup and password changes, plus one
+    """Per-address failure window for sign-in and current-password checks, plus one
     shared window for the public address (DD-195) and a bound on parallel checks."""
 
     def __init__(self, clock=time.monotonic):
@@ -436,12 +420,11 @@ class Attempts:
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="master-konsol", description="Konsol hesabı (root, DD-194)")
+    parser = argparse.ArgumentParser(prog="master-konsol", description="Konsol hesabı (root, DD-194/DD-205)")
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
     sub = parser.add_subparsers(dest="action", required=True)
-    sub.add_parser("durum", help="hesap ve kurulum kodu durumu")
-    sub.add_parser("kod", help="hesap yokken yeni tek kullanımlık kod (yalnız kodu yazar)")
-    sub.add_parser("sifirla", help="hesabı ve oturumları siler, yeni kod verir")
+    sub.add_parser("durum", help="hesap ve açık oturum sayısı")
+    sub.add_parser("sifirla", help="hesabı ve oturumları siler; internet adresi kapanır")
     opener = sub.add_parser("oturum-ac", help="kısa ömürlü otomasyon/test oturumu; belirteci yazar")
     opener.add_argument("--sure", type=int, default=600)
     sub.add_parser("oturum-kapat", help="stdin'den okunan otomasyon oturumunu kapatır")
@@ -457,23 +440,11 @@ def main():
             if account is not None:
                 print("Konsol hesabı: %s · açık oturum: %d" % (account["kullanici"], len(store.sessions())))
             else:
-                setup = store.setup_record()
-                print("Konsol hesabı yok; " + ("kurulum kodu geçerli (bitiş %s)."
-                                               % time.strftime("%Y-%m-%d %H:%M", time.localtime(setup["bitis"]))
-                                               if setup else "geçerli kurulum kodu yok: sudo master-konsol sifirla"))
-        elif args.action == "kod":
-            try:
-                print(store.issue_code()[0])
-            except AuthError as err:
-                if err.status == 409:
-                    sys.exit(2)  # an account exists: the installer prints no code
-                raise
+                print(NO_ACCOUNT)
         elif args.action == "sifirla":
-            code, until = store.reset()
-            print("Konsol hesabı ve tüm oturumlar silindi.")
-            print("Yeni ilk giriş kodu: %s  (tek kullanımlık, %s'e kadar geçerli)"
-                  % (code, time.strftime("%Y-%m-%d %H:%M", time.localtime(until))))
-            print("http://panel.%s adresini açın; kodu girip kullanıcı adınızı ve parolanızı belirleyin."
+            store.reset()
+            print("Konsol hesabı ve tüm oturumlar silindi; internet adresi kapandı.")
+            print("Yeni hesap: Tailscale'den http://panel.%s → Ayarlar → Sistem → Konsol hesabı."
                   % env.get("LOCAL_DOMAIN", ""))
         elif args.action == "oturum-ac":
             print(store.automation_session(args.sure))

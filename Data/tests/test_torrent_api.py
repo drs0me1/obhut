@@ -1,6 +1,6 @@
 """qBittorrent package (DD-202): the settings worker ayar.py and the API module api.py behind
-the root backend's package dispatcher. No real qBittorrent or systemd: service control is faked,
-the profile and the unit drop-in are scratch files."""
+the root backend's package dispatcher. No real qBittorrent, Podman or systemd: service control is
+faked, the profile and the quadlet drop-in (DD-209) are scratch files."""
 import base64
 import contextlib
 import hashlib
@@ -46,13 +46,15 @@ class Scratch(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="torrent-pkg-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        for rel in ("profile/qBittorrent", "units", "run", "etc", "dns", "srv/downloads", "srv/media/movies", "srv/.pay"):
+        for rel in ("profile/qBittorrent", "units", "quadlet", "run", "etc", "dns", "srv/downloads", "srv/media/movies", "srv/.pay",
+                    "srv/media/a b"):
             (self.root / rel).mkdir(parents=True)
         self.env = {
             "SETTINGS_FILE": str(self.root / "etc/settings.json"), "SETTINGS_PENDING_FILE": str(self.root / "etc/pending.json"),
             "SETTINGS_DNS_FILE": str(self.root / "dns/konsol.conf"), "DNSMASQ_CONF_FILE": str(self.root / "dns/base.conf"),
             "DNSMASQ_CONF_DIR": str(self.root / "dns"), "TORRENT_PROFILE_DIR": str(self.root / "profile"),
             "UNIT_DIR": str(self.root / "units"), "MODULES_FILE": str(self.root / "modules"),
+            "KONTEYNER_BIRIM_DIR": str(self.root / "quadlet"), "TORRENT_CONTAINER": "qbittorrent", "TORRENT_UI_PORT": "61006",
             "MODULES_DIR": str(self.root / "mods"), "RUNTIME_DIR": str(self.root / "run"),
             "SERVER_ROOT": str(self.root / "srv"), "DOWNLOADS_PATH": str(self.root / "srv/downloads"), "MEDIA_SUBDIR": "media",
             "LOCAL_DOMAIN": "test", "TAILSCALE_IF": "tailscale0", "WAN_INTERFACE": "eth0", "WAN_IPV4": "203.0.113.1",
@@ -75,11 +77,14 @@ class Scratch(unittest.TestCase):
             shutil.copy(PACKAGE / name, self.pkg / name)
         (self.pkg / "paket.env").write_text((PACKAGE / "paket.env").read_text().replace("__TORRENT_UI_PORT__", "61006")
                                             .replace("__DOWNLOADS_PATH__", self.env["DOWNLOADS_PATH"]))
-        (self.pkg / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s\n" % self.env["TORRENT_PROFILE_DIR"])
+        (self.pkg / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s\nTORRENT_CONTAINER=qbittorrent\n" % self.env["TORRENT_PROFILE_DIR"])
         self.calls, self.fail_cmd, self.active = [], None, True
         self.addCleanup(patch.stopall)
         patch.object(settings, "run", side_effect=self.fake_run).start()
         patch.object(ayar, "PACKAGE_DIR", str(self.pkg)).start()
+        # DD-209: the worker waits for the interface after a restart; here it answers at once.
+        self.ui_waits = []
+        patch.object(ayar, "wait_ui", side_effect=lambda env, seconds=40: self.ui_waits.append(env["TORRENT_UI_PORT"])).start()
 
     def fake_run(self, argv, **kwargs):
         self.calls.append(list(argv))
@@ -157,6 +162,7 @@ class WorkerTests(Scratch):
         self.assertEqual(base64.b64decode(key), hashlib.pbkdf2_hmac("sha512", phrase.encode(), base64.b64decode(salt), 100000, 64))
         self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
         self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "is-active"])
+        self.assertEqual(self.ui_waits, ["61006"], "the change counts once the interface answers")
         self.assertFalse(self.drop.exists(), "an account change adds no drop-in")
 
     def test_username_only_keeps_hash_and_password_only_keeps_username(self):
@@ -169,7 +175,7 @@ class WorkerTests(Scratch):
 
     def test_failed_start_restores_the_profile_and_starts_the_service_again(self):
         before = self.conf.read_bytes()
-        self.fail_cmd = "start qbittorrent-nox@"
+        self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
             ayar.hesap(self.env, {"username": "failed-user"})
         self.assertEqual(self.conf.read_bytes(), before)
@@ -180,7 +186,16 @@ class WorkerTests(Scratch):
         self.active = False
         self.assertEqual(ayar.hesap(self.env, {"username": "stopped-user"}), {"ok": True, "username": "stopped-user"})
         self.assertEqual(self.systemctl(), ["is-active", "stop"])
+        self.assertEqual(self.ui_waits, [], "a stopped service is not waited for")
         self.assertIn("WebUI\\Username=stopped-user\n", self.conf.read_text())
+
+    def test_an_interface_that_never_opens_restores_the_profile(self):
+        before = self.conf.read_bytes()
+        with patch.object(ayar, "wait_ui", side_effect=settings.SettingsError("qBittorrent arayüzü yeniden başlatmadan sonra açılmadı.")):
+            with self.assertRaises(settings.SettingsError):
+                ayar.hesap(self.env, {"username": "slow-user"})
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "is-active", "start"], "restored, then started again")
 
     def test_dizin_writes_one_narrow_drop_in_and_restores_both_files_on_failure(self):
         before = self.conf.read_bytes()
@@ -192,7 +207,7 @@ class WorkerTests(Scratch):
         self.assertEqual(self.calls, [], "validation runs no command")
         media = str(self.root / "srv/media")
         # First failure, no drop-in yet: the profile is restored and the drop-in does not appear.
-        self.fail_cmd = "start qbittorrent-nox@"
+        self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
             ayar.dizin(self.env, {"save": media}, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
@@ -204,7 +219,9 @@ class WorkerTests(Scratch):
         self.assertIn('Session\\DefaultSavePath="%s/"\n' % media, text)
         self.assertIn('Downloads\\SavePath="%s/"\n' % media, text)
         self.assertIn("Unrelated=keep\n", text)
-        self.assertEqual(self.drop.read_text(), '[Service]\nReadWritePaths="%s"\n' % media)
+        # DD-209: a folder outside the downloads tree is one bind mount at the same path in the quadlet drop-in.
+        self.assertEqual(self.drop, self.root / "quadlet/qbittorrent.container.d/90-konsol.conf")
+        self.assertEqual(self.drop.read_text(), "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s\n" % (media, media))
         self.assertEqual(self.drop.stat().st_mode & 0o777, 0o644)
         probe = [c for c in self.calls if c[0] == "setpriv"]
         self.assertEqual(len(probe), 1, "writability is probed as the service user")
@@ -213,10 +230,23 @@ class WorkerTests(Scratch):
         self.assertEqual(ayar.durum(self.env)["save"], media + "/")
         # Second failure, with a drop-in: both files return to the previous choice.
         saved_conf, saved_drop = self.conf.read_bytes(), self.drop.read_bytes()
-        self.fail_cmd = "start qbittorrent-nox@"
+        self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
             ayar.dizin(self.env, {"save": self.env["DOWNLOADS_PATH"]}, str(self.state))
         self.assertEqual((self.conf.read_bytes(), self.drop.read_bytes()), (saved_conf, saved_drop))
+        # Back inside the downloads tree: the extra mount goes (the container already sees that folder).
+        self.calls.clear()
+        inner = self.env["DOWNLOADS_PATH"] + "/filmler"
+        os.mkdir(inner)
+        self.assertEqual(ayar.dizin(self.env, {"save": inner}, str(self.state)), {"ok": True, "save": inner + "/"})
+        self.assertFalse(self.drop.exists())
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "daemon-reload", "start", "is-active"])
+        # A folder name a bind mount cannot carry (space, ':' or '%') is refused before any service change.
+        self.calls.clear()
+        with self.assertRaises(settings.SettingsError) as err:
+            ayar.dizin(self.env, {"save": str(self.root / "srv/media/a b")}, str(self.state))
+        self.assertIn("konteynere bağlanamaz", str(err.exception))
+        self.assertEqual(self.systemctl(), [])
 
     def test_standalone_run_finds_the_base_library_through_lib(self):
         # Found live: run as its own process from the package folder, the worker has no base module

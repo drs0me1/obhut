@@ -1,0 +1,99 @@
+/* Ayarlar → Konteynerler biçemi (DD-208). Kart, rozet, tablo ve not biçemleri konsol.css ve
+   ayarlar.css'ten, renk ve yazı değişkenleri konsol.css'ten gelir. Bütün sınıflar pd- önekli. */
+.pd-root { display:grid; gap:14px; }
+
+/* üst kart: çalışma zamanı rozeti ve sayılar */
+.pd-head { display:flex; flex-wrap:wrap; align-items:center; gap:14px 28px; }
+.pd-runtime { display:flex; flex-wrap:wrap; align-items:center; gap:10px; min-width:0; }
+.pd-runtime > svg { width:20px; height:20px; color:var(--accent); }
+.pd-wrap { white-space:normal; line-height:1.4; overflow-wrap:anywhere; }
+.pd-counts { display:flex; flex-wrap:wrap; gap:8px 26px; margin:0 0 0 auto; }
+.pd-counts > div { display:grid; gap:1px; }
+.pd-counts dt { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+.pd-counts dd { margin:0; font:600 18px/1.2 var(--f-display); font-variant-numeric:tabular-nums; }
+.pd-counts dd small { font:400 12.5px var(--f-body); color:var(--muted); margin-left:5px; }
+
+/* konteyner listesi: her satır bir düğme, açık satırın altında ayrıntı */
+.pd-list { display:grid; }
+.pd-row + .pd-row { border-top:1px solid var(--line); }
+.pd-rowbtn {
+  display:grid; grid-template-columns:8.5rem minmax(0,1.6fr) minmax(0,1.1fr) minmax(0,1fr) 6.5rem 18px; gap:14px; align-items:center;
+  width:100%; padding:12px 16px; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; font:inherit;
+}
+.pd-rowbtn:hover { background:var(--surface-2); }
+.pd-rowbtn:focus-visible { box-shadow:inset 0 0 0 3px var(--focus); border-radius:0; }
+.pd-row.pd-open > .pd-rowbtn { background:var(--accent-soft); }
+.pd-rowbtn > * { min-width:0; }
+.pd-state { justify-self:start; }
+.pd-who { display:grid; gap:1px; }
+.pd-who strong { font-weight:600; overflow-wrap:anywhere; }
+.pd-image { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+.pd-meta { display:grid; gap:1px; font-size:12.5px; color:var(--muted); }
+.pd-unit { font-size:11.5px; overflow-wrap:anywhere; }
+.pd-ports { font:12.5px var(--f-mono); overflow-wrap:anywhere; }
+.pd-mounts { font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.pd-chev { color:var(--muted); display:grid; place-items:center; transition:transform .15s; }
+.pd-chev svg { width:16px; height:16px; }
+.pd-row.pd-open .pd-chev { transform:rotate(90deg); }
+.pd-empty .empty-row span { max-width:52ch; }
+
+/* ayrıntı: ayrıntılar kartı, yan yana bağlamalar ve portlar, altta günlük */
+.pd-detail { display:grid; gap:14px; padding:4px 16px 16px; background:var(--tint); border-top:1px solid var(--line); }
+.pd-detail .pd-card { box-shadow:none; align-content:start; }
+.pd-card .card-head small { display:block; }
+.pd-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.pd-facts { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(14rem,100%),1fr)); gap:12px 18px; margin:0; }
+.pd-facts > div { display:grid; gap:3px; min-width:0; align-content:start; }
+.pd-facts dt { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+.pd-facts dd { margin:0; font-size:13.5px; overflow-wrap:anywhere; display:flex; flex-wrap:wrap; gap:3px 8px; align-items:center; }
+.pd-facts dd small { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+.pd-facts dd .mono { font-size:12.5px; }
+.pd-facts .pd-cmd { grid-column:1 / -1; }
+.pd-src { overflow-wrap:anywhere; }
+
+/* bağlama ve port tabloları: kabuğun .table/.tr ızgarası, kendi sütunları */
+.pd-t .tr { align-items:start; padding:9px 14px; }
+.pd-mounts-t .tr { grid-template-columns:minmax(0,1.1fr) minmax(0,1.4fr) 4.5rem 8rem; }
+.pd-ports-t .tr { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 6rem; }
+.pd-path { font-size:12.5px; overflow-wrap:anywhere; }
+.pd-ip { font:12px var(--f-body); color:var(--muted); }
+.pd-t .tr > span::before { display:none; content:attr(data-l); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-family:var(--f-body); }
+.pd-note { border-radius:9px; }
+
+/* günlük kartı: açılır; satır sayısı seçimi, Yenile, en yenisi altta */
+.pd-logcard > summary { list-style:none; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:8px 12px; flex-wrap:wrap; }
+.pd-logcard > summary::-webkit-details-marker { display:none; }
+.pd-logcard > summary::after { content:""; width:7px; height:7px; border-right:1.6px solid var(--muted); border-bottom:1.6px solid var(--muted); transform:rotate(-45deg); margin:0 6px 0 auto; transition:transform .15s; }
+.pd-logcard[open] > summary::after { transform:rotate(45deg); }
+.pd-logcard > summary small { margin-left:0; }
+.pd-logtools { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+.pd-tail { display:flex; gap:6px; flex-wrap:wrap; }
+.pd-tail .btn { min-width:3.2rem; font-variant-numeric:tabular-nums; }
+.pd-tail .btn[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--ink); }
+.pd-log {
+  margin:0; max-height:26rem; min-height:6rem; overflow:auto; padding:10px 12px; border-radius:9px; border:1px solid var(--line);
+  background:var(--surface-2); color:var(--ink); font:12px/1.55 var(--f-mono); white-space:pre-wrap; overflow-wrap:anywhere;
+}
+.pd-log.pd-empty { color:var(--muted); }
+
+@media(max-width:1000px) {
+  .pd-rowbtn { grid-template-columns:8.5rem minmax(0,1.6fr) minmax(0,1.2fr) 6.5rem 18px; }
+  .pd-ports { display:none; }
+}
+@media(max-width:760px) {
+  .pd-counts { margin-left:0; }
+  .pd-rowbtn { grid-template-columns:minmax(0,1fr) 18px; gap:6px 10px; padding:12px 14px; }
+  .pd-state { grid-column:1; grid-row:1; }
+  .pd-chev { grid-column:2; grid-row:1; }
+  .pd-who, .pd-meta, .pd-ports, .pd-mounts { grid-column:1; }
+  .pd-ports { display:block; }
+  .pd-mounts { white-space:normal; }
+  .pd-detail { padding:4px 10px 12px; gap:12px; }
+  .pd-grid { grid-template-columns:minmax(0,1fr); }
+  .pd-t .tr.head { display:none; }
+  .pd-mounts-t .tr, .pd-ports-t .tr { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; }
+  .pd-mounts-t .tr > .pd-path { grid-column:1 / -1; }
+  .pd-t .tr > span { display:grid; gap:2px; justify-items:start; }
+  .pd-t .tr > span::before { display:block; }
+  .pd-log { max-height:20rem; font-size:11.5px; }
+}

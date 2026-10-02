@@ -120,11 +120,11 @@ try:
         status_code, _, body = public(api)
         assert status_code == 401 and json.loads(body)["giris"] is True, (api, status_code)
     assert json.loads(public("/api/konsol/oturum")[2]) == {"durum": "giris", "kanal": "internet"}
-    status_code, _, body = public("/api/konsol/oturum/kur", {"kod": "AAAA-BBBB-CCCC", "kullanici": "x-test", "parola": "x" * 12})
+    status_code, _, body = public("/api/konsol/oturum/kur", {"kullanici": "x-test", "parola": "x" * 12})
     assert status_code == 403 and "Tailscale" in json.loads(body)["error"], status_code
     status_code, _, _ = public("/api/konsol/oturum/giris", {"kullanici": "x-test-wrong", "parola": "wrong-password-x"})
     assert status_code == 401, status_code
-    print("PASS: public sign-in page with HSTS; pages, Files and root APIs need a session; no setup code over the internet", flush=True)
+    print("PASS: public sign-in page with HSTS; pages, Files and root APIs need a session; no account creation over the internet", flush=True)
 
     status_code, _, body = public("/", cookie=COOKIE, api=False)
     assert status_code == 200 and b'id="panel-sidebar"' in body, status_code

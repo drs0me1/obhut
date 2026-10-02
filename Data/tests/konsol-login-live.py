@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Opt-in DD-194 sign-in acceptance from a tailnet client against an authorized test host.
+"""Opt-in DD-205 sign-in acceptance from a tailnet client against an authorized test host.
 
-Requires a host WITHOUT a Konsol account (a fresh install); otherwise it exits 3 and
-touches nothing. It issues its own one-time code over SSH (root CLI), creates a temporary
-account through the real Caddy path, checks page/API protection, sign-in/out, password
-change and the attempt limit, then resets: no account remains and the operator gets a
-new code with `sudo master-konsol sifirla`. Codes, passwords and tokens stay in memory.
+Requires a host WITHOUT a Konsol account; otherwise it exits 3 and touches nothing. From this
+Mac (a Tailscale device) it checks that Konsol, Files and the root API open without any
+sign-in and that the sign-in page goes back to Konsol, creates a temporary internet account
+through the real Caddy path (no code, no session), changes its password from the tailnet
+without the current one, signs in and out with it, checks the attempt limit, then resets: no
+account remains. Passwords and tokens stay in memory. The internet address itself needs a
+public name and is covered by panel-public-live.py.
 
 Run on the operator Mac: python3 Data/tests/konsol-login-live.py --host nrm
 """
 import argparse
 import http.client
 import json
-import re
 import secrets
 import shlex
 import subprocess
@@ -59,67 +60,55 @@ def call(method, path, body=None, cookie=None, api=True):
         conn.close()
 
 
-def new_code():
-    found = re.search(r"\b([A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4})\b", run(CLI + "sifirla"))
-    if not found:
-        raise RuntimeError("No one-time code in the reset output (output withheld)")
-    return found.group(1)
-
-
 user = "test-" + secrets.token_hex(4)
 password, changed = secrets.token_urlsafe(18), secrets.token_urlsafe(18)
 try:
-    code = new_code()
-    assert call("GET", "/giris.html", api=False)[0] == 200
-    assert call("GET", "/konsol.css", api=False)[0] == 200
-    for page in ("/", "/konsol.js", "/index.html"):
-        status, headers, _ = call("GET", page, api=False)
-        assert (status, headers.get("location")) == (302, "/giris.html"), (page, status)
-    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/uygulama/wireguard/state"):
-        status, _, body = call("GET", api)
-        assert status == 401 and json.loads(body)["giris"] is True, (api, status)
-    assert json.loads(call("GET", "/api/konsol/oturum")[2]) == {"durum": "kurulum", "kod": True}
-    print("PASS: sign-in page/files open; every Konsol page, file and API needs a session", flush=True)
-
-    assert call("POST", "/api/konsol/oturum/kur", {"kod": "AAAA-BBBB-CCCC", "kullanici": user, "parola": password})[0] == 401
-    status, headers, _ = call("POST", "/api/konsol/oturum/kur", {"kod": code.lower(), "kullanici": user, "parola": password})
-    assert status == 200, status
-    attributes = [part.strip() for part in headers["set-cookie"].split(";")]
-    assert attributes[1:] == ["Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=604800"], attributes[1:]
-    first = attributes[0]
-    status, _, body = call("GET", "/", cookie=first, api=False)
-    assert status == 200 and b'id="panel-sidebar"' in body
+    # Tailnet: no session anywhere; the sign-in page goes back to Konsol.
+    for page in ("/", "/index.html", "/konsol.js"):
+        status, _, body = call("GET", page, api=False)
+        assert status == 200, (page, status)
+    status, headers, _ = call("GET", "/giris.html", api=False)
+    assert (status, headers.get("location")) == (302, "/"), (status, headers.get("location"))
     for api in ("/api/konsol/kaynaklar", "/api/state"):
-        assert call("GET", api, cookie=first)[0] == 200, api
-    assert json.loads(call("GET", "/api/konsol/oturum", cookie=first)[2])["kullanici"] == user
-    assert call("POST", "/api/konsol/oturum/kur", {"kod": code, "kullanici": user, "parola": password})[0] == 409
-    print("PASS: one-time code creates the account once; the session opens pages, files and API", flush=True)
+        assert call("GET", api)[0] == 200, api
+    assert json.loads(call("GET", "/api/konsol/oturum")[2]) == {"durum": "kurulum", "kanal": "tailscale"}
+    print("PASS: a Tailscale device opens Konsol, Files and the root API without a sign-in; /giris.html goes back", flush=True)
+
+    status, headers, body = call("POST", "/api/konsol/oturum/kur", {"kullanici": user, "parola": password})
+    assert status == 200 and json.loads(body) == {"durum": "kuruldu"} and "set-cookie" not in headers, status
+    assert call("POST", "/api/konsol/oturum/kur", {"kullanici": user, "parola": password})[0] == 409
+    assert json.loads(call("GET", "/api/konsol/oturum")[2]) == {"durum": "giris", "kullanici": user, "kanal": "tailscale"}
+    assert run(CLI + "durum").startswith("Konsol hesabı: " + user)
+    print("PASS: the internet account is created from the tailnet without a code or session", flush=True)
 
     status, headers, _ = call("POST", "/api/konsol/oturum/giris", {"kullanici": user, "parola": password})
     assert status == 200
-    second = headers["set-cookie"].split(";", 1)[0]
-    assert call("POST", "/api/konsol/hesap/parola", {"eski": "wrong-" + password, "yeni": changed}, cookie=first)[0] == 401
-    assert call("POST", "/api/konsol/hesap/parola", {"eski": password, "yeni": changed}, cookie=first)[0] == 200
-    assert call("GET", "/api/konsol/kaynaklar", cookie=second)[0] == 401
-    assert call("GET", "/api/konsol/kaynaklar", cookie=first)[0] == 200
+    attributes = [part.strip() for part in headers["set-cookie"].split(";")]
+    assert attributes[1:] == ["Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=604800"], attributes[1:]
+    first = attributes[0]
+    assert json.loads(call("GET", "/api/konsol/oturum", cookie=first)[2])["durum"] == "acik"
+    # Tailnet password change: no current password, no session; every session ends.
+    assert call("POST", "/api/konsol/hesap/parola", {"yeni": "short"})[0] == 400
+    assert call("POST", "/api/konsol/hesap/parola", {"yeni": changed})[0] == 200
+    assert json.loads(call("GET", "/api/konsol/oturum", cookie=first)[2])["durum"] == "giris"
     assert call("POST", "/api/konsol/oturum/giris", {"kullanici": user, "parola": password})[0] == 401
     status, headers, _ = call("POST", "/api/konsol/oturum/giris", {"kullanici": user, "parola": changed})
     assert status == 200
-    third = headers["set-cookie"].split(";", 1)[0]
-    status, headers, _ = call("POST", "/api/konsol/oturum/cikis", {}, cookie=third)
+    second = headers["set-cookie"].split(";", 1)[0]
+    status, headers, _ = call("POST", "/api/konsol/oturum/cikis", {}, cookie=second)
     assert status == 200 and "Max-Age=0" in headers["set-cookie"]
-    assert call("GET", "/", cookie=third, api=False)[0] == 302
-    print("PASS: sign-in, password change closes other sessions, old password refused, sign-out", flush=True)
+    assert json.loads(call("GET", "/api/konsol/oturum", cookie=second)[2])["durum"] == "giris"
+    print("PASS: sign-in with the account, tailnet password change ends sessions, old password refused, sign-out", flush=True)
 
-    # Three failures so far (wrong code, wrong current password, old password).
-    for _ in range(2):
+    # One failure so far (the old password). Five within a minute block this address.
+    for _ in range(4):
         assert call("POST", "/api/konsol/oturum/giris", {"kullanici": user, "parola": "wrong-" + changed})[0] == 401
     status, headers, body = call("POST", "/api/konsol/oturum/giris", {"kullanici": user, "parola": changed})
     assert status == 429 and int(headers["retry-after"]) > 0, status
     print("PASS: five failures from one address block sign-in with Retry-After", flush=True)
 finally:
-    new_code()  # removes the test account and sessions; this code is never shown
+    run(CLI + "sifirla")  # removes the test account and its sessions; the internet address stays closed
     # The attempt limit lives in the backend's memory; a restart frees this address.
     run("sudo -n systemctl restart master-panel.service")
-    assert "Konsol hesabı yok" in run(CLI + "durum")
-    print("CLEANUP: test account and sessions removed; show a fresh code with: sudo master-konsol sifirla", flush=True)
+    assert run(CLI + "durum").startswith("Konsol hesabı yok")
+    print("CLEANUP: test account and sessions removed; the host has no Konsol account again", flush=True)

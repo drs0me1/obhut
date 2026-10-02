@@ -11,14 +11,14 @@ const magaza = path.join(__dirname, "../magaza");
 const meta = (id) => JSON.parse(fs.readFileSync(path.join(magaza, id, "konsol.json"), "utf8").replace(/__[A-Z_]+__/g, "x"));
 const modules = [
   { id: "wireguard", installed: false, state: "yok", runtime: "konsol", live: "-", durdurulabilir: false, konsol: meta("wireguard") },
-  { id: "torrent", installed: true, state: "calisiyor", runtime: "host", live: "running", durdurulabilir: true, konsol: meta("torrent"),
+  { id: "torrent", installed: true, state: "calisiyor", runtime: "konteyner", live: "running", durdurulabilir: true, konsol: meta("torrent"),
     sayfa: ["sayfa.js", "sayfa.css"], urls: { tailscale: "http://torrent.ayc", internet: null } },
 ];
-const durum = { installed: true, running: true, unit: "qbittorrent-nox@master-downloads.service", profile: "/var/lib/qbittorrent",
+const durum = { installed: true, running: true, unit: "qbittorrent.service", container: "qbittorrent", profile: "/var/lib/qbittorrent",
   downloads: "/srv/downloads", save: "/srv/downloads/", save_inside: true, temp: "", temp_on: false, temp_inside: false,
   ui: "127.0.0.1:61006", peer_port: 0, username: "admin" };
 const writes = [], errors = [];
-let hold = false, release = null, failNext = "";
+let hold = false, release = null, failNext = "", durumReads = 0;
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}) });
   try {
@@ -40,7 +40,7 @@ let hold = false, release = null, failNext = "";
       const req = route.request(), url = new URL(req.url()), p = url.pathname;
       let result = {};
       if (p === "/api/konsol/moduller") result = { items: modules };
-      else if (p === "/api/uygulama/torrent/durum") result = durum;
+      else if (p === "/api/uygulama/torrent/durum") { durumReads++; result = durum; }
       else if (p === "/api/uygulama/torrent/hesap" || p === "/api/uygulama/torrent/dizin") {
         const body = req.postDataJSON();
         writes.push({ path: p, body });
@@ -83,6 +83,10 @@ let hold = false, release = null, failNext = "";
     assert.equal(await page.locator("#title").innerText(), "qBittorrent");
     assert.equal(await page.getByRole("tab").count(), 0, "No settings tabs on the application page");
     assert.equal(await page.locator("#torrent-open").getAttribute("href"), "http://torrent.ayc");
+    // DD-209: the app runs in Podman; its container view (state, mounts, log) is one link away in Settings.
+    await page.waitForFunction(() => document.querySelector("#torrent-container")?.getAttribute("href") === "#/ayarlar/konteynerler/qbittorrent");
+    // Found live: an absent bar item must not become the text "null".
+    assert(!(await page.locator("#torrent-status").innerText()).includes("null"), "no null text in the service bar");
     assert.equal(await username().inputValue(), "admin");
     assert.equal(await box.locator("div.as-body > code").innerText(), "/srv/downloads/");
     // Validation stays in the browser: no request leaves for an invalid username or password.
@@ -138,7 +142,9 @@ let hold = false, release = null, failNext = "";
     assert.deepEqual(writes[4], { path: "/api/uygulama/torrent/dizin", body: { save: "/srv/media" } });
     await page.waitForFunction(() => document.querySelector("#torrent-settings .as-message")?.textContent.includes("İndirme dizini kaydedildi: /srv/media/"));
     assert.equal(await box.locator("div.as-body > code").innerText(), "/srv/media/");
-    assert.equal(await box.locator(".as-note.warn").count(), 1, "A folder outside downloads is flagged");
+    // DD-209: a folder outside downloads is bind-mounted into the container; the page says so, calmly.
+    assert.equal(await box.locator(".as-note.warn").count(), 0);
+    assert.equal(await box.getByText("Dizin indirme klasörünün dışında; konteynere ayrıca bağlanmıştır.", { exact: true }).count(), 1, "A folder outside downloads is named");
     assert.equal(await page.locator("dialog[open]").count(), 0);
     // Service bar: stop asks, start does not; the link follows the running state.
     await page.locator("#torrent-status").getByRole("button", { name: "Durdur", exact: true }).click();
@@ -186,8 +192,30 @@ let hold = false, release = null, failNext = "";
     durum.save = originalSave;
     await page.getByRole("button", { name: "Yenile", exact: true }).click();
     await page.getByText(originalSave, { exact: true }).waitFor();
+    // A refresh or the shell's 10 s poll re-reads the status while the operator types: the typed
+    // password, the half-typed repeat, the focus and the caret survive the re-render (v2-185).
+    await page.setViewportSize({ width: 1400, height: 1000 });
+    await password().fill("draft-password-1"); await repeat().click(); await repeat().pressSequentially("draft-pa");
+    const rebuilt = async (action) => {   // wait until the status read has rebuilt the form
+      const before = await box.locator("form").elementHandle();
+      await action();
+      await page.waitForFunction((old) => { const f = document.querySelector("#torrent-settings form"); return f && f !== old; }, before);
+    };
+    await rebuilt(() => page.getByRole("button", { name: "Yenile", exact: true }).click());
+    assert.equal(await password().inputValue(), "draft-password-1", "Typed password survives a refresh");
+    assert.equal(await repeat().inputValue(), "draft-pa", "Half-typed repeat survives a refresh");
+    await page.clock.install();
+    await repeat().click(); await repeat().pressSequentially("ss");
+    const reads = durumReads;
+    await rebuilt(() => page.clock.runFor(10500));
+    assert.equal(durumReads, reads + 1, "The poll read the status once");
+    assert.deepEqual(await page.evaluate(() => { const a = document.activeElement; return [a && a.name, a && a.selectionStart, a && a.selectionEnd]; }),
+      ["repeat", 10, 10], "Focus and caret stay in the repeat field across the poll");
+    assert.equal(await repeat().inputValue(), "draft-pass");
+    assert.equal(await password().inputValue(), "draft-password-1");
+    assert.equal(await username().inputValue(), "another-user", "An untouched username still follows the server");
     assert.deepEqual(errors, []);
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
-    console.log("PASS: qBittorrent package page — direct account save (validation, hold, failure, username-only, password-only, unchanged), folder picker to the package API, service bar with link, five widths/dark; screenshots in " + shots);
+    console.log("PASS: qBittorrent package page — direct account save (validation, hold, failure, username-only, password-only, unchanged), draft kept across refresh/poll, folder picker to the package API, service bar with link, five widths/dark; screenshots in " + shots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

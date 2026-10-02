@@ -13,6 +13,232 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-209: qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network (v2-186)
+
+- **Request (user, 2026-10-03):** "sunucuda podman üzerinden yüklü qbittorrent ama ekranda ve app
+  store içerisinde uygulama gibi görülmesi daha iyi olur" — after the Podman trial
+  (DD-208) and having removed the native qBittorrent from Konsol themselves, the qBittorrent that
+  runs in Podman should be *the* qBittorrent application. An earlier message had already named
+  qBittorrent as the one application worth moving into a container.
+- **Decision:** one App Store application `torrent`, now a container. No second "qBittorrent
+  (container)" entry: two would collide on the UI port, the Caddy name `torrent.<domain>`, the
+  publication row, the page route and the downloads folder. The Debian package `qbittorrent-nox`
+  is no longer installed (fresh-install rule: an old enabled `qbittorrent-nox@` unit stops the
+  install with the manual `systemctl disable --now …` step instead of a migration).
+- **Engine (generic, no application name):** `PAKET_CALISMA=konteyner` (Konsol shows a
+  "Konteyner" chip; liveness is the unit's, like `host`); `PAKET_KONTEYNER` names the package's
+  quadlet file, placed into `KONTEYNER_BIRIM_DIR` (`/etc/containers/systemd`, from
+  `defaults.env`/state) with a `daemon-reload` when it changed, removed on `kaldir`, checked by
+  the engine's and the installer's leftover checks and pruned for uninstalled packages like a
+  drop-in; `PAKET_IMAJ` is the image, accepted only as `name@sha256:<64 hex>`;
+  `paket_imaj_cek` pulls it only when `podman image exists` says no (bounded by `timeout 900`),
+  `paket_imaj_sil` removes it by image id (`podman rmi NAME@sha256:…` answers "tag not known",
+  found live) and leaves an image that another tag or container uses.
+- **Quadlet (`magaza/torrent/qbittorrent.container`):** `Network=host` (no bridge, no
+  netavark NAT chains: the firewall stays the project's), `Pull=never` (boots and re-runs never
+  download), journald logging (`podman logs` and `journalctl -u` both work), `StopTimeout=45`,
+  `DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT`, PUID/PGID = the downloads account,
+  `UMASK=002`, `WEBUI_PORT=TORRENT_UI_PORT`, `[Service] Nice=10 CPUWeight=50` (DD-181),
+  `After=master-firewall.service`, `[Install] WantedBy=multi-user.target`. Two mounts only: the
+  profile `TORRENT_PROFILE_DIR` as `/config` (the image's layout `/config/qBittorrent/` equals the
+  native XDG layout, so `ayar.py`, `yayin.py`, `klasorler.py`, `trafik.py` read the same paths) and
+  `DOWNLOADS_PATH` **at the same path**, so every path qBittorrent stores is a host path (Files'
+  protected folders, share validation and `save_inside` keep working). The trash and the share
+  root are simply absent inside. The image is the linuxserver build pinned by its OCI index
+  digest (amd64 + arm64) in the package's own `torrent.env` (`TORRENT_IMAGE`; `TORRENT_SURUM`
+  only for the App Store text); an update is a new digest plus an installer run (the changed
+  quadlet recreates the container). No `AutoUpdate=` and no `podman-auto-update.timer`.
+- **Live findings that shaped it (nrm, 2026-10-03):** with `NoNewPrivileges=true` the image's s6
+  init ignored SIGTERM and was SIGKILLed after the stop timeout (30–45 s instead of 3 s, the unit
+  left "failed" — qBittorrent writes settings and resume data on shutdown), so the quadlet
+  carries no `NoNewPrivileges` and the hook resets a failed unit when it stops it. The seeded
+  `WebUI\Address=127.0.0.1` survives the image's init (it copies its defaults only when no
+  `qBittorrent.conf` exists), so the profile seed must precede the first start. The unit is
+  `active` before qBittorrent listens, so the worker waits (≤40 s) for the loopback port before a
+  change counts. Journal lines of the container carry the unit's `_SYSTEMD_INVOCATION_ID`, so the
+  first-login password is read exactly as before.
+- **Lifecycle:** a generated unit cannot be enabled or disabled; `durdur` stops it and removes the
+  quadlet (nothing starts at boot), `baslat` places it again, an installer run keeps a stopped app
+  stopped. `kaldir` keeps the image (as a kept Debian package was); `--veri` deletes the profile,
+  the folder drop-in and the image. Verification on `kur`/`baslat`/`uygula`: the
+  `qbittorrent-nox` process's host uid (`podman top … huid`) is `DOWNLOADS_UID`; no mount is `/`,
+  `SERVER_ROOT`, the trash or the share root; the UI port listens on `127.0.0.1` only; first
+  install still requires the unauthenticated 403 on loopback and through `torrent.<domain>`.
+- **Folder choice:** a download folder inside the downloads tree needs nothing; one outside it
+  (the library) becomes one quadlet drop-in `qbittorrent.container.d/90-konsol.conf` with a
+  same-path `Volume=` (Podman merges drop-ins), replacing the old `ReadWritePaths` drop-in.
+  Names with whitespace, `:` or `%` cannot be expressed as a bind mount and are refused.
+- **Trade-offs, stated:** memory ~100 MB for the service cgroup versus ~53 MB native; a 228 MB
+  image (pulled once, ~1 min); the container's init runs as root inside its namespaces (the app
+  itself as PUID), weaker than the native unit's `ProtectSystem=strict` + `NoNewPrivileges`, but
+  the container sees only its two mounts. Updates no longer come from apt; they are a digest
+  bump in the repository. Not done: rootless/user-namespace mapping, image signature checks,
+  automatic updates, a container log view on the app's own page (it links to Settings →
+  Konteynerler instead).
+
+### DD-208: Podman is base infrastructure; Settings → Konteynerler is its read-only view (v2-185, v2-186)
+
+- **Request (user, 2026-10-02):** after setting the "iOS-like store" restructuring aside
+  ("amacımız stabilite"), the user asked to try qBittorrent as a container beside the native
+  one and, on the assistant's comparison, chose Podman over Docker ("öneriyi kabul ediyorum");
+  the trial on nrm (quadlet unit, host network, PUID 1000) left the firewall rule set untouched,
+  needed no daemon and survived a reboot (SESSION.md, 2026-10-02). Then: "podman da çalışan
+  konteyner'ı panelden görebileceğimiz bir yapı … kabaca kontainer durumu, mount dosyaları,
+  portlar ve log görmek istiyorum sadece". v2-185 first shipped this as an App Store package
+  (`magaza/podman/`, never committed). On 2026-10-03 the user corrected it: "podman bir platform
+  sonuçta ayrı bir uygulama gibi görülmesin … app store tarafından kullanılabilen bir taban
+  yapı olarak birlikte kurulsun".
+- **Decision (v2-186):** Podman is part of the base. Stage 1 installs `podman netavark` without
+  recommends (no buildah, criu, slirp4netns, passt or uidmap: host-network rootful containers
+  need none; `netavark` is named because Ubuntu noble's podman does not depend on it) and dies
+  unless `podman info` answers; stage 7 checks it again and the summary prints its version. No
+  daemon: Debian ships `podman.socket`, `podman.service` and `podman-auto-update.timer`
+  disabled and the installer never enables them. The App Store catalogue is the applications
+  only; container applications use the runtime (DD-209).
+- **The view:** Settings → **Konteynerler** (a sixth tab; the sidebar's "installed applications"
+  stays for applications). `panel/master_containers.py` maps `podman ps/inspect/images/system
+  df/logs` for `GET /api/konsol/konteynerler/{liste,ayrinti,gunluk}` (shared Konsol gates, no
+  write route at all); `console/konteynerler.js`/`.css` render every container on the host with
+  state, image, unit, mounts, ports and a masked log tail (100–1000 lines, in-place refresh that
+  keeps the scroll). The tab's DOM node is persistent across Settings redraws, does not load
+  the settings document, and opens a named container from `#/ayarlar/konteynerler/<name>` —
+  the link an application page uses for its own container.
+- **Safety of the read path:** the reads run inside `master-panel`'s sandbox (verified on nrm:
+  `ProtectSystem=full`, `RestrictNamespaces`, `NoNewPrivileges` do not block them), container
+  names are validated, `Config.Env` is never returned (images carry passwords there) and
+  `password|parola|passwd|secret|token|api key|private key … : value` is masked in log lines
+  before they leave the server. Nothing here starts, stops or removes a container: that belongs
+  to the application that owns it.
+- **Why base and not a package:** a runtime is not something an operator "uses"; applications
+  depend on it, and the engine has no dependency key. As a package it would also have needed a
+  removal refusal ("remove the containers first") and a store-wide `podman system reset` for
+  `--veri`, both wrong once applications run in it. DD-152 holds: no Docker, no daemon, no
+  iptables churn (host network only).
+
+### DD-207: A package's backend write paths exist before the backend starts (v2-184)
+
+- **Report (user, 2026-10-02):** creating the first WireGuard network from Konsol failed with
+  "install: cannot change permissions of '/etc/wireguard/clients-wg0': No such file or
+  directory". Reproduced on nrm inside the root backend's mount namespace: `/etc/wireguard`
+  was read-only there (`mkdir` → EROFS) while writable on the host.
+- **Cause.** DD-203 renders `ReadWritePaths=-/etc/wireguard` into `master-panel.service`; systemd
+  binds such a path writable only if it exists when the service starts and silently skips it
+  otherwise (the `-`). On a host where WireGuard was never installed, `/etc/wireguard` appears
+  only when the App Store installs the package (its hook, or `wireguard-tools`), after the
+  backend started, so the backend keeps seeing it through the read-only `/etc` until it
+  restarts. The same happens when the folder is removed while the backend runs (the kernel
+  detaches the bind) and created again — on nrm the assistant's test cleanup purged
+  `wireguard-tools`, which removed the empty folder, and the operator's reinstall surfaced it.
+  The v2-177 live test passed only because `/etc/wireguard` already existed when the backend
+  started.
+- **Fix.** (1) The installer creates every catalogued declared path (0700 root) before it
+  (re)starts the backend, so a fresh host binds `/etc/wireguard` from the start; while
+  WireGuard is not installed the folder is empty. (2) The installer also restarts a running
+  backend whose `/proc/<pid>/mountinfo` lacks a writable mount at a declared path, so a re-run
+  repairs a host in that state. (3) The store engine runs the same check after `kur`, `baslat`
+  and `uygula` and restarts the backend once when needed (only in the removed-and-recreated
+  case); Konsol keeps following a running operation quietly through that brief restart instead
+  of dropping it after one failed poll. (4) `master-wg` checks that its folder is writable
+  before any writing command and otherwise says so in Turkish with the remedy.
+- **Rejected:** running every `master-wg` call through a transient unit outside the backend's
+  sandbox (latency on every peer action and a larger change), and a per-install drop-in with an
+  unconditional backend restart (DD-203's reason still holds).
+- **UI in the same version:** the new-network screen became one card as wide as the windows
+  (560 px: label and port side by side, the DNS picker, the outcome lines, the buttons) instead
+  of three cards and a summary column; DNS options take two lines (name and badge, then
+  description · addresses), so the network settings, peer add and peer edit windows show the
+  whole list without an inner scroll; the network settings window has one hint instead of two.
+
+### DD-206: Overview edit mode, a server-side layout and a network card (v2-183)
+
+- **Request (user, 2026-10-02):** "ana ekrana sol alta bir düzenle seçeneği ekleyelim … uygulama
+  simgelerinin yerini değiştirebilelim ve widgetlarda boyut ayarlaması yapabilelim", then, on the
+  assistant's plan: width only ("yükseklik sabit"), a show/hide switch, the clock card without
+  version details (time, date, uptime, Tailscale and WAN addresses), and a network card with the
+  server's download/upload every 1–2 s plus WireGuard's and qBittorrent's totals in one card.
+- **Edit mode.** A "Düzenle" pill bottom-left, below the tiles and sticky to the bottom of the
+  screen on a long page (a fixed pill covered the last row's controls on a short page — seen in the
+  live look; sticky rests below the tiles at the end), opens a draft: tiles wiggle and become non-link groups with ‹ › buttons, and can be dragged with
+  pointer events (one path for mouse and touch; listeners sit on the document because moving the
+  dragged tile in the DOM drops pointer capture — found by the browser test). Widgets get − / +
+  (1–4 of four columns) and Gizle/Göster; a hidden widget stays visible, dimmed, while editing.
+  "Bitti" saves, "Vazgeç"/Escape/leaving the page drops the draft, "Varsayılan" returns to the
+  defaults (a draft equal to the defaults deletes the record). Data refreshes do not redraw while
+  editing; numbers keep updating in place. Reduced motion stops the wiggle. The tiles (and
+  Düzenle) wait for the module list's first answer, so installed applications do not jump in
+  after the page and a draft never misses them.
+- **Layout on the server, not in the browser:** the same overview on every device. The root
+  backend stores `KONSOL_AUTH_DIR/duzen.json` through the account store's safe writer (0600,
+  atomic, no-follow, its lock), checks only the shape — keys, counts, width 1–4, boolean
+  visibility — and leaves meaning to the shell, so the backend names no tile or widget. A damaged
+  record falls back to the defaults. Widgets keep a fixed order (clock, status, network); only
+  tiles are reordered. Grid: four columns (two below 1100 px, one below 480 px), the row sets the
+  height; charts shrink inside a one-column card (container queries).
+- **Network card.** Server rates come from the WAN interface's sysfs counters: the background
+  sampler adds a point every 10 s and each `/api/konsol/ag` request one more when 1.5 s passed,
+  so the card's 2-s polling gives live rates and the chart has the last 120 s at once; no command
+  runs. Applications report through a new optional manifest key, `PAKET_TRAFIK` (a module in the
+  package folder exposing `trafik(env) → {down, up, since}`, loaded like `yayin.py`/`klasorler.py`
+  and cached 2 s), so the shell and the backend still name no application. Direction is as the
+  application's users see it. qBittorrent: its own all-time totals (AlltimeDL/AlltimeUL), read
+  from `qBittorrent-data.conf` ([Stats] AllStats, a QVariantHash that QSettings streams in the Qt
+  4.0 format behind INI escapes) with the file's time as `at` — no login, no command; qBittorrent
+  writes the file every few minutes while transferring and when it stops, so the figure can lag
+  by that much and the card says when it was saved. WireGuard: the bytes its interfaces sent to
+  (down) and received from (up) the peers, `since` the earliest running network's unit start.
+- **Rejected on the live host — systemd IP accounting.** The first version counted qBittorrent's
+  unit with `IPAccounting=yes`. On nrm (Debian 13, systemd 257) every `daemon-reload` dropped the
+  counters of units loaded from disk ("[no data]" until the service restarts; transient units kept
+  theirs), and installer runs, package installs and apt all reload systemd, so the card showed
+  "ölçülemedi" most of the time. qBittorrent's API would give live all-time figures but needs its
+  login, and a localhost bypass would open it to every local client behind Caddy.
+- **Clock card:** time, date, uptime, Tailscale and WAN IPv4; host, OS and kernel stay in
+  Ayarlar → Sistem.
+- **Not done:** widget reordering, per-device layouts, all-time application totals, per-peer or
+  per-network breakdown in the card.
+
+### DD-205: No sign-in on the tailnet; the account is the public name's credential (v2-181)
+
+- **Request (user, 2026-10-02):** "Panel girişinde eğer tailscale adı ile panel erişimi varsa
+  parola sormadan açabilelim. ama https arayüzden erişim olursa kullanıcı adı ve parola ile
+  erişim sağlayalım. kullanıcı ilk kullanımı tailscale arayüz ile yapar ve https arayüz
+  kullanıcı adı ve şifresini oluşturur sonra giriş yapabilir olsun" — accepted with the
+  assistant's recommendation: passwordless tailnet, the account made in Settings, no setup
+  code, tailnet password change without the current one.
+- **Trade-off (flagged):** every device in the tailnet is a full administrator without a
+  password — a shared node, another tailnet user or an unlocked phone included. DD-194 was
+  added one day earlier against exactly that; the user now prefers the convenience on the
+  tailnet and keeps the password for the public name. Tailscale ACLs remain the only limit
+  on who reaches `panel.<domain>`; the installer does not touch them.
+- **The channel decides:** Caddy still asks the root backend before every protected request
+  (`forward_auth`); the backend answers by the channel Caddy wrote (`X-Konsol-Kanal`,
+  DD-195). `tailscale`: 204 without a cookie — `gate()` has already required another
+  Tailscale device (DD-180), so host-local programs still cannot reach Konsol or the Files
+  API through Caddy — and `/giris.html` gets 302 to `/`. `internet`, and a caller without
+  Caddy's forwarding headers: a `konsol_oturum` session as before; only `/giris.html` is
+  open without one. The sign-in page therefore moved behind `forward_auth` (its files and
+  the sign-in API stay open in Caddy), which is what lets the backend redirect it on the
+  tailnet.
+- **Account = public credential:** the one-time setup code is gone (file, CLI verb,
+  installer printout, sign-in form). `POST /api/konsol/oturum/kur` takes only user name and
+  password, is refused over the internet (403) and opens no session; Settings → Sistem →
+  Konsol hesabı offers it on the tailnet while no account exists. The Panel's internet switch
+  (DD-195) keeps requiring an existing account, so the public site cannot open before the
+  operator chose a password. `GET /api/konsol/oturum` tells the account name to the tailnet
+  without a session (`reveal`), never to an anonymous internet visitor, and names the
+  channel; the page shows the sign-out and the current-password field only on the public
+  name and never guesses the channel from the URL.
+- **Password change:** on the public name as before (current password, this session stays,
+  the others end). On the tailnet `{yeni}` alone: the device is the credential, no session
+  is needed and every session ends (`Store.set_password`). This replaces the SSH reset as
+  the recovery path; `sudo master-konsol sifirla` still deletes the account and closes the
+  public name, and `durum`, `oturum-ac`, `oturum-kapat` stay for state and scripted checks.
+- **Budgets:** unchanged for the public name (per address and shared). `kur` and the tailnet
+  password change check no secret, so they only use the bounded hash slots; the audit journal
+  records them as `hesap-kur` and `parola-degis` with the device's address.
+- **Not done:** no per-device identity on the tailnet (`tailscale whois`), no roles, no
+  second factor for the public name, no account deletion in the UI.
+
 ### DD-204: CasaOS-inspired skin and an overview page for Konsol (v2-178)
 
 - **Scope (user, 2026-10-02: "casaos yapısına internetten bak … panel yapısını tema olarak
@@ -38,13 +264,16 @@ with its status and the file that holds it.
   `backdrop-filter` there would become the containing block of the fixed selection dock
   (found by `files-ui.cjs`). Eyebrows stay untransformed (Model A).
 - **Overview (`genel`, the landing page).** A shell route like Dosyalar/App Store/Ayarlar:
-  four widgets — clock with host/OS/kernel/uptime, system status with CPU/RAM rings and the
-  health checks' pill, storage with the disk bar and trash size, CPU history as a sparkline
-  from the backend's samples — and the tiles: Dosyalar, every installed application (name,
+  two widgets — clock with host/OS/kernel/uptime, and system status with CPU/RAM rings, a
+  storage pie (used share of the data disk, warn colour from 90 %) and the health checks'
+  pill (v2-178 also had a storage card with the disk bar and a CPU-history sparkline; the
+  user dropped both in v2-179 — the sidebar already carries the figures; v2-182 removed the
+  health-check lines from the card and enlarged the three charts to fill it, the pill alone
+  carries the verdict and Ayarlar → Sistem → Sağlık has the texts) — and the tiles: Dosyalar, every installed application (name,
   icon and tone from its `konsol.json`, state as text and dot, link to its page), Paylaşımlar,
   App Store (installed/installable counts) and Ayarlar. Everything comes from the existing
   endpoints (`kaynaklar`, `saglik`, `/api/state`, `paylasim`, `moduller`); the page computes
-  nothing and polls only while shown. SVG rings and sparklines are built from templates like
+  nothing and polls only while shown. SVG rings and the pie are built from templates like
   the icons (no namespace URL literal, no inline style). An unknown route opens the overview;
   DD-160 made Dosyalar the landing page and Model A removed the old overview — this brings a
   smaller, data-driven one back by the user's choice.
@@ -92,7 +321,9 @@ with its status and the file that holds it.
   declaration (`__WG_CONF_DIR__` for WireGuard), each with `-` so an absent folder never
   keeps the backend down, installed or not — the same catalogue-wide rule as the port
   reservation (DD-201), chosen over a per-install drop-in because that would restart the
-  backend the Konsol is talking to in the middle of an install.
+  backend the Konsol is talking to in the middle of an install. **Amended by DD-207:** a
+  `-` path is bound only if it exists when the backend starts; the installer now creates
+  them first.
 - **One package-module loader.** `master_settings.load_package_module(env, mid, name,
   attr, label)` replaces the publication-only loader of DD-199: regular file, no symlink,
   mtime cache, `sys.dont_write_bytecode` while executing — the `__pycache__` the base used
@@ -431,6 +662,8 @@ with its status and the file that holds it.
 
 ### DD-195: Konsol over public HTTPS through the publication table (v2-167)
 
+- **Amended by DD-205:** there is no setup code any more; account creation stays
+  refused over the internet, and the tailnet site no longer asks for a sign-in.
 - **Request (user, 2026-10-01):** after creating the first Konsol account, "panel
   sayfası için caddy adresini de https olarak açabilelim" — the Panel row of
   Settings → Caddy gets an internet switch and a public name like qBittorrent and
@@ -498,6 +731,10 @@ with its status and the file that holds it.
 - **Amended by DD-195:** Konsol can also be published over HTTPS. The public site
   shares this `forward_auth` check; there the setup code is refused, the cookie is
   `Secure`, and public failures also count in one shared budget.
+- **Amended by DD-205:** the tailnet address asks for no sign-in any more and the
+  one-time code is gone; the account is the public name's credential, created in
+  Settings over Tailscale. The session, cookie and budget rules below now apply to
+  the public name only.
 - **Request (user, 2026-10-01):** "panel girişine kullanıcı adı ve parola" — option B
   (Konsol's own sign-in page) with option 1 (a one-time code shown at the end of the
   install), seven-day sessions. This reverses DD-147's "no password" for Konsol; its
@@ -4946,6 +5183,9 @@ failure with an early, named one.
     unit; the package stays, as WireGuard's do (**DD-150**). `--veri` deletes
     the profile (settings and torrent list), only under `/var/lib`. A
     downloaded file is never deleted.
+- **Superseded in part by DD-209 (2026-10-03):** qBittorrent now runs as a Podman container
+  (quadlet, digest-pinned image); the settings seed, account, journal and folder rules below
+  still hold. The paragraph that follows is the 2026-09-18 reasoning.
 - **Why host and not the container:** one image fewer to follow and pin, a
   sandbox that says what the mounts said, the first-login password in a
   journal Konsol already reads, and the same start/stop path as the other host

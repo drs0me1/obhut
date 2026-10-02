@@ -4,6 +4,232 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler, v2-186 (DD-208
+rewritten, DD-209; uncommitted, with v2-179..184; v2-185's store package superseded):**
+- User: "podman bir platform … ayrı bir uygulama gibi görülmesin … taban yapı olarak birlikte kurulsun" and
+  "podman üzerinden yüklü qbittorrent … ekranda ve app store içerisinde uygulama gibi görülmesi daha iyi olur".
+  Decision taken without asking (stated in the reply): one qBittorrent app, now in Podman (the user had removed
+  the native one from Konsol at 23:06 on 2026-10-02); Podman in stage 1; the view moves to a Settings tab.
+- Planning: workflow `wf_7ff31156-925` (3 readers: engine/installer, torrent package, podman/Konsol; the
+  synthesis agent failed with "out of usage credits", so planning and implementation were done inline).
+- Base: stage 1 `apt-podman` (`podman netavark`, `--no-install-recommends`) + `check_podman` (also stage 7,
+  summary line); `panel/master_containers.py` + `/api/konsol/konteynerler/{liste,ayrinti,gunluk}`;
+  `console/konteynerler.{js,css}` (persistent node, deep link `#/ayarlar/konteynerler/<name>`); `magaza/podman/`
+  deleted. Engine: `PAKET_CALISMA=konteyner`, `PAKET_KONTEYNER` (quadlet → `KONTEYNER_BIRIM_DIR`),
+  `PAKET_IMAJ` (digest only; `paket_imaj_cek`/`paket_imaj_sil`); installer leftover/prune know the quadlet.
+- qBittorrent: `qbittorrent.container` (host network, Pull=never, journald, StopTimeout 45, 3 caps dropped,
+  PUID/PGID, UMASK, WEBUI_PORT, Nice/CPUWeight, two same-path mounts), `torrent.env` + `TORRENT_CONTAINER`,
+  `TORRENT_IMAGE` (index digest b522f9f4…, amd64+arm64), `TORRENT_SURUM`; kanca rewritten (pull, seed before
+  first start, verify host uid/mounts/loopback listener, stop = remove quadlet + reset-failed, legacy unit
+  guard); ayar.py: unit/drop-in for the quadlet, same-path Volume drop-in only outside downloads, refuses
+  unmountable names, waits for the UI after restart; page links to its container; konsol.json texts.
+- Live findings fixed: `NoNewPrivileges` made the s6 init ignore SIGTERM (stop 30–45 s → SIGKILL, unit
+  failed) → removed; `podman rmi NAME@sha256` = "tag not known" → remove by image id; mount check missed the
+  last line; service bar printed "null" (old bug, `replaceChildren(null)`).
+- Verification 2026-10-03: Mac Python 434 OK (4 skipped), Bats 176 OK, browser suites files/giris/panel/
+  publications/settings-https/settings/torrent/wireguard/konteynerler PASS, shellcheck clean (engine, kanca).
+  nrm: trial quadlet `deneme-qbit` and its folders removed (image kept, same digest); the old native profile
+  moved aside to `/var/lib/qbittorrent.yerel-onceki` for a fresh-profile test (left there); the retired v2-185
+  `podman` package removed by hand (registry line, rendered folder, page) — fresh-install rule, no migration
+  code. Installer v2-186 (scratch input, defaults, `E`) exit 0 several times; `master-modul kur torrent`: 2 s
+  with the image present, 54 s with a real 228 MB pull after `kaldir --veri` (image removed by id); process
+  host uid 1000, mounts profile→/config + /srv/downloads, caps reduced, UI listens on 127.0.0.1:61006 only
+  (peer port random on all interfaces, as native; firewall unchanged 60/59), 403 on loopback and via
+  torrent.ayc, `hesap` gecici from the journal, gunluk masked; durdur removes the quadlet (unit inactive),
+  baslat 2 s; folder outside downloads → quadlet drop-in mount, back inside → drop-in gone; account change via
+  the worker + login 204 with an unprinted password; changed quadlet on re-run → container recreated. The
+  operator then set their own qBittorrent password from Konsol at 00:07 (audit `torrent:hesap parola -> ok`;
+  clean 3 s restart). Live read-only Playwright: App Store shows WireGuard + qBittorrent (chip "Konteyner"), no
+  Podman item; page bar without "null", link `#/ayarlar/konteynerler/qbittorrent`; Settings has six tabs, the
+  container's two mounts and host-network note, no CSP errors, no non-GET, no overflow at 390 px dark. Health
+  ok, no failed units, qBittorrent cgroup 24 MB, network card reads qBittorrent's totals. Linux Bats 176 OK,
+  `settings-linux.py` PASS (real qBittorrent 5.1 natively, scratch KONTEYNER_BIRIM_DIR). Not done: a reboot
+  (the operator was using nrm; the quadlet autostart was proven by the 2026-10-02 trial), Ubuntu noble/resolute
+  (quadlet drop-ins and `podman netavark` names unverified there).
+
+**2026-10-02 — Podman package with a read-only Konteynerler page, v2-185 (DD-208; superseded by v2-186, never committed):**
+- User: "podman da çalışan konteyner'ı panelden görebileceğimiz bir yapı … durum, mount, portlar ve log,
+  sadece". Done as a store package `magaza/podman/`: paket.env (APT podman passt uidmap, page, API, no
+  unit/ekler/firewall), kanca (kur: apt → `podman info` → page; kaldir refused while `podman ps -a` lists
+  containers; --veri `podman system reset --force`; denetle; ozet), konsol.json (route `podman`, title
+  Konteynerler), api.py (GET /liste, /konteyner?ad=, /gunluk?ad=&satir=; podman ps/inspect/images/system
+  df/logs via ctx.run inside the sandbox — verified on nrm with a systemd-run replica of the unit's
+  hardening; no Env; SECRET_RE masking; 405 on non-GET), sayfa.js/sayfa.css + tests/podman-ui.cjs written
+  by a workflow agent against the API contract. Tests: test_podman_api.py (6), Bats package test + catalogue
+  pins now `wireguard torrent podman`. Docs: DD-208, contract §1.11, CLAUDE.md constraint, architecture.
+- Also in v2-185: qBittorrent account form kept its draft across the poll (`draftOf`/`restoreDraft` in
+  `magaza/torrent/sayfa.js`; the submit resets the username field so a failed save still shows the server's
+  account). torrent-ui.cjs: refresh + `page.clock` poll checks; the old file fails them.
+- Review (workflow, 2 agents): duplicate `/gunluk` request on reopening a row while the log card was
+  remembered open (the open-born `<details>` also fires toggle) → `logPending` guard; `aria-controls` only
+  on the open row; "Bitti" shows "—" for a running container (inspect keeps the old FinishedAt); mounts/ports
+  tables rebuilt only when their content changes; no English Podman status text; copy; test asserts each.
+- Verification 2026-10-03: Mac Python 432 OK (4 skipped), Bats 175 OK (summary test now expects the Podman
+  line), browser suites files/giris/panel/publications/settings-https/settings/torrent/wireguard/podman PASS
+  (`share-connections-browser` is a live suite needing a share on panel.ayc; not run). nrm: installer re-run
+  v2-185 (scratch input, defaults, `E`; exit 0, summary lists "Podman: kurulu değil"), `sudo master-modul kur
+  podman` → `kuruldu` (apt already present from the trial), page files placed; live Playwright over the tailnet:
+  Konteynerler lists `deneme-qbit` (host network, 2 mounts, unit, labels), detail + 37 masked log lines
+  (temporary password line shows `••••`), only GET `/liste`, `/konteyner`, `/gunluk` (200), no CSP errors, no
+  overflow at 390 px dark; firewall rule counts unchanged (60/59); Linux Bats 175 OK after guarding the
+  `node --check` line (no Node on nrm). Trial container, image and folders still on nrm.
+
+**2026-10-02 — Podman trial on nrm (no repo change; DD-152 reconsidered, now DD-208):** user dropped the
+"iOS-style" restructuring (stability first; base stays native: Caddy, dnsmasq, Tailscale, WireGuard) and asked
+to try qBittorrent as a container beside the native one; Podman + quadlet chosen over Docker (no daemon, no
+iptables churn, systemd-native). Done on nrm: `apt install podman passt uidmap` (5.4.2, netavark, crun),
+`/etc/containers/systemd/deneme-qbit.container` (lscr.io/linuxserver/qbittorrent, Network=host, PUID/PGID 1000,
+WEBUI_PORT 61016, TORRENTING_PORT 61017, volumes /var/lib/master-stack/deneme-qbit/config and
+/srv/downloads/deneme-podman). Results: firewall rule counts unchanged (iptables 60 / ip6tables 59 / nft 203),
+`master-firewall --check` and the health card ok, port 61016 unreachable from Tailscale and WAN (firewall),
+native qBittorrent untouched (torrent.ayc 200), temp-password login 204, Debian netinst torrent downloaded with
+files owned 1000:1000 and deleted again, systemd restart ~10 s, unit "generated" and auto-started after a reboot
+(all base services active), container memory 14 MB per `podman stats`, service cgroup ~100 MB after boot
+(native unit 53 MB), image 228 MB (/var/lib/containers 447 MB). Left running on nrm for the user to decide;
+cleanup = stop unit, remove the .container file, `podman rmi`, purge podman/passt/uidmap, remove the two folders.
+Still pending: qBittorrent password form fix (poll re-renders the form), v2-179..184 uncommitted.
+
+
+**2026-10-02 — WireGuard network creation fix + one-card creation screen, v2-184 (DD-207; uncommitted, with v2-179..183, on top of ead9ef1):**
+- User: "arayüz oluşturma ekranında install: cannot change permissions of '/etc/wireguard/clients-wg0':
+  No such file or directory … arayüz oluşturamadım"; also shrink the creation screen to one card and fix
+  the windows' size. Reproduced on nrm with nsenter into master-panel's namespace: `/etc/wireguard`
+  read-only (mountinfo had no bind) — master-panel started (20:02) while the folder existed, my test
+  cleanup purged wireguard-tools (folder removed, bind detached), the operator's reinstall recreated
+  it. Same failure on any fresh host (folder created after the backend). Immediate remedy:
+  `systemctl restart master-panel` on nrm (bind back, verified writable).
+- Fix: install.sh `paket_arkauc_klasorler` + pre-create in `ensure_panel` + `panel_yollari_bagli`
+  (mountinfo rw check → restart); master-modul `arkauc_yollari_hazirla` after kur/baslat/uygula;
+  master-wg `yazilabilir` before writing verbs; konsol.js keeps polling a busy operation through ≤8
+  failed polls. UI: `#wg-ekle` one `.addcard` (560 px), DNS options two lines (`.meta`), settings window
+  one hint. Tests: 2 Bats tests (+ phase-3 test loads the new helper), wireguard-ui single-card check.
+- Mac: 174 Bats, 426 Python, 8 browser suites. nrm (root runner, so the 0555 master-wg test skips
+  there; it runs on the Mac): 174 Linux Bats.
+- Live on nrm, scoped and restored: WireGuard removed with `--veri`, wireguard-tools/qrencode purged,
+  backend restarted while `/etc/wireguard` was absent → a later folder is EROFS for the backend
+  (shown with nsenter). v2-184 installer (exit 0) → folder 0700 created, backend restarted, mountinfo
+  `/etc/wireguard rw`. `master-modul kur wireguard` (no backend restart needed) → POST
+  `/api/uygulama/wireguard/nets` from the Mac (tailnet, no cookie) 201 `wg0 61001`, `wg-quick@wg0`
+  active → removed through `/nets/wg0/remove` (200). Folder recreated under the running backend →
+  EROFS → `master-modul uygula wireguard` restarted the backend once, writable again; a second
+  `uygula` did not restart. Live creation screen (`scratchpad/live-v2-184.cjs`, no POST): one card,
+  560 px, port 61001 suggested, no overflow/CSP errors. End state as the operator left it: WireGuard
+  installed with no network, qBittorrent untouched. Not committed yet.
+
+**2026-10-02 — Overview edit mode, server-side layout, network card, v2-183 (DD-206; uncommitted, with v2-179..182, on top of ead9ef1):**
+- User: a Düzenle option bottom-left to move app icons and size widgets; then width only, a
+  show/hide switch, clock card without version details (time, date, uptime, Tailscale, WAN), and a
+  network card with live download/upload (1–2 s) plus WireGuard's and qBittorrent's totals.
+- Backend (`master-panel`): `clean_layout`, `GET/POST /api/konsol/duzen` (store `duzen.json` in
+  `KONSOL_AUTH_DIR` via `master_auth.Store`, audit `duzen kaydet|sifirla`), WAN rate sampler from
+  sysfs (`net_sample`: background + per request, ≥1.5 s step, 160 points, 120 s window),
+  `GET /api/konsol/ag` with `traffic()` over `PAKET_TRAFIK` modules (2 s cache, errors once).
+  Packages: `magaza/torrent/trafik.py` (qBittorrent-data.conf [Stats] AllStats: Qt INI unescape +
+  Qt 4.0 QVariantHash, `at` = file mtime; first version used systemd IP accounting — dropped, see
+  below), `magaza/wireguard/trafik.py` (registry + /sys/class/net, down = tx);
+  `PAKET_TRAFIK` in both manifests and the engine defaults.
+- Shell: overview rewritten (WIDGETS, layout/draft, tile defs + order, edit bar, arrows, pointer
+  drag with document listeners, widget tools, network card painter + 2 s poll, Escape), ICON
+  `chevl`, audit word `duzen`; `index.html` edit bar; `panel.css` 4-column grid with spans,
+  container queries, network card, edit mode (wiggle, reduced motion).
+- Tests: new `test_overview.py` (15), panel-ui overview/edit flow, Bats DD-206 test + skin test
+  update. Docs: DD-206, contract, architecture, CLAUDE.md, README, tests/README, CHANGELOG.
+- Mac: 426 Python, 172 Bats, all eight fixture browser suites (panel-ui: three widgets, clock facts,
+  network card + 2 s polling on the page clock, Düzenle: wiggle/reduced motion, arrows with focus,
+  mouse drag, widths measured, hide/show, Bitti body, no polling while hidden, another device's
+  order, Escape, Varsayılan, sticky bar on a phone). Fixes found by the tests: drag listeners on the
+  document (moving the tile drops pointer capture); Playwright needs still targets (reduced motion
+  in the edit part of the test).
+- nrm: v2-183 installed three times over v2-182/183 (`Kurulum tamam`, exit 0); 172 Linux Bats and
+  `test_overview` with Debian's Python (Linux tree re-created at `/tmp/v2-181/tree`: /tmp is tmpfs,
+  bats-core needs bin+libexec+lib). Live (no cookie, `scratchpad/live-v2-183.cjs`): eth0 rates
+  change every 2 s, 13 points at once, clock facts (uptime, Tailscale, WAN), layout save → file in
+  `KONSOL_AUTH_DIR` → reload keeps it → Varsayılan deletes it; the first live look showed the fixed
+  bar covering the last row and tiles jumping in after the module list → sticky bar below the tiles,
+  tiles wait for `modsSettled`.
+- systemd IP accounting (first qBittorrent source) failed live: `daemon-reload` drops the counters
+  of units loaded from disk on systemd 257 (bisected with probe units: transient units keep them,
+  unit files and template+drop-in lose them) → qBittorrent now reads its own `qBittorrent-data.conf`
+  AllStats; verified live, survives a daemon-reload.
+- Test footprint removed: torrent and WireGuard were installed with `master-modul kur` for the live
+  totals and removed with `kaldir --veri`; the apt packages my installs added (qbittorrent-nox,
+  wireguard-tools, qrencode and their 18 new dependencies, from apt history 19:40:51/57) purged
+  by exact list (no autoremove). `master-modul liste`: both `yok`; no /var/lib/qbittorrent or
+  /etc/wireguard; Konsol account untouched. Not committed yet.
+
+**2026-10-02 — Status widget charts only and larger, v2-182 (DD-204 note; uncommitted, with v2-179..181, on top of ead9ef1):**
+- User: drop the explanation texts on the Sistem durumu widget, enlarge the charts to fit the widget.
+  `konsol.js`: the `hint-s` check lines left the status card (pill stays). `panel.css`: `.rings` is a
+  3-column grid, charts 84 px, the figure centred over the ring by grid overlap (no absolute `top`).
+  Tests: panel-ui (no lines, ring ≥ 80 px, widget heights close), Bats pins the CSS.
+- Mac: 171 Bats, all eight fixture browser suites (Python untouched). nrm: v2-182 installed over
+  v2-181 (`Kurulum tamam`, exit 0); `scratchpad/live-v2-182.cjs` (no cookie, POSTs blocked): ring
+  84×84, zero `.hint-s`/`.line` in the card, status and clock cards both 208.75 px, pill "Sağlıklı";
+  light/dark/mobile screenshots reviewed. Not committed yet.
+
+**2026-10-02 — No sign-in on the tailnet, account = public credential, v2-181 (DD-205; uncommitted, with v2-179/180, on top of ead9ef1):**
+- User ("uygulayalım başla"): Tailscale address without a password, public HTTPS name with user name +
+  password; first use over Tailscale creates the account there. Implemented as recommended: backend
+  `session_gate` answers by channel (tailnet 204, `/giris.html` → `/`; internet/no-headers: session,
+  `/giris.html` open), `/giris.html` moved behind `forward_auth` (Caddy `@korumali`), `kur` without a
+  code (tailnet only, no session), `set_password` for the tailnet (`{yeni}`, ends all sessions),
+  `status(reveal=...)` names the user to the tailnet only; `master_auth.py` without the setup code and
+  the `kod` verb; `giris.html/js` sign-in only; `konsol.js` account card per channel (create account,
+  password dialog with/without current password, sidebar sign-out only on the internet via
+  `kanal`); installer summary and stage-7 probes (giris.js 200, tailnet 204/302); messages in
+  `master_publications.py`/`ayarlar.js`. Tests: `test_konsol_auth.py` (22), `giris-ui`, `settings-ui`,
+  Bats sign-in test, `konsol-login-live.py` rewritten, `panel-public-live.py` body. Docs: DD-205,
+  DD-194/195 amendments, contract, architecture, README, CLAUDE.md, tests/README, folder-shares.
+- Mac: 409 Python, 171 Bats, all eight fixture browser suites (four fixtures gained the
+  `/api/konsol/oturum` route the shell now reads at boot). Stage-7 probe address is derived from
+  `TAILSCALE_IPV4` (last octet changed) because the detect_wan Bats test forbids literal IPv4s.
+- nrm: `/tmp` is tmpfs and the reboot wiped `/tmp/v2-167`; new Linux tree `/tmp/v2-181/tree` with
+  Homebrew bats-core (`bin`, `libexec` and `lib` are all needed) and the root files
+  (`.gitignore`, `wireguard.command`, the `.command`, `app/`) beside it: 171 Bats, Linux Python
+  `test_konsol_auth` (22) and `test_publications` OK. v2-181 installed over v2-180 (`Kurulum tamam`,
+  exit 0; the summary names the passwordless tailnet and the Settings card). Live from the Mac with
+  no cookie: tailnet pages/Files/root API 200, `/giris.html` → 302 `/`, `/api/konsol/oturum`
+  `{giris, kullanici, kanal: tailscale}`; public `panel.example.net`: `/` → 302 `/giris.html`,
+  `/giris.html` 200, API 401, `oturum` without `kullanici`, `kur` 403. `scratchpad/live-v2-181.cjs`
+  (Playwright, no cookie, POSTs blocked): landing Genel bakış, `#logout` hidden, account card
+  "İnternet hesabı: …" with "Parolayı değiştir" only, `/giris.html#/ayarlar` lands on `/#/ayarlar`;
+  screenshot reviewed. `konsol-login-live.py --host nrm` → SKIP (exit 3), the operator's account
+  untouched. Not committed yet.
+
+**2026-10-02 — Public HTTPS address without WebDAV's port, v2-180 (uncommitted, with v2-179, on top of ead9ef1):**
+- User: Settings → Caddy showed `https://panel.<name>:61010` after saving the Panel's HTTPS name; the
+  address does not open. Cause: `ayarlar.js` built the link from `manage.https.port` (WebDAV's WAN
+  port, = `SHARE_PORT` while WebDAV is on legacy HTTP) instead of `manage.https.https_port`
+  (`SHARE_HTTPS_PORT`, 443). Checked the other producers: `panel_site`/`package_site` (Caddy),
+  `master_shares` share URLs, `master-panel package_urls` and the confirm dialog all use the HTTPS
+  port. One-line fix; `settings-https-ui` now flips the Panel row to ready while WebDAV is legacy HTTP
+  and asserts `https://panel.example.net` with no `:61010`; Bats pins the expression.
+- Mac: 409 Python, 171 Bats, all fixture browser suites. Regression proof: the suite run against
+  `HEAD`'s `ayarlar.js` (served from a scratch copy on :8767) fails with
+  `https://panel.example.net:61010` vs `https://panel.example.net`.
+- nrm: v2-180 installed over v2-179 (`Kurulum tamam`, exit 0). `scratchpad/live-v2-180.cjs` with a
+  `master-konsol oturum-ac` session (closed afterwards): Panel row link `https://panel.example.net`,
+  status "Sertifika hazır"; qBittorrent row off (not installed); WebDAV row "Eski HTTP erişimi"
+  (the state that exposed the bug); no `:61010` in the table, no CSP errors. Not committed yet.
+
+**2026-10-02 — Overview widgets trimmed, v2-179 (DD-204 amended; uncommitted on top of ead9ef1):**
+- User: drop the Depolama widget's chart and the separate İşlemci history widget; the CPU/RAM
+  widget is enough — add storage there as a pie chart. `konsol.js`: `spark`, the storage and
+  history cards removed; `pie(pct)` (filled wedge, r=9/stroke 18, `warn` from 90 %) and a
+  `.pie-box` caption `%N Depolama` in `.rings`; `return [clock, status]`. `panel.css`: `.pie*`
+  rules replace `.spark*`; `.bar` dropped from the progress rules. Tests: panel-ui widget/ring/pie
+  counts; Bats DD-204 test checks the two-widget shape. Docs: DD-204, contract, CHANGELOG.
+- Mac: 409 Python, 171 Bats, all fixture browser suites (a stale Apple-python `http.server` on
+  :8766 from before the context reset caused one ECONNRESET; replaced by a python3.13 server).
+- nrm: v2-179 installed over v2-178 (`Kurulum tamam`, exit 0). The host had been rebooted twice
+  at 17:18/17:23 CEST before the run (kernel now 6.12.111, reboot warning gone), its Tailscale
+  IPv4 is now **100.68.198.38** (was 100.77.205.10) and the torrent package was no longer
+  installed (`master-modul liste`: torrent yok; WireGuard yok) — not done by this session.
+  `scratchpad/live-dd204.cjs` with `KONSOL_IP=100.68.198.38` and a `master-konsol oturum-ac`
+  session (closed afterwards): landing Genel bakış, two widgets, rings %1/%7 and pie %5
+  Depolama matching the sidebar, health "Sağlıklı", blur active, no CSP errors; screenshots
+  reviewed. Not committed yet.
+
 **2026-10-02 — CasaOS-inspired skin and overview page, v2-178 (DD-204; committed as 78e5ea7 on branch quantum):**
 - Analysis of CasaOS (site, CasaOS-UI source, screenshots; demo login not entered) → frozen mockup
   `docs/design/konsol-casa-v01.html` (option C) → user approved ("tasarım çok güzel olmuş uygulayalım").

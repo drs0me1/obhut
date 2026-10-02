@@ -45,6 +45,7 @@
     key: '<circle cx="5.8" cy="12" r="3.2"/><path d="M8.1 9.7l6.5-6.5M12.4 5.4l1.9 1.9M10.6 7.2l1.5 1.5"/>',
     sliders: '<path d="M3 5h7M13.5 5H15M3 13h2.5M9 13h6"/><circle cx="11.8" cy="5" r="1.8"/><circle cx="7.2" cy="13" r="1.8"/>',
     chev: '<path d="M7 4.5L11.5 9 7 13.5"/>',
+    chevl: '<path d="M11 4.5L6.5 9 11 13.5"/>',
     arrow: '<path d="M3.4 9h11.2M10.6 5l4 4-4 4"/>',
   };
   // Tek şablon noktası: simgeler, Genel bakış'ın halkaları ve çizgi grafiği buradan üretilir; içine
@@ -83,8 +84,8 @@
   const fail = (err) => toast(err && err.message ? err.message : String(err));
 
   /* ---------- API ---------- */
-  // DD-194: an expired or missing session sends the browser to the sign-in page, which
-  // returns to the same Konsol page afterwards.
+  // DD-194/DD-205: on the internet address an expired or missing session sends the browser to the
+  // sign-in page, which returns to the same Konsol page afterwards. The tailnet address never asks.
   const toLogin = () => location.replace("/giris.html" + (location.hash.startsWith("#/") ? location.hash : ""));
   function api(path, opts) {
     opts = opts || {};
@@ -245,8 +246,9 @@
     "arsiv-olustur": (e) => `ZIP oluşturma başladı: ${e.detail}`, "arsiv-ac": (e) => `Arşiv açma başladı: ${e.detail}`,
     "arsiv-iptal": (e) => `Arşiv işlemi için iptal istendi: ${e.detail}`, "arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`,
     // DD-194/196: Konsol account, settings and share events have their own words and source.
-    "oturum-kur": () => "Konsol hesabı oluşturuldu", giris: () => "Konsol girişi", cikis: () => "Konsol çıkışı",
+    "hesap-kur": () => "Konsol hesabı oluşturuldu", giris: () => "Konsol girişi", cikis: () => "Konsol çıkışı",
     "parola-degis": () => "Konsol parolası değiştirildi",
+    duzen: (e) => e.detail === "sifirla" ? "Genel bakış varsayılan düzene döndü" : "Genel bakış düzeni kaydedildi",
     "ayar-apply": () => "Ayarlar uygulandı", "ayar-confirm": () => "Ayar değişikliği onaylandı",
     "ayar-rollback": () => "Ayarlar geri alındı", "ayar-discard": () => "Takılan ayar işlemi bırakıldı",
     "paylasim-save": () => "Klasör paylaşımı kaydedildi", "paylasim-pause": () => "Klasör paylaşımının durumu değişti",
@@ -983,8 +985,10 @@
     };
   }
   const modName = (detail) => metaOf(String(detail || "").split(" ")[0]).name;
-  const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };
-  let MODS = null, modTimer = null;
+  // DD-209: "konteyner" = tabandaki Podman'da çalışan uygulama; durumu host gibi birimin canlılığıdır.
+  const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"], konteyner: ["konteyner", "box", "Konteyner"] };
+  const unitRuntime = (m) => m.runtime === "host" || m.runtime === "konteyner";
+  let MODS = null, modTimer = null, modMisses = 0;
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
   // Files is built in; application pages follow the server registry and each package's declaration.
   function appRoutes() {
@@ -1032,6 +1036,8 @@
   function loadModules() {
     return api("/api/konsol/moduller").then((r) => {
       MODS = r.items || [];
+      modsSettled = true;
+      modMisses = 0;
       MODS.forEach((m) => {
         if (!m.installed) delete modLogs[m.id];
         const want = modPending[m.id];
@@ -1050,7 +1056,18 @@
       if (PAGES[current] && PAGES[current].page.modules) PAGES[current].page.modules(MODS);
       clearTimeout(modTimer);
       if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
-    }).catch(fail);
+    }).catch((err) => {
+      // DD-206: the overview's tiles wait for the first answer; without one they show Konsol's own sections.
+      if (!modsSettled) { modsSettled = true; renderOverview(); }
+      // DD-207: while an App Store operation runs the backend may restart once (a package's write path);
+      // keep following the progress quietly for a few tries instead of dropping it after one miss.
+      if (MODS && MODS.some((m) => m.busy) && ++modMisses <= 8) {
+        clearTimeout(modTimer);
+        modTimer = setTimeout(loadModules, 1500);
+        return;
+      }
+      fail(err);
+    });
   }
   function modAct(m, action, veri) {
     return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, { veri: !!veri })
@@ -1071,7 +1088,7 @@
     if (m.state === "durduruldu") return h("span", { class: "hm idle" }, "Durduruldu");
     if (m.runtime === "konsol") return m.live === "exited" ? h("span", { class: "hm warn" }, "Çalışmıyor")
       : h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Kurulu");
-    if (m.runtime === "host" && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
+    if (unitRuntime(m) && m.live !== "running") return h("span", { class: "hm warn" }, "Çalışmıyor");
     return h("span", { class: "hm ok" }, h("span", { class: "dotmark live", "aria-hidden": "true" }), "Çalışıyor");
   }
   function modRow(m) {
@@ -1237,56 +1254,85 @@
         : h("p", {class:"hint-s"}, healthFailed ? "Sağlık bilgisi okunamadı; bağlantıyı kontrol edin." : "Sağlık denetleniyor…"),
       h("p", {class:"hint-s"}, hs ? `Salt okunur · son denetim ${hhmm(hs.read_at)} · en çok 30 sn'de bir yenilenir.` : "Salt okunur."));
   }
-  // DD-194: the signed-in Konsol account, read once per page for Settings → Sistem.
+  // DD-194/DD-205: the Konsol account, read once per page. Settings → Sistem shows it; the sidebar's
+  // sign-out exists only on the internet address — the tailnet address has no sign-in, the device is
+  // the credential. The backend names the channel (kanal); the page never guesses it.
   let konsolAccount = null, konsolAccountBusy = false;
+  const publicChannel = () => konsolAccount?.kanal === "internet";
   function loadKonsolAccount() {
     if (konsolAccountBusy) return;
     konsolAccountBusy = true;
     api("/api/konsol/oturum").then((s) => { konsolAccount = s; }).catch(() => { konsolAccount = { durum: "bilinmiyor" }; })
-      .finally(() => { konsolAccountBusy = false; if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
+      .finally(() => {
+        konsolAccountBusy = false;
+        $("logout").hidden = !publicChannel();
+        if (current === "ayarlar" && settingsTab === "system") renderSettings();
+      });
   }
   async function logout() {
     try { await post("/api/konsol/oturum/cikis", {}); } catch (_err) { /* oturum zaten bitmiş olabilir */ }
     location.replace("/giris.html");
   }
-  function openPasswordDialog() {
-    // In the shared dialog, outside the Settings view that re-renders every 10 s.
+  // One dialog for the account: "kur" creates the internet account (tailnet only), "degistir" sets a
+  // new password — the current one is asked only on the internet address (DD-205). It runs in the
+  // shared dialog, outside the Settings view that re-renders every 10 s.
+  function accountDialog(kind) {
+    const create = kind === "kur", needOld = !create && publicChannel();
     const field = (id, label, auto, min) => h("label", { for: id }, label,
       h("input", { type: "password", id, autocomplete: auto, required: true, minlength: min, maxlength: 256 }));
     const error = h("p", { class: "err-s", role: "alert", hidden: true });
-    const submit = h("button", { type: "submit", class: "btn btn-primary" }, svg("key"), "Parolayı değiştir");
-    const form = h("form", { class: "dav-form", id: "konsol-password", onsubmit: async (e) => {
+    const submit = h("button", { type: "submit", class: "btn btn-primary" }, svg("key"), create ? "Hesabı oluştur" : "Parolayı değiştir");
+    const form = h("form", { class: "dav-form", id: create ? "konsol-create" : "konsol-password", onsubmit: async (e) => {
       e.preventDefault();
-      const [old, next, again] = ["acc-old", "acc-new", "acc-again"].map($);
-      again.setCustomValidity(next.value === again.value ? "" : "Yeni parolalar aynı değil.");
+      const next = $("acc-new"), again = $("acc-again");
+      again.setCustomValidity(next.value === again.value ? "" : (create ? "Parolalar aynı değil." : "Yeni parolalar aynı değil."));
       if (submit.disabled || !form.reportValidity()) return;
       submit.disabled = true; error.hidden = true;
       try {
-        await post("/api/konsol/hesap/parola", { eski: old.value, yeni: next.value });
-        shClose(); toast("Konsol parolası değişti; diğer oturumlar kapatıldı.");
-      } catch (err) { old.value = ""; error.textContent = err.message; error.hidden = false; }
+        if (create) {
+          await post("/api/konsol/oturum/kur", { kullanici: $("acc-user").value.trim(), parola: next.value });
+          shClose(); toast("Konsol hesabı oluşturuldu; internet adresi bu hesapla açılır.");
+        } else {
+          await post("/api/konsol/hesap/parola", needOld ? { eski: $("acc-old").value, yeni: next.value } : { yeni: next.value });
+          shClose(); toast(needOld ? "Konsol parolası değişti; diğer oturumlar kapatıldı." : "Konsol parolası değişti; internet oturumları kapatıldı.");
+        }
+        konsolAccount = null; loadKonsolAccount();
+      } catch (err) { if (needOld) $("acc-old").value = ""; error.textContent = err.message; error.hidden = false; }
       finally { submit.disabled = false; }
     } },
-    field("acc-old", "Mevcut parola", "current-password", null),
-    field("acc-new", "Yeni parola (en az 10 karakter)", "new-password", 10),
-    field("acc-again", "Yeni parola (tekrar)", "new-password", 10),
-    h("p", { class: "hint-s" }, "Bu tarayıcı açık kalır; diğer tüm oturumlar kapanır."),
+    create ? h("label", { for: "acc-user" }, "Kullanıcı adı", h("input", { type: "text", id: "acc-user", autocomplete: "username", autocapitalize: "none",
+      spellcheck: false, required: true, minlength: 3, maxlength: 32, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]{2,31}" })) : null,
+    needOld ? field("acc-old", "Mevcut parola", "current-password", null) : null,
+    field("acc-new", create ? "Parola (en az 10 karakter)" : "Yeni parola (en az 10 karakter)", "new-password", 10),
+    field("acc-again", create ? "Parola (tekrar)" : "Yeni parola (tekrar)", "new-password", 10),
+    h("p", { class: "hint-s" }, create ? "Kayıt sunucuda yalnız özet olarak tutulur. Tailscale'den giriş parolasızdır; bu hesap yalnız internet adresinde sorulur."
+      : needOld ? "Bu tarayıcı açık kalır; diğer tüm oturumlar kapanır." : "Tailscale cihazından mevcut parola sorulmaz; internet adresindeki tüm oturumlar kapanır."),
     error, h("div", { class: "dav-actions" }, submit, h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç")));
     form.addEventListener("input", (e) => { if (e.target.id === "acc-again") e.target.setCustomValidity(""); });
     $("sh").addEventListener("close", () => form.querySelectorAll("input").forEach((i) => { i.value = ""; }), { once: true });
-    $("sh-body").replaceChildren(shHead("Konsol parolası", "Konsol girişi · Tailscale ve varsa internet adresi", "key"), form);
+    $("sh-body").replaceChildren(shHead(create ? "İnternet hesabı" : "Konsol parolası", "Konsol girişi · yalnız internet adresinde sorulur", "key"), form);
     if (!$("sh").open) $("sh").showModal();
-    $("acc-old").focus();
+    (create ? $("acc-user") : needOld ? $("acc-old") : $("acc-new")).focus();
   }
   function accountCard() {
     if (!konsolAccount) loadKonsolAccount();
-    const user = konsolAccount?.kullanici;
+    const a = konsolAccount, user = a?.kullanici;
+    const action = (label, onclick, primary) => h("button", { type: "button", class: primary ? "btn btn-primary" : "btn btn-quiet", onclick }, svg("key"), label);
+    let note, actions = [];
+    if (!a) note = "Hesap bilgisi okunuyor…";
+    else if (a.durum === "bilinmiyor" || (a.durum !== "kurulum" && !user)) note = "Hesap bilgisi okunamadı.";
+    else if (publicChannel()) {
+      note = `Giriş yapan: ${user}. Oturum ${a.oturum_gun || 7} gün açık kalır.`;
+      actions = [action("Parolayı değiştir", () => accountDialog("degistir")), h("button", { type: "button", class: "btn btn-quiet", onclick: logout }, "Çıkış yap")];
+    } else if (a.durum === "kurulum") {
+      note = "Tailscale'den giriş parolasızdır. İnternet adresi (Ayarlar → Caddy → Panel) için bir kullanıcı adı ve parola belirleyin; hesap olmadan internet yayını açılmaz.";
+      actions = [action("İnternet hesabı oluştur", () => accountDialog("kur"), true)];
+    } else {
+      note = `İnternet hesabı: ${user}. Tailscale'den giriş parolasızdır; internet adresi bu hesapla açılır.`;
+      actions = [action("Parolayı değiştir", () => accountDialog("degistir"))];
+    }
     return h("article", { class: "card", id: "konsol-account" }, h("h2", null, "Konsol hesabı"),
-      h("p", { class: "page-note" }, user ? `Giriş yapan: ${user}. Oturum ${konsolAccount.oturum_gun || 7} gün açık kalır.`
-        : konsolAccount ? "Hesap bilgisi okunamadı." : "Hesap bilgisi okunuyor…"),
-      h("div", { class: "top-actions" },
-        h("button", { type: "button", class: "btn btn-quiet", disabled: !user, onclick: openPasswordDialog }, svg("key"), "Parolayı değiştir"),
-        h("button", { type: "button", class: "btn btn-quiet", onclick: logout }, "Çıkış yap")));
+      h("p", { class: "page-note" }, note), h("div", { class: "top-actions" }, ...actions));
   }
   function systemContent() {
     const s = S.sys;
@@ -1302,18 +1348,23 @@
           row("Panel adresi", "panel." + s.domain), row("Kullanıcı alanı", s.root),
           row("Son okuma", hhmm(s.read_at))) : h("p", {class:"hint-s"}, "Sunucu bilgisi bekleniyor…")),
       h("article", {class:"card"}, h("h2", null, "Yerleşik altyapı"),
-        h("p", {class:"page-note"}, "Dosyalar, WebDAV ve ZIP/RAR açma panelle birlikte hazırdır. Tailscale, Caddy, Dnsmasq ve güvenlik duvarı temel bağımlılıklardır; App Store’dan kaldırılmaz."),
+        h("p", {class:"page-note"}, "Dosyalar, WebDAV ve ZIP/RAR açma panelle birlikte hazırdır. Tailscale, Caddy, Dnsmasq, güvenlik duvarı ve Podman (App Store’un konteyner ortamı) temel bağımlılıklardır; App Store’dan kaldırılmaz."),
         h("p", {class:"hint-s"}, "Uygulamalar App Store’dan kurulur. Kaldırma sırasında profil/veri silme ayrıca onaylanır; kullanıcı dosyaları korunur.")));
   }
   const logContent = () => h("div", {class:"logwrap"},
     h("p", {class:"page-note"}, "Konsol’dan yapılan son işlemler. Servis günlükleri App Store → Ayrıntı bölümünde bulunur."),
     h("div", {class:"chipset", id:"log-filter", role:"group", "aria-label":"Süzgeç"}),
     h("div", {class:"table log-t", id:"log-table"}));
-  let settingsTab = "system";
-  const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog:renderLog });
+  let settingsTab = "system", containerWant = "";
+  // DD-208: Ayarlar → Konteynerler; görünüm kendi okumasını yapar, üst çubuktaki zaman damgasını yazar.
+  const containers = window.createContainersView({ h, svg, api, enc, fail, bytes, since,
+    clock: { sync: (serverNow) => { if (Number.isFinite(serverNow)) S.offset = serverNow - Date.now() / 1000; } },
+    stamp: (text) => { const s = $("cfg-stamp"); if (s && current === "ayarlar" && settingsTab === "konteynerler") s.textContent = text; } });
+  const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog:renderLog,
+    containersContent: containers.content });
   function renderSettings() {
     const stamp = $("cfg-stamp");
-    if (stamp) stamp.textContent = CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
+    if (stamp) stamp.textContent = settingsTab === "konteynerler" ? containers.stampText() : CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
     settingsPage.render(CFG, settingsTab);
   }
   /* ---------- One workspace, hash routes ---------- */
@@ -1328,100 +1379,332 @@
     h("button", {type:"button", class:"btn btn-quiet", onclick:() => {
       if (current === "ayarlar" && settingsTab === "log") loadActions();
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
+      else if (current === "ayarlar" && settingsTab === "konteynerler") containers.refresh();
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
-  /* ---------- Genel bakış (DD-204): kaynak, sağlık, depolama ve uygulama kareleri ---------- */
-  // Hiçbir veri burada hesaplanmaz: kaynaklar /api/konsol/kaynaklar, sağlık /api/konsol/saglik,
-  // disk ve çöp /api/state, paylaşımlar /api/konsol/paylasim, kareler modül listesinden.
-  // Halka ve çizgi grafiği de simgeler gibi şablondan üretilir; içine yalnız sayı yazılır.
+  /* ---------- Genel bakış (DD-204, DD-206): widget'lar, uygulama kareleri ve düzenleme ---------- */
+  // Hiçbir veri burada hesaplanmaz: kaynaklar /api/konsol/kaynaklar, sağlık /api/konsol/saglik, ağ
+  // /api/konsol/ag (kart görünürken 2 sn'de bir), kök klasör /api/state, paylaşımlar /api/konsol/paylasim,
+  // kareler modül listesinden. Düzen (kare sırası, widget genişliği ve görünürlüğü) sunucuda
+  // /api/konsol/duzen ile durur; her cihazda aynı açılır. Halkalar, pasta ve ağ grafiği de simgeler
+  // gibi şablondan üretilir; içine yalnız sayı yazılır.
   const ring = (pct) => {
     const dash = Number.isFinite(pct) ? (113.1 * Math.max(0, Math.min(100, pct)) / 100).toFixed(1) + " 113.1" : "0 113.1";
     return svgFrom(`<svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" stroke-dasharray="${dash}"/></svg>`);
   };
-  const spark = (values) => {
-    const w = 200, hgt = 56, n = values.length;
-    const pts = values.map((v, i) => [n > 1 ? w * i / (n - 1) : w, hgt - 4 - Math.max(0, Math.min(100, Number(v) || 0)) / 100 * (hgt - 8)]);
-    const line = pts.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join(" ");
-    const body = pts.length > 1 ? `<path class="fill" d="${line} L${w} ${hgt} L0 ${hgt} Z"/><path d="${line}"/>` : "";
-    return svgFrom(`<svg class="spark" viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" aria-hidden="true">${body}</svg>`);
+  // Pasta: dolu daire üzerinde kullanılan dilim (r=9, kalınlık 18 → çevre 56.5); %90 ve üstü uyarı rengi.
+  const pie = (pct) => {
+    const dash = Number.isFinite(pct) ? (56.5 * Math.max(0, Math.min(100, pct)) / 100).toFixed(1) + " 56.5" : "0 56.5";
+    return svgFrom(`<svg class="pie${Number.isFinite(pct) && pct >= 90 ? " warn" : ""}" viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="9" stroke-dasharray="${dash}"/></svg>`);
   };
   const uptimeText = (sec) => { const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
     return d ? `${d} g ${hh} sa` : hh ? `${hh} sa ${mm} dk` : `${mm} dk`; };
   const HEALTH_PILL = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Uyarı var"], bad: ["bad", "Sorun var"] };
-  function overviewWidgets() {
-    const { s, fresh, cpu, mem, disk } = resourceValues();
-    const d = new Date(now() * 1000);
-    const clock = h("article", { class: "card widget", "aria-label": "Saat ve sunucu" },
-      h("div", { class: "clock", id: "genel-clock" }, d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })),
-      h("div", { class: "hint-s" }, d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })),
-      h("div", { class: "hint-s" }, s ? `${s.host} · ${s.os} · ${s.kernel}` : "Sunucu bilgisi okunuyor…"),
-      h("div", { class: "hint-s" }, s && fresh ? `Çalışma süresi ${uptimeText(s.uptime)} · Tailscale ${s.net.tailscale || "—"}` : "Güncel ölçüm yok"));
-    const hs = S.health, pill = hs && HEALTH_PILL[hs.status] ? HEALTH_PILL[hs.status] : null;
-    const issues = hs ? hs.checks.filter((c) => c.status !== "ok") : [];
-    const status = h("article", { class: "card widget", "aria-label": "Sistem durumu" },
-      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Sistem durumu"), h("small", { class: "hint-s" }, hs ? "Son denetim " + hhmm(hs.read_at) : healthFailed ? "Sağlık bilgisi okunamadı" : "Denetleniyor…")),
-        pill ? h("span", { class: "hm " + pill[0], id: "genel-health" }, pill[1]) : h("span", { class: "hm", id: "genel-health" }, "—")),
-      h("div", { class: "rings" },
-        h("div", { class: "big" }, ring(cpu), h("b", null, Number.isFinite(cpu) ? "%" + Math.round(cpu) : "—"), "İşlemci"),
-        h("div", { class: "big" }, ring(mem), h("b", null, Number.isFinite(mem) ? "%" + Math.round(mem) : "—"), "RAM"),
-        h("div", { class: "hint-s" }, ...(hs ? (issues.length ? issues : hs.checks).slice(0, 3).map((c) => h("span", { class: "line" + (c.status === "ok" ? "" : " " + c.status) }, c.detail || c.name)) : [h("span", { class: "line" }, "Sağlık denetimi bekleniyor")]))));
-    const fs = S.fs, free = s && s.disk ? s.disk.free : null, total = s && s.disk ? s.disk.total : null;
-    const storage = h("article", { class: "card widget", "aria-label": "Depolama" },
-      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Depolama"), h("small", { class: "hint-s" }, (s && s.root) || "/srv")),
-        h("span", { class: "hm" + (Number.isFinite(disk) && disk >= 90 ? " warn" : "") }, Number.isFinite(disk) ? `${bytes(total - free)} / ${bytes(total)}` : "—")),
-      (() => { const bar = h("progress", { class: "bar", max: "100", "aria-label": "Disk kullanımı" }); bar.value = Number.isFinite(disk) ? disk : 0; return bar; })(),
-      h("div", { class: "hint-s" }, Number.isFinite(disk) ? `${bytes(free)} boş` + (fs && fs.trash ? ` · çöp ${fs.trash.count} öge, ${bytes(fs.trash.size)}` : "") : "Güncel ölçüm yok"));
-    const samples = s && Array.isArray(s.cpu) ? s.cpu : [];
-    const history = h("article", { class: "card widget", "aria-label": "İşlemci geçmişi" },
-      h("div", { class: "card-head" }, h("div", null, h("h2", null, "İşlemci"), h("small", { class: "hint-s" }, s ? `${s.cores} çekirdek · son ${Math.round(samples.length * (s.interval || 1))} sn` : "—")),
-        h("span", { class: "hm" }, Number.isFinite(cpu) ? "%" + Math.round(cpu) : "—")),
-      samples.length > 1 ? spark(samples) : h("p", { class: "hint-s" }, "Örnekler toplanıyor…"));
-    return [clock, status, storage, history];
-  }
+  // Widget'lar sabit sırada; genişlik 1–4 sütun (yükseklik içeriğe göre, ayarlanmaz) ve görünürlük düzenden.
+  const WIDGETS = [
+    { id: "saat", ad: "Saat", label: "Saat ve sunucu", genislik: 2 },
+    { id: "durum", ad: "Sistem durumu", label: "Sistem durumu", genislik: 2 },
+    { id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },
+  ];
   const TONE_FALLBACK = { dosyalar: "t-files", paylasim: "t-share", moduller: "t-store", ayarlar: "t-settings" };
-  function tile(href, icon, tone, name, sub, dot, key) {
-    return h("a", { class: "tile card", href, "data-tile": key || href.replace(/^#\//, "").split("/")[0] },
-      dot ? h("span", { class: "dot " + dot, "aria-hidden": "true" }) : null,
-      h("span", { class: "ico " + tone }, svg(icon)), h("strong", null, name), h("small", null, sub));
+  // layout: sunucudaki kayıt (null: varsayılan); editing: Düzenle açıkken taslak, değilse null.
+  // modsSettled: the module list answered once (or failed), so the tiles do not jump in after the page.
+  let layout = null, layoutLoaded = false, modsSettled = false, editing = null, drag = null;
+  const defaultLayout = () => ({ kareler: [], widgetlar: WIDGETS.map((w) => ({ id: w.id, genislik: w.genislik, gizli: false })) });
+  const activeLayout = () => editing || layout || defaultLayout();
+  function widgetSetting(id) {
+    const own = (activeLayout().widgetlar || []).find((w) => w.id === id), base = WIDGETS.find((w) => w.id === id);
+    return { genislik: own ? own.genislik : base.genislik, gizli: own ? own.gizli : false };
   }
-  function overviewTiles() {
+  function loadLayout() {
+    return api("/api/konsol/duzen").then((r) => { if (!editing) layout = r && r.duzen ? r.duzen : null; })
+      .catch(() => { /* düzen okunamazsa varsayılan düzen gösterilir */ })
+      .finally(() => { layoutLoaded = true; renderOverview(); });
+  }
+
+  /* -- ağ kartı (DD-206) -- */
+  let NET = null, netFailed = false, netBusy = false;
+  const netFresh = () => !!NET && !netFailed && Number.isFinite(NET.sampled_at) && NET.read_at - NET.sampled_at <= 15;
+  function speed(b) {
+    if (!Number.isFinite(b)) return "—";
+    if (b < KiB) return Math.round(b) + " B/s";
+    if (b < MiB) return Math.round(b / KiB) + " KB/s";
+    if (b < GiB) return dec(b / MiB, b < 10 * MiB ? 1 : 0) + " MB/s";
+    return dec(b / GiB, 1) + " GB/s";
+  }
+  // İndirme dolgulu çizgi, yükleme ince çizgi; x zamana göre (son pencere), ölçek pencerenin en büyüğüne uyar.
+  function netChart(net) {
+    const w = 300, hgt = 64, span = net && net.window > 0 ? net.window : 120, end = net && Number.isFinite(net.read_at) ? net.read_at : 0;
+    const pts = net && Array.isArray(net.points) ? net.points.filter((p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite)) : [];
+    const top = Math.max(64 * KiB, ...pts.map((p) => Math.max(p[1], p[2])));
+    const x = (t) => Math.max(0, Math.min(w, w * (1 - (end - t) / span))).toFixed(1);
+    const y = (v) => (hgt - 2 - (hgt - 6) * Math.max(0, v) / top).toFixed(1);
+    const line = (i) => pts.map((p, n) => (n ? "L" : "M") + x(p[0]) + " " + y(p[i])).join(" ");
+    let body = `<line class="base" x1="0" y1="${hgt - 1}" x2="${w}" y2="${hgt - 1}" vector-effect="non-scaling-stroke"/>`;
+    if (pts.length > 1) {
+      body += `<path class="down-fill" d="${line(1)} L${x(pts[pts.length - 1][0])} ${hgt} L${x(pts[0][0])} ${hgt} Z"/>`
+        + `<path class="down" d="${line(1)}" vector-effect="non-scaling-stroke"/><path class="up" d="${line(2)}" vector-effect="non-scaling-stroke"/>`;
+    }
+    return svgFrom(`<svg class="net-svg" viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" aria-hidden="true">${body}</svg>`);
+  }
+  const when = (t) => {
+    const d = new Date(t * 1000), today = new Date(now() * 1000);
+    return (d.toDateString() === today.toDateString() ? "" : d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) + " ") + hhmm(t);
+  };
+  // since: sayaçların başladığı an (ör. ağın açılışı); at: uygulamanın tüm zamanlar kaydının zamanı.
+  const appCaption = (a) => Number.isFinite(a.since) ? "başlangıç " + when(a.since) : Number.isFinite(a.at) ? "tüm zamanlar · kayıt " + when(a.at) : "toplam";
+  function netApps() {
+    const apps = NET && Array.isArray(NET.apps) ? NET.apps : [];
+    if (!apps.length) return [h("p", { class: "hint-s" }, NET ? "Trafiğini bildiren kurulu uygulama yok." : netFailed ? "Uygulama trafiği okunamadı." : "Uygulama trafiği okunuyor…")];
+    return apps.map((a) => {
+      const meta = metaOf(a.id), known = Number.isFinite(a.down) && Number.isFinite(a.up);
+      const name = meta.name === a.id ? (typeof a.name === "string" && a.name ? a.name : a.id) : meta.name;
+      return h("div", { class: "net-app", "data-app": a.id },
+        h("span", { class: "ico " + meta.tone }, svg(meta.icon)),
+        h("div", null, h("strong", null, name), h("small", null, a.state === "durduruldu" ? "durduruldu" : known ? appCaption(a) : "ölçülemedi")),
+        h("span", { class: "v down" }, known ? "↓ " + bytes(a.down) : "—"),
+        h("span", { class: "v up" }, known ? "↑ " + bytes(a.up) : "—"));
+    });
+  }
+  const netSub = () => NET ? (NET.iface ? `${NET.iface} · son ${Math.round((NET.window || 120) / 60)} dk` : "WAN arayüzü bilinmiyor")
+    : netFailed ? "Ağ bilgisi okunamadı" : "Ölçülüyor…";
+  function netBody() {
+    const fresh = netFresh();
+    return [
+      h("div", { class: "net-live" },
+        h("div", { class: "net-rates" },
+          h("div", { class: "net-rate down" }, h("span", { class: "lbl" }, "İndirme"), h("b", { id: "ag-rx" }, fresh ? speed(NET.rx) : "—")),
+          h("div", { class: "net-rate up" }, h("span", { class: "lbl" }, "Yükleme"), h("b", { id: "ag-tx" }, fresh ? speed(NET.tx) : "—"))),
+        h("div", { class: "net-chart" }, netChart(fresh ? NET : null))),
+      h("div", { class: "net-apps", id: "ag-apps" }, h("small", { class: "net-apps-head" }, "Uygulamalar · toplam"), ...netApps()),
+    ];
+  }
+  function paintNetwork() {
+    const body = $("ag-body"), sub = $("ag-sub"), live = $("ag-live");
+    if (body) body.replaceChildren(...netBody());
+    if (sub) sub.textContent = netSub();
+    if (live) { live.textContent = netFresh() ? "Canlı" : "Bekleniyor"; live.className = "hm" + (netFresh() ? " ok" : ""); }
+  }
+  async function loadNetwork() {
+    if (netBusy) return;
+    netBusy = true;
+    try { NET = await api("/api/konsol/ag"); netFailed = false; }
+    catch (_err) { netFailed = true; }
+    finally { netBusy = false; }
+    if (current === "genel") paintNetwork();
+  }
+
+  /* -- widget'lar -- */
+  function widgetContent(id, v) {
+    if (id === "saat") {
+      const d = new Date(now() * 1000);
+      const fact = (label, value, mono) => h("div", null, h("dt", null, label), h("dd", mono ? { class: "mono" } : null, value || "—"));
+      return [
+        h("div", { class: "clock", id: "genel-clock" }, d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })),
+        h("div", { class: "hint-s" }, d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })),
+        h("dl", { class: "clock-facts" },
+          fact("Çalışma süresi", v.s && v.fresh ? uptimeText(v.s.uptime) : ""),
+          fact("Tailscale", v.s && v.s.net ? v.s.net.tailscale : "", true),
+          fact("WAN", v.s && v.s.net ? v.s.net.wan : "", true)),
+      ];
+    }
+    if (id === "durum") {
+      // v2-182: the check texts are not repeated here (Ayarlar → Sistem → Sağlık has them); the pill is the verdict.
+      const hs = S.health, pill = hs && HEALTH_PILL[hs.status] ? HEALTH_PILL[hs.status] : null;
+      return [
+        h("div", { class: "card-head" }, h("div", null, h("h2", null, "Sistem durumu"), h("small", { class: "hint-s" }, hs ? "Son denetim " + hhmm(hs.read_at) : healthFailed ? "Sağlık bilgisi okunamadı" : "Denetleniyor…")),
+          pill ? h("span", { class: "hm " + pill[0], id: "genel-health" }, pill[1]) : h("span", { class: "hm", id: "genel-health" }, "—")),
+        h("div", { class: "rings" },
+          h("div", { class: "big" }, ring(v.cpu), h("b", null, Number.isFinite(v.cpu) ? "%" + Math.round(v.cpu) : "—"), "İşlemci"),
+          h("div", { class: "big" }, ring(v.mem), h("b", null, Number.isFinite(v.mem) ? "%" + Math.round(v.mem) : "—"), "RAM"),
+          h("div", { class: "big pie-box" }, pie(v.disk), h("span", null, h("b", null, Number.isFinite(v.disk) ? "%" + Math.round(v.disk) : "—"), " Depolama"))),
+      ];
+    }
+    return [
+      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Ağ"), h("small", { class: "hint-s", id: "ag-sub" }, netSub())),
+        h("span", { class: "hm" + (netFresh() ? " ok" : ""), id: "ag-live" }, netFresh() ? "Canlı" : "Bekleniyor")),
+      h("div", { class: "net", id: "ag-body" }, ...netBody()),
+    ];
+  }
+  function widgetTools(def, set) {
+    const change = (patch, tool) => {
+      Object.assign(editing.widgetlar.find((w) => w.id === def.id), patch);
+      renderOverview(true, `[data-widget="${def.id}"] [data-tool="${tool}"]`);
+    };
+    return h("div", { class: "widget-tools", role: "group", "aria-label": def.ad + " düzeni" },
+      h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "dar", "aria-label": `${def.ad}: daralt`, disabled: set.genislik <= 1,
+        onclick: () => change({ genislik: set.genislik - 1 }, "dar") }, "−"),
+      h("span", { class: "hm" }, `${set.genislik}/4`),
+      h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "genis", "aria-label": `${def.ad}: genişlet`, disabled: set.genislik >= 4,
+        onclick: () => change({ genislik: set.genislik + 1 }, "genis") }, "+"),
+      h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "gizle", "aria-label": `${def.ad}: ${set.gizli ? "göster" : "gizle"}`,
+        onclick: () => change({ gizli: !set.gizli }, "gizle") }, svg("eye"), set.gizli ? "Göster" : "Gizle"));
+  }
+  function overviewWidgets() {
+    const v = resourceValues();
+    return WIDGETS.filter((w) => editing || !widgetSetting(w.id).gizli).map((def) => {
+      const set = widgetSetting(def.id);
+      const el = h("article", { class: "card widget" + (set.gizli ? " is-hidden" : ""), "aria-label": def.label, "data-widget": def.id,
+        "data-span": String(set.genislik) }, ...widgetContent(def.id, v));
+      if (editing) el.append(widgetTools(def, set));
+      return el;
+    });
+  }
+
+  /* -- uygulama kareleri -- */
+  function tileDefs() {
     const shares = S.share && Array.isArray(S.share.items) ? S.share.items.length : null;
     const installed = (MODS || []).filter((m) => m.installed);
     const apps = installed.map((m) => {
       const meta = metaOf(m.id);
-      const state = m.busy ? "işleniyor" : m.state === "durduruldu" ? "durduruldu" : (m.runtime === "host" && m.live !== "running") || m.live === "exited" ? "çalışmıyor" : "çalışıyor";
+      const state = m.busy ? "işleniyor" : m.state === "durduruldu" ? "durduruldu" : (unitRuntime(m) && m.live !== "running") || m.live === "exited" ? "çalışmıyor" : "çalışıyor";
       const dot = m.busy ? "warn" : state === "çalışıyor" ? "on" : state === "durduruldu" ? "off" : "warn";
-      return tile(meta.rota ? "#/" + meta.rota : "#/moduller", meta.icon, meta.tone, meta.name, state, dot);
+      return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot };
     });
     return [
-      tile("#/dosyalar", "folder", TONE_FALLBACK.dosyalar, "Dosyalar", S.fs && S.fs.root ? S.fs.root : "kullanıcı alanı"),
+      { key: "dosyalar", href: "#/dosyalar", icon: "folder", tone: TONE_FALLBACK.dosyalar, name: "Dosyalar", sub: S.fs && S.fs.root ? S.fs.root : "kullanıcı alanı" },
       ...apps,
-      tile("#/dosyalar/paylasim", "share", TONE_FALLBACK.paylasim, "Paylaşımlar", shares == null ? "klasör WebDAV" : shares === 1 ? "1 paylaşım" : `${shares} paylaşım`, null, "paylasim"),
-      tile("#/moduller", "stack", TONE_FALLBACK.moduller, "App Store", MODS ? `${installed.length} kurulu · ${MODS.length - installed.length} kurulabilir` : "okunuyor…"),
-      tile("#/ayarlar", "sliders", TONE_FALLBACK.ayarlar, "Ayarlar", "sistem, güvenlik duvarı, Caddy, DNS"),
+      { key: "paylasim", href: "#/dosyalar/paylasim", icon: "share", tone: TONE_FALLBACK.paylasim, name: "Paylaşımlar", sub: shares == null ? "klasör WebDAV" : shares === 1 ? "1 paylaşım" : `${shares} paylaşım` },
+      { key: "moduller", href: "#/moduller", icon: "stack", tone: TONE_FALLBACK.moduller, name: "App Store", sub: MODS ? `${installed.length} kurulu · ${MODS.length - installed.length} kurulabilir` : "okunuyor…" },
+      { key: "ayarlar", href: "#/ayarlar", icon: "sliders", tone: TONE_FALLBACK.ayarlar, name: "Ayarlar", sub: "sistem, güvenlik duvarı, Caddy, DNS" },
     ];
   }
-  function renderOverview() {
-    if (current !== "genel") return;
-    $("genel-widgets").replaceChildren(...overviewWidgets());
-    $("genel-tiles").replaceChildren(...overviewTiles());
+  // Kayıtlı sıradakiler önce, kayıtta olmayanlar (sonradan kurulan uygulama) varsayılan sırayla sonra.
+  function orderedTiles() {
+    const defs = tileDefs(), order = activeLayout().kareler || [];
+    const rank = (d, i) => { const at = order.indexOf(d.key); return at < 0 ? order.length + i : at; };
+    return defs.map((d, i) => [rank(d, i), d]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+  }
+  function tileEl(def, index, total) {
+    const inner = [def.dot ? h("span", { class: "dot " + def.dot, "aria-hidden": "true" }) : null,
+      h("span", { class: "ico " + def.tone }, svg(def.icon)), h("strong", null, def.name), h("small", null, def.sub)];
+    if (!editing) return h("a", { class: "tile card", href: def.href, "data-tile": def.key }, ...inner);
+    return h("div", { class: "tile card", "data-tile": def.key, role: "group", "aria-label": def.name, onpointerdown: (e) => dragStart(e, def.key) }, ...inner,
+      h("span", { class: "tile-move" },
+        h("button", { type: "button", "data-move": "-1", "aria-label": `${def.name}: sola taşı`, disabled: index === 0, onclick: () => moveTile(def.key, -1) }, svg("chevl")),
+        h("button", { type: "button", "data-move": "1", "aria-label": `${def.name}: sağa taşı`, disabled: index === total - 1, onclick: () => moveTile(def.key, 1) }, svg("chev"))));
+  }
+  function moveTile(key, step) {
+    const order = orderedTiles().map((d) => d.key), i = order.indexOf(key), j = i + step;
+    if (!editing || i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    editing.kareler = order;
+    renderOverview(true, `[data-tile="${key}"] [data-move="${step}"]`);
+  }
+  // Sürükle-bırak: fare ve dokunma için aynı işaretçi olayları; kare sürüklenirken yerinde taşınır.
+  // Taşınan öğe belgeden bir an ayrıldığı için tarayıcı işaretçi yakalamasını bırakır; olaylar bu
+  // yüzden belge düzeyinde dinlenir.
+  function dragStart(e, key) {
+    if (!editing || drag || e.button > 0 || e.target.closest("button")) return;
+    const el = e.currentTarget;
+    drag = { key, el, id: e.pointerId, moved: false };
+    el.classList.add("dragging");
+    document.addEventListener("pointermove", dragMove);
+    document.addEventListener("pointerup", dragEnd);
+    document.addEventListener("pointercancel", dragEnd);
+    e.preventDefault();
+  }
+  function dragMove(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const over = target && target.closest("#genel-tiles .tile");
+    if (!over || over === drag.el) return;
+    const r = over.getBoundingClientRect();
+    if (e.clientX > r.left + r.width / 2) over.after(drag.el); else over.before(drag.el);
+    drag.moved = true;
+  }
+  function dragEnd(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { el, moved } = drag;
+    drag = null;
+    el.classList.remove("dragging");
+    ["pointermove", "pointerup", "pointercancel"].forEach((t) => document.removeEventListener(t, t === "pointermove" ? dragMove : dragEnd));
+    if (moved && e.type === "pointerup" && editing) editing.kareler = [...$("genel-tiles").querySelectorAll(".tile")].map((t) => t.dataset.tile);
+    renderOverview(true);
+  }
+
+  /* -- düzenleme modu -- */
+  function sameAsDefault(draft) {
+    const keys = tileDefs().map((d) => d.key), order = orderedTiles().map((d) => d.key);
+    return order.join() === keys.join() && WIDGETS.every((w) => {
+      const own = draft.widgetlar.find((x) => x.id === w.id);
+      return own && own.genislik === w.genislik && !own.gizli;
+    });
+  }
+  function startEdit() {
+    const draft = { kareler: orderedTiles().map((d) => d.key), widgetlar: WIDGETS.map((w) => ({ id: w.id, ...widgetSetting(w.id) })) };
+    editing = draft;
+    renderOverview(true, "#genel-bitti");
+  }
+  function cancelEdit() {
+    editing = null;
+    renderOverview(true, "#genel-duzenle");
+  }
+  function resetDraft() {
+    editing = { kareler: [], widgetlar: defaultLayout().widgetlar };
+    renderOverview(true, "#genel-varsayilan");
+  }
+  async function finishEdit() {
+    const button = $("genel-bitti");
+    if (!editing || !button || button.disabled) return;
+    const draft = { kareler: orderedTiles().map((d) => d.key), widgetlar: editing.widgetlar.map((w) => ({ id: w.id, genislik: w.genislik, gizli: w.gizli })) };
+    const reset = sameAsDefault(draft);
+    button.disabled = true;
+    try {
+      const answer = await post("/api/konsol/duzen", reset ? { sifirla: true } : { duzen: draft });
+      layout = answer && answer.duzen ? answer.duzen : null;
+      editing = null;
+      renderOverview(true, "#genel-duzenle");
+      toast(reset ? "Genel bakış varsayılan düzene döndü." : "Düzen kaydedildi.");
+    } catch (err) { button.disabled = false; fail(err); }
+  }
+  function paintEditBar() {
+    const bar = $("genel-edit");
+    if (!bar) return;
+    bar.classList.toggle("editing", !!editing);
+    bar.replaceChildren(...(editing ? [
+      h("span", { class: "edit-hint" }, "Kareleri sürükleyin ya da oklarla taşıyın"),
+      h("button", { type: "button", class: "btn btn-sm btn-quiet", id: "genel-varsayilan", onclick: resetDraft }, "Varsayılan"),
+      h("button", { type: "button", class: "btn btn-sm btn-quiet", id: "genel-vazgec", onclick: cancelEdit }, "Vazgeç"),
+      h("button", { type: "button", class: "btn btn-sm btn-primary", id: "genel-bitti", onclick: finishEdit }, "Bitti"),
+    ] : [h("button", { type: "button", class: "btn btn-sm btn-quiet", id: "genel-duzenle", disabled: !layoutLoaded || !modsSettled, onclick: startEdit }, svg("pencil"), "Düzenle")]));
+  }
+  // force: düzenleme adımları; veriler yenilenince Düzenle açıksa sayfa yeniden çizilmez (sürükleme ve
+  // odak bozulmasın), sayılar kendi yerlerinde güncellenir.
+  function renderOverview(force, focus) {
+    if (current !== "genel" || (editing && !force) || drag) return;
+    const widgets = $("genel-widgets"), tiles = $("genel-tiles");
+    if (!layoutLoaded) { widgets.replaceChildren(); tiles.replaceChildren(); paintEditBar(); return; }
+    widgets.replaceChildren(...overviewWidgets());
+    widgets.classList.toggle("editing", !!editing);
+    const defs = modsSettled ? orderedTiles() : [];
+    tiles.replaceChildren(...defs.map((d, i) => tileEl(d, i, defs.length)));
+    tiles.classList.toggle("editing", !!editing);
     const installed = (MODS || []).filter((m) => m.installed).length;
-    $("genel-sum").textContent = MODS ? (installed ? `${installed} kurulu uygulama ve Konsol bölümleri` : "Konsol bölümleri; uygulamalar App Store’dan kurulur") : "";
+    $("genel-sum").textContent = editing ? "Düzenleniyor · değişiklikler Bitti ile kaydedilir"
+      : MODS ? (installed ? `${installed} kurulu uygulama ve Konsol bölümleri` : "Konsol bölümleri; uygulamalar App Store’dan kurulur") : "";
     const stamp = $("genel-stamp");
     if (stamp) stamp.textContent = S.sys ? "Son okuma " + hhmm(S.sys.read_at) : "Okunuyor…";
+    paintEditBar();
+    if (focus) {
+      const target = document.querySelector(focus);
+      const fallback = target && target.disabled ? target.parentElement.querySelector("button:not([disabled])") : null;
+      (fallback || target)?.focus();
+    }
   }
   const overviewActions = () => [h("span", { class: "hm", id: "genel-stamp" }, "Okunuyor…"),
-    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadHealth(); loadModules(); loadFsState(); loadShares(); } }, svg("refresh"), "Yenile")];
+    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadHealth(); loadModules(); loadFsState(); loadShares(); loadNetwork(); } }, svg("refresh"), "Yenile")];
 
   // Konsol'un kendi sayfaları; uygulama sayfaları paketlerden gelir (DD-200/202).
   const ROUTES = {
     genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,
-      render: () => { renderOverview(); loadHealth(); loadFsState(); loadShares(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
+      render: () => { renderOverview(); loadLayout(); loadNetwork(); loadHealth(); loadFsState(); loadShares(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
     ayarlar: { title: "Ayarlar", eyebrow: "Panel ve sunucu yapılandırması", actions:settingsActions,
-      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth(); loadSettings(); } },
+      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth();
+        if (settingsTab === "konteynerler") containers.show(containerWant); else loadSettings(); } },
   };
   // DD-204: açılış sayfası Genel bakış (DD-160'ta Dosyalar'dı).
   let current = "genel";
@@ -1527,7 +1810,11 @@
       key = "moduller";
     }
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
-    if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
+    if (key === "ayarlar") settingsTab = ["fw","web","dns","konteynerler","log"].includes(raw[1]) ? raw[1] : "system";
+    // DD-209: bir uygulamanın sayfası kendi konteynerine #/ayarlar/konteynerler/<ad> ile bağlanır.
+    containerWant = key === "ayarlar" && settingsTab === "konteynerler" && raw[2] ? (() => { try { return decodeURIComponent(raw[2]); } catch (_) { return ""; } })() : "";
+    // DD-206: leaving the overview drops an unsaved layout draft.
+    if (key !== "genel" && editing) { editing = null; drag = null; }
     current = key;
     if (!ROUTES[key]) sectionFor(key);
     document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== key; });
@@ -1555,12 +1842,17 @@
     if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
+    if (current === "ayarlar" && settingsTab === "konteynerler") containers.poll();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
     if (current === "genel") { loadHealth(); loadFsState(); loadShares(); }
     if ((current === "moduller" || current === "genel") && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
   setInterval(() => { if (!document.hidden) { paintResources(); if (current === "genel") { const c = $("genel-clock"); if (c) c.textContent = new Date(now() * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }); } } }, 1000);
+  // DD-206: the network card reads every 2 s while the overview shows it.
+  setInterval(() => { if (!document.hidden && current === "genel" && (editing || !widgetSetting("ag").gizli)) loadNetwork(); }, 2000);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && editing && current === "genel" && !$("sh").open) cancelEdit(); });
   $("logout").addEventListener("click", logout);
+  loadKonsolAccount();  // DD-205: shows the sign-out only on the internet address
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { paintResources(); loadSystem(); loadModules(); } });
   loadFsState();
 })();

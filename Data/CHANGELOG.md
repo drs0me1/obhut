@@ -6,6 +6,142 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler (v2-186)
+
+- **Podman is part of the base** (DD-208): stage 1 installs `podman` and `netavark` without
+  recommends and requires `podman info` (checked again in stage 7; the summary prints the
+  version). No daemon, socket or auto-update timer is enabled; Docker stays out (DD-152).
+  v2-185's App Store package "Podman" (never released) is gone: Podman is not an application.
+- **Settings → Konteynerler** (a sixth tab): the read-only container view — every container with
+  state, image, unit, mounts, ports and a masked log tail (100–1000 lines) — now from
+  `GET /api/konsol/konteynerler/*` in the base. No start/stop/remove; environments never shown.
+- **qBittorrent runs in Podman** (DD-209) and stays an ordinary App Store application (tile,
+  sidebar, page; a "Konteyner" chip in the App Store): the linuxserver image pinned by digest,
+  a quadlet unit `qbittorrent.service`, host network, the downloads account's uid, only the
+  profile and the downloads folder mounted (same path), UI on 127.0.0.1 only. The page links
+  to its container view. Stop removes the unit so nothing starts at boot; remove keeps the
+  image, `--veri` also deletes it. A download folder outside the downloads tree is bind-mounted
+  through a quadlet drop-in. The Debian package `qbittorrent-nox` is no longer used.
+- Engine: `PAKET_CALISMA=konteyner`, `PAKET_KONTEYNER` (quadlet into `/etc/containers/systemd`)
+  and `PAKET_IMAJ` (digest-only image, pulled once; removed by image id).
+- qBittorrent page: the account form no longer loses a typed password (or the half-typed repeat,
+  focus and caret) when the 10 s status poll or Yenile redraws the page; the service bar no
+  longer shows the text "null" for an absent item.
+- Manual step for a host that ran an earlier version with qBittorrent installed (fresh-install
+  rule, no migration): `systemctl disable --now qbittorrent-nox@<user>.service` before
+  installing qBittorrent from the App Store again; the old profile in `/var/lib/qbittorrent`
+  is reused by the container as is.
+- **Verified:** see SESSION.md.
+
+### 2026-10-02 — WireGuard network creation on a fresh host; a one-card creation screen (v2-184)
+
+- Fixed (DD-207): creating a WireGuard network from Konsol failed with "install: cannot change
+  permissions of '/etc/wireguard/clients-wg0'" when `/etc/wireguard` did not exist while the
+  root backend started (a host where WireGuard was installed later, or the folder was removed and
+  created again): systemd had skipped its writable bind. The installer now creates every
+  package-declared backend write path before starting the backend and restarts a backend that
+  sees one read-only; the store engine repeats the check after installing, starting or applying
+  a package; Konsol keeps following an operation through that brief restart; `master-wg` names
+  the problem and the remedy instead of a raw `install` error.
+- The new-network screen is one card as wide as the windows (label and port side by side, DNS,
+  what will happen, buttons). DNS options are two lines, so the network settings, peer add and
+  peer edit windows show the whole list without scrolling inside.
+- **Verified:** Mac — 174 Bats (two new), 426 Python, all eight fixture browser suites. nrm —
+  174 Linux Bats; the faulty state reproduced (backend started without `/etc/wireguard`, a
+  later folder read-only for it), then the v2-184 installer created the folder and restarted the
+  backend with a writable mount; App Store install of WireGuard and a network created through
+  Konsol's API (HTTP 201, wg0 up) and removed again; the folder removed and recreated under the
+  running backend was repaired by `master-modul uygula` with one backend restart (none on the
+  second run); the creation screen is one 560 px card on the live host.
+
+### 2026-10-02 — Overview edit mode, server-side layout and a network card (v2-183)
+
+- Genel bakış has a **Düzenle** pill bottom-left (DD-206): tiles can be dragged (mouse or
+  finger) or moved with arrow buttons, each widget gets a width of 1–4 columns and a hide/show
+  switch; Bitti saves, Vazgeç/Escape discards, Varsayılan restores the defaults. The layout is
+  stored by the root backend (`KONSOL_AUTH_DIR/duzen.json`), so every device shows the same.
+- The clock card shows time, date, uptime and the Tailscale and WAN addresses; the host/OS/kernel
+  line moved out (Ayarlar → Sistem has it).
+- New **Ağ** card: the WAN interface's download/upload rates every 2 s with a two-minute chart,
+  and each installed application's totals — qBittorrent's own all-time figures from its
+  statistics file (with the time it saved them), WireGuard's interfaces since the networks came
+  up — through a new optional package module (`PAKET_TRAFIK`, `trafik.py`); the shell still names
+  no application. systemd IP accounting was tried and dropped: on Debian 13 a daemon-reload loses
+  those counters.
+- **Verified:** Mac — 426 Python (17 new in `test_overview`), 172 Bats, all eight fixture browser
+  suites (panel-ui drives the whole edit flow, a mouse drag included). nrm — 172 Linux Bats, the
+  overview tests with Debian's Python; installer runs over v2-182 (exit 0); live from the Mac
+  without a session: rates every 2 s, a 120 s chart filled at once, a layout saved through the real
+  backend, read back after a reload and reset (`duzen.json` gone); with qBittorrent and WireGuard
+  installed for the test, their totals (qBittorrent's survive a daemon-reload); both removed
+  afterwards with their data and apt packages.
+
+### 2026-10-02 — Status widget: charts only, larger (v2-182)
+
+- Genel bakış → Sistem durumu no longer repeats the health-check texts (Ayarlar → Sistem →
+  Sağlık has them); the pill in the card head keeps the verdict. The CPU and RAM rings and
+  the storage pie grew from 58 to 84 px and sit in three equal columns that fill the card.
+- **Verified:** Mac — 171 Bats, all eight fixture browser suites (panel-ui: no check lines,
+  ring ≥ 80 px, both widgets about the same height). nrm — installer run over v2-181
+  (exit 0); live from the Mac without a session: rings 84 × 84 px, no explanation lines, the
+  two widgets exactly the same height; light/dark/mobile screenshots reviewed.
+
+### 2026-10-02 — No sign-in on the tailnet; the account is the public name's credential (v2-181)
+
+- Konsol's tailnet address (`panel.<domain>`) asks for no sign-in any more (DD-205): Caddy
+  still asks the root backend before every request, and on the Tailscale site the backend
+  passes every request from another Tailscale device; its sign-in page goes back to Konsol.
+  The public HTTPS name keeps the user name and password, the `Secure` cookie and the
+  attempt budgets.
+- The one-time setup code is gone: no installer printout, no code form, no `master-konsol
+  kod`. The operator creates the account — the public name's credential — in Settings →
+  Sistem → Konsol hesabı over Tailscale (user name + password, no code); the Panel's
+  internet switch still needs it. From the tailnet the password is changed without the
+  current one and every session ends; over the internet the current password is required
+  as before. The sidebar's "Çıkış yap" and the account name shown to anonymous visitors
+  exist only on the public name. `sudo master-konsol sifirla` deletes the account and
+  closes the public name.
+- **Flagged trade-off:** every device in the tailnet administers the server without a
+  password; Tailscale ACLs decide who reaches the panel.
+- **Verified:** Mac — 409 Python (22 in `test_konsol_auth`), 171 Bats, browser suites
+  `giris-ui`, `settings-ui`, `panel-ui`, `files-ui`, `torrent-ui`, `wireguard-ui`,
+  `publications-ui`, `settings-https-ui`. nrm (Linux) — 171 Bats on a fresh copy of the
+  tree, `test_konsol_auth`/`test_publications` with Debian's Python; installer run over
+  v2-180 (exit 0, stage 7 proves the tailnet gate: 204 and `/giris.html` → `/`); from the
+  Mac without any cookie `panel.ayc` pages, Files API and root API answer 200,
+  `/giris.html` redirects to `/`, the account name is shown to the tailnet; the public name
+  still redirects to the sign-in page, answers 401 on the API, hides the account name and
+  refuses account creation (403); Settings → Sistem shows "İnternet hesabı: …" with
+  "Parolayı değiştir" only and no sidebar sign-out. `konsol-login-live.py` skips (exit 3)
+  because the operator's account exists.
+
+### 2026-10-02 — Public HTTPS address shown without WebDAV's port (v2-180)
+
+- Settings → Caddy showed a ready Panel or application name as `https://<name>:61010`
+  whenever WebDAV still used legacy HTTP: the link took WebDAV's own WAN port
+  (`manage.https.port`, which is `SHARE_PORT` in that state) instead of the HTTPS listener
+  port (`https_port`, `SHARE_HTTPS_PORT`). Caddy itself always listened on 443, so the shown
+  address did not open. Only the display changed; site generation, share URLs and package
+  URLs already used the right port.
+- **Verified:** Mac — 409 Python, 171 Bats, all fixture browser suites; the new
+  `settings-https-ui` assertion fails against the previous `ayarlar.js` with exactly
+  `https://panel.example.net:61010`. nrm — installer run over v2-179 (exit 0); live
+  Settings → Caddy shows the ready Panel name without a port while WebDAV is still on
+  legacy HTTP; no `:61010` anywhere in the table.
+
+### 2026-10-02 — Overview widgets trimmed (v2-179)
+
+- Genel bakış keeps two widgets: the clock and **Sistem durumu**, which now shows storage as
+  a pie beside the CPU and RAM rings (warn colour from 90 %). The separate Depolama card
+  (disk bar, trash size) and the İşlemci history sparkline are gone; the sidebar meters still
+  carry the figures. No endpoint or markup change elsewhere.
+- **Verified:** Mac — 409 Python, 171 Bats, browser suites `panel-ui` (two widgets, three
+  charts, pie caption from the fixture's disk figures), `files-ui`, `settings-ui`,
+  `torrent-ui`, `wireguard-ui`, `publications-ui`, `settings-https-ui`, `giris-ui`. nrm —
+  installer run over v2-178 (exit 0); live Playwright look at `panel.ayc`: clock and status
+  cards only, CPU/RAM rings with the storage pie, health pill healthy after the host's reboot,
+  `backdrop-filter` active, no CSP report; light/dark/mobile screenshots reviewed.
+
 ### 2026-10-02 — CasaOS-inspired skin and an overview page for Konsol (v2-178)
 
 - Konsol wears a CasaOS-inspired skin (DD-204): a wallpaper (inline SVG, no external

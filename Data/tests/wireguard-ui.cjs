@@ -47,6 +47,7 @@ const creationTemplate=structuredClone(nets[0]);
     Object.assign(net,{dns:body.dns,revision:'b'.repeat(64)}); data={iface:net.iface};
    } else if(p===API+'/state') {stateReads++; data={host:'fixture',version:'test',installed:true,networks:nets,now:Date.now()/1000,max:10,defaults:{dns,keepalive:21,mtu:1420,port:61001},reserved:[]};}
    else if(p==='/api/konsol/moduller') data={items:[{id:'wireguard',installed:true,state:'calisiyor',runtime:'konsol',live:'running',durdurulabilir:false,konsol:meta('wireguard'),sayfa:['sayfa.js','sayfa.css']},{id:'torrent',installed:false,state:'yok',runtime:'host',live:'-',durdurulabilir:true,konsol:meta('torrent')}]};
+   else if(p==='/api/konsol/oturum')data={durum:'giris',kullanici:'fixture',kanal:'tailscale'};  // DD-205: tailnet, no sign-out
    else if(p==='/api/konsol/kaynaklar')data={host:'fixture',domain:'ayc',version:'test',root:'/srv',read_at:Date.now()/1000,sampled_at:null,cpu:[],mem:null,disk:null,net:{}};
    else if(p==='/api/konsol/paylasim')data={items:[],enabled:true};
    else if(p==='/api/state')data={root:'/srv',protected:[{path:'downloads/incomplete',owner:'Deneme Uygulaması'}],trash:{count:0,size:0},disk:{total:100,free:80}};
@@ -120,7 +121,11 @@ const creationTemplate=structuredClone(nets[0]);
   await creation.waitFor({state:'visible'});
   assert.equal(await page.locator('#na-local, #na-local-row, #na-local-desc').count(),0);
   assert.equal(await creation.getByRole('switch').count(),0);
-  assert.match(await page.locator('#na-preview').innerText(),/Yalnız internet/);
+  assert.match(await page.locator('#na-ident').innerText(),/Yalnız internet/);
+  // One card as wide as the windows (dialog#sh), not a two-column page with a summary sidebar.
+  assert.equal(await creation.locator('article.card').count(),1,'the new-network screen is a single card');
+  const cardBox=await creation.locator('article.card').boundingBox();
+  assert(cardBox.width<=561,`card width ${cardBox.width}`);
   assert.doesNotMatch(await creation.innerText(),/local|qBittorrent arayüzü/i);
   await page.locator('#na-port').fill('61001');
   assert.equal(await page.locator('#na-create').isDisabled(),true);

@@ -123,14 +123,15 @@ EOF
     # Every apt-get call waits on the dpkg lock (ubuntu unattended-upgrades).
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
     # DD-150: the WireGuard packages are installed by the WireGuard module, not here;
-    # DD-152: no Docker repository update or packages either.
-    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 7 ]
+    # DD-152: no Docker repository update or packages either; DD-208: Podman is one base call.
+    [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 8 ]
     grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
     grep -qF -- '-o DPkg::Lock::Timeout=300 "$@"' "$V2_ROOT/scripts/master-modul"
     # DD-197: packages are declared in each package's manifest; the engine installs them.
     grep -qx 'PAKET_APT="wireguard-tools qrencode"' "$V2_ROOT/magaza/wireguard/paket.env"
-    grep -qx 'PAKET_APT="qbittorrent-nox"' "$V2_ROOT/magaza/torrent/paket.env"
-    grep -qx '    paket_apt || fail_step "$FAIL"' "$V2_ROOT/magaza/torrent/kanca"
+    # DD-209: qBittorrent has no Debian package; its image is pulled by digest instead.
+    grep -qx 'PAKET_APT=""' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qx '    paket_imaj_cek || fail_step "$FAIL"' "$V2_ROOT/magaza/torrent/kanca"
     # retry runs a function in a child bash that does not inherit arrays, so
     # the masked-quiet installs take APT_OPTS as arguments (DD-125).
     [ "$(grep -cF 'apt_get_install_masked_quiet "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 2 ]
@@ -559,10 +560,14 @@ EOF
 }
 
 @test "qBittorrent and WebDAV run as the downloads uid" {
-    # DD-151: the package's template unit runs as the downloads account's own name.
+    # DD-209: the container runs qBittorrent as PUID/PGID = the downloads account; the hook checks the
+    # host uid of the qbittorrent-nox process, and the unit is the one Podman generates.
+    grep -qx 'Environment=PUID=__DOWNLOADS_UID__ PGID=__DOWNLOADS_GID__ UMASK=002 TZ=__TIMEZONE__ WEBUI_PORT=__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/qbittorrent.container"
+    body="$(awk '/^torrent_verify\(\)/,/^}$/' "$V2_ROOT/magaza/torrent/kanca")"
+    grep -qF 'podman top "$TORRENT_CONTAINER" huid comm' <<<"$body"
+    grep -qF '[[ "$uid" == "$DOWNLOADS_UID" ]]' <<<"$body"
     body="$(awk '/^torrent_unit_name\(\)/,/^}$/' "$V2_ROOT/magaza/torrent/kanca")"
-    grep -qF 'getent passwd "$DOWNLOADS_UID"' <<<"$body"
-    grep -qF "printf 'qbittorrent-nox@%s.service\n'" <<<"$body"
+    grep -qF "printf '%s.service\n' \"\$TORRENT_CONTAINER\"" <<<"$body"
     # DD-152: the share service reads the shared files as their owner, never as root.
     grep -qx 'User=__DOWNLOADS_UID__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
     grep -qx 'Group=__DOWNLOADS_GID__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
@@ -819,9 +824,9 @@ assert not missing, missing
     run ! grep -qF 'systemctl is-active --quiet master-settings-guard.timer' <<<"$s7"
     # The root backend writes audit lines only, no request lines.
     awk '/    def log_message\(self, fmt, \*args\):/,/pass$/' "$V2_ROOT/panel/master-panel" | grep -q '^        pass$'
-    # qBittorrent yields CPU to Tailscale and Konsol.
-    grep -qx 'Nice=10' "$V2_ROOT/magaza/torrent/master-stack.conf"
-    grep -qx 'CPUWeight=50' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    # qBittorrent yields CPU to Tailscale and Konsol (the quadlet passes [Service] through).
+    grep -qx 'Nice=10' "$V2_ROOT/magaza/torrent/qbittorrent.container"
+    grep -qx 'CPUWeight=50' "$V2_ROOT/magaza/torrent/qbittorrent.container"
 }
 
 @test "resilience: capped rollback with discard, stale WAN site, watchdog resets, damaged history, health card" {
@@ -1743,7 +1748,7 @@ EOF
     sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e "s#__DOWNLOADS_PATH__#$TMP/downloads#g" -e "s#__TORRENT_PROFILE_DIR__#$TMP/qb#g" \
         "$V2_ROOT/magaza/torrent/konsol.json" >"$TMP/mods/torrent/konsol.json"
     # DD-203: the package's own settings live in its folder; the state carries no TORRENT_* key.
-    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qb\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qb\nTORRENT_CONTAINER=qbittorrent\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
     # DD-150: WireGuard is a package; these tests run with it installed.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/master-wg" <<EOF
@@ -1906,9 +1911,10 @@ mm() {
     modul_fixture
     run mm liste
     [ "$status" -eq 0 ]
-    # Catalogue order is Konsol's order (DD-149, DD-150); DD-152: no Docker runtime, no Arşiv açıcı.
+    # Catalogue order is Konsol's order (DD-149, DD-150); DD-152: no Docker; DD-208: Podman is base
+    # infrastructure, not a catalogue item; DD-209: qBittorrent runs in a container.
     [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'wireguard torrent ' ]
-    [ "$(cut -f2 <<<"$output" | tr '\n' ' ')" = 'konsol host ' ]
+    [ "$(cut -f2 <<<"$output" | tr '\n' ' ')" = 'konsol konteyner ' ]
     [ "$(grep -c '^paylasim' <<<"$output")" -eq 0 ]
     run mm kaldir paylasim
     [ "$status" -ne 0 ]
@@ -1927,7 +1933,12 @@ mm() {
     [ "$status" -ne 0 ]
     run mm gunluk paylasim 20000
     [ "$status" -ne 0 ]
-    [ "$(grep -vE '^[[:space:]]*#' "$V2_ROOT/scripts/master-modul" | grep -ciE 'docker|compose|container|unpackerr')" -eq 0 ]
+    # DD-152: no Docker or Compose. DD-209: a package's Podman unit is a quadlet file (NAME.container)
+    # placed into the state's KONTEYNER_BIRIM_DIR; the engine names no path of its own.
+    [ "$(grep -vE '^[[:space:]]*#' "$V2_ROOT/scripts/master-modul" | grep -ciE 'docker|compose|unpackerr')" -eq 0 ]
+    run ! grep -qF '/etc/containers' "$V2_ROOT/scripts/master-modul"
+    grep -qF '[[ "$PAKET_CALISMA" =~ ^(host|konsol|konteyner)$ ]]' "$V2_ROOT/scripts/master-modul"
+    grep -qx 'KONTEYNER_BIRIM_DIR="/etc/containers/systemd"' "$V2_ROOT/config/defaults.env"
 }
 
 @test "master-modul keeps lifecycle changes locked and deletes only owned data" {
@@ -2502,14 +2513,27 @@ EOF
     run ! grep -q 'a < 180' "$V2_ROOT/magaza/wireguard/sayfa.js"
 }
 
-@test "Konsol sign-in: Caddy asks the root backend for every protected path and the code stays off the log" {
-    local site body summary s7
-    # DD-194: only the sign-in page, its files and the sign-in API are open.
+@test "Konsol sign-in: Caddy asks the root backend for every protected path; the tailnet passes, the internet signs in" {
+    local site body s7 backend="$V2_ROOT/panel/master-panel" auth="$V2_ROOT/panel/master_auth.py"
+    # DD-194: only the sign-in page's files and the sign-in API are open to Caddy; DD-205: the sign-in
+    # page itself goes to the backend too, which sends the tailnet back to Konsol.
     # DD-195: the routes live in one snippet; the tailnet site only imports it.
     [ "$(awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")" = \
         "$(printf 'http://panel.__LOCAL_DOMAIN__ {\n\timport konsol tailscale\n}')" ]
     site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
-    grep -qxF "$(printf '\t@korumali not path /giris.html /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
+    grep -qxF "$(printf '\t@korumali not path /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
+    # DD-205: the backend answers by Caddy's channel — the tailnet needs no cookie, its /giris.html is a redirect
+    # to Konsol, the internet needs a session except for the sign-in page; the account is made without a code.
+    grep -qF 'if self.channel() == "tailscale":' "$backend"
+    grep -qF 'self.send(302, extra={"Location": "/"})' "$backend"
+    grep -qF 'if user or page == "/giris.html":' "$backend"
+    grep -qF 'reveal=self.channel() != "internet"' "$backend"
+    grep -qF 'store.create(data.get("kullanici"), data.get("parola"))' "$backend"
+    grep -qF 'store.set_password(data.get("yeni"))' "$backend"
+    run ! grep -qE 'SETUP_FILE|kurulum-kodu|issue_code|normalize_code|CODE_ALPHABET' "$auth"
+    run ! grep -qE 'form-setup|setup-code|Kurulum kodu' "$V2_ROOT/console/giris.html" "$V2_ROOT/console/giris.js"
+    grep -q 'id="logout" hidden' "$V2_ROOT/console/index.html"
+    grep -qF '$("logout").hidden = !publicChannel();' "$V2_ROOT/console/konsol.js"
     grep -qxF "$(printf '\tforward_auth @korumali unix/__PANEL_SOCKET__ {')" <<<"$site"
     grep -qxF "$(printf '\t\turi /oturum-denetle')" <<<"$site"
     # forward_auth precedes the routes, so no handle block can bypass it.
@@ -2532,18 +2556,20 @@ EOF
     [ "$(grep -n 'install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"' <<<"$body" | cut -d: -f1)" -lt \
         "$(grep -n 'systemctl restart master-panel.service' <<<"$body" | cut -d: -f1)" ]
     grep -qF 'KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR"' <<<"$body"
-    # Stage 7: the open page, a refused host-local page request and both session answers.
+    # Stage 7: an open sign-in file, a refused host-local page request, both session answers for a
+    # caller without Caddy's headers and the tailnet answers (204, /giris.html → /).
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
-    grep -qF '"http://${TAILSCALE_IPV4}/giris.html"' <<<"$s7"
+    grep -qF '"http://${TAILSCALE_IPV4}/giris.js"' <<<"$s7"
     grep -qF 'for probe in "/api/konsol/kaynaklar|401" "/|302"; do' <<<"$s7"
+    grep -qF 'for probe in "/api/konsol/kaynaklar|204" "/giris.html|302"; do' <<<"$s7"
+    grep -qF -- '-H "X-Forwarded-For: $tail_probe"' <<<"$s7"
     grep -qF '"http://localhost/oturum-denetle"' <<<"$s7"
     grep -qF -- '--url "http://127.0.0.1:${FILES_PANEL_PORT}/api/state"' <<<"$s7"
-    # The one-time code goes to the operator's terminal with printf, never through log().
-    summary="$(awk '/^konsol_login_summary\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    grep -qF 'master_auth.py" --state "$STATE_FILE" kod' <<<"$summary"
-    grep -qF "printf '\\nKonsol ilk giriş kodu: %s" <<<"$summary"
-    run ! grep -qE '^[[:space:]]*log ' <<<"$summary"
-    grep -q '^    konsol_login_summary$' "$V2_ROOT/install.sh"
+    # DD-205: no setup code anywhere — the summary names the passwordless tailnet and the Settings card.
+    run ! grep -qE 'konsol_login_summary|ilk giriş kodu|master_auth.py" --state "\$STATE_FILE" kod' "$V2_ROOT/install.sh"
+    grep -qF "Tailscale'den parolasız" "$V2_ROOT/install.sh"
+    grep -qF 'Ayarlar → Sistem → Konsol hesabı' "$V2_ROOT/install.sh"
+    run ! grep -qE '"kod"|sub.add_parser\("kod"' "$auth"
     [ -x "$V2_ROOT/scripts/master-konsol" ]
 }
 
@@ -2690,7 +2716,7 @@ EOF
     grep -qF '"http://${TAILSCALE_IPV4}/api/konsol/kaynaklar" 2>/dev/null || true)"' <<<"$s7"
     grep -qF '*"başka bir Tailscale cihazından"*' <<<"$s7"
     grep -qF 'master-panel" check --socket "$PANEL_SOCKET"' <<<"$s7"
-    grep -q 'Konsol giriş sayfası tailnet.ten açılmadı' <<<"$s7"
+    grep -q 'Konsol giriş sayfasının dosyası tailnet.ten açılmadı' <<<"$s7"
     grep -q 'master-panel" check' <<<"$s7"
     run ! grep -q 'WG_PANEL_PORT' <<<"$s7"
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
@@ -3027,7 +3053,7 @@ PY
     grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
-    for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf paket.env kanca torrent.env klasorler.py; do
+    for f in qbittorrent.container qBittorrent.conf torrent.caddy dnsmasq.conf paket.env kanca torrent.env klasorler.py; do
         [ -f "$V2_ROOT/magaza/torrent/$f" ]
     done
     grep -q '__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/torrent.caddy"
@@ -3099,7 +3125,7 @@ PY
     mkdir -p "$TMP/rend/deneme" "$TMP/rend/baska"
     printf 'PAKET_AD="Deneme Uygulaması"\nPAKET_KLASORLER="/srv/downloads/incomplete /elsewhere/x /srv"\nPAKET_ARKAUC_YOLLAR="/etc/deneme __UNRENDERED__"\n' >"$TMP/rend/deneme/paket.env"
     printf 'PAKET_AD="Başka"\nPAKET_KLASORLER="/srv/media/cache"\n' >"$TMP/rend/baska/paket.env"
-    for fn in paket_islenmis_oku paket_korunan_klasorler paket_arkauc_yollar; do
+    for fn in paket_islenmis_oku paket_korunan_klasorler paket_arkauc_klasorler paket_arkauc_yollar; do
         eval "$(awk "/^$fn\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
     done
     [ "$(MODULES_DIR="$TMP/rend" SERVER_ROOT=/srv paket_korunan_klasorler)" = "media/cache=Başka;downloads/incomplete=Deneme Uygulaması" ]
@@ -3128,7 +3154,15 @@ PY
     grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
     # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
     grep -qF 'genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,' "$js"
-    grep -qF 'return tile(meta.rota ? "#/" + meta.rota : "#/moduller", meta.icon, meta.tone, meta.name, state, dot);' "$js"
+    grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot };' "$js"
+    # v2-179: no separate storage/CPU-history card; storage is a pie beside the CPU/RAM rings.
+    grep -qF 'h("div", { class: "big pie-box" }, pie(v.disk),' "$js"
+    run ! grep -qE 'class="spark"|class: "bar"|İşlemci geçmişi' "$js"
+    # v2-182: the status card shows the three charts only (no check lines); they are 84 px in three equal columns.
+    run ! grep -qF 'Sağlık denetimi bekleniyor' "$js"
+    grep -q '^\.ring, \.pie { width:84px; height:84px; max-width:100%; transform:rotate(-90deg); }$' "$css"
+    grep -q '^\.rings { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));' "$css"
+    grep -q '^\.pie \.fg { fill:none; stroke:var(--accent); stroke-width:18; }$' "$css"
     run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css"
     # Glass tokens, opaque fallbacks for reduced transparency and engines without backdrop-filter.
     for token in -- '--glass:' '--glass-line:' '--blur:' '--radius:' '--sky1:' '--m4:'; do [ "$token" = -- ] || grep -q -- "$token" "$css"; done
@@ -3141,6 +3175,137 @@ PY
     grep -qF 'h("article", { class:"store-row", id:`modc-${m.id}`' "$js"
     # Icons the overview uses exist (svg() silently falls back to the file icon).
     for icon in home clock folder share stack sliders refresh; do grep -qE "^    ${icon}: '" "$js"; done
+}
+
+@test "overview layout and network card (DD-206): server-side layout, package traffic modules, no app names in the shell" {
+    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css" backend="$V2_ROOT/panel/master-panel"
+    # Düzenle sits below the tiles and sticks to the bottom-left of a long page (never over the last row).
+    grep -qF '<div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Genel bakış düzeni"></div>' "$html"
+    [ "$(grep -n 'id="genel-edit"' "$html" | cut -d: -f1)" -gt "$(grep -n 'id="genel-tiles"' "$html" | cut -d: -f1)" ]
+    grep -q '^\.edit-bar { position:sticky;' "$css"
+    # The tiles wait for the module list (no jump), and Düzenle waits for both the layout and the list.
+    grep -qF 'const defs = modsSettled ? orderedTiles() : [];' "$js"
+    grep -qF 'disabled: !layoutLoaded || !modsSettled, onclick: startEdit' "$js"
+    # Three widgets in a fixed order; width 1–4 columns (no height control), visibility; the clock card has no version line.
+    grep -qF '{ id: "saat", ad: "Saat", label: "Saat ve sunucu", genislik: 2 },' "$js"
+    grep -qF '{ id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },' "$js"
+    grep -q '^\.widgets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }$' "$css"
+    for n in 1 2 3 4; do grep -qF ".widget[data-span=\"$n\"] { grid-column:span $n; }" "$css"; done
+    run ! grep -qF '${v.s.host} · ' "$js"
+    run ! grep -qE 'grid-row:span|data-height|yukseklik' "$js" "$css"
+    # The layout is stored by the root backend in KONSOL_AUTH_DIR (format checks only); the shell names no application.
+    grep -qx 'LAYOUT_FILE = "duzen.json"' "$backend"
+    grep -qx 'LAYOUT_SPANS = (1, 2, 3, 4)' "$backend"
+    grep -qF 'if path == "/api/konsol/duzen":' "$backend"
+    grep -qF 'self.audit(user, "duzen", detail, True)' "$backend"
+    grep -qF 'api("/api/konsol/duzen")' "$js"
+    grep -qF 'post("/api/konsol/duzen", reset ? { sifirla: true } : { duzen: draft })' "$js"
+    # The Files view mode stays a per-browser convenience; the overview layout never touches browser storage.
+    [ "$(grep -c 'localStorage' "$js")" -eq 2 ] && grep -q 'localStorage.setItem("konsol-files-view"' "$js"
+    run ! grep -qE 'sessionStorage' "$js"
+    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css" "$html"
+    # Network: WAN counters from sysfs (no command in the sampler), package totals from PAKET_TRAFIK modules.
+    grep -qF 'open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb")' "$backend"
+    grep -qF 'master_settings.load_package_module(env, mid, name, "trafik", label)' "$backend"
+    grep -qF 'setInterval(() => { if (!document.hidden && current === "genel" && (editing || !widgetSetting("ag").gizli)) loadNetwork(); }, 2000);' "$js"
+    grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/wireguard/paket.env"
+    [ -f "$V2_ROOT/magaza/torrent/trafik.py" ] && [ -f "$V2_ROOT/magaza/wireguard/trafik.py" ]
+    # qBittorrent's own all-time statistics, not systemd IP accounting (a daemon-reload drops those counters).
+    run ! grep -q 'IPAccounting' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    grep -qF '"qBittorrent-data.conf"' "$V2_ROOT/magaza/torrent/trafik.py"
+    run ! grep -qE '^import subprocess|subprocess\.run' "$V2_ROOT/magaza/torrent/trafik.py"
+    grep -qF 'PAKET_TRAFIK=""' "$V2_ROOT/scripts/master-modul"
+    # The WireGuard module reads interface counters and its registry only; it never runs wg or master-wg.
+    run ! grep -qE '"wg"|master-wg|wg show' "$V2_ROOT/magaza/wireguard/trafik.py"
+}
+
+@test "Podman is base infrastructure (DD-208): installed and verified by the installer, read-only Konteynerler tab in Settings" {
+    local s1 s7 mc="$V2_ROOT/panel/master_containers.py" js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css"
+    [ ! -e "$V2_ROOT/magaza/podman" ]
+    s1="$(awk '/^stage_1\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    # Stage 1 installs the runtime without recommends (no buildah, criu, slirp4netns) and requires it.
+    grep -qF 'retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \' <<<"$s1"
+    grep -qx '        podman netavark' <<<"$s1"
+    [ "$(grep -n 'check_nft_iptables required' <<<"$s1" | cut -d: -f1)" -lt "$(grep -n 'check_podman$' <<<"$s1" | cut -d: -f1)" ]
+    grep -qx '    check_podman' <<<"$s7"
+    grep -qF "podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}'" "$V2_ROOT/install.sh"
+    # No daemon: the installer never enables Podman's socket, service or auto-update timer.
+    [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-modul" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
+    # The base view: helper installed with the backend, GET routes only, console files shipped.
+    grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
+    grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css; do' "$V2_ROOT/install.sh"
+    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk)$", path)' "$V2_ROOT/panel/master-panel"
+    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 1 ]
+    awk '/    def do_POST\(self\):/,/^    def do_DELETE|^class /' "$V2_ROOT/panel/master-panel" | { ! grep -q 'konteynerler'; }
+    # Podman read commands only, secrets masked, the environment never returned.
+    run ! grep -qE '"(run|create|pull|rm|rmi|stop|start|kill|exec|restart|reset)"' "$mc"
+    grep -q '^SECRET_RE = re.compile' "$mc"
+    run ! grep -qE '"Env"|\.get\("Env"' "$mc"
+    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$mc" "$js" "$css"
+    # Settings tab: CSP-safe, read-only, pd- prefixed classes only; loaded before the shell.
+    grep -qF '["konteynerler", "Konteynerler"]' "$V2_ROOT/console/ayarlar.js"
+    [ "$(grep -n 'src="/konteynerler.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" -lt "$(grep -n 'src="/konsol.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" ]
+    grep -qF 'href="/konteynerler.css"' "$V2_ROOT/console/index.html"
+    run ! grep -qE 'innerHTML|localStorage|sessionStorage|https?://|style=' "$js"
+    run ! grep -qE 'url\(|@import|https?://' "$css"
+    run ! grep -qF 'post(' "$js"
+    [ "$(grep -cE '^\.(pd-|@)' "$css")" -gt 0 ] && [ "$(grep -cE '^\.[a-oq-z]' "$css")" -eq 0 ]
+    # Syntax check only where Node exists (the Mac); the Linux host has no Node.
+    if command -v node >/dev/null 2>&1; then node --check "$js"; fi
+}
+
+@test "qBittorrent runs as a Podman quadlet (DD-209): pinned image, loopback UI, same-path mounts, stop removes the unit" {
+    local pkg="$V2_ROOT/magaza/torrent" q="$V2_ROOT/magaza/torrent/qbittorrent.container" body
+    grep -qx 'PAKET_CALISMA=konteyner' "$pkg/paket.env"
+    grep -qx 'PAKET_KONTEYNER="qbittorrent.container"' "$pkg/paket.env"
+    grep -qx 'PAKET_IMAJ="__TORRENT_IMAGE__"' "$pkg/paket.env"
+    grep -qx 'PAKET_EKLER=""' "$pkg/paket.env"
+    [ ! -e "$pkg/master-stack.conf" ]
+    # The container name matches the quadlet file; the image is an OCI index pinned by digest.
+    grep -qx 'TORRENT_CONTAINER=qbittorrent' "$pkg/torrent.env"
+    grep -qE '^TORRENT_IMAGE=lscr\.io/linuxserver/qbittorrent@sha256:[0-9a-f]{64}$' "$pkg/torrent.env"
+    run ! grep -qE ':latest|Pull=(always|missing|newer)|AutoUpdate=' "$q" "$pkg/torrent.env"
+    for line in 'Image=__TORRENT_IMAGE__' 'ContainerName=__TORRENT_CONTAINER__' 'Pull=never' 'Network=host' 'LogDriver=journald' \
+        'StopTimeout=45' 'DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT' \
+        'Volume=__TORRENT_PROFILE_DIR__:/config' 'Volume=__DOWNLOADS_PATH__:__DOWNLOADS_PATH__' \
+        'After=network-online.target master-firewall.service' 'WantedBy=multi-user.target'; do
+        grep -qxF "$line" "$q"
+    done
+    # Live finding: with no-new-privileges the image's s6 init ignores SIGTERM until SIGKILL (settings lost).
+    run ! grep -q '^NoNewPrivileges' "$q"
+    awk '/^torrent_off\(\)/,/^}$/' "$pkg/kanca" | grep -qF 'systemctl reset-failed'
+    # Only these two mounts: no SERVER_ROOT, trash or share root; no published ports (no NAT rules).
+    [ "$(grep -c '^Volume=' "$q")" -eq 2 ]
+    run ! grep -qE '^(PublishPort|Network=(bridge|pasta|slirp))' "$q"
+    # The engine places/removes the quadlet and pulls the digest; the installer's leftover check knows it.
+    grep -qF 'paket_imaj_cek() {' "$V2_ROOT/scripts/master-modul"
+    grep -qF '[[ "$PAKET_IMAJ" =~ ^[a-z0-9.-]+(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$ ]] ||' "$V2_ROOT/scripts/master-modul"
+    grep -qF 'out="$(timeout 900 podman pull -q "$PAKET_IMAJ" 2>&1)" ||' "$V2_ROOT/scripts/master-modul"
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul" | grep -qx '    paket_konteyner_kaldir'
+    awk '/^paket_iz_kontrol\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul" | grep -qF 'konteyner_hedef'
+    awk '/^paket_iz_yok\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qF '"$KONTEYNER_BIRIM_DIR/$name"'
+    grep -qx 'KONTEYNER_BIRIM_DIR=$KONTEYNER_BIRIM_DIR' "$V2_ROOT/install.sh"
+    # Stop = stop + remove the unit file (a generated unit cannot be disabled); the profile seed precedes the
+    # first start; the verifier checks the process uid, the mounts and a loopback-only interface.
+    body="$(awk '/^torrent_off\(\)/,/^}$/' "$pkg/kanca")"
+    grep -qF 'paket_konteyner_kaldir' <<<"$body"
+    # (the only "systemctl disable" is the manual step named for an old Debian qbittorrent-nox unit)
+    [ "$(grep -E 'systemctl (enable|disable)' "$pkg/kanca" | grep -vc 'eski qBittorrent servisi')" -eq 0 ]
+    body="$(awk '/^paket_kur\(\)/,/^}$/' "$pkg/kanca")"
+    [ "$(grep -n 'torrent_profile' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl start' <<<"$body" | cut -d: -f1)" ]
+    body="$(awk '/^torrent_verify\(\)/,/^}$/' "$pkg/kanca")"
+    grep -qF 'podman inspect --format' <<<"$body"
+    grep -qF '"$SERVER_ROOT/$FILES_PANEL_TRASH/"* | "$SERVER_ROOT/$SHARE_DIR/"*)' <<<"$body"
+    grep -qF "awk '\$4 !~ /^127\\.0\\.0\\.1:/ {print \$4}'" <<<"$body"
+    # A folder outside the downloads tree is one quadlet drop-in bind mount at the same path.
+    grep -qF 'drop_in = "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"' "$pkg/ayar.py"
+    grep -qF 'return Path(env["KONTEYNER_BIRIM_DIR"]) / (container_name(env) + ".container.d") / DROP_IN' "$pkg/ayar.py"
+    # --veri also drops the drop-in and the image; the profile guard stays.
+    body="$(awk '/^torrent_drop_data\(\)/,/^}$/' "$pkg/kanca")"
+    grep -qF 'paket_imaj_sil' <<<"$body"
+    grep -qF 'rm -f -- "$ek/90-konsol.conf"' <<<"$body"
 }
 
 @test "installer prepares optional modules and reapplies installed ones separately from builtins" {
@@ -3165,6 +3330,7 @@ PY
     grep -qF 'die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"' <<<"$render"
     grep -qF '[[ ! -x "$src" ]] || mode=0755' <<<"$render"
     for id in wireguard torrent paylasim; do [ -f "$V2_ROOT/magaza/$id/paket.env" ]; done
+    [ ! -e "$V2_ROOT/magaza/podman" ]
     grep -qx 'PAKET_YERLESIK=1' "$V2_ROOT/magaza/paylasim/paket.env"
     # The installer never installs, stops or removes a module on its own.
     [ "$(grep -cE 'master-modul" (kur|kaldir|durdur|baslat|parola)' "$V2_ROOT/install.sh")" -eq 0 ]
@@ -3221,7 +3387,10 @@ PY
     grep -qF 'moduller: { title: "App Store"' "$js"
     run ! grep -qF 'unpackerr' "$js"
     # DD-152: every module runs on the host or in Konsol; there is no Docker runtime chip.
-    grep -qF 'const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"] };' "$js"
+    grep -qF 'const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"], konteyner: ["konteyner", "box", "Konteyner"] };' "$js"
+    # DD-209: a container app's state is its unit's liveness, like a host service.
+    grep -qF 'const unitRuntime = (m) => m.runtime === "host" || m.runtime === "konteyner";' "$js"
+    grep -q '^\.rt-chip\.konteyner' "$V2_ROOT/console/konsol.css"
     run ! grep -q 'rt-chip.docker' "$V2_ROOT/console/konsol.css"
     grep -q '^\.store-list' "$V2_ROOT/console/panel.css"
     grep -q '^\.store-row' "$V2_ROOT/console/panel.css"
@@ -3267,8 +3436,9 @@ PY
     grep -qF 'atomic_write "$SBIN_DIR/master_webdav.py"' "$V2_ROOT/install.sh"
     grep -qF 'dosyalar.css dosyalar.js' "$V2_ROOT/install.sh"
     [ "$(cat "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|SHARE_STATE_FILE')" -eq 0 ]
-    grep -qx 'ReadWritePaths=__TORRENT_PROFILE_DIR__ __DOWNLOADS_PATH__' "$V2_ROOT/magaza/torrent/master-stack.conf"
-    grep -qx 'InaccessiblePaths=-__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    # DD-209: the qBittorrent container sees only its profile and the downloads tree (same path), so the
+    # trash and the share root are absent inside it rather than hidden by a systemd sandbox.
+    [ "$(grep '^Volume=' "$V2_ROOT/magaza/torrent/qbittorrent.container" | tr '\n' ' ')" = 'Volume=__TORRENT_PROFILE_DIR__:/config Volume=__DOWNLOADS_PATH__:__DOWNLOADS_PATH__ ' ]
 }
 
 @test "installer wires the files panel: downloads uid, sandbox, no password, tailnet name, hidden trash, stage 7 proof" {
@@ -3416,6 +3586,84 @@ EOF
 
 master_wg() {
     PATH="$TMP/bin:$PATH" STATE_FILE="$TMP/state.env" bash "$V2_ROOT/magaza/wireguard/master-wg" "$@"
+}
+
+@test "backend write paths (DD-207): created before the backend starts, checked in its namespace, a clear error otherwise" {
+    local fn mi body mm
+    # Installer: declared paths one per line; created before the backend (re)starts; a running backend
+    # whose namespace lacks a writable mount for one of them is restarted (a re-run repairs such a host).
+    mkdir -p "$TMP/rend/deneme" "$TMP/bin"
+    printf 'PAKET_ARKAUC_YOLLAR="/etc/deneme /etc/ikinci __UNRENDERED__"\n' >"$TMP/rend/deneme/paket.env"
+    for fn in paket_islenmis_oku paket_arkauc_klasorler paket_arkauc_yollar panel_yollari_bagli; do
+        eval "$(awk "/^$fn\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    export MODULES_DIR="$TMP/rend" PATH="$TMP/bin:$PATH"
+    [ "$(paket_arkauc_klasorler)" = $'/etc/deneme\n/etc/ikinci' ]
+    [ "$(paket_arkauc_yollar)" = "-/etc/deneme -/etc/ikinci" ]
+    printf '#!/bin/sh\necho "${PANEL_PID:-4242}"\n' >"$TMP/bin/systemctl"
+    chmod +x "$TMP/bin/systemctl"
+    mi="$TMP/mountinfo"
+    printf '%s\n' '1 0 8:1 / / rw,relatime - ext4 /dev/sda1 rw' '2 1 8:1 /etc /etc ro,relatime - ext4 /dev/sda1 rw' \
+        '3 2 8:1 /etc/deneme /etc/deneme rw,nosuid,relatime - ext4 /dev/sda1 rw' '4 2 8:1 /etc/ikinci /etc/ikinci rw,nosuid - ext4 /dev/sda1 rw' >"$mi"
+    panel_yollari_bagli "$mi"
+    printf '%s\n' '1 0 8:1 / / rw,relatime - ext4 /dev/sda1 rw' '3 1 8:1 /etc/deneme /etc/deneme rw,nosuid - ext4 /dev/sda1 rw' >"$mi"
+    run panel_yollari_bagli "$mi"
+    [ "$status" -ne 0 ]   # /etc/ikinci came after the backend started: read-only there
+    printf '%s\n' '3 1 8:1 /etc/deneme /etc/deneme ro,nosuid - ext4 /dev/sda1 rw' '4 1 8:1 /etc/ikinci /etc/ikinci rw - ext4 /dev/sda1 rw' >"$mi"
+    run panel_yollari_bagli "$mi"
+    [ "$status" -ne 0 ]   # a read-only mount does not count
+    PANEL_PID=0 run panel_yollari_bagli "$mi"
+    [ "$status" -ne 0 ]   # no running backend
+    body="$(awk '/^ensure_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF '[[ -d "$f" ]] || install -d -m 0700 -o root -g root -- "$f"' <<<"$body"
+    grep -qF '|| ! panel_yollari_bagli; then' <<<"$body"
+    [ "$(grep -n 'install -d -m 0700 -o root -g root -- "$f"' <<<"$body" | cut -d: -f1)" -lt \
+        "$(grep -n 'systemctl restart master-panel.service' <<<"$body" | cut -d: -f1)" ]
+    # Store engine: after install, start and apply, a package's paths exist and are writable for the
+    # backend; otherwise the backend restarts once (e.g. the folder was removed while it ran).
+    mm="$V2_ROOT/scripts/master-modul"
+    eval "$(awk '/^arkauc_yollari_hazirla\(\)/,/^}$/' "$mm")"
+    printf '#!/bin/sh\nprintf "install %%s\\n" "$*" >>"$TMP/calls"; for a; do last="$a"; done; mkdir -p "$last"\n' >"$TMP/bin/install"
+    printf '#!/bin/sh\ncase "$1" in show) echo "${PANEL_PID:-4242}" ;; *) printf "systemctl %%s\\n" "$*" >>"$TMP/calls" ;; esac\n' >"$TMP/bin/systemctl"
+    chmod +x "$TMP/bin/install" "$TMP/bin/systemctl"
+    export TMP
+    rm -f "$TMP/calls"
+    printf '%s\n' "3 1 8:1 $TMP/w1 $TMP/w1 rw - ext4 /dev/sda1 rw" >"$mi"
+    PAKET_ARKAUC_YOLLAR="$TMP/w1" PANEL_MOUNTINFO="$mi" arkauc_yollari_hazirla
+    [ -d "$TMP/w1" ] && grep -qx "install -d -m 0700 -o root -g root -- $TMP/w1" "$TMP/calls"
+    run ! grep -q 'restart' "$TMP/calls"
+    rm -f "$TMP/calls"
+    PAKET_ARKAUC_YOLLAR="$TMP/w1 $TMP/w2" PANEL_MOUNTINFO="$mi" arkauc_yollari_hazirla
+    grep -qx 'systemctl restart master-panel.service' "$TMP/calls"
+    rm -f "$TMP/calls"
+    PANEL_PID=0 PAKET_ARKAUC_YOLLAR="$TMP/w2" PANEL_MOUNTINFO="$mi" arkauc_yollari_hazirla
+    run ! grep -q 'restart' "$TMP/calls"   # nothing running: it binds the folder when it starts
+    PAKET_ARKAUC_YOLLAR="" arkauc_yollari_hazirla
+    for fn in cmd_kur cmd_baslat cmd_uygula; do
+        awk "/^$fn\\(\\)/,/^}\$/" "$mm" | grep -qx '    arkauc_yollari_hazirla'
+    done
+    [ "$(awk '/^cmd_kur\(\)/,/^}$/' "$mm" | grep -n 'arkauc_yollari_hazirla' | cut -d: -f1)" -lt \
+        "$(awk '/^cmd_kur\(\)/,/^}$/' "$mm" | grep -n 'registry_set' | cut -d: -f1)" ]
+}
+
+@test "master-wg says plainly when its folder is read-only for the caller (DD-207)" {
+    [ "$(id -u)" -ne 0 ] || skip "root writes into a 0555 folder; the check needs an unprivileged runner"
+    wg_mock_bin
+    wg_state_fixture
+    local wgd="$TMP/etc/wireguard" before
+    before="$(cat "$wgd/networks")"
+    chmod 0555 "$wgd"
+    run master_wg net-add 61011 1.1.1.1 x
+    chmod 0755 "$wgd"
+    [ "$status" -ne 0 ]
+    case "$output" in *"salt okunur görünüyor"*"systemctl restart master-panel"*) ;; *) false ;; esac
+    [ "$(cat "$wgd/networks")" = "$before" ]
+    [ ! -e "$wgd/wg1.conf" ]
+    chmod 0555 "$wgd"
+    run master_wg list
+    chmod 0755 "$wgd"
+    [ "$status" -eq 0 ]   # reading still works
+    grep -qF 'net-add|net-remove|add|remove|dns|keepalive|peer|net|net-settings|reset) yazilabilir ;;' "$V2_ROOT/magaza/wireguard/master-wg"
 }
 
 @test "master-wg adds a peer generated on the server, applies it live and keeps the profile root-side" {
@@ -3901,13 +4149,16 @@ EOF
 }
 
 torrent_fixture() {
-    # DD-151: the qBittorrent host module against fakes (apt, systemd, journal, curl, dig, Caddy, dnsmasq).
+    # DD-209: the qBittorrent container package against fakes (podman, systemd, journal, curl, ss, dig,
+    # Caddy, dnsmasq). The fake systemctl answers is-active and start like systemd: a generated unit
+    # exists only while its quadlet file is in place.
     konsol_fixture
     # The real CLI imports the shared no-follow reader for its username lookup.
     cp "$V2_ROOT/panel/master_settings.py" "$TMP/sbin/master_settings.py"
     cp "$V2_ROOT/panel/master_https.py" "$TMP/sbin/master_https.py"
-    mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof"
-    printf '[Service]\nUMask=0002\n' >"$TMP/mods/torrent/master-stack.conf"
+    mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof" "$TMP/quadlet"
+    sed -e "s#__TORRENT_IMAGE__#lscr.io/linuxserver/qbittorrent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#" "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
+    printf '[Container]\nImage=fixture\nNetwork=host\n' >"$TMP/mods/torrent/qbittorrent.container"
     sed -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_UI_PORT__/61006/g' \
         "$V2_ROOT/magaza/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
     printf 'http://torrent.ayc {\n\treverse_proxy 127.0.0.1:61006\n}\n' >"$TMP/mods/torrent/torrent.caddy"
@@ -3915,8 +4166,8 @@ torrent_fixture() {
     # DD-202: the Konsol page comes with the package and is placed while installed.
     cp "$V2_ROOT/magaza/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.css" "$TMP/mods/torrent/"
     : >"$TMP/caddy/Caddyfile"
-    # DD-203: the hook reads its port and profile from the package's own env file.
-    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
+    # DD-203: the hook reads its port, profile and container name from the package's own env file.
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\nTORRENT_CONTAINER=qbittorrent\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
     cat >>"$TMP/mstate.env" <<EOF
 CONSOLE_WEB_DIR=$TMP/web
 DOWNLOADS_GID=1000
@@ -3924,20 +4175,42 @@ SHARE_DIR=.pay
 CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
 DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
+KONTEYNER_BIRIM_DIR=$TMP/quadlet
 EOF
     cat >"$TMP/mbin/systemctl" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/systemctl-calls"
 case "\$*" in
-    "enable --now qbittorrent-nox@master-downloads.service") touch "$TMP/qb-active" ;;
-    "disable --now qbittorrent-nox@master-downloads.service") rm -f "$TMP/qb-active" ;;
-    "is-active --quiet qbittorrent-nox@master-downloads.service") [ -e "$TMP/qb-active" ] ;;
-    "show -p MainPID --value qbittorrent-nox@master-downloads.service") echo 4242 ;;
-    "show -p InvocationID --value qbittorrent-nox@master-downloads.service") echo 0123456789abcdef0123456789abcdef ;;
-    "show -p InaccessiblePaths --value qbittorrent-nox@master-downloads.service")
-        [ -e "$TMP/qb-open" ] || echo "-$TMP/srv/.cop -$TMP/srv/.pay" ;;
+    "start qbittorrent.service" | "restart qbittorrent.service")
+        [ -e "$TMP/quadlet/qbittorrent.container" ] || exit 5
+        touch "$TMP/qb-active" ;;
+    "stop qbittorrent.service") rm -f "$TMP/qb-active" ;;
+    "is-active --quiet qbittorrent.service") [ -e "$TMP/qb-active" ]; exit \$? ;;
+    "show -p InvocationID --value qbittorrent.service") echo 0123456789abcdef0123456789abcdef ;;
+    list-units*) [ ! -e "$TMP/qb-legacy" ] || echo "qbittorrent-nox@master-downloads.service loaded active running qBittorrent" ;;
 esac
 exit 0
+EOF
+    cat >"$TMP/mbin/podman" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/podman-calls"
+case "\$1 \$2" in
+    "image exists") [ -e "$TMP/qb-image" ]; exit \$? ;;
+    "pull -q") touch "$TMP/qb-image"; echo sha256:fixture ;;
+    "image inspect") [ -e "$TMP/qb-image" ] && echo f1997322e699aaaa || exit 125 ;;
+    "rmi f1997322e699aaaa") rm -f "$TMP/qb-image" ;;
+    "rmi "*) echo "Error: \$2: tag not known" >&2; exit 125 ;;
+    "top qbittorrent") printf 'HUID COMMAND\n0 s6-svscan\n%s qbittorrent-nox\n' "\$([ -e "$TMP/qb-root" ] && echo 0 || echo 1000)" ;;
+    "inspect --format")
+        printf '%s\n' "$TMP/qbprof" "$TMP/dl"
+        [ ! -e "$TMP/qb-open" ] || printf '%s\n' "$TMP/srv/.cop" ;;
+esac
+exit 0
+EOF
+    cat >"$TMP/mbin/ss" <<EOF
+#!/bin/bash
+echo "LISTEN 0 50 127.0.0.1:61006 0.0.0.0:*"
+[ ! -e "$TMP/qb-wide" ] || echo "LISTEN 0 50 0.0.0.0:61006 0.0.0.0:*"
 EOF
     cat >"$TMP/mbin/journalctl" <<EOF
 #!/bin/bash
@@ -3946,7 +4219,8 @@ echo "WebUI will be started shortly after internal preparations. Please wait..."
 echo "The WebUI administrator username is: admin"
 [ -e "$TMP/qb-password-set" ] || echo "The WebUI administrator password was not set. A temporary password is provided for this session: Tmp9Pass7Word"
 EOF
-    printf '#!/bin/bash\necho master-downloads:x:1000:1000::/nonexistent:/usr/sbin/nologin\n' >"$TMP/mbin/getent"
+    # macOS has no util-linux timeout; the engine bounds podman pull with it.
+    printf '#!/bin/bash\nshift\nexec "$@"\n' >"$TMP/mbin/timeout"
     printf '#!/bin/bash\necho 100.64.0.7\n' >"$TMP/mbin/dig"
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/caddy"
     printf '#!/bin/bash\nexit 0\n' >"$TMP/mbin/dnsmasq"
@@ -3954,24 +4228,28 @@ EOF
     chmod +x "$TMP/mbin"/*
 }
 
-@test "master-modul installs qBittorrent on the host once, as the downloads user, closed to the trash and the share" {
+@test "master-modul installs qBittorrent as a pinned Podman container, as the downloads user, closed to the trash and the share" {
+    local ref="lscr.io/linuxserver/qbittorrent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     torrent_fixture
     run mm kur torrent
     [ "$status" -eq 0 ]
     grep -qx "$(printf 'torrent\tcalisiyor')" "$TMP/moduller"
     [ "$(cat "$TMP/run/modul-torrent.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
-    grep -q -- 'install -y --no-install-recommends -o DPkg::Lock::Timeout=300 qbittorrent-nox' "$TMP/apt-calls"
-    # The package's unit gets our drop-in; the settings are written once into an empty profile.
-    cmp -s "$TMP/mods/torrent/master-stack.conf" "$TMP/units/qbittorrent-nox@.service.d/master-stack.conf"
+    # DD-209: no Debian package; the image is pulled once, by digest.
+    [ ! -s "$TMP/apt-calls" ]
+    grep -qx "pull -q $ref" "$TMP/podman-calls"
+    # The quadlet is placed, the settings are written once into an empty profile before the first start.
+    cmp -s "$TMP/mods/torrent/qbittorrent.container" "$TMP/quadlet/qbittorrent.container"
     cmp -s "$TMP/mods/torrent/qBittorrent.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
-    grep -qx 'enable --now qbittorrent-nox@master-downloads.service' "$TMP/systemctl-calls"
+    grep -qx 'start qbittorrent.service' "$TMP/systemctl-calls"
+    run ! grep -qE '^(enable|disable) ' "$TMP/systemctl-calls"
     cmp -s "$TMP/mods/torrent/torrent.caddy" "$TMP/caddy/moduller/torrent.caddy"
     cmp -s "$TMP/mods/torrent/dnsmasq.conf" "$TMP/dnsmasq.d/modul-torrent.conf"
     # DD-202: the page files sit under CONSOLE_WEB_DIR/uygulama/torrent while installed (found missing live).
     cmp -s "$TMP/web/uygulama/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.js"
     cmp -s "$TMP/web/uygulama/torrent/sayfa.css" "$V2_ROOT/magaza/torrent/sayfa.css"
     run mm liste
-    [ "$(grep '^torrent' <<<"$output" | cut -f2-4)" = "$(printf 'host\tcalisiyor\trunning')" ]
+    [ "$(grep '^torrent' <<<"$output" | cut -f2-4)" = "$(printf 'konteyner\tcalisiyor\trunning')" ]
     # First login: the temporary password comes from this run's journal, only on request.
     run mm hesap torrent
     [ "$output" = "$(printf 'admin\tgecici')" ]
@@ -3980,6 +4258,7 @@ EOF
     grep -q '_SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef' "$TMP/journal-calls"
     run mm gunluk torrent 20
     [ "$(grep -c 'Tmp9Pass7Word' <<<"$output")" -eq 0 ]
+    grep -q -- '-u qbittorrent.service' "$TMP/journal-calls"
     touch "$TMP/qb-password-set"
     run mm hesap torrent --parola
     [ "$output" = "$(printf 'admin\tayarli')" ]
@@ -3992,47 +4271,85 @@ EOF
         '[Preferences]' 'Connection\UPnP=true' 'WebUI\Username=operator' \
         >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
     cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/operator.conf"
-    # A re-run after an upgrade brings the page back (the installer calls uygula for changed packages).
+    # A re-run after an upgrade brings the page back and never pulls an image that is present.
     rm -rf "$TMP/web/uygulama"
     run mm uygula torrent
     [ "$status" -eq 0 ]
     cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
     cmp -s "$TMP/web/uygulama/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.js"
+    [ "$(grep -c '^pull ' "$TMP/podman-calls")" -eq 1 ]
+    # A changed quadlet (e.g. a new image digest) recreates the container.
+    printf '# changed\n' >>"$TMP/mods/torrent/qbittorrent.container"
+    run mm uygula torrent
+    [ "$status" -eq 0 ]
+    grep -qx 'restart qbittorrent.service' "$TMP/systemctl-calls"
+    cmp -s "$TMP/mods/torrent/qbittorrent.container" "$TMP/quadlet/qbittorrent.container"
+    # Stop: the generated unit cannot be disabled, so the quadlet goes; nothing starts at boot.
     run mm durdur torrent
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/qb-active" ]
+    [ ! -e "$TMP/quadlet/qbittorrent.container" ]
     grep -qx "$(printf 'torrent\tdurduruldu')" "$TMP/moduller"
+    run mm liste
+    [ "$(grep '^torrent' <<<"$output" | cut -f2-4)" = "$(printf 'konteyner\tdurduruldu\texited')" ]
+    # A re-run keeps a stopped app stopped.
+    run mm uygula torrent
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/quadlet/qbittorrent.container" ]
     run mm baslat torrent
     [ "$status" -eq 0 ]
+    [ -e "$TMP/qb-active" ]
+    cmp -s "$TMP/mods/torrent/qbittorrent.container" "$TMP/quadlet/qbittorrent.container"
     run mm kaldir torrent
     [ "$status" -eq 0 ]
-    [ ! -e "$TMP/units/qbittorrent-nox@.service.d/master-stack.conf" ]
+    [ ! -e "$TMP/quadlet/qbittorrent.container" ]
     [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
     [ ! -e "$TMP/dnsmasq.d/modul-torrent.conf" ]
     [ ! -e "$TMP/web/uygulama" ]
-    [ "$(grep -cE 'remove|purge' "$TMP/apt-calls")" -eq 0 ]
-    : >"$TMP/apt-calls"
+    # Removal keeps the image (like a kept Debian package): a reinstall needs no download.
+    [ -e "$TMP/qb-image" ]
+    : >"$TMP/podman-calls"
     run mm kur torrent
     [ "$status" -eq 0 ]
-    [ ! -s "$TMP/apt-calls" ]
+    run ! grep -q '^pull ' "$TMP/podman-calls"
     cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
     [ "$(grep -c 'master-firewall' "$TMP/systemctl-calls")" -eq 0 ]
-    # --veri deletes the profile only under /var/lib; nothing else is ever removed.
+    # --veri deletes the image and the folder drop-in; the profile only under /var/lib.
+    mkdir -p "$TMP/quadlet/qbittorrent.container.d"
+    printf '[Container]\nVolume=/x:/x\n' >"$TMP/quadlet/qbittorrent.container.d/90-konsol.conf"
     run mm kaldir torrent --veri
     [ "$status" -eq 0 ]
+    [ ! -e "$TMP/qb-image" ]
+    # Removed by image id: podman rmi treats NAME@sha256 as a tag ("tag not known", found live).
+    grep -qx "rmi f1997322e699aaaa" "$TMP/podman-calls"
+    [ ! -e "$TMP/quadlet/qbittorrent.container.d" ]
     [ -f "$TMP/qbprof/qBittorrent/qBittorrent.conf" ]
-    # A service that can see the trash or the share is taken back.
-    touch "$TMP/qb-open"
+    # A container that sees the trash, an interface beyond loopback or a root qBittorrent is taken back.
+    local trap_file msg
+    for trap_file in qb-open:"korunan bir klasörü görüyor" qb-wide:"loopback dışında da dinliyor" qb-root:"uid '0' ile çalışıyor"; do
+        msg="${trap_file#*:}"; trap_file="${trap_file%%:*}"
+        touch "$TMP/$trap_file"
+        run mm kur torrent
+        [ "$status" -ne 0 ]
+        case "$output" in *"$msg"*) ;; *) false ;; esac
+        [ "$(grep -c torrent "$TMP/moduller")" -eq 0 ]
+        [ ! -e "$TMP/web/uygulama/torrent" ]
+        [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
+        [ ! -e "$TMP/quadlet/qbittorrent.container" ]
+        [ ! -e "$TMP/qb-active" ]
+        rm -f "$TMP/$trap_file"
+    done
+    # An old Debian qbittorrent-nox unit that is still active holds the port: the manual step is named.
+    touch "$TMP/qb-legacy"
     run mm kur torrent
     [ "$status" -ne 0 ]
-    case "$output" in *"çöp ve paylaşım klasörünü görebiliyor"*) ;; *) false ;; esac
-    [ "$(grep -c torrent "$TMP/moduller")" -eq 0 ]
-    [ ! -e "$TMP/web/uygulama/torrent" ]
-    [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
+    case "$output" in *"systemctl disable --now qbittorrent-nox@master-downloads.service"*) ;; *) false ;; esac
+    [ ! -e "$TMP/quadlet/qbittorrent.container" ]
 }
 
 @test "master-modul account refuses a FIFO profile promptly without leaking journal credentials" {
     torrent_fixture
+    touch "$TMP/qb-active"
     mkdir -p "$TMP/qbprof/qBittorrent"
     mkfifo "$TMP/qbprof/qBittorrent/qBittorrent.conf"
     # Python bounds the real CLI on macOS too, where util-linux timeout is absent.
@@ -4390,6 +4707,8 @@ PY
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
     [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
+    # DD-208: Podman is base infrastructure, printed with its version, not as an App Store line.
+    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Ayarlar → Konteynerler)' "$V2_ROOT/install.sh"
     # DD-196: the WireGuard usage note is printed only with the package installed.
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(summary_notes)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
@@ -4531,9 +4850,9 @@ t, tmp = json.load(open(sys.argv[1])), sys.argv[2]
 assert t["installed"] and t["save"] == tmp + "/srv/downloads/" and t["save_inside"], t
 assert t["temp"] == "" and not t["temp_on"] and not t["temp_inside"], t
 assert t["peer_port"] == 45410 and t["ui"] == "127.0.0.1:61006" and t["username"] == "admin", t
-assert t["unit"].startswith("qbittorrent-nox@") and t["running"] is False, t
+assert (t["unit"], t["container"], t["running"]) == ("qbittorrent.service", "qbittorrent", False), t
 PY
-    grep -q "^is-active --quiet qbittorrent-nox@" "$TMP/systemctl-calls"
+    grep -qx "is-active --quiet qbittorrent.service" "$TMP/systemctl-calls"
     # DD-178: absent in the seed, but an explicit user's temporary folder is
     # still reported accurately; GET must never enable or rewrite it.
     printf '\n[BitTorrent]\nSession\\TempPath=%s/srv/downloads/user-buffer/\nSession\\TempPathEnabled=true\n' \
@@ -4546,7 +4865,7 @@ t = json.load(open(sys.argv[1]))
 assert t["temp"] == sys.argv[2] + "/srv/downloads/user-buffer/" and t["temp_on"] and t["temp_inside"], t
 PY
     cmp -s "$TMP/user-temp.conf" "$TMP/qb/qBittorrent/qBittorrent.conf"
-    # A save path outside the downloads folder is flagged (the sandbox would refuse the writes).
+    # A save path outside the downloads folder is flagged (it needs its own bind mount, DD-209).
     sed -i.bak 's#^Session\\DefaultSavePath=.*#Session\\DefaultSavePath=/root/indirilenler/#' "$TMP/qb/qBittorrent/qBittorrent.conf"
     [ "$(pc /api/uygulama/torrent/durum -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; t = json.load(open(sys.argv[1])); assert t["save"] == "/root/indirilenler/" and not t["save_inside"], t' "$TMP/body"
@@ -4579,6 +4898,9 @@ PY
     grep -q '/api/konsol/ayarlar/uygula' "$settings"
     grep -q '/api/konsol/ayarlar/durum' "$settings"
     run ! grep -qE 'localStorage[.(]|innerHTML[ =]' "$settings"
+    # v2-180: public names are shown on the HTTPS listener port, never on WebDAV's own WAN port (SHARE_PORT under legacy HTTP).
+    grep -qF 'live.manage.https?.https_port && live.manage.https.https_port !== 443 ? ":" + live.manage.https.https_port : ""' "$settings"
+    run ! grep -qF 'live.manage.https.port' "$settings"
     grep -q 'OnUnitActiveSec=2s' "$V2_ROOT/systemd/master-settings-guard.timer"
     grep -q 'master_settings.py --state __STATE_FILE__ guard' "$V2_ROOT/systemd/master-settings-guard.service"
     # Icons the page uses exist (svg() silently falls back to the file icon).

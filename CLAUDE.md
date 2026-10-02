@@ -15,7 +15,8 @@ The installer turns a fresh Debian 13
 into a Tailscale exit-node with host dnsmasq + Caddy on the tailnet and a
 persistent firewall. Files, folder WebDAV and ZIP/RAR are built in; optional
 WireGuard and qBittorrent are installed from App Store (**DD-159**).
-There is no Docker (**DD-152**). There is no
+There is no Docker (**DD-152**); Podman is base infrastructure, the App Store's container runtime
+(**DD-208**), and qBittorrent runs in it (**DD-209**). There is no
 reconcile / self-healing engine by design.
 
 Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
@@ -46,9 +47,10 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   changes, wipes, and reboots without per-turn approval. Drive the installer
   with a scratch test input file, never the operator's `kurulum/kurulum.env`:
   empty domain, path and ports (defaults). The input file holds no accounts:
-  the Konsol account is the operator's, created at first visit with the
-  installer's one-time code (**DD-194**) — never create or keep one on their
-  behalf; scripted checks use `sudo master-konsol oturum-ac` sessions, and
+  the Konsol account is the operator's, created by them in Settings over
+  Tailscale (**DD-205**; the tailnet asks for no sign-in, the public name needs
+  the account) — never create or keep one on their behalf; scripted checks use
+  `sudo master-konsol oturum-ac` sessions where a session matters, and
   `konsol-login-live.py` runs only while no account exists and resets afterwards.
   Folder shares are managed in Konsol and qBittorrent's
   first login is a temporary password from its journal (**DD-151**). Add and
@@ -111,9 +113,9 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `versiyon/` (root) | Copies of verified working versions on the user's request: `<V2_VERSION>/` from a commit via `git archive` (no `Data/app`, no `kurulum/`), each with a Turkish `OKUBENI.txt`; index in `versiyon/OKUBENI.txt`. Frozen: never edit a saved copy |
 | `kurulum/wireguard/` (root) | Only what `wireguard.command` downloads on request: device profiles and their QR pictures (**DD-132**), mode 600. Since **DD-143** the installer never reads this folder and nothing is sent to the server |
 | `Data/magaza/wireguard/master-wg` | Server-side peer tool; the WireGuard package installs it to `/usr/local/sbin` and removes it with the package (**DD-196**) |
-| `Data/scripts/master-modul`, `Data/magaza/<id>/` | Store engine (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`/`hesap`) that knows no application, and the packages it runs: `paket.env` manifest, `kanca` hooks, slot files, the package's own settings file (`<id>.env`: `wireguard.env` with every `WG_*` key, `torrent.env` with the interface port and profile; the base carries none, **DD-201/203**), the folders it writes into (`PAKET_KLASORLER`, optional `klasorler.py` report) and the paths the root backend may write for it (`PAKET_ARKAUC_YOLLAR`, **DD-203**) and the Konsol files `konsol.json` (App Store texts, page declaration), `sayfa.js`/`sayfa.css` (the page, placed under `CONSOLE_WEB_DIR/uygulama/<id>/` while installed) and `api.py` (root-backend module behind `/api/uygulama/<id>/*`; qBittorrent's runs its settings worker `ayar.py` through `ctx.worker`, **DD-202**), rendered by the installer to `/usr/local/share/master-stack/moduller/` (**DD-197**, **DD-200**); registry `/etc/master-stack/moduller`. Folder accounts are managed by `master_shares.py` (**DD-158**) |
-| `Data/console/` | Konsol shell (`index.html`, `konsol.js`/`konsol.css`, the skin `panel.css` — CasaOS-inspired glass over an inline-SVG wallpaper, overview landing page with widgets and tiles, **DD-204** — and per-page scripts/styles; `giris.html`/`.js`/`.css` sign-in and first account) at Caddy `panel.<domain>` on the tailnet, optionally a public HTTPS name (**DD-140**, **DD-194**, **DD-195**). The shell names no application: installed packages' pages register through `window.Konsol.sayfa` (**DD-200**). Design mockups in `Data/docs/design/` |
-| `Data/panel/master_auth.py`, `Data/scripts/master-konsol` | Konsol account and sessions (**DD-194**): scrypt hash, SHA-256 session tokens, one-time setup code in `KONSOL_AUTH_DIR` (0700 root); Caddy `forward_auth` asks the root backend's `/oturum-denetle` before every protected panel request. Root CLI: `master-konsol durum|kod|sifirla|oturum-ac|oturum-kapat` |
+| `Data/scripts/master-modul`, `Data/magaza/<id>/` | Store engine (root; `liste`/`kur`/`baslat`/`durdur`/`kaldir`/`gunluk`/`uygula`/`hesap`) that knows no application, and the packages it runs: `paket.env` manifest, `kanca` hooks, slot files, the package's own settings file (`<id>.env`: `wireguard.env` with every `WG_*` key, `torrent.env` with the interface port and profile; the base carries none, **DD-201/203**), the folders it writes into (`PAKET_KLASORLER`, optional `klasorler.py` report) and the paths the root backend may write for it (`PAKET_ARKAUC_YOLLAR`, **DD-203**; the installer creates them before the backend starts, **DD-207**), an optional traffic module for the overview's network card (`PAKET_TRAFIK`, `trafik.py`: qBittorrent's own all-time statistics file, WireGuard's interface counters, **DD-206**), a container application's quadlet and digest-pinned image (`PAKET_KONTEYNER`, `PAKET_IMAJ`; the engine places the quadlet into `KONTEYNER_BIRIM_DIR`, **DD-209**) and the Konsol files `konsol.json` (App Store texts, page declaration), `sayfa.js`/`sayfa.css` (the page, placed under `CONSOLE_WEB_DIR/uygulama/<id>/` while installed) and `api.py` (root-backend module behind `/api/uygulama/<id>/*`; qBittorrent's runs its settings worker `ayar.py` through `ctx.worker`, **DD-202**), rendered by the installer to `/usr/local/share/master-stack/moduller/` (**DD-197**, **DD-200**); registry `/etc/master-stack/moduller`. Folder accounts are managed by `master_shares.py` (**DD-158**) |
+| `Data/console/` | Konsol shell (`index.html`, `konsol.js`/`konsol.css`, the skin `panel.css` — CasaOS-inspired glass over an inline-SVG wallpaper, overview landing page with widgets and tiles, **DD-204**; edit mode with tile order, widget width/visibility saved in `KONSOL_AUTH_DIR/duzen.json` and the network card, **DD-206** — and per-page scripts/styles; `giris.html`/`.js`/`.css` sign-in and first account) at Caddy `panel.<domain>` on the tailnet, optionally a public HTTPS name (**DD-140**, **DD-194**, **DD-195**). The shell names no application: installed packages' pages register through `window.Konsol.sayfa` (**DD-200**). Design mockups in `Data/docs/design/` |
+| `Data/panel/master_auth.py`, `Data/scripts/master-konsol` | Konsol account and sessions (**DD-194**, **DD-205**): Caddy `forward_auth` asks the root backend's `/oturum-denetle` before every protected panel request and the answer follows the channel — the tailnet address passes without a sign-in, the public name needs the account (scrypt hash, SHA-256 session tokens in `KONSOL_AUTH_DIR`, 0700 root), which the operator creates in Settings over Tailscale; no setup code. Root CLI: `master-konsol durum|sifirla|oturum-ac|oturum-kapat` |
 | Built-in WebDAV (`paylasim` internal ID) | **DD-158/159/192:** `master_shares.py` owns `/etc/master-stack/webdav.json` (0600 root, scrypt hashes); `master_webdav.py` runs as the downloads uid with a systemd credential. Each folder's `/s/<id>/` and account are shared by two independent Tailscale/WAN policies: enabled, RO/RW and expiry. Shares shows two cards; Manage edits the shared folder/account/password. Caddy serves Tailscale HTTP on `SHARE_PORT`; optional public HTTPS uses `SHARE_HTTPS_PORT` and `master_https.py` (**DD-179/190**). No cross-folder shared account or writable symlink tree. See contract §3 and §5–7 for publication modes, limits and manual recipient ACL requirements. |
 | `Data/panel/` | Konsol's root backend (`master-panel`, Python stdlib, root, Unix socket `/run/master-panel/api.sock` only — no TCP port since **DD-180** — `/api/konsol/*` and `/api/uygulama/<id>/*`, the latter handed to the installed package's `api.py` loaded from its folder, **DD-200**); WireGuard networks wg0…wg9 and peer/network switches live in `Data/magaza/wireguard/api.py` over `master-wg` (**DD-133**, **DD-136**, **DD-140**) |
 | `Data/files-panel/` | Built-in file backend (`master-files-panel`, Python stdlib, loopback, downloads uid, no password; trash in `.cop`); `master_archives.py` and `master_rar.py` run bounded archive jobs with private `.arsiv` staging/history. ZIP creation, automatic nested ZIP/RAR extraction and multipart RAR detection are built in. Installer activates both data services through `master-modul yerlesik` (**DD-159**, **DD-166**, **DD-170**). |
@@ -160,7 +162,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   DD-195: the Panel row's Tailscale switch is fixed on; its optional public HTTPS
   name imports the same `(konsol)` Caddy snippet (session check, Host pinned to
   `panel.<domain>`, Caddy-written `X-Konsol-Kanal`), needs an existing Konsol
-  account, refuses the setup code and adds a shared public sign-in budget.
+  account, refuses account creation and adds a shared public sign-in budget.
   qBittorrent WAN requires its permanent
   native login, CSRF/Host checks and login-attempt ban; no preferences are
   rewritten. All public names share TCP443 and its existing socket budgets.
@@ -174,7 +176,10 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   only (**DD-102**). Noble live-verified 2026-08-29; resolute
   live-verified 2026-08-30, including re-run, service restarts and reboot.
 - The fixed base includes Files, folder WebDAV and ZIP/RAR (**DD-159**, **DD-166**).
-  The App Store catalogue is only WireGuard and qBittorrent. Public module
+  Podman is part of the base (daemon-less container runtime, `podman info` checked in
+  stages 1 and 7; Settings → Konteynerler is its read-only view, **DD-208**; no Docker).
+  The App Store catalogue is WireGuard and qBittorrent; qBittorrent is a container
+  application (`PAKET_CALISMA=konteyner`, quadlet + digest-pinned image, **DD-209**). Public module
   verbs refuse `dosya`/`paylasim`; these are internal template/registry IDs used
   by DNS/Caddy/firewall rendering. No profiles.
 - Do not delete or recreate other software's iptables chains (Tailscale's

@@ -76,13 +76,13 @@ def main():
         e = settings.env_read(DATA / "config/defaults.env")
         paths = {"SETTINGS_FILE": "etc/settings.json", "SETTINGS_PENDING_FILE": "etc/pending.json",
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
-                 "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
+                 "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "KONTEYNER_BIRIM_DIR": "quadlet", "MODULES_FILE": "etc/modules",
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
                  "SBIN_DIR": "bin", "SHARE_STATE_FILE": "etc/webdav.json"}
         e.update({k: str(root / v) for k, v in paths.items()})
         e.update(LOCAL_DOMAIN="ayc", WAN_INTERFACE="eth0", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2",
-                 TORRENT_UI_PORT="18555", DOWNLOADS_UID="1000", DOWNLOADS_GID="1000")
-        for name in ("etc", "bin", "dns", "templates", "units", "run", "srv/downloads/incomplete", "srv/media", "profile/qBittorrent"):
+                 TORRENT_UI_PORT="18555", TORRENT_CONTAINER="qbittorrent", DOWNLOADS_UID="1000", DOWNLOADS_GID="1000")
+        for name in ("etc", "bin", "dns", "templates", "units", "quadlet", "run", "srv/downloads/incomplete", "srv/media", "profile/qBittorrent"):
             (root / name).mkdir(parents=True, exist_ok=True)
         for name in ("srv", "profile"):
             for p in [root / name, *(root / name).rglob("*")]:
@@ -149,7 +149,8 @@ def main():
             action = argv[1]
             if argv[-1] == "master-settings-guard.timer":
                 return subprocess.CompletedProcess(argv, 0, "", "")  # DD-181: apply starts the timer
-            name = "qbit" if argv[-1].startswith("qbittorrent-nox@") else "dns"
+            # DD-209: the worker controls the container's generated unit; here the same qBittorrent runs natively.
+            name = "qbit" if argv[-1] == ayar.unit_name(e) else "dns"
             if action == "stop":
                 stop(name)
             elif action in ("start", "restart"):
@@ -256,7 +257,8 @@ def main():
                 with request("app/preferences", cookie=cookie) as response:
                     prefs = json.load(response)
                 assert prefs["save_path"].rstrip("/") == str(root / "srv/media"), prefs["save_path"]
-                assert drop.read_text() == '[Service]\nReadWritePaths="%s"\n' % (root / "srv/media"), drop.read_text()
+                assert drop.read_text() == "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s\n" % (root / "srv/media", root / "srv/media"), drop.read_text()
+                assert str(drop).startswith(str(root / "quadlet")), drop
                 assert "test-new-password" not in conf.read_text()
                 before = conf.read_bytes()
                 try:
@@ -278,7 +280,7 @@ def main():
                 # A failed restart restores the previous working account and starts the service again.
                 adapted, failed = settings.run, []
                 def failing_start(argv, **kwargs):
-                    if argv[:2] == ["systemctl", "start"] and argv[-1].startswith("qbittorrent-nox@") and not failed:
+                    if argv[:2] == ["systemctl", "start"] and argv[-1] == ayar.unit_name(e) and not failed:
                         failed.append(argv)
                         raise settings.SettingsError("injected start failure")
                     return adapted(argv, **kwargs)

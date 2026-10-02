@@ -12,7 +12,7 @@ const settings = {read_at:Date.now()/1000,domain:"ayc",tailscale:"100.64.0.2",ts
 // DD-200: App Store texts, the page declaration and the page files come from each package folder.
 const magaza = path.join(__dirname,"../magaza");
 const meta = id => JSON.parse(fs.readFileSync(path.join(magaza,id,"konsol.json"),"utf8").replace(/__[A-Z_]+__/g,"x"));
-const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "host",live:"-",
+const modules = ["wireguard","torrent"].map(id => ({id,installed:false,state:"yok",runtime:id === "wireguard" ? "konsol" : "konteyner",live:"-",
   durdurulabilir:id === "torrent",konsol:meta(id)}));
 // DD-195 (v2-168): the backend names both qBittorrent addresses; the public one only while published.
 modules[1].urls = {tailscale:"http://torrent.ayc",internet:null};
@@ -21,6 +21,10 @@ const temporaryPassword = "FixtureTemp8!";
 let passwordReads = 0, temporaryLogin = true;
 const longArchiveFolder = "archive." + "a".repeat(150);
 let resources = "normal", submitted, resourceCount = 0, holdInstall = false, logStatus = 200, pickerFailure = false, archiveFailure = false;
+// DD-206: network card (rates rise with each poll; package totals while installed) and the saved overview layout.
+let netCount = 0, layoutSaved = null;
+const layoutWrites = [];
+const netApps = () => modules[1].installed ? [{id:"torrent",name:"qBittorrent",state:"calisiyor",down:5*1024**3,up:1024**3,since:null,at:Math.floor(Date.now()/1000)-600}] : [];
 const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now()/1000});
 (async () => {
   const browser = await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM} : {})});
@@ -58,7 +62,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         m.sayfa = m.installed ? ["sayfa.js","sayfa.css"] : undefined;
         m.live = m.state === "calisiyor" ? "running" : "inactive";
         m.progress = {action,step:"bitti"}; result = {ok:true};
-      } else if (p === "/api/uygulama/torrent/durum") result = {installed:true,running:modules[1].state === "calisiyor",unit:"qbittorrent-nox@master-downloads.service",
+      } else if (p === "/api/uygulama/torrent/durum") result = {installed:true,running:modules[1].state === "calisiyor",unit:"qbittorrent.service",container:"qbittorrent",
         profile:"/var/lib/qbittorrent",downloads:"/srv/downloads",save:"/srv/downloads/",save_inside:true,temp:"",temp_on:false,temp_inside:false,ui:"127.0.0.1:61006",peer_port:0,username:"admin"};
       else if (p.endsWith("/torrent/gunluk")) return route.fulfill({status:logStatus,contentType:"text/plain",body:"<img src=x onerror=alert(1)>\nfixture service log"});
       else if (p.endsWith("/torrent/hesap")) {
@@ -67,6 +71,18 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       }
       else if (p === "/api/konsol/saglik") result = {status:"ok",read_at:1,checks:[{id:"units",name:"Servisler",status:"ok",detail:"Başarısız servis yok"}]};
       else if (p === "/api/konsol/oturum") result = {durum:"acik",kullanici:"fixture",oturum_gun:7};
+      else if (p === "/api/konsol/ag") {
+        netCount++;
+        const now = Math.floor(Date.now()/1000), rx = netCount*1024*1024, tx = 256*1024;
+        result = {read_at:now,iface:"eth0",window:120,sampled_at:now,rx,tx,points:[[now-4,512*1024,128*1024],[now-2,rx/2,tx],[now,rx,tx]],apps:netApps()};
+      }
+      else if (p === "/api/konsol/duzen") {
+        if (req.method() === "POST") {
+          const body = req.postDataJSON(); layoutWrites.push(body);
+          layoutSaved = body.sifirla ? null : {schema:1,...body.duzen};
+        }
+        result = {duzen:layoutSaved};
+      }
       else if (p === "/api/konsol/kaynaklar") {
         resourceCount++;
         if (resources === "offline") return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"fixture offline"})});
@@ -118,12 +134,125 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.deepEqual(await page.locator("#genel-tiles .tile strong").allTextContents(),["Dosyalar","Paylaşımlar","App Store","Ayarlar"],"no application tile while none is installed");
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="moduller"] small').innerText(),"0 kurulu · 2 kurulabilir");
     await page.locator("#genel-health").filter({hasText:"Sağlıklı"}).waitFor();
-    assert.equal(await page.locator("#genel-widgets .rings .big").count(),2);
+    assert.deepEqual(await page.locator("#genel-widgets .widget").evaluateAll(els => els.map(e => [e.dataset.widget,e.dataset.span])),[["saat","2"],["durum","2"],["ag","4"]],"clock, status and network (DD-206)");
+    assert.equal(await page.locator("#genel-widgets .rings .big").count(),3);
     assert.equal(await page.locator("#genel-widgets .rings .big b").first().innerText(),"%18","the overview ring shows the same measurement as the sidebar");
-    assert.equal(await page.locator("#genel-widgets .spark").count(),0,"a single sample draws no history line");
+    assert.equal(await page.locator("#genel-widgets .rings .pie-box").innerText(),"%28 Depolama","storage is a pie beside the rings with the sidebar's disk figure");
+    assert.equal(await page.locator("#genel-widgets .pie.warn").count(),0);
+    // v2-182: the status card carries the three charts only — no check texts — and they fill the card.
+    assert.equal(await page.locator("#genel-widgets .rings .hint-s, #genel-widgets .rings .line").count(),0,"no explanation lines in the status card");
+    const ringBox = await page.locator("#genel-widgets .ring").first().boundingBox();
+    assert(ringBox.width >= 80 && ringBox.height >= 80, `charts are large: ${ringBox.width}x${ringBox.height}`);
+    const statusBox = await page.locator('#genel-widgets .widget[aria-label="Sistem durumu"]').boundingBox(), clockBox = await page.locator('#genel-widgets .widget[aria-label="Saat ve sunucu"]').boundingBox();
+    assert(Math.abs(statusBox.height - clockBox.height) <= 60, `the two widgets stay about the same height: ${statusBox.height} vs ${clockBox.height}`);
     assert(!calls.includes("/api/uygulama/wireguard/state") && !calls.includes("/api/konsol/islemler"));
     assert.equal(await page.locator('script[src^="/uygulama/"]').count(),0,"no package page is loaded while none is installed");
+    // DD-206: the clock card shows time, date, uptime and both addresses — no host, OS or kernel line.
+    const clockCard = page.locator('#genel-widgets .widget[data-widget="saat"]');
+    assert.deepEqual(await clockCard.locator(".clock-facts dt").allTextContents(),["Çalışma süresi","Tailscale","WAN"]);
+    assert.deepEqual(await clockCard.locator(".clock-facts dd").allTextContents(),["15 dk","100.64.0.2","192.0.2.1"]);
+    assert.doesNotMatch(await clockCard.innerText(),/Debian|·/,"no version details in the clock card");
+    // DD-206: the network card shows the WAN rates, a chart and the packages' totals, read every 2 s.
+    const netCard = page.locator('#genel-widgets .widget[data-widget="ag"]');
+    await netCard.locator("#ag-rx").filter({hasText:"MB/s"}).waitFor();
+    assert.equal(await netCard.locator("#ag-sub").innerText(),"eth0 · son 2 dk");
+    assert.equal(await netCard.locator("#ag-live").innerText(),"Canlı");
+    assert.equal(await netCard.locator("#ag-tx").innerText(),"256 KB/s");
+    assert.equal(await netCard.locator(".net-svg path.down").count(),1,"the chart draws the download line");
+    assert.equal(await netCard.locator(".net-svg path.up").count(),1,"and the upload line");
+    assert.match(await netCard.locator("#ag-apps").innerText(),/Trafiğini bildiren kurulu uygulama yok/);
+    const firstRate = await netCard.locator("#ag-rx").innerText(), polls = netCount;
+    await page.clock.runFor(2100);
+    await page.waitForFunction(prev => document.querySelector("#ag-rx").textContent !== prev, firstRate);
+    assert(netCount > polls,"the network card polls every 2 s");
+    await page.clock.setSystemTime(new Date());
     await page.screenshot({path:path.join(shots,"model-a-overview.png"),fullPage:true});
+    // DD-206: Düzenle — bottom-left of the content; tiles move by arrows or dragging, widgets change
+    // width (1–4 columns, height not adjustable) and visibility; Bitti saves on the server.
+    const bar = page.locator("#genel-edit"), order = () => page.locator("#genel-tiles .tile").evaluateAll(els => els.map(e => e.dataset.tile));
+    const barBox = await bar.boundingBox(), gridBox0 = await page.locator("#genel-widgets").boundingBox(), tilesBox = await page.locator("#genel-tiles").boundingBox();
+    assert(Math.abs(barBox.x - gridBox0.x) < 2 && barBox.y >= tilesBox.y + tilesBox.height, `Düzenle sits bottom-left, below the tiles: ${JSON.stringify(barBox)}`);
+    await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
+    await bar.getByRole("button",{name:"Bitti",exact:true}).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement.id),"genel-bitti");
+    assert.equal(await page.locator("#genel-tiles a.tile").count(),0,"tiles are not links while editing");
+    assert.equal(await page.locator("#genel-tiles.editing .tile .tile-move").count(),4);
+    // Tiles wiggle while editing; readers who ask for reduced motion get still tiles (and the clicks
+    // below need still targets).
+    const wiggle = () => page.locator("#genel-tiles .tile").first().evaluate(e => getComputedStyle(e).animationName);
+    assert.equal(await wiggle(),"tile-wiggle");
+    await page.emulateMedia({reducedMotion:"reduce"});
+    assert.equal(await wiggle(),"none");
+    assert.deepEqual(await order(),["dosyalar","paylasim","moduller","ayarlar"]);
+    assert(await page.getByRole("button",{name:"Dosyalar: sola taşı",exact:true}).isDisabled());
+    await page.getByRole("button",{name:"Ayarlar: sola taşı",exact:true}).click();
+    assert.deepEqual(await order(),["dosyalar","paylasim","ayarlar","moduller"]);
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")),"Ayarlar: sola taşı","focus stays on the moved tile's button");
+    // Dragging uses pointer events, the same code for a mouse and a finger.
+    const from = await page.locator('#genel-tiles .tile[data-tile="moduller"] .ico').boundingBox();
+    const to = await page.locator('#genel-tiles .tile[data-tile="dosyalar"]').boundingBox();
+    await page.mouse.move(from.x + from.width/2, from.y + from.height/2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + 12, to.y + to.height/2, {steps:16});
+    await page.mouse.up();
+    assert.deepEqual(await order(),["moduller","dosyalar","paylasim","ayarlar"],"dragging App Store to the front");
+    const clockW = page.locator('#genel-widgets .widget[data-widget="saat"]'), statusW = page.locator('#genel-widgets .widget[data-widget="durum"]');
+    await page.getByRole("button",{name:"Saat: daralt",exact:true}).click();
+    assert.equal(await clockW.getAttribute("data-span"),"1");
+    assert(await page.getByRole("button",{name:"Saat: daralt",exact:true}).isDisabled(),"one column is the minimum");
+    await page.getByRole("button",{name:"Sistem durumu: genişlet",exact:true}).click();
+    assert.equal(await statusW.getAttribute("data-span"),"3");
+    const gridBox = await page.locator("#genel-widgets").boundingBox(), clockWBox = await clockW.boundingBox(), statusWBox = await statusW.boundingBox();
+    assert(Math.abs(clockWBox.width - (gridBox.width - 42)/4) < 3, `span 1 is one of four columns: ${clockWBox.width}/${gridBox.width}`);
+    assert(Math.abs(statusWBox.width - (3*(gridBox.width - 42)/4 + 28)) < 3, `span 3 is three columns: ${statusWBox.width}/${gridBox.width}`);
+    assert(Math.abs(clockWBox.height - statusWBox.height) < 2, "widgets in a row share one height");
+    const ringSmall = await statusW.locator(".ring").first().boundingBox();
+    assert(ringSmall.width >= 80, "the status charts keep their size in a wide card");
+    await page.getByRole("button",{name:"Ağ: gizle",exact:true}).click();
+    assert.equal(await page.locator('#genel-widgets .widget[data-widget="ag"].is-hidden').count(),1,"a hidden widget stays visible, dimmed, while editing");
+    assert.equal(await page.getByRole("button",{name:"Ağ: göster",exact:true}).count(),1);
+    await page.screenshot({path:path.join(shots,"model-a-overview-edit.png"),fullPage:true});
+    await bar.getByRole("button",{name:"Bitti",exact:true}).click();
+    await page.getByText("Düzen kaydedildi.",{exact:true}).first().waitFor();
+    assert.deepEqual(layoutWrites.at(-1),{duzen:{kareler:["moduller","dosyalar","paylasim","ayarlar"],
+      widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:4,gizli:true}]}});
+    assert.equal(await page.locator('#genel-widgets .widget[data-widget="ag"]').count(),0,"a hidden widget is not shown");
+    assert.equal(await page.locator("#genel-tiles a.tile").count(),4,"tiles are links again");
+    assert.equal(await page.evaluate(() => document.activeElement.id),"genel-duzenle");
+    const hiddenPolls = netCount;
+    await page.clock.runFor(4100);
+    await page.clock.setSystemTime(new Date());
+    assert.equal(netCount,hiddenPolls,"a hidden network card is not polled");
+    // The layout lives on the server: another device's order shows up on the next visit.
+    layoutSaved = {schema:1,kareler:["ayarlar","moduller","dosyalar","paylasim"],widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:4,gizli:true}]};
+    await navigate("#/dosyalar"); await navigate("#/genel");
+    await page.waitForFunction(() => document.querySelector("#genel-tiles .tile")?.dataset.tile === "ayarlar");
+    // Vazgeç (Escape) drops a draft; Varsayılan + Bitti removes the saved layout.
+    const writes = layoutWrites.length;
+    await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
+    await page.getByRole("button",{name:"Ayarlar: sağa taşı",exact:true}).click();
+    await page.keyboard.press("Escape");
+    await bar.getByRole("button",{name:"Düzenle",exact:true}).waitFor();
+    assert.deepEqual(await order(),["ayarlar","moduller","dosyalar","paylasim"]);
+    assert.equal(layoutWrites.length,writes,"cancel saves nothing");
+    await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
+    await bar.getByRole("button",{name:"Varsayılan",exact:true}).click();
+    assert.deepEqual(await order(),["dosyalar","paylasim","moduller","ayarlar"]);
+    assert.equal(await page.locator('#genel-widgets .widget:not(.is-hidden)').count(),3);
+    await bar.getByRole("button",{name:"Bitti",exact:true}).click();
+    await page.getByText("Genel bakış varsayılan düzene döndü.",{exact:true}).first().waitFor();
+    assert.deepEqual(layoutWrites.at(-1),{sifirla:true});
+    // On a long (phone) page the bar sticks to the bottom-left of the screen; scrolled to the end it rests below the tiles.
+    await page.setViewportSize({width:390,height:760});
+    await page.evaluate(() => window.scrollTo(0,0));
+    const phoneBar = await bar.boundingBox();
+    assert(phoneBar.x <= 20 && Math.abs(phoneBar.y + phoneBar.height - (760 - 12)) < 3, `sticky bottom-left on a phone: ${JSON.stringify(phoneBar)}`);
+    await page.evaluate(() => window.scrollTo(0,document.documentElement.scrollHeight));
+    const phoneEnd = await bar.boundingBox(), phoneTiles = await page.locator("#genel-tiles").boundingBox();
+    assert(phoneEnd.y >= phoneTiles.y + phoneTiles.height, "at the end of the page the bar does not cover the last row");
+    await page.setViewportSize({width:1440,height:1000});
+    await page.emulateMedia({reducedMotion:"no-preference"});
+    await netCard.locator("#ag-rx").waitFor();
     await page.locator('#genel-tiles .tile[data-tile="dosyalar"]').click();
     await page.getByRole("button", {name:"media ayrıntıları",exact:true}).waitFor();
     assert.equal(await page.locator("#title").innerText(),"Dosyalar");
@@ -136,7 +265,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.getByRole("heading",{name:"Genel bakış",exact:true}).waitFor();
     await navigate("#/ayarlar/log");
     await page.locator("#log-table").waitFor();
-    assert.equal(await page.getByRole("tab").count(),5);
+    // DD-208: Sistem, Güvenlik Duvarı, Caddy, Dnsmasq, Konteynerler, Günlük.
+    assert.equal(await page.getByRole("tab").count(),6);
     await page.getByRole("tab",{name:"Sistem",exact:true}).click();
     await page.getByRole("tab",{name:"Sistem",exact:true}).press("ArrowRight");
     await page.waitForURL("**/#/ayarlar/fw");
@@ -267,6 +397,13 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await appTile.locator("small").innerText(),"çalışıyor");
     assert.equal(await appTile.locator(".dot.on").count(),1);
     assert(await appTile.locator(".ico.t-video").count() === 1, "the tile uses the package's declared tone");
+    // DD-206: the network card lists the package's totals from its own traffic module.
+    const appTraffic = page.locator('#ag-apps .net-app[data-app="torrent"]');
+    await appTraffic.waitFor();
+    assert.equal(await appTraffic.locator("strong").innerText(),"qBittorrent");
+    assert.deepEqual(await appTraffic.locator(".v").allTextContents(),["↓ 5,0 GB","↑ 1,0 GB"]);
+    assert.match(await appTraffic.locator("small").innerText(),/^tüm zamanlar · kayıt \d\d:\d\d$/,"all-time figures name the time qBittorrent saved them");
+    assert.equal(await appTraffic.locator(".ico.t-video").count(),1);
     await appTile.click();
     await page.getByRole("textbox",{name:"Kullanıcı adı",exact:true}).waitFor();
     await navigate("#/torrent");

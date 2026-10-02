@@ -5,7 +5,7 @@
 (() => {
   "use strict";
   window.Konsol.sayfa("torrent", (k) => {
-  const { h, svg, $, api, post, toast, fail, ask, credRow, copyButton, copyText, modPill, modAct } = k;
+  const { h, svg, $, api, post, enc, toast, fail, ask, credRow, copyButton, copyText, modPill, modAct } = k;
   const ROUTE = "torrent", ID = "torrent", BASE = "/api/uygulama/torrent";
   let DURUM = null, busy = false, message = "", readAt = 0, failed = false;
   const publicPanel = () => location.protocol === "https:";
@@ -36,7 +36,8 @@
     const m = k.module(ID);
     if (!m || !m.installed) { box.replaceChildren(h("p", { class: "hint-s" }, "Kurulum durumu okunuyor…")); return; }
     const running = m.state === "calisiyor", url = appUrl();
-    box.replaceChildren(modPill(m),
+    // replaceChildren yazar: boş (null) öğe metne dönüşüp "null" görünürdü; yalnız var olanlar konur.
+    box.replaceChildren(...[modPill(m),
       h("button", { type: "button", class: "btn btn-quiet", disabled: !!m.busy, onclick: () => {
         if (!running) { modAct(ID, "baslat"); return; }
         ask({ title: "qBittorrent durdurulsun mu?", calm: true, go: "Durdur", items: [["pause", "Süren indirmeler duraklar. Başlatana kadar servis kapalı kalır."]],
@@ -45,7 +46,9 @@
       running && url ? h("a", { class: "btn btn-primary", id: "torrent-open", href: url, target: "_blank", rel: "noopener" }, "Web arayüzünü aç ↗") : null,
       running && !url && publicPanel() ? h("p", { class: "hint-s", id: "torrent-open-note" }, "İnternetten açmak için qBittorrent'in internet yayınını açın: ",
         h("a", { href: "#/ayarlar/web" }, "Ayarlar → Caddy")) : null,
-      h("a", { class: "linkbtn", href: "#/moduller" }, "App Store’da yönet"));
+      // DD-209: uygulama Podman'da çalışır; konteynerin durumu, bağlamaları ve günlüğü Ayarlar'dadır.
+      h("a", { class: "linkbtn", id: "torrent-container", href: "#/ayarlar/konteynerler" + (DURUM && DURUM.container ? "/" + enc(DURUM.container) : "") }, "Konteyner"),
+      h("a", { class: "linkbtn", href: "#/moduller" }, "App Store’da yönet")].filter(Boolean));
   }
 
   /* ---------- ilk giriş hesabı: parola yalnız göz ya da kopyala ile, açıkça istenince gelir,
@@ -183,7 +186,7 @@
       if (username.value !== DURUM.username) account.username = username.value;
       if (password.value) account.password = password.value;
       if (!Object.keys(account).length) { toast("Hesap bilgilerinde değişiklik yok."); return; }
-      password.value = repeat.value = "";
+      password.value = repeat.value = ""; username.value = username.defaultValue;  // taslak sunucuya gitti; form artık sunucuyu izler
       saveAccount(account);
     } }, h("div", { class: "as-formgrid" }, field("Kullanıcı adı", username), h("div"), field("Yeni parola", password, "Boş bırakılırsa kayıtlı parola korunur; en az 8 karakter."), field("Yeni parola (tekrar)", repeat)),
     h("div", { class: "as-inline" }, h("button", { type: "submit", class: "btn btn-primary", disabled: busy }, "Hesabı kaydet")),
@@ -194,14 +197,35 @@
     return [card("Web arayüzü hesabı", "Mevcut parola gösterilmez", form),
       card("İndirme dizini", "Yalnız yeni torrentlerin varsayılanı", h("div", { class: "as-body" }, h("code", null, DURUM.save || "—"),
         h("div", null, btn("Klasör seç", chooseFolder)),
-        note("Seçilen dizin mevcut ve servis kullanıcısına yazılabilir olmalı; doğrudan kaydedilir, çalışıyorsa qBittorrent kısa süre yeniden başlar. Gerekli systemd yazma izni yalnız o dizine eklenir. Mevcut torrentler ve yarım indirmelerin yerleri taşınmaz."),
-        DURUM.save && !DURUM.save_inside ? note("Dizin indirme klasörünün dışında; servis korumalı alanı yazmayı reddedebilir.", true) : null),
+        note("Seçilen dizin mevcut ve servis kullanıcısına yazılabilir olmalı; doğrudan kaydedilir, çalışıyorsa qBittorrent kısa süre yeniden başlar. İndirme klasörü dışındaki bir dizin konteynere aynı yolla bağlanır. Mevcut torrentler ve yarım indirmelerin yerleri taşınmaz."),
+        DURUM.save && !DURUM.save_inside ? note("Dizin indirme klasörünün dışında; konteynere ayrıca bağlanmıştır.") : null),
       note(`Profil: ${DURUM.profile}. Çöp, paylaşım iç dizinleri, gizli klasörler ve sembolik bağlantılar seçilemez.`))];
+  }
+  /* Hesap formundaki taslak (yazılmış ama kaydedilmemiş alanlar ve imleç) 10 sn'lik yoklama yeniden
+     çizerken korunur; aksi hâlde tekrar parolası yazılırken ilk parola silinirdi. */
+  function draftOf(box) {
+    const form = box.querySelector("form.as-body");
+    if (!form) return null;
+    const draft = { values: {}, focus: null };
+    for (const el of form.querySelectorAll("input")) {
+      if (el.value !== el.defaultValue) draft.values[el.name] = el.value;
+      if (el === document.activeElement) draft.focus = { name: el.name, start: el.selectionStart, end: el.selectionEnd };
+    }
+    return draft;
+  }
+  function restoreDraft(box, draft) {
+    const form = draft && box.querySelector("form.as-body");
+    if (!form) return;
+    for (const el of form.querySelectorAll("input")) if (el.name in draft.values) el.value = draft.values[el.name];
+    const el = draft.focus && form.querySelector(`input[name="${draft.focus.name}"]`);
+    if (el && !el.disabled) { el.focus(); try { el.setSelectionRange(draft.focus.start, draft.focus.end); } catch (_) { /* tür izin vermiyorsa imleç sona gider */ } }
   }
   function renderSettings() {
     const box = $("torrent-settings");
     if (!box) return;
+    const draft = draftOf(box);
     box.replaceChildren(...[message ? h("p", { class: "as-message", role: "status" }, message) : null, ...settingsCards()].filter(Boolean));
+    restoreDraft(box, draft);
     const stamp = $("torrent-stamp");
     if (stamp) stamp.textContent = readAt ? "Son okuma " + hhmm(readAt) : "Okunuyor…";
   }

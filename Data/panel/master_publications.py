@@ -199,7 +199,7 @@ def validate(env, saved, request):
             if not before["enabled"] or before["domain"] != item["domain"]:
                 require(request.get("confirm") == "onayla", "Panel'i internete açmak için onayla yazın.")
             # The first account is created only over Tailscale with the one-time code.
-            require(konsol_account(env), "Önce Konsol hesabını Tailscale üzerinden oluşturun.")
+            require(konsol_account(env), "Önce Tailscale adresinden Ayarlar → Sistem → Konsol hesabı bölümünde internet hesabını oluşturun.")
             require(not legacy_http_active(env), LEGACY_HTTP_BUSY)
             tls.check_dns(env, item["domain"])
         return saved
@@ -335,7 +335,7 @@ def panel_status(env, rows):
         return row
     row.update(status="error", message="Panel yayını veya sertifikası doğrulanamadı.")
     if not row["account"]:
-        row["message"] = "Konsol hesabı yok; internet yayını kapalı. İlk hesap yalnız Tailscale üzerinden oluşturulur."
+        row["message"] = "Konsol hesabı yok; internet yayını kapalı. Hesabı Tailscale adresinden Ayarlar → Sistem → Konsol hesabı bölümünde oluşturun."
     elif panel_active(env, rows):
         try:
             row.update(expires=tls.certificate(env, row["domain"]), status="ready", message="Sertifika doğrulandı.")

@@ -48,7 +48,11 @@ class Api:
         except Exception:
             unit = ""
         rc, _, _ = self.ctx.run(["systemctl", "is-active", "--quiet", unit], timeout=10) if unit else (1, "", "")
-        return dict(self.ayar.durum(env), installed=True, running=rc == 0, unit=unit)
+        try:
+            container = self.ayar.container_name(env)
+        except Exception:
+            container = ""
+        return dict(self.ayar.durum(env), installed=True, running=rc == 0, unit=unit, container=container)
 
     def change(self, req, action):
         data = req.data if isinstance(req.data, dict) else {}

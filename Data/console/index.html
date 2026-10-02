@@ -8,11 +8,13 @@
 <title>Konsol</title>
 <link rel="stylesheet" href="/konsol.css">
 <link rel="stylesheet" href="/ayarlar.css">
+<link rel="stylesheet" href="/konteynerler.css">
 <link rel="stylesheet" href="/dosyalar.css">
 <link rel="stylesheet" href="/panel.css">
 <script src="/arsiv.js" defer></script>
 <script src="/dosyalar.js" defer></script>
 <script src="/ayarlar.js" defer></script>
+<script src="/konteynerler.js" defer></script>
 <script src="/konsol.js" defer></script>
 </head>
 <body>
@@ -49,7 +51,7 @@
       <div class="resource"><div><span>RAM</span><strong id="resource-mem">—</strong></div><progress id="bar-mem" max="100" value="0" aria-label="Bellek kullanımı" hidden></progress><small id="detail-mem">—</small></div>
       <div class="resource"><div><span>Disk</span><strong id="resource-disk">—</strong></div><progress id="bar-disk" max="100" value="0" aria-label="Disk kullanımı" hidden></progress><small id="detail-disk">—</small></div>
     </section>
-    <div class="side-foot"><span id="foot-access">Tailscale</span><span class="mono" id="foot-ts">—</span><span class="mono" id="foot-version">—</span><button type="button" class="linkbtn" id="logout">Çıkış yap</button></div>
+    <div class="side-foot"><span id="foot-access">Tailscale</span><span class="mono" id="foot-ts">—</span><span class="mono" id="foot-version">—</span><button type="button" class="linkbtn" id="logout" hidden>Çıkış yap</button></div>
   </aside>
   <main class="main" id="main-content" tabindex="-1">
     <div class="content">
@@ -60,11 +62,13 @@
 
       <!-- Application pages (DD-200): sections are created by konsol.js for installed packages. -->
 
-      <!-- GENEL BAKIŞ (DD-204): saat, durum, depolama, işlemci geçmişi ve uygulama kareleri; konsol.js doldurur. -->
+      <!-- GENEL BAKIŞ (DD-204, DD-206): widget'lar, uygulama kareleri ve sol altta Düzenle; konsol.js doldurur.
+           Düzenle çubuğu karelerin altındadır; sayfa uzunsa ekranın sol altına yapışır. -->
       <section data-view="genel" hidden>
         <div class="widgets" id="genel-widgets" aria-label="Sunucu durumu"></div>
         <div class="section-title"><h2>Uygulamalar</h2><span class="hint-s" id="genel-sum"></span></div>
         <div class="tiles" id="genel-tiles" aria-label="Uygulamalar"></div>
+        <div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Genel bakış düzeni"></div>
       </section>
 
       <!-- DOSYALAR -->

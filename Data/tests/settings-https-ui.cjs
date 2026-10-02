@@ -103,6 +103,7 @@ function setHttps(domain, status = "ready", enabled = !!domain) {
         for (const [scope,patch] of Object.entries(body.connections || {})) Object.assign(share.connections[scope],patch);
         result = projectShares();
       } else if (endpoint === "/api/konsol/moduller" || endpoint === "/api/konsol/islemler" || endpoint === "/api/archives") result = { items: [] };
+      else if (endpoint === "/api/konsol/oturum") result = { durum: "giris", kullanici: "fixture", kanal: "tailscale" };  // DD-205
       else if (endpoint === "/api/konsol/kaynaklar") result = { host: "fixture", version: "fixture", domain: "ayc", os: "Debian 13", kernel: "fixture", uptime: 100,
         cores: 2, cpu: [1], mem: { total: 1000, used: 200, graph: [20] }, net: { wan: data.wan.ipv4, tailscale: data.tailscale }, root: "/srv", disk: { total: 1000, free: 800 }, ports: [] };
       else if (endpoint === "/api/state") result = { root: "/srv", downloads: "downloads", disk: { total: 1000, free: 800 }, trash: { count: 0, size: 0 } };
@@ -131,6 +132,15 @@ function setHttps(domain, status = "ready", enabled = !!domain) {
     assert.match(await table.innerText(), /192\.0\.2\.1/);
     assert.match(await table.innerText(), /DNS only/);
     assert.match(await table.innerText(), /HTTPS TCP 443\b/, "Legacy HTTP shows the configured HTTPS port, not SHARE_PORT");
+    // v2-180: a ready Panel (or application) name is shown on the HTTPS port even while WebDAV is still on legacy HTTP,
+    // whose own port (manage.https.port = SHARE_PORT) once leaked into the link as https://panel.example.net:61010.
+    const panelRow = data.manage.publications.find(r => r.service === "panel"), panelSaved = { ...panelRow };
+    Object.assign(panelRow, { enabled: true, domain: "panel.example.net", status: "ready", message: "Sertifika doğrulandı.", expires: 1798000000 });
+    await refresh();
+    assert.equal(await table.locator('[data-publication="panel"] a[href^="https://"]').getAttribute("href"), "https://panel.example.net", "Panel link carries no WebDAV port");
+    assert.doesNotMatch(await table.innerText(), /:61010/, "SHARE_PORT never appears in a public HTTPS address");
+    Object.assign(panelRow, panelSaved);
+    await refresh();
     // v2-169: nothing is shared over plaintext HTTP yet, so only the plain note shows and nothing blocks HTTPS rows.
     assert.match(await table.innerText(), /internet paylaşımı açılırsa eski HTTP kullanılır/);
     assert.doesNotMatch(await table.innerText(), /Eski WebDAV WAN erişimi HTTP kullanıyor/);
