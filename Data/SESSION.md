@@ -4,7 +4,7 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
-**2026-10-02 — CasaOS-inspired skin and overview page, v2-178 (DD-204, uncommitted on top of 6d86100):**
+**2026-10-02 — CasaOS-inspired skin and overview page, v2-178 (DD-204; committed as 78e5ea7 on branch quantum):**
 - Analysis of CasaOS (site, CasaOS-UI source, screenshots; demo login not entered) → frozen mockup
   `docs/design/konsol-casa-v01.html` (option C) → user approved ("tasarım çok güzel olmuş uygulayalım").
 - `panel.css` rewritten: palette + glass/wallpaper tokens, glass surfaces, pill buttons, tiles,
@@ -21,7 +21,7 @@ Cross-session continuity for this repository.
   landing = Genel bakış, tiles Dosyalar/qBittorrent/Paylaşımlar/App Store/Ayarlar, health pill
   "Uyarı var" (real: kernel 6.12.107 → 6.12.111 reboot pending), `backdrop-filter` active,
   no CSP errors; light/dark/mobile/App Store screenshots reviewed — glass, wallpaper, tiles
-  and the sidebar resource bars render as in the mockup. Not committed yet.
+  and the sidebar resource bars render as in the mockup.
 
 ## Previous Task
 
