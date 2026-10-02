@@ -52,7 +52,7 @@ def http(method, path, data=None, item=None, password=None, extra=None):
         data = json.dumps(data)
     headers.update(extra or {})
     root_api = not item and path.startswith(("/api/konsol/", "/api/uygulama/"))
-    conn = UnixConnection(env["WG_PANEL_SOCKET"], 45) if root_api else HTTPConnection(address, port, timeout=45)
+    conn = UnixConnection(env["PANEL_SOCKET"], 45) if root_api else HTTPConnection(address, port, timeout=45)
     try:
         conn.request(method, path, data, headers)
         result = conn.getresponse()
@@ -162,7 +162,7 @@ def verify(manifest):
     inspected += Path(env["SHARE_STATE_FILE"]).read_bytes()
     inspected += Path("/etc/master-stack/state.env").read_bytes()
     inspected += subprocess.check_output(["journalctl", "--since", "-20 minutes", "-u", "master-paylasim",
-                                         "-u", "master-wg-panel", "--no-pager", "-o", "cat"])
+                                         "-u", "master-panel", "--no-pager", "-o", "cat"])
     for secret in (state["password"], state.get("writer_password", state["password"])):
         assert secret.encode() not in inspected, "Plaintext test credential exposed"
     print("PASS: IDs/hashes/per-connection policies preserved; active reader and disabled writer verified.")

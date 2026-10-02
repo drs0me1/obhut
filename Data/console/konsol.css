@@ -226,7 +226,7 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .fs-t .tr { grid-template-columns: 26px minmax(0, 1fr) 6.5rem 9rem 7rem; padding-block: 8px; }
 .movelist .tr { grid-template-columns: minmax(0, 1fr); }
 
-/* App Store ayrıntıları ve qBittorrent ilk giriş kartı */
+/* App Store ayrıntıları ve paket sayfalarının hesap kartları */
 .svc-ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex: none; }
 .svc-ico svg { width: 20px; height: 20px; }
 .mod-desc { margin: 0; font-size: 13.5px; color: var(--muted); max-width: 60ch; }
@@ -243,12 +243,6 @@ dialog#sh { width: min(560px, calc(100vw - 32px)); }
 .will li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 9px; font-size: 13px; }
 .will svg { width: 15px; height: 15px; color: var(--accent); margin-top: 2px; }
 .acct-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
-/* qBittorrent geçici parolası yalnız istenince görünür, 30 sn sonra gizlenir */
-.acct-inner { display: grid; gap: 6px; }
-.cred-row.masked-row .v { letter-spacing: .08em; color: var(--muted); white-space: nowrap; overflow: hidden; }
-.acct-meta { display: flex; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.acct-wg { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
-.acct-wg svg { width: 15px; height: 15px; color: var(--accent); flex: none; margin-top: 1px; }
 .logbox { display: grid; gap: 6px; }
 .logbox pre { margin: 0; max-height: 11.5rem; overflow: auto; padding: 10px 12px; border-radius: 9px; background: var(--surface-2); color: var(--ink); font: 12px/1.55 var(--f-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .logbox .src { font-family: var(--f-mono); font-size: 11.5px; text-transform: none; letter-spacing: 0; }

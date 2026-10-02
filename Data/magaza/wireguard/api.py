@@ -7,6 +7,7 @@ validation, same lock, same live apply), run through the backend's ctx.run().
 
 Contract with the backend (ctx):
   ctx.env()                     state.env as a dict
+  ctx.read_env(path)            another KEY=value file as a dict (the package's wireguard.env)
   ctx.tool(name)                path of a package tool beside master-modul
   ctx.run(argv, binary, timeout)  (rc, out, message) with the backend's environment
   ctx.ports(env)                port catalogue rows (reserved UDP ports for new networks)
@@ -173,9 +174,16 @@ class Api:
                 online = fresh
             return online and fresh, (int(rec[1]) if rec[1] is not None else None)
 
+    def package_env(self, env):
+        """DD-201: the package's own settings (wireguard.env in its rendered folder); the base state
+        carries none of them."""
+        base = env.get("MODULES_DIR", "")
+        return self.ctx.read_env(os.path.join(base, "wireguard", "wireguard.env")) if base else {}
+
     def state(self):
         """DD-136: bütün ağlar (wg0 + panelde eklenenler), her biri kendi peer'larıyla."""
         env = self.ctx.env()
+        wg = self.package_env(env)
         networks = self.net_rows()
         seen = set()
         for net in networks:
@@ -186,15 +194,15 @@ class Api:
         # Yeni ağa önerilmeyecek portlar: temelin ve kayıtlı paketlerin port kataloğu.
         reserved = {p["port"] for p in self.ctx.ports(env) if p.get("port")}
         return {
-            "endpoint": env.get("WG_ENDPOINT_HOST", ""),
-            "max": num_or(env.get("WG_NETWORKS_MAX"), 9) + 1,
+            "endpoint": env.get("WAN_IPV4", ""),
+            "max": num_or(wg.get("WG_NETWORKS_MAX"), 9) + 1,
             "reserved": sorted(reserved | {num_or(env.get("DNS_PORT"), 53), num_or(env.get("CADDY_HTTP_PORT"), 80)}),
             "defaults": {
-                "dns": env.get("WG_CLIENT_DNS_DEFAULT", ""),
-                "keepalive": num_or(env.get("WG_CLIENT_KEEPALIVE_DEFAULT"), 21),
-                "mtu": num_or(env.get("WG_MTU"), 1420),
+                "dns": wg.get("WG_CLIENT_DNS_DEFAULT", ""),
+                "keepalive": num_or(wg.get("WG_CLIENT_KEEPALIVE_DEFAULT"), 21),
+                "mtu": num_or(wg.get("WG_MTU"), 1420),
                 # DD-143: ilk ağa önerilen UDP portu; sonrakiler 61020'den sıralanır.
-                "port": num_or(env.get("WG_PORT_DEFAULT"), 61001),
+                "port": num_or(wg.get("WG_PORT_DEFAULT"), 61001),
             },
             "now": int(time.time()),
             "active_window": int(ACTIVE_WINDOW),

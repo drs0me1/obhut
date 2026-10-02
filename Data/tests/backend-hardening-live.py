@@ -83,7 +83,7 @@ from collections import Counter
 class U(http.client.HTTPConnection):
  def connect(self):
   self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
-  self.sock.settimeout(10); self.sock.connect(e['WG_PANEL_SOCKET'])
+  self.sock.settimeout(10); self.sock.connect(e['PANEL_SOCKET'])
 def check(_):
  c=U('localhost',timeout=10)
  try:

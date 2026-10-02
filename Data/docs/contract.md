@@ -157,7 +157,8 @@ the ones agreed on 2026-08-05:
   distribution's `qbittorrent-nox` runs on the server as the downloads account.
   `magaza/torrent/qBittorrent.conf` seeds minimal settings only when absent.
   The installer holds no account or incoming peer-port setting. Later
-  account/download-folder edits use the settings worker and qBittorrent profile.
+  account/download-folder edits go through the package's own page and worker
+  (`magaza/torrent/ayar.py`, **DD-202**), never the base settings transaction.
 - Every web interface and WebDAV listens on loopback only (`127.0.0.1`;
   WebDAV's WAN scope on `SHARE_WAN_BACKEND`, **DD-179**) (**R11**).
 - Module services survive a reboot as enabled systemd units; a module stopped
@@ -267,9 +268,11 @@ Contract in §5–§7 and `folder-shares.md`.
   `fdcc:ad94:bacf:61a4::/112` (peers `…::N`, the hex of the IPv4 host number;
   **DD-135**), UDP `${WG_PORT_DEFAULT}`, MTU `${WG_MTU}`; later ones take the next
   free `wgN` and a port from 61020 upward. No setting describes an installed
-  network: `defaults.env` and `state.env` carry only the address base
-  (`WG_ADDR_BASE4`, `WG_ADDR_BASE6`), the suggested first port and the peer
-  profile defaults.
+  network, and the base carries no WireGuard setting at all (**DD-201**): the
+  address bases (`WG_ADDR_BASE4`, `WG_ADDR_BASE6`), the suggested first port, the
+  peer profile defaults and the paths live in the package's own
+  `magaza/wireguard/wireguard.env`, read by `master-wg`, the hooks, the Konsol API
+  module and the Mac launcher from the rendered package folder.
 - **Internet-only (DD-177).** No access selector, no WG host-rule override and
   no per-network Caddy listener. API creation/settings reject a supplied
   `scope` field; CLI creation is `net-add PORT DNS LABEL`, and settings is
@@ -336,7 +339,7 @@ Contract in §5–§7 and `folder-shares.md`.
   add and remove peers, show a peer's QR code, download its profile or picture,
   change its DNS and regenerate a network.
   - The backend runs Python 3's standard library only and has no TCP port: it listens
-    on the Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`,
+    on the Unix socket `PANEL_SOCKET` (`/run/master-panel/api.sock`,
     `0660 root:caddy`), and also checks the connecting process's identity
     (`SO_PEERCRED`: root or Caddy's group, **DD-180**). Caddy exposes it on the
     tailnet; nothing exposes it on a WireGuard network, the WAN or loopback TCP.
@@ -394,8 +397,8 @@ Contract in §5–§7 and `folder-shares.md`.
   - A peer shows "Bağlı" only while data arrives from it: its received bytes
     grew within the last 45 s and its handshake is under 3 minutes old. A
     background sampler reads every network every 10 s (**DD-137**).
-  - The header shows the endpoint `WG_ENDPOINT_HOST`, the IPv4 the installer
-    detected on the server; no address is written by hand (**DD-138**).
+  - The header shows the endpoint, the `WAN_IPV4` the installer detected on the
+    server; no address is written by hand (**DD-138**, **DD-201**).
   - Nothing on the Mac is tracked (**DD-143**); `wireguard.command` is managed
     on its own and asks which network to work on.
 - **WireGuard networks from the panel (DD-136/143).** "Arayüz ekle" creates
@@ -411,9 +414,10 @@ Contract in §5–§7 and `folder-shares.md`.
     DNS, label) is written by `master-wg` and read by `master-firewall`
     and the panel. A malformed or clashing registry stops the firewall
     before any chain changes; stage 7 stops on a fixed field other than `inet`.
-  - A new network's port may not be a stack port, another network's port or a
-    UDP port already listened on; the next free number is taken (from `wg0`, at
-    most `WG_NETWORKS_MAX + 1` slots, currently 10).
+  - A new network's port may not be a base port (SSH, Tailscale, DNS, HTTP), a port
+    any package manifest declares (`PAKET_PORTLAR`, installed or not, **DD-201**),
+    another network's port or a UDP port already listened on; the next free number
+    is taken (from `wg0`, at most `WG_NETWORKS_MAX + 1` slots, currently 10).
   - Order when adding: files and registry, `master-firewall` restart, then
     `wg-quick@wgN`. A failing step removes
     every trace of the network and restores the firewall.
@@ -446,7 +450,7 @@ Contract in §5–§7 and `folder-shares.md`.
   for the same console (**DD-195**). Caddy serves the page files itself from
   `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
   re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
-  replies are compressed with zstd/gzip, **DD-181**), sends `/api/konsol/*` and `/api/uygulama/*` to `master-wg-panel` and
+  replies are compressed with zstd/gzip, **DD-181**), sends `/api/konsol/*` and `/api/uygulama/*` to `master-panel` and
   every other `/api/*` to `master-files-panel`. Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**); every path except the sign-in page and API also needs a Konsol
@@ -456,8 +460,8 @@ Contract in §5–§7 and `folder-shares.md`.
     application's link, section, App Store texts and journal words come from its
     package's `konsol.json`; its page script and stylesheet are loaded from
     `/uygulama/<id>/` only while the package is installed and register through
-    `window.Konsol.sayfa`. The qBittorrent page is still the shell's own (phase 2b
-    moves it). The qBittorrent page links the app by its tailnet name
+    `window.Konsol.sayfa` (since **DD-202** the qBittorrent page too; the shell
+    names no application). The qBittorrent page links the app by its tailnet name
     on the tailnet address and by its own public HTTPS name on Konsol's public
     address, only while that publication is active; otherwise it points to
     Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
@@ -553,32 +557,35 @@ Contract in §5–§7 and `folder-shares.md`.
     - Günlük lists both backends' audit lines from the last 7 days
       (`/api/konsol/islemler`), including archive job results (**DD-183**); a
       package API's events are `<id>:<verb>` lines, labelled by the package.
-  - The qBittorrent page (only while installed, **DD-160**) holds its service
-    controls, Web UI link and account/folder form, which uses the same
-    settings transaction as Ayarlar. The form permits username, optional new
-    password (8–256 characters) and the default folder for new torrents.
-    Blank in the UI preserves the password. Only canonical existing non-hidden
-    downloads/media directories may be chosen; write permission is probed as
-    the service UID and narrowly added to its systemd sandbox. Existing
-    files/torrent locations and incomplete paths are not moved.
-    Stop/snapshot/write/restart avoids overwriting a live application's
-    settings. **DD-165:** account-only Save commits immediately in one
-    request, with explicit success/failure feedback and no
-    draft/review/countdown. Other pending drafts are neither submitted nor
-    discarded. Blank preserves a stored password; a temporary startup password
-    can rotate on restart. Stopped services remain stopped. Folder changes
-    retain review/confirmation.
+  - The qBittorrent page (only while installed, **DD-160**; the package's own
+    `sayfa.js` since **DD-202**) holds its service controls, Web UI link,
+    first-login card and account/folder form. The form posts to the package API
+    (`POST /api/uygulama/torrent/{hesap,dizin}`), which runs the package worker
+    `ayar.py` as a transient root unit with JSON on stdin (`ctx.worker`; the
+    script must sit in the package folder). It permits username, optional new
+    password (8–256 characters) and the default folder for new torrents; blank
+    preserves the password. Only canonical existing non-hidden downloads/media
+    directories may be chosen (the base's folder policy; write permission is
+    probed as the service UID) and one narrow `ReadWritePaths` drop-in
+    (`90-konsol.conf`) is added. Existing files/torrent locations and
+    incomplete paths are not moved. Every change is direct (**DD-165**,
+    **DD-202**): stop/snapshot/write/start/verify with explicit success/failure
+    feedback and no draft, review, countdown or pending record; a failure
+    restores both files and starts the service again. A temporary startup
+    password can rotate on restart. Stopped services remain stopped.
+    `GET /api/uygulama/torrent/durum` is the page's read-only view (paths,
+    interface, account name, service state); the password hash never leaves.
   - Settings transactions: `POST /api/konsol/ayarlar/{uygula,onayla,geri-al,birak}`
     runs an independent
-    worker with JSON on stdin, never a password on argv/in logs. DNS-only,
-    qBittorrent account-only (username/password, no folder or other section)
+    worker with JSON on stdin, never a password on argv/in logs. DNS-only
     and standalone HTTPS or Caddy publication-row (`web`) requests return
     `{pending: null, committed: true}`
     after a durable commit (HTTPS enablement first verifies the certificate);
     only the server determines eligibility from the supplied change sections.
     Other requests retain review and a 60 s confirmation window (300 s for a
-    local-domain change), including mixed DNS/firewall or DNS/qBittorrent
-    requests. HTTPS cannot be combined with another settings section.
+    local-domain change), including mixed DNS/firewall requests. HTTPS cannot
+    be combined with another settings section; an application's own settings
+    are never part of it (**DD-202**).
     Failed immediate applies restore snapshots; interrupted pre-commit writes retain
     guard recovery. The commit marker prevents recovery from undoing a durable
     commit after a crash. The server-side guard timer
@@ -596,9 +603,9 @@ Contract in §5–§7 and `folder-shares.md`.
     console's own DNS name. `SETTINGS_FILE` owns confirmed firewall/DNS/local-domain
     and public-HTTPS choices across re-runs; `SETTINGS_PENDING_FILE` is root-only recovery data,
     not a portable backup. qBittorrent remains the owner of its profile.
-  - Both root qBittorrent readers use descriptor-relative no-follow,
-    nonblocking regular-file reads (**DD-186**): 64 KiB for the panel's
-    allowlisted view and 1 MiB for share path checks. A missing profile is
+  - The package worker's profile reader and the base's share path check both
+    use descriptor-relative no-follow, nonblocking regular-file reads
+    (**DD-186**): 64 KiB for the package's view and 1 MiB for share path checks. A missing profile is
     allowed; an unsafe/unreadable profile prevents share changes.
   - A peer or a whole network can be switched off and on (§1.9).
 - **Folder shares (DD-158/DD-192):** each Shares entry has two connection cards,
@@ -752,7 +759,10 @@ Contract in §5–§7 and `folder-shares.md`.
   unregisters the module, re-applies the firewall and removes
   `WG_MODULES_LOAD_FILE`; `--veri` also empties `WG_CONF_DIR`. `uygula`
   (every installer run while installed) makes sure of the packages, the kernel
-  module and the networks. `gunluk` reads `journalctl -u wg-quick@*`.
+  module, the Konsol page and the networks. `gunluk` reads `journalctl -u wg-quick@*`.
+  Stage 7 runs the package's `paket_denetle` (tool, modules-load file, each network's
+  listen port and address, no file-backend answer on a VPN address); the summary takes
+  its note from `paket_not` and its counts from `paket_ozet` (**DD-201**).
 - qBittorrent (`torrent`, **DD-151**, package hooks since **DD-197**): `kur` in four
   steps — package (`qbittorrent-nox`), service unit (the manifest's drop-in), service
   start, name.
@@ -783,6 +793,10 @@ Contract in §5–§7 and `folder-shares.md`.
     reads this run's journal (`_SYSTEMD_INVOCATION_ID`) and prints
     `user<TAB>gecici|ayarli` (with `--parola` also the temporary password);
     `gunluk` masks that line.
+  - Its Konsol files (**DD-200**, **DD-202**): `konsol.json`, `sayfa.js`/`sayfa.css`
+    (the page) and `api.py` with the worker `ayar.py`
+    (`/api/uygulama/torrent/{durum,hesap,dizin}`; the worker edits the profile
+    and the `90-konsol.conf` drop-in, §1.10).
   - `durdur` disables and stops the unit (the name stays); `kaldir` removes the
     names and the drop-in and stops the unit but leaves the package installed;
     `--veri` deletes the profile (settings and torrent list) — only under
@@ -792,7 +806,7 @@ Contract in §5–§7 and `folder-shares.md`.
   401, then publishes/checks Caddy and DNS. Unchanged reruns do not rewrite
   accounts or restart healthy services. Remove individual accounts through
   Files; no module verb stops or removes the service.
-- The root backend (`master-wg-panel`):
+- The root backend (`master-panel`):
   - `GET /api/konsol/moduller` → `{items: [{id, runtime, installed, state,
     live, busy, progress, durdurulabilir, konsol?, sayfa?, urls?}]}`. `busy` is a running
     `master-modul-<id>.service`, read with `systemctl list-units`; `konsol` is the
@@ -861,8 +875,8 @@ No module gets a WAN port. qBittorrent has no inbound peer port
 
 **WireGuard is a host listener (DD-120/143):** each registered network's UDP
 port is admitted by the base WAN policy while the application is installed.
-`WG_PORT_DEFAULT` (61001) is only a suggestion for a new network, not an
-automatically created listener.
+`WG_PORT_DEFAULT` (61001, in the package's `wireguard.env`) is only a suggestion
+for a new network, not an automatically created listener.
 
 **Host SSH is a separate MASTER-INPUT exception:** inbound TCP
 `${SSH_PUBLIC_PORT}` (default 22) on the WAN interface is accepted so
@@ -927,7 +941,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 | Service | Listen address | Port |
 |---|---|---|
 | qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
-| Konsol root backend (`master-wg-panel`; package API modules inside it, **DD-200**) | Unix socket `/run/master-wg-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
+| Konsol root backend (`master-panel`; package API modules inside it, **DD-200**) | Unix socket `/run/master-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
 | Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
 | Per-folder WebDAV (`paylasim` internal ID; built in) | `127.0.0.1` (Tailscale scope) and `SHARE_WAN_BACKEND` `127.0.0.2` (WAN scope) | 61010 (**DD-158**, **DD-159**, **DD-179**) |
@@ -964,7 +978,7 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
 | `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
 | Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
-| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR` (installed packages' pages under `uygulama/<id>/`); `/api/konsol/*` and `/api/uygulama/*` → Unix socket `WG_PANEL_SOCKET` (`/run/master-wg-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
+| `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR` (installed packages' pages under `uygulama/<id>/`); `/api/konsol/*` and `/api/uygulama/*` → Unix socket `PANEL_SOCKET` (`/run/master-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |
 | Public Konsol domain (optional, **DD-195**) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}` (`import konsol internet`) | the same routes as `panel.${LOCAL_DOMAIN}`, with backend Host `panel.${LOCAL_DOMAIN}` |
 
 `SERVICE_NAMES` is `panel`.
@@ -1199,7 +1213,7 @@ declared in `config/defaults.env` and nowhere else.
   - `MASTER-SETTINGS` and `MASTER-INPUT` drop all WG ingress first.
     WG-scoped user rules are refused; no user rule can bypass the mandatory
     policy.
-  - `MASTER-FORWARD` first drops destinations in `WG_BLOCK_DEST4/6`
+  - `MASTER-FORWARD` first drops destinations in `VPN_BLOCK_DEST4/6`
     (private, CGNAT, loopback, link-local, multicast/reserved and standard NAT64
     prefixes), then accepts `wgN` → WAN. Other WG ingress is dropped.
     Only established/related replies arriving from WAN can reach WG; all other
@@ -1244,7 +1258,7 @@ declared in `config/defaults.env` and nowhere else.
 | `refresh-tailnet-config.timer` | — | address poll + firewall watchdog (checked again once Tailscale answers); resets a failed Caddy's start limit before restarting it; reopens failed WireGuard networks (**DD-180**, **DD-182**) | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service master-firewall.service` | `Wants=` both (no `PartOf`); `ExecStartPre=+master-firewall --check` (**DD-179**); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | `Wants=tailscaled.service` | `on-failure`, `RestartSec=5s` (drop-in) |
-| `master-wg-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
+| `master-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
 | `master-files-panel.service` (built in) | `network-online.target` | none; `127.0.0.1` listener, `RequiresMountsFor=SERVER_ROOT`, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
 | `master-paylasim.service` (built-in WebDAV) | `network-online.target` | none; `127.0.0.1` and `SHARE_WAN_BACKEND` listeners, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
 | `master-share-network.timer` | — | closes expired legacy HTTP WAN projections, retains configured HTTPS for renewal and recovers interrupted share operations (**DD-179/190**) | starts oneshot 30 s after boot and 30 s after each run |

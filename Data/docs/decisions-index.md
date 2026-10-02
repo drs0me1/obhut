@@ -202,3 +202,5 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-198 | Firewall, health and port catalogue from package declarations, phase 1b | live | design-decisions.md |
 | DD-199 | Publication rows from package declarations, phase 1b | live | design-decisions.md |
 | DD-200 | Konsol pages and application API from packages, phase 2a | live | design-decisions.md |
+| DD-201 | A neutral backend, package-owned settings and self-checking packages, phase 2b | live | design-decisions.md |
+| DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |

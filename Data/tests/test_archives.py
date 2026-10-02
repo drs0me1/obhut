@@ -91,7 +91,7 @@ class ArchiveTests(unittest.TestCase):
         lines = out.getvalue().splitlines()
         self.assertEqual(lines[0], 'dosya: konsol - arsiv-sonuc "a.rar, b, c (+1) → cikti: Bozuk arşiv." -> hata')
         self.assertTrue(lines[1].endswith("-> ok"))
-        pattern = r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$"  # ACTION_RE in master-wg-panel
+        pattern = r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$"  # ACTION_RE in master-panel
         self.assertTrue(all(re.match(pattern, line) for line in lines))
 
     def test_next_job_waits_for_the_previous_cleanup_instead_of_refusing(self):

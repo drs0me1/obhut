@@ -5,6 +5,8 @@ Run as root: unshare --net --fork python3 Data/tests/settings-linux.py
 Never uses the installed stack's configuration or controls its services.
 """
 import copy
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +26,18 @@ DATA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DATA / "panel"))
 import master_settings as settings
 real_run = settings.run
+
+
+def load_ayar():
+    """DD-202: the qBittorrent package's settings worker, straight from the repository."""
+    loader = importlib.machinery.SourceFileLoader("torrent_ayar", str(DATA / "magaza/torrent/ayar.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+ayar = load_ayar()
 
 
 def cmd(*args):
@@ -64,7 +78,7 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
-                 "SBIN_DIR": "bin", "WG_NETWORKS_FILE": "etc/networks", "SHARE_STATE_FILE": "etc/webdav.json"}
+                 "SBIN_DIR": "bin", "SHARE_STATE_FILE": "etc/webdav.json"}
         e.update({k: str(root / v) for k, v in paths.items()})
         e.update(LOCAL_DOMAIN="ayc", WAN_INTERFACE="eth0", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2",
                  TORRENT_UI_PORT="18555", DOWNLOADS_UID="1000", DOWNLOADS_GID="1000")
@@ -93,7 +107,7 @@ def main():
         Path(e["DNSMASQ_CONF_FILE"]).write_text(render("templates/dnsmasq.conf"))
         (root / "dns/modul-torrent.conf").write_text(render("magaza/torrent/dnsmasq.conf"))
         m = settings.Manager(state)
-        settings.atomic(m.qconf, render("magaza/torrent/qBittorrent.conf") + "WebUI\\Username=initial\nWebUI\\Password_PBKDF2=" + settings.password_hash("test-initial-password") + "\n", 0o640, (1000, 1000))
+        settings.atomic(ayar.conf_path(e), render("magaza/torrent/qBittorrent.conf") + "WebUI\\Username=initial\nWebUI\\Password_PBKDF2=" + ayar.password_hash("test-initial-password") + "\n", 0o640, (1000, 1000))
         processes = {}
         def stop(name):
             p = processes.pop(name, None)
@@ -227,60 +241,65 @@ def main():
                 assert m.pending() is None
                 assert "100.64.0.2" in dig("torrent.ayc")
                 print("PASS real dnsmasq local names, forwarding, private-zone isolation, immediate commit, failed-apply rollback", flush=True)
+                # DD-202: qBittorrent's account and folder belong to the package worker (ayar.py), which
+                # the root backend runs as a transient unit; here its functions run in-process against
+                # the real qbittorrent-nox with the same adapted systemctl.
                 start("qbit")
                 with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
                     assert response.read() == b"Ok."
-                apply(torrent=dict(username="operator", password="test-new-password-123", save=str(root / "srv/media")))
+                conf, drop = ayar.conf_path(e), ayar.drop_in_path(e)
+                assert ayar.hesap(e, dict(username="operator", password="test-new-password-123")) == {"ok": True, "username": "operator"}
+                assert ayar.dizin(e, dict(save=str(root / "srv/media")), str(state))["save"] == str(root / "srv/media") + "/"
                 with request("auth/login", dict(username="operator", password="test-new-password-123")) as response:
                     assert response.read() == b"Ok."
                     cookie = response.headers["Set-Cookie"].split(";", 1)[0]
                 with request("app/preferences", cookie=cookie) as response:
                     prefs = json.load(response)
                 assert prefs["save_path"].rstrip("/") == str(root / "srv/media"), prefs["save_path"]
-                assert "test-new-password" not in m.pending_path.read_text()
-                m.rollback()
-                with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
-                    assert response.read() == b"Ok."
-                assert not m.qdrop.exists()
-                before = m.qconf.read_bytes()
+                assert drop.read_text() == '[Service]\nReadWritePaths="%s"\n' % (root / "srv/media"), drop.read_text()
+                assert "test-new-password" not in conf.read_text()
+                before = conf.read_bytes()
                 try:
-                    apply(torrent=dict(password="1234567"))
+                    ayar.hesap(e, dict(password="1234567"))
                 except settings.SettingsError:
                     pass
                 else:
                     raise AssertionError("Seven-character password was accepted")
-                assert m.qconf.read_bytes() == before
-                assert m.pending() is None
-                result = apply(torrent=dict(username="saved-user", password="Pass8!xy"))
-                assert result == {"pending": None, "committed": True}
-                assert m.pending() is None
+                assert conf.read_bytes() == before
+                assert ayar.hesap(e, dict(username="saved-user", password="Pass8!xy"))["ok"]
                 with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
-                with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
+                with request("auth/login", dict(username="operator", password="test-new-password-123")) as response:
                     assert response.read() == b"Fails."
                 start("qbit")
-                m.guard()
                 with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
-                assert "Pass8!xy" not in m.qconf.read_text() + m.config_path.read_text()
-                # Real restart after a failed commit restores the previous working account.
-                with patch.object(m, "commit", side_effect=OSError("injected disk failure")):
+                assert "Pass8!xy" not in conf.read_text()
+                # A failed restart restores the previous working account and starts the service again.
+                adapted, failed = settings.run, []
+                def failing_start(argv, **kwargs):
+                    if argv[:2] == ["systemctl", "start"] and argv[-1].startswith("qbittorrent-nox@") and not failed:
+                        failed.append(argv)
+                        raise settings.SettingsError("injected start failure")
+                    return adapted(argv, **kwargs)
+                with patch.object(settings, "run", side_effect=failing_start):
                     try:
-                        apply(torrent=dict(username="failed-user", password="test-failed-password-123"))
-                    except OSError:
+                        ayar.hesap(e, dict(username="failed-user", password="test-failed-password-123"))
+                    except settings.SettingsError:
                         pass
                     else:
-                        raise AssertionError("Failed commit was accepted")
-                assert m.pending() is None
+                        raise AssertionError("Failed restart was accepted")
+                assert failed
+                wait_for(ready)
                 with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
                 stop("qbit")
-                assert apply(torrent=dict(username="stopped-user"))["committed"]
+                assert ayar.hesap(e, dict(username="stopped-user"))["ok"]
                 assert "qbit" not in processes, "Durdurulmuş servis kendiliğinden açıldı"
                 start("qbit")
                 with request("auth/login", dict(username="stopped-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
-                print("PASS real qBittorrent eight-character password save/login/restart, seven-character rejection, old-login rejection, blank-password preservation, commit-failure rollback, save path, stopped-state preservation", flush=True)
+                print("PASS real qBittorrent package worker: eight-character password save/login/restart, seven-character rejection, old-login rejection, failed-restart recovery, save path and drop-in, stopped-state preservation", flush=True)
         finally:
             for name in list(processes):
                 stop(name)

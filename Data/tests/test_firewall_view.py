@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "panel" / "master-wg-panel"
+SOURCE = Path(__file__).resolve().parents[1] / "panel" / "master-panel"
 loader = importlib.machinery.SourceFileLoader("firewall_view_panel", str(SOURCE))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 panel = importlib.util.module_from_spec(spec)
@@ -88,8 +88,7 @@ class FirewallViewTests(unittest.TestCase):
              patch.object(self.p, "vpn_apps", return_value=["WireGuard"]), \
              patch.object(self.p, "firewall_view", return_value={}), \
              patch.object(self.p, "web_view", return_value={}), \
-             patch.object(self.p, "dns_view", return_value={}), \
-             patch.object(self.p, "torrent_view", return_value={}):
+             patch.object(self.p, "dns_view", return_value={}):
             fw = self.p.settings(fresh=True)["firewall"]
         self.assertTrue(fw["vpn_installed"])
         self.assertEqual(fw["vpn_name"], "WireGuard")

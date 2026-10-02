@@ -9,7 +9,19 @@ import fnmatch
 import http.client
 from pathlib import Path
 
-from master_settings import SettingsError, ini_values, read_regular, require
+from master_settings import SettingsError, read_regular, require
+
+
+def ini_values(text):
+    """qBittorrent's INI, section-qualified (DD-202: the base no longer carries this reader)."""
+    section, out = "", {}
+    for line in text.splitlines():
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif "=" in line and not line.startswith(("#", ";")):
+            k, _, v = line.partition("=")
+            out[(section, k)] = v.strip('"').replace("\\\\", "\\")
+    return out
 
 
 def security(env, name, probe=False):

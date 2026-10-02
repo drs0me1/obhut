@@ -240,7 +240,7 @@ next to upload, text view, move, rename and trash.
   names, usernames, salts/hashes, identity, `created` and `changed` remain
   unchanged. `prepare` persists schema 4 once; unchanged preparation does not
   rewrite it. Schema 2 is unsupported; malformed/conflicting input fails closed.
-- `master-wg-panel`: existing Host, same-origin and `X-Konsol: 1` gates.
+- `master-panel`: existing Host, same-origin and `X-Konsol: 1` gates.
   `GET /api/konsol/paylasim` lists public metadata; POST `.../kaydet` and
   `.../kaldir` dispatch fixed transient workers with JSON on stdin.
   The worker locks install, module and share operations, in that order; pending

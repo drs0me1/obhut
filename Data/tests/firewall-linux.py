@@ -105,6 +105,11 @@ def main():
             (Path(e["MODULES_DIR"]) / "wireguard").mkdir(parents=True)
             for name in ("paket.env", "kanca"):
                 shutil.copy(DATA / "magaza/wireguard" / name, Path(e["MODULES_DIR"]) / "wireguard" / name)
+            # DD-201: the hook reads its registry path and defaults from the package's own env file.
+            wg = m.env_read(DATA / "magaza/wireguard/wireguard.env")
+            e["WG_PORT_DEFAULT"] = wg["WG_PORT_DEFAULT"]
+            (Path(e["MODULES_DIR"]) / "wireguard/wireguard.env").write_text(
+                "WG_NETWORKS_FILE=%s\nWG_PORT_DEFAULT=%s\n" % (shlex.quote(e["WG_NETWORKS_FILE"]), wg["WG_PORT_DEFAULT"]))
             # DD-199: qBittorrent's publication row exists only through its package manifest and check module.
             (Path(e["MODULES_DIR"]) / "torrent").mkdir()
             (Path(e["MODULES_DIR"]) / "torrent/paket.env").write_text(

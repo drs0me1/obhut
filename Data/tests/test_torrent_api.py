@@ -1,0 +1,438 @@
+"""qBittorrent package (DD-202): the settings worker ayar.py and the API module api.py behind
+the root backend's package dispatcher. No real qBittorrent or systemd: service control is faked,
+the profile and the unit drop-in are scratch files."""
+import base64
+import contextlib
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import types
+import unittest
+from unittest.mock import patch
+
+import test_resources as resources
+
+panel = resources.panel
+REPO = Path(__file__).resolve().parents[1]
+PACKAGE = REPO / "magaza" / "torrent"
+sys.path.insert(0, str(REPO / "panel"))
+import master_settings as settings  # noqa: E402
+
+
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+ayar = load("torrent_ayar_test", PACKAGE / "ayar.py")
+SEED = ("[Preferences]\nWebUI\\Username=admin\nWebUI\\Password_PBKDF2=oldhash\nWebUI\\Address=127.0.0.1\n"
+        "WebUI\\Port=61006\nUnrelated=keep\n[BitTorrent]\nSession\\DefaultSavePath=%s/\nSession\\Port=45410\n")
+
+
+class Scratch(unittest.TestCase):
+    """A profile, unit folder and user area like the installer's, plus a recording service control."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="torrent-pkg-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        for rel in ("profile/qBittorrent", "units", "run", "etc", "dns", "srv/downloads", "srv/media/movies", "srv/.pay"):
+            (self.root / rel).mkdir(parents=True)
+        self.env = {
+            "SETTINGS_FILE": str(self.root / "etc/settings.json"), "SETTINGS_PENDING_FILE": str(self.root / "etc/pending.json"),
+            "SETTINGS_DNS_FILE": str(self.root / "dns/konsol.conf"), "DNSMASQ_CONF_FILE": str(self.root / "dns/base.conf"),
+            "DNSMASQ_CONF_DIR": str(self.root / "dns"), "TORRENT_PROFILE_DIR": str(self.root / "profile"),
+            "UNIT_DIR": str(self.root / "units"), "MODULES_FILE": str(self.root / "modules"),
+            "MODULES_DIR": str(self.root / "mods"), "RUNTIME_DIR": str(self.root / "run"),
+            "SERVER_ROOT": str(self.root / "srv"), "DOWNLOADS_PATH": str(self.root / "srv/downloads"), "MEDIA_SUBDIR": "media",
+            "LOCAL_DOMAIN": "test", "TAILSCALE_IF": "tailscale0", "WAN_INTERFACE": "eth0", "WAN_IPV4": "203.0.113.1",
+            "TAILSCALE_IPV4": "100.64.0.2", "DOWNLOADS_UID": str(os.getuid()), "DOWNLOADS_GID": str(os.getgid()),
+            "SBIN_DIR": str(self.root / "bin"), "DNS_PORT": "53", "CADDY_HTTP_PORT": "80",
+            "CADDYFILE": str(self.root / "Caddyfile"), "CADDY_MODULES_DIR": str(self.root / "caddy-modules"),
+        }
+        (self.root / "modules").write_text("torrent\tcalisiyor\n")
+        (self.root / "dns/base.conf").write_text("interface=lo\n")
+        self.state = self.root / "state.env"
+        self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
+        self.conf = ayar.conf_path(self.env)
+        self.drop = ayar.drop_in_path(self.env)
+        self.conf.write_text(SEED % self.env["DOWNLOADS_PATH"])
+        self.conf.chmod(0o640)
+        self.calls, self.fail_cmd, self.active = [], None, True
+        self.addCleanup(patch.stopall)
+        patch.object(settings, "run", side_effect=self.fake_run).start()
+
+    def fake_run(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        if self.fail_cmd and self.fail_cmd in " ".join(argv):
+            self.fail_cmd = None
+            raise settings.SettingsError("injected failure")
+        code = 0
+        if argv[:3] == ["systemctl", "is-active", "--quiet"]:
+            code = 0 if self.active else 3
+            settings.require(not kwargs.get("check", True) or code == 0, "Test servisi durmuş")
+        return subprocess.CompletedProcess(argv, code, "", "")
+
+    def systemctl(self):
+        return [c[1] for c in self.calls if c[0] == "systemctl"]
+
+
+class WorkerTests(Scratch):
+    def test_password_hash_format_and_ini_preservation(self):
+        hashed = ayar.password_hash("sample-test-phrase")
+        salt, key = hashed[len("@ByteArray("):-1].split(":")
+        self.assertEqual(len(base64.b64decode(salt)), 16)
+        self.assertEqual(base64.b64decode(key), hashlib.pbkdf2_hmac("sha512", b"sample-test-phrase", base64.b64decode(salt), 100000, 64))
+        result = ayar.ini_patch("[Preferences]\nOther=value\nWebUI\\Username=old\n[BitTorrent]\nX=2\n", {("Preferences", "WebUI\\Username"): "new"})
+        self.assertIn("Other=value\n", result)
+        self.assertIn("[BitTorrent]\nX=2\n", result)
+        self.assertIn("WebUI\\Username=new", result)
+        # A key whose section does not exist yet gets its section appended.
+        result = ayar.ini_patch("[Preferences]\nA=1\n", {("BitTorrent", "Session\\DefaultSavePath"): '"/x/"'})
+        self.assertIn("[Preferences]\nA=1\n", result)
+        self.assertIn('[BitTorrent]\nSession\\DefaultSavePath="/x/"', result)
+
+    def test_durum_reports_paths_and_account_name_without_the_hash(self):
+        d = ayar.durum(self.env)
+        self.assertEqual((d["profile"], d["downloads"]), (self.env["TORRENT_PROFILE_DIR"], self.env["DOWNLOADS_PATH"]))
+        self.assertEqual((d["save"], d["save_inside"]), (self.env["DOWNLOADS_PATH"] + "/", True))
+        self.assertEqual((d["temp"], d["temp_on"], d["temp_inside"]), ("", False, False))
+        self.assertEqual((d["ui"], d["peer_port"], d["username"]), ("127.0.0.1:61006", 45410, "admin"))
+        self.assertNotIn("oldhash", json.dumps(d))
+        self.assertNotIn("Password", json.dumps(d))
+        with self.conf.open("a") as fh:
+            fh.write("Session\\TempPath=%s/incomplete/\nSession\\TempPathEnabled=true\n" % self.env["DOWNLOADS_PATH"])
+        d = ayar.durum(self.env)
+        self.assertEqual((d["temp"], d["temp_on"], d["temp_inside"]), (self.env["DOWNLOADS_PATH"] + "/incomplete/", True, True))
+        self.conf.write_text(SEED % "/root/indirilenler")
+        self.assertFalse(ayar.durum(self.env)["save_inside"])
+        self.conf.unlink()
+        self.assertEqual(ayar.durum(self.env), {"error": "qBittorrent'in ayar dosyası okunamadı", "profile": self.env["TORRENT_PROFILE_DIR"]})
+        self.conf.symlink_to(self.root / "dns/base.conf")
+        self.assertIn("error", ayar.durum(self.env))
+        self.assertEqual(self.calls, [], "the view runs no command")
+
+    def test_hesap_validation_runs_before_any_service_change(self):
+        before = self.conf.read_bytes()
+        for data in ({}, {"x": 1}, {"username": "bad user"}, {"username": ""}, {"username": "a" * 65}, {"password": "short"},
+                     {"password": "x" * 257}, {"password": "1234567\n9"}, {"password": None}, {"username": 5}, "text", None,
+                     {"username": "ok", "password": ""}):
+            with self.subTest(data=data), self.assertRaises(settings.SettingsError):
+                ayar.hesap(self.env, data)
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.calls, [])
+        for phrase in ("Pass8!xy", "ü" * 8, "x" * 256):
+            with self.subTest(phrase=phrase):
+                ayar.hesap(self.env, {"password": phrase})
+
+    def test_hesap_stops_writes_and_starts_again_without_plaintext(self):
+        phrase = "sample-only-test-password"
+        self.assertEqual(ayar.hesap(self.env, {"username": "newuser", "password": phrase}), {"ok": True, "username": "newuser"})
+        text = self.conf.read_text()
+        self.assertIn("WebUI\\Username=newuser\n", text)
+        for keep in ("Unrelated=keep\n", "[BitTorrent]\n", "Session\\Port=45410\n", "WebUI\\Address=127.0.0.1\n"):
+            self.assertIn(keep, text)
+        self.assertNotIn(phrase, text)
+        self.assertNotIn("oldhash", text)
+        salt, key = text.split("WebUI\\Password_PBKDF2=@ByteArray(", 1)[1].split(")", 1)[0].split(":")
+        self.assertEqual(base64.b64decode(key), hashlib.pbkdf2_hmac("sha512", phrase.encode(), base64.b64decode(salt), 100000, 64))
+        self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "is-active"])
+        self.assertFalse(self.drop.exists(), "an account change adds no drop-in")
+
+    def test_username_only_keeps_hash_and_password_only_keeps_username(self):
+        ayar.hesap(self.env, {"username": "other"})
+        self.assertIn("WebUI\\Password_PBKDF2=oldhash\n", self.conf.read_text())
+        ayar.hesap(self.env, {"password": "password-only-test"})
+        text = self.conf.read_text()
+        self.assertIn("WebUI\\Username=other\n", text)
+        self.assertNotIn("oldhash", text)
+
+    def test_failed_start_restores_the_profile_and_starts_the_service_again(self):
+        before = self.conf.read_bytes()
+        self.fail_cmd = "start qbittorrent-nox@"
+        with self.assertRaises(settings.SettingsError):
+            ayar.hesap(self.env, {"username": "failed-user"})
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "start"], "the second start is the recovery")
+
+    def test_stopped_service_stays_stopped(self):
+        self.active = False
+        self.assertEqual(ayar.hesap(self.env, {"username": "stopped-user"}), {"ok": True, "username": "stopped-user"})
+        self.assertEqual(self.systemctl(), ["is-active", "stop"])
+        self.assertIn("WebUI\\Username=stopped-user\n", self.conf.read_text())
+
+    def test_dizin_writes_one_narrow_drop_in_and_restores_both_files_on_failure(self):
+        before = self.conf.read_bytes()
+        for data in ({}, {"save": 1}, {"save": "/etc"}, {"save": str(self.root / "srv")}, {"save": str(self.root / "srv/.pay")},
+                     {"save": str(self.root / "srv/downloads/../media")}, {"other": "x"}, {"save": str(self.root / "srv/media"), "x": 1}):
+            with self.subTest(data=data), self.assertRaises(settings.SettingsError):
+                ayar.dizin(self.env, data, str(self.state))
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.calls, [], "validation runs no command")
+        media = str(self.root / "srv/media")
+        # First failure, no drop-in yet: the profile is restored and the drop-in does not appear.
+        self.fail_cmd = "start qbittorrent-nox@"
+        with self.assertRaises(settings.SettingsError):
+            ayar.dizin(self.env, {"save": media}, str(self.state))
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertFalse(self.drop.exists())
+        self.assertEqual(self.systemctl().count("daemon-reload"), 2)
+        self.calls.clear()
+        self.assertEqual(ayar.dizin(self.env, {"save": media}, str(self.state)), {"ok": True, "save": media + "/"})
+        text = self.conf.read_text()
+        self.assertIn('Session\\DefaultSavePath="%s/"\n' % media, text)
+        self.assertIn('Downloads\\SavePath="%s/"\n' % media, text)
+        self.assertIn("Unrelated=keep\n", text)
+        self.assertEqual(self.drop.read_text(), '[Service]\nReadWritePaths="%s"\n' % media)
+        self.assertEqual(self.drop.stat().st_mode & 0o777, 0o644)
+        probe = [c for c in self.calls if c[0] == "setpriv"]
+        self.assertEqual(len(probe), 1, "writability is probed as the service user")
+        self.assertIn("--reuid=" + self.env["DOWNLOADS_UID"], probe[0])
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "daemon-reload", "start", "is-active"])
+        self.assertEqual(ayar.durum(self.env)["save"], media + "/")
+        # Second failure, with a drop-in: both files return to the previous choice.
+        saved_conf, saved_drop = self.conf.read_bytes(), self.drop.read_bytes()
+        self.fail_cmd = "start qbittorrent-nox@"
+        with self.assertRaises(settings.SettingsError):
+            ayar.dizin(self.env, {"save": self.env["DOWNLOADS_PATH"]}, str(self.state))
+        self.assertEqual((self.conf.read_bytes(), self.drop.read_bytes()), (saved_conf, saved_drop))
+
+    def test_standalone_run_finds_the_base_library_through_lib(self):
+        # Found live: run as its own process from the package folder, the worker has no base module
+        # on sys.path; the backend hands it the engine's folder as --lib.
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH",)}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        argv = [sys.executable, str(PACKAGE / "ayar.py"), "--state", str(self.state), "durum"]
+        with_lib = argv[:2] + ["--lib", str(REPO / "panel")] + argv[2:]
+        p = subprocess.run(with_lib, capture_output=True, text=True, env=env, cwd=str(self.root), timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout)["username"], "admin")
+        if shutil.which("master-modul") is None and not os.path.exists("/usr/local/sbin/master_settings.py"):
+            p = subprocess.run(argv, capture_output=True, text=True, env=env, cwd=str(self.root), timeout=60)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn("master_settings", p.stderr)
+
+    def test_cli_reads_json_on_stdin_and_answers_json(self):
+        def main(action, stdin=""):
+            out = io.StringIO()
+            with patch("sys.argv", ["ayar.py", "--lib", str(REPO / "panel"), "--state", str(self.state), action]), patch("sys.stdin", io.StringIO(stdin)), \
+                    contextlib.redirect_stdout(out):
+                try:
+                    ayar.main()
+                except SystemExit as stop:
+                    return stop.code, json.loads(out.getvalue())
+            return 0, json.loads(out.getvalue())
+        code, view = main("durum")
+        self.assertEqual((code, view["save"], view["username"]), (0, self.env["DOWNLOADS_PATH"] + "/", "admin"))
+        self.assertEqual(main("hesap", json.dumps({"username": "cliuser"})), (0, {"ok": True, "username": "cliuser"}))
+        self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
+        code, err = main("hesap", json.dumps({"password": "short"}))
+        self.assertEqual((code, err), (1, {"error": "Parola 8–256 karakter olmalı."}))
+        code, err = main("hesap", "not json")
+        self.assertEqual(code, 1)
+        self.assertEqual(err["error"], "qBittorrent ayarı uygulanamadı; önceki ayar geri yüklendi.")
+        code, err = main("hesap", json.dumps({"username": "a" * (ayar.LIMIT + 1)}))
+        self.assertEqual((code, err), (1, {"error": "İstek çok büyük."}))
+        code, err = main("dizin", json.dumps({"save": str(self.root / "srv")}))
+        self.assertEqual(code, 1)
+        self.assertIn("Yalnız indirmeler", err["error"])
+        # The base's settings lock is honoured: a held lock refuses the worker.
+        with settings.Manager(str(self.state)).locked():
+            code, err = main("hesap", json.dumps({"username": "locked"}))
+        self.assertEqual(code, 1)
+        self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
+
+
+class FakeContext:
+    """What api.py may use of the backend (PackageContext), recording the worker calls."""
+    def __init__(self, env, state, active=True):
+        self._env, self._state, self.active = env, state, active
+        self.worker_calls, self.runs = [], []
+        self.worker_result = (200, {"ok": True, "username": "worker-user"})
+
+    def env(self):
+        return dict(self._env)
+
+    def state_path(self):
+        return self._state
+
+    @staticmethod
+    def tool(name):
+        return "/fixture/sbin/" + name
+
+    def run(self, argv, binary=False, timeout=120):
+        self.runs.append(list(argv))
+        return (0 if self.active else 3), "", ""
+
+    def worker(self, argv, data):
+        self.worker_calls.append((list(argv), json.loads(json.dumps(data))))
+        return self.worker_result
+
+    @staticmethod
+    def error(code, message):
+        return panel.ApiError(code, message)
+
+
+class FakeRequest:
+    def __init__(self, method, path, data=None):
+        self.method, self.path, self.query, self.data = method, path, {}, data
+        self.user, self.client, self.audits = "konsol", "yerel", []
+
+    def audit(self, verb, detail, ok):
+        self.audits.append((verb, detail, ok))
+
+
+class ApiModuleTests(Scratch):
+    def setUp(self):
+        super().setUp()
+        self.api_module = load("torrent_api_test", PACKAGE / "api.py")
+        self.ctx = FakeContext(self.env, str(self.state))
+        self.api = self.api_module.create(self.ctx)
+
+    def test_status_is_the_workers_view_plus_the_service_state(self):
+        code, body = self.api.handle(FakeRequest("GET", "/durum"))
+        self.assertEqual(code, 200)
+        self.assertEqual((body["installed"], body["running"], body["save"], body["username"]), (True, True, self.env["DOWNLOADS_PATH"] + "/", "admin"))
+        self.assertEqual(body["unit"], ayar.unit_name(self.env))
+        self.assertEqual(self.ctx.runs, [["systemctl", "is-active", "--quiet", body["unit"]]])
+        self.assertNotIn("oldhash", json.dumps(body))
+        self.ctx.active = False
+        self.assertFalse(self.api.handle(FakeRequest("GET", "/durum"))[1]["running"])
+        self.assertEqual(self.ctx.worker_calls, [], "reads never start the worker")
+
+    def test_bad_shapes_are_refused_before_the_worker(self):
+        for path, data in (("/hesap", {}), ("/hesap", None), ("/hesap", {"x": 1}), ("/hesap", {"username": "bad user"}),
+                           ("/hesap", {"username": 5}), ("/hesap", {"password": "short"}), ("/hesap", {"password": "x" * 257}),
+                           ("/hesap", {"password": "tab\there"}), ("/dizin", {}), ("/dizin", {"save": 1}), ("/dizin", {"save": "x" * 1025}),
+                           ("/dizin", {"save": "/x", "y": 1}), ("/dizin", None)):
+            with self.subTest(path=path, data=data), self.assertRaises(panel.ApiError) as caught:
+                self.api.handle(FakeRequest("POST", path, data))
+            self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(self.ctx.worker_calls, [])
+        with self.assertRaises(panel.ApiError) as caught:
+            self.api.handle(FakeRequest("GET", "/yok"))
+        self.assertEqual(caught.exception.code, 404)
+        with self.assertRaises(panel.ApiError) as caught:
+            self.api.handle(FakeRequest("PUT", "/hesap", {"username": "x"}))
+        self.assertEqual(caught.exception.code, 405)
+
+    def test_changes_run_the_packages_worker_with_the_state_and_audit_without_secrets(self):
+        req = FakeRequest("POST", "/hesap", {"username": "new-user", "password": "dummy-api-password"})
+        self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "worker-user"}))
+        argv, data = self.ctx.worker_calls[0]
+        self.assertEqual(argv, ["/usr/bin/python3", str(PACKAGE / "ayar.py"), "--lib", "/fixture/sbin", "--state", str(self.state), "hesap"])
+        self.assertEqual(data, {"username": "new-user", "password": "dummy-api-password"})
+        self.assertEqual(req.audits, [("hesap", "kullanıcı adı ve parola", True)])
+        req = FakeRequest("POST", "/hesap", {"password": "dummy-api-password"})
+        self.api.handle(req)
+        self.assertEqual(req.audits, [("hesap", "parola", True)])
+        self.ctx.worker_result = (200, {"ok": True, "save": "/srv/media/"})
+        req = FakeRequest("POST", "/dizin", {"save": "/srv/media"})
+        self.assertEqual(self.api.handle(req), (200, {"ok": True, "save": "/srv/media/"}))
+        self.assertEqual(self.ctx.worker_calls[-1][0][-1], "dizin")
+        self.assertEqual(req.audits, [("dizin", "/srv/media", True)])
+        self.assertEqual(self.calls, [], "the API module itself touches no file and runs no service command")
+
+    def test_worker_refusals_become_the_requests_error(self):
+        self.ctx.worker_result = (400, {"error": "Kullanıcı adı geçersiz."})
+        req = FakeRequest("POST", "/hesap", {"username": "x"})
+        with self.assertRaises(panel.ApiError) as caught:
+            self.api.handle(req)
+        self.assertEqual((caught.exception.code, caught.exception.message), (400, "Kullanıcı adı geçersiz."))
+        self.assertEqual(req.audits, [("hesap", "kullanıcı adı", False)])
+        self.ctx.worker_result = (502, "garbage")
+        with self.assertRaises(panel.ApiError) as caught:
+            self.api.handle(FakeRequest("POST", "/dizin", {"save": "/x"}))
+        self.assertEqual((caught.exception.code, caught.exception.message), (502, "qBittorrent ayarı uygulanamadı"))
+
+
+class DispatcherTests(Scratch):
+    """The real backend over its Unix socket: gates, the package folder rule and the private worker run."""
+    def setUp(self):
+        super().setUp()
+        mods = self.root / "mods" / "torrent"
+        mods.mkdir(parents=True)
+        for name in ("api.py", "ayar.py"):
+            shutil.copy(PACKAGE / name, mods / name)
+        (mods / "paket.env").write_text((PACKAGE / "paket.env").read_text().replace("__TORRENT_UI_PORT__", "61006"))
+        (self.root / "bin").mkdir()
+        (self.root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
+        os.chmod(self.root / "bin" / "master-modul", 0o755)
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False,
+                                                   master_modul=str(self.root / "bin" / "master-modul")))
+        self.addCleanup(lambda: [self.p.api_stop(mid, api) for mid, (_key, api) in list(self.p.apis.items())])
+
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        self.server, self.sock = resources.start_unix(self, Handler)
+        self.runs = []
+
+        def fake_subprocess(argv, **kwargs):
+            self.runs.append((list(argv), kwargs.get("input")))
+            if argv[0] == "systemd-run":
+                return subprocess.CompletedProcess(argv, 0, '{"ok": true, "username": "u"}', "")
+            return subprocess.CompletedProcess(argv, 3, b"", b"")
+        patch.object(panel.subprocess, "run", side_effect=fake_subprocess).start()
+
+    def request(self, method, path, data=None, headers=None):
+        headers = {"X-Konsol": "1"} if headers is None else headers
+        body = None if data is None else json.dumps(data).encode()
+        if body is not None:
+            headers = {"Content-Type": "application/json", **headers}
+        status, _headers, raw = resources.unix_get(self.sock, path, headers, method, body)
+        return status, json.loads(raw)
+
+    def test_status_and_private_worker_run_through_the_dispatcher(self):
+        self.assertEqual(self.request("GET", "/api/uygulama/torrent/durum", headers={})[0], 403)
+        status, body = self.request("GET", "/api/uygulama/torrent/durum")
+        self.assertEqual((status, body["installed"], body["running"], body["save"]), (200, True, False, self.env["DOWNLOADS_PATH"] + "/"))
+        self.assertNotIn("oldhash", json.dumps(body))
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/hesap", {"password": "short"})[0], 400)
+        self.assertFalse([r for r in self.runs if r[0][0] == "systemd-run"], "a refused shape starts no worker")
+        with patch("builtins.print") as out:
+            status, body = self.request("POST", "/api/uygulama/torrent/hesap", {"password": "dummy-api-password"})
+        self.assertEqual((status, body), (200, {"ok": True, "username": "u"}))
+        argv, stdin = [r for r in self.runs if r[0][0] == "systemd-run"][0]
+        self.assertEqual(argv[:5], ["systemd-run", "--quiet", "--wait", "--pipe", "--collect"])
+        self.assertEqual(argv[-7:], ["/usr/bin/python3", str(self.root / "mods/torrent/ayar.py"), "--lib", str(self.root / "bin"), "--state", str(self.state), "hesap"])
+        self.assertEqual(json.loads(stdin), {"password": "dummy-api-password"})
+        self.assertNotIn("dummy-api-password", " ".join(argv))
+        lines = [str(c.args[0]) for c in out.call_args_list if c.args]
+        self.assertEqual([l for l in lines if "torrent:hesap" in l], ["panel: konsol yerel torrent:hesap parola -> ok"])
+        self.assertFalse([l for l in lines if "dummy-api-password" in l])
+        self.assertEqual(self.conf.read_text(), SEED % self.env["DOWNLOADS_PATH"], "the backend itself never writes the profile")
+        (self.root / "modules").write_text("")
+        self.assertEqual(self.request("GET", "/api/uygulama/torrent/durum")[0], 404)
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/hesap", {"username": "x"})[0], 409)
+
+    def test_worker_scripts_must_live_in_the_package_folder(self):
+        ctx = panel.PackageContext(self.p, "torrent")
+        outside = self.root / "elsewhere.py"
+        outside.write_text("")
+        code, body = ctx.worker(["/usr/bin/python3", str(outside), "--state", str(self.state), "hesap"], {})
+        self.assertEqual(code, 400)
+        self.assertIn("paket klasöründe değil", body["error"])
+        link = self.root / "mods" / "torrent" / "link.py"
+        link.symlink_to(outside)
+        self.assertEqual(ctx.worker(["/usr/bin/python3", str(link), "x"], {})[0], 400)
+        self.assertFalse([r for r in self.runs if r[0][0] == "systemd-run"])
+        code, body = ctx.worker(["/usr/bin/python3", str(self.root / "mods/torrent/ayar.py"), "--state", str(self.state), "durum"], {"a": 1})
+        self.assertEqual((code, body), (200, {"ok": True, "username": "u"}))
+
+
+if __name__ == "__main__":
+    unittest.main()

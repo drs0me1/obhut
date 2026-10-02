@@ -26,8 +26,10 @@ def load_script(name, path):
     return module
 
 
-panel = load_script("hardened_panel", DATA / "panel/master-wg-panel")
+panel = load_script("hardened_panel", DATA / "panel/master-panel")
 files = load_script("hardened_files", DATA / "files-panel/master-files-panel")
+# DD-202: the qBittorrent profile's root reader is the package worker's; the share path check is the base's.
+ayar = load_script("torrent_ayar", DATA / "magaza/torrent/ayar.py")
 
 
 class ConfigReadTests(unittest.TestCase):
@@ -43,17 +45,19 @@ class ConfigReadTests(unittest.TestCase):
         self.data = {"root": str(self.root / "srv"), "blocked": [], "items": []}
 
     def assert_rejected(self):
-        self.assertIsNone(panel.read_torrent_conf(self.conf))
+        self.assertIsNone(ayar.read_conf(self.conf))
         with self.assertRaisesRegex(shares.ShareError, "güvenli okunamadı"):
             self.manager.validate_path(self.data, "media")
 
     def test_normal_and_missing_config_keep_user_paths_and_hide_other_keys(self):
-        self.assertIsNone(panel.read_torrent_conf(self.conf))
+        self.assertIsNone(ayar.read_conf(self.conf))
         self.assertEqual(self.manager.validate_path(self.data, "media")[0], "media")
         self.conf.write_text("[BitTorrent]\nSession\\TempPath=" + str(self.root / "srv/media")
                              + "\nWebUI\\Password_PBKDF2=fixture-secret\n")
-        self.assertEqual(panel.read_torrent_conf(self.conf),
-                         {"Session\\TempPath": str(self.root / "srv/media")})
+        # The package worker's view carries paths only, never the hash the file also holds.
+        view = ayar.durum({"TORRENT_PROFILE_DIR": str(self.root / "profile"), "DOWNLOADS_PATH": str(self.root / "srv")})
+        self.assertEqual((view["temp"], view["temp_inside"]), (str(self.root / "srv/media"), True))
+        self.assertNotIn("fixture-secret", json.dumps(view))
         with self.assertRaisesRegex(shares.ShareError, "çakışıyor"):
             self.manager.validate_path(self.data, "media")
 
@@ -87,10 +91,10 @@ import importlib.machinery, importlib.util, json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import master_shares as shares
-loader = importlib.machinery.SourceFileLoader('fifo_panel', sys.argv[1] + '/master-wg-panel')
+loader = importlib.machinery.SourceFileLoader('fifo_ayar', sys.argv[4])
 spec = importlib.util.spec_from_loader(loader.name, loader)
 p = importlib.util.module_from_spec(spec); loader.exec_module(p)
-assert p.read_torrent_conf(sys.argv[2]) is None
+assert p.read_conf(sys.argv[2]) is None
 m = object.__new__(shares.Manager)
 m.env = {'TORRENT_PROFILE_DIR': str(Path(sys.argv[2]).parents[1])}
 try:
@@ -101,7 +105,7 @@ else:
     raise AssertionError('FIFO accepted')
 """
         result = subprocess.run([sys.executable, "-c", code, str(DATA / "panel"),
-                                 str(self.conf), json.dumps(self.data)],
+                                 str(self.conf), json.dumps(self.data), str(DATA / "magaza/torrent/ayar.py")],
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
 

@@ -46,11 +46,11 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
                  "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
-                 "WG_NETWORKS_FILE": "etc/networks", "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules",
+                 "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules",
                  "KONSOL_AUTH_DIR": "etc/konsol"}
         e.update({k: str(root / v) for k, v in paths.items()})
         # DD-180: both private sockets live in the disposable tree, never in the host's /run.
-        e.update(WG_PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
+        e.update(PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
         e.update(LOCAL_DOMAIN="ayc", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),
                  DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", V2_VERSION="test", FILES_PANEL_USER="test", FILES_PANEL_GROUP="test")
         for folder in ("etc", "dns", "profile", "units", "templates/dosya", "templates/torrent", "caddy-modules", "run", "srv/downloads", "srv/media"):
@@ -113,9 +113,9 @@ def main():
                         "serve", "--listen", "127.0.0.1:" + e["FILES_PANEL_PORT"], "--root", e["SERVER_ROOT"], "--domain=" + domain]
                 ready = lambda: http("panel." + domain, "/api/state", e["FILES_PANEL_PORT"]) == "200"
             else:
-                args = ["python3", str(DATA / "panel/master-wg-panel"), "serve", "--listen", "unix:" + e["WG_PANEL_SOCKET"],
+                args = ["python3", str(DATA / "panel/master-panel"), "serve", "--listen", "unix:" + e["PANEL_SOCKET"],
                         "--state", str(state), "--master-modul", "/bin/false"]
-                ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]) == "200"
+                ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["PANEL_SOCKET"]) == "200"
             processes[name] = subprocess.Popen(args, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(ready)
         def adapter(argv, **kwargs):
@@ -153,8 +153,8 @@ def main():
             # site or health payload. Do not mistake status alone for a route.
             assert cmd("curl", "--noproxy", "*", "-s", "--max-time", "2", "-H", "Host: health." + domain,
                        "http://" + e["TAILSCALE_IPV4"] + "/") == ""
-            for path, port in (("/api/konsol/ayarlar/durum", e["WG_PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
-                root_api = port == e["WG_PANEL_SOCKET"]
+            for path, port in (("/api/konsol/ayarlar/durum", e["PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
+                root_api = port == e["PANEL_SOCKET"]
                 # DD-180/194: Caddy's session check refuses what it relays from this host (100.64.0.2
                 # is local here); the reply still proves the new name reaches the root backend.
                 # Direct calls (root socket, loopback Files port) answer the new name.

@@ -10,9 +10,9 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-wg-panel serve --listen unix:__WG_PANEL_SOCKET__ --socket-group __CADDY_GROUP__ --state __STATE_FILE__ --master-modul __SBIN_DIR__/master-modul
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-panel serve --listen unix:__PANEL_SOCKET__ --socket-group __CADDY_GROUP__ --state __STATE_FILE__ --master-modul __SBIN_DIR__/master-modul
 # Soketin klasörü; Caddy geçebilsin diye 0755, soketin kendisi 0660.
-RuntimeDirectory=__WG_PANEL_RUNTIME__
+RuntimeDirectory=__PANEL_RUNTIME__
 RuntimeDirectoryMode=0755
 Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0077

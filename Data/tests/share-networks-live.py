@@ -62,7 +62,7 @@ class U(http.client.HTTPConnection):
 
 def api(action, data):
     return remote(BOOT+UNIX+"""
-c=U(e['WG_PANEL_SOCKET'],100)
+c=U(e['PANEL_SOCKET'],100)
 c.request('POST','/api/konsol/paylasim/'+d['action'],json.dumps(d['data']),
  {'Host':'panel.'+e['LOCAL_DOMAIN'],'X-Konsol':'1','Origin':'http://panel.'+e['LOCAL_DOMAIN'],'Content-Type':'application/json'})
 r=c.getresponse(); data=json.loads(r.read()); c.close()

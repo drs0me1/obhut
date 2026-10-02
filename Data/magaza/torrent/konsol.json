@@ -22,5 +22,9 @@
     "veri_silinir": "Profil ve torrent listesi de silinir. İndirilen dosyalara dokunulmaz."
   },
   "durdur_notu": "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder.",
-  "sayfa": {"rota": "torrent", "baslik": "qBittorrent", "ustbilgi": "Hesap, indirme dizini ve servis", "detay": "qBittorrent ayarları ve ilk giriş bilgileri"}
+  "sayfa": {"rota": "torrent", "baslik": "qBittorrent", "ustbilgi": "Hesap, indirme dizini ve servis", "detay": "qBittorrent ayarları ve ilk giriş bilgileri"},
+  "gunluk": {
+    "hesap": "qBittorrent hesabı kaydedildi ({detail})",
+    "dizin": "qBittorrent indirme dizini: {detail}"
+  }
 }

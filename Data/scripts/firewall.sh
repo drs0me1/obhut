@@ -44,8 +44,8 @@ fi
 : "${TAILSCALE_UDP_PORT:?}"
 : "${CHAIN_FORWARD:?}"
 : "${CHAIN_NAT:?}"
-: "${WG_BLOCK_DEST4:?}"
-: "${WG_BLOCK_DEST6:?}"
+: "${VPN_BLOCK_DEST4:?}"
+: "${VPN_BLOCK_DEST6:?}"
 
 # nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
 # seçimi bu sarmalayıcılardadır.
@@ -332,8 +332,8 @@ apply_input6() {
 # DD-177/198: declared VPN networks are internet-only. Deny private destinations even when routed via WAN.
 # All ingress guards precede return-path permits (including between WG networks).
 apply_forward() {
-    local bin="$1" prefix="$2" staging i dest blocked="$WG_BLOCK_DEST4"
-    [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
+    local bin="$1" prefix="$2" staging i dest blocked="$VPN_BLOCK_DEST4"
+    [[ "$bin" != ip6tables ]] || blocked="$VPN_BLOCK_DEST6"
     if [[ "${#VPN_IFACES[@]}" -eq 0 ]]; then
         remove_named "$bin" FORWARD "$CHAIN_FORWARD"
         return 0
@@ -551,8 +551,8 @@ check_before() {
 }
 
 check_forward_chain() {
-    local bin="$1" i w dest blocked="$WG_BLOCK_DEST4" count=0
-    [[ "$bin" != ip6tables ]] || blocked="$WG_BLOCK_DEST6"
+    local bin="$1" i w dest blocked="$VPN_BLOCK_DEST4" count=0
+    [[ "$bin" != ip6tables ]] || blocked="$VPN_BLOCK_DEST6"
     if [[ "${#VPN_IFACES[@]}" -eq 0 ]]; then
         check_absent "$bin" FORWARD "$CHAIN_FORWARD"
         return 0

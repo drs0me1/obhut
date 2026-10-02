@@ -16,7 +16,7 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
-SOURCE = Path(__file__).resolve().parents[1] / "panel" / "master-wg-panel"
+SOURCE = Path(__file__).resolve().parents[1] / "panel" / "master-panel"
 loader = importlib.machinery.SourceFileLoader("resources_panel", str(SOURCE))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 panel = importlib.util.module_from_spec(spec)

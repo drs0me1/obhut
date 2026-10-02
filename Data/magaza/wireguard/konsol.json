@@ -17,7 +17,7 @@
       ["folder", "WireGuard sayfası kalkar."]
     ],
     "veri_etiket": "Ağ anahtarlarını ve profilleri de sil",
-    "veri_kalir": "ağ anahtarları ve cihaz profilleri __WG_CONF_DIR__ altında korunur; yeniden kurunca ağlar geri gelir.",
+    "veri_kalir": "ağ anahtarları ve cihaz profilleri sunucuda korunur; yeniden kurunca ağlar geri gelir.",
     "veri_silinir": "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir."
   },
   "sayfa": {"rota": "wireguard", "baslik": "WireGuard", "ustbilgi": "Cihazlar ve ağlar"},

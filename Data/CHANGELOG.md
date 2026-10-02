@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-02 — qBittorrent page and settings in its package, phase 2c (v2-176)
+
+- The qBittorrent page is the package's `sayfa.js`/`sayfa.css`; its account and
+  download-folder form posts to the package API `/api/uygulama/torrent/{hesap,dizin}`
+  and reads `…/durum` (DD-202). Changes apply directly through the package worker
+  `ayar.py` (stop, snapshot, write, start; a failure restores both files and restarts);
+  the folder change no longer has a 60 s confirmation window.
+- Settings has no qBittorrent tab and no `torrent` section; `GET /api/konsol/ayarlar`
+  carries no `torrent` key and no account/folder fields. The shell, `ayarlar.js` and
+  the root backend contain no qBittorrent code.
+- Backend: `PackageContext.worker()` runs a package script that lives under the
+  package's own folder as a transient root unit with JSON on stdin, the same private
+  path as the base settings and share workers.
+- The torrent package's hooks place the page files on install and re-run and remove
+  them on rollback (the first live run showed only WireGuard's hooks did).
+- Fresh install only; an in-place host receives the new package files on the next
+  installer run.
+- **Verified:** Mac — 408 Python, 169 Bats, browser suites `torrent-ui` (new),
+  `panel-ui`, `settings-ui`, `files-ui`, `publications-ui`, `settings-https-ui`,
+  `wireguard-ui`, `giris-ui`. nrm — portable run with scratch inputs on the in-place
+  host (exit 0, no warnings; three runs, the first two surfaced the hook and `--lib`
+  fixes); live acceptance: package files rendered, the page under
+  `CONSOLE_WEB_DIR/uygulama/torrent` (0644 root) and served by Caddy, the module listing
+  offers it, `GET /api/konsol/ayarlar` has no `torrent` key, `/api/uygulama/torrent/durum`
+  answers 401 without a session and the paths without any hash, bad shapes answer 400
+  before the worker, the folder policy refusal comes from the worker, a username change
+  and its restore went through the worker (service restarted, profile 0640 uid 1000,
+  password hash untouched, audit lines), a folder change to `/srv/media` and back wrote
+  the `90-konsol.conf` drop-in and qBittorrent's default save path. Linux (nrm) — 408
+  Python, 169 Bats, firewall, settings (package worker block), settings-domain,
+  torrent-defaults, publications-proxy and install-hardening suites.
+
+### 2026-10-02 — Neutral backend, package-owned settings, self-checking packages, phase 2b (v2-175)
+
+- The root backend is `master-panel` on `PANEL_SOCKET` (`/run/master-panel/api.sock`);
+  `master-wg-panel`, `WG_PANEL_SOCKET` and `WG_PANEL_RUNTIME` are gone (DD-201).
+- WireGuard's settings moved into its package: `magaza/wireguard/wireguard.env` holds
+  every `WG_*` default and path; `master-wg`, the hooks, the Konsol API module and the
+  Mac launcher read it there. `defaults.env`/`state.env` carry no `WG_*` key; the VPN
+  endpoint is `WAN_IPV4`; the firewall's destination block lists are `VPN_BLOCK_DEST4/6`.
+- Stage 7 asks each installed package to check itself (`paket_denetle`) and verifies
+  that absent packages left no tool or drop-in; the re-run prune and the summary note
+  (`paket_not`) and counts (`paket_ozet`) come from the manifests and hooks.
+- `master-wg net-add` reserves the ports every package manifest declares instead of
+  naming qBittorrent, Files and WebDAV; the launcher's intro line names App Store.
+- Fresh install only, as the whole store model: a host updated in place keeps the
+  old `master-wg-panel.service` running beside the new one until the operator
+  runs `systemctl disable --now master-wg-panel.service`, removes
+  `/etc/systemd/system/master-wg-panel.service` and `/usr/local/sbin/master-wg-panel`
+  and reloads systemd (done by hand on nrm).
+- **Verified:** Mac — 403 Python, 169 Bats (browser suites unchanged by this phase).
+  nrm — portable run with scratch inputs (exit 0, no warnings) on the in-place host;
+  live acceptance: `master-panel` active on `/run/master-panel/api.sock`
+  (`root:caddy 0660`), no `WG_*` key in `state.env`, `VPN_BLOCK_DEST4/6` present,
+  the package env rendered; `master-wg net-add` refused 61006/61010/61009 naming
+  `torrent`/`paylasim`/`dosya` from their manifests; the API state's endpoint and a
+  masked profile's `Endpoint` carried `WAN_IPV4`, defaults came from `wireguard.env`,
+  `master-firewall --check` passed and the journal lines sat under `master-panel`;
+  a second installer run with wg0 and one peer installed passed the package's
+  `paket_denetle`, and the summary printed "WireGuard: kurulu — 1 ağ, 1 peer" with
+  the package's note; the network and the package were then removed (`--veri`),
+  leaving the registry, `/etc/wireguard` and the console folder clean. Linux (nrm) —
+  403 Python, 169 Bats, firewall, settings, settings-domain, torrent-defaults,
+  publications-proxy and install-hardening suites.
+
 ### 2026-10-02 — Konsol pages and application API from packages, phase 2a (v2-174)
 
 - The Konsol shell and the root backend no longer know WireGuard (DD-200). A

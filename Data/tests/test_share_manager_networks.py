@@ -14,12 +14,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
 import master_shares as s
-loader=importlib.machinery.SourceFileLoader("share_panel",str(Path(__file__).resolve().parents[1]/"panel/master-wg-panel"))
+loader=importlib.machinery.SourceFileLoader("share_panel",str(Path(__file__).resolve().parents[1]/"panel/master-panel"))
 if Path(loader.path).exists():
     spec=importlib.util.spec_from_loader(loader.name,loader)
     panel=importlib.util.module_from_spec(spec); loader.exec_module(panel)
 else:
-    loader=importlib.machinery.SourceFileLoader("share_panel","/usr/local/sbin/master-wg-panel")
+    loader=importlib.machinery.SourceFileLoader("share_panel","/usr/local/sbin/master-panel")
     spec=importlib.util.spec_from_loader(loader.name,loader)
     panel=importlib.util.module_from_spec(spec); loader.exec_module(panel)
 

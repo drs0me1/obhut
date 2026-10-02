@@ -30,7 +30,7 @@ class HttpsSettingsTests(unittest.TestCase):
                     "DNSMASQ_CONF_DIR": "dns", "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units",
                     "MODULES_DIR": "templates", "MODULES_FILE": "modules", "RUNTIME_DIR": "run",
                     "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads", "CADDYFILE": "Caddyfile",
-                    "CADDY_MODULES_DIR": "sites", "SBIN_DIR": "bin", "WG_NETWORKS_FILE": "networks",
+                    "CADDY_MODULES_DIR": "sites", "SBIN_DIR": "bin",
                     "SHARE_STATE_FILE": "shares.json"}
         self.env = {key: str(self.root / value) for key, value in self.env.items()}
         self.env.update(LOCAL_DOMAIN="ayc", TAILSCALE_IF="tailscale0", WAN_INTERFACE="eth0", WAN_IPV4="8.8.8.8",

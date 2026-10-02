@@ -20,10 +20,10 @@ const data = {
       {port:61009,proto:"tcp",family:4,address:"127.0.0.1",scope:"lo"}],
     rules: { errors: [], rows: [{ family: 4, table: "filter", chain: "ts-input", position: 1, packets: 12, bytes: 1024, spec: "-i tailscale0 -j ACCEPT", owner: "Tailscale" }] } },
   web: { entries: [{ address: "panel.ayc", source: "base", access: "tailscale", routes: [{ kind: "proxy", path: "/api/*", to: "127.0.0.1:61008" }] }], raw: [] },
-  dns: { listen: ["lo", "tailscale0"] }, torrent: { installed: true, profile: "/var/lib/qbittorrent" },
-  manage: { revision: "r1", config: copy(config), pending: null, username: "admin", save: "/srv/downloads/", names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "torrent.ayc", target: "tailscale", source: "torrent" }] },
+  dns: { listen: ["lo", "tailscale0"] },
+  manage: { revision: "r1", config: copy(config), pending: null, names: [{ name: "panel.ayc", target: "tailscale", source: "base" }, { name: "torrent.ayc", target: "tailscale", source: "torrent" }] },
 };
-let lastApply = null, writes = 0, failApply = false, holdAccount = false, releaseAccount, discarded = false;
+let lastApply = null, writes = 0, failApply = false, discarded = false;
 // DD-194: Konsol account fixture (sign-in state, password change and sign-out).
 let sessionState = "acik", passwordFail = "", loggedOut = false;
 const passwordWrites = [];
@@ -55,17 +55,15 @@ const health = { status: "bad", read_at: 1790750000, checks: [
       else if (endpoint === "/api/state") result = {root:"/srv", temp:"downloads/incomplete", disk:{total:10000,free:8000}, trash:{count:0,size:0}};
       else if (endpoint === "/api/list") result = {path:"",entries:[]};
       else if (endpoint === "/api/archives") result = {items:[], limits:{bytes:2147483648,entries:10000,layers:5,seconds:900}};
-      else if (endpoint === "/api/konsol/moduller/torrent/hesap") result = {user:"admin",temp:false};
       else if (endpoint === "/api/konsol/ayarlar") result = data;
       else if (endpoint === "/api/konsol/ayarlar/durum") result = data.manage;
       else if (endpoint === "/api/konsol/ayarlar/klasorler") result = { items: [{ path: "/srv/downloads", free: 10000000000 }, { path: "/srv/media", free: 10000000000 }] };
       else if (endpoint === "/api/konsol/ayarlar/uygula") {
         lastApply = route.request().postDataJSON();
         assert.equal(lastApply.revision, data.manage.revision, "Draft revision follows our own account commit");
-        if (holdAccount && lastApply.torrent) await new Promise(resolve => { releaseAccount = resolve; });
         if (failApply) {
           failApply = false;
-          return route.fulfill({status:400, contentType:"application/json", body:JSON.stringify({error:lastApply.torrent ? "Hesap sınama hatası; önceki ayarlar korundu." : "DNS sınama hatası; önceki ayarlar korundu."})});
+          return route.fulfill({status:400, contentType:"application/json", body:JSON.stringify({error:"DNS sınama hatası; önceki ayarlar korundu."})});
         }
         if (lastApply.firewall) data.manage.config.firewall = copy(lastApply.firewall);
         if (lastApply.dns) data.manage.config.dns = copy(lastApply.dns);
@@ -77,11 +75,6 @@ const health = { status: "bad", read_at: 1790750000, checks: [
         result = { pending: data.manage.pending };
         if (Object.keys(lastApply).sort().join(",") === "dns,revision") {
           data.manage.pending = null; data.manage.revision += "-dns";
-          result = {pending:null, committed:true};
-        }
-        if (Object.keys(lastApply).sort().join(",") === "revision,torrent" && !lastApply.torrent.save) {
-          data.manage.username = lastApply.torrent.username ?? data.manage.username;
-          data.manage.pending = null; data.manage.revision += "-account";
           result = {pending:null, committed:true};
         }
       } else if (endpoint === "/api/konsol/saglik") result = health;
@@ -242,123 +235,12 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     await page.getByRole("button", { name: "Devam et" }).click();
     await page.getByRole("switch", { name: "Üst DNS'e yönlendirme", exact: true }).click();
     await page.getByLabel("Sağlayıcı", { exact: true }).selectOption("google");
-    await page.locator('.nav [data-route="torrent"]').click();
-    const accountWrites = writes;
-    const username = page.getByRole("textbox", {name:"Kullanıcı adı", exact:true});
-    const password = page.getByLabel("Yeni parola", {exact:true});
-    const repeat = page.getByLabel("Yeni parola (tekrar)", {exact:true});
-    const saveAccount = page.getByRole("button", {name:"Hesabı kaydet", exact:true});
-    await username.fill("bad user");
-    assert.equal(await username.evaluate(el => el.checkValidity()), false);
-    await saveAccount.click();
-    assert.equal(writes, accountWrites);
-    await username.fill("new-user");
-    assert.equal(await username.evaluate(el => el.checkValidity()), true);
-    assert.equal(await password.evaluate(el => el.minLength), 8);
-    await password.fill("1234567"); await repeat.fill("1234567");
-    await saveAccount.click();
-    assert.equal(writes, accountWrites);
-    await password.fill("sample-ui-only-password"); await repeat.fill("mismatched-password");
-    await saveAccount.click();
-    assert.equal(writes, accountWrites);
-    await repeat.fill("sample-ui-only-password");
-    holdAccount = true;
-    await saveAccount.click();
-    await page.waitForFunction(() => document.querySelector(".as-message")?.textContent.includes("hesabı kaydediliyor"));
-    assert(await saveAccount.isDisabled());
-    assert(await password.isDisabled());
-    assert.equal(await password.inputValue(), "");
-    while (!releaseAccount) await page.waitForTimeout(10);
-    holdAccount = false; releaseAccount();
-    await page.waitForFunction(() => document.querySelector(".as-message")?.textContent.includes("hesabı kaydedildi."));
-    await page.waitForFunction(() => !document.querySelector('input[name=username]').disabled);
-    assert.equal(writes, accountWrites + 1, "One click = one account-only request, no confirmation");
-    assert.deepEqual(Object.keys(lastApply).sort(), ["revision", "torrent"]);
-    assert.deepEqual(lastApply.torrent, {username:"new-user", password:"sample-ui-only-password"});
-    assert.equal(await username.inputValue(), "new-user");
-    assert.equal(await password.inputValue(), "");
-    assert.equal(await page.locator("dialog[open], .as-rollback").count(), 0);
-    assert(!((await page.locator("body").innerText()).includes("sample-ui-only-password")));
-    assert.match(await page.locator(".as-footer").innerText(), /3 değişiklik taslakta/, "Unrelated DNS drafts remain unapplied");
-    assert.equal(data.manage.config.dns.records.length, 0);
-    // Username-only preserves the password; password-only leaves the username alone.
-    await username.fill("another-user"); await saveAccount.click();
-    await page.waitForFunction(() => !document.querySelector('input[name=username]').disabled);
-    assert.deepEqual(lastApply.torrent, {username:"another-user"});
-    await page.getByLabel("Yeni parola", { exact: true }).fill("Pass8!xy");
-    await page.getByLabel("Yeni parola (tekrar)", { exact: true }).fill("Pass8!xy");
-    await saveAccount.click();
-    await page.waitForFunction(() => !document.querySelector('input[name=username]').disabled);
-    assert.deepEqual(lastApply.torrent, {password:"Pass8!xy"});
-    const noChangeWrites = writes;
-    await saveAccount.click();
-    assert.equal(writes, noChangeWrites, "Unchanged account does not restart the service");
-    failApply = true;
-    await username.fill("failed-user");
-    await password.fill("failed-test-password"); await repeat.fill("failed-test-password");
-    await saveAccount.click();
-    await page.waitForFunction(() => document.querySelector(".as-message")?.textContent.includes("Hesap kaydı doğrulanamadı"));
-    assert.equal(data.manage.username, "another-user");
-    assert.equal(await password.inputValue(), "");
-    assert.equal(await repeat.inputValue(), "");
-    assert.equal(await page.locator(".as-rollback").count(), 0);
-    await username.fill("new-user");
-    await password.fill("sample-ui-only-password"); await repeat.fill("sample-ui-only-password");
-    await saveAccount.click();
-    await page.waitForFunction(() => !document.querySelector('input[name=username]').disabled);
-    assert.equal(await page.getByLabel("Yeni parola", { exact: true }).inputValue(), "");
-    await page.getByRole("button", { name: "Klasör seç", exact: true }).click();
-    await page.locator(".as-folder").filter({ hasText: "/srv/media" }).getByRole("button", { name: "Seç", exact: true }).click();
-    await page.getByRole("button", { name: "İncele ve uygula" }).click();
-    assert.match(await page.locator(".as-changes").innerText(), /nas.ayc/);
-    assert(!((await page.locator(".as-dialog").innerText()).includes("sample-ui-only-password")));
-    await page.getByRole("button", { name: "Sunucuda uygula", exact: true }).click();
-    await page.getByRole("button", { name: "Bağlantı çalışıyor · onayla" }).waitFor();
+    // DD-202: the base transaction carries no application section; the DNS draft applies directly.
+    await page.getByRole("button", { name: "Uygula", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".as-message")?.textContent.includes("Dnsmasq ayarları uygulandı"));
     assert.deepEqual(lastApply.dns.servers, ["8.8.8.8", "8.8.4.4"]);
-    assert.equal(lastApply.torrent.save, "/srv/media");
-    assert.deepEqual(lastApply.torrent, {save:"/srv/media"}, "Account secrets are never staged with other settings");
-    await page.getByRole("button", { name: "Bağlantı çalışıyor · onayla" }).click();
-    await page.waitForFunction(() => !document.querySelector(".as-rollback"));
-    await page.reload();
-    await username.waitFor();
-    assert.equal(await username.inputValue(), "new-user");
-    assert.equal(await page.locator(".as-footer").count(), 0, "No misleading draft footer on the clean account page");
-    for (const colorScheme of ["light", "dark"]) {
-      await page.emulateMedia({colorScheme});
-      for (const width of [1400, 1024, 736, 390, 320]) {
-        await page.setViewportSize({width, height:1000});
-        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-        const boxes = await page.locator("#torrent-settings").evaluate(root => {
-          const rect = el => {const r = el.getBoundingClientRect(); return {x:r.x, y:r.y, width:r.width, height:r.height};};
-          return {fields:[...root.querySelectorAll("input")].map(rect),
-            headers:[...root.querySelectorAll(".card-head")].map(rect),
-            buttons:[...root.querySelectorAll(".as-body button")].map(rect),
-            path:rect(root.querySelector("div.as-body > code"))};
-        });
-        const [user, pass, again] = boxes.fields;
-        const near = (a,b) => Math.abs(a-b) < 1;
-        assert(near(user.height,pass.height) && near(pass.height,again.height), `equal controls at ${width}`);
-        assert(user.height >= 44, "Readable input height");
-        assert(near(user.x, boxes.headers[0].x) && near(user.x, boxes.buttons[0].x), "Heading/field/Save left edge");
-        assert(near(boxes.path.x, boxes.headers[1].x), "Download path aligned with heading");
-        if (width > 700) {
-          assert(near(pass.y,again.y) && near(pass.width,again.width), `password row at ${width}`);
-          assert(near(boxes.path.y + boxes.path.height/2, boxes.buttons[1].y + boxes.buttons[1].height/2), "Path and folder action share a row");
-        } else {
-          assert(near(user.x,again.x) && near(user.width,again.width) && again.y > pass.y + pass.height);
-          assert(near(boxes.path.x, boxes.buttons[1].x), "Mobile folder action left edge");
-        }
-        await page.screenshot({path:path.join(screenshots, `account-${colorScheme}-${width}.png`), fullPage:true});
-      }
-    }
-    const originalSave = data.manage.save;
-    data.manage.save = "/srv/downloads/" + "long-folder-name-".repeat(24);
-    await page.getByRole("button",{name:"Yenile",exact:true}).click();
-    await page.getByText(data.manage.save,{exact:true}).waitFor();
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Long folder path wraps on mobile");
-    data.manage.save = originalSave;
-    await page.getByRole("button",{name:"Yenile",exact:true}).click();
-    await page.getByText(originalSave,{exact:true}).waitFor();
+    assert.deepEqual(Object.keys(lastApply).sort(), ["dns", "revision"], "No application section in a settings request");
+    assert.equal(data.manage.config.dns.records.length, 1);
     await page.emulateMedia({colorScheme:"light"});
     await page.setViewportSize({width:1400, height:1000});
     await page.locator('.nav [data-route="ayarlar"]').click();
@@ -509,6 +391,6 @@ const health = { status: "bad", read_at: 1790750000, checks: [
     assert(loggedOut);
     assert.deepEqual(errors, []);
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
-    console.log("PASS: Konsol account card/password dialog/sign-out, network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, credentials/path, qBittorrent field/heading/action alignment and long paths in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
+    console.log("PASS: Konsol account card/password dialog/sign-out, network categories/WG lifecycle and multi-network selection/listener versus permission/keyboard tabs/draft retention, full firewall tables/toggles/rollback, DNS immediate single Apply/persistence/failure/retry/protected panel/mixed confirmation, no application section (the qBittorrent form is torrent-ui.cjs) in 5 widths/both themes, domain transaction, keyboard scroll, production CSP. Screenshots: " + screenshots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -47,7 +47,7 @@
 	@korumali not path /giris.html /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*
 	# Her site root arka uca en çok 16 bağlantı açar: internetten gelen istek seli arka
 	# ucun iş parçacıklarını ve dosya tanıtıcılarını tüketip Tailscale'i de kapatamaz.
-	forward_auth @korumali unix/__WG_PANEL_SOCKET__ {
+	forward_auth @korumali unix/__PANEL_SOCKET__ {
 		uri /oturum-denetle
 		header_up Host panel.__LOCAL_DOMAIN__
 		header_up X-Konsol-Kanal {args[0]}
@@ -57,7 +57,7 @@
 	}
 	@kok path /api/uygulama/* /api/konsol/*
 	handle @kok {
-		reverse_proxy unix/__WG_PANEL_SOCKET__ {
+		reverse_proxy unix/__PANEL_SOCKET__ {
 			header_up Host panel.__LOCAL_DOMAIN__
 			header_up X-Konsol-Kanal {args[0]}
 			# Tarayıcının gerçekten kullandığı ad; alan adı değişikliği onayı bunu ister.

@@ -4,6 +4,11 @@
 # fail_step, warn, FAIL. Kurulum yalnız bu klasörü işler; sunucuya ne gireceğine paket karar verir.
 # shellcheck shell=bash
 
+# DD-201: paketin kendi ayarları (adres tabanı, yollar, varsayılanlar) paket klasöründedir;
+# kancayı yükleyen her yer (motor, güvenlik duvarı, kurulum) MODULES_DIR'i bilir.
+# shellcheck source=/dev/null
+[[ -z "${MODULES_DIR:-}" || ! -f "$MODULES_DIR/wireguard/wireguard.env" ]] || source "$MODULES_DIR/wireguard/wireguard.env"
+
 paket_gerekli() {
     need_keys WG_CONF_DIR WG_NETWORKS_FILE WG_MODULES_LOAD_FILE SBIN_DIR UNIT_DIR MODULES_DIR
 }
@@ -132,7 +137,45 @@ paket_saglik() {
     done <"$WG_NETWORKS_FILE"
 }
 
-# Kurulum özeti için tek satır (kurulumun 7. aşaması sayıları verir).
+# DD-201: kurulumun 7. aşaması kurulu paketi böyle doğrular (alt kabuk, kurulumun değişkenleri).
+# Hata: açıklama stderr'e, çıkış 1; kurulum paketin adıyla durur.
+paket_denetle() {
+    local iface port policy s4 code
+    [[ -n "${WG_CONF_DIR:-}" && -n "${WG_NETWORKS_FILE:-}" && -n "${WG_MODULES_LOAD_FILE:-}" ]] ||
+        { echo "paket ayarı eksik (wireguard.env); kurulumu yeniden çalıştırın" >&2; return 1; }
+    "${SBIN_DIR:?}/master-wg" version >/dev/null 2>&1 || { echo "master-wg çalışmıyor ($SBIN_DIR/master-wg)" >&2; return 1; }
+    [[ -f "$WG_MODULES_LOAD_FILE" ]] || { echo "çekirdek modülü dosyası yok: $WG_MODULES_LOAD_FILE" >&2; return 1; }
+    [[ -f "$WG_NETWORKS_FILE" ]] || return 0
+    while IFS=$'\t' read -r iface port policy s4 _; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        [[ "$policy" == inet ]] || { echo "kayıtta beklenmeyen erişim sütunu: $iface ($policy)" >&2; return 1; }
+        [[ "$(wg show "$iface" listen-port 2>/dev/null || true)" == "$port" ]] ||
+            { echo "$iface dinleme portu kayıttaki $port değil" >&2; return 1; }
+        ip -4 -o addr show dev "$iface" 2>/dev/null | grep -q " ${s4}/" ||
+            { echo "$iface üzerinde $s4 yok" >&2; return 1; }
+        # DD-177/180: Konsol'un dosya arka ucu bir VPN adresinde yanıt vermemeli.
+        if [[ -n "${FILES_PANEL_PORT:-}" ]]; then
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://${s4}:${FILES_PANEL_PORT}/" || true)"
+            [[ "$code" == "000" ]] || { echo "Konsol $iface adresinde yanıt verdi (HTTP $code)" >&2; return 1; }
+        fi
+    done <"$WG_NETWORKS_FILE"
+}
+
+# Kurulum özetinin notu, yalnız paket kuruluyken.
+paket_not() {
+    printf '  WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.\n'
+    printf '  Ağlar: WireGuard → Yapılandır. Peer ve QR: Konsol ya da Mac'"'"'te wireguard.command.'
+}
+
+# Kurulum özeti için tek satır: kayıttaki ağlar ve arayüzlerdeki peer'lar.
 paket_ozet() {
-    printf '%s ağ, %s peer' "${WG_NET_COUNT:-0}" "${WG_PEER_COUNT:-0}"
+    local iface nets=0 peers=0
+    if [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]]; then
+        while IFS=$'\t' read -r iface _; do
+            [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+            nets=$((nets + 1))
+            peers=$((peers + $(wg show "$iface" peers 2>/dev/null | grep -c . || true)))
+        done <"$WG_NETWORKS_FILE"
+    fi
+    printf '%s ağ, %s peer' "$nets" "$peers"
 }

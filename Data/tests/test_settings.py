@@ -33,10 +33,10 @@ class SettingsTests(unittest.TestCase):
             "SERVER_ROOT": str(self.root / "srv"), "DOWNLOADS_PATH": str(self.root / "srv/downloads"), "MEDIA_SUBDIR": "media",
             "LOCAL_DOMAIN": "ayc", "TAILSCALE_IF": "tailscale0", "WAN_INTERFACE": "eth0", "WAN_IPV4": "203.0.113.1",
             "TAILSCALE_IPV4": "100.64.0.2", "DOWNLOADS_UID": str(os.getuid()), "DOWNLOADS_GID": str(os.getgid()),
-            "SBIN_DIR": str(self.root / "bin"), "WG_NETWORKS_FILE": str(self.root / "networks"), "DNS_PORT": "53", "CADDY_HTTP_PORT": "80",
+            "SBIN_DIR": str(self.root / "bin"), "DNS_PORT": "53", "CADDY_HTTP_PORT": "80",
             "CADDYFILE": str(self.root / "Caddyfile"), "CADDY_MODULES_DIR": str(self.root / "caddy-modules"),
         }
-        for rel in ("dns", "profile/qBittorrent", "templates/torrent", "srv/downloads", "srv/media/movies", "srv/.pay", "units", "run"):
+        for rel in ("dns", "templates/torrent", "srv/downloads", "srv/media/movies", "srv/.pay", "units", "run"):
             (self.root / rel).mkdir(parents=True, exist_ok=True)
         (self.root / "modules").write_text("torrent\tcalisiyor\n")
         (self.root / "networks").write_text("wg0\t61001\tui\n")
@@ -45,7 +45,6 @@ class SettingsTests(unittest.TestCase):
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.m = settings.Manager(self.state)
-        self.m.qconf.write_text("[Preferences]\nWebUI\\Username=admin\nWebUI\\Password_PBKDF2=oldhash\nUnrelated=keep\n[BitTorrent]\nSession\\DefaultSavePath=" + self.env["DOWNLOADS_PATH"] + "/\n")
         self.now = 1000
         self.calls = []
         self.fail_cmd = None
@@ -53,7 +52,6 @@ class SettingsTests(unittest.TestCase):
         patch.object(settings, "boot_id", return_value="boot-a").start()
         patch.object(settings.time, "monotonic", side_effect=lambda: self.now).start()
         patch.object(settings, "run", side_effect=self.fake_run).start()
-        patch.object(self.m, "q_unit", return_value="qbittorrent-nox@test.service").start()
 
     def fake_run(self, argv, **kwargs):
         self.calls.append(argv)
@@ -77,12 +75,13 @@ class SettingsTests(unittest.TestCase):
     def test_defaults_and_no_secrets_in_status(self):
         s = self.m.status()
         self.assertEqual(s["config"], settings.DEFAULT)
-        self.assertEqual(s["username"], "admin")
-        self.assertNotIn("oldhash", json.dumps(s))
+        # DD-202: the base's status knows no application account or folder.
+        self.assertFalse({"username", "save"} & set(s), sorted(s))
 
-    def test_stale_revision_and_external_qbit_change(self):
+    def test_stale_revision_and_external_dns_change(self):
         data = self.payload(firewall=[])
-        self.m.qconf.write_text(self.m.qconf.read_text() + "Other=1\n")
+        base = Path(self.env["DNSMASQ_CONF_FILE"])
+        base.write_text(base.read_text() + "# changed outside the transaction\n")
         with self.assertRaises(settings.SettingsError):
             self.m.validate(data)
         self.assertFalse(self.m.pending_path.exists())
@@ -173,7 +172,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIn(["systemctl", "restart", "dnsmasq"], self.calls)
 
     def test_mixed_dns_keeps_confirmation_even_with_unchanged_firewall(self):
-        for extra in ({"firewall": []}, {"torrent": {"username": "operator"}}):
+        for extra in ({"firewall": []},):
             with self.subTest(extra=extra):
                 self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"]), **extra))
                 self.assertEqual(self.m.status()["pending"]["seconds"], 60)
@@ -250,132 +249,6 @@ class SettingsTests(unittest.TestCase):
                 self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
         self.assertEqual(before, Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes())
         self.assertIsNone(self.m.pending())
-
-    def test_password_hash_format_and_ini_preservation(self):
-        hashed = settings.password_hash("sample-test-phrase")
-        salt, key = hashed[len("@ByteArray("):-1].split(":")
-        self.assertEqual(len(base64.b64decode(salt)), 16)
-        self.assertEqual(base64.b64decode(key), hashlib.pbkdf2_hmac("sha512", b"sample-test-phrase", base64.b64decode(salt), 100000, 64))
-        result = settings.ini_patch("[Preferences]\nOther=value\nWebUI\\Username=old\n[BitTorrent]\nX=2\n", {("Preferences", "WebUI\\Username"): "new"})
-        self.assertIn("Other=value\n", result)
-        self.assertIn("[BitTorrent]\nX=2\n", result)
-        self.assertIn("WebUI\\Username=new", result)
-
-    def test_torrent_stops_before_write_and_rolls_back_without_plaintext(self):
-        before = self.m.qconf.read_bytes()
-        phrase = "sample-only-test-password"
-        self.m.apply(self.payload(torrent={"username": "newuser", "password": phrase, "save": str(self.root / "srv/media")}))
-        self.assertNotIn(phrase, self.m.pending_path.read_text())
-        self.assertNotIn(phrase, self.m.qconf.read_text())
-        self.assertNotIn(phrase, json.dumps(self.m.status()))
-        self.assertIn("Unrelated=keep", self.m.qconf.read_text())
-        self.assertIn("ReadWritePaths=", self.m.qdrop.read_text())
-        actions = [x[1] for x in self.calls if x[0] == "systemctl" and x[-1] != "master-settings-guard.timer"]
-        self.assertLess(actions.index("stop"), actions.index("start"))
-        self.m.rollback()
-        self.assertEqual(self.m.qconf.read_bytes(), before)
-        self.assertFalse(self.m.qdrop.exists())
-
-    def test_empty_password_rejected_but_omitted_preserved(self):
-        with self.assertRaises(settings.SettingsError):
-            self.m.validate(self.payload(torrent={"password": ""}))
-        self.m.apply(self.payload(torrent={"username": "newuser"}))
-        self.assertIn("oldhash", self.m.qconf.read_text())
-
-    def test_password_length_boundaries_before_any_service_change(self):
-        before = self.m.qconf.read_bytes()
-        for phrase in ("", "x" * 7, "x" * 257, "1234567\n", None):
-            with self.subTest(phrase=phrase), self.assertRaises(settings.SettingsError):
-                self.m.apply(self.payload(torrent={"password": phrase}))
-        for phrase in ("Pass8!xy", "ü" * 8, "x" * 11, "x" * 12, "x" * 256):
-            with self.subTest(length=len(phrase)):
-                self.m.validate(self.payload(torrent={"password": phrase}))
-        self.assertEqual(before, self.m.qconf.read_bytes())
-        self.assertEqual(self.calls, [])
-        self.assertIsNone(self.m.pending())
-
-    def test_account_only_commits_and_survives_deadline_and_reboot(self):
-        phrase = "Pass8!xy"
-        result = self.m.apply(self.payload(torrent={"username": "new-user", "password": phrase}))
-        self.assertEqual(result, {"pending": None, "committed": True})
-        self.assertIsNone(self.m.pending())
-        self.assertEqual(self.m.status()["username"], "new-user")
-        self.assertIn("Unrelated=keep", self.m.qconf.read_text())
-        self.assertNotIn(phrase, self.m.qconf.read_text() + self.m.config_path.read_text() + json.dumps(self.m.status()))
-        self.assertEqual(self.m.qconf.stat().st_mode & 0o777, 0o640)
-        self.assertFalse(self.m.qdrop.exists())
-        self.now += 181
-        with patch.object(settings, "boot_id", return_value="boot-b"):
-            recovered = settings.Manager(self.state)
-            recovered.guard()
-            self.assertEqual(recovered.status()["username"], "new-user")
-        self.assertEqual(self.m.config()["firewall"], [])
-        self.assertEqual(self.m.config()["dns"], settings.DEFAULT["dns"])
-
-    def test_password_only_commits_without_changing_username(self):
-        self.assertTrue(self.m.apply(self.payload(torrent={"password": "password-only-test"}))["committed"])
-        self.assertEqual(self.m.status()["username"], "admin")
-        self.assertNotIn("oldhash", self.m.qconf.read_text())
-
-    def test_account_start_or_commit_failure_restores_profile(self):
-        before = self.m.qconf.read_bytes()
-        for failure in ("start", "commit"):
-            with self.subTest(failure=failure):
-                if failure == "start":
-                    self.fail_cmd = "start qbittorrent-nox@"
-                    with self.assertRaises(settings.SettingsError):
-                        self.m.apply(self.payload(torrent={"username": "failed-user"}))
-                else:
-                    with patch.object(self.m, "commit", side_effect=OSError("disk failure")), self.assertRaises(OSError):
-                        self.m.apply(self.payload(torrent={"password": "failed-password-test"}))
-                self.assertIsNone(self.m.pending())
-                self.assertEqual(self.m.qconf.read_bytes(), before)
-
-    def test_account_crash_recovery_before_and_after_commit(self):
-        for committed in (False, True):
-            with self.subTest(committed=committed):
-                def crash(p):
-                    if committed:
-                        settings.save_json(self.m.config_path, dict(p["candidate"], _transaction=p["id"]))
-                    raise SystemExit("simulated process death")
-                with patch.object(self.m, "commit", side_effect=crash), self.assertRaises(SystemExit):
-                    self.m.apply(self.payload(torrent={"username": "saved-user"}))
-                self.assertEqual(self.m.pending()["phase"], "applying")
-                self.now += 181
-                self.m.guard()
-                self.assertIsNone(self.m.pending())
-                self.assertEqual(self.m.status()["username"], "saved-user" if committed else "admin")
-
-    def test_account_save_never_starts_stopped_service(self):
-        original = self.fake_run
-        def inactive(argv, **kwargs):
-            if argv == ["systemctl", "is-active", "--quiet", self.m.q_unit()]:
-                return subprocess.CompletedProcess(argv, 3, "", "")
-            return original(argv, **kwargs)
-        with patch.object(settings, "run", side_effect=inactive):
-            self.assertTrue(self.m.apply(self.payload(torrent={"username": "stopped-user"}))["committed"])
-        self.assertNotIn(["systemctl", "start", self.m.q_unit()], self.calls)
-
-    def test_account_mixed_or_folder_edits_keep_confirmation(self):
-        for extra, q in (({"firewall": []}, {"username": "newuser"}),
-                         ({"dns": self.dns()}, {"password": "test-only-password"}),
-                         ({}, {"save": str(self.root / "srv/media")}),
-                         ({}, {"username": "newuser", "save": str(self.root / "srv/media")})):
-            with self.subTest(extra=extra, keys=list(q)):
-                result = self.m.apply(self.payload(torrent=q, **extra))
-                self.assertNotIn("committed", result)
-                self.assertEqual(result["pending"]["seconds"], 60)
-                self.m.rollback()
-
-    def test_invalid_or_stale_account_request_never_writes(self):
-        before = self.m.qconf.read_bytes()
-        for q in ({}, {"username": "bad user"}, {"password": "short"}, {"password": "x" * 257}, {"committed": True}):
-            with self.subTest(keys=list(q)), self.assertRaises(settings.SettingsError):
-                self.m.apply(self.payload(torrent=q))
-        with self.assertRaises(settings.SettingsError):
-            self.m.apply({"revision": "stale", "torrent": {"username": "newuser"}})
-        self.assertEqual(self.m.qconf.read_bytes(), before)
-        self.assertEqual(self.calls, [])
 
     def test_directory_scope_and_symlinks(self):
         for value in (str(self.root / "srv"), str(self.root / "srv/.pay"), "/etc", str(self.root / "srv/downloads/../media")):
@@ -458,10 +331,10 @@ class SettingsTests(unittest.TestCase):
 
     def test_timer_must_be_active_before_any_mutation(self):
         self.fail_cmd = "master-settings-guard.timer"
-        before = self.m.qconf.read_bytes()
         with self.assertRaises(settings.SettingsError):
-            self.m.apply(self.payload(torrent={"username": "operator"}))
-        self.assertEqual(before, self.m.qconf.read_bytes())
+            self.m.apply(self.payload(firewall=[self.rule()]))
+        self.assertEqual(self.m.config()["firewall"], [])
+        self.assertEqual([c for c in self.calls if "master-settings-guard.timer" not in c], [])
         self.assertIsNone(self.m.pending())
 
     def test_apply_starts_the_guard_timer_before_the_pending_file(self):
@@ -469,7 +342,7 @@ class SettingsTests(unittest.TestCase):
         written = []
         original = settings.save_json
         with patch.object(settings, "save_json", side_effect=lambda *a, **k: (written.append(len(self.calls)), original(*a, **k))):
-            self.m.apply(self.payload(torrent={"username": "operator"}))
+            self.m.apply(self.payload(firewall=[self.rule()]))
         self.assertIn(start, self.calls)
         self.assertLess(self.calls.index(start), written[0])
 
@@ -501,14 +374,15 @@ class SettingsTests(unittest.TestCase):
 
     def test_symlinked_parent_cannot_redirect_root_file_access(self):
         link = self.root / "redirect"
-        link.symlink_to(self.root / "profile", target_is_directory=True)
-        before = self.m.qconf.read_bytes()
-        target = link / "qBittorrent/qBittorrent.conf"
+        link.symlink_to(self.root / "dns", target_is_directory=True)
+        conf = self.root / "dns" / "base.conf"
+        before = conf.read_bytes()
+        target = link / conf.name
         with self.assertRaises(OSError):
             settings.atomic(target, "injected")
         with self.assertRaises(OSError):
             self.m.snapshot(target)
-        self.assertEqual(before, self.m.qconf.read_bytes())
+        self.assertEqual(before, conf.read_bytes())
 
     def domain_fixture(self):
         (self.root / "Caddyfile").write_text('(konsol) {\n\treverse_proxy x {\n\t\theader_up Host panel.ayc\n\t}\n}\n'
@@ -549,7 +423,7 @@ class SettingsTests(unittest.TestCase):
         self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "host": "panel.ev", "kanal": "tailscale"})
         self.assertEqual(settings.saved_domain(self.m.config_path), "ev")
         self.assertIn(["systemctl", "reload", "caddy.service"], self.calls)
-        self.assertNotIn(["systemctl", "restart", "master-wg-panel.service"], self.calls)
+        self.assertNotIn(["systemctl", "restart", "master-panel.service"], self.calls)
 
     def test_domain_timeout_restores_files_but_not_new_tailscale_ip(self):
         self.domain_fixture()

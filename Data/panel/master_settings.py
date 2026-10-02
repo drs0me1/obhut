@@ -15,7 +15,6 @@ import ipaddress
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import secrets
 import shlex
@@ -228,52 +227,6 @@ def tailnet_ports(env):
     return rows
 
 
-def ini_values(text):
-    section, out = "", {}
-    for line in text.splitlines():
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1]
-        elif "=" in line and not line.startswith(("#", ";")):
-            k, _, v = line.partition("=")
-            out[(section, k)] = v.strip('"').replace("\\\\", "\\")
-    return out
-
-
-def ini_patch(text, updates):
-    """Change only selected keys, preserving unrelated qBittorrent settings."""
-    remaining, section, out = dict(updates), "", []
-    def finish():
-        for (sec, key), value in list(remaining.items()):
-            if sec == section:
-                out.append(key + "=" + value)
-                del remaining[(sec, key)]
-    seen = set()
-    for line in text.splitlines():
-        if line.startswith("[") and line.endswith("]"):
-            finish()
-            section = line[1:-1]
-        key = (section, line.partition("=")[0])
-        if "=" in line and key in updates:
-            if key not in seen:
-                out.append(key[1] + "=" + updates[key])
-                seen.add(key)
-                remaining.pop(key, None)
-        else:
-            out.append(line)
-    finish()
-    for sec in dict.fromkeys(k[0] for k in remaining):
-        out.extend(["", "[" + sec + "]"])
-        out.extend(k + "=" + v for (s, k), v in remaining.items() if s == sec)
-    return "\n".join(out) + "\n"
-
-
-def password_hash(password):
-    # qBittorrent Utils::Password::PBKDF2 (4.6/5.x): SHA512, 100000, salt16/key64.
-    salt = secrets.token_bytes(16)
-    key = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, 100000, 64)
-    return "@ByteArray(%s:%s)" % (base64.b64encode(salt).decode(), base64.b64encode(key).decode())
-
-
 def dns_interface(value):
     """The managed interface-name grammar, shared with the read-only DNS view."""
     match = re.fullmatch(r"([^,\s]+),([^,/\s]+)(?:/([46]))?", value)
@@ -290,8 +243,6 @@ class Manager:
         self.config_path = Path(self.e["SETTINGS_FILE"])
         self.pending_path = Path(self.e["SETTINGS_PENDING_FILE"])
         self.dns_file = Path(self.e["SETTINGS_DNS_FILE"])
-        self.qconf = Path(self.e["TORRENT_PROFILE_DIR"]) / "qBittorrent/qBittorrent.conf"
-        self.qdrop = Path(self.e["UNIT_DIR"]) / "qbittorrent-nox@.service.d/90-konsol.conf"
 
     def config(self):
         return read_json(self.config_path, DEFAULT)
@@ -307,9 +258,9 @@ class Manager:
 
     def revision(self):
         h = hashlib.sha256(json.dumps(self.config(), sort_keys=True).encode())
-        # Detect changes from qBittorrent itself, installer and module lifecycle too.
-        for path in [Path(self.state), self.qconf, self.qdrop, Path(self.e["WG_NETWORKS_FILE"]),
-                     Path(self.e["MODULES_FILE"]), self.dns_file, *self.dns_paths(), *self.domain_paths()]:
+        # Detect installer and module lifecycle changes too (DD-201/202: no package file is named
+        # here; a package's own settings go through its API module and worker).
+        for path in [Path(self.state), Path(self.e["MODULES_FILE"]), self.dns_file, *self.dns_paths(), *self.domain_paths()]:
             try:
                 s = path.stat()
                 h.update((str(path) + str(s.st_mtime_ns) + str(s.st_size)).encode())
@@ -350,7 +301,7 @@ class Manager:
         return names
 
     def validate(self, data):
-        require(isinstance(data, dict) and set(data) <= {"revision", "firewall", "dns", "torrent", "domain", "https", "web"}, "Bilinmeyen ayar alanı.")
+        require(isinstance(data, dict) and set(data) <= {"revision", "firewall", "dns", "domain", "https", "web"}, "Bilinmeyen ayar alanı.")
         require(data.get("revision") == self.revision(), "Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
         c = self.config()
         if "web" in data:
@@ -451,18 +402,6 @@ class Manager:
                         "Yerel/kendisine dönen DNS sunucusu kullanılamaz.")
             require(not d["forward"] or bool(d["servers"]), "Yönlendirme için DNS sunucusu seçin.")
             c["dns"] = d
-        if "torrent" in data:
-            q = data["torrent"]
-            require(isinstance(q, dict) and set(q) <= {"username", "password", "save"} and bool(q), "qBittorrent alanı geçersiz.")
-            modules = Path(self.e["MODULES_FILE"]).read_text()
-            require(any(x.startswith("torrent\t") for x in modules.splitlines()) and self.qconf.is_file(), "qBittorrent kurulu değil.")
-            if "username" in q:
-                require(isinstance(q["username"], str) and re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", q["username"]), "Kullanıcı adı geçersiz (1–64 harf/rakam/._@-).")
-            if "password" in q:
-                require(isinstance(q["password"], str) and 8 <= len(q["password"]) <= 256
-                        and all(ord(x) >= 32 for x in q["password"]), "Parola 8–256 karakter olmalı.")
-            if "save" in q:
-                self.safe_dir(q["save"], writable=True)
         return c
 
     def safe_dir(self, value, writable=False):
@@ -554,17 +493,9 @@ class Manager:
                 pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
             if p["changes"].get("web"):
                 pending["web"] = True
-        q = ini_values(read_regular(self.qconf)[0].decode()) if self.qconf.exists() else {}
         return {"revision": self.revision(), "config": self.current(), "pending": pending,
-                "names": self.dns_names(), "username": q.get(("Preferences", "WebUI\\Username"), "admin"),
-                "save": q.get(("BitTorrent", "Session\\DefaultSavePath"), q.get(("Preferences", "Downloads\\SavePath"), "")),
-                "folders": self.folders(), "https": master_https.status(self.e),
+                "names": self.dns_names(), "folders": self.folders(), "https": master_https.status(self.e),
                 "publications": master_publications.status(self.e)}
-
-    def q_unit(self):
-        user = pwd.getpwuid(int(self.e["DOWNLOADS_UID"])).pw_name
-        require(bool(re.fullmatch(r"[a-z_][a-z0-9_-]*", user)), "Servis kullanıcısı geçersiz.")
-        return "qbittorrent-nox@" + user + ".service"
 
     def snapshot(self, path):
         require(not path.is_symlink(), "Sembolik ayar dosyası reddedildi.")
@@ -645,49 +576,18 @@ class Manager:
         self.project_dns(candidate)
         self.domain_reload(self.pending()["files_active"])
 
-    def torrent_apply(self, q):
-        unit = self.q_unit()
-        # Snapshot only after clean shutdown, which flushes qBittorrent's in-memory settings.
-        active = run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
-        p = self.pending()
-        p["q_active"] = active
-        save_json(self.pending_path, p)
-        run(["systemctl", "stop", unit], timeout=25)
-        p["files"][str(self.qconf)] = self.snapshot(self.qconf)
-        save_json(self.pending_path, p)
-        text = read_regular(self.qconf)[0].decode()
-        updates = {}
-        if "username" in q:
-            updates[("Preferences", "WebUI\\Username")] = q["username"]
-        if "password" in q:
-            updates[("Preferences", "WebUI\\Password_PBKDF2")] = password_hash(q["password"])
-        if "save" in q:
-            path = str(self.safe_dir(q["save"], writable=True)).rstrip("/") + "/"
-            updates[("BitTorrent", "Session\\DefaultSavePath")] = '"' + path + '"'
-            updates[("Preferences", "Downloads\\SavePath")] = '"' + path + '"'
-            # Add one narrow write path. Default downloads + temp path remain available.
-            atomic(self.qdrop, '[Service]\nReadWritePaths="' + path.rstrip("/") + '"\n', 0o644)
-            run(["systemctl", "daemon-reload"])
-        atomic(self.qconf, ini_patch(text, updates), 0o640, (int(self.e["DOWNLOADS_UID"]), int(self.e["DOWNLOADS_GID"])))
-        if active:
-            run(["systemctl", "start", unit], timeout=25)
-            run(["systemctl", "is-active", "--quiet", unit])
-
     def apply(self, data):
         require(not self.pending(), "Önce bekleyen işlemi onaylayın veya geri alın.")
         candidate = self.validate(data)
-        change = {k: k in data for k in ("firewall", "dns", "torrent", "domain", "https", "web")}
+        change = {k: k in data for k in ("firewall", "dns", "domain", "https", "web")}
         require(any(change.values()), "Değişiklik yok.")
-        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "torrent", "domain"))
-        # Account edits cannot disconnect Konsol. Folder/mixed writes keep the
-        # existing confirmation; eligibility is server-owned, not a client flag.
-        account_only = set(data) == {"revision", "torrent"} and set(data["torrent"]) <= {"username", "password"}
+        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "domain"))
         if change["dns"]:
             require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
                     "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
         run(["systemctl", "start", GUARD_TIMER])
         run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
-        paths = ([*self.dns_paths(), self.dns_file] if change["dns"] else []) + ([self.qdrop] if change["torrent"] else [])
+        paths = [*self.dns_paths(), self.dns_file] if change["dns"] else []
         files_active = False
         if change["web"]:
             import master_publications
@@ -702,7 +602,7 @@ class Manager:
         # Pending is durable BEFORE the first mutation, and the timer already runs.
         p = {"id": secrets.token_hex(16), "boot": boot_id(), "until": time.monotonic() + 180,
              "phase": "applying", "candidate": candidate, "changes": change,
-             "files": {str(path): self.snapshot(path) for path in paths}, "q_active": False,
+             "files": {str(path): self.snapshot(path) for path in paths},
              "old_domain": self.e["LOCAL_DOMAIN"], "files_active": files_active}
         save_json(self.pending_path, p)
         try:
@@ -714,8 +614,6 @@ class Manager:
                 self.https_apply(candidate["https"]["domain"])
             if change["domain"]:
                 self.domain_apply(candidate)
-            if change["torrent"]:
-                self.torrent_apply(data["torrent"])
             if change["dns"]:
                 self.project_dns(candidate)
                 self.dns_test()
@@ -724,7 +622,7 @@ class Manager:
                 self.firewall_apply()
             p = self.pending()
             require(p["until"] > time.monotonic(), "Uygulama zaman aşımına uğradı.")
-            if dns_only or account_only or change["https"] or change["web"]:
+            if dns_only or change["https"] or change["web"]:
                 self.commit(p)
                 return {"pending": None, "committed": True}
             p.update(phase="awaiting", until=time.monotonic() + (300 if change["domain"] else 60))
@@ -830,8 +728,6 @@ class Manager:
             self.restore(p["files"])
         if p["changes"].get("https") or p["changes"].get("web"):
             self.https_apply()
-        if p["changes"]["torrent"]:
-            run(["systemctl", "stop", self.q_unit()], timeout=25)
         self.restore(p["files"])
         if p["changes"].get("domain"):
             self.set_domain_state(p["old_domain"])
@@ -842,10 +738,6 @@ class Manager:
             run(["systemctl", "restart", "dnsmasq"], timeout=20)
         if p["changes"]["firewall"]:
             self.firewall_apply()
-        if p["changes"]["torrent"]:
-            run(["systemctl", "daemon-reload"])
-            if p["q_active"]:
-                run(["systemctl", "start", self.q_unit()], timeout=25)
 
     def discard(self, data):
         """DD-182: stop a stuck rollback. Files stay as they are now; the installer re-applies

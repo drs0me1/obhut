@@ -120,6 +120,6 @@ try:
 finally:
     new_code()  # removes the test account and sessions; this code is never shown
     # The attempt limit lives in the backend's memory; a restart frees this address.
-    run("sudo -n systemctl restart master-wg-panel.service")
+    run("sudo -n systemctl restart master-panel.service")
     assert "Konsol hesabı yok" in run(CLI + "durum")
     print("CLEANUP: test account and sessions removed; show a fresh code with: sudo master-konsol sifirla", flush=True)

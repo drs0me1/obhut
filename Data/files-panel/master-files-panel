@@ -2,7 +2,7 @@
 # Konsol'un dosya arka ucu (DD-139, DD-140, DD-141). Kullanıcı alanını tarayıcıdan yönetir:
 # gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
 # oku, indir, yükle ve arşivle. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri
-# root arka ucuna (master-wg-panel) gider. Klasör paylaşım hesapları orada yönetilir.
+# root arka ucuna (master-panel) gider. Klasör paylaşım hesapları orada yönetilir.
 # Yalnız 127.0.0.1'i dinler; Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
 # adına (DD-195) açar. Konsol oturumunu
 # Caddy root arka uca sorar (DD-194); bu servis oturum görmez. Servis root değil, kullanıcı

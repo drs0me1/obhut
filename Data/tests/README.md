@@ -68,6 +68,19 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-176 (DD-202, store phase 2c): `test_torrent_api.py` drives the qBittorrent package
+worker (`ayar.py`: hash format, INI preservation, the read-only view without the hash,
+validation before any service change, stop/write/start order, failed-start recovery,
+stopped-state preservation, the narrow drop-in and its rollback, the CLI) and its API
+module through a fake context and through the real dispatcher (gates, the package-folder
+rule for worker scripts, the private stdin run, the `torrent:hesap` audit line);
+`torrent-ui.cjs` is the page's browser suite; `panel-ui.cjs` serves the page from the
+package and fixtures `/api/uygulama/torrent/durum`; `settings-ui.cjs` has no application
+section any more; `test_backend_hardening.py` points the profile-reader checks at
+`ayar.read_conf`; `settings-linux.py` runs the worker's functions against real
+qBittorrent; Bats checks the status view, the private worker run and that the shell
+and the settings page name no application.
+
 v2-173 (DD-199, store phase 1b): `test_publications.py` renders the qBittorrent
 manifest and copies `yayin.py` into the fixture `MODULES_DIR`, so rows, sites and
 checks come from the package; it also covers a failing, unparsable and missing
@@ -600,16 +613,15 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
 ```
 
 The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`,
-`giris-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
+`torrent-ui`, `giris-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
 health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
 bar that replaced the jobs page (DD-183).
 
 `PLAYWRIGHT_MODULE`, `PLAYWRIGHT_CHROMIUM` and `KONSOL_URL` may override the
 module, browser executable and preview URL. The test intercepts APIs with
 fixtures; it never modifies a server. It covers tabs, review/discard, custom
-rules, DNS, credentials/folder, confirmation/rollback, address explanations,
-account-only single Save (validation, duplicate blocking, failure/retry, reload,
-blank-password preservation, unrelated-draft retention and revision refresh),
+rules, DNS, confirmation/rollback, address explanations (the qBittorrent
+account/folder form is `torrent-ui.cjs` since DD-202),
 domain review/new-address links/old-host confirmation refusal, four widths and dark
 mode. Screenshots go to a fresh temporary directory.
 
@@ -624,8 +636,9 @@ PYTHONDONTWRITEBYTECODE=1 unshare --net --fork python3 Data/tests/settings-domai
 
 The first refuses the host network namespace, uses scratch profiles and
 dummy interfaces, and substitutes only service control; firewall, DNS and
-qBittorrent are real. Account-only save verifies real new/old login results,
-restart persistence, failed-commit recovery and stopped-state preservation.
+qBittorrent are real. The package worker's account and folder functions (DD-202)
+verify real new/old login results, restart persistence, failed-restart recovery,
+the save path with its drop-in, and stopped-state preservation.
 A local upstream fixture verifies forwarding without
 internet access and proves private names are not forwarded. The second uses
 real transient systemd work/timer units with a scratch pending record and no

@@ -24,6 +24,20 @@ import master_settings as settings
 import master_https as tls
 
 
+def load_ayar():
+    """DD-202: the qBittorrent package's settings worker (its password hash), straight from the repository."""
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("torrent_ayar", str(DATA / "magaza/torrent/ayar.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+ayar = load_ayar()
+
+
 def cmd(*args):
     return subprocess.run(args, check=True, capture_output=True, timeout=20)
 
@@ -62,7 +76,7 @@ def main():
         text = (DATA / "magaza/torrent/qBittorrent.conf").read_text()
         for key, value in dict(e, DOWNLOADS_PATH=str(root / "downloads")).items():
             text = text.replace("__" + key + "__", value)
-        text += "WebUI\\Username=fixture\nWebUI\\Password_PBKDF2=" + settings.password_hash(password) + "\n"
+        text += "WebUI\\Username=fixture\nWebUI\\Password_PBKDF2=" + ayar.password_hash(password) + "\n"
         settings.atomic(root / "profile/qBittorrent/qBittorrent.conf", text, 0o640, (1000,1000))
         cert, key = root / "cert.pem", root / "key.pem"
         cmd("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",

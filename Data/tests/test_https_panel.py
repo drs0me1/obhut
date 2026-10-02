@@ -190,7 +190,6 @@ class HttpsPanelTests(unittest.TestCase):
                 patch.object(self.p, "firewall_view", return_value={}), \
                 patch.object(self.p, "web_view", return_value={}), \
                 patch.object(self.p, "dns_view", return_value={}), \
-                patch.object(self.p, "torrent_view", return_value={}), \
                 patch.object(self.p, "all_firewall_rules", return_value={}), \
                 patch.object(self.p, "listeners", return_value=[]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]):

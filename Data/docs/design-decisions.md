@@ -13,6 +13,114 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-202: The qBittorrent page and its settings in the package, phase 2c (v2-176)
+
+- **Scope (user, 2026-10-02: "Öneri ile devam" on the phase 2c recommendation):** the last
+  application piece leaves the base. The qBittorrent page (service bar, first-login card,
+  account and download-folder form) is the package's `sayfa.js`/`sayfa.css`, registered
+  through `window.Konsol.sayfa` like WireGuard's; its reads and writes go to the package's
+  `api.py` behind `/api/uygulama/torrent/*`; the base settings transaction
+  (`master_settings.py`, `ayarlar.js`) has no `torrent` family, no application tab and no
+  application draft. The shell, the settings page, `index.html` and the root backend contain
+  no qBittorrent code.
+- **Option chosen (A, direct apply through a package worker)** over keeping the
+  account/folder change inside the base's reviewed transaction. That transaction exists for
+  changes that can lock the operator out (firewall, DNS, domain) and so needs the
+  confirmation window; a wrong qBittorrent account or folder locks nobody out of Konsol,
+  and the account-only path already committed directly (**DD-165**). The folder change
+  therefore loses the 60 s confirmation it had; in exchange the base knows nothing about
+  the application. A generic "package settings" family inside the base transaction (option
+  B) would have kept application knowledge in the base and was not taken.
+- **Worker.** `magaza/torrent/ayar.py` (`--state STATE hesap|dizin|durum`, JSON on stdin,
+  JSON on stdout, exit 1 with `{"error"}`): validation (username `[A-Za-z0-9._@-]{1,64}`,
+  password 8–256 printable characters; the folder through the base's
+  `Manager.safe_dir(writable=True)`, so the downloads/library policy and the write probe as
+  the service user stay the base's), then stop → snapshot → optional drop-in +
+  `daemon-reload` → INI patch of the touched keys only (0640, downloads uid) → start →
+  `is-active`; any failure restores both files, reloads systemd and starts the service
+  again. The drop-in is `UNIT_DIR/qbittorrent-nox@.service.d/90-konsol.conf` with one
+  `ReadWritePaths` line. The worker takes the base settings lock (`Manager.locked()`), so it
+  never interleaves with a base transaction. `durum` is the page's read-only view: paths,
+  inside-downloads flags, interface, peer port and account name; never the hash.
+- **Backend.** `PackageContext.worker(argv, data)` runs a script that must sit under
+  `MODULES_DIR/<id>/` (real path; a symlink out of the folder is refused with 400) through
+  the same `systemd-run --wait --pipe --collect` path as the base settings/share workers
+  (`run_worker`), so a password reaches stdin only, never argv, the environment, the journal
+  or the reply; `PackageContext.state_path()` hands the state file to the worker, and the
+  module passes the engine's folder as `--lib` so the standalone process finds the base's
+  `master_settings.py` (a hand run finds `master-modul` on `PATH`; found live, the first run
+  answered 502 because the worker could not import the base). `api.py`
+  checks shapes before starting the worker (400), audits `torrent:hesap` with `kullanıcı
+  adı`/`parola` and `torrent:dizin` with the path, and returns the worker's error as the
+  request's error. `torrent_view`, `TORRENT_KEYS` and `read_torrent_conf` are gone from
+  `master-panel`; `GET /api/konsol/ayarlar` carries no `torrent` key and `manage` no
+  `username`/`save`.
+- **Settings transaction.** Families are firewall, dns, domain, https and web.
+  `ini_values`, `ini_patch`, `password_hash`, `q_unit`, `torrent_apply` and the account-only
+  shortcut left `master_settings.py`; the package's publication check `yayin.py`
+  (**DD-199**) carries its own `ini_values`. A mixed DNS request needs confirmation only
+  together with firewall or domain.
+- **Shell.** `PAGE_API` gained `credRow`, `copyButton`, `copyText`, `module(id)`, `modPill`,
+  `modAct(id, action)` and `reloadModules()`, so a package page can show an account card and
+  drive its own service through Konsol's module API; `loadModules` calls the current page's
+  `modules()` hook. The page keeps the DD-151/DD-195 behaviour: the temporary password is
+  read only on request, shown for 30 s, hidden on tab change or navigation; the Web UI link
+  follows the Konsol address in use.
+- **Remaining base knowledge, left for a later step on purpose:** `master_shares.py` still
+  reads the qBittorrent profile for the incomplete-folder guard of folder shares, the Files
+  page still names qBittorrent next to the downloads temp folder, and
+  `TORRENT_PROFILE_DIR`/`TORRENT_UI_PORT`/`TORRENT_TEMP_DIR` are still base defaults.
+  Moving them needs a package declaration for "folders a package writes to".
+- **Hooks.** The package's `paket_kur` places the page (`paket_sayfa_koy`) after the service
+  and its name are verified and before the registry line, `paket_uygula` places it on every
+  re-run, and the rollback removes it; found live on nrm, where the first v2-176 run left
+  `CONSOLE_WEB_DIR/uygulama/torrent` absent because only WireGuard's hooks called the helper.
+  The engine's `kaldir` removes the folder for every package (DD-200).
+- **Fresh install only**, like the rest of the store model; an in-place host gets the new
+  package files on the next installer run (`master-modul uygula`).
+
+### DD-201: A neutral backend, package-owned settings and self-checking packages, phase 2b (v2-175)
+
+- **Scope (user, 2026-10-02: "faz 2b ye başla"):** the second half of phase 2 of the store
+  model (DD-196). After it the base names no application in its code, state or defaults:
+  the root backend and its socket are renamed, WireGuard's settings live in its package,
+  stage 7 asks installed packages to verify themselves, and the launcher and the peer tool
+  know other packages only through their manifests. The qBittorrent page and its Settings
+  form are the one remaining application piece in the shell (phase 2c, with the settings
+  transaction they use).
+- **Rename.** `master-wg-panel` → `master-panel` (file, unit, journal unit, `HEALTH_UNITS`,
+  `server_version`), `WG_PANEL_SOCKET` → `PANEL_SOCKET` = `/run/master-panel/api.sock`,
+  `WG_PANEL_RUNTIME` → `PANEL_RUNTIME`, `ensure_wg_panel` → `ensure_panel`. A fresh-install
+  change like the rest of the store model; historical entries and archived documents keep
+  the old names.
+- **Package-owned settings.** `Data/magaza/wireguard/wireguard.env` holds every `WG_*`
+  default (address bases, MTU, client DNS/keepalive/AllowedIPs defaults, config and
+  profile directories, the network registry path and slot limit, the modules-load file,
+  the suggested first port). The installer copies it into the rendered package folder like
+  any other package file; `master-wg`, the hooks (`kanca`, sourced wherever
+  `MODULES_DIR` is known: engine, firewall, installer) and the Konsol API module
+  (`ctx.read_env`) read it there. `defaults.env` and `state.env` carry no `WG_*` key any
+  more; the VPN endpoint is the detected `WAN_IPV4` (no `WG_ENDPOINT_HOST`), and the
+  destination block lists the firewall applies to every `vpn` declaration are the base's
+  own vocabulary, `VPN_BLOCK_DEST4/6`. The Mac launcher reads the peer-prompt defaults
+  from the package file. `master_settings.py` no longer hashes the network registry into
+  its revision: a package's own state changes go through its API.
+- **Self-checking packages.** Stage 7 runs, for every registered package, the hook
+  `paket_denetle` (sourced in a subshell with the installer's variables; a failure prints
+  its reason and stops the install under the package's name) and, for every absent
+  package, checks that none of its declared tools or drop-ins remain; the re-run prune
+  removes such leftovers from the manifests instead of naming WireGuard. The summary takes
+  each installed package's note from `paket_not` and its counts from `paket_ozet`, which
+  now computes them itself. WireGuard's `paket_denetle` carries the former stage-7 block:
+  `master-wg version`, the modules-load file, each registry network's listen port and
+  address, and that the file backend does not answer on a VPN address.
+- **Reserved ports.** `master-wg net-add` reserves the base ports (SSH, Tailscale, DNS,
+  HTTP) and every `PAKET_PORTLAR` key of every package manifest in `MODULES_DIR`,
+  installed or not, instead of naming qBittorrent, Files and WebDAV.
+- **Still in the shell (phase 2c):** the qBittorrent page (`ROUTES.torrent`,
+  `renderTorrentStatus`, the account card) and the Settings form (`torrent` key of the
+  settings transaction in `master_settings.py`, `ayarlar.js`).
+
 ### DD-200: Konsol pages and application API from packages, phase 2a (v2-174)
 
 - **Scope (user, 2026-10-01: "faz 2 ye başla"):** the first half of phase 2 of the store

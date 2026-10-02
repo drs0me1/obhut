@@ -4,6 +4,65 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-02 — qBittorrent page and settings in its package, phase 2c, v2-176 (DD-202,
+uncommitted on top of 3b6f2ce together with v2-175):**
+- `magaza/torrent/ayar.py` (worker: `hesap|dizin|durum`, JSON stdin/stdout, stop → snapshot →
+  drop-in `90-konsol.conf` → INI patch → start; failure restores + restarts; takes the base
+  settings lock, uses `Manager.safe_dir(writable=True)`), `api.py` (`/api/uygulama/torrent/*`,
+  shape checks → `ctx.worker`, audit `torrent:hesap|dizin`), `sayfa.js` + `sayfa.css` (service
+  bar via `k.modPill/modAct`, first-login card, account form, folder picker), konsol.json
+  `gunluk` templates, manifest `PAKET_SAYFA`/`PAKET_API`.
+- Base: `master-panel` `PackageContext.worker/state_path`, generic `run_worker`; no
+  `torrent_view`/`TORRENT_KEYS`/`read_torrent_conf`; `master_settings.py` families firewall/dns/
+  domain/https/web only (no `ini_*`, `password_hash`, `q_unit`, `torrent_apply`); `konsol.js`
+  without `ROUTES.torrent`/account machinery, `PAGE_API` + `credRow/copyButton/copyText/module/
+  modPill/modAct/reloadModules`; `ayarlar.js` without the qb tab/`qdraft`; `index.html`/css
+  without the torrent section. `yayin.py` has its own `ini_values` (was the base's).
+- Tests: new `test_torrent_api.py`, `torrent-ui.cjs`; trimmed `test_settings.py`; retargeted
+  `test_backend_hardening.py`, `test_https_panel.py`, `test_firewall_view.py`, `settings-linux.py`,
+  Bats (status view via `/api/uygulama/torrent/durum`, private worker run, shell/settings name no
+  application; seed keys under their sections), `settings-ui.cjs`, `panel-ui.cjs` (page files from
+  the package also on the public-address page; null-tolerant deep-link wait).
+- Live on nrm (first v2-176 run): the page folder was missing — the torrent kanca never called
+  `paket_sayfa_koy`; fixed in `paket_kur` (after verification, before the registry line),
+  `paket_uygula` and `torrent_rollback`, with Bats coverage in the engine lifecycle test.
+- Second live finding: the standalone worker could not import `master_settings` (502);
+  `api.py` now passes the engine's folder as `--lib`, with a real-subprocess unit test.
+- Verified: Mac 408 Python / 169 Bats / all fixture browser suites; nrm v2-176 deployed
+  (`scratchpad/live-dd202.py` passed: page placement and serving, status view, refusals,
+  username round trip with the operator's hash untouched, folder round trip with drop-in);
+  Linux suites on nrm all green (408 Python, 169 Bats, firewall, settings, settings-domain,
+  torrent-defaults, publications-proxy, install-hardening).
+- Next: commit on request (2b + 2c together); later step: `master_shares.py` incomplete-folder
+  guard, Files page text, `TORRENT_*` base defaults, root `__pycache__/yayin.*.pyc` written into
+  the rendered package folder by `master_shares.py publish` (pre-existing since v2-173).
+- Left for later (documented in DD-202): `master_shares.py` incomplete-folder guard, Files page
+  text naming qBittorrent, `TORRENT_*` base defaults.
+
+## Previous Task
+
+**2026-10-02 — Neutral backend, package-owned settings, self-checking packages, phase 2b,
+v2-175 (DD-201, verified, uncommitted on top of 3b6f2ce):**
+- Rename: `master-wg-panel` → `master-panel`, `WG_PANEL_SOCKET` → `PANEL_SOCKET`
+  (`/run/master-panel/api.sock`), `PANEL_RUNTIME`, `ensure_panel` (sed over the active tree;
+  archives/history untouched).
+- `magaza/wireguard/wireguard.env` holds every `WG_*` default/path; master-wg, kanca (sourced
+  wherever MODULES_DIR is known), api.py (`ctx.read_env`) and `wireguard.command` read it;
+  defaults.env/state.env have no `WG_*`; endpoint = `WAN_IPV4`; `VPN_BLOCK_DEST4/6`.
+- install.sh: generic `paket_denetle_calistir`/`paket_iz_yok`/`summary_notes`, manifest-driven
+  prune; kanca: `paket_denetle`, `paket_not`, self-computing `paket_ozet`; master-wg
+  `declared_ports` from manifests; exporter intro line generic.
+- Verified: Mac 403 Python / 169 Bats; nrm Linux suites all green; v2-175 deployed to nrm
+  (in-place host: the old `master-wg-panel.service` kept running beside the new unit until
+  removed by hand — documented as the manual step); `scratchpad/live-dd201.py` passed (renamed
+  socket, no WG_* in state, manifest-named port refusals, WAN_IPV4 endpoint, package defaults);
+  a second installer run with wg0 + one peer passed `paket_denetle` and printed the package's
+  counts and note; WireGuard removed with `--veri` afterwards (nrm clean, account untouched).
+- Next: commit on request; then phase 2c — qBittorrent page (`ROUTES.torrent`, account card)
+  and its Settings form (`torrent` key of the settings transaction) into the package.
+
+## Previous Task
+
 **2026-10-02 — Konsol pages and application API from packages, phase 2a, v2-174 (DD-200):**
 - Done: `magaza/wireguard/api.py` (package API module behind `/api/uygulama/wireguard/*`,
   sampler, `networks()` for Settings), `magaza/wireguard/sayfa.js` + `sayfa.css` (the
@@ -458,7 +517,7 @@ Older entries (v2-153 and earlier), the stale v2-79 status table and the 2026-08
   tailnet listener too, per-share 100/h budget with known-address exemption,
   decoy scrypt; disk reserve min(5 GiB,10%) for PUT/COPY and Files uploads;
   Files unit sandbox; wg-quick@ waits for `master-firewall --check`, refresh
-  timer reopens failed networks. WG_PANEL_PORT removed; WG_PANEL_SOCKET,
+  timer reopens failed networks. WG_PANEL_PORT removed; PANEL_SOCKET,
   CADDY_ADMIN_SOCKET in state.env.
 - v2-155: WebDAV login memory (10 min, 256), tailnet slots 64, Connection: close
   on closing replies, TCP_NODELAY in WebDAV and Files handlers (found live:

@@ -2,7 +2,7 @@
 """Konsol hesabı ve oturumları (DD-194). Yalnız root; hiçbir şey sunucu dışına çıkmaz.
 
 Parola yalnız scrypt özeti, oturum belirteci yalnız SHA-256 özeti olarak saklanır. Kök
-backend (master-wg-panel) bu modülü içe aktarır ve Caddy'nin her panel isteği için sorduğu
+backend (master-panel) bu modülü içe aktarır ve Caddy'nin her panel isteği için sorduğu
 oturum denetimini yapar. `master-konsol` (root CLI) aynı dosyaları aynı kilitle değiştirir:
 tek kullanımlık ilk giriş kodu, sıfırlama ve kısa ömürlü otomasyon oturumu.
 """

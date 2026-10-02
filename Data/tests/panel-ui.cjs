@@ -8,8 +8,7 @@ const csp = fs.readFileSync(path.join(__dirname,"../templates/Caddyfile"),"utf8"
 const config = {firewall:[],dns:{disabled:[],records:[],forward:false,servers:[]}};
 const settings = {read_at:Date.now()/1000,domain:"ayc",tailscale:"100.64.0.2",ts_if:"tailscale0",wan:{iface:"eth0",ipv4:"192.0.2.1"},
   firewall:{ok:true,ports:[],listeners:[],rules:{errors:[],rows:[]}}, web:{entries:[],raw:[]}, dns:{listen:["lo","tailscale0"]},
-  torrent:{installed:true,profile:"/var/lib/qbittorrent"},
-  manage:{revision:"r1",config,pending:null,username:"admin",save:"/srv/downloads/",names:[]}};
+  manage:{revision:"r1",config,pending:null,names:[]}};
 // DD-200: App Store texts, the page declaration and the page files come from each package folder.
 const magaza = path.join(__dirname,"../magaza");
 const meta = id => JSON.parse(fs.readFileSync(path.join(magaza,id,"konsol.json"),"utf8").replace(/__[A-Z_]+__/g,"x"));
@@ -55,9 +54,13 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         }
         m.busy = false;
         m.installed = action !== "kaldir"; m.state = action === "kaldir" ? "yok" : action === "durdur" ? "durduruldu" : "calisiyor";
+        // DD-202: the page files are offered only while installed; the shell loads them from /uygulama/<id>/.
+        m.sayfa = m.installed ? ["sayfa.js","sayfa.css"] : undefined;
         m.live = m.state === "calisiyor" ? "running" : "inactive";
         m.progress = {action,step:"bitti"}; result = {ok:true};
-      } else if (p.endsWith("/torrent/gunluk")) return route.fulfill({status:logStatus,contentType:"text/plain",body:"<img src=x onerror=alert(1)>\nfixture service log"});
+      } else if (p === "/api/uygulama/torrent/durum") result = {installed:true,running:modules[1].state === "calisiyor",unit:"qbittorrent-nox@master-downloads.service",
+        profile:"/var/lib/qbittorrent",downloads:"/srv/downloads",save:"/srv/downloads/",save_inside:true,temp:"",temp_on:false,temp_inside:false,ui:"127.0.0.1:61006",peer_port:0,username:"admin"};
+      else if (p.endsWith("/torrent/gunluk")) return route.fulfill({status:logStatus,contentType:"text/plain",body:"<img src=x onerror=alert(1)>\nfixture service log"});
       else if (p.endsWith("/torrent/hesap")) {
         result = {user:"admin",temp:temporaryLogin};
         if (url.searchParams.get("parola") === "1") { passwordReads++; result.pass = temporaryPassword; }
@@ -346,7 +349,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     // A direct bookmark must populate the new-network form after its async first fetch.
     modules[0].installed = true; modules[0].state = "calisiyor"; modules[0].sayfa = ["sayfa.js","sayfa.css"];
     await page.goto(base + "/?deep-link-test=1#/wireguard/ekle");
-    await page.waitForFunction(() => document.querySelector("#na-port").value !== "");
+    // The field exists only once the package script has mounted; wait for it, then for its value.
+    await page.waitForFunction(() => (document.querySelector("#na-port") || {value:""}).value !== "");
     await page.locator("#na-label").fill("Keep my draft");
     await refreshResources();
     assert.equal(await page.locator("#na-label").inputValue(),"Keep my draft");
@@ -388,13 +392,14 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.deepEqual(errors,[]);
     // Konsol on its public HTTPS address (DD-195): qBittorrent opens by its own public name,
     // or the page points to Settings → Caddy while that publication is off.
-    Object.assign(modules[1], {installed:true,state:"calisiyor",live:"running",busy:false,progress:null,urls:{tailscale:"http://torrent.ayc",internet:"https://qbit.example.net"}});
+    Object.assign(modules[1], {installed:true,state:"calisiyor",live:"running",busy:false,progress:null,sayfa:["sayfa.js","sayfa.css"],urls:{tailscale:"http://torrent.ayc",internet:"https://qbit.example.net"}});
     const secure = await context.newPage();
     secure.on("pageerror", e => errors.push(e.message));
     secure.on("console", msg => { if (/violates.*Content Security Policy|Refused to/.test(msg.text())) errors.push(msg.text()); });
     await secure.route("**/*", async route => {
       const url = new URL(route.request().url());
       if (url.pathname.startsWith("/api/")) return apiHandler(route);
+      if (url.pathname.startsWith("/uygulama/")) return packageFile(route);
       const response = await route.fetch({url:base + url.pathname + url.search});
       await route.fulfill({response,headers:{...response.headers(),"content-security-policy":csp}});
     });

@@ -10,10 +10,10 @@ admin panel: sidebar with resource meters, App Store, installed app pages and
 tabbed Settings. `panel.css` styles the sidebar and resource meters. Host CPU
 sampling runs independently of WireGuard; the resources API
 (`/api/konsol/kaynaklar`) does not enumerate networks or ports or invoke external
-commands. One Settings controller renders either system settings or the
-qBittorrent application form. **DD-165:** account-only Save uses the same worker
-but commits directly; other drafts remain separate and unapplied. Folder/network
-edits retain their confirmation flow.
+commands. Settings renders the base's tabs only; an application's settings belong to its
+package page (`magaza/torrent/sayfa.js`, **DD-202**) and go to its API, which runs
+the package worker directly (no draft, no confirmation). Folder/network edits of
+the base retain their confirmation flow.
 
 **Built-ins (DD-159/166/170):** Files, folder WebDAV and archive tools are built in.
 Creation produces ZIP; extraction automatically detects multipart RAR and nested
@@ -79,9 +79,10 @@ Caddy publication gate (**DD-179/190/191/192**).
 Panel choices have a separate owner: `master_settings.py` commits firewall,
 DNS and domain overrides to `/etc/master-stack/ayarlar.json`, which the installer
 and service renderers preserve on re-runs. A confirmed domain takes precedence
-over the installer input. qBittorrent account/path changes are written to its own profile.
-The independent settings guard handles unconfirmed transactions; DNS-only and
-account-only applies commit directly. WebDAV credentials go through
+over the installer input. qBittorrent account/path changes are the package worker's
+(`magaza/torrent/ayar.py`, run by the backend as a transient unit) and go straight to
+its own profile. The independent settings guard handles unconfirmed transactions;
+DNS-only applies commit directly. WebDAV credentials go through
 `master_shares.py` into a separate hash-only registry (§4).
 
 ---
@@ -93,12 +94,12 @@ Two files, two lifetimes, two owners.
 | | `config.env` | `state.env` |
 |---|---|---|
 | **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
-| **Contains** | Effective local domain and timezone | Detected facts plus runtime constants: WAN interface/addresses, `TAILSCALE_IPV4/6`, install version, paths/ports; `WG_ENDPOINT_HOST` equals the current `WAN_IPV4` (**DD-138**) |
+| **Contains** | Effective local domain and timezone | Detected facts plus runtime constants: WAN interface/addresses, `TAILSCALE_IPV4/6`, install version, paths/ports, the firewall's `VPN_BLOCK_DEST4/6`; no package setting (WireGuard's live in its package, **DD-201**) |
 | **Source** | `config/defaults.env` + the installer input file `kurulum/kurulum.env` (**DD-119**) | installer / `refresh-tailnet-config` at run time |
 | **Written by** | The installer, once per run | The installer, `refresh-tailnet-config` when an address changes, and `master_settings.py` (only `LOCAL_DOMAIN`) on a confirmed domain change |
 | **Lifetime** | Persistent; each run resolves defaults/input and any confirmed panel domain, then rewrites it | Regenerated from current constants and detected facts |
 | **Hand-editable** | No — initial domain comes from installer input; later domain changes use Settings | No — it will be overwritten |
-| **Read by** | The installer, template rendering | The installer, `master-firewall`, Caddy (`EnvironmentFile=`), `refresh-tailnet-config`, `wait-tailnet-addr`, `master-wg`, `master-modul` and the Konsol backends/workers (`master-wg-panel`, `master_settings.py`, `master_shares.py`) |
+| **Read by** | The installer, template rendering | The installer, `master-firewall`, Caddy (`EnvironmentFile=`), `refresh-tailnet-config`, `wait-tailnet-addr`, `master-wg`, `master-modul` and the Konsol backends/workers (`master-panel`, `master_settings.py`, `master_shares.py`) |
 | **Contains secrets** | **No** | **No** |
 
 `config.env` is not a port editor. Constants live in `config/defaults.env`;
@@ -131,7 +132,7 @@ reality.
     ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
     ├── systemd/                       units, timers and drop-ins
     ├── magaza/<id>/                   store packages: WebDAV (paylasim), qBittorrent (torrent), WireGuard (wireguard) files
-    ├── panel/                         Konsol root backend (master-wg-panel; loads package API modules), settings and share workers, WebDAV service
+    ├── panel/                         Konsol root backend (master-panel; loads package API modules), settings and share workers, WebDAV service
     ├── files-panel/                   unprivileged file/archive backend (Python), API only
     ├── console/                       Konsol pages, styles and scripts (one origin, no external loads)
     ├── app/<V2_VERSION>.command       the current portable install app (older ones in Git)
@@ -186,7 +187,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `config/defaults.env` | Declare every constant exactly once: ports, paths, chain names, interface name, the WebDAV registry path | How any of them is used |
 | `templates/Caddyfile` | The base HTTP sites and their upstreams (loopback, root backend socket), the admin API socket (**DD-180**), the timeouts of the optional WAN share listeners (**DD-179/190**), scoped proxy logging (**DD-193**), plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
 | `magaza/wireguard/master-wg` | Installed on the host only with the WireGuard package (**DD-196**). WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
-| `panel/master-wg-panel` | Root `/api/konsol/*` and, for installed packages, `/api/uygulama/<id>/*` handed to the package's API module (**DD-200**) on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
+| `panel/master-panel` | Root `/api/konsol/*` and, for installed packages, `/api/uygulama/<id>/*` handed to the package's API module (**DD-200**) on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
 | `panel/master_settings.py` | Validate/apply settings, snapshot/rollback/confirm with independent guard, render committed overrides | Arbitrary shell commands, client-visible password hashes |
 | `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry with independent Tailscale/WAN policies, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
 | `panel/master_auth.py`, `scripts/master-konsol` | Konsol account, sessions, one-time setup code, the per-address attempt limit and the shared public budget/bounded password checks (**DD-195**); the root CLI for reset/state/automation sessions (**DD-194**) | Passwords or tokens in clear text, multi-user roles, anything outside `KONSOL_AUTH_DIR` |
@@ -194,7 +195,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `panel/master_https.py`, `panel/master_publications.py` | Public-name validation, DNS check and pinned certificate probe; the fixed Panel/qBittorrent/WebDAV publication table, its private 403 stubs (address line taken from the module template) and the public qBittorrent and Konsol sites (**DD-190/191/193/195**) | ACME keys or renewal (Caddy owns them), DNS writes, arbitrary upstreams |
 | `panel/master_permissions.py` | Installer-only descriptor-pinned creation and selective owner/mode repair of the user data tree (**DD-187**) | Symlinks, special or hard-linked files, the private `.arsiv`/`.pay` trees |
 | `scripts/master-modul` | Package lifecycle from manifests and hooks (apt, tools, drop-ins, names, Konsol page files), registry/progress/locks; installer-only `yerlesik` activates/checks built-in Files/WebDAV and their names, retaining accounts (**DD-159**, **DD-197**, **DD-200**) | Any application name; templates and inputs; user files; public removal of built-ins |
-| `magaza/<id>/` | One package: `paket.env` manifest and `kanca` hooks (**DD-197**), its Konsol files `konsol.json` (App Store texts, page declaration, journal words), `sayfa.js`/`sayfa.css` (the page, served from `CONSOLE_WEB_DIR/uygulama/<id>/` while installed) and `api.py` (the backend module behind `/api/uygulama/<id>/*`, **DD-200**), plus its files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
+| `magaza/<id>/` | One package: `paket.env` manifest and `kanca` hooks (**DD-197**), its Konsol files `konsol.json` (App Store texts, page declaration, journal words), `sayfa.js`/`sayfa.css` (the page, served from `CONSOLE_WEB_DIR/uygulama/<id>/` while installed) and `api.py` (the backend module behind `/api/uygulama/<id>/*`, **DD-200**; qBittorrent's runs its worker `ayar.py` through `ctx.worker`, **DD-202**), plus its files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `master-stack.conf`, `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
 | `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations, `.cop` trash, text and archive jobs | Anything outside `SERVER_ROOT`; WebDAV credentials; WireGuard administration |
 | `files-panel/master_archives.py`, `files-panel/master_rar.py` | Single bounded ZIP creation or ZIP/RAR extraction job; descriptor-safe paths, resource-limited RAR subprocess, private staging, atomic publication and history | Root privileges, shell extraction, backups or resumable jobs |
 | `console/panel.css`, `console/arsiv.js` | Model A shell styling and archive dialogs plus the running-job bar with cancellation (no jobs page; results in Günlük, **DD-183**), using the real file API | OS sessions, fake progress, service credentials |
@@ -229,16 +230,16 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config`, `master_settings.py` (domain) | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.json` | `master_shares.py` | Schema 4: independent folder accounts, scrypt hashes and folder identity; each item's `connections.tailscale` and `connections.wan` owns enabled/permission/expiry; 0600 root, systemd credential (DD-158, DD-192) |
-| `/etc/master-stack/konsol/` (`KONSOL_AUTH_DIR`) | `master-wg-panel`, `master-konsol` (installer creates it 0700) | `hesap.json` (user, scrypt hash), `oturumlar.json` (SHA-256 of tokens, expiry; at most 16), `kurulum-kodu.json` (scrypt hash, 24 h); 0600 root (**DD-194**) |
+| `/etc/master-stack/konsol/` (`KONSOL_AUTH_DIR`) | `master-panel`, `master-konsol` (installer creates it 0700) | `hesap.json` (user, scrypt hash), `oturumlar.json` (SHA-256 of tokens, expiry; at most 16), `kurulum-kodu.json` (scrypt hash, 24 h); 0600 root (**DD-194**) |
 | `/etc/master-stack/ayarlar.json`, `ayarlar-bekleyen.json` | `master_settings.py` | Committed firewall/DNS/domain choices and pending transaction recovery; the independent guard rolls unconfirmed work back |
 | `/var/lib/qbittorrent/` | qBittorrent (module) | its profile: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**) |
 | `/etc/systemd/system/qbittorrent-nox@.service.d/master-stack.conf` | `master-modul` (qBittorrent) | the unit drop-in: profile, `UMask`, sandbox (**DD-151**) |
-| `/etc/wireguard/networks` | `master-wg` | Networks wg0…wg9 (`WG_NETWORKS_MAX` is the highest slot index): port, fixed `inet` policy column, addresses, default DNS, label; `0600` |
+| `/etc/wireguard/networks` | `master-wg` | Networks wg0…wg9 (`WG_NETWORKS_MAX` in the package's `wireguard.env` is the highest slot index): port, fixed `inet` policy column, addresses, default DNS, label; `0600` |
 | `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
 | `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` in a `0700` directory |
 | `/etc/modules-load.d/master-stack-wireguard.conf` | `master-modul` (WireGuard) | `wireguard`, `0644`; removed with the module (**DD-150**) |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
-| `/usr/local/sbin/master-wg-panel`, `master_settings.py`, `master_shares.py`, `master_webdav.py`, `master_https.py`, `master_publications.py` | installer | Root API, settings/account/publication workers and unprivileged WebDAV handler; pages are separate |
+| `/usr/local/sbin/master-panel`, `master_settings.py`, `master_shares.py`, `master_webdav.py`, `master_https.py`, `master_publications.py` | installer | Root API, settings/account/publication workers and unprivileged WebDAV handler; pages are separate |
 | `/usr/local/sbin/master-files-panel`, `master_archives.py`, `master_rar.py`; `/usr/local/share/master-stack/konsol/` | installer | file backend and archive workers, and the console pages Caddy serves (**DD-139**, **DD-140**) |
 | `/usr/local/sbin/master-modul`, `/usr/local/share/master-stack/moduller/<id>/` | installer | module helper and rendered module files, `0755` / `0644` (**DD-148**) |
 | `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor\|durduruldu`, `0644` (**DD-148**) |
@@ -255,7 +256,7 @@ error, not a warning.
 | `/etc/dnsmasq.d/local-services.conf` | installer | Base `panel` record/resolver policy, `0644`; other names in separate managed files |
 | `/etc/caddy/Caddyfile` | installer | The `(konsol)` snippet (static/API routes, session check), the tailnet panel site importing it, and imported service sites, `0644`; `moduller/panel-wan.caddy` is the generated public Konsol site (**DD-195**) |
 | `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,wait-tailnet-addr}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,master-wg-panel,master-settings-guard,master-share-network}.service`, `{refresh-tailnet-config,master-settings-guard,master-share-network}.timer` | installer | `0644`; the settings guard enforces rollback deadlines, the share-network timer runs the WebDAV WAN guard every 30 s (**DD-179**) |
+| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,master-panel,master-settings-guard,master-share-network}.service`, `{refresh-tailnet-config,master-settings-guard,master-share-network}.timer` | installer | `0644`; the settings guard enforces rollback deadlines, the share-network timer runs the WebDAV WAN guard every 30 s (**DD-179**) |
 | `/etc/systemd/system/master-paylasim.service`, `master-files-panel.service` | `master-modul yerlesik`, from the installer's renders in `MODULES_DIR/paylasim/` and `MODULES_DIR/dosya/` | built-in WebDAV and file/archive backends, always enabled (**DD-159**) |
 | `/etc/systemd/system/wg-quick@.service.d/master-stack.conf` | installer | a WireGuard network starts only after `master-firewall --check` passes (**DD-180**); `wg-quick@.service` comes from `wireguard-tools`; `master-wg` enables `wg-quick@wgN` |
 | `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
@@ -367,9 +368,9 @@ it. An installer re-run records the new `WAN_IPV4`, drops a site bound to the
 stale address before restarting Caddy, and stage 7 republishes it (**DD-182**).
 `master-firewall` re-applies on boot and on a Tailscale restart and reads
 current WAN facts from `state.env` / the interface.
-`WG_ENDPOINT_HOST` in `state.env` is an operator hint only; WireGuard client
-profiles that baked an old endpoint still need manual client updates
-(**DD-138**). `refresh-tailnet-config` does not track the WAN address.
+WireGuard profiles take `WAN_IPV4` from `state.env` as their endpoint at creation
+time; profiles that baked an old endpoint still need manual client updates
+(**DD-138**, **DD-201**). `refresh-tailnet-config` does not track the WAN address.
 
 ---
 

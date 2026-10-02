@@ -291,7 +291,7 @@ tar -C '$REMOTE_INPUT_DIR.incoming' --no-same-owner -xf -; mv '$REMOTE_INPUT_DIR
 
 printf '\n==> Kurulum başlıyor: %s\n' "$HOST"
 printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n'
-printf '    WireGuard peer eklemek/çıkarmak: kurulumdan sonra repo kökünde wireguard.command.\n\n'
+printf '    Uygulamalar kurulumdan sonra Konsol → App Store'"'"'dan kurulur.\n\n'
 
 set +e
 ssh \

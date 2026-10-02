@@ -1,5 +1,5 @@
-/* Approved v08 interaction model, live implementation (DD-156).
-   Drafts/passwords stay in memory only. No localStorage, no inline HTML. */
+/* Approved v08 interaction model, live implementation (DD-156, DD-202: no application tab;
+   package pages carry their own settings). Drafts stay in memory only. No localStorage, no inline HTML. */
 "use strict";
 window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog }) => {
   let root = document.getElementById("settings-page");
@@ -9,12 +9,12 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   // DD-200: the VPN category is named after the installed package that declares networks.
   const vpnName = () => (live && live.firewall && live.firewall.vpn_name) || "VPN";
   const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", wg: vpnName(), lo: "Sunucu içi" }[s] || s);
-  let live = null, draft = null, qdraft = {}, tab = "system", family = 4, scope = "tail", mode = "ports", wgNetwork = "all";
+  let live = null, draft = null, tab = "system", family = 4, scope = "tail", mode = "ports", wgNetwork = "all";
   let pending = null, busy = false, poll = null, message = "", baseRevision = "";
   let domainInput = "", migration = null;
   const webDrafts = {};
   let webBusy = "";
-  const dirty = () => live?.manage?.config && draft && (!same(draft.firewall, live.manage.config.firewall) || !same(draft.dns, live.manage.config.dns) || Object.keys(qdraft).length);
+  const dirty = () => live?.manage?.config && draft && (!same(draft.firewall, live.manage.config.firewall) || !same(draft.dns, live.manage.config.dns));
   const locked = () => busy || !!pending;
   const httpsApplying = () => pending?.phase === "applying" && (!!webBusy || pending.web || live?.manage?.https?.status === "pending");
   const btn = (text, action, primary = false, available = false) => h("button", { type: "button", class: "btn btn-sm" + (primary ? " btn-primary" : ""), disabled: !available && locked(), onclick: action }, text);
@@ -66,22 +66,20 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       for (const r of old.dns.records) if (!draft.dns.records.some((x) => x.name === r.name)) out.push(`${r.name}: silinecek`);
       if (draft.dns.forward !== old.dns.forward || !same(draft.dns.servers, old.dns.servers)) out.push(`Üst DNS → ${draft.dns.forward ? draft.dns.servers.join(", ") : "kapalı"}`);
     }
-    if (qdraft.save !== undefined) out.push(`Yeni indirmeler → ${qdraft.save}; mevcut dosyalar taşınmaz.`);
     return out;
   }
   function reset() {
-    draft = clone(live.manage.config); qdraft = {}; baseRevision = live.manage.revision; message = ""; draw();
+    draft = clone(live.manage.config); baseRevision = live.manage.revision; message = ""; draw();
   }
   async function submitChanges(close) {
     if (locked() || !dirty()) return;
     const payload = { revision: baseRevision };
     if (!same(draft.firewall, live.manage.config.firewall)) payload.firewall = draft.firewall;
     if (!same(draft.dns, live.manage.config.dns)) payload.dns = draft.dns;
-    if (Object.keys(qdraft).length) payload.torrent = qdraft;
     close(); busy = true; message = "Sunucuda doğrulanıyor ve uygulanıyor…"; draw();
     try {
       const result = await post("/api/konsol/ayarlar/uygula", payload);
-      qdraft = {}; pending = result.pending;
+      pending = result.pending;
       if (result.committed) {
         draft = null; clearTimeout(poll);
         message = "Dnsmasq ayarları uygulandı ve kaydedildi.";
@@ -100,7 +98,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     let dialog;
     dialog = modal("Değişiklikleri incele", h("div", null,
       h("ul", { class: "as-changes" }, ...list.map((t) => h("li", null, t))),
-      note("Uygulama sonrası 60 saniye içinde onay gerekir. Sekme/bağlantı kapanırsa sunucu eski ayarları geri yükler. qBittorrent değişecekse indirmeler kısa süre duraklar.", true),
+      note("Uygulama sonrası 60 saniye içinde onay gerekir. Sekme/bağlantı kapanırsa sunucu eski ayarları geri yükler.", true),
       note("İnternete izin vermek servisin dinlediği adresi değiştirmez. İlk eşleşen kullanıcı kuralı geçerlidir; açık bağlantılar korunur.")),
     (_form, close) => submitChanges(close));
     dialog.querySelector('[type="submit"]').textContent = "Sunucuda uygula";
@@ -119,7 +117,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       close(); busy = true; draw();
       try {
         await post("/api/konsol/ayarlar/birak", { id: pending.id, confirm: "onayla" });
-        pending = null; qdraft = {}; draft = null; message = "Takılan işlem bırakıldı; kaydedilmiş ayarlar için kurulumu yeniden çalıştırın.";
+        pending = null; draft = null; message = "Takılan işlem bırakıldı; kaydedilmiş ayarlar için kurulumu yeniden çalıştırın.";
         toast(message); loadSettings(true);
       } catch (e) { error(e); }
       finally { busy = false; draw(); }
@@ -142,7 +140,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     busy = true; draw();
     try {
       await post("/api/konsol/ayarlar/" + action, { id: pending.id });
-      pending = null; qdraft = {}; draft = null; message = action === "onayla" ? "Ayarlar kalıcı olarak kaydedildi." : "Önceki ayarlar geri yüklendi.";
+      pending = null; draft = null; message = action === "onayla" ? "Ayarlar kalıcı olarak kaydedildi." : "Önceki ayarlar geri yüklendi.";
       toast(message); loadSettings(true);
     } catch (e) { error(e); }
     finally { busy = false; draw(); }
@@ -155,7 +153,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
         const was = pending; pending = s.pending;
         if (s.https && live?.manage) live.manage.https = s.https;
         if (s.publications && live?.manage) live.manage.publications = s.publications;
-        if (was && !pending) { draft = null; qdraft = {}; message = "İşlem tamamlandı; sunucudaki ayarlar yeniden okunuyor."; loadSettings(true); }
+        if (was && !pending) { draft = null; message = "İşlem tamamlandı; sunucudaki ayarlar yeniden okunuyor."; loadSettings(true); }
         draw();
       } catch (_e) { message = pending && !httpsApplying() ? "Sunucuya erişilemiyor. Onay verilmezse sunucu değişiklikleri geri alır." : "Sunucuya erişilemiyor. İşlemin sonucunu ayarları yenileyerek kontrol edin."; draw(); }
       if (pending) startPoll();
@@ -224,10 +222,10 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       ["dnsmasq", "Yerel alan adlarını DNS ile çözer."],
       ["Paylaşım WebDAV", "Dosyalar uygulamasındaki klasör paylaşımları."],
       ["Konsol · dosya", "Panelin dosya ve ZIP işlemleri arka ucu."],
-      ["qBittorrent", "Torrent uygulamasının web arayüzü."],
     ];
+    // DD-202: packages' ports come from their manifests; the base knows no application text.
     return known.find(([prefix]) => row.name.startsWith(prefix))?.[1]
-      || (row.rule ? "Kullanıcının tanımladığı port izni." : "Servis adı eşleştirilemedi; dinlenen adresi kontrol edin.");
+      || (row.rule ? "Kullanıcının tanımladığı port izni." : row.module ? "Kurulu bir uygulamanın bildirdiği port." : "Servis adı eşleştirilemedi; dinlenen adresi kontrol edin.");
   }
   function ruleNote(row) {
     if (row.spec.startsWith("Politika: ")) return "Bu zincirde eşleşmeyen paketler için varsayılan karar.";
@@ -343,7 +341,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       const domain = input.value;
       if (domain === live.domain) { toast("Alan adı zaten bu değerde."); return; }
       const dialog = modal("Yerel alan adını değiştir", h("div", { class: "as-stack" },
-        note(`${live.domain} → ${domain}. Panel, torrent, paylaşım ve özel DNS adlarının son eki birlikte değişir.`),
+        note(`${live.domain} → ${domain}. Panel, paylaşım, uygulama ve özel DNS adlarının son eki birlikte değişir.`),
         note(`Önce Tailscale Admin → DNS'te ${live.tailscale} sunucusuna, “Restrict to domain” ile ${domain} alanını ekleyin. Onay bitene kadar eski ${live.domain} eşleştirmesini de koruyun.`, true),
         note("Uygulamadan sonra aşağıdaki yeni adresi açıp 5 dakika içinde onaylayın. Aksi halde sunucu eski ada döner. Dosya yöneticisi açıksa kısa süre yeniden başlar; devam eden dosya aktarımlarını önce bitirin."),
         h("code", null, domainUrl(domain))), (_form, close) => submitDomain(domain, close));
@@ -463,7 +461,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       note(`DNS A kaydı: ${live.wan?.ipv4 || "WAN IPv4 okunamadı"} · proxy kapalı (DNS only) · HTTPS TCP ${live.manage.https?.https_port || 443}.`),
       note("WebDAV’ın ana ağ seçimi klasör izinlerini genişletmez. Kapalı ağdaki yeni istekler reddedilir; devam eden aktarımlar tamamlanabilir. Sertifika hazır olması internetten erişimin test edildiği anlamına gelmez."),
       rows.some(row => row.mode === "http" && row.wan_active) ? note("Eski WebDAV WAN erişimi HTTP kullanıyor. HTTPS alan adı kaydedin; kapatınca HTTP’ye otomatik dönülmez.", true)
-        : rows.some(row => row.mode === "http") ? note("WebDAV için HTTPS alan adı kaydedilmedi; internet paylaşımı açılırsa eski HTTP kullanılır. qBittorrent veya Panel internet yayını açıkken WebDAV internet erişimi HTTPS alan adı ister.") : null);
+        : rows.some(row => row.mode === "http") ? note("WebDAV için HTTPS alan adı kaydedilmedi; internet paylaşımı açılırsa eski HTTP kullanılır. Panelin veya bir uygulamanın internet yayını açıkken WebDAV internet erişimi HTTPS alan adı ister.") : null);
     box.id = "as-publications"; box.setAttribute("aria-busy", !!webBusy || !!pending?.web);
     return box;
   }
@@ -501,68 +499,6 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       field("DNS IP adresleri", upstream, "En çok dört genel DNS adresi; virgülle ayırın. Sunucuların hangi sırada kullanılacağı garanti edilmez.")),
     note(`.${live.domain} içindeki adlar, kapalı veya bulunamayanlar dahil, dış DNS'e gönderilmez. İnternete DNS erişimi açılmaz. Üst DNS bağlantısı DoH/DoT ile şifrelenmez; Tailscale Admin DNS ayarları değişmez.`)));
   }
-  function chooseFolder() {
-    const box = h("div", { class: "as-stack" });
-    const dialog = modal("İndirme klasörü seç", box);
-    async function show(path) {
-      box.replaceChildren(note("Klasörler okunuyor…"));
-      try {
-        const r = await api("/api/konsol/ayarlar/klasorler" + (path ? "?path=" + encodeURIComponent(path) : ""));
-        box.replaceChildren(btn("Başlangıç dizinleri", () => show(), false, true), ...(path ? [note(path)] : []),
-          ...r.items.map((x) => h("div", { class: "as-folder" }, h("div", null, h("strong", null, x.path), h("small", null, `${(x.free / 1073741824).toFixed(1)} GB boş`)),
-            btn("İçine gir", () => show(x.path), false, true), btn("Seç", () => { qdraft.save = x.path; dialog.close(); dialog.remove(); draw(); }, false, true))));
-      } catch (e) { box.replaceChildren(note(e.message, true)); }
-    }
-    show();
-  }
-  async function saveAccount(account) {
-    if (locked()) return;
-    busy = true; message = "qBittorrent hesabı kaydediliyor…"; draw();
-    try {
-      // Account-only: never submit unrelated DNS/firewall/folder drafts (DD-165).
-      const result = await post("/api/konsol/ayarlar/uygula", { revision: baseRevision, torrent: account });
-      delete account.password;
-      pending = result.pending;
-      if (!result.committed || pending) {
-        startPoll();
-        throw new Error("Sunucu kalıcı kaydı doğrulamadı; işlem durumunu kontrol edin.");
-      }
-      if (account.username !== undefined) live.manage.username = account.username;
-      message = "qBittorrent hesabı kaydedildi. Web arayüzüne yeni bilgilerle giriş yapabilirsiniz.";
-      toast(message);
-      await loadSettings(true);
-      // Keep other drafts, but rebase them after our own committed profile write.
-      baseRevision = live.manage.revision;
-    } catch (e) {
-      error(new Error(`Hesap kaydı doğrulanamadı. ${e.message} Sonucu Yenile ile kontrol edin; yeniden denemek için parolayı tekrar girin.`));
-    } finally { delete account.password; busy = false; draw(); }
-  }
-  function torrent() {
-    if (!live.torrent.installed) return card("qBittorrent", "Kurulu değil", note("Önce App Store’dan qBittorrent’i kurun."));
-    const username = h("input", { name: "username", required: true, value: live.manage.username, maxlength: 64, pattern: "[A-Za-z0-9._@\\-]{1,64}", autocomplete: "username", disabled: locked() });
-    const password = h("input", { name: "password", type: "password", minlength: 8, maxlength: 256, autocomplete: "new-password", disabled: locked() });
-    const repeat = h("input", { name: "repeat", type: "password", autocomplete: "new-password", disabled: locked() });
-    const form = h("form", { class: "as-body", onsubmit: (e) => {
-      e.preventDefault();
-      if (locked()) return;
-      if (password.value !== repeat.value) { repeat.setCustomValidity("Parolalar aynı olmalı."); repeat.reportValidity(); return; }
-      const account = {};
-      if (username.value !== live.manage.username) account.username = username.value;
-      if (password.value) account.password = password.value;
-      if (!Object.keys(account).length) { toast("Hesap bilgilerinde değişiklik yok."); return; }
-      password.value = repeat.value = "";
-      saveAccount(account);
-    } }, h("div", { class: "as-formgrid" }, field("Kullanıcı adı", username), h("div"), field("Yeni parola", password, "Boş bırakılırsa kayıtlı parola korunur; en az 8 karakter."), field("Yeni parola (tekrar)", repeat)),
-    h("div", { class: "as-inline" }, h("button", { type: "submit", class: "btn btn-primary", disabled: locked() }, "Hesabı kaydet")),
-    note("Doğrudan kaydedilir; ek onay gerekmez. Çalışıyorsa qBittorrent kısa süre yeniden başlar. Diğer ayar taslakları uygulanmaz."),
-    note("Henüz kalıcı parola belirlenmediyse geçici ilk giriş parolası yeniden başlatmada değişebilir. Kalıcı giriş için yeni parola belirleyin."));
-    repeat.addEventListener("input", () => repeat.setCustomValidity(""));
-    password.addEventListener("input", () => repeat.setCustomValidity(""));
-    return h("div", { class: "as-stack" }, card("Web arayüzü hesabı", "Mevcut parola gösterilmez", form),
-      card("İndirme dizini", "Yalnız yeni torrentlerin varsayılanı", h("div", { class: "as-body" }, h("code", null, qdraft.save ?? live.manage.save),
-        h("div", null, btn("Klasör seç", chooseFolder)), note("Seçilen dizin mevcut ve servis kullanıcısına yazılabilir olmalı. Gerekli systemd yazma izni yalnız o dizine eklenir. Mevcut torrentler ve yarım indirmelerin dizini değiştirilmez.")),
-      note(`Profil: ${live.torrent.profile}. Çöp, paylaşım iç dizinleri, gizli klasörler ve sembolik bağlantılar seçilemez.`)));
-  }
   function draw() {
     const previousTable = root.querySelector(".as-fw-scroll");
     const tableScroll = previousTable ? {name:previousTable.getAttribute("aria-label"), top:previousTable.scrollTop, left:previousTable.scrollLeft} : null;
@@ -574,17 +510,17 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     const ready = !!(live?.manage && !live.manage.error && draft);
     const content = tab === "system" ? systemContent() : tab === "log" ? logContent() : !ready
       ? note(live?.manage?.error || "Ayarlar okunuyor…", !!live?.manage?.error)
-      : tab === "fw" ? firewall() : tab === "dns" ? dns() : tab === "qb" ? torrent() : caddy();
-    const view = h("div", { id: "as-view", ...(tab === "qb" ? {} : {role: "tabpanel", "aria-labelledby": "as-tab-" + tab}) }, content);
+      : tab === "fw" ? firewall() : tab === "dns" ? dns() : caddy();
+    const view = h("div", { id: "as-view", role: "tabpanel", "aria-labelledby": "as-tab-" + tab }, content);
     const list = changes();
     const directDns = ready && (tab === "dns" || !same(draft.dns, live.manage.config.dns))
-      && same(draft.firewall, live.manage.config.firewall) && !Object.keys(qdraft).length;
+      && same(draft.firewall, live.manage.config.firewall);
     const restoreFocus = document.activeElement?.getAttribute("role") === "tab" ? document.activeElement.id : "";
-    root.replaceChildren(...[tab === "qb" ? null : nav,
+    root.replaceChildren(...[nav,
       pending && !httpsApplying() ? h("div", { class: "as-rollback" + (pending.phase === "stuck" ? " stuck" : ""), role: "status" }, ...rollbackState()) : null,
       pending?.domain || migration ? domainLinks(pending?.domain || migration) : null,
       message ? h("p", { class: "as-message", role: "status" }, message) : null, view,
-      ready && (list.length || !["system", "log", "qb", "web"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
+      ready && (list.length || !["system", "log", "web"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
         h("small", null, directDns ? "Uygula ile DNS ayarları doğrudan kaydedilir; süreli onay gerekmez." : "İnceleyip uygulayana kadar sunucu değişmez.")), h("div", { class: "as-inline" },
         h("button", { type: "button", class: "btn btn-quiet", disabled: locked() || !list.length, onclick: reset }, "Vazgeç"),
         h("button", { type: "button", class: "btn btn-primary", disabled: locked() || !list.length, onclick: directDns ? () => submitChanges(() => {}) : review }, directDns ? "Uygula" : "İncele ve uygula"))) : null].filter(Boolean));
@@ -594,7 +530,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
     if (tableScroll && nextTable?.getAttribute("aria-label") === tableScroll.name) {
       nextTable.scrollTop = tableScroll.top; nextTable.scrollLeft = tableScroll.left;
     }
-    if (restoreFocus && tab !== "qb") document.getElementById(restoreFocus.startsWith("as-fw-tab-") ? "as-fw-tab-" + scope : "as-tab-" + tab)?.focus();
+    if (restoreFocus) document.getElementById(restoreFocus.startsWith("as-fw-tab-") ? "as-fw-tab-" + scope : "as-tab-" + tab)?.focus();
   }
   window.addEventListener("beforeunload", (e) => { if ((dirty() || (domainInput && domainInput !== live?.domain)
     || webBusy || Object.keys(webDrafts).length) && !pending && !migration) { e.preventDefault(); e.returnValue = ""; } });
@@ -605,8 +541,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   });
   return { render(data, section = "system") {
     tab = section;
-    const next = document.getElementById(section === "qb" ? "torrent-settings" : "settings-page");
-    if (root !== next) { root.replaceChildren(); root = next; }
+    if (!root) root = document.getElementById("settings-page");
     if (!data) { draw(); return; }
     const keepDraft = dirty();
     live = data;

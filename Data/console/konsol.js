@@ -1,7 +1,7 @@
-/* Konsol (DD-140, DD-200): root ve dosya arka uçlarının tek arayüzü; hiçbir uygulamayı
-   tanımaz. App Store metinleri ve uygulama sayfaları paketlerden gelir (konsol.json,
-   /uygulama/<id>/sayfa.js); bu dosya yalnız API'yi çağırır ve sayfalara küçük bir
-   arayüz (window.Konsol) verir. Sayfa CSP altında çalışır: satır içi biçem ve betik yok. */
+/* Konsol (DD-140, DD-200, DD-202): root ve dosya arka uçlarının tek arayüzü; hiçbir
+   uygulamayı tanımaz. App Store metinleri ve uygulama sayfaları paketlerden gelir
+   (konsol.json, /uygulama/<id>/sayfa.js); bu dosya yalnız API'yi çağırır ve sayfalara küçük
+   bir arayüz (window.Konsol) verir. Sayfa CSP altında çalışır: satır içi biçem ve betik yok. */
 (() => {
   "use strict";
   const ICON = {
@@ -223,7 +223,6 @@
     $("foot-access").textContent = location.protocol === "https:" ? "İnternet · HTTPS" : "Tailscale";
     paintResources();
     if (current === "ayarlar" && settingsTab === "system") renderSettings();
-    if (current === "torrent") renderTorrentStatus();
   }
 
   /* ---------- Audit log, shown only in Settings ---------- */
@@ -806,7 +805,7 @@
     }).catch(fail);
   }
 
-  /* hesap satırları ve kopyalama (qBittorrent ilk girişi, klasör paylaşım adresleri) */
+  /* hesap satırları ve kopyalama (paket sayfalarının hesap kartları, klasör paylaşım adresleri) */
   const credRow = (k, v, acts, plain, cls) => h("div", { class: "cred-row" + (cls ? ` ${cls}` : "") }, h("span", { class: "k" }, k),
     h("span", { class: "v" + (plain ? " plain" : "") }, v), h("span", { class: "cred-acts" }, acts));
   // Konsol düz HTTP'den açılır: navigator.clipboard orada çalışmaz, eski yöntemle kopyalanır.
@@ -835,88 +834,6 @@
       setTimeout(() => b.replaceChildren(svg("copy")), 1200);
     } }, svg("copy"));
     return b;
-  }
-  /* qBittorrent ilk giriş hesabı: root arka ucundan okunur; parola yalnız göz ya da kopyala ile,
-     açıkça istenince gelir, 30 sn sonra (sekme gizlenince hemen) ekrandan kalkar, hiç yoklanmaz. */
-  const ACCT = {}, REVEAL = {}, acctLoading = new Set(), acctFailed = new Set();
-  const REVEAL_SECONDS = 30;
-  const acctUrl = (id, withPass) => `/api/konsol/moduller/${enc(id)}/hesap${withPass ? "?parola=1" : ""}`;
-  function loadAccount(id) {
-    if (acctLoading.has(id)) return Promise.resolve(ACCT[id]);
-    acctLoading.add(id);
-    return api(acctUrl(id, false)).then((a) => { ACCT[id] = a; acctFailed.delete(id); paintAccount(id); return a; })
-      .catch(() => { delete ACCT[id]; acctFailed.add(id); paintAccount(id); }).finally(() => acctLoading.delete(id));
-  }
-  function forgetAccount(id) { hidePass(id); delete ACCT[id]; acctFailed.delete(id); }
-  function revealPass(id) {
-    return api(acctUrl(id, true)).then((a) => {
-      ACCT[id] = Object.assign({}, a);
-      delete ACCT[id].pass;
-      hidePass(id);
-      const r = REVEAL[id] = { pass: a.pass, left: REVEAL_SECONDS };
-      r.timer = setInterval(() => {
-        r.left -= 1;
-        if (r.left <= 0) { hidePass(id); return; }
-        document.querySelectorAll(`[data-acct-left="${id}"]`).forEach((el) => { el.textContent = `${r.left} sn sonra gizlenir`; });
-      }, 1000);
-      paintAccount(id);
-    }).catch(fail);
-  }
-  function hidePass(id) {
-    const r = REVEAL[id];
-    if (!r) return;
-    clearInterval(r.timer);
-    delete REVEAL[id];
-    paintAccount(id);
-  }
-  const hideAllPass = () => Object.keys(REVEAL).forEach(hidePass);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) hideAllPass(); });
-  function copyPassButton(id) {
-    const b = h("button", { type: "button", class: "ib", title: "Parola kopyala", "aria-label": "Parola kopyala", onclick: async () => {
-      let pass = REVEAL[id] && REVEAL[id].pass;
-      if (!pass) {
-        try { pass = (await api(acctUrl(id, true))).pass; } catch (e) { fail(e); return; }
-      }
-      const ok = await copyText(pass);
-      pass = "";
-      if (!ok) { toast("Pano kullanılamadı; parolayı gösterip seçerek kopyalayın."); return; }
-      b.replaceChildren(svg("check"));
-      setTimeout(() => b.replaceChildren(svg("copy")), 1200);
-    } }, svg("copy"));
-    return b;
-  }
-  // paintAccount yalnız ilk giriş kartını yeniler; sayfanın geri kalanı yerinde kalır.
-  function accountBlock(id) {
-    const a = ACCT[id], r = REVEAL[id];
-    const cred = h("div", { class: "cred" });
-    if (!a && acctFailed.has(id)) {
-      cred.append(h("p", { class: "hint-s" }, "Hesap okunamadı. Servisin çalıştığını kontrol edip sayfayı yenileyin."));
-    } else if (!a) {
-      cred.append(h("p", { class: "hint-s" }, "Hesap okunuyor…"));
-      loadAccount(id);
-    } else {
-      // DD-151: qBittorrent'in geçici parolası yalnız bu açılışın günlüğündedir.
-      // DD-195: the address follows the Konsol address the browser is using.
-      const url = id === "torrent" ? torrentUrl((MODS || []).find((x) => x.id === id)) : "";
-      const address = url ? url.replace(/^[a-z]+:\/\//, "") : a.host;
-      cred.append(...[
-        address ? credRow("Adres", address, [copyButton(address, "Adres")]) : null,
-        credRow("Kullanıcı", a.user, [copyButton(a.user, "Kullanıcı")]),
-        a.temp ? credRow("Geçici", r ? r.pass : "•".repeat(9), [
-          h("button", { type: "button", class: "ib", title: r ? "Gizle" : "Günlükten göster", "aria-label": r ? "Geçici parolayı gizle" : "Geçici parolayı göster",
-            onclick: () => (REVEAL[id] ? hidePass(id) : revealPass(id)) }, svg("eye")),
-          copyPassButton(id)], false, r ? "" : "masked-row") : null,
-        h("div", { class: "acct-wg" }, svg("info"), h("span", null, a.temp
-          ? "qBittorrent ilk açılışta geçici parolayı günlüğüne yazar; Konsol onu oradan okur ve her yeniden başlatmada değişir. Girişten sonra parolayı qBittorrent arayüzünden (Tools → Options → WebUI) koyun."
-          : "Parola kayıtlı; Konsol mevcut parolayı göstermez. qBittorrent sayfasından yeni kullanıcı adı veya parola belirleyebilirsiniz."))].filter(Boolean));
-    }
-    return h("div", { class: "acct-inner", "data-acct": id }, cred,
-      h("div", { class: "acct-meta" },
-        h("span", null),
-        r ? h("span", { "data-acct-left": id }, `${r.left} sn sonra gizlenir`) : null));
-  }
-  function paintAccount(id) {
-    document.querySelectorAll(`[data-acct="${id}"]`).forEach((el) => el.replaceWith(accountBlock(id)));
   }
   const sharesPage = window.createSharesPage({
     h, svg, post, toast, fail, copyButton, root: fsRoot, getShares: () => S.share,
@@ -1109,7 +1026,7 @@
     return api("/api/konsol/moduller").then((r) => {
       MODS = r.items || [];
       MODS.forEach((m) => {
-        if (!m.installed) { forgetAccount(m.id); delete modLogs[m.id]; }
+        if (!m.installed) delete modLogs[m.id];
         const want = modPending[m.id];
         if (!want) return;
         if (!m.busy) { delete modPending[m.id]; modDone(m, want); return; }
@@ -1122,7 +1039,7 @@
       if (owner && !owner.installed) location.hash = "#/moduller";
       else if (pendingRoute) route();
       if (current === "moduller") renderModules();
-      if (current === "torrent") renderTorrentStatus();
+      if (PAGES[current] && PAGES[current].page.modules) PAGES[current].page.modules(MODS);
       clearTimeout(modTimer);
       if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
     }).catch(fail);
@@ -1134,7 +1051,7 @@
         // An unchanged poll may retain DOM handlers while replacing the catalogue objects.
         const live = (MODS || []).find(x => x.id === m.id) || m;
         live.busy = true; live.progress = { action, step: "0", total: 0, text: "" };
-        renderModules(); if (current === "torrent") renderTorrentStatus(); return loadModules();
+        renderModules(); return loadModules();
       }).catch(fail);
   }
   function modPill(m) {
@@ -1272,8 +1189,10 @@
 
   const isIpPort = (a) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
   function webDesc(e) {
-    if (e.access === "wan") return ({ "panel-wan": "Sunucu yönetim paneli · internet girişi", "torrent-wan": "qBittorrent · kendi girişiyle" }[e.source]
-      || "İnternet üzerinden seçili klasör paylaşımları") + " · " + (e.scheme === "https" ? "HTTPS" : "HTTP şifrelemez");
+    // DD-202: a package's public site is "<id>-wan"; its name comes from the package.
+    if (e.access === "wan") return (e.source === "panel-wan" ? "Sunucu yönetim paneli · internet girişi"
+      : e.source === "paylasim-wan" ? "İnternet üzerinden seçili klasör paylaşımları"
+      : metaOf(e.source.replace(/-wan$/, "")).name + " · kendi girişiyle") + " · " + (e.scheme === "https" ? "HTTPS" : "HTTP şifrelemez");
     const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
     if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
     return metaOf(e.source).name + extra;
@@ -1290,7 +1209,7 @@
     const rows = w.entries.map((e) => h("div", { class: "tr" },
       h("span", { class: "a" }, e.address, h("small", null, webDesc(e))),
       h("span", { class: "to" }, e.routes.map((r) => webHop(r, e.routes.length > 1))),
-      h("span", { class: "who" }, srcTag({ "paylasim-wan": "paylasim", "torrent-wan": "torrent", "panel-wan": "base" }[e.source] || e.source), h("span", { class: "tag" }, e.access === "wan" ? "WAN · " + (e.scheme === "https" ? "HTTPS" : "HTTP") : "Tailscale"))));
+      h("span", { class: "who" }, srcTag(e.source === "panel-wan" ? "base" : e.source.replace(/-wan$/, "")), h("span", { class: "tag" }, e.access === "wan" ? "WAN · " + (e.scheme === "https" ? "HTTPS" : "HTTP") : "Tailscale"))));
     fill("cfg-web", 
       h("div", { class: "card-head" }, h("h2", null, svg("globe"), "Web adresleri"),
         h("div", { class: "head-right" }, h("span", { class: "hm" }, `Caddy · ${names} ad, ${w.entries.length - names} IP adresi`))),
@@ -1387,37 +1306,8 @@
   function renderSettings() {
     const stamp = $("cfg-stamp");
     if (stamp) stamp.textContent = CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
-    settingsPage.render(CFG, current === "torrent" ? "qb" : settingsTab);
+    settingsPage.render(CFG, settingsTab);
   }
-  // DD-195: on the public (HTTPS) Konsol address qBittorrent opens on its own public name,
-  // which Settings → Caddy must have turned on; on the tailnet address its tailnet name.
-  const publicPanel = () => location.protocol === "https:";
-  function torrentUrl(m) {
-    const urls = m?.urls || {};
-    if (publicPanel()) return urls.internet || "";
-    return urls.tailscale || (S.sys?.domain ? location.protocol + "//torrent." + S.sys.domain : "");
-  }
-  function renderTorrentStatus() {
-    const m = (MODS || []).find((x) => x.id === "torrent");
-    const box = $("torrent-status");
-    if (!m?.installed) { box.replaceChildren(h("p", {class:"hint-s"}, "Kurulum durumu okunuyor…")); return; }
-    const running = m.state === "calisiyor", url = torrentUrl(m);
-    box.replaceChildren(modPill(m),
-      h("button", {type:"button", class:"btn btn-quiet", disabled:!!m.busy, onclick:() => {
-        if (!running) { modAct(m, "baslat"); return; }
-        ask({title:"qBittorrent durdurulsun mu?", calm:true, go:"Durdur", items:[["pause","Süren indirmeler duraklar. Başlatana kadar servis kapalı kalır."]],
-          onOk:() => modAct(m, "durdur")});
-      }}, svg(running ? "pause" : "play"), running ? "Durdur" : "Başlat"),
-      running && url ? h("a", {class:"btn btn-primary", id:"torrent-open", href:url, target:"_blank", rel:"noopener"}, "Web arayüzünü aç ↗") : null,
-      running && !url && publicPanel() ? h("p", {class:"hint-s", id:"torrent-open-note"}, "İnternetten açmak için qBittorrent'in internet yayınını açın: ",
-        h("a", {href:"#/ayarlar/web"}, "Ayarlar → Caddy")) : null,
-      h("a", {class:"linkbtn", href:"#/moduller"}, "App Store’da yönet"));
-  }
-  $("torrent-account").parentElement.addEventListener("toggle", (e) => {
-    if (e.currentTarget.open) { $("torrent-account").replaceChildren(accountBlock("torrent")); loadAccount("torrent"); }
-    else { hidePass("torrent"); $("torrent-account").replaceChildren(); }
-  });
-
   /* ---------- One workspace, hash routes ---------- */
   function setMenu(open) {
     $("menu-toggle").setAttribute("aria-expanded", String(open));
@@ -1432,10 +1322,8 @@
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
-  // Konsol'un kendi sayfaları; qBittorrent sayfası şimdilik buradadır (metinleri paketten).
+  // Konsol'un kendi sayfaları; uygulama sayfaları paketlerden gelir (DD-200/202).
   const ROUTES = {
-    torrent: { title:"qBittorrent", eyebrow:"Hesap, indirme dizini ve servis", actions:settingsActions,
-      render:() => { renderTorrentStatus(); renderSettings(); loadSettings(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
@@ -1455,9 +1343,13 @@
   const PAGE_FILE_RE = /^[a-z][a-z0-9_.-]{0,40}\.(js|css)$/;
   let pendingRoute = false;
   const PAGE_API = Object.freeze({
-    h, svg, $, api, post, enc, toast, fail, ask, bytes, since,
+    h, svg, $, api, post, enc, toast, fail, ask, bytes, since, credRow, copyButton, copyText,
     clock: { sync: (serverNow) => { if (Number.isFinite(serverNow)) S.offset = serverNow - Date.now() / 1000; }, now },
     dialog: { show: shShow, close: shClose },
+    // Modül listesi ve işlemleri Konsol'undur; sayfa yalnız okur ve ister (DD-202).
+    module: (id) => (MODS || []).find((x) => x.id === id) || null,
+    modPill, modAct: (id, action) => { const m = (MODS || []).find((x) => x.id === id); return m ? modAct(m, action) : Promise.resolve(); },
+    reloadModules: () => loadModules(),
     route: () => current, header: () => paintHeader(), go: (hash) => { location.hash = hash; },
   });
   function sectionFor(rota) {
@@ -1542,7 +1434,6 @@
     }
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
     if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
-    if (key !== current) hideAllPass();
     current = key;
     if (!ROUTES[key]) sectionFor(key);
     document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== key; });
@@ -1571,7 +1462,7 @@
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
-    if (["moduller","torrent"].includes(current) && !(MODS || []).some((m) => m.busy)) loadModules();
+    if (current === "moduller" && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
   setInterval(() => { if (!document.hidden) paintResources(); }, 1000);
   $("logout").addEventListener("click", logout);

@@ -7,9 +7,9 @@
 # /api/uygulama/<id>/* istekleri aynı kapılardan geçtikten sonra ona verilir; paket kaldırılınca
 # modül bırakılır. Yalnız Python standart kütüphanesi.
 #
-#   master-wg-panel serve --listen unix:SOKET [--socket-group GRUP] --state FILE
+#   master-panel serve --listen unix:SOKET [--socket-group GRUP] --state FILE
 #                         --master-modul PATH [--allow-host HOST]
-#   master-wg-panel check --url URL --host HOST [--socket SOKET]   /api/konsol/kaynaklar denetimi
+#   master-panel check --url URL --host HOST [--socket SOKET]   /api/konsol/kaynaklar denetimi
 #
 # DD-180: sunucudaki başka bir hesap (ör. indirme hesabıyla çalışan qBittorrent) yerel
 # ağdan bu root arka uca istek atamasın diye TCP yoktur. Sokete dosya izni (0660, root ve
@@ -78,7 +78,7 @@ ACTIONS_CACHE_SECONDS = 15
 HEALTH_CACHE_SECONDS = 30
 # Always-on core; the settings guard timer deliberately sleeps while idle (DD-181).
 HEALTH_UNITS = ("tailscaled.service", "caddy.service", "dnsmasq.service",
-                "master-firewall.service", "master-wg-panel.service",
+                "master-firewall.service", "master-panel.service",
                 "master-files-panel.service", "master-paylasim.service",
                 "refresh-tailnet-config.timer", "master-share-network.timer")
 # Tailscale düğüm anahtarının süresi bu kadar gün kala uyarılır.
@@ -89,9 +89,6 @@ ACTIONS_LIMIT = 40
 SETTINGS_CACHE_SECONDS = 5
 SETTINGS_TEXT_LIMIT = 65536
 IPT_COUNTER_RE = re.compile(r" -c (\d+) (\d+)")
-# qBittorrent.conf'tan okunan tek anahtarlar: yollar ve portlar. Parola özeti ve öbür her şey okunmaz.
-TORRENT_KEYS = ("Session\\DefaultSavePath", "Session\\TempPath", "Session\\TempPathEnabled", "Session\\Port",
-                "Downloads\\SavePath", "Downloads\\TempPath", "WebUI\\Address", "WebUI\\Port")
 ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
 # Settings service-port metadata: produced from configuration, no scanning.
 # Temel satırlar (state.env anahtarı, ad, protokol, kapsam, varsayılan); paketlerinkiler
@@ -436,20 +433,6 @@ def parse_dnsmasq(text, source):
             got["dhcp"] = True
     return got
 
-
-def read_torrent_conf(path):
-    """qBittorrent.conf'tan yalnız TORRENT_KEYS; bölüm başlıkları ve öbür anahtarlar atlanır."""
-    try:
-        raw, _ = master_settings.read_regular(path, SETTINGS_TEXT_LIMIT)
-        text = raw.decode("utf-8", "replace")
-    except (OSError, master_settings.SettingsError):
-        return None
-    got = {}
-    for raw in text.splitlines():
-        key, sep, value = raw.strip().partition("=")
-        if sep and key in TORRENT_KEYS:
-            got[key] = value
-    return got
 
 
 class Panel:
@@ -1234,29 +1217,6 @@ class Panel:
                 n["address"] = ", ".join(a for a in addresses if a)
         return view
 
-    def torrent_view(self, env):
-        if not self.module_state("torrent", env):
-            return {"installed": False}
-        profile = env.get("TORRENT_PROFILE_DIR", "")
-        conf = read_torrent_conf(os.path.join(profile, "qBittorrent", "qBittorrent.conf")) if profile else None
-        if conf is None:
-            return {"installed": True, "error": "qBittorrent'in ayar dosyası okunamadı", "profile": profile}
-        save = conf.get("Session\\DefaultSavePath") or conf.get("Downloads\\SavePath", "")
-        temp = conf.get("Session\\TempPath") or conf.get("Downloads\\TempPath", "")
-        downloads = env.get("DOWNLOADS_PATH", "")
-
-        def inside(path):
-            if not path or not downloads:
-                return False
-            real, root = os.path.realpath(path), os.path.realpath(downloads)
-            return real == root or real.startswith(root.rstrip("/") + "/")
-
-        return {"installed": True, "save": save, "save_inside": inside(save), "temp": temp,
-                "temp_on": conf.get("Session\\TempPathEnabled", "").lower() == "true",
-                "temp_inside": inside(temp), "downloads": downloads, "profile": profile,
-                "ui": "%s:%s" % (conf.get("WebUI\\Address", ""), conf.get("WebUI\\Port", "")),
-                "peer_port": num_or(conf.get("Session\\Port"), 0)}
-
     def settings(self, fresh=False):
         """DD-155: Ayarlar sayfası. Salt okunur: kurallar canlı (sayaçlarıyla), yapılandırma dosyaları
         olduğu gibi; hesap, parola ya da anahtar taşıyan hiçbir dosya okunmaz. "Yenile" önbelleği atlar."""
@@ -1285,7 +1245,6 @@ class Panel:
             "firewall": self.firewall_view(env, networks),
             "web": self.web_view(env, networks),
             "dns": self.dns_view(env),
-            "torrent": self.torrent_view(env),
         }
         # Presentation metadata only; no peer identities or firewall mutations.
         data["firewall"]["vpn_installed"] = bool(vpn_apps)
@@ -1446,23 +1405,27 @@ class Panel:
                 rows.append({**port, "scope": "tail", "baseline": True})
         return rows
 
-    def settings_run(self, action, data, shares=False):
-        """stdin is private; no password in argv, environment, journal or response."""
-        helper = os.path.join(os.path.dirname(self.args.master_modul), "master_shares.py" if shares else "master_settings.py")
-        argv = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+    def run_worker(self, argv, data, failure):
+        """A root worker as its own transient unit (outside this backend's sandbox), JSON on stdin,
+        JSON object on stdout; stdin is private, so no password reaches argv, environment or journal."""
+        full = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
                 "--property=UMask=0077", "--property=RuntimeMaxSec=150",
-                "--setenv=PYTHONDONTWRITEBYTECODE=1", "/usr/bin/python3", helper, "--state", self.args.state, action]
+                "--setenv=PYTHONDONTWRITEBYTECODE=1", *argv]
         try:
-            p = subprocess.run(argv, input=json.dumps(data), capture_output=True, text=True, timeout=155, env=self.env())
+            p = subprocess.run(full, input=json.dumps(data), capture_output=True, text=True, timeout=155, env=self.env())
             result = json.loads(p.stdout)
             if not isinstance(result, dict):
                 raise ValueError("worker response is not an object")
             self.settings_cache = (0, None)
             return (400 if p.returncode else 200), result
         except (OSError, subprocess.TimeoutExpired, ValueError, RecursionError):
-            if shares:
-                return 502, {"error": "İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin."}
-            return 502, {"error": "İşlem sonucu alınamadı. Ayarlar sayfasını yenileyin; onaysız işlem sunucuda geri alınır."}
+            return 502, {"error": failure}
+
+    def settings_run(self, action, data, shares=False):
+        helper = os.path.join(os.path.dirname(self.args.master_modul), "master_shares.py" if shares else "master_settings.py")
+        failure = ("İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin." if shares
+                   else "İşlem sonucu alınamadı. Ayarlar sayfasını yenileyin; onaysız işlem sunucuda geri alınır.")
+        return self.run_worker(["/usr/bin/python3", helper, "--state", self.args.state, action], data, failure)
 
     def actions(self):
         """Son işlemler: iki arka ucun audit satırları (journald), yeniden eskiye."""
@@ -1470,7 +1433,7 @@ class Panel:
         stamp, rows = self.actions_cache
         if now - stamp < ACTIONS_CACHE_SECONDS:
             return rows
-        cmd = ["journalctl", "-u", "master-wg-panel.service", "-u", "master-files-panel.service",
+        cmd = ["journalctl", "-u", "master-panel.service", "-u", "master-files-panel.service",
                "--since", "-7 days", "-n", "400", "-o", "short-unix", "--no-pager"]
         try:
             proc = subprocess.run(cmd, capture_output=True, timeout=15, stdin=subprocess.DEVNULL,
@@ -1538,6 +1501,11 @@ class PackageContext:
     def env(self):
         return read_env(self.panel.args.state)
 
+    @staticmethod
+    def read_env(path):
+        """DD-201: a package's own KEY=value file (its rendered folder), same parser as state.env."""
+        return read_env(path)
+
     def tool(self, name):
         if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,40}", name):
             raise ValueError("tool name")
@@ -1545,6 +1513,18 @@ class PackageContext:
 
     def run(self, argv, binary=False, timeout=120):
         return self.panel.run_tool(argv, binary=binary, timeout=timeout)
+
+    def state_path(self):
+        return self.panel.args.state
+
+    def worker(self, argv, data):
+        """DD-202: a package's own worker as a transient root unit with JSON on stdin (the base
+        settings/share workers run the same way); the script must sit in the package's folder."""
+        here = os.path.realpath(os.path.join(self.env().get("MODULES_DIR", ""), self.mid))
+        script = next((a for a in argv if a.endswith(".py")), "")
+        if not here or not os.path.realpath(script).startswith(here + os.sep):
+            return 400, {"error": "paket çalışanı paket klasöründe değil"}
+        return self.panel.run_worker(argv, data, "İşlem sonucu alınamadı; sayfayı yenileyip durumu kontrol edin.")
 
     def ports(self, env=None):
         return self.panel.ports(env if env is not None else self.env())
@@ -1573,7 +1553,7 @@ class ApiRequest:
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    server_version = "master-wg-panel"
+    server_version = "master-panel"
     sys_version = ""
     protocol_version = "HTTP/1.1"
     panel = None
@@ -2012,7 +1992,7 @@ def cmd_serve(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="master-wg-panel")
+    parser = argparse.ArgumentParser(prog="master-panel")
     sub = parser.add_subparsers(dest="cmd")
     s = sub.add_parser("serve")
     s.add_argument("--listen", required=True)
