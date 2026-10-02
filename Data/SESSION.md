@@ -5,7 +5,7 @@ Cross-session continuity for this repository.
 ## Current Task
 
 **2026-10-02 — Package-declared folders, settings and backend write paths, phase 3, v2-177
-(DD-203, uncommitted on top of 2094b91):**
+(DD-203; committed as 845d337 on branch quantum):**
 - `PAKET_KLASORLER` + `klasorler.py` (torrent): file backend `--protected "rel=owner;…"` →
   `/api/state.protected`; shares `validate_path` = base reserved + declared + reported (fail
   closed); WebDAV hides/refuses by root-relative path (`protected` in the registry, recomputed in
