@@ -116,7 +116,9 @@ class ResourceTests(unittest.TestCase):
         for mid in ("wireguard", "torrent", "paylasim", "dosya"):
             (mods_dir / mid).mkdir(parents=True)
             (mods_dir / mid / "paket.env").write_bytes((repo / mid / "paket.env").read_bytes())
-        env = {"MODULES_FILE": str(modules), "MODULES_DIR": str(mods_dir), "TORRENT_UI_PORT": "61006", "FILES_PANEL_PORT": "61009",
+        # DD-203: a package's port key resolves from its own env file when the state does not carry it.
+        (mods_dir / "torrent" / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=/var/lib/qbittorrent\n")
+        env = {"MODULES_FILE": str(modules), "MODULES_DIR": str(mods_dir), "FILES_PANEL_PORT": "61009",
                "SHARE_PORT": "61010", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641"}
         rows = lambda: {(r["name"], r["scope"]) for r in self.p.ports(env, [])}  # noqa: E731
         modules.write_text("wireguard\tcalisiyor\n")

@@ -42,6 +42,8 @@ def main():
         root = Path(temp)
         root.chmod(0o755)
         e = settings.env_read(DATA / "config/defaults.env")
+        # DD-203: the torrent site's upstream port is the package's own setting, not a base default.
+        e["TORRENT_UI_PORT"] = settings.env_read(DATA / "magaza/torrent/torrent.env")["TORRENT_UI_PORT"]
         paths = {"SETTINGS_FILE": "etc/settings.json", "SETTINGS_PENDING_FILE": "etc/pending.json",
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",

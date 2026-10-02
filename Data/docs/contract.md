@@ -249,8 +249,8 @@ Contract in §5–§7 and `folder-shares.md`.
 ### 1.9 WireGuard (DD-120, DD-124)
 
 - **A fresh install has no WireGuard (DD-143, DD-150).** WireGuard is a Konsol
-  module (§1.11). The installer only puts `master-wg` and an empty `/etc/wireguard` (`0700`, the root backend's only
-  writable path) in place. Installing the module installs `wireguard-tools`
+  module (§1.11). The installer only puts `master-wg` and an empty `/etc/wireguard` (`0700`, the root backend's
+  writable path declared by the package) in place. Installing the module installs `wireguard-tools`
   and `qrencode` (`--no-install-recommends`), loads the kernel module (and
   writes `WG_MODULES_LOAD_FILE`), creates `/etc/wireguard`, re-applies the
   firewall and starts whatever networks the registry already holds. Nothing
@@ -390,9 +390,10 @@ Contract in §5–§7 and `folder-shares.md`.
     `PrivateKey` and `PresharedKey`. The full profile and the QR picture are
     returned only on an explicit request, and the audit line in the journal
     names the user, client, action and peer, never the content.
-  - The unit runs with `NoNewPrivileges`, `ProtectSystem=full` with
-    `/etc/wireguard` writable (optional: a missing folder never keeps Konsol
-    down), `ProtectHome`, `PrivateTmp`, the kernel
+  - The unit runs with `NoNewPrivileges`, `ProtectSystem=full` with the paths
+    packages declare (`PAKET_ARKAUC_YOLLAR`; WireGuard's `/etc/wireguard`) writable,
+    each optional so a missing folder never keeps Konsol down (**DD-203**),
+    `ProtectHome`, `PrivateTmp`, the kernel
     protections and `AF_UNIX`/`AF_INET`/`AF_INET6`/`AF_NETLINK` only.
   - A peer shows "Bağlı" only while data arrives from it: its received bytes
     grew within the last 45 s and its handshake is under 3 minutes old. A
@@ -693,10 +694,11 @@ Contract in §5–§7 and `folder-shares.md`.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
     by the operator, and decoded on the server.
   - The page inserts the text as text nodes only.
-- The page protects the conventional temporary folder
-  (`DOWNLOADS_SUBDIR/TORRENT_TEMP_DIR`) for existing/user-configured downloads.
-  Since DD-178 new profiles do not automatically enable separate temporary
-  storage. Keeping this existing path guard does not enable it in qBittorrent.
+- The page refuses to select, share or trash the folders packages declare they
+  write into (`PAKET_KLASORLER`, delivered root-relative with the owner's name in
+  `/api/state.protected`, **DD-203**) and says which application writes there.
+  Since DD-178 new qBittorrent profiles do not enable separate temporary
+  storage; the declared folder is a reserved default, not an enabled setting.
 
 ### 1.11 App Store and built-ins (DD-148, DD-149, DD-159, DD-197, DD-200)
 
@@ -768,7 +770,8 @@ Contract in §5–§7 and `folder-shares.md`.
   start, name.
   - It runs as `qbittorrent-nox@<downloads account>.service`, the package's
     template unit plus the drop-in `UNIT_DIR/qbittorrent-nox@.service.d/master-stack.conf`:
-    profile in `TORRENT_PROFILE_DIR` (`/var/lib/qbittorrent`), `UMask=0002`,
+    profile in `TORRENT_PROFILE_DIR` (the package's `torrent.env`, `/var/lib/qbittorrent`,
+    **DD-203**), `UMask=0002`,
     `ProtectSystem=strict` with only the profile and `DOWNLOADS_PATH`
     writable, the trash and the share root inaccessible, no new privileges.
   - Its settings are written once, when the profile has none (**DD-178**): save
@@ -796,7 +799,9 @@ Contract in §5–§7 and `folder-shares.md`.
   - Its Konsol files (**DD-200**, **DD-202**): `konsol.json`, `sayfa.js`/`sayfa.css`
     (the page) and `api.py` with the worker `ayar.py`
     (`/api/uygulama/torrent/{durum,hesap,dizin}`; the worker edits the profile
-    and the `90-konsol.conf` drop-in, §1.10).
+    and the `90-konsol.conf` drop-in, §1.10). Its own settings `torrent.env`
+    (`TORRENT_UI_PORT`, `TORRENT_PROFILE_DIR`) and `klasorler.py`, which reports the
+    folders it writes into beyond the manifest's `PAKET_KLASORLER` (**DD-203**).
   - `durdur` disables and stops the unit (the name stays); `kaldir` removes the
     names and the drop-in and stops the unit but leaves the package installed;
     `--veri` deletes the profile (settings and torrent list) — only under

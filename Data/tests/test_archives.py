@@ -184,7 +184,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in (self.root / ".arsiv").iterdir()), ["jobs.json"])
 
     def test_state_uses_installer_downloads_not_source_or_torrent_temp(self):
-        panel = files_module.Panel(SimpleNamespace(root=str(self.root),trash=".cop",share="",version="test",domain="test",temp_dir="different/tmp",downloads_dir="custom-downloads"))
+        panel = files_module.Panel(SimpleNamespace(root=str(self.root),trash=".cop",share="",version="test",domain="test",protected=[{"path":"different/tmp","owner":"Deneme"}],downloads_dir="custom-downloads"))
         self.assertEqual(panel.state()["downloads"], "custom-downloads")
 
     def test_conflicts_never_overwrite(self):

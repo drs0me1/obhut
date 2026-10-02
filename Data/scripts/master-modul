@@ -47,6 +47,8 @@ paket_sifirla() {
     PAKET_APT="" PAKET_ARACLAR="" PAKET_EKLER="" PAKET_ADLAR=0 PAKET_GUNLUK="" PAKET_KUR_ADIM=1
     PAKET_YAYIN=0 PAKET_UYGULA_HEP=0 PAKET_UYGULA_NEDEN="" PAKET_YERLESIK=0
     PAKET_KONSOL="" PAKET_SAYFA="" PAKET_API=""
+    # DD-203: yazdığı klasörler (mutlak), onları bildiren Python modülü, root arka ucun yazma yolları.
+    PAKET_KLASORLER="" PAKET_KLASOR_MODUL="" PAKET_ARKAUC_YOLLAR=""
 }
 
 paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)

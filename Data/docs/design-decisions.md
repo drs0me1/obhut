@@ -13,6 +13,58 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-203: Package-declared folders, settings and backend write paths, phase 3 (v2-177)
+
+- **Scope (user, 2026-10-02: "Faz 3 tamamla, kalan kozmetik temizliği de yap"):** the crumbs
+  DD-202 left in the base and every remaining application name in base code and comments.
+  After this phase the base — installer, `defaults.env`, `state.env`, root backend,
+  settings/share/WebDAV helpers, file backend, Konsol shell, unit templates — carries no
+  application name or key; adding an application means writing `Data/magaza/<id>/` only.
+- **Declared folders (`PAKET_KLASORLER`, `PAKET_KLASOR_MODUL`).** A package declares, as
+  absolute paths the installer renders, the folders it writes into
+  (`__DOWNLOADS_PATH__/incomplete`: qBittorrent's conventional incomplete folder) and,
+  optionally, a Python module (`klasorler.py`, `yazilan(env) → [paths]`) that reports what
+  it writes into right now (the temporary folder the user chose in qBittorrent itself, read
+  from its profile). The base applies one policy to both: the file backend receives every
+  catalogued package's declared folders as root-relative `path=owner` pairs (`--protected`,
+  `/api/state.protected`), so the Files page refuses to select, share or trash them and
+  says which application writes there; the share manager refuses a share on, inside or
+  around them (`validate_path`: declared + reported, fail closed when a report cannot be
+  read); the WebDAV server hides and refuses them inside any share that contains them (the
+  registry's `protected` list, root-relative, recomputed by `read()` from the catalogue and
+  the reports instead of trusted from the saved file). Protection is by actual path, not by
+  folder name as before: a folder merely named `incomplete` elsewhere is ordinary.
+  `TORRENT_TEMP_DIR`, `temp_name`, `--temp-dir` and the base's reader of qBittorrent's
+  profile are gone.
+- **Package settings (`<id>.env`).** `magaza/torrent/torrent.env` holds `TORRENT_UI_PORT`
+  and `TORRENT_PROFILE_DIR`, as `wireguard.env` holds the `WG_*` keys (DD-201). The
+  installer fills a package's own `__KEY__` placeholders from its env file before its own
+  variables (`paket_ayar_oku`), so the templates, `PAKET_YAYIN_UPSTREAM` and
+  `PAKET_KLASORLER` render without base keys; `defaults.env`/`state.env` carry no
+  `TORRENT_*`. The hook sources the file; `api.py`, `ayar.py`, `yayin.py` and
+  `klasorler.py` merge it over the state (`package_env`). A `PAKET_PORTLAR` key resolves
+  from the state or, failing that, from the package's own env file (root backend `ports()`,
+  `master-wg declared_ports`), keeping DD-198's key semantics.
+- **Backend write paths (`PAKET_ARKAUC_YOLLAR`).** `master-panel.service` no longer names
+  `/etc/wireguard`: the installer renders `ReadWritePaths` from every catalogued manifest's
+  declaration (`__WG_CONF_DIR__` for WireGuard), each with `-` so an absent folder never
+  keeps the backend down, installed or not — the same catalogue-wide rule as the port
+  reservation (DD-201), chosen over a per-install drop-in because that would restart the
+  backend the Konsol is talking to in the middle of an install.
+- **One package-module loader.** `master_settings.load_package_module(env, mid, name,
+  attr, label)` replaces the publication-only loader of DD-199: regular file, no symlink,
+  mtime cache, `sys.dont_write_bytecode` while executing — the `__pycache__` the base used
+  to write into the rendered package folder (found on nrm) is gone. `yayin.py`
+  (`security`) and `klasorler.py` (`yazilan`) both load through it.
+- **Cosmetics.** The installer's summaries list the catalogue's `PAKET_AD` names
+  (`paket_katalog_adlar`), stale WAN sites are removed by the `*-wan.caddy` pattern, the
+  Files page's protected-folder notice names the owner the backend reports, the Settings
+  port descriptions and the public-panel warning name no application, and base comments
+  describe roles ("a package's service", "the download account's services") instead of
+  products. Historical DD entries and archived documents keep their names.
+- **Fresh install only**, like the rest of the store model (DD-196); an in-place host gets
+  the new unit lines, state and package files on the next installer run.
+
 ### DD-202: The qBittorrent page and its settings in the package, phase 2c (v2-176)
 
 - **Scope (user, 2026-10-02: "Öneri ile devam" on the phase 2c recommendation):** the last
@@ -70,7 +122,8 @@ with its status and the file that holds it.
   reads the qBittorrent profile for the incomplete-folder guard of folder shares, the Files
   page still names qBittorrent next to the downloads temp folder, and
   `TORRENT_PROFILE_DIR`/`TORRENT_UI_PORT`/`TORRENT_TEMP_DIR` are still base defaults.
-  Moving them needs a package declaration for "folders a package writes to".
+  Moving them needs a package declaration for "folders a package writes to" (done in
+  **DD-203**).
 - **Hooks.** The package's `paket_kur` places the page (`paket_sayfa_koy`) after the service
   and its name are verified and before the registry line, `paket_uygula` places it on every
   re-run, and the rollback removes it; found live on nrm, where the first v2-176 run left

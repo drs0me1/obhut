@@ -37,6 +37,9 @@ class PublicationTests(unittest.TestCase):
         (self.root / "templates/torrent/paket.env").write_text(
             (repo / "paket.env").read_text().replace("__TORRENT_UI_PORT__", self.env["TORRENT_UI_PORT"]))
         (self.root / "templates/torrent/yayin.py").write_bytes((repo / "yayin.py").read_bytes())
+        # DD-203: the check module reads the interface port and profile from the package's own env file.
+        (self.root / "templates/torrent/torrent.env").write_text(
+            "TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (self.env["TORRENT_UI_PORT"], self.root / "profile"))
         self.qconf = self.root / "profile/qBittorrent/qBittorrent.conf"
         self.qconf.parent.mkdir()
         self.qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=@ByteArray(fixture)\nWebUI\\LocalHostAuth=true\n")

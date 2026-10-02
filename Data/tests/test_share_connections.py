@@ -45,8 +45,7 @@ class ShareConnectionTests(unittest.TestCase):
             "RUNTIME_DIR": str(self.root / "run"),
             "SERVER_ROOT": str(self.root / "srv"),
             "DOWNLOADS_PATH": str(self.root / "srv/downloads"),
-            "TORRENT_PROFILE_DIR": str(self.root / "profile"),
-            "TORRENT_TEMP_DIR": "incomplete", "FILES_PANEL_TRASH": ".cop",
+            "FILES_PANEL_TRASH": ".cop",
             "SHARE_DIR": ".pay", "SETTINGS_FILE": str(self.root / "settings.json"),
             "SETTINGS_PENDING_FILE": str(self.root / "settings-pending"),
             "SHARE_PORT": "61010", "SHARE_HTTPS_PORT": "443",
@@ -78,7 +77,7 @@ class ShareConnectionTests(unittest.TestCase):
         self.data = {
             "schema": 4, "root": self.env["SERVER_ROOT"],
             "limits": dict(shares.DEFAULT_LIMITS), "items": [self.item],
-            "temp_name": "incomplete", "blocked": [".cop", ".pay", "downloads/incomplete"],
+            "blocked": [".cop", ".pay"], "protected": [],
         }
         self.write(self.data)
 

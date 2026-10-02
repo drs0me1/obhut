@@ -337,9 +337,11 @@
   const fsRoot = () => (S.fs && S.fs.root) || "/srv";
   const fsHere = () => [fsRoot(), ...fsPath].join("/") || "/";
   const pathText = (parts) => parts.join("/");
-  /* qBittorrent'in geçici klasörü köke göre verilir (ör. downloads/incomplete). */
-  const tempRel = () => (S.fs && S.fs.temp) || "";
-  const inTemp = (rel) => { const t = tempRel(); return !!t && (rel === t || rel.startsWith(t + "/")); };
+  /* DD-203: paketlerin yazdığı klasörler köke göre, sahibinin adıyla gelir ({path, owner}); Konsol
+     onları seçtirmez, paylaştırmaz ve kimin yazdığını söyler. Hiçbir ad burada sabit değildir. */
+  const protectedList = () => (S.fs && Array.isArray(S.fs.protected) ? S.fs.protected : []);
+  const protectedOwner = (rel) => { const hit = protectedList().find((p) => rel === p.path || rel.startsWith(p.path + "/")); return hit ? hit.owner : ""; };
+  const inTemp = (rel) => !!protectedOwner(rel);
   const kindOf = (item) => (item.type === "dir" ? "dir" : /\.(txt|log|nfo|srt|sub|md|json|conf|ini|csv|yml|yaml)$/i.test(item.name) ? "text"
     : /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i.test(item.name) ? "video" : "file");
   const isText = (item) => kindOf(item) === "text";
@@ -522,7 +524,7 @@
     const shown = fsShown();
     const kids = [];
     if (inTemp(pathText(fsPath))) {
-      kids.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, "qBittorrent bu klasöre yazıyor. "),
+      kids.push(h("div", { class: "offbar" }, h("div", null, h("strong", null, `${protectedOwner(pathText(fsPath))} bu klasöre yazıyor. `),
         h("span", null, "Buradaki dosyaları taşımak ya da silmek süren indirmeyi bozar."))));
     }
     const table = h("div", { class: "table fs-t" + (dragDepth ? " dragging" : ""), id: "fs-table" },
@@ -671,7 +673,7 @@
           h("small", null, dir ? `${item.count == null ? "?" : item.count} öge` : isText(item) ? "metin dosyası" : "")));
     const here = pathText(fsPath.concat(item.name));
     const on = fsSel.has(item.name);
-    // qBittorrent'in yazdığı klasör seçilmez, paylaşılmaz: süren indirme bozulmasın.
+    // Bir paketin yazdığı klasör seçilmez, paylaşılmaz: süren indirme bozulmasın.
     const locked = inTemp(here) || inTemp(pathText(fsPath));
     return h("div", { class: "tr" + (on ? " on" : "") + (fsFocus === item.name ? " focused" : "") },
       h("span", { class: "c-sel" },
@@ -860,7 +862,7 @@
       return;
     }
     const path = pathText(fsPath.concat(item.name)), sh = shareOf(path), directory = item.type === "dir";
-    const eligible = directory && !inTemp(path) && !(tempRel() && tempRel().startsWith(path + "/")) && !path.split("/").some((p) => p.startsWith("."));
+    const eligible = directory && !inTemp(path) && !protectedList().some((p) => p.path.startsWith(path + "/")) && !path.split("/").some((p) => p.startsWith("."));
     const action = (label, icon, fn) => h("button", { type: "button", class: "btn btn-sm btn-quiet", onclick: fn }, svg(icon), label);
     box.replaceChildren(h("div", { class: "fs09-detail-head" }, h("span", { class: "ticon t-dir" }, svg(directory ? "folder" : "file")),
       h("div", null, h("h2", null, item.name), h("small", null, `${fsRoot()}/${path}`)),

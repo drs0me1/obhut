@@ -52,7 +52,7 @@ const health = { status: "bad", read_at: 1790750000, checks: [
       if (endpoint === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: "calisiyor", runtime: "host", live: "running", durdurulabilir: true, konsol: torrentMeta }] };
       else if (endpoint === "/api/konsol/kaynaklar") result = { host: "test", version: data.version, domain: "ayc", os: "Debian 13", kernel: "test", uptime: 120, cores: 2, cpu: [1], mem: { total: 1000, used: 200, graph: [20] }, net: { wan: "192.0.2.1", tailscale: data.tailscale }, root: "/srv", disk: { total: 1000, free: 800 }, ports: [{ port: 22, proto: "tcp", scope: "internet", name: "SSH" }] };
       else if (endpoint === "/api/konsol/islemler") result = { items: [] };
-      else if (endpoint === "/api/state") result = {root:"/srv", temp:"downloads/incomplete", disk:{total:10000,free:8000}, trash:{count:0,size:0}};
+      else if (endpoint === "/api/state") result = {root:"/srv", protected:[{path:"downloads/incomplete",owner:"Deneme Uygulaması"}], disk:{total:10000,free:8000}, trash:{count:0,size:0}};
       else if (endpoint === "/api/list") result = {path:"",entries:[]};
       else if (endpoint === "/api/archives") result = {items:[], limits:{bytes:2147483648,entries:10000,layers:5,seconds:900}};
       else if (endpoint === "/api/konsol/ayarlar") result = data;

@@ -68,6 +68,21 @@ v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 requests and checks that the qBittorrent page links the public name, falls back
 to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
 
+v2-177 (DD-203, store phase 3): the shared share fixture (`test_share_manager_networks.
+torrent_package`) renders the torrent package folder — manifest with `PAKET_KLASORLER`,
+`klasorler.py`, `torrent.env` — so `test_shares.py`, `test_stage3_share_paths.py` and
+`test_backend_hardening.py` exercise declared and reported folders through the package
+module (fail closed on an unreadable profile); `test_shares.py` checks the WebDAV server
+hides and refuses a reported folder inside a share by path; `test_webdav_*` configs use the
+root-relative `protected` list; `test_torrent_api.py` covers `package_env`, the standalone
+worker reading `torrent.env` beside itself and `klasorler.yazilan`; `test_resources.py`
+resolves a `PAKET_PORTLAR` key from the package's env file; `test_publications.py`,
+`firewall-linux.py` and `publications-proxy-linux.py` write `torrent.env` into their
+package folders, and `settings-domain-linux.py` takes the torrent site's port from it. Bats checks the installer helpers (`paket_korunan_klasorler`,
+`paket_arkauc_yollar`, `paket_ayar_oku`) against rendered manifests, the `--protected`
+file-backend argument and that no base file names an application or carries a `TORRENT_*`
+key. Browser fixtures return `protected: [{path, owner}]` from `/api/state`.
+
 v2-176 (DD-202, store phase 2c): `test_torrent_api.py` drives the qBittorrent package
 worker (`ayar.py`: hash format, INI preservation, the read-only view without the hash,
 validation before any service change, stop/write/start order, failed-start recovery,

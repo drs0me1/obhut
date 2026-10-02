@@ -73,6 +73,9 @@ def main():
         (root / "templates/torrent/paket.env").write_text(
             (DATA / "magaza/torrent/paket.env").read_text().replace("__TORRENT_UI_PORT__", e["TORRENT_UI_PORT"]))
         shutil.copy(DATA / "magaza/torrent/yayin.py", root / "templates/torrent/yayin.py")
+        # DD-203: the check module reads the interface port and profile from the package's own env file.
+        (root / "templates/torrent/torrent.env").write_text(
+            "TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (e["TORRENT_UI_PORT"], e["TORRENT_PROFILE_DIR"]))
         text = (DATA / "magaza/torrent/qBittorrent.conf").read_text()
         for key, value in dict(e, DOWNLOADS_PATH=str(root / "downloads")).items():
             text = text.replace("__" + key + "__", value)

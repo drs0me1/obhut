@@ -15,6 +15,7 @@ import unittest
 DATA = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(DATA / "panel"), str(DATA / "files-panel")]
 import master_shares as shares
+import test_share_manager_networks as fixture
 import master_webdav as dav
 
 
@@ -40,8 +41,10 @@ class ConfigReadTests(unittest.TestCase):
         (self.root / "profile/qBittorrent").mkdir(parents=True)
         (self.root / "srv/media").mkdir(parents=True)
         self.conf = self.root / "profile/qBittorrent/qBittorrent.conf"
+        # DD-203: the share path check asks the torrent package's folder module (klasorler.py).
+        fixture.torrent_package(self.root / "mods", self.root / "srv/downloads", self.root / "profile")
         self.manager = object.__new__(shares.Manager)
-        self.manager.env = {"TORRENT_PROFILE_DIR": str(self.root / "profile")}
+        self.manager.env = {"MODULES_DIR": str(self.root / "mods"), "SERVER_ROOT": str(self.root / "srv")}
         self.data = {"root": str(self.root / "srv"), "blocked": [], "items": []}
 
     def assert_rejected(self):
@@ -96,7 +99,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 p = importlib.util.module_from_spec(spec); loader.exec_module(p)
 assert p.read_conf(sys.argv[2]) is None
 m = object.__new__(shares.Manager)
-m.env = {'TORRENT_PROFILE_DIR': str(Path(sys.argv[2]).parents[1])}
+m.env = json.loads(sys.argv[5])
 try:
     m.validate_path(json.loads(sys.argv[3]), 'media')
 except shares.ShareError:
@@ -105,7 +108,8 @@ else:
     raise AssertionError('FIFO accepted')
 """
         result = subprocess.run([sys.executable, "-c", code, str(DATA / "panel"),
-                                 str(self.conf), json.dumps(self.data), str(DATA / "magaza/torrent/ayar.py")],
+                                 str(self.conf), json.dumps(self.data), str(DATA / "magaza/torrent/ayar.py"),
+                                 json.dumps(self.manager.env)],
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
 

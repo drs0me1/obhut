@@ -41,6 +41,14 @@ import master_settings as settings  # noqa: E402
 
 LIMIT = 65536
 USERNAME_RE = re.compile(r"[A-Za-z0-9._@-]{1,64}")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def package_env(env):
+    """The package's own settings (torrent.env next to this file, DD-203) on top of the base's state."""
+    merged = dict(env)
+    merged.update(settings.env_read(os.path.join(PACKAGE_DIR, "torrent.env")))
+    return merged
 CONF = "qBittorrent/qBittorrent.conf"
 DROP_IN = "qbittorrent-nox@.service.d/90-konsol.conf"
 
@@ -221,7 +229,7 @@ def main():
     parser.add_argument("action", choices=("hesap", "dizin", "durum"))
     args = parser.parse_args()
     try:
-        env = settings.env_read(args.state)
+        env = package_env(settings.env_read(args.state))
         if args.action == "durum":
             print(json.dumps(durum(env), ensure_ascii=False))
             return

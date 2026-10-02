@@ -74,7 +74,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
         result = {host:"nrm",version:"2026.08.06-v2-131",domain:"ayc",os:"Debian 13",kernel:"test",uptime:900,cores:2,
           read_at:now,sampled_at:resources === "stale" ? now-90 : now,cpu:[18],mem:{total:4*1024**3,used:1024**3},
           disk:{total:100*1024**3,free:72*1024**3},root:"/srv",net:{tailscale:"100.64.0.2",wan:"192.0.2.1"}};
-      } else if (p === "/api/state") result = {root:"/srv",downloads:"downloads",temp:"downloads/incomplete",trash:{count:0,size:0},disk:{total:100*1024**3,free:72*1024**3}};
+      } else if (p === "/api/state") result = {root:"/srv",downloads:"downloads",protected:[{path:"downloads/incomplete",owner:"Deneme Uygulaması"}],trash:{count:0,size:0},disk:{total:100*1024**3,free:72*1024**3}};
       else if (p === "/api/list") {
         if (pickerFailure && url.searchParams.get("dirs") === "1") return route.fulfill({status:403,contentType:"application/json",body:JSON.stringify({error:"Klasör okunamadı"})});
         result = {path:url.searchParams.get("path") || "",entries:[entry("media"),entry("downloads"),entry("Belgeler"),entry(longArchiveFolder),...["sample.zip","sample.rar","sample.r00","sample.part01.rar","not-an-archive.txt"].map(name=>entry(name,"file"))]};

@@ -7,8 +7,13 @@
 # CONSOLE_WEB_DIR/uygulama/torrent altında durur (DD-200, DD-202); ilk giriş geçici paroladır.
 # İnternete eş portu açılmaz; paket kaldırılınca bile sunucuda kalır.
 # shellcheck shell=bash
+# DD-203: paketin kendi ayarları (arayüz portu, profil klasörü) kendi klasöründedir.
+# shellcheck source=/dev/null
+[[ -z "${MODULES_DIR:-}" || ! -f "$MODULES_DIR/torrent/torrent.env" ]] || source "$MODULES_DIR/torrent/torrent.env"
 
 paket_gerekli() {
+    [[ -n "${TORRENT_UI_PORT:-}" && -n "${TORRENT_PROFILE_DIR:-}" ]] ||
+        fail_step "paket ayarı eksik (torrent.env); kurulumu yeniden çalıştırın"
     need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR UNIT_DIR \
         SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
     torrent_unit_name >/dev/null || fail_step "uid $DOWNLOADS_UID için kullanıcı yok; kurulumu yeniden çalıştırın"

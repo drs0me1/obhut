@@ -9,7 +9,7 @@
 # alanının sahibi olarak çalışır. Yalnız Python standart kütüphanesi.
 #
 #   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN [--trash AD]
-#                            [--domain ALAN] [--version SÜRÜM] [--temp-dir AD] [--allow-host HOST]
+#                            [--domain ALAN] [--version SÜRÜM] [--protected YOL=SAHİP;...] [--allow-host HOST]
 #   master-files-panel check --url URL --host HOST
 #
 # Güvenlik: kökten çıkılamaz (her yol adımı bir dizin tanıtıcısından O_NOFOLLOW ile
@@ -507,7 +507,7 @@ class Files:
         with DirFd(self.open_dir(parts)) as fd:
             handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664, dir_fd=fd)
             try:
-                # umask ne olursa olsun ağacın kuralı: dosya 0664 (qBittorrent aynı grupla
+                # umask ne olursa olsun ağacın kuralı: dosya 0664 (indirme hesabının servisleri aynı grupla
                 # yazar; Paylaşım aynı hesapla okur; ensure_downloads_tree de bunu bekler).
                 os.fchmod(handle, 0o664)
                 while written < length:
@@ -698,7 +698,7 @@ class Panel:
             "root": self.args.root,
             "downloads": getattr(self.args, "downloads_dir", ""),
             "domain": self.args.domain,
-            "temp": self.args.temp_dir,
+            "protected": self.args.protected,
             "writable": os.access(self.args.root, os.W_OK),
             "disk": {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize,
                      "used": self.used(), "mount": os.path.ismount(self.args.root)},
@@ -1049,10 +1049,17 @@ def cmd_serve(args):
         fail("paylaşım klasörü adı noktayla başlayan küçük harfli ve çöpten farklı olmalı")
     if args.archive_dir and (not TRASH_RE.fullmatch(args.archive_dir) or args.archive_dir in (args.share, args.trash)):
         fail("arşiv çalışma klasörü noktayla başlayan küçük harfli ve diğer iç alanlardan farklı olmalı")
-    # DD-144: geçici klasör kullanıcı alanının kökünde değil, indirme klasörünün
-    # altındadır; yol köke göre verilir (ör. downloads/incomplete).
-    if args.temp_dir and not all(valid_name(p) for p in args.temp_dir.split("/")):
-        fail("geçersiz --temp-dir")
+    # DD-203: paketlerin yazdığı klasörler (köke göre yol ve sahibinin adı); sayfa onları
+    # seçtirmez, paylaştırmaz ve kime ait olduğunu söyler. Kurulum listeyi bildirimlerden derler.
+    protected = []
+    for entry in (args.protected or "").split(";"):
+        if not entry.strip():
+            continue
+        rel, sep, owner = entry.partition("=")
+        if not sep or not owner.strip() or not all(valid_name(p) for p in rel.split("/")):
+            fail("geçersiz --protected")
+        protected.append({"path": rel, "owner": owner.strip()})
+    args.protected = protected
     try:
         Files(args.root, args.trash, args.share, args.archive_dir).split(args.downloads_dir)
     except PanelError:
@@ -1081,7 +1088,7 @@ def main():
     s.add_argument("--archive-dir", default="")
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
-    s.add_argument("--temp-dir", dest="temp_dir", default="")
+    s.add_argument("--protected", default="")
     s.add_argument("--downloads-dir", default="")
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     c = sub.add_parser("check")

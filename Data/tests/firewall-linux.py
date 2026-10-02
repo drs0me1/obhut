@@ -89,6 +89,8 @@ def main():
         with tempfile.TemporaryDirectory(prefix="firewall-test-") as temp:
             root = Path(temp)
             e = m.env_read(DATA / "config/defaults.env")
+            # DD-203: the interface port is the torrent package's own setting, not a base default.
+            e["TORRENT_UI_PORT"] = m.env_read(DATA / "magaza/torrent/torrent.env")["TORRENT_UI_PORT"]
             for key in ("SETTINGS_FILE", "SETTINGS_PENDING_FILE", "SETTINGS_DNS_FILE", "DNSMASQ_CONF_FILE",
                         "DNSMASQ_CONF_DIR", "MODULES_FILE", "MODULES_DIR", "WG_NETWORKS_FILE", "RUNTIME_DIR",
                         "UNIT_DIR", "TORRENT_PROFILE_DIR", "SBIN_DIR", "SHARE_STATE_FILE", "SERVER_ROOT"):
@@ -115,6 +117,8 @@ def main():
             (Path(e["MODULES_DIR"]) / "torrent/paket.env").write_text(
                 (DATA / "magaza/torrent/paket.env").read_text().replace("__TORRENT_UI_PORT__", e["TORRENT_UI_PORT"]))
             shutil.copy(DATA / "magaza/torrent/yayin.py", Path(e["MODULES_DIR"]) / "torrent/yayin.py")
+            (Path(e["MODULES_DIR"]) / "torrent/torrent.env").write_text(
+                "TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (e["TORRENT_UI_PORT"], e["TORRENT_PROFILE_DIR"]))
             modules = Path(e["MODULES_FILE"])
             networks = Path(e["WG_NETWORKS_FILE"])
             module_record = "wireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n"

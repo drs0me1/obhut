@@ -173,7 +173,7 @@ printf 'SHA256: %s\n\n' "$PORTABLE_ARCHIVE_SHA256"
 # DD-119: bütün girdiler .command'ın yanındaki kurulum/kurulum.env'de. Burada
 # yalnız varlığı, izni ve SSH_HOST okunur; alan doğrulaması
 # sunucuda kurulumun kendisindedir. DD-143: sunucuya yalnız bu dosya gider —
-# WireGuard ağları ve peer'ları sunucuda Konsol/master-wg ile kurulur, Mac'ten
+# VPN ağları ve cihazları sunucuda Konsol ile (paketin aracıyla) kurulur, Mac'ten
 # hiçbir anahtar ya da profil taşınmaz.
 INPUT_LOCAL_DIR="$here/kurulum"
 INPUT_FILE_LOCAL="$INPUT_LOCAL_DIR/kurulum.env"

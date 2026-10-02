@@ -13,6 +13,8 @@ import tempfile
 import threading
 import time
 import unittest
+
+import test_share_manager_networks as fixture
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
@@ -32,10 +34,13 @@ class SharesTests(unittest.TestCase):
         self.root = self.base / "srv"
         (self.root / "alpha/movie.txt").write_bytes(b"abcdefghij")
         (self.root / "beta/private.txt").write_bytes(b"beta-only")
+        # DD-203: downloads/incomplete is reserved because the torrent package declares it.
+        fixture.torrent_package(self.base / "mods", self.root / "downloads", self.base / "profile")
         self.env = {"SHARE_STATE_FILE": str(self.base / "webdav.json"), "MODULES_FILE": str(self.base / "modules"),
+                    "MODULES_DIR": str(self.base / "mods"),
                     "RUNTIME_DIR": str(self.base / "run"), "SERVER_ROOT": str(self.root), "SHARE_DIR": ".pay",
-                    "FILES_PANEL_TRASH": ".cop", "DOWNLOADS_PATH": str(self.root / "downloads"), "TORRENT_TEMP_DIR": "incomplete",
-                    "SETTINGS_PENDING_FILE": str(self.base / "pending"), "TORRENT_PROFILE_DIR": str(self.base / "profile"),
+                    "FILES_PANEL_TRASH": ".cop", "DOWNLOADS_PATH": str(self.root / "downloads"),
+                    "SETTINGS_PENDING_FILE": str(self.base / "pending"),
                     "TAILSCALE_IPV4": "100.64.0.2", "SHARE_PORT": "61010"}
         self.state = self.base / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
@@ -103,8 +108,16 @@ class SharesTests(unittest.TestCase):
         for method in ("COPY", "MOVE"):
             for destination in ("/s/" + self.a["id"] + "/oops", "http://evil.example/s/" + self.b["id"] + "/oops"):
                 self.assertEqual(self.request(method, self.b, "private.txt", headers={"Destination": destination})[0], 403)
-        for path in ("../beta/private.txt", "%2e%2e/beta/private.txt", "..%2fbeta/private.txt", "x%00", "a//b", ".hidden", "incomplete/x"):
+        for path in ("../beta/private.txt", "%2e%2e/beta/private.txt", "..%2fbeta/private.txt", "x%00", "a//b", ".hidden"):
             self.assertIn(self.request("GET", leaf=path)[0], (400, 403))
+        # DD-203: a folder a package reports it writes into (root-relative) is refused and hidden
+        # inside the share that contains it; a same-named folder elsewhere is ordinary.
+        (self.root / "alpha/incomplete").mkdir()
+        (self.root / "alpha/incomplete/x").write_bytes(b"half")
+        self.assertEqual(self.request("GET", leaf="incomplete/x")[0], 200)
+        self.config["protected"].append("alpha/incomplete")
+        self.assertEqual(self.request("GET", leaf="incomplete/x")[0], 403)
+        self.assertNotIn(b"incomplete", self.request("PROPFIND", leaf="", headers={"Depth": "1"})[1])
 
     def test_symlink_hardlink_and_hidden_entries_not_served(self):
         os.symlink(self.root / "beta", self.root / "alpha/link")

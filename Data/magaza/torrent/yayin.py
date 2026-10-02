@@ -9,7 +9,16 @@ import fnmatch
 import http.client
 from pathlib import Path
 
-from master_settings import SettingsError, read_regular, require
+from master_settings import SettingsError, env_read, read_regular, require
+
+PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def package_env(env):
+    """The package's own settings (torrent.env, DD-203) on top of the base's state."""
+    merged = dict(env)
+    merged.update(env_read(PACKAGE_DIR / "torrent.env"))
+    return merged
 
 
 def ini_values(text):
@@ -26,6 +35,7 @@ def ini_values(text):
 
 def security(env, name, probe=False):
     """Fail closed if the native app permits bypass or has no permanent password."""
+    env = package_env(env)
     path = Path(env["TORRENT_PROFILE_DIR"]) / "qBittorrent/qBittorrent.conf"
     q = ini_values(read_regular(path)[0].decode())
 

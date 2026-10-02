@@ -35,8 +35,14 @@ class Api:
             return self.change(req, req.path[1:])
         raise self.ctx.error(405 if req.method not in ("GET", "POST") else 404, "bulunamadı")
 
-    def durum(self):
+    def env(self):
+        """The base's state plus the package's own torrent.env (DD-203)."""
         env = self.ctx.env()
+        env.update(self.ctx.read_env(os.path.join(os.path.dirname(self.worker_path), "torrent.env")))
+        return env
+
+    def durum(self):
+        env = self.env()
         try:
             unit = self.ayar.unit_name(env)
         except Exception:

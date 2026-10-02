@@ -290,13 +290,14 @@ next to upload, text view, move, rename and trash.
 
 Paths are resolved from directory descriptors with O_NOFOLLOW. Root identity
 includes device, inode and birth time (Linux statx); unsupported filesystems
-fail closed. Root/internal/hidden directories, known incomplete-download roots,
-symlinks, multiply linked regular files, cross-device children and overlapping
-share roots are refused. `SHARE_DIR` (`.pay`) below `SERVER_ROOT` is a reserved
+fail closed. Root/internal/hidden directories, the folders packages declare or
+report they write into (DD-203), symlinks, multiply linked regular files,
+cross-device children and overlapping share roots are refused. `SHARE_DIR` (`.pay`) below `SERVER_ROOT` is a reserved
 internal name (DD-171): the installer never creates, reads or deletes it, Files
-hides it and refuses to create it, and WebDAV and qBittorrent cannot access it
-when it exists. Do not move a qBittorrent incomplete directory into an
-existing shared subtree: remove/recreate the share after such external changes.
+hides it and refuses to create it, and WebDAV and the packages' services cannot
+access it when it exists. If an application's temporary folder is later pointed
+into an existing shared subtree, the registry hides it inside the share on the
+next publish; remove/recreate the share after such external changes.
 
 PUT/COPY stage content in a hidden sibling without holding the global mutation
 lock. Publication revalidates the receiving connection's enabled/RW/expiry

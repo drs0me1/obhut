@@ -74,16 +74,21 @@ valid_name() {
     [[ "$1" =~ $NAME_RE ]] || die "geçersiz peer adı '$1' (harf, rakam, . _ -; en çok 32)"
 }
 
-# DD-201: öbür paketlerin portları kendi bildirimlerinden (PAKET_PORTLAR "KEY:proto:kapsam:ad";
-# değer state'ten). Kurulu olsun olmasın ayrılır: bir ağ ileride kurulacak uygulamanın portunu almasın.
+# DD-201/203: öbür paketlerin portları kendi bildirimlerinden (PAKET_PORTLAR "KEY:proto:kapsam:ad";
+# değer state'ten ya da paketin kendi <id>.env dosyasından). Kurulu olsun olmasın ayrılır: bir ağ
+# ileride kurulacak uygulamanın portunu almasın.
 declared_ports() {
-    local manifest id key
+    local manifest id key value
     for manifest in "$MODULES_DIR"/*/paket.env; do
         [[ -f "$manifest" ]] || continue
         id="${manifest%/paket.env}"; id="${id##*/}"
         for key in $(sed -n 's/^PAKET_PORTLAR="\(.*\)"$/\1/p' "$manifest" | tr ';' '\n' | cut -d: -f1); do
-            [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ && -n "${!key:-}" ]] || continue
-            printf '%s:%s\n' "$id" "${!key}"
+            [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
+            value="${!key:-}"
+            [[ -n "$value" || ! -f "$MODULES_DIR/$id/$id.env" ]] ||
+                value="$(sed -n "s/^$key=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$MODULES_DIR/$id/$id.env" | head -n 1)"
+            [[ -n "$value" ]] || continue
+            printf '%s:%s\n' "$id" "$value"
         done
     done
 }

@@ -372,11 +372,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise DavError(403, "Başka bir paylaşıma erişilemez.")
         try:
             pp = parts(urllib.parse.unquote(parsed.path[len(self.prefix):], errors="strict"), empty=True)
-            if self.server.config.get("temp_name") in pp:
+            if self.protected(pp):
                 raise DavError(403)
             return pp
         except (ShareError, UnicodeError):
             raise DavError(403)
+
+    def protected(self, pp):
+        """DD-203: a folder a package writes into (root-relative list from the registry) is neither
+        listed nor reachable through any share that contains it."""
+        rel = "/".join(parts(self.authorized["path"]) + list(pp))
+        return any(rel == p or rel.startswith(p + "/") for p in self.server.config.get("protected", []))
 
     def folder(self, pp):
         fd = open_dir(self.rootfd, pp)
@@ -547,7 +553,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise DavError(507, "Bu klasörde çok fazla öge var.")
                 for name in sorted(names):
                     try:
-                        if name == self.server.config.get("temp_name"):
+                        if self.protected(pp + [name]):
                             continue
                         parts(name)
                         child = self.target_stat(fd, name)

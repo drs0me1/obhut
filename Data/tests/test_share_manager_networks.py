@@ -24,6 +24,20 @@ else:
     panel=importlib.util.module_from_spec(spec); loader.exec_module(panel)
 
 
+
+def torrent_package(mods_dir, downloads_path, profile_dir, ui_port="61006"):
+    """DD-203: a rendered torrent package folder: manifest (folders it writes into), its folder module
+    and its own settings file, as the installer leaves them under MODULES_DIR."""
+    repo = Path(__file__).resolve().parents[1] / "magaza" / "torrent"
+    folder = Path(mods_dir) / "torrent"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "paket.env").write_text((repo / "paket.env").read_text().replace("__TORRENT_UI_PORT__", ui_port)
+                                      .replace("__DOWNLOADS_PATH__", str(downloads_path)))
+    (folder / "klasorler.py").write_bytes((repo / "klasorler.py").read_bytes())
+    (folder / "torrent.env").write_text("TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (ui_port, profile_dir))
+    return folder
+
+
 class NetworkManagerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="share-networks-")
@@ -31,10 +45,12 @@ class NetworkManagerTests(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         for name in ("srv/alpha", "run", "sites", "profile"):
             (self.root / name).mkdir(parents=True)
+        # DD-203: the folders a package writes into come from its manifest and module, not the base.
+        torrent_package(self.root/"mods", self.root/"srv/downloads", self.root/"profile")
         self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"), MODULES_FILE=str(self.root/"modules"),
+                        MODULES_DIR=str(self.root/"mods"),
                         RUNTIME_DIR=str(self.root/"run"), SERVER_ROOT=str(self.root/"srv"),
-                        DOWNLOADS_PATH=str(self.root/"srv/downloads"), TORRENT_PROFILE_DIR=str(self.root/"profile"),
-                        TORRENT_TEMP_DIR="incomplete", FILES_PANEL_TRASH=".cop", SHARE_DIR=".pay",
+                        DOWNLOADS_PATH=str(self.root/"srv/downloads"), FILES_PANEL_TRASH=".cop", SHARE_DIR=".pay",
                         SETTINGS_PENDING_FILE=str(self.root/"settings-pending"),
                         SHARE_PORT="61010", TAILSCALE_IPV4="100.64.0.2", WAN_IPV4="8.8.8.8",
                         SHARE_WAN_BACKEND="127.0.0.2", CADDY_MODULES_DIR=str(self.root/"sites"),

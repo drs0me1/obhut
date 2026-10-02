@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-176"
+V2_VERSION="2026.08.06-v2-177"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -84,7 +84,6 @@ SHARE_PORT=$SHARE_PORT
 SHARE_HTTPS_PORT=$SHARE_HTTPS_PORT
 SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND
 SHARE_STATE_FILE=$SHARE_STATE_FILE
-TORRENT_TEMP_DIR=$TORRENT_TEMP_DIR
 SHARE_DIR=$SHARE_DIR
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
@@ -100,8 +99,6 @@ VPN_BLOCK_DEST6="$VPN_BLOCK_DEST6"
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 CONSOLE_WEB_DIR=$CONSOLE_WEB_DIR
 RUNTIME_DIR=$RUNTIME_DIR
-TORRENT_UI_PORT=$TORRENT_UI_PORT
-TORRENT_PROFILE_DIR=$TORRENT_PROFILE_DIR
 OS_ID=$OS_ID
 OS_CODENAME=$OS_CODENAME
 OS_VERSION_ID=$OS_VERSION_ID
@@ -253,7 +250,7 @@ tailscale_login() {
     die "Tailscale girişi tamamlanamadı"
 }
 
-# DD-124/DD-143: WireGuard'ın kaynağı sunucudaki kayıt ve wgN.conf dosyalarıdır.
+# DD-124/DD-143: VPN ağlarının kaynağı sunucudaki kayıt ve wgN.conf dosyalarıdır.
 # Yayıncı bu ID/codename için gerçekten bir suite yayınlamış mı? Yayınlamadıysa
 # hata `apt-get update`in içinde, 3 deneme x APT_LOCK_TIMEOUT sonra ve sebebi
 # gizleyen bir mesajla çıkardı. Ağ dalgalanmasında yanlış ölmemek için 3 deneme
@@ -371,8 +368,8 @@ stage_0() {
     assert_downloads_path_allowed "$SERVER_ROOT"
     DOWNLOADS_PATH="$SERVER_ROOT/$DOWNLOADS_SUBDIR"
 
-    # DD-143/201: WireGuard'ın hiçbir ayarı girdi ya da state değildir; paket kendi
-    # ayarlarını taşır (wireguard.env) ve uç nokta olarak state'teki WAN_IPV4'ü kullanır.
+    # DD-143/201/203: hiçbir paket ayarı girdi ya da state değildir; her paket kendi ayarlarını
+    # taşır (magaza/<id>/<id>.env) ve uç nokta olarak state'teki WAN_IPV4'ü kullanır.
 
     detect_wan
 
@@ -414,7 +411,7 @@ Kurulum girdileri (kurulum/kurulum.env):
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
   Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve arşiv aracı
-  App Store:    WireGuard ve qBittorrent; isteğe bağlı kurulur
+  App Store:    $(paket_katalog_adlar); isteğe bağlı kurulur
   Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
   Tailscale:     $ts_note
   full-upgrade:  $yes_no_upgrade
@@ -551,7 +548,7 @@ EOF
 }
 
 # TCP tıkanıklık denetimi (DD-111). Yalnız bu host'ta SONLANAN TCP'yi etkiler:
-# Caddy'nin Infuse'a WebDAV akışı, qBittorrent yüklemeleri, arayüzler.
+# Caddy'nin Infuse'a WebDAV akışı, uygulamaların indirmeleri, arayüzler.
 # Exit-node üzerinden yönlendirilen akışların denetimi uç noktalardadır;
 # router'ın ayarı onlara dokunmaz. tcp_bbr Ubuntu 26.04 çekirdeğinde modül
 # olarak doğrulandı; Debian 13 için beklenir ama doğrulanmadı. Yüklenemezse
@@ -664,8 +661,62 @@ module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
 # DD-197: bir paketin repo klasörü olduğu gibi işlenir. __KEY__ içeren dosya şablondur ve
 # kurulumun aynı adlı değişkeniyle doldurulur; öbürleri kopyalanır. Çalıştırılabilir dosyalar
 # (araçlar) 0755, geri kalanı 0644. 0: bir dosya değişti, 1: hepsi aynıydı.
+# DD-203: paketin kendi ayar dosyası (magaza/<id>/<id>.env, KEY=değer; `source` edilmez).
+paket_ayar_oku() { # ID ANAHTAR → değer (yoksa boş)
+    local file="$V2_ROOT/magaza/$1/$1.env"
+    [[ -f "$file" ]] || return 0
+    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$file" | head -n 1
+}
+
+paket_islenmis_oku() { # ID ANAHTAR → işlenmiş bildirimden (MODULES_DIR) değer
+    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$MODULES_DIR/$1/paket.env" 2>/dev/null | head -n 1
+}
+
+# DD-203: paketlerin yazdığı klasörler (işlenmiş bildirimlerdeki PAKET_KLASORLER, mutlak yol), dosya
+# arka ucuna köke göre "yol=sahip;..." olarak verilir: Dosyalar seçtirmez, paylaştırmaz, sahibini söyler.
+paket_korunan_klasorler() {
+    local manifest id ad p out=""
+    for manifest in "$MODULES_DIR"/*/paket.env; do
+        [[ -f "$manifest" ]] || continue
+        id="${manifest%/paket.env}"; id="${id##*/}"
+        ad="$(paket_islenmis_oku "$id" PAKET_AD)"; [[ -n "$ad" ]] || ad="$id"
+        for p in $(paket_islenmis_oku "$id" PAKET_KLASORLER); do
+            [[ "$p" == "$SERVER_ROOT/"* ]] || continue
+            out="${out:+$out;}${p#"$SERVER_ROOT"/}=$ad"
+        done
+    done
+    printf '%s' "$out"
+}
+
+# DD-203: root arka ucun yazabileceği yollar paketlerin bildiriminden (PAKET_ARKAUC_YOLLAR, mutlak);
+# kurulu olsun olmasın '-' ile verilir (yoksa atlanır), böylece bir kurulum birimi yeniden başlatmaz.
+paket_arkauc_yollar() {
+    local manifest id p out=""
+    for manifest in "$MODULES_DIR"/*/paket.env; do
+        [[ -f "$manifest" ]] || continue
+        id="${manifest%/paket.env}"; id="${id##*/}"
+        for p in $(paket_islenmis_oku "$id" PAKET_ARKAUC_YOLLAR); do
+            [[ "$p" == /* ]] || continue
+            out="${out:+$out }-$p"
+        done
+    done
+    printf '%s' "$out"
+}
+
+# Kataloğun adları ("A ve B"), özetler için.
+paket_katalog_adlar() {
+    local id names=() n
+    for id in $(paket_katalog); do names+=("$(paket_bildirim_oku "$id" PAKET_AD)"); done
+    n=${#names[@]}
+    case "$n" in
+        0) printf 'yok' ;;
+        1) printf '%s' "${names[0]}" ;;
+        *) printf '%s ve %s' "$(IFS=,; printf '%s' "${names[*]:0:n-1}" | sed 's/,/, /g')" "${names[n-1]}" ;;
+    esac
+}
+
 render_package_dir() { # ID
-    local id="$1" src dst name mode changed=0 key
+    local id="$1" src dst name mode changed=0 key value
     local -a args
     install -d -m 0755 -o root -g root "$MODULES_DIR/$id"
     for src in "$V2_ROOT/magaza/$id"/*; do
@@ -677,8 +728,15 @@ render_package_dir() { # ID
         args=()
         while IFS= read -r key; do
             [[ -n "$key" ]] || continue
-            [[ -n "${!key+x}" ]] || die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"
-            args+=("$key=${!key}")
+            # DD-203: paketin kendi ayarı (magaza/<id>/<id>.env) önce, kurulumun değişkeni sonra.
+            value="$(paket_ayar_oku "$id" "$key")"
+            if [[ -n "$value" ]]; then
+                args+=("$key=$value")
+            elif [[ -n "${!key+x}" ]]; then
+                args+=("$key=${!key}")
+            else
+                die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"
+            fi
         done < <(grep -oE '__[A-Z][A-Z0-9_]*__' "$src" | sort -u | sed 's/^__//; s/__$//')
         if [[ ${#args[@]} -gt 0 ]]; then
             render_template "$src" "$dst" "$mode" "${args[@]}"
@@ -686,6 +744,13 @@ render_package_dir() { # ID
             atomic_write "$dst" "$mode" <"$src"
         fi
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || changed=1
+    done
+    # DD-203: işlenmiş klasörde yalnız paketin dosyaları durur; eski sürümlerin bıraktıkları
+    # (ör. önceki sürümlerin yazdığı __pycache__) kalkar.
+    for dst in "$MODULES_DIR/$id"/* "$MODULES_DIR/$id"/.[!.]*; do
+        [[ -e "$dst" || -L "$dst" ]] || continue
+        name="${dst##*/}"
+        [[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }
     done
     [[ "$changed" -eq 1 ]]
 }
@@ -804,7 +869,7 @@ stage_3() {
     local fixed
     fixed="$(ensure_downloads_tree "$SERVER_ROOT" "$DOWNLOADS_UID" "$DOWNLOADS_GID")"
     if [[ "$fixed" -gt 0 ]]; then
-        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; qBittorrent/Konsol R/W)"
+        log INFO "Downloads: $fixed girdinin sahibi ya da izni düzeltildi (${DOWNLOADS_UID}:${DOWNLOADS_GID}; indirme hesabı R/W)"
     else
         log INFO "Downloads sahipliği ve izinleri yerinde (${DOWNLOADS_UID}:${DOWNLOADS_GID})"
     fi
@@ -871,8 +936,8 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
-    # DD-150: WireGuard katmanı (paketler, çekirdek modülü, ağların açılması) WireGuard
-    # modülündedir; kurulu değilse güvenlik duvarı hiçbir WireGuard portu açmaz.
+    # DD-150: VPN katmanı (paketler, çekirdek modülü, ağların açılması) VPN paketindedir;
+    # kurulu değilse güvenlik duvarı hiçbir VPN portu açmaz.
 }
 
 # retry fonksiyonu export -f + bash -c ile ayrı süreçte çalıştırır; diziler
@@ -1017,8 +1082,7 @@ EOF
     # DD-182: WAN paylaşım sitesi son yayındaki WAN_IPV4'e bağlanır. Sağlayıcı adresi
     # değiştirdiyse Caddy onunla açılamaz; site burada kalkar, 7. aşama yeni adresle yazar.
     local wan_site
-    for wan_site in "$CADDY_MODULES_DIR/paylasim-wan.caddy" "$CADDY_MODULES_DIR/torrent-wan.caddy" \
-        "$CADDY_MODULES_DIR/panel-wan.caddy"; do
+    for wan_site in "$CADDY_MODULES_DIR"/*-wan.caddy; do
         if [[ -f "$wan_site" ]] && ! grep -qxF "$(printf '\tbind %s' "$WAN_IPV4")" "$wan_site"; then
             rm -f -- "$wan_site"
             caddy_changed=1
@@ -1115,8 +1179,9 @@ EOF
 ensure_panel() {
     local changed="${1:-0}" f out
     [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
-    # DD-196: WireGuard'ın anahtar klasörünü paket açar; birim onu yoksa atlar (ReadWritePaths -).
-    # DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği kalıcı yer.
+    # DD-196/203: paket araçlarının yazdığı klasörleri (PAKET_ARKAUC_YOLLAR) paket açar; birim onları
+    # yoksa atlar (ReadWritePaths -). DD-194: hesap ve oturum kayıtları; arka ucun /etc altında
+    # yazabildiği kalıcı yer.
     install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"
     atomic_write "$SBIN_DIR/master-panel" 0755 <"$V2_ROOT/panel/master-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
@@ -1126,6 +1191,7 @@ ensure_panel() {
         PANEL_RUNTIME="$(basename -- "${PANEL_SOCKET%/*}")" \
         CADDY_GROUP="$CADDY_GROUP" \
         STATE_FILE="$STATE_FILE" \
+        PANEL_WRITE_PATHS="$(paket_arkauc_yollar)" \
         KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
@@ -1159,7 +1225,7 @@ ensure_console_pages() {
 }
 
 ensure_files_panel() {
-    local changed="${1:-0}" temp_dir user group
+    local changed="${1:-0}" protected user group
     # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
     # yoksa girişsiz, ev dizinsiz bir sistem hesabı; dosya sahipliği sayısal kaldığı için değişmez.
     # getent bulamayınca 2 döner; pipefail altında kurulumu düşürmesin.
@@ -1186,9 +1252,8 @@ ensure_files_panel() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     python3 "$V2_ROOT/panel/master_permissions.py" --directory-mode 0700 \
         "$SERVER_ROOT/$FILES_ARCHIVE_DIR" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
-    # DD-144, DD-151: qBittorrent modülünün ilk ayarındaki yarım indirme klasörü; panel onu
-    # kullanıcı alanının köküne göre bilir (<indirme klasörü>/<geçici>) ve orada uyarır.
-    temp_dir="$DOWNLOADS_SUBDIR/$TORRENT_TEMP_DIR"
+    # DD-144, DD-203: paketlerin yazdığı klasörler (bildirimlerden) köke göre; sayfa orada uyarır.
+    protected="$(paket_korunan_klasorler)"
     install -d -m 0755 -o root -g root "$MODULES_DIR/dosya"
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
@@ -1201,7 +1266,7 @@ ensure_files_panel() {
         FILES_PANEL_GROUP="$group" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         V2_VERSION="$V2_VERSION" \
-        QBITTORRENT_TEMP_DIR="$temp_dir" \
+        PROTECTED_DIRS="$protected" \
         DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED dosya"
@@ -1297,7 +1362,7 @@ stage_7() {
     # API) Caddy'nin forward_auth'u ile root arka uçtan oturum ister. Sunucunun kendisinden gelen
     # istek orada reddedilir (DD-180); oturumsuz API 401 alır, sayfa giriş sayfasına yönlenir.
     # Ayrıca X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan attığı istek)
-    # ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel WireGuard adresinde
+    # ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel VPN adresinde
     # dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/giris.html" || true)"
@@ -1331,7 +1396,7 @@ stage_7() {
             -H "Host: baska.ornek" "${gate_url}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
     done
-    # DD-180: indirme hesabıyla çalışan bir program (qBittorrent, unrar) root arka uca ve
+    # DD-180: indirme hesabıyla çalışan bir program (bir paketin servisi, unrar) root arka uca ve
     # Caddy'nin yönetim arayüzüne ulaşamamalı. Soketin izni ve gerçek bir deneme sınanır.
     [[ "$(stat -c '%U:%G:%a' "$PANEL_SOCKET" 2>/dev/null)" == "root:${CADDY_GROUP}:660" ]] ||
         die "Konsol arka ucu soketi root:${CADDY_GROUP} 0660 değil: $PANEL_SOCKET"
@@ -1434,7 +1499,7 @@ Manuel Tailscale Admin:
 Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; kullanıcı adı ve parolayla)
   İnternetten HTTPS isteğe bağlı: Ayarlar → Caddy → Panel (önce DNS A kaydı; ilk hesap yalnız Tailscale'den).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
-Yerleşik Dosyalar/WebDAV ve App Store uygulamaları (WireGuard, qBittorrent):
+Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
 $(summary_modules)$(summary_notes)
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF

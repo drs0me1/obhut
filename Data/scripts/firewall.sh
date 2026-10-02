@@ -482,7 +482,7 @@ wan_allow_pairs() {
     [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_WAN_PORT"
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
     [[ "${#VPN_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${VPN_PORTS[@]}"
-    # DD-151: qBittorrent'e gelen eş portu açılmaz.
+    # DD-151/198: paketler yalnız bildirdikleri portları alır; başka gelen port açılmaz.
     return 0
 }
 

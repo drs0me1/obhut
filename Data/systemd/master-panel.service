@@ -20,15 +20,15 @@ UMask=0077
 # çok 16 bağlantı açar. Tanıtıcı sınırı yine de dolmasın: kendi adresi denetimi dolunca
 # kapalı kalır ve Tailscale'i de reddederdi.
 LimitNOFILE=8192
-# Paket araçları root ister (ör. WireGuard: wg syncconf, /etc/wireguard). Yazabildiği kalıcı
-# yerler /etc/wireguard ve Konsol hesap klasörü (DD-194); /run (kilit) ProtectSystem=full
-# altında yazılabilir kalır. Klasörleri kurulum ya da paket açar; yoksa atlanır ('-') ve giriş
-# "kurulumu yeniden çalıştırın" der.
+# Paket araçları root ister. Yazabildiği kalıcı yerler paketlerin bildirdiği yollar
+# (PAKET_ARKAUC_YOLLAR, kurulum doldurur; DD-203) ve Konsol hesap klasörü (DD-194); /run (kilit)
+# ProtectSystem=full altında yazılabilir kalır. Klasörleri kurulum ya da paket açar; yoksa atlanır
+# ('-') ve giriş "kurulumu yeniden çalıştırın" der.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__
+ReadWritePaths=__PANEL_WRITE_PATHS__ -__KONSOL_AUTH_DIR__
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

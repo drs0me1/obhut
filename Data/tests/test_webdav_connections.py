@@ -60,8 +60,8 @@ class WebDAVConnectionTests(unittest.TestCase):
             "connections": {"tailscale": connection(permission="ro"), "wan": connection()},
         }
         self.config = {"schema": 4, "root": str(self.root), "items": [self.item],
-                       "limits": dict(shares.DEFAULT_LIMITS), "temp_name": "incomplete",
-                       "blocked": [".cop", ".pay", "incomplete"]}
+                       "limits": dict(shares.DEFAULT_LIMITS),
+                       "blocked": [".cop", ".pay"], "protected": ["alpha/incomplete"]}
         self.enterContext(patch.object(socket, "getfqdn", return_value="localhost"))
         self.clock = self.enterContext(patch.object(dav.time, "time", return_value=NOW))
         self.mutation_lock = threading.Lock()

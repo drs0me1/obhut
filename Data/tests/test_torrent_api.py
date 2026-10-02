@@ -68,9 +68,18 @@ class Scratch(unittest.TestCase):
         self.drop = ayar.drop_in_path(self.env)
         self.conf.write_text(SEED % self.env["DOWNLOADS_PATH"])
         self.conf.chmod(0o640)
+        # DD-203: the rendered package folder with its own settings file; the worker reads it next to itself.
+        self.pkg = self.root / "mods" / "torrent"
+        self.pkg.mkdir(parents=True)
+        for name in ("api.py", "ayar.py", "klasorler.py"):
+            shutil.copy(PACKAGE / name, self.pkg / name)
+        (self.pkg / "paket.env").write_text((PACKAGE / "paket.env").read_text().replace("__TORRENT_UI_PORT__", "61006")
+                                            .replace("__DOWNLOADS_PATH__", self.env["DOWNLOADS_PATH"]))
+        (self.pkg / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s\n" % self.env["TORRENT_PROFILE_DIR"])
         self.calls, self.fail_cmd, self.active = [], None, True
         self.addCleanup(patch.stopall)
         patch.object(settings, "run", side_effect=self.fake_run).start()
+        patch.object(ayar, "PACKAGE_DIR", str(self.pkg)).start()
 
     def fake_run(self, argv, **kwargs):
         self.calls.append(list(argv))
@@ -214,7 +223,7 @@ class WorkerTests(Scratch):
         # on sys.path; the backend hands it the engine's folder as --lib.
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH",)}
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        argv = [sys.executable, str(PACKAGE / "ayar.py"), "--state", str(self.state), "durum"]
+        argv = [sys.executable, str(self.pkg / "ayar.py"), "--state", str(self.state), "durum"]
         with_lib = argv[:2] + ["--lib", str(REPO / "panel")] + argv[2:]
         p = subprocess.run(with_lib, capture_output=True, text=True, env=env, cwd=str(self.root), timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -223,6 +232,24 @@ class WorkerTests(Scratch):
             p = subprocess.run(argv, capture_output=True, text=True, env=env, cwd=str(self.root), timeout=60)
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("master_settings", p.stderr)
+
+    def test_package_env_overrides_the_state_and_the_folder_module_reports_the_chosen_temp(self):
+        # The state carries no TORRENT_* key any more; the package's own file does (DD-203).
+        state_only = {k: v for k, v in self.env.items() if not k.startswith("TORRENT_")}
+        merged = ayar.package_env(state_only)
+        self.assertEqual(merged["TORRENT_PROFILE_DIR"], self.env["TORRENT_PROFILE_DIR"])
+        self.assertEqual(merged["TORRENT_UI_PORT"], "61006")
+        klasorler = load("torrent_klasorler_test", self.pkg / "klasorler.py")
+        self.assertEqual(klasorler.yazilan(state_only), [])
+        with self.conf.open("a") as fh:
+            fh.write('Session\\TempPath="%s/incomplete/"\n' % self.env["DOWNLOADS_PATH"])
+        self.assertEqual(klasorler.yazilan(state_only), [self.env["DOWNLOADS_PATH"] + "/incomplete"])
+        self.conf.unlink()
+        self.assertEqual(klasorler.yazilan(state_only), [], "a missing profile reports nothing")
+        self.conf.symlink_to(self.root / "dns/base.conf")
+        with self.assertRaises((settings.SettingsError, OSError)):
+            klasorler.yazilan(state_only)  # an unsafe profile is an error, never a guess
+        self.assertEqual(self.calls, [])
 
     def test_cli_reads_json_on_stdin_and_answers_json(self):
         def main(action, stdin=""):
@@ -263,7 +290,9 @@ class FakeContext:
         self.worker_result = (200, {"ok": True, "username": "worker-user"})
 
     def env(self):
-        return dict(self._env)
+        return {k: v for k, v in self._env.items() if not k.startswith("TORRENT_")}  # the state has none (DD-203)
+
+    read_env = staticmethod(panel.read_env)
 
     def state_path(self):
         return self._state
@@ -297,7 +326,7 @@ class FakeRequest:
 class ApiModuleTests(Scratch):
     def setUp(self):
         super().setUp()
-        self.api_module = load("torrent_api_test", PACKAGE / "api.py")
+        self.api_module = load("torrent_api_test", self.pkg / "api.py")
         self.ctx = FakeContext(self.env, str(self.state))
         self.api = self.api_module.create(self.ctx)
 
@@ -332,7 +361,7 @@ class ApiModuleTests(Scratch):
         req = FakeRequest("POST", "/hesap", {"username": "new-user", "password": "dummy-api-password"})
         self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "worker-user"}))
         argv, data = self.ctx.worker_calls[0]
-        self.assertEqual(argv, ["/usr/bin/python3", str(PACKAGE / "ayar.py"), "--lib", "/fixture/sbin", "--state", str(self.state), "hesap"])
+        self.assertEqual(argv, ["/usr/bin/python3", str(self.pkg / "ayar.py"), "--lib", "/fixture/sbin", "--state", str(self.state), "hesap"])
         self.assertEqual(data, {"username": "new-user", "password": "dummy-api-password"})
         self.assertEqual(req.audits, [("hesap", "kullanıcı adı ve parola", True)])
         req = FakeRequest("POST", "/hesap", {"password": "dummy-api-password"})
@@ -362,11 +391,8 @@ class DispatcherTests(Scratch):
     """The real backend over its Unix socket: gates, the package folder rule and the private worker run."""
     def setUp(self):
         super().setUp()
-        mods = self.root / "mods" / "torrent"
-        mods.mkdir(parents=True)
-        for name in ("api.py", "ayar.py"):
-            shutil.copy(PACKAGE / name, mods / name)
-        (mods / "paket.env").write_text((PACKAGE / "paket.env").read_text().replace("__TORRENT_UI_PORT__", "61006"))
+        # The state file carries no TORRENT_* key (DD-203); the package folder from Scratch does.
+        self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items() if not k.startswith("TORRENT_")))
         (self.root / "bin").mkdir()
         (self.root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
         os.chmod(self.root / "bin" / "master-modul", 0o755)

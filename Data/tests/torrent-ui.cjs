@@ -63,7 +63,7 @@ let hold = false, release = null, failNext = "";
         mem: { total: 1000, used: 200 }, disk: { total: 1000, free: 500 }, root: "/srv", net: { tailscale: "100.64.0.2", wan: "192.0.2.1" }, read_at: Date.now() / 1000, sampled_at: Date.now() / 1000 };
       else if (p === "/api/konsol/saglik") result = { status: "ok", read_at: 1, checks: [] };
       else if (p === "/api/konsol/oturum") result = { durum: "acik", kullanici: "fixture", oturum_gun: 7 };
-      else if (p === "/api/state") result = { root: "/srv", downloads: "downloads", temp: "downloads/incomplete", trash: { count: 0, size: 0 }, disk: { total: 1000, free: 500 } };
+      else if (p === "/api/state") result = { root: "/srv", downloads: "downloads", protected: [{ path: "downloads/incomplete", owner: "Deneme Uygulaması" }], trash: { count: 0, size: 0 }, disk: { total: 1000, free: 500 } };
       else if (p === "/api/list") result = { path: "", entries: [] };
       else if (p === "/api/konsol/paylasim") result = { enabled: true, running: true, max: 32, host: "http://100.64.0.2:61010", items: [] };
       else if (p === "/api/trash" || p === "/api/konsol/islemler" || p === "/api/archives") result = { items: [] };

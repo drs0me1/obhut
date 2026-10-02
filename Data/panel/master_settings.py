@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import importlib.util
 import secrets
 import shlex
 import stat
@@ -108,6 +109,51 @@ MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: 
 MANIFEST_ID_RE = re.compile(r"^[a-z]{2,16}$")
 
 
+def package_env(env, mid):
+    """DD-201/203: a package's own KEY=value settings (MODULES_DIR/<id>/<id>.env); {} when absent."""
+    base = env.get("MODULES_DIR", "")
+    if not base or not MANIFEST_ID_RE.fullmatch(mid):
+        return {}
+    try:
+        return env_read(Path(base) / mid / (mid + ".env"))
+    except (OSError, UnicodeError):
+        return {}
+
+
+_package_modules = {}
+
+
+def load_package_module(env, mid, name, attr, label):
+    """DD-199/203: a package's own Python module (yayin.py, klasorler.py), loaded from its rendered
+    folder as data: regular file, no symlink, cached by mtime, no bytecode written next to it.
+    It must expose the callable `attr`; any failure is a SettingsError under `label`."""
+    require(bool(re.fullmatch(r"[a-z][a-z0-9_]{0,40}\.py", name or "")), "%s adı geçersiz." % label)
+    path = Path(env["MODULES_DIR"]) / mid / name
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except OSError as err:
+        raise SettingsError("%s yok; kurulumu yeniden çalıştırın." % label) from err
+    require(not os.path.islink(path) and stat.S_ISREG(st.st_mode), "%s okunamadı." % label)
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    module = _package_modules.get(key)
+    if module is None:
+        spec = importlib.util.spec_from_file_location("magaza_%s_%s" % (mid, name[:-3]), path)
+        module = importlib.util.module_from_spec(spec)
+        before = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(module)
+        except Exception as err:  # the package's file is data for us
+            raise SettingsError("%s yüklenemedi." % label) from err
+        finally:
+            sys.dont_write_bytecode = before
+        require(callable(getattr(module, attr, None)), "%s eksik (%s)." % (label, attr))
+        for old in [k for k in _package_modules if k[0] == str(path)]:
+            del _package_modules[old]
+        _package_modules[key] = module
+    return module
+
+
 def read_manifests(env, limit=65536):
     """{id: {PAKET_KEY: value}} for every rendered package folder with a readable manifest."""
     result = {}
@@ -180,7 +226,7 @@ def run(argv, *, input=None, check=True, timeout=30, env=None):
                            env=dict({"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}, **(env or {})))
     except (OSError, subprocess.TimeoutExpired) as err:
         raise SettingsError("Komut tamamlanamadı: " + Path(argv[0]).name) from err
-    # Never copy command output into errors: qBittorrent may print credentials.
+    # Never copy command output into errors: a service may print credentials.
     require(not check or p.returncode == 0, "Doğrulama/uygulama başarısız: " + Path(argv[0]).name)
     return p
 

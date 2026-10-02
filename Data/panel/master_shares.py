@@ -220,15 +220,65 @@ class Manager:
 
     def initial(self):
         e = self.env
-        return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [], "temp_name": e["TORRENT_TEMP_DIR"],
-                "blocked": [e["FILES_PANEL_TRASH"], e["SHARE_DIR"],
-                            os.path.relpath(e["DOWNLOADS_PATH"], e["SERVER_ROOT"]) + "/" + e["TORRENT_TEMP_DIR"]]}
+        return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [],
+                "blocked": [e["FILES_PANEL_TRASH"], e["SHARE_DIR"]], "protected": self.protected_folders()}
 
     def read(self):
         try:
-            return load(self.path)
+            data = load(self.path)
         except FileNotFoundError:
             return self.initial()
+        # DD-203: the folders packages write into follow the catalogue and the packages' own reports,
+        # not the saved file; the WebDAV server hides and refuses them inside shares. A report that
+        # cannot be read leaves the list at the declarations here (path validation fails closed itself).
+        data["protected"] = self.protected_folders()
+        try:
+            data["protected"] += [p for p in self.written_folders() if p not in data["protected"]]
+        except ShareError:
+            pass
+        return data
+
+    def relative_folders(self, paths):
+        root = self.env["SERVER_ROOT"].rstrip("/")
+        out = []
+        for value in paths:
+            value = os.path.normpath(value)
+            if value.startswith(root + "/") and value != root:
+                rel = os.path.relpath(value, root)
+                if rel not in out:
+                    out.append(rel)
+        return out
+
+    def protected_folders(self):
+        """DD-203: every catalogued package's declared folders (PAKET_KLASORLER, absolute), root-relative."""
+        from master_settings import read_manifests
+        paths = []
+        for manifest in read_manifests(self.env).values():
+            paths.extend(manifest.get("PAKET_KLASORLER", "").split())
+        return self.relative_folders(paths)
+
+    def written_folders(self):
+        """DD-203: what the packages' own modules (PAKET_KLASOR_MODUL) report they write into right now,
+        e.g. a temporary folder the user chose in the application; fail closed on an unreadable report."""
+        from master_settings import SettingsError, load_package_module, read_manifests
+        paths = []
+        for mid, manifest in read_manifests(self.env).items():
+            name = manifest.get("PAKET_KLASOR_MODUL", "")
+            if not name:
+                continue
+            label = (manifest.get("PAKET_AD") or mid) + " klasör bildirimi"
+            try:
+                module = load_package_module(self.env, mid, name, "yazilan", label)
+                reported = module.yazilan(dict(self.env))
+                require_list = isinstance(reported, list) and all(isinstance(x, str) for x in reported)
+                if not require_list:
+                    raise ShareError("%s geçersiz; paylaşım değiştirilmedi." % label)
+                paths.extend(reported)
+            except ShareError:
+                raise
+            except (OSError, SettingsError, UnicodeError, ValueError, TypeError, KeyError, RecursionError) as err:
+                raise ShareError("%s güvenli okunamadı; paylaşım değiştirilmedi." % label) from err
+        return self.relative_folders(paths)
 
     def module_state(self):
         try:
@@ -355,25 +405,11 @@ class Manager:
         return False
 
     def validate_path(self, data, path, exclude=""):
-        # Only the root-side path validator needs the settings file reader.
-        from master_settings import SettingsError, read_regular
-
         pp = parts(path)
         path = "/".join(pp)
-        blocked = list(data["blocked"])
-        # Respect a user-selected qBittorrent incomplete folder as well as the default.
-        conf = os.path.join(self.env["TORRENT_PROFILE_DIR"], "qBittorrent", "qBittorrent.conf")
-        try:
-            raw, _ = read_regular(conf)
-            for line in raw.decode("utf-8").splitlines():
-                if line.startswith(("Session\\TempPath=", "Downloads\\TempPath=")):
-                    temp = os.path.normpath(line.rstrip().split("=", 1)[1])
-                    if temp.startswith(data["root"] + "/"):
-                        blocked.append(os.path.relpath(temp, data["root"]))
-        except FileNotFoundError:
-            pass
-        except (OSError, SettingsError, UnicodeError) as err:
-            raise ShareError("qBittorrent ayar dosyası güvenli okunamadı; paylaşım değiştirilmedi.") from err
+        # DD-203: the base's own reserved names, every package's declared folders and what the
+        # packages report they write into right now (a folder the user chose in the application).
+        blocked = list(data["blocked"]) + list(data.get("protected", [])) + self.written_folders()
         for p in blocked:
             if path == p or path.startswith(p + "/") or p.startswith(path + "/"):
                 raise ShareError("Bu klasör iç/geçici alan “%s” ile çakışıyor. Bu alanı içermeyen bir klasör seçin." % p)

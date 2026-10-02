@@ -4,6 +4,33 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-02 — Package-declared folders, settings and backend write paths, phase 3, v2-177
+(DD-203, uncommitted on top of 2094b91):**
+- `PAKET_KLASORLER` + `klasorler.py` (torrent): file backend `--protected "rel=owner;…"` →
+  `/api/state.protected`; shares `validate_path` = base reserved + declared + reported (fail
+  closed); WebDAV hides/refuses by root-relative path (`protected` in the registry, recomputed in
+  `read()`); konsol.js generic (`protectedOwner`). `TORRENT_TEMP_DIR`/`temp_name`/`--temp-dir` gone.
+- `magaza/torrent/torrent.env` (`TORRENT_UI_PORT`, `TORRENT_PROFILE_DIR`); installer
+  `paket_ayar_oku` fills package placeholders first; kanca sources it; `api.py`/`ayar.py`/
+  `yayin.py`/`klasorler.py` `package_env`; `PAKET_PORTLAR` key falls back to the package env
+  (master-panel `ports`, master-wg `declared_ports`). No `TORRENT_*` in defaults/state.
+- `PAKET_ARKAUC_YOLLAR="__WG_CONF_DIR__"` → installer renders `master-panel.service`
+  `ReadWritePaths=__PANEL_WRITE_PATHS__ -KONSOL_AUTH_DIR` (`paket_arkauc_yollar`); unit names no app.
+- `master_settings.load_package_module` (shared by `yayin.py`/`klasorler.py`, `sys.dont_write_bytecode`);
+  `paket_katalog_adlar` summaries; `*-wan.caddy` cleanup; comments/texts neutral.
+- Tests: shared `torrent_package()` fixture; Bats phase-3 test + fixture moves; browser `/api/state`
+  shape; Linux suites write `torrent.env`. Mac: 409 Python, 170 Bats, all browser suites green.
+- nrm: v2-177 deployed twice (second run proved the rendered-folder prune); `scratchpad/live-dd203.py`
+  passed (state/env/units/API, share refusals for declared and reported folders, no bytecode in the
+  package folder, WireGuard network + peer over the declared write path, port reservation by name);
+  Linux suites all green after `settings-domain-linux.py` learned to take the torrent port from
+  `torrent.env` (the only suite failure, a fixture issue). In-place host keeps a stale `temp_name`
+  key in `/etc/master-stack/webdav.json` (harmless; a fresh install writes none).
+- Next: commit on request. The store model is complete: adding an application means writing
+  `Data/magaza/<id>/` only.
+
+## Previous Task
+
 **2026-10-02 — qBittorrent page and settings in its package, phase 2c, v2-176 (DD-202;
 committed with v2-175 as e7c7e12 on branch quantum):**
 - `magaza/torrent/ayar.py` (worker: `hesap|dizin|durum`, JSON stdin/stdout, stop → snapshot →

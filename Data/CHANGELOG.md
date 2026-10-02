@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-02 — Package-declared folders, settings and backend write paths, phase 3 (v2-177)
+
+- Packages declare the folders they write into (`PAKET_KLASORLER`; qBittorrent's
+  `downloads/incomplete`) and may report the user's current choice through a module
+  (`klasorler.py`). Files refuses to select/share/trash them and names the owner,
+  share creation refuses them (fail closed on an unreadable report) and WebDAV hides and
+  refuses them inside shares — by path, not by folder name (DD-203). The base's
+  `TORRENT_TEMP_DIR`, `temp_name`, `--temp-dir` and its reader of qBittorrent's profile are gone.
+- `magaza/torrent/torrent.env` holds `TORRENT_UI_PORT` and `TORRENT_PROFILE_DIR`; the
+  installer fills a package's own placeholders from its env file, so `defaults.env` and
+  `state.env` carry no `TORRENT_*` key. A `PAKET_PORTLAR` key also resolves from the
+  package's env file.
+- `master-panel.service` takes its `ReadWritePaths` from the packages' `PAKET_ARKAUC_YOLLAR`
+  declarations (WireGuard: `/etc/wireguard`), each optional; the unit names no application.
+- One package-module loader in `master_settings.py` (publication checks and folder
+  reports) that writes no `__pycache__` into the rendered package folder.
+- Cosmetics: summaries list the catalogue's names, stale WAN sites are removed by pattern,
+  Settings port descriptions and the public-panel warning name no application, base
+  comments describe roles instead of products.
+- Fresh install only; an in-place host gets the new unit lines and files on the next run.
+- **Verified:** Mac — 409 Python, 170 Bats, all fixture browser suites. nrm — two portable
+  runs with scratch inputs on the in-place host (exit 0, no warnings; the second confirmed
+  the rendered-folder prune removed the stale `__pycache__`); live acceptance: no `TORRENT_*`
+  in `state.env`, `torrent.env` rendered and its values in the Caddy site, manifest and
+  package API, `--protected="downloads/incomplete=qBittorrent"` on the file backend and the
+  same list with owner in `/api/state`, `ReadWritePaths=-/etc/wireguard -…` rendered from the
+  WireGuard manifest, the port catalogue resolving `TORRENT_UI_PORT` from the package env, a
+  share on or inside the declared folder refused, a temporary folder pointed into a library
+  folder reported by `klasorler.py` and refused (profile restored), an ordinary folder shared
+  and unshared with no bytecode written into the package folder, WireGuard installed from
+  the engine with a network and peer created through the API over the declared write path,
+  the firewall check passing and `master-wg` refusing the torrent port by name; WireGuard
+  removed again. Linux (nrm) — 409 Python, 170 Bats, firewall, settings, settings-domain,
+  torrent-defaults, publications-proxy and install-hardening suites.
+
 ### 2026-10-02 — qBittorrent page and settings in its package, phase 2c (v2-176)
 
 - The qBittorrent page is the package's `sayfa.js`/`sayfa.css`; its account and

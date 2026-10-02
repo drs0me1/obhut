@@ -49,7 +49,7 @@ const creationTemplate=structuredClone(nets[0]);
    else if(p==='/api/konsol/moduller') data={items:[{id:'wireguard',installed:true,state:'calisiyor',runtime:'konsol',live:'running',durdurulabilir:false,konsol:meta('wireguard'),sayfa:['sayfa.js','sayfa.css']},{id:'torrent',installed:false,state:'yok',runtime:'host',live:'-',durdurulabilir:true,konsol:meta('torrent')}]};
    else if(p==='/api/konsol/kaynaklar')data={host:'fixture',domain:'ayc',version:'test',root:'/srv',read_at:Date.now()/1000,sampled_at:null,cpu:[],mem:null,disk:null,net:{}};
    else if(p==='/api/konsol/paylasim')data={items:[],enabled:true};
-   else if(p==='/api/state')data={root:'/srv',temp:'downloads/incomplete',trash:{count:0,size:0},disk:{total:100,free:80}};
+   else if(p==='/api/state')data={root:'/srv',protected:[{path:'downloads/incomplete',owner:'Deneme Uygulaması'}],trash:{count:0,size:0},disk:{total:100,free:80}};
    else if(['/api/konsol/islemler','/api/archives','/api/trash'].includes(p))data={items:[]};
    else if(p==='/api/list')data={path:'',entries:[]};
    else errors.push('unexpected endpoint '+p);

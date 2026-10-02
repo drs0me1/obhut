@@ -9,7 +9,6 @@ upstreams or tunnels. Application preferences are inspected, never rewritten.
 """
 import argparse
 import http.client
-import importlib.util
 import ipaddress
 import os
 from pathlib import Path
@@ -17,7 +16,7 @@ import re
 import sys
 
 import master_https as tls
-from master_settings import SettingsError, atomic, read_manifests, read_regular, require
+from master_settings import SettingsError, atomic, load_package_module, read_manifests, read_regular, require
 
 BUILTIN_ID = "paylasim"
 PANEL_ID = "panel"
@@ -25,7 +24,6 @@ UPSTREAM_RE = re.compile(r"^127\.0\.0\.1:[1-9][0-9]{0,4}$")
 LOCAL_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 NAME_RE = re.compile(r"^[^\x00-\x1f]{1,40}$")
 CHECK_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}\.py$")
-_modules = {}
 
 
 def packages(env):
@@ -111,28 +109,10 @@ def module_states(env):
 
 
 def security_module(env, mid, info):
-    """The package's own check module, loaded from its rendered folder (regular file, cached by mtime)."""
+    """The package's own check module (DD-199), through the base's package-module loader (DD-203)."""
     if not info["check"]:
         return None
-    path = Path(env["MODULES_DIR"]) / mid / info["check"]
-    try:
-        st = os.stat(path, follow_symlinks=False)
-    except OSError as err:
-        raise SettingsError("%s yayın denetimi yok; kurulumu yeniden çalıştırın." % info["name"]) from err
-    require(not os.path.islink(path) and os.path.isfile(path), "%s yayın denetimi okunamadı." % info["name"])
-    key = (str(path), st.st_mtime_ns, st.st_size)
-    module = _modules.get(key)
-    if module is None:
-        spec = importlib.util.spec_from_file_location("magaza_yayin_" + mid, path)
-        module = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(module)
-        except Exception as err:  # the package's file is data for us; a broken one closes the row
-            raise SettingsError("%s yayın denetimi yüklenemedi." % info["name"]) from err
-        require(callable(getattr(module, "security", None)), "%s yayın denetimi eksik." % info["name"])
-        _modules.clear()
-        _modules[key] = module
-    return module
+    return load_package_module(env, mid, info["check"], "security", info["name"] + " yayın denetimi")
 
 
 def security_check(env, mid, name, probe=False):

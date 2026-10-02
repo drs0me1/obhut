@@ -171,7 +171,9 @@ class NetworkTests(unittest.TestCase):
         self.addCleanup(fqdn.stop)
         self.root = Path(self.tmp.name)
         self.config = {"schema": 4, "root": str(self.root), "items": [],
-                       "limits": dict(shares.DEFAULT_LIMITS), "temp_name": "incomplete"}
+                       "limits": dict(shares.DEFAULT_LIMITS),
+                       # DD-203: root-relative folders packages write into; hidden and unreachable in shares.
+                       "protected": ["1/incomplete", "2/incomplete", "3/incomplete"]}
         for index, networks in enumerate((["tailscale"], ["wan"], ["tailscale", "wan"]), 1):
             folder = self.root / str(index)
             folder.mkdir()

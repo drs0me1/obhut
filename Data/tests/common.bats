@@ -1738,9 +1738,12 @@ WG_CLIENTS_DIR=$TMP/clients
 WG_NETWORKS_FILE=$TMP/networks
 WG_NETWORKS_MAX=9
 EOF
-    sed 's/__TORRENT_UI_PORT__/61006/g' "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
+    sed -e 's/__TORRENT_UI_PORT__/61006/g' -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" \
+        "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
     sed -e 's/__LOCAL_DOMAIN__/ayc/g' -e "s#__DOWNLOADS_PATH__#$TMP/downloads#g" -e "s#__TORRENT_PROFILE_DIR__#$TMP/qb#g" \
         "$V2_ROOT/magaza/torrent/konsol.json" >"$TMP/mods/torrent/konsol.json"
+    # DD-203: the package's own settings live in its folder; the state carries no TORRENT_* key.
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qb\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
     # DD-150: WireGuard is a package; these tests run with it installed.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/master-wg" <<EOF
@@ -1958,8 +1961,6 @@ SHARE_PORT=61010
 SHARE_HTTPS_PORT=443
 SHARE_STATE_FILE=$TMP/etc/webdav.json
 SBIN_DIR=$TMP/lib
-TORRENT_TEMP_DIR=incomplete
-TORRENT_PROFILE_DIR=$TMP/profile
 DOWNLOADS_PATH=$TMP/srv/downloads
 SETTINGS_PENDING_FILE=$TMP/pending
 STATE_DIR=$TMP/etc
@@ -2357,7 +2358,7 @@ case "\$1" in
 esac
 EOF
     printf 'wireguard\tcalisiyor\ntorrent\tcalisiyor\n' >"$TMP/moduller"
-    printf 'TORRENT_UI_PORT=61006\nFILES_PANEL_PORT=61009\n' >>"$TMP/state.env"
+    printf 'FILES_PANEL_PORT=61009\n' >>"$TMP/state.env"
     [ "$(pc /api/konsol/moduller/torrent/hesap -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d == {"user": "admin", "temp": True, "host": "torrent.ayc"}, d' "$TMP/body"
     [ "$(pc '/api/konsol/moduller/torrent/hesap?parola=1' -H 'X-Konsol: 1')" = 200 ]
@@ -2564,7 +2565,8 @@ EOF
     # A local domain change also renames the Host the backends check.
     grep -qF 'r"(?m)^(\t+header_up Host panel\.)" + old + r"$"' "$V2_ROOT/panel/master_settings.py"
     # A changed WAN IPv4 drops the stale public site like the other WAN sites.
-    awk '/for wan_site in/,/; do$/' "$V2_ROOT/install.sh" | grep -qF '"$CADDY_MODULES_DIR/panel-wan.caddy"'
+    # DD-203: every package's public site by pattern, no application name in the installer.
+    awk '/for wan_site in/,/; do$/' "$V2_ROOT/install.sh" | grep -qF '"$CADDY_MODULES_DIR"/*-wan.caddy'
     # The backend trusts the internet mark only while the publication is active.
     grep -qF 'if not self.panel.public_open() or not self.public_client():' "$V2_ROOT/panel/master-panel"
     grep -qF 'secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""' "$V2_ROOT/panel/master-panel"
@@ -2640,7 +2642,7 @@ EOF
     run ! grep -q -- '--master-wg' "$unit"
     grep -q -- '--master-modul __SBIN_DIR__/master-modul' "$unit"
     run ! grep -q 'PANEL_DNS_DEFAULT\|PANEL_KEEPALIVE_DEFAULT\|PANEL_MTU_DEFAULT' "$unit"
-    for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__' 'PrivateTmp=true' \
+    for line in 'NoNewPrivileges=true' 'ProtectSystem=full' 'ReadWritePaths=__PANEL_WRITE_PATHS__ -__KONSOL_AUTH_DIR__' 'PrivateTmp=true' \
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'; do
         grep -qx "$line" "$unit"
     done
@@ -2659,7 +2661,11 @@ EOF
     body="$(awk '/^ensure_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     # DD-196: the WireGuard key folder belongs to the package; the base backend starts without it.
     run ! grep -q 'WG_CONF_DIR' <<<"$body"
-    grep -qx 'ReadWritePaths=-/etc/wireguard -__KONSOL_AUTH_DIR__' "$unit"
+    grep -qx 'ReadWritePaths=__PANEL_WRITE_PATHS__ -__KONSOL_AUTH_DIR__' "$unit"
+    # DD-203: the write path comes from the package that needs it; the base unit names none.
+    run ! grep -q '/etc/wireguard' "$unit"
+    grep -qx 'PAKET_ARKAUC_YOLLAR="__WG_CONF_DIR__"' "$V2_ROOT/magaza/wireguard/paket.env"
+    grep -qF 'PANEL_WRITE_PATHS="$(paket_arkauc_yollar)"' "$V2_ROOT/install.sh"
     # DD-140: this backend serves no page files any more; the console pages come from the file backend.
     run ! grep -q -- '--web' "$V2_ROOT/systemd/master-panel.service"
     run ! grep -qE 'index\.html|panel\.css|panel\.js' <<<"$body"
@@ -2726,7 +2732,7 @@ files_panel_start() {
     FPORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" \
         --share .pay \
-        --domain ayc --version 2026.08.06-v2-test --temp-dir incomplete >"$TMP/fpanel.log" 2>&1 &
+        --domain ayc --version 2026.08.06-v2-test --protected "incomplete=Deneme Uygulaması" >"$TMP/fpanel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
         curl -s -o /dev/null "http://127.0.0.1:$FPORT/" && return 0
@@ -2777,7 +2783,7 @@ fpost() {
     python3 - "$TMP/body" "$TMP/root" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["root"] == sys.argv[2] and d["writable"] and d["temp"] == "incomplete", d
+assert d["root"] == sys.argv[2] and d["writable"] and d["protected"] == [{"path": "incomplete", "owner": "Deneme Uygulaması"}], d
 assert d["trash"] == {"count": 0, "size": 0} and d["disk"]["total"] >= d["disk"]["free"] > 0, d
 PY
     # The stage 7 check: no password.
@@ -3020,7 +3026,7 @@ PY
     grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
-    for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf paket.env kanca; do
+    for f in master-stack.conf qBittorrent.conf torrent.caddy dnsmasq.conf paket.env kanca torrent.env klasorler.py; do
         [ -f "$V2_ROOT/magaza/torrent/$f" ]
     done
     grep -q '__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/torrent.caddy"
@@ -3035,7 +3041,10 @@ PY
     [ "$actual" = "$expected" ]
     grep -qx 'Accepted=true' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'WebUI\\LocalHostAuth=true' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
-    grep -qx 'TORRENT_PROFILE_DIR="/var/lib/qbittorrent"' "$V2_ROOT/config/defaults.env"
+    # DD-203: the package's port and profile are its own settings; the base defaults carry none.
+    grep -qx 'TORRENT_PROFILE_DIR=/var/lib/qbittorrent' "$V2_ROOT/magaza/torrent/torrent.env"
+    grep -qx 'TORRENT_UI_PORT=61006' "$V2_ROOT/magaza/torrent/torrent.env"
+    run ! grep -q '^TORRENT_' "$V2_ROOT/config/defaults.env"
 }
 
 @test "console shows qBittorrent's first login and its interface link" {
@@ -3064,6 +3073,45 @@ PY
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
     grep -q '^\.acct-wg {' "$V2_ROOT/magaza/torrent/sayfa.css"
     run ! grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
+}
+
+@test "phase 3: packages declare their folders, settings and backend write paths; the base names no application" {
+    # DD-203: the torrent package declares what it writes into and reports the user's choice itself.
+    grep -qx 'PAKET_KLASORLER="__DOWNLOADS_PATH__/incomplete"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qx 'PAKET_KLASOR_MODUL="klasorler.py"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qF 'def yazilan(env):' "$V2_ROOT/magaza/torrent/klasorler.py"
+    grep -qF 'source "$MODULES_DIR/torrent/torrent.env"' "$V2_ROOT/magaza/torrent/kanca"
+    # The base's state, defaults, shell and helpers carry no application name or key.
+    run ! grep -qE '^TORRENT_' <<<"$(awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    run ! grep -qE 'qBittorrent|^TORRENT_|WireGuard' "$V2_ROOT/config/defaults.env"
+    run ! grep -qiE 'qbittorrent|torrent' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/ayarlar.js" "$V2_ROOT/console/index.html"
+    run ! grep -q 'WireGuard' "$V2_ROOT/console/ayarlar.js"
+    run ! grep -qiE 'qbittorrent|TORRENT_' "$V2_ROOT/panel/master_shares.py" "$V2_ROOT/panel/master_webdav.py" \
+        "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master_settings.py" "$V2_ROOT/scripts/firewall.sh" \
+        "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/systemd/master-panel.service"
+    grep -q -- '--protected="__PROTECTED_DIRS__"' "$V2_ROOT/systemd/master-files-panel.service"
+    grep -qF 'PROTECTED_DIRS="$protected"' "$V2_ROOT/install.sh"
+    grep -qF 'for wan_site in "$CADDY_MODULES_DIR"/*-wan.caddy; do' "$V2_ROOT/install.sh"
+    grep -qF 'App Store:    $(paket_katalog_adlar); isteğe bağlı kurulur' "$V2_ROOT/install.sh"
+    # The installer's helpers against rendered manifests: folders become root-relative "path=owner"
+    # pairs for the file backend, backend write paths become '-' entries; foreign paths are skipped.
+    mkdir -p "$TMP/rend/deneme" "$TMP/rend/baska"
+    printf 'PAKET_AD="Deneme Uygulaması"\nPAKET_KLASORLER="/srv/downloads/incomplete /elsewhere/x /srv"\nPAKET_ARKAUC_YOLLAR="/etc/deneme __UNRENDERED__"\n' >"$TMP/rend/deneme/paket.env"
+    printf 'PAKET_AD="Başka"\nPAKET_KLASORLER="/srv/media/cache"\n' >"$TMP/rend/baska/paket.env"
+    for fn in paket_islenmis_oku paket_korunan_klasorler paket_arkauc_yollar; do
+        eval "$(awk "/^$fn\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    [ "$(MODULES_DIR="$TMP/rend" SERVER_ROOT=/srv paket_korunan_klasorler)" = "media/cache=Başka;downloads/incomplete=Deneme Uygulaması" ]
+    [ "$(MODULES_DIR="$TMP/rend" paket_arkauc_yollar)" = "-/etc/deneme" ]
+    [ -z "$(MODULES_DIR="$TMP/empty" paket_korunan_klasorler)" ]
+    # The installer fills a package's own placeholders from its env file before its own variables.
+    eval "$(awk '/^paket_ayar_oku\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent TORRENT_UI_PORT)" = 61006 ]
+    [ "$(V2_ROOT="$V2_ROOT" paket_ayar_oku wireguard WG_CONF_DIR)" = /etc/wireguard ]
+    [ -z "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent NOPE)" ]
+    grep -qF 'value="$(paket_ayar_oku "$id" "$key")"' "$V2_ROOT/install.sh"
+    # The rendered package folder holds the package's files only; leftovers of earlier versions go.
+    grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
 @test "installer prepares optional modules and reapplies installed ones separately from builtins" {
@@ -3221,7 +3269,7 @@ PY
     grep -q 'useradd --system --uid "\$DOWNLOADS_UID" --gid "\$DOWNLOADS_GID" --no-create-home' <<<"$body"
     grep -q -- '--shell /usr/sbin/nologin "\$DOWNLOADS_ACCOUNT"' <<<"$body"
     grep -qx 'DOWNLOADS_ACCOUNT="master-downloads"' "$V2_ROOT/config/defaults.env"
-    grep -qF 'temp_dir="$DOWNLOADS_SUBDIR/$TORRENT_TEMP_DIR"' <<<"$body"
+    grep -qF 'protected="$(paket_korunan_klasorler)"' <<<"$body"
     # DD-140: this backend serves the console pages.
     pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     for f in index.html konsol.css konsol.js; do grep -q "$f" <<<"$pages"; [ -f "$V2_ROOT/console/$f" ]; done
@@ -3313,11 +3361,11 @@ WAN_IPV4=203.0.113.7
 RUNTIME_DIR=$TMP/run
 SSH_PUBLIC_PORT=22
 SHARE_PORT=61010
-TORRENT_UI_PORT=61006
 FILES_PANEL_PORT=61009
 TAILSCALE_UDP_PORT=41641
 EOF
     mkdir -p "$TMP/mods/wireguard" "$TMP/mods/torrent" "$TMP/mods/paylasim" "$TMP/mods/dosya"
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=/var/lib/qbittorrent\n' >"$TMP/mods/torrent/torrent.env"
     cat >"$TMP/mods/wireguard/wireguard.env" <<EOF
 WG_CONF_DIR=$TMP/etc/wireguard
 WG_CLIENTS_DIR=$TMP/etc/wireguard/clients
@@ -3838,11 +3886,11 @@ torrent_fixture() {
     # DD-202: the Konsol page comes with the package and is placed while installed.
     cp "$V2_ROOT/magaza/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.css" "$TMP/mods/torrent/"
     : >"$TMP/caddy/Caddyfile"
+    # DD-203: the hook reads its port and profile from the package's own env file.
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
     cat >>"$TMP/mstate.env" <<EOF
 CONSOLE_WEB_DIR=$TMP/web
 DOWNLOADS_GID=1000
-TORRENT_UI_PORT=61006
-TORRENT_PROFILE_DIR=$TMP/qbprof
 SHARE_DIR=.pay
 CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
@@ -4332,14 +4380,12 @@ WAN_IPV4=203.0.113.7
 TAILSCALE_IF=tailscale0
 SSH_PUBLIC_PORT=22
 TAILSCALE_UDP_PORT=41641
-TORRENT_UI_PORT=61006
 CHAIN_INPUT=MASTER-INPUT
 CHAIN_FORWARD=MASTER-FORWARD
 CHAIN_NAT=MASTER-NAT
 CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
 DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
-TORRENT_PROFILE_DIR=$TMP/qb
 DOWNLOADS_PATH=$TMP/srv/downloads
 EOF
     rend() {
@@ -4348,7 +4394,7 @@ EOF
             -e 's/__CADDY_HTTP_PORT__/80/g' -e "s#__CONSOLE_WEB_DIR__#$TMP/web#g" -e "s#__CADDY_MODULES_DIR__#$TMP/caddy/moduller#g" \
             -e 's/__WAN_IPV4__/203.0.113.7/g' -e 's/__SHARE_HTTPS_PORT__/443/g' \
             -e 's/__SHARE_PORT__/61010/g' -e 's/__TORRENT_UI_PORT__/61006/g' -e 's/__TAILSCALE_IF__/tailscale0/g' \
-            -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_TEMP_DIR__/incomplete/g' "$1"
+            -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" "$1"
     }
     rend "$V2_ROOT/templates/Caddyfile" >"$TMP/caddy/Caddyfile"
     rend "$V2_ROOT/magaza/paylasim/paylasim.caddy" >"$TMP/caddy/moduller/paylasim.caddy"
@@ -4576,7 +4622,7 @@ PY
     # the same private way: the password reaches stdin only, never argv, the journal or the reply.
     mkdir -p "$TMP/templates/torrent"
     sed 's/__TORRENT_UI_PORT__/61006/g' "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/templates/torrent/paket.env"
-    cp "$V2_ROOT/magaza/torrent/api.py" "$V2_ROOT/magaza/torrent/ayar.py" "$TMP/templates/torrent/"
+    cp "$V2_ROOT/magaza/torrent/api.py" "$V2_ROOT/magaza/torrent/ayar.py" "$TMP/mods/torrent/torrent.env" "$TMP/templates/torrent/"
     [ "$(pc /api/uygulama/torrent/hesap -H 'Content-Type: application/json' --data '{"password":"dummy-api-password"}')" = 403 ]
     [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"password":"short"}')" = 400 ]
     [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"username":"bad user"}')" = 400 ]

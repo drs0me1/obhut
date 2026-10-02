@@ -217,7 +217,6 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       ["SSH", "Sunucuya uzaktan terminal bağlantısı."],
       ["Tailscale PeerAPI", "Tailscale'in cihazlar arası hizmet ucu; portu otomatik izlenir."],
       ["Tailscale", "Tailscale tünelinin bağlantı trafiği."],
-      ["WireGuard", "WireGuard VPN ağına cihaz bağlantısı."],
       ["Caddy", "Panel ve servislerin web adreslerini sunar."],
       ["dnsmasq", "Yerel alan adlarını DNS ile çözer."],
       ["Paylaşım WebDAV", "Dosyalar uygulamasındaki klasör paylaşımları."],
@@ -380,7 +379,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
   function confirmPanel(row, item) {
     const word = h("input", { type: "text", autocomplete: "off", spellcheck: "false", required: true });
     modal("Panel internete açılsın mı?", h("div", null,
-      note(`https://${item.domain} adresinde Konsol giriş sayfası internete açılır. Konsol hesabıyla giren herkes sunucuyu yönetebilir: güvenlik duvarı, WireGuard, dosyalar ve uygulamalar.`, true),
+      note(`https://${item.domain} adresinde Konsol giriş sayfası internete açılır. Konsol hesabıyla giren herkes sunucuyu yönetebilir: güvenlik duvarı, dosyalar, paylaşımlar ve uygulamalar.`, true),
       row.enabled && location.protocol === "https:" ? note("Bu sayfayı eski internet adresinden açtınız; kaydettiğinizde bu bağlantı kesilir. Konsol Tailscale adresinden ve yeni addan açık kalır.", true) : null,
       h("ul", { class: "as-changes" },
         h("li", null, "Uzun ve başka yerde kullanmadığınız bir Konsol parolası kullanın; gerekirse önce Sistem → Konsol hesabı bölümünden değiştirin."),
