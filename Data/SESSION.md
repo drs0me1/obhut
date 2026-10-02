@@ -4,8 +4,8 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
-**2026-10-02 — qBittorrent page and settings in its package, phase 2c, v2-176 (DD-202,
-uncommitted on top of 3b6f2ce together with v2-175):**
+**2026-10-02 — qBittorrent page and settings in its package, phase 2c, v2-176 (DD-202;
+committed with v2-175 as e7c7e12 on branch quantum):**
 - `magaza/torrent/ayar.py` (worker: `hesap|dizin|durum`, JSON stdin/stdout, stop → snapshot →
   drop-in `90-konsol.conf` → INI patch → start; failure restores + restarts; takes the base
   settings lock, uses `Manager.safe_dir(writable=True)`), `api.py` (`/api/uygulama/torrent/*`,
