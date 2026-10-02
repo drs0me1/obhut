@@ -5,7 +5,7 @@ Cross-session continuity for this repository.
 ## Current Task
 
 **2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler, v2-186 (DD-208
-rewritten, DD-209; uncommitted, with v2-179..184; v2-185's store package superseded):**
+rewritten, DD-209; committed with v2-179..184 as 1eba852 on branch quantum; v2-185's store package superseded):**
 - User: "podman bir platform … ayrı bir uygulama gibi görülmesin … taban yapı olarak birlikte kurulsun" and
   "podman üzerinden yüklü qbittorrent … ekranda ve app store içerisinde uygulama gibi görülmesi daha iyi olur".
   Decision taken without asking (stated in the reply): one qBittorrent app, now in Podman (the user had removed
