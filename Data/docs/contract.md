@@ -481,10 +481,11 @@ Contract in §5–§7 and `folder-shares.md`.
   (**DD-147**); on the public name every path except the sign-in page and API
   also needs a Konsol session, while the tailnet address asks for none
   (**DD-194**, **DD-205**).
-  - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212**): Genel bakış remains the
+  - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**): Ana Menü is the
     landing page, with only installed application tiles and the network widget.
     Dosyalar, Paylaşımlar, App Store and Ayarlar have no home cards. Dosyalar, App Store
-    (§1.11, laid out as tiles), the installed applications' pages and Ayarlar remain in
+    (§1.11, cards with name/status/actions and descriptions only in Details), Konteynerler,
+    the installed applications' pages and Ayarlar remain in
     one responsive sidebar; Paylaşımlar is a tab inside Dosyalar, not a separate
     sidebar entry. The skin is
     a wallpaper (inline SVG, no external asset) behind translucent surfaces; readers who
@@ -498,18 +499,19 @@ Contract in §5–§7 and `folder-shares.md`.
     address, only while that publication is active; otherwise it points to
     Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
     from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
-    measurements show as unknown, never as zero. Clock/date sit below those resources;
-    the sidebar also shows WAN/Tailscale addresses, version and uptime. Separate home
+    measurements show as unknown, never as zero. Clock/date replace only the home heading;
+    the sidebar shows WAN/Tailscale addresses, version and uptime. Separate home
     clock/system widgets, including their unused SVG/CSS, are removed. An unknown route opens
-    Genel bakış; a page of an absent application opens App Store.
-  - **Opening an application and its actions (DD-210, DD-212).** An application with a native
+    Ana Menü (`#/genel`); a page of an absent application opens App Store.
+  - **Opening an application and its actions (DD-210, DD-212/213).** An application with a native
     web interface (its `urls`) opens there in a new tab (`noopener`) from its overview
     tile, its sidebar entry and its App Store "Aç" while it runs: the public name on the
     public HTTPS address, the tailnet name on the tailnet address. A stopped, busy or
     unpublished application (on the public address without an active public name) opens
     its Konsol page instead; the public address never links a private name. Beneath the
     icon of every installed App Store application's tile is a row with three fixed
-    positions: **Ayarlar**, **Durdur/Başlat**, **Günlükler**. The actions are bare icons
+    positions: **Durdur/Başlat**, **Ayarlar**, **Günlükler**. Desktop cards are approximately
+    16% narrower than v191, retaining their normal height and 44 px action targets. The actions are bare icons
     (no visible text, background or border; accessible names and tooltips remain),
     siblings of the launch link and absent in edit mode. Unsupported actions leave a
     blank, non-interactive slot so supported actions stay aligned. **Ayarlar**
@@ -523,20 +525,24 @@ Contract in §5–§7 and `folder-shares.md`.
     the start/stop position blank. **Günlükler** opens a dialog backed by the existing
     module journal. Settings stay usable while the app is stopped. The page stays
     reachable from App Store details and its route.
-  - **Overview layout and network card (DD-206, DD-212).** "Düzenle" (bottom-left, below the
+  - **Home layout and network card (DD-206, DD-212/213).** "Düzenle" (bottom-left, below the
     tiles, sticky on desktop and in normal flow on phones) lets the operator move tiles (dragging with mouse or finger, or arrow
     buttons) and hide or show the sole network widget (`ag`). Its width is fixed at
-    four columns; there are no width controls. "Bitti" saves, "Vazgeç"/Escape drops the
+    two of six desktop slots (four slots on narrower screens, two on phones); there are
+    no width controls. "Bitti" saves, "Vazgeç"/Escape drops the
     draft, "Varsayılan" returns to the defaults. The layout lives on the server:
     `GET /api/konsol/duzen` → `{duzen: {schema, kareler, widgetlar} | null}`, `POST`
     `{duzen: …}` or `{sifirla: true}`; the root backend checks the shape only (keys
     `^[a-z]{2,16}$`, at most 32 tiles and 8 widgets, width 1–4, boolean visibility), writes
     `KONSOL_AUTH_DIR/duzen.json` (0600, atomic) and logs `duzen kaydet|sifirla`; a damaged
     record means the defaults. The frontend ignores saved IDs of removed tiles/widgets
-    and normalizes older `ag` widths to 4, preserving visibility. Tiles missing from
+    and normalizes older `ag` widths to 2, preserving visibility. Tiles missing from
     the saved order (a newly installed application) follow in the default order.
     The network card reads `GET
-    /api/konsol/ag` every 2 s while shown: the WAN interface's (`WAN_INTERFACE`) receive
+    /api/konsol/ag` every 5 s while shown, alongside host resources and module state.
+    There is no home Refresh button or duplicate ten-second home poll; hidden tabs pause
+    periodic reads. Other pages retain their ten-second poll and busy installations
+    retain their progress polling. The endpoint returns the WAN interface's (`WAN_INTERFACE`) receive
     and send rates in bytes/s — computed from `/sys/class/net/<if>/statistics`, a point at
     most every 1.5 s plus one per background sample, the last 120 s returned — and, per
     installed package that declares `PAKET_TRAFIK`, its own module's cumulative totals
@@ -546,7 +552,7 @@ Contract in §5–§7 and `folder-shares.md`.
     application's statistics-file saves. WireGuard's are its networks' interface
     counters since the networks came up (`since`; down = sent to the peers).
     Live server rates/chart and the application table occupy equal-width, equal-height
-    sections beside one another. The table is borderless, with three columns:
+    compact sections beside one another, stacking at very narrow card widths. The table is borderless, with three columns:
     application icon/name, cumulative download total and cumulative upload total.
     Its fixed-height area scrolls when rows overflow. Application totals use byte
     units, never bytes/s; only the server rates/chart section shows live speeds.
@@ -560,6 +566,11 @@ Contract in §5–§7 and `folder-shares.md`.
     definitions, including stopped containers with no live runtime object. Failed
     reads are shown as unavailable, never as empty collections or zero measurements.
     Details include mounts, port bindings and masked log tails (100/200/500/1000 lines).
+    The list (**DD-213**) shows only the application/container name, status, resources
+    and access; no image subtitle or ownership column. Its three icon actions are
+    start/stop → edit → remove, disabled when unsupported or busy. Image details and
+    additional operations remain on the detail page; permissions and confirmations
+    are unchanged.
     - Start, stop, restart and remove use the actual owner. App Store lifecycle goes
       through `master-modul`; another systemd/Compose/pod controller remains read-only.
       A standalone external container may be controlled or explicitly adopted after

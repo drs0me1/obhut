@@ -247,12 +247,12 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
       .evaluateAll((els) => els.map((e) => [e.dataset.act,e.tagName, e.innerText.trim(), e.getAttribute("aria-label"), e.getAttribute("title"),
         e.querySelectorAll("svg").length, e.closest("a.tile-link") === null]));
     const iconOnly = async () => {
-      assert.deepEqual(await row("torrent"), [["ayar","BUTTON", "", "qBittorrent ayarları", "qBittorrent ayarları", 1, true],
-        ["servis","BUTTON", "", "qBittorrent: Durdur", "qBittorrent: Durdur", 1, true],
-        ["gunluk","BUTTON", "", "qBittorrent günlükleri", "qBittorrent günlükleri", 1, true]], "settings, service, logs in order; icon-only controls outside the launch link");
+      assert.deepEqual(await row("torrent"), [["servis","BUTTON", "", "qBittorrent: Durdur", "qBittorrent: Durdur", 1, true],
+        ["ayar","BUTTON", "", "qBittorrent ayarları", "qBittorrent ayarları", 1, true],
+        ["gunluk","BUTTON", "", "qBittorrent günlükleri", "qBittorrent günlükleri", 1, true]], "service, settings, logs in order; icon-only controls outside the launch link");
       // WireGuard has a page but no form and cannot stop as a whole (its networks switch one by one).
-      assert.deepEqual(await row("wireguard"), [["ayar","A", "", "WireGuard ayarları", "WireGuard ayarları", 1, true],
-        ["servis","SPAN","",null,null,0,true],
+      assert.deepEqual(await row("wireguard"), [["servis","SPAN","",null,null,0,true],
+        ["ayar","A", "", "WireGuard ayarları", "WireGuard ayarları", 1, true],
         ["gunluk","BUTTON","","WireGuard günlükleri","WireGuard günlükleri",1,true]]);
       for (const id of ["torrent","wireguard"])
         assert.equal(await page.locator(`#genel-tiles [data-tile="${id}"] .tile-actions > *`).count(),3,"no extra footer slots");
@@ -281,6 +281,10 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
       }
     };
     await iconOnly();
+    const compactTile = await tile.boundingBox();
+    // v191 at this viewport: ~169px wide, 193px tall. Keep its height and usable 44px action targets.
+    assert(compactTile.width>=139 && compactTile.width<=144,`15–18% narrower at 1400px: ${JSON.stringify(compactTile)}`);
+    assert(Math.abs(compactTile.height-193)<=2,`same card height: ${JSON.stringify(compactTile)}`);
     await looks();
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="wireguard"] .tile-actions a').getAttribute("href"), "#/wireguard");
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="wireguard"] a.tile-link').getAttribute("href"), "#/wireguard");
@@ -591,14 +595,14 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await iconOnly();
     for (const sel of ['#genel-tiles [data-tile="torrent"] [data-act="ayar"]', '#genel-tiles [data-tile="torrent"] [data-act="servis"]'])
       assert.deepEqual(await bare(sel), BARE, `${sel} at 390 px dark`);
-    // Reached by keyboard (Tab from Ayarlar), as a keyboard user would: the focus ring is the only drawn edge.
-    await page.locator('#genel-tiles [data-tile="torrent"] [data-act="ayar"]').focus();
+    // Keyboard order matches the visible row: service → settings → logs.
+    await page.locator('#genel-tiles [data-tile="torrent"] [data-act="servis"]').focus();
     await page.keyboard.press("Tab");
-    assert.equal(await page.locator('#genel-tiles [data-tile="torrent"] [data-act="servis"]').evaluate((el) => document.activeElement === el), true);
+    assert.equal(await page.locator('#genel-tiles [data-tile="torrent"] [data-act="ayar"]').evaluate((el) => document.activeElement === el), true);
     await page.locator("#genel-tiles").screenshot({ path: path.join(shots, "tiles-390-dark-focus.png") });
-    assert.notEqual(await page.locator('#genel-tiles [data-tile="torrent"] [data-act="servis"]').evaluate((el) => getComputedStyle(el).outlineStyle), "none",
+    assert.notEqual(await page.locator('#genel-tiles [data-tile="torrent"] [data-act="ayar"]').evaluate((el) => getComputedStyle(el).outlineStyle), "none",
       "keyboard focus stays visible");
-    await page.locator('#genel-tiles [data-tile="torrent"] [data-act="servis"]').blur();
+    await page.locator('#genel-tiles [data-tile="torrent"] [data-act="ayar"]').blur();
     await settingsBtn.click();
     await user.waitFor();
     await dialog.getByRole("button", { name: "Klasör seç", exact: true }).click();

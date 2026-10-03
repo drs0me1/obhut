@@ -16,10 +16,12 @@ Folder shares can opt into Tailscale, WAN IPv4 or both (DD-179). New shares
 default to Tailscale. WAN uses HTTP with explicit plaintext-risk consent,
 credential-attempt and connection caps; no console/admin endpoint is published.
 
-Model A is implemented: Files is the landing page, with one sidebar and live
-CPU/RAM/disk indicators. See the [clean-install checklist](Data/docs/model-a-clean-install.md).
-App Store uses the compact list (model 2): Install/Open in each row, service
-controls and logs under Details.
+Model A opens on **Ana Menü** (**DD-213**): a compact network widget, installed
+application cards and a clock/date header, refreshed every five seconds. One sidebar
+holds navigation and live CPU/RAM/disk indicators. See the
+[clean-install checklist](Data/docs/model-a-clean-install.md).
+App Store uses cards with a name, status and Install/Open actions; descriptions,
+service controls and logs remain under Details.
 
 The repository root holds only what is double-clicked: the current portable
 installer (`<version>.command`), `wireguard.command` (WireGuard peer management)
@@ -105,7 +107,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 | qBittorrent (Podman container, **DD-151**, **DD-209**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store (the linuxserver image, pinned by digest, host network); torrent downloads. Account/folder settings remain in its application form; Konteynerler manages lifecycle and its listener port/download folder through the package adapter |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); internet only for folders that turn WAN on: HTTPS on a public name set in Settings → Caddy (**DD-190/191**), or legacy consented HTTP when none is set (**DD-179**) | Separate account per folder; Tailscale and WAN each have their own on/off, RO/RW and expiry (**DD-192**). Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
-| Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); no sign-in on the tailnet; the public name asks for the Konsol account created in Settings over Tailscale (**DD-194**, **DD-205**) | one sidebar: Genel bakış (clock, status and network widgets, application tiles; an edit mode for order, widget width and visibility, **DD-206**), Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
+| Konsol Model A (**DD-160**, **DD-213**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); no sign-in on the tailnet; the public name asks for the Konsol account created in Settings over Tailscale (**DD-194**, **DD-205**) | one sidebar: Ana Menü (clock/date title, network widget using two of six desktop slots, installed application cards with start/stop → settings → logs; edit mode for order and network visibility), Files (browse, upload, move, trash, text, archive creation/extraction), App Store, Konteynerler, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk and IP/version/uptime below the menu |
 
 qBittorrent's first profile contains only panel integration and headless-startup
 settings (**DD-178**): download path, authenticated loopback WebUI and startup

@@ -3,24 +3,29 @@
 ## What ships
 
 This is the approved Model A implemented in the real panel, not a new mockup.
-Files is the landing page. The sidebar contains Files, App Store, installed
-qBittorrent/WireGuard, Settings, then live CPU/RAM/disk indicators. Mobile uses
-the same sidebar behind an accessible menu button. The old desktop dock,
-Applications, Overview and window controls are removed. Files has a contextual
+Ana Menü (`#/genel`, DD-213) is the landing page: clock/date in the heading,
+one compact network widget and only installed application cards. The sidebar contains
+Ana Menü, Files, App Store, Konteynerler, installed applications and Settings, then live
+CPU/RAM/disk indicators and IP/version/uptime. Mobile uses the same sidebar behind an
+accessible menu button. The old desktop dock, Applications and window controls are
+removed. Files has a contextual
 action dock for selected items (DD-170); it is not an application launcher.
-App Store uses model 2's compact rows (DD-161). Install/Open stays in the row;
+App Store uses compact cards with no description below the name. Install/Open stays on the card;
 technical details, logs, service controls and removal share an optional panel.
 
 | Area | Responsibility |
 | --- | --- |
-| Files | Files, Shares, Archive jobs, Trash; list/cards; details when selected |
+| Ana Menü | Five-second refresh; network uses two of six desktop slots; narrower cards with start/stop → settings → logs |
+| Files | Files, Shares, Trash; list/cards; details when selected; running archive-job bar |
 | App Store | Install/remove optional WireGuard/qBittorrent, progress and service logs |
 | qBittorrent | Start/stop, Web UI, first login, account and new-download directory |
 | WireGuard | Existing networks, peers, profiles and switches |
 | Settings | System, Firewall, Caddy, Dnsmasq, Log |
+| Konteynerler | Name/status/resources/access; start/stop → edit → remove; image and other operations in details |
 
-Old `#/uygulamalar` and `#/genel` links open Files; `#/gunluk` opens Settings/Log;
-`#/ayarlar/qb` opens qBittorrent. A bookmark for an absent app opens App Store.
+Unknown routes open Ana Menü. A bookmark for an absent app opens App Store.
+Old Settings/Containers links redirect to Konteynerler; installed application pages
+and the compatible `#/genel` route remain available.
 CPU sampling is independent of WireGuard. Resource polling is single-flight,
 has a 12-second timeout and hides measurements after failure or 30-second
 staleness. Missing CPU samples do not hide valid RAM/disk measurements. Disk is
@@ -63,8 +68,9 @@ for exact scope and results.
 
 - Installer exits 0 after all seven stages, including rendered Caddy/dnsmasq/
   systemd validation and firewall/API gate checks.
-- `panel.<domain>` opens Files over the tailnet; only Files/App Store/Settings
-  are in the initial menu. No old settings, peers or accounts appear.
+- `panel.<domain>` opens Ana Menü over the tailnet, with no application tiles before
+  installation; an empty-state link opens App Store. Initial navigation includes
+  Ana Menü/Files/App Store/Konteynerler/Settings. No old settings, peers or accounts appear.
 - Resource values become live without installing WireGuard. Disconnecting
   marks values unknown; reconnecting recovers them.
 - File upload/create/move/trash/restore, per-folder RO/RW/pause sharing, ZIP

@@ -173,7 +173,13 @@ address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
 already public.
 
-## Install form, app launch and tile actions (v2-187…v2-189, DD-210)
+## Install form, app launch and tile actions (DD-210, DD-212/213)
+
+Current home assertions cover service → settings → logs, three fixed 44 px slots
+(unsupported WireGuard service slot is noninteractive), narrower cards with unchanged
+height, safe log dialogs with timeout/retry, focus and draft retention, and light/dark
+desktop/320/390 px geometry. `panel-ui.cjs` also asserts that Store card subtitles are
+absent while full package descriptions remain in Details.
 
 `test_torrent_api.py` covers the worker's `kur-hazirla` (every field refused before any write, the seed
 only in `RUNTIME_DIR`, 0600, hash only, writability probed as the service user), `kur-uygula` into a kept
@@ -217,7 +223,10 @@ busy/error handling, details and logs; create/edit/review/async apply; private s
 explicit public scopes and accurate recreation/stopped-save behavior; a logical default network
 on a fresh host; the App Store listener/folder adapter; images, volumes, networks and adoption.
 Drafts survive polling, stale responses cannot replace a newer sheet, leaving the page closes it,
-and 390 px dark/light layouts retain keyboard access without horizontal overflow.
+and 320/390/768/1024/1440 px layouts retain keyboard access without horizontal overflow.
+DD-213 adds name-only rows, retained status/resources/access columns, three capability-gated
+44 px start/stop/edit/remove controls, busy/disabled refusal, row editor focus return,
+and direct removal that keeps generic data and defaults package data deletion to off.
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
 files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
 no `/etc/containers` literal in the engine), the qBittorrent quadlet (host network, `Pull=never`,
@@ -240,7 +249,7 @@ and `uygula`; and that `master-wg` refuses writing commands on a read-only folde
 Turkish remedy while reading still works (skipped when the runner is root). `wireguard-ui.cjs`
 checks the new-network screen is one card no wider than the windows.
 
-## Overview edit mode and network card (v2-183, DD-206)
+## Home edit mode and network card (DD-206, DD-212/213)
 
 `test_overview.py` covers the layout's shape check, the root backend's layout endpoints
 (save, read back, reset, 0600 file next to the account records, audit lines, refused bodies,
@@ -250,12 +259,15 @@ interface), `/api/konsol/ag` with package traffic modules in a temporary catalog
 stopped, unregistered, undeclared and built-in packages; broken modules reported once; the
 2 s cache; no bytecode in the package folder; the 120 s window) and both packages'
 `trafik.py` (qBittorrent's real `AllStats` line from nrm, large totals through a Qt-style
-escaper, no file yet and damaged records; the WireGuard registry and interface counters). `panel-ui.cjs` drives the overview: three widgets, the clock card's
-facts, the network card's rates/chart/app totals and its 2 s polling on the page clock, then
-Düzenle — wiggle and reduced motion, arrow moves with focus kept, a mouse drag, widget widths
-measured against the four columns, hide/show, Bitti's request body, no polling while hidden,
-another device's saved order, Escape and Varsayılan. `common.bats` pins the edit bar, the grid
-spans, the server-side storage and the package declarations.
+escaper, no file yet and damaged records; the WireGuard registry and interface counters).
+`panel-ui.cjs` drives Ana Menü: installed-only tiles, clock/date in the home heading,
+sidebar context, the compact two-of-six-slot network widget, cumulative/missing/zero totals,
+fixed-height overflow and scroll/focus retention. The page clock verifies five-second
+resources/modules/network reads, no duplicate ten-second home tick and no hidden-page
+polling. Düzenle covers wiggle/reduced motion, keyboard moves, mouse drag, legacy layout
+normalization, hide/show, Bitti, another device's order, Escape and Varsayılan. Both themes
+and phone widths are checked. `common.bats` pins the source guards; fixture browsers do
+not establish live deployment or fresh-install acceptance.
 
 ## Konsol sign-in (v2-166, DD-194; v2-181, DD-205)
 

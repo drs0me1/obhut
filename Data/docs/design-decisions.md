@@ -13,7 +13,35 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-213: Compact Ana Menü, five-second refresh and direct container actions (v2-192)
+
+- **Request (2026-10-04):** refine the installed v191 presentation without changing
+  the underlying service configuration or control authority.
+- **Space:** six desktop widget slots; network spans two. At narrower widths the grid
+  becomes four, then two slots. The network chart and borderless totals table retain
+  fixed, equal-height areas and internal scrolling. Saved network widths normalize
+  to two; visibility and application order keep the existing layout schema.
+- **Applications:** home cards are approximately 16% narrower at desktop sizes, with
+  the same 193 px normal height and 44 px action targets. Bare icons are ordered
+  start/stop → settings → logs; unsupported slots stay blank. Store cards show no
+  subtitle; full descriptions remain in Details.
+- **Header and updates:** Ana Menü labels the sidebar entry; the compatible route
+  remains `#/genel`. Clock/date replace its heading and no longer appear in the
+  sidebar. Home has one five-second resources/modules/network tick, no manual Refresh
+  and no overlapping ten-second home tick. Other pages retain ten-second polling;
+  hidden tabs pause periodic reads and active installation progress keeps its own poll.
+- **Containers:** name only, status/resources/access and three icon controls ordered
+  start/stop → edit → remove. Remove the owner column and overflow menu from the list.
+  Ownership still controls permissions, unsupported actions remain disabled, and
+  details retain image information and additional operations. Existing confirmation,
+  package lifecycle, stopped-save behavior and data-retention semantics are unchanged.
+- **Scope:** frontend presentation only; cumulative traffic sources, authentication,
+  firewall and backend APIs are unchanged. Local browser and source checks are recorded
+  in `SESSION.md`; the portable installer is exported in the repo, not deployed.
+
 ### DD-212: Installed application home tiles and one fixed network widget (v2-191)
+
+Presentation amended by DD-213; installed-only tiles and cumulative traffic semantics remain.
 
 - **Request (2026-10-04):** simplify the overview to installed applications and the
   network widget. Dosyalar, Ayarlar and App Store keep their sidebar navigation;

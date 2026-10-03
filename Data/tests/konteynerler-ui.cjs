@@ -1,7 +1,7 @@
 /* Konteynerler (container manager) on the real console assets under the production CSP. Every API call
    is a fixture that follows Data/docs/design/container-manager-api.md: read routes, POST /islem with 202
    operations and GET /islem polling. No server is modified. Covers navigation and the old Settings link,
-   list/filter/badges, lifecycle with confirmation/busy/failure, detail sections and logs, the shared
+   name-only list/fixed action slots, lifecycle with confirmation/busy/failure, detail sections and logs, the shared
    create/edit/review/apply sheet (secrets, public ports, stopped saves, late answers), the App Store
    host-network adapter, removal, adoption preview, images/volumes/networks and their refusals, failed
    resource reads, keyboard use and the 390 px dark/light layout. */
@@ -237,11 +237,36 @@ function settle(op) {
       assert(r.ok, "no horizontal page scroll " + JSON.stringify(r.bad));
     };
     const focused = () => page.evaluate(() => { const a = document.activeElement; return a ? a.dataset.k || a.id || a.getAttribute("aria-label") || a.textContent.trim() : ""; });
+    const listLayout = async () => {
+      // Operation toasts temporarily cover the page; measure the settled list after they expire.
+      await page.locator("#toast").waitFor({ state: "hidden", timeout: 8000 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await noOverflow();
+      const issues = await page.locator(".pd-row[data-name]").evaluateAll((rows) => rows.flatMap((r) => {
+        const problems = [], bounds = r.getBoundingClientRect();
+        for (const selector of [".pd-c-who", ".pd-c-state", ".pd-c-res", ".pd-c-access"]) {
+          const cell = r.querySelector(selector), b = cell?.getBoundingClientRect();
+          if (!b || !b.width || !b.height) problems.push(r.dataset.name + ": hidden " + selector);
+        }
+        const buttons = [...r.querySelectorAll(".pd-acts button")];
+        buttons.forEach((b, i) => {
+          const box = b.getBoundingClientRect(), previous = buttons[i - 1]?.getBoundingClientRect();
+          if (box.width < 44 || box.height < 44 || box.left < bounds.left || box.right > bounds.right || (previous && previous.right > box.left))
+            problems.push(r.dataset.name + ": clipped, overlapping or undersized " + b.dataset.act);
+          const hit = document.elementFromPoint(box.left + 2, box.top + box.height / 2);
+          if (box.top >= 0 && box.bottom < innerHeight && hit?.closest("button") !== b)
+            problems.push(r.dataset.name + ": touch target intercepted " + b.dataset.act + " by " + hit?.tagName + "." + hit?.className + " at " + innerWidth);
+        });
+        return problems;
+      }));
+      if (issues.length) await page.screenshot({ path: path.join(shots, "layout-failure-" + page.viewportSize().width + ".png"), fullPage: true });
+      assert.deepEqual(issues, [], "visible status/resources/access and distinct 44px controls; evidence: " + shots);
+    };
 
     /* ---- navigation: main sidebar entry after App Store; Settings lost its tab; old links redirect ---- */
     await page.goto(base + "/#/genel");
     await page.locator('.nav a[data-app="torrent"]').waitFor();
-    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(), ["Genel bakış", "Dosyalar", "App Store", "Konteynerler", "qBittorrent", "Ayarlar"]);
+    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(), ["Ana Menü", "Dosyalar", "App Store", "Konteynerler", "qBittorrent", "Ayarlar"]);
     await page.locator('.nav a[data-route="ayarlar"]').click();
     await page.getByRole("tab", { name: "Sistem", exact: true }).waitFor();
     assert.deepEqual(await page.locator("#settings-page [role=tab]").allTextContents(), ["Sistem", "Güvenlik Duvarı", "Caddy", "Dnsmasq", "Günlük"], "Settings has no container tab any more");
@@ -252,19 +277,91 @@ function settle(op) {
     await page.locator('.nav a[data-route="konteynerler"]').click();
     await page.waitForFunction(() => location.hash === "#/konteynerler");
 
-    /* ---- list: summary, badges, stopped definitions, read-only reason, filters ---- */
+    /* ---- list: names only, retained columns, three accessible capability-aware action slots ---- */
     await rowOf("jellyfin").waitFor();
     assert.equal(await page.locator(".pd-row[data-name]").count(), 5);
     assert.match(await page.locator("#pd-summary").innerText(), /Podman 5\.4\.2/);
     assert.doesNotMatch(await page.locator("#pd-summary").innerText(), /undefined/);
-    assert.equal(await rowOf("qbittorrent").locator(".pd-src").innerText(), "App Store");
-    assert.equal(await rowOf("jellyfin").locator(".pd-src").innerText(), "Konsol");
-    assert.equal(await rowOf("deneme-nginx").locator(".pd-src").innerText(), "Dışarıda");
+    // Collect independent presentation failures so the test-first run records each missing requirement.
+    const listFailures = [];
+    const checkList = (fn) => { try { fn(); } catch (e) { listFailures.push(e.message); } };
+    const headings = await page.locator(".pd-row.pd-head > span").allTextContents();
+    checkList(() => assert.deepEqual(headings, ["Ad", "Durum", "Kaynak", "Erişim", ""], "name-only heading; no owner column"));
+    for (const c of S.containers) {
+      const r = rowOf(c.name), displayName = c.module_id ? meta(c.module_id).ad : c.name;
+      const nameText = await r.locator(".pd-c-who").innerText();
+      checkList(() => assert.equal(nameText, displayName, c.name + ": application/container name only"));
+      const owners = await r.locator(".pd-c-src, .pd-src").count();
+      checkList(() => assert.equal(owners, 0, c.name + ": no owner badge in the list"));
+      const controls = await r.locator(".pd-acts button").evaluateAll((buttons) => buttons.map((b) => ({
+        action: b.dataset.act, label: b.getAttribute("aria-label"), title: b.title,
+        disabled: b.getAttribute("aria-disabled"), text: b.textContent.trim(), icons: b.querySelectorAll("svg[aria-hidden=true]").length,
+        width: b.getBoundingClientRect().width, height: b.getBoundingClientRect().height,
+      })));
+      checkList(() => assert.deepEqual(controls.map((b) => b.action), ["svc", "edit", "remove"], c.name + ": lifecycle/edit/remove order"));
+      const actions = [c.state === "running" ? "stop" : "start", "save", "remove"];
+      const labels = [c.state === "running" ? "Durdur" : "Başlat", "Düzenle", "Kaldır"];
+      controls.forEach((b, i) => checkList(() => {
+        assert(b.label.startsWith(displayName + ": " + labels[i]), c.name + ": accessible action name");
+        assert(b.title.includes(labels[i]), c.name + ": action tooltip");
+        assert.equal(b.text, "", c.name + ": icon-only action");
+        assert.equal(b.icons, 1, c.name + ": decorative icon");
+        assert(b.width >= 44 && b.height >= 44, c.name + ": non-overlapping 44px touch target");
+        assert.equal(b.disabled, c.actions.includes(actions[i]) ? "false" : "true", c.name + ": backend capability enforced");
+        if (!c.actions.includes(actions[i])) {
+          assert(b.title.includes(c.restricted_reason), c.name + ": disabled reason in tooltip");
+          assert(b.label.includes(c.restricted_reason), c.name + ": disabled reason accessible");
+        }
+      }));
+    }
+    await page.screenshot({ path: path.join(shots, "list-desktop.png"), fullPage: true });
+    assert.deepEqual(listFailures, [], "bounded list refinement; screenshot: " + path.join(shots, "list-desktop.png"));
+    await listLayout();
     assert.match(await rowOf("uptime-kuma").innerText(), /tanım kayıtlı/, "a stopped definition without a live container stays visible");
     assert.match(await rowOf("pod-uygulama").innerText(), /denetleyicisi bilinmediği için/, "the read-only reason is shown beside the controls");
-    assert.equal(await rowOf("pod-uygulama").locator("button[data-act]").count(), 0, "no lifecycle controls without backend permission");
+    assert.equal(await rowOf("pod-uygulama").locator('button[data-act][aria-disabled="false"]').count(), 0, "no enabled controls without backend permission");
+    // Programmatic clicks also cannot bypass disabled slots or silently adopt an external container.
+    const beforeDisabled = reads.length;
+    await page.locator('.pd-acts button[aria-disabled="true"]').evaluateAll((buttons) => buttons.forEach((b) => b.click()));
+    assert.equal(posts.length, 0);
+    assert.equal(reads.length, beforeDisabled);
+    assert.equal(await sheet.evaluate((d) => d.open), false);
+    assert.equal(await cf.evaluate((d) => d.open), false);
     assert.match(await rowOf("deneme-nginx").innerText(), /İnternet \(açık\)/);
-    await page.screenshot({ path: path.join(shots, "list-desktop.png"), fullPage: true });
+    await rowOf("jellyfin").locator('[data-act="svc"]').focus();
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(), "edit:jellyfin", "keyboard order follows the visual action order");
+    await page.keyboard.press("Enter");
+    await page.locator("#pd-f-image").waitFor();
+    assert.equal(await page.locator("#pd-f-image").inputValue(), D.jellyfin.config.image_ref);
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden" });
+    assert.equal(await focused(), "edit:jellyfin", "closing the editor returns focus to its row action");
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(), "remove:jellyfin");
+    // Row controls preserve package-specific stop/remove disclosures and default data retention.
+    await rowOf("qbittorrent").locator('[data-act="svc"]').click();
+    await cf.getByText("qBittorrent durdurulsun mu?").waitFor();
+    assert((await page.locator("#cf-list").innerText()).includes(meta("torrent").durdur_notu));
+    await page.locator("#cf-cancel").click();
+    for (const name of ["qbittorrent", "jellyfin", "deneme-nginx"]) {
+      await rowOf(name).locator('[data-act="remove"]').click();
+      await cf.waitFor({ state: "visible" });
+      const disclosure = await page.locator("#cf-list").innerText();
+      if (name === "qbittorrent") {
+        assert.match(disclosure, /App Store/);
+        assert.match(disclosure, /dosyalarınıza dokunulmaz/);
+        assert.equal(await page.locator("#mod-veri").isChecked(), false);
+      } else if (name === "jellyfin") {
+        assert.match(disclosure, /birimler kalır/);
+        assert.match(disclosure, /Sunucu klasörlerine dokunulmaz/);
+      } else {
+        assert.match(disclosure, /imaj ve birimler kalır/);
+        assert.equal(await page.locator("#cf-go").isDisabled(), true);
+      }
+      await page.locator("#cf-cancel").click();
+    }
+    assert.equal(posts.length, 0, "row edit/cancel and removal cancellation never mutate state");
     await page.locator("#pd-q").fill("kuma");
     assert.equal(await page.locator(".pd-row[data-name]").count(), 1);
     assert.equal(await page.evaluate(() => document.activeElement.id), "pd-q", "typing keeps the search focused");
@@ -287,10 +384,12 @@ function settle(op) {
     assert.deepEqual(posts[0], { action: "stop", name: "jellyfin", revision: "j1" });
     await page.waitForFunction(() => document.querySelector('.pd-row[data-name="jellyfin"] [data-act="svc"]')?.getAttribute("aria-disabled") === "true");
     assert.equal(await rowOf("jellyfin").locator('[data-act="svc"]').getAttribute("aria-label"), "jellyfin: Durduruluyor…");
-    await page.evaluate(() => document.querySelector('.pd-row[data-name="jellyfin"] [data-act="svc"]').click());
+    assert.equal(await rowOf("jellyfin").locator('.pd-acts [aria-disabled="true"]').count(), 3, "busy disables every row action");
+    await rowOf("jellyfin").locator(".pd-acts button").evaluateAll((buttons) => buttons.forEach((b) => b.click()));
     await page.waitForTimeout(150);
     assert.equal(posts.length, 1, "no duplicate request while busy");
     assert.equal(await cf.evaluate((d) => d.open), false);
+    assert.equal(await sheet.evaluate((d) => d.open), false);
     const modReadsBefore = reads.length;
     holdOps = false; holds.splice(0);
     await page.waitForFunction(() => document.querySelector('.pd-row[data-name="jellyfin"] [data-act="svc"]')?.getAttribute("aria-label") === "jellyfin: Başlat", null, { timeout: 8000 });
@@ -307,19 +406,17 @@ function settle(op) {
     await rowOf("uptime-kuma").locator('[data-act="svc"]').click();
     await page.getByText("Bu konteynerde bir işlem sürüyor", { exact: false }).first().waitFor();
     assert.equal(await rowOf("uptime-kuma").locator('[data-act="svc"]').getAttribute("aria-disabled"), "false");
-    // Restart comes from the overflow menu and only for running containers; keyboard menu.
-    await rowOf("qbittorrent").locator('[data-act="menu"]').click();
-    await page.getByRole("menu").waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("role")), "menuitem");
-    assert.deepEqual(await page.getByRole("menuitem").allTextContents(), ["Yeniden başlat", "Düzenle", "Günlük", "Kaldır…"]);
-    await page.keyboard.press("Escape");
-    assert.equal(await page.getByRole("menu").count(), 0);
-    assert.equal(await focused(), "menu:qbittorrent", "Escape returns focus to the menu button");
-    await rowOf("qbittorrent").locator('[data-act="menu"]').click();
-    await page.getByRole("menuitem", { name: "Yeniden başlat" }).click();
+    // Additional operations remain on the detail page, including restart for a running package.
+    await rowOf("qbittorrent").locator('[data-k="open:qbittorrent"]').click();
+    await page.getByRole("button", { name: "Yeniden başlat", exact: true }).click();
     while (posts.at(-1).action !== "restart") await page.waitForTimeout(20);
     assert.deepEqual(posts.at(-1), { action: "restart", name: "qbittorrent", revision: "q1" });
     await settled();
+    assert.equal(await page.locator(".pd-detail-head .pd-src").innerText(), "App Store");
+    const packageImage = S.containers.find((c) => c.name === "qbittorrent").image;
+    assert.equal(await page.locator(".pd-meta .mono").getAttribute("title"), packageImage, "full image information remains in details");
+    assert.match(await page.locator(".pd-panel").textContent(), /lscr\.io\/linuxserver\/qbittorrent/);
+    await page.evaluate(() => { location.hash = "#/konteynerler"; });
 
     /* ---- detail: sections, effective startup, logs ---- */
     await rowOf("uptime-kuma").locator('[data-k="open:uptime-kuma"]').click();
@@ -443,7 +540,7 @@ function settle(op) {
     await page.locator("#pd-f-image").fill("docker.io/library/redis:7.4");
     await page.evaluate(() => { location.hash = "#/genel"; });
     await sheet.waitFor({ state: "hidden", timeout: 4000 });
-    await page.getByRole("heading", { name: "Genel bakış", exact: true }).waitFor();
+    await page.locator("#title #home-clock").waitFor();
     await page.evaluate(() => { location.hash = "#/konteynerler"; });
     await rowOf("web-deneme").waitFor();
     // Every generic save of a running container stops, recreates and starts it, limits and startup included.
@@ -620,12 +717,16 @@ function settle(op) {
     assert.equal(await page.locator(".pd-res").count(), 0);
     delete S.resource_errors.volumes;
 
-    /* ---- phone width, dark and light ---- */
+    /* ---- desktop/tablet/phone: keep resource values and distinct touch targets in both themes ---- */
     await page.getByRole("tab", { name: /^Konteynerler/ }).click();
+    for (const width of [1024, 768, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await listLayout();
+    }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForTimeout(150);
-    await noOverflow();
+    await listLayout();
     await page.screenshot({ path: path.join(shots, "list-390-dark.png"), fullPage: true });
     await rowOf("jellyfin").locator('[data-k="open:jellyfin"]').click();
     await page.locator("#pd-detail-title").filter({ hasText: "jellyfin" }).waitFor();
@@ -649,10 +750,28 @@ function settle(op) {
     await page.emulateMedia({ colorScheme: "light" });
     await page.evaluate(() => { location.hash = "#/konteynerler"; });
     await page.waitForTimeout(150);
-    await noOverflow();
+    await listLayout();
     await page.screenshot({ path: path.join(shots, "list-390-light.png"), fullPage: true });
 
+    /* ---- direct remove sends existing payloads: generic data kept, package cleanup opt-in only ---- */
+    await rowOf("web-deneme").locator('[data-act="remove"]').click();
+    await page.locator("#cf-go").click();
+    await rowOf("web-deneme").waitFor({ state: "hidden", timeout: 8000 });
+    assert.deepEqual(posts.at(-1), { action: "remove", name: "web-deneme", revision: "c1" });
+    for (const withData of [false, true]) {
+      const original = { ...S.containers.find((c) => c.name === "qbittorrent") }, originalDetail = D.qbittorrent;
+      await rowOf("qbittorrent").locator('[data-act="remove"]').click();
+      assert.equal(await page.locator("#mod-veri").isChecked(), false, "each package removal defaults to keeping data");
+      if (withData) await page.locator("#mod-veri").check();
+      await page.locator("#cf-go").click();
+      await rowOf("qbittorrent").waitFor({ state: "hidden", timeout: 8000 });
+      assert.deepEqual(posts.at(-1), { action: "remove", name: "qbittorrent", revision: original.revision, with_data: withData });
+      S.containers.unshift(original); D.qbittorrent = originalDetail;
+      await page.getByRole("button", { name: "Yenile", exact: true }).click();
+      await rowOf("qbittorrent").waitFor();
+    }
+
     assert.deepEqual(errors, []);
-    console.log("PASS: sidebar Konteynerler + old link redirect + Settings without the tab; list/badges/stopped definitions/read-only reason/filters; stop confirm/busy/no duplicate/refresh, failed op, 409, restart menu; detail sections/effective startup/logs; stopped save start:false; running save discloses recreation; edit with secret kept, public consent, draft across poll, late answer vs newer sheet; create on a fresh host with the logical default network; leaving the page closes the sheet; host adapter listener/save without a start box (running/stopped); image update; removal kinds; adoption preview with explicit scope; images/volumes/networks with refusals and subnet text; failed read; 390 dark/light with the chosen section tab kept in view. Screenshots: " + shots);
+    console.log("PASS: sidebar Konteynerler + old link redirect + Settings without the tab; name-only list with status/resources/access, no owner column, three capability-aware icon actions with accessible names/titles and 44px targets; disabled/busy actions send nothing; keyboard edit and focus return; stop confirm/busy/no duplicate/refresh, failed op, 409; restart and image metadata in details; detail sections/effective startup/logs; stopped save start:false; running save discloses recreation; edit with secret kept, public consent, draft across poll, late answer vs newer sheet; create on a fresh host with the logical default network; leaving the page closes the sheet; host adapter listener/save without a start box (running/stopped); image update; direct removal with retained generic data and package data deletion opt-in; adoption preview with explicit scope; images/volumes/networks with refusals and subnet text; failed read; 1440/1024/768/390/320 layout, 390 dark/light and section tab kept in view. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

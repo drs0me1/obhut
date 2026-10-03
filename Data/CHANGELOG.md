@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-04 — Compact Ana Menü and container controls (v2-192)
+
+- The network widget occupies two of six desktop slots; narrower screens use four
+  or two slots. Fixed-height chart and traffic-table areas keep the widget compact.
+  Application traffic remains cumulative; only server traffic shows live rates.
+- Home application cards are about 16% narrower on desktop, with the same height
+  and 44 px action targets. The order is start/stop, settings, logs.
+- The sidebar entry is Ana Menü. Clock/date replace the home title instead of
+  appearing in the sidebar. Home refreshes every five seconds, without a Refresh
+  button, duplicate ten-second reads or hidden-page polling.
+- App Store cards omit subtitles; descriptions remain in Details. Container rows
+  show only the application/container name, status, resources and access, followed
+  by start/stop, edit and remove. Unsupported actions remain disabled; ownership,
+  confirmations and data-retention behavior are unchanged.
+- DD-213 records the contract. Five fixture browser suites and 174 Bats checks
+  passed; three checks skipped because this Mac lacks GNU timeout. Root and
+  `Data/app` contain the verified v2-192 portable installer. No server deployment.
+
 ### 2026-10-04 — Installed applications and one network widget on the overview (v2-191)
 
 - The home tiles contain only installed applications. Dosyalar, Ayarlar and App Store

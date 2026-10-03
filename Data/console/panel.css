@@ -86,9 +86,9 @@ dialog { background:var(--glass-2); }
 .side-facts dt { color:var(--muted); }
 .side-facts dd { margin:0; color:var(--ink); font-variant-numeric:tabular-nums; }
 .side-facts .mono { font-size:10.5px; }
-.side-time { display:grid; gap:4px; padding:0 6px; }
-.side-time time { font:600 24px/1.1 var(--f-display); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
-.side-time span { color:var(--muted); font-size:10.5px; }
+.home-title { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 14px; }
+.home-title time { font-variant-numeric:tabular-nums; }
+.home-title span { font:400 13px/1.5 var(--f-body); color:var(--muted); letter-spacing:0; }
 .resources { border-top:1px solid var(--glass-line); padding:16px 6px 0; display:grid; gap:12px; margin-top:auto; }
 .resource-status { font-size:10px; color:var(--muted); margin:0; }
 .resource { display:grid; gap:6px; font-size:11px; font-variant-numeric:tabular-nums; }
@@ -119,25 +119,30 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .rl:hover { background:var(--glass-2); }
 .toast { border-radius:12px; }
 
-/* ---- overview (DD-212): the single fixed-size network widget; resources and clock live in the sidebar ---- */
-.widgets { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
+/* ---- home (DD-213): six desktop slots; the compact network card occupies at most two ---- */
+.widgets { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:14px; align-items:start; }
 .widgets:empty { display:none; }
-.widget { container-type:inline-size; min-width:0; }
+.widget { container-type:inline-size; min-width:0; padding:14px; }
+.widget[data-span="2"] { grid-column:span 2; }
 .widget .card-head h2 { font-size:14.5px; }
 .widget .card-head small { font-size:12px; }
 
-/* ---- network card: equal halves, fixed height; live host rates beside borderless app totals ---- */
+/* ---- network card: compact equal halves; stack only when their content cannot fit ---- */
 :root { --net-down:var(--accent); --net-up:#C2783A; }
-.net { display:grid; gap:20px; }
-@container (min-width:640px) { .net { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-.net-live, .net-apps { min-width:0; height:174px; }
-.net-live { display:grid; grid-template-rows:auto 1fr; gap:16px; }
-.net-rates { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.net { display:grid; gap:12px; }
+.net-live, .net-apps { min-width:0; height:90px; }
+.net-live { display:grid; grid-template-rows:auto 1fr; gap:8px; }
+.net-rates { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+@container (min-width:300px) {
+  .net { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .net-live, .net-apps { height:126px; }
+  .net-rates { grid-template-columns:minmax(0,1fr); }
+}
 .net-rate { display:grid; gap:3px; min-width:0; }
 .net-rate .lbl { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted); }
 .net-rate .lbl::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--net-down); flex:none; }
 .net-rate.up .lbl::before { background:var(--net-up); }
-.net-rate b { font:600 26px/1.15 var(--f-display); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.net-rate b { font:600 19px/1.15 var(--f-display); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .net-chart { min-height:0; }
 .net-svg { display:block; width:100%; height:100%; }
 .net-svg .base { stroke:var(--line); stroke-width:1; }
@@ -145,17 +150,17 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .net-svg .down { fill:none; stroke:var(--net-down); stroke-width:1.8; }
 .net-svg .up { fill:none; stroke:var(--net-up); stroke-width:1.5; }
 .net-apps { overflow:auto; scrollbar-width:thin; }
-.net-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; }
-.net-table th, .net-table td { border:0; padding:8px 4px; text-align:right; }
-.net-table thead th { color:var(--muted); font-size:11px; font-weight:500; padding-top:0; padding-bottom:10px; }
-.net-table th:first-child { width:48%; text-align:left; }
+.net-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:11px; }
+.net-table th, .net-table td { border:0; padding:6px 2px; text-align:right; }
+.net-table thead th { color:var(--muted); font-size:10px; font-weight:500; padding-top:0; padding-bottom:8px; }
+.net-table th:first-child { width:44%; text-align:left; }
 .net-table th:first-child, .net-table td:first-child { padding-left:0; }
 .net-table th:last-child, .net-table td:last-child { padding-right:0; }
-.net-app-name { display:flex; align-items:center; gap:8px; min-width:0; }
-.net-app .ico { width:26px; height:26px; border-radius:8px; flex:none; display:grid; place-items:center; color:#fff; }
-.net-app .ico svg { width:15px; height:15px; }
-.net-app strong { min-width:0; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.net-app .v { font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.net-app-name { display:flex; align-items:center; gap:5px; min-width:0; }
+.net-app .ico { width:18px; height:18px; border-radius:5px; flex:none; display:grid; place-items:center; color:#fff; }
+.net-app .ico svg { width:12px; height:12px; }
+.net-app strong { min-width:0; font-size:11px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.net-app .v { font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .net-empty { color:var(--muted); text-align:left!important; line-height:1.6; }
 
 /* ---- edit mode: below the tiles; sticky on desktop, normal flow on phones so cards stay clear ---- */
@@ -183,9 +188,9 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .section-title h2 { margin:0; font-size:15px; font-weight:650; }
 
 /* ---- application tiles: the overview and the App Store share one shape ---- */
-.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(156px,1fr)); gap:14px; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr)); gap:14px; }
 .home-empty { grid-column:1/-1; padding:16px 0; display:grid; justify-items:start; gap:8px; }
-.tile { position:relative; display:grid; justify-items:center; gap:9px; padding:20px 10px 14px; text-decoration:none; color:inherit; text-align:center; cursor:pointer; }
+.tile { position:relative; display:grid; justify-items:center; gap:9px; min-height:193px; padding:20px 2px 14px; text-decoration:none; color:inherit; text-align:center; cursor:pointer; }
 .tile:hover, .store-row:hover { border-color:var(--accent); }
 .tile .ico, .store-row .svc-ico { width:54px; height:54px; border-radius:16px; display:grid; place-items:center; color:#fff; box-shadow:0 10px 22px -12px rgba(0,0,0,.6); }
 .tile .ico svg, .store-row .svc-ico svg { width:26px; height:26px; }
@@ -193,7 +198,7 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .tile small { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
 .tile .dot { position:absolute; top:10px; right:10px; width:8px; height:8px; border-radius:50%; }
 /* DD-210: an installed app's tile: the launch link stretches over the card; a compact row of bare icons
-   (Ayarlar, Durdur/Başlat, Günlükler; no text, background or border) sits beneath the icon and text.
+   (Durdur/Başlat, Ayarlar, Günlükler; no text, background or border) sits beneath the icon and text.
    Each slot has a 44 px touch area; unsupported actions leave a noninteractive blank. */
 .tile.has-actions { cursor:default; padding-bottom:10px; }
 .tile-link { display:grid; justify-items:center; gap:9px; color:inherit; text-decoration:none; }
@@ -246,7 +251,6 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .store-row:has([aria-expanded="true"]) { border-color:var(--accent); background:var(--glass-2); }
 .store-who { min-width:0; }
 .store-who h2 { font-size:13.5px; margin:0 0 3px; font-weight:600; }
-.store-who p { font-size:11.5px; margin:0; color:var(--muted); line-height:1.4; }
 .store-state { font-size:11px; }
 .store-actions,.store-detail-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; justify-content:center; }
 .store-actions .btn,.store-detail .btn { min-height:32px; font-size:12px; }
@@ -295,10 +299,12 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .archive-bar .spin { width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; flex:none; }
 .archive-form, .archive-form > * { min-width:0; overflow-wrap:anywhere; }
 
+@media(max-width:1199px) { .widgets { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media(max-width:1100px) {
   .fs09-layout.with-detail { grid-template-columns:minmax(0,1fr); }
 }
 @media(max-width:760px) {
+  .widgets { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .shell { display:block; min-height:calc(100vh - 62px); }
   .mobile-brand { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; margin:10px 10px 0; border-radius:14px; position:sticky; top:10px; z-index:25; }
   .mobile-brand .wordmark { font-size:22px; }

@@ -2752,8 +2752,9 @@ EOF
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
     # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
     grep -q 'UDP $port kullanılıyor' "$V2_ROOT/magaza/wireguard/master-wg"
-    # The console polls every ten seconds and skips the work while the tab is hidden.
-    grep -q 'if (document.hidden) return;' "$V2_ROOT/console/konsol.js"
+    # Home has its own five-second tick; other pages keep ten seconds. Both stop when hidden.
+    grep -qF 'if (document.hidden || current === "genel") return;' "$V2_ROOT/console/konsol.js"
+    grep -qF 'if (document.hidden || current !== "genel") return;' "$V2_ROOT/console/konsol.js"
 }
 
 files_panel_start() {
@@ -3152,10 +3153,10 @@ PY
     grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
-@test "console skin (DD-204, DD-212): installed home tiles, fixed actions and sidebar resources, no external asset" {
+@test "console skin (DD-204, DD-213): compact home tiles, fixed actions and title clock, no external asset" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css"
     # The overview is the landing page and a shell route; the wallpaper is inline SVG with no inline style.
-    grep -q '<a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>' "$html"
+    grep -q '<a href="#/genel" data-route="genel" data-icon="home">Ana Menü</a>' "$html"
     grep -q '<section data-view="genel" hidden>' "$html"
     grep -q '<div class="wall" aria-hidden="true">' "$html"
     run ! grep -q ' style="' "$html"
@@ -3164,7 +3165,8 @@ PY
     grep -qF 'let current = "genel";' "$js"
     grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
     # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
-    grep -qF 'genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,' "$js"
+    grep -qF 'genel: { title: "Ana Menü", eyebrow: "", actions: () => [],' "$js"
+    run ! grep -qE 'overviewActions|homeRefresh' "$js"
     grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,' "$js"
     # DD-212: only installed applications become home tiles; built-in navigation stays available.
     local defs actions journal sidebar
@@ -3184,10 +3186,13 @@ PY
     grep -qF '"aria-label": name, title: name' <<<"$actions"
     grep -qF '"data-act": "gunluk"' <<<"$actions"
     grep -qF 'onclick: () => appLog(m.id)' <<<"$actions"
-    grep -qE '^\.tile-actions \{ .*display:grid; grid-template-columns:repeat\(3,[1-9][0-9]*px\);' "$css"
+    grep -qE '^\.tile-actions \{ .*display:grid; grid-template-columns:repeat\(3,44px\);' "$css"
+    grep -qE '^\.tile-act \{ .*width:44px; height:44px;' "$css"
+    grep -qF '.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr));' "$css"
+    grep -qE '^\.tile \{ .*min-height:193px;' "$css"
     grep -qF '.tile-act-empty { cursor:default; pointer-events:none; }' "$css"
-    [ "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" ]
-    [ "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n '"data-act": "gunluk"' <<<"$actions" | cut -d: -f1)" ]
+    [ "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" ]
+    [ "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n '"data-act": "gunluk"' <<<"$actions" | cut -d: -f1)" ]
     # The dialog consumes the existing module journal as text, through the usual request gate.
     journal="$(awk '/^  function appLog\(id\)/,/^  }$/' "$js")"
     grep -qF '$("sh").showModal()' <<<"$journal"
@@ -3195,13 +3200,15 @@ PY
     grep -qF '"X-Konsol": "1"' <<<"$journal"
     grep -qF 'output.textContent = value || "(boş)"' <<<"$journal"
     run ! grep -q 'innerHTML' <<<"$journal"
-    # Resources and clock/date remain in the sidebar; removed home widgets have no SVG/CSS remnants.
+    # Resources stay in the sidebar; clock/date belong only to the home page's h1.
     sidebar="$(awk '/<aside /,/<\/aside>/' "$html")"
-    for id in resource-cpu resource-mem resource-disk side-clock side-date foot-ts foot-wan foot-version foot-uptime; do
+    for id in resource-cpu resource-mem resource-disk foot-ts foot-wan foot-version foot-uptime; do
         grep -qF "id=\"$id\"" <<<"$sidebar"
     done
-    [ "$(grep -n 'id="side-clock"' <<<"$sidebar" | cut -d: -f1)" -gt "$(grep -n 'id="resource-disk"' <<<"$sidebar" | cut -d: -f1)" ]
-    grep -qF 'function paintSidebarClock()' "$js"
+    run ! grep -qE 'side-clock|side-date|home-clock|home-date' <<<"$sidebar"
+    grep -qF 'function paintHomeClock()' "$js"
+    grep -qF '$("title").replaceChildren(h("time", { id: "home-clock" }), h("span", { id: "home-date" }));' "$js"
+    grep -qF '} else $("title").textContent = hd.title;' "$js"
     grep -qF '$("foot-uptime").textContent = fresh && Number.isFinite(s.uptime)' "$js"
     run ! grep -qE 'genel-clock|genel-health|const (ring|pie) =|function (ring|pie)\(' "$js"
     run ! grep -qE '(^|[[:space:],])\.(clock(-facts)?|rings?|pie(-box)?)([[:space:].,{]|$)' "$css"
@@ -3219,10 +3226,10 @@ PY
     for icon in home clock folder share stack sliders refresh list; do grep -qE "^    ${icon}: '" "$js"; done
 }
 
-@test "overview layout and network card (DD-206, DD-212): one fixed widget, server rates and cumulative app totals" {
+@test "overview layout and network card (DD-206, DD-213): two of six slots, server rates and cumulative app totals" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css" backend="$V2_ROOT/panel/master-panel"
     # Düzenle sits below the tiles and sticks to the bottom-left of a long page (never over the last row).
-    grep -qF '<div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Genel bakış düzeni"></div>' "$html"
+    grep -qF '<div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Ana Menü düzeni"></div>' "$html"
     [ "$(grep -n 'id="genel-edit"' "$html" | cut -d: -f1)" -gt "$(grep -n 'id="genel-tiles"' "$html" | cut -d: -f1)" ]
     grep -q '^\.edit-bar { position:sticky;' "$css"
     # The tiles wait for the module list (no jump), and Düzenle waits for both the layout and the list.
@@ -3232,11 +3239,14 @@ PY
     local widgets tools totals
     widgets="$(awk '/^  const WIDGETS = \[/,/^  ];$/' "$js")"
     [ "$(grep -c 'id:' <<<"$widgets")" -eq 1 ]
-    grep -qF '{ id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },' <<<"$widgets"
+    grep -qF '{ id: "ag", ad: "Ağ", label: "Ağ", genislik: 2 },' <<<"$widgets"
     grep -qF 'return { genislik: base.genislik, gizli: own ? own.gizli : false };' "$js"
     grep -qF 'widgetlar: WIDGETS.map((w) => ({ id: w.id, ...widgetSetting(w.id) }))' "$js"
     grep -qF 'const defs = tileDefs(), order = activeLayout().kareler || [];' "$js"
-    grep -qF '.widgets { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }' "$css"
+    grep -qF '.widgets { display:grid; grid-template-columns:repeat(6,minmax(0,1fr));' "$css"
+    grep -qF '.widget[data-span="2"] { grid-column:span 2; }' "$css"
+    grep -qF '@media(max-width:1199px) { .widgets { grid-template-columns:repeat(4,minmax(0,1fr)); } }' "$css"
+    grep -qF '.widgets { grid-template-columns:repeat(2,minmax(0,1fr)); }' "$css"
     tools="$(awk '/^  function widgetTools\(def, set\)/,/^  }$/' "$js")"
     grep -qF 'change({ gizli: !set.gizli }, "gizle")' <<<"$tools"
     run ! grep -qE '"data-tool": "(dar|genis)"|genislik:' <<<"$tools"
@@ -3264,14 +3274,26 @@ PY
     grep -qF '...["Uygulama", "İndirme", "Yükleme"].map' "$js"
     grep -qF 'class: "net-app-name", title: name' <<<"$totals"
     # Equal-width, equal-height sections and a borderless table with fixed-height overflow.
-    grep -qF '@container (min-width:640px) { .net { grid-template-columns:repeat(2,minmax(0,1fr)); } }' "$css"
-    grep -qE '^\.net-live, \.net-apps \{ min-width:0; height:[1-9][0-9]*px; \}$' "$css"
+    grep -qF '@container (min-width:300px) {' "$css"
+    grep -qF '.net { grid-template-columns:repeat(2,minmax(0,1fr)); }' "$css"
+    grep -qF '.net-live, .net-apps { min-width:0; height:90px; }' "$css"
+    grep -qF '.net-live, .net-apps { height:126px; }' "$css"
     grep -qF '.net-apps { overflow:auto; scrollbar-width:thin; }' "$css"
     grep -qF '.net-table th, .net-table td { border:0;' "$css"
     # Network: WAN counters from sysfs (no command in the sampler), package totals from PAKET_TRAFIK modules.
     grep -qF 'open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb")' "$backend"
     grep -qF 'master_settings.load_package_module(env, mid, name, "trafik", label)' "$backend"
-    grep -qF 'setInterval(() => { if (!document.hidden && current === "genel" && (editing || !widgetSetting("ag").gizli)) loadNetwork(); }, 2000);' "$js"
+    # One five-second home tick fetches all three sources; other pages keep the ten-second tick.
+    local poll
+    poll="$(awk '/^  setInterval\(\(\) => \{$/,/^  }, 5000\);$/' "$js")"
+    grep -qF 'if (document.hidden || current !== "genel") return;' <<<"$poll"
+    grep -qF 'if (document.hidden || current === "genel") return;' <<<"$poll"
+    [ "$(grep -cF 'loadSystem();' <<<"$poll")" -eq 2 ]
+    grep -qF 'if (!(MODS || []).some((m) => m.busy)) loadModules();' <<<"$poll"
+    grep -qF 'if (editing || !widgetSetting("ag").gizli) loadNetwork();' <<<"$poll"
+    grep -qxF '  }, 10000);' <<<"$poll"
+    grep -qxF '  }, 5000);' <<<"$poll"
+    run ! grep -qE 'loadNetwork\(\).*2000|homeRefresh|overviewActions' "$js"
     grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/torrent/paket.env"
     grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/wireguard/paket.env"
     [ -f "$V2_ROOT/magaza/torrent/trafik.py" ] && [ -f "$V2_ROOT/magaza/wireguard/trafik.py" ]
@@ -3439,6 +3461,30 @@ PY
     grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-panel.service"
 }
 
+@test "container list (DD-213): compact columns and capability-gated service edit remove slots" {
+    local js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css" row actions list
+    row="$(awk '/^  function rowEl\(c\)/,/^  }$/' "$js")"
+    actions="$(awk '/^  function rowActions\(c\)/,/^  }$/' "$js")"
+    list="$(awk '/^  function containersPanel\(\)/,/^  }$/' "$js")"
+    # Ownership remains server authority, but no longer consumes a list column.
+    grep -qF 'h("span", null, "Ad"), h("span", null, "Durum"), h("span", null, "Kaynak"), h("span", null, "Erişim"), h("span", null, ""))' <<<"$list"
+    run ! grep -qE 'shortImage|c\.image|pd-c-owner|ownerPill' <<<"$row"
+    grep -qF 'appName(c)' <<<"$row"
+    for cls in pd-c-state pd-c-res pd-c-access; do grep -qF "$cls" <<<"$row"; done
+    grep -qF 'rowActions(c)' <<<"$row"
+    # Fixed slots dispatch to the existing confirmed workflows, never directly to the API.
+    grep -qF '() => lifecycle(c, svcAction)' <<<"$actions"
+    grep -qF '["edit", "save", "Düzenle", "pencil", () => openEditor(c.name)]' <<<"$actions"
+    grep -qF '() => removeContainer(c)' <<<"$actions"
+    [ "$(grep -nF '["svc",' <<<"$actions" | cut -d: -f1)" -lt "$(grep -nF '["edit",' <<<"$actions" | cut -d: -f1)" ]
+    [ "$(grep -nF '["edit",' <<<"$actions" | cut -d: -f1)" -lt "$(grep -nF '["remove",' <<<"$actions" | cut -d: -f1)" ]
+    grep -qF '"aria-disabled": reason ? "true" : "false"' <<<"$actions"
+    grep -qF 'if (!busyOf(c) && can(c, action)) fn();' <<<"$actions"
+    run ! grep -qE 'submit\(|fetch\(' <<<"$actions"
+    grep -qF 'c.restricted_reason' <<<"$row"
+    grep -qF '.pd-acts .pd-ib { width:44px; height:44px;' "$css"
+}
+
 @test "console shows App Store from the module API in one responsive sidebar" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
     [ "$(grep -c 'data-route="moduller"' "$html")" -eq 1 ]
@@ -3466,6 +3512,13 @@ PY
     grep -q '^\.store-list' "$V2_ROOT/console/panel.css"
     grep -q '^\.store-row' "$V2_ROOT/console/panel.css"
     grep -q '^\.rt-chip' "$V2_ROOT/console/konsol.css"
+    # Compact cards omit descriptions; opening details must still reveal the package's explanation.
+    local card detail
+    card="$(awk '/^  function modRow\(m\)/,/^  }$/' "$js")"
+    detail="$(awk '/^  function modDetail\(m\)/,/^  }$/' "$js")"
+    run ! grep -qE 'meta\.desc|mod-desc|store-desc' <<<"$card"
+    grep -qF 'h("h2", {id:`mod-name-${m.id}`}, meta.name)' <<<"$card"
+    grep -qF 'h("p", {class:"mod-desc"}, meta.desc)' <<<"$detail"
 }
 
 @test "console includes per-folder accounts as a Files capability" {

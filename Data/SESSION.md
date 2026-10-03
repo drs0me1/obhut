@@ -4,6 +4,39 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-04 — Compact Ana Menü, source/export v2-192 (DD-213):**
+- User reported UI issues after installing v191. Implemented the requested compact
+  network widget (two of six desktop slots, responsive four/two-column grid), narrower
+  home cards with start/stop → settings → logs, clock/date as the home heading,
+  sidebar label Ana Menü, five-second home refresh with no manual Refresh, title-only
+  App Store cards and name-only container rows with three ordered actions.
+- Existing lifecycle/ownership gates, settings forms, remove confirmations and data
+  retention remain intact. Application traffic is still cumulative, not live speed.
+  No backend, firewall, package dependency or server configuration changes.
+- Local TDD: new home/header and action-order assertions failed before implementation.
+  Main independently ran `panel-ui`, `app-install-ui`, `konteynerler-ui`, `files-ui`
+  and `torrent-ui` with fixture APIs and production CSP: all PASS. Covered 320–1440 px,
+  both themes, focus/scroll and draft retention, action capabilities, removal defaults,
+  five-second polling without duplicate or hidden-page reads. Screenshots inspected.
+  Final screenshot directories: `konsol-v131-panel-xWaVgA`, `konsol-app-install-X9mZ7f`,
+  `konsol-konteynerler-vbHhdy` under the macOS temporary directory (paths in transcript).
+- `bats Data/tests`: 177 total, 174 passed / 3 GNU-timeout skips, exit 0. A stale
+  source assertion expecting the old standalone hidden-page guard was updated to
+  require both guarded polling paths. Per-file Node/Bash syntax and whitespace checks
+  passed. No Python/backend or real Linux installation acceptance is claimed.
+- Preview-only connection reset was isolated to the default Python static server's
+  backlog of five. Rerun against a local 128-backlog preview passed; no production
+  server change was made for this. Both temporary preview servers were stopped.
+- Exported `2026.08.06-v2-192.command` at root and `Data/app`, 523485 bytes each.
+  Both copies match; embedded SHA256
+  `ba6b15cb77d6414a63ec8bc7e26a8f1ab85ff1ad23165f7ecfbf76c927605bc0` verified,
+  with all 82 runtime files matching source and a complete allowed-file inventory.
+  The previous two v191 copies remain recoverable from Git history. No Desktop copy,
+  version snapshot, server operation or push. Unrelated agent files untouched.
+- Follow-up: the user requested the local v192 commit. Rechecked all Bats tests,
+  per-file Node/Bash syntax, whitespace and the complete embedded runtime inventory;
+  only the v192 implementation, tests, documentation and installer exports are included.
+
 **2026-10-04 — Version exports stay in Git; v2-191 portable delivery:**
 - The user clarified that only Desktop copying was unwanted: every version change
   must also produce the current portable installer inside the repository. Updated

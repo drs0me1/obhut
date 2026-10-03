@@ -24,7 +24,6 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   let tab = "konteynerler", filter = "tum", query = "";
   let detailName = "", DETAIL = null, detailError = "", detailSeq = 0, section = "genel";
   let LOG = null, logError = "", logTail = 200, logQuery = "", logSeq = 0, logLoading = false;
-  let menuFor = "";
   const pending = new Map();    // hedef → istenen eylem (istek gitti, işlem bitmedi)
   const OPS = new Map();        // işlem kimliği → { id, action, target, state, step, error, result, ctx }
   const lastError = new Map();  // konteyner adı → son başarısız işlemin metni
@@ -262,7 +261,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   const TABS = [["konteynerler", "Konteynerler", "box", "containers"], ["imajlar", "İmajlar", "stack", "images"], ["birimler", "Birimler", "disk", "volumes"], ["aglar", "Ağlar", "globe", "networks"]];
   function tabsEl() {
     const count = (key) => (collectionError(key) ? "!" : LIST && Array.isArray(LIST[key]) ? String(LIST[key].length) : "…");
-    const choose = (id) => { tab = id; menuFor = ""; paint("tab:" + id); };
+    const choose = (id) => { tab = id; paint("tab:" + id); };
     return h("div", { class: "pd-tabs", role: "tablist", "aria-label": "Konteyner kaynakları",
       onkeydown: (e) => {
         // Oklar odaktaki sekmeden yürür (seçili olandan değil).
@@ -298,7 +297,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (!containersOf().length) return [tools, h("section", { class: "card pd-empty" }, svg("box"), h("strong", null, "Bu sunucuda konteyner yok"),
       h("span", null, "App Store'dan bir uygulama kurun ya da Yeni konteyner ile bir imajdan oluşturun."))];
     return [tools, h("section", { class: "card pd-table", "aria-label": "Konteynerler" },
-      h("div", { class: "pd-row pd-head", "aria-hidden": "true" }, h("span", null, "Ad ve imaj"), h("span", null, "Durum"), h("span", null, "Kaynak"), h("span", null, "Erişim"), h("span", null, "Yönetim"), h("span", null, "")),
+      h("div", { class: "pd-row pd-head", "aria-hidden": "true" }, h("span", null, "Ad"), h("span", null, "Durum"), h("span", null, "Kaynak"), h("span", null, "Erişim"), h("span", null, "")),
       rows.length ? rows.map(rowEl) : h("p", { class: "pd-none hint-s" }, "Eşleşen konteyner yok; süzgeci ya da aramayı değiştirin.")),
       h("p", { class: "card pd-note" }, svg("info"), h("span", null, "Yönetim: ", h("b", null, "App Store"), " uygulamaları App Store ile aynı yaşam döngüsünü paylaşır; ",
         h("b", null, "Konsol"), " tanımları burada düzenlenir; ", h("b", null, "Dışarıda"), " oluşturulanlar için Konsol yalnız sunucunun izin verdiği işlemleri gösterir."))];
@@ -307,13 +306,11 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     const busy = busyOf(c), err = lastError.get(c.name);
     return h("div", { class: "pd-row", "data-name": c.name },
       h("div", { class: "pd-c-who" }, icon(c), h("div", { class: "pd-nm" },
-        h("button", { type: "button", class: "pd-open", "data-k": "open:" + c.name, onclick: () => go("#/konteynerler/" + enc(c.name)) }, c.name),
-        h("small", { class: "mono", title: c.image || null }, shortImage(c.image) || "—"))),
+        h("button", { type: "button", class: "pd-open", "data-k": "open:" + c.name, onclick: () => go("#/konteynerler/" + enc(c.name)) }, appName(c)))),
       h("div", { class: "pd-c-state" }, busy ? h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), busyText(busy)) : statePill(c), running(c) ? healthPill(c.health) : null,
         c.live === false ? h("span", { class: "hm", title: "Hizmet durunca Podman konteyneri siler; tanım Konsol'da kalır" }, "tanım kayıtlı") : null),
       h("div", { class: "pd-c-res" }, h("span", null, "İşlemci ", pct(c.cpu_percent)), h("span", null, "Bellek ", mem(c.memory_bytes))),
       h("div", { class: "pd-c-access" }, accessLines(c)),
-      h("div", { class: "pd-c-src" }, srcBadge(c)),
       rowActions(c),
       c.restricted_reason ? h("p", { class: "pd-reason" }, svg("lock"), h("span", null, c.restricted_reason)) : null,
       err ? errorLine(c.name, err) : null);
@@ -323,46 +320,20 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     h("button", { type: "button", class: "pd-ib pd-dismiss", "data-k": "dismiss:" + name, "aria-label": "Hata bildirimini kapat", title: "Kapat",
       onclick: () => { lastError.delete(name); paint(); } }, svg("close")));
   function rowActions(c) {
-    const busy = busyOf(c), run = running(c);
-    const svcAction = run ? (can(c, "stop") ? "stop" : "") : can(c, "start") ? "start" : "";
-    const items = menuItems(c);
-    const wrap = h("div", { class: "pd-acts" });
-    if (svcAction || busy) {
-      const label = busy ? busyText(busy) : svcAction === "stop" ? "Durdur" : "Başlat";
-      wrap.append(h("button", { type: "button", class: "pd-ib", "data-act": "svc", "data-k": "svc:" + c.name, "aria-label": `${c.name}: ${label}`, title: label,
-        "aria-disabled": busy ? "true" : "false", onclick: () => { if (!busyOf(c) && svcAction) lifecycle(c, svcAction); } }, svg(busy ? "clock" : svcAction === "stop" ? "stop" : "play")));
-    }
-    if (items.length) {
-      wrap.append(h("button", { type: "button", class: "pd-ib", "data-act": "menu", "data-k": "menu:" + c.name, "aria-label": `${c.name}: diğer işlemler`, title: "Diğer işlemler",
-        "aria-haspopup": "menu", "aria-expanded": String(menuFor === c.name), onclick: () => { menuFor = menuFor === c.name ? "" : c.name; paint(menuFor ? "mi:" + c.name + ":0" : "menu:" + c.name); } }, svg("more")));
-      if (menuFor === c.name) wrap.append(menuEl(c, items));
-    }
-    return wrap;
+    const busy = busyOf(c), svcAction = running(c) ? "stop" : "start";
+    // Üç sabit yer: yetki yalnız sunucudan gelir. Diğer işlemler ayrıntı sayfasındadır.
+    return h("div", { class: "pd-acts" }, [
+      ["svc", svcAction, svcAction === "stop" ? "Durdur" : "Başlat", svcAction === "stop" ? "stop" : "play", () => lifecycle(c, svcAction)],
+      ["edit", "save", "Düzenle", "pencil", () => openEditor(c.name)],
+      ["remove", "remove", "Kaldır", "trash", () => removeContainer(c)],
+    ].map(([slot, action, label, ic, fn]) => {
+      const reason = busy ? busyText(busy) : !can(c, action) ? c.restricted_reason || "Sunucu bu işleme izin vermiyor." : "";
+      const tip = reason ? `${label}: ${reason}` : label;
+      return h("button", { type: "button", class: `pd-ib pd-act-${slot === "svc" ? svcAction : slot}`, "data-act": slot, "data-k": slot + ":" + c.name,
+        "aria-label": `${appName(c)}: ${busy && slot === "svc" ? busyText(busy) : tip}`, title: tip, "aria-disabled": reason ? "true" : "false",
+        onclick: () => { if (!busyOf(c) && can(c, action)) fn(); } }, svg(busy && slot === "svc" ? "clock" : ic));
+    }));
   }
-  function menuItems(c) {
-    const busy = !!busyOf(c), out = [];
-    if (can(c, "restart") && running(c)) out.push(["refresh", "Yeniden başlat", () => lifecycle(c, "restart"), busy]);
-    if (can(c, "save")) out.push(["pencil", "Düzenle", () => openEditor(c.name), busy]);
-    if (can(c, "image-update")) out.push(["download", "İmajı güncelle", () => updateImage(c), busy]);
-    if (c.actions && c.actions.length) out.push(["list", "Günlük", () => { section = "gunluk"; go("#/konteynerler/" + enc(c.name)); }, false]);
-    if (can(c, "adopt")) out.push(["key", "Sahiplen…", () => openAdopt(c), busy]);
-    if (can(c, "remove")) out.push(["trash", "Kaldır…", () => removeContainer(c), busy, true]);
-    return out;
-  }
-  function menuEl(c, items) {
-    const m = h("div", { class: "pd-menu", role: "menu", "aria-label": `${c.name} işlemleri`,
-      onkeydown: (e) => {
-        const list = [...m.querySelectorAll("[role=menuitem]")], i = list.indexOf(document.activeElement);
-        if (e.key === "ArrowDown") { list[(i + 1) % list.length].focus(); e.preventDefault(); }
-        else if (e.key === "ArrowUp") { list[(i - 1 + list.length) % list.length].focus(); e.preventDefault(); }
-        else if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); menuFor = ""; paint("menu:" + c.name); }
-      } },
-    items.map(([ic, label, fn, off, danger], i) => h("button", { type: "button", role: "menuitem", "data-k": `mi:${c.name}:${i}`, class: danger ? "pd-danger" : null,
-      "aria-disabled": off ? "true" : "false", title: off ? "Bir işlem sürüyor" : null,
-      onclick: () => { if (off) return; menuFor = ""; paint(); fn(); } }, svg(ic), label)));
-    return m;
-  }
-  document.addEventListener("click", (e) => { if (menuFor && !e.target.closest(".pd-acts")) { menuFor = ""; paint(); } });
 
   /* ---------------- ayrıntı ---------------- */
   const SECTIONS = [["genel", "Genel"], ["ag", "Ağ ve portlar"], ["baglama", "Bağlamalar"], ["ortam", "Ortam"], ["sinir", "Başlatma ve sınırlar"], ["gunluk", "Günlük"]];
@@ -1114,7 +1085,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       mount();
       const name = sub ? decode(sub) : "";
       if (name !== detailName) {
-        detailName = name; DETAIL = null; detailError = ""; LOG = null; logError = ""; logQuery = ""; menuFor = "";
+        detailName = name; DETAIL = null; detailError = ""; LOG = null; logError = ""; logQuery = "";
         if (!name) section = "genel"; else if (section !== "gunluk") section = "genel";
         detailSeq++; logSeq++;
       }
@@ -1123,9 +1094,9 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       if (detailName) { loadDetail(); if (section === "gunluk") loadLog(); }
     },
     poll() { if (active && active()) refresh(); },
-    // Sayfadan çıkınca (geri tuşu, yazılan bağlantı) açık pencere ve menü kapanır, taslak düşer; Genel bakış'ın
+    // Sayfadan çıkınca (geri tuşu, yazılan bağlantı) açık pencere kapanır, taslak düşer; Genel bakış'ın
     // düzen taslağı gibi (DD-206). Gönderilmiş bir işlem sunucuda sürer, sonucu satırda ve bildirimde görünür.
-    leave() { menuFor = ""; if (sheet.open) sheet.close(); },
+    leave() { if (sheet.open) sheet.close(); },
     refresh,
   };
 };

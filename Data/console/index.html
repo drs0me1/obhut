@@ -38,7 +38,7 @@
   <aside class="side" id="panel-sidebar" aria-label="Sunucu konsolu">
     <div class="brand"><span class="wordmark"><span id="brand-host">sunucu</span><span class="dot">.</span></span><small id="brand-sub">Konsol</small></div>
     <nav class="nav" aria-label="Bölümler">
-      <a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>
+      <a href="#/genel" data-route="genel" data-icon="home">Ana Menü</a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
       <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
       <a href="#/konteynerler" data-route="konteynerler" data-icon="box">Konteynerler</a>
@@ -52,9 +52,6 @@
       <div class="resource"><div><span>RAM</span><strong id="resource-mem">—</strong></div><progress id="bar-mem" max="100" value="0" aria-label="Bellek kullanımı" hidden></progress><small id="detail-mem">—</small></div>
       <div class="resource"><div><span>Disk</span><strong id="resource-disk">—</strong></div><progress id="bar-disk" max="100" value="0" aria-label="Disk kullanımı" hidden></progress><small id="detail-disk">—</small></div>
     </section>
-    <div class="side-time" aria-label="Saat ve tarih">
-      <time id="side-clock">—</time><span id="side-date">—</span>
-    </div>
     <div class="side-foot">
       <dl class="side-facts">
         <div><dt>Tailscale IP</dt><dd class="mono" id="foot-ts">—</dd></div>
@@ -68,19 +65,19 @@
   <main class="main" id="main-content" tabindex="-1">
     <div class="content">
       <header class="topbar">
-        <div><p class="eyebrow" id="eyebrow">Sunucu yönetimi</p><h1 id="title">Genel bakış</h1></div>
+        <div><p class="eyebrow" id="eyebrow" hidden></p><h1 id="title"></h1></div>
         <div class="top-actions" id="top-actions"></div>
       </header>
 
       <!-- Application pages (DD-200): sections are created by konsol.js for installed packages. -->
 
-      <!-- GENEL BAKIŞ (DD-204, DD-206): widget'lar, uygulama kareleri ve sol altta Düzenle; konsol.js doldurur.
+      <!-- ANA MENÜ (DD-213): widget'lar, uygulama kareleri ve sol altta Düzenle; konsol.js doldurur.
            Düzenle çubuğu karelerin altındadır; sayfa uzunsa ekranın sol altına yapışır. -->
       <section data-view="genel" hidden>
         <div class="widgets" id="genel-widgets" aria-label="Sunucu durumu"></div>
         <div class="section-title"><h2>Uygulamalar</h2><span class="hint-s" id="genel-sum"></span></div>
         <div class="tiles" id="genel-tiles" aria-label="Uygulamalar"></div>
-        <div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Genel bakış düzeni"></div>
+        <div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Ana Menü düzeni"></div>
       </section>
 
       <!-- DOSYALAR -->

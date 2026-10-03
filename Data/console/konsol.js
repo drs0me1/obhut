@@ -218,13 +218,15 @@
     if ($("resource-status").textContent !== status) $("resource-status").textContent = status;
     $("foot-uptime").textContent = fresh && Number.isFinite(s.uptime)
       ? uptimeText(s.uptime + (performance.now() - resourceReceived) / 1000) : "—";
-    paintSidebarClock();
+    paintHomeClock();
   }
-  function paintSidebarClock() {
+  function paintHomeClock() {
+    const clock = $("home-clock"), date = $("home-date");
+    if (!clock || !date) return;
     const d = new Date(now() * 1000);
-    $("side-clock").textContent = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-    $("side-clock").dateTime = d.toISOString();
-    $("side-date").textContent = d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+    clock.textContent = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    clock.dateTime = d.toISOString();
+    date.textContent = d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
   }
   function paintSystem() {
     const s = S.sys;
@@ -260,7 +262,7 @@
     // DD-194/196: Konsol account, settings and share events have their own words and source.
     "hesap-kur": () => "Konsol hesabı oluşturuldu", giris: () => "Konsol girişi", cikis: () => "Konsol çıkışı",
     "parola-degis": () => "Konsol parolası değiştirildi",
-    duzen: (e) => e.detail === "sifirla" ? "Genel bakış varsayılan düzene döndü" : "Genel bakış düzeni kaydedildi",
+    duzen: (e) => e.detail === "sifirla" ? "Ana Menü varsayılan düzene döndü" : "Ana Menü düzeni kaydedildi",
     "ayar-apply": () => "Ayarlar uygulandı", "ayar-confirm": () => "Ayar değişikliği onaylandı",
     "ayar-rollback": () => "Ayarlar geri alındı", "ayar-discard": () => "Takılan ayar işlemi bırakıldı",
     "paylasim-save": () => "Klasör paylaşımı kaydedildi", "paylasim-pause": () => "Klasör paylaşımının durumu değişti",
@@ -1144,7 +1146,7 @@
     const disabled = !!m.busy;
     return h("article", { class:"store-row", id:`modc-${m.id}`, "aria-labelledby":`mod-name-${m.id}` },
       h("span", {class:`svc-ico ${meta.tone}`}, svg(meta.icon)),
-      h("div", {class:"store-who"}, h("h2", {id:`mod-name-${m.id}`}, meta.name), h("p", null, meta.sub)),
+      h("div", {class:"store-who"}, h("h2", {id:`mod-name-${m.id}`}, meta.name)),
       h("div", {class:"store-state", role:"status"}, modPill(m)),
       h("div", {class:"store-actions"},
         h("button", {type:"button", class:"btn btn-sm btn-quiet", id:`mod-details-${m.id}`,
@@ -1583,14 +1585,14 @@
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
-  /* ---------- Genel bakış (DD-212): yalnız kurulu uygulamalar ve sabit boyutlu ağ kartı ---------- */
-  // Kaynaklar yan menüde; ağ /api/konsol/ag'den (görünürken 2 sn'de bir), kareler modül listesinden.
+  /* ---------- Ana Menü (DD-213): yalnız kurulu uygulamalar ve kompakt ağ kartı ---------- */
+  // Kaynaklar yan menüde; ağ /api/konsol/ag'den, kareler modül listesinden; görünürken 5 sn'de bir.
   // Kare sırası ve ağ kartının görünürlüğü aynı sunucu düzen kaydında durur.
   const uptimeText = (sec) => { const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
     return d ? `${d} g ${hh} sa` : hh ? `${hh} sa ${mm} dk` : `${mm} dk`; };
-  // Eski saat/sistem ayarları yok sayılır; ağ kartı her zaman tam genişliktedir.
+  // Eski saat/sistem ayarları yok sayılır; ağ kartı masaüstündeki altı alanın ikisini kullanır.
   const WIDGETS = [
-    { id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },
+    { id: "ag", ad: "Ağ", label: "Ağ", genislik: 2 },
   ];
   // layout: sunucudaki kayıt (null: varsayılan); editing: Düzenle açıkken taslak, değilse null.
   // modsSettled: the module list answered once (or failed), so the tiles do not jump in after the page.
@@ -1733,7 +1735,7 @@
   function tileEl(def, index, total) {
     const inner = [def.dot ? h("span", { class: "dot " + def.dot, "aria-hidden": "true" }) : null,
       h("span", { class: "ico " + def.tone }, svg(def.icon)), h("strong", null, def.name), h("small", null, def.sub)];
-    // DD-212: three fixed action slots beneath the icon (Ayarlar, Durdur/Başlat, Günlükler).
+    // DD-213: three fixed action slots beneath the icon (Durdur/Başlat, Ayarlar, Günlükler).
     // The row sits next to the (stretched) launch link, never
     // inside it; the link opens the app's web UI. Edit mode draws the plain tiles below.
     const actions = !editing ? appActions(def) : null;
@@ -1757,10 +1759,6 @@
     const kids = [];
     const blank = (action) => h("span", { class: "tile-act tile-act-empty", "data-act": action, "aria-hidden": "true" });
     const named = (name) => ({ "aria-label": name, title: name });
-    if (def.settings === "form") kids.push(h("button", { type: "button", class: "tile-act", "data-act": "ayar", ...named(`${def.name} ayarları`),
-      onclick: () => appForm(m.id, "ayar") }, svg("sliders")));
-    else if (def.settings) kids.push(h("a", { class: "tile-act", "data-act": "ayar", href: def.settings, ...named(`${def.name} ayarları`) }, svg("sliders")));
-    else kids.push(blank("ayar"));
     if (def.service) {
       const running = m.state === "calisiyor", busy = !!m.busy || tilePending.has(m.id);
       const doing = m.busy ? m.progress && m.progress.action : tilePending.get(m.id);
@@ -1769,6 +1767,10 @@
       kids.push(h("button", { type: "button", class: "tile-act", "data-act": "servis", "aria-disabled": busy ? "true" : "false",
         ...named(`${def.name}: ${word}`), onclick: () => tileService(m.id) }, svg(busy ? "clock" : running ? "pause" : "play")));
     } else kids.push(blank("servis"));
+    if (def.settings === "form") kids.push(h("button", { type: "button", class: "tile-act", "data-act": "ayar", ...named(`${def.name} ayarları`),
+      onclick: () => appForm(m.id, "ayar") }, svg("sliders")));
+    else if (def.settings) kids.push(h("a", { class: "tile-act", "data-act": "ayar", href: def.settings, ...named(`${def.name} ayarları`) }, svg("sliders")));
+    else kids.push(blank("ayar"));
     kids.push(h("button", { type: "button", class: "tile-act", "data-act": "gunluk", ...named(`${def.name} günlükleri`),
       onclick: () => appLog(m.id) }, svg("list")));
     return h("div", { class: "tile-actions", role: "group", "aria-label": `${def.name} işlemleri` }, ...kids);
@@ -1892,7 +1894,7 @@
       layout = answer && answer.duzen ? answer.duzen : null;
       editing = null;
       renderOverview(true, "#genel-duzenle");
-      toast(reset ? "Genel bakış varsayılan düzene döndü." : "Düzen kaydedildi.");
+      toast(reset ? "Ana Menü varsayılan düzene döndü." : "Düzen kaydedildi.");
     } catch (err) { button.disabled = false; fail(err); }
   }
   function paintEditBar() {
@@ -1934,8 +1936,6 @@
     const installed = (MODS || []).filter((m) => m.installed).length;
     $("genel-sum").textContent = editing ? "Düzenleniyor · değişiklikler Bitti ile kaydedilir"
       : MODS && installed ? `${installed} kurulu uygulama` : "";
-    const stamp = $("genel-stamp");
-    if (stamp) stamp.textContent = S.sys ? "Son okuma " + hhmm(S.sys.read_at) : "Okunuyor…";
     paintEditBar();
     if (focus) {
       const target = document.querySelector(focus);
@@ -1943,12 +1943,9 @@
       (fallback || target)?.focus();
     }
   }
-  const overviewActions = () => [h("span", { class: "hm", id: "genel-stamp" }, "Okunuyor…"),
-    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadModules(); loadNetwork(); } }, svg("refresh"), "Yenile")];
-
   // Konsol'un kendi sayfaları; uygulama sayfaları paketlerden gelir (DD-200/202).
   const ROUTES = {
-    genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,
+    genel: { title: "Ana Menü", eyebrow: "", actions: () => [],
       render: () => { renderOverview(); loadLayout(); loadNetwork(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
@@ -2045,7 +2042,11 @@
   function paintHeader() {
     const raw = location.hash.replace(/^#\/?/, "").split("/");
     const hd = headerFor(current, raw[0] === current ? raw[1] : undefined);
-    $("title").textContent = hd.title;
+    $("title").classList.toggle("home-title", current === "genel");
+    if (current === "genel") {
+      $("title").replaceChildren(h("time", { id: "home-clock" }), h("span", { id: "home-date" }));
+      paintHomeClock();
+    } else $("title").textContent = hd.title;
     $("eyebrow").textContent = hd.eyebrow;
     $("eyebrow").hidden = !hd.eyebrow;
     $("top-actions").replaceChildren(...hd.actions);
@@ -2095,18 +2096,23 @@
   route();
   loadModules();
   setInterval(() => {
-    if (document.hidden) return;
+    if (document.hidden || current === "genel") return;
     loadSystem();
     if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "konteynerler") containers.poll();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
-    if ((current === "moduller" || current === "genel") && !(MODS || []).some((m) => m.busy)) loadModules();
+    if (current === "moduller" && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
   setInterval(() => { if (!document.hidden) { paintResources(); if (current === "genel" && NET && !netReplyFresh()) paintNetwork(); } }, 1000);
-  // DD-206: the network card reads every 2 s while the overview shows it.
-  setInterval(() => { if (!document.hidden && current === "genel" && (editing || !widgetSetting("ag").gizli)) loadNetwork(); }, 2000);
+  // DD-213: one five-second home tick; no page reload, no duplicate ten-second home poll.
+  setInterval(() => {
+    if (document.hidden || current !== "genel") return;
+    loadSystem();
+    if (!(MODS || []).some((m) => m.busy)) loadModules();
+    if (editing || !widgetSetting("ag").gizli) loadNetwork();
+  }, 5000);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && editing && current === "genel" && !$("sh").open) cancelEdit(); });
   $("logout").addEventListener("click", logout);
   loadKonsolAccount();  // DD-205: shows the sign-out only on the internet address

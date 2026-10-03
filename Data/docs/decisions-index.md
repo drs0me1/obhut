@@ -213,4 +213,5 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |
 | DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212 | design-decisions.md |
 | DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live | design-decisions.md |
-| DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | v2-191; locally verified and exported, not deployed | design-decisions.md |
+| DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | presentation amended by DD-213; installed-only tiles and cumulative totals retained | design-decisions.md |
+| DD-213 | Compact Ana Menü, five-second refresh and direct container actions | v2-192; locally verified and exported, not deployed | design-decisions.md |
