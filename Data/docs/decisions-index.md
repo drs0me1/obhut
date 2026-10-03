@@ -152,7 +152,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-148 | A clean install is the base; Konsol installs modules | live | design-decisions.md |
 | DD-149 | Paylaşım is a module with a generated account | live; parts superseded by DD-158 | design-decisions.md |
 | DD-150 | Dosya yöneticisi and WireGuard are Konsol modules | live | design-decisions.md |
-| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209 | design-decisions.md |
+| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209, first-login password by DD-210 | design-decisions.md |
 | DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live | design-decisions.md |
 | DD-153 | The base installs only what the base uses | live | design-decisions.md |
 | DD-154 | One console name, one current export | live | design-decisions.md |
@@ -211,3 +211,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
 | DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |
+| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live | design-decisions.md |

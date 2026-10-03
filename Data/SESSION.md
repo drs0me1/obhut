@@ -4,6 +4,114 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-03 — v2-189 accepted and deployed; user requested commit (Astra):**
+- Final independent review: icon-only controls retain accessible names/tooltips, invisible 44 px hit areas
+  and keyboard focus; the request-completion focus regression is fixed. `app-install-ui.cjs` passed on the
+  frozen v2-189 candidate; screenshots inspected at 390 px. Root and Data/app launchers are identical; all
+  78 runtime files in the embedded archive match the source bytes, with the recorded v2-189 archive hash.
+- nrm: the first SSH session disconnected at the full-upgrade prompt before installation changes. The
+  abandoned installer process was terminated and a fresh scratch input file was used for the retry:
+  SSH_HOST=nrm, blank LOCAL_DOMAIN, default no full-upgrade, confirmation `E`. The retry finished with exit 0,
+  `Kurulum tamam`, version 2026.08.06-v2-189. No reboot or full OS upgrade.
+- Real v2-189 browser acceptance passed: icon-only controls have no text/background/border/shadow, including
+  hover; names and tooltips remain; qBittorrent opens its native UI in a new tab with noopener; settings open
+  running and stopped with a blank password; cancel-stop and stop/start work; username/save path stay the same;
+  no page errors. Desktop/390 px screenshots: `/private/tmp/v189-live-ui-knFekU`.
+- Final health: all checks ok (services, Tailscale, firewall, reboot, clock, disk, pending settings).
+  master-panel, Caddy and qBittorrent active. Deployed konsol.js/panel.css hashes match the accepted source
+  (cd1242b24e95708f / 861fb83927541e20). Remote test/staging files and the local preview server were cleaned up.
+- New explicit human rule: do not create server-side installation backups on nrm; data loss is acceptable,
+  and real code verification is the purpose. Recorded in CLAUDE.md. The two source backups created earlier
+  in this task were removed; no backups were created for the retry. The existing Konsol account was untouched.
+- Scope limits: the registered qBittorrent app was not destructively removed/reinstalled. Fresh account/path
+  application was verified with the real isolated container described below; App Store install wiring was
+  covered by browser and Linux engine fixtures. No new backend changes in v2-189 required repeating that suite.
+
+**2026-10-03 — Icon-only tile actions, v2-189; v2-188 live acceptance; launcher exported (uncommitted; Astra's
+qitem-20261002235236-12610846, user: "menü altındaki ayarlar ve durdur başlat iconları fon rengi olmadan sadece simge
+olarak görülsün"):**
+- konsol.js/panel.css: tile actions are bare icons (no text, background, border; also hover/pressed), name =
+  `aria-label` + `title` ("qBittorrent ayarları", "qBittorrent: Durdur|Başlat|Durduruluyor…|Başlatılıyor…"),
+  focus ring kept, 28 px icon box with an invisible 44 px `::before`, 16 px gap. Astra's focus finding fixed: the
+  `finally` redraw of `tileService` is now the focus-keeping `renderOverview()` (no pulling focus back).
+- Local checks: red first (row text/title assertion; focus regression failed on the old `finally` via a temporary
+  local revert, then restored, same sha256); app-install PASS three runs in a row after making one busy-geometry
+  check atomic (a 1.5 s redraw could detach a held element: test flake, not product), panel and torrent PASS, Bats
+  176 OK (after export, incl. the launcher-copy test). Screenshots reviewed: tiles desktop, 390 dark with focus
+  ring, busy clock icon.
+- Export: `Data/dev/export-installer.sh` (no --desktop) → `2026.08.06-v2-189.command` in the root and Data/app
+  (identical, 441557 bytes; v2-186 copies removed by the exporter), embedded archive sha256
+  `e1b438589e0c2e3a0e14fc30d022b42b87db91b4c04bcedd3bac6707b59df9b0` = header; extracted tree equals the runtime
+  sources (only CHANGELOG/SESSION/OKUBENI/app/dev/docs/tests absent); no `kurulum/` input inside. Not run.
+- v2-188 on nrm (Astra): frozen runtime archive sha256 `3739392986a2369522eff6e0d0b6c986a527e50fc297aaa749f0c401e81b3b5f`,
+  scratch inputs (SSH_HOST=nrm, LOCAL_DOMAIN blank), no full-upgrade, `E`, exit 0; owner Konsol account untouched;
+  core services active; the operator's qBittorrent username, password hash and save path digest unchanged
+  before/after. Mac re-checks: test_torrent_api 28, test_resources 22 (1 skip), app-install PASS. Real nrm
+  browser: native popup (new tab, noopener), settings prefill/blank password running and stopped, cancelled stop,
+  stop → start from the tile, values unchanged, no page errors. Isolated Podman fixture (deployed worker, quadlet,
+  pinned image; unique unit/profile/ports): first start with the form's account/password/folder via real
+  kur-hazirla/kur-uygula, native login + protected preferences, non-root uid, isolated mounts; running change with a
+  library bind and old-login rejection; stopped save keeping the hash and staying stopped, explicit start applies;
+  cleanup complete, owner service unchanged; 14.5 s. qBittorrent 5.2 login success is 204 (no body), failure 401 —
+  the fixture first expected 5.1's 200 "Ok." (fixture fixed, no product change). This is worker + native container
+  acceptance, not a destructive reinstall of the registered production app; UI install/engine wiring stays
+  fixture-tested. Linux Bats on nrm: `master-modul installs qBittorrent` 1/1; Konsol health all ok; no qb-accept
+  leftovers.
+- Note: tests/settings-linux.py, publications-proxy-linux.py and torrent-defaults-linux.py run the Debian
+  qbittorrent-nox 5.1 ("Ok."/"Fails."), not the container's 5.2 login contract.
+
+**2026-10-03 — Ayarlar and Durdur/Başlat under the overview's application tiles, v2-188 (DD-210 extended;
+uncommitted; Astra's qitem-20261002232837-ba6defe7, user: "ana ekran uygulamalarının altında ayarlar, durdur
+başlat iki seçenek olsun"):**
+- konsol.js: `appActions(def)` row under every installed App Store app's tile (replaces v2-187's single gear):
+  Ayarlar = the declared form (`appForm`) or a link to the package's page; Durdur/Başlat only when
+  `durdurulabilir`, `tileService` → `askStop` (shared with App Store details, the package's stop note) →
+  `modStart(m, action, {veri:false})`; `tilePending` (Map) + server `busy` → `aria-disabled` (focusable, clicks
+  ignored), visible "Duruyor…"/"Başlıyor…", spoken "<app>: Durduruluyor…/Başlatılıyor…"; refusal → toast,
+  usable again. Focus kept across redraws by `data-act`. No row in edit mode or on built-in tiles. WireGuard
+  (PAKET_DURDURULABILIR=0) gets Ayarlar → #/wireguard only. No backend or package change.
+- panel.css: `.tile.has-actions`, `.tile-actions`, `.tile-act` (content-sized, min 48 px, ~52 px touch height).
+- Verification (Mac only; Astra owns nrm): red first (app-install-ui: empty action row); green: app-install-ui
+  PASS (twice), panel, torrent, wireguard PASS, Bats 176 OK; no Python source changed this round (Python
+  last run 445 OK on the v2-187 fixes). Screenshots reviewed: tiles desktop/390 dark, busy "Duruyor…" inside
+  the tile (an earlier "Durduruluyor…" label overflowed the tile and was shortened).
+
+**2026-10-03 — qBittorrent install form, direct app launch, overview settings action, v2-187 (DD-210; uncommitted;
+assigned by the project lead Astra/dev-check as qitem-20261002223131-af71e87e, implemented by Opus/dev-owner):**
+- User outcome: App Store → qBittorrent → Kur opens a window for username, password and download path and the
+  install uses them; afterwards the app's main-menu icon opens qBittorrent's own web UI and a small settings icon
+  beneath it changes the three values.
+- Generic: `konsol.json` `form` (field types metin/parola/klasor, texts, `oku`/`yaz` routes) + manifest
+  `PAKET_KUR_AYAR="ayar.py"`. Backend `module_install`: form required, lock, busy/installed refused, worker
+  `ayar.py kur-hazirla --tohum RUNTIME_DIR/modul-<id>.kur` (stdin), then `master-modul kur`; seed removed if the
+  spawn fails. Engine `kur_tohumu_al`: fresh (≤10 min) 0600 own seed required, `KUR_TOHUM` for hooks, EXIT trap
+  removes seed + `.onceki`. Hook: `torrent_tohum uygula` after `torrent_profile`, before the quadlet/start;
+  `torrent_kur_geri` (rollback + `kur-geri`) on every failure. Worker: `kur-hazirla` (hash only), `kur-uygula`
+  (4 keys + drop-in, snapshot), `kur-geri`, `ayar` (one stop/start; blank password keeps hash); API `/ayar`.
+- Shell: `formOf`, `launchUrl` (tile, sidebar entry, App Store "Aç" open the web UI in a new tab while running;
+  public address only the public name, otherwise the page), `appForm` dialog (folder chooser over
+  `/api/konsol/ayarlar/klasorler`, drafts kept, single submit, focus return), tile with a stretched launch link and
+  a sibling `.tile-gear` button (absent in edit mode); tile focus kept across poll redraws.
+- Verification 2026-10-03 (Mac only, no nrm per assignment): red first (Python 27 run → 4 failures + 26 errors;
+  Bats lifecycle test installed without a seed; new browser suite: Kur posted at once). Green: Python 443 OK (4
+  skipped), Bats 176 OK, shellcheck/bash -n clean, browser suites app-install (new), panel, torrent, wireguard,
+  settings, files, giris, publications, settings-https, konteynerler PASS; screenshots reviewed (install/settings
+  dialogs desktop and 390 px dark, overview, App Store). Not done: Linux Bats on nrm, a real Podman install with
+  the form, export of the v2-187 launcher (root/Data/app still v2-186).
+- Astra's review (qitem-20261002231658-3a2413ea) found two P2 gaps, fixed in v2-187: (1) a stopped
+  (`durduruldu`) app's settings failed (package APIs loaded only for `calisiyor`: GET /durum 404, POST /ayar
+  409) → `package_api(..., stopped=True)` for the package's own requests only; no `start()` for a stopped
+  object, `package_apis()` (sampler, VPN networks) never returns it, a state change rebuilds the object;
+  (2) a late install/save answer closed or cleared a newer shared dialog and a late /durum read replaced
+  another dialog → each `appForm` call owns the dialog only while its root node is the content and no close
+  happened since (`mine()`); late successes only toast, late refusals toast. Also fixed: the page-poll
+  after a settings save compared a shadowed variable. Red first: test_resources stopped-package test (GET
+  404), test_torrent_api stopped settings test (KeyError 'installed' from a 404), app-install-ui ("A
+  completed older request must not close a newly opened form"; a probe copy without that case failed with
+  "the late read leaves the newer dialog alone"). Green: Python 445 OK (4 skipped), Bats 176 OK, git diff
+  --check clean, browser app-install (twice), panel, torrent, wireguard, files, settings, giris PASS; fresh
+  dialog screenshots reviewed (layout unchanged). Still not done: nrm/Podman, Linux Bats, launcher export.
+
 **2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler, v2-186 (DD-208
 rewritten, DD-209; committed with v2-179..184 as 1eba852 on branch quantum; v2-185's store package superseded):**
 - User: "podman bir platform … ayrı bir uygulama gibi görülmesin … taban yapı olarak birlikte kurulsun" and

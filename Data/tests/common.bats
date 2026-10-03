@@ -1724,6 +1724,7 @@ RCLONE_VERSION=1.75.1
 TAILSCALE_IPV4=100.64.0.7
 SERVER_ROOT=$TMP
 MODULES_DIR=$TMP/mods
+RUNTIME_DIR=$TMP/run
 EOF
     # DD-200: the rendered package folders the backend reads: manifests, the WireGuard API module
     # and the Konsol metadata, with placeholders filled the way the installer fills them.
@@ -1790,6 +1791,8 @@ EOF
     cat >"$TMP/pbin/systemd-run" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/sdrun-calls"
+# A worker run (--pipe): its JSON request arrives on stdin and it answers JSON (DD-202, DD-210).
+case " \$* " in *" --pipe "*) cat >>"$TMP/sdrun-stdin"; printf '{"ok": true}\n' ;; esac
 EOF
     cat >"$TMP/pbin/systemctl" <<EOF
 #!/bin/bash
@@ -2224,7 +2227,14 @@ m = [i for i in json.load(open(sys.argv[1]))["items"] if i["id"] == "torrent"][0
 assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("torrent", "host", False, "", False, None), m
 ' "$TMP/body"
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
-    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{}')" = 202 ]
+    # DD-210: qBittorrent declares an install form; without it nothing starts.
+    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{}')" = 400 ]
+    [ ! -e "$TMP/sdrun-calls" ]
+    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{"form":{"username":"operator","password":"bats-install-phrase","save":"/srv/downloads"}}')" = 202 ]
+    [ "$(wc -l <"$TMP/sdrun-calls")" -eq 2 ]
+    head -n 1 "$TMP/sdrun-calls" | grep -q -- "--wait --pipe .*/mods/torrent/ayar.py --lib .* kur-hazirla --tohum $TMP/run/modul-torrent.kur$"
+    grep -q '"password": "bats-install-phrase"' "$TMP/sdrun-stdin"
+    run ! grep -q 'bats-install-phrase' "$TMP/sdrun-calls"
     tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-torrent.service --collect --quiet '
     tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kur torrent$"
     [ "$(pc /api/konsol/moduller/torrent/kaldir "${json[@]}" --data '{"veri":true}')" = 202 ]
@@ -3154,7 +3164,13 @@ PY
     grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
     # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
     grep -qF 'genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,' "$js"
-    grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot };' "$js"
+    grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,' "$js"
+    # DD-210: a running app with publication names opens its own web UI; the action row (Ayarlar, Durdur/Başlat)
+    # sits beside the launch link; no action on built-in tiles.
+    grep -qF 'launch: launchUrl(m), settings: form && form.oku && form.yaz ? "form" : meta.rota ? "#/" + meta.rota : "", service: !!m.durdurulabilir };' "$js"
+    grep -qF 'const actions = !editing && (def.settings || def.service) ? appActions(def) : null;' "$js"
+    grep -qF 'if (m.state === "calisiyor") askStop(m, () => go("durdur")); else go("baslat");' "$js"
+    grep -qF 'const newTab = (url) => (url ? { target: "_blank", rel: "noopener noreferrer" } : {});' "$js"
     # v2-179: no separate storage/CPU-history card; storage is a pie beside the CPU/RAM rings.
     grep -qF 'h("div", { class: "big pie-box" }, pie(v.disk),' "$js"
     run ! grep -qE 'class="spark"|class: "bar"|İşlemci geçmişi' "$js"
@@ -3295,12 +3311,14 @@ PY
     [ "$(grep -E 'systemctl (enable|disable)' "$pkg/kanca" | grep -vc 'eski qBittorrent servisi')" -eq 0 ]
     body="$(awk '/^paket_kur\(\)/,/^}$/' "$pkg/kanca")"
     [ "$(grep -n 'torrent_profile' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl start' <<<"$body" | cut -d: -f1)" ]
+    # DD-210: the install form's account and folder are written before the first start.
+    [ "$(grep -n 'torrent_tohum uygula' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl start' <<<"$body" | cut -d: -f1)" ]
     body="$(awk '/^torrent_verify\(\)/,/^}$/' "$pkg/kanca")"
     grep -qF 'podman inspect --format' <<<"$body"
     grep -qF '"$SERVER_ROOT/$FILES_PANEL_TRASH/"* | "$SERVER_ROOT/$SHARE_DIR/"*)' <<<"$body"
     grep -qF "awk '\$4 !~ /^127\\.0\\.0\\.1:/ {print \$4}'" <<<"$body"
     # A folder outside the downloads tree is one quadlet drop-in bind mount at the same path.
-    grep -qF 'drop_in = "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"' "$pkg/ayar.py"
+    grep -qF 'return updates, "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"' "$pkg/ayar.py"
     grep -qF 'return Path(env["KONTEYNER_BIRIM_DIR"]) / (container_name(env) + ".container.d") / DROP_IN' "$pkg/ayar.py"
     # --veri also drops the drop-in and the image; the profile guard stays.
     body="$(awk '/^torrent_drop_data\(\)/,/^}$/' "$pkg/kanca")"
@@ -3380,7 +3398,10 @@ PY
     grep -q 'id="mod-grid"' "$html"
     grep -q 'id="cf-extra"' "$html"
     grep -qF 'api("/api/konsol/moduller")' "$js"
-    grep -qF 'post(`/api/konsol/moduller/${enc(m.id)}/${action}`, { veri: !!veri })' "$js"
+    grep -qF 'return modStart(m, action, body || { veri: !!veri }).catch(fail);' "$js"
+    grep -qF 'return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, body)' "$js"
+    # DD-210: Kur opens the package's declared form instead of starting at once.
+    grep -qF 'onclick:() => (formOf(m.id) ? appForm(m.id, "kur") : modAct(m, "kur"))}, "Kur")),' "$js"
     grep -qF 'if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);' "$js"
     # Until the unit writes its first step, the card shows the requested action, not the previous one.
     grep -qF 'if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };' "$js"
@@ -4165,6 +4186,9 @@ torrent_fixture() {
     printf 'interface-name=torrent.ayc,tailscale0\n' >"$TMP/mods/torrent/dnsmasq.conf"
     # DD-202: the Konsol page comes with the package and is placed while installed.
     cp "$V2_ROOT/magaza/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.css" "$TMP/mods/torrent/"
+    # DD-210: the hook writes the install form's seed into the profile through the package's worker.
+    cp "$V2_ROOT/magaza/torrent/ayar.py" "$TMP/mods/torrent/"
+    mkdir -p "$TMP/srv/media"
     : >"$TMP/caddy/Caddyfile"
     # DD-203: the hook reads its port, profile and container name from the package's own env file.
     printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\nTORRENT_CONTAINER=qbittorrent\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
@@ -4183,6 +4207,8 @@ printf '%s\n' "\$*" >>"$TMP/systemctl-calls"
 case "\$*" in
     "start qbittorrent.service" | "restart qbittorrent.service")
         [ -e "$TMP/quadlet/qbittorrent.container" ] || exit 5
+        # What the container would read at its first start (DD-210).
+        cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/conf-at-start" 2>/dev/null || true
         touch "$TMP/qb-active" ;;
     "stop qbittorrent.service") rm -f "$TMP/qb-active" ;;
     "is-active --quiet qbittorrent.service") [ -e "$TMP/qb-active" ]; exit \$? ;;
@@ -4228,11 +4254,42 @@ EOF
     chmod +x "$TMP/mbin"/*
 }
 
+# DD-210: what the base's worker leaves for the engine after Konsol's install form: a private seed with
+# the password's hash only.
+torrent_seed() { # [SAVE_DIR]
+    printf '{"username": "operator", "hash": "@ByteArray(c2FsdHNhbHRzYWx0c2FsdA==:a2V5a2V5a2V5)", "save": "%s/"}\n' "${1:-$TMP/dl}" \
+        >"$TMP/run/modul-torrent.kur"
+    chmod 600 "$TMP/run/modul-torrent.kur"
+}
+
 @test "master-modul installs qBittorrent as a pinned Podman container, as the downloads user, closed to the trash and the share" {
     local ref="lscr.io/linuxserver/qbittorrent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     torrent_fixture
+    # DD-210: without Konsol's install form there is no install: no image, no profile, no unit.
+    run mm kur torrent
+    [ "$status" -ne 0 ]
+    case "$output" in *"kurulum bilgileri"*) ;; *) false ;; esac
+    [ ! -e "$TMP/podman-calls" ]
+    [ ! -e "$TMP/qbprof/qBittorrent" ]
+    run ! grep -q torrent "$TMP/moduller"
+    # A seed that others can read is refused and removed too.
+    torrent_seed
+    chmod 644 "$TMP/run/modul-torrent.kur"
+    run mm kur torrent
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/run/modul-torrent.kur" ]
+    [ ! -e "$TMP/podman-calls" ]
+    torrent_seed
     run mm kur torrent
     [ "$status" -eq 0 ]
+    # The form's account and folder are in the profile before the container's first start; the seed is gone.
+    grep -qx 'WebUI\\Username=operator' "$TMP/conf-at-start"
+    grep -qx 'WebUI\\Password_PBKDF2=@ByteArray(c2FsdHNhbHRzYWx0c2FsdA==:a2V5a2V5a2V5)' "$TMP/conf-at-start"
+    grep -qx "Session\\\\DefaultSavePath=\"$TMP/dl/\"" "$TMP/conf-at-start"
+    grep -qx 'WebUI\\Address=127.0.0.1' "$TMP/conf-at-start"
+    [ ! -e "$TMP/run/modul-torrent.kur" ]
+    [ ! -e "$TMP/run/modul-torrent.kur.onceki" ]
+    [ ! -e "$TMP/quadlet/qbittorrent.container.d/90-konsol.conf" ]
     grep -qx "$(printf 'torrent\tcalisiyor')" "$TMP/moduller"
     [ "$(cat "$TMP/run/modul-torrent.ilerleme")" = "$(printf 'kur\tbitti\t0\tkuruldu')" ]
     # DD-209: no Debian package; the image is pulled once, by digest.
@@ -4240,7 +4297,8 @@ EOF
     grep -qx "pull -q $ref" "$TMP/podman-calls"
     # The quadlet is placed, the settings are written once into an empty profile before the first start.
     cmp -s "$TMP/mods/torrent/qbittorrent.container" "$TMP/quadlet/qbittorrent.container"
-    cmp -s "$TMP/mods/torrent/qBittorrent.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    cmp -s "$TMP/conf-at-start" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    grep -qx '\[LegalNotice\]' "$TMP/qbprof/qBittorrent/qBittorrent.conf"
     grep -qx 'start qbittorrent.service' "$TMP/systemctl-calls"
     run ! grep -qE '^(enable|disable) ' "$TMP/systemctl-calls"
     cmp -s "$TMP/mods/torrent/torrent.caddy" "$TMP/caddy/moduller/torrent.caddy"
@@ -4250,18 +4308,19 @@ EOF
     cmp -s "$TMP/web/uygulama/torrent/sayfa.css" "$V2_ROOT/magaza/torrent/sayfa.css"
     run mm liste
     [ "$(grep '^torrent' <<<"$output" | cut -f2-4)" = "$(printf 'konteyner\tcalisiyor\trunning')" ]
-    # First login: the temporary password comes from this run's journal, only on request.
+    # The account is the form's (from the profile). A temporary password, which qBittorrent prints only
+    # while none is set, would come from this run's journal, only on request.
     run mm hesap torrent
-    [ "$output" = "$(printf 'admin\tgecici')" ]
+    [ "$output" = "$(printf 'operator\tgecici')" ]
     run mm hesap torrent --parola
-    [ "$output" = "$(printf 'admin\tgecici\tTmp9Pass7Word')" ]
+    [ "$output" = "$(printf 'operator\tgecici\tTmp9Pass7Word')" ]
     grep -q '_SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef' "$TMP/journal-calls"
     run mm gunluk torrent 20
     [ "$(grep -c 'Tmp9Pass7Word' <<<"$output")" -eq 0 ]
     grep -q -- '-u qbittorrent.service' "$TMP/journal-calls"
     touch "$TMP/qb-password-set"
     run mm hesap torrent --parola
-    [ "$output" = "$(printf 'admin\tayarli')" ]
+    [ "$output" = "$(printf 'operator\tayarli')" ]
     printf '[Preferences]\nWebUI\\Username=operator\n' >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
     run mm hesap torrent
     [ "$output" = "$(printf 'operator\tayarli')" ]
@@ -4309,10 +4368,19 @@ EOF
     # Removal keeps the image (like a kept Debian package): a reinstall needs no download.
     [ -e "$TMP/qb-image" ]
     : >"$TMP/podman-calls"
+    # A reinstall with the kept profile takes the form's account and a library folder outside the
+    # downloads tree (one same-path drop-in mount) and keeps every other preference.
+    torrent_seed "$TMP/srv/media"
     run mm kur torrent
     [ "$status" -eq 0 ]
     run ! grep -q '^pull ' "$TMP/podman-calls"
-    cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    for line in 'Session\LSDEnabled=false' 'Session\TempPath=/operator/incomplete/' 'PortForwardingEnabled=true' \
+        'Connection\UPnP=true' 'WebUI\Username=operator'; do
+        grep -qxF "$line" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+    done
+    grep -qxF "Downloads\\SavePath=\"$TMP/srv/media/\"" "$TMP/conf-at-start"
+    [ "$(cat "$TMP/quadlet/qbittorrent.container.d/90-konsol.conf")" = "$(printf '# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s' "$TMP/srv/media" "$TMP/srv/media")" ]
+    [ ! -e "$TMP/run/modul-torrent.kur" ]
     [ "$(grep -c 'master-firewall' "$TMP/systemctl-calls")" -eq 0 ]
     # --veri deletes the image and the folder drop-in; the profile only under /var/lib.
     mkdir -p "$TMP/quadlet/qbittorrent.container.d"
@@ -4326,12 +4394,19 @@ EOF
     [ -f "$TMP/qbprof/qBittorrent/qBittorrent.conf" ]
     # A container that sees the trash, an interface beyond loopback or a root qBittorrent is taken back.
     local trap_file msg
+    # A failed install also returns the kept profile and the drop-in to what they were (DD-210).
+    cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/before-failed.conf"
     for trap_file in qb-open:"korunan bir klasörü görüyor" qb-wide:"loopback dışında da dinliyor" qb-root:"uid '0' ile çalışıyor"; do
         msg="${trap_file#*:}"; trap_file="${trap_file%%:*}"
         touch "$TMP/$trap_file"
+        torrent_seed "$TMP/srv/media"
         run mm kur torrent
         [ "$status" -ne 0 ]
         case "$output" in *"$msg"*) ;; *) false ;; esac
+        cmp -s "$TMP/before-failed.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
+        [ ! -e "$TMP/quadlet/qbittorrent.container.d/90-konsol.conf" ]
+        [ ! -e "$TMP/run/modul-torrent.kur" ]
+        [ ! -e "$TMP/run/modul-torrent.kur.onceki" ]
         [ "$(grep -c torrent "$TMP/moduller")" -eq 0 ]
         [ ! -e "$TMP/web/uygulama/torrent" ]
         [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
@@ -4341,10 +4416,12 @@ EOF
     done
     # An old Debian qbittorrent-nox unit that is still active holds the port: the manual step is named.
     touch "$TMP/qb-legacy"
+    torrent_seed
     run mm kur torrent
     [ "$status" -ne 0 ]
     case "$output" in *"systemctl disable --now qbittorrent-nox@master-downloads.service"*) ;; *) false ;; esac
     [ ! -e "$TMP/quadlet/qbittorrent.container" ]
+    [ ! -e "$TMP/run/modul-torrent.kur" ]
 }
 
 @test "master-modul account refuses a FIFO profile promptly without leaking journal credentials" {

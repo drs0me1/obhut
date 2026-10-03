@@ -6,8 +6,9 @@
 # yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur (DD-178). Hesap/dizin
 # değişikliklerini paketin kendi çalışanı (ayar.py, Konsol API'si api.py üzerinden) yapar; Konsol
 # sayfası (sayfa.js/css) paketle gelir ve kuruluyken CONSOLE_WEB_DIR/uygulama/torrent altında durur
-# (DD-200, DD-202); ilk giriş geçici paroladır. İnternete eş portu açılmaz. Kaldırılınca imaj
-# sunucuda kalır; `kaldir --veri` profili ve imajı siler.
+# (DD-200, DD-202). İnternete eş portu açılmaz. Kaldırılınca imaj sunucuda kalır; `kaldir --veri`
+# profili ve imajı siler. DD-210: kurulum Konsol'daki pencerenin hesap ve indirme klasörüyle olur;
+# motor bilgiyi KUR_TOHUM'da verir, kanca onu konteyner ilk kez başlamadan önce profile yazar.
 # shellcheck shell=bash
 # DD-203: paketin kendi ayarları (arayüz portu, profil klasörü, konteyner adı, imaj) kendi klasöründedir.
 # shellcheck source=/dev/null
@@ -140,6 +141,23 @@ torrent_rollback() {
     paket_sayfa_kaldir
 }
 
+# DD-210: kurulum penceresinin bilgisi (hesap, parola özeti, indirme klasörü) paketin çalışanıyla
+# yazılır (uygula) ya da kurulum başarısızsa önceki profil ve dizin eki geri konur (geri).
+torrent_tohum() { # uygula | geri
+    local out
+    out="$(PYTHONDONTWRITEBYTECODE=1 python3 "$MODULES_DIR/torrent/ayar.py" --lib "$SBIN_DIR" --state "$STATE_FILE" "kur-$1" --tohum "$KUR_TOHUM" 2>/dev/null)" && return 0
+    FAIL="$(sed -n 's/^{"error": "\(.*\)"}$/\1/p' <<<"$out")"
+    FAIL="kurulum bilgileri uygulanamadı${FAIL:+: $FAIL}"
+    return 1
+}
+
+torrent_kur_geri() {
+    local fail="$FAIL"
+    torrent_rollback
+    torrent_tohum geri || warn "önceki qBittorrent profili geri konamadı: $FAIL"
+    FAIL="$fail"
+}
+
 # --veri: profil (ayarlar ve torrent listesi), Konsol'un eklediği dizin bağlaması ve imaj.
 # İndirilen dosyalara dokunulmaz.
 torrent_drop_data() {
@@ -190,22 +208,26 @@ PY
 
 paket_kur() {
     paket_gerekli
+    [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → App Store'daki pencereden kurun"
     torrent_eski_yok
     progress_step 1 "İmaj indiriliyor"
     paket_imaj_cek || fail_step "$FAIL"
     progress_step 2 "Konteyner birimi"
     torrent_profile
-    paket_konteyner_koy || { torrent_rollback; fail_step "$FAIL"; }
+    # DD-210: hesap ve indirme klasörü konteynerin ilk açılışından önce; dizin eki değişmiş olabilir.
+    torrent_tohum uygula || { torrent_kur_geri; fail_step "$FAIL"; }
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    paket_konteyner_koy || { torrent_kur_geri; fail_step "$FAIL"; }
     progress_step 3 "Servis başlatılıyor"
     systemctl start "$(torrent_unit_name)" >/dev/null 2>&1 ||
-        { torrent_rollback; fail_step "qBittorrent başlatılamadı"; }
-    torrent_verify --ilk || { torrent_rollback; fail_step "$FAIL"; }
+        { FAIL="qBittorrent başlatılamadı"; torrent_kur_geri; fail_step "$FAIL"; }
+    torrent_verify --ilk || { torrent_kur_geri; fail_step "$FAIL"; }
     progress_step 4 "Ad"
-    paket_adlar_ac || { torrent_rollback; fail_step "$FAIL"; }
-    torrent_verify_names || { torrent_rollback; fail_step "$FAIL"; }
+    paket_adlar_ac || { torrent_kur_geri; fail_step "$FAIL"; }
+    torrent_verify_names || { torrent_kur_geri; fail_step "$FAIL"; }
     # DD-200/202: Konsol sayfası paketle gelir; servis doğrulandıktan sonra, kayıt yazılmadan
     # önce yerleşir ki başarısız bir kurulum sayfa bırakmasın.
-    paket_sayfa_koy || { torrent_rollback; fail_step "$FAIL"; }
+    paket_sayfa_koy || { torrent_kur_geri; fail_step "$FAIL"; }
 }
 
 paket_baslat() {

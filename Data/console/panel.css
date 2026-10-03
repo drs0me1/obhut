@@ -198,6 +198,42 @@ h1 { font-size:28px; font-weight:650; letter-spacing:-.02em; }
 .tile strong { font-size:13px; font-weight:600; overflow-wrap:anywhere; }
 .tile small { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
 .tile .dot { position:absolute; top:10px; right:10px; width:8px; height:8px; border-radius:50%; }
+/* DD-210: an installed app's tile: the launch link stretches over the card; a compact row of bare icons
+   (Ayarlar, Durdur/Başlat; v2-189: no text, background or border) sits beneath the icon and text as its own
+   controls, each with an invisible ~44 px touch area and a visible keyboard focus ring. */
+.tile.has-actions { cursor:default; padding-bottom:10px; }
+.tile-link { display:grid; justify-items:center; gap:9px; color:inherit; text-decoration:none; }
+.tile-link::after { content:""; position:absolute; inset:0; border-radius:inherit; }
+.tile-link:focus-visible { outline:none; }
+.tile-link:focus-visible::after { outline:2px solid var(--accent); outline-offset:2px; }
+.tile-actions { position:relative; z-index:1; display:flex; justify-content:center; gap:16px; max-width:100%; }
+.tile-act { position:relative; display:grid; place-items:center; width:28px; height:28px; padding:0; border:0; border-radius:8px;
+  background:none; box-shadow:none; color:var(--muted); font:inherit; text-decoration:none; cursor:pointer; }
+.tile-act::before { content:""; position:absolute; inset:-8px; }
+.tile-act svg { width:18px; height:18px; }
+.tile-act:hover, .tile-act:active { color:var(--ink); background:none; }
+.tile-act:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.tile-act[aria-disabled="true"] { opacity:.55; cursor:progress; }
+/* One install/settings form call's content in the shared dialog; it lays out as the dialog's own children. */
+.app-form-root { display:contents; }
+/* The install/settings form's folder chooser (inside the shared dialog). */
+.app-field { display:grid; gap:6px; min-width:0; }
+.app-field > label { display:grid; gap:6px; font-size:13px; }
+.app-field input { width:100%; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:var(--ground); color:var(--ink); font:inherit; }
+.app-field input[readonly] { color:var(--muted); }
+.app-folder-pick { display:flex; gap:8px; align-items:center; min-width:0; }
+.app-folder-pick input { flex:1 1 auto; }
+.app-folder-pick .btn { flex:0 0 auto; }
+.app-picker { display:grid; gap:6px; max-height:260px; overflow:auto; padding:8px; border:1px solid var(--line); border-radius:8px; }
+.app-picker-here { display:flex; gap:8px; align-items:center; flex-wrap:wrap; min-width:0; }
+.app-picker-here code { overflow-wrap:anywhere; font-size:12.5px; }
+.app-picker-row { display:flex; gap:8px; align-items:center; min-width:0; }
+.app-picker-row > span { flex:1 1 auto; min-width:0; display:grid; }
+.app-picker-row strong { font-size:13px; font-weight:600; overflow-wrap:anywhere; }
+.app-picker-row small { font-size:11.5px; color:var(--muted); }
+.app-form small.hint-s { display:block; }
+/* App Store's "Aç" is a link while the app has its own web UI (DD-210); it looks like the button it replaces. */
+.store-actions a.btn { text-decoration:none; }
 .dot.on { background:var(--ok); } .dot.off { background:var(--idle); } .dot.warn { background:var(--warn); }
 /* icon tones: the shell's sections and the tones packages declare (konsol.json "ton") */
 .t-files, .tile .t-dir, .store-row .t-dir { background:linear-gradient(145deg,#3F8BD1,#2A5F9A); color:#fff; }

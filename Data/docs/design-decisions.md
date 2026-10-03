@@ -13,6 +13,83 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
+
+- **Request (user via the project lead, 2026-10-03):** qBittorrent's App Store "Kur" opens a window
+  asking for a username, a password and the download folder, and the install uses them; afterwards the
+  application's icon on the main menu opens qBittorrent's own web UI, and a small settings icon beneath
+  it changes the same three values.
+- **Why the install takes the values (instead of the temporary password, DD-151):** with a password
+  chosen up front there is no temporary-password step and no window in which the web UI runs with a
+  journal password. A "temporary default, patch later" install was rejected: the container would start
+  once with credentials the operator did not choose, and a failed patch would leave it that way.
+- **Generic, two declarations:** `konsol.json` `form` (generic field types `metin`, `parola`, `klasor`,
+  texts, the package API's read and write routes) drives the shell's dialogs; the manifest key
+  `PAKET_KUR_AYAR` names the worker that validates the form. The shell, the backend and the engine name
+  no application. A package without `PAKET_KUR_AYAR` (WireGuard) installs exactly as before and refuses
+  a form.
+- **Validation before anything starts:** the backend, under one lock per install, refuses a busy or
+  installed package, runs the package worker as a transient root unit with the form on stdin
+  (`kur-hazirla`; the same `run_worker` path as every settings write, so the password never reaches
+  argv, environment or journal) and spawns `master-modul kur` only after the worker accepted. The worker
+  reuses the package's own rules: username pattern, password 8–256 printable characters, the base's
+  `safe_dir(writable=True)` user-area policy probed as the downloads user, and the same-path bind-mount
+  character check. A refusal is the request's 400; no image is pulled and nothing is written.
+- **Seed, not a password, crosses into the engine:** the engine runs detached (`systemd-run`, DD-148), so
+  stdin cannot reach it. The worker writes `RUNTIME_DIR/modul-<id>.kur` (tmpfs, 0600, root) with the
+  validated username, folder and the password **already hashed** in qBittorrent's PBKDF2 format; no
+  plaintext is ever stored. The engine refuses to install such a package without a fresh (≤10 min),
+  private, root-owned seed, exposes its path to the hooks as `KUR_TOHUM` and removes it and the hook's
+  snapshot on every exit; the backend removes it when the engine could not be started.
+- **Before the first start, and reversible:** the hook writes the seed into the new or kept profile
+  (`kur-uygula`: only `WebUI\Username`, `WebUI\Password_PBKDF2` and the two save-path keys, plus the
+  folder drop-in when outside the downloads tree) after `torrent_profile` and before the quadlet and the
+  first `systemctl start`; the image's init copies its defaults only when no profile exists, so the
+  values hold. The files as they were are snapshotted next to the seed; every failure path of `kur`
+  (`torrent_kur_geri`) stops and removes the unit, then restores the profile and the drop-in
+  (`kur-geri`), so a failed reinstall never loses the previous working account, folder, unrelated
+  preferences or torrents.
+- **Edit:** `POST /api/uygulama/torrent/ayar` takes any of the three fields; the worker validates all of
+  them first and makes one stop/write/start (`change()`, DD-165 direct apply with rollback), keeping a
+  stopped app stopped. A blank password is simply not sent and the stored hash stays. The dialog reads
+  current values from `/durum`, which never carries the hash.
+- **Launch:** an app with publication names (`urls`, DD-195/199) opens its web UI in a new tab
+  (`noopener noreferrer`) from the tile, the sidebar entry and App Store's "Aç" while it runs — the
+  public name on the public HTTPS address, the tailnet name on the tailnet. Stopped, busy or (on the
+  public address) unpublished apps open their Konsol page instead; no name is constructed in the page
+  and the public address never falls back to a private one. The page remains reachable from App Store
+  details and its route, and it keeps its own forms.
+- **Stopped apps keep their settings (review fix):** the tile keeps the settings action while the app is
+  stopped, so the root backend hands a stopped (`durduruldu`) package's own `/api/uygulama/<id>/*`
+  requests to its API module too (`package_api(..., stopped=True)`). For that object `start()` is not run,
+  and background callers (`package_apis()`: the sampler, VPN networks) never get it; a state change
+  rebuilds the object (stopping a running one). Absent packages still answer 404/409. The qBittorrent page
+  reads its status while stopped for the same reason.
+- **Dialog ownership (review fix):** the form shares Konsol's one dialog with every other flow. Each call
+  puts its content under its own root node and owns the dialog only while that node is the content and
+  the dialog has not closed since. A late install or save answer then closes only its own dialog (else it
+  only toasts), a late refusal toasts instead of writing into another dialog, and a late settings read
+  never replaces a newer dialog; closing still clears the call's password fields and returns focus.
+- **Tile action row (v2-188, user: "ana ekran uygulamalarının altında ayarlar, durdur başlat iki seçenek
+  olsun"):** v2-187's single settings icon became a compact row beneath the icon of every installed
+  App Store application: **Ayarlar** (the declared form; without one, a link to the package's page, so
+  WireGuard gets its page) and, only for packages that declare `PAKET_DURDURULABILIR=1`, one
+  **Durdur/Başlat** button. WireGuard cannot stop as a whole (its networks switch one by one) and gets no
+  invented all-networks switch; built-in navigation tiles get no row. The tile is a container with a
+  stretched launch link and the row as a sibling (no nested interactive elements). Durdur asks the App
+  Store's own confirmation (`askStop`, the package's stop note); both actions use the same lifecycle
+  request and progress (`modStart`), so no backend change. From the click until the server's operation
+  ends the button is `aria-disabled` (still focusable, so keyboard focus survives the 1.5 s progress
+  redraws) and ignores clicks; its visible label is the short "Duruyor…"/"Başlıyor…" (the narrow tile),
+  its accessible name "<app>: Durduruluyor…/Başlatılıyor…". A refused request is a toast and the button
+  is usable again; the label follows the server's state when the operation ends. **v2-189** (user: "fon
+  rengi olmadan sadece simge"): the controls are bare icons — no visible text, background or border, also
+  on hover/press; the name is the `aria-label` and the `title` tooltip, the focus ring stays, the touch area
+  is an invisible 44 px pseudo-element. The redraw at the end of a lifecycle request keeps whatever has focus
+  by then instead of pulling it back to the tile. Edit mode renders the
+  tiles exactly as before (no row, no link). A poll that redraws the tiles keeps keyboard focus on the same
+  tile part (`data-act`), and closing the settings dialog returns focus to Ayarlar.
+
 ### DD-209: qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network (v2-186)
 
 - **Request (user, 2026-10-03):** "sunucuda podman üzerinden yüklü qbittorrent ama ekranda ve app

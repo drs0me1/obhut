@@ -989,6 +989,33 @@
   const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"], konteyner: ["konteyner", "box", "Konteyner"] };
   const unitRuntime = (m) => m.runtime === "host" || m.runtime === "konteyner";
   let MODS = null, modTimer = null, modMisses = 0;
+  /* DD-210: a package may declare a form (konsol.json "form"): the App Store's Kur asks for it before the
+     install and the overview's settings action edits the same fields through the package's own API.
+     Field types are generic (text, password, folder); the shell names no application. */
+  const FORM_TYPES = new Set(["metin", "parola", "klasor"]);
+  function formOf(id) {
+    const m = (MODS || []).find((x) => x.id === id), f = m && m.konsol && m.konsol.form;
+    if (!f || typeof f !== "object" || !Array.isArray(f.alanlar)) return null;
+    const text = (v) => (typeof v === "string" ? v : "");
+    const num = (v) => (Number.isInteger(v) && v > 0 && v <= 4096 ? v : null);
+    const route = (v) => (typeof v === "string" && /^\/[a-z]{1,16}$/.test(v) ? v : "");
+    const fields = f.alanlar.filter((a) => a && typeof a === "object" && /^[a-z_]{1,32}$/.test(a.ad) && FORM_TYPES.has(a.tur))
+      .map((a) => ({ ad: a.ad, tur: a.tur, etiket: text(a.etiket) || a.ad, varsayilan: text(a.varsayilan), desen: text(a.desen),
+        enAz: num(a.en_az), enCok: num(a.en_cok), ipucu: text(a.ipucu), ayarIpucu: text(a.ayar_ipucu) }));
+    if (!fields.length) return null;
+    return { fields, kurBaslik: text(f.kur_baslik), kurAlt: text(f.kur_alt), kurNot: text(f.kur_not),
+      ayarBaslik: text(f.ayar_baslik), ayarAlt: text(f.ayar_alt), ayarNot: text(f.ayar_not), oku: route(f.oku), yaz: route(f.yaz) };
+  }
+  /* DD-210: an app with a native web interface (its publication's names, DD-195/199) opens there in a new
+     tab while it runs: the public name on the public HTTPS address, the tailnet name on the tailnet. No
+     name is ever made up here, and the public address never falls back to a private one. */
+  const publicAddress = () => location.protocol === "https:";
+  function launchUrl(m) {
+    if (!m || !m.installed || m.busy || m.state !== "calisiyor" || (unitRuntime(m) && m.live !== "running") || !m.urls) return "";
+    const url = publicAddress() ? m.urls.internet : m.urls.tailscale;
+    return typeof url === "string" && /^https?:\/\/[^\s"'<>]+$/.test(url) ? url : "";
+  }
+  const newTab = (url) => (url ? { target: "_blank", rel: "noopener noreferrer" } : {});
   const modOn = (id) => !!((MODS || []).find((m) => m.id === id) || {}).installed;
   // Files is built in; application pages follow the server registry and each package's declaration.
   function appRoutes() {
@@ -1013,7 +1040,12 @@
         a = h("a", { href: "#/" + rota, "data-route": rota, "data-app": r.id }, svg(r.icon), r.baslik);
         after.after(a);
       }
-      if (rota === current) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+      // DD-210: the main navigation opens the app itself while it can; its page stays at #/<rota>.
+      const url = launchUrl((MODS || []).find((m) => m.id === r.id));
+      a.setAttribute("href", url || "#/" + rota);
+      if (url) { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); }
+      else { a.removeAttribute("target"); a.removeAttribute("rel"); }
+      if (rota === current && !url) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
       after = a;
     });
     label.hidden = !document.querySelector(".nav a[data-app]");
@@ -1069,15 +1101,19 @@
       fail(err);
     });
   }
-  function modAct(m, action, veri) {
-    return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, { veri: !!veri })
+  function modAct(m, action, veri, body) {
+    return modStart(m, action, body || { veri: !!veri }).catch(fail);
+  }
+  // The request itself; a form that must show the server's refusal (DD-210) catches it on its own.
+  function modStart(m, action, body) {
+    return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, body)
       .then(() => {
         modPending[m.id] = action;
         // An unchanged poll may retain DOM handlers while replacing the catalogue objects.
         const live = (MODS || []).find(x => x.id === m.id) || m;
         live.busy = true; live.progress = { action, step: "0", total: 0, text: "" };
         renderModules(); return loadModules();
-      }).catch(fail);
+      });
   }
   function modPill(m) {
     if (m.busy) {
@@ -1103,13 +1139,22 @@
           "aria-expanded":String(modSelected === m.id), "aria-controls":"mod-detail", onclick:() => {
             modSelected = modSelected === m.id ? null : m.id; renderModules();
           }}, "Ayrıntı"),
-        m.installed
+        m.installed && launchUrl(m)
+          ? h("a", {class:"btn btn-sm btn-primary", id:`mod-open-${m.id}`, href:launchUrl(m), ...newTab(launchUrl(m)),
+              "aria-label":`${meta.name} arayüzünü yeni sekmede aç`}, "Aç ↗")
+          : m.installed
           ? h("button", {type:"button", class:"btn btn-sm btn-primary", id:`mod-open-${m.id}`, disabled,
               "data-go":meta.rota ? "#/" + meta.rota : "#/moduller"}, "Aç")
           : h("button", {type:"button", class:"btn btn-sm btn-primary", id:`mod-install-${m.id}`, disabled,
-              onclick:() => modAct(m, "kur")}, "Kur")),
+              onclick:() => (formOf(m.id) ? appForm(m.id, "kur") : modAct(m, "kur"))}, "Kur")),
       m.busy ? h("p", {class:"store-progress", role:"status"}, p.text || "İşlem sunucuda sürüyor…")
         : p.step === "hata" ? h("p", {class:"store-progress store-error", role:"alert"}, "Son işlem başarısız: " + (p.text || "İşlem tamamlanamadı.")) : null);
+  }
+  // The stop confirmation with the package's own explanation (App Store details and the overview tile).
+  function askStop(m, onOk) {
+    const meta = metaOf(m.id);
+    ask({title:`${meta.name} durdurulsun mu?`, sub:"Kurulu kalır; istediğinizde başlatırsınız", calm:true, go:"Durdur",
+      items:[["pause",meta.stopNote],["info","Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]], onOk});
   }
   function modDetail(m) {
     const meta = metaOf(m.id), p = m.progress || {};
@@ -1132,8 +1177,7 @@
       kids.push(h("div", {class:"store-detail-actions"},
         !m.durdurulabilir ? null : h("button", {type:"button", class:"btn btn-sm btn-quiet", id:`mod-service-${m.id}`, disabled:!!m.busy, onclick:() => {
           if (!running) { modAct(m, "baslat"); return; }
-          ask({title:`${meta.name} durdurulsun mu?`, sub:"Kurulu kalır; istediğinizde başlatırsınız", calm:true, go:"Durdur",
-            items:[["pause",meta.stopNote],["info","Açılışta da kapalı kalır; başlatılana kadar çalışmaz."]], onOk:() => modAct(m,"durdur")});
+          askStop(m, () => modAct(m,"durdur"));
         }}, svg(running ? "pause" : "play"), running ? "Durdur" : "Başlat"),
         h("button", {type:"button", class:"btn btn-sm btn-quiet", id:`mod-log-${m.id}`, disabled:!!m.busy || modLogLoading.has(m.id),
           "aria-expanded":String(modLogs[m.id] != null), "aria-controls":"mod-log-output", onclick:() => {
@@ -1183,6 +1227,151 @@
       (target && !target.disabled ? target : $("mod-details-" + focusApp))?.focus({preventScroll:true});
     }
     if (scroll && $(scroll[0])) { $(scroll[0]).scrollTop = scroll[1]; $(scroll[0]).scrollLeft = scroll[2]; }
+  }
+
+  /* ---------- Uygulama formu (DD-210) ---------- */
+  // "kur": the App Store's install form; nothing is sent until a valid submission, and the engine starts
+  // only after the package's worker accepted the values. "ayar": the same fields, current values from
+  // the package API (never a password), only changed fields sent; a blank password keeps the stored one.
+  // The form lives in the shared dialog, outside views the polls redraw, so drafts survive polls/errors.
+  // Each call owns the dialog only while its own root node is the dialog's content and the dialog has not
+  // closed since: a late answer of an older call (a held install, a slow read) never closes, clears or
+  // replaces a newer dialog; it reports through a toast instead.
+  function appForm(id, mode) {
+    const form = formOf(id), meta = metaOf(id), install = mode === "kur";
+    if (!form || (!install && !(form.oku && form.yaz))) return;
+    const opener = document.activeElement;
+    const root = h("div", { class: "app-form-root" });
+    let closed = false;
+    const mine = () => !closed && $("sh").open && $("sh-body").contains(root);
+    const restoreFocus = () => {
+      const back = opener && opener.isConnected ? opener : document.querySelector(install ? `#mod-install-${id}` : `[data-tile="${id}"] [data-act="ayar"]`);
+      if (back && !back.disabled) back.focus();
+    };
+    const title = (install ? form.kurBaslik : form.ayarBaslik) || meta.name;
+    const sub = (install ? form.kurAlt : form.ayarAlt) || "";
+    root.replaceChildren(shHead(title, sub, install ? meta.icon : "sliders"), h("p", { class: "hint-s" }, "Okunuyor…"));
+    $("sh-body").replaceChildren(root);
+    if (!$("sh").open) $("sh").showModal();
+    $("sh").addEventListener("close", () => {
+      const own = $("sh-body").contains(root);
+      closed = true;
+      root.querySelectorAll("input[type=password]").forEach((i) => { i.value = ""; });
+      if (own) restoreFocus();
+    }, { once: true });
+    if (install) { drawForm({}); return; }
+    api(`/api/uygulama/${enc(id)}${form.oku}`).then((now) => {
+      if (mine()) drawForm(now && typeof now === "object" ? now : {});
+    }).catch((err) => { if (mine()) root.replaceChildren(shHead(title, sub, "sliders"), h("p", { class: "err-s", role: "alert" }, err.message)); });
+
+    function drawForm(now) {
+      const initial = {}, inputs = {};
+      let busy = false;
+      const error = h("p", { class: "err-s", role: "alert", hidden: true });
+      const note = h("p", { class: "hint-s", role: "status", hidden: true });
+      const submit = h("button", { type: "submit", class: "btn btn-primary" }, install ? "Kur ve başlat" : "Kaydet");
+      const rows = form.fields.map((f) => {
+        const fid = `app-${f.ad}`;
+        if (f.tur === "parola") {
+          const attrs = { type: "password", autocomplete: "new-password", required: install, minlength: f.enAz, maxlength: f.enCok };
+          const first = h("input", { ...attrs, id: fid, name: f.ad }), second = h("input", { ...attrs, id: fid + "-tekrar", name: f.ad + "-tekrar" });
+          inputs[f.ad] = first;
+          first.addEventListener("input", () => second.setCustomValidity(""));
+          second.addEventListener("input", () => second.setCustomValidity(""));
+          const hint = install ? f.ipucu : f.ayarIpucu || f.ipucu;
+          if (hint) first.setAttribute("aria-describedby", fid + "-ipucu");
+          return [h("div", { class: "app-field" }, h("label", { for: fid }, f.etiket, first), hint ? h("small", { class: "hint-s", id: fid + "-ipucu" }, hint) : null),
+            h("label", { for: fid + "-tekrar" }, `${f.etiket} (tekrar)`, second)];
+        }
+        const value = install ? f.varsayilan : typeof now[f.ad] === "string" ? now[f.ad] : "";
+        initial[f.ad] = value;
+        if (f.tur === "metin") {
+          const input = h("input", { type: "text", id: fid, name: f.ad, value, required: true, maxlength: f.enCok, minlength: f.enAz,
+            pattern: f.desen || null, autocomplete: f.ad === "username" ? "username" : "off", autocapitalize: "none", spellcheck: false });
+          inputs[f.ad] = input;
+          if (f.ipucu) input.setAttribute("aria-describedby", fid + "-ipucu");
+          return h("div", { class: "app-field" }, h("label", { for: fid }, f.etiket, input), f.ipucu ? h("small", { class: "hint-s", id: fid + "-ipucu" }, f.ipucu) : null);
+        }
+        // klasor: chosen from the base's safe folder list (downloads/library, no hidden/share/trash dirs).
+        const input = h("input", { type: "text", id: fid, name: f.ad, value, required: true, readonly: true });
+        inputs[f.ad] = input;
+        const list = h("div", { class: "app-picker", hidden: true });
+        const toggle = h("button", { type: "button", class: "btn btn-sm btn-quiet", "aria-expanded": "false", onclick: () => {
+          const open = list.hidden;
+          list.hidden = !open; toggle.setAttribute("aria-expanded", String(open));
+          if (open) browse();
+        } }, svg("folder"), "Klasör seç");
+        async function browse(at) {
+          list.replaceChildren(h("p", { class: "hint-s" }, "Klasörler okunuyor…"));
+          try {
+            const r = await api("/api/konsol/ayarlar/klasorler" + (at ? "?path=" + enc(at) : ""));
+            const items = Array.isArray(r.items) ? r.items : [];
+            list.replaceChildren(...[at ? h("div", { class: "app-picker-here" },
+              h("button", { type: "button", class: "btn btn-sm btn-quiet", onclick: () => browse() }, svg("back"), "Başlangıç dizinleri"),
+              h("code", null, at)) : null,
+              ...items.map((x) => h("div", { class: "app-picker-row" },
+                h("span", null, h("strong", null, x.path), h("small", null, `${dec((x.free || 0) / GiB, 1)} GB boş`)),
+                h("button", { type: "button", class: "btn btn-sm btn-quiet", "aria-label": `${x.path} içine gir`, onclick: () => browse(x.path) }, "İçine gir"),
+                h("button", { type: "button", class: "btn btn-sm btn-primary", "aria-label": `${x.path} seç`, onclick: () => {
+                  input.value = x.path; list.hidden = true; toggle.setAttribute("aria-expanded", "false"); toggle.focus();
+                } }, "Seç"))),
+              items.length ? null : h("p", { class: "hint-s" }, "Bu klasörün altında seçilebilir klasör yok.")].filter(Boolean));
+          } catch (err) { list.replaceChildren(h("p", { class: "err-s" }, err.message)); }
+        }
+        if (f.ipucu) input.setAttribute("aria-describedby", fid + "-ipucu");
+        return h("div", { class: "app-folder app-field" }, h("label", { for: fid }, f.etiket), h("span", { class: "app-folder-pick" }, input, toggle),
+          f.ipucu ? h("small", { class: "hint-s", id: fid + "-ipucu" }, f.ipucu) : null, list);
+      }).flat();
+      const formEl = h("form", { class: "dav-form app-form", id: `app-form-${id}`, novalidate: false, onsubmit: async (e) => {
+        e.preventDefault();
+        if (busy) return;
+        error.hidden = true; note.hidden = true;
+        for (const f of form.fields) {
+          if (f.tur !== "parola") continue;
+          const a = inputs[f.ad], b = formEl.querySelector(`#app-${f.ad}-tekrar`);
+          b.setCustomValidity(a.value === b.value ? "" : "Parolalar aynı değil.");
+        }
+        if (!formEl.reportValidity()) return;
+        const values = {};
+        for (const f of form.fields) {
+          const v = f.tur === "metin" ? inputs[f.ad].value.trim() : inputs[f.ad].value;
+          if (install) values[f.ad] = v;
+          else if (f.tur === "parola" ? v !== "" : v !== initial[f.ad]) values[f.ad] = v;
+        }
+        if (!install && !Object.keys(values).length) { note.textContent = "Değişiklik yok."; note.hidden = false; return; }
+        busy = true; submit.disabled = true;
+        submit.textContent = install ? "Kuruluyor…" : "Kaydediliyor…";
+        try {
+          if (install) {
+            const m = (MODS || []).find((x) => x.id === id);
+            if (!m) throw new Error("Uygulama listesi okunamadı; sayfayı yenileyin.");
+            await modStart(m, "kur", { form: values });
+            if (mine()) shClose();
+            toast(`${meta.name} kuruluyor; ilerleme App Store'da görünür.`);
+          } else {
+            await post(`/api/uygulama/${enc(id)}${form.yaz}`, values);
+            if (mine()) shClose();
+            toast(`${meta.name} ayarları kaydedildi.`);
+            loadModules();
+            const page = PAGES[metaOf(id).rota];
+            if (page && page.page.poll && current === metaOf(id).rota) page.page.poll();
+          }
+        } catch (err) {
+          if (mine()) { error.textContent = err.message; error.hidden = false; }
+          else toast(`${meta.name}: ${err.message}`);
+        } finally {
+          Object.keys(values).forEach((k) => { values[k] = ""; });
+          busy = false; submit.disabled = false; submit.textContent = install ? "Kur ve başlat" : "Kaydet";
+        }
+      } },
+      ...rows,
+      (install ? form.kurNot : form.ayarNot) ? h("p", { class: "hint-s" }, install ? form.kurNot : form.ayarNot) : null,
+      error, note,
+      h("div", { class: "dav-actions" }, submit, h("button", { type: "button", class: "btn btn-quiet", onclick: shClose }, "Vazgeç")));
+      root.replaceChildren(shHead(title, sub, install ? meta.icon : "sliders"), formEl);
+      const first = formEl.querySelector("input:not([readonly])");
+      if (first && mine()) first.focus();
+    }
   }
 
   /* ---------- Ayarlar (DD-156) ---------- */
@@ -1559,7 +1748,9 @@
       const meta = metaOf(m.id);
       const state = m.busy ? "işleniyor" : m.state === "durduruldu" ? "durduruldu" : (unitRuntime(m) && m.live !== "running") || m.live === "exited" ? "çalışmıyor" : "çalışıyor";
       const dot = m.busy ? "warn" : state === "çalışıyor" ? "on" : state === "durduruldu" ? "off" : "warn";
-      return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot };
+      const form = formOf(m.id);
+      return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,
+        launch: launchUrl(m), settings: form && form.oku && form.yaz ? "form" : meta.rota ? "#/" + meta.rota : "", service: !!m.durdurulabilir };
     });
     return [
       { key: "dosyalar", href: "#/dosyalar", icon: "folder", tone: TONE_FALLBACK.dosyalar, name: "Dosyalar", sub: S.fs && S.fs.root ? S.fs.root : "kullanıcı alanı" },
@@ -1578,11 +1769,53 @@
   function tileEl(def, index, total) {
     const inner = [def.dot ? h("span", { class: "dot " + def.dot, "aria-hidden": "true" }) : null,
       h("span", { class: "ico " + def.tone }, svg(def.icon)), h("strong", null, def.name), h("small", null, def.sub)];
-    if (!editing) return h("a", { class: "tile card", href: def.href, "data-tile": def.key }, ...inner);
+    // DD-210: an installed application's tile carries a compact action row beneath its icon (Ayarlar and,
+    // where the app can stop, Durdur/Başlat). The row sits next to the (stretched) launch link, never
+    // inside it; the link opens the app's web UI. Edit mode draws the plain tiles below.
+    const actions = !editing && (def.settings || def.service) ? appActions(def) : null;
+    if (actions) return h("div", { class: "tile card has-actions", "data-tile": def.key },
+      h("a", { class: "tile-link", href: def.launch || def.href, ...newTab(def.launch),
+        "aria-label": def.launch ? `${def.name}: arayüzü yeni sekmede aç` : def.name }, ...inner), actions);
+    if (!editing) return h("a", { class: "tile card", href: def.launch || def.href, "data-tile": def.key, ...newTab(def.launch) }, ...inner);
     return h("div", { class: "tile card", "data-tile": def.key, role: "group", "aria-label": def.name, onpointerdown: (e) => dragStart(e, def.key) }, ...inner,
       h("span", { class: "tile-move" },
         h("button", { type: "button", "data-move": "-1", "aria-label": `${def.name}: sola taşı`, disabled: index === 0, onclick: () => moveTile(def.key, -1) }, svg("chevl")),
         h("button", { type: "button", "data-move": "1", "aria-label": `${def.name}: sağa taşı`, disabled: index === total - 1, onclick: () => moveTile(def.key, 1) }, svg("chev"))));
+  }
+  // Ayarlar: the package's declared form (dialog), else its page. Durdur/Başlat follows the server's state and
+  // progress: busy (or a request on its way) marks it aria-disabled — still focusable, so keyboard focus
+  // survives the poll redraws — and clicks are ignored until the operation ends. v2-189: icons only; the
+  // name is the accessible label and the tooltip.
+  const tilePending = new Map();   // id → the action whose request is on its way
+  function appActions(def) {
+    const m = (MODS || []).find((x) => x.id === def.key);
+    if (!m) return null;
+    const kids = [];
+    const named = (name) => ({ "aria-label": name, title: name });
+    if (def.settings === "form") kids.push(h("button", { type: "button", class: "tile-act", "data-act": "ayar", ...named(`${def.name} ayarları`),
+      onclick: () => appForm(m.id, "ayar") }, svg("sliders")));
+    else if (def.settings) kids.push(h("a", { class: "tile-act", "data-act": "ayar", href: def.settings, ...named(`${def.name} ayarları`) }, svg("sliders")));
+    if (def.service) {
+      const running = m.state === "calisiyor", busy = !!m.busy || tilePending.has(m.id);
+      const doing = m.busy ? m.progress && m.progress.action : tilePending.get(m.id);
+      const word = !busy ? (running ? "Durdur" : "Başlat") : doing === "durdur" ? "Durduruluyor…" : doing === "baslat" ? "Başlatılıyor…"
+        : running ? "Durdur" : "Başlat";
+      kids.push(h("button", { type: "button", class: "tile-act", "data-act": "servis", "aria-disabled": busy ? "true" : "false",
+        ...named(`${def.name}: ${word}`), onclick: () => tileService(m.id) }, svg(busy ? "clock" : running ? "pause" : "play")));
+    }
+    return kids.length ? h("div", { class: "tile-actions" }, ...kids) : null;
+  }
+  function tileService(id) {
+    const m = (MODS || []).find((x) => x.id === id);
+    if (!m || !m.installed || m.busy || tilePending.has(id)) return;
+    const focusSel = `[data-tile="${id}"] [data-act="servis"]`;
+    const go = (action) => {
+      tilePending.set(id, action);
+      renderOverview(false, focusSel);
+      // The finishing redraw keeps whatever has focus by then (the operator may have moved on).
+      modStart(m, action, { veri: false }).catch(fail).finally(() => { tilePending.delete(id); renderOverview(); });
+    };
+    if (m.state === "calisiyor") askStop(m, () => go("durdur")); else go("baslat");
   }
   function moveTile(key, step) {
     const order = orderedTiles().map((d) => d.key), i = order.indexOf(key), j = i + step;
@@ -1678,7 +1911,11 @@
     widgets.replaceChildren(...overviewWidgets());
     widgets.classList.toggle("editing", !!editing);
     const defs = modsSettled ? orderedTiles() : [];
+    // A poll redraws the tiles; keyboard focus on a tile's link or settings action stays on its new copy.
+    const had = document.activeElement, hadTile = !focus && had && had.closest ? had.closest("#genel-tiles [data-tile]") : null;
+    const hadPart = hadTile && had !== hadTile ? (had.dataset.act ? ` [data-act="${had.dataset.act}"]` : " .tile-link") : "";
     tiles.replaceChildren(...defs.map((d, i) => tileEl(d, i, defs.length)));
+    if (hadTile) tiles.querySelector(`[data-tile="${hadTile.dataset.tile}"]${hadPart}`)?.focus({ preventScroll: true });
     tiles.classList.toggle("editing", !!editing);
     const installed = (MODS || []).filter((m) => m.installed).length;
     $("genel-sum").textContent = editing ? "Düzenleniyor · değişiklikler Bitti ile kaydedilir"

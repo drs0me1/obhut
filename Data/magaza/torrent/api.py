@@ -31,7 +31,7 @@ class Api:
     def handle(self, req):
         if req.method == "GET" and req.path == "/durum":
             return 200, self.durum()
-        if req.method == "POST" and req.path in ("/hesap", "/dizin"):
+        if req.method == "POST" and req.path in ("/hesap", "/dizin", "/ayar"):
             return self.change(req, req.path[1:])
         raise self.ctx.error(405 if req.method not in ("GET", "POST") else 404, "bulunamadı")
 
@@ -57,15 +57,20 @@ class Api:
     def change(self, req, action):
         data = req.data if isinstance(req.data, dict) else {}
         # Shape and limits are checked here too, so a bad request never starts the worker.
-        if action == "hesap":
-            if not data or not set(data) <= {"username", "password"}:
-                raise self.ctx.error(400, "Hesap alanı geçersiz.")
+        if action in ("hesap", "ayar"):
+            allowed = {"username", "password"} | ({"save"} if action == "ayar" else set())
+            if not data or not set(data) <= allowed:
+                raise self.ctx.error(400, "Hesap alanı geçersiz." if action == "hesap" else "Ayar alanı geçersiz.")
             if "username" in data and not (isinstance(data["username"], str) and self.ayar.USERNAME_RE.fullmatch(data["username"])):
                 raise self.ctx.error(400, "Kullanıcı adı geçersiz (1–64 harf/rakam/._@-).")
             if "password" in data and not (isinstance(data["password"], str) and 8 <= len(data["password"]) <= 256
                                            and all(ord(x) >= 32 for x in data["password"])):
                 raise self.ctx.error(400, "Parola 8–256 karakter olmalı.")
-            detail = " ve ".join(k for k, v in (("kullanıcı adı", "username" in data), ("parola", "password" in data)) if v)
+            if "save" in data and not (isinstance(data["save"], str) and len(data["save"]) <= 1024):
+                raise self.ctx.error(400, "Dizin alanı geçersiz.")
+            parts = [k for k, v in (("kullanıcı adı", "username" in data), ("parola", "password" in data),
+                                    ("dizin " + str(data.get("save", "")), "save" in data)) if v]
+            detail = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " ve " + parts[-1]
         else:
             if set(data) != {"save"} or not isinstance(data["save"], str) or len(data["save"]) > 1024:
                 raise self.ctx.error(400, "Dizin alanı geçersiz.")

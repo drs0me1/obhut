@@ -312,6 +312,155 @@ class WorkerTests(Scratch):
         self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
 
 
+
+class InstallWorkerTests(Scratch):
+    """DD-210: the App Store install form. kur-hazirla validates the choices and stores only a hash in a
+    private seed; kur-uygula writes them into the profile before the first start; kur-geri restores."""
+    def setUp(self):
+        super().setUp()
+        self.seed = self.root / "run" / "modul-torrent.kur"
+        self.form = {"username": "operator", "password": "first-install-phrase", "save": self.env["DOWNLOADS_PATH"]}
+
+    def test_kur_hazirla_validates_everything_before_writing_and_keeps_only_a_hash(self):
+        media = str(self.root / "srv/media")
+        bad = [None, "text", {}, {"username": "operator", "save": media}, dict(self.form, password=""),
+               dict(self.form, password="short"), dict(self.form, password="x" * 257), dict(self.form, password="tab\there"),
+               dict(self.form, username="bad user"), dict(self.form, username=""), dict(self.form, save="/etc"),
+               dict(self.form, save=str(self.root / "srv/.pay")), dict(self.form, save=str(self.root / "srv/media/a b")),
+               dict(self.form, extra=1)]
+        for data in bad:
+            with self.subTest(data=data), self.assertRaises(settings.SettingsError):
+                ayar.kur_hazirla(self.env, data, str(self.state), str(self.seed))
+        self.assertFalse(self.seed.exists(), "a refused form leaves no seed")
+        with self.assertRaises(settings.SettingsError):
+            ayar.kur_hazirla(self.env, self.form, str(self.state), str(self.root / "elsewhere.kur"))
+        self.assertFalse((self.root / "elsewhere.kur").exists(), "the seed lives only in the runtime folder")
+        self.assertEqual(self.systemctl(), [], "preparing an install touches no service")
+        self.calls.clear()
+        result = ayar.kur_hazirla(self.env, dict(self.form, save=media), str(self.state), str(self.seed))
+        self.assertEqual(result, {"ok": True, "username": "operator", "save": media + "/"})
+        self.assertEqual(self.seed.stat().st_mode & 0o777, 0o600)
+        raw = self.seed.read_text()
+        self.assertNotIn("first-install-phrase", raw)
+        data = json.loads(raw)
+        self.assertEqual((data["username"], data["save"]), ("operator", media + "/"))
+        salt, key = data["hash"][len("@ByteArray("):-1].split(":")
+        self.assertEqual(base64.b64decode(key), hashlib.pbkdf2_hmac("sha512", b"first-install-phrase", base64.b64decode(salt), 100000, 64))
+        self.assertEqual(len([c for c in self.calls if c[0] == "setpriv"]), 1, "writability is probed as the service user")
+        self.assertEqual(self.conf.read_text(), SEED % self.env["DOWNLOADS_PATH"], "the profile is not touched yet")
+
+    def test_kur_uygula_writes_the_choices_before_the_first_start_and_kur_geri_restores_them(self):
+        media = str(self.root / "srv/media")
+        operator = (SEED % "/elsewhere") + "[Network]\nPortForwardingEnabled=true\n"
+        self.conf.write_text(operator)
+        self.conf.chmod(0o640)
+        before = self.conf.read_bytes()
+        ayar.kur_hazirla(self.env, dict(self.form, save=media), str(self.state), str(self.seed))
+        self.calls.clear()
+        self.assertEqual(ayar.kur_uygula(self.env, str(self.seed)), {"ok": True})
+        text = self.conf.read_text()
+        self.assertIn("WebUI\\Username=operator\n", text)
+        self.assertIn('Session\\DefaultSavePath="%s/"\n' % media, text)
+        self.assertIn('Downloads\\SavePath="%s/"\n' % media, text)
+        self.assertNotIn("oldhash", text)
+        self.assertNotIn("first-install-phrase", text)
+        for keep in ("Unrelated=keep\n", "Session\\Port=45410\n", "PortForwardingEnabled=true\n", "WebUI\\Address=127.0.0.1\n"):
+            self.assertIn(keep, text, "a kept profile keeps every other preference")
+        self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.drop.read_text(), "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s\n" % (media, media))
+        self.assertEqual(self.calls, [], "no service command: the container has not started yet")
+        ayar.kur_geri(self.env, str(self.seed))
+        self.assertEqual(self.conf.read_bytes(), before, "a failed install returns the previous account and folder")
+        self.assertFalse(self.drop.exists())
+        # Inside the downloads tree an earlier drop-in goes, and comes back on rollback.
+        self.drop.parent.mkdir(parents=True, exist_ok=True)
+        self.drop.write_text("[Container]\nVolume=/old:/old\n")
+        ayar.kur_hazirla(self.env, self.form, str(self.state), str(self.seed))
+        self.calls.clear()
+        ayar.kur_uygula(self.env, str(self.seed))
+        self.assertFalse(self.drop.exists())
+        ayar.kur_geri(self.env, str(self.seed))
+        self.assertEqual(self.drop.read_text(), "[Container]\nVolume=/old:/old\n")
+        self.assertEqual(self.calls, [])
+
+    def test_kur_uygula_refuses_a_seed_that_is_not_private(self):
+        ayar.kur_hazirla(self.env, self.form, str(self.state), str(self.seed))
+        before = self.conf.read_bytes()
+        self.seed.chmod(0o644)
+        with self.assertRaises(settings.SettingsError):
+            ayar.kur_uygula(self.env, str(self.seed))
+        self.seed.chmod(0o600)
+        link = self.root / "run" / "modul-link.kur"
+        link.symlink_to(self.seed)
+        with self.assertRaises((settings.SettingsError, OSError)):
+            ayar.kur_uygula(self.env, str(link))
+        data = json.loads(self.seed.read_text())
+        for broken in (dict(data, username="bad user"), dict(data, hash="plain"), dict(data, save="relative/")):
+            with self.subTest(broken=broken), self.assertRaises(settings.SettingsError):
+                self.seed.write_text(json.dumps(broken))
+                ayar.kur_uygula(self.env, str(self.seed))
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.seed.unlink()
+        with self.assertRaises((settings.SettingsError, OSError)):
+            ayar.kur_uygula(self.env, str(self.seed))
+        ayar.kur_geri(self.env, str(self.seed))  # nothing applied: nothing to restore
+        self.assertEqual(self.conf.read_bytes(), before)
+
+    def test_ayar_changes_every_field_with_one_restart_and_a_blank_password_keeps_the_hash(self):
+        media = str(self.root / "srv/media")
+        before = self.conf.read_bytes()
+        for data in ({}, {"password": ""}, {"username": "bad user"}, {"save": "/etc"}, {"x": 1}, None,
+                     {"username": "ok", "save": str(self.root / "srv/media/a b")}):
+            with self.subTest(data=data), self.assertRaises(settings.SettingsError):
+                ayar.ayar(self.env, data, str(self.state))
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.systemctl(), [], "validation runs before any service change")
+        self.calls.clear()
+        result = ayar.ayar(self.env, {"username": "edited", "save": media}, str(self.state))
+        self.assertEqual(result, {"ok": True, "username": "edited", "save": media + "/"})
+        text = self.conf.read_text()
+        self.assertIn("WebUI\\Username=edited\n", text)
+        self.assertIn("WebUI\\Password_PBKDF2=oldhash\n", text, "no password given: the stored one stays")
+        self.assertIn('Session\\DefaultSavePath="%s/"\n' % media, text)
+        self.assertTrue(self.drop.exists())
+        self.assertEqual(self.systemctl(), ["is-active", "stop", "daemon-reload", "start", "is-active"], "one stop and one start")
+        # A failed restart restores the account, the folder and the drop-in together.
+        saved = (self.conf.read_bytes(), self.drop.read_bytes())
+        self.fail_cmd = "start qbittorrent.service"
+        with self.assertRaises(settings.SettingsError):
+            ayar.ayar(self.env, {"username": "lost", "password": "never-applied-phrase", "save": self.env["DOWNLOADS_PATH"]}, str(self.state))
+        self.assertEqual((self.conf.read_bytes(), self.drop.read_bytes()), saved)
+        # A stopped app stays stopped; the account alone adds no daemon-reload.
+        self.calls.clear()
+        self.active = False
+        ayar.ayar(self.env, {"password": "stopped-phrase-1"}, str(self.state))
+        self.assertEqual(self.systemctl(), ["is-active", "stop"])
+        self.assertNotIn("oldhash", self.conf.read_text())
+
+    def test_cli_install_actions_read_stdin_and_never_print_the_password(self):
+        def main(argv, stdin=""):
+            out = io.StringIO()
+            with patch("sys.argv", ["ayar.py", "--lib", str(REPO / "panel"), "--state", str(self.state), *argv]), \
+                    patch("sys.stdin", io.StringIO(stdin)), contextlib.redirect_stdout(out):
+                try:
+                    ayar.main()
+                except SystemExit as stop:
+                    return stop.code, json.loads(out.getvalue())
+            return 0, json.loads(out.getvalue())
+        code, body = main(["kur-hazirla", "--tohum", str(self.seed)], json.dumps(self.form))
+        self.assertEqual((code, body["username"]), (0, "operator"))
+        self.assertNotIn("first-install-phrase", json.dumps(body))
+        self.assertEqual(main(["kur-uygula", "--tohum", str(self.seed)]), (0, {"ok": True}))
+        self.assertEqual(main(["kur-geri", "--tohum", str(self.seed)]), (0, {"ok": True}))
+        code, body = main(["kur-hazirla", "--tohum", str(self.seed)], json.dumps(dict(self.form, password="short")))
+        self.assertEqual((code, body), (1, {"error": "Parola 8–256 karakter olmalı."}))
+        code, body = main(["ayar"], json.dumps({"username": "cli-edit"}))
+        self.assertEqual((code, body["username"]), (0, "cli-edit"))
+        with patch("sys.argv", ["ayar.py", "--state", str(self.state), "kur-uygula"]), patch("sys.stderr", io.StringIO()), \
+                self.assertRaises(SystemExit) as stop:
+            ayar.main()  # the seed path is required
+        self.assertEqual(stop.exception.code, 2)
+
 class FakeContext:
     """What api.py may use of the backend (PackageContext), recording the worker calls."""
     def __init__(self, env, state, active=True):
@@ -417,6 +566,22 @@ class ApiModuleTests(Scratch):
         self.assertEqual((caught.exception.code, caught.exception.message), (502, "qBittorrent ayarı uygulanamadı"))
 
 
+    def test_ayar_route_checks_the_shape_and_runs_the_worker_once(self):
+        for data in ({}, None, {"x": 1}, {"username": "bad user"}, {"password": "short"}, {"password": ""},
+                     {"save": 1}, {"save": "x" * 1025}):
+            with self.subTest(data=data), self.assertRaises(panel.ApiError) as caught:
+                self.api.handle(FakeRequest("POST", "/ayar", data))
+            self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(self.ctx.worker_calls, [])
+        self.ctx.worker_result = (200, {"ok": True, "username": "edited", "save": "/srv/media/"})
+        req = FakeRequest("POST", "/ayar", {"username": "edited", "password": "dummy-edit-password", "save": "/srv/media"})
+        self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "edited", "save": "/srv/media/"}))
+        argv, data = self.ctx.worker_calls[0]
+        self.assertEqual(argv[-1], "ayar")
+        self.assertEqual(data["password"], "dummy-edit-password")
+        self.assertEqual(req.audits, [("ayar", "kullanıcı adı, parola ve dizin /srv/media", True)])
+        self.assertNotIn("dummy-edit-password", json.dumps(req.audits))
+
 class DispatcherTests(Scratch):
     """The real backend over its Unix socket: gates, the package folder rule and the private worker run."""
     def setUp(self):
@@ -489,6 +654,121 @@ class DispatcherTests(Scratch):
         code, body = ctx.worker(["/usr/bin/python3", str(self.root / "mods/torrent/ayar.py"), "--state", str(self.state), "durum"], {"a": 1})
         self.assertEqual((code, body), (200, {"ok": True, "username": "u"}))
 
+
+    def test_settings_of_a_stopped_app_read_and_save_without_starting_it(self):
+        # DD-210: an installed but stopped qBittorrent (registry durduruldu) keeps its settings route: the
+        # overview dialog reads /durum and saves /ayar through the worker; the backend starts nothing.
+        (self.root / "modules").write_text("torrent\tdurduruldu\n")
+        status, body = self.request("GET", "/api/uygulama/torrent/durum")
+        self.assertEqual((status, body["installed"], body["running"], body["username"]), (200, True, False, "admin"))
+        self.assertNotIn("oldhash", json.dumps(body))
+        status, body = self.request("POST", "/api/uygulama/torrent/ayar", {"username": "stopped-edit", "password": "dummy-stopped-pass"})
+        self.assertEqual(status, 200)
+        workers = [r for r in self.runs if r[0][0] == "systemd-run"]
+        self.assertEqual(len(workers), 1)
+        self.assertEqual(workers[0][0][-1], "ayar")
+        self.assertEqual(json.loads(workers[0][1]), {"username": "stopped-edit", "password": "dummy-stopped-pass"})
+        self.assertNotIn("dummy-stopped-pass", " ".join(workers[0][0]))
+        self.assertFalse([r for r in self.runs if r[0][:2] in (["systemctl", "start"], ["systemctl", "restart"])],
+                         "the backend never starts a stopped app to change its settings")
+        self.assertEqual((self.root / "modules").read_text(), "torrent\tdurduruldu\n")
+        self.assertEqual([mid for mid, _api in self.p.package_apis()], [], "a stopped app is not given to background callers")
+        (self.root / "modules").write_text("")
+        self.assertEqual(self.request("GET", "/api/uygulama/torrent/durum")[0], 404)
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/ayar", {"username": "x"})[0], 409)
+
+class InstallRouteTests(Scratch):
+    """DD-210: POST /api/konsol/moduller/<id>/kur with the form of a package that declares PAKET_KUR_AYAR.
+    The base runs the package's worker first (stdin only); the engine starts only after it accepted."""
+    def setUp(self):
+        super().setUp()
+        self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items() if not k.startswith("TORRENT_")))
+        (self.root / "modules").write_text("")
+        (self.root / "bin").mkdir()
+        (self.root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
+        os.chmod(self.root / "bin" / "master-modul", 0o755)
+        (self.root / "mods" / "wireguard").mkdir()
+        shutil.copy(REPO / "magaza" / "wireguard" / "paket.env", self.root / "mods" / "wireguard" / "paket.env")
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False,
+                                                   master_modul=str(self.root / "bin" / "master-modul")))
+        self.items = [{"id": "wireguard", "installed": False}, {"id": "torrent", "installed": False}]
+        patch.object(panel.Panel, "modules", side_effect=lambda: self.items).start()
+
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        self.server, self.sock = resources.start_unix(self, Handler)
+        self.runs, self.worker_answer, self.spawn_code = [], (0, '{"ok": true, "username": "operator", "save": "/srv/downloads/"}'), 0
+
+        def fake_subprocess(argv, **kwargs):
+            self.runs.append((list(argv), kwargs.get("input")))
+            if argv[0] == "systemd-run" and "--wait" in argv:
+                return subprocess.CompletedProcess(argv, self.worker_answer[0], self.worker_answer[1], "")
+            if argv[0] == "systemd-run":
+                return subprocess.CompletedProcess(argv, self.spawn_code, b"", b"Unit already exists" if self.spawn_code else b"")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        patch.object(panel.subprocess, "run", side_effect=fake_subprocess).start()
+        self.seed = self.root / "run" / "modul-torrent.kur"
+        self.form = {"username": "operator", "password": "dummy-install-password", "save": self.env["DOWNLOADS_PATH"]}
+
+    def request(self, path, data):
+        body = json.dumps(data).encode()
+        status, _headers, raw = resources.unix_get(self.sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", body)
+        return status, json.loads(raw)
+
+    def worker_runs(self):
+        return [r for r in self.runs if r[0][0] == "systemd-run" and "--wait" in r[0]]
+
+    def spawns(self):
+        return [r for r in self.runs if r[0][0] == "systemd-run" and "--wait" not in r[0]]
+
+    def test_the_form_is_required_validated_by_the_package_and_only_then_installed(self):
+        status, body = self.request("/api/konsol/moduller/torrent/kur", {"veri": False})
+        self.assertEqual(status, 400)
+        self.assertIn("Kurulum bilgileri", body["error"])
+        self.assertEqual(self.request("/api/konsol/moduller/torrent/kur", {"form": "x"})[0], 400)
+        self.assertEqual((self.worker_runs(), self.spawns()), ([], []), "no form: no worker and no install")
+        self.worker_answer = (1, '{"error": "Parola 8–256 karakter olmalı."}')
+        status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": dict(self.form, password="short")})
+        self.assertEqual((status, body["error"]), (400, "Parola 8–256 karakter olmalı."))
+        self.assertEqual(self.spawns(), [], "a refused form starts no install")
+        self.worker_answer = (0, '{"ok": true, "username": "operator", "save": "/srv/downloads/"}')
+        self.runs.clear()
+        with patch("builtins.print") as out:
+            status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
+        self.assertEqual((status, body), (202, {"id": "torrent", "action": "kur"}))
+        argv, stdin = self.worker_runs()[0]
+        self.assertEqual(argv[-9:], ["/usr/bin/python3", str(self.pkg / "ayar.py"), "--lib", str(self.root / "bin"), "--state",
+                                     str(self.state), "kur-hazirla", "--tohum", str(self.seed)])
+        self.assertEqual(json.loads(stdin), self.form)
+        spawn = self.spawns()[0][0]
+        self.assertIn("--unit=master-modul-torrent.service", spawn)
+        self.assertEqual(spawn[-2:], ["kur", "torrent"])
+        self.assertLess(self.runs.index(self.worker_runs()[0]), self.runs.index(self.spawns()[0]), "validated before the engine starts")
+        flat = json.dumps([r[0] for r in self.runs]) + json.dumps([str(c.args) for c in out.call_args_list])
+        self.assertNotIn("dummy-install-password", flat, "the password travels on stdin only, never argv or audit")
+        self.assertIn("modul-kur torrent -> ok", " ".join(str(c.args[0]) for c in out.call_args_list if c.args))
+
+    def test_a_failed_start_removes_the_seed_and_an_installed_or_busy_package_is_refused_first(self):
+        self.seed.write_text("{}")
+        self.spawn_code = 1
+        status, _body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
+        self.assertEqual(status, 502)
+        self.assertFalse(self.seed.exists(), "a seed whose install never started is removed")
+        self.runs.clear()
+        self.items[1]["installed"] = True
+        status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.worker_runs(), [], "an installed package is refused before the worker")
+
+    def test_a_package_without_an_install_form_refuses_one(self):
+        status, _body = self.request("/api/konsol/moduller/wireguard/kur", {"form": self.form})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.worker_runs(), [])
+        status, _body = self.request("/api/konsol/moduller/wireguard/kur", {"veri": False})
+        self.assertEqual(status, 202)
+        self.assertEqual(self.worker_runs(), [])
 
 if __name__ == "__main__":
     unittest.main()

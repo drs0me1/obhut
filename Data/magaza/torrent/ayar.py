@@ -7,6 +7,10 @@ the base settings worker), JSON on stdin, JSON on stdout, exit 1 with {"error"} 
 
     ayar.py --state STATE hesap    {"username"?: str, "password"?: str}
     ayar.py --state STATE dizin    {"save": "/abs/dir"}
+    ayar.py --state STATE ayar     {"username"?, "password"?, "save"?}  one stop/start for all
+    ayar.py --state STATE kur-hazirla --tohum SEED   {"username", "password", "save"}
+    ayar.py --state STATE kur-uygula --tohum SEED    (the engine, before the first start)
+    ayar.py --state STATE kur-geri --tohum SEED      (the engine, when that install fails)
 
 Every change is direct (DD-165): validate, stop the service if it runs, snapshot the files,
 write, start again, verify; a failure restores the snapshot and starts the service again.
@@ -16,6 +20,11 @@ DD-209: qBittorrent runs in a Podman container whose unit Podman's systemd gener
 the package's quadlet file. The profile is the container's /config (same files, same paths on the
 host); a download folder outside the downloads tree is bind-mounted at the same path through the
 quadlet drop-in <container>.container.d/90-konsol.conf, so the paths qBittorrent stores are host paths.
+
+DD-210: the App Store install form. The base runs kur-hazirla before it starts the engine: the choices
+are validated here and only the password's hash goes into a private seed file (0600, the base's runtime
+folder); the engine's hook runs kur-uygula into the fresh or kept profile before the container's first
+start and kur-geri when that install fails. The engine removes the seed at the end either way.
 """
 import argparse
 import base64
@@ -61,6 +70,8 @@ CONTAINER_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
 # A bind mount is "SRC:DST" in the quadlet; systemd expands % and splits on whitespace elsewhere.
 MOUNTABLE_RE = re.compile(r"/[^\s:%\\\"']+")
 STOP_TIMEOUT = 75   # the quadlet's StopTimeout (45 s) plus the container teardown
+HASH_RE = re.compile(r"@ByteArray\([A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}\)")
+SEED_RE = re.compile(r"modul-[a-z]{2,16}\.kur")
 
 
 def ini_values(text):
@@ -230,57 +241,173 @@ def change(env, updates, drop_in=None):
         raise
 
 
-def hesap(env, data):
-    settings.require(isinstance(data, dict) and set(data) <= {"username", "password"} and bool(data), "Hesap alanı geçersiz.")
-    updates = {}
-    if "username" in data:
-        settings.require(isinstance(data["username"], str) and USERNAME_RE.fullmatch(data["username"]),
-                         "Kullanıcı adı geçersiz (1–64 harf/rakam/._@-).")
-        updates[("Preferences", "WebUI\\Username")] = data["username"]
-    if "password" in data:
-        settings.require(isinstance(data["password"], str) and 8 <= len(data["password"]) <= 256
-                         and all(ord(x) >= 32 for x in data["password"]), "Parola 8–256 karakter olmalı.")
-        updates[("Preferences", "WebUI\\Password_PBKDF2")] = password_hash(data["password"])
-    change(env, updates)
-    return {"ok": True, "username": durum(env).get("username", "")}
+def check_username(value):
+    settings.require(isinstance(value, str) and USERNAME_RE.fullmatch(value), "Kullanıcı adı geçersiz (1–64 harf/rakam/._@-).")
+    return value
 
 
-def dizin(env, data, state):
-    settings.require(isinstance(data, dict) and set(data) == {"save"}, "Dizin alanı geçersiz.")
+def check_password(value):
+    settings.require(isinstance(value, str) and 8 <= len(value) <= 256 and all(ord(x) >= 32 for x in value),
+                     "Parola 8–256 karakter olmalı.")
+    return value
+
+
+def save_choice(env, value, state):
+    """A download folder: the base's user-area policy (DD-202), then what a same-path bind mount can carry.
+    Returns (path with a trailing slash, profile updates, drop-in text or "" for none)."""
     # The base owns the user-area policy (downloads/library only, no hidden/share/trash dirs,
     # writable by the service user); the package only asks it.
-    path = str(settings.Manager(state).safe_dir(data["save"], writable=True)).rstrip("/") + "/"
+    path = str(settings.Manager(state).safe_dir(value, writable=True)).rstrip("/") + "/"
+    return (path, *save_updates(env, path))
+
+
+def save_updates(env, path):
     updates = {("BitTorrent", "Session\\DefaultSavePath"): '"' + path + '"',
                ("Preferences", "Downloads\\SavePath"): '"' + path + '"'}
     # The container sees the downloads tree; a folder outside it (the library) is one narrow extra
     # bind mount at the same path, so the stored path means the same inside and outside.
     folder = path.rstrip("/")
     if inside(folder, env.get("DOWNLOADS_PATH", "")):
-        drop_in = ""
-    else:
-        settings.require(bool(MOUNTABLE_RE.fullmatch(folder)),
-                         "Bu klasör adı konteynere bağlanamaz (boşluk, ':' ya da '%' içeriyor); adını değiştirin ya da indirme klasöründen seçin.")
-        drop_in = "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"
+        return updates, ""
+    settings.require(bool(MOUNTABLE_RE.fullmatch(folder)),
+                     "Bu klasör adı konteynere bağlanamaz (boşluk, ':' ya da '%' içeriyor); adını değiştirin ya da indirme klasöründen seçin.")
+    return updates, "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"
+
+
+def hesap(env, data):
+    settings.require(isinstance(data, dict) and set(data) <= {"username", "password"} and bool(data), "Hesap alanı geçersiz.")
+    updates = {}
+    if "username" in data:
+        updates[("Preferences", "WebUI\\Username")] = check_username(data["username"])
+    if "password" in data:
+        updates[("Preferences", "WebUI\\Password_PBKDF2")] = password_hash(check_password(data["password"]))
+    change(env, updates)
+    return {"ok": True, "username": durum(env).get("username", "")}
+
+
+def dizin(env, data, state):
+    settings.require(isinstance(data, dict) and set(data) == {"save"}, "Dizin alanı geçersiz.")
+    path, updates, drop_in = save_choice(env, data["save"], state)
     change(env, updates, drop_in)
     return {"ok": True, "save": path}
+
+
+def ayar(env, data, state):
+    """DD-210: the overview's settings dialog. Every field is checked first, then one stop/write/start;
+    an omitted (blank) password keeps the stored hash."""
+    settings.require(isinstance(data, dict) and bool(data) and set(data) <= {"username", "password", "save"}, "Ayar alanı geçersiz.")
+    updates, drop_in, path = {}, None, None
+    if "username" in data:
+        updates[("Preferences", "WebUI\\Username")] = check_username(data["username"])
+    if "password" in data:
+        updates[("Preferences", "WebUI\\Password_PBKDF2")] = password_hash(check_password(data["password"]))
+    if "save" in data:
+        path, more, drop_in = save_choice(env, data["save"], state)
+        updates.update(more)
+    change(env, updates, drop_in)
+    view = durum(env)
+    return {"ok": True, "username": view.get("username", ""), "save": view.get("save", "")}
+
+
+def seed_path(env, value):
+    """The seed sits directly in the base's runtime folder under the engine's name for it."""
+    path = Path(value)
+    settings.require(SEED_RE.fullmatch(path.name) is not None and str(path.parent) == str(Path(env.get("RUNTIME_DIR", "/nonexistent"))),
+                     "Kurulum bilgisi dosyası geçersiz.")
+    return path
+
+
+def kur_hazirla(env, data, state, seed):
+    """DD-210: validate the install form and keep only the hash, before the engine starts."""
+    path = seed_path(env, seed)
+    settings.require(isinstance(data, dict) and set(data) == {"username", "password", "save"}, "Kurulum bilgileri eksik ya da geçersiz.")
+    username = check_username(data["username"])
+    check_password(data["password"])
+    save, _, _ = save_choice(env, data["save"], state)
+    seed_doc = {"username": username, "hash": password_hash(data["password"]), "save": save}
+    settings.atomic(path, json.dumps(seed_doc) + "\n", 0o600)
+    return {"ok": True, "username": username, "save": save}
+
+
+def read_seed(path):
+    raw, info = settings.read_regular(path, LIMIT)
+    settings.require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0, "Kurulum bilgisi dosyası korunmuyor.")
+    doc = json.loads(raw.decode("utf-8"))
+    settings.require(isinstance(doc, dict) and set(doc) == {"username", "hash", "save"}, "Kurulum bilgisi dosyası geçersiz.")
+    check_username(doc["username"])
+    settings.require(isinstance(doc["hash"], str) and HASH_RE.fullmatch(doc["hash"]) is not None
+                     and isinstance(doc["save"], str) and doc["save"].startswith("/") and doc["save"].endswith("/")
+                     and ".." not in doc["save"].split("/") and os.path.isdir(doc["save"]) and not os.path.islink(doc["save"].rstrip("/")),
+                     "Kurulum bilgisi dosyası geçersiz.")
+    return doc
+
+
+def kur_uygula(env, seed):
+    """DD-210: write the form's choices into the profile before the container first starts. The files as
+    they were go next to the seed (private, removed with it) so kur-geri can put them back."""
+    path = seed_path(env, seed)
+    doc = read_seed(path)
+    conf, drop = conf_path(env), drop_in_path(env)
+    settings.require(conf.is_file() and not conf.is_symlink(), "qBittorrent profili hazır değil.")
+    updates, drop_in = save_updates(env, doc["save"])
+    updates[("Preferences", "WebUI\\Username")] = doc["username"]
+    updates[("Preferences", "WebUI\\Password_PBKDF2")] = doc["hash"]
+    before = {"conf": snapshot(conf), "drop": snapshot(drop)}
+    keep = {k: None if v is None else dict(v, data=base64.b64encode(v["data"]).decode()) for k, v in before.items()}
+    settings.atomic(str(path) + ".onceki", json.dumps(keep) + "\n", 0o600)
+    snap = before["conf"]
+    settings.atomic(conf, ini_patch(snap["data"].decode(), updates), snap["mode"], (snap["uid"], snap["gid"]))
+    if drop_in:
+        settings.atomic(drop, drop_in, 0o644)
+    else:
+        restore(drop, None)
+    return {"ok": True}
+
+
+def kur_geri(env, seed):
+    """DD-210: a failed install returns the profile and the drop-in to what they were before kur-uygula."""
+    path = Path(str(seed_path(env, seed)) + ".onceki")
+    try:
+        raw, info = settings.read_regular(path, 4 * 1024 * 1024)
+    except FileNotFoundError:
+        return {"ok": True}
+    settings.require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0, "Kurulum yedeği korunmuyor.")
+    keep = json.loads(raw.decode("utf-8"))
+    for key, target in (("conf", conf_path(env)), ("drop", drop_in_path(env))):
+        snap = keep.get(key)
+        restore(target, None if snap is None else dict(snap, data=base64.b64decode(snap["data"])))
+    return {"ok": True}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
     parser.add_argument("--lib", default=None, help=argparse.SUPPRESS)  # consumed above, before the import
-    parser.add_argument("action", choices=("hesap", "dizin", "durum"))
+    parser.add_argument("--tohum", default=None, help="DD-210: the engine's seed file for the install form")
+    parser.add_argument("action", choices=("hesap", "dizin", "ayar", "durum", "kur-hazirla", "kur-uygula", "kur-geri"))
     args = parser.parse_args()
+    if args.action.startswith("kur-") and not args.tohum:
+        parser.error("--tohum gerekli")
     try:
         env = package_env(settings.env_read(args.state))
         if args.action == "durum":
             print(json.dumps(durum(env), ensure_ascii=False))
             return
+        # The engine runs these inside its own install, holding the locks already.
+        if args.action in ("kur-uygula", "kur-geri"):
+            result = (kur_uygula if args.action == "kur-uygula" else kur_geri)(env, args.tohum)
+            print(json.dumps(result, ensure_ascii=False))
+            return
         raw = sys.stdin.read(LIMIT + 1)
         settings.require(len(raw) <= LIMIT, "İstek çok büyük.")
         data = json.loads(raw)
         with settings.Manager(args.state).locked():
-            result = hesap(env, data) if args.action == "hesap" else dizin(env, data, args.state)
+            if args.action == "kur-hazirla":
+                result = kur_hazirla(env, data, args.state, args.tohum)
+            elif args.action == "ayar":
+                result = ayar(env, data, args.state)
+            else:
+                result = hesap(env, data) if args.action == "hesap" else dizin(env, data, args.state)
         print(json.dumps(result, ensure_ascii=False))
     except (settings.SettingsError, ValueError, KeyError, TypeError, OSError, RecursionError) as err:
         message = str(err) if isinstance(err, settings.SettingsError) else "qBittorrent ayarı uygulanamadı; önceki ayar geri yüklendi."

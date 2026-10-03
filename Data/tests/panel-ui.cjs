@@ -301,8 +301,18 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await detail.getByRole("button",{name:"Kapat",exact:true}).click();
     assert.equal(await detail.isVisible(),false);
     assert.equal(await page.evaluate(() => document.activeElement.id),"mod-details-wireguard");
+    // DD-210: qBittorrent's Kur opens its install form; the install starts with the submitted form.
+    const installTorrent = async () => {
+      await card.getByRole("button",{name:"Kur",exact:true}).click();
+      const form = page.locator("#sh");
+      await form.getByLabel("Parola",{exact:true}).fill("fixture-install-phrase");
+      await form.getByLabel("Parola (tekrar)",{exact:true}).fill("fixture-install-phrase");
+      await form.getByRole("button",{name:"Kur ve başlat",exact:true}).click();
+      await form.waitFor({state:"hidden"});
+      assert.deepEqual(submitted, {form:{username:"admin",password:"fixture-install-phrase",save:"x"}});
+    };
     holdInstall = true;
-    await card.getByRole("button",{name:"Kur",exact:true}).click();
+    await installTorrent();
     await card.getByText("Paket kuruluyor",{exact:true}).waitFor();
     assert.equal(await card.getByRole("button",{name:"Kur",exact:true}).isDisabled(),true);
     await toggle.click();
@@ -319,7 +329,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.match(await card.getByRole("alert").innerText(),/Fixture package failure/);
     assert.equal(await detail.isVisible(),false);
     holdInstall = false;
-    await card.getByRole("button",{name:"Kur",exact:true}).click();
+    await installTorrent();
     await page.locator('.nav [data-route="torrent"]').waitFor();
     await toggle.click();
     await detail.getByRole("button",{name:"Durdur",exact:true}).click();
@@ -337,7 +347,12 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await detail.locator("img").count(),0);
     assert(!calls.some(p => p.endsWith("/hesap")), "Store never auto-reads account data");
     await page.screenshot({path:path.join(shots,"store-details.png"),fullPage:true});
-    await card.getByRole("button",{name:"Aç",exact:true}).click();
+    // DD-210: Aç opens the running app's own web UI in a new tab; its Konsol page stays one link away.
+    const openApp = card.getByRole("link",{name:"qBittorrent arayüzünü yeni sekmede aç",exact:true});
+    assert.equal(await openApp.getAttribute("href"),"http://torrent.ayc");
+    assert.equal(await openApp.getAttribute("target"),"_blank");
+    if (!(await detail.isVisible())) await toggle.click();
+    await detail.getByRole("link",{name:"qBittorrent ayarları ve ilk giriş bilgileri",exact:true}).click();
     await page.getByRole("textbox",{name:"Kullanıcı adı",exact:true}).waitFor();
     assert.equal(await page.getByRole("tab").count(),0);
     // Removing the old shared-account UI must preserve qBittorrent's opt-in secret.
@@ -404,7 +419,11 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.deepEqual(await appTraffic.locator(".v").allTextContents(),["↓ 5,0 GB","↑ 1,0 GB"]);
     assert.match(await appTraffic.locator("small").innerText(),/^tüm zamanlar · kayıt \d\d:\d\d$/,"all-time figures name the time qBittorrent saved them");
     assert.equal(await appTraffic.locator(".ico.t-video").count(),1);
-    await appTile.click();
+    // DD-210: the tile opens the app's web UI in a new tab; the settings action beside it is separate.
+    assert.equal(await appTile.locator("a.tile-link").getAttribute("href"),"http://torrent.ayc");
+    assert.equal(await appTile.locator("a.tile-link").getAttribute("target"),"_blank");
+    assert.equal(await appTile.getByRole("button",{name:"qBittorrent ayarları",exact:true}).count(),1);
+    await navigate("#/torrent");
     await page.getByRole("textbox",{name:"Kullanıcı adı",exact:true}).waitFor();
     await navigate("#/torrent");
     await navigate("#/moduller");

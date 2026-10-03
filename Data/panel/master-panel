@@ -483,6 +483,8 @@ class Panel:
         self.apis = {}
         self.apis_lock = threading.Lock()
         self.konsol_cache = {}
+        # DD-210: one install-form preparation and engine start at a time (the seed file is per package).
+        self.install_lock = threading.Lock()
         self.sys_lock = threading.Lock()
         self.samples = []
         self.cpu_prev = None
@@ -541,15 +543,20 @@ class Panel:
         return proc.returncode, out, message
 
     # -- paket API modülleri (DD-200)
-    def package_api(self, mid, env=None, manifest=None):
+    def package_api(self, mid, env=None, manifest=None, stopped=False):
         """Kurulu (calisiyor) ve PAKET_API bildiren paketin yüklenmiş API nesnesi; yoksa None.
         Dosya paket klasöründen düz dosya olarak, mtime ile önbellekli yüklenir; paket kalkınca
-        ya da dosyası değişince eski nesne durdurulur. Bozuk bir modül yalnız kendi paketini kapatır."""
+        ya da dosyası değişince eski nesne durdurulur. Bozuk bir modül yalnız kendi paketini kapatır.
+        DD-210: stopped=True (yalnız paketin kendi istekleri) durdurulmuş (durduruldu) paketi de verir ki
+        ayarları durmuşken değişebilsin; o nesnenin start()'ı çağrılmaz ve arka plan çağıranlarına
+        (örnekleyici, VPN ağları) verilmez. Durum değişince nesne yeniden kurulur."""
         env = env if env is not None else read_env(self.args.state)
         if manifest is None:
             manifest = master_settings.read_manifests(env).get(mid, {})
         name = manifest.get("PAKET_API", "")
-        installed = self.module_state(mid, env) == "calisiyor"
+        state = self.module_state(mid, env)
+        running = state == "calisiyor"
+        installed = running or state == "durduruldu"
         with self.apis_lock:
             current = self.apis.get(mid)
             path = os.path.join(env.get("MODULES_DIR", ""), mid, name) if name and env.get("MODULES_DIR") else ""
@@ -558,22 +565,22 @@ class Panel:
                 try:
                     st = os.stat(path, follow_symlinks=False)
                     if stat.S_ISREG(st.st_mode):
-                        key = (path, st.st_mtime_ns, st.st_size)
+                        key = (path, st.st_mtime_ns, st.st_size, running)
                 except OSError:
                     key = None
             if current is not None and current[0] == key:
-                return current[1]
+                return current[1] if running or stopped else None
             if current is not None:
                 del self.apis[mid]
                 self.api_stop(mid, current[1])
-            if key is None:
+            if key is None or not (running or stopped):
                 return None
             try:
                 spec = importlib.util.spec_from_file_location("magaza_api_" + mid, path)
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
                 api = module.create(PackageContext(self, mid))
-                if callable(getattr(api, "start", None)):
+                if running and callable(getattr(api, "start", None)):
                     api.start()
             except Exception as err:  # paketin dosyası bizim için veridir; bozuksa yalnız o paket kapanır
                 print("panel: %s uygulama API'si yüklenemedi (%s)" % (mid, err.__class__.__name__), flush=True)
@@ -743,6 +750,40 @@ class Panel:
         except (master_settings.SettingsError, OSError, ValueError, KeyError):
             pass  # a broken publication record never hides the module list or its tailnet name
         return urls
+
+    def module_install(self, mid, form):
+        """DD-210: a package that declares PAKET_KUR_AYAR is installed only with its form. Its worker
+        (in the package folder, root, JSON on stdin) validates the choices and writes a private seed
+        with the password's hash; the engine starts only after that and removes the seed at the end."""
+        env = read_env(self.args.state)
+        manifest = master_settings.read_manifests(env).get(mid, {})
+        script_name = manifest.get("PAKET_KUR_AYAR", "")
+        if not script_name:
+            if form is not None:
+                return 400, "bu uygulama kurulum bilgisi almaz"
+            return self.module_spawn(mid, "kur", False)
+        if not isinstance(form, dict):
+            return 400, "Kurulum bilgileri gerekli; App Store'daki pencereden kurun."
+        here = os.path.realpath(os.path.join(env.get("MODULES_DIR", ""), mid))
+        script = os.path.join(here, script_name)
+        if not API_FILE_RE.match(script_name) or not os.path.realpath(script).startswith(here + os.sep) or not env.get("RUNTIME_DIR"):
+            return 500, "paketin kurulum çalışanı geçersiz"
+        seed = os.path.join(env["RUNTIME_DIR"], "modul-%s.kur" % mid)
+        with self.install_lock:
+            if self.module_busy(mid):
+                return 409, "bu modülde bir işlem sürüyor"
+            if any(m.get("id") == mid and m.get("installed") for m in self.modules()):
+                return 409, "modül zaten kurulu"
+            code, result = self.run_worker(["/usr/bin/python3", script, "--lib", self.tool_dir(), "--state", self.args.state,
+                                            "kur-hazirla", "--tohum", seed], form,
+                                           "Kurulum bilgileri doğrulanamadı; yeniden deneyin.")
+            if code != 200:
+                return code, (result.get("error") if isinstance(result, dict) else "") or "Kurulum bilgileri doğrulanamadı."
+            code, message = self.module_spawn(mid, "kur", False)
+            if code != 202:
+                with contextlib.suppress(OSError):
+                    os.unlink(seed)
+            return code, message
 
     def module_spawn(self, mid, action, with_data):
         """master-modul'ü ayrı bir systemd birimi olarak başlatır: işlem sayfa kapansa da sürer."""
@@ -2052,7 +2093,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         Host/CSRF/session gates as every other root route. Audit lines carry "<id>:<verb>"."""
         env = read_env(self.panel.args.state)
         manifest = master_settings.read_manifests(env).get(mid, {})
-        api = self.panel.package_api(mid, env, manifest)
+        api = self.panel.package_api(mid, env, manifest, stopped=True)
         if api is None:
             name = manifest.get("PAKET_AD") or mid
             if self.command == "POST":
@@ -2137,7 +2178,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if mid not in known:
                 self.error(404, "bilinmeyen modül")
                 return
-            code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
+            if action == "kur":
+                code, message = self.panel.module_install(mid, data.get("form"))
+            else:
+                code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
             self.audit(user, "modul-" + action, mid + (" +veri" if action == "kaldir" and data.get("veri") else ""), code == 202)
             if code != 202:
                 self.error(code, message)

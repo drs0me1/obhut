@@ -145,6 +145,36 @@ address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
 already public.
 
+## Install form, app launch and tile actions (v2-187…v2-189, DD-210)
+
+`test_torrent_api.py` covers the worker's `kur-hazirla` (every field refused before any write, the seed
+only in `RUNTIME_DIR`, 0600, hash only, writability probed as the service user), `kur-uygula` into a kept
+profile (only the four keys change, other preferences stay, the folder drop-in, no service command) and
+`kur-geri` (profile and drop-in restored byte for byte), refusal of a readable, linked or malformed seed,
+the combined `ayar` save (validation first, one stop/start, blank password keeps the hash, failure restores
+both files, a stopped app stays stopped), the CLI, the API module's `/ayar` route, and the real backend's
+install route on a Unix socket (form required, worker before engine, password only on stdin and never in
+argv or audit, seed removed when the engine cannot start, installed package refused before the worker,
+WireGuard refuses a form). `common.bats` runs the real engine and hook against the fake Podman/systemd:
+no install without a seed or with a readable one (no image pulled), the form's account and folder in the
+profile at the first start, the seed gone afterwards, a kept profile's preferences preserved with a
+library-folder drop-in, failed installs restoring the previous profile and drop-in, and the backend's
+worker-then-engine order. `app-install-ui.cjs` drives the shell with fixture APIs under the production
+CSP: Kur opens the form (defaults, cancel/Escape send nothing, required and repeated password, folder
+chooser), drafts survive a server refusal and a poll, one request per submission, WireGuard's Kur
+unchanged, launch in a new tab with `noopener` from the tile, the sidebar and App Store (stub page as the
+target), the tile action row (v2-189: icons only — no text, transparent background, no border at rest, on
+hover and pressed, at desktop and 390 px; aria-label and tooltip names; the keyboard focus ring; a finished
+request leaving focus where the operator moved it; v2-188: Ayarlar opening the form for qBittorrent and linking WireGuard's
+page, Durdur/Başlat only for qBittorrent and nothing on built-in tiles, beneath the icon in one row with a
+larger touch area; Durdur's confirmation and cancel, the busy label without duplicate requests, focus kept
+across poll redraws, the label after completion, a refused Başlat shown and recoverable), the settings
+dialog (keyboard, focus return, only changed fields, blank password not sent, error draft, a late read
+or a late install answer leaving a newer dialog alone), a stopped app's settings read and saved without
+starting it, stopped state falling back to the page, edit mode without the row and with working arrows,
+390 px dark screenshots and the public address (public name or the page, never the tailnet name). `panel-ui.cjs` installs qBittorrent through
+the form and checks the new open actions.
+
 ## Podman in the base and qBittorrent in Podman (v2-186, DD-208, DD-209)
 
 `test_containers.py` drives `panel/master_containers.py` with canned `podman` JSON: the list
@@ -683,7 +713,7 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
 ```
 
 The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`,
-`torrent-ui`, `giris-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
+`torrent-ui`, `giris-ui`, `app-install-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
 health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
 bar that replaced the jobs page (DD-183).
 

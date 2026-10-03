@@ -161,9 +161,11 @@ the ones agreed on 2026-08-05:
   (§1.11): the `lscr.io/linuxserver/qbittorrent` image, pinned by digest, runs in
   Podman on the host network as the downloads account (PUID/PGID).
   `magaza/torrent/qBittorrent.conf` seeds minimal settings only when absent.
-  The installer holds no account or incoming peer-port setting. Later
-  account/download-folder edits go through the package's own page and worker
-  (`magaza/torrent/ayar.py`, **DD-202**), never the base settings transaction.
+  The installer holds no account or incoming peer-port setting: the account and the
+  download folder come from the App Store install form (**DD-210**) and are written
+  before the container's first start. Later account/download-folder edits go through
+  the package's own page, the overview's settings action and its worker
+  (`magaza/torrent/ayar.py`, **DD-202**, **DD-210**), never the base settings transaction.
 - Every web interface and WebDAV listens on loopback only (`127.0.0.1`;
   WebDAV's WAN scope on `SHARE_WAN_BACKEND`, **DD-179**) (**R11**).
 - Module services survive a reboot as enabled systemd units (a container
@@ -498,6 +500,23 @@ Contract in §5–§7 and `folder-shares.md`.
     from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
     measurements show as unknown, never as zero. An unknown route opens
     Genel bakış; a page of an absent application opens App Store.
+  - **Opening an application and its settings (DD-210).** An application with a native
+    web interface (its `urls`) opens there in a new tab (`noopener`) from its overview
+    tile, its sidebar entry and its App Store "Aç" while it runs: the public name on the
+    public HTTPS address, the tailnet name on the tailnet address. A stopped, busy or
+    unpublished application (on the public address without an active public name) opens
+    its Konsol page instead; the public address never links a private name. Beneath the
+    icon of every installed App Store application's tile is a compact row of bare icons
+    (v2-188; v2-189: no visible text, background or border; the name is the `aria-label` and
+    the tooltip), a sibling of the launch link and absent in edit mode and on built-in tiles: **Ayarlar**
+    opens the package's declared `form` (read/write routes) in a dialog for the same fields
+    as the install form (current values from the package API, never a password; only
+    changed fields are sent; a blank password keeps the stored one), or else links the
+    package's page; **Durdur/Başlat** appears only for `durdurulabilir` packages, asks the
+    App Store's stop confirmation before stopping and uses the same lifecycle request and
+    progress; it is locked (`aria-disabled`, still focusable) from the click until the
+    operation ends, shows a refusal and follows the server's state. Settings stay usable
+    while the app is stopped. The page stays reachable from App Store details and its route.
   - **Overview layout and network card (DD-206).** "Düzenle" (bottom-left, below the
     tiles, sticky on a long page) lets the operator move tiles (dragging with mouse or finger, or arrow
     buttons), set each widget's width to 1–4 of four columns (height follows the row,
@@ -783,14 +802,31 @@ Contract in §5–§7 and `folder-shares.md`.
   removes it by image id and leaves an image another tag or container uses. Image
   updates are a new digest in the package and an installer run (a changed quadlet
   recreates the container); there is no automatic update.
+- **Install form (DD-210).** A package may declare an install form: `konsol.json`
+  `form` (generic fields `metin`/`parola`/`klasor`, texts, the package API's read and
+  write routes) and the manifest's `PAKET_KUR_AYAR` (its worker). App Store's "Kur" then
+  opens the form and sends nothing until a valid submission; cancel/Escape changes
+  nothing. `POST /api/konsol/moduller/<id>/kur` requires `{"form": {...}}` for such a
+  package (400 without it; a package without `PAKET_KUR_AYAR` refuses a form). Under one
+  lock the backend refuses a busy or installed package (409), runs the worker as a
+  transient root unit with the form on stdin (`<worker> --lib … --state … kur-hazirla
+  --tohum RUNTIME_DIR/modul-<id>.kur`), and starts the engine only after the worker
+  accepted; a refusal is the request's 400 and nothing is installed. The worker writes a
+  seed file (0600, owner root) holding the validated values with the password only as
+  the application's hash. `master-modul kur` of such a package refuses to run without a
+  fresh (≤10 min), private, root-owned seed, hands its path to the hooks as `KUR_TOHUM`
+  and removes it (and the hook's `.onceki` snapshot) when the install ends either way;
+  the backend removes it if the engine could not be started. The password never reaches
+  argv, environment, journal, audit, progress or a persistent plaintext file.
 - **Package (DD-197).** `Data/magaza/<id>/` holds the manifest `paket.env` (`PAKET_AD`,
   `PAKET_SIRA`, `PAKET_CALISMA`, `PAKET_DURDURULABILIR`, `PAKET_HESAP`, `PAKET_APT`,
   `PAKET_ARACLAR`, `PAKET_EKLER`, `PAKET_ADLAR`, `PAKET_GUNLUK`, `PAKET_KUR_ADIM`,
   `PAKET_YAYIN`, `PAKET_UYGULA_HEP`, `PAKET_UYGULA_NEDEN`, `PAKET_YERLESIK`, and the Konsol
   keys `PAKET_KONSOL` (App Store texts and page declaration), `PAKET_SAYFA` (page files),
   `PAKET_API` (backend module), **DD-200**, `PAKET_TRAFIK` (traffic-totals module for
-  the overview's network card, **DD-206**), and `PAKET_KONTEYNER`/`PAKET_IMAJ` (a
-  container application's quadlet and pinned image, **DD-209**)), the hook
+  the overview's network card, **DD-206**), `PAKET_KONTEYNER`/`PAKET_IMAJ` (a
+  container application's quadlet and pinned image, **DD-209**), and `PAKET_KUR_AYAR`
+  (the install form's worker, **DD-210**)), the hook
   file `kanca` (`paket_kur`, `paket_kaldir`, `paket_uygula`, `paket_baslat`, `paket_durdur`,
   `paket_birim`, `paket_hesap`, `paket_veri_sil`, `paket_gunluk_suz`, `paket_ozet`) and the
   package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds,
@@ -845,8 +881,11 @@ Contract in §5–§7 and `folder-shares.md`.
   its note from `paket_not` and its counts from `paket_ozet` (**DD-201**).
 - qBittorrent (`torrent`, **DD-151**, package hooks since **DD-197**, a Podman container
   since **DD-209**): `kur` in four steps — image (`TORRENT_IMAGE`, pulled by digest if
-  absent), container unit (profile seed, then the quadlet `qbittorrent.container`),
-  service start, name.
+  absent), container unit (profile seed, the install form's account and folder, then the
+  quadlet `qbittorrent.container`), service start, name. It is installed only with its
+  App Store form (**DD-210**): username (`[A-Za-z0-9._@-]{1,64}`, default `admin`), a
+  required password (8–256 characters) and the download folder (default
+  `DOWNLOADS_PATH`; the same downloads/library policy as the page's folder choice).
   - It runs as `qbittorrent.service`, which Podman's generator writes from the quadlet:
     `Network=host` (no bridge, no NAT rules), `Pull=never`, journald logging,
     `StopTimeout=45`, capabilities `NET_BIND_SERVICE SETFCAP SYS_CHROOT` dropped,
@@ -862,8 +901,13 @@ Contract in §5–§7 and `folder-shares.md`.
     No UPnP/automatic port-mapping, Local Peer Discovery, temporary folder/enable,
     performance, peer-limit or other user-preference override is seeded. Those
     follow the installed qBittorrent version's defaults until the user changes
-    them. Reinstall/reapply preserves the entire existing profile; account and
-    folder changes go through Konsol's qBittorrent page (§1.10).
+    them. Reapply preserves the entire existing profile. `kur` writes only the form's
+    `WebUI\Username`, `WebUI\Password_PBKDF2` and the two save-path keys into the new
+    or kept profile (and the folder drop-in when the folder is outside the downloads
+    tree) before the first start; every other preference of a kept profile stays. A
+    failed install restores the profile and the drop-in as they were (**DD-210**).
+    Later account and folder changes go through Konsol's qBittorrent page and the
+    overview's settings action (§1.10).
   - `kur` checks that the `qbittorrent-nox` process runs as `DOWNLOADS_UID` on the
     host (`podman top … huid`), that no mount is `/`, `SERVER_ROOT`, the trash or the
     share root, that the interface listens on `127.0.0.1` only, that its API answers
@@ -876,14 +920,17 @@ Contract in §5–§7 and `folder-shares.md`.
   - No inbound peer port: the firewall opens nothing for it. qBittorrent
     still listens on its own random peer port on every interface; new WAN
     traffic to it is dropped in both families; tailnet access requires an explicit rule.
-  - The account is not Konsol's: qBittorrent prints a temporary password to
+  - The account is not Konsol's; since **DD-210** it is the install form's. Should no
+    password be set, qBittorrent prints a temporary password to
     its journal on each start until one is set in its UI. `hesap torrent`
     reads this run's journal (`_SYSTEMD_INVOCATION_ID`) and prints
     `user<TAB>gecici|ayarli` (with `--parola` also the temporary password);
     `gunluk` masks that line.
   - Its Konsol files (**DD-200**, **DD-202**): `konsol.json`, `sayfa.js`/`sayfa.css`
     (the page) and `api.py` with the worker `ayar.py`
-    (`/api/uygulama/torrent/{durum,hesap,dizin}`; the worker edits the profile
+    (`/api/uygulama/torrent/{durum,hesap,dizin,ayar}`; `ayar` is the overview dialog's
+    single save of any of username, password and folder with one stop/start, **DD-210**;
+    the worker also has `kur-hazirla`/`kur-uygula`/`kur-geri`; the worker edits the profile
     and the quadlet drop-in `90-konsol.conf`, §1.10). Its own settings `torrent.env`
     (`TORRENT_UI_PORT`, `TORRENT_PROFILE_DIR`, `TORRENT_CONTAINER`, `TORRENT_IMAGE`,
     `TORRENT_SURUM`) and `klasorler.py`, which reports the
@@ -905,9 +952,13 @@ Contract in §5–§7 and `folder-shares.md`.
     package's rendered `konsol.json` (every catalogued package), `sayfa` the declared
     page files (installed packages only), `urls` its publication addresses (**DD-200**).
   - `/api/uygulama/<id>/*` (any method) → the installed package's API module after the
-    same gates; `404`/`409` while the package is absent (**DD-200**).
+    same gates; `404`/`409` while the package is absent (**DD-200**). An installed but
+    stopped package (`durduruldu`) still answers its own requests, so its settings can be
+    read and changed while it stays stopped; for it the module's `start()` is not run and
+    background callers (the sampler, VPN networks) do not get it (**DD-210**).
   - `POST /api/konsol/moduller/<id>/(kur|baslat|durdur|kaldir)`, JSON
-    body, `{"veri": true}` honoured for `kaldir` only. The id
+    body, `{"veri": true}` honoured for `kaldir` only; `kur` of a package with an install
+    form needs `{"form": {...}}` (§1.11, **DD-210**). The id
     must be in `liste` (else `404`). It starts `systemd-run
     --unit=master-modul-<id>.service --collect master-modul <verb> <id>` and
     answers `202`; while that unit is active the answer is `409`. The audit

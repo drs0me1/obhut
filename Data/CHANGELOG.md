@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-03 — Icon-only tile actions; v2-188 live acceptance (v2-189)
+
+- **Tile actions are bare icons** (DD-210; user: "fon rengi olmadan sadece simge"): Ayarlar and Durdur/Başlat
+  under the overview's application tiles show only their icon — no text, background or border, also on
+  hover and press. Their names are the accessible label and the tooltip ("qBittorrent ayarları",
+  "qBittorrent: Durdur", "…: Durduruluyor…"); the keyboard focus ring stays; each keeps a ~44 px invisible
+  touch area. Confirmation, busy lock and state follow-up are unchanged.
+- Fixed: when a Durdur/Başlat request finished, its redraw pulled keyboard focus back to the tile even if
+  the operator had moved elsewhere.
+- **v2-188 on nrm (Astra, 2026-10-03):** installed from the frozen runtime archive (sha256
+  `3739392986a2369522eff6e0d0b6c986a527e50fc297aaa749f0c401e81b3b5f`) with scratch inputs, defaults and `E`;
+  exit 0, core services active, the operator's qBittorrent username, password hash and save path unchanged
+  (digest before/after). Real browser: native qBittorrent popup (new tab, noopener), settings prefill with a
+  blank password while running and stopped, cancelled stop, stop → start from the tile. Isolated Podman
+  fixture with the deployed worker, quadlet and pinned image: the install form's account, password and
+  folder accepted by native qBittorrent at first start, a running change with a library bind and old-login
+  rejection, a stopped save keeping the hash; cleanup complete. qBittorrent 5.2 answers a successful login
+  with 204 (no body) and a wrong one with 401; the fixture first expected 5.1's "Ok." (test fixed, no
+  product change). Linux Bats `master-modul installs qBittorrent` 1/1 on nrm; Konsol health all ok.
+- **Verified locally:** see SESSION.md.
+
+### 2026-10-03 — Ayarlar and Durdur/Başlat under the overview's application tiles (v2-188)
+
+- **Action row under installed applications** (DD-210): each installed App Store application's tile on
+  Genel bakış now has a compact row beneath its icon. **Ayarlar** opens the app's settings form
+  (qBittorrent) or, without one, its Konsol page (WireGuard). **Durdur/Başlat**, only for apps that can
+  stop (qBittorrent), follows the server's state: Durdur asks the same confirmation as App Store, both go
+  through the usual lifecycle and progress, the button is locked while the operation runs and shows
+  "Duruyor…"/"Başlıyor…", a refusal is shown and the button stays usable. Built-in tiles (Dosyalar,
+  Paylaşımlar, App Store, Ayarlar) get no row; edit mode shows none. This replaces v2-187's single settings
+  icon. The icon itself still opens the app's web UI while it runs.
+- **Verified:** see SESSION.md.
+
+### 2026-10-03 — qBittorrent install form, direct app launch, settings action (v2-187)
+
+- **App Store → qBittorrent → Kur opens a form** (DD-210): username (default `admin`), password
+  (required, twice) and download folder (default the downloads folder; the safe folder chooser). Nothing
+  is sent until a valid submission; Vazgeç/Escape changes nothing; a server refusal keeps the typed
+  values and no install starts. The values are written into qBittorrent's profile before the container
+  first starts, so there is no temporary password step. A failed install returns a kept profile and
+  folder to what they were.
+- **The app opens itself:** while qBittorrent runs, its overview tile, its sidebar entry and App Store's
+  "Aç" open qBittorrent's web UI in a new tab (the public name on Konsol's public address, the tailnet
+  name on the tailnet). Stopped, or without a public name on the public address, they open its Konsol
+  page instead.
+- **Settings action:** a small settings button beneath the qBittorrent tile opens a dialog for the
+  username, a new password (blank keeps the current one) and the download folder; one save, one short
+  restart, a stopped app stays stopped.
+- Generic: `konsol.json` `form` + manifest `PAKET_KUR_AYAR`; the shell, backend and engine name no
+  application. WireGuard installs as before.
+- **Verified:** see SESSION.md.
+
 ### 2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler (v2-186)
 
 - **Podman is part of the base** (DD-208): stage 1 installs `podman` and `netavark` without

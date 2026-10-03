@@ -247,6 +247,68 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual(unix_get(sock, "/api/uygulama/wireguard/state", headers)[0], 404)
         self.assertEqual(unix_get(sock, "/api/konsol/kaynaklar", headers)[0], 200)
 
+    def test_a_stopped_package_answers_its_requests_without_background_work(self):
+        # DD-210: an installed but stopped (durduruldu) package still answers its own requests, so its
+        # settings can change while it is stopped; it is not offered to background callers (sampler,
+        # VPN networks) and its start() runs only while the package runs. Unregistered stays 404/409.
+        root = Path(self.p.args.state).parent
+        mods = root / "mods"
+        (mods / "demo").mkdir(parents=True)
+        (mods / "demo" / "paket.env").write_text('PAKET_AD="Demo"\nPAKET_DURDURULABILIR=1\nPAKET_API="api.py"\n')
+        marks = root / "marks"
+        (mods / "demo" / "api.py").write_text(
+            "import os\n"
+            "def create(ctx):\n    return Api(ctx)\n"
+            "class Api:\n"
+            "    def __init__(self, ctx):\n        self.ctx = ctx\n"
+            "    def mark(self, word):\n"
+            "        with open(%r, 'a') as fh:\n            fh.write(word + '\\n')\n" % str(marks) +
+            "    def start(self):\n        self.mark('start')\n"
+            "    def stop(self):\n        self.mark('stop')\n"
+            "    def networks(self):\n        return []\n"
+            "    def handle(self, req):\n        return 200, {'ok': True, 'method': req.method}\n")
+        (root / "bin").mkdir()
+        (root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
+        state = Path(self.p.args.state)
+        state.write_text(state.read_text() + "MODULES_DIR=%s\n" % mods)
+        self.p.args.master_modul = str(root / "bin" / "master-modul")
+        self.addCleanup(lambda: [self.p.api_stop(mid, api) for mid, (_key, api) in list(self.p.apis.items())])
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        _server, sock = start_unix(self, Handler)
+        headers = {"X-Konsol": "1"}
+        post = {"X-Konsol": "1", "Content-Type": "application/json"}
+        read = lambda: marks.read_text().split() if marks.exists() else []
+        (root / "modules").write_text("demo\tdurduruldu\n")
+        self.assertEqual(self.p.package_apis(), [], "background callers never see a stopped package")
+        self.assertEqual(read(), [])
+        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", headers)
+        self.assertEqual((status, json.loads(body)), (200, {"ok": True, "method": "GET"}))
+        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", post, "POST", b"{}")
+        self.assertEqual((status, json.loads(body)["method"]), (200, "POST"))
+        self.assertEqual(read(), [], "answering a stopped package's request starts nothing in the background")
+        self.assertEqual(self.p.package_apis(), [])
+        self.assertEqual(self.p.vpn_apps(), [])
+        # Started again: background callers get it and its start() runs once.
+        (root / "modules").write_text("demo\tcalisiyor\n")
+        self.assertEqual([mid for mid, _api in self.p.package_apis()], ["demo"])
+        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", headers)[0], 200)
+        self.assertEqual(read().count("start"), 1)
+        # Stopped again: the running object is stopped; requests still work without a new start().
+        (root / "modules").write_text("demo\tdurduruldu\n")
+        self.assertEqual(self.p.package_apis(), [])
+        self.assertEqual(read()[-1], "stop")
+        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", headers)[0], 200)
+        self.assertEqual(read().count("start"), 1)
+        # Not registered: no module at all.
+        (root / "modules").write_text("")
+        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", headers)
+        self.assertEqual((status, json.loads(body)["error"]), (404, "Demo kurulu değil"))
+        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", post, "POST", b"{}")[0], 409)
+        self.assertEqual(self.p.apis, {})
+
     def test_http_resources_have_same_host_header_and_origin_gates(self):
         class Handler(panel.Handler):
             def log_message(self, *_args):

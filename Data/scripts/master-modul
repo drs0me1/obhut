@@ -53,6 +53,8 @@ paket_sifirla() {
     PAKET_TRAFIK=""
     # DD-209: Podman birimi (paketteki quadlet dosyasının adı) ve özetiyle sabitlenmiş imajı.
     PAKET_KONTEYNER="" PAKET_IMAJ=""
+    # DD-210: Konsol'daki kurulum penceresinin bilgilerini doğrulayan paket çalışanı (kur-hazirla).
+    PAKET_KUR_AYAR=""
 }
 
 paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
@@ -650,11 +652,24 @@ arkauc_yollari_hazirla() {
     [[ "$missing" == 0 ]] || systemctl restart master-panel.service >/dev/null 2>&1 || true
 }
 
+# DD-210: kurulum penceresi bildiren paket (PAKET_KUR_AYAR) yalnız Konsol'un doğrulayıp bıraktığı bilgiyle
+# kurulur: RUNTIME_DIR/modul-<id>.kur, root'un, yalnız sahibine açık ve taze (parolanın yalnız özeti).
+# Kanca onu KUR_TOHUM'dan okur; dosya ve kancanın yedeği (.onceki) kurulum nasıl biterse bitsin silinir.
+KUR_TOHUM=""
+kur_tohumu_al() { # ID
+    KUR_TOHUM="$RUNTIME_DIR/modul-$1.kur"
+    trap 'rm -f -- "$KUR_TOHUM" "$KUR_TOHUM.onceki"' EXIT
+    [[ -f "$KUR_TOHUM" && ! -L "$KUR_TOHUM" && -O "$KUR_TOHUM" &&
+        -n "$(find "$KUR_TOHUM" -maxdepth 0 -type f -perm 0600 -mmin -10 2>/dev/null)" ]] ||
+        fail_step "kurulum bilgileri yok ya da eskidi; Konsol → App Store'daki pencereden kurun"
+}
+
 cmd_kur() {
     local id="$1"
     CUR_ID="$id" CUR_ACTION=kur
     take_lock
     ! registry_get "$id" >/dev/null || fail_step "modül zaten kurulu"
+    [[ -z "$PAKET_KUR_AYAR" ]] || kur_tohumu_al "$id"
     kanca_gerekli paket_kur
     paket_kur
     arkauc_yollari_hazirla
