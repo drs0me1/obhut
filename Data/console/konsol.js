@@ -49,7 +49,7 @@
     chevl: '<path d="M11 4.5L6.5 9 11 13.5"/>',
     arrow: '<path d="M3.4 9h11.2M10.6 5l4 4-4 4"/>',
   };
-  // Tek şablon noktası: simgeler, Genel bakış'ın halkaları ve çizgi grafiği buradan üretilir; içine
+  // Tek şablon noktası: simgeler ve Genel bakış'ın çizgi grafiği buradan üretilir; içine
   // yalnız bu dosyanın kendi işaretlemesi ve sayılar girer.
   const svgFrom = (markup) => { const t = document.createElement("template"); t.innerHTML = markup; return t.content.firstChild; };
   const svg = (name) => svgFrom('<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.file) + "</svg>");
@@ -160,6 +160,7 @@
     const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       S.sys = await api("/api/konsol/kaynaklar", { signal: controller.signal });
+      if (Number.isFinite(S.sys.read_at)) S.offset = S.sys.read_at - Date.now() / 1000;
       resourceReceived = performance.now(); resourceFailed = false;
       paintSystem();
     } catch (_err) {
@@ -171,7 +172,7 @@
   function loadHealth() {
     return api("/api/konsol/saglik").then((s) => { S.health = s; healthFailed = false; })
       .catch(() => { healthFailed = true; })
-      .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); if (current === "genel") renderOverview(); });
+      .finally(() => { if (current === "ayarlar" && settingsTab === "system") renderSettings(); });
   }
   function loadActions() {
     return api("/api/konsol/islemler").then((s) => { S.actions = s.items || []; paintActions(); }).catch(fail);
@@ -185,12 +186,12 @@
     const previous = S.share;
     return api("/api/konsol/paylasim").then((s) => {
       if (S.share !== previous || sharesPage.interacting()) return;
-      S.share = s; if (current === "dosyalar") renderFs(); if (current === "genel") renderOverview();
+      S.share = s; if (current === "dosyalar") renderFs();
     })
       .catch((e) => { if (S.share === previous && !sharesPage.interacting()) { S.share = null; fail(e); } });
   }
   const paintActions = () => { if (current === "ayarlar" && settingsTab === "log") renderLog(); };
-  const paintFsState = () => { if (current === "dosyalar") renderRail(); if (current === "genel") renderOverview(); };
+  const paintFsState = () => { if (current === "dosyalar") renderRail(); };
 
   /* ---------- Independent host resources (DD-160) ---------- */
   function resourceValues() {
@@ -215,6 +216,15 @@
     $("detail-disk").textContent = Number.isFinite(disk) ? bytes(s.disk.total - s.disk.free) + " / " + bytes(s.disk.total) + " · " + bytes(s.disk.free) + " boş · " + s.root : "Güncel ölçüm yok";
     const status = !s && !resourceFailed ? "Kaynaklar okunuyor…" : !fresh ? "Bağlantı yok · ölçümler eski" : !cpuFresh ? "İşlemci örneği bekleniyor" : "Sunucu kaynakları · canlı";
     if ($("resource-status").textContent !== status) $("resource-status").textContent = status;
+    $("foot-uptime").textContent = fresh && Number.isFinite(s.uptime)
+      ? uptimeText(s.uptime + (performance.now() - resourceReceived) / 1000) : "—";
+    paintSidebarClock();
+  }
+  function paintSidebarClock() {
+    const d = new Date(now() * 1000);
+    $("side-clock").textContent = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    $("side-clock").dateTime = d.toISOString();
+    $("side-date").textContent = d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
   }
   function paintSystem() {
     const s = S.sys;
@@ -225,6 +235,7 @@
     document.title = s.host + " · Konsol";
     $("foot-version").textContent = s.version || "—";
     $("foot-ts").textContent = s.net.tailscale || "—";
+    $("foot-wan").textContent = s.net.wan || "—";
     // DD-195: the tailnet address is HTTP; only the public Konsol address is HTTPS.
     $("foot-access").textContent = location.protocol === "https:" ? "İnternet · HTTPS" : "Tailscale";
     paintResources();
@@ -1090,7 +1101,7 @@
       clearTimeout(modTimer);
       if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
     }).catch((err) => {
-      // DD-206: the overview's tiles wait for the first answer; without one they show Konsol's own sections.
+      // The overview waits for the first answer; a failed catalogue has an explicit empty/error state.
       if (!modsSettled) { modsSettled = true; renderOverview(); }
       // DD-207: while an App Store operation runs the backend may restart once (a package's write path);
       // keep following the progress quietly for a few tries instead of dropping it after one miss.
@@ -1572,31 +1583,15 @@
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
-  /* ---------- Genel bakış (DD-204, DD-206): widget'lar, uygulama kareleri ve düzenleme ---------- */
-  // Hiçbir veri burada hesaplanmaz: kaynaklar /api/konsol/kaynaklar, sağlık /api/konsol/saglik, ağ
-  // /api/konsol/ag (kart görünürken 2 sn'de bir), kök klasör /api/state, paylaşımlar /api/konsol/paylasim,
-  // kareler modül listesinden. Düzen (kare sırası, widget genişliği ve görünürlüğü) sunucuda
-  // /api/konsol/duzen ile durur; her cihazda aynı açılır. Halkalar, pasta ve ağ grafiği de simgeler
-  // gibi şablondan üretilir; içine yalnız sayı yazılır.
-  const ring = (pct) => {
-    const dash = Number.isFinite(pct) ? (113.1 * Math.max(0, Math.min(100, pct)) / 100).toFixed(1) + " 113.1" : "0 113.1";
-    return svgFrom(`<svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" stroke-dasharray="${dash}"/></svg>`);
-  };
-  // Pasta: dolu daire üzerinde kullanılan dilim (r=9, kalınlık 18 → çevre 56.5); %90 ve üstü uyarı rengi.
-  const pie = (pct) => {
-    const dash = Number.isFinite(pct) ? (56.5 * Math.max(0, Math.min(100, pct)) / 100).toFixed(1) + " 56.5" : "0 56.5";
-    return svgFrom(`<svg class="pie${Number.isFinite(pct) && pct >= 90 ? " warn" : ""}" viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="9" stroke-dasharray="${dash}"/></svg>`);
-  };
+  /* ---------- Genel bakış (DD-212): yalnız kurulu uygulamalar ve sabit boyutlu ağ kartı ---------- */
+  // Kaynaklar yan menüde; ağ /api/konsol/ag'den (görünürken 2 sn'de bir), kareler modül listesinden.
+  // Kare sırası ve ağ kartının görünürlüğü aynı sunucu düzen kaydında durur.
   const uptimeText = (sec) => { const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
     return d ? `${d} g ${hh} sa` : hh ? `${hh} sa ${mm} dk` : `${mm} dk`; };
-  const HEALTH_PILL = { ok: ["ok", "Sağlıklı"], warn: ["warn", "Uyarı var"], bad: ["bad", "Sorun var"] };
-  // Widget'lar sabit sırada; genişlik 1–4 sütun (yükseklik içeriğe göre, ayarlanmaz) ve görünürlük düzenden.
+  // Eski saat/sistem ayarları yok sayılır; ağ kartı her zaman tam genişliktedir.
   const WIDGETS = [
-    { id: "saat", ad: "Saat", label: "Saat ve sunucu", genislik: 2 },
-    { id: "durum", ad: "Sistem durumu", label: "Sistem durumu", genislik: 2 },
     { id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },
   ];
-  const TONE_FALLBACK = { dosyalar: "t-files", paylasim: "t-share", moduller: "t-store", ayarlar: "t-settings" };
   // layout: sunucudaki kayıt (null: varsayılan); editing: Düzenle açıkken taslak, değilse null.
   // modsSettled: the module list answered once (or failed), so the tiles do not jump in after the page.
   let layout = null, layoutLoaded = false, modsSettled = false, editing = null, drag = null;
@@ -1604,7 +1599,7 @@
   const activeLayout = () => editing || layout || defaultLayout();
   function widgetSetting(id) {
     const own = (activeLayout().widgetlar || []).find((w) => w.id === id), base = WIDGETS.find((w) => w.id === id);
-    return { genislik: own ? own.genislik : base.genislik, gizli: own ? own.gizli : false };
+    return { genislik: base.genislik, gizli: own ? own.gizli : false };
   }
   function loadLayout() {
     return api("/api/konsol/duzen").then((r) => { if (!editing) layout = r && r.duzen ? r.duzen : null; })
@@ -1613,8 +1608,10 @@
   }
 
   /* -- ağ kartı (DD-206) -- */
-  let NET = null, netFailed = false, netBusy = false;
-  const netFresh = () => !!NET && !netFailed && Number.isFinite(NET.sampled_at) && NET.read_at - NET.sampled_at <= 15;
+  let NET = null, netFailed = false, netBusy = false, netReceived = 0;
+  const netReplyFresh = () => !!NET && !netFailed && (performance.now() - netReceived) / 1000 <= 15;
+  const netFresh = () => netReplyFresh() && Number.isFinite(NET.sampled_at)
+    && NET.read_at - NET.sampled_at + (performance.now() - netReceived) / 1000 <= 15;
   function speed(b) {
     if (!Number.isFinite(b)) return "—";
     if (b < KiB) return Math.round(b) + " B/s";
@@ -1637,23 +1634,18 @@
     }
     return svgFrom(`<svg class="net-svg" viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" aria-hidden="true">${body}</svg>`);
   }
-  const when = (t) => {
-    const d = new Date(t * 1000), today = new Date(now() * 1000);
-    return (d.toDateString() === today.toDateString() ? "" : d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) + " ") + hhmm(t);
-  };
-  // since: sayaçların başladığı an (ör. ağın açılışı); at: uygulamanın tüm zamanlar kaydının zamanı.
-  const appCaption = (a) => Number.isFinite(a.since) ? "başlangıç " + when(a.since) : Number.isFinite(a.at) ? "tüm zamanlar · kayıt " + when(a.at) : "toplam";
   function netApps() {
     const apps = NET && Array.isArray(NET.apps) ? NET.apps : [];
-    if (!apps.length) return [h("p", { class: "hint-s" }, NET ? "Trafiğini bildiren kurulu uygulama yok." : netFailed ? "Uygulama trafiği okunamadı." : "Uygulama trafiği okunuyor…")];
+    if (!apps.length) return [h("tr", null, h("td", { colspan: 3, class: "net-empty" }, netFailed ? "Uygulama trafiği okunamadı." : NET ? "Trafiğini bildiren kurulu uygulama yok." : "Uygulama trafiği okunuyor…"))];
     return apps.map((a) => {
-      const meta = metaOf(a.id), known = Number.isFinite(a.down) && Number.isFinite(a.up);
+      const meta = metaOf(a.id), fresh = netReplyFresh() && a.state === "calisiyor";
       const name = meta.name === a.id ? (typeof a.name === "string" && a.name ? a.name : a.id) : meta.name;
-      return h("div", { class: "net-app", "data-app": a.id },
-        h("span", { class: "ico " + meta.tone }, svg(meta.icon)),
-        h("div", null, h("strong", null, name), h("small", null, a.state === "durduruldu" ? "durduruldu" : known ? appCaption(a) : "ölçülemedi")),
-        h("span", { class: "v down" }, known ? "↓ " + bytes(a.down) : "—"),
-        h("span", { class: "v up" }, known ? "↑ " + bytes(a.up) : "—"));
+      const total = (key, cls) => h("td", { class: "v " + cls,
+        title: !fresh || !Number.isFinite(a[key]) ? (a.state === "durduruldu" ? "Uygulama durduruldu" : "Aktarım miktarı okunamadı") : "" },
+        fresh && Number.isFinite(a[key]) ? bytes(a[key]) : "—");
+      return h("tr", { class: "net-app", "data-app": a.id },
+        h("th", { scope: "row" }, h("span", { class: "net-app-name", title: name }, h("span", { class: "ico " + meta.tone }, svg(meta.icon)), h("strong", null, name))),
+        total("down", "down"), total("up", "up"));
     });
   }
   const netSub = () => NET ? (NET.iface ? `${NET.iface} · son ${Math.round((NET.window || 120) / 60)} dk` : "WAN arayüzü bilinmiyor")
@@ -1666,50 +1658,36 @@
           h("div", { class: "net-rate down" }, h("span", { class: "lbl" }, "İndirme"), h("b", { id: "ag-rx" }, fresh ? speed(NET.rx) : "—")),
           h("div", { class: "net-rate up" }, h("span", { class: "lbl" }, "Yükleme"), h("b", { id: "ag-tx" }, fresh ? speed(NET.tx) : "—"))),
         h("div", { class: "net-chart" }, netChart(fresh ? NET : null))),
-      h("div", { class: "net-apps", id: "ag-apps" }, h("small", { class: "net-apps-head" }, "Uygulamalar · toplam"), ...netApps()),
+      h("div", { class: "net-apps", id: "ag-apps", tabindex: "0", role: "region", "aria-label": "Uygulama trafiği" },
+        h("table", { class: "net-table", "aria-label": "Uygulama aktarım toplamları" },
+          h("thead", null, h("tr", null, ...["Uygulama", "İndirme", "Yükleme"].map(t => h("th", { scope: "col" }, t)))),
+          h("tbody", null, ...netApps()))),
     ];
   }
   function paintNetwork() {
     const body = $("ag-body"), sub = $("ag-sub"), live = $("ag-live");
-    if (body) body.replaceChildren(...netBody());
+    // Preserve the scroll/focus of a long application list while replacing its measured values.
+    const old = $("ag-apps"), scroll = old?.scrollTop || 0, focused = old && document.activeElement === old;
+    if (body) {
+      body.replaceChildren(...netBody());
+      $("ag-apps").scrollTop = scroll;
+      if (focused) $("ag-apps").focus({ preventScroll: true });
+    }
     if (sub) sub.textContent = netSub();
     if (live) { live.textContent = netFresh() ? "Canlı" : "Bekleniyor"; live.className = "hm" + (netFresh() ? " ok" : ""); }
   }
   async function loadNetwork() {
     if (netBusy) return;
     netBusy = true;
-    try { NET = await api("/api/konsol/ag"); netFailed = false; }
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 12000);
+    try { NET = await api("/api/konsol/ag", { signal: controller.signal }); netReceived = performance.now(); netFailed = false; }
     catch (_err) { netFailed = true; }
-    finally { netBusy = false; }
+    finally { clearTimeout(timeout); netBusy = false; }
     if (current === "genel") paintNetwork();
   }
 
   /* -- widget'lar -- */
-  function widgetContent(id, v) {
-    if (id === "saat") {
-      const d = new Date(now() * 1000);
-      const fact = (label, value, mono) => h("div", null, h("dt", null, label), h("dd", mono ? { class: "mono" } : null, value || "—"));
-      return [
-        h("div", { class: "clock", id: "genel-clock" }, d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })),
-        h("div", { class: "hint-s" }, d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })),
-        h("dl", { class: "clock-facts" },
-          fact("Çalışma süresi", v.s && v.fresh ? uptimeText(v.s.uptime) : ""),
-          fact("Tailscale", v.s && v.s.net ? v.s.net.tailscale : "", true),
-          fact("WAN", v.s && v.s.net ? v.s.net.wan : "", true)),
-      ];
-    }
-    if (id === "durum") {
-      // v2-182: the check texts are not repeated here (Ayarlar → Sistem → Sağlık has them); the pill is the verdict.
-      const hs = S.health, pill = hs && HEALTH_PILL[hs.status] ? HEALTH_PILL[hs.status] : null;
-      return [
-        h("div", { class: "card-head" }, h("div", null, h("h2", null, "Sistem durumu"), h("small", { class: "hint-s" }, hs ? "Son denetim " + hhmm(hs.read_at) : healthFailed ? "Sağlık bilgisi okunamadı" : "Denetleniyor…")),
-          pill ? h("span", { class: "hm " + pill[0], id: "genel-health" }, pill[1]) : h("span", { class: "hm", id: "genel-health" }, "—")),
-        h("div", { class: "rings" },
-          h("div", { class: "big" }, ring(v.cpu), h("b", null, Number.isFinite(v.cpu) ? "%" + Math.round(v.cpu) : "—"), "İşlemci"),
-          h("div", { class: "big" }, ring(v.mem), h("b", null, Number.isFinite(v.mem) ? "%" + Math.round(v.mem) : "—"), "RAM"),
-          h("div", { class: "big pie-box" }, pie(v.disk), h("span", null, h("b", null, Number.isFinite(v.disk) ? "%" + Math.round(v.disk) : "—"), " Depolama"))),
-      ];
-    }
+  function widgetContent() {
     return [
       h("div", { class: "card-head" }, h("div", null, h("h2", null, "Ağ"), h("small", { class: "hint-s", id: "ag-sub" }, netSub())),
         h("span", { class: "hm" + (netFresh() ? " ok" : ""), id: "ag-live" }, netFresh() ? "Canlı" : "Bekleniyor")),
@@ -1722,20 +1700,14 @@
       renderOverview(true, `[data-widget="${def.id}"] [data-tool="${tool}"]`);
     };
     return h("div", { class: "widget-tools", role: "group", "aria-label": def.ad + " düzeni" },
-      h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "dar", "aria-label": `${def.ad}: daralt`, disabled: set.genislik <= 1,
-        onclick: () => change({ genislik: set.genislik - 1 }, "dar") }, "−"),
-      h("span", { class: "hm" }, `${set.genislik}/4`),
-      h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "genis", "aria-label": `${def.ad}: genişlet`, disabled: set.genislik >= 4,
-        onclick: () => change({ genislik: set.genislik + 1 }, "genis") }, "+"),
       h("button", { type: "button", class: "btn btn-sm btn-quiet", "data-tool": "gizle", "aria-label": `${def.ad}: ${set.gizli ? "göster" : "gizle"}`,
         onclick: () => change({ gizli: !set.gizli }, "gizle") }, svg("eye"), set.gizli ? "Göster" : "Gizle"));
   }
   function overviewWidgets() {
-    const v = resourceValues();
     return WIDGETS.filter((w) => editing || !widgetSetting(w.id).gizli).map((def) => {
       const set = widgetSetting(def.id);
       const el = h("article", { class: "card widget" + (set.gizli ? " is-hidden" : ""), "aria-label": def.label, "data-widget": def.id,
-        "data-span": String(set.genislik) }, ...widgetContent(def.id, v));
+        "data-span": String(set.genislik) }, ...widgetContent());
       if (editing) el.append(widgetTools(def, set));
       return el;
     });
@@ -1743,9 +1715,7 @@
 
   /* -- uygulama kareleri -- */
   function tileDefs() {
-    const shares = S.share && Array.isArray(S.share.items) ? S.share.items.length : null;
-    const installed = (MODS || []).filter((m) => m.installed);
-    const apps = installed.map((m) => {
+    return (MODS || []).filter((m) => m.installed).map((m) => {
       const meta = metaOf(m.id);
       const state = m.busy ? "işleniyor" : m.state === "durduruldu" ? "durduruldu" : (unitRuntime(m) && m.live !== "running") || m.live === "exited" ? "çalışmıyor" : "çalışıyor";
       const dot = m.busy ? "warn" : state === "çalışıyor" ? "on" : state === "durduruldu" ? "off" : "warn";
@@ -1753,13 +1723,6 @@
       return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,
         launch: launchUrl(m), settings: form && form.oku && form.yaz ? "form" : meta.rota ? "#/" + meta.rota : "", service: !!m.durdurulabilir };
     });
-    return [
-      { key: "dosyalar", href: "#/dosyalar", icon: "folder", tone: TONE_FALLBACK.dosyalar, name: "Dosyalar", sub: S.fs && S.fs.root ? S.fs.root : "kullanıcı alanı" },
-      ...apps,
-      { key: "paylasim", href: "#/dosyalar/paylasim", icon: "share", tone: TONE_FALLBACK.paylasim, name: "Paylaşımlar", sub: shares == null ? "klasör WebDAV" : shares === 1 ? "1 paylaşım" : `${shares} paylaşım` },
-      { key: "moduller", href: "#/moduller", icon: "stack", tone: TONE_FALLBACK.moduller, name: "App Store", sub: MODS ? `${installed.length} kurulu · ${MODS.length - installed.length} kurulabilir` : "okunuyor…" },
-      { key: "ayarlar", href: "#/ayarlar", icon: "sliders", tone: TONE_FALLBACK.ayarlar, name: "Ayarlar", sub: "sistem, güvenlik duvarı, Caddy, DNS" },
-    ];
   }
   // Kayıtlı sıradakiler önce, kayıtta olmayanlar (sonradan kurulan uygulama) varsayılan sırayla sonra.
   function orderedTiles() {
@@ -1770,10 +1733,10 @@
   function tileEl(def, index, total) {
     const inner = [def.dot ? h("span", { class: "dot " + def.dot, "aria-hidden": "true" }) : null,
       h("span", { class: "ico " + def.tone }, svg(def.icon)), h("strong", null, def.name), h("small", null, def.sub)];
-    // DD-210: an installed application's tile carries a compact action row beneath its icon (Ayarlar and,
-    // where the app can stop, Durdur/Başlat). The row sits next to the (stretched) launch link, never
+    // DD-212: three fixed action slots beneath the icon (Ayarlar, Durdur/Başlat, Günlükler).
+    // The row sits next to the (stretched) launch link, never
     // inside it; the link opens the app's web UI. Edit mode draws the plain tiles below.
-    const actions = !editing && (def.settings || def.service) ? appActions(def) : null;
+    const actions = !editing ? appActions(def) : null;
     if (actions) return h("div", { class: "tile card has-actions", "data-tile": def.key },
       h("a", { class: "tile-link", href: def.launch || def.href, ...newTab(def.launch),
         "aria-label": def.launch ? `${def.name}: arayüzü yeni sekmede aç` : def.name }, ...inner), actions);
@@ -1792,10 +1755,12 @@
     const m = (MODS || []).find((x) => x.id === def.key);
     if (!m) return null;
     const kids = [];
+    const blank = (action) => h("span", { class: "tile-act tile-act-empty", "data-act": action, "aria-hidden": "true" });
     const named = (name) => ({ "aria-label": name, title: name });
     if (def.settings === "form") kids.push(h("button", { type: "button", class: "tile-act", "data-act": "ayar", ...named(`${def.name} ayarları`),
       onclick: () => appForm(m.id, "ayar") }, svg("sliders")));
     else if (def.settings) kids.push(h("a", { class: "tile-act", "data-act": "ayar", href: def.settings, ...named(`${def.name} ayarları`) }, svg("sliders")));
+    else kids.push(blank("ayar"));
     if (def.service) {
       const running = m.state === "calisiyor", busy = !!m.busy || tilePending.has(m.id);
       const doing = m.busy ? m.progress && m.progress.action : tilePending.get(m.id);
@@ -1803,8 +1768,46 @@
         : running ? "Durdur" : "Başlat";
       kids.push(h("button", { type: "button", class: "tile-act", "data-act": "servis", "aria-disabled": busy ? "true" : "false",
         ...named(`${def.name}: ${word}`), onclick: () => tileService(m.id) }, svg(busy ? "clock" : running ? "pause" : "play")));
+    } else kids.push(blank("servis"));
+    kids.push(h("button", { type: "button", class: "tile-act", "data-act": "gunluk", ...named(`${def.name} günlükleri`),
+      onclick: () => appLog(m.id) }, svg("list")));
+    return h("div", { class: "tile-actions", role: "group", "aria-label": `${def.name} işlemleri` }, ...kids);
+  }
+  function appLog(id) {
+    const meta = metaOf(id), opener = document.activeElement;
+    const root = h("div", { class: "app-log-root" });
+    const output = h("pre", { tabindex: "0", "aria-label": `${meta.name} günlük çıktısı` }, "Okunuyor…");
+    const error = h("p", { class: "err-s", role: "alert", hidden: true });
+    let controller = null, closed = false;
+    const mine = () => !closed && $("sh").open && $("sh-body").contains(root);
+    const refresh = h("button", { type: "button", class: "btn btn-quiet btn-sm", onclick: read }, svg("refresh"), "Yenile");
+    root.append(shHead(`${meta.name} günlükleri`, meta.logSrc, "list"), h("div", { class: "logbox" }, output), error,
+      h("div", { class: "dlg-foot" }, refresh, h("button", { type: "button", class: "btn btn-primary", onclick: shClose }, "Kapat")));
+    $("sh-body").replaceChildren(root);
+    if (!$("sh").open) $("sh").showModal();
+    $("sh").addEventListener("close", () => {
+      const own = $("sh-body").contains(root);
+      closed = true; controller?.abort();
+      if (own) (opener?.isConnected ? opener : document.querySelector(`[data-tile="${id}"] [data-act="gunluk"]`))?.focus();
+    }, { once: true });
+    read();
+    async function read() {
+      if (refresh.disabled) return;
+      refresh.disabled = true; error.hidden = true;
+      const request = new AbortController();
+      controller = request;
+      const timeout = setTimeout(() => request.abort(), 12000);
+      try {
+        const response = await fetch(`/api/konsol/moduller/${enc(id)}/gunluk`, {
+          headers: { "X-Konsol": "1" }, cache: "no-store", credentials: "same-origin", signal: request.signal });
+        if (response.status === 401) { const body = await response.json().catch(() => ({})); if (body.giris) toLogin(); }
+        if (!response.ok) throw new Error(`Günlük okunamadı (HTTP ${response.status}).`);
+        const value = await response.text();
+        if (mine()) output.textContent = value || "(boş)";
+      } catch (err) {
+        if (mine()) { output.textContent = ""; error.textContent = err.name === "AbortError" ? "Günlük okunamadı; istek zaman aşımına uğradı." : err.message; error.hidden = false; }
+      } finally { clearTimeout(timeout); refresh.disabled = false; }
     }
-    return kids.length ? h("div", { class: "tile-actions" }, ...kids) : null;
   }
   function tileService(id) {
     const m = (MODS || []).find((x) => x.id === id);
@@ -1909,18 +1912,28 @@
     if (current !== "genel" || (editing && !force) || drag) return;
     const widgets = $("genel-widgets"), tiles = $("genel-tiles");
     if (!layoutLoaded) { widgets.replaceChildren(); tiles.replaceChildren(); paintEditBar(); return; }
+    const oldApps = $("ag-apps"), appScroll = oldApps?.scrollTop || 0;
+    const appFocused = !focus && oldApps && document.activeElement === oldApps;
     widgets.replaceChildren(...overviewWidgets());
+    const newApps = $("ag-apps");
+    if (newApps) {
+      newApps.scrollTop = appScroll;
+      if (appFocused) newApps.focus({ preventScroll: true });
+    }
     widgets.classList.toggle("editing", !!editing);
     const defs = modsSettled ? orderedTiles() : [];
     // A poll redraws the tiles; keyboard focus on a tile's link or settings action stays on its new copy.
     const had = document.activeElement, hadTile = !focus && had && had.closest ? had.closest("#genel-tiles [data-tile]") : null;
     const hadPart = hadTile && had !== hadTile ? (had.dataset.act ? ` [data-act="${had.dataset.act}"]` : " .tile-link") : "";
     tiles.replaceChildren(...defs.map((d, i) => tileEl(d, i, defs.length)));
+    if (modsSettled && !defs.length) tiles.append(h("div", { class: "home-empty" },
+      h("p", { class: "hint-s" }, MODS ? "Henüz kurulu uygulama yok." : "Uygulama listesi okunamadı."),
+      h("a", { href: "#/moduller", class: "btn btn-sm btn-quiet" }, svg("stack"), "App Store’u aç")));
     if (hadTile) tiles.querySelector(`[data-tile="${hadTile.dataset.tile}"]${hadPart}`)?.focus({ preventScroll: true });
     tiles.classList.toggle("editing", !!editing);
     const installed = (MODS || []).filter((m) => m.installed).length;
     $("genel-sum").textContent = editing ? "Düzenleniyor · değişiklikler Bitti ile kaydedilir"
-      : MODS ? (installed ? `${installed} kurulu uygulama ve Konsol bölümleri` : "Konsol bölümleri; uygulamalar App Store’dan kurulur") : "";
+      : MODS && installed ? `${installed} kurulu uygulama` : "";
     const stamp = $("genel-stamp");
     if (stamp) stamp.textContent = S.sys ? "Son okuma " + hhmm(S.sys.read_at) : "Okunuyor…";
     paintEditBar();
@@ -1931,12 +1944,12 @@
     }
   }
   const overviewActions = () => [h("span", { class: "hm", id: "genel-stamp" }, "Okunuyor…"),
-    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadHealth(); loadModules(); loadFsState(); loadShares(); loadNetwork(); } }, svg("refresh"), "Yenile")];
+    h("button", { type: "button", class: "btn btn-quiet", onclick: () => { loadSystem(); loadModules(); loadNetwork(); } }, svg("refresh"), "Yenile")];
 
   // Konsol'un kendi sayfaları; uygulama sayfaları paketlerden gelir (DD-200/202).
   const ROUTES = {
     genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,
-      render: () => { renderOverview(); loadLayout(); loadNetwork(); loadHealth(); loadFsState(); loadShares(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
+      render: () => { renderOverview(); loadLayout(); loadNetwork(); if (!(MODS || []).some((m) => m.busy)) loadModules(); } },
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
@@ -2089,10 +2102,9 @@
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
     if (current === "konteynerler") containers.poll();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
-    if (current === "genel") { loadHealth(); loadFsState(); loadShares(); }
     if ((current === "moduller" || current === "genel") && !(MODS || []).some((m) => m.busy)) loadModules();
   }, 10000);
-  setInterval(() => { if (!document.hidden) { paintResources(); if (current === "genel") { const c = $("genel-clock"); if (c) c.textContent = new Date(now() * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }); } } }, 1000);
+  setInterval(() => { if (!document.hidden) { paintResources(); if (current === "genel" && NET && !netReplyFresh()) paintNetwork(); } }, 1000);
   // DD-206: the network card reads every 2 s while the overview shows it.
   setInterval(() => { if (!document.hidden && current === "genel" && (editing || !widgetSetting("ag").gizli)) loadNetwork(); }, 2000);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && editing && current === "genel" && !$("sh").open) cancelEdit(); });

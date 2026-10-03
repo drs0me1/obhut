@@ -481,12 +481,12 @@ Contract in §5–§7 and `folder-shares.md`.
   (**DD-147**); on the public name every path except the sign-in page and API
   also needs a Konsol session, while the tailnet address asks for none
   (**DD-194**, **DD-205**).
-  - Pages (**DD-160**, **DD-200**, **DD-204**): Genel bakış (the landing page since
-    **DD-204**: widgets — clock with date, uptime and the Tailscale and WAN addresses;
-    CPU/RAM rings, a storage pie and the health pill; the network card (**DD-206**) — plus
-    tiles for Dosyalar, every installed application, Paylaşımlar, App Store and Ayarlar),
-    Dosyalar, App Store (§1.11, laid out as tiles),
-    the installed applications' pages and Ayarlar, in one responsive sidebar. The skin is
+  - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212**): Genel bakış remains the
+    landing page, with only installed application tiles and the network widget.
+    Dosyalar, Paylaşımlar, App Store and Ayarlar have no home cards. Dosyalar, App Store
+    (§1.11, laid out as tiles), the installed applications' pages and Ayarlar remain in
+    one responsive sidebar; Paylaşımlar is a tab inside Dosyalar, not a separate
+    sidebar entry. The skin is
     a wallpaper (inline SVG, no external asset) behind translucent surfaces; readers who
     ask for reduced transparency get opaque surfaces. An
     application's link, section, App Store texts and journal words come from its
@@ -498,45 +498,62 @@ Contract in §5–§7 and `folder-shares.md`.
     address, only while that publication is active; otherwise it points to
     Settings → Caddy (**DD-195**). `/api/konsol/moduller` carries both as `urls`. CPU, memory and disk sit below the sidebar menu, read
     from the gated `/api/konsol/kaynaklar` endpoint; missing or stale
-    measurements show as unknown, never as zero. An unknown route opens
+    measurements show as unknown, never as zero. Clock/date sit below those resources;
+    the sidebar also shows WAN/Tailscale addresses, version and uptime. Separate home
+    clock/system widgets, including their unused SVG/CSS, are removed. An unknown route opens
     Genel bakış; a page of an absent application opens App Store.
-  - **Opening an application and its settings (DD-210).** An application with a native
+  - **Opening an application and its actions (DD-210, DD-212).** An application with a native
     web interface (its `urls`) opens there in a new tab (`noopener`) from its overview
     tile, its sidebar entry and its App Store "Aç" while it runs: the public name on the
     public HTTPS address, the tailnet name on the tailnet address. A stopped, busy or
     unpublished application (on the public address without an active public name) opens
     its Konsol page instead; the public address never links a private name. Beneath the
-    icon of every installed App Store application's tile is a compact row of bare icons
-    (v2-188; v2-189: no visible text, background or border; the name is the `aria-label` and
-    the tooltip), a sibling of the launch link and absent in edit mode and on built-in tiles: **Ayarlar**
+    icon of every installed App Store application's tile is a row with three fixed
+    positions: **Ayarlar**, **Durdur/Başlat**, **Günlükler**. The actions are bare icons
+    (no visible text, background or border; accessible names and tooltips remain),
+    siblings of the launch link and absent in edit mode. Unsupported actions leave a
+    blank, non-interactive slot so supported actions stay aligned. **Ayarlar**
     opens the package's declared `form` (read/write routes) in a dialog for the same fields
     as the install form (current values from the package API, never a password; only
     changed fields are sent; a blank password keeps the stored one), or else links the
     package's page; **Durdur/Başlat** appears only for `durdurulabilir` packages, asks the
     App Store's stop confirmation before stopping and uses the same lifecycle request and
     progress; it is locked (`aria-disabled`, still focusable) from the click until the
-    operation ends, shows a refusal and follows the server's state. Settings stay usable
-    while the app is stopped. The page stays reachable from App Store details and its route.
-  - **Overview layout and network card (DD-206).** "Düzenle" (bottom-left, below the
-    tiles, sticky on a long page) lets the operator move tiles (dragging with mouse or finger, or arrow
-    buttons), set each widget's width to 1–4 of four columns (height follows the row,
-    it is not adjustable) and hide or show it; "Bitti" saves, "Vazgeç"/Escape drops the
+    operation ends, shows a refusal and follows the server's state. WireGuard leaves
+    the start/stop position blank. **Günlükler** opens a dialog backed by the existing
+    module journal. Settings stay usable while the app is stopped. The page stays
+    reachable from App Store details and its route.
+  - **Overview layout and network card (DD-206, DD-212).** "Düzenle" (bottom-left, below the
+    tiles, sticky on desktop and in normal flow on phones) lets the operator move tiles (dragging with mouse or finger, or arrow
+    buttons) and hide or show the sole network widget (`ag`). Its width is fixed at
+    four columns; there are no width controls. "Bitti" saves, "Vazgeç"/Escape drops the
     draft, "Varsayılan" returns to the defaults. The layout lives on the server:
     `GET /api/konsol/duzen` → `{duzen: {schema, kareler, widgetlar} | null}`, `POST`
     `{duzen: …}` or `{sifirla: true}`; the root backend checks the shape only (keys
     `^[a-z]{2,16}$`, at most 32 tiles and 8 widgets, width 1–4, boolean visibility), writes
     `KONSOL_AUTH_DIR/duzen.json` (0600, atomic) and logs `duzen kaydet|sifirla`; a damaged
-    record means the defaults. Tiles missing from the saved order (a newly installed
-    application) follow in the default order. The network card reads `GET
+    record means the defaults. The frontend ignores saved IDs of removed tiles/widgets
+    and normalizes older `ag` widths to 4, preserving visibility. Tiles missing from
+    the saved order (a newly installed application) follow in the default order.
+    The network card reads `GET
     /api/konsol/ag` every 2 s while shown: the WAN interface's (`WAN_INTERFACE`) receive
     and send rates in bytes/s — computed from `/sys/class/net/<if>/statistics`, a point at
     most every 1.5 s plus one per background sample, the last 120 s returned — and, per
-    installed package that declares `PAKET_TRAFIK`, its own module's totals `{down, up,
-    since}` as the application's users see them (cached 2 s; a stopped package shows as
-    stopped, a failing module only empties its own row). qBittorrent's are its own
-    all-time totals from `qBittorrent-data.conf` with the file's time (`at`; it lags by
-    the application's save interval), WireGuard's its networks' interface counters since
-    the networks came up (`since`; down = sent to the peers).
+    installed package that declares `PAKET_TRAFIK`, its own module's cumulative totals
+    `{down, up, since}` (cached 2 s; a stopped package shows as stopped, a failing module
+    only empties its own row). qBittorrent's are its own all-time totals from
+    `qBittorrent-data.conf` with the file's time (`at`); these can lag between the
+    application's statistics-file saves. WireGuard's are its networks' interface
+    counters since the networks came up (`since`; down = sent to the peers).
+    Live server rates/chart and the application table occupy equal-width, equal-height
+    sections beside one another. The table is borderless, with three columns:
+    application icon/name, cumulative download total and cumulative upload total.
+    Its fixed-height area scrolls when rows overflow. Application totals use byte
+    units, never bytes/s; only the server rates/chart section shows live speeds.
+    Missing, non-finite or stale measurements show as unknown, never as zero; one
+    application's missing measurement does not hide other rows or the server rates.
+    Existing backend traffic sources and authentication are unchanged; no new rate
+    module or additional qBittorrent login is introduced.
   - **Konteynerler (DD-211)** is a main sidebar page at `#/konteynerler`, with
     containers, images, named volumes and networks. Old Settings deep links redirect.
     Inventory merges real Podman state, installed App Store applications and saved

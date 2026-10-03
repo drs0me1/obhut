@@ -3152,7 +3152,7 @@ PY
     grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
-@test "console skin (DD-204): wallpaper and glass from tokens, an overview page with tiles, no external asset" {
+@test "console skin (DD-204, DD-212): installed home tiles, fixed actions and sidebar resources, no external asset" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css"
     # The overview is the landing page and a shell route; the wallpaper is inline SVG with no inline style.
     grep -q '<a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>' "$html"
@@ -3166,20 +3166,45 @@ PY
     # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
     grep -qF 'genel: { title: "Genel bakış", eyebrow: "Sunucu yönetimi", actions: overviewActions,' "$js"
     grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,' "$js"
-    # DD-210: a running app with publication names opens its own web UI; the action row (Ayarlar, Durdur/Başlat)
-    # sits beside the launch link; no action on built-in tiles.
+    # DD-212: only installed applications become home tiles; built-in navigation stays available.
+    local defs actions journal sidebar
+    defs="$(awk '/^  function tileDefs\(\)/,/^  }$/' "$js")"
+    grep -qF 'return (MODS || []).filter((m) => m.installed).map((m) => {' <<<"$defs"
+    run ! grep -qE 'key: "(dosyalar|paylasim|moduller|ayarlar)"' <<<"$defs"
+    for route in dosyalar moduller ayarlar; do grep -qF "data-route=\"$route\"" "$html"; done
+    # Native launch and lifecycle remain; three action slots are siblings of the launch link.
     grep -qF 'launch: launchUrl(m), settings: form && form.oku && form.yaz ? "form" : meta.rota ? "#/" + meta.rota : "", service: !!m.durdurulabilir };' "$js"
-    grep -qF 'const actions = !editing && (def.settings || def.service) ? appActions(def) : null;' "$js"
+    grep -qF 'const actions = !editing ? appActions(def) : null;' "$js"
     grep -qF 'if (m.state === "calisiyor") askStop(m, () => go("durdur")); else go("baslat");' "$js"
     grep -qF 'const newTab = (url) => (url ? { target: "_blank", rel: "noopener noreferrer" } : {});' "$js"
-    # v2-179: no separate storage/CPU-history card; storage is a pie beside the CPU/RAM rings.
-    grep -qF 'h("div", { class: "big pie-box" }, pie(v.disk),' "$js"
-    run ! grep -qE 'class="spark"|class: "bar"|İşlemci geçmişi' "$js"
-    # v2-182: the status card shows the three charts only (no check lines); they are 84 px in three equal columns.
-    run ! grep -qF 'Sağlık denetimi bekleniyor' "$js"
-    grep -q '^\.ring, \.pie { width:84px; height:84px; max-width:100%; transform:rotate(-90deg); }$' "$css"
-    grep -q '^\.rings { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));' "$css"
-    grep -q '^\.pie \.fg { fill:none; stroke:var(--accent); stroke-width:18; }$' "$css"
+    actions="$(awk '/^  function appActions\(def\)/,/^  }$/' "$js")"
+    grep -qF 'class: "tile-act tile-act-empty", "data-act": action, "aria-hidden": "true"' <<<"$actions"
+    grep -qF 'else kids.push(blank("ayar"));' <<<"$actions"
+    grep -qF '} else kids.push(blank("servis"));' <<<"$actions"
+    grep -qF '"aria-label": name, title: name' <<<"$actions"
+    grep -qF '"data-act": "gunluk"' <<<"$actions"
+    grep -qF 'onclick: () => appLog(m.id)' <<<"$actions"
+    grep -qE '^\.tile-actions \{ .*display:grid; grid-template-columns:repeat\(3,[1-9][0-9]*px\);' "$css"
+    grep -qF '.tile-act-empty { cursor:default; pointer-events:none; }' "$css"
+    [ "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" ]
+    [ "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n '"data-act": "gunluk"' <<<"$actions" | cut -d: -f1)" ]
+    # The dialog consumes the existing module journal as text, through the usual request gate.
+    journal="$(awk '/^  function appLog\(id\)/,/^  }$/' "$js")"
+    grep -qF '$("sh").showModal()' <<<"$journal"
+    grep -qF 'fetch(`/api/konsol/moduller/${enc(id)}/gunluk`' <<<"$journal"
+    grep -qF '"X-Konsol": "1"' <<<"$journal"
+    grep -qF 'output.textContent = value || "(boş)"' <<<"$journal"
+    run ! grep -q 'innerHTML' <<<"$journal"
+    # Resources and clock/date remain in the sidebar; removed home widgets have no SVG/CSS remnants.
+    sidebar="$(awk '/<aside /,/<\/aside>/' "$html")"
+    for id in resource-cpu resource-mem resource-disk side-clock side-date foot-ts foot-wan foot-version foot-uptime; do
+        grep -qF "id=\"$id\"" <<<"$sidebar"
+    done
+    [ "$(grep -n 'id="side-clock"' <<<"$sidebar" | cut -d: -f1)" -gt "$(grep -n 'id="resource-disk"' <<<"$sidebar" | cut -d: -f1)" ]
+    grep -qF 'function paintSidebarClock()' "$js"
+    grep -qF '$("foot-uptime").textContent = fresh && Number.isFinite(s.uptime)' "$js"
+    run ! grep -qE 'genel-clock|genel-health|const (ring|pie) =|function (ring|pie)\(' "$js"
+    run ! grep -qE '(^|[[:space:],])\.(clock(-facts)?|rings?|pie(-box)?)([[:space:].,{]|$)' "$css"
     run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css"
     # Glass tokens, opaque fallbacks for reduced transparency and engines without backdrop-filter.
     for token in -- '--glass:' '--glass-line:' '--blur:' '--radius:' '--sky1:' '--m4:'; do [ "$token" = -- ] || grep -q -- "$token" "$css"; done
@@ -3191,10 +3216,10 @@ PY
     grep -q '^\.store-list { display:grid;' "$css"
     grep -qF 'h("article", { class:"store-row", id:`modc-${m.id}`' "$js"
     # Icons the overview uses exist (svg() silently falls back to the file icon).
-    for icon in home clock folder share stack sliders refresh; do grep -qE "^    ${icon}: '" "$js"; done
+    for icon in home clock folder share stack sliders refresh list; do grep -qE "^    ${icon}: '" "$js"; done
 }
 
-@test "overview layout and network card (DD-206): server-side layout, package traffic modules, no app names in the shell" {
+@test "overview layout and network card (DD-206, DD-212): one fixed widget, server rates and cumulative app totals" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css" backend="$V2_ROOT/panel/master-panel"
     # Düzenle sits below the tiles and sticks to the bottom-left of a long page (never over the last row).
     grep -qF '<div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Genel bakış düzeni"></div>' "$html"
@@ -3203,12 +3228,18 @@ PY
     # The tiles wait for the module list (no jump), and Düzenle waits for both the layout and the list.
     grep -qF 'const defs = modsSettled ? orderedTiles() : [];' "$js"
     grep -qF 'disabled: !layoutLoaded || !modsSettled, onclick: startEdit' "$js"
-    # Three widgets in a fixed order; width 1–4 columns (no height control), visibility; the clock card has no version line.
-    grep -qF '{ id: "saat", ad: "Saat", label: "Saat ve sunucu", genislik: 2 },' "$js"
-    grep -qF '{ id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },' "$js"
-    grep -q '^\.widgets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }$' "$css"
-    for n in 1 2 3 4; do grep -qF ".widget[data-span=\"$n\"] { grid-column:span $n; }" "$css"; done
-    run ! grep -qF '${v.s.host} · ' "$js"
+    # Only ag survives; an old width is ignored while its visibility is retained.
+    local widgets tools totals
+    widgets="$(awk '/^  const WIDGETS = \[/,/^  ];$/' "$js")"
+    [ "$(grep -c 'id:' <<<"$widgets")" -eq 1 ]
+    grep -qF '{ id: "ag", ad: "Ağ", label: "Ağ", genislik: 4 },' <<<"$widgets"
+    grep -qF 'return { genislik: base.genislik, gizli: own ? own.gizli : false };' "$js"
+    grep -qF 'widgetlar: WIDGETS.map((w) => ({ id: w.id, ...widgetSetting(w.id) }))' "$js"
+    grep -qF 'const defs = tileDefs(), order = activeLayout().kareler || [];' "$js"
+    grep -qF '.widgets { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }' "$css"
+    tools="$(awk '/^  function widgetTools\(def, set\)/,/^  }$/' "$js")"
+    grep -qF 'change({ gizli: !set.gizli }, "gizle")' <<<"$tools"
+    run ! grep -qE '"data-tool": "(dar|genis)"|genislik:' <<<"$tools"
     run ! grep -qE 'grid-row:span|data-height|yukseklik' "$js" "$css"
     # The layout is stored by the root backend in KONSOL_AUTH_DIR (format checks only); the shell names no application.
     grep -qx 'LAYOUT_FILE = "duzen.json"' "$backend"
@@ -3221,6 +3252,22 @@ PY
     [ "$(grep -c 'localStorage' "$js")" -eq 2 ] && grep -q 'localStorage.setItem("konsol-files-view"' "$js"
     run ! grep -qE 'sessionStorage' "$js"
     run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css" "$html"
+    # Application columns show cumulative byte totals; only the server section shows live rates.
+    totals="$(awk '/^  function netApps\(\)/,/^  }$/' "$js")"
+    grep -qF 'total("down", "down"), total("up", "up")' <<<"$totals"
+    grep -qF 'fresh && Number.isFinite(a[key]) ? bytes(a[key]) : "—"' <<<"$totals"
+    run ! grep -qE 'speed\(|down_rate|up_rate' <<<"$totals"
+    grep -qF 'if (!Number.isFinite(b)) return "—";' "$js"
+    grep -qF 'fresh ? speed(NET.rx) : "—"' "$js"
+    grep -qF 'fresh ? speed(NET.tx) : "—"' "$js"
+    grep -qF 'h("table", { class: "net-table", "aria-label": "Uygulama aktarım toplamları" }' "$js"
+    grep -qF '...["Uygulama", "İndirme", "Yükleme"].map' "$js"
+    grep -qF 'class: "net-app-name", title: name' <<<"$totals"
+    # Equal-width, equal-height sections and a borderless table with fixed-height overflow.
+    grep -qF '@container (min-width:640px) { .net { grid-template-columns:repeat(2,minmax(0,1fr)); } }' "$css"
+    grep -qE '^\.net-live, \.net-apps \{ min-width:0; height:[1-9][0-9]*px; \}$' "$css"
+    grep -qF '.net-apps { overflow:auto; scrollbar-width:thin; }' "$css"
+    grep -qF '.net-table th, .net-table td { border:0;' "$css"
     # Network: WAN counters from sysfs (no command in the sampler), package totals from PAKET_TRAFIK modules.
     grep -qF 'open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb")' "$backend"
     grep -qF 'master_settings.load_package_module(env, mid, name, "trafik", label)' "$backend"

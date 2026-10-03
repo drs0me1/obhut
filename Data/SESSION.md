@@ -4,6 +4,51 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-04 — Overview simplification, source v2-191 (DD-212; locally verified):**
+- Requested outcome: only installed application tiles, with fixed settings/start-stop/log
+  icon slots and empty unsupported slots; logs use the existing module journal. Built-in
+  navigation stays available: Dosyalar, Ayarlar and App Store in the sidebar, Paylaşımlar
+  as a tab inside Dosyalar. Home clock/system widgets and unused SVG/CSS are removed;
+  clock/date sit below sidebar resources with WAN/Tailscale addresses, version and uptime.
+- Network (`ag`) is the only widget, fixed at full width, with hide/show and tile reordering
+  through the existing server layout contract. Ignore removed saved widget/tile IDs and
+  normalize older `ag` widths to 4. Equal-size live server rates/chart and application-table
+  sections; a borderless three-column icon/name, cumulative download total, cumulative
+  upload total table scrolls inside a fixed-height area. Application `down`/`up` counters
+  use byte units, never bytes/s; unavailable totals remain unknown. Only the server
+  section shows live rates. No backend, traffic-module or authentication changes and
+  no additional qBittorrent login; its existing all-time totals can lag between saves.
+- Shared checkout: `~/Documents/debian-server-installer`. Main implemented
+  the console; parallel helpers covered browser regressions and documentation/source guards.
+  Main independently reproduced the initial missing behavior, log retry after timeout and
+  table scroll reset failures, then reran the final tests after fixing them. Logs render as
+  text, abort on close and cannot overwrite a newer dialog; each retry has a fresh signal.
+  Network and resource polling preserve the table's scroll position and keyboard focus.
+  Final visual review caught the sticky edit toolbar over a tile at 390×844; a regression
+  reproduced the intersection. On phones the toolbar now stays below tiles in normal flow;
+  desktop keeps its sticky behavior.
+- Local validation: `PYTHONDONTWRITEBYTECODE=1 python3.13 -m unittest discover -s Data/tests
+  -p 'test_*.py'` — 541 tests, 537 passed / 4 platform skips; `bats Data/tests` — 176 tests,
+  173 passed / 3 skips (no GNU timeout on this Mac), exit 0. `node --check` on the console
+  and changed browser tests, `bash -n Data/install.sh`, and `git diff --check` passed.
+- Main ran all ten fixture browser suites with `NODE_PATH=/opt/homebrew/lib/node_modules
+  node Data/tests/<suite>.cjs`: `panel-ui`, `app-install-ui`, `files-ui`, `torrent-ui`,
+  `konteynerler-ui`, `wireguard-ui`, `settings-ui`, `publications-ui`, `settings-https-ui`,
+  `giris-ui` — all PASS. New assertions cover installed-only home/empty state, legacy layout,
+  fixed equal network halves, cumulative/unknown/zero totals, scrolling/focus, sidebar context,
+  three action slots, 44 px targets, logs, desktop/320/390 px and both themes under production CSP.
+  Final screenshots were inspected. Evidence: macOS temp directories
+  `konsol-v131-panel-B0g29j` and `konsol-app-install-YsqNBt` (paths in task transcript).
+- Test-harness issues were diagnosed separately: preview connection reset under concurrent
+  browser loads passed on serial rerun; the dialog-close helper now arms its listener before
+  Escape and has a deadline; responsive hit tests await the existing transient notification.
+  These fixture tests do not establish live nrm or Linux acceptance; no deployment was attempted.
+- Source `V2_VERSION` is `2026.08.06-v2-191`; root and `Data/app` portable installers remain
+  `2026.08.06-v2-190.command`. The user requested the commit after local acceptance.
+  Pre-commit syntax/whitespace checks and the two overview Bats guards passed again.
+  No export, server operation, Desktop copy or frozen version copy was performed.
+  Unrelated agent configuration stays untouched and is excluded from the commit.
+
 **2026-10-03 — Container manager v2-190 implemented and live-verified on nrm (Astra + Opus):**
 - User accepted the prototype, requested implementation, then requested its commit after live acceptance.
   Baseline `5b91f65` / v2-189. The implementation commit includes the accepted design and existing v2-190

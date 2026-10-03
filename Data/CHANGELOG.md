@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-04 — Installed applications and one network widget on the overview (v2-191)
+
+- The home tiles contain only installed applications. Dosyalar, Ayarlar and App Store
+  remain in the sidebar; Paylaşımlar remains a tab inside Dosyalar, not a separate
+  sidebar entry. None has a duplicate home card.
+- Each application has three fixed icon positions: settings, start/stop and logs.
+  Unsupported actions leave an empty position; WireGuard has no start/stop action.
+  Logs open a dialog using the existing module journal.
+- Clock/date move below the sidebar resources, alongside WAN/Tailscale addresses,
+  version and uptime. The separate home clock/system widgets and their unused SVG/CSS
+  are removed.
+- Network is the only home widget, fixed at full width. Hide/show and application
+  reordering keep the existing server layout contract; removed saved IDs are ignored
+  and an older network width is normalized to four columns.
+- The live server rates/chart and the borderless application table share equal width
+  and height. The table has application icon/name, cumulative download total and
+  cumulative upload total columns in a fixed-height scrolling area. Only the server
+  section shows rates; application totals use byte units, never bytes/s. Unavailable
+  totals remain unknown. Existing traffic sources and authentication are unchanged;
+  qBittorrent's all-time totals can lag until its next statistics-file save.
+- Regression coverage includes log timeout/retry and late answers, table scroll/focus
+  retention, three icon hit targets and responsive layout in both themes. The mobile
+  edit toolbar stays below the tiles rather than covering them on short screens.
+- DD-212 records the contract; local validation results are in `SESSION.md`.
+  Source is v2-191; the portable installers remain v2-190. No live deployment performed.
+
 ### 2026-10-03 — Main-sidebar container manager (v2-190)
 
 - Containers moves from Settings into the main sidebar with containers, images, volumes

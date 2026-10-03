@@ -13,6 +13,44 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-212: Installed application home tiles and one fixed network widget (v2-191)
+
+- **Request (2026-10-04):** simplify the overview to installed applications and the
+  network widget. Dosyalar, Ayarlar and App Store keep their sidebar navigation;
+  Paylaşımlar remains a tab inside Dosyalar, not a separate sidebar entry. None has a
+  duplicate home card. This changes the overview composition from DD-204 and DD-206
+  and extends the DD-210 action row.
+- **Stable action positions:** every installed application has three bare-icon slots
+  in this order: settings, start/stop, logs. Unsupported slots remain blank and
+  non-interactive, so other actions do not move; WireGuard's start/stop slot is empty.
+  Keep accessible labels/tooltips, focus, existing settings forms and lifecycle
+  confirmation/progress. Logs open a dialog through the existing module journal.
+- **Sidebar context:** move clock/date below CPU, memory and disk; retain WAN and
+  Tailscale addresses, version and uptime there. Remove the separate home clock/system
+  widgets and their unused SVG/CSS. Resource information remains available without
+  repeating it in home widgets.
+- **Layout compatibility:** `ag` is the only widget, always full width (four columns).
+  Keep hide/show, tile reordering and the existing server layout API/schema and safe
+  writer. The frontend ignores removed saved widget/tile IDs and normalizes any older
+  `ag` width to 4 while retaining its visibility. There is no server data migration
+  or per-device layout; new installed tiles follow the saved order as before. On phones
+  the edit toolbar stays in normal flow below the tiles, preventing a short viewport
+  from covering a card; the desktop toolbar retains its sticky behavior.
+- **Network presentation:** equal-width and equal-height sections place live server
+  download/upload rates and chart beside a borderless three-column application table:
+  icon/name, cumulative download total, cumulative upload total. The table has a
+  fixed-height overflow area so more applications do not stretch the widget.
+- **Measurement meaning:** the user's clarified contract keeps application `down`/`up`
+  counters as cumulative totals formatted in byte units, never bytes/s. Only the server
+  rates/chart section shows live speeds. Missing, non-finite or stale measurements stay
+  unknown rather than zero, without suppressing other rows or server measurements.
+  Existing backend traffic sources and authentication stay unchanged: no new rate
+  module or additional qBittorrent login. qBittorrent's existing all-time totals can
+  lag between its statistics-file saves; they are not live measurements.
+- **Delivery and evidence:** source version v2-191; portable installers remain v2-190
+  until an explicitly requested export. Local integration validation is recorded in
+  `SESSION.md`; this decision does not claim live acceptance.
+
 ### DD-211: Main-sidebar container management with explicit ownership (v2-190)
 
 - **Request (2026-10-03):** move Containers out of Settings and implement the accepted

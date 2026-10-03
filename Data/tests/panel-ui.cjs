@@ -21,15 +21,18 @@ const temporaryPassword = "FixtureTemp8!";
 let passwordReads = 0, temporaryLogin = true;
 const longArchiveFolder = "archive." + "a".repeat(150);
 let resources = "normal", submitted, resourceCount = 0, holdInstall = false, logStatus = 200, pickerFailure = false, archiveFailure = false;
-// DD-206: network card (rates rise with each poll; package totals while installed) and the saved overview layout.
-let netCount = 0, layoutSaved = null;
+// Old saved layouts must not restore retired widgets/built-ins or shrink the network card.
+let netCount = 0, layoutSaved = {schema:1,kareler:["dosyalar","paylasim","moduller","ayarlar"],
+  widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:1,gizli:false}]};
 const layoutWrites = [];
-const netApps = () => modules[1].installed ? [{id:"torrent",name:"qBittorrent",state:"calisiyor",down:5*1024**3,up:1024**3,since:null,at:Math.floor(Date.now()/1000)-600}] : [];
+let trafficOverride = null;
+const netApps = () => trafficOverride || (modules[1].installed ? [{id:"torrent",name:"qBittorrent",state:"calisiyor",
+  down:5*1024**3,up:1024**3,since:null,at:Math.floor(Date.now()/1000)-600}] : []);
 const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now()/1000});
 (async () => {
   const browser = await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM} : {})});
   try {
-    const context = await browser.newContext({viewport:{width:1440,height:1000}});
+    const context = await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:"no-preference"});
     const packageFile = route => {
       const p = new URL(route.request().url()).pathname, file = path.join(magaza,p.slice("/uygulama/".length));
       return route.fulfill({status:200,contentType:p.endsWith(".css") ? "text/css" : "application/javascript",body:fs.readFileSync(file,"utf8")});
@@ -124,35 +127,36 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
       assert(resourceCount > before);
     };
     await page.goto(base + "/");
-    // DD-204: the landing page is Genel bakış — widgets from the shell's own APIs and tiles for
-    // Konsol's sections and installed applications; nothing is computed in the page.
-    await page.locator("#genel-tiles .tile").first().waitFor();
+    // The landing page contains installed optional apps and the fixed-width network widget only.
     await page.waitForFunction(() => document.querySelector("#resource-cpu").textContent === "%18");
+    assert.deepEqual(await page.locator("#genel-tiles .tile").evaluateAll(els => els.map(e => e.dataset.tile)),[],
+      "home shows only installed optional applications; no built-in tiles when none are installed");
     assert.equal(await page.locator("#title").innerText(),"Genel bakış");
     assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Genel bakış","Dosyalar","App Store","Konteynerler","Ayarlar"]);
     assert.equal(await page.locator('[data-view="uygulamalar"],.desktop-dock,#window-min').count(),0);
-    assert.deepEqual(await page.locator("#genel-tiles .tile strong").allTextContents(),["Dosyalar","Paylaşımlar","App Store","Ayarlar"],"no application tile while none is installed");
-    assert.equal(await page.locator('#genel-tiles .tile[data-tile="moduller"] small').innerText(),"0 kurulu · 2 kurulabilir");
-    await page.locator("#genel-health").filter({hasText:"Sağlıklı"}).waitFor();
-    assert.deepEqual(await page.locator("#genel-widgets .widget").evaluateAll(els => els.map(e => [e.dataset.widget,e.dataset.span])),[["saat","2"],["durum","2"],["ag","4"]],"clock, status and network (DD-206)");
-    assert.equal(await page.locator("#genel-widgets .rings .big").count(),3);
-    assert.equal(await page.locator("#genel-widgets .rings .big b").first().innerText(),"%18","the overview ring shows the same measurement as the sidebar");
-    assert.equal(await page.locator("#genel-widgets .rings .pie-box").innerText(),"%28 Depolama","storage is a pie beside the rings with the sidebar's disk figure");
-    assert.equal(await page.locator("#genel-widgets .pie.warn").count(),0);
-    // v2-182: the status card carries the three charts only — no check texts — and they fill the card.
-    assert.equal(await page.locator("#genel-widgets .rings .hint-s, #genel-widgets .rings .line").count(),0,"no explanation lines in the status card");
-    const ringBox = await page.locator("#genel-widgets .ring").first().boundingBox();
-    assert(ringBox.width >= 80 && ringBox.height >= 80, `charts are large: ${ringBox.width}x${ringBox.height}`);
-    const statusBox = await page.locator('#genel-widgets .widget[aria-label="Sistem durumu"]').boundingBox(), clockBox = await page.locator('#genel-widgets .widget[aria-label="Saat ve sunucu"]').boundingBox();
-    assert(Math.abs(statusBox.height - clockBox.height) <= 60, `the two widgets stay about the same height: ${statusBox.height} vs ${clockBox.height}`);
+    const emptyStore = page.locator('#genel-tiles a[href="#/moduller"]');
+    assert.equal(await emptyStore.count(),1,"the empty state links to App Store");
+    assert.match(await emptyStore.innerText(),/App Store/);
+    await emptyStore.click();
+    await page.waitForURL("**/#/moduller");
+    await navigate("#/genel");
+    const widgetState = () => page.locator("#genel-widgets .widget").evaluateAll(els => els.map(e => [e.dataset.widget,e.dataset.span]));
+    assert.deepEqual(await widgetState(),[["ag","4"]],"retired clock/status preferences are ignored; network width is fixed");
+    assert.equal(await page.locator("#genel-health,#genel-clock,#genel-widgets .rings").count(),0);
     assert(!calls.includes("/api/uygulama/wireguard/state") && !calls.includes("/api/konsol/islemler"));
     assert.equal(await page.locator('script[src^="/uygulama/"]').count(),0,"no package page is loaded while none is installed");
-    // DD-206: the clock card shows time, date, uptime and both addresses — no host, OS or kernel line.
-    const clockCard = page.locator('#genel-widgets .widget[data-widget="saat"]');
-    assert.deepEqual(await clockCard.locator(".clock-facts dt").allTextContents(),["Çalışma süresi","Tailscale","WAN"]);
-    assert.deepEqual(await clockCard.locator(".clock-facts dd").allTextContents(),["15 dk","100.64.0.2","192.0.2.1"]);
-    assert.doesNotMatch(await clockCard.innerText(),/Debian|·/,"no version details in the clock card");
-    // DD-206: the network card shows the WAN rates, a chart and the packages' totals, read every 2 s.
+    for (const [id,value] of [["foot-ts","100.64.0.2"],["foot-wan","192.0.2.1"],["foot-uptime","15 dk"],["foot-version","2026.08.06-v2-131"]]) {
+      assert.equal(await page.locator(`#panel-sidebar #${id}`).innerText(),value);
+      assert(await page.locator(`#panel-sidebar #${id}`).isVisible(),`${id} is visible in the sidebar`);
+    }
+    assert.match(await page.locator("#panel-sidebar #side-clock").innerText(),/^\d{2}:\d{2}$/);
+    assert.match(await page.locator("#panel-sidebar #side-date").innerText(),/\d/);
+    const resourcesBox = await page.locator("#panel-sidebar .resources").boundingBox();
+    for (const id of ["side-clock","side-date"]) {
+      const box = await page.locator(`#${id}`).boundingBox();
+      assert(box.y >= resourcesBox.y + resourcesBox.height - 1,`${id} sits below the resource meters`);
+    }
+    // The network card shows WAN rates and a three-column application totals table, read every 2 s.
     const netCard = page.locator('#genel-widgets .widget[data-widget="ag"]');
     await netCard.locator("#ag-rx").filter({hasText:"MB/s"}).waitFor();
     assert.equal(await netCard.locator("#ag-sub").innerText(),"eth0 · son 2 dk");
@@ -167,8 +171,11 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert(netCount > polls,"the network card polls every 2 s");
     await page.clock.setSystemTime(new Date());
     await page.screenshot({path:path.join(shots,"model-a-overview.png"),fullPage:true});
-    // DD-206: Düzenle — bottom-left of the content; tiles move by arrows or dragging, widgets change
-    // width (1–4 columns, height not adjustable) and visibility; Bitti saves on the server.
+    // Install two fixture apps to exercise order/dragging independently of the App Store flow below.
+    for (const m of modules) Object.assign(m,{installed:true,state:"calisiyor"});
+    await refreshResources();
+    await page.waitForFunction(() => document.querySelectorAll("#genel-tiles .tile").length === 2);
+    // Edit mode changes app order and network visibility; no width controls remain.
     const bar = page.locator("#genel-edit"), order = () => page.locator("#genel-tiles .tile").evaluateAll(els => els.map(e => e.dataset.tile));
     const barBox = await bar.boundingBox(), gridBox0 = await page.locator("#genel-widgets").boundingBox(), tilesBox = await page.locator("#genel-tiles").boundingBox();
     assert(Math.abs(barBox.x - gridBox0.x) < 2 && barBox.y >= tilesBox.y + tilesBox.height, `Düzenle sits bottom-left, below the tiles: ${JSON.stringify(barBox)}`);
@@ -176,84 +183,91 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await bar.getByRole("button",{name:"Bitti",exact:true}).waitFor();
     assert.equal(await page.evaluate(() => document.activeElement.id),"genel-bitti");
     assert.equal(await page.locator("#genel-tiles a.tile").count(),0,"tiles are not links while editing");
-    assert.equal(await page.locator("#genel-tiles.editing .tile .tile-move").count(),4);
+    assert.equal(await page.locator("#genel-tiles.editing .tile .tile-move").count(),2);
+    assert.equal(await page.locator('#genel-widgets [data-tool="dar"],#genel-widgets [data-tool="genis"]').count(),0);
+    assert.equal(await page.getByRole("button",{name:/daralt|genişlet/}).count(),0);
     // Tiles wiggle while editing; readers who ask for reduced motion get still tiles (and the clicks
     // below need still targets).
     const wiggle = () => page.locator("#genel-tiles .tile").first().evaluate(e => getComputedStyle(e).animationName);
     assert.equal(await wiggle(),"tile-wiggle");
     await page.emulateMedia({reducedMotion:"reduce"});
     assert.equal(await wiggle(),"none");
-    assert.deepEqual(await order(),["dosyalar","paylasim","moduller","ayarlar"]);
-    assert(await page.getByRole("button",{name:"Dosyalar: sola taşı",exact:true}).isDisabled());
-    await page.getByRole("button",{name:"Ayarlar: sola taşı",exact:true}).click();
-    assert.deepEqual(await order(),["dosyalar","paylasim","ayarlar","moduller"]);
-    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")),"Ayarlar: sola taşı","focus stays on the moved tile's button");
+    assert.deepEqual(await order(),["wireguard","torrent"]);
+    assert(await page.getByRole("button",{name:"WireGuard: sola taşı",exact:true}).isDisabled());
+    await page.getByRole("button",{name:"qBittorrent: sola taşı",exact:true}).click();
+    assert.deepEqual(await order(),["torrent","wireguard"]);
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")),"qBittorrent: sağa taşı","at the left edge, focus moves to the same tile's enabled arrow");
     // Dragging uses pointer events, the same code for a mouse and a finger.
-    const from = await page.locator('#genel-tiles .tile[data-tile="moduller"] .ico').boundingBox();
-    const to = await page.locator('#genel-tiles .tile[data-tile="dosyalar"]').boundingBox();
+    const from = await page.locator('#genel-tiles .tile[data-tile="wireguard"] .ico').boundingBox();
+    const to = await page.locator('#genel-tiles .tile[data-tile="torrent"]').boundingBox();
     await page.mouse.move(from.x + from.width/2, from.y + from.height/2);
     await page.mouse.down();
     await page.mouse.move(to.x + 12, to.y + to.height/2, {steps:16});
     await page.mouse.up();
-    assert.deepEqual(await order(),["moduller","dosyalar","paylasim","ayarlar"],"dragging App Store to the front");
-    const clockW = page.locator('#genel-widgets .widget[data-widget="saat"]'), statusW = page.locator('#genel-widgets .widget[data-widget="durum"]');
-    await page.getByRole("button",{name:"Saat: daralt",exact:true}).click();
-    assert.equal(await clockW.getAttribute("data-span"),"1");
-    assert(await page.getByRole("button",{name:"Saat: daralt",exact:true}).isDisabled(),"one column is the minimum");
-    await page.getByRole("button",{name:"Sistem durumu: genişlet",exact:true}).click();
-    assert.equal(await statusW.getAttribute("data-span"),"3");
-    const gridBox = await page.locator("#genel-widgets").boundingBox(), clockWBox = await clockW.boundingBox(), statusWBox = await statusW.boundingBox();
-    assert(Math.abs(clockWBox.width - (gridBox.width - 42)/4) < 3, `span 1 is one of four columns: ${clockWBox.width}/${gridBox.width}`);
-    assert(Math.abs(statusWBox.width - (3*(gridBox.width - 42)/4 + 28)) < 3, `span 3 is three columns: ${statusWBox.width}/${gridBox.width}`);
-    assert(Math.abs(clockWBox.height - statusWBox.height) < 2, "widgets in a row share one height");
-    const ringSmall = await statusW.locator(".ring").first().boundingBox();
-    assert(ringSmall.width >= 80, "the status charts keep their size in a wide card");
+    assert.deepEqual(await order(),["wireguard","torrent"],"dragging WireGuard to the front");
+    assert.deepEqual(await widgetState(),[["ag","4"]]);
+    const gridBox = await page.locator("#genel-widgets").boundingBox(), netBox = await netCard.boundingBox();
+    assert(Math.abs(netBox.width - gridBox.width) < 3,"the network widget fills all four columns");
     await page.getByRole("button",{name:"Ağ: gizle",exact:true}).click();
     assert.equal(await page.locator('#genel-widgets .widget[data-widget="ag"].is-hidden').count(),1,"a hidden widget stays visible, dimmed, while editing");
     assert.equal(await page.getByRole("button",{name:"Ağ: göster",exact:true}).count(),1);
     await page.screenshot({path:path.join(shots,"model-a-overview-edit.png"),fullPage:true});
     await bar.getByRole("button",{name:"Bitti",exact:true}).click();
     await page.getByText("Düzen kaydedildi.",{exact:true}).first().waitFor();
-    assert.deepEqual(layoutWrites.at(-1),{duzen:{kareler:["moduller","dosyalar","paylasim","ayarlar"],
-      widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:4,gizli:true}]}});
+    assert.deepEqual(layoutWrites.at(-1),{duzen:{kareler:["wireguard","torrent"],widgetlar:[{id:"ag",genislik:4,gizli:true}]}},
+      "saving drops retired widgets/built-ins and normalizes the network width");
     assert.equal(await page.locator('#genel-widgets .widget[data-widget="ag"]').count(),0,"a hidden widget is not shown");
-    assert.equal(await page.locator("#genel-tiles a.tile").count(),4,"tiles are links again");
+    assert.equal(await page.locator("#genel-tiles a.tile-link").count(),2,"tiles are links again");
     assert.equal(await page.evaluate(() => document.activeElement.id),"genel-duzenle");
     const hiddenPolls = netCount;
     await page.clock.runFor(4100);
     await page.clock.setSystemTime(new Date());
     assert.equal(netCount,hiddenPolls,"a hidden network card is not polled");
     // The layout lives on the server: another device's order shows up on the next visit.
-    layoutSaved = {schema:1,kareler:["ayarlar","moduller","dosyalar","paylasim"],widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:4,gizli:true}]};
+    layoutSaved = {schema:1,kareler:["ayarlar","torrent","moduller","wireguard","dosyalar","paylasim"],
+      widgetlar:[{id:"saat",genislik:1,gizli:false},{id:"durum",genislik:3,gizli:false},{id:"ag",genislik:2,gizli:true}]};
     await navigate("#/dosyalar"); await navigate("#/genel");
-    await page.waitForFunction(() => document.querySelector("#genel-tiles .tile")?.dataset.tile === "ayarlar");
+    await page.waitForFunction(() => document.querySelector("#genel-tiles .tile")?.dataset.tile === "torrent");
     // Vazgeç (Escape) drops a draft; Varsayılan + Bitti removes the saved layout.
     const writes = layoutWrites.length;
     await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
-    await page.getByRole("button",{name:"Ayarlar: sağa taşı",exact:true}).click();
+    await page.getByRole("button",{name:"qBittorrent: sağa taşı",exact:true}).click();
     await page.keyboard.press("Escape");
     await bar.getByRole("button",{name:"Düzenle",exact:true}).waitFor();
-    assert.deepEqual(await order(),["ayarlar","moduller","dosyalar","paylasim"]);
+    assert.deepEqual(await order(),["torrent","wireguard"]);
     assert.equal(layoutWrites.length,writes,"cancel saves nothing");
     await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
+    assert.deepEqual(await widgetState(),[["ag","4"]]);
+    await page.getByRole("button",{name:"Ağ: göster",exact:true}).click();
+    await bar.getByRole("button",{name:"Bitti",exact:true}).click();
+    await netCard.waitFor();
+    assert.deepEqual(layoutWrites.at(-1),{duzen:{kareler:["torrent","wireguard"],widgetlar:[{id:"ag",genislik:4,gizli:false}]}});
+    await bar.getByRole("button",{name:"Düzenle",exact:true}).click();
     await bar.getByRole("button",{name:"Varsayılan",exact:true}).click();
-    assert.deepEqual(await order(),["dosyalar","paylasim","moduller","ayarlar"]);
-    assert.equal(await page.locator('#genel-widgets .widget:not(.is-hidden)').count(),3);
+    assert.deepEqual(await order(),["wireguard","torrent"]);
+    assert.deepEqual(await widgetState(),[["ag","4"]]);
     await bar.getByRole("button",{name:"Bitti",exact:true}).click();
     await page.getByText("Genel bakış varsayılan düzene döndü.",{exact:true}).first().waitFor();
     assert.deepEqual(layoutWrites.at(-1),{sifirla:true});
-    // On a long (phone) page the bar sticks to the bottom-left of the screen; scrolled to the end it rests below the tiles.
+    // On phones the bar stays in document flow below the tiles and is reachable by scrolling.
     await page.setViewportSize({width:390,height:760});
     await page.evaluate(() => window.scrollTo(0,0));
-    const phoneBar = await bar.boundingBox();
-    assert(phoneBar.x <= 20 && Math.abs(phoneBar.y + phoneBar.height - (760 - 12)) < 3, `sticky bottom-left on a phone: ${JSON.stringify(phoneBar)}`);
+    const phoneBar = await bar.boundingBox(), phoneTilesBefore = await page.locator("#genel-tiles").boundingBox();
+    assert(phoneBar.y >= phoneTilesBefore.y + phoneTilesBefore.height,"the phone edit bar stays below the application tiles");
+    await bar.scrollIntoViewIfNeeded();
+    const visiblePhoneBar = await bar.boundingBox();
+    assert(visiblePhoneBar.x <= 20 && visiblePhoneBar.y >= 0 && visiblePhoneBar.y + visiblePhoneBar.height <= 760,
+      `the edit bar is reachable by scrolling on a phone: ${JSON.stringify(visiblePhoneBar)}`);
     await page.evaluate(() => window.scrollTo(0,document.documentElement.scrollHeight));
     const phoneEnd = await bar.boundingBox(), phoneTiles = await page.locator("#genel-tiles").boundingBox();
     assert(phoneEnd.y >= phoneTiles.y + phoneTiles.height, "at the end of the page the bar does not cover the last row");
     await page.setViewportSize({width:1440,height:1000});
     await page.emulateMedia({reducedMotion:"no-preference"});
     await netCard.locator("#ag-rx").waitFor();
-    await page.locator('#genel-tiles .tile[data-tile="dosyalar"]').click();
+    for (const m of modules) Object.assign(m,{installed:false,state:"yok"});
+    await refreshResources();
+    await page.waitForFunction(() => document.querySelectorAll("#genel-tiles .tile").length === 0);
+    await page.locator('.nav a[href="#/dosyalar"]').click();
     await page.getByRole("button", {name:"media ayrıntıları",exact:true}).waitFor();
     assert.equal(await page.locator("#title").innerText(),"Dosyalar");
     assert.equal(await page.locator("#fs-detail:visible").count(),0);
@@ -412,13 +426,85 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await appTile.locator("small").innerText(),"çalışıyor");
     assert.equal(await appTile.locator(".dot.on").count(),1);
     assert(await appTile.locator(".ico.t-video").count() === 1, "the tile uses the package's declared tone");
-    // DD-206: the network card lists the package's totals from its own traffic module.
+    // Application rows show their original byte counters; only the server graph displays live rates.
     const appTraffic = page.locator('#ag-apps .net-app[data-app="torrent"]');
     await appTraffic.waitFor();
     assert.equal(await appTraffic.locator("strong").innerText(),"qBittorrent");
-    assert.deepEqual(await appTraffic.locator(".v").allTextContents(),["↓ 5,0 GB","↑ 1,0 GB"]);
-    assert.match(await appTraffic.locator("small").innerText(),/^tüm zamanlar · kayıt \d\d:\d\d$/,"all-time figures name the time qBittorrent saved them");
+    assert.equal(await page.locator("#ag-apps table.net-table").count(),1,"application traffic uses a semantic table");
+    assert.equal(await page.locator("#ag-apps table.net-table").getAttribute("aria-label"),"Uygulama aktarım toplamları");
+    assert.equal(await page.locator("#ag-apps").getAttribute("aria-label"),"Uygulama trafiği");
+    assert.deepEqual(await page.locator("#ag-apps .net-table thead th").allTextContents(),["Uygulama","İndirme","Yükleme"]);
+    assert.equal(await appTraffic.evaluate(el => el.tagName),"TR");
+    assert.equal(await appTraffic.locator("th,td").count(),3);
+    assert.deepEqual(await appTraffic.locator("th,td").allTextContents(),["qBittorrent","5,0 GB","1,0 GB"]);
+    assert.equal(await appTraffic.locator("small").count(),0,"no all-time, timestamp or status subtext in app rows");
     assert.equal(await appTraffic.locator(".ico.t-video").count(),1);
+    const readTraffic = async () => { await page.clock.runFor(2100); await page.clock.setSystemTime(new Date()); };
+    trafficOverride = [{id:"torrent",name:"qBittorrent",state:"calisiyor",since:null,at:1}];
+    await readTraffic();
+    await page.waitForFunction(() => document.querySelector('#ag-apps [data-app="torrent"] td:nth-child(2)')?.textContent === "—");
+    assert.deepEqual(await appTraffic.locator("th,td").allTextContents(),["qBittorrent","—","—"],"missing totals remain unknown");
+    Object.assign(trafficOverride[0],{down:0,up:null});
+    await readTraffic();
+    await page.waitForFunction(() => document.querySelector('#ag-apps [data-app="torrent"] td:nth-child(2)')?.textContent === "0 B");
+    assert.deepEqual(await appTraffic.locator("th,td").allTextContents(),["qBittorrent","0 B","—"],"zero is a measured total; null remains unknown independently");
+    delete trafficOverride[0].down;
+    trafficOverride[0].up = 2048;
+    await readTraffic();
+    await page.waitForFunction(() => document.querySelector('#ag-apps [data-app="torrent"] td:nth-child(3)')?.textContent === "2 KB");
+    assert.deepEqual(await appTraffic.locator("th,td").allTextContents(),["qBittorrent","—","2 KB"]);
+
+    const geometry = () => page.evaluate(() => {
+      const rect = sel => { const r = document.querySelector(sel).getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height}; };
+      return {live:rect(".net-live"),apps:rect("#ag-apps")};
+    });
+    const singleRow = await geometry();
+    const longName = "Uygulama" + "x".repeat(120);
+    trafficOverride = Array.from({length:24},(_,i) => ({id:"fixture"+String.fromCharCode(97+i),name:i ? `Uygulama ${i}` : longName,
+      state:"calisiyor",down:5*1024**3,up:1024**3}));
+    await readTraffic();
+    await page.waitForFunction(() => document.querySelectorAll("#ag-apps .net-app").length === 24);
+    const manyRows = await geometry();
+    assert(Math.abs(singleRow.apps.height-manyRows.apps.height)<2,"more applications must not grow the fixed-height table half");
+    assert(Math.abs(singleRow.live.height-manyRows.live.height)<2,"more applications must not grow the chart half");
+    const trafficList = page.locator("#ag-apps");
+    await trafficList.focus();
+    const scrollBefore = await trafficList.evaluate(el => { el.scrollTop=80; return el.scrollTop; });
+    assert(scrollBefore>0,"the traffic table has a scrolled position to preserve");
+    const refreshBefore=resourceCount;
+    await page.clock.fastForward(10100);
+    for (let i=0;i<100 && resourceCount===refreshBefore;i++) await page.waitForTimeout(10);
+    assert(resourceCount>refreshBefore,"the regular 10-second resource poll ran");
+    await page.waitForTimeout(100);
+    assert.equal(await trafficList.evaluate(el => el.scrollTop),scrollBefore,"resource refresh preserves the application table scroll position");
+    assert(await trafficList.evaluate(el => document.activeElement===el),"resource refresh preserves keyboard focus on the application table");
+    await page.clock.setSystemTime(new Date());
+    for (const colorScheme of ["light","dark"]) {
+      await page.emulateMedia({colorScheme});
+      for (const width of [1440,390,320]) {
+        await page.setViewportSize({width,height:950});
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const {live,apps} = await geometry();
+        assert(await page.evaluate(() => document.documentElement.scrollWidth<=innerWidth+1),`network overflow at ${width}/${colorScheme}`);
+        assert(Math.abs(live.width-apps.width)<2,`network halves have equal width at ${width}/${colorScheme}`);
+        assert(Math.abs(live.height-apps.height)<2,`network halves have equal fixed height at ${width}/${colorScheme}`);
+        if (width>760) {
+          assert(Math.abs(live.y-apps.y)<2 && apps.x>=live.x+live.width,`desktop halves sit side by side: ${JSON.stringify({live,apps})}`);
+        } else {
+          assert(Math.abs(live.x-apps.x)<2 && apps.y>=live.y+live.height,`phone halves stack: ${JSON.stringify({live,apps})}`);
+        }
+        assert(await page.locator("#ag-apps").evaluate(el => [el,...el.querySelectorAll("*")].some(e =>
+          /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight>e.clientHeight+1)),"long application tables scroll within their half");
+        assert.equal(await page.locator("#ag-apps .net-app small").count(),0);
+        assert(await page.locator("#ag-apps .net-table").evaluate(el => el.getBoundingClientRect().width<=el.closest("#ag-apps").clientWidth+1),
+          `three-column table fits ${width}/${colorScheme} even with a long name`);
+        await page.screenshot({path:path.join(shots,`network-${width}-${colorScheme}.png`),fullPage:true});
+      }
+    }
+    trafficOverride = null;
+    await page.setViewportSize({width:1440,height:1000});
+    await page.emulateMedia({colorScheme:"light"});
+    await readTraffic();
     // DD-210: the tile opens the app's web UI in a new tab; the settings action beside it is separate.
     assert.equal(await appTile.locator("a.tile-link").getAttribute("href"),"http://torrent.ayc");
     assert.equal(await appTile.locator("a.tile-link").getAttribute("target"),"_blank");
@@ -525,8 +611,10 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     resources = "offline"; await refreshResources();
     await page.waitForFunction(() => document.querySelector("#resource-mem").textContent === "—");
     assert.equal(await page.locator("#bar-disk:visible").count(),0);
+    assert.equal(await page.locator("#foot-uptime").innerText(),"—","failed resource reads do not retain a live-looking uptime");
     resources = "normal"; await refreshResources();
     await page.waitForFunction(() => document.querySelector("#resource-cpu").textContent === "%18");
+    assert.equal(await page.locator("#foot-uptime").innerText(),"15 dk","fresh resources restore uptime");
     // A direct bookmark must populate the new-network form after its async first fetch.
     modules[0].installed = true; modules[0].state = "calisiyor"; modules[0].sayfa = ["sayfa.js","sayfa.css"];
     await page.goto(base + "/?deep-link-test=1#/wireguard/ekle");
@@ -596,6 +684,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await secure.locator("#torrent-open").count(),0,"no tailnet link on the public address");
     assert.equal(await secure.locator("#torrent-open-note").getByRole("link").getAttribute("href"),"#/ayarlar/web");
     await secure.close();
-    console.log("PASS: Model A routes/navigation, compact Store rows/details/progress/failure/focus/logs/no credentials/lifecycle, qBittorrent opt-in password/30s expiry/hidden-tab/card-close/navigation/no storage, shared settings, keyboard/5 widths/dark, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, public-address qBittorrent link/hint, production CSP. Screenshots: " + shots);
+    console.log("PASS: installed-only home/App Store empty state; fixed network widget, legacy layout migration, hide/show and tile reorder; sidebar clock/date/IP/version/fresh uptime; cumulative app traffic table, missing/zero totals, equal fixed-height halves, scrolling/focus across resource refresh, desktop/320/390 light/dark; routes/navigation, Store details/progress/failure/focus/logs/lifecycle, qBittorrent opt-in password/privacy, shared settings, keyboard/5 widths, resources/stale/offline/recovery, archive create/cancel/unzip/results, WG deep link, public-address links, production CSP. Screenshots: " + shots);
+  } catch (err) { if (errors.length) console.error("Browser errors:",errors); throw err;
   } finally { await browser.close(); }
 })().catch(err => {console.error(err); process.exit(1);});

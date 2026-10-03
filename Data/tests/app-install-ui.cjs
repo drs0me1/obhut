@@ -17,9 +17,11 @@ const modules = [
 const durum = { installed: true, running: true, unit: "qbittorrent.service", container: "qbittorrent", profile: "/var/lib/qbittorrent",
   downloads: "/srv/downloads", save: "/srv/downloads/", save_inside: true, temp: "", temp_on: false, temp_inside: false,
   ui: "127.0.0.1:61006", peer_port: 0, username: "admin" };
-const installs = [], edits = [], urls = [], errors = [], lifecycle = [];
+const installs = [], edits = [], urls = [], errors = [], lifecycle = [], logReads = [];
+const LOG = '<img src=x onerror="window.logInjected=true">\n<script>window.logInjected=true</script>\nfixture service log & < >';
 let hold = false, release = null, failNext = "", modReads = 0, holdRead = false, releaseRead = null, failLifecycle = "";
 let holdLifecycle = false, releaseLifecycle = null;
+let holdLog = false, releaseLog = null;
 const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}) });
@@ -45,6 +47,11 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
       urls.push(req.url());
       let result = {};
       if (p === "/api/konsol/moduller") { modReads++; result = { items: modules }; }
+      else if (/^\/api\/konsol\/moduller\/(torrent|wireguard)\/gunluk$/.test(p)) {
+        logReads.push({path:p,method:req.method()});
+        if (holdLog) { holdLog=false; await new Promise(resolve => { releaseLog=resolve; }); }
+        return route.fulfill({status:200,contentType:"text/plain",body:LOG});
+      }
       else if (/^\/api\/konsol\/moduller\/(torrent|wireguard)\/kur$/.test(p)) {
         const body = req.postDataJSON(), m = modules.find((x) => p.includes("/" + x.id + "/"));
         installs.push({ id: m.id, body });
@@ -121,8 +128,19 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
       pg.on("console", (m) => { if (/violates.*Content Security Policy|Refused to/.test(m.text())) errors.push(m.text()); });
     };
     const page = await context.newPage();
+    await page.clock.install();
     watch(page);
     const dialog = page.locator("#sh");
+    // dialog.open becomes false before its queued close handlers run; await the event before reopening.
+    const closeDialog = async () => {
+      await dialog.evaluate(el => {
+        el.dataset.testCloseObserved = "false";
+        el.addEventListener("close",() => { el.dataset.testCloseObserved = "true"; },{once:true});
+      });
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => document.querySelector("#sh")?.dataset.testCloseObserved === "true",null,{timeout:3000});
+      await dialog.waitFor({state:"hidden"});
+    };
     const poll = async () => { const n = modReads; await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); for (let i = 0; i < 200 && modReads === n; i++) await page.waitForTimeout(10); };
     const navigate = async (hash) => { await page.evaluate((h) => { location.hash = h; }, hash); await page.waitForTimeout(80); };
     const noOverflow = async (pg = page) => assert(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no horizontal page scroll");
@@ -204,6 +222,7 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     assert.equal(installs.length, 3, "the second draft was never sent");
     assert(!urls.some((u) => u.includes(PASS)), "the password never travels in a URL");
     assert(!JSON.stringify(await page.evaluate(() => [localStorage, sessionStorage])).includes(PASS));
+    await page.waitForFunction(() => [...document.querySelectorAll("#sh input[type=password]")].every(el => !el.value));
     assert.equal(await page.locator("#sh input[type=password]").evaluateAll((els) => els.filter((e) => e.value).length), 0, "the closed form forgets the password");
 
     /* ---- Main navigation, App Store and overview open the native web UI in a new tab ---- */
@@ -223,16 +242,27 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     assert.equal(await launch.getAttribute("target"), "_blank");
     assert.match(await launch.getAttribute("rel"), /noopener/);
     const settingsBtn = tile.getByRole("button", { name: "qBittorrent ayarları", exact: true });
-    // v2-188: one compact row under each installed application: Ayarlar and, where the app can stop, Durdur/Başlat.
-    // v2-189: icons only — no visible text, no background, no border; the name is the aria-label and the tooltip.
-    const row = (sel) => page.locator(`#genel-tiles .tile[data-tile="${sel}"] .tile-actions`).locator("button, a")
-      .evaluateAll((els) => els.map((e) => [e.tagName, e.innerText.trim(), e.getAttribute("aria-label"), e.getAttribute("title"),
+    // Every footer reserves exactly three slots; unsupported actions keep their position as blank spans.
+    const row = (sel) => page.locator(`#genel-tiles .tile[data-tile="${sel}"] .tile-actions > .tile-act`)
+      .evaluateAll((els) => els.map((e) => [e.dataset.act,e.tagName, e.innerText.trim(), e.getAttribute("aria-label"), e.getAttribute("title"),
         e.querySelectorAll("svg").length, e.closest("a.tile-link") === null]));
     const iconOnly = async () => {
-      assert.deepEqual(await row("torrent"), [["BUTTON", "", "qBittorrent ayarları", "qBittorrent ayarları", 1, true],
-        ["BUTTON", "", "qBittorrent: Durdur", "qBittorrent: Durdur", 1, true]], "qBittorrent: settings and stop icons, outside the launch link");
+      assert.deepEqual(await row("torrent"), [["ayar","BUTTON", "", "qBittorrent ayarları", "qBittorrent ayarları", 1, true],
+        ["servis","BUTTON", "", "qBittorrent: Durdur", "qBittorrent: Durdur", 1, true],
+        ["gunluk","BUTTON", "", "qBittorrent günlükleri", "qBittorrent günlükleri", 1, true]], "settings, service, logs in order; icon-only controls outside the launch link");
       // WireGuard has a page but no form and cannot stop as a whole (its networks switch one by one).
-      assert.deepEqual(await row("wireguard"), [["A", "", "WireGuard ayarları", "WireGuard ayarları", 1, true]]);
+      assert.deepEqual(await row("wireguard"), [["ayar","A", "", "WireGuard ayarları", "WireGuard ayarları", 1, true],
+        ["servis","SPAN","",null,null,0,true],
+        ["gunluk","BUTTON","","WireGuard günlükleri","WireGuard günlükleri",1,true]]);
+      for (const id of ["torrent","wireguard"])
+        assert.equal(await page.locator(`#genel-tiles [data-tile="${id}"] .tile-actions > *`).count(),3,"no extra footer slots");
+      const blank = page.locator('#genel-tiles [data-tile="wireguard"] .tile-act-empty[data-act="servis"]');
+      assert.equal(await blank.count(),1);
+      assert.deepEqual(await blank.evaluate(el => [el.childNodes.length,el.tabIndex,el.getAttribute("role"),el.getAttribute("href"),el.onclick]),[0,-1,null,null,null],
+        "unsupported service slot has no content, focus, role, link or click handler");
+      await page.locator('#genel-tiles [data-tile="wireguard"] [data-act="ayar"]').focus();
+      await page.keyboard.press("Tab");
+      assert(await page.locator('#genel-tiles [data-tile="wireguard"] [data-act="gunluk"]').evaluate(el => document.activeElement === el),"Tab skips the blank service slot");
     };
     // Computed look of an action now (rest, hover, pressed): transparent, borderless, no shadow, no text.
     const bare = (sel) => page.locator(sel).evaluate((el) => { const c = getComputedStyle(el);
@@ -240,7 +270,8 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     const BARE = ["rgba(0, 0, 0, 0)", true, "none", ""];
     const looks = async () => {
       for (const sel of ['#genel-tiles [data-tile="torrent"] [data-act="ayar"]', '#genel-tiles [data-tile="torrent"] [data-act="servis"]',
-        '#genel-tiles [data-tile="wireguard"] [data-act="ayar"]']) {
+        '#genel-tiles [data-tile="torrent"] [data-act="gunluk"]', '#genel-tiles [data-tile="wireguard"] [data-act="ayar"]',
+        '#genel-tiles [data-tile="wireguard"] [data-act="gunluk"]']) {
         assert.deepEqual(await bare(sel), BARE, `${sel} at rest`);
         await page.locator(sel).hover();
         assert.deepEqual(await bare(sel), BARE, `${sel} on hover`);
@@ -254,7 +285,8 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="wireguard"] .tile-actions a').getAttribute("href"), "#/wireguard");
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="wireguard"] a.tile-link').getAttribute("href"), "#/wireguard");
     for (const builtIn of ["dosyalar", "paylasim", "moduller", "ayarlar"])
-      assert.equal(await page.locator(`#genel-tiles .tile[data-tile="${builtIn}"] .tile-actions`).count(), 0, `${builtIn} is navigation, not a service`);
+      assert.equal(await page.locator(`#genel-tiles .tile[data-tile="${builtIn}"]`).count(), 0, `${builtIn} has no home tile`);
+    assert.deepEqual(await page.locator("#genel-tiles .tile").evaluateAll(els => els.map(el => el.dataset.tile)),["wireguard","torrent"]);
     await page.screenshot({ path: path.join(shots, "overview-desktop.png") });
     await page.locator("#genel-tiles").screenshot({ path: path.join(shots, "tiles-desktop.png") });
     const serviceBtn = tile.locator('[data-act="servis"]');
@@ -262,10 +294,13 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     assert(actBox.y > icoBox.y + icoBox.height && svcBox.y > icoBox.y + icoBox.height, "the actions sit beneath the application icon");
     assert(Math.abs(actBox.y - svcBox.y) < 2, "one row");
     assert(actBox.height <= 44 && actBox.width <= 70, `compact: ${JSON.stringify(actBox)}`);
-    for (const b of [settingsBtn, serviceBtn]) {
-      const hit = await b.evaluate((el) => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top - 4) === el
-        && document.elementFromPoint(r.left + r.width / 2, r.bottom + 4) === el; });
-      assert(hit, "the touch target extends beyond the drawn button");
+    for (const b of [settingsBtn, serviceBtn,tile.locator('[data-act="gunluk"]')]) {
+      const hit = await b.evaluate((el) => { const r=el.getBoundingClientRect(),s=el.querySelector("svg").getBoundingClientRect();
+        return r.width>=44 && r.height>=44 && s.width===18 && s.height===18 &&
+          [[r.left+r.width/2,r.top+1],[r.right-1,r.top+r.height/2],[r.left+1,r.top+r.height/2],[r.left+r.width/2,r.bottom-1]].every(([x,y]) => {
+            const target=document.elementFromPoint(x,y); return target===el || el.contains(target);
+          }); });
+      assert(hit, "actual 44 px touch bounds receive edge hits around the visible 18 px glyph");
     }
     const [popup] = await Promise.all([context.waitForEvent("page"), launch.click()]);
     await popup.waitForLoadState();
@@ -273,6 +308,64 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     assert.equal(await popup.evaluate(() => window.opener), null, "noopener");
     await popup.close();
     assert.equal(await page.evaluate(() => location.hash), "#/genel", "Konsol stays where it was");
+
+    /* ---- Logs use the existing read-only endpoint and render untrusted bytes as text in #sh ---- */
+    for (const [id,name] of [["torrent","qBittorrent"],["wireguard","WireGuard"]]) {
+      const logButton = page.locator(`#genel-tiles [data-tile="${id}"] [data-act="gunluk"]`);
+      const reads = logReads.length;
+      await logButton.focus();
+      await page.keyboard.press("Enter");
+      await dialog.getByRole("heading",{name:`${name} günlükleri`,exact:true}).waitFor();
+      await dialog.locator("pre").filter({hasText:"fixture service log"}).waitFor();
+      assert.equal(await dialog.locator("pre").textContent(),LOG,"log markup remains literal text");
+      assert.equal(await dialog.locator("img,script").count(),0);
+      assert.equal(await page.evaluate(() => window.logInjected),undefined);
+      assert.deepEqual(logReads.slice(reads),[{path:`/api/konsol/moduller/${id}/gunluk`,method:"GET"}]);
+      assert.equal(await page.evaluate(() => location.hash),"#/genel");
+      await closeDialog();
+    }
+    assert.equal(lifecycle.length,0,"opening logs never starts or stops an app");
+
+    /* ---- Timeout is recoverable with Yenile; late reads cannot overwrite a new dialog or reopen it ---- */
+    const logButton = tile.locator('[data-act="gunluk"]');
+    const waitHeldLog = async () => {
+      for (let i=0;i<200 && !releaseLog;i++) await page.waitForTimeout(10);
+      assert(releaseLog,"the held log request reached the API fixture");
+    };
+    holdLog=true;
+    await logButton.click();
+    await waitHeldLog();
+    await page.clock.fastForward(13000);
+    await dialog.getByRole("alert").filter({hasText:/zaman aşımı/}).waitFor();
+    releaseLog(); releaseLog=null;
+    const retry = dialog.getByRole("button",{name:"Yenile",exact:true});
+    assert(await retry.isEnabled(),"a timed-out log read leaves Yenile available");
+    const beforeRetry=logReads.length;
+    await retry.click();
+    await dialog.locator("pre").filter({hasText:"fixture service log"}).waitFor({timeout:3000});
+    assert.equal(logReads.length,beforeRetry+1,"Yenile sends a new GET after timeout");
+    assert.equal(await dialog.getByRole("alert").isVisible(),false);
+    await closeDialog();
+    for (const replace of [false,true]) {
+      holdLog=true;
+      await logButton.click();
+      await waitHeldLog();
+      await closeDialog();
+      if (replace) {
+        await settingsBtn.click();
+        await user.waitFor();
+        await user.fill("new-dialog-draft");
+      }
+      releaseLog(); releaseLog=null;
+      await page.waitForTimeout(150);
+      if (replace) {
+        assert.equal(await dialog.getByRole("heading",{name:"qBittorrent ayarları",exact:true}).count(),1,"a late log answer leaves the newer dialog intact");
+        assert.equal(await user.inputValue(),"new-dialog-draft");
+        assert.equal(await dialog.locator("pre").count(),0);
+        await closeDialog();
+      } else assert.equal(await dialog.isVisible(),false,"a late log answer cannot reopen a closed dialog");
+    }
+    await page.clock.setSystemTime(new Date());
 
     /* ---- The gear opens a compact edit dialog; a blank password keeps the stored one ---- */
     await settingsBtn.focus();
@@ -422,13 +515,76 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await page.locator("#genel-vazgec").click();
     assert.deepEqual(await order(), before);
     assert.equal(await page.locator("#genel-tiles .tile-actions").count(), 2, "the actions return after editing");
+    // The lifecycle refusal toast is transient; measure the resting layout after it dismisses.
+    await page.locator("#toast").waitFor({state:"hidden",timeout:7000});
 
-    /* ---- Phone width and dark theme ---- */
+    /* ---- Desktop and 320/390 px phones, in both themes: visible, distinct icon hit targets ---- */
+    const actionGlyphs = await page.locator("#genel-tiles .tile-act:not(.tile-act-empty) svg").evaluateAll(els => els.map(el => el.innerHTML));
+    for (const colorScheme of ["light","dark"]) {
+      await page.emulateMedia({colorScheme});
+      for (const width of [1400,390,320]) {
+        await page.setViewportSize({width,height:950});
+        await noOverflow();
+        await iconOnly();
+        assert.deepEqual(await page.locator("#genel-tiles .tile-act:not(.tile-act-empty) svg").evaluateAll(els => els.map(el => el.innerHTML)),actionGlyphs,
+          `glyphs remain intact at ${width}/${colorScheme}`);
+        for (const id of ["torrent","wireguard"]) {
+          const actions = page.locator(`#genel-tiles [data-tile="${id}"] .tile-actions`);
+          const rowBox = await actions.boundingBox(), tileBox = await page.locator(`#genel-tiles [data-tile="${id}"]`).boundingBox();
+          assert(rowBox.x>=tileBox.x && rowBox.x+rowBox.width<=tileBox.x+tileBox.width+1,`three slots fit ${id} at ${width}/${colorScheme}`);
+          const slots = await actions.locator(".tile-act").evaluateAll(els => els.map(el => {
+            const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
+          }));
+          assert(slots.every(s => s.width>0 && s.height>0 && Math.abs(s.y-slots[0].y)<2),"all three slots reserve space on one row");
+          assert(slots[0].x+slots[0].width<=slots[1].x && slots[1].x+slots[1].width<=slots[2].x,"slots remain ordered without overlap");
+          for (const button of await actions.locator("button,a").all()) {
+            await button.scrollIntoViewIfNeeded();
+            assert(await button.isVisible());
+            const hitTest = await button.evaluate(el => {
+              const r=el.getBoundingClientRect(),svg=el.querySelector("svg"),s=svg.getBoundingClientRect();
+              const point={x:r.x+r.width/2,y:r.y+r.height/2},hit=document.elementFromPoint(point.x,point.y);
+              const describe = node => node && ({tag:node.tagName,id:node.id,class:node.getAttribute("class"),label:node.getAttribute("aria-label")});
+              return {ok:(hit===el || el.contains(hit)) && s.width>0 && s.height>0 && getComputedStyle(svg).visibility!=="hidden",
+                control:describe(el),rect:{x:r.x,y:r.y,width:r.width,height:r.height},point,scroll:{x:scrollX,y:scrollY},
+                viewport:{width:innerWidth,height:innerHeight},glyph:{width:s.width,height:s.height,visibility:getComputedStyle(svg).visibility},
+                hit:describe(hit),stack:document.elementsFromPoint(point.x,point.y).slice(0,6).map(describe)};
+            });
+            const hitShot=path.join(shots,`hit-target-${id}-${await button.getAttribute("data-act")}-${width}-${colorScheme}.png`);
+            if (!hitTest.ok) await page.screenshot({path:hitShot});
+            assert(hitTest.ok,`visible control receives its center hit at ${width}/${colorScheme}: ${JSON.stringify(hitTest)}; screenshot: ${hitShot}`);
+            await button.click({trial:true});
+          }
+        }
+        // Exercise the visible log control on every viewport/theme; no forced clicks or DOM dispatch.
+        await tile.locator('[data-act="gunluk"]').click();
+        await dialog.getByRole("heading",{name:"qBittorrent günlükleri",exact:true}).waitFor();
+        await dialog.locator("pre").filter({hasText:"fixture service log"}).waitFor();
+        const logBox = await dialog.boundingBox();
+        assert(logBox.x>=0 && logBox.x+logBox.width<=width+1,`logs fit ${width}/${colorScheme}`);
+        await noOverflow();
+        await closeDialog();
+        await page.screenshot({path:path.join(shots,`overview-${width}-${colorScheme}.png`),fullPage:true});
+      }
+    }
+
+    /* ---- The existing phone settings/install journeys ---- */
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForTimeout(100);
     await noOverflow();
     await page.screenshot({ path: path.join(shots, "overview-390-dark.png"), fullPage: true });
+    const phoneEditLayout = await page.evaluate(() => {
+      const bar=document.querySelector("#genel-edit").getBoundingClientRect();
+      const rect=r => ({x:r.x,y:r.y,width:r.width,height:r.height});
+      const overlaps=[...document.querySelectorAll("#genel-tiles .tile")].flatMap(el => {
+        const tile=el.getBoundingClientRect();
+        return bar.left<tile.right && bar.right>tile.left && bar.top<tile.bottom && bar.bottom>tile.top
+          ? [{id:el.dataset.tile,rect:rect(tile)}] : [];
+      });
+      return {editing:document.querySelector("#genel-tiles").classList.contains("editing"),bar:rect(bar),overlaps};
+    });
+    assert.equal(phoneEditLayout.editing,false,"check the normal phone layout outside edit mode");
+    assert.deepEqual(phoneEditLayout.overlaps,[],`Düzenle must not overlap application tiles at 390x844: ${JSON.stringify(phoneEditLayout)}`);
     await page.locator("#genel-tiles").screenshot({ path: path.join(shots, "tiles-390-dark.png") });
     const phoneRow = await tile.locator(".tile-actions").boundingBox(), phoneTile = await tile.boundingBox();
     assert(phoneRow.x >= phoneTile.x && phoneRow.x + phoneRow.width <= phoneTile.x + phoneTile.width + 1, "the action row fits the phone tile");
@@ -477,6 +633,7 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await secure.close();
 
     assert.deepEqual(errors, []);
-    console.log("PASS: install form (defaults, cancel/Escape, required password, folder picker, server error and poll drafts, single submit, form body, a late install answer leaving a newer form alone), WireGuard unchanged, launch in a new tab with noopener from tile/sidebar/App Store, tile action row (Ayarlar form/page, Durdur with confirmation, busy without duplicates, Başlat with refusal recovery, focus across polls, none on built-ins), settings action (keyboard, focus return, blank password kept, error draft, a late read leaving a newer dialog alone), stopped state with settings read and saved, edit-mode reorder, 390 px dark, public channel. Screenshots: " + shots);
+    console.log("PASS: install form and settings regressions; native app launch/noopener/public channel; installed-only home; three ordered icon slots with blank noninteractive WireGuard service; safe GET logs in dialog; stop/start confirmation, progress, refusal and focus; edit reorder; desktop/320/390 light/dark overflow, glyphs and visible hit targets. Screenshots: " + shots);
+  } catch (err) { if (errors.length) console.error("Browser errors:",errors); throw err;
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

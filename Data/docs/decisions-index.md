@@ -205,11 +205,12 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-201 | A neutral backend, package-owned settings and self-checking packages, phase 2b | live | design-decisions.md |
 | DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |
 | DD-203 | Package-declared folders, settings and backend write paths, phase 3 | live | design-decisions.md |
-| DD-204 | CasaOS-inspired skin and an overview page for Konsol | live | design-decisions.md |
+| DD-204 | CasaOS-inspired skin and an overview page for Konsol | live; home composition amended by DD-212 | design-decisions.md |
 | DD-205 | No sign-in on the tailnet; the account is the public name's credential | live | design-decisions.md |
-| DD-206 | Overview edit mode, a server-side layout and a network card | live | design-decisions.md |
+| DD-206 | Overview edit mode, a server-side layout and a network card | live; widget set, width and totals table presentation amended by DD-212 | design-decisions.md |
 | DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
 | DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |
-| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live | design-decisions.md |
+| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212 | design-decisions.md |
 | DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live | design-decisions.md |
+| DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | source v2-191; locally verified, not deployed | design-decisions.md |
