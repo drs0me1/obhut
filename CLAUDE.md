@@ -91,10 +91,13 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Smallest possible change. No opportunistic refactors.
 - Show the diff before committing. Commit only when the user asks (unless
   a user rule says otherwise for that turn).
-- Keep version history in Git. A commit must not trigger an installer export,
-  Desktop copy or separate version snapshot. When an export is needed, use
-  `Data/dev/export-installer.sh` without `--desktop`; keep its outputs in the
-  repository. Copy outside the repository only on an explicit user request.
+- Keep version history in Git. For every `V2_VERSION` change, rebuild the current
+  portable installer with `Data/dev/export-installer.sh` without `--desktop`.
+  Keep matching `<V2_VERSION>.command` files in the repository root and `Data/app/`,
+  verify them against the final source, and include them in the version's commit
+  when the user requests a commit. Keep only the current installer in these two
+  locations; older versions remain in Git. Do not create Desktop copies or separate
+  version snapshots. Copy outside the repository only on an explicit user request.
   Leave existing Desktop copies and frozen versions untouched.
 - Bump `V2_VERSION` in `install.sh` on every behavioural change to the
   installer tree. Record user-facing changes under `[Unreleased]` in

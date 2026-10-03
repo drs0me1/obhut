@@ -30,7 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   retention, three icon hit targets and responsive layout in both themes. The mobile
   edit toolbar stays below the tiles rather than covering them on short screens.
 - DD-212 records the contract; local validation results are in `SESSION.md`.
-  Source is v2-191; the portable installers remain v2-190. No live deployment performed.
+  Source and both repository portable installers are v2-191. Each version change also
+  rebuilds its installer in the repository; no Desktop copies or separate snapshots.
+  No live deployment performed.
 
 ### 2026-10-03 — Main-sidebar container manager (v2-190)
 

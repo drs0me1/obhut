@@ -312,7 +312,7 @@ Ana hedef:
 
 ## Export (taşınabilir kurulum app)
 
-Kullanıcı "export et" (veya eşdeğeri) dediğinde:
+Her `V2_VERSION` değişikliğinde ve kullanıcı ayrıca "export et" dediğinde:
 
 1. `Data/dev/export-installer.sh` çalıştır (`--desktop` kullanma).
 2. Çıktıyı `Data/app/<V2_VERSION>.command` olarak kaydet (`V2_VERSION`, `Data/install.sh` içinden).
@@ -321,9 +321,11 @@ Kullanıcı "export et" (veya eşdeğeri) dediğinde:
 5. Ayrı upload/sync betiği kullanma; tek dağıtım birimi bu app dosyasıdır.
 6. Gömülü tarball `app`, `dev`, `tests`, `.cursor` ve `docs` içermez.
 
-Commit işlemi kendiliğinden export, Masaüstü kopyası veya ayrı sürüm arşivi
-oluşturmaz; sürüm geçmişi Git'te tutulur. Önceden alınmış Masaüstü kopyalarına ve
-`versiyon/` arşivlerine dokunma.
+Sürüm değişikliğinin güncel kurulum dosyalarını son kaynakla doğrula ve kullanıcı
+commit istediğinde o sürümün commit'ine dahil et. Yalnız güncel sürüm repo kökünde
+ve `Data/app/` içinde durur; eski sürümler Git geçmişinde korunur. Commit sırasında
+Masaüstü kopyası veya ayrı sürüm arşivi oluşturma. Önceden alınmış Masaüstü
+kopyalarına ve `versiyon/` arşivlerine dokunma.
 
 ## Modüller (DD-148)
 

@@ -206,9 +206,12 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_*.
 
 ## Working conventions
 
-Version history stays in Git. Commits do not create Desktop copies, separate
-version snapshots or installer exports. When rebuilding the portable installer,
-keep outputs in the repository; copying elsewhere requires an explicit request.
+Version history stays in Git. Every version change also rebuilds the current portable
+installer in the repository root and `Data/app/` using `Data/dev/export-installer.sh`
+without `--desktop`. Verify both copies against the final source and include them in
+the version's commit when requested. Only the current installer stays in those two
+locations; older versions remain in Git. No Desktop copies or separate version
+snapshots are created; copying elsewhere requires an explicit request.
 
 See [`CLAUDE.md`](CLAUDE.md). Change history: [`Data/CHANGELOG.md`](Data/CHANGELOG.md).
 Session continuity: [`Data/SESSION.md`](Data/SESSION.md).

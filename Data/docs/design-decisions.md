@@ -47,9 +47,10 @@ with its status and the file that holds it.
   Existing backend traffic sources and authentication stay unchanged: no new rate
   module or additional qBittorrent login. qBittorrent's existing all-time totals can
   lag between its statistics-file saves; they are not live measurements.
-- **Delivery and evidence:** source version v2-191; portable installers remain v2-190
-  until an explicitly requested export. Local integration validation is recorded in
-  `SESSION.md`; this decision does not claim live acceptance.
+- **Delivery and evidence:** source and repository portable installers are v2-191.
+  Per the user's clarified workflow, every version change rebuilds the root and
+  `Data/app` installers for the version commit, without a Desktop copy or separate
+  snapshot. Local validation is recorded in `SESSION.md`; no live acceptance is claimed.
 
 ### DD-211: Main-sidebar container management with explicit ownership (v2-190)
 

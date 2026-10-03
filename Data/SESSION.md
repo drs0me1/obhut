@@ -4,6 +4,22 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-04 — Version exports stay in Git; v2-191 portable delivery:**
+- The user clarified that only Desktop copying was unwanted: every version change
+  must also produce the current portable installer inside the repository. Updated
+  CLAUDE.md, README.md and the active Cursor rule accordingly. Commit still requires
+  the user's request; version commits include the generated files. No separate snapshots.
+- Ran `bash Data/dev/export-installer.sh` without `--desktop`. Root and `Data/app/`
+  now contain `2026.08.06-v2-191.command`, 524069 bytes each; the exporter removed
+  the two previous v2-190 copies, which remain recoverable from Git history.
+- Verified both copies are identical, their declared version matches source, the embedded
+  archive SHA256 is `c63602c8a93a66da43eae8aa530a2459c494f0bca27e141624e1c476a4cbbaba`,
+  and all 82 archived runtime files exactly match current source. Generated launcher
+  syntax, four targeted exporter/launcher Bats tests and `git diff --check` passed.
+- This is an additive follow-up to source commit `af3a77d`, not a history rewrite.
+  No runtime behavior change/version bump, server operation, push, Desktop copy or
+  private installer-input/profile access. Local agent configuration remains excluded.
+
 **2026-10-04 — Overview simplification, source v2-191 (DD-212; locally verified):**
 - Requested outcome: only installed application tiles, with fixed settings/start-stop/log
   icon slots and empty unsupported slots; logs use the existing module journal. Built-in
@@ -43,8 +59,9 @@ Cross-session continuity for this repository.
   browser loads passed on serial rerun; the dialog-close helper now arms its listener before
   Escape and has a deadline; responsive hit tests await the existing transient notification.
   These fixture tests do not establish live nrm or Linux acceptance; no deployment was attempted.
-- Source `V2_VERSION` is `2026.08.06-v2-191`; root and `Data/app` portable installers remain
-  `2026.08.06-v2-190.command`. The user requested the commit after local acceptance.
+- Source commit `af3a77d` set `V2_VERSION` to `2026.08.06-v2-191` but initially left root
+  and `Data/app` installers at v2-190; the subsequent export is recorded above.
+  The user requested the commit after local acceptance.
   Pre-commit syntax/whitespace checks and the two overview Bats guards passed again.
   No export, server operation, Desktop copy or frozen version copy was performed.
   Unrelated agent configuration stays untouched and is excluded from the commit.
