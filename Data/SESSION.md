@@ -4,6 +4,74 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-03 — Container manager v2-190 implemented and live-verified on nrm (Astra + Opus):**
+- User accepted the prototype, requested implementation, then requested its commit after live acceptance.
+  Baseline `5b91f65` / v2-189. The implementation commit includes the accepted design and existing v2-190
+  export; no new export, Desktop copy, version snapshot or push. Unrelated agent configuration is excluded.
+- Opus implemented/froze the console and browser fixtures through `qitem-20261003091223-7fc997a3`, returned
+  as `qitem-20261003102529-d655a39f`, accepted/closed `done/no-follow-on` at 11:08Z. Astra independently reviewed the UI, implemented the broker and
+  integration, coordinated bounded backend helpers, and owned all final nrm acceptance. Interface:
+  `docs/design/container-manager-api.md`; behavior: DD-211 and `docs/contract.md`.
+- Main sidebar now contains Konteynerler: containers, images, volumes and networks, detail/log pages,
+  create/edit previews and ownership-derived start/stop/restart/remove. Generic definitions use private
+  digest-pinned Quadlets, durable manual stop, scoped ports, retained data and explicit resource deletion.
+  qBittorrent retains its native package lifecycle and exposes its real port/download folder adapter.
+- Review corrected real Podman JSON shapes, stopped inventory, resource usage, native revision races,
+  UI stopped-save behavior/interruption disclosure and the initial managed-network choice. Linux tests
+  caught Quadlet Volume quoting, nft JSON normalization and adoption defaults (PIDs/ulimits/stop signal).
+  Real UI acceptance caught own conmon sockets falsely blocking restart and missing bridge DNS. The
+  final candidate validates exact live socket ownership, installs aardvark-dns explicitly and permits
+  only managed-bridge TCP/UDP 53 to that incoming bridge's own address.
+- Final local commands: `PYTHONDONTWRITEBYTECODE=1 python3.13 -m unittest discover -s Data/tests -p
+  'test_*.py'` — 541 tests, 537 passed / 4 platform skips, exit 0; `bats Data/tests` — 176 passed;
+  ShellCheck (`-x`, working directory Data) and `git diff --check` clean. Root independently ran
+  `konteynerler-ui.cjs`, `panel-ui.cjs` and `torrent-ui.cjs`, all PASS; Opus reported the other console
+  fixture suites PASS. Browser fixtures alone do not prove server behavior.
+- nrm Linux proofs: isolated network namespace fixture passed 48 TCP/UDP/IPv4/IPv6 packet probes,
+  scope revocation and foreign-table preservation. Final `containers-worker-linux.py` passed all 14
+  claims with cleanup, including actual Quadlets, literal command arguments, private environment,
+  stopped edits, running save/restart with owned TCP/UDP listeners, adoption and data retention.
+- Actual Caddy/browser acceptance PASS: create; stop; stopped edit of port and volume destination;
+  explicit start; restart; remove retaining the volume; separate volume/network deletion. qBittorrent
+  running port/folder change, stopped edit without startup, explicit start/restart and native Web UI
+  through Caddy passed. Its test settings were restored to the original port/folder afterwards.
+  Desktop and 390 px screenshots were inspected; no browser JS errors. Evidence/scripts:
+  `/private/tmp/container-manager-live/`; fixture browser evidence is recorded in the turn transcript.
+- Actual bridge checks PASS: loopback access, Tailscale/WAN permitted and denied scope matrix, TCP/UDP
+  container-name and external DNS before/after firewall reapply and again after reboot. Installer
+  re-run and a real reboot retained the exact generic configurations/revisions, kept a manually stopped
+  container stopped, started the running one and retained qBittorrent's overridden port/folder/Caddy.
+  Final test containers, volumes, managed test networks, cached test images and remote staging files
+  were removed. Only qBittorrent and its image remain; core services are active and health is all ok.
+- Exported without Desktop copy: root + Data/app `2026.08.06-v2-190.command` identical, 524746 bytes;
+  embedded archive SHA256 `1c624adbad32713770dd0982bac08422a6be78745c268936a79b98abbe8af4b9`.
+  All 82 runtime files match source; deployed manager/worker/config/network and console hashes match.
+  Final candidate install at 10:57Z and unchanged rerun at 11:02Z exited 0. Scratch inputs only:
+  `SSH_HOST=nrm`, blank domain, default paths/ports; no full-upgrade, confirmation E. No installation
+  backups, operator Konsol account changes, private local input/profile reads or external publishing.
+- Limits: this candidate was live-tested on Debian 13/Podman 5.4.2, not Ubuntu. Generic IPv6 ingress
+  remains intentionally denied; public bindings are explicit IPv4 WAN scopes. No arbitrary host
+  networking/runtime socket mounts, implicit takeover of another controller or automatic image updates.
+
+**2026-10-03 — Container management design proposal (Astra + Opus; planning only):**
+- User requested moving Settings → Containers into the main sidebar and planning a Portainer-like
+  manager with lifecycle actions plus editable ports and volumes. No manager implementation or live
+  deployment performed in this task. Baseline remains commit `5b91f65`, v2-189 on branch quantum.
+- Astra authored `docs/design/konsol-konteynerler-v01.md`: ownership-aware App Store/systemd lifecycle,
+  durable definitions and stopped state, recreate previews, real host listener versus bridge mappings,
+  volume retention, worker/locking boundaries and required firewall/OS acceptance. Three delivery
+  batches divide backend/worker/package/Linux tests to Astra and console/browser work to Opus, with
+  mutual review and one live-test owner (Astra).
+- Opus returned frozen `docs/design/konsol-konteynerler-v01.html` through
+  `qitem-20261003083844-ffcc8666`. Astra claimed and independently reviewed it. The plan records chosen
+  semantics where the simulation differs: separate volume deletion, effective startup state, one
+  qBittorrent port value, ownership-derived external actions and explicit adoption access choices.
+- Independent Chromium check PASS: desktop/390 px dark, host-listener review, stopped edit stays
+  stopped unless selected, App Store removal consequences/default data retention; no JS errors or
+  HTTP requests. Screenshots: `/private/tmp/container-proposal-review-ELAl0E`. This proves the demo
+  interactions only; real Podman, network isolation and future worker behavior remain untested.
+- Design artifacts are uncommitted. No runtime/version/export changes, no nrm operations, no push.
+
 **2026-10-03 — v2-189 accepted and deployed; user requested commit (Astra):**
 - Final independent review: icon-only controls retain accessible names/tooltips, invisible 44 px hit areas
   and keyboard focus; the request-completion focus regression is fixed. `app-install-ui.cjs` passed on the

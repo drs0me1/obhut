@@ -46,8 +46,8 @@
       running && url ? h("a", { class: "btn btn-primary", id: "torrent-open", href: url, target: "_blank", rel: "noopener" }, "Web arayüzünü aç ↗") : null,
       running && !url && publicPanel() ? h("p", { class: "hint-s", id: "torrent-open-note" }, "İnternetten açmak için qBittorrent'in internet yayınını açın: ",
         h("a", { href: "#/ayarlar/web" }, "Ayarlar → Caddy")) : null,
-      // DD-209: uygulama Podman'da çalışır; konteynerin durumu, bağlamaları ve günlüğü Ayarlar'dadır.
-      h("a", { class: "linkbtn", id: "torrent-container", href: "#/ayarlar/konteynerler" + (DURUM && DURUM.container ? "/" + enc(DURUM.container) : "") }, "Konteyner"),
+      // DD-211: uygulamanın konteyneri ana menüdeki yönetim sayfasında açılır.
+      h("a", { class: "linkbtn", id: "torrent-container", href: "#/konteynerler" + (DURUM && DURUM.container ? "/" + enc(DURUM.container) : "") }, "Konteyner"),
       h("a", { class: "linkbtn", href: "#/moduller" }, "App Store’da yönet")].filter(Boolean));
   }
 

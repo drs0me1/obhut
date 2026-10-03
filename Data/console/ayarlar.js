@@ -1,12 +1,12 @@
 /* Approved v08 interaction model, live implementation (DD-156, DD-202: no application tab;
    package pages carry their own settings). Drafts stay in memory only. No localStorage, no inline HTML. */
 "use strict";
-window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog, containersContent }) => {
+window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog }) => {
   let root = document.getElementById("settings-page");
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  // DD-208: Konteynerler, tabandaki Podman'ın salt okunur görünümüdür (konteynerler.js); ayar taslağı yoktur.
-  const tabs = [["system", "Sistem"], ["fw", "Güvenlik Duvarı"], ["web", "Caddy"], ["dns", "Dnsmasq"], ["konteynerler", "Konteynerler"], ["log", "Günlük"]];
+  // Konteynerler artık ana menüde kendi sayfasıdır (konteynerler.js); eski sekmenin bağlantıları oraya yönlenir.
+  const tabs = [["system", "Sistem"], ["fw", "Güvenlik Duvarı"], ["web", "Caddy"], ["dns", "Dnsmasq"], ["log", "Günlük"]];
   // DD-200: the VPN category is named after the installed package that declares networks.
   const vpnName = () => (live && live.firewall && live.firewall.vpn_name) || "VPN";
   const scopeName = (s) => ({ wan: "İnternet", tail: "Tailscale", wg: vpnName(), lo: "Sunucu içi" }[s] || s);
@@ -510,7 +510,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       onkeydown: (e) => { const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!delta && !["Home", "End"].includes(e.key)) return; e.preventDefault(); choose(tabs[e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (tabs.findIndex(([k]) => k === key) + delta + tabs.length) % tabs.length][0]); }
     }, name)));
     const ready = !!(live?.manage && !live.manage.error && draft);
-    const content = tab === "system" ? systemContent() : tab === "log" ? logContent() : tab === "konteynerler" ? containersContent() : !ready
+    const content = tab === "system" ? systemContent() : tab === "log" ? logContent() : !ready
       ? note(live?.manage?.error || "Ayarlar okunuyor…", !!live?.manage?.error)
       : tab === "fw" ? firewall() : tab === "dns" ? dns() : caddy();
     const view = h("div", { id: "as-view", role: "tabpanel", "aria-labelledby": "as-tab-" + tab }, content);
@@ -522,7 +522,7 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
       pending && !httpsApplying() ? h("div", { class: "as-rollback" + (pending.phase === "stuck" ? " stuck" : ""), role: "status" }, ...rollbackState()) : null,
       pending?.domain || migration ? domainLinks(pending?.domain || migration) : null,
       message ? h("p", { class: "as-message", role: "status" }, message) : null, view,
-      ready && (list.length || !["system", "log", "web", "konteynerler"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
+      ready && (list.length || !["system", "log", "web"].includes(tab)) ? h("footer", { class: "as-footer" }, h("div", null, h("strong", null, list.length ? `${list.length} değişiklik taslakta` : "Kaydedilmemiş değişiklik yok"),
         h("small", null, directDns ? "Uygula ile DNS ayarları doğrudan kaydedilir; süreli onay gerekmez." : "İnceleyip uygulayana kadar sunucu değişmez.")), h("div", { class: "as-inline" },
         h("button", { type: "button", class: "btn btn-quiet", disabled: locked() || !list.length, onclick: reset }, "Vazgeç"),
         h("button", { type: "button", class: "btn btn-primary", disabled: locked() || !list.length, onclick: directDns ? () => submitChanges(() => {}) : review }, directDns ? "Uygula" : "İncele ve uygula"))) : null].filter(Boolean));

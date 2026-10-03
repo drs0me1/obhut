@@ -162,7 +162,8 @@ torrent_kur_geri() {
 # İndirilen dosyalara dokunulmaz.
 torrent_drop_data() {
     local ek="$KONTEYNER_BIRIM_DIR/$TORRENT_CONTAINER.container.d"
-    rm -f -- "$ek/90-konsol.conf"
+    rm -f -- "$ek/90-konsol.conf" "$ek/85-konteyner.conf"
+    [[ -z "${PACKAGE_OVERRIDES_DIR:-}" ]] || rm -f -- "$PACKAGE_OVERRIDES_DIR/torrent.env"
     rmdir -- "$ek" 2>/dev/null || true
     paket_imaj_sil
     [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0
@@ -242,6 +243,16 @@ paket_baslat() {
 paket_durdur() { # servis durur, açılışta başlamaz; adlar kalır
     paket_gerekli
     torrent_off
+}
+
+paket_yeniden_baslat() { # motorun tek install/modül kilidi altında
+    paket_gerekli
+    torrent_eski_yok
+    paket_imaj_cek || fail_step "$FAIL"
+    paket_konteyner_koy || fail_step "$FAIL"
+    systemctl restart "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent yeniden başlatılamadı"
+    torrent_verify || fail_step "$FAIL"
+    paket_adlar_ac || fail_step "$FAIL"
 }
 
 paket_kaldir() {

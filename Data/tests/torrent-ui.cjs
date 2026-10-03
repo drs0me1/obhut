@@ -83,8 +83,8 @@ let hold = false, release = null, failNext = "", durumReads = 0;
     assert.equal(await page.locator("#title").innerText(), "qBittorrent");
     assert.equal(await page.getByRole("tab").count(), 0, "No settings tabs on the application page");
     assert.equal(await page.locator("#torrent-open").getAttribute("href"), "http://torrent.ayc");
-    // DD-209: the app runs in Podman; its container view (state, mounts, log) is one link away in Settings.
-    await page.waitForFunction(() => document.querySelector("#torrent-container")?.getAttribute("href") === "#/ayarlar/konteynerler/qbittorrent");
+    // DD-211: the application links directly to the main-sidebar container manager.
+    await page.waitForFunction(() => document.querySelector("#torrent-container")?.getAttribute("href") === "#/konteynerler/qbittorrent");
     // Found live: an absent bar item must not become the text "null".
     assert(!(await page.locator("#torrent-status").innerText()).includes("null"), "no null text in the service bar");
     assert.equal(await username().inputValue(), "admin");

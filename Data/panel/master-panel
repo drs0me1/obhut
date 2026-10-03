@@ -53,13 +53,14 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import master_auth
 import master_containers
+import master_container_manager
 import master_settings
 import master_shares
 import master_publications
 
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
-MODULE_ACTIONS = ("kur", "baslat", "durdur", "kaldir")
+MODULE_ACTIONS = ("kur", "baslat", "durdur", "yeniden-baslat", "kaldir")
 # DD-200: paketin bildirdiği Konsol dosyaları (düz dosya adları; klasör yolu kabul edilmez).
 API_FILE_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}\.py$")
 PAGE_FILE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,40}\.(js|css)$")
@@ -505,6 +506,7 @@ class Panel:
         self.traffic_lock = threading.Lock()
         self.traffic_cache = (-TRAFFIC_CACHE_SECONDS, None)
         self.traffic_errors = set()
+        self.containers = master_container_manager.Service(self)
 
     def public_open(self):
         """DD-195: is Konsol published on the internet right now (name, WAN IPv4, account)?
@@ -2007,11 +2009,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/konsol/saglik":
             self.json(200, self.panel.health())
             return
-        # DD-208: Ayarlar → Konteynerler; tabandaki Podman'ın salt okunur görünümü. Yazma yolu yoktur.
-        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk)$", path)
+        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem)$", path)
         if m:
-            view = master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout))
             try:
+                if m.group(1) == "islem":
+                    self.json(200, self.panel.containers.operation(query.get("id", [""])[0]))
+                    return
+                # Older state files retain their read-only view until the installer provisions
+                # the manager's private store and workers.
+                view = (self.panel.containers.view() if read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR") else
+                        master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout)))
                 if m.group(1) == "liste":
                     body = view.liste()
                 else:
@@ -2148,6 +2155,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.audit(user, "duzen", detail, True)
             self.json(200, {"duzen": value})
+            return
+        if path == "/api/konsol/konteynerler/islem":
+            try:
+                result = self.panel.containers.submit(data)
+            except master_containers.ContainerError as err:
+                self.error(err.status, str(err))
+                return
+            self.audit(user, "konteyner-" + result["action"], result["name"], True)
+            self.json(202, result)
             return
         share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
         if path in {"/api/konsol/paylasim/" + name for name in share_actions}:

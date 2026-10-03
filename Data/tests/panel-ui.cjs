@@ -129,7 +129,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#genel-tiles .tile").first().waitFor();
     await page.waitForFunction(() => document.querySelector("#resource-cpu").textContent === "%18");
     assert.equal(await page.locator("#title").innerText(),"Genel bakış");
-    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Genel bakış","Dosyalar","App Store","Ayarlar"]);
+    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Genel bakış","Dosyalar","App Store","Konteynerler","Ayarlar"]);
     assert.equal(await page.locator('[data-view="uygulamalar"],.desktop-dock,#window-min').count(),0);
     assert.deepEqual(await page.locator("#genel-tiles .tile strong").allTextContents(),["Dosyalar","Paylaşımlar","App Store","Ayarlar"],"no application tile while none is installed");
     assert.equal(await page.locator('#genel-tiles .tile[data-tile="moduller"] small').innerText(),"0 kurulu · 2 kurulabilir");
@@ -265,8 +265,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.getByRole("heading",{name:"Genel bakış",exact:true}).waitFor();
     await navigate("#/ayarlar/log");
     await page.locator("#log-table").waitFor();
-    // DD-208: Sistem, Güvenlik Duvarı, Caddy, Dnsmasq, Konteynerler, Günlük.
-    assert.equal(await page.getByRole("tab").count(),6);
+    // Sistem, Güvenlik Duvarı, Caddy, Dnsmasq, Günlük; containers have their own sidebar page.
+    assert.equal(await page.getByRole("tab").count(),5);
     await page.getByRole("tab",{name:"Sistem",exact:true}).click();
     await page.getByRole("tab",{name:"Sistem",exact:true}).press("ArrowRight");
     await page.waitForURL("**/#/ayarlar/fw");

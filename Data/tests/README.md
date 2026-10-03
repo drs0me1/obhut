@@ -41,6 +41,34 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Container manager (v2-190, DD-211)
+
+Local checks need no server:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_container*.py'
+node tests/konteynerler-ui.cjs  # console static server and Playwright required; see browser setup below
+```
+
+Use Python 3.11 or newer (nrm uses 3.13); macOS's system Python 3.9 does not parse
+the nanosecond RFC3339 timestamps returned by the runtime. The suites cover merged
+inventory/stopped definitions, real Podman JSON shapes, API gates, private results,
+stale revisions, recreate/rollback, explicit adoption, volume/network boundaries,
+package port overrides, bridge DNS INPUT permissions, ownership-aware listener
+conflicts and the existing tailnet event's bounded refresh job.
+Browser fixtures exercise actual console assets with mocked API state; they do not
+prove Podman, firewall or server mutations.
+
+`containers-network-linux.py` requires Linux/root and is run inside a disposable
+network namespace (`unshare --net --fork`). It tests actual TCP/UDP packet paths,
+scope revocation, direct/IPv6 ingress and preservation of foreign nftables tables.
+`containers-worker-linux.py` requires a disposable rootful Podman/systemd host with
+the project firewall already active. It creates only uniquely named test resources
+and cleans them up; it checks real Quadlet execution and lifecycle behavior.
+Do not run live fixtures concurrently with installation or another nrm test.
+Installation/reboot persistence and the actual application/browser journey remain
+separate acceptance checks; record exact runs and untested platforms in SESSION.md.
+
 ## Public Konsol over HTTPS (v2-167, DD-195)
 
 `test_publications.py` covers the Panel row: the tailnet switch cannot close, an
@@ -183,10 +211,13 @@ missing or fails, `inspect` mapping (sorted mounts, port bindings, three labels,
 the environment), log masking of password/token/key values with a bounded tail, name and path
 gates and RFC 3339 parsing; a route test runs the real backend handler on a Unix socket (shared
 gates, 400/404 answers, no write route: POST → 404, no podman write verb).
-`konteynerler-ui.cjs` renders Settings → Konteynerler with fixture APIs under the production CSP
-(six tabs, no sidebar application, list, detail with mounts/ports/labels as text, log tail and
-masked lines, runtime error and empty states, the deep link `#/ayarlar/konteynerler/<name>`, the
-open detail surviving a tab switch, no settings read and no non-GET request, widths, dark theme).
+`konteynerler-ui.cjs` now drives the main-sidebar manager (DD-211) under the production CSP:
+five Settings tabs and old-link redirects; saved stopped definitions; ownership-derived actions,
+busy/error handling, details and logs; create/edit/review/async apply; private secret preservation,
+explicit public scopes and accurate recreation/stopped-save behavior; a logical default network
+on a fresh host; the App Store listener/folder adapter; images, volumes, networks and adoption.
+Drafts survive polling, stale responses cannot replace a newer sheet, leaving the page closes it,
+and 390 px dark/light layouts retain keyboard access without horizontal overflow.
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
 files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
 no `/etc/containers` literal in the engine), the qBittorrent quadlet (host network, `Pull=never`,

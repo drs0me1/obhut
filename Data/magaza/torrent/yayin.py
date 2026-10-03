@@ -9,7 +9,7 @@ import fnmatch
 import http.client
 from pathlib import Path
 
-from master_settings import SettingsError, env_read, read_regular, require
+from master_settings import SettingsError, env_read, package_overrides, read_regular, require
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -18,6 +18,7 @@ def package_env(env):
     """The package's own settings (torrent.env, DD-203) on top of the base's state."""
     merged = dict(env)
     merged.update(env_read(PACKAGE_DIR / "torrent.env"))
+    merged.update(package_overrides(env, "torrent"))
     return merged
 
 

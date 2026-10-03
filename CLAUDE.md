@@ -180,7 +180,10 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   live-verified 2026-08-30, including re-run, service restarts and reboot.
 - The fixed base includes Files, folder WebDAV and ZIP/RAR (**DD-159**, **DD-166**).
   Podman is part of the base (daemon-less container runtime, `podman info` checked in
-  stages 1 and 7; Settings → Konteynerler is its read-only view, **DD-208**; no Docker).
+  stages 1 and 7; the main-sidebar Konteynerler manager adds explicit lifecycle,
+  configuration and resource operations, **DD-211**; no Docker). App Store containers
+  retain their package lifecycle; generic definitions are private, digest-pinned Quadlets
+  with managed bridge ingress. No implicit adoption, automatic image update or reconciliation.
   The App Store catalogue is WireGuard and qBittorrent; qBittorrent is a container
   application (`PAKET_CALISMA=konteyner`, quadlet + digest-pinned image, **DD-209**). Public module
   verbs refuse `dosya`/`paylasim`; these are internal template/registry IDs used

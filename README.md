@@ -5,7 +5,8 @@ Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
 dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
 the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
 are built in (**DD-159**, **DD-166**). Podman is part of the base as the App Store's
-container runtime, with a read-only Settings → Konteynerler view (**DD-208**); no Docker
+container runtime, with a main-sidebar Konteynerler manager for lifecycle, ports,
+volumes, images and networks (**DD-211**); no Docker
 (**DD-152**), no reconcile engine.
 
 **Current version:** the name of the `<version>.command` at the repository root
@@ -101,7 +102,7 @@ only the runtime files and their archive SHA-256. It uploads them to
 
 | Service | Exposure | Role |
 |---------|----------|------|
-| qBittorrent (Podman container, **DD-151**, **DD-209**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store (the linuxserver image, pinned by digest, host network); torrent downloads. Its own page shows first-login information on request and links to its container in Settings → Konteynerler |
+| qBittorrent (Podman container, **DD-151**, **DD-209**) | loopback → Caddy `torrent.<domain>` (its own login); outgoing peer connections only | installed from Konsol → App Store (the linuxserver image, pinned by digest, host network); torrent downloads. Account/folder settings remain in its application form; Konteynerler manages lifecycle and its listener port/download folder through the package adapter |
 | WireGuard (host kernel; app, **DD-150**) | public UDP; internet-only VPN | installed from Konsol → App Store; VPN; peers generated on the server with Konsol or `wireguard.command` |
 | Built-in folder WebDAV (**DD-158**, **DD-159**) | loopback → Caddy on Tailscale (`paylas.<domain>`, `<tailscale-ip>:SHARE_PORT/s/<id>/`); internet only for folders that turn WAN on: HTTPS on a public name set in Settings → Caddy (**DD-190/191**), or legacy consented HTTP when none is set (**DD-179**) | Separate account per folder; Tailscale and WAN each have their own on/off, RO/RW and expiry (**DD-192**). Configure from Files → Details; manage together under Paylaşımlar. Passwords stored only as hashes. |
 | Konsol Model A (**DD-160**) | loopback → Caddy `panel.<domain>` on the tailnet, optionally also a public HTTPS name from Settings → Caddy (**DD-195**); no sign-in on the tailnet; the public name asks for the Konsol account created in Settings over Tailscale (**DD-194**, **DD-205**) | one sidebar: Genel bakış (clock, status and network widgets, application tiles; an edit mode for order, widget width and visibility, **DD-206**), Files (browse, upload, move, trash, text, archive creation/extraction), App Store, installed qBittorrent/WireGuard and Settings; CPU/RAM/disk below the menu |
@@ -126,10 +127,13 @@ There is no Local access option in creation, settings, API or CLI.
 WG cannot reach host services, other VPN networks or private destinations routed
 through WAN. Firewall overrides are available only for WAN and Tailscale.
 
-Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq,
-Konteynerler (**DD-208**) and Log tabs. qBittorrent's account/new-download folder is on its own application
-page. Account-only Save commits directly (**DD-165**); folder edits share the
-existing draft/review/rollback controller with Settings.
+Konsol → Ayarlar (**DD-156/160**) contains System, Firewall, Caddy, Dnsmasq
+and Log tabs. **Konteynerler** is a main-sidebar page (**DD-211**): create, start,
+stop, restart and remove containers; edit ports, mounts and startup settings;
+manage images, named volumes and bridge networks. App Store applications retain
+their package lifecycle. Removing a container keeps its volumes and host files;
+internet port exposure requires an explicit choice. qBittorrent's account and
+download folder remain editable from its existing application settings form.
 Firewall uses full tables with service/address explanations, source CIDRs,
 policy and on/off controls. Incoming-network tabs are Tailscale (default), Internet,
 WireGuard (when installed, with per-network selection) and protected loopback.

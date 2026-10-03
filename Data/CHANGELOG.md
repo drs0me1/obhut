@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-03 — Main-sidebar container manager (v2-190)
+
+- Containers moves from Settings into the main sidebar with containers, images, volumes
+  and networks. The accepted design gains real lifecycle controls, details/logs, creation
+  and configuration forms; old links redirect to the new page.
+- Generic containers retain ports, mounts, environment and startup settings across
+  recreation. Manual stop remains effective at boot; stopped editing does not start the
+  container. Resources in use cannot be deleted, and removing a container keeps its data.
+- App Store applications retain their package lifecycle. qBittorrent's listener port and
+  download folder can be changed through its adapter; publication and installer re-runs
+  use the durable port setting. Existing account settings remain in the app form.
+- Explicit local/Tailscale/internet port scopes are enforced on managed bridges. Operations
+  report actual completion or failure, reject stale edits and keep secret values private.
+- Implementation and acceptance evidence: see `SESSION.md` (DD-211).
+
 ### 2026-10-03 — Icon-only tile actions; v2-188 live acceptance (v2-189)
 
 - **Tile actions are bare icons** (DD-210; user: "fon rengi olmadan sadece simge"): Ayarlar and Durdur/Başlat

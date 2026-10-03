@@ -40,6 +40,7 @@
     boxOpen: '<path d="M9 6L3 3 1 6l6 3 2-3 6-3 2 3-6 3-2-3M3 7v6l6 3 6-3V7M9 10v6"/>',
     play: '<path d="M5.6 3.6v10.8L14.2 9z"/>',
     pause: '<path d="M6 3.8v10.4M12 3.8v10.4"/>',
+    stop: '<rect x="4.6" y="4.6" width="8.8" height="8.8" rx="1.6"/>',
     search: '<circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.4 15.4"/>',
     close: '<path d="M4.8 4.8l8.4 8.4M13.2 4.8l-8.4 8.4"/>',
     key: '<circle cx="5.8" cy="12" r="3.2"/><path d="M8.1 9.7l6.5-6.5M12.4 5.4l1.9 1.9M10.6 7.2l1.5 1.5"/>',
@@ -966,7 +967,7 @@
   // Katalog ve her paketin App Store metinleri sunucudan gelir (master-modul liste + paketin
   // konsol.json'u); burada hiçbir uygulama adı yazılı değildir. Metinler yalnız metin düğümü olur.
   const ROUTE_RE = /^[a-z]{2,16}$/;
-  const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "ayarlar"]);
+  const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "konteynerler", "ayarlar"]);
   const META_FALLBACK = { alt: "", simge: "box", ton: "t-text", aciklama: "", neler: [], notlar: [], kaldir: {}, durdur_notu: "", gunluk_kaynak: "", sayfa: {}, gunluk: {} };
   const pairs = (v) => (Array.isArray(v) ? v.filter((x) => Array.isArray(x) && x.length === 2 && typeof x[1] === "string").map(([ic, t]) => [ICON[ic] ? ic : "info", t]) : []);
   function metaOf(id) {
@@ -1544,16 +1545,17 @@
     h("p", {class:"page-note"}, "Konsol’dan yapılan son işlemler. Servis günlükleri App Store → Ayrıntı bölümünde bulunur."),
     h("div", {class:"chipset", id:"log-filter", role:"group", "aria-label":"Süzgeç"}),
     h("div", {class:"table log-t", id:"log-table"}));
-  let settingsTab = "system", containerWant = "";
-  // DD-208: Ayarlar → Konteynerler; görünüm kendi okumasını yapar, üst çubuktaki zaman damgasını yazar.
-  const containers = window.createContainersView({ h, svg, api, enc, fail, bytes, since,
+  let settingsTab = "system";
+  // Konteynerler: ana menüde kendi sayfası (konteynerler.js). Yönetici kendi okumasını ve işlemlerini yapar;
+  // bir işlem bitince App Store ve Genel bakış ortak modül listesinden yenilenir (refreshShared).
+  const containers = window.createContainerManager({ h, svg, api, post, enc, toast, fail, ask, bytes, since,
     clock: { sync: (serverNow) => { if (Number.isFinite(serverNow)) S.offset = serverNow - Date.now() / 1000; } },
-    stamp: (text) => { const s = $("cfg-stamp"); if (s && current === "ayarlar" && settingsTab === "konteynerler") s.textContent = text; } });
-  const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog:renderLog,
-    containersContent: containers.content });
+    stamp: (text) => { const s = $("ct-stamp"); if (s && current === "konteynerler") s.textContent = text; },
+    appMeta: (id) => metaOf(id), refreshShared: () => loadModules(), go: (hash) => { location.hash = hash; }, active: () => current === "konteynerler" });
+  const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog:renderLog });
   function renderSettings() {
     const stamp = $("cfg-stamp");
-    if (stamp) stamp.textContent = settingsTab === "konteynerler" ? containers.stampText() : CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
+    if (stamp) stamp.textContent = CFG ? "Son okuma " + hhmm(CFG.read_at) : "Okunuyor…";
     settingsPage.render(CFG, settingsTab);
   }
   /* ---------- One workspace, hash routes ---------- */
@@ -1568,7 +1570,6 @@
     h("button", {type:"button", class:"btn btn-quiet", onclick:() => {
       if (current === "ayarlar" && settingsTab === "log") loadActions();
       else if (current === "ayarlar" && settingsTab === "system") { loadSystem(); loadHealth(); }
-      else if (current === "ayarlar" && settingsTab === "konteynerler") containers.refresh();
       else loadSettings(true);
     }}, svg("refresh"), "Yenile")];
   /* ---------- Genel bakış (DD-204, DD-206): widget'lar, uygulama kareleri ve düzenleme ---------- */
@@ -1939,9 +1940,11 @@
     dosyalar: { title: "Dosyalar", eyebrow: "Sunucu alanı", actions: () => [],
       render: () => { renderFs(); if (fsView === "trash") loadTrash(); else if (fsView === "shares") loadShares(); else if (fsView === "files") { loadShares(); if (!fsList) loadFs(); } } },
     moduller: { title: "App Store", eyebrow: "", actions: () => [h("span", {class:"hm", id:"mod-sum"}, "Okunuyor…")], render: () => { renderModules(); loadModules(); } },
+    // #/konteynerler[/AD]: liste ya da bir konteynerin ayrıntısı (ad URL'de kodlu).
+    konteynerler: { title: (sub) => containers.title(sub), eyebrow: (sub) => containers.eyebrow(sub), actions: (sub) => containers.actions(sub),
+      render: (sub) => containers.show(sub) },
     ayarlar: { title: "Ayarlar", eyebrow: "Panel ve sunucu yapılandırması", actions:settingsActions,
-      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth();
-        if (settingsTab === "konteynerler") containers.show(containerWant); else loadSettings(); } },
+      render: () => { renderSettings(); if (settingsTab === "log") loadActions(); if (settingsTab === "system") loadHealth(); loadSettings(); } },
   };
   // DD-204: açılış sayfası Genel bakış (DD-160'ta Dosyalar'dı).
   let current = "genel";
@@ -2035,7 +2038,12 @@
     $("top-actions").replaceChildren(...hd.actions);
   }
   function route() {
-    const raw = location.hash.replace(/^#\/?/, "").split("/");
+    let raw = location.hash.replace(/^#\/?/, "").split("/");
+    // Eski Ayarlar → Konteynerler bağlantıları (#/ayarlar/konteynerler[/AD]) yeni sayfaya yönlenir.
+    if (raw[0] === "ayarlar" && raw[1] === "konteynerler") {
+      history.replaceState(null, "", "#/konteynerler" + (raw[2] ? "/" + raw[2] : ""));
+      raw = ["konteynerler"].concat(raw[2] ? [raw[2]] : []);
+    }
     const apps = appRoutes();
     // Before the module list arrives an application bookmark is kept and shown once the list is known.
     pendingRoute = !MODS && !SHELL_ROUTES.has(raw[0]) && !ROUTES[raw[0]] && ROUTE_RE.test(raw[0]);
@@ -2047,11 +2055,11 @@
       key = "moduller";
     }
     if (key === "dosyalar") fsView = raw[1] === "cop" ? "trash" : raw[1] === "paylasim" ? "shares" : "files";
-    if (key === "ayarlar") settingsTab = ["fw","web","dns","konteynerler","log"].includes(raw[1]) ? raw[1] : "system";
-    // DD-209: bir uygulamanın sayfası kendi konteynerine #/ayarlar/konteynerler/<ad> ile bağlanır.
-    containerWant = key === "ayarlar" && settingsTab === "konteynerler" && raw[2] ? (() => { try { return decodeURIComponent(raw[2]); } catch (_) { return ""; } })() : "";
+    if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
     // DD-206: leaving the overview drops an unsaved layout draft.
     if (key !== "genel" && editing) { editing = null; drag = null; }
+    // Likewise leaving Konteynerler closes its open sheet (an accepted operation keeps running on the server).
+    if (key !== "konteynerler") containers.leave();
     current = key;
     if (!ROUTES[key]) sectionFor(key);
     document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== key; });
@@ -2079,7 +2087,7 @@
     if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();
     if (current === "ayarlar" && settingsTab === "log") loadActions();
     if (current === "ayarlar" && settingsTab === "system") loadHealth();
-    if (current === "ayarlar" && settingsTab === "konteynerler") containers.poll();
+    if (current === "konteynerler") containers.poll();
     if (current === "dosyalar") { loadFsState(); if (fsView === "shares") loadShares(); }
     if (current === "genel") { loadHealth(); loadFsState(); loadShares(); }
     if ((current === "moduller" || current === "genel") && !(MODS || []).some((m) => m.busy)) loadModules();

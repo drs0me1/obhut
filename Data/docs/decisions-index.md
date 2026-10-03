@@ -212,3 +212,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |
 | DD-210 | App Store install form, direct app launch and the icon-only tile action row | live | design-decisions.md |
+| DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live | design-decisions.md |

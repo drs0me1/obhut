@@ -41,6 +41,7 @@
       <a href="#/genel" data-route="genel" data-icon="home">Genel bakış</a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
       <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
+      <a href="#/konteynerler" data-route="konteynerler" data-icon="box">Konteynerler</a>
       <!-- DD-200: installed application links follow this label; konsol.js builds them from each package's declaration. -->
       <span class="side-label" id="installed-label" hidden>Kurulu uygulamalar</span>
       <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders" class="settings-link">Ayarlar</a>
@@ -85,6 +86,11 @@
       <section data-view="moduller" hidden>
         <div class="store-list" id="mod-grid" aria-label="Uygulamalar"></div>
         <section class="store-detail" id="mod-detail" aria-labelledby="mod-detail-title" hidden></section>
+      </section>
+
+      <!-- Konteynerler: the base Podman manager (konteynerler.js); old Settings → Konteynerler links redirect here. -->
+      <section data-view="konteynerler" hidden>
+        <div id="konteyner-page"></div>
       </section>
 
       <section data-view="ayarlar" hidden>

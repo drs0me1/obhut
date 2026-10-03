@@ -846,7 +846,8 @@ assert not missing, missing
     # The watchdog resets Caddy's start limit and checks the firewall again once Tailscale answers.
     body="$(awk '/^recover_failed_bound_units\(\)/,/^}$/' "$rt")"
     [ "$(grep -n 'reset-failed "\$unit"' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl restart "\$unit"' <<<"$body" | cut -d: -f1)" ]
-    [ "$(grep -cx 'recover_firewall_if_broken' "$rt")" -eq 2 ]
+    # Also recover the guard after an address change, before refreshing bridge bindings.
+    [ "$(grep -cx 'recover_firewall_if_broken' "$rt")" -eq 3 ]
     [ "$(awk '/^recover_firewall_if_broken$/ {n++; if (n == 2) {print NR; exit}}' "$rt")" -gt \
         "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
     # A damaged archive history is set aside instead of stopping the Files service.
@@ -1945,7 +1946,7 @@ mm() {
 }
 
 @test "master-modul keeps lifecycle changes locked and deletes only owned data" {
-    [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 6 ]
+    [ "$(grep -c '^    take_lock$' "$V2_ROOT/scripts/master-modul")" -eq 7 ]
     grep -q 'flock -w 5 8' "$V2_ROOT/scripts/master-modul"
     # DD-197: data removal lives in each package's hook, still bounded to the package's own paths.
     grep -qF '[[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0' "$V2_ROOT/magaza/torrent/kanca"
@@ -3159,7 +3160,7 @@ PY
     grep -q '<div class="wall" aria-hidden="true">' "$html"
     run ! grep -q ' style="' "$html"
     run ! grep -qE 'url\(|@import|https?://' "$css"
-    grep -qF 'const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "ayarlar"]);' "$js"
+    grep -qF 'const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "konteynerler", "ayarlar"]);' "$js"
     grep -qF 'let current = "genel";' "$js"
     grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
     # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
@@ -3236,37 +3237,39 @@ PY
     run ! grep -qE '"wg"|master-wg|wg show' "$V2_ROOT/magaza/wireguard/trafik.py"
 }
 
-@test "Podman is base infrastructure (DD-208): installed and verified by the installer, read-only Konteynerler tab in Settings" {
+@test "Podman is base infrastructure (DD-211): integrated manager uses private root workers" {
     local s1 s7 mc="$V2_ROOT/panel/master_containers.py" js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css"
     [ ! -e "$V2_ROOT/magaza/podman" ]
     s1="$(awk '/^stage_1\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     # Stage 1 installs the runtime without recommends (no buildah, criu, slirp4netns) and requires it.
     grep -qF 'retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \' <<<"$s1"
-    grep -qx '        podman netavark' <<<"$s1"
+    grep -qx '        podman netavark aardvark-dns' <<<"$s1"
     [ "$(grep -n 'check_nft_iptables required' <<<"$s1" | cut -d: -f1)" -lt "$(grep -n 'check_podman$' <<<"$s1" | cut -d: -f1)" ]
     grep -qx '    check_podman' <<<"$s7"
     grep -qF "podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}'" "$V2_ROOT/install.sh"
     # No daemon: the installer never enables Podman's socket, service or auto-update timer.
     [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-modul" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
-    # The base view: helper installed with the backend, GET routes only, console files shipped.
+    # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css; do' "$V2_ROOT/install.sh"
-    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk)$", path)' "$V2_ROOT/panel/master-panel"
-    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 1 ]
-    awk '/    def do_POST\(self\):/,/^    def do_DELETE|^class /' "$V2_ROOT/panel/master-panel" | { ! grep -q 'konteynerler'; }
+    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem)$", path)' "$V2_ROOT/panel/master-panel"
+    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 2 ]
+    grep -qF 'if path == "/api/konsol/konteynerler/islem":' "$V2_ROOT/panel/master-panel"
+    grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
+    grep -qF -- '--property=RuntimeMaxSec=900' "$V2_ROOT/panel/master_container_manager.py"
     # Podman read commands only, secrets masked, the environment never returned.
     run ! grep -qE '"(run|create|pull|rm|rmi|stop|start|kill|exec|restart|reset)"' "$mc"
     grep -q '^SECRET_RE = re.compile' "$mc"
     run ! grep -qE '"Env"|\.get\("Env"' "$mc"
     run ! grep -qiE 'qbittorrent|wireguard|torrent' "$mc" "$js" "$css"
-    # Settings tab: CSP-safe, read-only, pd- prefixed classes only; loaded before the shell.
-    grep -qF '["konteynerler", "Konteynerler"]' "$V2_ROOT/console/ayarlar.js"
+    # Main sidebar page: CSP-safe, scoped styles and script loaded before the shell.
+    run ! grep -qF '["konteynerler", "Konteynerler"]' "$V2_ROOT/console/ayarlar.js"
+    grep -qF 'href="#/konteynerler"' "$V2_ROOT/console/index.html"
     [ "$(grep -n 'src="/konteynerler.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" -lt "$(grep -n 'src="/konsol.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" ]
     grep -qF 'href="/konteynerler.css"' "$V2_ROOT/console/index.html"
     run ! grep -qE 'innerHTML|localStorage|sessionStorage|https?://|style=' "$js"
     run ! grep -qE 'url\(|@import|https?://' "$css"
-    run ! grep -qF 'post(' "$js"
     [ "$(grep -cE '^\.(pd-|@)' "$css")" -gt 0 ] && [ "$(grep -cE '^\.[a-oq-z]' "$css")" -eq 0 ]
     # Syntax check only where Node exists (the Mac); the Linux host has no Node.
     if command -v node >/dev/null 2>&1; then node --check "$js"; fi
@@ -4605,7 +4608,7 @@ PY
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
     local fw="$V2_ROOT/scripts/firewall.sh" f
     # DD-198: the rules come from the installed package's firewall declaration ("vpn …" lines).
-    for f in package_declarations load_package_rules apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
+    for f in package_declarations load_package_rules container_dns_iface apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
         eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
     done
     grep -q '^load_package_rules$' "$fw"
@@ -4785,7 +4788,7 @@ PY
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
     [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
     # DD-208: Podman is base infrastructure, printed with its version, not as an App Store line.
-    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Ayarlar → Konteynerler)' "$V2_ROOT/install.sh"
+    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Konteynerler)' "$V2_ROOT/install.sh"
     # DD-196: the WireGuard usage note is printed only with the package installed.
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(summary_notes)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"

@@ -1,4 +1,4 @@
-"""Base container view (DD-208): Settings → Konteynerler, GET /api/konsol/konteynerler/*.
+"""Legacy read-only mapper (DD-208), reused by the main container manager (DD-211).
 
 Podman is base infrastructure; panel/master_containers.py maps read-only podman output for the
 root backend. No real podman: every command answers from canned output, so the tests cover the

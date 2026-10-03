@@ -282,8 +282,17 @@ check_rule_count() {
     [[ "$count" -eq "$expected" ]] || die "$bin: $chain kural sayısı $count (beklenen $expected)"
 }
 
+container_dns_iface() {
+    # Older state files predate the managed bridge key. Match the network helper's
+    # default and validation, never accept a caller-supplied wildcard interface.
+    local prefix="${KONTEYNER_BRIDGE_PREFIX-ksl}"
+    [[ "$prefix" =~ ^[a-z][a-z0-9]{1,4}$ ]] || die "konteyner köprü öneki geçersiz"
+    printf '%s+\n' "$prefix"
+}
+
 apply_input4() {
-    local bin=iptables staging i
+    local bin=iptables staging i proto dns_iface
+    dns_iface="$(container_dns_iface)"
     staging="$(create_staging "$bin" "${CHAIN_STAGING_PREFIX}IN-")"
     for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
         "$bin" -w 5 -A "$staging" -i "${VPN_IFACES[i]}" -j DROP
@@ -291,6 +300,12 @@ apply_input4() {
     "$bin" -w 5 -A "$staging" -i lo -j ACCEPT
     "$bin" -w 5 -A "$staging" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "$bin" -w 5 -A "$staging" -i "$TAILSCALE_IF" -j ACCEPT
+    # Aardvark serves only its bridge gateway. Keep container DNS working after
+    # firewall reload without allowing other host addresses, services or VPNs.
+    for proto in udp tcp; do
+        "$bin" -w 5 -A "$staging" -i "$dns_iface" -p "$proto" --dport 53 \
+            -m addrtype --dst-type LOCAL --limit-iface-in -j ACCEPT
+    done
     # Tailscale'in kendi UDP portu: ts-input da kabul eder ama o zincirin
     # varlığına/sırasına bağlı kalmamak için burada da açık (DD-73).
     "$bin" -w 5 -A "$staging" -i "$WAN_INTERFACE" -p udp \
@@ -499,13 +514,21 @@ check_wan_allow_count() {
 }
 
 check_input_chain() {
-    local bin="$1" family="$2" n=0 proto port i type expected=5
+    local bin="$1" family="$2" n=0 proto port i type expected=5 dns_iface
     check_jump_exactly_one "$bin" INPUT "$CHAIN_INPUT"
     check_no_staging_artifacts "$bin"
     check_ts_input_precedence "$bin"
     check_rule "$bin" "$CHAIN_INPUT" -i lo -j ACCEPT
     check_rule "$bin" "$CHAIN_INPUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     check_rule "$bin" "$CHAIN_INPUT" -i "$TAILSCALE_IF" -j ACCEPT
+    if [[ "$family" == v4 ]]; then
+        dns_iface="$(container_dns_iface)"
+        for proto in udp tcp; do
+            check_rule "$bin" "$CHAIN_INPUT" -i "$dns_iface" -p "$proto" --dport 53 \
+                -m addrtype --dst-type LOCAL --limit-iface-in -j ACCEPT
+        done
+        expected=$((expected + 2))
+    fi
     check_rule "$bin" "$CHAIN_INPUT" -i "$WAN_INTERFACE" -j DROP
     check_rule "$bin" "$CHAIN_INPUT" -j DROP
     [[ "$("$bin" -w 5 -S "$CHAIN_INPUT" | tail -n 1)" == "-A $CHAIN_INPUT -j DROP" ]] ||
@@ -754,10 +777,20 @@ if [[ -n "${RUNTIME_DIR:-}" ]]; then
     flock -w 5 7 || die "başka bir firewall işlemi sürüyor"
 fi
 trap startup_failure EXIT
+container_dns_iface >/dev/null
 load_package_rules
 load_share_wan
 resolve_wan_interface
 load_settings_rules
+if [[ -n "${KONTEYNER_STATE_DIR:-}" ]]; then
+    # Netavark kendi NAT kurallarını tutar. Yalnız Konsol köprülerine gelen trafiğin
+    # kapsamını ayrı inet tablosuyla sınırlarız; başka yazılımın zincirine dokunulmaz.
+    if [[ "$MODE" == check ]]; then
+        python3 "${SBIN_DIR:?}/master_container_network.py" --state "$STATE_FILE" --check
+    else
+        python3 "${SBIN_DIR:?}/master_container_network.py" --state "$STATE_FILE" apply
+    fi
+fi
 trap - EXIT
 
 if [[ "$MODE" == check ]]; then

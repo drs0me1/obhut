@@ -13,6 +13,53 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-211: Main-sidebar container management with explicit ownership (v2-190)
+
+- **Request (2026-10-03):** move Containers out of Settings and implement the accepted
+  Portainer-like prototype: lifecycle, editable ports/mounts and real resource management.
+  The frozen proposal is `docs/design/konsol-konteynerler-v01.html`; corrected semantics
+  and the implementation interface are recorded alongside it.
+- **Ownership:** App Store applications retain `master-modul` and package-owned settings.
+  Generic containers created/adopted in Konsol have private persisted definitions and
+  `konsol-<name>.container` Quadlets. Unmanaged standalone containers have explicit
+  lifecycle controls and an adoption preview. Compose/pod/systemd-controlled or unsupported
+  definitions are never silently converted. The worker rechecks ownership under locks.
+- **Writes:** the root socket backend brokers a fixed set of actions to a transient root
+  systemd unit with a 900-second runtime bound. HTTP 202 means accepted, not successful.
+  Private operation records expose progress and terminal success/failure, including an
+  interrupted worker. Install/module/container locks serialize mutations; stale revisions
+  refuse overwrite. Reads stay in the existing backend sandbox.
+- **Persistence:** validate image, network, mounts and generated unit before stopping the
+  old container. Images resolve to immutable digests. Explicit save/update can recreate;
+  a failed replacement attempts configuration/runtime rollback and reports failure.
+  This does not roll application data back. Stopped saves stay stopped; manual stop
+  suppresses boot startup independently of the configured autostart preference. Secret
+  environment values stay in 0600 files, with only presence returned by the API.
+- **Networking:** Netavark retains NAT. A separate `inet` nftables forward guard at
+  priority -10 covers only managed bridge interfaces. Local/Tailscale/public mappings
+  are explicit; public access requires acknowledgement. Original DNAT destination and
+  host port are checked, direct ingress and IPv6 are denied, and an established inbound
+  flow does not bypass a newly revoked scope. Foreign tables/chains remain untouched.
+  Aardvark DNS is an explicit dependency: managed bridge TCP/UDP 53 can reach only
+  that bridge's own host address, including after the project firewall is reapplied.
+  Existing tailnet address events mark a bounded refresh job; only changed Tailscale
+  bindings are rerendered, stopped state is retained. There is no new timer/reconciler.
+- **Data/resources:** container removal keeps volumes and bind data. Volume deletion is
+  a separate unused-resource operation; custom volume drivers/options cannot bypass
+  bind-path restrictions. Generic host binds are confined to real user folders under
+  `SERVER_ROOT`, excluding protected package/share/trash paths. Managed bridge creation
+  checks explicit subnet overlaps; runtime sockets, host networking and raw Podman flags
+  are not part of the editor. In-use resources and package-pinned images are protected.
+- **Package settings:** manifests may declare a container adapter and allowlisted durable
+  overrides. qBittorrent's one listener port drives its profile, Quadlet drop-in, Caddy
+  upstream, health/publication checks and installer rendering. Its existing account form
+  remains the account owner. Required mounts are shown as protected in the generic editor.
+- **Scope:** one host/rootful Podman, no Docker daemon, shell console, Compose editor,
+  cluster scheduler or automatic image updates. DD-208 still owns Podman base installation;
+  its former read-only Settings placement is superseded by this decision.
+- **Verification:** tests and live evidence are recorded in `SESSION.md`; the mockup is
+  design evidence only, not proof of runtime or OS compatibility.
+
 ### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
 
 - **Request (user via the project lead, 2026-10-03):** qBittorrent's App Store "Kur" opens a window

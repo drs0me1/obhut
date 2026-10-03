@@ -16,7 +16,7 @@ import re
 import sys
 
 import master_https as tls
-from master_settings import SettingsError, atomic, load_package_module, read_manifests, read_regular, require
+from master_settings import SettingsError, atomic, load_package_module, package_env, read_manifests, read_regular, require
 
 BUILTIN_ID = "paylasim"
 PANEL_ID = "panel"
@@ -36,6 +36,14 @@ def packages(env):
         name = manifest.get("PAKET_YAYIN_AD", "")
         local = manifest.get("PAKET_YAYIN_YEREL", "")
         upstream = manifest.get("PAKET_YAYIN_UPSTREAM", "")
+        port_key = manifest.get("PAKET_YAYIN_PORT_ANAHTARI", "")
+        if port_key:
+            if not UPSTREAM_RE.fullmatch(upstream) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", port_key):
+                continue
+            port = package_env(env, mid).get(port_key, "")
+            if not str(port).isdigit() or not 0 < int(port) < 65536:
+                continue
+            upstream = "127.0.0.1:%s" % int(port)
         check = manifest.get("PAKET_YAYIN_DENETIM", "")
         order = manifest.get("PAKET_SIRA", "50")
         if not (NAME_RE.match(name) and LOCAL_RE.match(local) and UPSTREAM_RE.match(upstream)
@@ -228,6 +236,11 @@ def site_addresses(source):
 
 def private_site(env, service, source):
     if config(env)[service]["tail"]:
+        info = packages(env).get(service)
+        declared = read_manifests(env).get(service, {}).get("PAKET_YAYIN_UPSTREAM", "")
+        if info and UPSTREAM_RE.fullmatch(declared):
+            source = re.sub(r"(\breverse_proxy[ \t]+)" + re.escape(declared) + r"(?=\s|$)",
+                            lambda m: m.group(1) + info["upstream"], source)
         return source
     # A disabled route refuses requests on exactly the template's addresses,
     # including WebDAV by Tailscale IP:port for clients without DNS.

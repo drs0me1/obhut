@@ -15,7 +15,7 @@
 #
 #   master-modul liste                  id runtime kayıt canlı eylem adım toplam metin (sekmeyle)
 #   master-modul kur ID
-#   master-modul baslat ID | durdur ID  yalnız PAKET_DURDURULABILIR=1 olan paketlerde
+#   master-modul baslat ID | durdur ID | yeniden-baslat ID  durdurulabilir paketlerde
 #   master-modul kaldir ID [--veri]     --veri: paketin ayar/anahtar verisi de silinir
 #   master-modul gunluk ID [SATIR]
 #   master-modul hesap ID [--parola]    yalnız PAKET_HESAP=1 olan paketlerde
@@ -52,7 +52,7 @@ paket_sifirla() {
     # DD-206: Genel bakış ağ kartı için trafik toplamlarını ölçen Python modülü (root arka uç yükler).
     PAKET_TRAFIK=""
     # DD-209: Podman birimi (paketteki quadlet dosyasının adı) ve özetiyle sabitlenmiş imajı.
-    PAKET_KONTEYNER="" PAKET_IMAJ=""
+    PAKET_KONTEYNER="" PAKET_IMAJ="" PAKET_KONTEYNER_YONETIM="" PAKET_AYAR_ANAHTARLAR=""
     # DD-210: Konsol'daki kurulum penceresinin bilgilerini doğrulayan paket çalışanı (kur-hazirla).
     PAKET_KUR_AYAR=""
 }
@@ -73,7 +73,22 @@ paket_bildirim() { # ID → PAKET_* değişkenleri (kanca yüklenmez)
     [[ "$PAKET_SIRA" =~ ^[0-9]{1,4}$ && "$PAKET_KUR_ADIM" =~ ^[0-9]{1,2}$ ]] || die "paket bildirimi geçersiz: $PAKET_ID"
 }
 
-HOOK_FUNCS="paket_gerekli paket_kur paket_kaldir paket_uygula paket_baslat paket_durdur paket_birim paket_hesap paket_veri_sil paket_gunluk_suz paket_ozet paket_firewall paket_saglik"
+HOOK_FUNCS="paket_gerekli paket_kur paket_kaldir paket_uygula paket_baslat paket_durdur paket_yeniden_baslat paket_birim paket_hesap paket_veri_sil paket_gunluk_suz paket_ozet paket_firewall paket_saglik"
+
+# İşlenmiş paket varsayılanlarını kanca okur; bu desteklenen kalıcı seçimleri üzerlerine koyar.
+# Çıktı veri olarak okunur: root'a ait olsa da override dosyası hiçbir zaman source/eval edilmez.
+paket_ayar_oku() { # ID
+    local id="$1" dir="${PACKAGE_OVERRIDES_DIR:-${STATE_DIR:-}/package-overrides}" rows key value
+    [[ ! -e "$dir/$id.env" && ! -L "$dir/$id.env" ]] && return 0
+    rows="$(python3 "$SBIN_DIR/master_settings.py" --state "$STATE_FILE" package-overrides "$id")" ||
+        die "paket kalıcı ayarları okunamadı: $id"
+    while IFS='=' read -r key value; do
+        [[ -n "$key" ]] || continue
+        [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ && " $PAKET_AYAR_ANAHTARLAR " == *" $key "* ]] ||
+            die "desteklenmeyen paket ayarı: $id"
+        printf -v "$key" '%s' "$value"
+    done <<<"$rows"
+}
 
 paket_yukle() { # ID → bildirim + kanca işlevleri
     local dir="$MODULES_DIR/$1"
@@ -85,6 +100,7 @@ paket_yukle() { # ID → bildirim + kanca işlevleri
         # shellcheck source=/dev/null
         source "$dir/kanca"
     fi
+    paket_ayar_oku "$1"
 }
 
 # Katalog: kurulumun koyduğu paketler, PAKET_SIRA sırasıyla; yerleşikler dışarıda.
@@ -175,6 +191,8 @@ take_lock() {
     flock -w 5 8 || die "başka bir modül işlemi sürüyor; biraz sonra yeniden deneyin"
     [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -f "$SETTINGS_PENDING_FILE" ]] ||
         die "Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın"
+    # Kilit beklerken değişen paket seçimi başlangıçtaki okumayı geçersiz kılabilir.
+    [[ -z "${PAKET_ID:-}" ]] || paket_ayar_oku "$PAKET_ID"
 }
 
 FAIL=""
@@ -183,6 +201,19 @@ need_keys() { # ANAHTAR…
     for k in "$@"; do
         [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
     done
+}
+
+# Konsol brokerinin gördüğü sürümü kilit alındıktan sonra yeniden kontrol eder. Yerel/native
+# çağrılarda bu iç önkoşul yoktur. Başarısızlık 75: broker bunu yeniden inceleme gereken 409 yapar.
+konteyner_surumu_dogrula() {
+    [[ -n "${KONSOL_KONTEYNER_REVISION:-}" ]] || return 0
+    if ! python3 "$SBIN_DIR/master_settings.py" --state "$STATE_FILE" container-revision \
+        "$CUR_ID" "$KONSOL_KONTEYNER_REVISION" >/dev/null 2>&1; then
+        progress "$CUR_ID" "$CUR_ACTION" hata 0 "Konteyner ayarları değişti veya doğrulanamadı; yenileyip yeniden deneyin."
+        trap - ERR
+        printf 'HATA: Konteyner ayarları değişti veya doğrulanamadı; yenileyip yeniden deneyin.\n' >&2
+        exit 75
+    fi
 }
 
 # Eksik Debian paketlerini önerileri olmadan kurar; kurulu olanlara dokunmaz. Hata: FAIL.
@@ -682,6 +713,7 @@ cmd_baslat() {
     local id="$1"
     CUR_ID="$id" CUR_ACTION=baslat
     take_lock
+    konteyner_surumu_dogrula
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
     [[ "$PAKET_DURDURULABILIR" == 1 ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     kanca_gerekli paket_baslat
@@ -697,6 +729,7 @@ cmd_durdur() {
     local id="$1"
     CUR_ID="$id" CUR_ACTION=durdur
     take_lock
+    konteyner_surumu_dogrula
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
     [[ "$PAKET_DURDURULABILIR" == 1 ]] || fail_step "bu modül durdurulup başlatılmaz; kaldırıp yeniden kurun"
     kanca_gerekli paket_durdur
@@ -707,10 +740,29 @@ cmd_durdur() {
     printf '%s\tdurduruldu\n' "$id"
 }
 
+cmd_yeniden_baslat() {
+    local id="$1" state
+    CUR_ID="$id" CUR_ACTION=yeniden-baslat
+    take_lock
+    konteyner_surumu_dogrula
+    state="$(registry_get "$id" || true)"
+    [[ -n "$state" ]] || fail_step "modül kurulu değil"
+    [[ "$state" == calisiyor ]] || fail_step "modül durdurulmuş; önce başlatın"
+    [[ "$PAKET_DURDURULABILIR" == 1 ]] || fail_step "bu modül yeniden başlatılamaz"
+    kanca_gerekli paket_yeniden_baslat
+    progress "$id" yeniden-baslat 1 1 "Yeniden başlatılıyor"
+    paket_yeniden_baslat
+    arkauc_yollari_hazirla
+    registry_set "$id" calisiyor
+    progress "$id" yeniden-baslat bitti 0 "yeniden başlatıldı"
+    printf '%s\tcalisiyor\n' "$id"
+}
+
 cmd_kaldir() {
     local id="$1" data="$2"
     CUR_ID="$id" CUR_ACTION=kaldir
     take_lock
+    konteyner_surumu_dogrula
     registry_get "$id" >/dev/null || fail_step "modül kurulu değil"
     kanca_gerekli paket_kaldir
     progress "$id" kaldir 1 1 "Kaldırılıyor"
@@ -824,7 +876,7 @@ main() {
         liste) cmd_liste ;;
         saglik) cmd_saglik ;;
         yerlesik) cmd_yerlesik "${2:-}" ;;
-        kur | baslat | durdur | gunluk | kaldir | hesap | uygula)
+        kur | baslat | durdur | yeniden-baslat | gunluk | kaldir | hesap | uygula)
             [[ $# -ge 2 ]] || die "kullanım: master-modul $cmd ID"
             valid_id "$2"
             paket_yukle "$2"
@@ -832,6 +884,7 @@ main() {
                 kur) cmd_kur "$2" ;;
                 baslat) cmd_baslat "$2" ;;
                 durdur) cmd_durdur "$2" ;;
+                yeniden-baslat) [[ $# -eq 2 ]] || die "kullanım: master-modul yeniden-baslat ID"; cmd_yeniden_baslat "$2" ;;
                 gunluk) cmd_gunluk "$2" "${3:-60}" ;;
                 kaldir)
                     [[ "${3:-}" == "" || "${3:-}" == --veri ]] || die "kullanım: master-modul kaldir ID [--veri]"
@@ -844,7 +897,7 @@ main() {
                 uygula) [[ $# -eq 2 ]] || die "kullanım: master-modul uygula ID"; cmd_uygula "$2" ;;
             esac
             ;;
-        *) die "kullanım: master-modul liste | saglik | kur ID | baslat ID | durdur ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
+        *) die "kullanım: master-modul liste | saglik | kur ID | baslat ID | durdur ID | yeniden-baslat ID | kaldir ID [--veri] | gunluk ID [SATIR] | hesap ID [--parola] | uygula ID" ;;
     esac
 }
 

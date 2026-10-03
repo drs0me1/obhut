@@ -63,15 +63,23 @@ def package_env(env):
     """The package's own settings (torrent.env next to this file, DD-203) on top of the base's state."""
     merged = dict(env)
     merged.update(settings.env_read(os.path.join(PACKAGE_DIR, "torrent.env")))
+    merged.update(settings.package_overrides(env, "torrent"))
     return merged
 CONF = "qBittorrent/qBittorrent.conf"
 DROP_IN = "90-konsol.conf"
+PORT_DROP_IN = "85-konteyner.conf"
 CONTAINER_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
 # A bind mount is "SRC:DST" in the quadlet; systemd expands % and splits on whitespace elsewhere.
 MOUNTABLE_RE = re.compile(r"/[^\s:%\\\"']+")
 STOP_TIMEOUT = 75   # the quadlet's StopTimeout (45 s) plus the container teardown
 HASH_RE = re.compile(r"@ByteArray\([A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}\)")
 SEED_RE = re.compile(r"modul-[a-z]{2,16}\.kur")
+
+
+class ContainerEditError(settings.SettingsError):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
 
 
 def ini_values(text):
@@ -309,6 +317,197 @@ def ayar(env, data, state):
     return {"ok": True, "username": view.get("username", ""), "save": view.get("save", "")}
 
 
+def container_config(env):
+    """Declared App Store adapter: safe effective settings and an opaque stale-edit revision.
+
+    Account credentials and the profile contents never leave this interface. Their bytes
+    participate in the revision so another application-settings edit invalidates the draft.
+    """
+    env = package_env(env)
+    view = durum(env)
+    settings.require("error" not in view, "qBittorrent ayarları okunamadı.")
+    port = int(env["TORRENT_UI_PORT"])
+    config = {"listener_port": port, "save": view["save"]}
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
+    paths = [conf_path(env), drop_in_path(env), drop_in_path(env).with_name(PORT_DROP_IN)]
+    override = settings.package_override_path(env, "torrent")
+    if override is not None:
+        paths.append(override)
+    for path in paths:
+        digest.update(str(path).encode() + b"\0")
+        try:
+            digest.update(settings.read_regular(path)[0])
+        except FileNotFoundError:
+            digest.update(b"missing")
+    state = ""
+    if env.get("MODULES_FILE"):
+        try:
+            state = next((line for line in settings.read_regular(env["MODULES_FILE"])[0].decode().splitlines()
+                          if line.split("\t", 1)[0] == "torrent"), "")
+        except FileNotFoundError:
+            pass
+    digest.update(state.encode())
+    return {"config": config, "revision": digest.hexdigest(), "editable": ["listener_port", "save"],
+            "protected_mounts": [{"source": env["TORRENT_PROFILE_DIR"], "target": "/config",
+                                  "destination": "/config", "reason": "Uygulama profili; taşıma ayrı bir işlemdir."},
+                                 {"source": env["DOWNLOADS_PATH"], "target": env["DOWNLOADS_PATH"],
+                                  "destination": env["DOWNLOADS_PATH"], "reason": "Uygulamanın indirme kökü."}],
+            "effective_autostart": state == "torrent\tcalisiyor"}
+
+
+def check_listener_port(env, value):
+    settings.require(type(value) is int and 1024 <= value <= 65535, "Arayüz portu 1024–65535 arasında olmalı.")
+    current = int(env["TORRENT_UI_PORT"])
+    if value == current:
+        return
+    reserved = {int(v) for k, v in env.items() if k.endswith("_PORT") and k != "TORRENT_UI_PORT"
+                and str(v).isdigit()}
+    for mid, manifest in settings.read_manifests(env).items():
+        if mid == "torrent":
+            continue
+        package = settings.package_env(env, mid)
+        for entry in manifest.get("PAKET_PORTLAR", "").split(";"):
+            key = entry.split(":", 1)[0]
+            val = package.get(key, env.get(key, ""))
+            if str(val).isdigit():
+                reserved.add(int(val))
+    if env.get("KONTEYNER_STATE_DIR"):
+        try:
+            import master_container_config
+            planned = master_container_config.Store(env).list()
+            for definition in planned:
+                reserved.update(row["host_port"] for row in definition.get("ports", [])
+                                if row.get("protocol") == "tcp")
+        except Exception as err:
+            raise ContainerEditError("Kaydedilmiş konteyner portları doğrulanamadı; değişiklik uygulanmadı.", 503) from err
+    settings.require(value not in reserved, "Bu port başka bir proje servisine ayrılmış.")
+    # A host listener must be free on loopback, including a wildcard/dual-stack listener.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", value))
+    except OSError as err:
+        raise settings.SettingsError("Seçilen port kullanımda veya bağlanamıyor.") from err
+
+
+def container_publish(env, state):
+    """Reproject WAN policy through its existing publisher; no new publication authority."""
+    worker = Path(env["SBIN_DIR"]) / "master_shares.py"
+    if worker.is_file():
+        settings.run(["python3", str(worker), "--state", str(state), "publish"], timeout=90)
+
+
+def konteyner_ayar(env, data, state):
+    """Apply the declared listener and save directory under the caller's standard settings locks.
+
+    Snapshots cover only files changed here. Failure restores configuration and previous
+    service state, never claims to restore application data or a server installation.
+    """
+    settings.require(isinstance(data, dict) and set(data) == {"revision", "config"} and
+                     isinstance(data["config"], dict) and set(data["config"]) == {"listener_port", "save"},
+                     "Konteyner ayar alanları geçersiz.")
+    current = container_config(env)
+    if not isinstance(data["revision"], str) or data["revision"] != current["revision"]:
+        raise ContainerEditError("Ayarlar değişti; sayfayı yenileyip değişiklikleri yeniden gözden geçirin.", 409)
+    config = data["config"]
+    check_listener_port(env, config["listener_port"])
+    path, updates, drop_in = save_choice(env, config["save"], state)
+    port = str(config["listener_port"])
+    changed_port = port != str(env["TORRENT_UI_PORT"])
+    if not changed_port and path == current["config"]["save"]:
+        return dict(current, ok=True)
+    override = settings.package_override_path(env, "torrent")
+    settings.require(override is not None, "Kalıcı paket ayar dizini yok; kurulumu yeniden çalıştırın.")
+    old_overrides = settings.package_overrides(env, "torrent")
+    chosen_overrides = dict(old_overrides, TORRENT_UI_PORT=port)
+    conf, drop = conf_path(env), drop_in_path(env)
+    port_drop = drop.with_name(PORT_DROP_IN)
+    caddy = Path(env["CADDY_MODULES_DIR"]) / "torrent.caddy"
+    targets = [conf, drop, port_drop, override]
+    caddy_text = None
+    if changed_port and caddy.exists():
+        text = settings.read_regular(caddy)[0].decode()
+        caddy_text, count = re.subn(r"(\breverse_proxy[ \t]+127\.0\.0\.1:)\d+", lambda m: m[1] + port, text)
+        settings.require(count == 1, "Uygulamanın Caddy upstream tanımı doğrulanamadı.")
+        targets.append(caddy)
+    # Readability/symlink failures are discovered before the running service is stopped.
+    before = {target: snapshot(target) for target in targets}
+    settings.require(before[conf] is not None, "qBittorrent kurulu değil.")
+    unit = unit_name(env)
+    active = settings.run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
+    touched, stop_attempted, started = [], False, False
+    new_env = dict(env, TORRENT_UI_PORT=port)
+    caddy_env = {"TAILSCALE_IPV4": env.get("TAILSCALE_IPV4", "")}
+
+    def write(target, content, mode=0o644, owner=None):
+        touched.append(target)
+        if content is None:
+            restore(target, None)
+        else:
+            settings.atomic(target, content, mode, owner)
+
+    try:
+        if active:
+            stop_attempted = True
+            settings.run(["systemctl", "stop", unit], timeout=STOP_TIMEOUT)
+            # qB persists native preferences during stop; preserve that most recent version.
+            before[conf] = snapshot(conf)
+        updates[("Preferences", "WebUI\\Port")] = port
+        write(conf, ini_patch(before[conf]["data"].decode(), updates), 0o640,
+              (int(env["DOWNLOADS_UID"]), int(env["DOWNLOADS_GID"])))
+        write(drop, drop_in or None)
+        write(port_drop, "# Konteynerler: uygulamanın etkin arayüz portu\n[Container]\nEnvironment=WEBUI_PORT=" + port + "\n")
+        write(override, "".join(k + "=" + v + "\n" for k, v in sorted(chosen_overrides.items())), 0o600)
+        if caddy_text is not None:
+            write(caddy, caddy_text)
+            settings.run(["caddy", "validate", "--config", env["CADDYFILE"], "--adapter", "caddyfile"], env=caddy_env)
+        settings.run(["systemctl", "daemon-reload"])
+        if active:
+            started = True
+            settings.run(["systemctl", "start", unit], timeout=60)
+            settings.run(["systemctl", "is-active", "--quiet", unit])
+            wait_ui(new_env)
+        if changed_port:
+            container_publish(new_env, state)
+            if caddy_text is not None:
+                settings.run(["systemctl", "reload", "caddy"])
+    except Exception as error:
+        rollback_failed = False
+        # A partially successful start can write the new profile on shutdown: stop first.
+        if started:
+            try:
+                settings.run(["systemctl", "stop", unit], timeout=STOP_TIMEOUT)
+            except settings.SettingsError:
+                rollback_failed = True
+        for target in reversed(touched):
+            try:
+                restore(target, before[target])
+            except (OSError, settings.SettingsError):
+                rollback_failed = True
+        if touched:
+            try:
+                settings.run(["systemctl", "daemon-reload"])
+            except settings.SettingsError:
+                rollback_failed = True
+        if active and stop_attempted:
+            try:
+                settings.run(["systemctl", "start", unit], timeout=60)
+                settings.run(["systemctl", "is-active", "--quiet", unit])
+                wait_ui(env)
+            except settings.SettingsError:
+                rollback_failed = True
+        if changed_port and touched:
+            try:
+                container_publish(env, state)
+                if caddy_text is not None:
+                    settings.run(["systemctl", "reload", "caddy"])
+            except settings.SettingsError:
+                rollback_failed = True
+        if rollback_failed:
+            raise ContainerEditError("Konteyner ayarı uygulanamadı; önceki yapılandırma/servis bütünüyle geri yüklenemedi. Servis durumunu denetleyin.", 503) from error
+        raise ContainerEditError("Konteyner ayarı uygulanamadı; önceki yapılandırma ve servis durumu korundu.", 502) from error
+    return dict(container_config(new_env), ok=True)
+
+
 def seed_path(env, value):
     """The seed sits directly in the base's runtime folder under the engine's name for it."""
     path = Path(value)
@@ -384,7 +583,7 @@ def main():
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
     parser.add_argument("--lib", default=None, help=argparse.SUPPRESS)  # consumed above, before the import
     parser.add_argument("--tohum", default=None, help="DD-210: the engine's seed file for the install form")
-    parser.add_argument("action", choices=("hesap", "dizin", "ayar", "durum", "kur-hazirla", "kur-uygula", "kur-geri"))
+    parser.add_argument("action", choices=("hesap", "dizin", "ayar", "durum", "konteyner-ayar", "kur-hazirla", "kur-uygula", "kur-geri"))
     args = parser.parse_args()
     if args.action.startswith("kur-") and not args.tohum:
         parser.error("--tohum gerekli")
@@ -401,17 +600,26 @@ def main():
         raw = sys.stdin.read(LIMIT + 1)
         settings.require(len(raw) <= LIMIT, "İstek çok büyük.")
         data = json.loads(raw)
-        with settings.Manager(args.state).locked():
+        manager = settings.Manager(args.state)
+        with manager.locked():
+            if args.action == "konteyner-ayar" and manager.pending():
+                raise ContainerEditError("Konsol'da onay bekleyen ayar var; önce onaylayın veya geri alın.", 409)
             if args.action == "kur-hazirla":
                 result = kur_hazirla(env, data, args.state, args.tohum)
             elif args.action == "ayar":
                 result = ayar(env, data, args.state)
+            elif args.action == "konteyner-ayar":
+                result = konteyner_ayar(env, data, args.state)
             else:
                 result = hesap(env, data) if args.action == "hesap" else dizin(env, data, args.state)
         print(json.dumps(result, ensure_ascii=False))
     except (settings.SettingsError, ValueError, KeyError, TypeError, OSError, RecursionError) as err:
         message = str(err) if isinstance(err, settings.SettingsError) else "qBittorrent ayarı uygulanamadı; önceki ayar geri yüklendi."
-        print(json.dumps({"error": message}, ensure_ascii=False))
+        result = {"error": message}
+        if args.action == "konteyner-ayar":
+            result["status"] = getattr(err, "status", 409 if isinstance(err, settings.SettingsBusy) else
+                                       400 if isinstance(err, (settings.SettingsError, ValueError, TypeError)) else 503)
+        print(json.dumps(result, ensure_ascii=False))
         sys.exit(1)
 
 

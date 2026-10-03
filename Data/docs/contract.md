@@ -150,7 +150,7 @@ the ones agreed on 2026-08-05:
 ### 1.3 Modules are host services (DD-151, DD-152, DD-208, DD-209)
 
 - Every module and built-in service is a systemd unit on the host (§1.11). The
-  base installs Podman (`podman`, `netavark`, no recommends) as the App Store's
+  base installs Podman (`podman`, `netavark`, `aardvark-dns`, no recommends) as the App Store's
   container runtime and requires `podman info` in stages 1 and 7 (**DD-208**); no
   Podman daemon, socket or auto-update timer is enabled and there is no Docker
   (**DD-152**). A container application is still a systemd unit: Podman's systemd
@@ -537,19 +537,45 @@ Contract in §5–§7 and `folder-shares.md`.
     all-time totals from `qBittorrent-data.conf` with the file's time (`at`; it lags by
     the application's save interval), WireGuard's its networks' interface counters since
     the networks came up (`since`; down = sent to the peers).
-  - Ayarlar (**DD-156**, superseding DD-155) has six tabs: Sistem, Güvenlik
-    Duvarı, Caddy, Dnsmasq, Konteynerler (**DD-208**) and Günlük. `GET
+  - **Konteynerler (DD-211)** is a main sidebar page at `#/konteynerler`, with
+    containers, images, named volumes and networks. Old Settings deep links redirect.
+    Inventory merges real Podman state, installed App Store applications and saved
+    definitions, including stopped containers with no live runtime object. Failed
+    reads are shown as unavailable, never as empty collections or zero measurements.
+    Details include mounts, port bindings and masked log tails (100/200/500/1000 lines).
+    - Start, stop, restart and remove use the actual owner. App Store lifecycle goes
+      through `master-modul`; another systemd/Compose/pod controller remains read-only.
+      A standalone external container may be controlled or explicitly adopted after
+      a preview; unsupported options refuse adoption. No implicit ownership transfer.
+    - Konsol definitions persist in private `KONTEYNER_STATE_DIR`. Ports, volumes,
+      environment, command, resource limits and startup policy are editable. Changed
+      settings recreate the container after validation; stopped saves stay stopped
+      unless explicitly started. Manual stop suppresses boot startup until Start.
+      Images are resolved to digests; updating one is an explicit operation.
+    - Ports select local, Tailscale or explicitly acknowledged internet access.
+      Netavark owns NAT; a separate project nftables guard limits managed bridge
+      ingress, including direct/IPv6 paths. Bridge DNS uses Aardvark with TCP/UDP 53
+      limited to the incoming bridge's own address. No host networking or runtime socket
+      mount is offered for generic containers. Bind mounts use existing, non-hidden,
+      non-symlink user folders under `SERVER_ROOT`, excluding protected app/share paths.
+    - Removing a container retains its volumes and host files. Unused standard named
+      volumes and managed bridge networks have separate removal actions. In-use
+      resources and package-pinned images cannot be removed through generic controls.
+    - qBittorrent exposes its real listener port and download folder through its
+      package adapter. Required mounts remain protected; native Web UI, Caddy upstream,
+      health checks and installer re-runs use the same durable port override. Account
+      editing remains in the application's existing settings form.
+    - `GET /api/konsol/konteynerler/{liste,ayrinti,gunluk,islem}` and `POST
+      /api/konsol/konteynerler/islem` retain the existing Host/channel/session/CSRF
+      gates. Writes return 202 plus an operation ID, then a bounded root worker
+      records actual success/failure. A stale revision or busy mutation is rejected.
+      Submitted passwords/secret environment values never appear in read responses
+      or operation/audit records. There is no background reconciliation engine.
+  - Ayarlar (**DD-156**, superseding DD-155) has five tabs: Sistem, Güvenlik
+    Duvarı, Caddy, Dnsmasq and Günlük. `GET
     /api/konsol/ayarlar` retains the same gates and 5 s cache (`?yenile=1`
     bypasses it); `/durum` reads transaction state and `/klasorler` lists
     allowed existing download folders. No password/hash is returned.
-    - Konteynerler is the base's read-only Podman view (`console/konteynerler.js`,
-      `panel/master_containers.py`): every container on the host with state, image,
-      unit, mounts, ports and a masked log tail (100/200/500/1000 lines), from
-      `GET /api/konsol/konteynerler/{liste,ayrinti?ad=,gunluk?ad=&satir=}` (shared
-      gates; `podman ps/inspect/images/system df/logs` inside the backend's sandbox;
-      never the environment; values after words like password or token masked; no
-      write route). It never starts, stops or removes a container. An application
-      page links to its container with `#/ayarlar/konteynerler/<name>`.
     - Sistem shows server facts and the read-only health card (`GET
       /api/konsol/saglik`, cached 30 s, **DD-182**): failed units, Tailscale
       state and key expiry, `master-firewall --check`, a pending reboot, NTP

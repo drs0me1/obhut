@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-189"
+V2_VERSION="2026.08.06-v2-190"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -89,6 +89,12 @@ STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
 KONTEYNER_BIRIM_DIR=$KONTEYNER_BIRIM_DIR
+KONTEYNER_STATE_DIR=$KONTEYNER_STATE_DIR
+KONTEYNER_LOCK=$KONTEYNER_LOCK
+KONTEYNER_NETWORK=$KONTEYNER_NETWORK
+KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
+KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
+PACKAGE_OVERRIDES_DIR=$PACKAGE_OVERRIDES_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
@@ -527,14 +533,14 @@ stage_1() {
     # kalma; awk sistemin mawk'ı) ve apache2-utils (ortak htpasswd hesabı kaldırıldı) yok.
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl ethtool iproute2 procps kmod \
-        iptables coreutils util-linux diffutils jq \
+        iptables nftables coreutils util-linux diffutils jq \
         dnsutils unattended-upgrades python3 python3-rarfile unrar
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     # DD-208: konteyner çalışma ortamı, önerileri olmadan (buildah, criu, slirp4netns gelmez).
-    # Uygulamalar Network=host kullanır; netavark Ubuntu noble'da bağımlılık olmadığı için açıkça adlanır.
+    # Netavark köprü/NAT kurallarını, master-firewall yalnız kendi giriş korumasını yönetir.
     retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
-        podman netavark
+        podman netavark aardvark-dns
     check_podman
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
@@ -680,7 +686,15 @@ module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
 # (araçlar) 0755, geri kalanı 0644. 0: bir dosya değişti, 1: hepsi aynıydı.
 # DD-203: paketin kendi ayar dosyası (magaza/<id>/<id>.env, KEY=değer; `source` edilmez).
 paket_ayar_oku() { # ID ANAHTAR → değer (yoksa boş)
-    local file="$V2_ROOT/magaza/$1/$1.env"
+    local file="$V2_ROOT/magaza/$1/$1.env" override
+    override="$(python3 - "$V2_ROOT/panel" "$V2_ROOT/magaza" "$PACKAGE_OVERRIDES_DIR" "$1" "$2" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from master_settings import package_overrides
+print(package_overrides({'MODULES_DIR': sys.argv[2], 'PACKAGE_OVERRIDES_DIR': sys.argv[3]}, sys.argv[4]).get(sys.argv[5], ''))
+PY
+)" || return 1
+    if [[ -n "$override" ]]; then printf '%s\n' "$override"; return; fi
     [[ -f "$file" ]] || return 0
     sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$file" | head -n 1
 }
@@ -937,9 +951,18 @@ stage_4() {
     # DD-194: Konsol hesabı/oturumları; master-konsol root CLI'si aynı modülü çalıştırır.
     atomic_write "$SBIN_DIR/master_auth.py" 0755 <"$V2_ROOT/panel/master_auth.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    # DD-208: Ayarlar → Konteynerler (Podman'ın salt okunur görünümü) arka ucun yardımcısıdır.
+    # Konteyner okuma/yönetim araçları. Yazma çalışanı backend sandbox'ının dışında çalışır.
     atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    local container_helper
+    for container_helper in master_container_config master_container_network master_container_worker master_container_manager; do
+        atomic_write "$SBIN_DIR/$container_helper.py" 0755 <"$V2_ROOT/panel/$container_helper.py"
+        if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
+            PANEL_HELPERS_CHANGED=1
+            FIREWALL_NEEDS_RESTART=1
+        fi
+    done
+    install -d -m 0700 "$KONTEYNER_STATE_DIR" "$PACKAGE_OVERRIDES_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
@@ -1565,7 +1588,7 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; Tailscale'
   İnternetten HTTPS isteğe bağlı: önce Ayarlar → Sistem → Konsol hesabı (kullanıcı adı + parola),
   sonra Ayarlar → Caddy → Panel (DNS A kaydı gerekir).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
-Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Ayarlar → Konteynerler)
+Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Konteynerler)
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
 $(summary_modules)$(summary_notes)
 Tailscale IP: refresh-tailnet-config → Caddy

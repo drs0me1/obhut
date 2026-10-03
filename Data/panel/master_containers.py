@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Konsol's read-only container view (DD-208): Settings → Konteynerler.
+"""Read-only Podman mapper (DD-208), reused by the DD-211 container manager.
 
 Podman is part of the base (the App Store's container runtime). The root backend calls this module
 for GET /api/konsol/konteynerler/{liste,ayrinti,gunluk}; everything comes from `podman` itself

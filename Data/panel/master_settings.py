@@ -110,14 +110,56 @@ MANIFEST_ID_RE = re.compile(r"^[a-z]{2,16}$")
 
 
 def package_env(env, mid):
-    """DD-201/203: a package's own KEY=value settings (MODULES_DIR/<id>/<id>.env); {} when absent."""
+    """Package defaults plus supported durable choices outside the regenerated package directory."""
     base = env.get("MODULES_DIR", "")
     if not base or not MANIFEST_ID_RE.fullmatch(mid):
         return {}
     try:
-        return env_read(Path(base) / mid / (mid + ".env"))
+        values = env_read(Path(base) / mid / (mid + ".env"))
     except (OSError, UnicodeError):
         return {}
+    values.update(package_overrides(env, mid))
+    return values
+
+
+def package_override_path(env, mid):
+    require(bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
+    directory = env.get("PACKAGE_OVERRIDES_DIR")
+    if not directory:
+        directory = str(Path(env["STATE_DIR"]) / "package-overrides") if env.get("STATE_DIR") else None
+    return Path(directory) / (mid + ".env") if directory else None
+
+
+def package_overrides(env, mid):
+    """Private, data-only overrides. A package explicitly declares every writable key.
+
+    Values never reach `source`/eval; the bounded KEY=value CLI is also safe to consume
+    with `IFS='=' read` and printf -v. Unknown keys fail closed, including old overrides
+    after a package changes its supported settings.
+    """
+    path = package_override_path(env, mid)
+    if path is None:
+        return {}
+    try:
+        raw, info = read_regular(path, 16384)
+    except FileNotFoundError:
+        return {}
+    require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0,
+            "Paket ayar dosyası yalnız root tarafından okunabilir olmalı.")
+    allowed = set(read_manifests(env).get(mid, {}).get("PAKET_AYAR_ANAHTARLAR", "").split())
+    require(bool(allowed) and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", key) for key in allowed),
+            "Paket kalıcı ayarları desteklemiyor.")
+    values = {}
+    for line in raw.decode("ascii").splitlines():
+        key, sep, value = line.partition("=")
+        require(bool(sep) and key in allowed and key not in values and
+                re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,1024}", value) is not None,
+                "Paket ayar dosyasında desteklenmeyen alan/değer var.")
+        # A declared service listener remains valid even if its file was edited by hand.
+        if key.endswith("_PORT"):
+            require(value.isdecimal() and 1 <= int(value) <= 65535, "Paket portu geçersiz.")
+        values[key] = value
+    return values
 
 
 _package_modules = {}
@@ -813,13 +855,30 @@ def guard_idle(p):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain", "package-overrides", "container-revision"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
     try:
         if args.action == "saved-domain":
             print(saved_domain(args.value))
+            return
+        if args.action == "package-overrides":
+            for key, value in sorted(package_overrides(env_read(args.state), args.value).items()):
+                print(key + "=" + value)
+            return
+        if args.action == "container-revision":
+            env = env_read(args.state)
+            mid = args.value
+            require(isinstance(mid, str) and bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
+            manifest = read_manifests(env).get(mid, {})
+            adapter = load_package_module(env, mid, manifest.get("PAKET_KONTEYNER_YONETIM", ""),
+                                          "container_config", "Konteyner paket ayarı")
+            effective = dict(env, **package_env(env, mid))
+            current = adapter.container_config(effective)
+            require(isinstance(current, dict) and isinstance(current.get("revision"), str) and
+                    isinstance(args.wan, str) and bool(args.wan) and current["revision"] == args.wan,
+                    "Konteyner ayarları değişti; yenileyip yeniden deneyin.")
             return
         m = Manager(args.state)
         if args.action == "tailnet-ports":
