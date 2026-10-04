@@ -9,9 +9,12 @@
 # (/config) ve indirme klasörünü aynı yolla görür; çöp ve paylaşım kökü ona hiç görünmez. Konsol'da
 # indirme klasörü dışında seçilen bir dizin __TORRENT_CONTAINER__.container.d/90-konsol.conf ile eklenir.
 # Süreç indirme klasörünün sahibi (PUID/PGID) olarak çalışır; dosyalar Konsol ve Paylaşım'la aynı sahipte.
+# DD-223: konteyner güvenlik duvarından sonra açılır ama onunla birlikte yeniden başlamaz (Requires= yok).
+# Açılmadan önce yönlendirme korumasının yerinde olduğunu yalnız denetler (yazmaz); yoksa 10 sn arayla
+# yeniden dener ve koruma gelince açılır. Korumayı güvenlik duvarı, motor ve paket çalışanı yazar.
 [Unit]
 Description=qBittorrent (Podman)
-Wants=network-online.target
+Wants=network-online.target master-firewall.service
 After=network-online.target master-firewall.service
 
 [Container]
@@ -33,7 +36,9 @@ Volume=__TORRENT_PROFILE_DIR__:/config
 Volume=__DOWNLOADS_PATH__:__DOWNLOADS_PATH__
 
 [Service]
+ExecStartPre=/usr/bin/python3 __SBIN_DIR__/master_container_network.py --state __STATE_FILE__ --check
 Restart=on-failure
+RestartSec=10s
 TimeoutStartSec=300
 TimeoutStopSec=60
 # DD-181: indirme işlemciyi paylaşır; Tailscale (çıkış düğümünün hızı) ve Konsol öne geçer.

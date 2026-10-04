@@ -218,9 +218,10 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-214 | Konsol checks image updates, the operator applies them; row controls before the name | v2-193; `--veri` keeps the override since DD-220 | design-decisions.md |
 | DD-215 | The Podman page shows the ports a host-network container listens on | v2-194; qBittorrent left the host network (DD-217) | design-decisions.md |
 | DD-216 | Applications open from Ana Menü only; the container page is named Podman | v2-194 | design-decisions.md |
-| DD-217 | qBittorrent on its own bridge; ports published per address in its Quadlet | v2-195; ports moved by DD-219 | design-decisions.md |
+| DD-217 | qBittorrent on its own bridge; ports published per address in its Quadlet | v2-195; ports moved by DD-219; start check by DD-223 | design-decisions.md |
 | DD-218 | qBittorrent's fresh-profile defaults are the user's choice | retired (v2-196, reverted by DD-219) | archive/design-decisions-retired.md |
 | DD-219 | qBittorrent back to its own defaults; its ports moved to uncommon fixed ports | v2-197 | design-decisions.md |
 | DD-220 | Removing qBittorrent with its data keeps Konsol's port and image choice | v2-198 | design-decisions.md |
 | DD-221 | The Podman page changes qBittorrent's peer port | v2-199 | design-decisions.md |
-| DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; locally verified, not deployed | design-decisions.md |
+| DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; live-verified on nrm 2026-10-05 | design-decisions.md |
+| DD-223 | Container units wait for the checked guard, without Requires= | v2-201 | design-decisions.md |

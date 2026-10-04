@@ -288,6 +288,45 @@ class NetworkTests(unittest.TestCase):
         with self.assertRaises(network.NetworkError):
             network.policy(self.env, network.read_definitions(self.env), run=self.runner)
 
+    def test_a_loopback_port_change_leaves_the_guard_unchanged(self):
+        # DD-223: the package worker restarts qBittorrent after an interface-port change without
+        # applying the guard; the start check passes because loopback rows are not in the policy.
+        root = Path(self.tmp.name)
+        (root / "mods/torrent").mkdir(parents=True)
+        (root / "units").mkdir()
+        (root / "mods/torrent/paket.env").write_text('PAKET_KONTEYNER="qbittorrent.container"\nPAKET_KONTEYNER_AG="torrent"\n')
+        (root / "kayit").write_text("torrent\tcalisiyor\n")
+        env = dict(self.env, MODULES_FILE=str(root / "kayit"), MODULES_DIR=str(root / "mods"),
+                   KONTEYNER_BIRIM_DIR=str(root / "units"))
+        quadlet = "[Container]\nNetwork=torrent\nPublishPort=127.0.0.1:{0}:{0}/tcp\nPublishPort=192.0.2.1:{1}:{1}/tcp\n"
+        placed = root / "units/qbittorrent.container"
+        placed.write_text(quadlet.format(62947, 63851))
+        before = network.policy(env, [], run=self.runner)
+        self.assertTrue(any("63851" in json.dumps(o) for o in before), "the WAN publication is let through")
+        placed.write_text(quadlet.format(61997, 63851))
+        self.assertEqual(network.policy(env, [], run=self.runner), before)
+        # A peer-port change does change it; the worker applies the guard before that start.
+        placed.write_text(quadlet.format(61997, 63999))
+        self.assertNotEqual(network.policy(env, [], run=self.runner), before)
+
+    def test_check_names_a_missing_guard_table(self):
+        # DD-223: a container unit's start precondition says why the container waits.
+        def missing(argv, timeout=20):
+            if argv[:3] == ["nft", "-j", "list"]:
+                return 1, "", "Error: No such file or directory\nlist table inet master_containers"
+            return self.runner(argv, timeout)
+        with self.assertRaises(network.NetworkError) as err:
+            network.check(self.env, run=missing)
+        self.assertEqual(str(err.exception), "Konteyner yönlendirme koruması eksik veya güncel değil.")
+
+        def broken(argv, timeout=20):
+            if argv[:3] == ["nft", "-j", "list"]:
+                return 1, "", "Error: Operation not permitted"
+            return self.runner(argv, timeout)
+        with self.assertRaises(network.NetworkError) as err:
+            network.check(self.env, run=broken)
+        self.assertEqual(str(err.exception), "Ağ durumu okunamadı: nft")
+
     def test_health_comparison_checks_rules_not_only_existence(self):
         expected = network.policy(self.env, [], run=self.runner)
         actual = {"nftables": [{"metainfo": {"version": "test"}}] + copy.deepcopy(expected)}

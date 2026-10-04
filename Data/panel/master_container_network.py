@@ -3,7 +3,9 @@
 
 Netavark owns DNAT/SNAT. We own only one nft inet table at forward priority -10;
 an ACCEPT in Netavark/Tailscale's filter chains cannot bypass its DROP. No foreign
-table is flushed. Guard installation precedes managed service start, including boot.
+table is flushed. The locked writers (master-firewall, the container worker and the
+package engine) install it; container units only check it before they start, including
+at boot, and retry until it is in place (DD-223).
 
 Worker API (caller holds installer/module/container locks):
   validate_ports(env, ports, name, run=runner) -> normalized schema rows
@@ -515,7 +517,15 @@ def same_policy(expected, actual):
 def check(env, run=None):
     table, _ = _config(env)
     expected = policy(env, read_definitions(env), run=run)
-    actual = _json(run, ["nft", "-j", "list", "table", "inet", table])
+    rc, out, err = _result(run, ["nft", "-j", "list", "table", "inet", table])
+    if rc and re.search(r"No such file|does not exist", err, re.I):
+        raise NetworkError("Konteyner yönlendirme koruması eksik veya güncel değil.", 503)
+    if rc:
+        raise NetworkError("Ağ durumu okunamadı: nft", 503)
+    try:
+        actual = json.loads(out)
+    except (ValueError, TypeError) as error:
+        raise NetworkError("Ağ durumu geçersiz: nft", 503) from error
     if not same_policy(expected, actual):
         raise NetworkError("Konteyner yönlendirme koruması eksik veya güncel değil.", 503)
     return True

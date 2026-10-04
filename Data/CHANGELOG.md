@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — Containers wait for the firewall and no longer restart with it (v2-201)
+
+- qBittorrent no longer starts while Konsol's container guard is missing. If the firewall
+  failed at boot, it used to start anyway. Now it waits and retries every 10 seconds until the
+  guard is in place (measured on nrm, DD-223).
+- Konsol containers no longer restart when the firewall restarts: a Tailscale update, a
+  WireGuard network change, an installer run or a watchdog repair. Before, each of these
+  restarted them and could leave them stopped.
+- Container units only check the guard before they start. The firewall, the package engine and
+  the container workers, which hold the locks, write it. A missing guard is reported as such.
+- The next installer run restarts qBittorrent once, because its Quadlet changes. Existing
+  Konsol containers keep their old unit until they are saved once in Konsol.
+
 ### 2026-10-05 — Documentation matches the code again (no version change)
 
 - Contract, architecture, folder-shares and three DD records described an older state.

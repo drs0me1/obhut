@@ -41,6 +41,16 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Container start precondition (v2-201, DD-223)
+
+`test_container_worker.py` checks the generated Konsol Quadlet: `Wants=` and `After=` on
+`master-firewall.service`, no `Requires=`, `BindsTo=` or `PartOf=`, one `ExecStartPre` that ends
+in `--check`, `RestartSec=10s`, and no check for a container without a network.
+`test_container_network.py` checks that `check()` names a missing guard table and still reports
+other read errors as before. It also checks that a loopback-only port change leaves the policy
+unchanged, which is what lets qBittorrent's interface-port restart pass its start check. A Bats
+catalogue rule applies the same unit lines to every package that declares its own bridge.
+
 ## Pending package changes across a failed run (v2-200, DD-222)
 
 The Bats test "pending module markers" runs the real `render_package_dir`,

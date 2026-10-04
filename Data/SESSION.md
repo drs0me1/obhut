@@ -4,6 +4,25 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Containers wait for the checked guard, no Requires=, v2-201 (DD-223; committed with this entry):**
+- From the accepted side-finding plan (Debian 13 only). Measured on nrm first:
+  - with the guard table deleted, `systemctl restart qbittorrent` started it anyway;
+  - a probe unit with `Requires=master-firewall.service` was restarted by `systemctl restart master-firewall`;
+  - a sandboxed uid-1000 unit (IPAddressDeny) gets no answer from qBittorrent's loopback publication (DD-180 amended in f475d81);
+  - Podman follows a bind source that uid 1000 swapped for a symlink (for the later bind-source item);
+  - AppArmor is on and qBittorrent runs under `containers-default` (enforce);
+  - uid 1000 on nrm is the nologin `master-downloads`.
+- Done: the qBittorrent Quadlet and generated Konsol units use `Wants=`/`After=` master-firewall, with no `Requires=`,
+  an `ExecStartPre` guard `--check` (none without a network) and `RestartSec=10s`. Only the locked writers apply
+  the guard. `check()` names a missing table. Tests: worker render, check mapping, loopback-port policy invariance,
+  a Bats catalogue rule (all red first). DD-223, DD-217/DD-211 amendments, contract §10 rows, architecture, CHANGELOG.
+- Verification: Mac bats 183/183 (3 skips), Python OK, shellcheck, `bash -n`; export v2-201 identical.
+  nrm v2-201 installer exit 0 (torrent re-applied once). Without the guard, qBittorrent failed with "Konteyner
+  yönlendirme koruması eksik veya güncel değil." and retried (NRestarts 2 in 25 s); after `systemctl restart
+  master-firewall` it was active within 6 s, UI 200, firewall check OK. A Konsol container created through the
+  real worker stayed running (same InvocationID) across a firewall restart, then was removed with its new network
+  and image. Linux bats 183/183 and `containers-worker-linux.py` passed on nrm (cleanup clean).
+
 **2026-10-05 — Pending package markers survive a failed install, v2-200 (DD-222; committed with this entry):**
 - Context: the user asked to commit before new work. The other window's v2-193..v2-199 was finished
   but uncommitted; after re-checking it (bats 180/180, Python 575 OK, shellcheck, `bash -n`,
@@ -21,7 +40,12 @@ Cross-session continuity for this repository.
   WebDAV marker reaches `yerlesik`) was red on the old code at the expected assertion; six
   mutations of the fix each turn it red. `bats tests` 181/181 (3 GNU-timeout skips), Python OK,
   shellcheck, `bash -n`; export root/`Data/app` `2026.08.06-v2-200.command` identical, 82 payload
-  files match source. Not yet live: nrm run and Linux Bats are planned with the next nrm session.
+  files match source. Live on nrm (2026-10-05): the incident was reproduced with a temporary `/run` drop-in
+  (`AssertPathExists`) that failed stage 5's `master-firewall` restart after stage 4 had re-rendered a tampered
+  qBittorrent Quadlet. That run stopped with markers `dosya` + `torrent`, the placed Quadlet still old and the
+  firewall rules intact (`--check` OK). The next run, with the drop-in removed, logged "Modül torrent: dosyası
+  değişti, yeniden uygulanıyor" without any render change; placed == rendered, markers empty (0700 root),
+  services active, UI 200. Linux bats 181/181 (Bash 5.2.37).
 - Next (accepted by the user, Debian 13 only — no Ubuntu work until a server change): docs drift
   fixes, nrm read-only measurements, then container boot precondition, container egress block,
   host-unit masking, bind-source pinning, Dosyalar account for writable binds.

@@ -305,7 +305,8 @@ def render_quadlet(definition, env, bindings=None):
     network = env.get('KONTEYNER_NETWORK', 'konsol') if d['network'] == 'bridge' else d['network']
     lines = ['# Konsol tarafından oluşturuldu; kalıcı kaynak: konteyner tanımı.', '[Unit]',
              'Description=Konsol container ' + d['name'], 'After=network-online.target master-firewall.service',
-             'Wants=network-online.target', 'Requires=master-firewall.service', '', '[Container]',
+             # DD-223: no Requires=, so a firewall restart does not restart the container.
+             'Wants=network-online.target master-firewall.service', '', '[Container]',
              'ContainerName=' + d['name'], 'Image=' + d['image'], 'Pull=never', 'Network=' + network,
              'Label=' + MANAGED_LABEL + '=konsol', 'LogDriver=journald', 'NoNewPrivileges=true',
              'EnvironmentFile=' + quote(Store(env).environment_path(d['name']))]
@@ -329,9 +330,13 @@ def render_quadlet(definition, env, bindings=None):
     if d.get('stop_signal'):
         lines.append('StopSignal=' + d['stop_signal'])
     helper = str(Path(env['SBIN_DIR']) / 'master_container_network.py')
-    lines.extend(['', '[Service]', 'Restart=' + d['restart'], 'TimeoutStartSec=180', 'TimeoutStopSec=75', 'UMask=0077',
-                  'ExecStartPre=/usr/bin/python3 ' + quote(helper, command=True) + ' --state ' +
-                  quote(env['STATE_FILE'], command=True) + ' apply'])
+    lines.extend(['', '[Service]', 'Restart=' + d['restart'], 'RestartSec=10s', 'TimeoutStartSec=180', 'TimeoutStopSec=75',
+                  'UMask=0077'])
+    if d['network'] != 'none':
+        # DD-223: only the locked writers (firewall, worker, engine) apply the guard; the unit checks it,
+        # so an automatic restart can never re-open a publication that was just revoked.
+        lines.append('ExecStartPre=/usr/bin/python3 ' + quote(helper, command=True) + ' --state ' +
+                     quote(env['STATE_FILE'], command=True) + ' --check')
     if d['autostart'] and not d['manual_stop']:
         lines.extend(['', '[Install]', 'WantedBy=multi-user.target'])
     return '\n'.join(lines) + '\n'

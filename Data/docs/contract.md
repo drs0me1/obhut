@@ -1023,7 +1023,8 @@ Contract in §5–§7 and `folder-shares.md`.
     journald logging, `StopTimeout=45`, capabilities `NET_BIND_SERVICE SETFCAP SYS_CHROOT`
     dropped, `PUID`/`PGID` = the downloads account, `UMASK=002`, `WEBUI_PORT=TORRENT_UI_PORT`,
     `TORRENTING_PORT=TORRENT_PEER_PORT`,
-    `Nice=10`/`CPUWeight=50`, started after `master-firewall`. Only two folders are
+    `Nice=10`/`CPUWeight=50`, started after `master-firewall` and only once the container
+    guard is in place (an `ExecStartPre` check, retried every 10 s, **DD-223**). Only two folders are
     mounted: the profile `TORRENT_PROFILE_DIR` (the package's `torrent.env`,
     `/var/lib/qbittorrent`, **DD-203**) as `/config`, and `DOWNLOADS_PATH` at the same
     path; the trash and the share root are absent inside. No `no-new-privileges`: the
@@ -1570,6 +1571,8 @@ declared in `config/defaults.env` and nowhere else.
 | `master-settings-guard.timer` | — | rollback deadline of an unconfirmed Settings change; active only while one is pending (**DD-181**) | starts oneshot every 2 s while active; once 15 s after boot |
 | `apt-daily-upgrade.timer` (drop-in, **DD-184**) | — | distribution unit; `OnCalendar` at `APT_UPGRADE_TIME` (04:00), `RandomizedDelaySec=30m`, the distribution's `Persistent=true` kept | daily |
 | `wg-quick@wgN.service` (drop-in, **DD-180**) | `master-firewall.service` | `Wants=`; `ExecStartPre=+master-firewall --check`, so a network never forwards without the owned rules | package default; a network left failed is reopened by `refresh-tailnet-config` once the check passes |
+| `<PAKET_KONTEYNER>.service` (App Store container, e.g. `qbittorrent.service`; Quadlet) | `network-online.target master-firewall.service` | `Wants=` both, no `Requires=`/`PartOf=`; `ExecStartPre` checks (never writes) the container guard, so it never starts unguarded (**DD-223**) | `on-failure`, `RestartSec=10s`: retried until the guard is in place |
+| `konsol-<ad>.service` (Konsol container; Quadlet) | `network-online.target master-firewall.service` | `Wants=` both, no `Requires=`, so a firewall restart leaves it running; the same guard check unless it has no network (**DD-211**, **DD-223**) | the operator's choice; `RestartSec=10s` |
 
 The Caddy drop-in also carries
 `EnvironmentFile=/etc/master-stack/state.env`, which is how
@@ -1584,7 +1587,7 @@ Invariants:
 
 - **Restarting `tailscaled` re-applies the firewall
   (`master-firewall` is `PartOf=tailscaled.service`) and leaves every module
-  running.** Caddy is restarted when `refresh-tailnet-config` sees an
+  and container running** (**DD-223**). Caddy is restarted when `refresh-tailnet-config` sees an
   address change, when Caddy fails and `OnFailure=` starts that oneshot
   (**DD-87**), or when the operator restarts it. The share WebDAV is a host
   service with no tie to `tailscaled`.

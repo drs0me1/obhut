@@ -3482,6 +3482,22 @@ PY
     grep -qF 'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
 }
 
+@test "container packages wait for the checked guard and never restart with the firewall (DD-223)" {
+    local env name q n=0
+    for env in "$V2_ROOT"/magaza/*/paket.env; do
+        grep -qE '^PAKET_KONTEYNER_AG="?[^"]' "$env" || continue
+        name="$(sed -n 's/^PAKET_KONTEYNER="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$env")"
+        q="${env%/paket.env}/$name"
+        grep -qx 'Wants=network-online.target master-firewall.service' "$q"
+        grep -qx 'After=network-online.target master-firewall.service' "$q"
+        grep -qxF 'ExecStartPre=/usr/bin/python3 __SBIN_DIR__/master_container_network.py --state __STATE_FILE__ --check' "$q"
+        grep -qx 'RestartSec=10s' "$q"
+        run ! grep -qE '^(Requires|Requisite|BindsTo|PartOf)=' "$q"
+        n=$((n + 1))
+    done
+    [ "$n" -ge 1 ]
+}
+
 @test "pending module markers (DD-222): a run that fails between stage 4 and 7 is applied by the next run" {
     local fn repo="$TMP/repo" real="$V2_ROOT" stage4 stage7
     for fn in mark_module_pending render_package_dir paket_bildirim_oku paket_katalog module_state \

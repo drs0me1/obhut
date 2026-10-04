@@ -174,6 +174,21 @@ class ContainerTests(unittest.TestCase):
         self.assertIn('EnvironmentFile="' + str(self.store.environment_path('demo')) + '"', lines)
         self.assertIn('Exec="serve" "literal $$HOME" "100%%"', lines)
 
+    def test_quadlet_waits_for_the_firewall_but_never_restarts_with_it(self):
+        # DD-223: Wants/After instead of Requires= (a firewall restart no longer restarts the
+        # container); the unit only checks the guard a locked writer applied, and retries.
+        d = self.create()
+        lines = self.manager.quadlet('demo').read_text().splitlines()
+        self.assertIn('After=network-online.target master-firewall.service', lines)
+        self.assertIn('Wants=network-online.target master-firewall.service', lines)
+        self.assertEqual([l for l in lines if l.split('=', 1)[0] in ('Requires', 'Requisite', 'BindsTo', 'PartOf')], [])
+        pre = [l for l in lines if l.startswith('ExecStartPre=')]
+        self.assertEqual(len(pre), 1)
+        self.assertTrue(pre[0].endswith(' --check'), pre[0])
+        self.assertIn('RestartSec=10s', lines)
+        # Without a network there is no publication and nothing to wait for.
+        self.assertNotIn('ExecStartPre=', cfg.render_quadlet(dict(d, network='none', ports=[]), self.manager.env, []))
+
     def test_stale_revision_refuses_before_any_mutation(self):
         d = self.create()
         before = len(self.runner.calls)

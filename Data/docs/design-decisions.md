@@ -13,6 +13,42 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-223: Container units wait for the checked guard, without Requires= (v2-201)
+
+- **Finding (measured on nrm, 2026-10-05):**
+  - qBittorrent's Quadlet had only `After=master-firewall.service`. With the container guard
+    table deleted, `systemctl restart qbittorrent` started it anyway: `After=` orders a start,
+    it does not hold one back when the firewall failed.
+  - Konsol's generated units had `Requires=master-firewall.service` and an `ExecStartPre` that
+    applied the guard. `systemctl restart master-firewall` restarted a running Konsol container
+    (measured). Every restart source restarted them: a Tailscale upgrade (`PartOf`), a WireGuard
+    network change, an installer run or a watchdog repair. A failed apply inside such a restart
+    left them stopped.
+  - The unit's own apply was an unlocked writer. It could re-open a publication the worker had
+    just revoked.
+- **Decision:**
+  - Package and Konsol container units use `Wants=` + `After=master-firewall.service`, with no
+    `Requires=`, `BindsTo=` or `PartOf=`.
+  - Their `ExecStartPre` only checks the guard (`master_container_network.py --check`), and
+    `RestartSec=10s` retries until it is in place. A container without a network gets no check.
+  - Only the locked writers write the guard:
+    - `master-firewall`, at boot and on every restart;
+    - the package engine, after placing a quadlet;
+    - the container and package workers, before a start that changes publications.
+  - `check()` now names a missing table ("Konteyner yönlendirme koruması eksik veya güncel
+    değil.") instead of a generic read error.
+- **Trade-offs:**
+  - A container waits until the firewall has applied the guard, retrying every 10 s with no start
+    limit.
+  - A crash-looping container also retries every 10 s, instead of stopping at the start limit.
+  - qBittorrent's interface-port change restarts it without reapplying the guard. Loopback
+    publications are not part of the policy, so its start check passes; a test pins this.
+- **Not done:** a fail-closed bridge drop in the firewall's cold recovery, and listing waiting or
+  dependency-stopped Konsol containers on the Sağlık card.
+- **Upgrade:** the next installer run re-places qBittorrent's Quadlet and restarts it once. That
+  goes through the DD-222 path, so a failed run cannot skip it. Existing Konsol containers keep their
+  old unit, with `Requires=`, until they are saved once in Konsol; there is no migration code.
+
 ### DD-222: A package's unapplied change survives a failed install (v2-200)
 
 - **Finding (nrm, 2026-10-04):** stage 7 re-applied a package only when `MODULES_CHANGED`
@@ -184,6 +220,9 @@ with its status and the file that holds it.
   `WebUI\Address=127.0.0.1` and the interface would not answer on the bridge. The manual step is
   reinstalling qBittorrent from App Store (the install writes `*`), or setting that key to `*` while
   the app is stopped.
+- **Amended (v2-201, DD-223):** `After=master-firewall.service` did not hold the start back when the
+  firewall failed. The package Quadlet now also checks the guard in `ExecStartPre` and retries
+  every 10 s until it is in place.
 
 ### DD-216: Applications open from Ana Menü only; the container page is named Podman (v2-194)
 
@@ -385,6 +424,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   its former read-only Settings placement is superseded by this decision.
 - **Verification:** tests and live evidence are recorded in `SESSION.md`; the mockup is
   design evidence only, not proof of runtime or OS compatibility.
+- **Amended (v2-201, DD-223):** generated units no longer carry `Requires=master-firewall.service`,
+  so a firewall restart leaves running containers alone. Their `ExecStartPre` only checks the guard
+  that the locked writers apply.
 
 ### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
 
