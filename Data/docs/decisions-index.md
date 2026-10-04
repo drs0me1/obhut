@@ -153,7 +153,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-149 | Paylaşım is a module with a generated account | live; parts superseded by DD-158 | design-decisions.md |
 | DD-150 | Dosya yöneticisi and WireGuard are Konsol modules | live | design-decisions.md |
 | DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209, first-login password by DD-210, inbound peer port by DD-217/219 | design-decisions.md |
-| DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live | design-decisions.md |
+| DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live; rclone and the trash tmpfs superseded by DD-158 | design-decisions.md |
 | DD-153 | The base installs only what the base uses | live | design-decisions.md |
 | DD-154 | One console name, one current export | live | design-decisions.md |
 | DD-155 | Konsol shows the server's settings, read-only | live; parts superseded by DD-156 | design-decisions.md |
@@ -181,7 +181,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-177 | Retire Local access; WireGuard is internet-only | live | design-decisions.md |
 | DD-178 | Seed qBittorrent integration, not user preferences | live; WebUI address by DD-217 | design-decisions.md |
 | DD-179 | Per-folder HTTP WAN opt-in with separate admission budgets | live; HTTP-only boundary superseded by DD-190, shared policy by DD-192 | design-decisions.md |
-| DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live | design-decisions.md |
+| DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live; qBittorrent reach amended 2026-10-05 | design-decisions.md |
 | DD-181 | Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol | live | design-decisions.md |
 | DD-182 | Capped rollback, WAN address change, watchdog resets, damaged history, health card | live | design-decisions.md |
 | DD-183 | No archive jobs page; results in Günlük, running job as a bar | live | design-decisions.md |
@@ -209,7 +209,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-205 | No sign-in on the tailnet; the account is the public name's credential | live | design-decisions.md |
 | DD-206 | Overview edit mode, a server-side layout and a network card | live; widget set, width and totals table presentation amended by DD-212 | design-decisions.md |
 | DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
-| DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
+| DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live; page moved by DD-211/216, bridges by DD-211/217 | design-decisions.md |
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live; explicit updates by DD-214; own bridge instead of host network by DD-217 | design-decisions.md |
 | DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212; sidebar launch removed by DD-216 | design-decisions.md |
 | DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live; named Podman by DD-216 | design-decisions.md |

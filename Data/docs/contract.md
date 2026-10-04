@@ -815,13 +815,15 @@ Contract in §5–§7 and `folder-shares.md`.
       name, or creates the system account and group `DOWNLOADS_ACCOUNT`
       (`master-downloads`, no login, no home). File ownership stays numeric.
     - The unit has no capabilities and `ProtectSystem=strict` with only
-      `DOWNLOADS_PATH` writable, plus `ProtectHome`, `PrivateTmp`,
+      `SERVER_ROOT` writable, plus `ProtectHome`, `PrivateTmp`,
       `PrivateDevices` and `NoNewPrivileges`.
     - Because unrar opens untrusted RAR files here (**DD-180**): network only to
       and from loopback (`IPAddressDeny=any`, `IPAddressAllow=localhost`),
       `SystemCallFilter=@system-service`, `ProtectProc=invisible`,
-      `PrivateIPC` and `MemoryDenyWriteExecute`. Loopback services (DNS, the
-      qBittorrent WebUI with its password) stay reachable from it.
+      `PrivateIPC` and `MemoryDenyWriteExecute`. Loopback services such as DNS stay
+      reachable from it. qBittorrent's interface does not: since **DD-217** its loopback
+      port is a container publication, and a unit with this address filter gets no
+      answer from it (measured on nrm, 2026-10-05).
   - It sees no sessions: Caddy asks the root backend before proxying (**DD-194**;
     **DD-205**: the tailnet passes, the public name needs a session); the
     stage-7 self-check uses its loopback port.
@@ -841,8 +843,8 @@ Contract in §5–§7 and `folder-shares.md`.
     (**DD-186**).
   - Names over 255 bytes or with `/` are refused; new names may not contain
     control characters or leading and trailing spaces.
-- Delete moves the item into `DOWNLOADS_PATH/.cop/<id>/` with a small origin
-  record, on the same disk.
+- Delete moves the item into `SERVER_ROOT/.cop/<id>/` (`FILES_PANEL_TRASH`) with a
+  small origin record, on the same disk.
   - Move-to-trash has a short confirmation; long names remain available in its
     subtitle/tooltip without overflowing. Permanent deletion guards are unchanged.
   - Restore puts it back where it was, or into the root if that folder is gone.
@@ -851,8 +853,9 @@ Contract in §5–§7 and `folder-shares.md`.
     `onayla`. The trash is not reachable through any path, and the root listing
     hides it.
   - The installer creates the folder. It lies outside `SERVER_ROOT/downloads`,
-    so qBittorrent never sees it (**DD-144**); the share WebDAV serves only
-    the share root and sees the trash as an empty tmpfs (**DD-152**).
+    so qBittorrent never sees it (**DD-144**). The WebDAV unit lists the trash, and
+    `.pay` when present, in `InaccessiblePaths=`, and a share can be neither the root
+    nor contain a hidden or reserved name (**DD-158**, §7).
 - Text view: the first 1 MiB of a regular file.
   - A file with a NUL in the first 8 KiB is refused as binary.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
@@ -937,8 +940,16 @@ Contract in §5–§7 and `folder-shares.md`.
   keys `PAKET_KONSOL` (App Store texts and page declaration), `PAKET_SAYFA` (page files),
   `PAKET_API` (backend module), **DD-200**, `PAKET_TRAFIK` (traffic-totals module for
   the overview's network card, **DD-206**), `PAKET_KONTEYNER`/`PAKET_IMAJ` (a
-  container application's quadlet and pinned image, **DD-209**), and `PAKET_KUR_AYAR`
-  (the install form's worker, **DD-210**)), the hook
+  container application's quadlet and pinned image, **DD-209**), `PAKET_KUR_AYAR`
+  (the install form's worker, **DD-210**), `PAKET_PORTLAR` (Settings port catalogue
+  rows, **DD-198**), `PAKET_YAYIN_AD`/`PAKET_YAYIN_YEREL`/`PAKET_YAYIN_UPSTREAM`/
+  `PAKET_YAYIN_PORT_ANAHTARI`/`PAKET_YAYIN_DENETIM` (the Caddy publication row,
+  **DD-199**), `PAKET_KLASORLER`/`PAKET_KLASOR_MODUL`/`PAKET_ARKAUC_YOLLAR` (folders the
+  package writes, its report module and the backend's write paths, **DD-203**),
+  `PAKET_KONTEYNER_YONETIM`/`PAKET_AYAR_ANAHTARLAR` (the Podman editor adapter and the
+  keys a durable override may change, **DD-211**, **DD-214**), `PAKET_IMAJ_KANAL` (the
+  tag the update check follows, **DD-214**) and `PAKET_KONTEYNER_AG` (the package's own
+  bridge, **DD-217**)), the hook
   file `kanca` (`paket_kur`, `paket_kaldir`, `paket_uygula`, `paket_baslat`, `paket_durdur`,
   `paket_birim`, `paket_hesap`, `paket_veri_sil`, `paket_gunluk_suz`, `paket_ozet`) and the
   package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds,
@@ -1069,9 +1080,11 @@ Contract in §5–§7 and `folder-shares.md`.
     and the image, never a downloaded file. Konsol's durable choices (the interface
     and peer ports and an approved image, with the port drop-in) stay, so a reinstall matches the
     rendered files without an installer run (**DD-220**).
-- Built-in WebDAV (`paylasim`, **DD-158/159**): `yerlesik` prepares a registry
-  only if absent, places/enables the unprivileged service, checks UID/anonymous
-  401, then publishes/checks Caddy and DNS. Unchanged reruns do not rewrite
+- Built-in WebDAV (`paylasim`, **DD-158/159**): `yerlesik` runs `master_shares.py
+  prepare`. It finishes an interrupted share change, creates the registry only if
+  absent, and otherwise rewrites only the derived list of package folders, which
+  WebDAV applies at its next start. Then `yerlesik` places/enables the unprivileged
+  service, checks UID/anonymous 401, then publishes/checks Caddy and DNS. Unchanged reruns do not rewrite
   accounts or restart healthy services. Remove individual accounts through
   Files; no module verb stops or removes the service.
 - The root backend (`master-panel`):
@@ -1148,6 +1161,13 @@ the Podman page can change it, **DD-221**) over TCP and UDP, published by its Qu
 container guard on the forward path (not MASTER-INPUT). It is a fixed uncommon port outside
 Linux's ephemeral range; nothing else of qBittorrent is published on the WAN.
 
+**Konsol containers (DD-211):** each published port of a generic container has one
+scope: `local` (127.0.0.1), `tailscale` (the current Tailscale IPv4) or `public`
+(every address, IPv4 only, only after an explicit acknowledgement in the editor).
+Tailscale and public publications are admitted on the forward path by the container
+guard, from `tailscale0` or the WAN interface respectively, not by MASTER-INPUT.
+Nothing is published until the operator saves such a container.
+
 **WireGuard is a host listener (DD-120/143):** each registered network's UDP
 port is admitted by the base WAN policy while the application is installed.
 `WG_PORT_DEFAULT` (61001, in the package's `wireguard.env`) is only a suggestion
@@ -1215,7 +1235,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 
 | Service | Listen address | Port |
 |---|---|---|
-| qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 62947 (**DD-127**, **DD-151**, **DD-219**) |
+| qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 62947 by default; the Podman page can change it (**DD-127**, **DD-151**, **DD-214**, **DD-219**) |
 | Konsol root backend (`master-panel`; package API modules inside it, **DD-200**) | Unix socket `/run/master-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
 | Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
@@ -1225,13 +1245,18 @@ Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 the share WebDAV on `paylas.*:80` and `${TAILSCALE_IPV4}:${SHARE_PORT}`. No
 loopback service names the Tailscale address. None of them listens on
 `0.0.0.0` or a WAN address; the stack-owned WAN TCP listeners are Caddy's
-opt-in share site and qBittorrent's published peer port (§3.1).
+opt-in WAN sites, qBittorrent's published peer port and public-scope ports of
+Konsol containers (§3.1).
 
 ### 3.4 Single source of truth
 
-Every number above is declared exactly once, in `config/defaults.env`,
-and reaches the module templates, the Caddyfile, the firewall script and the
-state file by substitution. A port literal appearing twice is a bug.
+The base's numbers above are declared exactly once, in `config/defaults.env`; a
+package's numbers (qBittorrent's 62947 and 63851, WireGuard's 61001 suggestion)
+once in its own `magaza/<id>/<id>.env` (**DD-203**). Konsol may keep a durable
+override only for the keys a package allows (`PAKET_AYAR_ANAHTARLAR` in
+`PACKAGE_OVERRIDES_DIR`, **DD-214**, **DD-220**, **DD-221**). Values reach the module
+templates, the Caddyfile, the firewall script and the state file by
+substitution. A port literal appearing twice is a bug.
 
 ### 3.5 WireGuard (`wgN`) — internet-only
 
@@ -1376,7 +1401,9 @@ off (DD-179/190). HTTPS stays available for renewal with zero active folders;
 folder authorization still fails closed. No Tailscale policy change.
 
 The installer prepares an empty registry only when absent and enables this
-built-in service. Reruns preserve accounts; public module removal is refused.
+built-in service; on a rerun it refreshes only the derived package-folder list,
+which WebDAV applies at its next start. Reruns preserve accounts; public module
+removal is refused.
 Address refresh changes Caddy, not WebDAV. No route broader than `/s/<id>/`
 exists.
 
@@ -1406,7 +1433,10 @@ Tailscale acceptance; WG host ingress is dropped first in both project chains):
    Raw listeners and technical rules stay unfiltered (**DD-173**).
 4. New inbound TCP on the WAN interface to `${SSH_PUBLIC_PORT}` (host sshd).
 5. New inbound UDP for Tailscale and each registered WireGuard network.
-6. When the WAN projection in §3.1 is enabled (**DD-179/190**), or a
+6. New DNS (TCP/UDP 53) from a Konsol container bridge (`ksl*`) to that bridge's
+   own address, for Aardvark's container name service (**DD-211**); no other host
+   address or service is reachable from a bridge.
+7. When the WAN projection in §3.1 is enabled (**DD-179/190**), or a
    qBittorrent/Konsol HTTPS publication is active (**DD-191/195**): new inbound
    IPv4 TCP on the WAN interface to the selected `${SHARE_PORT}` or
    `${SHARE_HTTPS_PORT}`, after the per-source and total
@@ -1414,7 +1444,7 @@ Tailscale acceptance; WG host ingress is dropped first in both project chains):
 
 Dropped:
 
-7. Every other new inbound connection arriving on the WAN interface, and any
+8. Every other new inbound connection arriving on the WAN interface, and any
    new tailnet host service connection outside the allowlist/explicit overrides.
 
 Rules:
@@ -1530,7 +1560,7 @@ declared in `config/defaults.env` and nowhere else.
 |---|---|---|---|
 | `tailscale-udp-gro.service` | `network-online.target` | none | `no`, oneshot, `RemainAfterExit` |
 | `master-firewall.service` | `network-online.target tailscaled.service` | `PartOf=tailscaled.service` only (**DD-152**) | `on-failure` (oneshot, `RemainAfterExit`, `RestartSec=10s`, `StartLimitBurst=12` / 300s) |
-| `refresh-tailnet-config.timer` | — | address poll + firewall watchdog (checked again once Tailscale answers); resets a failed Caddy's start limit before restarting it; reopens failed WireGuard networks (**DD-180**, **DD-182**) | starts oneshot every 5 min (`OnBootSec=2min`) |
+| `refresh-tailnet-config.timer` | — | address poll + firewall watchdog (checked again once Tailscale answers); resets a failed Caddy's start limit before restarting it; reopens failed WireGuard networks (**DD-180**, **DD-182**); hands a recorded Tailscale address change to the bounded container worker (**DD-211**) | starts oneshot every 5 min (`OnBootSec=2min`) |
 | `caddy.service` (drop-in) | `tailscaled.service master-firewall.service` | `Wants=` both (no `PartOf`); `ExecStartPre=+master-firewall --check` (**DD-179**); `OnFailure=refresh-tailnet-config.service` (**DD-87**) | `on-failure` + StartLimit (drop-in) |
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | `Wants=tailscaled.service` | `on-failure`, `RestartSec=5s` (drop-in) |
 | `master-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
@@ -1566,9 +1596,11 @@ Invariants:
   `master-firewall` when the unit is `failed` or `--check` fails, after a
   `reset-failed` so an exhausted start limit cannot block the recovery. It
   skips the round while the oneshot is mid-apply. Beyond the firewall it only
-  restarts a failed Caddy and reopens failed enabled WireGuard networks
-  (**DD-180**, **DD-182**): no module, file, or binary is reconciled
-  (**DD-94**).
+  restarts a failed Caddy, reopens failed enabled WireGuard networks
+  (**DD-180**, **DD-182**) and, after a recorded Tailscale address change, starts
+  the bounded `master-container-tailnet-refresh` worker (`RuntimeMaxSec=900`), which
+  recreates only Konsol containers whose Tailscale bindings changed (**DD-211**): no
+  module, file, or binary is reconciled (**DD-94**).
 - **No general-purpose repair engine.** The only `OnFailure=` in the stack
   is Caddy → `refresh-tailnet-config` (same oneshot the timer /
   `WantedBy=tailscaled` already use). There is no reconcile loop that

@@ -28,8 +28,12 @@ The [archive architecture](desktop-and-archives.md) supplements this
 document with the archive API and its security boundaries.
 
 The ownership rule: one owner per fact and one owner per decision. A port,
-path or chain name is declared once (`config/defaults.env`), and each question
-(is this healthy? has the address changed?) has exactly one answerer (§6).
+path or chain name of the base is declared once (`config/defaults.env`); a
+package's own defaults are declared once in its `magaza/<id>/<id>.env`, and a
+durable Konsol override may replace only the keys the package allows
+(`PAKET_AYAR_ANAHTARLAR`, `PACKAGE_OVERRIDES_DIR`; **DD-203**, **DD-214**,
+**DD-220**). Each question (is this healthy? has the address changed?) has
+exactly one answerer (§6).
 
 ---
 
@@ -206,7 +210,7 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations, `.cop` trash, text and archive jobs | Anything outside `SERVER_ROOT`; WebDAV credentials; WireGuard administration |
 | `files-panel/master_archives.py`, `files-panel/master_rar.py` | Single bounded ZIP creation or ZIP/RAR extraction job; descriptor-safe paths, resource-limited RAR subprocess, private staging, atomic publication and history | Root privileges, shell extraction, backups or resumable jobs |
 | `console/panel.css`, `console/arsiv.js` | Model A shell styling and archive dialogs plus the running-job bar with cancellation (no jobs page; results in Günlük, **DD-183**), using the real file API | OS sessions, fake progress, service credentials |
-| `console/index.html`, `konsol.css`, `konsol.js`, `ayarlar.{js,css}`, `dosyalar.{js,css}` | Files, folder shares, App Store, sidebar resources and tabbed Settings, plus the page registry (`window.Konsol.sayfa`) that mounts installed packages' pages from their declarations (**DD-200**; opened from Ana Menü tiles, no sidebar links, **DD-216**); served by Caddy from `CONSOLE_WEB_DIR`, same-origin only (**DD-160**) | Any application name or page of its own (the qBittorrent page remains until phase 2b); Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
+| `console/index.html`, `konsol.css`, `konsol.js`, `ayarlar.{js,css}`, `dosyalar.{js,css}` | Files, folder shares, App Store, sidebar resources and tabbed Settings, plus the page registry (`window.Konsol.sayfa`) that mounts installed packages' pages from their declarations (**DD-200**; opened from Ana Menü tiles, no sidebar links, **DD-216**); served by Caddy from `CONSOLE_WEB_DIR`, same-origin only (**DD-160**) | Any application name or page of its own; Keys — it asks for a QR or profile only when the operator does; file contents as HTML — names and text are inserted as text only |
 | `templates/dnsmasq.conf` | Base `panel` name and fail-closed resolver on `lo` + `tailscale0`; built-in WebDAV and installed qBittorrent add their own files | The current address (`bind-dynamic` tracks it) |
 | `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
 | `scripts/firewall.sh` → `master-firewall` | Project INPUT/FORWARD/NAT plus `MASTER-SETTINGS`, using installed apps, network registry and confirmed overrides; `--check` verifies critical policy | Other software's chain contents; the Tailscale address (matches its interface) |
@@ -352,7 +356,8 @@ Each consumer of an address is handled according to what it actually binds:
 | dnsmasq | `lo` and `tailscale0` **by name** | Nothing — `interface-name` + `bind-dynamic` follow the interface, and the config is never regenerated |
 | Caddy | `{$TAILSCALE_IPV4}` read from `state.env`; the opt-in WAN share site binds `WAN_IPV4` | Restarted after `state.env` is updated |
 | WebDAV | `127.0.0.1` (tailnet) and `SHARE_WAN_BACKEND` (WAN), loopback only | Nothing — loopback listeners do not track Tailscale |
-| Module services | no Tailscale bind | Nothing — no module binds a Tailscale address |
+| Module services | no Tailscale bind | Nothing — no App Store module binds a Tailscale address |
+| Konsol containers | a port with Tailscale scope is published on `TAILSCALE_IPV4` | `refresh-tailnet-config` leaves `RUNTIME_DIR/containers-tailnet.pending` and starts the bounded `master-container-tailnet-refresh` worker (`RuntimeMaxSec=900`); it recreates only containers whose Tailscale bindings changed, keeps stopped ones stopped, and the marker stays for the next round if it fails (**DD-211**) |
 | Firewall | `tailscale0` **by name**; configured service allowlist and registered WG ports; Self PeerAPI ports per family (DD-172) | Existing restart hook/watchdog regenerates changed PeerAPI ports; ordinary listener discovery never grants access |
 
 `refresh-tailnet-config` owns the Tailscale side of this table, and its
@@ -370,15 +375,27 @@ written against the *interface name* rather than the address it currently
 carries, so the address can change — or `tailscale0` can be destroyed and
 recreated — with no file to regenerate and no rule to reinstall.
 
-**A Tailscale address change never restarts a module.** Modules bind loopback
-only, so Caddy is the one service restarted.
+**A Tailscale address change never restarts an App Store module.** Modules
+publish on loopback or on the WAN address, so Caddy is the one service
+restarted. Konsol containers with a Tailscale-scope port are the one bounded
+exception (the hand-off in the table above, **DD-211**).
 
-**Public IPv4 change.** Only the opt-in WAN share site binds a specific WAN
-address. If the provider changes it, `master_shares.py` reports WAN as
-unavailable ("kurulumu yeniden çalıştırın"), the 30-second guard removes the
-site, and a Caddy that could not start on the old address is started without
-it. An installer re-run records the new `WAN_IPV4`, drops a site bound to the
-stale address before restarting Caddy, and stage 7 republishes it (**DD-182**).
+**Public IPv4 change.** These name the WAN address:
+- the opt-in WAN share site and the public HTTPS sites of packages and Konsol
+  (**DD-191**, **DD-195**), which Caddy binds to `WAN_IPV4`;
+- qBittorrent's peer-port publication, rendered with `WAN_IPV4` into its
+  Quadlet (**DD-217**);
+- Konsol containers with a public-scope port, which listen on every address
+  while the container guard admits them only for the WAN interface's addresses
+  as of its last apply.
+
+If the provider changes the address, `master_shares.py` reports WAN as
+unavailable ("kurulumu yeniden çalıştırın"), the 30-second guard removes every
+WAN site, and a Caddy that could not start on the old address is started without
+it. qBittorrent's peer port stays closed, because the guard admits no stale
+address, until an installer run re-renders and re-applies the package. An
+installer re-run records the new `WAN_IPV4`, drops a site bound to the stale
+address before restarting Caddy, and stage 7 republishes it (**DD-182**).
 `master-firewall` re-applies on boot and on a Tailscale restart and reads
 current WAN facts from `state.env` / the interface.
 WireGuard profiles take `WAN_IPV4` from `state.env` as their endpoint at creation
@@ -412,13 +429,13 @@ none of these questions for the installer.
 | Stage | Work | Owns |
 |---|---|---|
 | 0 | Gates (root, tty, supported OS, nft `iptables`, ufw inactive, lock, inhibit); detect release change; read/delete input, reject pending Settings transaction, resolve confirmed domain, one confirmation; write `config.env`; full-upgrade question on re-run | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages — only what the base uses (**DD-153**: no gnupg, gawk or apache2-utils); timezone; unattended-upgrade policy and its 04:00 window (**DD-113**, **DD-184**) | `apt` |
+| 1 | Suspend third-party restart managers (**DD-103**); `apt update`; optional `full-upgrade`; base packages — only what the base uses (**DD-153**: no gnupg, gawk or apache2-utils); `podman netavark aardvark-dns` without recommends and a `podman info` check (**DD-208**); timezone; unattended-upgrade policy and its 04:00 window (**DD-113**, **DD-184**) | `apt` |
 | 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
 | 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
 | 4 | Install scripts and workers; render module files, units, timers and the firewall-first `wg-quick@` drop-in (**DD-180**); enable the settings guard timer | templates |
-| 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
+| 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty), which also applies the container forward guard (`master_container_network.py`, **DD-211**, **DD-217**); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
 | 6 | dnsmasq/Caddy, Konsol root backend/pages, Files/archive code and staged unit; drop a WAN share site bound to a stale address (**DD-182**); restart changed services only | DNS/HTTP |
-| 7 | `master-modul yerlesik` enables/checks Files/WebDAV; publish the WAN share site and enable its guard timer (**DD-179**); reapply changed optional apps (including changes a failed earlier run left pending, **DD-222**) and installed WireGuard; core contracts, Caddy/API gates and optional network checks (**DD-159**) | verification |
+| 7 | `master-modul yerlesik` enables/checks Files/WebDAV; publish the WAN share site and enable its guard timer (**DD-179**); reapply changed optional apps (including changes a failed earlier run left pending, **DD-222**) and installed WireGuard; `master-firewall --check` (with the container guard) and the `podman info` check; core contracts, Caddy/API gates and optional network checks (**DD-159**) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 **Addresses are detected once, in stage 3, into `state.env`**, and every later

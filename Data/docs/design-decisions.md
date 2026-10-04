@@ -567,6 +567,12 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   removal refusal ("remove the containers first") and a store-wide `podman system reset` for
   `--veri`, both wrong once applications run in it. DD-152 holds: no Docker, no daemon, no
   iptables churn (host network only).
+- **Amended (v2-190, v2-195):** the read-only Settings tab became the main-sidebar Podman page
+  with brokered writes (DD-211, DD-216). Stage 1 installs `podman netavark aardvark-dns`.
+  Containers no longer use the host network only: Konsol's managed bridges (DD-211) and a
+  package's own bridge (DD-217) run with Netavark-owned NAT, a project-owned `inet` forward
+  guard and a MASTER-INPUT exception for each bridge's own DNS. The project never edits
+  Netavark's or Tailscale's rules.
 
 ### DD-207: A package's backend write paths exist before the backend starts (v2-184)
 
@@ -1758,6 +1764,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   DNS forwarding is on), resolved on Ubuntu and the password-protected
   qBittorrent WebUI remain reachable. A separate network namespace for the RAR
   helper is left for later.
+  - **Amended (2026-10-05):** since DD-217 qBittorrent's interface is a container
+    publication on loopback, not a host socket. A uid-1000 unit with this address
+    filter got no answer from it on nrm (control without the filter: HTTP 200), so
+    only host loopback services such as dnsmasq remain reachable.
 - **Request smuggling (pre-existing, found by the review):** the root backend
   answered rejected POSTs without reading their body on a keep-alive
   connection, so a body hidden in a cross-site text/plain POST was parsed as a
@@ -5581,6 +5591,10 @@ failure with an early, named one.
 - **Upgrading:** per the fresh-install rule there is no clean-up code: a host
   from an earlier version keeps Docker, its containers and images until it
   is reset. Reset and install fresh; Paylaşım generates a new account.
+- **Amended (recorded 2026-10-05):** rclone and its trash tmpfs are gone. Since
+  v2-126..v2-129 (commit 18b7ba7, DD-158) the Python WebDAV unit lists the trash,
+  and `.pay` when present, in `InaccessiblePaths=` (mode 000 inside the unit, checked
+  on nrm 2026-10-05). The tmpfs reasoning above applied to rclone's link following.
 - **Found in the live trial (v2-122):** right after `systemctl restart` a
   `Type=simple` unit is "active" while its process is still root (systemd
   switches to `User=` just before exec), so an immediate owner check failed

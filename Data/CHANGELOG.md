@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — Documentation matches the code again (no version change)
+
+- Contract, architecture, folder-shares and three DD records described an older state.
+  - The Files unit writes all of `SERVER_ROOT`, and the trash is `SERVER_ROOT/.cop`.
+  - WebDAV masks the trash with `InaccessiblePaths` (no tmpfs).
+  - The WebDAV registry's package-folder list refreshes on a share save, a removal or an
+    installer run (applied at WebDAV's next start), never through the 30-second guard.
+- Added what was missing:
+  - Konsol container publications and the bridge DNS exception in the port and INPUT
+    contracts.
+  - Every WAN-address binder in the architecture's address section.
+  - The Tailscale-address hand-off to the container worker.
+  - The full manifest key list.
+  - Package settings files in the single-source rule.
+  - Podman, the container guard and the `podman info` check in the stage table.
+- Measured on nrm on 2026-10-05: the Files/unrar sandbox no longer reaches qBittorrent's
+  interface (DD-180 amended). DD-152 and DD-208 carry amendment notes.
+- No code or installer payload changed.
+
 ### 2026-10-05 — A failed install no longer loses a package's pending changes (v2-200)
 
 - If an install wrote new package files and then failed before stage 7, the next successful

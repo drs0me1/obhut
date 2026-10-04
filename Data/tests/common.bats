@@ -3475,6 +3475,13 @@ PY
     grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-panel.service"
 }
 
+@test "contract names the current trash path and WebDAV curtain (no stale tmpfs text)" {
+    # The trash lives at SERVER_ROOT/.cop and WebDAV masks it with InaccessiblePaths (DD-158).
+    run ! grep -q 'empty tmpfs' "$V2_ROOT/docs/contract.md"
+    run ! grep -qF 'DOWNLOADS_PATH/.cop' "$V2_ROOT/docs/contract.md"
+    grep -qF 'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
+}
+
 @test "pending module markers (DD-222): a run that fails between stage 4 and 7 is applied by the next run" {
     local fn repo="$TMP/repo" real="$V2_ROOT" stage4 stage7
     for fn in mark_module_pending render_package_dir paket_bildirim_oku paket_katalog module_state \

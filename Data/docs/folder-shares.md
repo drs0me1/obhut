@@ -296,8 +296,12 @@ cross-device children and overlapping share roots are refused. `SHARE_DIR` (`.pa
 internal name (DD-171): the installer never creates, reads or deletes it, Files
 hides it and refuses to create it, and WebDAV and the packages' services cannot
 access it when it exists. If an application's temporary folder is later pointed
-into an existing shared subtree, the registry hides it inside the share on the
-next publish; remove/recreate the share after such external changes.
+into an existing shared subtree, WebDAV keeps serving it until the registry's
+derived folder list is rewritten and WebDAV restarts. A Konsol share save or
+removal does both (and cuts running transfers). An installer run rewrites the
+list, which WebDAV applies at its next start. The 30-second guard never does.
+A share whose path would contain such a folder cannot be created or re-pointed.
+After such an external change, save or remove the share in Konsol.
 
 PUT/COPY stage content in a hidden sibling without holding the global mutation
 lock. Publication revalidates the receiving connection's enabled/RW/expiry
