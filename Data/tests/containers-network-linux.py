@@ -4,7 +4,9 @@
 Run as root: unshare --net --fork python3 Data/tests/containers-network-linux.py
 Requires iproute2, nftables and Python; never changes the host network namespace.
 This exercises our actual nft guard with Netavark-shaped DNAT/SNAT and permissive
-foreign filter chains. Real Podman/Quadlet lifecycle is a separate live check.
+foreign filter chains, including what a container may open itself (DD-224): the
+internet yes; tailnet, WireGuard, private, link-local and IPv6 destinations no.
+Real Podman/Quadlet lifecycle is a separate live check.
 """
 import importlib.util
 import json
@@ -112,11 +114,14 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="container-network-") as root:
             env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, KONTEYNER_NETWORK="konsol",
-                       KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0")
+                       KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0",
+                       VPN_BLOCK_DEST4=net.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"])
             wan = peer("eth0", "192.0.2", "2001:db8:1")
             tail = peer("tailscale0", "100.64.0", "fd7a:115c:a1e0:1")
             wg = peer("wg0", "10.8.0", "fd00:3")
             other = peer("eth1", "198.51.100", "2001:db8:4")
+            lan = peer("eth2", "192.168.77", "2001:db8:77")
+            meta = peer("eth3", "169.254.169", "2001:db8:169")
             bridge = net.bridge_name(env)
             cmd("ip", "link", "add", bridge, "type", "bridge")
             cmd("ip", "link", "set", bridge, "up")
@@ -159,6 +164,24 @@ def main():
             outsiders = cmd("nft", "-j", "list", "table", "inet", "fixture")
             net.apply(env)
             assert net.check(env)
+            # DD-224: echo servers next to the host; the container may reach only the internet ones.
+            for prefix in (wan, tail, wg, other, lan, meta):
+                children.append(subprocess.Popen([*prefix, "python3", "-c", SERVER], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+            for address in ("192.0.2.2", "100.64.0.2", "10.8.0.2", "198.51.100.2", "192.168.77.2", "169.254.169.2"):
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        with socket.create_connection((address, 8080), timeout=.1):
+                            break
+                    except OSError:
+                        if time.monotonic() > deadline:
+                            raise AssertionError("peer echo server not ready: " + address)
+                        time.sleep(.05)
+            for protocol in ("tcp", "udp"):
+                probe(ctr, "192.0.2.2", 8080, protocol, True)
+                probe(ctr, "198.51.100.2", 8080, protocol, True)
+                for address in ("100.64.0.2", "10.8.0.2", "192.168.77.2", "169.254.169.2", "2001:db8:1::2", "2001:db8:4::2"):
+                    probe(ctr, address, 8080, protocol, False)
             for protocol in ("tcp", "udp"):
                 probe([], "127.0.0.1", 18080, protocol, True)
                 probe(tail, "100.64.0.1", 18081, protocol, True)
@@ -196,7 +219,7 @@ def main():
                 pass
             else:
                 raise AssertionError("health accepted changed owned rules")
-            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes, scope revocation, foreign chains preserved, rule-integrity check")
+            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes (publications and container egress), scope revocation, foreign chains preserved, rule-integrity check")
     finally:
         for child in reversed(children):
             if child.poll() is None:

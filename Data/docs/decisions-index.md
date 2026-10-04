@@ -224,4 +224,5 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-220 | Removing qBittorrent with its data keeps Konsol's port and image choice | v2-198 | design-decisions.md |
 | DD-221 | The Podman page changes qBittorrent's peer port | v2-199 | design-decisions.md |
 | DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; live-verified on nrm 2026-10-05 | design-decisions.md |
-| DD-223 | Container units wait for the checked guard, without Requires= | v2-201 | design-decisions.md |
+| DD-223 | Container units wait for the checked guard, without Requires= | v2-201; live-verified on nrm 2026-10-05 | design-decisions.md |
+| DD-224 | Containers may reach the internet, not private or tailnet destinations | v2-202 | design-decisions.md |

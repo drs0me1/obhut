@@ -607,7 +607,10 @@ Contract in §5–§7 and `folder-shares.md`.
       Images are resolved to digests; updating one is an explicit operation.
     - Ports select local, Tailscale or explicitly acknowledged internet access.
       Netavark owns NAT; a separate project nftables guard limits managed bridge
-      ingress, including direct/IPv6 paths. Bridge DNS uses Aardvark with TCP/UDP 53
+      ingress, including direct/IPv6 paths. It also limits what a container opens itself:
+      the internet yes; IPv6, anything out of `tailscale0` and the `VPN_BLOCK_DEST4` ranges
+      (private, CGNAT, link-local, loopback, multicast) no. Replies to its publications
+      still pass (**DD-224**). Bridge DNS uses Aardvark with TCP/UDP 53
       limited to the incoming bridge's own address. No host networking or runtime socket
       mount is offered for generic containers. Bind mounts use existing, non-hidden,
       non-symlink user folders under `SERVER_ROOT`, excluding protected app/share paths.

@@ -41,6 +41,22 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Container egress (v2-202, DD-224)
+
+`test_container_network.py` pins the rule order:
+- the one-rule path for traffic that neither enters nor leaves a bridge;
+- the reply returns;
+- then the IPv6, `tailscale0` and per-prefix drops, in `VPN_BLOCK_DEST4` order (from
+  `config/defaults.env`, with no address literal in the module);
+- a /32 rendered as an address.
+
+It also checks that a missing, empty or invalid list fails closed with 503, and that health
+detects a deleted or swapped egress rule. The live namespace suite `containers-network-linux.py`
+adds echo servers next to the host and probes from the container namespace. 192.0.2.2 and
+198.51.100.2 are reachable. The tailnet, WireGuard, 192.168, 169.254 and IPv6 peers are not.
+Tailscale-scope and WAN publication replies still pass. `containers-worker-linux.py` gives its
+fixture the same list.
+
 ## Container start precondition (v2-201, DD-223)
 
 `test_container_worker.py` checks the generated Konsol Quadlet: `Wants=` and `After=` on

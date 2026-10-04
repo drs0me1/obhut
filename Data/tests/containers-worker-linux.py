@@ -38,6 +38,16 @@ HELPERS = ('master_container_config.py', 'master_container_worker.py',
            'master_container_network.py', 'master_settings.py')
 
 
+def block_list(source):
+    """DD-224: the guard's single-source egress block list: Data/config or the installed state."""
+    for path in (source.parent / 'config/defaults.env', Path('/etc/master-stack/state.env')):
+        if path.is_file():
+            for line in path.read_text(encoding='utf-8').splitlines():
+                if line.startswith('VPN_BLOCK_DEST4='):
+                    return line.split('=', 1)[1].strip().strip('"')
+    raise SystemExit('VPN_BLOCK_DEST4 not found in Data/config/defaults.env or /etc/master-stack/state.env')
+
+
 class FixtureFailure(Exception):
     pass
 
@@ -146,9 +156,9 @@ class Acceptance:
                    SBIN_DIR=str(self.root / 'helpers'), MODULES_DIR=str(self.root / 'mods'),
                    SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop', SHARE_DIR='.pay',
                    KONTEYNER_NETWORK=self.network, KONTEYNER_BRIDGE_PREFIX=self.prefix,
-                   KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0')
+                   KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source))
         self.state = self.root / 'state.env'
-        self.state.write_text(''.join(k + '=' + v + '\n' for k, v in env.items()))
+        self.state.write_text(''.join(k + '=' + ('"%s"' % v if ' ' in v else v) + '\n' for k, v in env.items()))
         self.state.chmod(0o600)
         self.store = self.cfg.Store(env)
         self.secret = 'synthetic-' + uuid.uuid4().hex

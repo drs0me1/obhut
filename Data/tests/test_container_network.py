@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
 SPEC = importlib.util.spec_from_file_location("container_network", Path(__file__).resolve().parents[1] / "panel/master_container_network.py")
 network = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(network)
+DATA = Path(__file__).resolve().parents[1]
 
 
 def port(scope="local", host=18080, container=8080, protocol="tcp", **extra):
@@ -25,7 +26,8 @@ class NetworkTests(unittest.TestCase):
         self.env = {"KONTEYNER_STATE_DIR": self.tmp.name, "RUNTIME_DIR": self.tmp.name,
                     "KONTEYNER_NETWORK": "konsol", "KONTEYNER_BRIDGE_PREFIX": "ksl",
                     "KONTEYNER_NFT_TABLE": "master_containers", "TAILSCALE_IF": "tailscale0",
-                    "SSH_PUBLIC_PORT": "22", "DNS_PORT": "53"}
+                    "SSH_PUBLIC_PORT": "22", "DNS_PORT": "53",
+                    "VPN_BLOCK_DEST4": network.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"]}
         self.calls = []
         self.ss = ""
         self.podman = []
@@ -288,6 +290,59 @@ class NetworkTests(unittest.TestCase):
         with self.assertRaises(network.NetworkError):
             network.policy(self.env, network.read_definitions(self.env), run=self.runner)
 
+    def egress_rules(self, objects):
+        return [o["rule"]["expr"] for o in objects if "rule" in o]
+
+    def test_container_egress_rules_come_after_the_hot_path_and_replies(self):
+        # DD-224: exit-node/WireGuard traffic leaves after one rule; replies to publications pass
+        # before any egress drop; then IPv6, tailscale0 and every block-list prefix, in list order.
+        rules = self.egress_rules(network.policy(self.env, [], run=self.runner))
+        m = lambda key, right, op="==": {"match": {"op": op, "left": {"meta": {"key": key}}, "right": right}}
+        self.assertEqual(rules[0], [m("iifname", "ksl*", "!="), m("oifname", "ksl*", "!="), {"return": None}])
+        self.assertEqual([r[-1] for r in rules[1:3]], [{"return": None}] * 2)
+        self.assertTrue(all(r[0]["match"]["left"] == {"ct": {"key": "direction"}} for r in rules[1:3]))
+        egress = [m("iifname", "ksl*"), m("oifname", "ksl*", "!=")]
+        self.assertEqual(rules[3], egress + [m("nfproto", "ipv6"), {"drop": None}])
+        self.assertEqual(rules[4], [m("iifname", "ksl*"), m("oifname", "tailscale0"), {"drop": None}])
+        blocks = self.env["VPN_BLOCK_DEST4"].split()
+        dests = []
+        for r in rules[5:5 + len(blocks)]:
+            self.assertEqual(r[:2], egress)
+            self.assertEqual(r[2]["match"]["left"], {"payload": {"protocol": "ip", "field": "daddr"}})
+            self.assertEqual(r[-1], {"drop": None})
+            right = r[2]["match"]["right"]
+            dests.append(right if isinstance(right, str) else "%s/%d" % (right["prefix"]["addr"], right["prefix"]["len"]))
+        self.assertEqual(dests, blocks)
+        self.assertEqual(rules[5 + len(blocks)], [m("oifname", "ksl*", "!="), {"return": None}])
+        # One rule per prefix, no literal list in the code: the block list has one owner (defaults.env).
+        source = (DATA / "panel/master_container_network.py").read_text(encoding="utf-8")
+        for literal in ("169.254", "172.16", "192.168"):
+            self.assertNotIn(literal, source)
+        single = self.egress_rules(network.policy(dict(self.env, VPN_BLOCK_DEST4="203.0.113.9/32 10.0.0.0/8"), [], run=self.runner))
+        self.assertEqual([r[2]["match"]["right"] for r in single[5:7]],
+                         ["203.0.113.9", {"prefix": {"addr": "10.0.0.0", "len": 8}}])
+
+    def test_container_egress_block_list_fails_closed(self):
+        for value in (None, "", "fd00::/8", "10.0.0.1/8", "10.0.0.0/33", "not-a-network"):
+            env = dict(self.env)
+            if value is None:
+                env.pop("VPN_BLOCK_DEST4")
+            else:
+                env["VPN_BLOCK_DEST4"] = value
+            with self.subTest(value=value), self.assertRaises(network.NetworkError) as err:
+                network.policy(env, [], run=self.runner)
+            self.assertEqual(err.exception.status, 503)
+
+    def test_health_detects_a_missing_or_reordered_egress_rule(self):
+        expected = network.policy(self.env, [], run=self.runner)
+        rules = [i for i, o in enumerate(expected) if "rule" in o]
+        missing = [o for i, o in enumerate(expected) if i != rules[6]]
+        self.assertFalse(network.same_policy(expected, {"nftables": copy.deepcopy(missing)}))
+        swapped = copy.deepcopy(expected)
+        swapped[rules[5]], swapped[rules[6]] = swapped[rules[6]], swapped[rules[5]]
+        self.assertFalse(network.same_policy(expected, {"nftables": swapped}))
+        self.assertTrue(network.same_policy(expected, {"nftables": copy.deepcopy(expected)}))
+
     def test_a_loopback_port_change_leaves_the_guard_unchanged(self):
         # DD-223: the package worker restarts qBittorrent after an interface-port change without
         # applying the guard; the start check passes because loopback rows are not in the policy.
@@ -344,7 +399,10 @@ class NetworkTests(unittest.TestCase):
             if "rule" not in obj:
                 continue
             expr = obj["rule"]["expr"]
-            obj["rule"]["expr"] = [e for e in expr if e.get("match", {}).get("left", {}).get("meta", {}).get("key") not in ("nfproto", "l4proto")]
+            implied = any(e.get("match", {}).get("left", {}).get("ct", {}).get("key") == "daddr" for e in expr)
+            obj["rule"]["expr"] = [e for e in expr if not (
+                e.get("match", {}).get("left", {}).get("meta", {}).get("key") == "l4proto"
+                or implied and e.get("match", {}).get("left", {}).get("meta", {}).get("key") == "nfproto")]
             for e in expr:
                 ct = e.get("match", {}).get("left", {}).get("ct", {})
                 ct.pop("family", None)

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — Containers reach the internet, not the LAN or the tailnet (v2-202)
+
+- Konsol's container guard now also limits what a container opens itself. Allowed: the internet.
+  Not allowed: IPv6, the tailnet (it would leave as this exit node), and the private, CGNAT,
+  link-local, loopback and multicast ranges of `VPN_BLOCK_DEST4`. This applies to qBittorrent
+  and to Konsol containers.
+- Replies to a container's publications still pass, and exit-node and WireGuard traffic still
+  meets the guard's first rule only.
+- On nrm nothing reachable changes: Tailscale already dropped the tailnet path, and the
+  provider has no private network or metadata service. On a home LAN or with a cloud provider
+  it closes real paths (DD-224).
+
 ### 2026-10-05 — Containers wait for the firewall and no longer restart with it (v2-201)
 
 - qBittorrent no longer starts while Konsol's container guard is missing. If the firewall

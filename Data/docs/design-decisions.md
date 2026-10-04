@@ -13,6 +13,38 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-224: Containers may reach the internet, not private or tailnet destinations (v2-202)
+
+- **Finding:** no project layer filtered what a container opens itself. The guard's first rule
+  returned every packet not entering a bridge. MASTER-FORWARD matches only WireGuard
+  interfaces, and `VPN_BLOCK_DEST4` applied only to WireGuard clients.
+- **Measured on nrm (2026-10-05)** from qBittorrent's network namespace:
+  - internet by IP: reachable;
+  - a tailnet peer: dropped by Tailscale's stateful filtering (`--stateful-filtering=true`,
+    DD-74), while the host itself reaches it;
+  - quad-100: dropped;
+  - the metadata address: no answer; nrm has no private networks.
+
+  So on nrm the change is defense in depth. On a home LAN, or with a provider that serves
+  metadata, it closes real paths. It does not depend on a Tailscale flag.
+- **Decision:** the guard keeps one rule for traffic that neither enters nor leaves a bridge
+  (exit node, WireGuard), so that path still costs one rule (DD-181). Next come the existing
+  reply returns, so replies to Tailscale and WAN publications pass. Then, for traffic that leaves
+  a bridge for another interface:
+  - IPv6 dropped (the bridges are IPv4-only);
+  - anything out of `TAILSCALE_IF` dropped;
+  - one rule per `VPN_BLOCK_DEST4` prefix, in list order, dropped.
+
+  The list's single owner stays `defaults.env`, and no literal is repeated in the code. A missing,
+  empty or invalid list fails closed with 503, so no guard is written and master-firewall reports
+  it. Health stays an exact comparison, with one rule per prefix and no anonymous set that nft
+  could merge or reorder.
+- **Consequences:** a container can no longer reach a NAS or anything else on the LAN, the tailnet,
+  or a provider's private network. Konsol's internal networks ("iç ağ") still give no egress at
+  all. Internet exfiltration of mounted data stays possible for containers that need the internet;
+  qBittorrent does.
+- **Not done:** per-network egress modes (no workload needs them yet) and a TCP 25 block.
+
 ### DD-223: Container units wait for the checked guard, without Requires= (v2-201)
 
 - **Finding (measured on nrm, 2026-10-05):**

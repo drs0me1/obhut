@@ -393,6 +393,20 @@ def _match(left, right, op="=="):
     return {"match": {"op": op, "left": left, "right": right}}
 
 
+def egress_blocks(env):
+    """DD-224: destinations a container may not open a connection to: the VPN block list (IPv4,
+    defaults.env's single owner). Missing or invalid fails closed: no guard is written."""
+    blocks = []
+    for item in env.get("VPN_BLOCK_DEST4", "").split():
+        try:
+            blocks.append(ipaddress.IPv4Network(item, strict=True))
+        except ValueError as err:
+            raise NetworkError("Konteyner çıkış engeli listesi geçersiz; kurulumu yeniden çalıştırın.", 503) from err
+    if not blocks:
+        raise NetworkError("Konteyner çıkış engeli listesi yok; kurulumu yeniden çalıştırın.", 503)
+    return blocks
+
+
 def policy(env, definitions, run=None):
     """Return nft's JSON table/chain/rule objects, suitable for exact health comparison."""
     table, prefix = _config(env)
@@ -403,6 +417,23 @@ def policy(env, definitions, run=None):
         objects.append({"rule": dict(owner, chain="forward", expr=list(expr))})
     meta = lambda key: {"meta": {"key": key}}
     ct = lambda key, **kw: {"ct": dict(key=key, **kw)}
+    # DD-181/DD-224: traffic that neither leaves nor enters a bridge (exit node, WireGuard) passes after one rule.
+    rule(_match(meta("iifname"), prefix + "*", "!="), _match(meta("oifname"), prefix + "*", "!="), {"return": None})
+    # Only replies to container-originated traffic bypass publication checks. Original-direction
+    # established connections still lose access immediately when their publication is revoked.
+    # They come before the egress drops: replies to a Tailscale or WAN publication leave the bridge.
+    for state in ("established", "related"):
+        rule(_match(ct("direction"), "reply"), _match(ct("state"), state, "in"), {"return": None})
+    # DD-224: a container may open connections to the internet, but not to the tailnet (it would leave
+    # as this exit node), private, CGNAT or link-local ranges, nor over IPv6 (the bridges are IPv4-only).
+    egress = lambda: [_match(meta("iifname"), prefix + "*"), _match(meta("oifname"), prefix + "*", "!=")]
+    rule(*egress(), _match(meta("nfproto"), "ipv6"), {"drop": None})
+    rule(_match(meta("iifname"), prefix + "*"), _match(meta("oifname"), _iface(env["TAILSCALE_IF"])), {"drop": None})
+    for block in egress_blocks(env):
+        address = str(block.network_address)
+        rule(*egress(), _match({"payload": {"protocol": "ip", "field": "daddr"}},
+                               address if block.prefixlen == 32 else {"prefix": {"addr": address, "len": block.prefixlen}}),
+             {"drop": None})
     rule(_match(meta("oifname"), prefix + "*", "!="), {"return": None})
     packages = package_publications(env)
     # Bridge-local peers are governed by Netavark's network isolation; no blanket interbridge permit.
@@ -410,10 +441,6 @@ def policy(env, definitions, run=None):
     bridges.update(bridge_name(env, p["network"]) for p in packages)
     for bridge in sorted(bridges):
         rule(_match(meta("iifname"), bridge), _match(meta("oifname"), bridge), {"return": None})
-    # Only replies to container-originated traffic bypass publication checks. Original-direction
-    # established connections still lose access immediately when their publication is revoked.
-    for state in ("established", "related"):
-        rule(_match(ct("direction"), "reply"), _match(ct("state"), state, "in"), {"return": None})
     tail = None
     wan = None
     seen = []

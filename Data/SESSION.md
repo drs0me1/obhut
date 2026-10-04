@@ -4,6 +4,23 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Container egress limited to the internet, v2-202 (DD-224; committed with this entry):**
+- Measured on nrm first, from qBittorrent's netns:
+  - internet by IP reachable;
+  - a tailnet peer and quad-100 dropped by Tailscale's stateful filter (the host itself reaches the peer);
+  - no metadata answer and no private networks. On nrm this is defense in depth.
+- Done: the guard keeps a one-rule path for traffic that neither enters nor leaves a bridge. Next come the reply
+  returns, then IPv6, `tailscale0` and one drop per `VPN_BLOCK_DEST4` prefix (single owner `defaults.env`, no
+  literals; a missing or invalid list fails closed with 503). Unit tests: order, list fidelity, fail-closed,
+  tamper/reorder (red first). The health test now strips only implied nfproto. Live suites: the namespace suite
+  probes container egress, and the worker suite gets the list.
+- Verification: Mac bats 183/183, Python OK, shellcheck, `bash -n`; export v2-202.
+  - nrm v2-202 installer exit 0; stage 7 firewall check passed, so nft 1.1.x lists the new rules exactly.
+  - From the container: internet ping/HTTPS by IP and by name (Aardvark DNS) work; tailnet, 10.0.0.1 and the
+    metadata address are blocked.
+  - `containers-network-linux.py`: PASS, 64 probes. `containers-worker-linux.py` passed, cleanup clean.
+    Linux bats 183/183.
+
 **2026-10-05 — Containers wait for the checked guard, no Requires=, v2-201 (DD-223; committed with this entry):**
 - From the accepted side-finding plan (Debian 13 only). Measured on nrm first:
   - with the guard table deleted, `systemctl restart qbittorrent` started it anyway;
