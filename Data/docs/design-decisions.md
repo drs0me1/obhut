@@ -13,6 +13,42 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-226: A Konsol container's bind sources are pinned at every start (v2-204)
+
+- **Finding (measured on nrm, 2026-10-05):**
+  - A temporary alpine Quadlet bound `/srv/bindsrc-test/data` read-only.
+  - Acting as uid 1000, the test renamed the folder and left a symbolic link to a root-only
+    directory in its place.
+  - At the next `systemctl start` the container listed the root-only canary file.
+  - `podman inspect` still showed the old path.
+  - Podman resolves `Volume=` sources by path at every start. Konsol validated them only when
+    saving. Under `SERVER_ROOT`, which the downloads account writes, a uid-1000 compromise (Files,
+    WebDAV, unrar, qBittorrent) plus any restart of a root generic container meant host root
+    access through the bind.
+- **Decision:** a base helper, `master_container_binds.py`, runs in each generated unit.
+  - `ExecStartPre … bagla NAME SOURCE…` runs after the guard check. It walks each source from `/`
+    component by component with `O_DIRECTORY|O_NOFOLLOW` and requires a directory. It checks that
+    `/run`, `RUNTIME_DIR` and `KONTEYNER_BAGLAMA_DIR` are root-owned and writable by no one else,
+    and releases stale anchors.
+  - It then binds the descriptor (`/proc/self/fd/N`, `MS_BIND|MS_REC`, then `MS_PRIVATE`) onto
+    `KONTEYNER_BAGLAMA_DIR/NAME/<sha256(index:source)[:16]>`. It verifies that the anchor is a
+    mount point with the walked `(st_dev, st_ino)`. On any failure it releases what it pinned and
+    the unit fails.
+  - `ExecStopPost=-… birak NAME` detaches and removes only empty anchor folders, never data.
+  - The Quadlet mounts the anchor, never the path. `RequiresMountsFor=` keeps the real folder as
+    a mount dependency. Anchor names are deterministic, so refresh_tailnet's byte comparison holds.
+  - Start-time checks are the base invariants only: absolute, no `..`, a non-hidden subfolder of
+    `SERVER_ROOT`. Package-declared folders stay a save-time check, so no package code (or its
+    uid-1000-owned report) can block an unrelated container at start. The helper takes no lock.
+- **Limits:**
+  - The pinned directory is the one the walk found. A folder swapped before the start is either
+    refused (a link) or a different real folder that uid 1000 could have bound anyway.
+  - App Store containers are out of scope: qBittorrent's `torrent_verify` compares the inspected
+    source.
+  - Existing Konsol containers get the new unit when saved, started from Konsol or re-rendered for
+    Tailscale; there is no migration code.
+- **Reverse direction:** a root container planting files in `/srv` is DD-227's subject.
+
 ### DD-225: Packages' private state is hidden from the uid-1000 data units (v2-203)
 
 - **Finding (measured on nrm, 2026-10-05):**
@@ -486,6 +522,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   its former read-only Settings placement is superseded by this decision.
 - **Verification:** tests and live evidence are recorded in `SESSION.md`; the mockup is
   design evidence only, not proof of runtime or OS compatibility.
+- **Amended (v2-204, DD-226):** bind sources are walked and pinned at every start; the Quadlet
+  mounts the anchor, and a missing or symlinked folder keeps the container down.
 - **Amended (v2-201, DD-223):** generated units no longer carry `Requires=master-firewall.service`,
   so a firewall restart leaves running containers alone. Their `ExecStartPre` only checks the guard
   that the locked writers apply.

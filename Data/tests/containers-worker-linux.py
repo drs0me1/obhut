@@ -35,7 +35,7 @@ import uuid
 
 
 HELPERS = ('master_container_config.py', 'master_container_worker.py',
-           'master_container_network.py', 'master_settings.py')
+           'master_container_network.py', 'master_settings.py', 'master_container_binds.py')
 
 
 def block_list(source):
@@ -156,7 +156,8 @@ class Acceptance:
                    SBIN_DIR=str(self.root / 'helpers'), MODULES_DIR=str(self.root / 'mods'),
                    SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop', SHARE_DIR='.pay',
                    KONTEYNER_NETWORK=self.network, KONTEYNER_BRIDGE_PREFIX=self.prefix,
-                   KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source))
+                   KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source),
+                   KONTEYNER_BAGLAMA_DIR=str(self.root / 'run/konteyner-baglama'))
         self.state = self.root / 'state.env'
         self.state.write_text(''.join(k + '=' + ('"%s"' % v if ' ' in v else v) + '\n' for k, v in env.items()))
         self.state.chmod(0o600)
@@ -381,6 +382,13 @@ class Acceptance:
             except Exception:
                 errors.append('read fixture nft table during cleanup')
         if self.root is not None:
+            # DD-226: an anchor still mounted under the scratch tree would let rmtree reach the bound data.
+            try:
+                with open('/proc/self/mountinfo', encoding='utf-8') as stream:
+                    if any(line.split()[4].startswith(str(self.root) + '/') for line in stream if len(line.split()) > 4):
+                        errors.append('fixture bind anchor still mounted')
+            except OSError:
+                errors.append('read mount table during cleanup')
             # If a stop failed, do not erase bind data under a potentially live fixture container.
             if not errors:
                 shutil.rmtree(self.root)

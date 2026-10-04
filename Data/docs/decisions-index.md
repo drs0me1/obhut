@@ -226,4 +226,5 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-223 | Container units wait for the checked guard, without Requires= | v2-201; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-224 | Containers may reach the internet, not private or tailnet destinations | v2-202; live-verified on nrm 2026-10-05 | design-decisions.md |
-| DD-225 | Packages' private state is hidden from the uid-1000 data units | v2-203 | design-decisions.md |
+| DD-225 | Packages' private state is hidden from the uid-1000 data units | v2-203; live-verified on nrm 2026-10-05 | design-decisions.md |
+| DD-226 | A Konsol container's bind sources are pinned at every start | v2-204 | design-decisions.md |

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-203"
+V2_VERSION="2026.08.06-v2-204"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -91,6 +91,7 @@ UNIT_DIR=$UNIT_DIR
 KONTEYNER_BIRIM_DIR=$KONTEYNER_BIRIM_DIR
 KONTEYNER_STATE_DIR=$KONTEYNER_STATE_DIR
 KONTEYNER_LOCK=$KONTEYNER_LOCK
+KONTEYNER_BAGLAMA_DIR=$KONTEYNER_BAGLAMA_DIR
 KONTEYNER_NETWORK=$KONTEYNER_NETWORK
 KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
 KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
@@ -981,6 +982,8 @@ stage_4() {
             FIREWALL_NEEDS_RESTART=1
         fi
     done
+    # DD-226: Konsol konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
+    atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"
     install -d -m 0700 "$KONTEYNER_STATE_DIR" "$PACKAGE_OVERRIDES_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"

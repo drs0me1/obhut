@@ -12,6 +12,7 @@ import re
 import stat
 import uuid
 
+import master_container_binds
 import master_settings as settings
 
 SCHEMA = 1
@@ -303,20 +304,31 @@ def quote(value, command=False):
 def render_quadlet(definition, env, bindings=None):
     d = definition
     network = env.get('KONTEYNER_NETWORK', 'konsol') if d['network'] == 'bridge' else d['network']
+    binds = [m['source'] for m in d['mounts'] if m['type'] == 'bind']
     lines = ['# Konsol tarafından oluşturuldu; kalıcı kaynak: konteyner tanımı.', '[Unit]',
              'Description=Konsol container ' + d['name'], 'After=network-online.target master-firewall.service',
              # DD-223: no Requires=, so a firewall restart does not restart the container.
-             'Wants=network-online.target master-firewall.service', '', '[Container]',
+             'Wants=network-online.target master-firewall.service']
+    # DD-226: the Volume source is a pinned anchor, so the real folder stays a mount dependency here.
+    lines.extend('RequiresMountsFor=' + quote(source) for source in binds)
+    lines.extend(['', '[Container]',
              'ContainerName=' + d['name'], 'Image=' + d['image'], 'Pull=never', 'Network=' + network,
              'Label=' + MANAGED_LABEL + '=konsol', 'LogDriver=journald', 'NoNewPrivileges=true',
-             'EnvironmentFile=' + quote(Store(env).environment_path(d['name']))]
+             'EnvironmentFile=' + quote(Store(env).environment_path(d['name']))])
     for binding in bindings or []:
         lines.append('PublishPort=' + binding)
+    pinned = 0
     for mount in d['mounts']:
         # Quadlet reads Volume as a raw scalar (LookupAll), unlike EnvironmentFile/Exec.
         # Its generator quotes the resulting -v argument, including spaces. Outer quotes
         # here survive as literal characters in Podman's mount options. Paths were validated.
-        lines.append('Volume=' + mount['source'] + ':' + mount['destination'] + (':ro' if mount['read_only'] else ':rw'))
+        source = mount['source']
+        if mount['type'] == 'bind':
+            # DD-226: Podman would resolve the path again at every start; it mounts the anchor that
+            # ExecStartPre pinned through a descriptor instead.
+            source = str(master_container_binds.anchor_path(env, d['name'], pinned, source))
+            pinned += 1
+        lines.append('Volume=' + source + ':' + mount['destination'] + (':ro' if mount['read_only'] else ':rw'))
     if d['command']:
         lines.append('Exec=' + ' '.join(quote(arg, command=True) for arg in d['command']))
     # Resource flags are numeric/size-validated, never a user-provided raw PodmanArgs field.
@@ -337,6 +349,11 @@ def render_quadlet(definition, env, bindings=None):
         # so an automatic restart can never re-open a publication that was just revoked.
         lines.append('ExecStartPre=/usr/bin/python3 ' + quote(helper, command=True) + ' --state ' +
                      quote(env['STATE_FILE'], command=True) + ' --check')
+    if binds:
+        pin = '/usr/bin/python3 ' + quote(str(Path(env['SBIN_DIR']) / 'master_container_binds.py'), command=True) + \
+            ' --state ' + quote(env['STATE_FILE'], command=True)
+        lines.append('ExecStartPre=' + pin + ' bagla ' + ' '.join(quote(v, command=True) for v in [d['name']] + binds))
+        lines.append('ExecStopPost=-' + pin + ' birak ' + quote(d['name'], command=True))
     if d['autostart'] and not d['manual_stop']:
         lines.extend(['', '[Install]', 'WantedBy=multi-user.target'])
     return '\n'.join(lines) + '\n'

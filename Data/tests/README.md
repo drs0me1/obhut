@@ -41,6 +41,24 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Pinned bind sources (v2-204, DD-226)
+
+`test_container_binds.py` runs the real helper with fake mount calls. It checks that:
+- the bound directory is the one behind the walked descriptor, even when the path is swapped for
+  a link right after the walk;
+- links (final or intermediate), hidden, outside, root, file, missing, `..` and bad-character
+  sources are refused, and partial anchors are released;
+- an unmounted anchor is never accepted;
+- unsafe anchor directories are refused;
+- `birak` removes only empty folders;
+- a stale anchor is released first;
+- the helper loads no package code and takes no lock.
+
+`test_container_worker.py` checks the generated lines: guard check first, then `bagla`, the anchor in
+`Volume=`, `RequiresMountsFor` with the real path, and `ExecStopPost` only with binds.
+`containers-worker-linux.py` copies the helper, gives its fixture an anchor directory, and refuses
+to delete its scratch tree while an anchor is still mounted.
+
 ## Private package state (v2-203, DD-225)
 
 The Bats test "package private state is hidden" checks the new `PRIVATE_STATE_ROOT` key. The

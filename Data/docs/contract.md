@@ -614,6 +614,12 @@ Contract in §5–§7 and `folder-shares.md`.
       limited to the incoming bridge's own address. No host networking or runtime socket
       mount is offered for generic containers. Bind mounts use existing, non-hidden,
       non-symlink user folders under `SERVER_ROOT`, excluding protected app/share paths.
+      They are checked again and pinned at every start (**DD-226**). The unit's
+      `ExecStartPre` walks each folder from `/` without following links and binds the
+      directory behind that descriptor onto a root-owned anchor under
+      `KONTEYNER_BAGLAMA_DIR`, which the Quadlet mounts instead of the path. A missing
+      or symlinked folder keeps the container down (fail closed). `ExecStopPost`
+      releases the anchors.
     - Removing a container retains its volumes and host files. Unused standard named
       volumes and managed bridge networks have separate removal actions. In-use
       resources and package-pinned images cannot be removed through generic controls.

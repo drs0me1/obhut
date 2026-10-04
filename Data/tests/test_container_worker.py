@@ -12,6 +12,7 @@ import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'panel'))
+import master_container_binds as binds
 import master_container_config as cfg
 import master_container_worker as worker
 
@@ -110,7 +111,8 @@ class ContainerTests(unittest.TestCase):
                     'KONTEYNER_LOCK': str(self.root / 'run/container.lock'), 'RUNTIME_DIR': str(self.root / 'run'),
                     'SBIN_DIR': str(self.root / 'sbin'),
                     'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop', 'SHARE_DIR': '.pay',
-                    'MODULES_DIR': str(self.root / 'mods'), 'TAILSCALE_IPV4': '100.64.0.7'}
+                    'MODULES_DIR': str(self.root / 'mods'), 'TAILSCALE_IPV4': '100.64.0.7',
+                    'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama')}
         self.state = self.root / 'state.env'
         self.state.write_text(''.join(k + '=' + v + '\n' for k, v in self.env.items()))
         self.runner = FakeRun()
@@ -169,8 +171,11 @@ class ContainerTests(unittest.TestCase):
         lines = self.manager.quadlet('demo').read_text().splitlines()
         # Quadlet 5.4 addVolumes uses LookupAll + SplitN, not its argument/unquote parser.
         # A wrapping quote reaches Podman as part of the rw/ro option, including paths with spaces.
+        # DD-226: a bind mounts its pinned anchor, never the path; the real path stays a mount dependency.
+        anchor = binds.anchor_path(self.manager.env, 'demo', 0, str(source))
         self.assertEqual([line for line in lines if line.startswith('Volume=')],
-                         ['Volume=' + str(source) + ':/proof space:rw', 'Volume=data-volume:/cache:ro'])
+                         ['Volume=' + str(anchor) + ':/proof space:rw', 'Volume=data-volume:/cache:ro'])
+        self.assertIn('RequiresMountsFor="' + str(source) + '"', lines)
         self.assertIn('EnvironmentFile="' + str(self.store.environment_path('demo')) + '"', lines)
         self.assertIn('Exec="serve" "literal $$HOME" "100%%"', lines)
 
@@ -183,11 +188,33 @@ class ContainerTests(unittest.TestCase):
         self.assertIn('Wants=network-online.target master-firewall.service', lines)
         self.assertEqual([l for l in lines if l.split('=', 1)[0] in ('Requires', 'Requisite', 'BindsTo', 'PartOf')], [])
         pre = [l for l in lines if l.startswith('ExecStartPre=')]
-        self.assertEqual(len(pre), 1)
-        self.assertTrue(pre[0].endswith(' --check'), pre[0])
+        guard = [l for l in pre if 'master_container_network.py' in l]
+        self.assertEqual(len(guard), 1)
+        self.assertEqual(pre[0], guard[0], 'the guard is checked before anything else')
+        self.assertTrue(guard[0].endswith(' --check'), guard[0])
         self.assertIn('RestartSec=10s', lines)
         # Without a network there is no publication and nothing to wait for.
-        self.assertNotIn('ExecStartPre=', cfg.render_quadlet(dict(d, network='none', ports=[]), self.manager.env, []))
+        self.assertNotIn('master_container_network.py', cfg.render_quadlet(dict(d, network='none', ports=[]), self.manager.env, []))
+
+    def test_bind_sources_are_pinned_after_the_guard_check_and_released_on_stop(self):
+        # DD-226: ExecStartPre checks the guard, then pins every bind source; ExecStopPost releases.
+        self.config['mounts'].append({'type': 'volume', 'source': 'cache-volume', 'destination': '/cache', 'read_only': False})
+        self.create()
+        lines = self.manager.quadlet('demo').read_text().splitlines()
+        helper = '"' + str(Path(self.env['SBIN_DIR']) / 'master_container_binds.py') + '"'
+        state = '"' + str(self.state) + '"'
+        pre = [l for l in lines if l.startswith('ExecStartPre=')]
+        self.assertEqual(len(pre), 2)
+        self.assertTrue(pre[0].endswith(' --check'), pre[0])
+        self.assertEqual(pre[1], 'ExecStartPre=/usr/bin/python3 ' + helper + ' --state ' + state + ' bagla "demo" "' + str(self.root / 'srv/data') + '"')
+        self.assertIn('ExecStopPost=-/usr/bin/python3 ' + helper + ' --state ' + state + ' birak "demo"', lines)
+        self.assertIn('Volume=' + str(binds.anchor_path(self.manager.env, 'demo', 0, str(self.root / 'srv/data'))) + ':/data:rw', lines)
+        self.assertIn('Volume=cache-volume:/cache:rw', lines)
+        # Without a bind there is nothing to pin or release.
+        d = self.store.load('demo')
+        plain = cfg.render_quadlet(dict(d, mounts=[m for m in d['mounts'] if m['type'] == 'volume']), self.manager.env, [])
+        self.assertNotIn('master_container_binds.py', plain)
+        self.assertNotIn('RequiresMountsFor=', plain)
 
     def test_stale_revision_refuses_before_any_mutation(self):
         d = self.create()

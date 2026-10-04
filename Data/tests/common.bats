@@ -3486,6 +3486,18 @@ PY
     grep -qF 'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
 }
 
+@test "Konsol container bind sources are pinned by a base helper (DD-226)" {
+    local stage4
+    grep -qx 'KONTEYNER_BAGLAMA_DIR="/run/master-stack/konteyner-baglama"' "$V2_ROOT/config/defaults.env"
+    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'KONTEYNER_BAGLAMA_DIR=\$KONTEYNER_BAGLAMA_DIR'
+    stage4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"' <<<"$stage4"
+    # Not in the loop that restarts the firewall: the firewall never calls this helper.
+    run ! grep -qE 'for container_helper in .*master_container_binds' <<<"$stage4"
+    run ! grep -qiE 'qbittorrent|torrent|wireguard|PAKET_' "$V2_ROOT/panel/master_container_binds.py"
+    grep -qF "'master_container_binds.py'" "$V2_ROOT/tests/containers-worker-linux.py"
+}
+
 @test "package private state is hidden from the uid-1000 data units (DD-225)" {
     local files="$V2_ROOT/systemd/master-files-panel.service" dav="$V2_ROOT/magaza/paylasim/master-paylasim.service"
     local unit key args out

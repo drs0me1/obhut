@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — A container's folders can no longer be swapped for another host directory (v2-204)
+
+- A Konsol container bound to a folder under `/srv` used to look the folder up by name at every
+  start. Anything running as the downloads account could replace the folder with a link to
+  another directory, and a container running as root would then mount that directory.
+- Now each start walks the folder without following links and pins exactly that directory. The
+  container mounts the pinned copy. A missing or linked folder keeps the container down, with a
+  clear reason in its log (DD-226).
+- Existing Konsol containers get this the next time they are saved or started from Konsol.
+
 ### 2026-10-05 — Files and WebDAV no longer see packages' private data (v2-203)
 
 - Files, WebDAV and the RAR helper run as the downloads account. They can no longer read

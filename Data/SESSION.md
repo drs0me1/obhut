@@ -4,6 +4,32 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Konsol container bind sources pinned at every start, v2-204 (DD-226; committed with this entry):**
+- Measured on nrm first: Podman followed a bind source that uid 1000 had swapped for a link to a root-only
+  directory. The container listed the canary while `podman inspect` still showed the old path.
+- Done:
+  - New base helper `panel/master_container_binds.py` (stdlib only, no store, package code or lock):
+    - `bagla` walks each source with `O_DIRECTORY|O_NOFOLLOW` and checks that `/run`, `RUNTIME_DIR` and the anchor
+      dir are root-owned and not group/other-writable;
+    - it binds `/proc/self/fd/N` onto `KONTEYNER_BAGLAMA_DIR/<name>/<sha256(index:source)[:16]>`, marks it private
+      and verifies the mount point identity, releasing on any failure;
+    - `birak` detaches and removes empty folders only.
+  - `render_quadlet` mounts the anchor, adds `RequiresMountsFor=<real path>` and runs `bagla` after the guard check,
+    with `birak` as `ExecStopPost`. The installer installs the helper outside the firewall-restart loop.
+  - New key `KONTEYNER_BAGLAMA_DIR` (defaults.env, state.env).
+  - Tests: 8 helper tests with fake mounts, render tests and a Bats wiring test (all red first). The worker suite
+    copies the helper and refuses rmtree while an anchor is mounted.
+- Verification: Mac bats 185/185, Python OK, shellcheck, `bash -n`; export v2-204. nrm v2-204 installer exit 0.
+  With a Konsol container created through the real worker on a `/srv/media` folder:
+  - the anchor is mounted and `/data` reads the original;
+  - stop releases the anchor;
+  - after a uid-1000 link swap the start fails with "Bağlanan klasör eksik veya sembolik bağlantı; konteyner
+    başlatılmadı" and nothing is mounted;
+  - once the folder is restored it runs, and a swap while running changes nothing;
+  - `kill -9` re-anchors, and a firewall restart keeps the container;
+  - the probe, folder, canary, image and network were removed.
+  - `containers-worker-linux.py` passes (cleanup clean), `containers-network-linux.py` PASS 64, Linux bats 185/185.
+
 **2026-10-05 — Packages' private state hidden from Files/WebDAV/unrar, v2-203 (DD-225; committed with this entry):**
 - Measured on nrm first: inside WebDAV `.arsiv` was accessible (only the handler kept it out) and
   `/var/lib/qbittorrent` was readable as uid 1000 from WebDAV and Files.
