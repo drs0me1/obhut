@@ -41,6 +41,15 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Private package state (v2-203, DD-225)
+
+The Bats test "package private state is hidden" checks the new `PRIVATE_STATE_ROOT` key. The
+WebDAV unit must have exactly one `InaccessiblePaths=` line (trash, `.arsiv`, `-.pay`,
+`/var/lib`), `RequiresMountsFor` and no `SystemCallErrorNumber`. The Files unit must mask only
+`/var/lib`, and the installer must pass the key. Neither unit may name an application, and
+qBittorrent's profile directory must lie under `/var/lib`. The test also renders both templates
+with every placeholder filled and checks the resulting mask lines.
+
 ## Container egress (v2-202, DD-224)
 
 `test_container_network.py` pins the rule order:

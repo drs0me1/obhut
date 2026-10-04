@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-202"
+V2_VERSION="2026.08.06-v2-203"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1360,7 +1360,8 @@ ensure_files_panel() {
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         V2_VERSION="$V2_VERSION" \
         PROTECTED_DIRS="$protected" \
-        DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR"
+        DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR" \
+        PRIVATE_STATE_ROOT="$PRIVATE_STATE_ROOT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     # DD-222: aşama 4'ün döngüsünden sonra: işaret bir sonraki kurulum için, liste bu kurulum için.
     [[ "$changed" -eq 0 ]] || { mark_module_pending dosya; MODULES_CHANGED="$MODULES_CHANGED dosya"; }

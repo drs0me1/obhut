@@ -4,6 +4,23 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Packages' private state hidden from Files/WebDAV/unrar, v2-203 (DD-225; committed with this entry):**
+- Measured on nrm first: inside WebDAV `.arsiv` was accessible (only the handler kept it out) and
+  `/var/lib/qbittorrent` was readable as uid 1000 from WebDAV and Files.
+- Done:
+  - `PRIVATE_STATE_ROOT="/var/lib"` in `defaults.env`.
+  - WebDAV has one `InaccessiblePaths=` line (trash, `.arsiv`, `-.pay`, `/var/lib`) plus `RequiresMountsFor`, and
+    no EPERM. Files masks only `/var/lib`; the installer passes the key.
+  - The Files unit comment about loopback reach is corrected. Package rule recorded in the contract.
+  - Bats test (red first) also renders both templates.
+- Verification: Mac bats 184/184, Python OK, shellcheck, `bash -n`; export v2-203. nrm v2-203 installer exit 0
+  (Files + WebDAV restarted once, yerlesik verified).
+  - WebDAV namespace: `.cop`, `.arsiv`, `/var/lib` are mode 0.
+  - Files namespace: `.cop` 775 and `.arsiv` 700 stay usable, `/var/lib` is 0.
+  - `ls /var/lib/qbittorrent` as uid 1000 is denied in both.
+  - No journal errors.
+  - `archives-live.py` and `shares-live.py` prepare/verify/cleanup all PASS, with no leftovers.
+
 **2026-10-05 — Container egress limited to the internet, v2-202 (DD-224; committed with this entry):**
 - Measured on nrm first, from qBittorrent's netns:
   - internet by IP reachable;

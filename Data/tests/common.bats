@@ -1075,9 +1075,13 @@ EOF
         'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
         'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
         'IPAddressDeny=any' 'IPAddressAllow=localhost' 'ReadWritePaths=__SERVER_ROOT__' \
-        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__'; do
+        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __SERVER_ROOT__/__FILES_ARCHIVE_DIR__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__' \
+        'RequiresMountsFor=__SERVER_ROOT__'; do
         grep -qxF "$line" "$unit"
     done
+    # DD-225: one assignment (a second one would reset the list); SIGSYS stays the stricter default.
+    [ "$(grep -c '^InaccessiblePaths=' "$unit")" -eq 1 ]
+    run ! grep -q '^SystemCallErrorNumber=' "$unit"
     grep -qx 'http://paylas.__LOCAL_DOMAIN__, http://{$TAILSCALE_IPV4}:__SHARE_PORT__ {' "$V2_ROOT/magaza/paylasim/paylasim.caddy"
     # Public TLS has its own port; tailnet WebDAV stays on explicit HTTP.
     grep -qx 'SHARE_HTTPS_PORT="443"' "$V2_ROOT/config/defaults.env"
@@ -3480,6 +3484,39 @@ PY
     run ! grep -q 'empty tmpfs' "$V2_ROOT/docs/contract.md"
     run ! grep -qF 'DOWNLOADS_PATH/.cop' "$V2_ROOT/docs/contract.md"
     grep -qF 'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__' "$V2_ROOT/magaza/paylasim/master-paylasim.service"
+}
+
+@test "package private state is hidden from the uid-1000 data units (DD-225)" {
+    local files="$V2_ROOT/systemd/master-files-panel.service" dav="$V2_ROOT/magaza/paylasim/master-paylasim.service"
+    local unit key args out
+    grep -qx 'PRIVATE_STATE_ROOT="/var/lib"' "$V2_ROOT/config/defaults.env"
+    # Files needs its trash, staging and share names; it loses only the packages' private state.
+    grep -qx 'InaccessiblePaths=__PRIVATE_STATE_ROOT__' "$files"
+    [ "$(grep -c '^InaccessiblePaths=' "$files")" -eq 1 ]
+    run ! grep -qE '^InaccessiblePaths=.*(TRASH|ARCHIVE|SHARE_DIR)' "$files"
+    awk '/^ensure_files_panel\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qF 'PRIVATE_STATE_ROOT="$PRIVATE_STATE_ROOT"'
+    # The base units still name no application, and the package keeps its private state there.
+    run ! grep -qiE 'qbittorrent|torrent|wireguard' "$files" "$dav"
+    key="$(sed -n 's/^TORRENT_PROFILE_DIR=//p' "$V2_ROOT/magaza/torrent/torrent.env")"
+    case "$key" in /var/lib/?*) ;; *) false ;; esac
+    # Both templates render with every placeholder filled, and the masks keep their order.
+    for unit in "$files" "$dav"; do
+        args=()
+        for key in $(grep -oE '__[A-Z][A-Z0-9_]*__' "$unit" | sort -u | sed 's/^__//; s/__$//'); do
+            case "$key" in
+                SERVER_ROOT) args+=("$key=/srv") ;; FILES_PANEL_TRASH) args+=("$key=.cop") ;;
+                FILES_ARCHIVE_DIR) args+=("$key=.arsiv") ;; SHARE_DIR) args+=("$key=.pay") ;;
+                PRIVATE_STATE_ROOT) args+=("$key=/var/lib") ;; *) args+=("$key=x") ;;
+            esac
+        done
+        render_template "$unit" "$TMP/rendered" 0644 "${args[@]}"
+        out="$(grep '^InaccessiblePaths=' "$TMP/rendered")"
+        if [ "$unit" = "$dav" ]; then
+            [ "$out" = 'InaccessiblePaths=/srv/.cop /srv/.arsiv -/srv/.pay /var/lib' ]
+        else
+            [ "$out" = 'InaccessiblePaths=/var/lib' ]
+        fi
+    done
 }
 
 @test "container packages wait for the checked guard and never restart with the firewall (DD-223)" {

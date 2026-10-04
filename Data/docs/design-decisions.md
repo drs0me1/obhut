@@ -13,6 +13,36 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-225: Packages' private state is hidden from the uid-1000 data units (v2-203)
+
+- **Finding (measured on nrm, 2026-10-05):**
+  - Inside WebDAV's mount namespace `.cop` is mode 000, but `/srv/.arsiv` (the archive staging
+    area, 0700 uid 1000) is visible and accessible. The handler alone keeps it out.
+  - `/var/lib/qbittorrent`, which holds the WebUI hash and tracker passkeys and is owned by uid
+    1000, is readable from WebDAV's namespace as uid 1000, and so from Files and its unrar child.
+  - Reads only: `ProtectSystem=strict`.
+  - The pivot the hash once allowed is closed since DD-217. A sandboxed unit gets no answer from
+    the loopback publication (measured), so this is a confidentiality leak of low severity.
+- **Decision:**
+  - New `defaults.env` key `PRIVATE_STATE_ROOT="/var/lib"`. The base names no application.
+  - `master-paylasim.service` keeps exactly one `InaccessiblePaths=` line: trash, `.arsiv`,
+    `-.pay` and `PRIVATE_STATE_ROOT`. A second assignment would reset the list. `.arsiv` has no
+    `-`: the Files backend creates it at start, and a missing one keeps WebDAV down (fail closed).
+  - WebDAV also gets `RequiresMountsFor=SERVER_ROOT`, like Files.
+  - `master-files-panel.service` gets `InaccessiblePaths=PRIVATE_STATE_ROOT` only, because Files
+    owns the trash, the staging area and the share name.
+  - Package rule: a package's private host state lives under `PRIVATE_STATE_ROOT` or is
+    root-only. qBittorrent (`/var/lib/qbittorrent`) and WireGuard (`/etc/wireguard`, 0600 root)
+    already comply.
+- **Rejected:**
+  - A per-package manifest list of masked paths (`-` masks): a path created after the unit
+    started stays visible (the DD-207 lesson), and keeping it right needs mountinfo-driven
+    restarts.
+  - `SystemCallErrorNumber=EPERM` on WebDAV: it weakens the SIGSYS default on the WAN-facing
+    service.
+- **Cost:** the next installer run restarts Files (a running archive job is marked interrupted)
+  and WebDAV (open transfers are cut) once.
+
 ### DD-224: Containers may reach the internet, not private or tailnet destinations (v2-202)
 
 - **Finding:** no project layer filtered what a container opens itself. The guard's first rule

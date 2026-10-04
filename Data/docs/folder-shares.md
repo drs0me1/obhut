@@ -275,7 +275,9 @@ next to upload, text view, move, rename and trash.
   runs as DOWNLOADS_UID/GID in `master-paylasim.service`. The service receives
   the registry through `LoadCredential=registry:...`; command line contains
   only its path. Capabilities are empty; system files are read-only, home and
-  internal trash/share paths inaccessible, outgoing traffic limited to loopback.
+  internal trash/share paths, the archive staging area and packages' private state
+  (`PRIVATE_STATE_ROOT`, `/var/lib`) inaccessible, outgoing traffic limited to
+  loopback (**DD-225**).
   `SERVER_ROOT` is writable to support shares anywhere inside the user area.
   **Per-folder isolation is enforced in the request handler, not by a separate
   OS sandbox per account**; the supported DAV subset is intentionally bounded.

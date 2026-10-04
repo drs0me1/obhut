@@ -25,6 +25,8 @@ PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=__SERVER_ROOT__
+# DD-225: paketlerin özel durumu görünmez; çöp, arşiv hazırlık alanı ve paylaşım adı bu servisindir.
+InaccessiblePaths=__PRIVATE_STATE_ROOT__
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectKernelLogs=true
@@ -39,7 +41,8 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 # DD-180: unrar yabancı RAR dosyasını bu serviste açar. Bir açık doğrudan dışarıya ve Caddy'nin
 # tailnet adresine bağlanamasın (yalnız loopback), başka süreçleri görmesin ve yalnız sıradan servis
-# sistem çağrılarını kullansın. Loopback'teki hizmetler (DNS, paketlerin arayüzleri) açık kalır.
+# sistem çağrılarını kullansın. Loopback'teki host hizmetleri (DNS) açık kalır; loopback'e yayımlanan
+# konteyner portları bu süzgeçle yanıt vermez (DD-180 notu, nrm'de ölçüldü).
 IPAddressDeny=any
 IPAddressAllow=localhost
 SystemCallFilter=@system-service

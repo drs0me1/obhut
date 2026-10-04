@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — Files and WebDAV no longer see packages' private data (v2-203)
+
+- Files, WebDAV and the RAR helper run as the downloads account. They can no longer read
+  `/var/lib`, where packages keep private state such as qBittorrent's profile with its interface
+  password hash. WebDAV also no longer sees the archive staging folder `.arsiv` at all.
+- The new `PRIVATE_STATE_ROOT` setting names that folder once, and packages keep private state
+  there or readable by root only (DD-225).
+- The next installer run restarts Files and WebDAV once. A running archive job is marked
+  interrupted, and open WebDAV transfers are cut.
+
 ### 2026-10-05 — Containers reach the internet, not the LAN or the tailnet (v2-202)
 
 - Konsol's container guard now also limits what a container opens itself. Allowed: the internet.

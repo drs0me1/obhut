@@ -819,7 +819,8 @@ Contract in §5–§7 and `folder-shares.md`.
       (`master-downloads`, no login, no home). File ownership stays numeric.
     - The unit has no capabilities and `ProtectSystem=strict` with only
       `SERVER_ROOT` writable, plus `ProtectHome`, `PrivateTmp`,
-      `PrivateDevices` and `NoNewPrivileges`.
+      `PrivateDevices` and `NoNewPrivileges`. `PRIVATE_STATE_ROOT` (`/var/lib`), where
+      packages keep their private state, is inaccessible (**DD-225**).
     - Because unrar opens untrusted RAR files here (**DD-180**): network only to
       and from loopback (`IPAddressDeny=any`, `IPAddressAllow=localhost`),
       `SystemCallFilter=@system-service`, `ProtectProc=invisible`,
@@ -856,9 +857,10 @@ Contract in §5–§7 and `folder-shares.md`.
     `onayla`. The trash is not reachable through any path, and the root listing
     hides it.
   - The installer creates the folder. It lies outside `SERVER_ROOT/downloads`,
-    so qBittorrent never sees it (**DD-144**). The WebDAV unit lists the trash, and
-    `.pay` when present, in `InaccessiblePaths=`, and a share can be neither the root
-    nor contain a hidden or reserved name (**DD-158**, §7).
+    so qBittorrent never sees it (**DD-144**). The WebDAV unit lists the trash, the
+    archive staging area `.arsiv`, `.pay` when present and `PRIVATE_STATE_ROOT` in one
+    `InaccessiblePaths=` line (**DD-225**), and a share can be neither the root nor
+    contain a hidden or reserved name (**DD-158**, §7).
 - Text view: the first 1 MiB of a regular file.
   - A file with a NUL in the first 8 KiB is refused as binary.
   - The encoding is guessed (UTF-8, else Windows-1254; `.nfo` in CP437) or chosen
@@ -958,6 +960,9 @@ Contract in §5–§7 and `folder-shares.md`.
   package's files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools, seeds,
   `konsol.json`, `sayfa.js`/`sayfa.css`, `api.py`. The engine
   reads the manifest with a strict line pattern (never sourced) and sources the hooks.
+  A package keeps its private host state (profiles, keys, sessions) under
+  `PRIVATE_STATE_ROOT` (`/var/lib`), which Files, WebDAV and unrar never see, or makes
+  it readable by root only (**DD-225**).
 - The installer, on every run:
   - installs `/usr/local/sbin/master-modul` and renders every package folder to
     `MODULES_DIR/<id>/` (`/usr/local/share/master-stack/moduller`): a file with
@@ -1398,7 +1403,8 @@ and the Konsol administrator account remain outside this isolation boundary.
 master-paylasim.service runs master_webdav.py as DOWNLOADS_UID/GID on loopback
 (127.0.0.1 for the Tailscale scope, SHARE_WAN_BACKEND for the WAN scope),
 with no capabilities, system paths read-only, user area writable, internal
-trash/share paths inaccessible, and network restricted to loopback. Caddy
+trash/share paths, the archive staging area and `PRIVATE_STATE_ROOT` inaccessible
+(**DD-225**), and network restricted to loopback. Caddy
 publishes the `paylas.` name and Tailscale IP:SHARE_PORT over HTTP. The optional
 WAN site follows §3.1: legacy HTTP on SHARE_PORT, HTTPS on SHARE_HTTPS_PORT or
 off (DD-179/190). HTTPS stays available for renewal with zero active folders;
@@ -1569,7 +1575,7 @@ declared in `config/defaults.env` and nowhere else.
 | `dnsmasq.service` (drop-in) | `tailscaled.service` | `Wants=tailscaled.service` | `on-failure`, `RestartSec=5s` (drop-in) |
 | `master-panel.service` (Konsol root backend) | `network-online.target` | none; Unix socket only (**DD-180**) | `on-failure`, `RestartSec=3s` |
 | `master-files-panel.service` (built in) | `network-online.target` | none; `127.0.0.1` listener, `RequiresMountsFor=SERVER_ROOT`, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
-| `master-paylasim.service` (built-in WebDAV) | `network-online.target` | none; `127.0.0.1` and `SHARE_WAN_BACKEND` listeners, always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
+| `master-paylasim.service` (built-in WebDAV) | `network-online.target` | none; `127.0.0.1` and `SHARE_WAN_BACKEND` listeners, `RequiresMountsFor=SERVER_ROOT` (**DD-225**), always enabled by `master-modul yerlesik` | `on-failure`, `RestartSec=3s` |
 | `master-share-network.timer` | — | closes expired legacy HTTP WAN projections, retains configured HTTPS for renewal and recovers interrupted share operations (**DD-179/190**) | starts oneshot 30 s after boot and 30 s after each run |
 | `master-settings-guard.timer` | — | rollback deadline of an unconfirmed Settings change; active only while one is pending (**DD-181**) | starts oneshot every 2 s while active; once 15 s after boot |
 | `apt-daily-upgrade.timer` (drop-in, **DD-184**) | — | distribution unit; `OnCalendar` at `APT_UPGRADE_TIME` (04:00), `RandomizedDelaySec=30m`, the distribution's `Persistent=true` kept | daily |
