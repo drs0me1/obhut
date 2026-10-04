@@ -3154,7 +3154,7 @@ PY
     [ -z "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent NOPE)" ]
     grep -qF 'value="$(paket_ayar_oku "$id" "$key")"' "$V2_ROOT/install.sh"
     # The rendered package folder holds the package's files only; leftovers of earlier versions go.
-    grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
+    grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { mark_module_pending "$id"; rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
 @test "console skin (DD-204, DD-213): compact home tiles, fixed actions and title clock, no external asset" {
@@ -3424,7 +3424,8 @@ PY
     body="$(awk '/^ensure_module_files\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     run ! grep -q 'unpackerr' <<<"$body"
     # DD-197: every package folder is rendered generically; placeholders come from the installer's own variables.
-    grep -qF 'render_package_dir "$id" || [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]' <<<"$body"
+    grep -qF 'if render_package_dir "$id" || [[ -e "$MODULES_PENDING_DIR/$id" ]] ||' <<<"$body"
+    grep -qF '[[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]; then' <<<"$body"
     grep -qF 'MODULES_CHANGED="$MODULES_CHANGED $id"' <<<"$body"
     grep -qF 'atomic_write "$MODULES_FILE" 0644 </dev/null' <<<"$body"
     render="$(awk '/^render_package_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
@@ -3452,6 +3453,7 @@ PY
     log() { :; }
     SBIN_DIR="$TMP/sbin"
     MODULES_FILE="$TMP/reg"
+    MODULES_PENDING_DIR="$TMP/bekleyen"
     MODULES_CHANGED=" torrent"
     printf 'torrent\tcalisiyor\n' >"$TMP/reg"
     reapply_modules
@@ -3471,6 +3473,101 @@ PY
     awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh" | grep -qx '    reapply_modules'
     # The root backend runs module work; its unit knows the helper.
     grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-panel.service"
+}
+
+@test "pending module markers (DD-222): a run that fails between stage 4 and 7 is applied by the next run" {
+    local fn repo="$TMP/repo" real="$V2_ROOT" stage4 stage7
+    for fn in mark_module_pending render_package_dir paket_bildirim_oku paket_katalog module_state \
+        ensure_module_files reapply_modules; do
+        eval "$(awk "/^$fn\\(\\)/,/^}\$/" "$V2_ROOT/install.sh")"
+    done
+    stage4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    stage7="$(awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    # A fake repository: one App Store package with a template and the built-in WebDAV. The real
+    # renderer, stage-4 loop and stage-7 consumer run against it; only root-only commands are stubbed.
+    mkdir -p "$repo/magaza/deneme" "$repo/magaza/paylasim" "$TMP/sbin"
+    printf 'PAKET_AD="Deneme"\nPAKET_SIRA=30\nPAKET_UYGULA_HEP=0\n' >"$repo/magaza/deneme/paket.env"
+    printf '[Container]\nImage=__DENEME_IMAGE__\n' >"$repo/magaza/deneme/deneme.container"
+    printf 'PAKET_AD="Paylaşım"\nPAKET_SIRA=90\nPAKET_YERLESIK=1\n' >"$repo/magaza/paylasim/paket.env"
+    cat >"$TMP/sbin/master-modul" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/calls"
+[ "\$1" != uygula ] || [ ! -e "$TMP/uygula-hata" ]
+EOF
+    chmod +x "$TMP/sbin/master-modul"
+    install() { mkdir -p "${@: -1}"; }
+    chown() { :; }
+    paket_ayar_oku() { :; }
+    log() { printf '%s %s\n' "$1" "$2" >>"$TMP/log"; }
+    V2_ROOT="$repo" SBIN_DIR="$TMP/sbin" MODULES_DIR="$TMP/moduller" MODULES_FILE="$TMP/kayit"
+    MODULES_PENDING_DIR="$TMP/bekleyen"
+    printf 'deneme\tcalisiyor\n' >"$MODULES_FILE"
+    kurulum() { # one installer run in its own process; "dus": it fails between stage 4 and stage 7
+        (
+            MODULES_CHANGED=""
+            ensure_module_files
+            [ "${1:-}" != dus ] || exit 1   # e.g. stage 5: master-firewall failed (nrm, 2026-10-04)
+            "$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"
+            reapply_modules
+        )
+    }
+    uygulanan() { grep '^uygula ' "$TMP/calls" 2>/dev/null || true; }
+    DENEME_IMAGE=eski
+    kurulum
+    [ "$(uygulanan)" = 'uygula deneme' ]
+    rm -f "$TMP/calls"
+    # The new version renders a changed quadlet, then the run fails before stage 7: nothing applied.
+    DENEME_IMAGE=yeni
+    run kurulum dus
+    [ "$status" -eq 1 ]
+    grep -qx 'Image=yeni' "$TMP/moduller/deneme/deneme.container"
+    [ -z "$(uygulanan)" ]
+    # The next run renders nothing new, yet applies the package once; the run after it does not.
+    kurulum
+    [ "$(uygulanan)" = 'uygula deneme' ]
+    [ ! -e "$MODULES_PENDING_DIR/deneme" ]
+    rm -f "$TMP/calls"
+    kurulum
+    [ -z "$(uygulanan)" ]
+    # A failed reapply keeps the marker and says so; the following run tries again.
+    DENEME_IMAGE=daha-yeni
+    touch "$TMP/uygula-hata"
+    kurulum
+    [ "$(uygulanan)" = 'uygula deneme' ]
+    [ -e "$MODULES_PENDING_DIR/deneme" ]
+    grep -qF 'WARN Uygulama deneme yeniden uygulanamadı; bir sonraki kurulum yeniden dener' "$TMP/log"
+    rm -f "$TMP/calls" "$TMP/uygula-hata"
+    kurulum
+    [ "$(uygulanan)" = 'uygula deneme' ]
+    [ ! -e "$MODULES_PENDING_DIR/deneme" ]
+    rm -f "$TMP/calls"
+    # Not installed: nothing is placed, so the marker goes without a call (Konsol installs current files).
+    : >"$MODULES_FILE"
+    DENEME_IMAGE=son
+    kurulum
+    [ -z "$(uygulanan)" ]
+    [ ! -e "$MODULES_PENDING_DIR/deneme" ]
+    # Built-ins: a changed WebDAV helper marks paylasim in stage 4. After a failed run the next one
+    # still hands it to master-modul yerlesik; the marker goes once stage 7 got past yerlesik.
+    rm -f "$TMP/calls"
+    mark_module_pending paylasim
+    run kurulum dus
+    [ "$status" -eq 1 ]
+    kurulum
+    grep -qx 'yerlesik  paylasim' "$TMP/calls"
+    [ -z "$(uygulanan)" ]
+    [ ! -e "$MODULES_PENDING_DIR/paylasim" ]
+    rm -f "$TMP/calls"
+    kurulum
+    grep -qx 'yerlesik ' "$TMP/calls"
+    # Wiring: the marker directory is persistent state (a reboot between the runs keeps it); stage 4
+    # marks paylasim for its helpers, stage 6 marks dosya, stage 7 applies built-ins before the rest.
+    grep -qx 'MODULES_PENDING_DIR="/etc/master-stack/moduller-bekleyen"' "$real/config/defaults.env"
+    [ "$(grep -c '|| mark_module_pending paylasim$' <<<"$stage4")" -eq 2 ]
+    awk '/^ensure_files_panel\(\)/,/^}$/' "$real/install.sh" |
+        grep -qxF '    [[ "$changed" -eq 0 ]] || { mark_module_pending dosya; MODULES_CHANGED="$MODULES_CHANGED dosya"; }'
+    [ "$(grep -n 'master-modul" yerlesik "$MODULES_CHANGED"' <<<"$stage7" | cut -d: -f1)" -lt \
+        "$(grep -nx '    reapply_modules' <<<"$stage7" | cut -d: -f1)" ]
 }
 
 @test "container list (DD-213, DD-214): start/stop and edit before the name, remove last, home-tile icons" {

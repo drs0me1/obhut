@@ -959,6 +959,15 @@ Contract in §5–§7 and `folder-shares.md`.
     changed, or the manifest says `PAKET_UYGULA_HEP=1`, and the package is registered
     (`calisiyor` or `durduruldu`), stage 7 first runs `master-modul uygula <id>`.
     A failure is a warning, not a stop.
+  - keeps a change until it is applied (**DD-222**): the first changed or removed
+    rendered file of a package writes the empty marker `MODULES_PENDING_DIR/<id>`
+    (`/etc/master-stack/moduller-bekleyen`, 0700 root; also `paylasim` for a changed
+    `master_shares.py`/`master_webdav.py` and `dosya` for changed Files code or unit).
+    A marked package counts as changed in every later run. The marker is removed only
+    after `uygula` succeeded, after `yerlesik` for the built-ins, or when the package is
+    not registered. So a run that fails between stage 4 and stage 7, or whose `uygula`
+    fails, is applied by the next successful run. A marker that cannot be written stops
+    the install.
   - always checks built-in Files/WebDAV; checks WireGuard networks only while
     the optional application is installed. The summary names each package from its
     manifest with one line from its `paket_ozet` hook.

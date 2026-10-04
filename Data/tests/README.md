@@ -41,6 +41,18 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Pending package changes across a failed run (v2-200, DD-222)
+
+The Bats test "pending module markers" runs the real `render_package_dir`,
+`ensure_module_files` and `reapply_modules` against a fake one-package repository.
+`install`/`chown` and `master-modul` are stubbed. Each simulated installer run is its own
+subshell, as each real run is its own process. A run renders a changed Quadlet and then fails
+before stage 7. The next run renders nothing new and still calls `uygula` exactly once; the run
+after that calls nothing. The test also checks that a failed `uygula` keeps the marker and
+warns, that the next run retries, and that a package that is not installed loses its marker
+without a call. For the built-in WebDAV, a `paylasim` marker reaches `master-modul yerlesik`
+after a failed run and is then cleared. The wiring of stages 4, 6 and 7 is checked statically.
+
 ## Container manager (v2-190, DD-211)
 
 Local checks need no server:

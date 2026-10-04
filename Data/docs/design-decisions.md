@@ -13,6 +13,41 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-222: A package's unapplied change survives a failed install (v2-200)
+
+- **Finding (nrm, 2026-10-04):** stage 7 re-applied a package only when `MODULES_CHANGED`
+  named it, and that list existed only in the running installer's memory. Stage 4 had
+  already written the new files to `MODULES_DIR/<id>/`, so after a failure in stage 5
+  (`master-firewall`) the next successful run rendered byte-identical files, reported no
+  change and never ran `master-modul uygula <id>`. The placed Quadlet/unit stayed old until
+  someone ran it by hand. A change to a WebDAV or Files helper had the same gap: its restart
+  signal for `master-modul yerlesik` was lost the same way.
+- **Decision:** a durable marker per package, `MODULES_PENDING_DIR/<id>`
+  (`/etc/master-stack/moduller-bekleyen/`, 0700 root, empty files). `render_package_dir`
+  writes it at the first changed or removed file, before the package's remaining files are
+  processed. Stage 4 writes `paylasim` when `master_shares.py` or `master_webdav.py` changes,
+  and stage 6 writes `dosya` when the Files code or unit changes. `ensure_module_files` puts
+  every marked package into `MODULES_CHANGED`, together with changed packages and
+  `PAKET_UYGULA_HEP=1` packages. `reapply_modules` removes a marker only after `uygula`
+  succeeded, or when the package is not installed (Konsol's `kur` places the current rendered
+  files). It also removes the built-ins' markers, because `yerlesik` ran earlier in stage 7
+  and stops the install if it fails. A failing `uygula` stays a warning, as before, and
+  keeps the marker, so the next run tries again. A marker that cannot be written stops the
+  install.
+- **Why not `/run`:** `RUNTIME_DIR` is tmpfs; a reboot between the failed and the next run
+  would drop the marker and bring the bug back. Why not compare rendered and placed files:
+  only the hooks know where each file goes, and the engine stays application-neutral.
+  `MODULES_DIR` cannot hold it either: the renderer deletes anything that is not a package
+  file.
+- **Bounds:** markers stand only for "rendered, not yet applied". They are not a reconcile
+  queue. Nothing else reads them, no timer runs, and a marker for a package that was
+  removed from the repository is never read. An extra re-apply is harmless (`uygula` is
+  idempotent); a missed one is the bug. Hosts that missed a reapply before v2-200 are not
+  detected (no migration); run `master-modul uygula <id>` once there.
+- **Not covered:** `PANEL_HELPERS_CHANGED` (Konsol backend restart in stage 6) and
+  `FIREWALL_NEEDS_RESTART` are in-memory signals of the same kind. They are outside this
+  decision.
+
 ### DD-221: The Podman page changes qBittorrent's peer port (v2-199)
 
 - **Request (user, 2026-10-05):** "portların boş olduğunu denetleyen sisteme gerek yok. eş portunu

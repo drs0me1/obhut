@@ -255,6 +255,7 @@ error, not a warning.
 | `/usr/local/sbin/master-files-panel`, `master_archives.py`, `master_rar.py`; `/usr/local/share/master-stack/konsol/` | installer | file backend and archive workers, and the console pages Caddy serves (**DD-139**, **DD-140**) |
 | `/usr/local/sbin/master-modul`, `/usr/local/share/master-stack/moduller/<id>/` | installer | module helper and rendered module files, `0755` / `0644` (**DD-148**) |
 | `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor\|durduruldu`, `0644` (**DD-148**) |
+| `/etc/master-stack/moduller-bekleyen/<id>` (`MODULES_PENDING_DIR`) | installer | empty marker: the package's rendered files (or a built-in's code) changed and have not been applied yet; removed after a successful `uygula`/`yerlesik` or when the package is not installed; `0700` directory (**DD-222**) |
 | `/run/master-stack/modul-<id>.ilerleme`, `modul.lock` | `master-modul` | the last operation's progress line; the module lock (**DD-148**) |
 | `/etc/caddy/moduller/<id>.caddy` | installer (directory), `master-modul` (files) | module sites imported by the base Caddyfile; WebDAV: `paylas.<domain>` and `TAILSCALE_IPV4:SHARE_PORT` (**DD-98**, **DD-158**) |
 | `/etc/caddy/moduller/paylasim-wan.caddy` | `master_shares.py` | Global-gated WAN WebDAV site, `/s/*` only: legacy `WAN_IPV4:SHARE_PORT` while an eligible WAN connection exists, or configured HTTPS on `SHARE_HTTPS_PORT` retained for renewal without active folders (**DD-179/190/191/192**); stale WAN binding fails closed (**DD-182**) |
@@ -417,7 +418,7 @@ none of these questions for the installer.
 | 4 | Install scripts and workers; render module files, units, timers and the firewall-first `wg-quick@` drop-in (**DD-180**); enable the settings guard timer | templates |
 | 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
 | 6 | dnsmasq/Caddy, Konsol root backend/pages, Files/archive code and staged unit; drop a WAN share site bound to a stale address (**DD-182**); restart changed services only | DNS/HTTP |
-| 7 | `master-modul yerlesik` enables/checks Files/WebDAV; publish the WAN share site and enable its guard timer (**DD-179**); reapply changed optional apps and installed WireGuard; core contracts, Caddy/API gates and optional network checks (**DD-159**) | verification |
+| 7 | `master-modul yerlesik` enables/checks Files/WebDAV; publish the WAN share site and enable its guard timer (**DD-179**); reapply changed optional apps (including changes a failed earlier run left pending, **DD-222**) and installed WireGuard; core contracts, Caddy/API gates and optional network checks (**DD-159**) | verification |
 | — | Print summary and the manual Tailscale admin steps | operator guidance |
 
 **Addresses are detected once, in stage 3, into `state.env`**, and every later

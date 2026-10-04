@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — A failed install no longer loses a package's pending changes (v2-200)
+
+- If an install wrote new package files and then failed before stage 7, the next successful
+  run no longer skips applying them. Found on nrm on 2026-10-04: stage 5 (`master-firewall`)
+  failed after stage 4, and a later successful run left the package's old placed Quadlet/unit
+  in place until `master-modul uygula <id>` was run by hand.
+- The installer now leaves an empty marker per package in `/etc/master-stack/moduller-bekleyen/`
+  as soon as one of the package's rendered files changes (also when a WebDAV or Files helper
+  changes). The marker is removed only after `master-modul uygula` (or `yerlesik` for the
+  built-ins) succeeded, or when the package is not installed. A failed `uygula` is still a
+  warning, and now the next run tries again (DD-222).
+- No manual step for future runs. A host that already missed a reapply before this version
+  still needs `master-modul uygula <id>` once, unless the package's files change again.
+
 ### 2026-10-05 — qBittorrent's peer port can be changed on the Podman page (v2-199)
 
 - The Podman page's editor for qBittorrent has a new "Eş portu" field next to the interface port

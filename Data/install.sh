@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-199"
+V2_VERSION="2026.08.06-v2-200"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -681,6 +681,15 @@ PANEL_HELPERS_CHANGED=0
 module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
     awk -F'\t' -v i="$1" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true
 }
+# DD-222: MODULES_CHANGED yalnız bu çalıştırmanın belleğindedir. Değişiklik yazılır yazılmaz paket
+# kalıcı olarak işaretlenir; işaret yalnız paket uygulanınca (reapply_modules) kalkar. Aşama 4'ten
+# sonra düşen bir kurulumun değişikliğini böylece bir sonraki kurulum yine uygular. İşaret
+# yazılamazsa kurulum durur (çağıran bir koşulun içinde olsa da: die).
+mark_module_pending() { # ID
+    local dir="${MODULES_PENDING_DIR:?}"
+    [[ -d "$dir" ]] || install -d -m 0700 -o root -g root "$dir" || die "bekleyen paket klasörü açılamadı: $dir"
+    : >"$dir/$1" || die "bekleyen paket işareti yazılamadı: $dir/$1"
+}
 # DD-197: bir paketin repo klasörü olduğu gibi işlenir. __KEY__ içeren dosya şablondur ve
 # kurulumun aynı adlı değişkeniyle doldurulur; öbürleri kopyalanır. Çalıştırılabilir dosyalar
 # (araçlar) 0755, geri kalanı 0644. 0: bir dosya değişti, 1: hepsi aynıydı.
@@ -795,14 +804,15 @@ render_package_dir() { # ID
         else
             atomic_write "$dst" "$mode" <"$src"
         fi
-        [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || changed=1
+        # DD-222: işaret ilk değişiklikte, paketin kalan dosyalarından önce konur.
+        [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || { changed=1; mark_module_pending "$id"; }
     done
     # DD-203: işlenmiş klasörde yalnız paketin dosyaları durur; eski sürümlerin bıraktıkları
     # (ör. önceki sürümlerin yazdığı __pycache__) kalkar.
     for dst in "$MODULES_DIR/$id"/* "$MODULES_DIR/$id"/.[!.]*; do
         [[ -e "$dst" || -L "$dst" ]] || continue
         name="${dst##*/}"
-        [[ -f "$V2_ROOT/magaza/$id/$name" ]] || { rm -rf -- "$dst"; changed=1; }
+        [[ -f "$V2_ROOT/magaza/$id/$name" ]] || { mark_module_pending "$id"; rm -rf -- "$dst"; changed=1; }
     done
     [[ "$changed" -eq 1 ]]
 }
@@ -851,12 +861,14 @@ ensure_module_files() {
     local dir id
     install -d -m 0755 -o root -g root "$MODULES_DIR"
     # Her paket (yerleşik WebDAV dahil) MODULES_DIR/<id>/ altına işlenir; canlı kopyaları
-    # master-modul koyar, kullanıcı kayıtları yeniden üretilmez (DD-158). Değişen ya da her
-    # kurulumda uygulanan (PAKET_UYGULA_HEP=1) paket MODULES_CHANGED'e girer.
+    # master-modul koyar, kullanıcı kayıtları yeniden üretilmez (DD-158). Değişen, uygulanmayı
+    # bekleyen (DD-222: bu ya da yarıda kalmış önceki bir kurulumdan) ya da her kurulumda uygulanan
+    # (PAKET_UYGULA_HEP=1) paket MODULES_CHANGED'e girer.
     for dir in "$V2_ROOT"/magaza/*/; do
         id="${dir%/}"; id="${id##*/}"
         [[ -f "$dir/paket.env" ]] || die "paket bildirimi yok: $dir"
-        if render_package_dir "$id" || [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]; then
+        if render_package_dir "$id" || [[ -e "$MODULES_PENDING_DIR/$id" ]] ||
+            [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]; then
             MODULES_CHANGED="$MODULES_CHANGED $id"
         fi
     done
@@ -869,19 +881,25 @@ ensure_module_files() {
 
 # DD-148/DD-149: dosyası değişen kurulu modül yeniden uygulanır (adları, hesabı; çalışıyorsa
 # servisi). Durdurulmuş modül durur, kurulmamış modüle dokunulmaz, hiçbiri kaldırılmaz.
+# DD-222: bekleyen işaret yalnız uygulama başarılıysa kalkar. Yerleşikleri aşama 7'nin başında
+# master-modul yerlesik uyguladı (başarısızsa kurulum orada durur); kurulu olmayan paketi Konsol
+# kurarken işlenmiş dosyalarıyla koyar, bekleyecek bir şey kalmaz.
 reapply_modules() {
     local id state
     for id in $MODULES_CHANGED; do
-        [[ "$id" != dosya && "$id" != paylasim ]] || continue
+        if [[ "$id" == dosya || "$id" == paylasim ]]; then rm -f -- "${MODULES_PENDING_DIR:?}/$id"; continue; fi
         state="$(module_state "$id")"
-        [[ "$state" == calisiyor || "$state" == durduruldu ]] || continue
+        [[ "$state" == calisiyor || "$state" == durduruldu ]] || { rm -f -- "${MODULES_PENDING_DIR:?}/$id"; continue; }
         if [[ "$(sed -n 's/^PAKET_UYGULA_HEP=//p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null)" == 1 ]]; then
             log INFO "Modül $id: yeniden uygulanıyor (her kurulumda: $(sed -n 's/^PAKET_UYGULA_NEDEN="\(.*\)"$/\1/p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null))"
         else
             log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
         fi
-        "$SBIN_DIR/master-modul" uygula "$id" >/dev/null ||
-            log WARN "Uygulama $id yeniden uygulanamadı; Konsol → App Store'dan bakın"
+        if "$SBIN_DIR/master-modul" uygula "$id" >/dev/null; then
+            rm -f -- "${MODULES_PENDING_DIR:?}/$id"
+        else
+            log WARN "Uygulama $id yeniden uygulanamadı; bir sonraki kurulum yeniden dener. Konsol → App Store'dan bakın"
+        fi
     done
     # DD-196/201: kurulu olmayan bir paketin bildirdiği araç ya da birim eki sunucuda durmaz
     # (önceki sürümlerin bıraktıkları dahil). Paket verisi kalır; kaldir --veri siler.
@@ -943,7 +961,8 @@ stage_4() {
     fi
     atomic_write "$SBIN_DIR/master_shares.py" 0755 <"$V2_ROOT/panel/master_shares.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    # DD-222: WebDAV'ın araçları değişince paylasim işaretlenir; ensure_module_files onu MODULES_CHANGED'e alır.
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || mark_module_pending paylasim
     atomic_write "$SBIN_DIR/master_https.py" 0755 <"$V2_ROOT/panel/master_https.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     atomic_write "$SBIN_DIR/master_publications.py" 0755 <"$V2_ROOT/panel/master_publications.py"
@@ -965,7 +984,7 @@ stage_4() {
     install -d -m 0700 "$KONTEYNER_STATE_DIR" "$PACKAGE_OVERRIDES_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED paylasim"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || mark_module_pending paylasim
     render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
         SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     atomic_write "$UNIT_DIR/master-settings-guard.timer" 0644 <"$V2_ROOT/systemd/master-settings-guard.timer"
@@ -1343,7 +1362,8 @@ ensure_files_panel() {
         PROTECTED_DIRS="$protected" \
         DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    [[ "$changed" -eq 0 ]] || MODULES_CHANGED="$MODULES_CHANGED dosya"
+    # DD-222: aşama 4'ün döngüsünden sonra: işaret bir sonraki kurulum için, liste bu kurulum için.
+    [[ "$changed" -eq 0 ]] || { mark_module_pending dosya; MODULES_CHANGED="$MODULES_CHANGED dosya"; }
 }
 
 stage_7() {

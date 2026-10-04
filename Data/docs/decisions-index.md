@@ -223,3 +223,4 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-219 | qBittorrent back to its own defaults; its ports moved to uncommon fixed ports | v2-197 | design-decisions.md |
 | DD-220 | Removing qBittorrent with its data keeps Konsol's port and image choice | v2-198 | design-decisions.md |
 | DD-221 | The Podman page changes qBittorrent's peer port | v2-199 | design-decisions.md |
+| DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; locally verified, not deployed | design-decisions.md |

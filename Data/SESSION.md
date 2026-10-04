@@ -4,6 +4,28 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Pending package markers survive a failed install, v2-200 (DD-222; committed with this entry):**
+- Context: the user asked to commit before new work. The other window's v2-193..v2-199 was finished
+  but uncommitted; after re-checking it (bats 180/180, Python 575 OK, shellcheck, `bash -n`,
+  `git diff --check`, export payload == source) it was committed as 2800105 without changes.
+- Finding (nrm, 2026-10-04): stage 5 `master-firewall` failed after stage 4 had rendered new package
+  files; the next successful run saw no change, so `reapply_modules` never ran `master-modul uygula`.
+- Done: `mark_module_pending` writes `MODULES_PENDING_DIR/<id>` (`/etc/master-stack/moduller-bekleyen`,
+  0700) at the first changed/removed rendered file, for `paylasim` when `master_shares.py`/
+  `master_webdav.py` change and for `dosya` in stage 6; `ensure_module_files` adds marked packages
+  to `MODULES_CHANGED`; `reapply_modules` removes a marker only after a successful `uygula`, for an
+  unregistered package, or for built-ins (after `yerlesik`); a failed `uygula` keeps it and warns
+  that the next run retries. DD-222, contract, architecture, CHANGELOG, tests/README.
+- Verification: new Bats test (real renderer/stage-4 loop/stage-7 consumer against a fake package:
+  failed run → next run applies once → then never; failed `uygula` retries; unregistered clears;
+  WebDAV marker reaches `yerlesik`) was red on the old code at the expected assertion; six
+  mutations of the fix each turn it red. `bats tests` 181/181 (3 GNU-timeout skips), Python OK,
+  shellcheck, `bash -n`; export root/`Data/app` `2026.08.06-v2-200.command` identical, 82 payload
+  files match source. Not yet live: nrm run and Linux Bats are planned with the next nrm session.
+- Next (accepted by the user, Debian 13 only — no Ubuntu work until a server change): docs drift
+  fixes, nrm read-only measurements, then container boot precondition, container egress block,
+  host-unit masking, bind-source pinning, Dosyalar account for writable binds.
+
 **2026-10-05 — qBittorrent's peer port editable on the Podman page, v2-199 (DD-221; uncommitted, on top of v2-198):**
 - User: "portların boş olduğunu denetleyen sisteme gerek yok. eş portunu Podman sayfasından değiştirme imkânı
   eklenebilir." (after asking how ports are chosen: fixed numbers in `torrent.env`, no mechanism).
