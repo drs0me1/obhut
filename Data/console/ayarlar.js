@@ -298,10 +298,11 @@ window.createSettingsPage = ({ h, svg, api, post, toast, fail, paintWeb, loadSet
           td(toggle(`${r.name} ${scopeName(r.scope)} ${r.proto} ${r.port}`, allow, (on) => {
             if (rule) rule.allow = on;
             else draft.firewall.push({ id: `p_${r.family}_${r.scope}_${r.proto}_${r.port}`, name: r.name.slice(0, 64), family: r.family, scope: r.scope, proto: r.proto, port: r.port, source: "", allow: on });
-          }, "as-port-" + i, r.scope === "lo"), r.scope === "lo" ? h("small", null, "Sunucu içi · korunur") : null),
+          }, "as-port-" + i, r.scope === "lo" || r.fixed), r.scope === "lo" ? h("small", null, "Sunucu içi · korunur")
+            : r.fixed ? h("small", null, "Konteyner yayını · uygulamayla açılır, kapanır") : null),
           td(rule ? h("div", { class:"as-fw-actions" }, btn("Düzenle", () => ruleForm(rule)), btn("Kuralı kaldır", () => {
             draft.firewall = draft.firewall.filter(x => x.id !== rule.id); draw();
-          })) : h("small", null, r.scope === "lo" ? "Değiştirilemez" : "Anahtarla kullanıcı kuralı eklenir.")));
+          })) : h("small", null, r.scope === "lo" || r.fixed ? "Değiştirilemez" : "Anahtarla kullanıcı kuralı eklenir.")));
       }), "as-ports as-fw-table", `${scopeName(scope)}${scope === "wg" && wgNetwork !== "all" ? " · " + wgNetwork : ""} · IPv${family} · ${rows.length} satır`);
     }
     return card("Güvenlik Duvarı", "Gelen ağa göre port izinleri · IPv4 / IPv6", mode === "ports" ? categories : null, toolbar,

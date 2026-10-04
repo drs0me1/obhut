@@ -12,6 +12,8 @@ Worker API (caller holds installer/module/container locks):
 runner(argv, timeout=20) returns CompletedProcess or (rc, stdout, stderr).
 Initial publications explicitly use IPv4; IPv6 remote/direct ingress to managed
 bridges is denied. The host may reach local publications through OUTPUT DNAT.
+DD-217: an App Store package may run on its own bridge (manifest PAKET_KONTEYNER_AG);
+its placed Quadlet's IPv4 PublishPort lines on the WAN/Tailscale address are let through.
 
 References: docs.podman.io/en/v5.4.2/markdown/podman-run.1.html (--publish);
 www.netfilter.org/projects/nftables/manpage.html (hook priorities and ct tuples);
@@ -162,6 +164,51 @@ def read_definitions(env):
         if not isinstance(row, dict) or row.get("name") != path.stem:
             raise NetworkError("Konteyner tanımı adı geçersiz.", 503)
         out.append(row)
+    return out
+
+
+PUBLISH_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):([1-9]\d{0,4}):([1-9]\d{0,4})/(tcp|udp)")
+
+
+def package_publications(env):
+    """DD-217: registered packages on their own bridge publish what their placed Quadlet says.
+
+    A stopped package's Quadlet is removed, so it publishes nothing. Only explicit IPv4
+    "address:host:container/protocol" values count; anything else is simply not let through.
+    A placed Quadlet on another network (an installer run renders the manifest before it places
+    the new Quadlet) publishes nothing either: never a reason to stop the firewall.
+    """
+    registry, base, units = env.get("MODULES_FILE"), env.get("MODULES_DIR"), env.get("KONTEYNER_BIRIM_DIR")
+    if not (registry and base and units) or not Path(registry).exists():
+        return []
+    out = []
+    for line in _read(registry).splitlines():
+        mid = line.split("\t", 1)[0]
+        manifest = Path(base) / mid / "paket.env"
+        if not re.fullmatch(r"[a-z]{2,16}", mid) or not manifest.exists():
+            continue
+        declared = env_read(manifest)
+        name, network = declared.get("PAKET_KONTEYNER", ""), declared.get("PAKET_KONTEYNER_AG", "")
+        if not network or not re.fullmatch(r"[a-z][a-z0-9-]{1,30}\.container", name):
+            continue
+        quadlet = Path(units) / name
+        if not quadlet.exists():
+            continue
+        lines = [row.strip() for row in _read(quadlet).splitlines()]
+        if "Network=" + network not in lines:
+            continue
+        ports = []
+        for row in lines:
+            match = PUBLISH_RE.fullmatch(row[len("PublishPort="):]) if row.startswith("PublishPort=") else None
+            if not match or max(int(match[2]), int(match[3])) > 65535:
+                continue
+            try:
+                address = str(ipaddress.IPv4Address(match[1]))
+            except ValueError:
+                continue
+            ports.append({"address": address, "host_port": int(match[2]), "container_port": int(match[3]),
+                          "protocol": match[4]})
+        out.append({"id": mid, "network": network, "ports": ports})
     return out
 
 
@@ -355,8 +402,11 @@ def policy(env, definitions, run=None):
     meta = lambda key: {"meta": {"key": key}}
     ct = lambda key, **kw: {"ct": dict(key=key, **kw)}
     rule(_match(meta("oifname"), prefix + "*", "!="), {"return": None})
+    packages = package_publications(env)
     # Bridge-local peers are governed by Netavark's network isolation; no blanket interbridge permit.
-    for bridge in sorted({bridge_name(env, d.get("network", "bridge")) for d in definitions if d.get("network") != "none"}):
+    bridges = {bridge_name(env, d.get("network", "bridge")) for d in definitions if d.get("network") != "none"}
+    bridges.update(bridge_name(env, p["network"]) for p in packages)
+    for bridge in sorted(bridges):
         rule(_match(meta("iifname"), bridge), _match(meta("oifname"), bridge), {"return": None})
     # Only replies to container-originated traffic bypass publication checks. Original-direction
     # established connections still lose access immediately when their publication is revoked.
@@ -365,6 +415,15 @@ def policy(env, definitions, run=None):
     tail = None
     wan = None
     seen = []
+
+    def publish(bridge, ingress, address, row):
+        rule(_match(meta("oifname"), bridge), _match(meta("iifname"), ingress),
+             _match(meta("nfproto"), "ipv4"), _match(meta("l4proto"), row["protocol"]),
+             _match(ct("direction"), "original"), _match(ct("status"), "dnat", "in"),
+             _match(ct("daddr", family="ip", dir="original"), address),
+             _match(ct("proto-dst", dir="original"), row["host_port"]),
+             _match({"payload": {"protocol": row["protocol"], "field": "dport"}}, row["container_port"]),
+             {"return": None})
     for definition in sorted(definitions, key=lambda d: d["name"]):
         rows = normalize_ports(definition.get("ports", []))
         if definition.get("network") == "none":
@@ -387,13 +446,24 @@ def policy(env, definitions, run=None):
                     wan = wan_addresses(env, run)
                 ingress, originals = wan
             for address in originals:
-                rule(_match(meta("oifname"), bridge), _match(meta("iifname"), ingress),
-                     _match(meta("nfproto"), "ipv4"), _match(meta("l4proto"), row["protocol"]),
-                     _match(ct("direction"), "original"), _match(ct("status"), "dnat", "in"),
-                     _match(ct("daddr", family="ip", dir="original"), address),
-                     _match(ct("proto-dst", dir="original"), row["host_port"]),
-                     _match({"payload": {"protocol": row["protocol"], "field": "dport"}}, row["container_port"]),
-                     {"return": None})
+                publish(bridge, ingress, address, row)
+    # DD-217: a package's loopback publication needs no forward path; its WAN or Tailscale one does.
+    for package in packages:
+        bridge = bridge_name(env, package["network"])
+        for row in package["ports"]:
+            if ipaddress.IPv4Address(row["address"]).is_loopback:
+                continue
+            if wan is None:
+                wan = wan_addresses(env, run)
+            if row["address"] == "0.0.0.0" or row["address"] in wan[1]:
+                for address in (wan[1] if row["address"] == "0.0.0.0" else [row["address"]]):
+                    publish(bridge, wan[0], address, row)
+                continue
+            if ipaddress.IPv4Address(row["address"]) in ipaddress.ip_network("100.64.0.0/10"):
+                if tail is None:
+                    tail = tailscale_address(env, run)
+                if row["address"] == tail:
+                    publish(bridge, _iface(env["TAILSCALE_IF"]), tail, row)
     rule({"drop": None})
     return objects
 

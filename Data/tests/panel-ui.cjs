@@ -135,7 +135,7 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.match(await page.locator("#title #home-date").innerText(),/\d/);
     assert(!/Genel bakış/.test(await page.locator("#title").innerText()));
     assert.equal(await page.locator('#top-actions button,#genel-stamp,#side-clock,#side-date').count(),0);
-    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Ana Menü","Dosyalar","App Store","Konteynerler","Ayarlar"]);
+    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(),["Ana Menü","Dosyalar","App Store","Podman","Ayarlar"]);
     assert.equal(await page.locator('[data-view="uygulamalar"],.desktop-dock,#window-min').count(),0);
     const emptyStore = page.locator('#genel-tiles a[href="#/moduller"]');
     assert.equal(await emptyStore.count(),1,"the empty state links to App Store");
@@ -358,7 +358,8 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     assert.equal(await detail.isVisible(),false);
     holdInstall = false;
     await installTorrent();
-    await page.locator('.nav [data-route="torrent"]').waitFor();
+    await card.getByRole("button",{name:"Kur",exact:true}).waitFor({state:"detached"});
+    assert.equal(await page.locator('.nav [data-route="torrent"], .nav a[data-app]').count(),0,"an installed app opens from Ana Menü, not the sidebar (DD-216)");
     await toggle.click();
     await detail.getByRole("button",{name:"Durdur",exact:true}).click();
     await page.locator("#cf-go").click();
@@ -638,10 +639,11 @@ const entry = (name,type="dir") => ({name,type,count:3,size:2048,mtime:Date.now(
     await page.locator("#na-label").fill("Keep my draft");
     await refreshResources();
     assert.equal(await page.locator("#na-label").inputValue(),"Keep my draft");
-    // The page, its stylesheet and its sidebar link come from the package (DD-200).
+    // The page and its stylesheet come from the package (DD-200); no sidebar link, Ana Menü stays marked (DD-216).
     assert.equal(await page.locator('script[src="/uygulama/wireguard/sayfa.js"]').count(),1);
     assert.equal(await page.locator('link[href="/uygulama/wireguard/sayfa.css"]').count(),1);
-    assert.deepEqual(await page.locator(".nav a[data-app]").allTextContents(),["WireGuard"]);
+    assert.equal(await page.locator(".nav a[data-app]").count(),0);
+    assert.equal(await page.locator('.nav a[aria-current="page"]').getAttribute("data-route"),"genel");
     assert.equal(await page.locator("#eyebrow").innerText(),"WireGuard · yeni ağ");
     for (const width of [1440,1024,736,390,320]) {
       await page.setViewportSize({width,height:950});

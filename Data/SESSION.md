@@ -4,6 +4,194 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — qBittorrent's peer port editable on the Podman page, v2-199 (DD-221; uncommitted, on top of v2-198):**
+- User: "portların boş olduğunu denetleyen sisteme gerek yok. eş portunu Podman sayfasından değiştirme imkânı
+  eklenebilir." (after asking how ports are chosen: fixed numbers in `torrent.env`, no mechanism).
+- Done: adapter `container_config` declares `peer_port` (config + editable); `konteyner_ayar` accepts an optional
+  `peer_port` (omitted = unchanged), checks it (1024–65535, ≠ listener, not another project port incl. saved
+  definitions' TCP/UDP ports, TCP+UDP bind probe on `WAN_IPV4`), patches both WAN `PublishPort` lines and
+  `TORRENTING_PORT` in the rendered and placed Quadlet (`patch_peer_publish`), sets `Session\Port`, records only a
+  changed port in the override (`PAKET_AYAR_ANAHTARLAR` gains `TORRENT_PEER_PORT`), applies the container guard
+  before the start and again on rollback. Reserved-port logic shared via `project_ports`. Podman page: field
+  "Eş portu (WAN IPv4, TCP+UDP)" only when the adapter declares it; form checks, review diff + consequence line,
+  payload. App Store text and Quadlet comments no longer carry port numbers; removal text says the peer port stays.
+  Docs: DD-221, index, contract (§1.11 editor, adapter paragraph, R12, §3.1, inbound peers, `--veri`), API doc,
+  CHANGELOG, tests/README, README, CLAUDE.md, Cursor rules.
+- Review: inline (the user stopped the review Workflow: "workflow girme"). Fixed: on a failed edit the rollback
+  restarted the old app before reapplying the guard (old peer port blocked until then) — the guard now returns
+  first, as on the way in (test asserts the order); CHANGELOG said "the form refuses" for server-side checks;
+  generic field hint ("Eşler bu porttan bağlanır"); DD-211 amendment, architecture row, README/CLAUDE.md refs.
+- Verification: Python 575 OK (4 skipped); `bats tests` 180/180 on the Mac and on nrm (Linux Bash 5.2); shellcheck
+  clean; 10/10 browser fixture suites. Flaky, not in v2-199's code: the long-running 8766 test server reset
+  connections (ECONNRESET in panel-ui and app-install-ui) and was restarted; app-install-ui also hit a null
+  bounding box for the home tile's action row at 390 px twice in sequence runs, then passed twice alone; final export
+  root/`Data/app` `2026.08.06-v2-199.command` identical (sha b7b8e82c…, archive 26311df6…), embedded tree matches.
+  nrm: installer v2-199 run twice (scratch input, defaults, `E`, exit 0); deployed `ayar.py`/`konteynerler.js`
+  hashes equal the source. Live Podman page (Playwright, one POST each) moved the peer port 63851 → 63777: placed
+  + rendered Quadlet, override, `Session\Port`, `podman port`, guard rules all 63777, guard/firewall checks OK,
+  UI 403, Mac → WAN 63777 open / 63851 timeout; a reserved port (61010) was refused with "Bu port başka bir proje
+  servisine ayrılmış." and no restart; back to 63851 the same way, then the test's `TORRENT_PEER_PORT=63851`
+  override line removed so nrm's override is byte-identical to before (only the approved `TORRENT_IMAGE`).
+
+**2026-10-05 — `kaldir --veri` keeps Konsol's qBittorrent choices, v2-198 (DD-220; uncommitted, on top of v2-197):**
+- User: "öneriyi çalış ve düzeltelim" (the follow-up the v2-197 review filed). Found: `--veri` deleted the
+  override and the port drop-in while the rendered Quadlet/manifest/seed kept the chosen port and
+  image; a reinstall before an installer run failed `torrent_verify`. Caddy is not affected
+  (`master_publications.private_site` rewrites the upstream from the override at placement).
+- Done: `torrent_drop_data` keeps the override and `85-konteyner.conf` (still deletes the folder drop-in,
+  image, `/var/lib` profile); dialog text says the choices stay; DD-220 (rejected: re-rendering to
+  defaults on `--veri`, which needs a second renderer and downgrades an approved image); DD-214
+  amendment; contract (also the image paragraph: an override outlasts newer package pins); CHANGELOG;
+  tests/README; Bats engine test now sets `PACKAGE_OVERRIDES_DIR`, an override and the port drop-in
+  before `--veri` (the old fixture had no override dir, so it could not catch this).
+- Review (Workflow, 7 agents): six lifecycle sequences traced, all consistent; confirmed only doc
+  defects (DD-220 wrongly promised a newer package restores the image pin; tests/README overstated
+  the test and still said host network; Cursor rules still said `Network=host` / no peer port) — fixed.
+- Verification: Python 568 OK (4 skipped); `bats tests` 179/179 on the Mac and on nrm (Linux Bash 5.2);
+  shellcheck clean; export root/`Data/app` `2026.08.06-v2-198.command` identical, embedded tree matches;
+  nrm installer v2-198 exit 0, torrent re-applied, ports 62947/63851 unchanged, firewall check OK, UI 403,
+  rendered hook/dialog carry the change. Not done live: an actual `--veri` + reinstall on nrm (needs a new
+  qBittorrent account through the install form); covered by the Bats engine test instead.
+
+**2026-10-04 — qBittorrent's own defaults again, ports 62947/63851, v2-197 (DD-219; uncommitted, on top of v2-196):**
+- User asked to cancel the v2-196 defaults ("image ... varsayılan config ayarları ile kurulsun"), and to
+  move the UI and peer ports (and WAN-open ports in general) away from randomly scanned ports. Asked to
+  choose: qBittorrent's own defaults (not the image's /defaults file), SSH stays 22, share 61010 /
+  WireGuard 61001 / Tailscale 41641 unchanged ("aralık uzak zaten"), fixed uncommon ports.
+- Done: seed back to the six integration keys; `TORRENT_UI_PORT=62947`, `TORRENT_PEER_PORT=63851` (outside
+  32768–60999, away from 610xx); DD-219; DD-218 moved to the retired archive; DD-178/DD-217 notes; index;
+  contract §1/§3 (also fixed the stale "no module gets a WAN port"); CLAUDE.md; API note; CHANGELOG;
+  tests/README; Bats pins; `torrent-defaults-linux.py` expects every preference native again.
+- Verification: Python 566 OK (4 skipped); `bats tests` 179/179; shellcheck clean; ten fixture browser
+  suites PASS (panel-ui and app-install-ui failed once under load during the review workflow, then
+  passed on rerun). nrm v2-197 (scratch input, defaults, `E`) exit 0; qBittorrent recreated on
+  `62947/tcp→127.0.0.1` and `63851/tcp+udp→WAN`; only conmon holds them; guard rules for 63851;
+  `master-firewall --check` OK; Caddy upstream 127.0.0.1:62947, no stale upstream; UI 403 on loopback
+  and via torrent.ayc; profile now `WebUI\Port=62947`, `Session\Port=63851` (from the start flags).
+  From the Mac: WAN 63851 connects, 61008 and 62947 time out, tailnet 63851 times out.
+  `torrent-defaults-linux.py` on nrm PASS (native defaults, user changes persist, no container left).
+- Review (Workflow, 15 agents, three lenses with one skeptic per finding; 20 findings, 8 confirmed, 4
+  refuted, 8 beyond the verify cap checked by hand): fixed the App Store text ("İnternete eş portu
+  açılmaz" was wrong since DD-217; now the rendered peer port, WAN IPv4 only, pinned in Bats); Settings
+  catalogue showed the peer port as IPv4+IPv6 INPUT with an ineffective toggle (now IPv4 rows marked
+  `fixed`, toggle locked, `test_firewall_view.py` case); a folder-only Podman-page save pinned the
+  interface port as an override (now only a changed port is recorded, new test); stale host-network /
+  outgoing-only text in contract R10/R12/R18/§3.1/torrent.env keys, README, architecture, defaults.env
+  comment (kept application-name free), Cursor rules and tests/README. Out of scope, filed as a task
+  chip: `kaldir --veri` deletes the port/image override while rendered files keep it (pre-existing).
+- After the fixes: Python 568 OK (4 skipped); `bats tests` 179/179; shellcheck clean; ten browser
+  suites PASS; v2-197 re-exported (root and `Data/app` identical, embedded tree matches) and reinstalled
+  on nrm (exit 0): live Settings rows for 63851 are IPv4 `fixed`, the rendered App Store text names
+  63851, ports unchanged.
+
+**2026-10-04 — qBittorrent fresh-profile defaults, v2-196 (DD-218; uncommitted, on top of v2-195):**
+- User asked what the install writes besides the container (audit: seed keys, form keys, start-time
+  env; nothing else), then to list the editable settings, choose, and save the choice as default.
+  The list came from qBittorrent 5.2.4 itself (throwaway, network-less container on nrm). Chosen:
+  UPnP/NAT-PMP off, LSD off, encryption required, anonymous mode on, queue 15/15/15, incomplete folder
+  on, preallocation on; seeding unlimited and English UI kept (defaults).
+- Done: `magaza/torrent/qBittorrent.conf` carries those keys (names written by qBittorrent itself via
+  `setPreferences` in a throwaway container, not assumed); Bats allowlist and values; the panel
+  temp-folder report; `torrent-defaults-linux.py` rewritten for the package image (podman
+  `--network host` inside `unshare --net`, `TORRENT_TEST_IMAGE`; qBittorrent 5.2 answers login with an
+  empty 204); DD-218, DD-178 amendment; contract (also fixed stale DD-217 lines: host network, random
+  peer port); CHANGELOG; tests/README.
+- Verification: Python 566 OK (4 skipped); `bats tests` 179/179; shellcheck clean;
+  `torrent-defaults-linux.py` on nrm PASS (chosen values applied, everything else native, user changes
+  survive restart; no container left). nrm installer v2-196 (scratch input, defaults, `E`) exit 0;
+  torrent re-applied without a restart; the live profile is unchanged by design (fresh profiles
+  only); the rendered seed carries the defaults; publications, firewall check and UI 403 unchanged.
+  Export: root and `Data/app` `2026.08.06-v2-196.command` identical (538962 bytes), embedded tree
+  matches the source. Browser suites not rerun (no UI change).
+
+**2026-10-04 — qBittorrent on its own bridge, v2-195 (DD-217; uncommitted, on top of v2-194):**
+- User asked to open only what qBittorrent needs (interface + peer port, not on every surface) and
+  whether the Quadlet can restrict ports per surface. Answer: not with `Network=host`. Asked to choose,
+  the user opened the peer port to the internet and picked bridge + Quadlet `PublishPort` (over the
+  recommended host network + qBittorrent binding + firewall).
+- Done: `torrent.env` `TORRENT_PEER_PORT=61008`, `TORRENT_NETWORK=torrent`; manifest
+  `PAKET_KONTEYNER_AG` (generic) and the peer port in `PAKET_PORTLAR` (internet); quadlet
+  `Network=torrent`, `PublishPort=127.0.0.1:UI:UI/tcp` and `WAN_IPV4:61008:61008/tcp+udp`,
+  `TORRENTING_PORT`; template/install `WebUI\Address=*`; engine creates the bridge (guard naming,
+  `io.master-stack.paket` label), refreshes the guard around placement/removal, removes it with
+  `kaldir`; guard `package_publications()` passes only the placed quadlet's WAN/Tailscale IPv4
+  publications; hook verifies `podman port` exactly; adapter port change patches the loopback line;
+  Podman page labels WAN publications as internet and names the bridge in the detail.
+- Live finding on nrm (fixed before acceptance): the first v2-195 run failed at stage 5 because the
+  guard refused a placed host-network quadlet next to the new manifest (stage 4 renders, stage 7
+  places); the guard now lets such a package through nothing instead of failing. The next run then did
+  not re-apply qBittorrent (pre-existing: `MODULES_CHANGED` comes only from this run's render), so
+  `master-modul uygula torrent` was run by hand; a separate task chip covers that installer gap.
+- Verification: Python 566 OK (4 skipped); `bats tests` 179/179 on the Mac and on nrm with Linux Bash
+  5.2 (2 skips); shellcheck clean; ten fixture browser suites PASS; `containers-network-linux.py` on
+  nrm in a disposable namespace PASS (48 probes). nrm (scratch input, defaults, `E`; manual step first:
+  qBittorrent stopped and its profile `WebUI\Address` set to `*`): installer v2-195 exit 0 then
+  `master-modul uygula torrent`; network `torrent` (`kslcad4058f8c`, 10.89.0.0/24), container
+  10.89.0.2; `podman port` exactly 61006/tcp→127.0.0.1 and 61008/tcp+udp→WAN; only conmon holds them
+  on the host; guard rules for the bridge (eth0 → WAN:61008 tcp/udp); `master-firewall --check` OK;
+  UI 403 on loopback and via Caddy; from the Mac over the internet 61008 connects, 61006 times out;
+  over Tailscale 61008 times out (80 works); DNS and HTTPS work inside the container; the live Podman
+  page shows the three publications and the bridge, no page errors, no non-GET request. Export: root
+  and `Data/app` `2026.08.06-v2-195.command` identical (538650 bytes), embedded tree matches source.
+- Operator's other servers: reinstall qBittorrent from App Store once (or set `WebUI\Address=*`
+  while it is stopped) before/after updating; no IPv6 peers on the bridge.
+
+**2026-10-04 — Podman page, host-network ports and app navigation, v2-194 (DD-215, DD-216; uncommitted, on top of v2-193):**
+- User asked (same Claude Code session): reinstall the Mac's Playwright components; fix the App Store
+  row's cold-load name ("torrent"); rename the Konteynerler page to Podman; show the ports qBittorrent
+  opens (peer and interface ports) as ip:port instead of only "Sunucu ağı (host)"; remove the sidebar's
+  "Kurulu uygulamalar" so installed apps open only from their Ana Menü icons.
+- Done: `node "$(npm root -g)/playwright/cli.js" install chromium` (chromium-1243 + headless shell + ffmpeg,
+  ~557 MB in `~/Library/Caches/ms-playwright`). `master_containers.listening()` (container cgroup PIDs →
+  socket fds → `/proc/<pid>/net/{tcp,udp}{,6}`; TCP LISTEN + unconnected UDP; link-local dropped; scope
+  from the state's WAN/Tailscale addresses, then the tailnet ranges; `None` when unreadable); manager rows
+  carry `listening` for running host-network containers. Page: per-port access lines (max three +
+  "+N port daha"), detail table with the firewall note, title/sidebar/back "Podman", eyebrow
+  "Konteynerler · bu sunucu", repaint on catalogue load and container-name fallback (`appMeta` null
+  before the catalogue). Shell: no `paintNav`/`installed-label`, Ana Menü marked on app pages. Installer
+  summary "Konsol → Podman". Tests: new `test_container_listening.py`; browser suites and Bats updated.
+- Verification: Python 560 OK (4 skipped); `bats tests` 178/178; `git diff --check` clean; all ten
+  fixture browser suites PASS (konteynerler, panel, app-install, wireguard, torrent, files, settings,
+  settings-https, giris, publications). The socket reader ran on nrm inside a replica of the backend
+  sandbox (5 ms, 10 PIDs, same sockets as `ss`). nrm (scratch input, defaults; full-upgrade default no,
+  `E`): installer v2-194 exit 0; the real backend returns 17 qBittorrent sockets (list and detail). A
+  read-only Playwright look at the live `http://panel.ayc` (nrm's tailnet name; the built-in browser pane
+  blocks its CSS/JS): title Podman, no app entries, access lines with "+2 port daha", 17 detail rows,
+  Ana Menü marked on `#/torrent`, no page errors, no non-GET request. Export: root and `Data/app`
+  `2026.08.06-v2-194.command` identical (534565 bytes), embedded tree matches the source.
+
+**2026-10-04 — Image update check and container row controls, v2-193 (DD-214; uncommitted):**
+- User chose model 2 ("konsol güncelleme olup olmadığını denetlesin kullanıcı isterse güncellesin") and
+  asked to move start/stop and edit right before the container name, remove last, with theme-fitting icons.
+- Done in this Claude Code session (not an OpenRig seat; `rig whoami` has no identity here). Base:
+  `master_containers.update_status()` (manifest-only, platform digest or config digest), manager
+  `Service.updates()` cache (6 h TTL, forced ≥60 s apart, emptied after a successful image change),
+  `row.update`, `image-update` for App Store apps with `PAKET_IMAJ_KANAL` + adapter, GET route
+  `/api/konsol/konteynerler/guncellemeler`. qBittorrent: `TORRENT_IMAGE_KANAL=…:latest`,
+  `PAKET_AYAR_ANAHTARLAR` + `TORRENT_IMAGE`, adapter `konteyner-guncelle` (validate → pull exact digest →
+  patch rendered/placed Quadlet `Image=` + rendered `PAKET_IMAJ` + override → restart → wait UI → check
+  ImageName; rollback; rmi old by id). Page: lead controls, bare home-tile icons, update chip/count/tools,
+  detail status. Live probes on nrm: a Quadlet drop-in `Image=` is ignored by the generator (so lines
+  are patched), `podman manifest inspect` works in a replica of the backend sandbox, latest == pinned now.
+- Verification (2026-10-04): `python3.13 -m unittest discover -s Data/tests -p 'test_*.py'` 555 OK
+  (4 skipped); `bats tests` 178/178; `git diff --check` clean. nrm (Debian 13, scratch input, defaults):
+  installer exit 0; GET `guncellemeler` → qBittorrent `guncel` against the real registry. Two real
+  updates through POST `islem` → transient unit → adapter (rendered channel temporarily `:libtorrentv1`,
+  then back to `:latest`): Quadlet `Image=`, rendered `PAKET_IMAJ` and the 0600 override moved, the
+  service restarted on the new ImageName, the old image was removed, status `guncel` (14 s / 10 s); a
+  forced check inside a minute was answered from the cache. Installer re-runs kept the updated digest
+  without restarting qBittorrent. Final nrm state: final v2-193 export installed, qBittorrent on the
+  `latest` amd64 digest `b111319e…`, rendered channel `:latest`, UI on 127.0.0.1:61006 only.
+- Browser: the Playwright suites did not run (no Chromium on the Mac; its download needs approval).
+  A local fixture server in the in-app browser checked the list at 320–1440 px in both themes. That
+  found the update chip running into the status column and names squeezed while the sidebar narrows
+  the table; fixed by laying rows out by the table's own width (`container-type` + `@container`, cards
+  below 840 px; the name keeps ≥112 px everywhere). `konteynerler-ui.cjs` now asserts that room.
+- Known, pre-existing: on a cold load the App Store row can show the package id (`torrent`) until the
+  next 10 s list refresh when the list answers before the module catalogue; not changed here.
+- Export: root and `Data/app` `2026.08.06-v2-193.command` identical (531278 bytes); the embedded tree
+  matches the source.
+
 **2026-10-04 — Compact Ana Menü, source/export v2-192 (DD-213):**
 - User reported UI issues after installing v191. Implemented the requested compact
   network widget (two of six desktop slots, responsive four/two-column grid), narrower

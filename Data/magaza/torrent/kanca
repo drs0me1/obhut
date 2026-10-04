@@ -3,10 +3,11 @@
 # linuxserver/qbittorrent imajıyla çalışır; birimi paketteki qbittorrent.container'dan (quadlet)
 # üretilir. Süreç indirme klasörünün sahibi olarak çalışır, konteyner yalnız profili ve indirme
 # klasörünü görür. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
-# yeri, arayüz 127.0.0.1:TORRENT_UI_PORT); yeniden kurulum bunları korur (DD-178). Hesap/dizin
+# yeri, arayüz portu); yeniden kurulum bunları korur (DD-178). Hesap/dizin
 # değişikliklerini paketin kendi çalışanı (ayar.py, Konsol API'si api.py üzerinden) yapar; Konsol
 # sayfası (sayfa.js/css) paketle gelir ve kuruluyken CONSOLE_WEB_DIR/uygulama/torrent altında durur
-# (DD-200, DD-202). İnternete eş portu açılmaz. Kaldırılınca imaj sunucuda kalır; `kaldir --veri`
+# (DD-200, DD-202). DD-217: konteyner kendi köprü ağındadır; arayüz yalnız 127.0.0.1'de, eş portu yalnız
+# WAN IPv4 adresinde yayımlanır (Quadlet'teki PublishPort satırları). Kaldırılınca imaj sunucuda kalır; `kaldir --veri`
 # profili ve imajı siler. DD-210: kurulum Konsol'daki pencerenin hesap ve indirme klasörüyle olur;
 # motor bilgiyi KUR_TOHUM'da verir, kanca onu konteyner ilk kez başlamadan önce profile yazar.
 # shellcheck shell=bash
@@ -15,10 +16,11 @@
 [[ -z "${MODULES_DIR:-}" || ! -f "$MODULES_DIR/torrent/torrent.env" ]] || source "$MODULES_DIR/torrent/torrent.env"
 
 paket_gerekli() {
-    [[ -n "${TORRENT_UI_PORT:-}" && -n "${TORRENT_PROFILE_DIR:-}" && "${TORRENT_CONTAINER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ ]] ||
+    [[ -n "${TORRENT_UI_PORT:-}" && -n "${TORRENT_PROFILE_DIR:-}" && "${TORRENT_CONTAINER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ &&
+        "${TORRENT_PEER_PORT:-}" =~ ^[1-9][0-9]{3,4}$ && -n "${TORRENT_NETWORK:-}" ]] ||
         fail_step "paket ayarı eksik (torrent.env); kurulumu yeniden çalıştırın"
     need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR KONTEYNER_BIRIM_DIR \
-        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
+        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 WAN_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
     command -v podman >/dev/null 2>&1 || fail_step "Podman yok; kurulumu yeniden çalıştırın"
 }
 
@@ -60,10 +62,11 @@ torrent_profile() {
 }
 
 # Servis ayakta; qBittorrent süreci indirme sahibi olarak çalışıyor; konteyner çöpü, paylaşım kökünü
-# ve kullanıcı alanının tamamını görmüyor; arayüz yalnız 127.0.0.1'de dinliyor.
+# ve kullanıcı alanının tamamını görmüyor; Podman yalnız arayüzü (127.0.0.1) ve eş portunu (WAN IPv4,
+# TCP+UDP) yayımlıyor.
 # --ilk: yeni kurulumda arayüz girişsiz 403 vermeli (sonra ayarlar kullanıcının).
 torrent_verify() { # [--ilk]
-    local unit _ uid="" code="000" mounts m listen
+    local unit _ uid="" code="000" mounts m listen want ports
     FAIL=""
     unit="$(torrent_unit_name)"
     for _ in $(seq 1 60); do
@@ -96,7 +99,11 @@ torrent_verify() { # [--ilk]
     else
         [[ "$code" != 000 ]] || { FAIL="qBittorrent arayüzü 127.0.0.1:$TORRENT_UI_PORT'ta yanıt vermedi"; return 1; }
     fi
-    # Network=host: loopback dışındaki her dinleme adresi sunucunun kendisi olurdu.
+    # DD-217: Quadlet'in yayımladığı tam küme; başka adres ya da port sunucuda açılmaz.
+    want="$(printf '%s\n' "$TORRENT_UI_PORT/tcp -> 127.0.0.1:$TORRENT_UI_PORT" \
+        "$TORRENT_PEER_PORT/tcp -> $WAN_IPV4:$TORRENT_PEER_PORT" "$TORRENT_PEER_PORT/udp -> $WAN_IPV4:$TORRENT_PEER_PORT" | LC_ALL=C sort)"
+    ports="$(podman port "$TORRENT_CONTAINER" 2>/dev/null | LC_ALL=C sort || true)"
+    [[ "$ports" == "$want" ]] || { FAIL="qBittorrent'in yayımlanan portları beklenenden farklı: $(tr '\n' ' ' <<<"$ports")"; return 1; }
     listen="$(ss -Hltn "sport = :$TORRENT_UI_PORT" 2>/dev/null | awk '$4 !~ /^127\.0\.0\.1:/ {print $4}' | head -n 3 | tr '\n' ' ' || true)"
     [[ -z "$listen" ]] || { FAIL="qBittorrent arayüzü loopback dışında da dinliyor ($listen)"; return 1; }
 }
@@ -159,11 +166,11 @@ torrent_kur_geri() {
 }
 
 # --veri: profil (ayarlar ve torrent listesi), Konsol'un eklediği dizin bağlaması ve imaj.
-# İndirilen dosyalara dokunulmaz.
+# İndirilen dosyalara dokunulmaz. DD-220/221: Konsol'da seçilen arayüz/eş portu ve onaylanan imaj (kalıcı
+# seçim) ile port eki kalır: işlenmiş paket dosyaları onlarla üretildi, yeniden kurulum onlarla tutarlı başlar.
 torrent_drop_data() {
     local ek="$KONTEYNER_BIRIM_DIR/$TORRENT_CONTAINER.container.d"
-    rm -f -- "$ek/90-konsol.conf" "$ek/85-konteyner.conf"
-    [[ -z "${PACKAGE_OVERRIDES_DIR:-}" ]] || rm -f -- "$PACKAGE_OVERRIDES_DIR/torrent.env"
+    rm -f -- "$ek/90-konsol.conf"
     rmdir -- "$ek" 2>/dev/null || true
     paket_imaj_sil
     [[ "$TORRENT_PROFILE_DIR" == /var/lib/* && -d "$TORRENT_PROFILE_DIR" && ! -L "$TORRENT_PROFILE_DIR" ]] || return 0

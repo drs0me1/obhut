@@ -24,6 +24,9 @@ Base: `/api/konsol/konteynerler`.
 - `GET /gunluk?ad=NAME&satir=200`: existing `{name,lines,truncated,masked}`; allowed tails 100/200/500/1000.
   Managed stopped containers use their unit journal where the runtime container is absent.
 - `GET /islem?id=UUID`: operation state. UUID is 32 lowercase hexadecimal characters.
+- `GET /guncellemeler[?yenile=1]` (DD-214): `{checked_at,items:{NAME:{state,channel,error}},cached}`;
+  `state` is `guncel`, `var`, `sabit` or `denetlenemedi`. Registry manifests only, cached six hours,
+  forced at most once a minute. Rows also carry the cached `update` object (or `null`).
 
 Every container row retains `name,image,state,status,unit,network,ports,mounts,created,started,
 exit_code,restarts`. Additional fields:
@@ -48,13 +51,20 @@ exit_code,restarts`. Additional fields:
 permission from source/state in the browser: honor `actions` and show `restricted_reason`.
 `id` remains the observed runtime ID. `state` uses running/stopped/exited/unknown; health is separate.
 Unknown measurements are null, not zero. Busy is an operation ID or null.
-Existing port rows use `host_ip,host_port,container_port,protocol`; list `mounts` is a count,
+`listening` (DD-215) is null except for a running host-network container, where it lists the sockets its
+processes listen on: `[{address, port, protocol: "tcp"|"udp", scope: "all"|"wan"|"tailscale"|"other"|"local"}]`
+(TCP LISTEN and unconnected bound UDP from `/proc`, IPv6 link-local omitted); null there means unreadable.
+`scope` is the kind of bound address, not reachability.
+Existing port rows use `host_ip,host_port,container_port,protocol` plus (DD-217) `scope`: `local`,
+`tailscale`, `public` (unspecified or the server's WAN address) or `other`; list `mounts` is a count,
 detail `mounts` is the existing array with `type,source,destination,rw,name`.
 
 Details additionally return `config`, `revision`, `editable`, `protected_mounts` and
 `effective_autostart`. For an App Store adapter the initial config is
-`{listener_port:61006,save:"/srv/downloads"}`, with `editable:["listener_port","save"]`.
-The UI labels this as an application listener, not a bridge mapping. Account settings remain in the
+`{listener_port:62947,peer_port:63851,save:"/srv/downloads"}` (DD-219), with
+`editable:["listener_port","peer_port","save"]`. `peer_port` is optional for an adapter (DD-221): the
+page shows the field only when the adapter declares it, and sends it only then; an adapter treats an
+omitted `peer_port` as unchanged. The UI labels this as an application listener, not a bridge mapping. Account settings remain in the
 existing application settings form. Required package mounts are read-only in this generic editor.
 
 Generic managed config:
@@ -114,7 +124,7 @@ controls. Named volume deletion is separate from container removal; no arbitrary
 | adopt apply | `{name,preview_fingerprint,config,start,confirm:true}` |
 | image-pull | `{image:"fully.qualified/repository:tag"}` |
 | image-remove | `{image:"sha256:..."}` |
-| image-update | `{name,revision}`; explicit pull/compare/recreate for a managed container, never automatic |
+| image-update | `{name,revision}`; explicit pull/compare/recreate for a managed container, or (DD-214) the package adapter's digest move for an App Store app that declares a channel; never automatic |
 | volume-create, volume-remove | `{name}` |
 | network-create | `{name,subnet,internal:false}`; bridge only, no privileged host networking |
 | network-remove | `{name}` |
@@ -134,7 +144,7 @@ Audit/operation logs contain the action/target/result, never submitted environme
 
 ## UI contract
 
-Main sidebar route `#/konteynerler[/NAME]`; old Settings deep links redirect. Remove only the old
+Main sidebar route `#/konteynerler[/NAME]`, labelled "Podman" since v2-194 (DD-216); old Settings deep links redirect. Remove only the old
 container Settings tab. The four resource tabs, mobile cards and detail/editor follow the accepted
 prototype, with the corrected semantics in the plan. Drafts survive polling; late responses cannot
 overwrite a newer editor. Disabled/busy actions keep accessible names and keyboard focus.
@@ -146,5 +156,7 @@ Root worker: `python3 master_container_worker.py --state PATH --operation UUID A
 Definitions live under `KONTEYNER_STATE_DIR/definitions/`, operations under `operations/`, mode 0600.
 Package adapter: manifest `PAKET_KONTEYNER_YONETIM`, function `container_config(env)` and existing worker
 CLI `konteyner-ayar`. App lifecycle routes through the module engine (restart `yeniden-baslat`).
+DD-214: an App Store package that also declares `PAKET_IMAJ_KANAL` offers `image-update`, handled by
+the adapter CLI `konteyner-guncelle` with `{revision}` (870 s bound inside the 900 s transient unit).
 Netavark retains NAT; a project-owned nftables guard restricts ingress to managed bridge interfaces.
 Do not publish bridge ports until the worker has installed the matching policy.

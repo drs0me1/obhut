@@ -6,6 +6,104 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — qBittorrent's peer port can be changed on the Podman page (v2-199)
+
+- The Podman page's editor for qBittorrent has a new "Eş portu" field next to the interface port
+  (DD-221). Saving moves the internet-facing peer port (TCP and UDP on the WAN IPv4 address) with
+  everything that depends on it: the container's published ports, qBittorrent's own setting, the
+  forwarding guard and the value the installer uses on its next run. The old port closes.
+- Saving is refused for a port outside 1024–65535, the interface port, a port another service of
+  the server uses and one that is already taken on the WAN address; the form recommends 61000–65535.
+- Only a port you actually change is kept across updates, and removing qBittorrent with its data
+  keeps it, like the interface port.
+- The App Store no longer prints the peer port number (it could be out of date after a change);
+  the Podman page and Settings show the current port.
+
+### 2026-10-05 — Reinstalling qBittorrent after deleting its data works again (v2-198)
+
+- Removing qBittorrent with "Profili, torrent listesini ve imajı da sil" no longer forgets the
+  interface port chosen on the Podman page or an approved image update (DD-220). Before, a reinstall
+  from App Store after such a removal could fail until the installer ran again, because the files the
+  installer had prepared still used the chosen port. The removal dialog now says these choices stay.
+- Such a choice also outlasts newer package versions: after an approved image update, a newer image
+  pinned in the package does not replace it; the image moves with the next approved update. To return
+  to the package's values, delete `/etc/master-stack/package-overrides/torrent.env` and the drop-in
+  `qbittorrent.container.d/85-konteyner.conf` as root and run the installer.
+
+### 2026-10-04 — qBittorrent's own defaults again, on uncommon ports (v2-197)
+
+- The defaults chosen in v2-196 are withdrawn (DD-219): a new qBittorrent profile again gets only
+  what Konsol needs (download folder, interface address and port, login required, legal notice);
+  everything else is qBittorrent's own default.
+- qBittorrent's ports moved away from the 610xx block to fixed, rarely scanned ports: the interface
+  to 62947 (still only on 127.0.0.1) and the peer port to 63851 (TCP and UDP on the WAN address).
+  Both are outside the range Linux uses for outgoing connections. An installer run moves an existing
+  install; a port chosen earlier on the Podman page keeps its value.
+- SSH (22), the share's HTTP port (61010), WireGuard (61001) and Tailscale (41641) are unchanged;
+  443 must stay for Let's Encrypt.
+- The App Store no longer says qBittorrent opens no peer port; it names the peer port and that it is
+  open on the WAN IPv4 address only. In Settings the peer port appears for IPv4 only and without an
+  on/off switch: it is a container publication that opens and closes with the app.
+- Saving only the download folder on the Podman page no longer fixes the interface port; only a port
+  you actually change is kept across updates. An install where qBittorrent was saved there before
+  stays on its old interface port until you enter the new one.
+
+### 2026-10-04 — qBittorrent defaults chosen for new installs (v2-196)
+
+- A new qBittorrent profile now starts with the settings chosen in Konsol's review (DD-218): no
+  UPnP/NAT-PMP port mapping, no local peer discovery, encryption required, anonymous mode on, up to
+  15 active downloads, uploads and torrents, half-finished files kept in
+  `/srv/downloads/incomplete` until they finish, and disk space reserved when a download starts.
+  Seeding stays unlimited and the interface English, as qBittorrent ships them.
+- These are starting values: changes made later in qBittorrent stay. An existing qBittorrent keeps
+  its own settings; it gets these only after a reinstall that deletes its data, or by changing them
+  in qBittorrent.
+
+### 2026-10-04 — qBittorrent on its own network with only two ports open (v2-195)
+
+- qBittorrent now runs on its own Podman bridge network instead of the server's network (DD-217).
+  Its Quadlet file publishes exactly three things: the interface on 127.0.0.1:61006 (Caddy and the
+  publication reach it there) and the peer port 61008 on the server's WAN IPv4 address over TCP and
+  UDP. Nothing is published on Tailscale or any other address, and Konsol's container guard drops
+  every other packet into that network.
+- The peer port is fixed at 61008 and is reachable from the internet, so other peers can connect
+  to the server. Before, qBittorrent listened on every address but the firewall closed all of them
+  on the WAN.
+- On this network qBittorrent has no IPv6 peers. If the server's WAN address changes, run the
+  installer again.
+- Existing qBittorrent installs: reinstall it from App Store once (the install sets the interface to
+  listen inside its network); without that its interface does not answer after the update.
+- The Podman page shows the network's name and labels the WAN publication as internet access.
+  Changing the interface port there also moves its line in the Quadlet file.
+
+### 2026-10-04 — Podman page, open ports and app navigation (v2-194)
+
+- The container page is now called Podman in the sidebar and in its title (DD-216); its address,
+  bookmarks and the old Settings links stay the same. The installer summary points to Konsol → Podman.
+- The Access column shows the ports a host-network container opens (DD-215). qBittorrent used to
+  show only "Sunucu ağı (host)"; now each port appears as ip:port with its protocols, for example the
+  peer port on the WAN, Tailscale and local addresses and the interface on 127.0.0.1. The list shows
+  up to three ports and "+N port daha"; the detail lists every address. The labels say which address a
+  port is bound to; whether it is reachable from outside is still the firewall's decision.
+- Installed applications no longer appear in the sidebar ("Kurulu uygulamalar" is gone, DD-216):
+  WireGuard and qBittorrent open from their Ana Menü icons, as before also from App Store.
+- Fixed: on a fresh load the qBittorrent row could read "torrent" for up to ten seconds; it now shows
+  the container name until the app list arrives and then the application name right away.
+
+### 2026-10-04 — Image update check and container row controls (v2-193)
+
+- Konsol checks whether a newer image build is published (DD-214): the Konteynerler page asks
+  on open (answers cached for six hours) and "Güncellemeleri denetle" checks again. Only registry
+  manifests are read; nothing is downloaded and nothing updates by itself.
+- A row with a newer build shows "Güncelleme var"; the summary counts them and the detail shows
+  the state, the followed tag and the check time. After a confirmation the image is updated:
+  qBittorrent follows `lscr.io/linuxserver/qbittorrent:latest`, pulls the new digest, restarts and
+  is verified; on failure the previous image and files return. The Quadlet file always names the
+  exact running digest, and the choice survives installer runs.
+- Container rows: start/stop and edit now sit right before the name, remove stays at the end; the
+  icons are the home tiles' own (play/pause, settings sliders, trash), bare like them. The rows follow
+  the table's own width, so with the sidebar open a narrow window shows cards instead of squeezed names.
+
 ### 2026-10-04 — Compact Ana Menü and container controls (v2-192)
 
 - The network widget occupies two of six desktop slots; narrower screens use four

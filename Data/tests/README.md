@@ -196,7 +196,7 @@ library-folder drop-in, failed installs restoring the previous profile and drop-
 worker-then-engine order. `app-install-ui.cjs` drives the shell with fixture APIs under the production
 CSP: Kur opens the form (defaults, cancel/Escape send nothing, required and repeated password, folder
 chooser), drafts survive a server refusal and a poll, one request per submission, WireGuard's Kur
-unchanged, launch in a new tab with `noopener` from the tile, the sidebar and App Store (stub page as the
+unchanged, launch in a new tab with `noopener` from the tile and App Store, no sidebar entry (DD-216; stub page as the
 target), the tile action row (v2-189: icons only — no text, transparent background, no border at rest, on
 hover and pressed, at desktop and 390 px; aria-label and tooltip names; the keyboard focus ring; a finished
 request leaving focus where the operator moved it; v2-188: Ayarlar opening the form for qBittorrent and linking WireGuard's
@@ -208,6 +208,75 @@ or a late install answer leaving a newer dialog alone), a stopped app's settings
 starting it, stopped state falling back to the page, edit mode without the row and with working arrows,
 390 px dark screenshots and the public address (public name or the page, never the tailnet name). `panel-ui.cjs` installs qBittorrent through
 the form and checks the new open actions.
+
+## Peer port editor on the Podman page (v2-199, DD-221)
+
+`test_container_package.py` changes the peer port through the package adapter (`konteyner_ayar`):
+a stopped app gets both WAN `PublishPort` lines and `TORRENTING_PORT` moved in the rendered Quadlet,
+`Session\Port` in the profile and an override holding only `TORRENT_PEER_PORT` (no interface-port
+pin, no port drop-in, no Caddy change); a running app gets the placed Quadlet moved too and the
+container guard applied before the start; a failed start restores every file and reapplies the guard
+before the app starts again.
+Refused before any service action: a non-integer, out-of-range or interface-equal port, another
+service's port (base `*_PORT`, a saved definition's UDP port), a port the WAN probe finds taken, a
+Quadlet whose WAN lines or `TORRENTING_PORT` do not match, and an unknown config key. The probe
+itself refuses a held TCP and UDP port. `konteynerler-ui.cjs` edits the field (range and
+interface-equal errors block the review, the review names the change and the closing old port, the
+payload carries `peer_port`) and checks that an adapter without `peer_port` shows no field and sends
+none. `common.bats` pins the guard-before-start order and the allowlist.
+
+## Data removal keeps Konsol's choices (v2-198, DD-220)
+
+The `common.bats` engine test sets a durable `TORRENT_UI_PORT` choice (`PACKAGE_OVERRIDES_DIR`) and the
+port drop-in `85-konteyner.conf` before `kaldir --veri`, and asserts that both survive while the image
+(removed by id) and the folder drop-in go and the fixture profile (outside `/var/lib`) stays; the
+`/var/lib`-only profile guard is pinned statically. The later reinstall steps run with the override in
+place; it holds the fixture's default port, so they do not exercise a non-default one.
+
+## qBittorrent on its own bridge (v2-195, DD-217)
+
+`test_container_network.py` builds a registered package with a placed Quadlet: the guard lets
+through only its WAN publications (TCP and UDP) into the package bridge, needs no rule for the
+loopback interface, ignores an address that is not the server's, and publishes nothing for a stopped
+or unregistered package or for a placed Quadlet on another network (the installer's upgrade window).
+`test_container_package.py` moves the loopback `PublishPort` line with the interface port in the
+rendered and the placed Quadlet, restores both on failure and refuses a Quadlet without that line
+before stopping anything; `test_torrent_api.py` checks that the install writes `WebUI\Address=*`.
+`test_container_listening.py` labels published addresses (the WAN one as internet access) and names
+the bridge in the detail. `common.bats` drives the engine with fake podman: the bridge is created
+once with the guard's interface name and the package label, removed with the package, and an
+unexpected publication stops the install; it also pins the three `PublishPort` lines.
+`konteynerler-ui.cjs` shows the three publications in the row and the detail, and keeps the host-socket
+view on another host-network fixture container.
+
+## Podman page, listening ports and app navigation (v2-194, DD-215, DD-216)
+
+`test_container_listening.py` builds a small `/proc` and cgroup v2 tree: only the container's own
+processes' sockets count (TCP LISTEN, unconnected bound UDP; peer connections, connected UDP, unbound
+and link-local binds, and the host's own listeners left out), IPv4-mapped and IPv6 addresses, child
+cgroups, the root cgroup never widening to the host, unknown as `None` and never an empty list, the
+address kinds (the server's own WAN address wins over the CGNAT range), and the manager reading only
+running host-network rows with the installer's WAN/Tailscale addresses. `konteynerler-ui.cjs` checks
+the Podman title, eyebrow and sidebar entry, the absence of application entries, a cold load whose
+list answers before the module catalogue (container name first, repaint without another list read),
+the per-port access lines with "+N port daha" and the detail's full address table. `panel-ui.cjs`,
+`wireguard-ui.cjs` and `app-install-ui.cjs` assert that an installed application has no sidebar entry
+and that Ana Menü stays marked on its page; `common.bats` pins both.
+
+## Image update check and row controls (v2-193, DD-214)
+
+`test_container_updates.py` covers `update_status()` (index by host platform digest, single
+manifest by config digest, pinned/unreachable/missing answers, manifests only), the manager's
+cached status (TTL, one forced check a minute, cache emptied after a successful image change,
+no pull target to the browser), `image-update` only for packages with a channel and an adapter,
+and the GET-only route behind the gates. `test_torrent_api.py` `ImageUpdateTests` drives the
+qBittorrent adapter: no-op when current, exact-digest pull after validation, patched Quadlet and
+manifest lines plus the override (port choice kept), restart/UI/ImageName checks, full rollback on
+a failed restart or a wrong image, a stopped app, and refusals that change nothing.
+`konteynerler-ui.cjs` asserts the lead controls before the name, the home-tile glyphs and bare
+style, keyboard order, the cached check on open, the forced check, the chip, count, confirmation
+and the detail state. `common.bats` pins the manifest-only check, the adapter order, the channel
+keys and the absence of any automatic update.
 
 ## Podman in the base and qBittorrent in Podman (v2-186, DD-208, DD-209)
 
@@ -229,10 +298,11 @@ DD-213 adds name-only rows, retained status/resources/access columns, three capa
 and direct removal that keeps generic data and defaults package data deletion to off.
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
 files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
-no `/etc/containers` literal in the engine), the qBittorrent quadlet (host network, `Pull=never`,
+no `/etc/containers` literal in the engine), the qBittorrent quadlet (its own bridge
+`Network=__TORRENT_NETWORK__` with exactly three `PublishPort` lines since DD-217, `Pull=never`,
 two same-path mounts, no `NoNewPrivileges`), and the qBittorrent lifecycle against a fake
 `podman`/`systemctl`/`ss`: pull once by digest, seed before the first start, host uid / mount /
-loopback-listener checks with rollback, stop removes the quadlet, a changed quadlet restarts,
+exact `podman port` set / loopback-listener checks with rollback, stop removes the quadlet, a changed quadlet restarts,
 `--veri` removes the image by id, an active old `qbittorrent-nox@` unit is refused.
 `test_torrent_api.py` covers the worker's quadlet drop-in (same-path `Volume=` only outside the
 downloads tree, unmountable names refused, the wait for the interface after a restart) and
@@ -570,21 +640,25 @@ measurements and real HTTP Host/header/origin gates.
 
 ## qBittorrent integration-only seed (DD-178, v2-152)
 
-Bats requires an exact six-key seed allowlist (startup notice, two download-path
-compatibility keys and three authenticated loopback WebUI keys). The module
+Bats requires an exact six-key seed allowlist (startup notice, two download-path compatibility keys
+and three authenticated WebUI keys; DD-218's chosen defaults were reverted by DD-219). The module
 fixture renders that real seed; reapply and remove/reinstall must preserve user
 UPnP/discovery/temporary-path choices byte-for-byte and never apply the firewall.
 
-On an authorized Linux test host with qBittorrent, iproute2 and setpriv installed:
+On an authorized Linux test host with Podman and the package's image present (set
+`TORRENT_TEST_IMAGE` to the digest the host runs when it differs from `torrent.env`):
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 unshare --net --fork python3 Data/tests/torrent-defaults-linux.py
 ```
 
-This refuses the host network namespace, starts native qBittorrent as uid 1000
-in disposable profiles, and compares the actual seed against application
-defaults. It checks loopback/local authentication, download location and native
-restart persistence of user choices. No torrents are added, no installed config
+This refuses the host network namespace, runs the package image (`--network host` of the private
+namespace, never the server's, no pull) as uid 1000 in disposable profiles, and compares the actual
+seed against the same qBittorrent's defaults: no user preference is forced (UPnP, LSD, encryption,
+anonymous mode, queue, temporary folder, preallocation and the rest stay native). It checks local
+authentication (qBittorrent 5.2 answers a good login with an empty 204),
+the download location and restart persistence of user choices (UPnP, LSD, a temporary folder, the
+active-download limit). No torrents are added, no installed config
 is read, no host service is controlled, and fixture passwords are never printed.
 It does not replace clean Debian/Ubuntu installation or service-sandbox tests.
 

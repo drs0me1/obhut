@@ -1040,30 +1040,6 @@
     });
     return out;
   }
-  function paintNav() {
-    const label = $("installed-label"), routes = appRoutes();
-    document.querySelectorAll(".nav a[data-app]").forEach((a) => {
-      const r = routes[a.dataset.route];
-      if (!r || !r.installed || r.id !== a.dataset.app) a.remove();
-    });
-    let after = label;
-    Object.entries(routes).forEach(([rota, r]) => {
-      if (!r.installed) return;
-      let a = document.querySelector(`.nav a[data-app="${r.id}"]`);
-      if (!a) {
-        a = h("a", { href: "#/" + rota, "data-route": rota, "data-app": r.id }, svg(r.icon), r.baslik);
-        after.after(a);
-      }
-      // DD-210: the main navigation opens the app itself while it can; its page stays at #/<rota>.
-      const url = launchUrl((MODS || []).find((m) => m.id === r.id));
-      a.setAttribute("href", url || "#/" + rota);
-      if (url) { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); }
-      else { a.removeAttribute("target"); a.removeAttribute("rel"); }
-      if (rota === current && !url) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
-      after = a;
-    });
-    label.hidden = !document.querySelector(".nav a[data-app]");
-  }
   const modLogs = {};
   const modLogLoading = new Set();
   let modSelected = null, modRenderKey = "";
@@ -1092,13 +1068,13 @@
         const p = m.progress;
         if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };
       });
-      paintNav();
       ensurePages();
       const owner = appRoutes()[current];
       if (owner && !owner.installed) location.hash = "#/moduller";
       else if (pendingRoute) route();
       if (current === "moduller") renderModules();
       if (current === "genel") renderOverview();
+      if (current === "konteynerler") containers.modules();
       if (PAGES[current] && PAGES[current].page.modules) PAGES[current].page.modules(MODS);
       clearTimeout(modTimer);
       if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);
@@ -1559,12 +1535,13 @@
     h("div", {class:"chipset", id:"log-filter", role:"group", "aria-label":"Süzgeç"}),
     h("div", {class:"table log-t", id:"log-table"}));
   let settingsTab = "system";
-  // Konteynerler: ana menüde kendi sayfası (konteynerler.js). Yönetici kendi okumasını ve işlemlerini yapar;
+  // Podman: kenar çubuğunda kendi sayfası (konteynerler.js, #/konteynerler). Yönetici kendi okumasını ve işlemlerini yapar;
   // bir işlem bitince App Store ve Genel bakış ortak modül listesinden yenilenir (refreshShared).
   const containers = window.createContainerManager({ h, svg, api, post, enc, toast, fail, ask, bytes, since,
     clock: { sync: (serverNow) => { if (Number.isFinite(serverNow)) S.offset = serverNow - Date.now() / 1000; } },
     stamp: (text) => { const s = $("ct-stamp"); if (s && current === "konteynerler") s.textContent = text; },
-    appMeta: (id) => metaOf(id), refreshShared: () => loadModules(), go: (hash) => { location.hash = hash; }, active: () => current === "konteynerler" });
+    // Before the catalogue answers an App Store row keeps its container name, never the internal package id.
+    appMeta: (id) => ((MODS || []).some((m) => m.id === id) ? metaOf(id) : null), refreshShared: () => loadModules(), go: (hash) => { location.hash = hash; }, active: () => current === "konteynerler" });
   const settingsPage = window.createSettingsPage({ h, svg, api, post, toast, fail, paintWeb, loadSettings, systemContent, logContent, paintLog:renderLog });
   function renderSettings() {
     const stamp = $("cfg-stamp");
@@ -2072,13 +2049,15 @@
     if (key === "ayarlar") settingsTab = ["fw","web","dns","log"].includes(raw[1]) ? raw[1] : "system";
     // DD-206: leaving the overview drops an unsaved layout draft.
     if (key !== "genel" && editing) { editing = null; drag = null; }
-    // Likewise leaving Konteynerler closes its open sheet (an accepted operation keeps running on the server).
+    // Likewise leaving the Podman page closes its open sheet (an accepted operation keeps running on the server).
     if (key !== "konteynerler") containers.leave();
     current = key;
     if (!ROUTES[key]) sectionFor(key);
     document.querySelectorAll("[data-view]").forEach((s) => { s.hidden = s.dataset.view !== key; });
+    // DD-216: applications have no sidebar entry; their pages open from Ana Menü's tiles, which stays marked.
+    const navKey = apps[key] ? "genel" : key;
     document.querySelectorAll("[data-route]").forEach((a) => {
-      if (a.dataset.route === key) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+      if (a.dataset.route === navKey) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
     paintHeader();
     const r = ROUTES[key] || (PAGES[key] && PAGES[key].page);

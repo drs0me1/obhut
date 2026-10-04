@@ -152,7 +152,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-148 | A clean install is the base; Konsol installs modules | live | design-decisions.md |
 | DD-149 | Paylaşım is a module with a generated account | live; parts superseded by DD-158 | design-decisions.md |
 | DD-150 | Dosya yöneticisi and WireGuard are Konsol modules | live | design-decisions.md |
-| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209, first-login password by DD-210 | design-decisions.md |
+| DD-151 | qBittorrent is a host module; Dozzle and the base Compose project go | live, host part superseded by DD-209, first-login password by DD-210, inbound peer port by DD-217/219 | design-decisions.md |
 | DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live | design-decisions.md |
 | DD-153 | The base installs only what the base uses | live | design-decisions.md |
 | DD-154 | One console name, one current export | live | design-decisions.md |
@@ -179,7 +179,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-175 | Remove obsolete firewall generation, not VPN requirements | live | design-decisions.md |
 | DD-176 | Local access by default when creating a WireGuard network | superseded by DD-177 | archive/design-decisions-retired.md |
 | DD-177 | Retire Local access; WireGuard is internet-only | live | design-decisions.md |
-| DD-178 | Seed qBittorrent integration, not user preferences | live | design-decisions.md |
+| DD-178 | Seed qBittorrent integration, not user preferences | live; WebUI address by DD-217 | design-decisions.md |
 | DD-179 | Per-folder HTTP WAN opt-in with separate admission budgets | live; HTTP-only boundary superseded by DD-190, shared policy by DD-192 | design-decisions.md |
 | DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live | design-decisions.md |
 | DD-181 | Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol | live | design-decisions.md |
@@ -201,7 +201,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |
 | DD-198 | Firewall, health and port catalogue from package declarations, phase 1b | live | design-decisions.md |
 | DD-199 | Publication rows from package declarations, phase 1b | live | design-decisions.md |
-| DD-200 | Konsol pages and application API from packages, phase 2a | live | design-decisions.md |
+| DD-200 | Konsol pages and application API from packages, phase 2a | live; sidebar links removed by DD-216 | design-decisions.md |
 | DD-201 | A neutral backend, package-owned settings and self-checking packages, phase 2b | live | design-decisions.md |
 | DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |
 | DD-203 | Package-declared folders, settings and backend write paths, phase 3 | live | design-decisions.md |
@@ -210,8 +210,16 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-206 | Overview edit mode, a server-side layout and a network card | live; widget set, width and totals table presentation amended by DD-212 | design-decisions.md |
 | DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
 | DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live | design-decisions.md |
-| DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live | design-decisions.md |
-| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212 | design-decisions.md |
-| DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live | design-decisions.md |
+| DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live; explicit updates by DD-214; own bridge instead of host network by DD-217 | design-decisions.md |
+| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212; sidebar launch removed by DD-216 | design-decisions.md |
+| DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live; named Podman by DD-216 | design-decisions.md |
 | DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | presentation amended by DD-213; installed-only tiles and cumulative totals retained | design-decisions.md |
-| DD-213 | Compact Ana Menü, five-second refresh and direct container actions | v2-192; locally verified and exported, not deployed | design-decisions.md |
+| DD-213 | Compact Ana Menü, five-second refresh and direct container actions | v2-192; row action places amended by DD-214 | design-decisions.md |
+| DD-214 | Konsol checks image updates, the operator applies them; row controls before the name | v2-193; `--veri` keeps the override since DD-220 | design-decisions.md |
+| DD-215 | The Podman page shows the ports a host-network container listens on | v2-194; qBittorrent left the host network (DD-217) | design-decisions.md |
+| DD-216 | Applications open from Ana Menü only; the container page is named Podman | v2-194 | design-decisions.md |
+| DD-217 | qBittorrent on its own bridge; ports published per address in its Quadlet | v2-195; ports moved by DD-219 | design-decisions.md |
+| DD-218 | qBittorrent's fresh-profile defaults are the user's choice | retired (v2-196, reverted by DD-219) | archive/design-decisions-retired.md |
+| DD-219 | qBittorrent back to its own defaults; its ports moved to uncommon fixed ports | v2-197 | design-decisions.md |
+| DD-220 | Removing qBittorrent with its data keeps Konsol's port and image choice | v2-198 | design-decisions.md |
+| DD-221 | The Podman page changes qBittorrent's peer port | v2-199 | design-decisions.md |

@@ -53,6 +53,10 @@ paket_sifirla() {
     PAKET_TRAFIK=""
     # DD-209: Podman birimi (paketteki quadlet dosyasının adı) ve özetiyle sabitlenmiş imajı.
     PAKET_KONTEYNER="" PAKET_IMAJ="" PAKET_KONTEYNER_YONETIM="" PAKET_AYAR_ANAHTARLAR=""
+    # DD-214: imajın izlediği kanal (hareketli etiket); motor kullanmaz, Konsol yalnız denetler.
+    PAKET_IMAJ_KANAL=""
+    # DD-217: konteynerin kendi köprü ağı (adı); motor kurar, kaldırmada siler.
+    PAKET_KONTEYNER_AG=""
     # DD-210: Konsol'daki kurulum penceresinin bilgilerini doğrulayan paket çalışanı (kur-hazirla).
     PAKET_KUR_AYAR=""
 }
@@ -555,6 +559,46 @@ konteyner_hedef() {
     printf '%s/%s\n' "$KONTEYNER_BIRIM_DIR" "$PAKET_KONTEYNER"
 }
 
+# DD-217: paketin kendi köprü ağı. Köprü arayüzü Konsol'un konteyner korumasının adlandırmasıyla
+# (KONTEYNER_BRIDGE_PREFIX + adın SHA-256 özetinin ilk 10 hanesi) kurulur; koruma bu öneke giden her
+# trafiği düşürür, yalnız paketin yerleşik Quadlet dosyasındaki WAN/Tailscale yayınlarını geçirir.
+# Ağ pakete etiketle bağlıdır; aynı adla başka bir ağ varsa kullanılmaz.
+paket_ag_arayuzu() {
+    [[ "$PAKET_KONTEYNER_AG" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || return 1
+    case "$PAKET_KONTEYNER_AG" in bridge | host | none | podman | "${KONTEYNER_NETWORK:-konsol}") return 1 ;; esac
+    [[ "${KONTEYNER_BRIDGE_PREFIX:-}" =~ ^[a-z][a-z0-9]{1,4}$ ]] || return 1
+    printf '%s%s\n' "$KONTEYNER_BRIDGE_PREFIX" "$(printf '%s' "$PAKET_KONTEYNER_AG" | sha256sum | cut -c1-10)"
+}
+
+paket_ag_hazirla() {
+    local iface out
+    [[ -n "$PAKET_KONTEYNER_AG" ]] || return 0
+    iface="$(paket_ag_arayuzu)" || { FAIL="paket ağı tanımı geçersiz: $PAKET_KONTEYNER_AG"; return 1; }
+    if podman network exists "$PAKET_KONTEYNER_AG" >/dev/null 2>&1; then
+        out="$(podman network inspect --format '{{.NetworkInterface}} {{index .Labels "io.master-stack.paket"}}' "$PAKET_KONTEYNER_AG" 2>/dev/null || true)"
+        [[ "$out" == "$iface $PAKET_ID" ]] || { FAIL="'$PAKET_KONTEYNER_AG' ağı bu pakete ait değil ($out)"; return 1; }
+        return 0
+    fi
+    out="$(podman network create --driver bridge --interface-name "$iface" \
+        --label "io.master-stack.paket=$PAKET_ID" "$PAKET_KONTEYNER_AG" 2>&1)" ||
+        { FAIL="paket ağı kurulamadı: $(tail -n 1 <<<"$out")"; return 1; }
+}
+
+paket_ag_kaldir() {
+    [[ -n "$PAKET_KONTEYNER_AG" ]] && paket_ag_arayuzu >/dev/null || return 0
+    podman network exists "$PAKET_KONTEYNER_AG" >/dev/null 2>&1 || return 0
+    [[ "$(podman network inspect --format '{{index .Labels "io.master-stack.paket"}}' "$PAKET_KONTEYNER_AG" 2>/dev/null)" == "$PAKET_ID" ]] ||
+        return 0
+    podman network rm "$PAKET_KONTEYNER_AG" >/dev/null 2>&1 || warn "paket ağı silinemedi: $PAKET_KONTEYNER_AG"
+}
+
+# Koruma yerleşik Quadlet dosyalarından kurulur: yerleştirme ya da kaldırma sonrası yenilenir.
+konteyner_korumasi() {
+    [[ -n "$PAKET_KONTEYNER_AG" && -n "${KONTEYNER_STATE_DIR:-}" ]] || return 0
+    python3 "$SBIN_DIR/master_container_network.py" --state "$STATE_FILE" apply >/dev/null 2>&1 ||
+        { FAIL="konteyner yönlendirme koruması güncellenemedi"; return 1; }
+}
+
 # shellcheck disable=SC2034  # kancalar okur (birim değiştiyse konteyner yeniden kurulur)
 KONTEYNER_DEGISTI=0
 paket_konteyner_koy() {
@@ -564,13 +608,15 @@ paket_konteyner_koy() {
     dst="$(konteyner_hedef)" || { FAIL="paket konteyner birimi tanımı geçersiz: $PAKET_KONTEYNER"; return 1; }
     src="$MODULES_DIR/$PAKET_ID/$PAKET_KONTEYNER"
     [[ -f "$src" ]] || { FAIL="paket dosyası yok ($src); kurulumu yeniden çalıştırın"; return 1; }
-    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then return 0; fi
+    paket_ag_hazirla || return 1
+    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then konteyner_korumasi; return; fi
     install -d -m 0755 -- "$KONTEYNER_BIRIM_DIR"
     tmp="$(mktemp "$KONTEYNER_BIRIM_DIR/.$PAKET_KONTEYNER.XXXXXX")"
     cp -- "$src" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"
     # shellcheck disable=SC2034
     KONTEYNER_DEGISTI=1
     systemctl daemon-reload
+    konteyner_korumasi
 }
 
 paket_konteyner_kaldir() {
@@ -579,6 +625,7 @@ paket_konteyner_kaldir() {
     [[ -e "$dst" ]] || return 0
     rm -f -- "$dst"
     systemctl daemon-reload >/dev/null 2>&1 || true
+    konteyner_korumasi || warn "$FAIL"
 }
 
 # DD-209: paketin imajı yalnız özetiyle (@sha256) kabul edilir; yerelde varsa ağa çıkılmaz. Hata: FAIL.
@@ -623,6 +670,10 @@ paket_iz_kontrol() {
         [[ ! -e "$dst" ]] || left="$left $dst"
     done
     if dst="$(konteyner_hedef)"; then [[ ! -e "$dst" ]] || left="$left $dst"; fi
+    if [[ -n "$PAKET_KONTEYNER_AG" ]] && paket_ag_arayuzu >/dev/null &&
+        [[ "$(podman network inspect --format '{{index .Labels "io.master-stack.paket"}}' "$PAKET_KONTEYNER_AG" 2>/dev/null || true)" == "$PAKET_ID" ]]; then
+        left="$left ağ:$PAKET_KONTEYNER_AG"
+    fi
     if [[ "$PAKET_ADLAR" == 1 ]]; then
         [[ ! -e "$CADDY_MODULES_DIR/$PAKET_ID.caddy" ]] || left="$left $CADDY_MODULES_DIR/$PAKET_ID.caddy"
         [[ ! -e "$DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf" ]] || left="$left $DNSMASQ_CONF_DIR/modul-$PAKET_ID.conf"
@@ -775,6 +826,7 @@ cmd_kaldir() {
     paket_araclar_kaldir
     paket_ekler_kaldir
     paket_konteyner_kaldir
+    paket_ag_kaldir
     paket_sayfa_kaldir
     registry_set "$id" ""
     paket_iz_kontrol

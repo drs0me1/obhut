@@ -111,7 +111,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   soketleri ve dosya portu WAN'a açılmaz.
 
 - DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). Her modül sunucuda bir systemd servisidir. DD-208: Podman tabanın parçasıdır (`podman netavark`, önerisiz; daemon/soket/otomatik güncelleme açılmaz); Ayarlar → Konteynerler salt okunur görünümüdür. Dozzle ve Unpackerr kaldırıldı; arşiv açıcı artık Dosyalar'ın yerleşik, istek üzerine çalışan yeteneğidir (DD-159/166/170).
-- qBittorrent bir konteyner uygulamasıdır (`torrent`, DD-151, DD-209): Podman'da linuxserver imajı (özetiyle sabit, `torrent.env` → `TORRENT_IMAGE`), quadlet `qbittorrent.container` → `qbittorrent.service`, `Network=host`, PUID/PGID indirme hesabı, yalnız profil (`/var/lib/qbittorrent` → `/config`) ve indirme klasörü (aynı yol) bağlı; durdurma quadlet'i kaldırır. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/magaza/torrent/qBittorrent.conf`), sonra dokunulmaz. Portu ve profil yolu paketin `torrent.env` dosyasındadır; yazdığı klasörü (`PAKET_KLASORLER`) ve kullanıcının qBittorrent'te seçtiği geçici klasörü (`klasorler.py`) taban buradan öğrenir, tabanda `TORRENT_*` anahtarı yoktur (DD-203). DD-178: yalnız indirme yolu, kimlik doğrulamalı loopback WebUI ve başlatma onayı; UPnP/otomatik port yönlendirme, yerel eş keşfi ve ayrı geçici klasör tercihi kullanıcıya aittir. Mevcut profillerdeki eski değerler de otomatik silinmez. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yok. Kaldırınca imaj kalır; `--veri` profili, klasör ekini ve imajı siler. Konsol sayfası ve API'si paketindedir (`sayfa.js`/`sayfa.css`, `api.py`, çalışan `ayar.py`; DD-200/202).
+- qBittorrent bir konteyner uygulamasıdır (`torrent`, DD-151, DD-209): Podman'da linuxserver imajı (özetiyle sabit, `torrent.env` → `TORRENT_IMAGE`), quadlet `qbittorrent.container` → `qbittorrent.service`, kendi köprüsü `torrent` (arayüz yalnız `127.0.0.1:62947`, eş portu yalnız `WAN_IPV4:63851` TCP+UDP; DD-217/219), PUID/PGID indirme hesabı, yalnız profil (`/var/lib/qbittorrent` → `/config`) ve indirme klasörü (aynı yol) bağlı; durdurma quadlet'i kaldırır. Ayarlar yalnız ilk kurulumda bir kez yazılır (`Data/magaza/torrent/qBittorrent.conf`), sonra dokunulmaz. Portu ve profil yolu paketin `torrent.env` dosyasındadır; yazdığı klasörü (`PAKET_KLASORLER`) ve kullanıcının qBittorrent'te seçtiği geçici klasörü (`klasorler.py`) taban buradan öğrenir, tabanda `TORRENT_*` anahtarı yoktur (DD-203). DD-178: yalnız indirme yolu, kimlik doğrulamalı WebUI (konteynerde `*`, sunucuda yalnız loopback yayını) ve başlatma onayı; UPnP/otomatik port yönlendirme, yerel eş keşfi ve ayrı geçici klasör tercihi kullanıcıya aittir. Mevcut profillerdeki eski değerler de otomatik silinmez. Kurulum hesabı tutmaz: ilk girişin geçici parolası günlükten okunur ve Konsol kartında gösterilir. Gelen eş portu yalnız WAN IPv4'te ve konteyner korumasından geçer (DD-217/219). Kaldırınca imaj kalır; `--veri` profili, klasör ekini ve imajı siler, Konsol'daki port/imaj seçimi kalır (DD-220). Konsol sayfası ve API'si paketindedir (`sayfa.js`/`sayfa.css`, `api.py`, çalışan `ayar.py`; DD-200/202).
 - Paylaşım (DD-158): Python stdlib `master_webdav.py`, `master-paylasim.service` içinde indirme UID'siyle loopback'te çalışır. Root kayıt `webdav.json` 0600, yalnız scrypt özeti, `LoadCredential`; çöp/iç alanlar erişilemez. Klasör sınırı tanıtıcı tabanlı istek denetimiyle korunur. Ayrıntı: `Data/docs/folder-shares.md`.
 
 ### WireGuard (DD-120, DD-124, DD-128, DD-130, DD-132, DD-133, DD-136)
@@ -153,17 +153,18 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 
 - Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
 - Örnek:
-  - paket arayüzleri (ör. torrent; port paketin `torrent.env` dosyasında): `127.0.0.1:61006`
+  - paket arayüzleri (ör. torrent; port paketin `torrent.env` dosyasında): `127.0.0.1:62947`
   - WebDAV: `127.0.0.1:<webdav-port>`
 - Public olarak yayınlanacak:
   - WireGuard (host çekirdeği, ağ başına wg-quick@wgN): yalnız UDP
+  - qBittorrent eş portu: `WAN_IPV4:63851` TCP+UDP, yalnız kendi köprüsünden Quadlet yayını (DD-217/219); Podman sayfasından değiştirilebilir (DD-221)
   - İsteğe bağlı klasör WebDAV: DD-190 moduna göre WAN IPv4 TCP
     `SHARE_HTTPS_PORT` veya eski onaylı HTTP için `SHARE_PORT`; yönetim yolu yok.
   - DD-191 qBittorrent'in kendi girişli WebUI'si: yalnız açık HTTPS tercihiyle,
     WebDAV ile aynı `SHARE_HTTPS_PORT`.
   - DD-195 Konsol: yalnız açık HTTPS tercihiyle ve Konsol hesabı varken, aynı
     `SHARE_HTTPS_PORT`; Tailscale adresiyle aynı `(konsol)` Caddy parçası ve oturum denetimi.
-  - Paketlere gelen veri/eş portu yok (DD-151): yalnız dışa bağlanırlar. Yeniden açmak açık karar ister.
+  - Paketler internete yalnız bildirdikleri portu açar; bugün yalnız qBittorrent'in eş portu (WAN IPv4, kendi köprüsünden; DD-217/219, kullanıcının açık kararı).
 - Servis adları, portlar ve yollar tek bir yapılandırma kaynağından (`defaults.env`) yönetilmeli.
 
 ### dnsmasq
@@ -242,7 +243,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `tailscale0` için yalnız SSH, Caddy, DNS, WebDAV, Self PeerAPI ve kayıtlı WireGuard portları izinlidir; diğer yeni host bağlantıları `ts-input` öncesinde düşürülür (DD-172), panelin onaylı izin/engel kuralları önceliklidir,
   - public WAN üzerinden yalnız:
     - SSH ve Tailscale UDP portu,
-    - WireGuard UDP portları kabul edilecek (torrent eş portu yok, DD-151),
+    - WireGuard UDP portları kabul edilecek (torrent eş portu MASTER-INPUT'ta değil, konteyner korumasında; DD-217/219),
     - DD-190/191 moduna göre WAN IPv4 WebDAV veya isteğe bağlı qBittorrent HTTPS;
       aynı HTTPS portunda tek izin, aynı bağlantı bütçesi. HTTP'de aktif WAN
       klasörü şart, yapılandırılmış HTTPS'te yenileme için boşken de açık,

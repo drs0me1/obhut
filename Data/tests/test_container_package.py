@@ -20,7 +20,7 @@ class PackageConfigTests(Scratch):
         self.env["PACKAGE_OVERRIDES_DIR"] = str(self.root / "overrides")
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         with (self.pkg / "paket.env").open("a") as stream:
-            stream.write('\nPAKET_AYAR_ANAHTARLAR="TORRENT_UI_PORT"\n')
+            stream.write('\nPAKET_AYAR_ANAHTARLAR="TORRENT_UI_PORT TORRENT_PEER_PORT"\n')
         self.override = self.root / "overrides/torrent.env"
         self.caddy = self.root / "caddy-modules/torrent.caddy"
         self.caddy.parent.mkdir()
@@ -55,8 +55,8 @@ class PackageConfigTests(Scratch):
 
     def test_config_is_safe_and_revision_changes_with_native_save(self):
         first = self.view()
-        self.assertEqual(first["config"], {"listener_port": 61006, "save": self.env["DOWNLOADS_PATH"] + "/"})
-        self.assertEqual(set(first["editable"]), {"listener_port", "save"})
+        self.assertEqual(first["config"], {"listener_port": 61006, "peer_port": 61008, "save": self.env["DOWNLOADS_PATH"] + "/"})
+        self.assertEqual(set(first["editable"]), {"listener_port", "peer_port", "save"})
         self.assertEqual(first["protected_mounts"][0]["target"], "/config")
         self.assertNotIn("oldhash", json.dumps(first))
         self.assertNotIn("password", json.dumps(first).lower())
@@ -89,6 +89,51 @@ class PackageConfigTests(Scratch):
         self.assertIn("Volume=" + media + ":" + media, self.drop.read_text())
         self.assertIn("reverse_proxy 127.0.0.1:61997", self.caddy.read_text())
         self.assertEqual(self.view()["config"]["listener_port"], 61997)
+        # DD-217: the loopback publication moves with the port; the peer publications stay; a stopped app
+        # has no placed Quadlet and none is created.
+        rendered = (self.pkg / "qbittorrent.container").read_text()
+        self.assertIn("PublishPort=127.0.0.1:61997:61997/tcp\n", rendered)
+        self.assertNotIn("61006", rendered)
+        self.assertEqual(rendered.count("PublishPort=203.0.113.1:61008:61008/"), 2)
+        self.assertFalse((self.root / "quadlet/qbittorrent.container").exists())
+
+    def test_folder_only_edit_does_not_pin_the_interface_port(self):
+        # DD-219: only a changed port becomes a durable choice; otherwise a later default port still applies.
+        self.active = False
+        media = str(self.root / "srv/media/movies")
+        self.apply(port=61006, save=media)
+        self.assertFalse(self.override.exists(), "no override for an unchanged port")
+        self.assertFalse((self.drop.parent / "85-konteyner.conf").exists())
+        self.assertIn("Volume=" + media + ":" + media, self.drop.read_text())
+        # An earlier explicit choice stays exactly as it was.
+        self.apply(port=61997)
+        before = self.override.read_bytes(), (self.drop.parent / "85-konteyner.conf").read_bytes()
+        self.apply(port=61997, save=media)
+        self.assertIn("Volume=" + media + ":" + media, self.drop.read_text(), "the folder edit itself applied")
+        self.assertEqual((self.override.read_bytes(), (self.drop.parent / "85-konteyner.conf").read_bytes()), before)
+
+    def test_placed_quadlet_publication_moves_and_failure_restores_it(self):
+        from test_torrent_api import QUADLET
+        placed = self.root / "quadlet/qbittorrent.container"
+        placed.write_text(QUADLET % (61006, 61006))
+        self.apply()
+        self.assertIn("PublishPort=127.0.0.1:61997:61997/tcp\n", placed.read_text())
+        placed.write_text(QUADLET % (61006, 61006))
+        (self.pkg / "qbittorrent.container").write_text(QUADLET % (61006, 61006))
+        self.override.unlink()
+        before = placed.read_bytes()
+        self.fail_cmd = "systemctl start"
+        with self.assertRaises(settings.SettingsError):
+            self.apply()
+        self.assertEqual(placed.read_bytes(), before)
+        self.assertEqual((self.pkg / "qbittorrent.container").read_bytes(), before)
+
+    def test_quadlet_without_its_loopback_publication_is_refused_before_stop(self):
+        (self.pkg / "qbittorrent.container").write_text("[Container]\nImage=x\nNetwork=host\n")
+        with self.assertRaisesRegex(settings.SettingsError, "port satırı"):
+            self.apply()
+        self.assertEqual(self.systemctl(), [], "nothing stopped or written for a Quadlet it cannot patch")
+        self.assertFalse(self.override.exists())
 
     def test_active_edit_waits_on_effective_new_listener(self):
         self.apply()
@@ -105,6 +150,126 @@ class PackageConfigTests(Scratch):
             server.bind(("127.0.0.1", 0))
             with self.assertRaisesRegex(settings.SettingsError, "port|Port"):
                 self.apply(port=server.getsockname()[1])
+        self.assertEqual(self.calls, [])
+
+    def apply_peer(self, peer, port=61006, save=None):
+        request = {"revision": self.view()["revision"],
+                   "config": {"listener_port": port, "peer_port": peer, "save": save or self.env["DOWNLOADS_PATH"]}}
+        return ayar.konteyner_ayar(ayar.package_env(self.env), request, str(self.state))
+
+    def guard_script(self):
+        (self.root / "bin").mkdir(exist_ok=True)
+        (self.root / "bin/master_container_network.py").write_text("# fixture\n")
+
+    def test_stopped_peer_edit_moves_both_publications_environment_profile_and_override(self):
+        # DD-221: the WAN publications (TCP+UDP), TORRENTING_PORT and Session\Port move together; only the
+        # changed key is recorded, the interface port keeps following the package default.
+        self.active = False
+        probes = []
+        patch.object(ayar, "peer_probe", side_effect=lambda address, port: probes.append((address, port))).start()
+        result = self.apply_peer(63999)
+        self.assertTrue(result["ok"])
+        self.assertEqual(probes, [("203.0.113.1", 63999)])
+        self.assertNotIn("start", self.systemctl())
+        rendered = (self.pkg / "qbittorrent.container").read_text()
+        for proto in ("tcp", "udp"):
+            self.assertIn("PublishPort=203.0.113.1:63999:63999/%s\n" % proto, rendered)
+        self.assertIn("Environment=PUID=1000 TZ=UTC TORRENTING_PORT=63999\n", rendered)
+        self.assertNotIn("61008", rendered)
+        self.assertIn("PublishPort=127.0.0.1:61006:61006/tcp\n", rendered, "the interface publication stays")
+        self.assertIn("Session\\Port=63999", self.conf.read_text())
+        self.assertEqual(self.override.read_text(), "TORRENT_PEER_PORT=63999\n")
+        self.assertEqual(self.override.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((self.drop.parent / "85-konteyner.conf").exists())
+        self.assertIn("reverse_proxy 127.0.0.1:61006", self.caddy.read_text())
+        self.assertEqual(self.view()["config"]["peer_port"], 63999)
+        self.assertEqual(settings.package_env(self.env, "torrent")["TORRENT_PEER_PORT"], "63999")
+        self.assertFalse((self.root / "quadlet/qbittorrent.container").exists())
+
+    def test_active_peer_edit_updates_the_guard_before_the_start(self):
+        from test_torrent_api import QUADLET
+        patch.object(ayar, "peer_probe").start()
+        self.guard_script()
+        placed = self.root / "quadlet/qbittorrent.container"
+        placed.write_text(QUADLET % (61006, 61006))
+        self.apply_peer(63999, port=61997)
+        self.assertIn("PublishPort=203.0.113.1:63999:63999/udp\n", placed.read_text())
+        self.assertIn("PublishPort=127.0.0.1:61997:61997/tcp\n", placed.read_text())
+        self.assertEqual(self.override.read_text(), "TORRENT_PEER_PORT=63999\nTORRENT_UI_PORT=61997\n")
+        flat = [" ".join(c) for c in self.calls]
+        guard = [i for i, c in enumerate(flat) if "master_container_network.py" in c and c.endswith(" apply")]
+        start = [i for i, c in enumerate(flat) if c.startswith("systemctl start")]
+        self.assertEqual(len(guard), 1)
+        self.assertLess(guard[0], start[0], "the new WAN publication is let through before the app starts")
+
+    def test_failed_peer_edit_restores_publications_profile_and_guard(self):
+        from test_torrent_api import QUADLET
+        patch.object(ayar, "peer_probe").start()
+        self.guard_script()
+        placed = self.root / "quadlet/qbittorrent.container"
+        placed.write_text(QUADLET % (61006, 61006))
+        before = placed.read_bytes(), (self.pkg / "qbittorrent.container").read_bytes(), self.conf.read_bytes()
+        self.fail_cmd = "systemctl start"
+        with self.assertRaises(settings.SettingsError):
+            self.apply_peer(63999)
+        self.assertEqual((placed.read_bytes(), (self.pkg / "qbittorrent.container").read_bytes(), self.conf.read_bytes()), before)
+        self.assertFalse(self.override.exists())
+        flat = [" ".join(c) for c in self.calls]
+        guards = [i for i, c in enumerate(flat) if "master_container_network.py" in c]
+        starts = [i for i, c in enumerate(flat) if c.startswith("systemctl start")]
+        self.assertEqual(len(guards), 2, "the guard is reapplied from the restored Quadlet")
+        self.assertEqual(len(starts), 2)
+        self.assertLess(guards[1], starts[1], "the restored publication is let through before the app restarts")
+
+    def test_invalid_reserved_or_occupied_peer_port_refused_before_stop(self):
+        patch.object(ayar, "peer_probe").start()
+        self.env["SHARE_PORT"] = "61010"
+        for peer in (True, "63999", 0, 1023, 65536, 61006, 61010):
+            with self.subTest(peer=peer), self.assertRaises(settings.SettingsError):
+                self.apply_peer(peer)
+            self.assertEqual(self.calls, [])
+        directory = self.root / "containers/definitions"
+        directory.mkdir(parents=True)
+        definition = directory / "sample.json"
+        definition.write_text(json.dumps({"schema": 1, "name": "sample", "revision": "a" * 32, "manual_stop": True,
+            "ports": [{"scope": "public", "host_port": 63999, "container_port": 9, "protocol": "udp"}]}))
+        definition.chmod(0o600)
+        self.env["KONTEYNER_STATE_DIR"] = str(directory.parent)
+        with self.assertRaisesRegex(settings.SettingsError, "ayrılmış"):
+            self.apply_peer(63999)
+        self.assertEqual(self.calls, [])
+        del self.env["KONTEYNER_STATE_DIR"]
+        patch.object(ayar, "peer_probe", side_effect=settings.SettingsError("kullanımda")).start()
+        with self.assertRaisesRegex(settings.SettingsError, "kullanımda"):
+            self.apply_peer(63998)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.override.exists())
+
+    def test_peer_probe_refuses_a_held_udp_or_tcp_port(self):
+        for kind in (socket.SOCK_DGRAM, socket.SOCK_STREAM):
+            with self.subTest(kind=kind), socket.socket(socket.AF_INET, kind) as held:
+                held.bind(("127.0.0.1", 0))
+                with self.assertRaisesRegex(settings.SettingsError, "eş portu"):
+                    ayar.peer_probe("127.0.0.1", held.getsockname()[1])
+
+    def test_quadlet_without_its_peer_publication_is_refused_before_stop(self):
+        patch.object(ayar, "peer_probe").start()
+        quadlet = self.pkg / "qbittorrent.container"
+        for text in (quadlet.read_text().replace("61008:61008/udp", "61009:61009/udp"),
+                     quadlet.read_text().replace("TORRENTING_PORT=61008", "TORRENTING_PORT=61009"),
+                     quadlet.read_text().replace("203.0.113.1", "198.51.100.7")):
+            quadlet.write_text(text)
+            with self.subTest(text=text), self.assertRaisesRegex(settings.SettingsError, "Eş portunun"):
+                self.apply_peer(63999)
+            self.assertEqual(self.systemctl(), [])
+            quadlet.write_text(text.replace("61009", "61008").replace("198.51.100.7", "203.0.113.1"))
+        self.assertFalse(self.override.exists())
+
+    def test_unknown_config_key_is_refused(self):
+        request = {"revision": self.view()["revision"],
+                   "config": {"listener_port": 61006, "peer_port": 61008, "save": self.env["DOWNLOADS_PATH"], "x": 1}}
+        with self.assertRaisesRegex(settings.SettingsError, "alanları"):
+            ayar.konteyner_ayar(ayar.package_env(self.env), request, str(self.state))
         self.assertEqual(self.calls, [])
 
     def test_bad_folder_is_refused_before_any_service_action(self):

@@ -5,10 +5,10 @@
   "ton": "t-video",
   "aciklama": "Sunucudaki Podman'da konteyner olarak çalışır. Kurulumda seçtiğiniz hesap ve indirme klasörüyle başlar; diğer ayarlarına dokunmaz.",
   "neler": [
-    ["box", "linuxserver/qbittorrent imajı __TORRENT_SURUM__, özetiyle sabit; kurulum günceller"],
+    ["box", "linuxserver/qbittorrent imajı __TORRENT_SURUM__, özetiyle sabit; Konsol yeni sürümü denetler, siz onaylayınca günceller"],
     ["globe", "torrent.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler)"],
     ["folder", "İndirme yeri __DOWNLOADS_PATH__, profil __TORRENT_PROFILE_DIR__"],
-    ["info", "İnternete eş portu açılmaz; yalnız giden bağlantılar"]
+    ["info", "Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır; Tailscale'de ve başka adreste port yok. Numarası Podman sayfasında görünür ve orada değiştirilebilir"]
   ],
   "notlar": ["Podman konteyneri · __TORRENT_CONTAINER__", "arayüz yalnız sunucu"],
   "gunluk_kaynak": "journalctl -u __TORRENT_CONTAINER__.service",
@@ -19,7 +19,7 @@
     ],
     "veri_etiket": "Profili, torrent listesini ve imajı da sil",
     "veri_kalir": "indirilenler __DOWNLOADS_PATH__ altında kalır; profil ve torrent listesi korunur.",
-    "veri_silinir": "Profil, torrent listesi ve konteyner imajı da silinir. İndirilen dosyalara dokunulmaz."
+    "veri_silinir": "Profil, torrent listesi ve konteyner imajı da silinir. İndirilen dosyalara dokunulmaz; Konsol'da seçilen arayüz ve eş portu ile onaylanan imaj sürümü korunur."
   },
   "durdur_notu": "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder.",
   "form": {

@@ -1009,12 +1009,18 @@ class Panel:
             if not self.module_state(mid, env):
                 continue
             own = None
+            # DD-217: a package on its own bridge reaches the internet through its Quadlet's IPv4
+            # publication and the container guard (forward path); a MASTER-INPUT rule cannot change it.
+            bridge = bool(manifest.get("PAKET_KONTEYNER_AG"))
             for key, name, proto, scope in manifest_ports(manifest):
                 if key not in env and own is None:
                     own = master_settings.package_env(env, mid)  # DD-203: the package's own setting
                 port = num_or(env.get(key, (own or {}).get(key)), 0)
                 if port:
-                    rows.append({"port": port, "proto": proto, "scope": scope, "name": name})
+                    row = {"port": port, "proto": proto, "scope": scope, "name": name}
+                    if bridge and scope == "internet":
+                        row.update(families=(4,), fixed=True)
+                    rows.append(row)
         return rows
 
     @staticmethod
@@ -1577,12 +1583,15 @@ class Panel:
             pass
         for p in self.ports(env, networks):
             scope = {"internet": "wan", "tailscale": "tail", "loopback": "lo"}[p["scope"]]
-            for family in (4, 6):
+            for family in p.get("families", (4, 6)):
                 for proto in p["proto"].split("+"):
                     # WAN IPv6 has no VPN endpoint permission (DD-198 vpn rows are IPv4 UDP).
                     if not (scope == "wan" and family == 6 and p.get("vpn")):
-                        rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"],
-                                     "scope": scope, "baseline": True})
+                        row = {"name": p["name"], "family": family, "proto": proto, "port": p["port"],
+                               "scope": scope, "baseline": True}
+                        if p.get("fixed"):
+                            row["fixed"] = True
+                        rows.append(row)
                     if p.get("vpn") and scope == "wan":
                         rows.append({"name": p["name"], "family": family, "proto": proto, "port": p["port"],
                                      "scope": "tail", "baseline": True})
@@ -2009,11 +2018,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/konsol/saglik":
             self.json(200, self.panel.health())
             return
-        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem)$", path)
+        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)
         if m:
             try:
                 if m.group(1) == "islem":
                     self.json(200, self.panel.containers.operation(query.get("id", [""])[0]))
+                    return
+                # DD-214: image update status from registry manifests; cached, ?yenile=1 asks again.
+                if m.group(1) == "guncellemeler":
+                    if not read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
+                        raise master_containers.ContainerError(503, "Konteyner yönetimi henüz hazır değil; kurulumu yeniden çalıştırın.")
+                    self.json(200, self.panel.containers.updates(force="yenile" in query))
                     return
                 # Older state files retain their read-only view until the installer provisions
                 # the manager's private store and workers.

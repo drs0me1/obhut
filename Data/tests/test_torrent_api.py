@@ -40,6 +40,11 @@ SEED = ("[Preferences]\nWebUI\\Username=admin\nWebUI\\Password_PBKDF2=oldhash\nW
         "WebUI\\Port=61006\nUnrelated=keep\n[BitTorrent]\nSession\\DefaultSavePath=%s/\nSession\\Port=45410\n")
 
 
+QUADLET = ("[Container]\nImage=lscr.io/linuxserver/qbittorrent@sha256:" + "b5" * 32 + "\nContainerName=qbittorrent\n"
+           "Network=torrent\nPublishPort=127.0.0.1:%d:%d/tcp\nPublishPort=203.0.113.1:61008:61008/tcp\n"
+           "PublishPort=203.0.113.1:61008:61008/udp\nEnvironment=PUID=1000 TZ=UTC TORRENTING_PORT=61008\n")
+
+
 class Scratch(unittest.TestCase):
     """A profile, unit folder and user area like the installer's, plus a recording service control."""
     def setUp(self):
@@ -77,7 +82,9 @@ class Scratch(unittest.TestCase):
             shutil.copy(PACKAGE / name, self.pkg / name)
         (self.pkg / "paket.env").write_text((PACKAGE / "paket.env").read_text().replace("__TORRENT_UI_PORT__", "61006")
                                             .replace("__DOWNLOADS_PATH__", self.env["DOWNLOADS_PATH"]))
-        (self.pkg / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s\nTORRENT_CONTAINER=qbittorrent\n" % self.env["TORRENT_PROFILE_DIR"])
+        (self.pkg / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PEER_PORT=61008\nTORRENT_PROFILE_DIR=%s\nTORRENT_CONTAINER=qbittorrent\n" % self.env["TORRENT_PROFILE_DIR"])
+        # DD-217: the rendered Quadlet publishes the interface on loopback and the peer port on the WAN address.
+        (self.pkg / "qbittorrent.container").write_text(QUADLET % (61006, 61006))
         self.calls, self.fail_cmd, self.active = [], None, True
         self.addCleanup(patch.stopall)
         patch.object(settings, "run", side_effect=self.fake_run).start()
@@ -364,8 +371,11 @@ class InstallWorkerTests(Scratch):
         self.assertIn('Downloads\\SavePath="%s/"\n' % media, text)
         self.assertNotIn("oldhash", text)
         self.assertNotIn("first-install-phrase", text)
-        for keep in ("Unrelated=keep\n", "Session\\Port=45410\n", "PortForwardingEnabled=true\n", "WebUI\\Address=127.0.0.1\n"):
+        for keep in ("Unrelated=keep\n", "Session\\Port=45410\n", "PortForwardingEnabled=true\n"):
             self.assertIn(keep, text, "a kept profile keeps every other preference")
+        # DD-217: on its own bridge the interface listens on the container's address (published on loopback only).
+        self.assertIn("WebUI\\Address=*\n", text)
+        self.assertNotIn("WebUI\\Address=127.0.0.1", text)
         self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
         self.assertEqual(self.drop.read_text(), "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s\n" % (media, media))
         self.assertEqual(self.calls, [], "no service command: the container has not started yet")
@@ -772,3 +782,138 @@ class InstallRouteTests(Scratch):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageUpdateTests(Scratch):
+    """DD-214: the package moves its pinned image on explicit request; rollback restores every file."""
+    REPO = "lscr.io/linuxserver/qbittorrent"
+    OLD = REPO + "@sha256:" + "b5" * 32
+    NEW = REPO + "@sha256:" + "11" * 32
+    CHANNEL = REPO + ":latest"
+
+    def setUp(self):
+        super().setUp()
+        self.env.update(PACKAGE_OVERRIDES_DIR=str(self.root / "overrides"), TORRENT_IMAGE_KANAL=self.CHANNEL, TORRENT_IMAGE=self.OLD)
+        (self.root / "overrides").mkdir(mode=0o700)
+        self.override = self.root / "overrides" / "torrent.env"
+        self.override.write_text("TORRENT_UI_PORT=61016\n")
+        self.override.chmod(0o600)
+        quadlet = QUADLET % (61016, 61016)
+        self.assertIn("Image=%s\n" % self.OLD, quadlet)
+        self.rendered = self.pkg / "qbittorrent.container"
+        self.rendered.write_text(quadlet)
+        manifest = (PACKAGE / "paket.env").read_text().replace("__TORRENT_IMAGE__", self.OLD)
+        (self.pkg / "paket.env").write_text(manifest)
+        self.placed = self.root / "quadlet" / "qbittorrent.container"
+        self.placed.write_text(quadlet)
+        self.remote_digest = "sha256:" + "11" * 32
+        self.local_digest = "sha256:" + "22" * 32
+        self.files = [self.override, self.rendered, self.pkg / "paket.env", self.placed]
+
+    def fake_run(self, argv, **kwargs):
+        argv = list(argv)
+        if argv[:1] != ["podman"]:
+            return super().fake_run(argv, **kwargs)
+        self.calls.append(argv)
+        if self.fail_cmd and self.fail_cmd in " ".join(argv):
+            self.fail_cmd = None
+            raise settings.SettingsError("injected failure")
+        out = ""
+        if argv[:2] == ["podman", "info"]:
+            out = "amd64\n"
+        elif argv[:3] == ["podman", "image", "inspect"] and "--format" not in argv:
+            out = json.dumps([{"Id": "a" * 64, "Digest": "sha256:" + "b5" * 32, "RepoDigests": [self.REPO + "@" + self.local_digest, self.OLD]}])
+        elif argv[:3] == ["podman", "manifest", "inspect"]:
+            out = json.dumps({"manifests": [{"digest": self.remote_digest, "platform": {"architecture": "amd64", "os": "linux"}}]})
+        elif argv[:2] == ["podman", "inspect"]:
+            out = self.NEW + "\n"
+        elif argv[:3] == ["podman", "image", "inspect"]:
+            fmt = argv[argv.index("--format") + 1]
+            out = ("5.2.5_v2.0.15-ls480\n" if "version" in fmt else ("a" * 64 if argv[-1] == self.OLD else "c" * 64) + "\n")
+        return subprocess.CompletedProcess(argv, 0, out, "")
+
+    def podman(self):
+        return [c[:3] for c in self.calls if c[0] == "podman"]
+
+    def run_update(self):
+        revision = ayar.container_config(self.env)["revision"]
+        return ayar.konteyner_guncelle(self.env, {"revision": revision}, str(self.state))
+
+    def test_an_up_to_date_channel_changes_nothing(self):
+        self.local_digest = self.remote_digest
+        before = [p.read_bytes() for p in self.files]
+        result = self.run_update()
+        self.assertEqual((result["ok"], result["changed"], result["image"]), (True, False, self.OLD))
+        self.assertEqual([p.read_bytes() for p in self.files], before)
+        self.assertNotIn(["podman", "pull", "-q"], self.podman())
+        self.assertEqual(self.systemctl(), [])
+
+    def test_update_pins_the_new_digest_everywhere_restarts_verifies_and_drops_the_old_image(self):
+        result = self.run_update()
+        self.assertEqual((result["changed"], result["image"], result["previous"], result["version"]), (True, self.NEW, self.OLD, "5.2.5_v2.0.15-ls480"))
+        self.assertEqual(self.override.read_text(), "TORRENT_IMAGE=%s\nTORRENT_UI_PORT=61016\n" % self.NEW, "the port choice is kept")
+        self.assertEqual(self.override.stat().st_mode & 0o777, 0o600)
+        for path in (self.rendered, self.placed):
+            self.assertIn("Image=%s\n" % self.NEW, path.read_text())
+            self.assertNotIn(self.OLD, path.read_text())
+        self.assertIn('PAKET_IMAJ="%s"\n' % self.NEW, (self.pkg / "paket.env").read_text())
+        self.assertIn('PAKET_IMAJ_KANAL="__TORRENT_IMAGE_KANAL__"', (self.pkg / "paket.env").read_text(), "only the image line changes")
+        pulls = [c for c in self.calls if c[:2] == ["podman", "pull"]]
+        self.assertEqual(pulls, [["podman", "pull", "-q", self.NEW]], "the exact digest seen by the check is pulled")
+        self.assertEqual(self.systemctl(), ["is-active", "daemon-reload", "restart", "is-active"])
+        self.assertEqual(self.ui_waits, ["61006"])
+        self.assertIn(["podman", "rmi", "a" * 64], self.calls, "the previous image is removed only after success")
+        # Order: pull before any file is written or the service touched.
+        first_write = min(i for i, c in enumerate(self.calls) if c[:1] == ["systemctl"])
+        self.assertLess(self.calls.index(["podman", "pull", "-q", self.NEW]), first_write)
+
+    def test_a_failed_restart_restores_every_file_and_the_previous_service(self):
+        before = [p.read_bytes() for p in self.files]
+        self.fail_cmd = "restart qbittorrent.service"
+        with self.assertRaises(settings.SettingsError) as err:
+            self.run_update()
+        self.assertEqual(err.exception.status, 502)
+        self.assertIn("önceki imaja dönüldü", str(err.exception))
+        self.assertEqual([p.read_bytes() for p in self.files], before)
+        self.assertEqual(self.systemctl(), ["is-active", "daemon-reload", "restart", "daemon-reload", "restart", "is-active"])
+        self.assertNotIn(["podman", "rmi", "a" * 64], self.calls)
+
+    def test_a_container_that_comes_up_with_another_image_is_rolled_back(self):
+        before = [p.read_bytes() for p in self.files]
+        original = self.fake_run
+
+        def wrong(argv, **kwargs):
+            if list(argv)[:2] == ["podman", "inspect"]:
+                self.calls.append(list(argv))
+                return subprocess.CompletedProcess(argv, 0, self.OLD + "\n", "")
+            return original(argv, **kwargs)
+        with patch.object(settings, "run", side_effect=wrong):
+            with self.assertRaises(settings.SettingsError) as err:
+                self.run_update()
+        self.assertEqual(err.exception.status, 502)
+        self.assertEqual([p.read_bytes() for p in self.files], before)
+
+    def test_a_stopped_app_only_changes_the_files_its_next_start_uses(self):
+        self.active = False
+        self.placed.unlink()
+        result = self.run_update()
+        self.assertTrue(result["changed"])
+        self.assertFalse(self.placed.exists(), "a stopped app's unit stays removed")
+        self.assertIn("Image=%s\n" % self.NEW, self.rendered.read_text())
+        self.assertEqual(self.systemctl(), ["is-active", "daemon-reload"])
+        self.assertEqual(self.ui_waits, [])
+
+    def test_stale_revision_missing_channel_and_unknown_image_line_change_nothing(self):
+        before = [p.read_bytes() for p in self.files]
+        with self.assertRaises(settings.SettingsError) as err:
+            ayar.konteyner_guncelle(self.env, {"revision": "0" * 64}, str(self.state))
+        self.assertEqual(err.exception.status, 409)
+        revision = ayar.container_config(self.env)["revision"]
+        with self.assertRaises(settings.SettingsError):
+            ayar.konteyner_guncelle(dict(self.env, TORRENT_IMAGE_KANAL=""), {"revision": revision}, str(self.state))
+        self.rendered.write_text("[Container]\nImage=elsewhere\n")
+        with self.assertRaises(settings.SettingsError):
+            ayar.konteyner_guncelle(self.env, {"revision": ayar.container_config(self.env)["revision"]}, str(self.state))
+        self.rendered.write_bytes(before[1])
+        self.assertEqual([p.read_bytes() for p in self.files], before)
+        self.assertFalse([c for c in self.calls if c[:2] == ["podman", "pull"]])

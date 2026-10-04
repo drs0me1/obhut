@@ -211,7 +211,7 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await user.waitFor();
     await user.fill("second-draft"); await pass.fill("second-draft-phrase"); await again.fill("second-draft-phrase");
     hold = false; release();
-    await page.locator('.nav a[data-app="torrent"]').waitFor();
+    await card.getByRole("link", { name: "qBittorrent arayüzünü yeni sekmede aç", exact: true }).waitFor();
     await page.getByText("qBittorrent kuruluyor; ilerleme App Store'da görünür.", { exact: true }).waitFor();
     assert.equal(await dialog.isVisible(), true, "A completed older request must not close a newly opened form");
     assert.deepEqual([await user.inputValue(), await pass.inputValue()], ["second-draft", "second-draft-phrase"], "nor clear its draft");
@@ -225,11 +225,8 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await page.waitForFunction(() => [...document.querySelectorAll("#sh input[type=password]")].every(el => !el.value));
     assert.equal(await page.locator("#sh input[type=password]").evaluateAll((els) => els.filter((e) => e.value).length), 0, "the closed form forgets the password");
 
-    /* ---- Main navigation, App Store and overview open the native web UI in a new tab ---- */
-    const nav = page.locator('.nav a[data-app="torrent"]');
-    assert.equal(await nav.getAttribute("href"), "http://torrent.ayc");
-    assert.equal(await nav.getAttribute("target"), "_blank");
-    assert.match(await nav.getAttribute("rel"), /noopener/);
+    /* ---- App Store and overview open the native web UI in a new tab; no sidebar entry (DD-216) ---- */
+    assert.equal(await page.locator(".nav a[data-app], #installed-label").count(), 0);
     const open = card.getByRole("link", { name: "qBittorrent arayüzünü yeni sekmede aç", exact: true });
     assert.equal(await open.getAttribute("href"), "http://torrent.ayc");
     assert.equal(await open.getAttribute("target"), "_blank");
@@ -467,7 +464,6 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     await page.waitForFunction(() => document.querySelector('#genel-tiles .tile[data-tile="torrent"] a.tile-link')?.getAttribute("href") === "#/torrent");
     assert.equal(await launch.getAttribute("target"), null);
     assert.equal(await settingsBtn.count(), 1);
-    assert.equal(await nav.getAttribute("href"), "#/torrent");
     await settingsBtn.click();
     await page.waitForFunction(() => document.querySelector("#sh input[name=username]")?.value === "editor");
     await user.fill("stopped-edit");
@@ -628,12 +624,10 @@ const PASS = "fixture-install-phrase", EDIT_PASS = "fixture-edit-phrase";
     const sTile = secure.locator('#genel-tiles .tile[data-tile="torrent"] a.tile-link');
     await sTile.waitFor();
     assert.equal(await sTile.getAttribute("href"), "https://qbit.example.net");
-    assert.equal(await secure.locator('.nav a[data-app="torrent"]').getAttribute("href"), "https://qbit.example.net");
     modules[1].urls.internet = null;
     await secure.reload();
     await sTile.waitFor();
     assert.equal(await sTile.getAttribute("href"), "#/torrent", "never the private tailnet name on the public address");
-    assert.equal(await secure.locator('.nav a[data-app="torrent"]').getAttribute("href"), "#/torrent");
     await secure.close();
 
     assert.deepEqual(errors, []);

@@ -236,6 +236,51 @@ class NetworkTests(unittest.TestCase):
         self.assertNotIn('18080', text, "local publications get no forward permit")
         self.assertEqual(policy[-1]["rule"]["expr"][-1], {"drop": None})
 
+    def package(self, quadlet, state="calisiyor", network_name="torrent"):
+        """DD-217: a registered package on its own bridge with a placed Quadlet (None: stopped, no unit)."""
+        root = Path(self.tmp.name)
+        (root / "mods/torrent").mkdir(parents=True, exist_ok=True)
+        (root / "units").mkdir(exist_ok=True)
+        (root / "modules").write_text("torrent\t%s\n" % state)
+        (root / "mods/torrent/paket.env").write_text('PAKET_KONTEYNER="qbittorrent.container"\nPAKET_KONTEYNER_AG="%s"\n' % network_name)
+        if quadlet is not None:
+            (root / "units/qbittorrent.container").write_text(quadlet)
+        self.env.update(MODULES_FILE=str(root / "modules"), MODULES_DIR=str(root / "mods"), KONTEYNER_BIRIM_DIR=str(root / "units"))
+
+    def rules_for(self, policy, bridge):
+        return [x["rule"]["expr"] for x in policy if "rule" in x and {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": bridge}} in x["rule"]["expr"]]
+
+    def test_package_bridge_lets_through_only_its_wan_publication(self):
+        self.package("[Container]\nNetwork=torrent\nPublishPort=127.0.0.1:61006:61006/tcp\n"
+                     "PublishPort=192.0.2.1:61008:61008/tcp\nPublishPort=192.0.2.1:61008:61008/udp\n"
+                     "PublishPort=198.51.100.9:7000:7000/tcp\nPublishPort=8080\n")
+        policy = network.policy(self.env, [], run=self.runner)
+        bridge = network.bridge_name(self.env, "torrent")
+        rules = self.rules_for(policy, bridge)
+        text = json.dumps(rules)
+        # Intra-bridge, then exactly the two WAN publications (TCP and UDP) from eth0 to 192.0.2.1:61008.
+        self.assertEqual(len(rules), 3)
+        self.assertEqual(text.count('"eth0"'), 2)
+        self.assertIn('"udp"', text)
+        self.assertNotIn("61006", text, "the loopback interface needs no forward path")
+        self.assertNotIn("198.51.100.9", text, "an address that is not the server's WAN or Tailscale one is not let through")
+        self.assertNotIn("tailscale0", text)
+        self.assertEqual(policy[-1]["rule"]["expr"][-1], {"drop": None})
+
+    def test_stopped_unregistered_or_mismatched_package_publishes_nothing(self):
+        self.package(None)
+        bridge = network.bridge_name(self.env, "torrent")
+        self.assertEqual(self.rules_for(network.policy(self.env, [], run=self.runner), bridge), [])
+        self.package("[Container]\nNetwork=torrent\nPublishPort=192.0.2.1:61008:61008/tcp\n", state="calisiyor")
+        Path(self.env["MODULES_FILE"]).write_text("")
+        self.assertEqual(self.rules_for(network.policy(self.env, [], run=self.runner), bridge), [])
+        # An installer run renders the new manifest before it places the new Quadlet: the old one on
+        # another network is let through nothing, and the firewall still applies (found live on nrm).
+        self.package("[Container]\nNetwork=host\nPublishPort=192.0.2.1:61008:61008/tcp\n")
+        policy = network.policy(self.env, [], run=self.runner)
+        self.assertEqual(self.rules_for(policy, bridge), [])
+        self.assertEqual(policy[-1]["rule"]["expr"][-1], {"drop": None})
+
     def test_policy_identity_and_corrupt_definitions_fail_closed(self):
         with self.assertRaises(network.NetworkError):
             network.policy(dict(self.env, KONTEYNER_BRIDGE_PREFIX="*"), [], run=self.runner)

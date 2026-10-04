@@ -1,4 +1,4 @@
-/* Konteynerler: tabandaki Podman'ın yöneticisi (ana menüde, App Store'dan sonra). Sözleşme:
+/* Podman sayfası: tabandaki Podman'ın yöneticisi (kenar çubuğunda, App Store'dan sonra; rota #/konteynerler). Sözleşme:
    docs/design/container-manager-api.md. Okuma: GET /api/konsol/konteynerler/{liste,ayrinti,gunluk,islem};
    yazma: yalnız POST /islem → 202 {id}, sonra GET /islem?id=… ile işlem bitene kadar izlenir. Tarayıcı izin
    tahmin etmez: her konteynerin yapabileceği işlemler sunucunun "actions" listesindedir, kısıt nedeni
@@ -24,6 +24,8 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   let tab = "konteynerler", filter = "tum", query = "";
   let detailName = "", DETAIL = null, detailError = "", detailSeq = 0, section = "genel";
   let LOG = null, logError = "", logTail = 200, logQuery = "", logSeq = 0, logLoading = false;
+  // DD-214: imaj güncelleme durumu; sunucu kayıt defterine yalnız manifest sorar ve yanıtı önbellekte tutar.
+  let UPD = null, updLoading = false, updError = "";
   const pending = new Map();    // hedef → istenen eylem (istek gitti, işlem bitmedi)
   const OPS = new Map();        // işlem kimliği → { id, action, target, state, step, error, result, ctx }
   const lastError = new Map();  // konteyner adı → son başarısız işlemin metni
@@ -58,6 +60,27 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (/^127\./.test(ip) || ip === "::1") return "local";
     if (/^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./.test(ip) || /^fd7a:115c:a1e0:/i.test(ip)) return "tailscale";
     return "other";
+  }
+  // DD-215: sunucu ağındaki (host) konteynerin port eşlemesi yoktur; sunucu, konteynerin kendi süreçlerinin
+  // dinlediği soketleri bildirir. Etiket, adresin türüdür; dışarıdan erişimi güvenlik duvarı belirler.
+  const LISTEN = { all: "Tüm adresler", wan: "WAN", tailscale: "Tailscale", other: "Belirli adres", local: "Yalnız bu sunucu" };
+  const LISTEN_ORDER = ["all", "wan", "tailscale", "other", "local"];
+  const hostPort = (address, port) => `${String(address).includes(":") ? `[${address}]` : address}:${port}`;
+  const listenLabel = (scopes) => (scopes.length === 1 ? LISTEN[scopes[0]] || scopes[0] : scopes.map((k) => (k === "local" ? "yerel" : LISTEN[k] || k)).join(" · "));
+  // Aynı port birden çok adreste (ve TCP ile UDP'de) açılabilir: satırda port başına bir satır, en geniş
+  // adresiyle (IPv4 önce); ayrıntıda her adres ayrı satırdır.
+  function listenGroups(c) {
+    const by = new Map();
+    (Array.isArray(c.listening) ? c.listening : []).forEach((s) => {
+      if (!s || !Number.isInteger(s.port)) return;
+      const g = by.get(s.port) || { port: s.port, protos: new Set(), scopes: new Set(), socks: [] };
+      g.protos.add(s.protocol); g.scopes.add(s.scope); g.socks.push(s);
+      by.set(s.port, g);
+    });
+    const rank = (s) => LISTEN_ORDER.indexOf(s.scope) * 2 + (String(s.address).includes(":") ? 1 : 0);
+    return [...by.values()].map((g) => ({ port: g.port, protos: ["tcp", "udp"].filter((x) => g.protos.has(x)),
+      lead: g.socks.slice().sort((a, b) => rank(a) - rank(b))[0], scopes: LISTEN_ORDER.filter((k) => g.scopes.has(k)) }))
+      .sort((a, b) => (a.protos.includes("tcp") ? 0 : 1) - (b.protos.includes("tcp") ? 0 : 1) || a.port - b.port);
   }
   const pct = (v) => (Number.isFinite(v) ? v.toFixed(1).replace(".", ",") + " %" : "—");
   const mem = (v) => (Number.isFinite(v) ? bytes(v) : "—");
@@ -120,6 +143,15 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     }).catch((e) => { if (name !== detailName || seq !== logSeq) return; logError = e.message; logLoading = false; paint(); });
   }
   function refresh() { loadList(); if (detailName) { loadDetail(); if (section === "gunluk") loadLog(); } }
+  // Sayfa açılınca sunucunun önbelleği istenir (eskiyse sunucu yeniden denetler); düğme zorla denetletir.
+  function loadUpdates(force) {
+    if (updLoading) return Promise.resolve();
+    updLoading = true; paint();
+    return api(`${BASE}/guncellemeler${force ? "?yenile=1" : ""}`).then((d) => { UPD = d; updError = ""; })
+      .catch((e) => { updError = e.message || "Güncellemeler denetlenemedi."; })
+      .finally(() => { updLoading = false; paint(); });
+  }
+  const updOf = (c) => (c && UPD && UPD.items && UPD.items[c.name]) || (c && c.update) || null;
 
   /* ---------------- işlemler: POST → 202 → izleme ---------------- */
   // Hedef anahtarı: konteyner adı ya da "image:…", "volume:…", "network:…". Aynı hedefe ikinci istek gitmez.
@@ -210,10 +242,22 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   }
   function updateImage(c) {
     if (!c || busyOf(c) || !can(c, "image-update")) return;
-    ask({ title: `${c.name} imajı güncellensin mi?`, sub: "Açık istek: kendiliğinden güncelleme yoktur", go: "Güncelle", calm: true,
-      items: [["download", "İmajın etiketi yeniden çekilir ve yeni özetle karşılaştırılır."], ["refresh", "Özet değiştiyse konteyner yeni imajla yeniden oluşturulur; kısa bir kesinti olabilir."],
-        ["disk", "Kalıcı veriler bağlamalarda kalır; konteynerin yazılabilir katmanı silinir."]],
-      onOk: () => submit({ action: "image-update", name: c.name, revision: c.revision }, c.name).catch((e) => toast(`${c.name}: ${e.message}`)) });
+    const u = updOf(c), app = c.source === "appstore";
+    const items = app
+      ? [["download", "Kanalın şu an gösterdiği imaj indirilir; birkaç dakika sürebilir."],
+        ["refresh", running(c) ? "Uygulama yeni imajla yeniden başlar; süren indirmeler kısa süre durur." : "Uygulama durmuş; başlattığınızda yeni imajla açılır."],
+        ["restore", "Açılmazsa önceki imaja dönülür. Profil, ayarlar ve indirilenler korunur."]]
+      : [["download", "İmajın etiketi yeniden çekilir ve yeni özetle karşılaştırılır."], ["refresh", "Özet değiştiyse konteyner yeni imajla yeniden oluşturulur; kısa bir kesinti olabilir."],
+        ["disk", "Kalıcı veriler bağlamalarda kalır; konteynerin yazılabilir katmanı silinir."]];
+    ask({ title: `${appName(c)} güncellensin mi?`, sub: u && u.state === "var" ? `Yeni sürüm yayınlanmış · ${u.channel}` : "Açık istek: kendiliğinden güncelleme yoktur",
+      go: "Güncelle", calm: true, items,
+      onOk: () => submit({ action: "image-update", name: c.name, revision: c.revision }, c.name, {
+        onDone: (o) => {
+          const r = o.result || {};
+          toast(`${appName(c)}: ${r.changed === false ? "imaj zaten güncel" : "imaj güncellendi" + (r.version ? ` (${r.version})` : "")}.`);
+          loadUpdates(false);
+          return true;
+        } }).catch((e) => toast(`${c.name}: ${e.message}`)) });
   }
 
   /* ---------------- çizim: ortak parçalar ---------------- */
@@ -229,10 +273,17 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     return h("span", { class: `pd-ico ${m && /^t-[a-z]+$/.test(m.tone) ? m.tone : c.source === "konsol" ? "pd-ico-konsol" : ""}`, "aria-hidden": "true" }, svg(m && m.icon ? m.icon : "box"));
   }
   function accessLines(c) {
-    if (c.network === "host") return [h("span", null, "Sunucu ağı (host)")];
+    if (c.network === "host") {
+      const groups = listenGroups(c), shown = groups.slice(0, 3);
+      if (!groups.length) return [h("span", null, "Sunucu ağı (host)"),
+        Array.isArray(c.listening) && running(c) ? h("span", { class: "pd-muted" }, "Açık port yok") : null].filter(Boolean);
+      return shown.map((g) => h("span", { "data-port": String(g.port) }, mono(`${hostPort(g.lead.address, g.port)}/${g.protos.join("+")}`), " ",
+        h("span", { class: "pd-muted" }, listenLabel(g.scopes))))
+        .concat(groups.length > shown.length ? [h("span", { class: "pd-muted" }, `+${groups.length - shown.length} port daha`)] : []);
+    }
     const ports = Array.isArray(c.ports) ? c.ports : [];
     if (!ports.length) return [h("span", { class: "pd-muted" }, "Port yayımlanmıyor")];
-    return ports.map((p) => { const sc = scopeOfIp(p.host_ip);
+    return ports.map((p) => { const sc = p.scope || scopeOfIp(p.host_ip);
       return h("span", null, mono(`${p.host_ip || "0.0.0.0"}:${p.host_port} → ${p.container_port}/${p.protocol || "tcp"}`), " ",
         h("span", { class: sc === "public" ? "hm bad" : "pd-muted" }, SCOPE[sc])); });
   }
@@ -252,6 +303,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
         h("div", null, h("dt", null, "Çalışıyor"), h("dd", null, String(run))),
         h("div", null, h("dt", null, "Duran"), h("dd", null, String(cs.length - run))),
         h("div", null, h("dt", null, "Sağlıksız"), h("dd", null, String(bad))),
+        h("div", null, h("dt", null, "Güncelleme"), h("dd", { id: "pd-upd-count" }, String(cs.filter((c) => (updOf(c) || {}).state === "var").length))),
         h("div", null, h("dt", null, "Depolama"), h("dd", null, Number.isFinite(st.size) ? bytes(st.size) : "—"))) : null,
       listError && LIST ? h("p", { class: "err-s", role: "alert" }, `Son okuma başarısız: ${listError}`) : null,
       LIST && rt.ok && collectionError("stats") ? h("p", { class: "hint-s pd-wide2" }, collectionError("stats")) : null,
@@ -288,7 +340,12 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     const tools = h("div", { class: "pd-toolbar" },
       h("label", { class: "pd-search" }, svg("search"), h("span", { class: "vis-hidden" }, "Konteyner ara"),
         h("input", { type: "search", id: "pd-q", placeholder: "Ad ya da imaj ara", value: query, autocomplete: "off", oninput: (e) => { query = e.target.value; paint("id:pd-q"); } })),
-      h("div", { class: "pd-chips", role: "group", "aria-label": "Duruma göre süz" }, chip("tum", "Tümü"), chip("calisan", "Çalışan"), chip("duran", "Duran"), chip("sorunlu", "Sağlıksız")));
+      h("div", { class: "pd-chips", role: "group", "aria-label": "Duruma göre süz" }, chip("tum", "Tümü"), chip("calisan", "Çalışan"), chip("duran", "Duran"), chip("sorunlu", "Sağlıksız")),
+      h("div", { class: "pd-updtools" },
+        h("span", { class: updError ? "err-s" : "hint-s", id: "pd-upd-stamp", role: "status" },
+          updLoading ? "Güncellemeler denetleniyor…" : updError ? updError : UPD && UPD.checked_at ? `Güncellemeler ${hhmm(UPD.checked_at)}'de denetlendi` : ""),
+        h("button", { type: "button", class: "btn btn-quiet btn-sm", "data-k": "updcheck", id: "pd-upd-check", "aria-disabled": updLoading ? "true" : "false",
+          onclick: () => { if (!updLoading) loadUpdates(true); } }, svg("refresh"), "Güncellemeleri denetle")));
     if (!LIST) return [tools, h("section", { class: "card pd-empty" }, h("p", { class: listError ? "err-s" : "hint-s", role: listError ? "alert" : null }, listError || "Okunuyor…"))];
     const rt = LIST.runtime || {};
     const err = !rt.ok ? rt.error || "Podman yanıt vermedi." : collectionError("containers");
@@ -305,13 +362,14 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   function rowEl(c) {
     const busy = busyOf(c), err = lastError.get(c.name);
     return h("div", { class: "pd-row", "data-name": c.name },
-      h("div", { class: "pd-c-who" }, icon(c), h("div", { class: "pd-nm" },
-        h("button", { type: "button", class: "pd-open", "data-k": "open:" + c.name, onclick: () => go("#/konteynerler/" + enc(c.name)) }, appName(c)))),
+      h("div", { class: "pd-c-who" }, rowLead(c), icon(c), h("div", { class: "pd-nm" },
+        h("button", { type: "button", class: "pd-open", "data-k": "open:" + c.name, onclick: () => go("#/konteynerler/" + enc(c.name)) }, appName(c)),
+        updChip(c))),
       h("div", { class: "pd-c-state" }, busy ? h("span", { class: "hm warn" }, h("span", { class: "spin", "aria-hidden": "true" }), busyText(busy)) : statePill(c), running(c) ? healthPill(c.health) : null,
         c.live === false ? h("span", { class: "hm", title: "Hizmet durunca Podman konteyneri siler; tanım Konsol'da kalır" }, "tanım kayıtlı") : null),
       h("div", { class: "pd-c-res" }, h("span", null, "İşlemci ", pct(c.cpu_percent)), h("span", null, "Bellek ", mem(c.memory_bytes))),
       h("div", { class: "pd-c-access" }, accessLines(c)),
-      rowActions(c),
+      h("div", { class: "pd-acts pd-acts-end" }, control(c, "remove")),
       c.restricted_reason ? h("p", { class: "pd-reason" }, svg("lock"), h("span", null, c.restricted_reason)) : null,
       err ? errorLine(c.name, err) : null);
   }
@@ -319,20 +377,30 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   const errorLine = (name, text) => h("p", { class: "pd-error", role: "alert" }, h("span", null, text),
     h("button", { type: "button", class: "pd-ib pd-dismiss", "data-k": "dismiss:" + name, "aria-label": "Hata bildirimini kapat", title: "Kapat",
       onclick: () => { lastError.delete(name); paint(); } }, svg("close")));
-  function rowActions(c) {
+  // Sabit yerler: başlat/durdur ve düzenle adın önünde, kaldır sonda (DD-214). Simgeler ana menünün uygulama
+  // kartlarıyla aynıdır: oynat/duraklat, ayarlar (kaydırıcılar), çöp. Yetki yalnız sunucudan gelir.
+  function control(c, slot) {
     const busy = busyOf(c), svcAction = running(c) ? "stop" : "start";
-    // Üç sabit yer: yetki yalnız sunucudan gelir. Diğer işlemler ayrıntı sayfasındadır.
-    return h("div", { class: "pd-acts" }, [
-      ["svc", svcAction, svcAction === "stop" ? "Durdur" : "Başlat", svcAction === "stop" ? "stop" : "play", () => lifecycle(c, svcAction)],
-      ["edit", "save", "Düzenle", "pencil", () => openEditor(c.name)],
-      ["remove", "remove", "Kaldır", "trash", () => removeContainer(c)],
-    ].map(([slot, action, label, ic, fn]) => {
-      const reason = busy ? busyText(busy) : !can(c, action) ? c.restricted_reason || "Sunucu bu işleme izin vermiyor." : "";
-      const tip = reason ? `${label}: ${reason}` : label;
-      return h("button", { type: "button", class: `pd-ib pd-act-${slot === "svc" ? svcAction : slot}`, "data-act": slot, "data-k": slot + ":" + c.name,
-        "aria-label": `${appName(c)}: ${busy && slot === "svc" ? busyText(busy) : tip}`, title: tip, "aria-disabled": reason ? "true" : "false",
-        onclick: () => { if (!busyOf(c) && can(c, action)) fn(); } }, svg(busy && slot === "svc" ? "clock" : ic));
-    }));
+    const [action, label, ic, fn] = {
+      svc: [svcAction, svcAction === "stop" ? "Durdur" : "Başlat", svcAction === "stop" ? "pause" : "play", () => lifecycle(c, svcAction)],
+      edit: ["save", "Düzenle", "sliders", () => openEditor(c.name)],
+      remove: ["remove", "Kaldır", "trash", () => removeContainer(c)],
+    }[slot];
+    const reason = busy ? busyText(busy) : !can(c, action) ? c.restricted_reason || "Sunucu bu işleme izin vermiyor." : "";
+    const tip = reason ? `${label}: ${reason}` : label;
+    return h("button", { type: "button", class: `pd-ib pd-act-${slot === "svc" ? svcAction : slot}`, "data-act": slot, "data-k": slot + ":" + c.name,
+      "aria-label": `${appName(c)}: ${busy && slot === "svc" ? busyText(busy) : tip}`, title: tip, "aria-disabled": reason ? "true" : "false",
+      onclick: () => { if (!busyOf(c) && can(c, action)) fn(); } }, svg(busy && slot === "svc" ? "clock" : ic));
+  }
+  const rowLead = (c) => h("div", { class: "pd-acts pd-acts-lead", role: "group", "aria-label": `${appName(c)} işlemleri` }, control(c, "svc"), control(c, "edit"));
+  // DD-214: kanalda yeni imaj varsa adın altında; tıklayınca açık onaylı güncelleme penceresi açılır.
+  function updChip(c) {
+    const u = updOf(c);
+    if (!u || u.state !== "var") return null;
+    const ok = can(c, "image-update") && !busyOf(c);
+    return h("button", { type: "button", class: "pd-upd", "data-k": "upd:" + c.name, "aria-disabled": ok ? "false" : "true",
+      title: ok ? `Yeni imaj yayınlanmış (${u.channel}); güncellemek için tıklayın` : busyOf(c) ? busyText(busyOf(c)) : "Bu konteyner Konsol'dan güncellenemez",
+      onclick: () => { if (ok) updateImage(c); } }, svg("up"), "Güncelleme var");
   }
 
   /* ---------------- ayrıntı ---------------- */
@@ -345,20 +413,43 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (d) for (const [k, v] of Object.entries(d)) if (v !== undefined) out[k] = v;
     return out;
   }
+  const UPD_STATE = { var: ["warn", "Yeni sürüm var"], guncel: ["ok", "Güncel"], sabit: ["", "Sabit özet"], denetlenemedi: ["bad", "Denetlenemedi"] };
+  function updFact(c) {
+    const u = updOf(c);
+    if (c.source === "external") return null;
+    const [tone, label] = u ? UPD_STATE[u.state] || ["warn", u.state] : ["", updLoading ? "Denetleniyor…" : "Henüz denetlenmedi"];
+    const when2 = u && (u.checked_at || (UPD && UPD.checked_at)) ? `${hhmm(u.checked_at || UPD.checked_at)}'de denetlendi` : "";
+    const note = !u ? "" : u.state === "sabit" ? "Bir etiket izlemiyor; imaj yalnız elle değişir."
+      : [u.channel ? `kanal: ${u.channel}` : "", u.error || "", when2].filter(Boolean).join(" · ");
+    return fact("Güncelleme", h("span", { class: `hm ${tone}`, id: "pd-upd-state" }, label), note);
+  }
+  // DD-215: konteynerin şu an dinlediği her adres; eşleme yok, dışarıdan erişimi güvenlik duvarı belirler.
+  function listenTable(c) {
+    const socks = Array.isArray(c.listening) ? c.listening : null;
+    if (!running(c)) return h("p", { class: "pd-muted", id: "pd-listen" }, "Konteyner çalışmıyor; açık port yok.");
+    if (!socks) return h("p", { class: "pd-muted", id: "pd-listen" }, "Dinlenen portlar okunamadı.");
+    if (!socks.length) return h("p", { class: "pd-muted", id: "pd-listen" }, "Konteyner şu an hiçbir portu dinlemiyor.");
+    return h("div", { class: "pd-stack", id: "pd-listen" },
+      h("div", { class: "pd-mini", role: "table", "aria-label": "Dinlenen portlar" },
+        h("div", { class: "pd-mrow pd-mhead", role: "row" }, ["Adres türü", "Adres", "Port", "Protokol"].map((t) => h("span", { role: "columnheader" }, t))),
+        socks.map((s) => h("div", { class: "pd-mrow", role: "row" }, h("span", { role: "cell" }, LISTEN[s.scope] || s.scope),
+          h("span", { role: "cell" }, mono(String(s.address))), h("span", { role: "cell" }, mono(String(s.port))), h("span", { role: "cell" }, String(s.protocol).toUpperCase())))),
+      h("p", { class: "pd-muted" }, "Konteynerin şu an dinlediği adresler. Sunucu ağında port eşlemesi yoktur; dışarıdan erişimi sunucunun güvenlik duvarı belirler."));
+  }
   function detailView() {
     const c = current();
-    const back = h("button", { type: "button", class: "pd-back", "data-k": "back", onclick: () => go("#/konteynerler") }, svg("back"), "Konteynerler");
+    const back = h("button", { type: "button", class: "pd-back", "data-k": "back", onclick: () => go("#/konteynerler") }, svg("back"), "Podman");
     if (!c) return [back, h("section", { class: "card pd-empty" }, h("p", { class: detailError ? "err-s" : "hint-s", role: detailError ? "alert" : null }, detailError || "Okunuyor…"))];
     const busy = busyOf(c), run = running(c), err = lastError.get(c.name);
     const btn = (label, ic, act, fn, primary, danger) => h("button", { type: "button", class: `btn ${primary ? "btn-primary" : "btn-quiet"}${danger ? " pd-danger" : ""}`, "data-k": "d:" + act,
       "aria-disabled": busy ? "true" : "false", title: busy ? busyText(busy) : null, onclick: () => { if (!busyOf(c)) fn(); } }, svg(ic), label);
     const bar = [];
     if (busy) bar.push(h("button", { type: "button", class: "btn btn-quiet", "data-k": "d:svc", "aria-disabled": "true" }, h("span", { class: "spin", "aria-hidden": "true" }), busyText(busy)));
-    else if (run && can(c, "stop")) bar.push(btn("Durdur", "stop", "svc", () => lifecycle(c, "stop")));
+    else if (run && can(c, "stop")) bar.push(btn("Durdur", "pause", "svc", () => lifecycle(c, "stop")));
     else if (!run && can(c, "start")) bar.push(btn("Başlat", "play", "svc", () => lifecycle(c, "start"), true));
     if (can(c, "restart") && run) bar.push(btn("Yeniden başlat", "refresh", "restart", () => lifecycle(c, "restart")));
-    if (can(c, "save")) bar.push(btn("Düzenle", "pencil", "edit", () => openEditor(c.name)));
-    if (can(c, "image-update")) bar.push(btn("İmajı güncelle", "download", "update", () => updateImage(c)));
+    if (can(c, "save")) bar.push(btn("Düzenle", "sliders", "edit", () => openEditor(c.name)));
+    if (can(c, "image-update")) bar.push(btn((updOf(c) || {}).state === "var" ? "Güncelle" : "İmajı güncelle", "up", "update", () => updateImage(c), (updOf(c) || {}).state === "var"));
     if (can(c, "adopt")) bar.push(btn("Sahiplen", "key", "adopt", () => openAdopt(c)));
     if (can(c, "remove")) bar.push(btn(c.source === "appstore" ? "Uygulamayı kaldır" : "Kaldır", "trash", "remove", () => removeContainer(c), false, true));
     const op = c.busy ? OPS.get(c.busy) : null;
@@ -412,25 +503,29 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
             fact("Hizmet", c.unit ? mono(c.unit) : "—"),
             fact("Kimlik", c.id ? mono(c.id) : "—", c.live === false ? "çalışan konteyner yok" : ""),
             fact("İmaj", h("span", { class: "mono", title: c.image || null }, shortImage(c.image) || "—"), cfg && cfg.image_ref && cfg.image_ref !== c.image ? `etiket: ${cfg.image_ref}` : ""),
+            updFact(c),
             fact("Yeniden başlatma", String(c.restarts || 0)),
             fact("İşlemci", pct(c.cpu_percent), cfg && cfg.cpus ? `sınır ${cfg.cpus} çekirdek` : ""),
             fact("Bellek", mem(c.memory_bytes), cfg && cfg.memory ? `sınır ${cfg.memory}` : ""),
             c.command ? fact("Komut", mono(c.command)) : null))];
     }
     if (section === "ag") {
-      if (adapter) return [h("section", { class: "card" }, h("h2", null, svg("globe"), "Ağ ve portlar"),
-        h("p", { class: "pd-muted" }, "Sunucu ağını (host) kullanır; port eşlemesi yoktur. Uygulama kendi arayüzünde, yalnız sunucunun içinde dinler; dışarıdan Caddy üzerinden açılır."),
-        h("dl", { class: "pd-facts" }, fact("Uygulama dinleyicisi", mono(`127.0.0.1:${cfg.listener_port}`), "uygulama ayarı; hizmet, Caddy ve denetimler aynı değeri kullanır")))];
+      const listener = adapter ? fact("Uygulama dinleyicisi", mono(`127.0.0.1:${cfg.listener_port}`), "uygulama ayarı; hizmet, Caddy ve denetimler aynı değeri kullanır") : null;
+      if (c.network === "host") return [h("section", { class: "card" }, h("h2", null, svg("globe"), "Ağ ve portlar"),
+        adapter ? h("p", { class: "pd-muted" }, "Sunucu ağını (host) kullanır; port eşlemesi yoktur. Uygulama kendi arayüzünde, yalnız sunucunun içinde dinler; dışarıdan Caddy üzerinden açılır.") : null,
+        h("dl", { class: "pd-facts" }, fact("Ağ", "Sunucu ağı (host)"), listener), listenTable(c))];
       const ports = cfg && Array.isArray(cfg.ports) ? cfg.ports.map((p) => ({ scope: p.scope, host: p.host_port, ctr: p.container_port, proto: p.protocol }))
-        : (c.ports || []).map((p) => ({ scope: scopeOfIp(p.host_ip), host: p.host_port, ctr: p.container_port, proto: p.protocol, ip: p.host_ip }));
+        : (c.ports || []).map((p) => ({ scope: p.scope || scopeOfIp(p.host_ip), host: p.host_port, ctr: p.container_port, proto: p.protocol, ip: p.host_ip }));
+      // DD-217: an App Store app on its own bridge publishes only what its Quadlet names, per address.
       return [h("section", { class: "card" }, h("h2", null, svg("globe"), "Ağ ve portlar"),
-        h("dl", { class: "pd-facts" }, fact("Ağ", c.network === "host" ? "Sunucu ağı (host)" : netFact(cfg && cfg.network, c.network))),
+        adapter ? h("p", { class: "pd-muted", id: "pd-app-net" }, "Uygulama kendi köprü ağında çalışır; yalnız aşağıdaki portlar yayımlanır. Arayüz yalnız bu sunucuda açılır, dışarıdan Caddy üzerinden erişilir.") : null,
+        h("dl", { class: "pd-facts" }, fact("Ağ", adapter ? mono(c.network || "—") : netFact(cfg && cfg.network, c.network)), listener),
         ports.length ? h("div", { class: "pd-mini", role: "table", "aria-label": "Portlar" },
           h("div", { class: "pd-mrow pd-mhead", role: "row" }, ["Erişim", "Sunucu", "Konteyner", "Protokol"].map((t) => h("span", { role: "columnheader" }, t))),
           ports.map((p) => h("div", { class: "pd-mrow", role: "row" },
             h("span", { role: "cell" }, p.scope === "public" ? h("span", { class: "hm bad" }, SCOPE.public) : SCOPE[p.scope] || p.scope),
             h("span", { role: "cell" }, mono(`${p.ip || ""}${p.ip ? ":" : ""}${p.host}`)), h("span", { role: "cell" }, mono(String(p.ctr))), h("span", { role: "cell" }, String(p.proto || "tcp").toUpperCase()))))
-          : h("p", { class: "pd-muted" }, c.network === "host" ? "Sunucu ağını kullanır; port eşlemesi yoktur." : "Port yayımlanmıyor; konteynere yalnız aynı ağdaki konteynerler ulaşır."),
+          : h("p", { class: "pd-muted" }, adapter && !running(c) ? "Uygulama çalışmadığı için şu an port yayımlanmıyor." : "Port yayımlanmıyor; konteynere yalnız aynı ağdaki konteynerler ulaşır."),
         ports.some((p) => p.scope === "public") ? h("p", { class: "pd-error" }, "İnternete açık port Konsol oturumunu ve Caddy TLS'yi atlar; uygulamanın kendi kimlik doğrulamasına güvenir.") : null)];
     }
     if (section === "baglama") {
@@ -594,7 +689,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       if (!cfg || typeof cfg !== "object") { SH.mode = "message"; SH.error = "Bu konteynerin düzenlenebilir bir tanımı yok."; drawSheet(); return; }
       const adapter = "listener_port" in cfg;
       Object.assign(SH, { mode: adapter ? "adapter" : "edit", revision: d.revision || (c && c.revision), editable: d.editable || [], protectedMounts: d.protected_mounts || [],
-        mounts: d.mounts || [], running: d.state === "running", orig: JSON.parse(JSON.stringify(cfg)), draft: adapter ? { listener_port: String(cfg.listener_port), save: cfg.save || "" } : draftFrom(cfg) });
+        mounts: d.mounts || [], running: d.state === "running", network: d.network || "", orig: JSON.parse(JSON.stringify(cfg)), draft: adapter ? adapterDraft(cfg) : draftFrom(cfg) });
       drawSheet(true);
     }).catch((e) => { if (!mine(seq)) return; SH.mode = "message"; SH.error = e.message; drawSheet(); });
   }
@@ -679,9 +774,16 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (d.memory.trim() && !/^\d+(\.\d+)?[kmg]?b?$/i.test(d.memory.trim())) add("memory", "Bellek sınırı sayı ve birim olmalı (ör. 512m, 2g).");
     return out;
   }
+  // Uygulama bağdaştırıcısının bildirdiği alanlar; eş portu yalnız onu bildiren uygulamada vardır (DD-221).
+  const adapterDraft = (cfg) => Object.assign({ listener_port: String(cfg.listener_port), save: cfg.save || "" }, "peer_port" in cfg ? { peer_port: String(cfg.peer_port) } : {});
   function adapterProblems(d) {
     const out = {}, port = Number(d.listener_port);
     if (!(Number.isInteger(port) && port >= 1024 && port <= 65535)) out.listener = ["Arayüz portu 1024–65535 arasında bir sayı olmalı."];
+    if ("peer_port" in d) {
+      const peer = Number(String(d.peer_port).trim());
+      if (!(/^\d+$/.test(String(d.peer_port).trim()) && peer >= 1024 && peer <= 65535)) out.peer = ["Eş portu 1024–65535 arasında bir sayı olmalı."];
+      else if (peer === port) out.peer = ["Eş portu arayüz portundan farklı olmalı."];
+    }
     if (!/^\/[^\0]*$/.test(d.save.trim())) out.save = ["Kayıt klasörü mutlak bir yol olmalı."];
     return out;
   }
@@ -821,8 +923,11 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     const fixed = (s.mounts || []).filter((m) => prot.has(m.destination));
     const body = h("div", { class: "pd-body" },
       h("fieldset", { class: "pd-fs" }, h("legend", null, svg("globe"), "Uygulama dinleyicisi"),
-        h("p", { class: "pd-muted" }, "Sunucu ağını (host) kullanır; port eşlemesi yoktur. Bu port uygulamanın kendi ayarına, hizmetine, Caddy yönlendirmesine ve denetimlerine birlikte uygulanır."),
-        field("Arayüz portu (yalnız 127.0.0.1)", input("pd-f-listener", d.listener_port, (v) => { d.listener_port = v; }, { inputmode: "numeric", readonly: !ed("listener_port") }), null, pr.listener)),
+        h("p", { class: "pd-muted" }, s.network === "host" ? "Sunucu ağını (host) kullanır; port eşlemesi yoktur. Bu port uygulamanın kendi ayarına, hizmetine, Caddy yönlendirmesine ve denetimlerine birlikte uygulanır."
+          : "Arayüz yalnız 127.0.0.1'de yayımlanır. Bu port uygulamanın kendi ayarına, yayın satırına, Caddy yönlendirmesine ve denetimlerine birlikte uygulanır."),
+        field("Arayüz portu (yalnız 127.0.0.1)", input("pd-f-listener", d.listener_port, (v) => { d.listener_port = v; }, { inputmode: "numeric", readonly: !ed("listener_port") }), null, pr.listener),
+        "peer_port" in d ? field("Eş portu (WAN IPv4, TCP+UDP)", input("pd-f-peer", d.peer_port, (v) => { d.peer_port = v; }, { inputmode: "numeric", readonly: !ed("peer_port") }),
+          "Eşler bu porttan bağlanır. 61000–65535 arası önerilir: sunucunun giden bağlantılar için kullandığı 32768–60999 aralığının dışındadır.", pr.peer) : null),
       h("fieldset", { class: "pd-fs" }, h("legend", null, svg("disk"), "Bağlamalar"),
         field("Kayıt klasörü (uygulama ayarı)", h("span", { class: "pd-pick" }, input("pd-f-save", d.save, (v) => { d.save = v; }, { class: "pd-inp mono", readonly: true }),
           ed("save") ? h("button", { type: "button", class: "btn btn-quiet btn-sm", id: "pd-pick-save", "aria-expanded": String(!!s.picker), onclick: () => { s.picker = !s.picker; if (s.picker) browse(s); else redraw("pd-pick-save"); } }, svg("folder"), "Klasör seç") : null),
@@ -871,6 +976,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (s.mode === "adapter") {
       const o = s.orig, d = s.draft;
       if (String(o.listener_port) !== String(d.listener_port).trim()) out.push(["chg", "Arayüz portu", `${o.listener_port} → ${String(d.listener_port).trim()}`]);
+      if ("peer_port" in d && String(o.peer_port) !== String(d.peer_port).trim()) out.push(["chg", "Eş portu", `${o.peer_port} → ${String(d.peer_port).trim()}`]);
       if ((o.save || "") !== d.save) out.push(["chg", "Kayıt klasörü", `${o.save || "—"} → ${d.save}`]);
       return out;
     }
@@ -916,6 +1022,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (!create && !adapter && !stopped) items.push(["bad", "Konteynerin yazılabilir katmanı silinir; kalıcı veriler yalnız bağlamalarda durur."]);
     if (list.some(([, k]) => k === "Bağlama" || k === "Kayıt klasörü")) items.push(["warn", "Bağlama değişikliği dosya taşımaz; eski klasör ya da birim olduğu gibi kalır."]);
     if (list.some(([kind, k, v]) => kind === "add" && k === "Port" && v.startsWith(SCOPE.public))) items.push(["bad", "İnternete açık port Konsol oturumunu ve Caddy TLS'yi atlar; uygulamanın kendi kimlik doğrulamasına güvenir."]);
+    if (list.some(([, k]) => k === "Eş portu")) items.push(["warn", "Eski eş portu internete kapanır, yenisi WAN IPv4 adresinde TCP ve UDP olarak açılır; eşler yeni portu bir sonraki duyuruda öğrenir."]);
     if (s.mode === "adapter") items.push(["info", "Uygulama ayarı, hizmet, Caddy yönlendirmesi ve denetimler aynı değerle birlikte güncellenir."]);
     const icon = { info: "info", ok: "check", warn: "info", bad: "info" };
     const body = h("div", { class: "pd-body" },
@@ -936,7 +1043,11 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (s.sending || !mine(s.seq)) return;
     let payload, target;
     if (s.mode === "create") { const cfg = configOut(s.draft); payload = { action: "create", config: cfg, start: !!s.start }; target = cfg.name; }
-    else if (s.mode === "adapter") { payload = { action: "save", name: s.name, revision: s.revision, config: { listener_port: Number(String(s.draft.listener_port).trim()), save: s.draft.save }, start: false }; target = s.name; }
+    else if (s.mode === "adapter") {
+      const config = { listener_port: Number(String(s.draft.listener_port).trim()), save: s.draft.save };
+      if ("peer_port" in s.draft) config.peer_port = Number(String(s.draft.peer_port).trim());
+      payload = { action: "save", name: s.name, revision: s.revision, config, start: false }; target = s.name;
+    }
     else { payload = { action: "save", name: s.name, revision: s.revision, config: configOut(s.draft), start: !s.running && !!s.start }; target = s.name; }
     s.sending = true; s.error = ""; s.stale = false; drawSheet();
     const seq = s.seq;
@@ -1075,8 +1186,8 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (host && root.parentNode !== host) host.replaceChildren(root);
   }
   return {
-    title: (sub) => (sub ? decode(sub) || "Konteyner" : "Konteynerler"),
-    eyebrow: (sub) => (sub ? "Konteynerler" : "Podman · bu sunucu"),
+    title: (sub) => (sub ? decode(sub) || "Konteyner" : "Podman"),
+    eyebrow: (sub) => (sub ? "Podman" : "Konteynerler · bu sunucu"),
     actions: (sub) => [h("span", { class: "hm", id: "ct-stamp" }, stampText()),
       h("button", { type: "button", class: "btn btn-quiet", onclick: () => refresh() }, svg("refresh"), "Yenile"),
       sub ? null : h("button", { type: "button", class: "btn btn-primary", id: "ct-new", "aria-disabled": LIST && (LIST.runtime || {}).ok ? "false" : "true",
@@ -1092,8 +1203,11 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       paint();
       loadList();
       if (detailName) { loadDetail(); if (section === "gunluk") loadLog(); }
+      if (!updLoading && (!UPD || Date.now() / 1000 - (UPD.checked_at || 0) > 3600)) loadUpdates(false);
     },
     poll() { if (active && active()) refresh(); },
+    // App Store satırının adı ve simgesi modül listesinden gelir; liste ondan önce geldiyse yeniden çizilir.
+    modules() { if (LIST) paint(); },
     // Sayfadan çıkınca (geri tuşu, yazılan bağlantı) açık pencere kapanır, taslak düşer; Genel bakış'ın
     // düzen taslağı gibi (DD-206). Gönderilmiş bir işlem sunucuda sürer, sonucu satırda ve bildirimde görünür.
     leave() { if (sheet.open) sheet.close(); },

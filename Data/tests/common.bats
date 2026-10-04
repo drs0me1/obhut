@@ -562,7 +562,7 @@ EOF
 @test "qBittorrent and WebDAV run as the downloads uid" {
     # DD-209: the container runs qBittorrent as PUID/PGID = the downloads account; the hook checks the
     # host uid of the qbittorrent-nox process, and the unit is the one Podman generates.
-    grep -qx 'Environment=PUID=__DOWNLOADS_UID__ PGID=__DOWNLOADS_GID__ UMASK=002 TZ=__TIMEZONE__ WEBUI_PORT=__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/qbittorrent.container"
+    grep -qx 'Environment=PUID=__DOWNLOADS_UID__ PGID=__DOWNLOADS_GID__ UMASK=002 TZ=__TIMEZONE__ WEBUI_PORT=__TORRENT_UI_PORT__ TORRENTING_PORT=__TORRENT_PEER_PORT__' "$V2_ROOT/magaza/torrent/qbittorrent.container"
     body="$(awk '/^torrent_verify\(\)/,/^}$/' "$V2_ROOT/magaza/torrent/kanca")"
     grep -qF 'podman top "$TORRENT_CONTAINER" huid comm' <<<"$body"
     grep -qF '[[ "$uid" == "$DOWNLOADS_UID" ]]' <<<"$body"
@@ -2342,7 +2342,9 @@ PY
     # DD-200: the shell names no application; links, sections and App Store texts come from packages.
     run ! grep -qi 'wireguard' "$js" "$html" "$V2_ROOT/console/konsol.css"
     run ! grep -q 'data-route="torrent"' "$html"
-    grep -qF 'a = h("a", { href: "#/" + rota, "data-route": rota, "data-app": r.id }, svg(r.icon), r.baslik);' "$js"
+    # DD-216: applications have no sidebar entry; their pages open from Ana Menü's tiles, which stays marked.
+    run ! grep -qE 'paintNav|installed-label|"data-app": r\.id' "$js" "$html"
+    grep -qF 'const navKey = apps[key] ? "genel" : key;' "$js"
     grep -qF 'window.Konsol = Object.freeze({ sayfa: registerPage });' "$js"
     grep -qF 'const url = `/uygulama/${enc(m.id)}/${f}`;' "$js"
     # A page whose package is absent is not opened; the backends are not asked.
@@ -3069,11 +3071,12 @@ PY
         [ -f "$V2_ROOT/magaza/torrent/$f" ]
     done
     grep -q '__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/torrent.caddy"
-    grep -qx 'WebUI\\Address=127.0.0.1' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
+    grep -qxF 'WebUI\Address=*' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'WebUI\\Port=__TORRENT_UI_PORT__' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     grep -qx 'Session\\DefaultSavePath=__DOWNLOADS_PATH__/' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
-    # DD-178: only panel integration/headless startup keys may be seeded. In
-    # particular do not force UPnP, discovery, temporary storage or performance.
+    # DD-178/DD-219: only panel integration/headless startup keys may be seeded; everything else is
+    # qBittorrent's own default (DD-218's chosen defaults were reverted). In particular do not force
+    # UPnP, discovery, temporary storage, encryption, queue or performance.
     expected="$(printf '%s\n' Accepted 'Session\DefaultSavePath' 'Downloads\SavePath' \
         'WebUI\Address' 'WebUI\LocalHostAuth' 'WebUI\Port' | LC_ALL=C sort)"
     actual="$(awk -F= '/=/ {print $1}' "$V2_ROOT/magaza/torrent/qBittorrent.conf" | LC_ALL=C sort)"
@@ -3082,7 +3085,8 @@ PY
     grep -qx 'WebUI\\LocalHostAuth=true' "$V2_ROOT/magaza/torrent/qBittorrent.conf"
     # DD-203: the package's port and profile are its own settings; the base defaults carry none.
     grep -qx 'TORRENT_PROFILE_DIR=/var/lib/qbittorrent' "$V2_ROOT/magaza/torrent/torrent.env"
-    grep -qx 'TORRENT_UI_PORT=61006' "$V2_ROOT/magaza/torrent/torrent.env"
+    # DD-219: uncommon fixed ports, outside Linux's ephemeral range and away from the 610xx block.
+    grep -qx 'TORRENT_UI_PORT=62947' "$V2_ROOT/magaza/torrent/torrent.env"
     run ! grep -q '^TORRENT_' "$V2_ROOT/config/defaults.env"
 }
 
@@ -3108,7 +3112,7 @@ PY
     grep -qF 'id: "torrent-open", href: url,' "$page"
     grep -qF 'urls = self.package_urls(mid)' "$V2_ROOT/panel/master-panel"
     run ! grep -q 'torrent' "$html"
-    grep -q 'id="installed-label" hidden' "$html"
+    run ! grep -q 'installed-label' "$html"
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
     grep -q '^\.acct-wg {' "$V2_ROOT/magaza/torrent/sayfa.css"
     run ! grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
@@ -3145,7 +3149,7 @@ PY
     [ -z "$(MODULES_DIR="$TMP/empty" paket_korunan_klasorler)" ]
     # The installer fills a package's own placeholders from its env file before its own variables.
     eval "$(awk '/^paket_ayar_oku\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    [ "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent TORRENT_UI_PORT)" = 61006 ]
+    [ "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent TORRENT_UI_PORT)" = 62947 ]
     [ "$(V2_ROOT="$V2_ROOT" paket_ayar_oku wireguard WG_CONF_DIR)" = /etc/wireguard ]
     [ -z "$(V2_ROOT="$V2_ROOT" paket_ayar_oku torrent NOPE)" ]
     grep -qF 'value="$(paket_ayar_oku "$id" "$key")"' "$V2_ROOT/install.sh"
@@ -3322,7 +3326,7 @@ PY
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css; do' "$V2_ROOT/install.sh"
-    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem)$", path)' "$V2_ROOT/panel/master-panel"
+    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 2 ]
     grep -qF 'if path == "/api/konsol/konteynerler/islem":' "$V2_ROOT/panel/master-panel"
     grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
@@ -3354,8 +3358,11 @@ PY
     # The container name matches the quadlet file; the image is an OCI index pinned by digest.
     grep -qx 'TORRENT_CONTAINER=qbittorrent' "$pkg/torrent.env"
     grep -qE '^TORRENT_IMAGE=lscr\.io/linuxserver/qbittorrent@sha256:[0-9a-f]{64}$' "$pkg/torrent.env"
-    run ! grep -qE ':latest|Pull=(always|missing|newer)|AutoUpdate=' "$q" "$pkg/torrent.env"
-    for line in 'Image=__TORRENT_IMAGE__' 'ContainerName=__TORRENT_CONTAINER__' 'Pull=never' 'Network=host' 'LogDriver=journald' \
+    # DD-214: the moving tag is only the channel Konsol checks; the Quadlet never follows it by itself.
+    run ! grep -qE ':latest|Pull=(always|missing|newer)|AutoUpdate=' "$q"
+    [ "$(grep -c ':latest' "$pkg/torrent.env")" -eq 1 ]
+    grep -qx 'TORRENT_IMAGE_KANAL=lscr.io/linuxserver/qbittorrent:latest' "$pkg/torrent.env"
+    for line in 'Image=__TORRENT_IMAGE__' 'ContainerName=__TORRENT_CONTAINER__' 'Pull=never' 'Network=__TORRENT_NETWORK__' 'LogDriver=journald' \
         'StopTimeout=45' 'DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT' \
         'Volume=__TORRENT_PROFILE_DIR__:/config' 'Volume=__DOWNLOADS_PATH__:__DOWNLOADS_PATH__' \
         'After=network-online.target master-firewall.service' 'WantedBy=multi-user.target'; do
@@ -3364,9 +3371,14 @@ PY
     # Live finding: with no-new-privileges the image's s6 init ignores SIGTERM until SIGKILL (settings lost).
     run ! grep -q '^NoNewPrivileges' "$q"
     awk '/^torrent_off\(\)/,/^}$/' "$pkg/kanca" | grep -qF 'systemctl reset-failed'
-    # Only these two mounts: no SERVER_ROOT, trash or share root; no published ports (no NAT rules).
+    # Only these two mounts: no SERVER_ROOT, trash or share root.
     [ "$(grep -c '^Volume=' "$q")" -eq 2 ]
-    run ! grep -qE '^(PublishPort|Network=(bridge|pasta|slirp))' "$q"
+    # DD-217: its own bridge; the interface only on loopback, the peer port only on the WAN IPv4 address.
+    [ "$(grep '^PublishPort=' "$q" | tr '\n' ' ')" = 'PublishPort=127.0.0.1:__TORRENT_UI_PORT__:__TORRENT_UI_PORT__/tcp PublishPort=__WAN_IPV4__:__TORRENT_PEER_PORT__:__TORRENT_PEER_PORT__/tcp PublishPort=__WAN_IPV4__:__TORRENT_PEER_PORT__:__TORRENT_PEER_PORT__/udp ' ]
+    run ! grep -qE '^Network=(host|bridge|pasta|slirp|podman)' "$q"
+    grep -qx 'PAKET_KONTEYNER_AG="__TORRENT_NETWORK__"' "$pkg/paket.env"
+    grep -qx 'TORRENT_PEER_PORT=63851' "$pkg/torrent.env"
+    grep -qx 'TORRENT_NETWORK=torrent' "$pkg/torrent.env"
     # The engine places/removes the quadlet and pulls the digest; the installer's leftover check knows it.
     grep -qF 'paket_imaj_cek() {' "$V2_ROOT/scripts/master-modul"
     grep -qF '[[ "$PAKET_IMAJ" =~ ^[a-z0-9.-]+(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$ ]] ||' "$V2_ROOT/scripts/master-modul"
@@ -3461,28 +3473,115 @@ PY
     grep -qF -- '--master-modul __SBIN_DIR__/master-modul' "$V2_ROOT/systemd/master-panel.service"
 }
 
-@test "container list (DD-213): compact columns and capability-gated service edit remove slots" {
-    local js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css" row actions list
+@test "container list (DD-213, DD-214): start/stop and edit before the name, remove last, home-tile icons" {
+    local js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css" row control list
     row="$(awk '/^  function rowEl\(c\)/,/^  }$/' "$js")"
-    actions="$(awk '/^  function rowActions\(c\)/,/^  }$/' "$js")"
+    control="$(awk '/^  function control\(c, slot\)/,/^  }$/' "$js")"
     list="$(awk '/^  function containersPanel\(\)/,/^  }$/' "$js")"
     # Ownership remains server authority, but no longer consumes a list column.
     grep -qF 'h("span", null, "Ad"), h("span", null, "Durum"), h("span", null, "Kaynak"), h("span", null, "Erişim"), h("span", null, ""))' <<<"$list"
     run ! grep -qE 'shortImage|c\.image|pd-c-owner|ownerPill' <<<"$row"
     grep -qF 'appName(c)' <<<"$row"
     for cls in pd-c-state pd-c-res pd-c-access; do grep -qF "$cls" <<<"$row"; done
-    grep -qF 'rowActions(c)' <<<"$row"
-    # Fixed slots dispatch to the existing confirmed workflows, never directly to the API.
-    grep -qF '() => lifecycle(c, svcAction)' <<<"$actions"
-    grep -qF '["edit", "save", "Düzenle", "pencil", () => openEditor(c.name)]' <<<"$actions"
-    grep -qF '() => removeContainer(c)' <<<"$actions"
-    [ "$(grep -nF '["svc",' <<<"$actions" | cut -d: -f1)" -lt "$(grep -nF '["edit",' <<<"$actions" | cut -d: -f1)" ]
-    [ "$(grep -nF '["edit",' <<<"$actions" | cut -d: -f1)" -lt "$(grep -nF '["remove",' <<<"$actions" | cut -d: -f1)" ]
-    grep -qF '"aria-disabled": reason ? "true" : "false"' <<<"$actions"
-    grep -qF 'if (!busyOf(c) && can(c, action)) fn();' <<<"$actions"
-    run ! grep -qE 'submit\(|fetch\(' <<<"$actions"
+    # DD-214: lead controls, icon and name in the first cell; remove alone at the end of the row.
+    grep -qF 'h("div", { class: "pd-c-who" }, rowLead(c), icon(c), h("div", { class: "pd-nm" },' <<<"$row"
+    grep -qF 'h("div", { class: "pd-acts pd-acts-end" }, control(c, "remove")),' <<<"$row"
+    grep -qF 'const rowLead = (c) => h("div", { class: "pd-acts pd-acts-lead", role: "group", "aria-label": `${appName(c)} işlemleri` }, control(c, "svc"), control(c, "edit"));' "$js"
+    # Fixed slots dispatch to the existing confirmed workflows, never directly to the API; the icons are the
+    # home tiles' own (play/pause, sliders, trash).
+    grep -qF 'svcAction === "stop" ? "pause" : "play", () => lifecycle(c, svcAction)]' <<<"$control"
+    grep -qF 'edit: ["save", "Düzenle", "sliders", () => openEditor(c.name)],' <<<"$control"
+    grep -qF 'remove: ["remove", "Kaldır", "trash", () => removeContainer(c)],' <<<"$control"
+    grep -qF '"aria-disabled": reason ? "true" : "false"' <<<"$control"
+    grep -qF 'if (!busyOf(c) && can(c, action)) fn();' <<<"$control"
+    run ! grep -qE 'submit\(|fetch\(|"pencil"|"stop" : "play"' <<<"$control"
     grep -qF 'c.restricted_reason' <<<"$row"
-    grep -qF '.pd-acts .pd-ib { width:44px; height:44px;' "$css"
+    grep -qF '.pd-acts .pd-ib { width:44px; height:44px; border-radius:8px; border:0; background:none; color:var(--muted); }' "$css"
+    run ! grep -qE '\.pd-acts \.pd-act-(start|stop|edit) \{ color' "$css"
+    # The row layout follows the table's own width, so the sidebar's narrow table turns into cards
+    # instead of squeezing the name; the phone media block no longer lays out rows.
+    grep -qF '.pd-table { padding:0; gap:0; overflow:visible; container-type:inline-size; }' "$css"
+    grep -qF '@container (max-width:840px) {' "$css"
+    run ! grep -qF '.pd-row' <<<"$(awk '/^@media \(max-width:760px\) \{/,/^\}/' "$css")"
+}
+
+@test "qBittorrent on its own bridge (DD-217): per-address publications, engine-made bridge, guarded forward path" {
+    local mm="$V2_ROOT/scripts/master-modul" net="$V2_ROOT/panel/master_container_network.py" kanca="$V2_ROOT/magaza/torrent/kanca" ayar="$V2_ROOT/magaza/torrent/ayar.py"
+    # The engine makes the package bridge with the guard's interface naming and the package's own label,
+    # refuses a same-named foreign network, refreshes the guard around placement and removes the bridge with the package.
+    grep -qF '"$(printf '"'"'%s'"'"' "$PAKET_KONTEYNER_AG" | sha256sum | cut -c1-10)"' "$mm"
+    grep -qF -- '--label "io.master-stack.paket=$PAKET_ID" "$PAKET_KONTEYNER_AG" 2>&1)" ||' "$mm"
+    grep -qF 'bridge | host | none | podman | "${KONTEYNER_NETWORK:-konsol}") return 1 ;;' "$mm"
+    [ "$(awk '/^paket_konteyner_koy\(\)/,/^}$/' "$mm" | grep -cx '    paket_ag_hazirla || return 1')" -eq 1 ]
+    [ "$(awk '/^paket_konteyner_koy\(\)/,/^}$/' "$mm" | grep -c 'konteyner_korumasi')" -eq 2 ]
+    awk '/^paket_konteyner_kaldir\(\)/,/^}$/' "$mm" | grep -qF 'konteyner_korumasi'
+    awk '/^cmd_kaldir\(\)/,/^}$/' "$mm" | grep -qx '    paket_ag_kaldir'
+    awk '/^paket_iz_kontrol\(\)/,/^}$/' "$mm" | grep -qF 'ağ:$PAKET_KONTEYNER_AG'
+    # The guard lets through only what a registered package's placed Quadlet publishes on the WAN or Tailscale address.
+    grep -qx 'def package_publications(env):' "$net"
+    grep -qF 'bridges.update(bridge_name(env, p["network"]) for p in packages)' "$net"
+    grep -qF 'if ipaddress.IPv4Address(row["address"]).is_loopback:' "$net"
+    # The hook verifies Podman's exact publications; the worker moves the loopback line with the port and
+    # the install sets the interface address the bridge needs.
+    grep -qF 'ports="$(podman port "$TORRENT_CONTAINER" 2>/dev/null | LC_ALL=C sort || true)"' "$kanca"
+    grep -qx 'def patch_ui_publish(text, old, new):' "$ayar"
+    awk '/^def kur_uygula\(/,/^def kur_geri\(/' "$ayar" | grep -qF 'updates[("Preferences", "WebUI\\Address")] = "*"'
+    # The App Store tells the operator the real exposure (found stale in review). DD-221: without the number,
+    # which the Podman page changes after the text was rendered.
+    grep -qF '"Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır' "$V2_ROOT/magaza/torrent/konsol.json"
+    run ! grep -qF '__TORRENT_PEER_PORT__' "$V2_ROOT/magaza/torrent/konsol.json"
+    run ! grep -qF 'İnternete eş portu açılmaz' "$V2_ROOT/magaza/torrent/konsol.json"
+    # Settings shows the peer port as an internet-facing package port, IPv4 only and without an INPUT toggle.
+    grep -qF 'row.update(families=(4,), fixed=True)' "$V2_ROOT/panel/master-panel"
+    grep -qF 'r.scope === "lo" || r.fixed' "$V2_ROOT/console/ayarlar.js"
+    grep -qx 'PAKET_PORTLAR="TORRENT_UI_PORT:tcp:loopback:qBittorrent arayüzü;TORRENT_PEER_PORT:udp+tcp:internet:qBittorrent eş portu"' "$V2_ROOT/magaza/torrent/paket.env"
+}
+
+@test "peer port editor (DD-221): the Podman page moves the WAN publications with the guard and a durable choice" {
+    local ayar="$V2_ROOT/magaza/torrent/ayar.py" ui="$V2_ROOT/console/konteynerler.js" body
+    body="$(awk '/^def konteyner_ayar\(/,/^def _runner\(/' "$ayar")"
+    # Both WAN publications and TORRENTING_PORT move together, on the WAN address the installer rendered.
+    grep -qx 'def patch_peer_publish(text, wan, old, new):' "$ayar"
+    grep -qF 'text = patch_peer_publish(text, wan_address(env), env["TORRENT_PEER_PORT"], peer)' <<<"$body"
+    # The guard admits the new publication before the app starts and is reapplied on rollback.
+    [ "$(grep -n 'container_guard(new_env, state)' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'started = True' <<<"$body" | cut -d: -f1)" ]
+    grep -qF 'container_guard(env, state)' <<<"$body"
+    # Only a changed peer port is recorded; an omitted one keeps the current value.
+    grep -qF 'chosen_overrides["TORRENT_PEER_PORT"] = peer' <<<"$body"
+    grep -qF 'peer_value = config.get("peer_port", int(env["TORRENT_PEER_PORT"]))' <<<"$body"
+    # The probe binds TCP and UDP on the WAN address; no install-time free-port search exists.
+    grep -qF 'for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):' "$ayar"
+    # The base page shows the field only for an adapter that declares it.
+    grep -qF '"peer_port" in d ? field("Eş portu (WAN IPv4, TCP+UDP)"' "$ui"
+    grep -qF 'if ("peer_port" in s.draft) config.peer_port' "$ui"
+}
+
+@test "image updates (DD-214): Konsol checks registry manifests, the operator updates; no automatic update" {
+    local mc="$V2_ROOT/panel/master_containers.py" mgr="$V2_ROOT/panel/master_container_manager.py" ayar="$V2_ROOT/magaza/torrent/ayar.py" check body
+    check="$(sed -n '/^def update_status(/,/^class ContainerError/p' "$mc")"
+    # The check reads manifests only: no pull, run or rmi anywhere in the base read module.
+    grep -qF '["podman", "manifest", "inspect", channel]' <<<"$check"
+    run ! grep -qE '"(pull|run|rmi|rm|create)"' "$mc"
+    grep -qx 'UPDATE_TTL = 6 \* 3600' "$mgr"
+    grep -qx 'UPDATE_MIN_INTERVAL = 60' "$mgr"
+    grep -qF "for value in items.values(): value.pop('candidate',None)" "$mgr"
+    grep -qF "if app.get('channel') and app.get('adapter'):" "$mgr"
+    grep -qF "('konteyner-guncelle',{'revision':data['revision']},870)" "$mgr"
+    # The package declares its channel and lets the operator's choice persist as an override.
+    grep -qx 'PAKET_IMAJ_KANAL="__TORRENT_IMAGE_KANAL__"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qx 'PAKET_AYAR_ANAHTARLAR="TORRENT_UI_PORT TORRENT_PEER_PORT TORRENT_IMAGE"' "$V2_ROOT/magaza/torrent/paket.env"
+    grep -qF 'PAKET_IMAJ_KANAL=""' "$V2_ROOT/scripts/master-modul"
+    # Adapter: validate every file, then pull the exact digest, then write/restart/verify, roll back on failure.
+    body="$(awk '/^def konteyner_guncelle\(/,/^def seed_path\(/' "$ayar")"
+    [ "$(grep -n 'texts\[placed\] = patch_image' <<<"$body" | cut -d: -f1)" -lt "$(grep -n '"podman", "pull", "-q", new' <<<"$body" | cut -d: -f1)" ]
+    [ "$(grep -n '"podman", "pull", "-q", new' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'settings.atomic(target, texts\[target\]' <<<"$body" | cut -d: -f1)" ]
+    grep -qF 'settings.require(image == new, "Konteyner yeni imajla açılmadı.")' <<<"$body"
+    grep -qF '_runner(["podman", "rmi", ident.strip()], 60)' <<<"$body"
+    # No timer, auto-update label or Podman auto-update unit anywhere in the stack.
+    [ "$(grep -rhE 'AutoUpdate=|podman-auto-update|auto-update' "$V2_ROOT/magaza" "$V2_ROOT/panel" "$V2_ROOT/systemd" "$V2_ROOT/install.sh" "$V2_ROOT/scripts" | grep -cvE '^[[:space:]]*#')" -eq 0 ]
+    # The page asks the cached status on open and forces only on the operator's button.
+    grep -qF 'api(`${BASE}/guncellemeler${force ? "?yenile=1" : ""}`)' "$V2_ROOT/console/konteynerler.js"
+    grep -qF 'onclick: () => { if (!updLoading) loadUpdates(true); } }, svg("refresh"), "Güncellemeleri denetle")' "$V2_ROOT/console/konteynerler.js"
 }
 
 @test "console shows App Store from the module API in one responsive sidebar" {
@@ -4281,8 +4380,12 @@ torrent_fixture() {
     cp "$V2_ROOT/panel/master_settings.py" "$TMP/sbin/master_settings.py"
     cp "$V2_ROOT/panel/master_https.py" "$TMP/sbin/master_https.py"
     mkdir -p "$TMP/mods/torrent" "$TMP/caddy/moduller" "$TMP/dnsmasq.d" "$TMP/srv/downloads" "$TMP/qbprof" "$TMP/quadlet"
-    sed -e "s#__TORRENT_IMAGE__#lscr.io/linuxserver/qbittorrent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#" "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
-    printf '[Container]\nImage=fixture\nNetwork=host\n' >"$TMP/mods/torrent/qbittorrent.container"
+    sed -e "s#__TORRENT_IMAGE__#lscr.io/linuxserver/qbittorrent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#" \
+        -e "s#__TORRENT_NETWORK__#torrent#" "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/mods/torrent/paket.env"
+    printf '[Container]\nImage=fixture\nNetwork=torrent\n' >"$TMP/mods/torrent/qbittorrent.container"
+    # DD-217: the engine names the package bridge like Konsol's guard (prefix + name digest).
+    local iface
+    iface="ksl$(printf '%s' torrent | sha256sum | cut -c1-10)"
     sed -e "s#__DOWNLOADS_PATH__#$TMP/srv/downloads#g" -e 's/__TORRENT_UI_PORT__/61006/g' \
         "$V2_ROOT/magaza/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
     printf 'http://torrent.ayc {\n\treverse_proxy 127.0.0.1:61006\n}\n' >"$TMP/mods/torrent/torrent.caddy"
@@ -4294,7 +4397,8 @@ torrent_fixture() {
     mkdir -p "$TMP/srv/media"
     : >"$TMP/caddy/Caddyfile"
     # DD-203: the hook reads its port, profile and container name from the package's own env file.
-    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\nTORRENT_CONTAINER=qbittorrent\n' "$TMP" >"$TMP/mods/torrent/torrent.env"
+    printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\nTORRENT_CONTAINER=qbittorrent\nTORRENT_PEER_PORT=61008\nTORRENT_NETWORK=torrent\n' "$TMP" \
+        >"$TMP/mods/torrent/torrent.env"
     cat >>"$TMP/mstate.env" <<EOF
 CONSOLE_WEB_DIR=$TMP/web
 DOWNLOADS_GID=1000
@@ -4303,6 +4407,8 @@ CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
 DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
 KONTEYNER_BIRIM_DIR=$TMP/quadlet
+KONTEYNER_BRIDGE_PREFIX=ksl
+WAN_IPV4=192.0.2.1
 EOF
     cat >"$TMP/mbin/systemctl" <<EOF
 #!/bin/bash
@@ -4333,6 +4439,15 @@ case "\$1 \$2" in
     "inspect --format")
         printf '%s\n' "$TMP/qbprof" "$TMP/dl"
         [ ! -e "$TMP/qb-open" ] || printf '%s\n' "$TMP/srv/.cop" ;;
+    "network exists") [ -e "$TMP/qb-net" ]; exit \$? ;;
+    "network create") printf '%s\n' "\$*" >>"$TMP/net-calls"; touch "$TMP/qb-net" ;;
+    "network inspect")
+        [ -e "$TMP/qb-net" ] || exit 125
+        case "\$*" in *NetworkInterface*) echo "$iface torrent" ;; *) echo torrent ;; esac ;;
+    "network rm") printf '%s\n' "\$*" >>"$TMP/net-calls"; rm -f "$TMP/qb-net" ;;
+    "port qbittorrent")
+        printf '61006/tcp -> 127.0.0.1:61006\n61008/tcp -> 192.0.2.1:61008\n61008/udp -> 192.0.2.1:61008\n'
+        [ ! -e "$TMP/qb-ports" ] || echo "8080/tcp -> 0.0.0.0:8080" ;;
 esac
 exit 0
 EOF
@@ -4389,7 +4504,10 @@ torrent_seed() { # [SAVE_DIR]
     grep -qx 'WebUI\\Username=operator' "$TMP/conf-at-start"
     grep -qx 'WebUI\\Password_PBKDF2=@ByteArray(c2FsdHNhbHRzYWx0c2FsdA==:a2V5a2V5a2V5)' "$TMP/conf-at-start"
     grep -qx "Session\\\\DefaultSavePath=\"$TMP/dl/\"" "$TMP/conf-at-start"
-    grep -qx 'WebUI\\Address=127.0.0.1' "$TMP/conf-at-start"
+    # DD-217: on its own bridge the interface listens on the container's address; Podman publishes it on loopback.
+    grep -qxF 'WebUI\Address=*' "$TMP/conf-at-start"
+    grep -qx "network create --driver bridge --interface-name ksl$(printf '%s' torrent | sha256sum | cut -c1-10) --label io.master-stack.paket=torrent torrent" "$TMP/net-calls"
+    [ "$(grep -c '^network create' "$TMP/net-calls")" -eq 1 ]
     [ ! -e "$TMP/run/modul-torrent.kur" ]
     [ ! -e "$TMP/run/modul-torrent.kur.onceki" ]
     [ ! -e "$TMP/quadlet/qbittorrent.container.d/90-konsol.conf" ]
@@ -4465,6 +4583,9 @@ torrent_seed() { # [SAVE_DIR]
     run mm kaldir torrent
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/quadlet/qbittorrent.container" ]
+    # DD-217: the package's own bridge goes with it.
+    grep -qx 'network rm torrent' "$TMP/net-calls"
+    [ ! -e "$TMP/qb-net" ]
     [ ! -e "$TMP/caddy/moduller/torrent.caddy" ]
     [ ! -e "$TMP/dnsmasq.d/modul-torrent.conf" ]
     [ ! -e "$TMP/web/uygulama" ]
@@ -4486,20 +4607,29 @@ torrent_seed() { # [SAVE_DIR]
     [ ! -e "$TMP/run/modul-torrent.kur" ]
     [ "$(grep -c 'master-firewall' "$TMP/systemctl-calls")" -eq 0 ]
     # --veri deletes the image and the folder drop-in; the profile only under /var/lib.
-    mkdir -p "$TMP/quadlet/qbittorrent.container.d"
+    # DD-220: Konsol's durable choice (the interface port, an approved image) and its port drop-in stay:
+    # the rendered package files were made with them, so a reinstall starts consistent with its hook.
+    mkdir -p "$TMP/quadlet/qbittorrent.container.d" "$TMP/etc/package-overrides"
     printf '[Container]\nVolume=/x:/x\n' >"$TMP/quadlet/qbittorrent.container.d/90-konsol.conf"
+    printf '[Container]\nEnvironment=WEBUI_PORT=61006\n' >"$TMP/quadlet/qbittorrent.container.d/85-konteyner.conf"
+    printf 'TORRENT_UI_PORT=61006\n' >"$TMP/etc/package-overrides/torrent.env"
+    chmod 600 "$TMP/etc/package-overrides/torrent.env"
+    printf 'PACKAGE_OVERRIDES_DIR=%s/etc/package-overrides\n' "$TMP" >>"$TMP/mstate.env"
     run mm kaldir torrent --veri
     [ "$status" -eq 0 ]
     [ ! -e "$TMP/qb-image" ]
     # Removed by image id: podman rmi treats NAME@sha256 as a tag ("tag not known", found live).
     grep -qx "rmi f1997322e699aaaa" "$TMP/podman-calls"
-    [ ! -e "$TMP/quadlet/qbittorrent.container.d" ]
+    [ ! -e "$TMP/quadlet/qbittorrent.container.d/90-konsol.conf" ]
+    [ "$(cat "$TMP/etc/package-overrides/torrent.env")" = "TORRENT_UI_PORT=61006" ]
+    grep -qx 'Environment=WEBUI_PORT=61006' "$TMP/quadlet/qbittorrent.container.d/85-konteyner.conf"
     [ -f "$TMP/qbprof/qBittorrent/qBittorrent.conf" ]
     # A container that sees the trash, an interface beyond loopback or a root qBittorrent is taken back.
     local trap_file msg
     # A failed install also returns the kept profile and the drop-in to what they were (DD-210).
     cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/before-failed.conf"
-    for trap_file in qb-open:"korunan bir klasörü görüyor" qb-wide:"loopback dışında da dinliyor" qb-root:"uid '0' ile çalışıyor"; do
+    for trap_file in qb-open:"korunan bir klasörü görüyor" qb-wide:"loopback dışında da dinliyor" qb-root:"uid '0' ile çalışıyor" \
+        qb-ports:"yayımlanan portları beklenenden farklı"; do
         msg="${trap_file#*:}"; trap_file="${trap_file%%:*}"
         touch "$TMP/$trap_file"
         torrent_seed "$TMP/srv/media"
@@ -4888,7 +5018,7 @@ PY
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
     [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
     # DD-208: Podman is base infrastructure, printed with its version, not as an App Store line.
-    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Konteynerler)' "$V2_ROOT/install.sh"
+    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)' "$V2_ROOT/install.sh"
     # DD-196: the WireGuard usage note is printed only with the package installed.
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(summary_notes)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"

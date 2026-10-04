@@ -41,9 +41,8 @@
       <a href="#/genel" data-route="genel" data-icon="home">Ana Menü</a>
       <a href="#/dosyalar" data-route="dosyalar" data-icon="folder">Dosyalar</a>
       <a href="#/moduller" data-route="moduller" data-icon="stack">App Store</a>
-      <a href="#/konteynerler" data-route="konteynerler" data-icon="box">Konteynerler</a>
-      <!-- DD-200: installed application links follow this label; konsol.js builds them from each package's declaration. -->
-      <span class="side-label" id="installed-label" hidden>Kurulu uygulamalar</span>
+      <a href="#/konteynerler" data-route="konteynerler" data-icon="box">Podman</a>
+      <!-- DD-216: installed applications have no sidebar entry; they open from their Ana Menü tiles. -->
       <a href="#/ayarlar" data-route="ayarlar" data-icon="sliders" class="settings-link">Ayarlar</a>
     </nav>
     <section class="resources" aria-label="Sunucu kaynakları">
@@ -96,7 +95,7 @@
         <section class="store-detail" id="mod-detail" aria-labelledby="mod-detail-title" hidden></section>
       </section>
 
-      <!-- Konteynerler: the base Podman manager (konteynerler.js); old Settings → Konteynerler links redirect here. -->
+      <!-- Podman: the base container manager (konteynerler.js, #/konteynerler); old Settings → Konteynerler links redirect here. -->
       <section data-view="konteynerler" hidden>
         <div id="konteyner-page"></div>
       </section>

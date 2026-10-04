@@ -41,15 +41,15 @@ the ones agreed on 2026-08-05:
 | R7 | Store the Tailscale IPv4 and IPv6 addresses as variables and in a state file |
 | R8 | Create the user root `/srv`, downloads `/srv/downloads` and media `/srv/media` (**DD-144**) |
 | R9 | Withdrawn (**DD-152**) |
-| R10 | Optional qBittorrent is a host service; Files, per-folder Python WebDAV and bounded archive tools are built in (**DD-151**, **DD-158**, **DD-159**) |
+| R10 | Optional qBittorrent is a Podman container application on its own bridge (**DD-151**, **DD-209**, **DD-217**); Files, per-folder Python WebDAV and bounded archive tools are built in (**DD-158**, **DD-159**) |
 | R11 | Publish every web interface on loopback only (`127.0.0.1`; WebDAV's WAN scope on `SHARE_WAN_BACKEND`, **DD-179**) |
-| R12 | Publish publicly the WireGuard UDP port of each network, only while WireGuard is installed (host kernel, **DD-120**). The torrent peer port is not opened (**DD-151**): qBittorrent makes outgoing connections only |
+| R12 | Publish publicly the WireGuard UDP port of each network, only while WireGuard is installed (host kernel, **DD-120**). qBittorrent's peer port `TORRENT_PEER_PORT` (63851 unless changed in the Podman page, **DD-221**) is published on `WAN_IPV4` over TCP and UDP only while it is installed, through its Quadlet and the container guard (**DD-217**, **DD-219**, superseding DD-151's outgoing-only rule; §3.1) |
 | R13 | Read the local domain from the installer input file (**DD-119**) |
 | R14 | Resolve the defined service names to the Tailscale IPv4 with dnsmasq |
 | R15 | Have Caddy serve selected private HTTP routes on the Tailscale IPv4, plus optional WAN WebDAV/qBittorrent/Konsol HTTPS publications; Konsol's tailnet address always stays (§3.1, **DD-179/190/191/195**) |
 | R16 | Reverse-proxy the service names to the loopback interfaces through Caddy |
 | R17 | Tell the operator to configure Custom DNS and Restrict-to-domain manually in the Tailscale admin panel |
-| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the selected optional WAN Caddy publication port (**DD-179/190/191**); confirmed panel overrides take precedence. No incoming torrent peer port (**DD-151**, **DD-156**) |
+| R18 | Reapply firewall on boot: default Tailscale access, Tailscale UDP, registered WireGuard UDP, WAN SSH and the selected optional WAN Caddy publication port (**DD-179/190/191**); confirmed panel overrides take precedence. qBittorrent's peer port is let through by the container guard on the forward path, not by MASTER-INPUT (**DD-217**, **DD-219**) |
 | R19 | Withdrawn (**DD-152**) |
 | R20 | Keep the installation re-runnable |
 
@@ -159,9 +159,12 @@ the ones agreed on 2026-08-05:
   (`APT::Keep-Downloaded-Packages=false`) (**DD-125**).
 - **qBittorrent is a container application (DD-151, DD-209)**, installed from Konsol
   (§1.11): the `lscr.io/linuxserver/qbittorrent` image, pinned by digest, runs in
-  Podman on the host network as the downloads account (PUID/PGID).
-  `magaza/torrent/qBittorrent.conf` seeds minimal settings only when absent.
-  The installer holds no account or incoming peer-port setting: the account and the
+  Podman on its own bridge `torrent` as the downloads account (PUID/PGID), with the
+  interface (`TORRENT_UI_PORT`, 62947) published on `127.0.0.1` only and the peer port
+  (`TORRENT_PEER_PORT`, 63851) on the WAN IPv4 address only (**DD-217**, **DD-219**).
+  `magaza/torrent/qBittorrent.conf` seeds minimal integration settings only when the
+  profile is absent (**DD-178**).
+  The installer holds no account: the account and the
   download folder come from the App Store install form (**DD-210**) and are written
   before the container's first start. Later account/download-folder edits go through
   the package's own page, the overview's settings action and its worker
@@ -481,16 +484,17 @@ Contract in §5–§7 and `folder-shares.md`.
   (**DD-147**); on the public name every path except the sign-in page and API
   also needs a Konsol session, while the tailnet address asks for none
   (**DD-194**, **DD-205**).
-  - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**): Ana Menü is the
+  - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**, **DD-216**): Ana Menü is the
     landing page, with only installed application tiles and the network widget.
     Dosyalar, Paylaşımlar, App Store and Ayarlar have no home cards. Dosyalar, App Store
-    (§1.11, cards with name/status/actions and descriptions only in Details), Konteynerler,
-    the installed applications' pages and Ayarlar remain in
+    (§1.11, cards with name/status/actions and descriptions only in Details), Podman
+    (the container page) and Ayarlar remain in
     one responsive sidebar; Paylaşımlar is a tab inside Dosyalar, not a separate
-    sidebar entry. The skin is
+    sidebar entry. Installed applications have no sidebar entry: each opens from its
+    Ana Menü tile (and App Store "Aç"), and Ana Menü stays marked while its page is open. The skin is
     a wallpaper (inline SVG, no external asset) behind translucent surfaces; readers who
     ask for reduced transparency get opaque surfaces. An
-    application's link, section, App Store texts and journal words come from its
+    application's section, App Store texts and journal words come from its
     package's `konsol.json`; its page script and stylesheet are loaded from
     `/uygulama/<id>/` only while the package is installed and register through
     `window.Konsol.sayfa` (since **DD-202** the qBittorrent page too; the shell
@@ -505,7 +509,7 @@ Contract in §5–§7 and `folder-shares.md`.
     Ana Menü (`#/genel`); a page of an absent application opens App Store.
   - **Opening an application and its actions (DD-210, DD-212/213).** An application with a native
     web interface (its `urls`) opens there in a new tab (`noopener`) from its overview
-    tile, its sidebar entry and its App Store "Aç" while it runs: the public name on the
+    tile and its App Store "Aç" while it runs: the public name on the
     public HTTPS address, the tailnet name on the tailnet address. A stopped, busy or
     unpublished application (on the public address without an active public name) opens
     its Konsol page instead; the public address never links a private name. Beneath the
@@ -560,17 +564,38 @@ Contract in §5–§7 and `folder-shares.md`.
     application's missing measurement does not hide other rows or the server rates.
     Existing backend traffic sources and authentication are unchanged; no new rate
     module or additional qBittorrent login is introduced.
-  - **Konteynerler (DD-211)** is a main sidebar page at `#/konteynerler`, with
+  - **Podman (DD-211, DD-216)** is a main sidebar page at `#/konteynerler` (title and
+    sidebar entry "Podman"; formerly Konteynerler), with
     containers, images, named volumes and networks. Old Settings deep links redirect.
     Inventory merges real Podman state, installed App Store applications and saved
     definitions, including stopped containers with no live runtime object. Failed
     reads are shown as unavailable, never as empty collections or zero measurements.
     Details include mounts, port bindings and masked log tails (100/200/500/1000 lines).
     The list (**DD-213**) shows only the application/container name, status, resources
-    and access; no image subtitle or ownership column. Its three icon actions are
-    start/stop → edit → remove, disabled when unsupported or busy. Image details and
-    additional operations remain on the detail page; permissions and confirmations
-    are unchanged.
+    and access; no image subtitle or ownership column. Its three icon actions keep fixed
+    places (**DD-214**): start/stop and edit immediately before the name, remove at the
+    end of the row. They use the home tiles' bare icons (play/pause, settings sliders,
+    trash) and are disabled when unsupported or busy. Image details and additional
+    operations remain on the detail page; permissions and confirmations are unchanged.
+    Access shows published port mappings; a host-network container has none, so it shows
+    the sockets its own processes listen on (**DD-215**, read from `/proc`: TCP LISTEN and
+    unconnected bound UDP, IPv6 link-local left out): one line per port with its widest
+    address, protocols and address kinds, at most three and "+N port daha", every address
+    in the detail. Labels name the bound address (all, WAN, Tailscale, other, loopback),
+    not reachability, which the firewall decides; an unreadable read shows as unknown.
+    An App Store row shows its container name until the module catalogue answers, never
+    the package id, and repaints when it does.
+  - **Image updates (DD-214)** are checked, never applied, by Konsol.
+    `GET /api/konsol/konteynerler/guncellemeler` compares each managed container's
+    installed digest with what its channel tag points to now (an App Store package's
+    `PAKET_IMAJ_KANAL`, a Konsol definition's tag reference) using registry manifests
+    only, inside the backend's sandbox; answers are `guncel`, `var`, `sabit` (digest
+    reference, nothing to follow) or `denetlenemedi` with a reason. The answer is cached
+    for six hours; the page asks on open and "Güncellemeleri denetle" forces a check at
+    most once a minute; a successful image change empties the cache. A row with a newer
+    build shows "Güncelleme var", the summary counts them and the detail shows the state,
+    channel and check time. Only an explicit `image-update` operation after a confirmation
+    changes an image; there is no timer and no automatic update.
     - Start, stop, restart and remove use the actual owner. App Store lifecycle goes
       through `master-modul`; another systemd/Compose/pod controller remains read-only.
       A standalone external container may be controlled or explicitly adopted after
@@ -589,10 +614,14 @@ Contract in §5–§7 and `folder-shares.md`.
     - Removing a container retains its volumes and host files. Unused standard named
       volumes and managed bridge networks have separate removal actions. In-use
       resources and package-pinned images cannot be removed through generic controls.
-    - qBittorrent exposes its real listener port and download folder through its
-      package adapter. Required mounts remain protected; native Web UI, Caddy upstream,
-      health checks and installer re-runs use the same durable port override. Account
-      editing remains in the application's existing settings form.
+    - qBittorrent exposes its real listener port, its WAN peer port (**DD-221**) and
+      download folder through its package adapter. Required mounts remain protected;
+      native Web UI, Caddy upstream, publications, the container guard, health checks
+      and installer re-runs use the same durable port override. Only a changed port is
+      recorded. A peer port must be 1024–65535, differ from the listener, belong to no
+      other project service and be bindable on the WAN address over TCP and UDP; there is
+      no install-time free-port search. Account editing remains in the application's
+      existing settings form.
     - `GET /api/konsol/konteynerler/{liste,ayrinti,gunluk,islem}` and `POST
       /api/konsol/konteynerler/islem` retain the existing Host/channel/session/CSRF
       gates. Writes return 202 plus an operation ID, then a bounded root worker
@@ -845,7 +874,7 @@ Contract in §5–§7 and `folder-shares.md`.
   installable/removable applications. Podman is base infrastructure, not a catalogue
   item (§1.3, **DD-208**).
 - **Container applications (DD-209).** `PAKET_CALISMA=konteyner` marks an application
-  that runs in Podman; Konsol shows it like any other application (tile, sidebar, App
+  that runs in Podman; Konsol shows it like any other application (tile, App
   Store row with a "Konteyner" chip; its state is its unit's liveness, as for `host`).
   `PAKET_KONTEYNER` names the package's quadlet file (`<name>.container`), which the
   engine places into `KONTEYNER_BIRIM_DIR` (`/etc/containers/systemd`) with a
@@ -853,9 +882,38 @@ Contract in §5–§7 and `folder-shares.md`.
   and checks after removal like a drop-in. `PAKET_IMAJ` is the image, accepted only as
   `name@sha256:<digest>`; `paket_imaj_cek` pulls it (bounded to 900 s) only when absent,
   so re-runs and boots never download (`Pull=never`); `paket_imaj_sil` (hooks' `--veri`)
-  removes it by image id and leaves an image another tag or container uses. Image
-  updates are a new digest in the package and an installer run (a changed quadlet
-  recreates the container); there is no automatic update.
+  removes it by image id and leaves an image another tag or container uses. A new
+  digest in the package and an installer run updates installs without an approved update
+  (no `TORRENT_IMAGE` override); after an approved update the recorded digest stays, also
+  across `kaldir --veri` (**DD-220**), until the next approved update. `PAKET_IMAJ_KANAL`
+  names the tag Konsol checks (**DD-214**); with a container adapter the application also
+  offers `image-update`: the adapter validates the files that name the image, pulls the
+  exact digest the check saw, rewrites that image line in the rendered and the placed
+  Quadlet and in the rendered manifest (a Quadlet drop-in cannot replace `Image=`), saves
+  the digest as the package's durable override so the installer renders the same, restarts
+  a running app, verifies its interface and the container's image, and on any failure
+  restores every file and the previous service. The previous image is removed only after
+  success. There is no automatic update.
+- **A container application's own bridge (DD-217).** `PAKET_KONTEYNER_AG` names the
+  application's own Podman bridge network. The engine creates it when missing with the
+  container guard's interface naming (`KONTEYNER_BRIDGE_PREFIX` plus the first ten hex digits
+  of the name's SHA-256) and the label `io.master-stack.paket=<id>`, refuses a same-named
+  network that is not the package's, refreshes the guard after placing or removing the quadlet,
+  and removes the network with `kaldir`. The guard drops every forwarded packet into such a
+  bridge except replies and what the registered package's placed quadlet publishes as an IPv4
+  `address:port:port/protocol` on the server's WAN or Tailscale address; a loopback publication
+  needs no forward path, and no IPv6 ingress is opened. qBittorrent runs on its own bridge
+  `torrent` with exactly three publications: the interface `127.0.0.1:TORRENT_UI_PORT/tcp`
+  (Caddy and the publication reach it there) and the peer port `WAN_IPV4:TORRENT_PEER_PORT`
+  (63851, **DD-219**) over TCP and UDP; `TORRENTING_PORT` fixes qBittorrent's own peer port to the same
+  number and its profile's interface address is `*` (the install sets it). The hook verifies
+  that `podman port` lists exactly these three. The WAN address is the installer's
+  `WAN_IPV4`; when it changes the installer must run again. qBittorrent has no IPv6 peers on
+  this bridge. Changing the interface port in the Podman page also moves the loopback
+  publication line in the rendered and the placed quadlet; changing the peer port moves both WAN
+  lines and `TORRENTING_PORT` there, sets the profile's `Session\Port`, records the override and
+  reapplies the container guard before the restart (**DD-221**). The Podman page labels a
+  publication on the WAN address as internet access and shows the bridge's name.
 - **Install form (DD-210).** A package may declare an install form: `konsol.json`
   `form` (generic fields `metin`/`parola`/`klasor`, texts, the package API's read and
   write routes) and the manifest's `PAKET_KUR_AYAR` (its worker). App Store's "Kur" then
@@ -941,22 +999,25 @@ Contract in §5–§7 and `folder-shares.md`.
   required password (8–256 characters) and the download folder (default
   `DOWNLOADS_PATH`; the same downloads/library policy as the page's folder choice).
   - It runs as `qbittorrent.service`, which Podman's generator writes from the quadlet:
-    `Network=host` (no bridge, no NAT rules), `Pull=never`, journald logging,
-    `StopTimeout=45`, capabilities `NET_BIND_SERVICE SETFCAP SYS_CHROOT` dropped,
-    `PUID`/`PGID` = the downloads account, `UMASK=002`, `WEBUI_PORT=TORRENT_UI_PORT`,
+    `Network=torrent` with exactly three `PublishPort` lines (**DD-217**), `Pull=never`,
+    journald logging, `StopTimeout=45`, capabilities `NET_BIND_SERVICE SETFCAP SYS_CHROOT`
+    dropped, `PUID`/`PGID` = the downloads account, `UMASK=002`, `WEBUI_PORT=TORRENT_UI_PORT`,
+    `TORRENTING_PORT=TORRENT_PEER_PORT`,
     `Nice=10`/`CPUWeight=50`, started after `master-firewall`. Only two folders are
     mounted: the profile `TORRENT_PROFILE_DIR` (the package's `torrent.env`,
     `/var/lib/qbittorrent`, **DD-203**) as `/config`, and `DOWNLOADS_PATH` at the same
     path; the trash and the share root are absent inside. No `no-new-privileges`: the
     image's init then ignores SIGTERM until SIGKILL (settings lost on stop).
-  - Its settings are written once, when the profile has none (**DD-178**): save
-    path `DOWNLOADS_PATH`, WebUI on `127.0.0.1:TORRENT_UI_PORT` with local
-    authentication, and startup legal notice acceptance for the headless service.
-    No UPnP/automatic port-mapping, Local Peer Discovery, temporary folder/enable,
-    performance, peer-limit or other user-preference override is seeded. Those
-    follow the installed qBittorrent version's defaults until the user changes
-    them. Reapply preserves the entire existing profile. `kur` writes only the form's
-    `WebUI\Username`, `WebUI\Password_PBKDF2` and the two save-path keys into the new
+  - Its settings are written once, when the profile has none (**DD-178**, **DD-219**):
+    save path `DOWNLOADS_PATH`, the WebUI on `TORRENT_UI_PORT` at the container's address
+    (`*`; the host publishes it on loopback only) with local authentication, and startup
+    legal notice acceptance for the headless service. No UPnP/automatic port-mapping,
+    Local Peer Discovery, encryption, anonymous mode, queue, temporary folder,
+    preallocation, performance, peer-limit or other user-preference override is seeded
+    (DD-218's chosen defaults were reverted). Those follow the installed qBittorrent
+    version's defaults until the user changes them. Reapply preserves the entire
+    existing profile. `kur` writes only the form's `WebUI\Username`,
+    `WebUI\Password_PBKDF2`, the two save-path keys and `WebUI\Address=*` into the new
     or kept profile (and the folder drop-in when the folder is outside the downloads
     tree) before the first start; every other preference of a kept profile stays. A
     failed install restores the profile and the drop-in as they were (**DD-210**).
@@ -964,16 +1025,18 @@ Contract in §5–§7 and `folder-shares.md`.
     overview's settings action (§1.10).
   - `kur` checks that the `qbittorrent-nox` process runs as `DOWNLOADS_UID` on the
     host (`podman top … huid`), that no mount is `/`, `SERVER_ROOT`, the trash or the
-    share root, that the interface listens on `127.0.0.1` only, that its API answers
+    share root, that Podman publishes exactly the three expected ports and the interface
+    on `127.0.0.1` only, that its API answers
     `403` without a login on `127.0.0.1:TORRENT_UI_PORT` and through
     `torrent.${LOCAL_DOMAIN}`, and that the name resolves; a failed install is taken
     back. An active old Debian `qbittorrent-nox@` unit stops the install with the
     manual step (`systemctl disable --now …`).
   - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name); no
     WireGuard publication.
-  - No inbound peer port: the firewall opens nothing for it. qBittorrent
-    still listens on its own random peer port on every interface; new WAN
-    traffic to it is dropped in both families; tailnet access requires an explicit rule.
+  - Inbound peers (**DD-217**, **DD-219**, **DD-221**): only `WAN_IPV4:TORRENT_PEER_PORT` (63851 unless
+    changed in the Podman page) over TCP and UDP is published, and
+    the container guard lets only that through to the bridge; nothing is published on
+    Tailscale or IPv6.
   - The account is not Konsol's; since **DD-210** it is the install form's. Should no
     password be set, qBittorrent prints a temporary password to
     its journal on each start until one is set in its UI. `hesap torrent`
@@ -986,14 +1049,17 @@ Contract in §5–§7 and `folder-shares.md`.
     single save of any of username, password and folder with one stop/start, **DD-210**;
     the worker also has `kur-hazirla`/`kur-uygula`/`kur-geri`; the worker edits the profile
     and the quadlet drop-in `90-konsol.conf`, §1.10). Its own settings `torrent.env`
-    (`TORRENT_UI_PORT`, `TORRENT_PROFILE_DIR`, `TORRENT_CONTAINER`, `TORRENT_IMAGE`,
-    `TORRENT_SURUM`) and `klasorler.py`, which reports the
+    (`TORRENT_UI_PORT`, `TORRENT_PEER_PORT`, `TORRENT_NETWORK`, `TORRENT_PROFILE_DIR`,
+    `TORRENT_CONTAINER`, `TORRENT_IMAGE`, `TORRENT_IMAGE_KANAL`, `TORRENT_SURUM`) and
+    `klasorler.py`, which reports the
     folders it writes into beyond the manifest's `PAKET_KLASORLER` (**DD-203**).
   - `durdur` stops the unit and removes the quadlet so it does not start at boot (the
     name stays); `baslat` places it again. `kaldir` removes the names, the page and
     the quadlet and stops the unit but keeps the image; `--veri` also deletes the
     profile (settings and torrent list) — only under `/var/lib` — the folder drop-in
-    and the image, never a downloaded file.
+    and the image, never a downloaded file. Konsol's durable choices (the interface
+    and peer ports and an approved image, with the port drop-in) stay, so a reinstall matches the
+    rendered files without an installer run (**DD-220**).
 - Built-in WebDAV (`paylasim`, **DD-158/159**): `yerlesik` prepares a registry
   only if absent, places/enables the unprivileged service, checks UID/anonymous
   401, then publishes/checks Caddy and DNS. Unchanged reruns do not rewrite
@@ -1067,8 +1133,11 @@ Three exposure classes, and nothing may straddle them.
 
 ### 3.1 Public (WAN IPv4)
 
-No module gets a WAN port. qBittorrent has no inbound peer port
-(**DD-151**): it makes outgoing connections only.
+The only module WAN port is qBittorrent's peer port (**DD-217**, **DD-219**, superseding
+DD-151's outgoing-only rule by the user's choice): `${WAN_IPV4}:63851` (`TORRENT_PEER_PORT`;
+the Podman page can change it, **DD-221**) over TCP and UDP, published by its Quadlet into its own bridge and let through by the
+container guard on the forward path (not MASTER-INPUT). It is a fixed uncommon port outside
+Linux's ephemeral range; nothing else of qBittorrent is published on the WAN.
 
 **WireGuard is a host listener (DD-120/143):** each registered network's UDP
 port is admitted by the base WAN policy while the application is installed.
@@ -1137,7 +1206,7 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 
 | Service | Listen address | Port |
 |---|---|---|
-| qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 61006 (**DD-127**, **DD-151**) |
+| qBittorrent WebUI (`torrent` module; only while installed) | `127.0.0.1` | 62947 (**DD-127**, **DD-151**, **DD-219**) |
 | Konsol root backend (`master-panel`; package API modules inside it, **DD-200**) | Unix socket `/run/master-panel/api.sock` (`0660 root:caddy`) | none (**DD-133**, **DD-140**, **DD-180**) |
 | Caddy admin API | Unix socket `/run/caddy/admin.sock` (folder `0700 caddy`) | none; `systemctl reload caddy` uses it (**DD-180**) |
 | Konsol file/archive backend (`master-files-panel`; built in) | `127.0.0.1` | 61009 (**DD-159**) |
@@ -1146,8 +1215,8 @@ LAN interface, no unbounded `0.0.0.0` listener, and no DHCP service.
 Reached from the tailnet through Caddy (**R11**, **R16**, **DD-98**):
 the share WebDAV on `paylas.*:80` and `${TAILSCALE_IPV4}:${SHARE_PORT}`. No
 loopback service names the Tailscale address. None of them listens on
-`0.0.0.0` or a WAN address; the only stack-owned WAN TCP listener is Caddy's
-opt-in share site (§3.1).
+`0.0.0.0` or a WAN address; the stack-owned WAN TCP listeners are Caddy's
+opt-in share site and qBittorrent's published peer port (§3.1).
 
 ### 3.4 Single source of truth
 
@@ -1172,7 +1241,7 @@ on re-runs (**DD-157**); the operator's Mac input file is never edited.
 
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
-| `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:61006` (**DD-117**, **DD-151**) |
+| `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:62947` (**DD-117**, **DD-151**, **DD-219**) |
 | `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
 | Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
 | `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | page files from `CONSOLE_WEB_DIR` (installed packages' pages under `uygulama/<id>/`); `/api/konsol/*` and `/api/uygulama/*` → Unix socket `PANEL_SOCKET` (`/run/master-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |

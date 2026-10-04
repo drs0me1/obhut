@@ -13,6 +13,225 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-221: The Podman page changes qBittorrent's peer port (v2-199)
+
+- **Request (user, 2026-10-05):** "portların boş olduğunu denetleyen sisteme gerek yok. eş portunu
+  Podman sayfasından değiştirme imkânı eklenebilir." Asked how the ports are chosen (fixed numbers in
+  `torrent.env`, no decision mechanism), the user declined an install-time free-port search and asked
+  for the peer port to be editable like the interface port.
+- **Decision:** the package adapter declares `peer_port` next to `listener_port` and `save` (`config`
+  and `editable`); the base page shows the field only for an adapter that declares it and still names
+  no application. A request without `peer_port` keeps the current one.
+- **What moves together** (one transaction under the settings lock: stop → write → daemon-reload →
+  guard → start → interface answers; any failure restores every file, reloads, reapplies the guard and
+  only then restores the previous service state): both WAN `PublishPort` lines (TCP and UDP) and the image's
+  `TORRENTING_PORT` in the rendered and the placed Quadlet, the profile's `Session\Port`, and
+  `TORRENT_PEER_PORT` in the durable override (now in `PAKET_AYAR_ANAHTARLAR`), so the installer renders
+  the same values and the hook's `podman port` check, Settings' port catalogue and the container guard
+  agree. The guard (`master_container_network.py apply`) runs before the start: it reads the placed
+  Quadlet, so the new publication is let through and the old one no longer. The main Quadlet is
+  patched, not a drop-in: Quadlet merges `PublishPort` lists from drop-ins, and the patched file is
+  exactly what the installer writes from the override (the DD-214/DD-217 pattern). `TORRENTING_PORT`
+  is patched in the same `Environment=` line, so each value has one place.
+- **Checks (the edit's own, before the service stops):** an integer 1024–65535, different from the
+  interface port, not another project service's port (base `*_PORT` values, other packages' declared
+  ports, saved Konsol container definitions over TCP or UDP), and bindable on the WAN address over
+  TCP and UDP (catches a WireGuard network's UDP port or another container's publication). No
+  install-time free-port search exists or was added (the user's call). The form recommends
+  61000–65535 (outside the ephemeral range, DD-219) but does not enforce it.
+- **Consistency:** only a changed peer port is recorded (DD-219's rule) and `kaldir --veri` keeps it
+  like the interface port (DD-220). The App Store text no longer names the number, which is rendered at
+  install time and would go stale after an edit; the Podman page and Settings show the effective port.
+  The Quadlet's comment lines no longer repeat port numbers for the same reason.
+- **Limits:** existing peer connections drop with the restart; trackers and the DHT learn the new port
+  on the next announce. qBittorrent's own listening-port option is overwritten by `TORRENTING_PORT` at
+  every start, so the port is changed here, not in its UI.
+
+### DD-220: Removing qBittorrent with its data keeps Konsol's port and image choice (v2-198)
+
+- **Request (user, 2026-10-05):** "öneriyi çalış ve düzeltelim" — the follow-up a multi-agent review
+  of v2-197 found and filed as a separate task.
+- **Problem:** the package's durable choices (`PAKET_AYAR_ANAHTARLAR`: `TORRENT_UI_PORT` from the
+  Podman page, `TORRENT_IMAGE` from an approved update, DD-214) are baked into rendered files by the
+  installer: the Quadlet's `PublishPort` loopback line, `WEBUI_PORT` and `Image=`, the manifest's
+  `PAKET_IMAJ`, the seed's `WebUI\Port`. `kaldir --veri` deleted the override (and the port drop-in
+  `85-konteyner.conf`) but no one re-rendered those files, so a reinstall from App Store before the
+  next installer run placed a Quadlet on the chosen port while the hook, Caddy's filter
+  (`master_publications.private_site`, override-aware) and the publication expected the package
+  default: `torrent_verify` failed and `torrent.<domain>` pointed at the wrong port.
+- **Decision:** `--veri` deletes what its dialog names — the profile, the torrent list, the folder
+  drop-in and the image — and keeps Konsol's choices: the override and the port drop-in. Every consumer
+  then agrees again (rendered files, hook, Caddy filter, publication). The dialog says so. Rejected:
+  rewriting the rendered lines back to defaults on `--veri` (a second renderer outside the installer,
+  and it would silently downgrade an approved image to the package's older pinned digest).
+- **Consequence:** a reinstall after `--veri` uses the chosen port and re-pulls the approved image
+  digest. A recorded choice wins over the package's `torrent.env` on every render (`paket_ayar_oku`,
+  DD-203/DD-214), so a newer package's `TORRENT_IMAGE` pin or default port does not reach an install
+  that has one: the image moves only by another approved update (to the channel's digest), and
+  entering the default port on the Podman page records that value as a choice too. There is no
+  in-product way back to following the package's values; the manual step is to delete
+  `PACKAGE_OVERRIDES_DIR/torrent.env` and `qbittorrent.container.d/85-konteyner.conf` as root and run
+  the installer (found by the v2-198 review: the first draft of this entry wrongly promised that a
+  newer package version restores the pin).
+- Supersedes DD-214's sentence "`kaldir --veri` drops the override with the other package settings".
+
+### DD-219: qBittorrent back to its own defaults; its ports moved to uncommon fixed ports (v2-197)
+
+- **Request (user, 2026-10-04):** "ayar değişikliğini iptal edelim image dosyası varsayılan config
+  ayarları ile kurulsun değişikliği geri alalım. arayüz portunu ve peer portlarını değiştirelim. wan
+  arayüzden internete açılan portları random taramalardan uzak portlar olarak güncelleyelim." Asked
+  to choose, the user picked qBittorrent's own defaults (not the image's `/defaults/qBittorrent.conf`,
+  whose `/downloads` paths do not match the same-path mounts; its only other difference is UPnP off),
+  kept SSH on 22, left the share HTTP (61010), WireGuard (61001) and Tailscale (41641) ports alone
+  ("aralık uzak zaten"), and chose fixed uncommon ports over per-install random ones.
+- **Revert:** DD-218 (v2-196) is retired; the seed is again the six integration keys of DD-178 with
+  DD-217's `WebUI\Address=*`. A profile seeded by v2-196 keeps its values (fresh-install rule; nrm's
+  live profile never received them).
+- **Ports:** `TORRENT_UI_PORT=62947` (published on loopback only) and `TORRENT_PEER_PORT=63851` (TCP+UDP
+  on the WAN IPv4 address). Both are outside Linux's ephemeral range (32768–60999, so an outgoing
+  connection can never hold them first), away from the 610xx block of the other services, and not a
+  commonly scanned or registered service port. Everything that names them renders from the package's
+  `torrent.env`: Quadlet `PublishPort`/`WEBUI_PORT`/`TORRENTING_PORT`, Caddy upstream, publication
+  upstream, the Settings port catalogue, the guard and the hook's checks.
+- **Honest limits:** an uncommon port only keeps opportunistic scans of common ports away; full-range
+  scanners still find an open TCP port. The peer port is announced to every tracker and peer by
+  design, so it cannot be hidden from the swarm. 443 stays (Let's Encrypt TLS-ALPN needs it); UDP
+  WireGuard/Tailscale ports do not answer unauthenticated probes.
+- **Existing installs:** an installer run re-renders the package and recreates the container on the
+  new ports; qBittorrent takes both from its start flags. An operator override of `TORRENT_UI_PORT`
+  (Podman page) keeps its value. Before v2-197 every Podman-page save of qBittorrent, even a
+  folder-only one, recorded the port shown at the time as such an override, so such an install stays
+  on 61006 (loopback only); the manual step is to enter the new port there. Since v2-197 only a
+  changed port is recorded.
+- **Review fixes (multi-agent review, v2-197):** the App Store text claimed "İnternete eş portu
+  açılmaz" since DD-217; it now states the rendered peer port and that it is WAN IPv4 only. Settings'
+  port catalogue showed the peer port as an IPv4+IPv6 INPUT permission with a toggle that cannot
+  affect a forwarded container publication; package internet ports of a bridge package are now IPv4
+  rows marked fixed (no toggle). Stale "host network / outgoing only" statements in the contract
+  (R10/R12/R18, §3.1), README, architecture, defaults.env and the Cursor rules were corrected.
+
+### DD-217: qBittorrent on its own bridge; ports published per address in its Quadlet (v2-195)
+
+- **Request (user, 2026-10-04):** the Podman page showed many qBittorrent ports on every address
+  (DD-215): "hangileri gerekli ise sadece onu açalım. arayüz erişimi, peer yayın portu açmamız
+  yeterli. tüm yüzeylerde peer yayın portu açılması gerekli olmayabilir. quadlet dosyasında port
+  açılmasını yüzey bazında kısıtlama yapabilir miyiz". Asked to choose, the user opened the peer
+  port to the internet and chose a bridge network with Quadlet `PublishPort` over the recommended
+  host network plus qBittorrent's own binding and the firewall.
+- **What was found (nrm):** on the host network qBittorrent listened on every address (its peer
+  port on WAN, Tailscale and loopback, LSD 6771/udp, UPnP/NAT-PMP sockets), but the WAN INPUT chain
+  dropped all of them; the tailnet accepted everything. With `Network=host` Quadlet cannot restrict
+  anything: Podman ignores published ports there.
+- **Decision:** the container joins its own bridge `torrent` (`PAKET_KONTEYNER_AG`, generic engine
+  key) and the quadlet publishes exactly `127.0.0.1:TORRENT_UI_PORT/tcp` and
+  `WAN_IPV4:TORRENT_PEER_PORT` over TCP and UDP (`TORRENT_PEER_PORT=61008`, fixed through the image's
+  `TORRENTING_PORT`). Inside the bridge the interface listens on the container's address
+  (`WebUI\Address=*`, written by the seed template and the install for fresh and kept profiles);
+  only the loopback publication reaches it. LSD/UPnP keep their defaults (DD-178): their sockets stay
+  inside the container and nothing is published for them.
+- **Why the guard changes:** Netavark DNATs a publication into the bridge, so the packet takes the
+  forward path, not INPUT. The bridge is named with the guard's prefix, so the existing default drop
+  covers it from the first second; `package_publications()` reads registered packages' placed
+  quadlets and lets through only their WAN/Tailscale IPv4 publications (an unparseable or foreign
+  address, or a placed quadlet on another network, is simply not let through; found live: an
+  installer run renders the new manifest at stage 4 but places the new quadlet at stage 7, and
+  refusing the mismatch stopped the firewall at stage 5). The engine refreshes
+  the guard after placing and removing the quadlet; `master-firewall` refreshes it at boot before
+  containers start.
+- **Port moves:** a Quadlet drop-in cannot replace `PublishPort` (lists merge), so a Podman-page
+  interface port change patches the single loopback line in the rendered and the placed quadlet,
+  like DD-214's image line; the durable override makes the next render identical.
+- **Trade-offs, stated:** NAT on the peer path; no IPv6 peers (the managed bridges are IPv4-only and
+  the guard opens no IPv6); the WAN address is baked in at render time, so a changed WAN address
+  needs an installer run; the peer port is internet-facing (libtorrent's listener).
+- **Amended (v2-197, DD-219):** the interface port is 62947 and the peer port 63851 (were 61006 and 61008).
+- **Existing installs:** fresh-install rule; a profile written by earlier versions carries
+  `WebUI\Address=127.0.0.1` and the interface would not answer on the bridge. The manual step is
+  reinstalling qBittorrent from App Store (the install writes `*`), or setting that key to `*` while
+  the app is stopped.
+
+### DD-216: Applications open from Ana Menü only; the container page is named Podman (v2-194)
+
+- **Request (user, 2026-10-04):** remove the sidebar's "Kurulu uygulamalar" group: WireGuard and
+  qBittorrent must not appear in the sidebar after installation; an application is opened from its
+  Ana Menü icon, and a package that gets a home icon gets no sidebar hook. Same request: rename the
+  Konteynerler page in the sidebar to Podman.
+- **Navigation:** every installed package already has a home tile (DD-212), whose link opens the
+  native interface while the app runs and its Konsol page otherwise (DD-210), and whose actions hold
+  start/stop, settings and logs. The sidebar entry only duplicated that link, so the shell builds no
+  application link at all: `paintNav()`, the `installed-label` span and its styles are gone. Package
+  pages are unchanged (DD-200): created from `konsol.json`, reached at `#/<rota>` from the tile, the
+  App Store "Aç" and bookmarks. While one is open, Ana Menü stays marked as the current section.
+- **Podman page:** the sidebar entry, page title and the detail page's way back read "Podman"; the
+  list's eyebrow says "Konteynerler · bu sunucu" and the resource tab keeps "Konteynerler". The route
+  stays `#/konteynerler`, so bookmarks and the Settings redirect keep working. The installer summary
+  points to "Konsol → Podman".
+- **Cold load (fix):** an App Store row's name and icon come from the module catalogue. When the
+  container list answered first, the row showed the internal package id ("torrent") until the next
+  ten-second refresh. The page now repaints when the catalogue arrives (no extra list read), and
+  before that it shows the container's own name, never the package id.
+
+### DD-215: The Podman page shows the ports a host-network container listens on (v2-194)
+
+- **Request (user, 2026-10-04):** the Access column showed only "Sunucu ağı (host)" for qBittorrent;
+  show the ports the container opens (for example the peer port and the interface port) as ip:port.
+- **Why not Podman:** a host-network container has no port mappings, so `podman ps`/`inspect` know no
+  ports. The ports are the sockets its processes hold. `master_containers.listening()` takes the
+  container's init PID (`State.Pid`), the processes of its own cgroup v2 subtree (never the root
+  cgroup: then only the init process), their socket fds, and matches them against
+  `/proc/<pid>/net/{tcp,tcp6,udp,udp6}` of that network namespace: TCP in LISTEN and unconnected bound
+  UDP. IPv4-mapped addresses read as IPv4, IPv6 link-local binds are left out, duplicates collapse. No
+  `ss`, no new tool, no podman call; it runs only for running host-network containers on each list or
+  detail read (about 5 ms for qBittorrent on nrm, inside a replica of the backend's sandbox).
+- **Honest labels:** each socket carries the kind of address it is bound to: all addresses, the
+  server's WAN or Tailscale address (from the installer's state, then the tailnet ranges), another
+  address, or loopback ("Yalnız bu sunucu"). This is not reachability: on the host network the
+  firewall decides, and the detail says so. Unreadable processes or tables give `null` (unknown),
+  never an empty "no ports".
+- **Display:** the list shows one line per port with its widest address (IPv4 first), the protocols
+  and the address kinds, at most three ports and "+N port daha"; the detail's "Ağ ve portlar" lists
+  every address. Published bridge ports keep their mapping lines unchanged.
+- **Not done:** no firewall evaluation, no process names, no per-port labels from packages.
+- **Amended (v2-195, DD-217):** qBittorrent left the host network; the reader remains for any other
+  host-network container.
+
+### DD-214: Konsol checks image updates, the operator applies them; row controls before the name (v2-193)
+
+- **Request (user, 2026-10-04):** after the explanation of Podman, Quadlet files and digest pins, the
+  user chose the "approved update" model for qBittorrent: "konsol güncelleme olup olmadığını
+  denetlesin kullanıcı isterse güncellesin". Same request: on the Konteynerler page put start/stop and
+  edit right before the container name, keep remove at the end, and use icons that suit the theme.
+- **Check, never apply:** `master_containers.update_status()` compares the installed digest with what a
+  channel tag points to now using `podman manifest inspect` (manifests only, no layer download): a
+  multi-arch index by this host's platform manifest digest, a single manifest by its config digest
+  (the local image id). It runs inside the backend's sandbox (verified on nrm with a replica of the
+  unit's hardening). App Store packages name their channel with `PAKET_IMAJ_KANAL`; a Konsol
+  definition's channel is its tag reference; digest references are `sabit`. `Service.updates()` caches
+  the answers for six hours, forced checks are limited to one a minute, and a successful image-changing
+  operation empties the cache. The page asks on open and on the operator's button only; there is no
+  timer, no `AutoUpdate=`, no `podman-auto-update.timer`, and the browser never sees a pull target.
+- **Apply on request (App Store):** `image-update` is offered when a package declares both a channel and
+  a container adapter. qBittorrent's adapter (`ayar.py konteyner-guncelle`) re-checks under the settings
+  lock, validates the files that name the image, then pulls the exact digest the check saw, rewrites the
+  single `Image=` line of the rendered and the placed Quadlet and the `PAKET_IMAJ` line of the rendered
+  manifest, records `TORRENT_IMAGE` as the package's durable override (`PAKET_AYAR_ANAHTARLAR`), restarts a
+  running app, waits for its interface and checks the container's `ImageName`. Any failure restores every
+  file and the previous service; the previous image is removed (by id, never forced) only after success.
+- **Why patch files instead of a drop-in:** live check on nrm (Podman 5.4.2): a Quadlet drop-in's
+  `Image=` is ignored (the generator keeps the main file's value), while multi-valued keys such as
+  `Volume=`/`Environment=` merge. Patching exactly the image line keeps the Quadlet the readable truth
+  about what runs, and the override makes the installer's next render produce the same bytes, so the
+  engine's placement never reverts the update. A stopped app only gets the rendered files; its next
+  start uses them. `kaldir --veri` drops the override with the other package settings (superseded by
+  DD-220, v2-198: `--veri` keeps the override and the port drop-in).
+- **Row controls:** start/stop and edit move into the name cell, before the application icon and name;
+  remove stays in the last column (DD-213's fixed slots and capabilities unchanged). The icons and their
+  bare style are the home tiles' own (`.tile-act`): play/pause, the settings sliders, trash; colour only
+  on hover, remove turns to the danger colour. Keyboard order follows: start/stop, edit, name, the
+  "Güncelleme var" chip when present, remove.
+- **Not done:** no update for external or Compose/pod containers, no image signature verification, no
+  automatic or scheduled update, no rollback after a successful update other than updating again.
+
 ### DD-213: Compact Ana Menü, five-second refresh and direct container actions (v2-192)
 
 - **Request (2026-10-04):** refine the installed v191 presentation without changing
@@ -82,6 +301,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 
 ### DD-211: Main-sidebar container management with explicit ownership (v2-190)
 
+- **Amended (v2-194, DD-216):** the sidebar entry and page title read "Podman"; the route stays
+  `#/konteynerler`. Host-network containers show their listening sockets (DD-215).
+
 - **Request (2026-10-03):** move Containers out of Settings and implement the accepted
   Portainer-like prototype: lifecycle, editable ports/mounts and real resource management.
   The frozen proposal is `docs/design/konsol-konteynerler-v01.html`; corrected semantics
@@ -121,6 +343,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   overrides. qBittorrent's one listener port drives its profile, Quadlet drop-in, Caddy
   upstream, health/publication checks and installer rendering. Its existing account form
   remains the account owner. Required mounts are shown as protected in the generic editor.
+  DD-221 (v2-199) adds the peer port: both WAN publications, `TORRENTING_PORT`, the profile's
+  `Session\Port`, the container guard and installer rendering follow the same kind of override.
 - **Scope:** one host/rootful Podman, no Docker daemon, shell console, Compose editor,
   cluster scheduler or automatic image updates. DD-208 still owns Podman base installation;
   its former read-only Settings placement is superseded by this decision.
@@ -168,7 +392,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   stopped app stopped. A blank password is simply not sent and the stored hash stays. The dialog reads
   current values from `/durum`, which never carries the hash.
 - **Launch:** an app with publication names (`urls`, DD-195/199) opens its web UI in a new tab
-  (`noopener noreferrer`) from the tile, the sidebar entry and App Store's "Aç" while it runs — the
+  (`noopener noreferrer`) from the tile, the sidebar entry (removed by DD-216) and App Store's "Aç" while it runs — the
   public name on the public HTTPS address, the tailnet name on the tailnet. Stopped, busy or (on the
   public address) unpublished apps open their Konsol page instead; no name is constructed in the page
   and the public address never falls back to a private one. The page remains reachable from App Store
@@ -239,6 +463,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   digest (amd64 + arm64) in the package's own `torrent.env` (`TORRENT_IMAGE`; `TORRENT_SURUM`
   only for the App Store text); an update is a new digest plus an installer run (the changed
   quadlet recreates the container). No `AutoUpdate=` and no `podman-auto-update.timer`.
+  Amended by DD-214: Konsol checks the channel and the operator may apply a newer digest.
+  Amended by DD-217 (v2-195): the container runs on its own bridge with per-address publications,
+  not on the host network.
 - **Live findings that shaped it (nrm, 2026-10-03):** with `NoNewPrivileges=true` the image's s6
   init ignored SIGTERM and was SIGKILLed after the stop timeout (30–45 s instead of 3 s, the unit
   left "failed" — qBittorrent writes settings and resume data on shutdown), so the quadlet
@@ -662,7 +889,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   whose listing carries `sayfa`; the script registers with `window.Konsol.sayfa(id,
   factory)` and receives a small, frozen API (`h`, `svg`, `api`, `post`, `ask`, the
   shared dialog, the clock, the current route and a header repaint). The shell creates
-  the section and the sidebar link from `konsol.json`, keeps a bookmark of an
+  the section and the sidebar link (removed by DD-216) from `konsol.json`, keeps a bookmark of an
   application until the module list arrives, sends a bookmark of an absent application
   to App Store and unmounts the page when the package is removed; a package that is
   removed and reinstalled is mounted again from the already loaded factory.
@@ -4632,6 +4859,11 @@ failure with an early, named one.
   after restart. Live installed accounts/services are not used by this fixture.
 - Supersedes DD-151's enforced UPnP/LSD/temporary-storage defaults only; the
   firewall and other module lifecycle decisions are unchanged.
+- **Amended (v2-195, DD-217):** on its own bridge the seeded and installed `WebUI\Address` is `*`
+  (loopback is now the Quadlet's only interface publication), and the peer port 61008 is published
+  on the WAN address by the user's choice.
+- **Amended (v2-196, DD-218; reverted v2-197, DD-219):** chosen fresh-profile defaults were seeded for
+  one version and then reverted; the seed is again integration keys only.
 
 ### DD-177: Retire Local access; WireGuard is internet-only (2026-09-28)
 

@@ -117,7 +117,9 @@ const creationTemplate=structuredClone(nets[0]);
   const creation=page.locator('#wg-ekle');
   // The shell shows the page's title; the first network is a "configure" step (DD-143).
   assert.equal(await page.locator('#title').innerText(),'Arayüz ekle');
-  assert.deepEqual(await page.locator('.nav a[data-app]').allTextContents(),['WireGuard']);
+  // DD-216: the page opens from its Ana Menü tile; the sidebar has no application entry.
+  assert.equal(await page.locator('.nav a[data-app]').count(),0);
+  assert.equal(await page.locator('.nav a[aria-current="page"]').getAttribute('data-route'),'genel');
   await creation.waitFor({state:'visible'});
   assert.equal(await page.locator('#na-local, #na-local-row, #na-local-desc').count(),0);
   assert.equal(await creation.getByRole('switch').count(),0);

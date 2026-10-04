@@ -60,6 +60,25 @@ class FirewallViewTests(unittest.TestCase):
                     run.return_value = result
                 self.assertIsNone(self.p.listeners(self.env, []))
 
+    def test_bridge_package_peer_port_is_a_fixed_ipv4_publication(self):
+        # DD-217/219: the peer port is published into the package bridge on IPv4 only and let through by
+        # the container guard; Settings shows it without an INPUT toggle and without an IPv6 row.
+        import shutil
+        import tempfile
+        mods = Path(tempfile.mkdtemp(prefix="fw-view-mods-")).resolve()
+        self.addCleanup(shutil.rmtree, mods, True)
+        (mods / "torrent").mkdir()
+        manifest = (Path(__file__).resolve().parents[1] / "magaza/torrent/paket.env").read_text()
+        (mods / "torrent/paket.env").write_text(manifest.replace("__TORRENT_NETWORK__", "torrent"))
+        (mods / "torrent/torrent.env").write_text("TORRENT_PEER_PORT=63851\n")
+        with patch.object(self.p, "module_state", return_value="calisiyor"), \
+                patch.dict(self.env, {"MODULES_DIR": str(mods)}):
+            rows = self.p.settings_ports(self.env, [], [])
+        peer = [r for r in rows if r["port"] == 63851]
+        self.assertEqual(sorted((r["family"], r["proto"], r["scope"]) for r in peer), [(4, "tcp", "wan"), (4, "udp", "wan")])
+        self.assertTrue(all(r.get("fixed") for r in peer))
+        self.assertFalse(any(r.get("fixed") for r in rows if r["port"] != 63851))
+
     def test_known_service_names_are_retained_across_scopes(self):
         # DD-198: the Files backend's loopback row is declared by the built-in dosya manifest.
         import shutil

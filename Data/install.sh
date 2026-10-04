@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-192"
+V2_VERSION="2026.08.06-v2-199"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1588,7 +1588,7 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; Tailscale'
   İnternetten HTTPS isteğe bağlı: önce Ayarlar → Sistem → Konsol hesabı (kullanıcı adı + parola),
   sonra Ayarlar → Caddy → Panel (DNS A kaydı gerekir).
   Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
-Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Konteynerler)
+Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
 $(summary_modules)$(summary_notes)
 Tailscale IP: refresh-tailnet-config → Caddy

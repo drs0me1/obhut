@@ -19,12 +19,16 @@ import uuid
 
 import master_settings as settings
 import master_container_config as config
-from master_containers import Containers, ContainerError, epoch, mask, name_of, ports_of, TAILS
+from master_containers import Containers, ContainerError, epoch, listening, mask, name_of, ports_of, TAILS, update_status
 
 ACTIONS = frozenset(('create', 'save', 'start', 'stop', 'restart', 'remove', 'adopt', 'image-pull',
                      'image-remove', 'image-update', 'volume-create', 'volume-remove', 'network-create', 'network-remove'))
 JOB_RE = re.compile(r'[0-9a-f]{32}\Z')
 APP_ACTIONS = {'start': 'baslat', 'stop': 'durdur', 'restart': 'yeniden-baslat', 'remove': 'kaldir'}
+# DD-214: image update checks read registry manifests only and are cached; the page asks on open,
+# the operator can ask again. No timer and no automatic update: an update is an explicit operation.
+UPDATE_TTL = 6 * 3600
+UPDATE_MIN_INTERVAL = 60
 
 
 def app_specs(env):
@@ -48,7 +52,8 @@ def app_specs(env):
         name = slot[:-10]
         result[name] = {'name': name, 'module_id': mid, 'manifest': manifest, 'module_state': states[mid],
                         'unit': name + '.service', 'image': manifest.get('PAKET_IMAJ', ''),
-                        'adapter': manifest.get('PAKET_KONTEYNER_YONETIM', '')}
+                        'adapter': manifest.get('PAKET_KONTEYNER_YONETIM', ''),
+                        'channel': manifest.get('PAKET_IMAJ_KANAL', '')}
     return result
 
 
@@ -65,6 +70,17 @@ def app_config(env, app):
         return result
     except (OSError, KeyError, ValueError, settings.SettingsError) as err:
         raise ContainerError(503, 'Uygulamanın konteyner ayarları okunamadı.') from err
+
+
+def port_scope(ip, env):
+    """DD-217: the access a published host address gives; the guard decides what passes."""
+    if ip in ('127.0.0.1', '::1'):
+        return 'local'
+    if ip and ip in (env.get('TAILSCALE_IPV4'), env.get('TAILSCALE_IPV6')):
+        return 'tailscale'
+    if ip in ('', '0.0.0.0', '::') or ip in (env.get('WAN_IPV4'), env.get('WAN_IPV6')):
+        return 'public'
+    return 'other'
 
 
 def definition_row(d):
@@ -112,11 +128,16 @@ class Inventory(Containers):
         app, d = self.apps.get(name), self.definitions.get(name)
         row.update(live=bool(row.get('id')), source='external', management_id='external:' + name,
                    module_id=None, revision=None, actions=[], restricted_reason='',
-                   cpu_percent=None, memory_bytes=None, busy=self.service.busy(name), health=row.get('health', ''))
+                   cpu_percent=None, memory_bytes=None, busy=self.service.busy(name), health=row.get('health', ''), listening=None)
         raw = self.inspect(name) if row['live'] else None
         if raw:
             row['health'] = ((raw.get('State') or {}).get('Health') or {}).get('Status') or row['health']
         running = row.get('state') == 'running'
+        # DD-215: no port mappings on the host network; show the sockets the container listens on.
+        if raw and running and (raw.get('HostConfig') or {}).get('NetworkMode') == 'host':
+            addresses = lambda *keys: {self.env.get(k, '') for k in keys} - {''}
+            row['listening'] = listening((raw.get('State') or {}).get('Pid'), wan=addresses('WAN_IPV4', 'WAN_IPV6'),
+                                         tailscale=addresses('TAILSCALE_IPV4', 'TAILSCALE_IPV6'))
         lifecycle = ['stop', 'restart'] if running else ['start']
         if app:
             row.update(source='appstore', management_id='appstore:' + app['module_id'], module_id=app['module_id'], unit=app['unit'])
@@ -124,6 +145,9 @@ class Inventory(Containers):
                 row['state'] = 'stopped' if app['module_state'] == 'durduruldu' else 'unknown'
                 if details: row['mounts'] = []
             row['actions'] = (['stop', 'restart'] if running else ['start']) + ['remove']
+            # DD-214: a package that names an update channel and an adapter can move its pinned image.
+            if app.get('channel') and app.get('adapter'):
+                row['actions'].append('image-update')
             try:
                 value = app_config(self.env, app)
                 row['revision'] = value['revision']
@@ -166,6 +190,10 @@ class Inventory(Containers):
         if row['live'] and row['state'] not in ('running','stopped','exited','created','configured'):
             row['actions'] = []
             row['restricted_reason'] = 'Konteyner duraklatılmış veya geçiş durumunda; önce asıl yöneticisinden durumunu düzeltin.'
+        row['update'] = self.service.update_of(name) if (app or d) else None
+        for port in row.get('ports') or []:
+            if isinstance(port, dict):
+                port['scope'] = port_scope(port.get('host_ip', ''), self.env)
         return row
 
     def liste(self):
@@ -283,6 +311,45 @@ class Service:
         self.panel=panel
         self.lock=threading.Lock()
         self.jobs={}
+        self.update_lock=threading.Lock()
+        self.update_items={}
+        self.update_at=0.0
+
+    def update_of(self,name):
+        with self.lock:
+            value=self.update_items.get(name)
+            return dict(value,checked_at=int(self.update_at)) if value else None
+
+    def updates(self,force=False):
+        """DD-214: per-container update status, cached; registry manifests only, never a pull."""
+        with self.update_lock:
+            age=time.time()-self.update_at
+            if self.update_at and age<UPDATE_MIN_INTERVAL or (self.update_at and age<UPDATE_TTL and not force):
+                with self.lock: items=copy.deepcopy(self.update_items)
+                return {'checked_at':int(self.update_at),'items':items,'cached':True}
+            view=self.view()
+            run=lambda argv,timeout: self.panel.run_tool(argv,timeout=timeout)
+            rc,arch,_=run(['podman','info','--format','{{.Host.Arch}}'],20)
+            arch=arch.strip()
+            items={}
+            for name,app in view.apps.items():
+                if app.get('channel'):
+                    items[name]=update_status(run,app['image'],app['channel'],arch) if rc==0 and arch else \
+                        {'state':'denetlenemedi','channel':app['channel'],'candidate':'','error':'Podman yanıt vermedi.'}
+            for name,d in view.definitions.items():
+                ref=d.get('image_ref') or ''
+                items[name]=update_status(run,d['image'],ref if '@' not in ref else '',arch) if rc==0 and arch else \
+                    {'state':'denetlenemedi','channel':ref,'candidate':'','error':'Podman yanıt vermedi.'}
+            for value in items.values(): value.pop('candidate',None)
+            now=time.time()
+            with self.lock:
+                self.update_items,self.update_at=items,now
+            return {'checked_at':int(now),'items':copy.deepcopy(items),'cached':False}
+
+    def forget_updates(self):
+        """An image change makes the cached answer stale; the next view asks the registry again."""
+        with self.lock:
+            self.update_items,self.update_at={},0.0
 
     def view(self):
         try: return Inventory(self)
@@ -372,6 +439,7 @@ class Service:
             with self.lock: value=dict(self.jobs[ident])
             value.update(state='failed',error='İşlem sonucu alınamadı; yeniden denemeden önce konteyner durumunu yenileyin.',updated_at=int(time.time()))
         with self.lock: self.jobs[ident]=value
+        if action in ('image-update','save','create','remove','adopt') and value.get('state')=='done': self.forget_updates()
         self.panel.settings_cache=(0,None)
 
 
@@ -386,7 +454,7 @@ def main():
         request=json.loads(raw)
         if not isinstance(request,dict): raise ContainerError(400,'İstek nesne olmalı.')
         env=settings.env_read(args.state)
-        app=app_specs(env).get(request.get('name')) if args.action in (*APP_ACTIONS,'save') else None
+        app=app_specs(env).get(request.get('name')) if args.action in (*APP_ACTIONS,'save','image-update') else None
         if app:
             result=application_job(args,env,app,request)
         else:
@@ -415,11 +483,13 @@ def application_job(args,env,app,data):
         current=app_config(env,app)
         if data.get('revision')!=current['revision']:
             raise ContainerError(409,'Uygulama ayarları değişmiş; yeniden inceleyin.')
-        if args.action=='save':
+        if args.action in ('save','image-update'):
             script=Path(env['MODULES_DIR'])/app['module_id']/app['adapter']
-            command=['/usr/bin/python3',str(script),'--lib',str(Path(__file__).resolve().parent),'--state',args.state,'konteyner-ayar']
-            proc=subprocess.run(command,input=json.dumps({'revision':data['revision'],'config':data.get('config',{})}),
-                                text=True,capture_output=True,timeout=600)
+            verb,body,limit=(('konteyner-ayar',{'revision':data['revision'],'config':data.get('config',{})},600) if args.action=='save' else
+                             ('konteyner-guncelle',{'revision':data['revision']},870))
+            command=['/usr/bin/python3',str(script),'--lib',str(Path(__file__).resolve().parent),'--state',args.state,verb]
+            job.update(step='İmaj denetleniyor ve indiriliyor' if args.action=='image-update' else 'Uygulama ayarı'); write()
+            proc=subprocess.run(command,input=json.dumps(body),text=True,capture_output=True,timeout=limit)
             result=json.loads(proc.stdout)
             if proc.returncode: raise ContainerError(result.get('status',400),result.get('error','Uygulama ayarı uygulanamadı.'))
         else:

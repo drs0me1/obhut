@@ -26,7 +26,11 @@ const S = {
   runtime: { version: "5.4.2", ok: true, error: "" },
   containers: [
     row({ name: "qbittorrent", management_id: "appstore:torrent", source: "appstore", module_id: "torrent", image: "lscr.io/linuxserver/qbittorrent@" + sha("b522f9f4"),
-      unit: "qbittorrent.service", network: "host", mounts: 2, revision: "q1", actions: ["stop", "restart", "save", "remove"], cpu_percent: 1.4, memory_bytes: 212 * MB }),
+      unit: "qbittorrent.service", network: "torrent", mounts: 2, revision: "q1", actions: ["stop", "restart", "save", "remove", "image-update"], cpu_percent: 1.4, memory_bytes: 212 * MB,
+      // DD-217: its own bridge; the backend labels each published address (the WAN one as internet access).
+      ports: [{ host_ip: "127.0.0.1", host_port: 61006, container_port: 61006, protocol: "tcp", scope: "local" },
+        { host_ip: "192.0.2.1", host_port: 61008, container_port: 61008, protocol: "tcp", scope: "public" },
+        { host_ip: "192.0.2.1", host_port: 61008, container_port: 61008, protocol: "udp", scope: "public" }] }),
     row({ name: "jellyfin", management_id: "konsol:jellyfin", source: "konsol", image: "docker.io/jellyfin/jellyfin@" + sha("3c1a77e0"), unit: "jellyfin.service",
       ports: [{ host_ip: "100.64.0.2", host_port: 8096, container_port: 8096, protocol: "tcp" }, { host_ip: "127.0.0.1", host_port: 8920, container_port: 8920, protocol: "tcp" }],
       mounts: 2, revision: "j1", health: "healthy", actions: ["stop", "restart", "save", "remove", "image-update"], cpu_percent: 6.8, memory_bytes: 684 * MB }),
@@ -36,8 +40,13 @@ const S = {
     row({ name: "deneme-nginx", management_id: "external:deneme-nginx", source: "external", image: "docker.io/library/nginx:1.27-alpine", network: "podman",
       state: "exited", exit_code: 0, ports: [{ host_ip: "0.0.0.0", host_port: 8088, container_port: 80, protocol: "tcp" }], revision: "n1",
       actions: ["start", "remove", "adopt"], restricted_reason: "Konsol dışında oluşturuldu; düzenlemek için önce sahiplenin." }),
-    row({ name: "pod-uygulama", management_id: "external:pod-uygulama", source: "external", image: "docker.io/library/redis:7.4", network: "podman", revision: "p1",
-      actions: [], restricted_reason: "Bir pod'a bağlı; denetleyicisi bilinmediği için Konsol yalnız gösterir.", cpu_percent: 0.2, memory_bytes: 9 * MB }),
+    row({ name: "pod-uygulama", management_id: "external:pod-uygulama", source: "external", image: "docker.io/library/redis:7.4", network: "host", revision: "p1",
+      actions: [], restricted_reason: "Bir pod'a bağlı; denetleyicisi bilinmediği için Konsol yalnız gösterir.", cpu_percent: 0.2, memory_bytes: 9 * MB,
+      // DD-215: a host-network container has no mappings; the backend reports the sockets it listens on.
+      listening: [{ address: "0.0.0.0", port: 6771, protocol: "udp", scope: "all" }, { address: "192.0.2.1", port: 51413, protocol: "tcp", scope: "wan" },
+        { address: "2001:db8::1", port: 51413, protocol: "tcp", scope: "wan" }, { address: "100.64.0.2", port: 51413, protocol: "tcp", scope: "tailscale" },
+        { address: "127.0.0.1", port: 51413, protocol: "tcp", scope: "local" }, { address: "192.0.2.1", port: 51413, protocol: "udp", scope: "wan" },
+        { address: "2001:db8::1", port: 40000, protocol: "udp", scope: "wan" }, { address: "127.0.0.1", port: 61006, protocol: "tcp", scope: "local" }] }),
   ],
   images: [
     { name: "lscr.io/linuxserver/qbittorrent:5.2.4", id: sha("b522f9f4"), size: 228e6, created: T - 9e5, used_by: ["qbittorrent"], managed: false, pinned: true },
@@ -54,7 +63,7 @@ const S = {
   // Podman's own default network comes first; a fresh host has only this one. The backend normalises subnets
   // to strings; the one raw {subnet, gateway} row checks that the page tolerates Podman's own shape.
   networks: [
-    { name: "podman", id: "n2", driver: "bridge", subnets: ["10.88.0.0/16"], used_by: ["deneme-nginx", "pod-uygulama"], managed: false, internal: false },
+    { name: "podman", id: "n2", driver: "bridge", subnets: ["10.88.0.0/16"], used_by: ["deneme-nginx"], managed: false, internal: false },
     { name: "konsol", id: "n1", driver: "bridge", subnets: [{ subnet: "10.89.0.0/24", gateway: "10.89.0.1" }], used_by: ["jellyfin", "uptime-kuma"], managed: true, internal: false },
     { name: "medya", id: "n3", driver: "bridge", subnets: ["10.89.1.0/24"], used_by: [], managed: true, internal: true },
   ],
@@ -65,7 +74,7 @@ const detailBase = (name) => {
   return Object.assign({}, r, { image_digest: (r.image.split("sha256:")[1] || "").slice(0, 12), finished: 0, labels: {}, command: "", health: r.health || "" });
 };
 const D = {
-  qbittorrent: { config: { listener_port: 61006, save: "/srv/downloads" }, editable: ["listener_port", "save"],
+  qbittorrent: { config: { listener_port: 61006, peer_port: 61008, save: "/srv/downloads" }, editable: ["listener_port", "peer_port", "save"],
     protected_mounts: [{ source: "/var/lib/qbittorrent", target: "/config", destination: "/config", reason: "Uygulama profili; taşıma ayrı bir işlemdir." }],
     effective_autostart: true,
     mounts: [{ type: "bind", source: "/var/lib/qbittorrent", destination: "/config", rw: true, name: "" }, { type: "bind", source: "/srv/downloads", destination: "/srv/downloads", rw: true, name: "" }] },
@@ -87,18 +96,23 @@ const D = {
   "pod-uygulama": { config: null, editable: [], protected_mounts: [], mounts: [] },
 };
 const ops = {}, posts = [], errors = [], reads = [];
-let opSeq = 0, holdOps = false, failNext = "", postError = null, listFail = false;
+// DD-214: what the backend's cached registry check answers; the page never forces it on open.
+const UPD = { qbittorrent: { state: "guncel", channel: "lscr.io/linuxserver/qbittorrent:latest", error: "" },
+  jellyfin: { state: "guncel", channel: "docker.io/jellyfin/jellyfin:latest", error: "" },
+  "uptime-kuma": { state: "guncel", channel: "docker.io/louislam/uptime-kuma:1.23.16", error: "" } };
+let updChecked = T;
+let opSeq = 0, holdOps = false, failNext = "", postError = null, listFail = false, holdModules = null;
 const LOG_LINES = ["[08:12:04] Başlatma tamamlandı", "[08:14:31] Yavaş istek: /api/items 1840 ms", "[08:16:40] Yapılandırma okundu: API_TOKEN=****", "[08:18:09] Sağlık denetimi başarılı"];
 
 function effect(op, body) {
   const c = S.containers.find((x) => x.name === body.name);
   const d = D[body.name];
   switch (body.action) {
-    case "start": Object.assign(c, { state: "running", live: true, id: c.id || "fed654cba321", started: T, cpu_percent: 0.4, memory_bytes: 40 * MB, actions: c.source === "external" ? ["stop", "restart", "remove", "adopt"] : ["stop", "restart", "save", "remove"].concat(c.name === "jellyfin" ? ["image-update"] : []) });
+    case "start": Object.assign(c, { state: "running", live: true, id: c.id || "fed654cba321", started: T, cpu_percent: 0.4, memory_bytes: 40 * MB, actions: c.source === "external" ? ["stop", "restart", "remove", "adopt"] : ["stop", "restart", "save", "remove"].concat(["jellyfin", "qbittorrent"].includes(c.name) ? ["image-update"] : []) });
       if (d && d.config && "manual_stop" in d.config) { d.config.manual_stop = false; d.effective_autostart = !!d.config.autostart; }
       break;
     case "stop": Object.assign(c, { state: c.source === "konsol" ? "stopped" : "exited", live: c.source !== "konsol", id: c.source === "konsol" ? "" : c.id, cpu_percent: null, memory_bytes: null,
-      actions: c.source === "external" ? ["start", "remove", "adopt"] : ["start", "save", "remove"].concat(c.name === "jellyfin" ? ["image-update"] : []) });
+      actions: c.source === "external" ? ["start", "remove", "adopt"] : ["start", "save", "remove"].concat(["jellyfin", "qbittorrent"].includes(c.name) ? ["image-update"] : []) });
       if (d && d.config && "manual_stop" in d.config) { d.config.manual_stop = true; d.effective_autostart = false; }
       break;
     case "restart": c.restarts += 1; break;
@@ -131,7 +145,11 @@ function effect(op, body) {
       break;
     case "image-pull": S.images.push({ name: body.image, id: sha("ddee0011"), size: 3.3e7, created: T, used_by: [], managed: true, pinned: false }); break;
     case "image-remove": S.images = S.images.filter((i) => i.id !== body.image); break;
-    case "image-update": c.revision += "u"; break;
+    case "image-update":
+      c.revision += "u";
+      if (UPD[body.name]) UPD[body.name].state = "guncel";
+      op.result = { ok: true, changed: true, version: body.name === "qbittorrent" ? "5.2.5_v2.0.15-ls480" : "" };
+      break;
     case "volume-create": S.volumes.push({ name: body.name, driver: "local", size: 0, used_by: [], managed: true }); break;
     case "volume-remove": S.volumes = S.volumes.filter((v) => v.name !== body.name); break;
     case "network-create": S.networks.push({ name: body.name, id: "n9", driver: "bridge", subnets: body.subnet ? [body.subnet] : ["10.89.9.0/24"], used_by: [], managed: true, internal: !!body.internal }); break;
@@ -183,6 +201,10 @@ function settle(op) {
           return json(200, Object.assign(detailBase(name), JSON.parse(JSON.stringify(D[name]))));
         }
         if (p.endsWith("/gunluk")) return json(200, { name: url.searchParams.get("ad"), lines: LOG_LINES, truncated: false, masked: true });
+        if (p.endsWith("/guncellemeler")) {
+          if (url.searchParams.has("yenile")) updChecked = Math.floor(Date.now() / 1000);
+          return json(200, { checked_at: updChecked, items: JSON.parse(JSON.stringify(UPD)), cached: !url.searchParams.has("yenile") });
+        }
         if (p.endsWith("/islem") && req.method() === "POST") {
           const body = req.postDataJSON();
           posts.push(body);
@@ -204,6 +226,7 @@ function settle(op) {
         return json(404, { error: "yok" });
       }
       let result = {};
+      if (p === "/api/konsol/moduller" && holdModules) await holdModules;
       if (p === "/api/konsol/moduller") result = { items: [{ id: "torrent", installed: true, state: S.containers.some((c) => c.name === "qbittorrent" && c.state === "running") ? "calisiyor" : "durduruldu",
         runtime: "konteyner", live: "running", busy: false, progress: null, durdurulabilir: true, konsol: meta("torrent"), sayfa: ["sayfa.js", "sayfa.css"], urls: { tailscale: "http://torrent.ayc", internet: null } }] };
       else if (p === "/api/uygulama/torrent/durum") result = { installed: true, running: true, unit: "qbittorrent.service", container: "qbittorrent", profile: "/var/lib/qbittorrent", downloads: "/srv/downloads", save: "/srv/downloads/", save_inside: true, temp: "", temp_on: false, temp_inside: false, ui: "127.0.0.1:61006", peer_port: 0, username: "admin" };
@@ -248,6 +271,16 @@ function settle(op) {
           const cell = r.querySelector(selector), b = cell?.getBoundingClientRect();
           if (!b || !b.width || !b.height) problems.push(r.dataset.name + ": hidden " + selector);
         }
+        // DD-214: the lead controls share the first cell; the name keeps readable room and neither it nor the
+        // update chip runs into the status cell (the sidebar's narrow table becomes cards instead).
+        const who = r.querySelector(".pd-c-who").getBoundingClientRect(), state = r.querySelector(".pd-c-state").getBoundingClientRect();
+        const room = who.right - r.querySelector(".pd-nm").getBoundingClientRect().left;
+        if (room < 100) problems.push(r.dataset.name + ": name squeezed to " + Math.round(room) + "px");
+        for (const e of r.querySelectorAll(".pd-nm > *")) {
+          const b = e.getBoundingClientRect();
+          if (b.right > who.right + 1 || (b.right > state.left + 1 && b.left < state.right - 1 && b.bottom > state.top + 1 && b.top < state.bottom - 1))
+            problems.push(r.dataset.name + ": " + e.className + " leaves the name cell");
+        }
         const buttons = [...r.querySelectorAll(".pd-acts button")];
         buttons.forEach((b, i) => {
           const box = b.getBoundingClientRect(), previous = buttons[i - 1]?.getBoundingClientRect();
@@ -263,10 +296,11 @@ function settle(op) {
       assert.deepEqual(issues, [], "visible status/resources/access and distinct 44px controls; evidence: " + shots);
     };
 
-    /* ---- navigation: main sidebar entry after App Store; Settings lost its tab; old links redirect ---- */
+    /* ---- navigation: Podman sidebar entry after App Store, apps only on Ana Menü (DD-216); old links redirect ---- */
     await page.goto(base + "/#/genel");
-    await page.locator('.nav a[data-app="torrent"]').waitFor();
-    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(), ["Ana Menü", "Dosyalar", "App Store", "Konteynerler", "qBittorrent", "Ayarlar"]);
+    await page.locator('#genel-tiles .tile[data-tile="torrent"]').waitFor();
+    assert.deepEqual(await page.locator(".nav a:visible").allTextContents(), ["Ana Menü", "Dosyalar", "App Store", "Podman", "Ayarlar"]);
+    assert.equal(await page.locator(".nav a[data-app], #installed-label").count(), 0, "an installed application has no sidebar entry");
     await page.locator('.nav a[data-route="ayarlar"]').click();
     await page.getByRole("tab", { name: "Sistem", exact: true }).waitFor();
     assert.deepEqual(await page.locator("#settings-page [role=tab]").allTextContents(), ["Sistem", "Güvenlik Duvarı", "Caddy", "Dnsmasq", "Günlük"], "Settings has no container tab any more");
@@ -276,6 +310,20 @@ function settle(op) {
     assert.equal(await page.locator('.nav a[data-route="konteynerler"]').getAttribute("aria-current"), "page");
     await page.locator('.nav a[data-route="konteynerler"]').click();
     await page.waitForFunction(() => location.hash === "#/konteynerler");
+    // The hashchange handler repaints the header after the hash itself has changed.
+    await page.waitForFunction(() => document.getElementById("title").textContent === "Podman");
+    assert.equal(await page.locator("#eyebrow").innerText(), "Konteynerler · bu sunucu");
+
+    /* ---- a cold load whose list answers before the application catalogue still names the App Store row ---- */
+    let releaseModules;
+    holdModules = new Promise((resolve) => { releaseModules = resolve; });
+    await page.reload();  // a full load: the same URL with a hash alone would not reload the shell
+    await rowOf("qbittorrent").waitFor();
+    assert.equal(await rowOf("qbittorrent").locator(".pd-open").innerText(), "qbittorrent", "the container name until the catalogue arrives");
+    const coldReads = reads.filter((r) => r.includes("/liste")).length;
+    holdModules = null; releaseModules();
+    await page.waitForFunction(() => document.querySelector('.pd-row[data-name="qbittorrent"] .pd-open')?.textContent === "qBittorrent");
+    assert.equal(reads.filter((r) => r.includes("/liste")).length, coldReads, "repainted from the catalogue without another list read");
 
     /* ---- list: names only, retained columns, three accessible capability-aware action slots ---- */
     await rowOf("jellyfin").waitFor();
@@ -316,6 +364,32 @@ function settle(op) {
     }
     await page.screenshot({ path: path.join(shots, "list-desktop.png"), fullPage: true });
     assert.deepEqual(listFailures, [], "bounded list refinement; screenshot: " + path.join(shots, "list-desktop.png"));
+    // DD-214: start/stop and edit right before the name, remove last; the home tiles' icons, bare like them.
+    const order = await rowOf("jellyfin").evaluate((r) => {
+      const box = (sel) => r.querySelector(sel).getBoundingClientRect();
+      return { kids: [...r.querySelector(".pd-c-who").children].map((k) => k.classList[0]),
+        svc: box('[data-act="svc"]').left, edit: box('[data-act="edit"]').left, name: box(".pd-open").left, remove: box('[data-act="remove"]').left, access: box(".pd-c-access").right };
+    });
+    assert.deepEqual(order.kids, ["pd-acts", "pd-ico", "pd-nm"], "lead controls, icon, name");
+    assert(order.svc < order.edit && order.edit < order.name && order.remove > order.access, "start/stop → edit → name … remove: " + JSON.stringify(order));
+    const shellJs = fs.readFileSync(path.join(__dirname, "../console/konsol.js"), "utf8");
+    const iconD = (n) => shellJs.match(new RegExp("\\b" + n + ": '<path d=\"([^\"]+)\""))[1];
+    const glyph = (n, act) => rowOf(n).locator(`[data-act="${act}"] svg path`).first().getAttribute("d");
+    assert.equal(await glyph("jellyfin", "svc"), iconD("pause"), "running: pause, as on the home tiles");
+    assert.equal(await glyph("uptime-kuma", "svc"), iconD("play"), "stopped: play");
+    assert.equal(await glyph("jellyfin", "edit"), iconD("sliders"), "edit: the settings sliders");
+    assert.equal(await glyph("jellyfin", "remove"), iconD("trash"));
+    assert.deepEqual(await rowOf("jellyfin").locator('[data-act="edit"]').evaluate((b) => { const st = getComputedStyle(b); return [st.borderTopWidth, st.backgroundColor]; }),
+      ["0px", "rgba(0, 0, 0, 0)"], "bare icon like the home tile actions");
+    assert.equal(await page.locator(".pd-upd").count(), 0, "nothing to update yet");
+    // DD-215: a host-network row shows the sockets its container listens on, one line per port (widest address).
+    assert.deepEqual(await rowOf("pod-uygulama").locator(".pd-c-access > span").allInnerTexts(), ["192.0.2.1:51413/tcp+udp WAN · Tailscale · yerel",
+      "127.0.0.1:61006/tcp Yalnız bu sunucu", "0.0.0.0:6771/udp Tüm adresler", "+1 port daha"]);
+    // DD-217: the App Store app on its own bridge shows its three publications; the WAN one reads as internet access.
+    assert.deepEqual(await rowOf("qbittorrent").locator(".pd-c-access > span").allInnerTexts(), ["127.0.0.1:61006 → 61006/tcp Yalnız bu sunucu",
+      "192.0.2.1:61008 → 61008/tcp İnternet (açık)", "192.0.2.1:61008 → 61008/udp İnternet (açık)"]);
+    assert(reads.some((r) => r.endsWith("/guncellemeler")), "the page asks for the cached update status on open");
+    assert(!reads.some((r) => r.includes("/guncellemeler?yenile")), "opening the page never forces a registry check");
     await listLayout();
     assert.match(await rowOf("uptime-kuma").innerText(), /tanım kayıtlı/, "a stopped definition without a live container stays visible");
     assert.match(await rowOf("pod-uygulama").innerText(), /denetleyicisi bilinmediği için/, "the read-only reason is shown beside the controls");
@@ -337,6 +411,8 @@ function settle(op) {
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "hidden" });
     assert.equal(await focused(), "edit:jellyfin", "closing the editor returns focus to its row action");
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(), "open:jellyfin", "the name follows the lead controls");
     await page.keyboard.press("Tab");
     assert.equal(await focused(), "remove:jellyfin");
     // Row controls preserve package-specific stop/remove disclosures and default data retention.
@@ -561,12 +637,28 @@ function settle(op) {
     await sheet.waitFor({ state: "hidden" });
     await page.evaluate(() => { location.hash = "#/konteynerler"; });
 
-    /* ---- App Store host-network adapter: listener and save only, protected mount read-only ---- */
+    /* ---- DD-215: a host-network container's detail lists every listening address ---- */
+    await rowOf("pod-uygulama").locator('[data-k="open:pod-uygulama"]').click();
+    await page.getByRole("tab", { name: "Ağ ve portlar" }).click();
+    // Every listening address, IPv6 too, with the note that the firewall decides outside access.
+    const listen = page.locator('#pd-listen [role="row"]:not(.pd-mhead)');
+    assert.equal(await listen.count(), 8);
+    assert.deepEqual(await listen.nth(2).locator('[role="cell"]').allInnerTexts(), ["WAN", "2001:db8::1", "51413", "TCP"]);
+    assert.match(await page.locator("#pd-listen").innerText(), /güvenlik duvarı belirler/);
+    await page.evaluate(() => { location.hash = "#/konteynerler"; });
+
+    /* ---- App Store adapter on its own bridge (DD-217): listener and save only, protected mount read-only ---- */
     await rowOf("qbittorrent").locator('[data-k="open:qbittorrent"]').click();
     await page.getByRole("tab", { name: "Ağ ve portlar" }).click();
     // textContent: the label is upper-cased by CSS (innerText would return "DİNLEYİCİSİ").
     assert.match(await page.locator(".pd-panel").textContent(), /Uygulama dinleyicisi/);
     assert.match(await page.locator(".pd-panel").textContent(), /127\.0\.0\.1:61006/);
+    assert.match(await page.locator("#pd-app-net").innerText(), /kendi köprü ağında/);
+    assert.match(await page.locator(".pd-panel").textContent(), /torrent/);
+    const published = page.locator('.pd-panel .pd-mini[aria-label="Portlar"] [role="row"]:not(.pd-mhead)');
+    assert.equal(await published.count(), 3);
+    assert.deepEqual(await published.nth(1).locator('[role="cell"]').allInnerTexts(), ["İnternet (açık)", "192.0.2.1:61008", "61008", "TCP"]);
+    assert.equal(await page.locator("#pd-listen").count(), 0, "a bridge app shows its publications, not host sockets");
     await page.getByRole("tab", { name: "Bağlamalar" }).click();
     assert.match(await page.locator(".pd-panel").innerText(), /korunur/);
     await page.getByRole("button", { name: "Düzenle", exact: true }).click();
@@ -581,8 +673,43 @@ function settle(op) {
     assert.equal((await page.locator("#pd-apply").innerText()).trim(), "Uygula ve yeniden başlat");
     await page.locator("#pd-apply").click();
     await sheet.waitFor({ state: "hidden", timeout: 8000 });
-    assert.deepEqual(posts.at(-1), { action: "save", name: "qbittorrent", revision: "q1", config: { listener_port: 61016, save: "/srv/downloads" }, start: false });
+    assert.deepEqual(posts.at(-1), { action: "save", name: "qbittorrent", revision: "q1", config: { listener_port: 61016, peer_port: 61008, save: "/srv/downloads" }, start: false });
     await settled();
+    // DD-221: the adapter's declared peer port is edited here too: checked in the form, explained in the review.
+    await page.getByRole("button", { name: "Düzenle", exact: true }).click();
+    await page.locator("#pd-f-peer").waitFor();
+    assert.equal(await page.locator("#pd-f-peer").inputValue(), "61008");
+    assert.match(await sheet.locator(".pd-body").innerText(), /32768–60999 aralığının dışındadır/);
+    for (const [value, why] of [["61016", /arayüz portundan farklı/], ["1000", /1024–65535/], ["6x", /1024–65535/]]) {
+      await page.locator("#pd-f-peer").fill(value);
+      await page.locator("#pd-f-peer").press("Tab");
+      await page.waitForFunction((src) => new RegExp(src).test(document.querySelector("#pd-sheet .pd-ferr")?.innerText || ""), why.source);
+      assert.equal(await page.locator("#pd-review").getAttribute("aria-disabled"), "true");
+    }
+    await page.locator("#pd-f-peer").fill("63900");
+    await page.locator("#pd-f-peer").press("Tab");
+    await page.waitForFunction(() => !document.querySelector("#pd-sheet .pd-ferr"));
+    await page.locator("#pd-review").click();
+    assert.match(await sheet.locator(".pd-diff").textContent(), /Eş portu[\s\S]*61008 → 63900/);
+    assert.doesNotMatch(await sheet.locator(".pd-diff").innerText(), /Arayüz portu/);
+    assert.match(await sheet.locator(".pd-conseq").innerText(), /Eski eş portu internete kapanır, yenisi WAN IPv4 adresinde TCP ve UDP/);
+    await page.locator("#pd-apply").click();
+    await sheet.waitFor({ state: "hidden", timeout: 8000 });
+    assert.deepEqual(posts.at(-1), { action: "save", name: "qbittorrent", revision: "q1+", config: { listener_port: 61016, peer_port: 63900, save: "/srv/downloads" }, start: false });
+    await settled();
+    // An adapter that does not declare a peer port gets no such field and sends none.
+    const declared = D.qbittorrent;
+    D.qbittorrent = Object.assign({}, declared, { config: { listener_port: 61016, save: "/srv/downloads" }, editable: ["listener_port", "save"] });
+    await page.getByRole("button", { name: "Düzenle", exact: true }).click();
+    await page.locator("#pd-f-listener").waitFor();
+    assert.equal(await page.locator("#pd-f-peer").count(), 0);
+    await page.locator("#pd-f-listener").fill("61017");
+    await page.locator("#pd-review").click();
+    await page.locator("#pd-apply").click();
+    await sheet.waitFor({ state: "hidden", timeout: 8000 });
+    assert.deepEqual(posts.at(-1).config, { listener_port: 61017, save: "/srv/downloads" });
+    await settled();
+    D.qbittorrent = declared;
     // A stopped App Store app: the package keeps it stopped, so the review offers no start box either.
     const qb = S.containers.find((c) => c.name === "qbittorrent"), qbRunning = Object.assign({}, qb);
     Object.assign(qb, { state: "exited", cpu_percent: null, memory_bytes: null, actions: ["start", "save", "remove"] });
@@ -601,11 +728,48 @@ function settle(op) {
     await page.getByRole("button", { name: "Yenile", exact: true }).click();
     await page.getByRole("button", { name: "Durdur", exact: true }).waitFor();
 
+    /* ---- DD-214: update check, row chip, package update and detail status ---- */
+    await page.evaluate(() => { location.hash = "#/konteynerler"; });
+    await rowOf("qbittorrent").waitFor();
+    assert.match(await page.locator("#pd-upd-stamp").innerText(), /denetlendi/);
+    UPD.qbittorrent.state = "var"; UPD.jellyfin.state = "var";
+    await page.locator("#pd-upd-check").click();
+    await rowOf("qbittorrent").locator(".pd-upd").waitFor();
+    assert(reads.some((r) => r.endsWith("/guncellemeler?yenile=1")), "the button forces a check");
+    assert.equal(await page.locator(".pd-upd").count(), 2);
+    assert.equal(await page.locator("#pd-upd-count").innerText(), "2");
+    assert.equal(await rowOf("uptime-kuma").locator(".pd-upd").count(), 0);
+    await rowOf("qbittorrent").locator('[data-k="open:qbittorrent"]').focus();
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(), "upd:qbittorrent", "the update chip follows the name");
+    const qbRevision = S.containers.find((c) => c.name === "qbittorrent").revision;
+    await page.keyboard.press("Enter");
+    await cf.getByText("qBittorrent güncellensin mi?").waitFor();
+    assert.match(await cf.innerText(), /lscr\.io\/linuxserver\/qbittorrent:latest/);
+    assert.match(await page.locator("#cf-list").innerText(), /önceki imaja dönülür/);
+    assert.match(await page.locator("#cf-list").innerText(), /indirilenler korunur/);
+    await page.locator("#cf-go").click();
+    while (posts.at(-1).action !== "image-update") await page.waitForTimeout(20);
+    assert.deepEqual(posts.at(-1), { action: "image-update", name: "qbittorrent", revision: qbRevision });
+    await settled();
+    await page.waitForFunction(() => (document.querySelector("#toast")?.textContent || "").includes("qBittorrent: imaj güncellendi (5.2.5_v2.0.15-ls480)."));
+    await page.waitForFunction(() => !document.querySelector('.pd-row[data-name="qbittorrent"] .pd-upd'));
+    assert.equal(await page.locator("#pd-upd-count").innerText(), "1");
+    await page.evaluate(() => { location.hash = "#/konteynerler/jellyfin"; });
+    await page.locator("#pd-detail-title").filter({ hasText: "jellyfin" }).waitFor();
+    assert.equal(await page.locator("#pd-upd-state").innerText(), "Yeni sürüm var");
+    assert.match(await page.locator(".pd-panel").innerText(), /kanal: docker\.io\/jellyfin\/jellyfin:latest/);
+    assert.equal(await page.getByRole("button", { name: "Güncelle", exact: true }).count(), 1, "the detail bar says Güncelle when a newer build exists");
+    UPD.jellyfin.state = "guncel";
+    await page.evaluate(() => { location.hash = "#/konteynerler"; });
+    await page.locator("#pd-upd-check").click();
+    await page.waitForFunction(() => document.querySelectorAll(".pd-upd").length === 0);
+
     /* ---- image update and removal flows ---- */
     await page.evaluate(() => { location.hash = "#/konteynerler/jellyfin"; });
     await page.locator("#pd-detail-title").filter({ hasText: "jellyfin" }).waitFor();
     await page.getByRole("button", { name: "İmajı güncelle", exact: true }).click();
-    await cf.getByText("jellyfin imajı güncellensin mi?").waitFor();
+    await cf.getByText("jellyfin güncellensin mi?").waitFor();
     assert.match(await page.locator("#cf-list").innerText(), /yeniden oluşturulur/);
     await page.locator("#cf-go").click();
     while (posts.at(-1).action !== "image-update") await page.waitForTimeout(20);
@@ -719,7 +883,7 @@ function settle(op) {
 
     /* ---- desktop/tablet/phone: keep resource values and distinct touch targets in both themes ---- */
     await page.getByRole("tab", { name: /^Konteynerler/ }).click();
-    for (const width of [1024, 768, 320]) {
+    for (const width of [1180, 1024, 768, 320]) {
       await page.setViewportSize({ width, height: 1000 });
       await listLayout();
     }
@@ -772,6 +936,6 @@ function settle(op) {
     }
 
     assert.deepEqual(errors, []);
-    console.log("PASS: sidebar Konteynerler + old link redirect + Settings without the tab; name-only list with status/resources/access, no owner column, three capability-aware icon actions with accessible names/titles and 44px targets; disabled/busy actions send nothing; keyboard edit and focus return; stop confirm/busy/no duplicate/refresh, failed op, 409; restart and image metadata in details; detail sections/effective startup/logs; stopped save start:false; running save discloses recreation; edit with secret kept, public consent, draft across poll, late answer vs newer sheet; create on a fresh host with the logical default network; leaving the page closes the sheet; host adapter listener/save without a start box (running/stopped); image update; direct removal with retained generic data and package data deletion opt-in; adoption preview with explicit scope; images/volumes/networks with refusals and subnet text; failed read; 1440/1024/768/390/320 layout, 390 dark/light and section tab kept in view. Screenshots: " + shots);
+    console.log("PASS: sidebar Podman (title, eyebrow, no app entries) + cold-load app name + host-network listening ports (row and detail) + App Store app on its own bridge with per-address publications + old link redirect + Settings without the tab; name-only list with status/resources/access, no owner column, three capability-aware icon actions with accessible names/titles and 44px targets; disabled/busy actions send nothing; keyboard edit and focus return; stop confirm/busy/no duplicate/refresh, failed op, 409; restart and image metadata in details; detail sections/effective startup/logs; stopped save start:false; running save discloses recreation; edit with secret kept, public consent, draft across poll, late answer vs newer sheet; create on a fresh host with the logical default network; leaving the page closes the sheet; adapter listener/save and the declared peer port (form checks, review, payload; none when undeclared) without a start box (running/stopped); image update; direct removal with retained generic data and package data deletion opt-in; adoption preview with explicit scope; images/volumes/networks with refusals and subnet text; failed read; 1440/1024/768/390/320 layout, 390 dark/light and section tab kept in view. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch((err) => { console.error(err); process.exit(1); });

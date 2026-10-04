@@ -4,12 +4,15 @@
 Podman is part of the base (the App Store's container runtime). The root backend calls this module
 for GET /api/konsol/konteynerler/{liste,ayrinti,gunluk}; everything comes from `podman` itself
 (ps, inspect, images, system df, logs) run inside the backend's sandbox, which is enough for
-reading. Nothing here starts, stops or removes a container: that belongs to the application that
-owns it. Environment variables are never returned (they may hold passwords), and log lines mask
+reading, and, for a container on the host network, from /proc (the sockets it listens on, DD-215).
+Nothing here starts, stops or removes a container: that belongs to the application that owns it. Environment variables are never returned (they may hold passwords), and log lines mask
 values that follow words like password or token before they leave the server.
 """
+import ipaddress
 import json
+import os
 import re
+import sys
 import time
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -58,6 +61,176 @@ def ps_ports(items):
         if isinstance(p, dict) and str(p.get("host_port", "")).isdigit() and str(p.get("container_port", "")).isdigit():
             rows.append({"host_ip": p.get("host_ip") or "0.0.0.0", "host_port": int(p["host_port"]),
                          "container_port": int(p["container_port"]), "protocol": p.get("protocol") or "tcp"})
+    return rows
+
+
+DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def image_repo(ref):
+    """Repository of an image reference: without its @digest and without a :tag after the last '/'."""
+    repo = str(ref or "").split("@", 1)[0]
+    head, sep, last = repo.rpartition("/")
+    if sep and ":" in last:
+        repo = head + "/" + last.split(":", 1)[0]
+    return repo
+
+
+def update_status(run, image, channel, arch, timeout=30):
+    """DD-214: is there a newer build on the image's channel? Reads manifests only, downloads no layer.
+
+    `image` is the installed, digest-pinned reference; `channel` the tag it follows (empty or a
+    digest: pinned, nothing to follow). A multi-arch index is compared by this host's platform
+    manifest digest, a single manifest by its config digest (the local image id).
+    run(argv, timeout) -> (returncode, stdout, last stderr line). Never raises.
+    """
+    result = {"state": "sabit", "channel": channel or "", "candidate": "", "error": ""}
+    if not channel or "@" in channel:
+        return result
+    rc, out, _ = run(["podman", "image", "inspect", image], 20)
+    try:
+        info = json.loads(out)[0] if rc == 0 else None
+    except (ValueError, IndexError, TypeError):
+        info = None
+    if not isinstance(info, dict):
+        return dict(result, state="denetlenemedi", error="Kurulu imaj okunamadı.")
+    local = {str(d).split("@", 1)[1] for d in info.get("RepoDigests") or [] if "@" in str(d)}
+    if isinstance(info.get("Digest"), str):
+        local.add(info["Digest"])
+    rc, out, message = run(["podman", "manifest", "inspect", channel], timeout)
+    try:
+        remote = json.loads(out) if rc == 0 else None
+    except ValueError:
+        remote = None
+    if not isinstance(remote, dict):
+        return dict(result, state="denetlenemedi", error="Kayıt defterine ulaşılamadı" + (": " + message if message else "."))
+    if isinstance(remote.get("manifests"), list):
+        entries = [m for m in remote["manifests"] if isinstance(m, dict) and isinstance(m.get("platform"), dict)
+                   and m["platform"].get("architecture") == arch and m["platform"].get("os", "linux") == "linux"
+                   and DIGEST_RE.fullmatch(str(m.get("digest", "")))]
+        if not entries:
+            return dict(result, state="denetlenemedi", error="Kanalda bu sunucunun mimarisi (%s) için imaj yok." % arch)
+        digest = entries[0]["digest"]
+        return dict(result, state="guncel" if digest in local else "var", candidate=image_repo(channel) + "@" + digest)
+    config = str((remote.get("config") or {}).get("digest", ""))
+    if DIGEST_RE.fullmatch(config):
+        current = "sha256:" + str(info.get("Id", "")).replace("sha256:", "")
+        return dict(result, state="guncel" if config == current else "var")
+    return dict(result, state="denetlenemedi", error="Kanalın imaj tanımı okunamadı.")
+
+
+# DD-215: a container on the host network has no port mappings, so Konsol shows the sockets its own
+# processes listen on: TCP in LISTEN and unconnected bound UDP, read from /proc like ss does.
+TCP_LISTEN, UDP_UNBOUND = "0A", "07"
+TAILNET_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+SOCKET_SCOPES = ("all", "wan", "tailscale", "other", "local")
+
+
+def proc_address(text):
+    """/proc/net/{tcp,udp}{,6} "0100007F:EE6E" → (address, port); each 32-bit word is in host order."""
+    host, _, port = text.partition(":")
+    raw = bytes.fromhex(host)
+    if len(raw) not in (4, 16):
+        raise ValueError("address length")
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    ip = ipaddress.ip_address(raw)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip, int(port, 16)
+
+
+def socket_scope(ip, wan=(), tailscale=()):
+    """The kind of address a socket is bound to, not whether it is reachable (the firewall decides)."""
+    if ip.is_unspecified:
+        return "all"
+    if ip.is_loopback:
+        return "local"
+    if ip.is_link_local:
+        return "link"
+    if str(ip) in tailscale:
+        return "tailscale"
+    if str(ip) in wan:
+        return "wan"
+    if any(ip.version == net.version and ip in net for net in TAILNET_NETS):
+        return "tailscale"
+    return "other"
+
+
+def container_pids(pid, proc="/proc", cgroups="/sys/fs/cgroup", limit=512):
+    """The container's init process and every process of its own cgroup (v2) subtree."""
+    pids = {pid}
+    try:
+        with open("%s/%d/cgroup" % (proc, pid)) as f:
+            path = next((line.strip()[3:] for line in f if line.startswith("0::")), "")
+    except OSError:
+        return pids
+    if not path.startswith("/") or path == "/":
+        return pids
+    for root, _, _ in os.walk(os.path.join(cgroups, path.lstrip("/"))):
+        try:
+            with open(os.path.join(root, "cgroup.procs")) as f:
+                pids.update(int(x) for x in f.read().split() if x.isdigit())
+        except OSError:
+            continue
+        if len(pids) >= limit:
+            break
+    return pids
+
+
+def listening(pid, wan=(), tailscale=(), proc="/proc", cgroups="/sys/fs/cgroup"):
+    """Sockets a running host-network container listens on: [{address, port, protocol, scope}].
+
+    Only sockets owned by the container's processes count (their fds matched against the socket
+    table of the container's network namespace). IPv6 link-local binds are left out. None when the
+    processes or the socket table cannot be read: unknown, never an empty "no ports".
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    inodes, seen_fds = set(), False
+    for p in container_pids(pid, proc, cgroups):
+        fd_dir = "%s/%d/fd" % (proc, p)
+        try:
+            names = os.listdir(fd_dir)
+        except OSError:
+            continue
+        seen_fds = True
+        for n in names:
+            try:
+                target = os.readlink(os.path.join(fd_dir, n))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target.endswith("]"):
+                inodes.add(target[8:-1])
+    if not seen_fds:
+        return None
+    rows, seen, tables = [], set(), 0
+    for protocol, files in (("tcp", ("tcp", "tcp6")), ("udp", ("udp", "udp6"))):
+        for name in files:
+            try:
+                with open("%s/%d/net/%s" % (proc, pid, name)) as f:
+                    lines = f.read().splitlines()[1:]
+            except OSError:
+                continue
+            tables += 1
+            for line in lines:
+                parts = line.split()
+                if len(parts) < 10 or parts[9] not in inodes:
+                    continue
+                if parts[3] != (TCP_LISTEN if protocol == "tcp" else UDP_UNBOUND) or not parts[2].endswith(":0000"):
+                    continue
+                try:
+                    ip, port = proc_address(parts[1])
+                except ValueError:
+                    continue
+                scope = socket_scope(ip, wan, tailscale)
+                if port == 0 or scope == "link" or (protocol, str(ip), port) in seen:
+                    continue
+                seen.add((protocol, str(ip), port))
+                rows.append({"address": str(ip), "port": port, "protocol": protocol, "scope": scope})
+    if not tables:
+        return None
+    rows.sort(key=lambda r: (r["port"], r["protocol"], SOCKET_SCOPES.index(r["scope"]), r["address"]))
     return rows
 
 
@@ -151,6 +324,8 @@ class Containers:
         except (ValueError, IndexError, TypeError):
             raise ContainerError(502, "podman inspect çıktısı okunamadı")
         state, host, config, net = c.get("State") or {}, c.get("HostConfig") or {}, c.get("Config") or {}, c.get("NetworkSettings") or {}
+        mode = host.get("NetworkMode", "") or ""
+        networks = sorted(k for k in (net.get("Networks") or {}) if isinstance(k, str))
         labels = config.get("Labels") or {}
         health = state.get("Health") or {}
         mounts = []
@@ -166,7 +341,8 @@ class Containers:
             "exit_code": state.get("ExitCode", 0) if isinstance(state.get("ExitCode"), int) else 0,
             "restarts": c.get("RestartCount", 0) if isinstance(c.get("RestartCount"), int) else 0,
             "unit": labels.get("PODMAN_SYSTEMD_UNIT", "") if isinstance(labels, dict) else "",
-            "network": host.get("NetworkMode", "") or "", "health": (health.get("Status") or "") if isinstance(health, dict) else "",
+            "network": ", ".join(networks) if mode == "bridge" and networks else mode,
+            "health": (health.get("Status") or "") if isinstance(health, dict) else "",
             "ports": ports_of(net.get("Ports") or host.get("PortBindings")), "mounts": mounts,
             "labels": {k: str(labels.get(v, "")) if isinstance(labels, dict) else "" for k, v in LABEL_KEYS.items()},
             "command": " ".join(str(x) for x in (config.get("Cmd") or [])),

@@ -70,7 +70,6 @@ a { color: inherit; }
 .nav a:hover { background: var(--surface-2); color: var(--ink); }
 .nav a[aria-current="page"] { background: var(--accent-soft); color: var(--ink); }
 .nav a[aria-current="page"] svg { color: var(--accent); }
-.side-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 0 10px 4px; }
 .side-foot { margin-top: auto; padding: 10px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 3px; }
 .side-foot .mono { color: var(--ink); }
 

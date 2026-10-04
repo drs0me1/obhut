@@ -3886,3 +3886,31 @@ failure was claimed.
   downloads.
 - **Verified (2026-09-16):** bats 154 ok, including the sweep, the refusals
   (root, trash, share folder, escape) and the installer wiring.
+
+### DD-218: qBittorrent's fresh-profile defaults are the user's choice (v2-196)
+
+- **Request (user, 2026-10-04):** after the audit of what the install writes, "qbittorrent için
+  düzenlenebilir ayarları listele bir tercihte bulunalım ve default olarak kaydedelim". The list came
+  from the shipped qBittorrent 5.2.4 itself (a throwaway, network-less container's
+  `/api/v2/app/preferences`). The user chose: no UPnP/NAT-PMP, no LSD, required encryption, anonymous
+  mode, 15 active downloads/uploads/torrents, half-finished files in a separate folder, preallocated
+  files; seeding unlimited and the English interface (qBittorrent's defaults) were kept.
+- **Seed:** `magaza/torrent/qBittorrent.conf` adds exactly `Session\LSDEnabled=false`,
+  `[Network] PortForwardingEnabled=false`, `Session\Encryption=1`, `Session\AnonymousModeEnabled=true`,
+  `Session\MaxActive{Downloads,Uploads,Torrents}=15`, `Session\TempPathEnabled=true`,
+  `Session\TempPath=DOWNLOADS_PATH/incomplete/` and `Session\Preallocation=true`. The key names
+  were not assumed: a throwaway container got the values through `setPreferences` and wrote these
+  keys itself. The incomplete folder is the package's declared `PAKET_KLASORLER`, already refused by
+  shares and reported by `klasorler.py`.
+- **Still DD-178's rule otherwise:** the seed is written only into an empty profile; `kur` writes
+  only the form's account and folder (and `WebUI\Address`); reapply and reinstall keep every
+  preference of an existing profile; the user changes them in qBittorrent, and the defaults test
+  proves such a change survives a restart. Existing installs get these defaults only from a fresh
+  profile (reinstall with its data removed) or by changing them in qBittorrent.
+- **Trade-offs, stated:** required encryption and anonymous mode reduce the number of peers and
+  some private trackers refuse anonymous clients; preallocation reserves the full size at the start.
+- **Verification:** `tests/torrent-defaults-linux.py` now runs the package's container image (the
+  native binary left with DD-209) inside a private network namespace: the chosen values are applied,
+  everything else equals the same qBittorrent's defaults, the login gate holds (5.2 answers a good
+  login with an empty 204), and user changes persist.
+- **Retired (v2-197):** reverted by DD-219 at the user's request; qBittorrent's own defaults apply again.
