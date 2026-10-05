@@ -23,7 +23,8 @@ REV_RE = re.compile(r'[0-9a-f]{32}\Z')
 IMAGE_RE = re.compile(r'(?:[a-z0-9][a-z0-9.-]*\.[a-z0-9.-]+|localhost)(?::[0-9]{1,5})?/(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})?\Z')
 MANAGED_LABEL = 'io.master-stack.managed'
 FIELDS = {'schema', 'name', 'image', 'image_ref', 'network', 'ports', 'mounts', 'environment', 'command',
-          'autostart', 'manual_stop', 'restart', 'cpus', 'memory', 'pids_limit', 'ulimits', 'stop_signal', 'revision'}
+          'autostart', 'manual_stop', 'restart', 'cpus', 'memory', 'pids_limit', 'ulimits', 'stop_signal', 'revision',
+          'user'}
 ULIMIT_NAMES = frozenset('as core cpu data fsize locks memlock msgqueue nice nofile nproc rss rtprio rttime sigpending stack'.split())
 SIGNAL_NAMES = frozenset(('SIG' + name) for name in
                         'ABRT ALRM BUS CHLD CLD CONT FPE HUP ILL INT IO IOT KILL PIPE POLL PROF PWR QUIT SEGV STKFLT STOP SYS TERM TRAP TSTP TTIN TTOU URG USR1 USR2 VTALRM WINCH XCPU XFSZ'.split())
@@ -247,6 +248,11 @@ def validate(value, env, previous=None):
     require(isinstance(pids, str) and (pids in ('', '-1') or re.fullmatch(r'[1-9][0-9]{0,18}', pids) and
                                      int(pids) <= 9223372036854775807), 'Süreç sınırı geçersiz.')
     result['pids_limit'] = pids
+    # DD-227: 'downloads' runs as the Files account without capabilities; 'image' keeps the image's own
+    # (often root). Omitted: a new definition gets the least privilege, a stored one keeps how it ran.
+    user = value.get('user', previous.get('user', 'image') if previous else 'downloads')
+    require(user in ('image', 'downloads'), 'Çalıştıran hesap geçersiz.')
+    result['user'] = user
     result['ulimits'] = ulimits_of(value.get('ulimits', (previous or {}).get('ulimits', [])))
     result['stop_signal'] = stop_signal_of(value.get('stop_signal', (previous or {}).get('stop_signal', '')))
     ports = value.get('ports', [])
@@ -274,6 +280,8 @@ def validate(value, env, previous=None):
         destinations.add(dest)
         source = bind_path(mount['source'], env) if mount['type'] == 'bind' else name_of(mount['source'])
         result['mounts'].append(dict(mount, source=source, destination=dest))
+    require(user == 'downloads' or not any(m['type'] == 'bind' and not m['read_only'] for m in result['mounts']),
+            'Sunucu klasörüne yalnız Dosyalar hesabıyla yazılabilir; root gerektiren imajlar için birim veya salt okunur klasör kullanın.')
     environ = value.get('environment', [])
     require(isinstance(environ, list) and len(environ) <= 256, 'Ortam değişkeni listesi geçersiz.')
     old = {e['name']: e for e in (previous or {}).get('environment', [])}
@@ -315,6 +323,13 @@ def render_quadlet(definition, env, bindings=None):
              'ContainerName=' + d['name'], 'Image=' + d['image'], 'Pull=never', 'Network=' + network,
              'Label=' + MANAGED_LABEL + '=konsol', 'LogDriver=journald', 'NoNewPrivileges=true',
              'EnvironmentFile=' + quote(Store(env).environment_path(d['name']))])
+    files_account = d.get('user', 'image') == 'downloads'
+    if files_account:
+        # DD-227: the Files account (DOWNLOADS_UID/GID), no capabilities; files stay group-writable like /srv.
+        ids = [env.get('DOWNLOADS_UID', ''), env.get('DOWNLOADS_GID', '')]
+        if not all(re.fullmatch(r'[1-9][0-9]{0,9}', i) for i in ids):
+            raise ContainerConfigError(503, 'Dosyalar hesabı kimliği geçersiz; kurulumu yeniden çalıştırın.')
+        lines.extend(['User=' + ids[0], 'Group=' + ids[1], 'DropCapability=all'])
     for binding in bindings or []:
         lines.append('PublishPort=' + binding)
     pinned = 0
@@ -333,6 +348,8 @@ def render_quadlet(definition, env, bindings=None):
         lines.append('Exec=' + ' '.join(quote(arg, command=True) for arg in d['command']))
     # Resource flags are numeric/size-validated, never a user-provided raw PodmanArgs field.
     limits = (['--cpus=' + d['cpus']] if d['cpus'] else []) + (['--memory=' + d['memory']] if d['memory'] else [])
+    if files_account:
+        limits.append('--umask=0002')
     if limits:
         lines.append('PodmanArgs=' + ' '.join(limits))
     if d.get('pids_limit'):

@@ -30,6 +30,10 @@ class FakeRun:
         self.volumes = set()
         self.volume_options = {}
         self.routes = []
+        self.quadlets = None
+        self.ignore_user = False
+        self.dropped = None  # Podman 5.4.2 reports a fully dropped capability set as null (nrm, 2026-10-05)
+        self.omit = ()
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
@@ -69,8 +73,14 @@ class FakeRun:
         elif argv[:2] == ['systemctl', 'start']:
             self.active.add(argv[-1])
             name = argv[-1][len('konsol-'):-len('.service')]
-            self.containers[name] = {'Name': name, 'State': {'Running': True},
-                                     'Config': {'Labels': {cfg.MANAGED_LABEL: 'konsol', 'PODMAN_SYSTEMD_UNIT': argv[-1]}}}
+            lines = (self.quadlets / ('konsol-' + name + '.container')).read_text().splitlines() if self.quadlets else []
+            value = lambda key: next((l.split('=', 1)[1] for l in lines if l.startswith(key + '=')), '')
+            user = '' if self.ignore_user or not value('User') else value('User') + ':' + value('Group')
+            caps = self.dropped if 'DropCapability=all' in lines and not self.ignore_user else ['CAP_CHOWN', 'CAP_DAC_OVERRIDE']
+            self.containers[name] = {'Name': name, 'State': {'Running': True}, 'EffectiveCaps': caps, 'BoundingCaps': caps,
+                                     'Config': {'Labels': {cfg.MANAGED_LABEL: 'konsol', 'PODMAN_SYSTEMD_UNIT': argv[-1]}, 'User': user}}
+            for key in self.omit:
+                self.containers[name].pop(key)
         elif argv[:2] == ['systemctl', 'stop']:
             self.active.discard(argv[-1])
             self.containers.pop(argv[-1][len('konsol-'):-len('.service')], None)
@@ -112,10 +122,12 @@ class ContainerTests(unittest.TestCase):
                     'SBIN_DIR': str(self.root / 'sbin'),
                     'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop', 'SHARE_DIR': '.pay',
                     'MODULES_DIR': str(self.root / 'mods'), 'TAILSCALE_IPV4': '100.64.0.7',
-                    'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama')}
+                    'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama'),
+                    'DOWNLOADS_UID': '1000', 'DOWNLOADS_GID': '1000'}
         self.state = self.root / 'state.env'
         self.state.write_text(''.join(k + '=' + v + '\n' for k, v in self.env.items()))
         self.runner = FakeRun()
+        self.runner.quadlets = self.root / 'quadlet'
         self.store = cfg.Store(self.env)
         self.manager = worker.Manager(str(self.state), run=self.runner, network=FakeNetwork(), generator='/fixture/quadlet')
         self.config = {'name': 'demo', 'image': 'registry.example/app:1', 'network': 'bridge', 'ports': [],
@@ -215,6 +227,76 @@ class ContainerTests(unittest.TestCase):
         plain = cfg.render_quadlet(dict(d, mounts=[m for m in d['mounts'] if m['type'] == 'volume']), self.manager.env, [])
         self.assertNotIn('master_container_binds.py', plain)
         self.assertNotIn('RequiresMountsFor=', plain)
+
+    def test_files_account_runs_without_capabilities_and_writes_group_writable(self):
+        # DD-227: User/Group from the state, DropCapability=all and a group-writable umask; ready() proves them.
+        self.config['user'] = 'downloads'
+        d = self.create(start=True)
+        lines = self.manager.quadlet('demo').read_text().splitlines()
+        for line in ('User=1000', 'Group=1000', 'DropCapability=all', 'NoNewPrivileges=true',
+                     'PodmanArgs=--cpus=1.5 --memory=256M --umask=0002'):
+            self.assertIn(line, lines)
+        self.assertEqual(d['user'], 'downloads')
+        self.assertEqual(self.runner.containers['demo']['Config']['User'], '1000:1000')
+
+    def test_image_account_cannot_write_server_folders(self):
+        self.config['user'] = 'image'
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.create()
+        self.assertIn('Dosyalar hesabıyla', str(err.exception))
+        self.assertFalse(any(c[0] == 'podman' for c in self.runner.calls), 'refused before any pull or stop')
+        self.assertEqual(self.store.list(), [])
+        for mounts in ([dict(self.config['mounts'][0], read_only=True)],
+                       [{'type': 'volume', 'source': 'cache-volume', 'destination': '/cache', 'read_only': False}]):
+            with self.subTest(mounts=mounts):
+                self.assertEqual(cfg.validate(dict(self.config, mounts=mounts), self.env)['user'], 'image')
+        with self.assertRaises(cfg.ContainerConfigError):
+            cfg.validate(dict(self.config, user='root'), self.env)
+
+    def test_account_defaults_new_definitions_to_files_and_keeps_older_ones_as_they_ran(self):
+        d = self.create()
+        self.assertEqual(d['user'], 'downloads', 'an omitted account means least privilege for a new definition')
+        self.assertEqual(cfg.validate(self.config, self.env, d)['user'], 'downloads', 'preserved when omitted')
+        older = {k: v for k, v in d.items() if k != 'user'}  # stored before DD-227: it ran as the image's account
+        rendered = cfg.render_quadlet(older, self.manager.env, [])
+        self.assertNotIn('User=', rendered)
+        self.assertNotIn('--umask', rendered)
+        with self.assertRaises(cfg.ContainerConfigError):  # saving it with a writable folder needs the switch
+            cfg.validate(self.config, self.env, older)
+
+    def test_files_account_ids_must_be_valid(self):
+        d = dict(self.create(), user='downloads')
+        for uid in ('0', 'abc', ''):
+            with self.subTest(uid=uid), self.assertRaises(cfg.ContainerConfigError) as err:
+                cfg.render_quadlet(d, dict(self.manager.env, DOWNLOADS_UID=uid), [])
+            self.assertEqual(err.exception.status, 503)
+
+    def test_ready_proves_the_files_account_and_dropped_capabilities(self):
+        self.config['user'] = 'downloads'
+        self.runner.ignore_user = True  # Podman did not apply the account
+        with self.assertRaises(cfg.ContainerConfigError):
+            self.create(start=True)
+        self.assertNotIn('konsol-demo.service', self.runner.active)
+        self.runner.ignore_user = False
+        for omit in (('EffectiveCaps',), ('BoundingCaps',)):  # an inspect without the field proves nothing
+            self.runner.omit = omit
+            with self.subTest(omit=omit), self.assertRaises(cfg.ContainerConfigError) as err:
+                self.create(start=True)
+            self.assertEqual(err.exception.status, 502)
+            self.assertNotIn('konsol-demo.service', self.runner.active)
+        self.runner.omit = ()
+        self.runner.dropped = []  # another Podman may print the empty set as a list
+        self.assertEqual(self.create(start=True)['user'], 'downloads')
+        self.assertIn('konsol-demo.service', self.runner.active)
+
+    def test_adoption_maps_the_downloads_account_and_refuses_other_users(self):
+        info = self.external()
+        for user, expected in (('1000:1000', 'downloads'), ('1000', 'downloads'), ('', 'image')):
+            info['Config']['User'] = user
+            preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
+            self.assertEqual((preview['unsupported'], preview['config']['user']), ([], expected), user)
+        info['Config']['User'] = '33'
+        self.assertIn('User', self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']['unsupported'])
 
     def test_stale_revision_refuses_before_any_mutation(self):
         d = self.create()

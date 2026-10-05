@@ -41,6 +41,30 @@ that named route, not the shared Caddy listener.
 Portable validation should compare the complete embedded file set with runtime
 sources, excluding Python caches, metadata, tests, docs and private input.
 
+## Files account for writable folders (v2-205, DD-227)
+
+`test_container_worker.py` checks:
+- the Files-account render (`User`/`Group`, `DropCapability=all`, `--umask=0002`);
+- the refusal of the image account with a writable folder before any Podman call, while read-only
+  folders and volumes are allowed;
+- the defaults: new definitions get the Files account, a value is preserved when omitted, and older
+  definitions render as before;
+- that invalid ids fail closed with 503;
+- that `ready()` proves the account and the empty capability sets, printed as `null` (Podman 5.4.2)
+  or `[]`, and fails closed when a field is missing (mutations that skip the check, accept a missing
+  field or reject `null` turn it red);
+- the adoption mapping.
+
+The fake runtime reflects the Quadlet's account lines and prints a fully dropped capability set as
+`null`, as Podman 5.4.2 does. `konteynerler-ui.cjs` checks:
+- the preselected account and the payload on create;
+- the running user in the details;
+- the blocked review when an old definition's folder is made writable, cleared by switching;
+- the review's account line and consequence;
+- the account in the adopt payload.
+
+The live worker fixture owns its writable folder by the downloads account, as `/srv` is.
+
 ## Pinned bind sources (v2-204, DD-226)
 
 `test_container_binds.py` runs the real helper with fake mount calls. It checks that:

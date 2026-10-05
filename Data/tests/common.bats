@@ -3495,6 +3495,8 @@ PY
     # Not in the loop that restarts the firewall: the firewall never calls this helper.
     run ! grep -qE 'for container_helper in .*master_container_binds' <<<"$stage4"
     run ! grep -qiE 'qbittorrent|torrent|wireguard|PAKET_' "$V2_ROOT/panel/master_container_binds.py"
+    # DD-227: the generic container code (account rule included) names no application either.
+    run ! grep -qiE 'qbittorrent|torrent|wireguard' "$V2_ROOT/panel/master_container_config.py" "$V2_ROOT/panel/master_container_worker.py"
     grep -qF "'master_container_binds.py'" "$V2_ROOT/tests/containers-worker-linux.py"
 }
 

@@ -13,6 +13,41 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-227: Writable server folders only through the Files account (v2-205)
+
+- **Finding (measured on nrm, 2026-10-05):** a generic container ran as its image's user. For alpine
+  that was root, with 11 effective capabilities (`podman inspect`). Podman is rootful without user
+  namespaces (DD-208/209), so such a container, or an exploit in it, was host root over every writable
+  `/srv` bind. It could chown or plant setuid files, and leave root-owned files that the installer's
+  repair walk would silently fix. DD-226 closed the path swap; this closes the privilege.
+- **Decision:** a definition carries `user`: `downloads` or `image`.
+  - `downloads` renders `User=`/`Group=` from the state's `DOWNLOADS_UID`/`GID`, which must be digits
+    and non-zero, else 503. It also renders `DropCapability=all` and a fixed `--umask=0002`, because
+    `/srv` is 0775/0664 by the repair walk. `NoNewPrivileges` stays.
+  - `validate()` refuses `image` together with any writable bind, before any pull or stop: "Sunucu
+    klasörüne yalnız Dosyalar hesabıyla yazılabilir…".
+  - After each start the worker proves the account: `Config.User` is `uid:gid`, and the effective and
+    bounding capability sets are empty. Podman 5.4.2 prints an empty set as `null`, others may print
+    `[]`; both count. A missing field fails closed.
+  - A new definition defaults to `downloads`. An omitted value on save keeps the stored one. A
+    definition stored before this counts as `image` and keeps running unchanged; it needs the switch
+    only when it is saved with a writable folder.
+  - Adoption maps the Files uid to `downloads`.
+  - The Podman page has "Çalıştıran hesap" (Dosyalar preselected on create), blocks the review until
+    the rule holds, and lists the change with its consequences. Details show the running user.
+- **Rejected:**
+  - An acknowledgement path for root images on writable folders: one preserved boolean is weaker than
+    the per-port public acknowledgement. Root-init images that must write `/srv` (LSIO style) belong in
+    App Store packages, which have a reviewed home.
+  - User namespaces (`UserNS=auto`): they change `/etc/subuid`/`subgid`, and Ubuntu is unverified.
+- **Consequences:**
+  - Podman sets a named volume's owner once, at its first use (measured on nrm). A new volume at a path
+    the image lacks becomes the Files account's. Over an image directory it takes that directory's owner,
+    and a volume used before keeps its owner. Either may be root-owned and so read-only for the Files
+    account.
+  - Images that need root or a port below 1024 may not start under it. The UI says so.
+  - qBittorrent's own LSIO image is out of scope.
+
 ### DD-226: A Konsol container's bind sources are pinned at every start (v2-204)
 
 - **Finding (measured on nrm, 2026-10-05):**
@@ -522,6 +557,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   its former read-only Settings placement is superseded by this decision.
 - **Verification:** tests and live evidence are recorded in `SESSION.md`; the mockup is
   design evidence only, not proof of runtime or OS compatibility.
+- **Amended (v2-205, DD-227):** writable server folders need the Files account (no capabilities);
+  a root image gets volumes or read-only folders only.
 - **Amended (v2-204, DD-226):** bind sources are walked and pinned at every start; the Quadlet
   mounts the anchor, and a missing or symlinked folder keeps the container down.
 - **Amended (v2-201, DD-223):** generated units no longer carry `Requires=master-firewall.service`,

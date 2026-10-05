@@ -38,6 +38,18 @@ HELPERS = ('master_container_config.py', 'master_container_worker.py',
            'master_container_network.py', 'master_settings.py', 'master_container_binds.py')
 
 
+def downloads_ids():
+    """DD-227: new Konsol definitions run as the Files account; the fixture's writable bind is owned by it, as /srv is."""
+    ids = {'DOWNLOADS_UID': '1000', 'DOWNLOADS_GID': '1000'}
+    state = Path('/etc/master-stack/state.env')
+    if state.is_file():
+        for line in state.read_text(encoding='utf-8').splitlines():
+            key, _, value = line.partition('=')
+            if key in ids and value.strip().strip('"').isdigit():
+                ids[key] = value.strip().strip('"')
+    return ids
+
+
 def block_list(source):
     """DD-224: the guard's single-source egress block list: Data/config or the installed state."""
     for path in (source.parent / 'config/defaults.env', Path('/etc/master-stack/state.env')):
@@ -139,6 +151,10 @@ class Acceptance:
         os.chmod(self.root, 0o700)
         for name in ('helpers', 'run', 'state', 'mods', 'srv/proof space'):
             (self.root / name).mkdir(parents=True, exist_ok=True)
+        ids = downloads_ids()
+        for name in ('srv', 'srv/proof space'):
+            os.chown(self.root / name, int(ids['DOWNLOADS_UID']), int(ids['DOWNLOADS_GID']))
+            os.chmod(self.root / name, 0o775)
         hashes = {}
         for filename in HELPERS:
             content = (self.source / filename).read_bytes()
@@ -157,7 +173,7 @@ class Acceptance:
                    SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop', SHARE_DIR='.pay',
                    KONTEYNER_NETWORK=self.network, KONTEYNER_BRIDGE_PREFIX=self.prefix,
                    KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source),
-                   KONTEYNER_BAGLAMA_DIR=str(self.root / 'run/konteyner-baglama'))
+                   KONTEYNER_BAGLAMA_DIR=str(self.root / 'run/konteyner-baglama'), **ids)
         self.state = self.root / 'state.env'
         self.state.write_text(''.join(k + '=' + ('"%s"' % v if ' ' in v else v) + '\n' for k, v in env.items()))
         self.state.chmod(0o600)

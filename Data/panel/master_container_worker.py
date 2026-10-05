@@ -288,7 +288,7 @@ class Manager:
                         'Quadlet üreticisi servis tanımını oluşturamadı.', 409)
         return rendered
 
-    def ready(self, name, seconds=30):
+    def ready(self, name, definition=None, seconds=30):
         deadline = time.monotonic() + seconds
         while True:
             info = self.inspect(name)
@@ -296,6 +296,13 @@ class Manager:
             health = state.get('Health') or {}
             if self.running(name) and state.get('Running') is True and health.get('Status') not in ('starting', 'unhealthy'):
                 cfg.require(cfg.ownership(info, self.env) == 'konsol', 'Başlayan konteynerin sahibi doğrulanamadı.', 502)
+                if (definition or {}).get('user') == 'downloads':
+                    # DD-227: prove the account and the empty capability sets. Podman prints an empty set as
+                    # null (5.4.2) or []; a missing field fails closed.
+                    expected = self.env.get('DOWNLOADS_UID', '') + ':' + self.env.get('DOWNLOADS_GID', '')
+                    dropped = all(key in info and info[key] in (None, []) for key in ('EffectiveCaps', 'BoundingCaps'))
+                    cfg.require((info.get('Config') or {}).get('User') == expected and dropped,
+                                'Konteyner Dosyalar hesabıyla yetkisiz başlamadı.', 502)
                 return
             if time.monotonic() >= deadline:
                 raise cfg.ContainerConfigError(502, 'Konteyner başlamadı veya sağlık denetimi başarısız oldu.')
@@ -347,7 +354,7 @@ class Manager:
             if start:
                 self.step('Konteyner başlatılıyor')
                 self.call(['systemctl', 'start', self.unit(name)], timeout=180)
-                self.ready(name)
+                self.ready(name, definition)
             return {'ok': True, 'name': name, 'management_id': 'konsol:' + name, 'revision': definition['revision'],
                     'running': start, 'effective_autostart': definition['autostart'] and not definition['manual_stop']}
         except Exception as original:
@@ -364,7 +371,7 @@ class Manager:
                 self.call(['systemctl', 'daemon-reload'])
                 if was_running:
                     self.call(['systemctl', 'start', self.unit(name)], timeout=180)
-                    self.ready(name)
+                    self.ready(name, old)
             except Exception:
                 recovered = False
             error = cfg.ContainerConfigError(502, 'Uygulama başarısız; önceki yapılandırma geri yüklendi.' if recovered else
@@ -591,7 +598,12 @@ class Manager:
                 unsupported.append(key)
         image_data = self.json_call(['podman', 'image', 'inspect', info.get('Image') or image])
         baseline = image_data[0].get('Config') or {} if isinstance(image_data, list) and image_data else {}
+        # DD-227: the Files account (uid or uid:gid) maps to Konsol's account choice; any other user is unsupported.
+        files = {self.env.get('DOWNLOADS_UID', ''), self.env.get('DOWNLOADS_UID', '') + ':' + self.env.get('DOWNLOADS_GID', '')}
+        user = 'downloads' if (config.get('User') or baseline.get('User') or '') in files - {'', ':'} else 'image'
         for key in ('Entrypoint', 'User', 'WorkingDir', 'Healthcheck'):
+            if key == 'User' and user == 'downloads':
+                continue
             if config.get(key) != baseline.get(key) and config.get(key) not in (None, '', [], {}):
                 unsupported.append(key)
         labels = config.get('Labels') or {}
@@ -666,7 +678,7 @@ class Manager:
                       'environment': environ, 'command': command, 'autostart': False, 'manual_stop': False,
                       'restart': restart if restart in ('no', 'on-failure', 'always') else 'no',
                       'cpus': str(cpu / 1e9) if cpu else '', 'memory': str(host['Memory']) if host.get('Memory') else '',
-                      'pids_limit': pids_limit, 'ulimits': ulimits, 'stop_signal': stop_signal}
+                      'pids_limit': pids_limit, 'ulimits': ulimits, 'stop_signal': stop_signal, 'user': user}
         # Health logs/timestamps can change every second without changing the imported settings.
         fingerprint_data = {key: info.get(key) for key in ('Id', 'Name', 'Image', 'Config', 'HostConfig', 'Mounts')}
         fingerprint_data['running'] = (info.get('State') or {}).get('Running')

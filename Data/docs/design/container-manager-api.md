@@ -84,7 +84,8 @@ Generic managed config:
   "manual_stop": false,
   "restart": "on-failure",
   "cpus": "",
-  "memory": ""
+  "memory": "",
+  "user": "downloads"
 }
 ```
 
@@ -105,6 +106,13 @@ on later edits preserves the saved value, including clients without a process-li
 Likewise, adoption preserves `ulimits:[{name,soft,hard}]` and `stop_signal` (a validated signal
 string). These optional fields remain unchanged when older editors omit them; they are not raw
 Podman arguments and cannot add arbitrary unit directives.
+`user` (DD-227) is `downloads` (the Files account: `User`/`Group` from `DOWNLOADS_UID`/`GID`,
+`DropCapability=all`, `--umask=0002`) or `image` (the image's own account, often root). A writable
+bind requires `downloads` (400 otherwise, before any pull or stop). Omitted on create means
+`downloads`; omitted on a later save keeps the stored value, and a definition stored before DD-227
+counts as `image`. Adoption maps an inspected user equal to the Files uid (with or without its gid)
+to `downloads`; any other user that differs from the image is unsupported. Details add `user`, the
+running process's `Config.User` (empty = the image default).
 
 Resource rows preserve current image fields `name,size,created` and add `id,used_by,managed,pinned`.
 Volume rows: `name,driver,size,used_by,managed`; networks: `name,id,driver,subnets,used_by,managed,internal`.

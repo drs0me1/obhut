@@ -48,6 +48,10 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   const SOURCE = { appstore: ["App Store", "store", "App Store uygulaması: yaşam döngüsü App Store ile ortaktır"],
     konsol: ["Konsol", "konsol", "Konsol'da tanımlı: ayarları burada düzenlenir"], external: ["Dışarıda", "dis", "Konsol dışında oluşturuldu"] };
   const RESTART = { no: "Hayır", "on-failure": "Hata olursa", always: "Her zaman" };
+  // DD-227: the account a Konsol container runs as; writable server folders need the Files account.
+  const USERS = { downloads: "Dosyalar hesabı (yetkisiz)", image: "İmajın kendi hesabı (çoğunlukla root)" };
+  const ACCOUNT_RULE = "Sunucu klasörüne yalnız Dosyalar hesabıyla yazılabilir: hesabı değiştirin ya da klasörü salt okunur yapın.";
+  const writesFolder = (d) => d.mounts.some((m) => m.type === "bind" && !m.read_only);
   const hhmm = (at) => new Date(at * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
   const when = (at) => (at ? new Date(at * 1000).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
   const decode = (v) => { try { return decodeURIComponent(v || ""); } catch (_) { return ""; } };
@@ -505,6 +509,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
             fact("İmaj", h("span", { class: "mono", title: c.image || null }, shortImage(c.image) || "—"), cfg && cfg.image_ref && cfg.image_ref !== c.image ? `etiket: ${cfg.image_ref}` : ""),
             updFact(c),
             fact("Yeniden başlatma", String(c.restarts || 0)),
+            "user" in c ? fact("Hesap", c.user ? mono(c.user) : "imajın varsayılanı", cfg && cfg.user ? USERS[cfg.user] : "") : null,
             fact("İşlemci", pct(c.cpu_percent), cfg && cfg.cpus ? `sınır ${cfg.cpus} çekirdek` : ""),
             fact("Bellek", mem(c.memory_bytes), cfg && cfg.memory ? `sınır ${cfg.memory}` : ""),
             c.command ? fact("Komut", mono(c.command)) : null))];
@@ -695,8 +700,8 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   }
   function openCreate() {
     if (!LIST || !(LIST.runtime || {}).ok) return;
-    openSheet({ mode: "create", name: "", title: "Yeni konteyner", start: true, editable: ["image", "network", "ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory"],
-      orig: null, draft: draftFrom({ network: DEFAULT_NET, autostart: true, restart: "on-failure" }) });
+    openSheet({ mode: "create", name: "", title: "Yeni konteyner", start: true, editable: ["image", "network", "ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory", "user"],
+      orig: null, draft: draftFrom({ network: DEFAULT_NET, autostart: true, restart: "on-failure", user: "downloads" }) });
   }
   function openAdopt(c) {
     if (!c || busyOf(c) || !can(c, "adopt")) return;
@@ -728,6 +733,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       mounts: (cfg.mounts || []).map((m) => ({ type: m.type === "bind" ? "bind" : "volume", source: m.source || "", destination: m.destination || "", read_only: !!m.read_only })),
       environment: (cfg.environment || []).map((e) => (e.secret ? { name: e.name || "", value: "", secret: true, stored: !!e.present } : { name: e.name || "", value: e.value != null ? String(e.value) : "", secret: false })),
       command: Array.isArray(cfg.command) ? cfg.command.join("\n") : "", autostart: cfg.autostart !== false, restart: cfg.restart || "on-failure", cpus: cfg.cpus || "", memory: cfg.memory || "",
+      user: cfg.user === "downloads" ? "downloads" : "image",
     };
   }
   const editable = (f) => SH && (SH.mode === "create" || (SH.editable || []).includes(f));
@@ -738,7 +744,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       ports: d.ports.map((p) => ({ scope: p.scope, host_port: Number(p.host_port), container_port: Number(p.container_port), protocol: p.protocol, public_ack: p.scope === "public" && !!(p.public_ack || p.was_public) })),
       mounts: d.mounts.map((m) => ({ type: m.type, source: m.source.trim(), destination: m.destination.trim(), read_only: !!m.read_only })),
       environment: d.environment.map((e) => (e.secret ? (e.value !== "" ? { name: e.name.trim(), value: e.value, secret: true } : { name: e.name.trim(), secret: true }) : { name: e.name.trim(), value: e.value, secret: false })),
-      command: d.command.split("\n").map((s) => s.trim()).filter(Boolean), autostart: !!d.autostart, restart: d.restart, cpus: d.cpus.trim(), memory: d.memory.trim() };
+      command: d.command.split("\n").map((s) => s.trim()).filter(Boolean), autostart: !!d.autostart, restart: d.restart, cpus: d.cpus.trim(), memory: d.memory.trim(), user: d.user };
   }
   function problems(d) {
     const out = {};
@@ -749,6 +755,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     }
     if ((SH.mode === "create" || editable("image")) && !IMAGE_RE.test(d.image_ref.trim())) add("image", "İmajın tam adını yazın: kayıt adresi, depo ve etiket (ör. docker.io/library/nginx:1.27-alpine).");
     if (editable("network") && !netChoices(SH.orig && SH.orig.network).some(([v]) => v === d.network)) add("network", "Bir ağ seçin.");
+    if (d.user !== "downloads" && writesFolder(d)) add("user", ACCOUNT_RULE);
     const seen = new Set();
     d.ports.forEach((p, i) => {
       const k = "p" + i, hp = Number(p.host_port), cp = Number(p.container_port);
@@ -871,6 +878,9 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       ro("environment") ? null : h("div", null, h("button", { type: "button", class: "btn btn-quiet btn-sm", id: "pd-add-env", onclick: () => { d.environment.push({ name: "", value: "", secret: false }); redraw(`pd-e${d.environment.length - 1}-name`); } }, svg("plus"), "Değişken ekle")),
       h("p", { class: "pd-muted" }, "Kayıtlı gizli değerler tarayıcıya gönderilmez; boş bırakırsanız korunur, satırı silerseniz değişken kalkar.")));
     sections.push(h("fieldset", { class: "pd-fs" }, h("legend", null, svg("clock"), "Komut, başlatma ve sınırlar"),
+      field("Çalıştıran hesap", h("select", { class: "pd-inp", id: "pd-f-user", disabled: ro("user"), onchange: (e) => { d.user = e.target.value; redraw(); } },
+        Object.entries(USERS).map(([k, v]) => h("option", { value: k, selected: d.user === k }, v))),
+        "Dosyalar hesabıyla sunucu klasörlerindeki dosyalar Dosyalar'la aynı sahipte olur ve yetki yoktur. İmajın kendi hesabı sunucu klasörünü yalnız salt okunur bağlayabilir.", pr.user),
       field("Komut (her satır bir argüman)", h("textarea", { class: "pd-inp mono", id: "pd-f-command", rows: "2", readonly: ro("command"), oninput: (e) => { d.command = e.target.value; }, onchange: () => redraw() }, d.command), "Boşsa imajın kendi komutu çalışır."),
       h("label", { class: "pd-check" }, h("input", { type: "checkbox", id: "pd-f-autostart", checked: d.autostart, disabled: ro("autostart"), onchange: (e) => { d.autostart = e.target.checked; redraw(); } }),
         h("span", null, "Açılışta başlat", h("small", null, "Siz durdurursanız bu tercih ne olursa olsun kapalı kalır; Başlat bu durumu kaldırır."))),
@@ -991,6 +1001,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
       if (d.command.length) out.push(["add", "Komut", d.command.join(" ")]);
       out.push(["add", "Başlatma", `${d.autostart ? "açılışta başlar" : "açılışta başlamaz"} · ${RESTART[d.restart] || d.restart}`]);
       if (d.cpus) out.push(["add", "İşlemci", d.cpus]); if (d.memory) out.push(["add", "Bellek", d.memory]);
+      out.push(["add", "Hesap", USERS[d.user]]);
       return out;
     }
     const list = (a, b, key, label) => { const A = new Set(a.map(key)), B = new Set(b.map(key));
@@ -1006,6 +1017,7 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if ((o.restart || "on-failure") !== d.restart) out.push(["chg", "Yeniden başlatma", RESTART[d.restart] || d.restart]);
     if ((o.cpus || "") !== d.cpus) out.push(["chg", "İşlemci", `${o.cpus || "sınırsız"} → ${d.cpus || "sınırsız"}`]);
     if ((o.memory || "") !== d.memory) out.push(["chg", "Bellek", `${o.memory || "sınırsız"} → ${d.memory || "sınırsız"}`]);
+    if ((o.user || "image") !== d.user) out.push(["chg", "Hesap", `${USERS[o.user || "image"]} → ${USERS[d.user]}`]);
     return out;
   }
   function reviewStep(s) {
@@ -1022,6 +1034,8 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
     if (!create && !adapter && !stopped) items.push(["bad", "Konteynerin yazılabilir katmanı silinir; kalıcı veriler yalnız bağlamalarda durur."]);
     if (list.some(([, k]) => k === "Bağlama" || k === "Kayıt klasörü")) items.push(["warn", "Bağlama değişikliği dosya taşımaz; eski klasör ya da birim olduğu gibi kalır."]);
     if (list.some(([kind, k, v]) => kind === "add" && k === "Port" && v.startsWith(SCOPE.public))) items.push(["bad", "İnternete açık port Konsol oturumunu ve Caddy TLS'yi atlar; uygulamanın kendi kimlik doğrulamasına güvenir."]);
+    if (s.draft && s.draft.user === "downloads" && list.some(([, k]) => k === "Hesap"))
+      items.push(["warn", "Önceden kullanılmış ya da imajdaki bir klasörün üzerine bağlanan birim sahibini korur; Dosyalar hesabı ona yazamayabilir. Root gerektiren ya da 1024 altında port açan imajlar başlamayabilir."]);
     if (list.some(([, k]) => k === "Eş portu")) items.push(["warn", "Eski eş portu internete kapanır, yenisi WAN IPv4 adresinde TCP ve UDP olarak açılır; eşler yeni portu bir sonraki duyuruda öğrenir."]);
     if (s.mode === "adapter") items.push(["info", "Uygulama ayarı, hizmet, Caddy yönlendirmesi ve denetimler aynı değerle birlikte güncellenir."]);
     const icon = { info: "info", ok: "check", warn: "info", bad: "info" };
@@ -1070,7 +1084,8 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
   function adoptForm(s) {
     const d = s.draft, unsupported = s.unsupported || [];
     const missing = d.ports.some((p) => !p.scope || (p.scope === "public" && !p.public_ack));
-    const blocked = unsupported.length > 0 || missing || s.sending;
+    const account = d.user !== "downloads" && writesFolder(d);
+    const blocked = unsupported.length > 0 || missing || account || s.sending;
     const body = h("div", { class: "pd-body" },
       h("p", { class: "pd-muted" }, "Sunucu bu konteynerin ayarlarını okudu. Sahiplenince Konsol tanımına dönüştürülür ve bir kez Konsol hizmetiyle yeniden oluşturulur (kısa kesinti; yazılabilir katman silinir)."),
       unsupported.length ? h("div", { class: "pd-failbox", role: "alert" }, h("strong", null, "Sahiplenilemez: desteklenmeyen seçenekler"), h("ul", null, unsupported.map((u) => h("li", null, String(u))))) : null,
@@ -1089,14 +1104,18 @@ window.createContainerManager = ({ h, svg, api, post, enc, toast, fail, ask, byt
             `Şu an: ${SCOPE[p.current] || p.current || "bilinmiyor"}`),
           p.scope === "public" ? h("label", { class: "pd-check pd-warnbox" }, h("input", { type: "checkbox", id: `pd-p${i}-ack`, checked: !!p.public_ack, onchange: (e) => { p.public_ack = e.target.checked; redraw(); } }),
             h("span", null, "Bu portun internetten herkese açık kalacağını anlıyorum", h("small", null, "Konsol oturumunu ve Caddy TLS'yi atlar."))) : null))),
+      h("fieldset", { class: "pd-fs" }, h("legend", null, svg("key"), "Çalıştıran hesap"),
+        field("Hesap", h("select", { class: "pd-inp", id: "pd-f-user", onchange: (e) => { d.user = e.target.value; redraw(); } },
+          Object.entries(USERS).map(([k, v]) => h("option", { value: k, selected: d.user === k }, v))), `Şu an: ${USERS[(s.preview.config || {}).user] || "bilinmiyor"}`,
+          account ? [ACCOUNT_RULE] : null)),
       h("label", { class: "pd-check" }, h("input", { type: "checkbox", id: "pd-f-start", checked: !!s.start, onchange: (e) => { s.start = e.target.checked; } }), h("span", null, "Sahiplendikten sonra başlat")),
       s.error ? h("p", { class: "err-s", role: "alert" }, s.error) : null);
-    const foot = h("div", { class: "pd-foot" }, h("span", { class: "pd-muted", role: "status" }, unsupported.length ? "Desteklenmeyen seçenek varken sahiplenilmez." : missing ? "Her portun erişimini seçin." : "Henüz hiçbir şey değişmedi."),
+    const foot = h("div", { class: "pd-foot" }, h("span", { class: "pd-muted", role: "status" }, unsupported.length ? "Desteklenmeyen seçenek varken sahiplenilmez." : missing ? "Her portun erişimini seçin." : account ? "Hesabı ya da klasörü düzeltin." : "Henüz hiçbir şey değişmedi."),
       h("div", { class: "pd-foot-btns" }, h("button", { type: "button", class: "btn btn-quiet", id: "pd-cancel", onclick: () => sheet.close() }, "Vazgeç"),
         h("button", { type: "button", class: "btn btn-primary", id: "pd-apply", "aria-disabled": blocked ? "true" : "false", onclick: () => {
           if (blocked) return;
           const seq = s.seq;
-          const cfg = Object.assign({}, s.preview.config, { network: d.network, ports: d.ports.map((p) => ({ scope: p.scope, host_port: Number(p.host_port), container_port: Number(p.container_port), protocol: p.protocol, public_ack: p.scope === "public" && !!p.public_ack })) });
+          const cfg = Object.assign({}, s.preview.config, { network: d.network, user: d.user, ports: d.ports.map((p) => ({ scope: p.scope, host_port: Number(p.host_port), container_port: Number(p.container_port), protocol: p.protocol, public_ack: p.scope === "public" && !!p.public_ack })) });
           s.sending = true; drawSheet();
           submit({ action: "adopt", name: s.name, preview_fingerprint: s.fingerprint, config: cfg, start: !!s.start, confirm: true }, s.name, {
             onDone: () => { if (mine(seq)) sheet.close(); toast(`${s.name}: ${DONE.adopt}.`); return true; },

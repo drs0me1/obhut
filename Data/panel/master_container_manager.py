@@ -166,7 +166,7 @@ class Inventory(Containers):
                 row['ports'] = [{'host_ip': {'local':'127.0.0.1','tailscale':self.env.get('TAILSCALE_IPV4',''),'public':'0.0.0.0'}[p['scope']],
                                  **{k:p[k] for k in ('host_port','container_port','protocol')}} for p in d.get('ports', [])]
             if details:
-                row.update(config=config.redact(d), editable=['ports','mounts','environment','command','autostart','restart','cpus','memory','image','network'], protected_mounts=[])
+                row.update(config=config.redact(d), editable=['ports','mounts','environment','command','autostart','restart','cpus','memory','image','network','user'], protected_mounts=[])
                 if not row['live']:
                     row['mounts'] = [{'type':m['type'], 'source':m['source'], 'destination':m['destination'],
                                       'rw':not m['read_only'], 'name':m['source'] if m['type']=='volume' else ''} for m in d.get('mounts', [])]

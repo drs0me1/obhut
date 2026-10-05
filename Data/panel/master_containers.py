@@ -343,6 +343,8 @@ class Containers:
             "unit": labels.get("PODMAN_SYSTEMD_UNIT", "") if isinstance(labels, dict) else "",
             "network": ", ".join(networks) if mode == "bridge" and networks else mode,
             "health": (health.get("Status") or "") if isinstance(health, dict) else "",
+            # DD-227: the account the process runs as ("" = the image's default, often root).
+            "user": str(config.get("User") or ""),
             "ports": ports_of(net.get("Ports") or host.get("PortBindings")), "mounts": mounts,
             "labels": {k: str(labels.get(v, "")) if isinstance(labels, dict) else "" for k, v in LABEL_KEYS.items()},
             "command": " ".join(str(x) for x in (config.get("Cmd") or [])),

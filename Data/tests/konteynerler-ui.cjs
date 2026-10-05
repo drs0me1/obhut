@@ -83,8 +83,8 @@ const D = {
       mounts: [{ type: "volume", source: "jellyfin-config", destination: "/config", read_only: false }, { type: "bind", source: "/srv/media", destination: "/media", read_only: true }],
       environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "API_TOKEN", secret: true, present: true }],
       command: [], autostart: true, manual_stop: false, restart: "always", cpus: "2", memory: "2g" },
-    editable: ["image", "network", "ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory"], protected_mounts: [],
-    effective_autostart: true,
+    editable: ["image", "network", "ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory", "user"], protected_mounts: [],
+    effective_autostart: true, user: "",
     mounts: [{ type: "volume", source: "/var/lib/containers/storage/volumes/jellyfin-config/_data", destination: "/config", rw: true, name: "jellyfin-config" }, { type: "bind", source: "/srv/media", destination: "/media", rw: false, name: "" }] },
   "uptime-kuma": { config: { name: "uptime-kuma", image: "docker.io/louislam/uptime-kuma@" + sha("9a0e5d14"), image_ref: "docker.io/louislam/uptime-kuma:1.23.16", network: "bridge",
       ports: [{ scope: "tailscale", host_port: 3001, container_port: 3001, protocol: "tcp", public_ack: false }],
@@ -134,7 +134,8 @@ function effect(op, body) {
       S.containers.push(row({ name: cfg.name, management_id: "konsol:" + cfg.name, source: "konsol", image: cfg.image_ref || cfg.image, unit: cfg.name + ".service",
         state: body.start ? "running" : "stopped", live: !!body.start, revision: "c1", actions: body.start ? ["stop", "restart", "save", "remove"] : ["start", "save", "remove"],
         ports: cfg.ports.map((p) => ({ host_ip: p.scope === "local" ? "127.0.0.1" : p.scope === "tailscale" ? "100.64.0.2" : "0.0.0.0", host_port: p.host_port, container_port: p.container_port, protocol: p.protocol })) }));
-      D[cfg.name] = { config: Object.assign({ manual_stop: false }, cfg), editable: D.jellyfin ? D.jellyfin.editable : [], protected_mounts: [], effective_autostart: !!cfg.autostart, mounts: [] };
+      D[cfg.name] = { config: Object.assign({ manual_stop: false }, cfg), editable: D.jellyfin ? D.jellyfin.editable : [], protected_mounts: [], effective_autostart: !!cfg.autostart, mounts: [],
+        user: cfg.user === "downloads" ? "1000:1000" : "" };
       break;
     }
     case "adopt":
@@ -598,11 +599,14 @@ function settle(op) {
     await page.waitForFunction(() => document.activeElement && document.activeElement.id === "pd-e0-name");
     await page.keyboard.type("API_KEY"); await page.keyboard.press("Tab"); await page.keyboard.type("gizli-deger-123");
     await page.locator("#pd-e0-secret").check();
+    assert.equal(await page.locator("#pd-f-user").inputValue(), "downloads", "DD-227: a new container runs as the Files account");
     await page.locator("#pd-review").click();
     assert.match(await sheet.locator(".pd-diff").innerText(), /web-deneme/);
+    assert.match(await sheet.locator(".pd-diff").innerText(), /hesap\s*dosyalar hesabı/i);
     await page.locator("#pd-apply").click();
     await sheet.waitFor({ state: "hidden", timeout: 8000 });
     const created = posts.at(-1);
+    assert.equal(created.config.user, "downloads");
     assert.equal(created.action, "create");
     assert.equal(created.start, true);
     assert.equal(created.config.name, "web-deneme");
@@ -621,6 +625,7 @@ function settle(op) {
     await rowOf("web-deneme").waitFor();
     // Every generic save of a running container stops, recreates and starts it, limits and startup included.
     await rowOf("web-deneme").locator('[data-k="open:web-deneme"]').click();
+    await page.getByText("1000:1000", { exact: true }).waitFor();  // DD-227: the account the process runs as
     await page.getByRole("button", { name: "Düzenle", exact: true }).click();
     await page.locator("#pd-f-cpus").waitFor();
     assert.deepEqual(await page.locator("#pd-f-network option").evaluateAll((o) => o.map((x) => x.value)), ["bridge", "konsol", "medya"],
@@ -633,6 +638,25 @@ function settle(op) {
     assert.doesNotMatch(runningNote, /canlı|etkilenmez/);
     assert.equal(await page.locator("#pd-f-start").count(), 0, "a running container needs no start box");
     assert.equal((await page.locator("#pd-apply").innerText()).trim(), "Uygula ve yeniden oluştur");
+    await page.locator("#pd-cancel").click();
+    await sheet.waitFor({ state: "hidden" });
+    await page.evaluate(() => { location.hash = "#/konteynerler"; });
+
+    /* ---- DD-227: writable server folders only with the Files account ---- */
+    await rowOf("jellyfin").locator('[data-k="open:jellyfin"]').click();
+    await page.getByRole("button", { name: "Düzenle", exact: true }).click();
+    await page.locator("#pd-f-user").waitFor();
+    assert.equal(await page.locator("#pd-f-user").inputValue(), "image", "a definition from before DD-227 keeps the image's account");
+    await page.locator("#pd-m1-ro").uncheck();
+    await page.waitForTimeout(80);
+    assert.match(await sheet.innerText(), /yalnız Dosyalar hesabıyla yazılabilir/);
+    assert.equal(await page.locator("#pd-review").getAttribute("aria-disabled"), "true", "the operator must switch the account explicitly");
+    await page.locator("#pd-f-user").selectOption("downloads");
+    await page.waitForTimeout(80);
+    assert.doesNotMatch(await sheet.innerText(), /yalnız Dosyalar hesabıyla yazılabilir/);
+    await page.locator("#pd-review").click();
+    assert.match(await sheet.locator(".pd-diff").innerText(), /hesap\s*İmajın kendi hesabı.*→ Dosyalar hesabı/i);
+    assert.match(await sheet.locator(".pd-conseq").innerText(), /bağlanan birim sahibini korur; Dosyalar hesabı ona yazamayabilir/);
     await page.locator("#pd-cancel").click();
     await sheet.waitFor({ state: "hidden" });
     await page.evaluate(() => { location.hash = "#/konteynerler"; });
@@ -812,6 +836,7 @@ function settle(op) {
     assert.equal(adopt.preview_fingerprint, "fp-1");
     assert.equal(adopt.config.ports[0].scope, "local");
     assert.equal(adopt.config.network, "bridge");
+    assert.equal(adopt.config.user, "image", "the adopt payload carries the account choice");
     await sheet.waitFor({ state: "hidden", timeout: 8000 });
     await page.waitForFunction(() => document.querySelector(".pd-detail-head .pd-src")?.textContent === "Konsol", null, { timeout: 8000 });
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-05 — Containers write to server folders only as the Files account (v2-205)
+
+- The Podman page has a new "Çalıştıran hesap" choice. The Files account runs the container as the
+  downloads uid without any privileges, and its files stay group-writable like everything in `/srv`.
+  "İmajın kendi hesabı" keeps the image's user, which is often root.
+- A writable server folder now requires the Files account. An image that needs root can use volumes
+  or read-only folders. New containers start with the Files account (DD-227).
+- After a start, Konsol checks that the container really runs as that account with no privileges.
+- Adopting a container that already runs as the downloads uid keeps that account.
+- Existing Konsol containers keep running as before. One that writes into a server folder needs the
+  account switched the next time it is saved.
+
 ### 2026-10-05 — A container's folders can no longer be swapped for another host directory (v2-204)
 
 - A Konsol container bound to a folder under `/srv` used to look the folder up by name at every

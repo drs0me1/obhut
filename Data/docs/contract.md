@@ -601,7 +601,12 @@ Contract in §5–§7 and `folder-shares.md`.
       A standalone external container may be controlled or explicitly adopted after
       a preview; unsupported options refuse adoption. No implicit ownership transfer.
     - Konsol definitions persist in private `KONTEYNER_STATE_DIR`. Ports, volumes,
-      environment, command, resource limits and startup policy are editable. Changed
+      environment, command, resource limits, startup policy and the running account are
+      editable. The account is the Files account (`DOWNLOADS_UID`/`GID`, no capabilities,
+      group-writable files) or the image's own. A writable server folder needs the Files
+      account, so a root image gets only volumes or read-only folders (**DD-227**). New
+      containers start with the Files account; a definition saved before keeps the image's
+      until the operator switches it. Changed
       settings recreate the container after validation; stopped saves stay stopped
       unless explicitly started. Manual stop suppresses boot startup until Start.
       Images are resolved to digests; updating one is an explicit operation.

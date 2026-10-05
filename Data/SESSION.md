@@ -4,6 +4,34 @@ Cross-session continuity for this repository.
 
 ## Current Task
 
+**2026-10-05 — Containers that write server folders run as the Files account, v2-205 (DD-227; committed with this entry):**
+- Measured on nrm first: a generic Konsol container ran as its image's user (alpine: root, 11 effective capabilities).
+  Rootful Podman without user namespaces made it host root over every writable `/srv` bind.
+- Done:
+  - Definitions carry `user`. `downloads` renders `User=`/`Group=` from `DOWNLOADS_UID`/`GID` (digits, non-zero,
+    else 503), `DropCapability=all` and `--umask=0002`; `image` keeps the image's account.
+  - `validate()` refuses `image` with a writable bind (400, before any pull or stop). New definitions default to
+    `downloads`, stored ones keep `image`, and adoption maps the Files uid.
+  - `ready()` proves `Config.User` and empty effective/bounding capability sets after every start. The first live
+    run failed closed and rolled back: Podman 5.4.2 prints an empty set as `null`, not `[]`. The fake runtime now
+    prints `null`; both forms count, and a missing field fails closed (red first, mutations checked).
+  - Podman page: "Çalıştıran hesap" in the editor and the adopt form. The rule blocks the review, the change is
+    listed with a consequence line, and details show the running user.
+  - The consequence line and DD-227 were corrected after measuring volume ownership: Podman sets it once, at first
+    use. A new volume at a path the image lacks becomes 1000:1000; one over an image directory takes that owner;
+    a used volume keeps its owner.
+  - Docs: DD-227, contract, API design doc, CHANGELOG, tests README.
+- Verification: Mac bats 185/185, Python 596 OK, shellcheck, `bash -n`, Playwright `konteynerler-ui.cjs`; export
+  v2-205 identical to the source. nrm v2-205 installer exit 0, final export installed. Live through the real worker:
+  - image account + writable folder: 400, nothing pulled, no Quadlet;
+  - Files account + writable folder + new volume: `/proc` Uid/Gid 1000, CapEff/CapPrm/CapBnd 0, NoNewPrivs 1;
+    proof file 1000:1000 664; volume writable; bind anchor mounted;
+  - a worker restart repeats the proof;
+  - image account + read-only folder: runs as the image's user (11 capabilities);
+  - cleanup left no definition, Quadlet, anchor, image or volume; qBittorrent active.
+  - Linux bats 185/185; `containers-worker-linux.py` status=pass (14 checks, its fixture defaults to the Files
+    account); `containers-network-linux.py` PASS 64.
+
 **2026-10-05 — Konsol container bind sources pinned at every start, v2-204 (DD-226; committed with this entry):**
 - Measured on nrm first: Podman followed a bind source that uid 1000 had swapped for a link to a root-only
   directory. The container listed the canary while `podman inspect` still showed the old path.
