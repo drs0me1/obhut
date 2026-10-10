@@ -73,6 +73,14 @@ class HttpsSettingsTests(unittest.TestCase):
     def payload(self, name="dav.example.net"):
         return {"revision": self.m.revision(), "https": {"domain": name}}
 
+    def test_folder_share_save_names_the_publication_failure(self):
+        # DD-254: the folder page names why the publication failed, not only that it did.
+        with patch.object(shares.Manager, "publish", side_effect=[shares.ShareError("Caddy yapılandırması geçersiz: x"), None]), \
+                self.assertRaises(shares.ShareError) as error:
+            self.s.change("save", {"id": self.s.read()["items"][0]["id"], "username": "fixture2"})
+        self.assertEqual(str(error.exception), "Paylaşım/ağ ayarı uygulanamadı; önceki kayıt geri yüklendi. "
+                                               "Neden: Caddy yapılandırması geçersiz: x")
+
     def test_save_commits_verified_https_and_preserves_accounts_local_domain(self):
         original = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
         result = self.m.apply(self.payload())

@@ -573,6 +573,10 @@ independent DAV network gates, remembered off domains, native qBittorrent auth
 requirements, duplicate/DNS rejection, first-row certificate failure, crash
 rollback and module projection persistence. It reuses isolated transaction
 fixtures and does not claim real ACME issuance.
+Publication failure causes (v2-237, DD-254): `test_publications.py` reads Caddy's JSON error and `Error:`
+lines and the firewall's "HATA:" line, and checks that a failing `caddy validate`, `master-firewall` or
+reload (Caddy's journal) is named in the Settings error with the previous state restored;
+`test_https_settings.py` checks the folder share save names the publication's cause.
 Caddy repository outage (v2-236, DD-253): `common.bats` runs `apt_update_caddy_tolerant` against a
 stubbed apt-get/dpkg-query: a 402 on Caddy's repository alone passes and records "402 Payment Required"
 on a host with Caddy, another failing repository or a host without Caddy stops, a clean refresh passes

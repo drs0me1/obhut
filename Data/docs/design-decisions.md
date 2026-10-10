@@ -13,6 +13,22 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-254: A failed publication names its step and cause (v2-237)
+
+- **Request (user, 2026-10-10):** "Asıl neden gösterilsin". Adding the Gezgin address in Settings →
+  Caddy failed with only "WAN dinleyicisi/güvenlik duvarı uygulanamadı."; the cause (an operator's
+  hand-made `gezgin-gecici.caddy` naming the same host, which Caddy rejects as "ambiguous site
+  definition") had to be found on the server.
+- **Now:** the share publisher records which step failed (writing the Caddy files, `caddy validate`,
+  `master-firewall`, `systemctl reload caddy`) and the reason its tool printed: Caddy's `Error:` line,
+  else its last error-level JSON log message, else the last plain line without the
+  "[hh:mm:ss] HATA: " prefix, cut at 300 characters. For a failed reload of a running Caddy, systemctl
+  says only that the job failed, so Caddy's own journal since the reload is read. The message is
+  "WAN dinleyicisi/güvenlik duvarı uygulanamadı (<step>: <reason>); önceki yayın geri yüklendi.";
+  rollback is unchanged. A folder share save that fails on the publication also names the cause.
+- Reasons are Caddy's and the firewall's own text, shown only to the operator (Tailscale or the
+  signed-in public Konsol); the Caddy configuration holds no credentials.
+
 ### DD-253: A Caddy repository outage does not stop a host that has Caddy (v2-236)
 
 - **Report (user, 2026-10-10):** Konsol's update of `nrm` to v2-235 stopped in stage 1 with

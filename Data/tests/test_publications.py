@@ -515,6 +515,59 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual((extras["elle-eski.caddy"], extras["elle-eski-wan.caddy"]), ("", ""))
         self.assertIn("http://ev-wan.ayc {", extras["elle-ev-wan.caddy"])
 
+    # --- DD-254: the operator sees the actual cause ------------------------------
+
+    def test_output_reason_reads_caddy_errors_and_installer_lines(self):
+        reason = fixtures.shares.output_reason
+        caddy = ('{"level":"warn","msg":"Unnecessary header_up X-Forwarded-For"}\n'
+                 '{"level":"error","ts":1,"msg":"adapting config using caddyfile: ambiguous site definition: '
+                 'https://gezgin.example.net:443"}\n')
+        self.assertEqual(reason(caddy), "adapting config using caddyfile: ambiguous site definition: https://gezgin.example.net:443")
+        self.assertEqual(reason('{"level":"error","msg":"loading config","error":"bind: address already in use"}\n'
+                                'Error: sending configuration to instance: HTTP 400\n'),
+                         "sending configuration to instance: HTTP 400")
+        self.assertEqual(reason("[12:00:01] HATA: zincir yazılamadı\n\n"), "zincir yazılamadı")
+        self.assertEqual(reason(""), "")
+        self.assertEqual(len(reason("x" * 900)), 300)
+
+    def failing(self, match, **error):
+        """Run the fixture commands, but the one whose argv contains `match` fails as given."""
+        def command(argv, **kwargs):
+            if match in " ".join(argv):
+                raise subprocess.CalledProcessError(1, argv, **error)
+            return self.command(argv, **kwargs)
+        return patch.object(fixtures.shares.subprocess, "run", side_effect=command)
+
+    def test_invalid_caddy_configuration_is_named_and_rolled_back(self):
+        before = self.m.config()
+        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://gezgin.example.net:443"}'
+        with self.failing("caddy validate", stderr=stderr), self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.manual())
+        self.assertIn("(Caddy yapılandırması geçersiz: adapting config using caddyfile: ambiguous site definition: "
+                      "https://gezgin.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
+        self.assertEqual(self.m.config(), before)
+        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
+
+    def test_firewall_failure_names_the_firewall_and_its_message(self):
+        with self.failing("master-firewall", stderr="[12:00:01] HATA: zincir yazılamadı\n".encode()), \
+                self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.manual())
+        self.assertIn("(güvenlik duvarı uygulanamadı: zincir yazılamadı)", str(error.exception))
+
+    def test_reload_failure_reads_caddys_own_reason_from_its_journal(self):
+        def command(argv, **kwargs):
+            if argv[:3] == ["systemctl", "reload", "caddy"]:
+                raise subprocess.CalledProcessError(1, argv, stderr=b"Job for caddy.service failed.")
+            if argv[0] == "journalctl":
+                self.assertIn("caddy", argv)
+                return subprocess.CompletedProcess(argv, 0, "Error: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign requested address\n", "")
+            return self.command(argv, **kwargs)
+        with patch.object(fixtures.shares.subprocess, "run", side_effect=command), \
+                self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.manual())
+        self.assertIn("(Caddy yeniden yüklenemedi: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign "
+                      "requested address)", str(error.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

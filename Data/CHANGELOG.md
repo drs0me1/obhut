@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-10 — Publication errors name their cause (v2-237)
+
+- When saving in Settings → Caddy (or a folder share) cannot apply the change, the message now says
+  which step failed and why, e.g. "Caddy yapılandırması geçersiz: … ambiguous site definition: …"
+  instead of only "WAN dinleyicisi/güvenlik duvarı uygulanamadı." The previous state is still
+  restored (DD-254).
+
 ### 2026-10-10 — Updates go on while Caddy's package repository is down (v2-236)
 
 - When Caddy's package repository does not answer (it returns "402 Payment Required" when its

@@ -50,6 +50,42 @@ class ShareError(Exception):
     pass
 
 
+def output_reason(text):
+    """The cause a failed command printed, short enough for Konsol (DD-254). Caddy's "Error: …"
+    line wins, then its last JSON log line at error level (read by its message), then the last
+    plain line without the installer-style "[hh:mm:ss] HATA: " prefix; "" when nothing printed."""
+    final, logged, plain = "", "", ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            item = None
+        if isinstance(item, dict):
+            if item.get("level") in ("error", "fatal") and item.get("msg"):
+                logged = str(item["msg"]) + (": %s" % item["error"] if item.get("error") else "")
+            continue
+        if line.startswith("Error: "):
+            final = line[len("Error: "):]
+        plain = re.sub(r"^\[[0-9:]+\]\s*", "", line).removeprefix("HATA: ")
+    reason = final or logged or plain
+    return reason if len(reason) <= 300 else reason[:299] + "…"
+
+
+def failure_reason(err):
+    """What went wrong in a failed step, from the exception it raised (DD-254)."""
+    if isinstance(err, subprocess.TimeoutExpired):
+        return "zaman aşımı"
+    if isinstance(err, subprocess.CalledProcessError):
+        text = b"\n".join(x for x in (err.stdout, err.stderr) if isinstance(x, bytes))
+        return output_reason(text.decode("utf-8", "replace")) or "çıkış kodu %s" % err.returncode
+    if isinstance(err, OSError) and err.strerror:
+        return err.strerror
+    return str(err)
+
+
 def env_read(path):
     with open(path, encoding="utf-8") as stream:
         return {k: v.strip('"') for line in stream if not line.startswith("#") and "=" in line
@@ -524,7 +560,8 @@ class Manager:
                 try:
                     self.restart()
                     self.publish()
-                except (subprocess.SubprocessError, OSError, ShareError):
+                except (subprocess.SubprocessError, OSError, ShareError) as err:
+                    cause = str(err) if isinstance(err, ShareError) else "WebDAV yeniden başlatılamadı: " + failure_reason(err)
                     atomic(self.path, old)
                     try:
                         self.restart()
@@ -532,7 +569,7 @@ class Manager:
                     except (subprocess.SubprocessError, OSError, ShareError):
                         raise ShareError("Önceki kayıt geri yüklendi ancak WebDAV başlamadı. Sunucuda master-paylasim günlüğünü kontrol edin.")
                     os.unlink(self.pending)
-                    raise ShareError("Paylaşım/ağ ayarı uygulanamadı; önceki kayıt geri yüklendi.")
+                    raise ShareError("Paylaşım/ağ ayarı uygulanamadı; önceki kayıt geri yüklendi. Neden: %s" % cause)
             os.unlink(self.pending)
             return self.public()
 
@@ -603,18 +640,30 @@ class Manager:
                 else:
                     with contextlib.suppress(FileNotFoundError):
                         os.unlink(path)
+        # DD-254: the operator sees which step failed and the reason its tool printed.
+        step = "Caddy dosyaları yazılamadı"
         try:
             write_config(text)
             write_extras(extras)
+            step = "Caddy yapılandırması geçersiz"
             subprocess.run(["caddy", "validate", "--config", e["CADDYFILE"], "--adapter", "caddyfile"],
                            check=True, timeout=15, capture_output=True, env=env)
             # Apply restrictions before opening a listener; existing manual denials
             # stay ahead of the base permission. Caddy reload never opens panel ports.
+            step = "güvenlik duvarı uygulanamadı"
             subprocess.run([os.path.join(e["SBIN_DIR"], "master-firewall")], check=True, timeout=30, capture_output=True, env=env)
+            step = "Caddy yeniden yüklenemedi"
+            reload_started = int(time.time())
             try:
                 subprocess.run(["systemctl", "reload", "caddy"], check=True, timeout=30, capture_output=True)
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as err:
                 if subprocess.run(["systemctl", "is-active", "--quiet", "caddy"], timeout=10).returncode == 0:
+                    # systemctl only says the job failed; Caddy's own reason is in its journal.
+                    with contextlib.suppress(OSError, subprocess.SubprocessError):
+                        journal = subprocess.run(["journalctl", "-u", "caddy", "--since", "@%d" % reload_started,
+                                                  "-o", "cat", "-n", "50", "--no-pager"],
+                                                 timeout=10, capture_output=True, text=True).stdout
+                        err.stderr = (journal or "").encode("utf-8") or err.stderr
                     raise
                 # DD-182: Caddy is down, e.g. it could not bind a WAN address the provider
                 # took away. Start it with this projection; the next guard run confirms it.
@@ -622,10 +671,12 @@ class Manager:
                 subprocess.run(["systemctl", "start", "--no-block", "caddy"], timeout=10, capture_output=True)
                 return
             atomic(marker, signature)
-        except (OSError, SettingsError, subprocess.SubprocessError):
+        except (OSError, SettingsError, subprocess.SubprocessError) as err:
             write_config(previous)
             write_extras(previous_extras)
-            raise ShareError("WAN dinleyicisi/güvenlik duvarı uygulanamadı.")
+            reason = failure_reason(err)
+            raise ShareError("WAN dinleyicisi/güvenlik duvarı uygulanamadı (%s%s); önceki yayın geri yüklendi."
+                             % (step, ": " + reason if reason else "")) from err
 
     def guard(self):
         with contextlib.ExitStack() as stack:

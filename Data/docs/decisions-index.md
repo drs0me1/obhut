@@ -235,6 +235,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-231 | Home widgets in 1×1 and 2×2 cells; live rates split from application traffic | v2-210; layout amended by DD-242 | design-decisions.md |
 | DD-233 | Konsol "Güncelle" button: GitHub version check, pinned commit, unattended re-run in its own unit | v2-212 | design-decisions.md |
 | DD-232 | Finder-style Files window (icons, right-hand places/detail column, no dock) and a two-card sidebar | v2-211 | design-decisions.md |
+| DD-254 | A failed Caddy publication names the failing step (validate, firewall, reload) and the tool's own reason; folder share saves too | v2-237 | design-decisions.md |
 | DD-253 | A Caddy repository outage (Cloudsmith 402) does not stop stage 1 on a host that has Caddy; Konsol's update message skips systemd-inhibit's "env failed" line | v2-236 | design-decisions.md |
 | DD-252 | Manual Caddy addresses: a tailnet name and an optional public HTTPS name for a `127.0.0.1` port, the application's own login as the guard (amends DD-191) | v2-235 | design-decisions.md |
 | DD-251 | Container logs exactly as written: unit journal for Konsol/App Store containers across restarts, no masking (amends DD-208) | v2-234 | design-decisions.md |
