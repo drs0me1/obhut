@@ -1,7 +1,8 @@
-# Debian / Ubuntu Server Installer
+# Obhut
 
-Lean Bash installer for a fresh **Debian 13 (trixie)**, **Ubuntu 24.04 LTS
-(noble)** or **Ubuntu 26.04 LTS (resolute)** host: Tailscale exit node, host
+**Obhut** (German for *safekeeping*) is a lean Bash installer for a fresh
+**Debian 13 (trixie)**, **Ubuntu 24.04 LTS (noble)** or **Ubuntu 26.04 LTS
+(resolute)** host: Tailscale exit node, host
 dnsmasq + Caddy on the tailnet, a persistent firewall and Konsol, from which
 the optional applications are installed. Files, folder WebDAV and ZIP/RAR tools
 are built in (**DD-159**, **DD-166**). Podman is part of the base as the App Store's
@@ -9,7 +10,9 @@ container runtime, with a main-sidebar Konteynerler manager for lifecycle, ports
 volumes, images and networks (**DD-211**); no Docker
 (**DD-152**), no reconcile engine.
 
-**Current version:** `V2_VERSION` in `Data/install.sh`.
+**Current version:** `V2_VERSION` in `Data/install.sh`. Paths, services and commands on the
+server keep their earlier names (`/root/debian-server-installer`, `/etc/master-stack`,
+`master-*`; **DD-255**).
 
 Folder shares can opt into Tailscale, WAN IPv4 or both (DD-179). New shares
 default to Tailscale. WAN uses HTTP with explicit plaintext-risk consent,
@@ -41,10 +44,10 @@ and session history; not current behaviour): [`Data/docs/archive/`](Data/docs/ar
 SSH into the fresh server yourself, then run one line (**DD-228**):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash
 # minimal image without curl/sudo, as root: apt install -y curl sudo
 # a specific commit or tag instead of main:
-curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo KUR_REF=<commit|tag> bash
+curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo KUR_REF=<commit|tag> bash
 ```
 
 `kur.sh` downloads the repository archive from GitHub, places the runtime files

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Master Stack — sunucuda tek satırla kurulum (DD-228).
+# Obhut — sunucuda tek satırla kurulum (DD-228, DD-255).
 #
-#   curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash
 #
 # Kodu GitHub'dan (varsayılan main; başka bir sürüm için: sudo KUR_REF=<commit|etiket> bash)
 # indirir, /root/debian-server-installer'a atomik yerleştirir ve install.sh'ı terminalden
@@ -12,7 +12,7 @@
 set -Eeuo pipefail
 
 main() {
-    local repo="drs0me1/myserver"
+    local repo="drs0me1/obhut"
     local ref="${KUR_REF:-main}"
     # KUR_URL yalnız testler içindir (yerel arşiv); kurulumda boş kalır.
     local url="${KUR_URL:-https://codeload.github.com/$repo/tar.gz/$ref}"
@@ -21,7 +21,7 @@ main() {
     # Kurulumun çalışma dosyaları; dokümanlar ve testler sunucuya gitmez.
     local items="install.sh common.sh config templates scripts systemd panel files-panel console magaza"
 
-    printf '\n=== Master Stack — kurulum ===\n'
+    printf '\n=== Obhut — kurulum ===\n'
     [[ "$(id -u)" -eq 0 ]] || {
         echo "HATA: root gerekli. Şöyle çalıştırın: curl -fsSL <bağlantı> | sudo bash" >&2
         exit 1

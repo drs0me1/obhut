@@ -1,10 +1,10 @@
 ---
-description: Master Stack refactor kuralları (Debian ve Ubuntu sunucu kurulum sistemi)
+description: Obhut refactor kuralları (Debian ve Ubuntu sunucu kurulum sistemi)
 globs: "**/*"
 alwaysApply: true
 ---
 
-# Master Stack Refactor Kuralları
+# Obhut Refactor Kuralları
 
 *Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `Data/docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz.*
 
@@ -314,10 +314,11 @@ Ana hedef:
 ## Dağıtım (DD-228)
 
 Taşınabilir `.command` ve exporter yoktur. Sunucuda tek satır:
-`curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash`.
+`curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`.
 `kur.sh` `main` dalını (ya da `KUR_REF`) indirir; `main`'e giden her push bir sonraki kuruluma
 ulaşır, bu yüzden `main` her zaman kurulabilir kalmalıdır. Repo herkese açıktır: sunucu IP'si,
-gerçek alan adı, kimlik bilgisi ya da kişisel yol commit edilmez.
+gerçek alan adı, kimlik bilgisi ya da kişisel yol commit edilmez. Proje adı Obhut'tur (DD-255);
+sunucudaki yollar, birimler ve `master-*` komutları eski adlarını korur.
 
 ## Modüller (DD-148)
 

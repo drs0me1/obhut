@@ -4,8 +4,10 @@ Working guide for any AI assistant in this repository. Read this first.
 
 ## Project Overview
 
+The project is named **Obhut** (repository `drs0me1/obhut`, **DD-255**); paths, units and
+commands on the server keep their earlier `master-stack`/`debian-server-installer` names.
 Active code lives under `Data/`; the repository root holds the server bootstrap
-`kur.sh` (run on the server: `curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash`,
+`kur.sh` (run on the server: `curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`,
 **DD-228**), `wireguard.command` and `onar.command` (SSH "Denetle ve onar", **DD-239**), plus the Git-ignored
 `kurulum/` (the SSH host both use and downloaded
 WireGuard device profiles/QR codes), this file and `README.md`. The repository is public: never commit host

@@ -229,12 +229,13 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-225 | Packages' private state is hidden from the uid-1000 data units | v2-203; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-226 | A Konsol container's bind sources are pinned at every start | v2-204; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-227 | Writable server folders only through the Files account | v2-205; live-verified on nrm 2026-10-05 | design-decisions.md |
-| DD-228 | Install from the public repository with one curl line on the server | v2-206 | design-decisions.md |
+| DD-228 | Install from the public repository with one curl line on the server | v2-206; repository renamed by DD-255 (v2-238) | design-decisions.md |
 | DD-229 | Overview controls, WireGuard as a whole, and a host closed to containers | v2-207; tile word amended by DD-230 | design-decisions.md |
 | DD-230 | Home widgets on the tiles' grid, a "Sunucu" widget and uniform Store cards | v2-208; widget sizes amended by DD-231 | design-decisions.md |
 | DD-231 | Home widgets in 1×1 and 2×2 cells; live rates split from application traffic | v2-210; layout amended by DD-242 | design-decisions.md |
 | DD-233 | Konsol "Güncelle" button: GitHub version check, pinned commit, unattended re-run in its own unit | v2-212 | design-decisions.md |
 | DD-232 | Finder-style Files window (icons, right-hand places/detail column, no dock) and a two-card sidebar | v2-211 | design-decisions.md |
+| DD-255 | The project is named Obhut: repository `drs0me1/obhut`, installer banner and docs; internal paths, units and commands keep their names; hosts with the old name follow GitHub's redirect | v2-238 | design-decisions.md |
 | DD-254 | A failed Caddy publication names the failing step (validate, firewall, reload) and the tool's own reason; folder share saves too | v2-237 | design-decisions.md |
 | DD-253 | A Caddy repository outage (Cloudsmith 402) does not stop stage 1 on a host that has Caddy; Konsol's update message skips systemd-inhibit's "env failed" line | v2-236 | design-decisions.md |
 | DD-252 | Manual Caddy addresses: a tailnet name and an optional public HTTPS name for a `127.0.0.1` port, the application's own login as the guard (amends DD-191) | v2-235 | design-decisions.md |

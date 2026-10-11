@@ -1,7 +1,7 @@
-Master Stack — kullanım
+Obhut — kullanım
 
 Kurulum sunucuda tek satırla başlar (v2-206, DD-228). Sunucuya kendiniz SSH ile bağlanın ve:
-  curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash
   (curl ya da sudo yoksa root olarak önce: apt install -y curl sudo)
   Kurulum önce sistemi günceller. İlk kurulumda yerel alan adını sorar (varsayılan yok;
   ör. ev yazarsanız panel adresi panel.ev olur). Yeniden kurulumda mevcut adı kullanır, sormaz;

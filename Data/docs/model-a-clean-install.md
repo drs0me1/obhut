@@ -46,7 +46,7 @@ archive limits, same-origin gates and CSP remain in force.
    Save any data that must survive before a reset. On an existing host, rerunning
    the installer preserves managed data and is **not** a clean installation.
 3. The installer is started on the server (**DD-228**):
-   `curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash`.
+   `curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`.
    The only input is the local domain, asked in stage 0 on a first install (no default).
 4. Confirm SSH works. If a reset changed the SSH host key, independently verify
    its new fingerprint before replacing only that server's known-host entry.

@@ -106,7 +106,7 @@ the ones agreed on 2026-08-05:
 - Root-only, single-host, `flock`-serialised, wrapped in `systemd-inhibit`
   so a shutdown cannot land mid-transaction.
 - **Started on the server with one line (DD-228).** The operator SSHes in and runs
-  `curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash`.
+  `curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`.
   - `kur.sh` downloads the public repository archive (`main`, or `KUR_REF`), copies
     only the runtime tree (`install.sh`, `common.sh`, `config`, `templates`,
     `scripts`, `systemd`, `panel`, `files-panel`, `console`, `magaza`) to

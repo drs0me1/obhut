@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-237"
+V2_VERSION="2026.08.06-v2-238"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1719,7 +1719,7 @@ EOF
 }
 
 main() {
-    log INFO "master-stack $V2_VERSION başlıyor"
+    log INFO "Obhut $V2_VERSION başlıyor"
     stage_0
     stage_1
     stage_2
@@ -1741,7 +1741,7 @@ if [[ "${V2_INHIBITED:-0}" != "1" ]]; then
     exec systemd-inhibit \
         --what=shutdown:sleep \
         --who=master-stack-installer \
-        --why="master-stack kurulum işlemi" \
+        --why="Obhut kurulum işlemi" \
         --mode=block \
         env V2_INHIBITED=1 bash "$self" "$@"
 fi

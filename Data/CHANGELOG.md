@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-11 — The project is named Obhut (v2-238)
+
+- The repository is now `drs0me1/obhut`; the install line is
+  `curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`. The old
+  `drs0me1/myserver` address keeps working through GitHub's redirect.
+- The installer's banner and first log line say "Obhut" ("=== Obhut — kurulum ===",
+  "Obhut <sürüm> başlıyor"). Konsol, Gezgin and the App Store keep their names.
+- Installed servers keep updating from Konsol, and their next update records the new repository
+  name. Paths, services and commands on the server keep their names (DD-255).
+
 ### 2026-10-10 — Publication errors name their cause (v2-237)
 
 - When saving in Settings → Caddy (or a folder share) cannot apply the change, the message now says

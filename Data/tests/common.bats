@@ -1396,7 +1396,7 @@ EOF
     [ "$(grep -vE '^\s*(#|$)' "$kur" | tail -n 1)" = 'main "$@"' ]
     grep -q '^main() {$' "$kur"
     grep -q 'https://codeload.github.com/\$repo/tar.gz/\$ref' "$kur"
-    grep -q 'local repo="drs0me1/myserver"' "$kur"
+    grep -q 'local repo="drs0me1/obhut"' "$kur"
     grep -q 'local ref="${KUR_REF:-main}"' "$kur"
     grep -q 'local root="${KUR_ROOT:-/root/debian-server-installer}"' "$kur"
     grep -q 'exec bash "\$root/install.sh" </dev/tty' "$kur"
@@ -1406,7 +1406,7 @@ EOF
 }
 
 @test "kur.sh ships the runtime tree, swaps it atomically and hands the terminal to the installer" {
-    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/myserver-main" dir
+    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/obhut-main" dir
     mkdir -p "$src/Data"
     for dir in install.sh common.sh config templates scripts systemd panel files-panel console magaza; do
         cp -R "$V2_ROOT/$dir" "$src/Data/"
@@ -1416,7 +1416,7 @@ EOF
     # The real installer must never start here: a stub stands in for it.
     printf '#!/usr/bin/env bash\nV2_VERSION="stub"\necho "STUB_INSTALL tty=$([[ -t 0 ]] && echo yes || echo no)"\n' \
         >"$src/Data/install.sh"
-    tar -C "$TMP/src" -czf "$TMP/kod.tgz" myserver-main
+    tar -C "$TMP/src" -czf "$TMP/kod.tgz" obhut-main
     # A previous copy is replaced as a whole.
     mkdir -p "$TMP/root"
     touch "$TMP/root/stale"
@@ -1435,7 +1435,7 @@ EOF
 
 @test "kur.sh update mode installs only the confirmed commit and version, without a terminal" {
     # DD-233: Konsol's update runs kur.sh pinned to a commit; install.sh gets V2_GUNCELLEME=1 and no tty.
-    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/myserver-x" dir sha=0123456789abcdef0123456789abcdef01234567
+    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/obhut-x" dir sha=0123456789abcdef0123456789abcdef01234567
     [ "$(id -u)" -eq 0 ] || skip "needs root"
     mkdir -p "$src/Data"
     for dir in install.sh common.sh config templates scripts systemd panel files-panel console magaza; do
@@ -1443,7 +1443,7 @@ EOF
     done
     printf '#!/usr/bin/env bash\nV2_VERSION="2026.08.06-v2-212"\necho "STUB_INSTALL tty=$([[ -t 0 ]] && echo yes || echo no) guncelleme=${V2_GUNCELLEME:-0}"\n' \
         >"$src/Data/install.sh"
-    tar -C "$TMP/src" -czf "$TMP/kod.tgz" myserver-x
+    tar -C "$TMP/src" -czf "$TMP/kod.tgz" obhut-x
     mkdir -p "$TMP/root" && touch "$TMP/root/keep"
     # A branch name, a bad version or another version than the confirmed one changes nothing.
     run env KUR_URL="file://$TMP/kod.tgz" KUR_ROOT="$TMP/root" KUR_REF=main KUR_GUNCELLE=2026.08.06-v2-212 bash "$kur" </dev/null
@@ -1471,7 +1471,7 @@ EOF
     local tool="$V2_ROOT/scripts/master-guncelle" sha=0123456789abcdef0123456789abcdef01234567 args
     [ "$(id -u)" -eq 0 ] || skip "needs root"
     bash -n "$tool"
-    printf 'GUNCELLEME_REPO=drs0me1/myserver\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n' \
+    printf 'GUNCELLEME_REPO=drs0me1/obhut\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n' \
         "$TMP/log/guncelleme.durum" "$TMP/log/guncelleme.log" >"$TMP/state.env"
     printf 'echo "ref=$KUR_REF surum=$KUR_GUNCELLE"\necho "[10:00:00] Aşama 3/7 — servisler"\n' >"$TMP/ok.sh"
     run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/ok.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212

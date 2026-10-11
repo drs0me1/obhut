@@ -41,7 +41,7 @@ class Clock:
 
 
 def env_for(root, version=OLD):
-    return {"V2_VERSION": version, "GUNCELLEME_REPO": "drs0me1/myserver", "GUNCELLEME_DAL": "main",
+    return {"V2_VERSION": version, "GUNCELLEME_REPO": "drs0me1/obhut", "GUNCELLEME_DAL": "main",
             "GUNCELLEME_UNIT": "master-guncelle.service",
             "GUNCELLEME_DURUM_FILE": str(root / "guncelleme.durum"), "GUNCELLEME_LOG_FILE": str(root / "guncelleme.log")}
 
@@ -64,8 +64,8 @@ class CheckTests(unittest.TestCase):
         info = self.u.status(self.env, False)
         self.assertEqual((info["son"], info["commit"], info["yeni"], info["hata"]), (NEW, SHA, True, ""))
         self.assertEqual(self.fetch.calls, [
-            ("https://api.github.com/repos/drs0me1/myserver/commits/main", "application/vnd.github.sha"),
-            ("https://raw.githubusercontent.com/drs0me1/myserver/%s/Data/install.sh" % SHA, "text/plain")])
+            ("https://api.github.com/repos/drs0me1/obhut/commits/main", "application/vnd.github.sha"),
+            ("https://raw.githubusercontent.com/drs0me1/obhut/%s/Data/install.sh" % SHA, "text/plain")])
 
     def test_same_or_older_or_unknown_installed_version_is_not_offered_blindly(self):
         for installed, expected in [(NEW, False), ("2026.08.06-v2-213", False), ("test", False), (OLD, True)]:

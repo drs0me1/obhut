@@ -13,6 +13,27 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-255: The project is named Obhut; internal names stay (v2-238)
+
+- **Request (user, 2026-10-11):** "Myserver projesine isim verelim"; among German candidates the user
+  picked "Obhut güzel" (German for safekeeping, care) and approved renaming the repository and the
+  names the operator sees, but not the internal ones.
+- **Now:** the repository is `drs0me1/obhut`. `kur.sh`'s `repo`, `GUNCELLEME_REPO` in `defaults.env`
+  and the documented install line follow it. The operator sees the name in `kur.sh`'s banner
+  ("=== Obhut — kurulum ==="), the installer's first log line ("Obhut <version> başlıyor"), the
+  `systemd-inhibit` reason, `README.md` and `OKUBENI.txt`. Konsol, Gezgin and the App Store keep
+  their names.
+- **Unchanged on purpose:** `/root/debian-server-installer`, `/etc/master-stack`, `/run/master-stack`,
+  the `master-*` commands and units, the marker comments in generated files and the update check's
+  `User-Agent`. Renaming them would migrate every installed host for nothing the operator sees.
+- **Installed hosts:** `state.env` keeps the `GUNCELLEME_REPO` written by the last run. GitHub keeps a
+  renamed repository's old name working: `api.github.com` answers 301 to the repository's id, which
+  `urllib` follows, while `raw.githubusercontent.com` and `codeload.github.com` serve the content
+  directly. A host with the old name therefore still finds and installs the next version, and that
+  run writes the new name from `defaults.env`.
+- **Constraint:** never create a repository named `myserver` under `drs0me1` again: it would take the
+  old name over and break the redirect for hosts that have not updated yet and for old links.
+
 ### DD-254: A failed publication names its step and cause (v2-237)
 
 - **Request (user, 2026-10-10):** "Asıl neden gösterilsin". Adding the Gezgin address in Settings →
@@ -628,6 +649,7 @@ with its status and the file that holds it.
   `kur.sh` downloads the GitHub archive of `main` (or `KUR_REF`), copies only the runtime tree
   to `/root/debian-server-installer` with the launcher's atomic swap, and `exec`s `install.sh`
   with `/dev/tty` as stdin. The body sits in `main()` so a truncated download runs nothing.
+  *(Amended by DD-255: the repository is now `drs0me1/obhut`; the old name redirects.)*
 - **Retired with it:** the portable `.command` and its exporter (DD-154's "one current
   export"), the input file's transport to `/run` and `read_input_file` (DD-119). The only
   input left, the local domain, has no default (user's choice: "default bir değer
