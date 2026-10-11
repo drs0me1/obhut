@@ -1544,6 +1544,14 @@ EOF
     # Both files are installed with the other console files.
     grep -qw 'obhut.svg' <<<"$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qw 'obhut.png' <<<"$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    # The sign-in page's brand is the wordmark, inline (it follows the theme through currentColor)
+    # and identical to docs/obhut-yazi.svg; the old "Konsol." text is gone.
+    local giris="$V2_ROOT/console/giris.html"
+    grep -qF '<svg class="wordmark-svg" viewBox="0 -1066.4 2732 1077.4" role="img" aria-label="Obhut">' "$giris"
+    run ! grep -qF 'class="wordmark">Konsol' "$giris"
+    [ "$(grep -oE ' d="[^"]*"' "$giris" | sort)" = "$(grep -oE ' d="[^"]*"' "$V2_ROOT/docs/obhut-yazi.svg" | sort)" ]
+    [ "$(grep -o ' d="' "$giris" | wc -l | tr -d ' ')" -eq 5 ]
+    grep -qF '.login .wordmark-svg { display: block; height: 40px; width: auto; color: var(--ink); }' "$V2_ROOT/console/giris.css"
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {

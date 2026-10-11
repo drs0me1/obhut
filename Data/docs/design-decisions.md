@@ -38,7 +38,10 @@ with its status and the file that holds it.
   Outfit SemiBold (OFL; the font itself is not in the repository). The ring is scaled to the
   font's O (ink 725 units tall at 1000 per em) and "b" starts at the font's own O–b distance less
   the wordmark's −0.02 em letter-spacing, so the first letter is the mark and the rest is the
-  typeface. The README shows this file; Konsol's pages show only the mark.
+  typeface. The README shows this file. The sign-in page (v2-240) shows the same wordmark in
+  place of its "Konsol." text, inline in `giris.html` so that `currentColor` follows Konsol's
+  light/dark setting (an `<img>` would only follow the system's); Konsol's sidebar keeps the
+  server's name and "Konsol".
 - **Not done:** no PNG favicon set for browsers without SVG icon support beyond the touch icon.
 
 ### DD-255: The project is named Obhut; internal names stay (v2-238)

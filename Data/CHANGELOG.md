@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-12 — The sign-in page shows the Ôbhut wordmark (v2-240)
+
+- Konsol's sign-in page shows "Ôbhut" (the mark as its first letter) where it said "Konsol.";
+  the subtitle and the rest of the page are unchanged. The wordmark follows the page's theme
+  (DD-256).
+
 ### 2026-10-11 — The Obhut mark: Konsol's icon (v2-239)
 
 - Obhut has a mark: the letter O wearing a roof, "Ô" (`Data/console/obhut.svg`, with a 180 px

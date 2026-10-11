@@ -1,6 +1,8 @@
 /* Konsol girişi (DD-194). Renkler ve düğmeler konsol.css'ten gelir. */
 .login { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: 18px; padding: 32px 16px; }
 .login .brand { text-align: center; justify-items: center; }
+/* DD-256: the Ôbhut wordmark, inline so it follows the theme through currentColor. */
+.login .wordmark-svg { display: block; height: 40px; width: auto; color: var(--ink); }
 .login-card { width: min(100%, 400px); padding: 22px; gap: 14px; }
 .login-card h1 { font-size: 24px; }
 .login-form { display: grid; gap: 8px; }
