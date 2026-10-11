@@ -13,6 +13,30 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-256: The Obhut mark is the letter O wearing a roof (v2-239)
+
+- **Request (user, 2026-10-11):** "Bir logo ve simge tasarım öner", then "tasarımı baştan düşün ve
+  basitleştirelim". Illustrative candidates (a birdhouse, a roof over a server with LEDs) lost
+  their detail at 16 px and sat in the stock "roof over a thing" family of smart-home icons.
+- **Decision:** the mark is "Ô": a ring and a detached chevron, two strokes of one weight
+  (`console/obhut.svg`, viewBox 0 0 64 64: ring centre 32,41 radius 14.5, chevron 20,16 → 32,9 →
+  44,16, stroke 7, round caps). It is the name itself: Turkish "şapkalı O", German *Hut* (hat;
+  "O mit Hut"), English *hut*; the chevron is the roof, the ring the home. It is a letter, so it
+  needs no explanation at favicon size, and it is also the first letter of the wordmark: the ring
+  is Outfit SemiBold's O (0.72 em tall, stroke 19 % of the diameter, the same as the font's) and
+  "bhut" follows in that face. The chevron is narrower than the ring (24 of 36 units) and 6 units
+  clear of it; closing that gap or widening the chevron turns the mark back into a house.
+- **Colour:** the SVG carries the Konsol accents (`#1F6F8B`, `#6FC3DC` under
+  `prefers-color-scheme: dark`), so it adapts as a favicon and inside README. The PNG
+  (`console/obhut.png`, 180 px, white mark on `#1F6F8B`) is the `apple-touch-icon`, because
+  Safari ignores SVG icons.
+- **Where it is used:** `<link rel="icon">` and `<link rel="apple-touch-icon">` on `index.html`
+  and `giris.html`, served by Caddy with the other console files (CSP `img-src 'self'`); the
+  README. Konsol's own name and sidebar wordmark are unchanged; Gezgin and the App Store keep
+  their names.
+- **Not done:** no PNG favicon set for browsers without SVG icon support beyond the touch icon;
+  no wordmark file in the repository yet (it needs Outfit's outlines).
+
 ### DD-255: The project is named Obhut; internal names stay (v2-238)
 
 - **Request (user, 2026-10-11):** "Myserver projesine isim verelim"; among German candidates the user

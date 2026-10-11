@@ -1,3 +1,5 @@
+<p><img src="Data/console/obhut.svg" alt="" width="64" height="64"></p>
+
 # Obhut
 
 **Obhut** (German for *safekeeping*) is a lean Bash installer for a fresh

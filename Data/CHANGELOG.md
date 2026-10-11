@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-11 — The Obhut mark: Konsol's icon (v2-239)
+
+- Obhut has a mark: the letter O wearing a roof, "Ô" (`Data/console/obhut.svg`, with a 180 px
+  PNG for iOS home screens). Konsol and its sign-in page now show it as their browser icon; the
+  README carries it. Nothing else in Konsol changes (DD-256).
+
 ### 2026-10-11 — The project is named Obhut (v2-238)
 
 - The repository is now `drs0me1/obhut`; the install line is

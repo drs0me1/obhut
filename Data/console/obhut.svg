@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Obhut</title>
+  <style>:root{color:#1F6F8B}@media (prefers-color-scheme:dark){:root{color:#6FC3DC}}</style>
+  <g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="41" r="14.5"/>
+    <path d="M20 16L32 9L44 16"/>
+  </g>
+</svg>

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-238"
+V2_VERSION="2026.08.06-v2-239"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1364,7 +1364,7 @@ ensure_console_pages() {
     local f dir id
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
-        konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js; do
+        konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
     # DD-200: kurulu paketlerin sayfa dosyaları uygulama/<id>/ altındadır (master-modul koyar ve

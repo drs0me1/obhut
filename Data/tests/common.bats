@@ -1527,6 +1527,25 @@ EOF
     grep -qF 'h("span", { id: "home-update", class: "home-update" })' "$V2_ROOT/console/konsol.js"
 }
 
+@test "Konsol pages carry the Obhut mark as their icon and the files ship with the console" {
+    # DD-256: the Ô mark is both pages' icon (SVG, light/dark aware) with a PNG for iOS home screens.
+    local page svg="$V2_ROOT/console/obhut.svg" png="$V2_ROOT/console/obhut.png"
+    for page in index.html giris.html; do
+        grep -qF '<link rel="icon" type="image/svg+xml" href="/obhut.svg">' "$V2_ROOT/console/$page"
+        grep -qF '<link rel="apple-touch-icon" href="/obhut.png">' "$V2_ROOT/console/$page"
+    done
+    # The SVG is self-contained: its only URL is the SVG namespace; no script, no external image.
+    run ! grep -qiE '<script|<image|xlink|href=' "$svg"
+    [ "$(grep -vF 'xmlns="http://www.w3.org/2000/svg"' "$svg" | grep -ciE 'https?://')" -eq 0 ]
+    grep -q 'prefers-color-scheme' "$svg"
+    grep -qF '<circle cx="32" cy="41" r="14.5"/>' "$svg"
+    grep -qF '<path d="M20 16L32 9L44 16"/>' "$svg"
+    [ "$(od -An -tx1 -N8 "$png" | tr -d ' \n')" = "89504e470d0a1a0a" ]
+    # Both files are installed with the other console files.
+    grep -qw 'obhut.svg' <<<"$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qw 'obhut.png' <<<"$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+}
+
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {
     local mm="$V2_ROOT/scripts/master-modul"
     grep -q 'status: REFUSED' "$V2_ROOT/install.sh"
@@ -2717,7 +2736,7 @@ EOF
     # forward_auth precedes the routes, so no handle block can bypass it.
     [ "$(grep -n 'forward_auth' <<<"$site" | cut -d: -f1)" -lt "$(grep -n '@kok path' <<<"$site" | cut -d: -f1)" ]
     # The sign-in page loads only open files, and nothing from elsewhere or inline.
-    [ "$(grep -oE '(href|src)="[^"]+"' "$V2_ROOT/console/giris.html" | sort -u | tr '\n' ' ')" = 'href="/giris.css" href="/konsol.css" src="/giris.js" ' ]
+    [ "$(grep -oE '(href|src)="[^"]+"' "$V2_ROOT/console/giris.html" | LC_ALL=C sort -u | tr '\n' ' ')" = 'href="/giris.css" href="/konsol.css" href="/obhut.png" href="/obhut.svg" src="/giris.js" ' ]
     run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/giris.html"
     run ! grep -qE 'localStorage|sessionStorage|innerHTML' "$V2_ROOT/console/giris.js"
     # Every console file is installed (the sign-in page once 404'd on a real host).
@@ -3551,7 +3570,7 @@ PY
     [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-modul" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
-    grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js; do' "$V2_ROOT/install.sh"
+    grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do' "$V2_ROOT/install.sh"
     grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 2 ]
     grep -qF 'if path == "/api/konsol/konteynerler/islem":' "$V2_ROOT/panel/master-panel"
