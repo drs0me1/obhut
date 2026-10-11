@@ -1,4 +1,4 @@
-<p><img src="Data/console/obhut.svg" alt="" width="64" height="64"></p>
+<p><img src="Data/docs/obhut-yazi.svg" alt="Obhut" height="72"></p>
 
 # Obhut
 

@@ -34,8 +34,12 @@ with its status and the file that holds it.
   and `giris.html`, served by Caddy with the other console files (CSP `img-src 'self'`); the
   README. Konsol's own name and sidebar wordmark are unchanged; Gezgin and the App Store keep
   their names.
-- **Not done:** no PNG favicon set for browsers without SVG icon support beyond the touch icon;
-  no wordmark file in the repository yet (it needs Outfit's outlines).
+- **Wordmark:** `docs/obhut-yazi.svg` is the mark followed by "bhut" as outlines taken from
+  Outfit SemiBold (OFL; the font itself is not in the repository). The ring is scaled to the
+  font's O (ink 725 units tall at 1000 per em) and "b" starts at the font's own O–b distance less
+  the wordmark's −0.02 em letter-spacing, so the first letter is the mark and the rest is the
+  typeface. The README shows this file; Konsol's pages show only the mark.
+- **Not done:** no PNG favicon set for browsers without SVG icon support beyond the touch icon.
 
 ### DD-255: The project is named Obhut; internal names stay (v2-238)
 
