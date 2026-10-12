@@ -10,6 +10,7 @@ import socket
 import stat
 import tempfile
 import threading
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -325,6 +326,50 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(headers["Cache-Control"], "no-store")
             self.assertNotIn("ports", json.loads(body))
+
+    def test_dot_and_empty_segments_are_refused_before_routing(self):
+        # Caddy matches the cleaned path (and the session check) but passes the raw one on.
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        _server, sock = start_unix(self, Handler)
+        for path in ("/api/uygulama/demo/a/../../../konsol/oturum/giris", "/api/uygulama/demo/%2e%2e/x",
+                     "/api/konsol//kaynaklar", "/api/konsol/kaynaklar/.", "/api/uygulama/demo/a%2f..%2fb"):
+            status, _h, body = unix_get(sock, path, {"X-Konsol": "1"})
+            self.assertEqual((status, json.loads(body)["error"]), (400, "geçersiz adres"), path)
+        self.assertEqual(unix_get(sock, "/api/konsol/kaynaklar", {"X-Konsol": "1"})[0], 200)
+
+    def test_a_body_that_does_not_arrive_in_time_ends_the_request(self):
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+
+            def log_error(self, *_args):
+                pass
+        Handler.panel = self.p
+        _server, sock = start_unix(self, Handler)
+        with patch.object(panel, "BODY_SECONDS", 0.5):
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.addCleanup(client.close)
+            client.settimeout(5)
+            client.connect(sock)
+            client.sendall(b"POST /api/konsol/oturum/giris HTTP/1.1\r\nHost: panel.test\r\nX-Konsol: 1\r\n"
+                           b"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{")
+            started = time.monotonic()
+            # Trickle one byte at a time, faster than any per-read timeout would notice.
+            closed = False
+            for _ in range(40):
+                time.sleep(0.1)
+                try:
+                    client.sendall(b" ")
+                except (BrokenPipeError, ConnectionResetError):
+                    closed = True
+                    break
+            if not closed:
+                closed = client.recv(1024) == b""
+            self.assertTrue(closed)
+            self.assertLess(time.monotonic() - started, 3)
 
     def test_unix_helper_reads_early_rejection_after_body_write_breaks(self):
         class Handler(panel.Handler):

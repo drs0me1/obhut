@@ -68,6 +68,9 @@ PAGE_FILE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,40}\.(js|css)$")
 KONSOL_JSON_LIMIT = 65536
 SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
 MAX_BODY = 65536
+# A request body must arrive within this time in all, not only between two packets: a body sent a
+# byte at a time would otherwise hold one of the public site's upstream connections for good.
+BODY_SECONDS = 30
 # Geri alınamaz işlemler için yazılan kelime (Konsol, paket API'leri ve paketlerin Mac araçları aynı).
 CONFIRM_WORD = "onayla"
 API_HEADER = "X-Konsol"
@@ -516,7 +519,6 @@ def parse_dnsmasq(text, source):
 class Panel:
     def __init__(self, args):
         self.args = args
-        self.lock = threading.Lock()
         # DD-200: kurulu paketlerin yüklenmiş API modülleri: id → (dosya anahtarı, nesne).
         self.apis = {}
         self.apis_lock = threading.Lock()
@@ -952,7 +954,11 @@ class Panel:
         with self.install_lock:
             if self.module_busy(mid):
                 return 409, "bu modülde bir işlem sürüyor"
-            if any(m.get("id") == mid and m.get("installed") for m in self.modules()):
+            try:
+                installed = any(m.get("id") == mid and m.get("installed") for m in self.modules())
+            except RuntimeError as err:
+                return 502, str(err)
+            if installed:
                 return 409, "modül zaten kurulu"
             code, result = self.run_worker(["/usr/bin/python3", script, "--lib", self.tool_dir(), "--state", self.args.state,
                                             "kur-hazirla", "--tohum", seed], form,
@@ -1987,6 +1993,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     sys_version = ""
     protocol_version = "HTTP/1.1"
     panel = None
+    # Per socket operation, as in the Files backend: above Caddy's two-minute keep-alive, so Caddy
+    # closes an idle connection first; a stalled client is let go.
+    timeout = 180
 
     def log_message(self, fmt, *args):
         # DD-181: istek satırı yazılmaz (dosya arka ucu gibi). Açık bir Konsol sekmesi her
@@ -2005,6 +2014,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         istek sanılmasın (gövdeye gizlenen istek CSRF kapısını ve adres kuralını aşardı)."""
         return not self.body_read and bool(self.headers.get("Transfer-Encoding")
                                            or (self.headers.get("Content-Length") or "0").strip() != "0")
+
+    def read_body(self, length):
+        deadline = time.monotonic() + BODY_SECONDS
+        parts, got = [], 0
+        while got < length:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                # handle_one_request closes the connection on a timeout.
+                raise socket.timeout("istek gövdesi zamanında gelmedi")
+            self.connection.settimeout(min(left, self.timeout))
+            part = self.rfile.read1(length - got)
+            if not part:
+                break
+            parts.append(part)
+            got += len(part)
+        self.connection.settimeout(self.timeout)
+        return b"".join(parts)
 
     def client(self):
         # DD-180: sokete yalnız Caddy ve root bağlanabilir; istemcinin adresi Caddy'nin
@@ -2068,6 +2094,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return None
         elif channel == "tailscale" and not remote_tailnet(self.client()):
             self.error(403, "Konsol yalnız başka bir Tailscale cihazından kullanılır")
+            return None
+        # Caddy matches its routes (and the session check) on the cleaned path but passes the raw one
+        # on: a path with dot or empty segments could match a route here that Caddy did not see.
+        segments = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).split("/")[1:]
+        if any(s in ("", ".", "..") for s in segments[:-1]) or (segments and segments[-1] in (".", "..")):
+            self.error(400, "geçersiz adres")
             return None
         if self.path.startswith("/api/"):
             site = self.headers.get("Sec-Fetch-Site")
@@ -2191,7 +2223,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         if length <= 0 or length > MAX_BODY:
             return None
-        raw = self.rfile.read(length)
+        raw = self.read_body(length)
         self.body_read = len(raw) == length
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -2501,7 +2533,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)
         if m:
             mid, action = m.group(1), m.group(2)
-            known = [i["id"] for i in self.panel.modules()] if MODULE_ID_RE.match(mid) else []
+            try:
+                known = [i["id"] for i in self.panel.modules()] if MODULE_ID_RE.match(mid) else []
+            except RuntimeError as err:
+                self.error(502, str(err))
+                return
             if mid not in known:
                 self.error(404, "bilinmeyen modül")
                 return

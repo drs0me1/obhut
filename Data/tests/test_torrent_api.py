@@ -97,6 +97,8 @@ class Scratch(unittest.TestCase):
         self.calls.append(list(argv))
         if self.fail_cmd and self.fail_cmd in " ".join(argv):
             self.fail_cmd = None
+            if not kwargs.get("check", True):
+                return subprocess.CompletedProcess(argv, 5, "", "")
             raise settings.SettingsError("injected failure")
         code = 0
         if argv[:3] == ["systemctl", "is-active", "--quiet"]:
@@ -195,6 +197,31 @@ class WorkerTests(Scratch):
         self.assertEqual(self.systemctl(), ["is-active", "stop"])
         self.assertEqual(self.ui_waits, [], "a stopped service is not waited for")
         self.assertIn("WebUI\\Username=stopped-user\n", self.conf.read_text())
+
+    def test_a_failed_stop_keeps_the_profile_and_the_drop_in(self):
+        # A rollback restores only what it snapshotted; it used to delete both files here.
+        before = self.conf.read_bytes()
+        self.drop.parent.mkdir(parents=True, exist_ok=True)
+        self.drop.write_text("[Container]\nVolume=/x:/x\n")
+        self.fail_cmd = "stop qbittorrent.service"
+        with self.assertRaises(settings.SettingsError):
+            ayar.hesap(self.env, {"username": "stop-fails"})
+        self.assertEqual(self.conf.read_bytes(), before)
+        self.assertEqual(self.drop.read_text(), "[Container]\nVolume=/x:/x\n")
+
+    def test_a_stopped_app_whose_unit_is_not_loaded_still_saves(self):
+        self.active = False
+        self.fail_cmd = "stop qbittorrent.service"
+        self.assertEqual(ayar.hesap(self.env, {"username": "not-loaded"}), {"ok": True, "username": "not-loaded"})
+        self.assertIn("WebUI\\Username=not-loaded\n", self.conf.read_text())
+
+    def test_an_account_change_that_fails_late_keeps_the_existing_drop_in(self):
+        self.drop.parent.mkdir(parents=True, exist_ok=True)
+        self.drop.write_text("[Container]\nVolume=/x:/x\n")
+        with patch.object(ayar, "wait_ui", side_effect=settings.SettingsError("açılmadı")):
+            with self.assertRaises(settings.SettingsError):
+                ayar.hesap(self.env, {"username": "late-fail"})
+        self.assertEqual(self.drop.read_text(), "[Container]\nVolume=/x:/x\n")
 
     def test_an_interface_that_never_opens_restores_the_profile(self):
         before = self.conf.read_bytes()

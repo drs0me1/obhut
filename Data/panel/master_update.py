@@ -3,6 +3,7 @@ tip of GUNCELLEME_DAL and the V2_VERSION in that commit's Data/install.sh), comp
 installed one, and starts master-guncelle as its own systemd unit, so the run survives the Konsol
 restarts the installer makes. The unit's result file and output are under LOG_DIR; this module only
 reads them. Nothing here runs installer code itself."""
+import http.client
 import os
 import re
 import threading
@@ -98,7 +99,7 @@ class Updates:
                 if not found or number(found.group(1)) is None:
                     raise ValueError("sürüm")
                 result.update(ok=True, son=found.group(1), commit=sha)
-            except (OSError, urllib.error.URLError, ValueError, UnicodeError):
+            except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError, UnicodeError):
                 result["hata"] = "GitHub'a ulaşılamadı ya da sürüm okunamadı; daha sonra yeniden denenir."
             self.cache = result
             return result

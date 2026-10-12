@@ -889,7 +889,7 @@ def guard_idle(p):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "pending", "status", "saved-domain", "package-overrides", "container-revision"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "status", "saved-domain", "package-overrides", "container-revision"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
@@ -941,8 +941,6 @@ def main():
             sys.exit(0 if args.value not in m.current()["dns"]["disabled"] else 1)
         if args.action == "dns-forward":
             sys.exit(0 if m.current()["dns"]["forward"] else 1)
-        if args.action == "pending":
-            sys.exit(0 if m.pending() else 1)
         if args.action == "status":
             print(json.dumps(m.status(), ensure_ascii=False))
             return

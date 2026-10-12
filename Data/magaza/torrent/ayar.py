@@ -223,10 +223,13 @@ def change(env, updates, drop_in=None):
     conf = conf_path(env)
     settings.require(conf.is_file() and not conf.is_symlink(), "qBittorrent kurulu değil.")
     active = settings.run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
-    saved = {conf: None, drop_in_path(env): None}
+    # Only the files snapshotted here are restored: a file never snapshotted is never removed (a
+    # failed stop used to delete the profile with the account and every preference).
+    saved = {}
     try:
-        # Stop first: qBittorrent writes its settings back on shutdown.
-        settings.run(["systemctl", "stop", unit], timeout=STOP_TIMEOUT)
+        # Stop first: qBittorrent writes its settings back on shutdown. A stopped app's unit may not
+        # be loaded at all; its stop failing changes nothing.
+        settings.run(["systemctl", "stop", unit], timeout=STOP_TIMEOUT, check=active)
         saved[conf] = snapshot(conf)
         if drop_in is not None:
             saved[drop_in_path(env)] = snapshot(drop_in_path(env))
@@ -243,8 +246,7 @@ def change(env, updates, drop_in=None):
             wait_ui(env)
     except Exception:
         for path, snap in saved.items():
-            if snap is not None or path.exists():
-                restore(path, snap)
+            restore(path, snap)
         if drop_in is not None:
             settings.run(["systemctl", "daemon-reload"], check=False)
         if active:

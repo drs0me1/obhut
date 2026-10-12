@@ -56,7 +56,6 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from master_archives import Archives, ArchiveError, job_source
 
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
-# DD-171: --share only reserves the retired hidden directory; never reads its marker.
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 MAX_BODY = 262144
@@ -267,6 +266,19 @@ def rmtree_onedev(parent_fd, name, dev):
     finally:
         os.close(fd)
     os.rmdir(name, dir_fd=parent_fd)
+
+
+def trash_rmtree(cop, name, dev):
+    """Removes an item from the trash on the trash's own filesystem only: a disk mounted inside a
+    folder that went to the trash (rename moves the mount with it) is never emptied with it."""
+    try:
+        rmtree_onedev(cop, name, dev)
+    except FileNotFoundError:
+        return
+    except OSError as err:
+        if err.errno != errno.EXDEV:
+            raise
+        raise PanelError(409, "Çöpteki bir öğenin içinde bağlı bir disk var; diski ayırın, sonra yeniden deneyin")
 
 
 def mount_points(mountinfo="/proc/self/mountinfo"):
@@ -727,7 +739,9 @@ class Files:
                     chunk = stream.read(min(UPLOAD_CHUNK, length - written))
                     if not chunk:
                         raise PanelError(400, "yükleme yarıda kesildi")
-                    os.write(handle, chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        view = view[os.write(handle, view):]
                     written += len(chunk)
                     since += len(chunk)
                     if since >= DISK_CHECK_EVERY:
@@ -846,8 +860,9 @@ class Files:
 
     def purge(self, ids):
         with DirFd(self.trash_dir(create=False)) as cop:
+            dev = os.fstat(cop).st_dev
             for token in ids:
-                rmtree_at(cop, token)
+                trash_rmtree(cop, token, dev)
                 try:
                     os.unlink(token + ".json", dir_fd=cop)
                 except FileNotFoundError:
@@ -861,8 +876,9 @@ class Files:
         with DirFd(cop):
             with os.scandir(cop) as it:
                 names = [e.name for e in it]
+            dev = os.fstat(cop).st_dev
             for name in names:
-                rmtree_at(cop, name)
+                trash_rmtree(cop, name, dev)
         return sum(1 for n in names if TOKEN_RE.match(n))
 
 
@@ -1447,6 +1463,7 @@ def main():
     s.add_argument("--listen", required=True)
     s.add_argument("--root", required=True)
     s.add_argument("--trash", default=".cop")
+    # DD-171: --share only reserves the retired hidden directory; never reads its marker.
     s.add_argument("--share", default="")
     s.add_argument("--archive-dir", default="")
     s.add_argument("--domain", default="")

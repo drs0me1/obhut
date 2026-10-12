@@ -71,6 +71,15 @@ main() {
     [[ -z "$update" || "$version" == "V2_VERSION=\"$update\"" ]] ||
         { rm -rf -- "$incoming"; echo "HATA: indirilen sürüm ($version) onaylanan $update değil" >&2; exit 1; }
 
+    # Çalışan bir kurulum şablonlarını ve yardımcılarını bu ağaçtan okur: altından değiştirilmez.
+    local lock
+    lock="$(sed -n 's/^RUNTIME_DIR="\(\/[^"]*\)"$/\1/p' "$incoming/config/defaults.env")/install.lock"
+    if [[ -e "$lock" ]] && command -v flock >/dev/null 2>&1 && ! flock -n "$lock" true; then
+        rm -rf -- "$incoming"
+        echo "HATA: bir kurulum ya da uygulama işlemi sürüyor; bitince yeniden çalıştırın" >&2
+        exit 1
+    fi
+
     # Atomik yer değiştirme: yarıda kalırsa önceki kopya geri gelir.
     [[ ! -e "$root" ]] || mv -- "$root" "$previous"
     if ! mv -- "$incoming" "$root"; then

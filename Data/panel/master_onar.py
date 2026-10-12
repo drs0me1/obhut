@@ -36,6 +36,8 @@ TIMERS = ("refresh-tailnet-config.timer", "master-duvar-denetim.timer", "master-
 # guard stops it), so it must be enabled (for the boot run) but is never expected to be waiting.
 ON_DEMAND_TIMERS = ("master-settings-guard.timer",)
 FIREWALL_UNIT = "master-firewall.service"
+# The hourly firewall check takes at most about a minute (master-firewall --check, 30 s).
+LOCK_WAIT_SECONDS = 120
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._-]+\.service$")
 MARK = {"ok": "✓", "onarildi": "↻", "sorun": "!", "hata": "✗", "atlandi": "–", "calisiyor": "…"}
 JOURNAL_TAG = "master-onar"
@@ -401,12 +403,13 @@ class Repair:
             return "atlandi", "Alan adı ya da Tailscale adresi kayıtlı değil"
         backend = lambda: http_code(["--unix-socket", sock, "-H", "Host: panel." + domain, "http://konsol/api/konsol/oturum"]) if sock else "200"
         caddy = lambda: http_code(["-H", "Host: panel." + domain, "http://%s/" % ip])
-        if answered(backend()) and answered(caddy()):
+        backend_ok, caddy_ok = answered(backend()), answered(caddy())
+        if backend_ok and caddy_ok:
             return "ok", "Konsol ve Caddy yanıt veriyor"
-        if self.need("Konsol %s, Caddy %s" % ("yanıt veriyor" if answered(backend()) else "yanıt vermiyor",
-                                              "yanıt veriyor" if answered(caddy()) else "yanıt vermiyor")):
-            return self.need("Konsol %s, Caddy %s" % ("yanıt veriyor" if answered(backend()) else "yanıt vermiyor",
-                                                      "yanıt veriyor" if answered(caddy()) else "yanıt vermiyor"))
+        found = "Konsol %s, Caddy %s" % ("yanıt veriyor" if backend_ok else "yanıt vermiyor",
+                                         "yanıt veriyor" if caddy_ok else "yanıt vermiyor")
+        if self.need(found):
+            return self.need(found)
         done = []
         for unit, probe in (("master-panel.service", backend), ("caddy.service", caddy)):
             if not answered(probe()):
@@ -635,11 +638,18 @@ def main():
     lock_dir = env.get("RUNTIME_DIR", "/run/master-stack")
     os.makedirs(lock_dir, exist_ok=True)
     lock = open(os.path.join(lock_dir, "onarim.lock"), "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("HATA: başka bir onarım sürüyor", file=sys.stderr)
-        return 3
+    # A run asked for (Konsol, terminal) waits for the hourly firewall check to end instead of
+    # leaving at once: Konsol would show the previous report as this run's result.
+    deadline = time.monotonic() + (0 if args.duvar else LOCK_WAIT_SECONDS)
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                print("HATA: başka bir onarım sürüyor", file=sys.stderr)
+                return 3
+            time.sleep(1)
     if args.duvar:
         # The hourly check writes to the journal only when it finds something.
         repair = Repair(env, True, None, "saatlik")

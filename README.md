@@ -98,11 +98,12 @@ Repairs run on request, not in the background (**DD-239**): Konsol → Ayarlar �
     ├── common.sh           # shared helpers
     ├── config/defaults.env # single source of truth for ports/paths/chain names
     ├── templates/          # Caddyfile, dnsmasq.conf
-    ├── magaza/             # store packages: app and built-in service files (DD-196)
-    ├── scripts/            # firewall, refresh-tailnet, GRO, wait, master-wg, master-modul
+    ├── magaza/             # store packages: app and built-in service files; master-wg (DD-196)
+    ├── scripts/            # firewall, refresh-tailnet, GRO, wait, master-modul, master-konsol, master-onar, master-guncelle
     ├── panel/              # Konsol root API, settings/share workers, WebDAV server
     ├── files-panel/        # file and archive backend
     ├── console/            # Konsol pages
+    ├── tools/              # source of the bundled text editor (not shipped)
     ├── systemd/            # units and drop-ins
     ├── tests/              # Bats, settings worker, browser and isolated Linux tests
     ├── docs/               # contract, architecture, design rationale and decision index

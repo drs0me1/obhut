@@ -235,6 +235,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-231 | Home widgets in 1×1 and 2×2 cells; live rates split from application traffic | v2-210; layout amended by DD-242 | design-decisions.md |
 | DD-233 | Konsol "Güncelle" button: GitHub version check, pinned commit, unattended re-run in its own unit | v2-212 | design-decisions.md |
 | DD-232 | Finder-style Files window (icons, right-hand places/detail column, no dock) and a two-card sidebar | v2-211 | design-decisions.md |
+| DD-257 | Security and stability review: firewall stops on an unreadable package declaration, qBittorrent rollback restores only snapshotted files, the trash never crosses into a mounted disk, a request body deadline and dot-segment refusal in the root backend, no tree swap under a running install, cleanup | v2-241 | design-decisions.md |
 | DD-256 | The Obhut mark "Ô" (ring + detached chevron, `console/obhut.svg`, PNG touch icon): Konsol's favicon and the README image; the wordmark's first letter; the sign-in page's brand | v2-239; sign-in wordmark v2-240 | design-decisions.md |
 | DD-255 | The project is named Obhut: repository `drs0me1/obhut`, installer banner and docs; internal paths, units and commands keep their names; hosts with the old name follow GitHub's redirect | v2-238 | design-decisions.md |
 | DD-254 | A failed Caddy publication names the failing step (validate, firewall, reload) and the tool's own reason; folder share saves too | v2-237 | design-decisions.md |

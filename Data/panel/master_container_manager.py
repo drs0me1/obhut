@@ -19,7 +19,7 @@ import uuid
 
 import master_settings as settings
 import master_container_config as config
-from master_containers import Containers, ContainerError, epoch, listening, name_of, ports_of, TAILS, update_status
+from master_containers import Containers, ContainerError, epoch, listening, name_of, TAILS, update_status
 
 ACTIONS = frozenset(('create', 'save', 'start', 'stop', 'restart', 'remove', 'adopt', 'image-pull',
                      'image-remove', 'image-update', 'volume-create', 'volume-remove', 'network-create', 'network-remove'))

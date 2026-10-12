@@ -13,6 +13,39 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-257: Security and stability review after Gezgin (v2-241)
+
+- **Request (user, 2026-10-12):** "paneli fonksiyonları güvenlik ve stabilite açısından incele
+  göz at ve temizlik yapılması gereken yapıları tesbit et ve temizle". Five read-only reviews
+  (root backend and sign-in; Files and folder shares; containers and App Store; installer and
+  firewall; dead code and stale files). Every finding was checked in the code and against the
+  DD entries before a change; each fix has a test that fails without it.
+- **Firewall (DD-198 kept):** `load_package_rules` reads the declarations into a variable and exits
+  when they fail. The `die` inside the process substitution used to end only that subshell, so the
+  rules were written from a partial list.
+- **qBittorrent settings:** `change()` restores only the files it snapshotted (a failed stop used
+  to unlink the never-snapshotted profile) and stops an inactive unit without requiring success.
+- **Root backend:** a body must arrive within `BODY_SECONDS` (30 s) in all, besides a 180 s
+  per-operation socket timeout (above Caddy's two-minute keep-alive). A path with `.`, `..` or empty
+  segments, also percent-encoded, is refused with 400 before routing: Caddy matches its routes and
+  the session check on the cleaned path but passes the raw one on. `Panel.lock` was never used.
+- **Files:** the trash is emptied and purged with `rmtree_onedev` on the trash's own device; a disk
+  mounted inside a trashed folder answers 409. Upload writes loop over short writes.
+- **Updates, repair, WireGuard:** `kur.sh` refuses to swap the tree while `install.lock` (path from
+  `defaults.env`) is held; `master-onar` run from Konsol or a terminal waits up to 120 s for the
+  hourly check's lock; `master_update` counts `http.client.HTTPException` as a failed check;
+  `master-wg net` takes the install lock like every other writing verb (DD-229).
+- **Cleanup:** the `.dav-summary`/`.dav-pair` styles (markup gone since v2-211), the unused
+  `ports_of` import, the `pending` action of `master_settings.py`, the unreachable `--check`
+  positional choice of `master_container_network.py`, the `RCLONE_VERSION` test fixture line, and
+  stale text about the exporter and `<sürüm>.command`.
+- **Not changed, for the operator:** retiring Konsol's Files module now that Gezgin exists
+  (Gezgin K52); the archived docs, design mockups (they carry tailnet addresses of the test host)
+  and the size of `SESSION.md`/`CHANGELOG.md`; `.cursor/rules` beside CLAUDE.md; the Files
+  backend's loopback port answering any local process; the channel default when the header is
+  missing (DD-195 keeps it); a container publication whose address is missing blocking every
+  container's start (DD-223); App Store bind sources not pinned like DD-226's.
+
 ### DD-256: The Obhut mark is the letter O wearing a roof (v2-239)
 
 - **Request (user, 2026-10-11):** "Bir logo ve simge tasarım öner", then "tasarımı baştan düşün ve

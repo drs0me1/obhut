@@ -1433,6 +1433,18 @@ EOF
     case "$output" in *"Yerleştirildi"*) ;; *) false ;; esac
 }
 
+@test "kur.sh never swaps the tree under a running install; master-wg net takes the install lock" {
+    # A running install reads its templates and helpers from the tree kur.sh replaces.
+    local kur="$V2_ROOT/../kur.sh"
+    grep -q 'flock -n "$lock" true' "$kur"
+    awk '/flock -n "\$lock" true/ {l = NR} /mv -- "\$incoming" "\$root"/ {m = NR} END { exit !(l && m && l < m) }' "$kur"
+    # The lock is the installer's own file, read from defaults.env, not restated.
+    grep -q '^RUNTIME_DIR="/' "$V2_ROOT/config/defaults.env"
+    grep -q 'config/defaults.env")/install.lock"' "$kur"
+    # DD-229: App Store's stop writes its list under this lock; "net ac" must not slip past it.
+    awk '/^cmd_net\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/master-wg" | grep -qx '    take_lock'
+}
+
 @test "kur.sh update mode installs only the confirmed commit and version, without a terminal" {
     # DD-233: Konsol's update runs kur.sh pinned to a commit; install.sh gets V2_GUNCELLEME=1 and no tty.
     local kur="$V2_ROOT/../kur.sh" src="$TMP/src/obhut-x" dir sha=0123456789abcdef0123456789abcdef01234567
@@ -1843,7 +1855,6 @@ WAN_IPV4=203.0.113.7
 MODULES_FILE=$TMP/moduller
 SHARE_PORT=61010
 SHARE_HTTPS_PORT=443
-RCLONE_VERSION=1.75.1
 TAILSCALE_IPV4=100.64.0.7
 SERVER_ROOT=$TMP
 MODULES_DIR=$TMP/mods
@@ -5382,6 +5393,28 @@ PY
     # No wg-quick PostUp rules: the firewall script owns netfilter (DD-16/DD-17).
     run ! grep -q 'PostUp' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
     run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
+}
+
+@test "a package declaration that cannot be read stops the firewall before any rule" {
+    # firewall.sh runs with pipefail; a hook that fails after printing part of its list must not
+    # leave the rules to be written from that part (the die used to end only a subshell).
+    set -o pipefail
+    local fw="$V2_ROOT/scripts/firewall.sh" f
+    for f in package_declarations load_package_rules; do
+        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
+    done
+    die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+    MODULES_DIR="$TMP/mods" MODULES_FILE="$TMP/modules"
+    mkdir -p "$MODULES_DIR/bozuk"
+    printf 'paket_firewall() { echo "vpn wg5 61051 10.8.5.0/24 fdcc::5:0/112"; return 1; }\n' >"$MODULES_DIR/bozuk/kanca"
+    printf 'bozuk\tcalisiyor\n' >"$MODULES_FILE"
+    run load_package_rules
+    [ "$status" -ne 0 ]
+    case "$output" in *"bildirimi okunamadı (bozuk)"*) ;; *) false ;; esac
+    # The same hook succeeding gives its network.
+    printf 'paket_firewall() { echo "vpn wg5 61051 10.8.5.0/24 fdcc::5:0/112"; }\n' >"$MODULES_DIR/bozuk/kanca"
+    load_package_rules
+    [ "${VPN_IFACES[*]}" = "wg5" ]
 }
 
 @test "check_before and the WireGuard FORWARD count catch order and extra rules" {

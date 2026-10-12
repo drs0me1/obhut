@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-12 — Security and stability review (v2-241)
+
+- The firewall stops before touching any rule when an installed package's declaration cannot be
+  read. It used to go on with the networks read so far, which could drop the WireGuard NAT and
+  the private-destination blocks while `--check` still passed.
+- Saving qBittorrent's account or folder no longer deletes its settings file when the service
+  cannot be stopped; a failed change restores only the files it had saved. A stopped app's
+  settings save even when its unit is not loaded.
+- Emptying the Files trash never enters a disk mounted inside a folder that was moved to the
+  trash; it answers that a disk is mounted there instead of erasing it. Uploads write every byte
+  even when the disk accepts a chunk in parts.
+- Konsol's backend ends a request whose body does not arrive within 30 seconds (a sign-in sent a
+  byte at a time could hold the public site's connections), refuses addresses with `.`, `..` or
+  empty segments, and answers a failed App Store listing with an error instead of dropping the
+  connection.
+- An update started from Konsol (or a second `kur.sh`) no longer replaces the installer's files
+  while an installation or App Store operation is running. "Denetle ve onar" waits for the hourly
+  firewall check instead of showing the previous report. A truncated answer from GitHub counts as
+  a failed update check. Opening or closing a WireGuard network waits for a running App Store
+  stop.
+- Cleanup: unused styles, an unused import and CLI action, an option that could never be reached,
+  stale mentions of the retired exporter and `.command` installer, the README and CLAUDE.md
+  layout rows (DD-257).
+
 ### 2026-10-12 — The sign-in page shows the Ôbhut wordmark (v2-240)
 
 - Konsol's sign-in page shows "Ôbhut" (the mark as its first letter) where it said "Konsol.";

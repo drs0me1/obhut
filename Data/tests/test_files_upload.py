@@ -66,3 +66,50 @@ class UploadReserveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WriteAndTrashTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "Filmler").mkdir()
+        self.files = fp.Files(str(self.root), ".cop")
+
+    def test_short_writes_are_continued(self):
+        real = fp.os.write
+        with patch.object(fp, "disk_room"), \
+             patch.object(fp.os, "write", side_effect=lambda fd, data: real(fd, bytes(data[:3]))):
+            self.assertEqual(self.files.upload(["Filmler"], "a.txt", io.BytesIO(b"0123456789"), 10), 10)
+        self.assertEqual((self.root / "Filmler/a.txt").read_bytes(), b"0123456789")
+
+    def trash_with_a_disk_inside(self):
+        (self.root / "Filmler/disk").mkdir()
+        (self.root / "Filmler/disk/film.mkv").write_bytes(b"x")
+        token = self.files.to_trash([], ["Filmler"])[0]
+        real = fp.os.stat
+
+        def fake(path, *args, **kwargs):
+            st = real(path, *args, **kwargs)
+            if path == "disk":
+                return types.SimpleNamespace(st_dev=st.st_dev + 1, st_mode=st.st_mode)
+            return st
+        return token, patch.object(fp.os, "stat", side_effect=fake)
+
+    def test_emptying_the_trash_never_enters_a_mounted_disk(self):
+        # rename() moves a folder with a disk mounted inside it; the trash must not empty the disk.
+        token, other_device = self.trash_with_a_disk_inside()
+        with other_device:
+            with self.assertRaises(fp.PanelError) as err:
+                self.files.empty()
+        self.assertEqual(err.exception.code, 409)
+        self.assertTrue((self.root / ".cop" / token / "Filmler/disk/film.mkv").exists())
+
+    def test_purging_an_item_never_enters_a_mounted_disk(self):
+        token, other_device = self.trash_with_a_disk_inside()
+        with other_device:
+            with self.assertRaises(fp.PanelError):
+                self.files.purge([token])
+        self.assertTrue((self.root / ".cop" / token / "Filmler/disk/film.mkv").exists())
+        self.files.purge([token])
+        self.assertFalse((self.root / ".cop" / token).exists())

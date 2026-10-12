@@ -547,6 +547,8 @@ cmd_net() {
     local want="$1" unit="wg-quick@${WG_INTERFACE}.service"
     [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
     [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    # DD-229: App Store'un Durdur'u bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
+    take_lock
     not_stopped
     if [[ "$want" == kapat ]]; then
         systemctl disable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE kapatılamadı"

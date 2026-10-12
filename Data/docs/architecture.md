@@ -128,6 +128,7 @@ reality.
 .
 ├── kur.sh                             server bootstrap: curl … | sudo bash downloads the repo and starts install.sh (DD-228)
 ├── wireguard.command                  WireGuard peer menu (double-click; calls master-wg over SSH)
+├── onar.command                       check and repair over SSH (double-click; DD-239)
 ├── kurulum/                           wireguard.command input: kurulum.env (SSH_HOST); wireguard/ (only profiles + QR .png that wireguard.command was asked to download; DD-143) (Git-ignored)
 ├── README.md, CLAUDE.md               entry points
 ├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
@@ -142,15 +143,16 @@ reality.
     ├── panel/                         Konsol root backend (master-panel; loads package API modules), settings and share workers, WebDAV service
     ├── files-panel/                   unprivileged file/archive backend (Python), API only
     ├── console/                       Konsol pages, styles and scripts (one origin, no external loads)
+    ├── tools/duzenleyici/             source and build of the bundled text editor console/duzenleyici.js (DD-249; not shipped)
     ├── docs/                          contract, architecture, design decisions, feature notes; archive/
     ├── tests/                         Bats, Python, browser and Linux suites (not shipped)
     ├── CHANGELOG.md, SESSION.md       change log and working notes (not shipped)
     └── OKUBENI.txt                    Turkish operator notes (not shipped)
 ```
 
-The root holds only what the operator double-clicks. Paths in the rest of this
-document are relative to `Data/`. The exporter ships only the runtime subset
-(§8), unpacked on the host under `/root/debian-server-installer`.
+The root holds the server bootstrap `kur.sh` and what the operator double-clicks.
+Paths in the rest of this document are relative to `Data/`. `kur.sh` places only
+the runtime subset (§8) on the host, under `/root/debian-server-installer`.
 
 `.cursor/rules/` covers the repository tree. It describes how to build this
 installer and ships no runtime behaviour — nothing installs it,
@@ -506,7 +508,7 @@ validator or an unrun fresh-host acceptance test as a pass:
 
 | Check | Scope | Available on the dev workstation? |
 |---|---|---|
-| `bash -n` | Root `*.sh`, `scripts/*` and the exporter | **yes** |
+| `bash -n` | Root `*.sh`, `scripts/*` and the `.command` files | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
 | `bats tests/` | Shell/unit contracts; some require Linux tools | **yes**, with explicit skips for unavailable tools |
 | Python unittest / browser suites | Backend and production UI with isolated fixtures | **yes**, with optional native-RAR tests skipped without Linux dependencies |

@@ -94,8 +94,11 @@ package_declarations() {
     done <"$MODULES_FILE"
 }
 load_package_rules() {
-    local id word iface port n4 n6 rest i j
+    local id word iface port n4 n6 rest i j decl
     VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
+    # Okunamayan bildirim betiği burada durdurur: süreç ikamesindeki die yalnız alt kabuğu kapatır,
+    # kurallar eksik listeyle yazılırdı (VPN ağlarının NAT'ı ve DD-177 engelleri silinirdi).
+    decl="$(package_declarations)" || exit 1
     while read -r id word iface port n4 n6 rest; do
         [[ -n "$id" ]] || continue
         case "$word" in
@@ -108,7 +111,7 @@ load_package_rules() {
                 ;;
             *) die "güvenlik duvarı bildiriminde bilinmeyen sözcük ($id: '$word'); hiçbir kural değiştirilmedi" ;;
         esac
-    done < <(package_declarations)
+    done <<<"$decl"
     for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
         for ((j = i + 1; j < ${#VPN_IFACES[@]}; j++)); do
             [[ "${VPN_IFACES[i]}" != "${VPN_IFACES[j]}" && "${VPN_PORTS[i]}" != "${VPN_PORTS[j]}" ]] ||

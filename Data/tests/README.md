@@ -37,9 +37,6 @@ With DD-191, an independently enabled qBittorrent publication keeps the shared
 HTTPS port open; disable both rows to close it. A Tailscale row switch gates
 that named route, not the shared Caddy listener.
 
-Portable validation should compare the complete embedded file set with runtime
-sources, excluding Python caches, metadata, tests, docs and private input.
-
 ## Files favourites (v2-232, DD-250)
 
 `test_favorites.py` drives `/api/konsol/favoriler` on the root backend's handler: add/remove in order,

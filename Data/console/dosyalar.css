@@ -22,10 +22,6 @@
 .dav-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; }
 .dav-actions > .btn { white-space:normal; text-align:left; }
 .dav-actions > .sw { padding:0; flex:0 0 46px; }
-.dav-summary { display:grid; gap:16px; }
-.dav-pair { display:grid; gap:4px; font-size:13px; min-width:0; }
-.dav-pair small { font-size:11px; color:var(--muted); }
-.dav-pair > span { display:flex; gap:6px; align-items:center; }
 .dav-address { display:inline-flex; align-items:center; gap:6px; width:fit-content; max-width:100%; min-width:0; }
 .dav-address > code { min-width:0; overflow-wrap:anywhere; user-select:all; }
 .dav-address > .ib { flex:none; }
@@ -195,7 +191,7 @@
 .fx-acts .btn { justify-content:center; min-width:0; padding-inline:6px; white-space:nowrap; background:var(--glass-2); }
 .fx-acts .btn svg { width:14px; height:14px; flex:none; }
 .fx-acts .fx-danger { color:var(--danger); }
-.fx-detail .dav-summary, .fx-detail .dav-warning { font-size:12px; }
+.fx-detail .dav-warning { font-size:12px; }
 .fx-disk { margin-top:auto; display:grid; gap:5px; padding:10px 8px 0; border-top:1px solid var(--glass-line); }
 .fx-disk small { font-size:10.5px; color:var(--muted); }
 .fx-disk progress { width:100%; height:5px; }

@@ -598,12 +598,12 @@ def apply(env, run=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
-    parser.add_argument("operation", choices=("apply", "check", "--check"), nargs="?", default="apply")
+    parser.add_argument("operation", choices=("apply", "check"), nargs="?", default="apply")
     parser.add_argument("--check", action="store_true", dest="check_only")
     args = parser.parse_args()
     try:
         env = env_read(args.state)
-        (check if args.check_only or args.operation in ("check", "--check") else apply)(env)
+        (check if args.check_only or args.operation == "check" else apply)(env)
     except (NetworkError, KeyError) as err:
         parser.exit(1, "HATA: %s\n" % err)
 

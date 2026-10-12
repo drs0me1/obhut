@@ -257,9 +257,9 @@ show_qr() {
 printf '\n=== WireGuard peer yönetimi ===\n'
 echo "==> Sunucu: $HOST"
 remote_version="$(remote version 2>/dev/null)" ||
-    fail "sunucuda master-wg yok ya da çalışmıyor; önce güncel kurulumu (<sürüm>.command) çalıştırın."
+    fail "sunucuda master-wg yok ya da çalışmıyor; önce WireGuard'ı App Store'dan kurun ve sunucuyu Konsol'dan güncelleyin."
 [[ "$remote_version" == "$LOCAL_VERSION" ]] ||
-    fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce güncel kurulumu çalıştırın."
+    fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce sunucuyu Konsol'dan (Güncelle) güncelleyin."
 
 select_net || pause_exit 1
 
