@@ -13,6 +13,35 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-258: Konsol is redesigned around tasks, with Gezgin as its file application (accepted 2026-10-13)
+
+- **Request (user, 2026-10-13):** "konsolun çalışma mantığını … daha öncesini bilmiyor gibi incele;
+  kullanıcı arayüzü ve görünümleri tamamen değiştirmek, daha kullanışlı bir biçime geçmek istiyor …
+  akışkan bir menü tasarımı … hangi yapıları önerirsin". After the review: "önerileri kabul ediyorum
+  başlayabilirsin".
+- **Decision:** the plan in [`redesign.md`](redesign.md). Navigation by task (Genel Bakış, Uygulamalar,
+  Erişim, Dosyalar, Sistem, Gelişmiş); one reachability view and a "Yayınla" flow; two save models; one
+  component per kind; health first on the overview; view state in the URL. Backend stays standard-library
+  Python, split behind a declared route table, with an exposure read model, Server-Sent Events and a
+  dry-run plan. Frontend moves to Vue 3 + TypeScript + Vite (Gezgin's stack), built into committed
+  static files under the same CSP. Gezgin becomes an App Store container package and the file
+  application; Konsol keeps the root view and a rescue view; sharing moves to Gezgin after parity.
+- **Built beside the current UI** at `/yeni/` and switched over when it covers every view, so the
+  running panel never loses a feature mid-way.
+- **Prototype (approved 2026-10-13, "tasarım onaylıyorum"):** a light work surface with the wallpaper
+  only on the overview; the sidebar carries the Ôbhut wordmark, the server's name and counts on
+  Uygulamalar, Erişim and Sistem; the top bar holds search (the palette), the problem count and the
+  activity entry. WireGuard is Erişim's WireGuard tab: networks as tabs with "Ağ ekle", a network card
+  with its on/off switch, the devices with on/off, QR, profile and details, and one side panel for
+  adding a device, a device's DNS and keepalive, the network's label and default DNS, regenerating and
+  removing (typed "onayla"). Every WireGuard function of today's page is kept; none is added.
+- **Rejected:** Java (JVM footprint and dependency surface in a root process); keeping the no-build
+  rule with Web Components (loses the shared stack with Gezgin); a single big-bang rewrite; framing
+  Gezgin in Konsol or signing in through a trusted header (Gezgin removed proxy authentication on
+  purpose).
+- **Revisits, each in its own phase:** DD-159, DD-204, DD-212, DD-216, the no-build rule and the
+  `contract.md` sections on the page set, the Settings tabs and the per-row publication save.
+
 ### DD-257: Security and stability review after Gezgin (v2-241)
 
 - **Request (user, 2026-10-12):** "paneli fonksiyonları güvenlik ve stabilite açısından incele
