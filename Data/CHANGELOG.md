@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-13 — Konsol's sidebar shows the Ôbhut wordmark (v2-242)
+
+- Konsol's sidebar and its mobile header show "Ôbhut" where they showed the server's name with
+  an accent dot. The server's name and the panel address stay beneath it in the small line
+  ("<host> · panel.<domain>"), so nothing the operator read there is lost (DD-256).
+
 ### 2026-10-12 — Security and stability review (v2-241)
 
 - The firewall stops before touching any rule when an installed package's declaration cannot be

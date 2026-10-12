@@ -73,8 +73,10 @@ with its status and the file that holds it.
   the wordmark's −0.02 em letter-spacing, so the first letter is the mark and the rest is the
   typeface. The README shows this file. The sign-in page (v2-240) shows the same wordmark in
   place of its "Konsol." text, inline in `giris.html` so that `currentColor` follows Konsol's
-  light/dark setting (an `<img>` would only follow the system's); Konsol's sidebar keeps the
-  server's name and "Konsol".
+  light/dark setting (an `<img>` would only follow the system's). Konsol's sidebar and mobile
+  header (v2-242) show the same inline wordmark where they showed the server's name with the
+  accent dot; the server's name and the panel address move to the small line under it
+  ("<host> · panel.<domain>"), so the operator still sees which server this is.
 - **Not done:** no PNG favicon set for browsers without SVG icon support beyond the touch icon.
 
 ### DD-255: The project is named Obhut; internal names stay (v2-238)

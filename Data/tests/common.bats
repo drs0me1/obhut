@@ -1564,6 +1564,16 @@ EOF
     [ "$(grep -oE ' d="[^"]*"' "$giris" | sort)" = "$(grep -oE ' d="[^"]*"' "$V2_ROOT/docs/obhut-yazi.svg" | sort)" ]
     [ "$(grep -o ' d="' "$giris" | wc -l | tr -d ' ')" -eq 5 ]
     grep -qF '.login .wordmark-svg { display: block; height: 40px; width: auto; color: var(--ink); }' "$V2_ROOT/console/giris.css"
+    # Konsol's sidebar and mobile header carry the same wordmark; the host name and the panel
+    # address keep their elements (konsol.js writes them), and the old text wordmark is gone.
+    local index="$V2_ROOT/console/index.html"
+    [ "$(grep -c '<svg class="wordmark-svg" viewBox="0 -1066.4 2732 1077.4" role="img" aria-label="Obhut">' "$index")" -eq 2 ]
+    [ "$(sed -n 's/.*\(<svg class="wordmark-svg".*<\/svg>\).*/\1/p' "$index" | grep -o ' d="' | wc -l | tr -d ' ')" -eq 10 ]
+    [ "$(sed -n 's/.*\(<svg class="wordmark-svg".*<\/svg>\).*/\1/p' "$index" | grep -oE ' d="[^"]*"' | sort -u)" = "$(grep -oE ' d="[^"]*"' "$V2_ROOT/docs/obhut-yazi.svg" | sort -u)" ]
+    grep -qF '<small><span id="brand-host">sunucu</span> · <span id="brand-sub">Konsol</span></small>' "$index"
+    grep -qF '<small id="brand-host-m">sunucu</small>' "$index"
+    run ! grep -qF 'class="wordmark"' "$index" "$giris"
+    run ! grep -qE '^\.wordmark \{|\.wordmark \.dot' "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css"
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {

@@ -59,9 +59,11 @@ a { color: inherit; }
   border-right: 1px solid var(--line); padding: 20px 16px; display: flex; flex-direction: column; gap: 20px;
 }
 .brand { display: grid; gap: 2px; padding-inline: 8px; }
-.wordmark { font: 700 30px/1 var(--f-display); letter-spacing: -.035em; }
-.wordmark .dot { color: var(--accent); }
+/* DD-256: the Ôbhut wordmark, inline SVG so currentColor follows the theme. */
+.wordmark-svg { display: block; height: 32px; width: auto; color: var(--ink); }
 .brand small { font-size: 12.5px; color: var(--muted); }
+.brand-m { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand-m small { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dotmark { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .live .dotmark { animation: pulse 2.4s ease-out infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 currentColor; } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
@@ -342,7 +344,7 @@ dialog::backdrop { background: rgba(10, 14, 12, .5); }
   .side { display: none; }
   .main { padding-bottom: 96px; }
   .mobile-brand { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-  .mobile-brand .wordmark { font-size: 26px; }
+  .mobile-brand .wordmark-svg { height: 28px; }
   .toast { bottom: 84px; }
   .fs-t .tr, .trash-t .tr { grid-template-columns: 26px minmax(0, 1fr) auto; }
   .trash-t .tr { grid-template-columns: minmax(0, 1fr) auto auto; }
