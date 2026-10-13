@@ -8,5 +8,6 @@
 # Python bytecode left by local test runs; kur.sh never ships it.
 __pycache__/
 
-# The editor bundle's build dependencies (Data/tools/duzenleyici, DD-249); npm ci restores them.
+# Build dependencies of the editor bundle (Data/tools/duzenleyici, DD-249) and the new Konsol
+# (Data/tools/konsol-ui, DD-259); npm ci restores them.
 node_modules/

@@ -93,6 +93,31 @@ class ManagerTests(unittest.TestCase):
         self.assertTrue(answer['resource_errors']['volumes'])
         self.assertEqual(answer['containers'][0]['name'],'web')
 
+    def test_reach_lists_owners_states_and_port_scopes_with_one_podman_call(self):
+        # DD-259: Erişim's view; a stopped definition shows the ports it would publish.
+        value = self.save()
+        value.update(name='gezgin', ports=[{'scope':'local','host_port':8093,'container_port':8080,'protocol':'tcp','public_ack':False},
+                                           {'scope':'public','host_port':8443,'container_port':443,'protocol':'tcp','public_ack':True}])
+        config.Store(self.env).save(value)
+        self.rows = [{'Id':'abc','Names':['other'],'Image':'image','State':'running',
+                      'Ports':[{'host_ip':'100.64.0.2','host_port':9000,'container_port':80,'protocol':'tcp'}]}]
+        app={'name':'qbittorrent','image':'docker.io/x/y@sha256:'+'e'*64,'unit':'qbittorrent.service',
+             'module_id':'torrent','module_state':'durduruldu','adapter':'','channel':''}
+        with patch.object(manager,'app_specs',return_value={'qbittorrent':app}):
+            answer = self.s.view().reach()
+        self.assertEqual(answer['runtime']['ok'], True)
+        self.assertEqual([(c['name'],c['source'],c['module_id'],c['state'],c['live']) for c in answer['containers']],
+                         [('gezgin','konsol',None,'stopped',False),('other','external',None,'running',True),
+                          ('qbittorrent','appstore','torrent','stopped',False),('web','konsol',None,'stopped',False)])
+        self.assertEqual([(p['host_ip'],p['host_port'],p['scope']) for p in answer['containers'][0]['ports']],
+                         [('127.0.0.1',8093,'local'),('0.0.0.0',8443,'public')])
+        self.assertEqual(answer['containers'][1]['ports'][0]['scope'], 'tailscale')
+        self.assertEqual([c[:2] for c in self.calls], [['podman','version'],['podman','ps']], 'no stats, images or inspect')
+        self.fail_commands.add(('podman','ps'))
+        answer = self.s.view().reach()
+        self.assertFalse(answer['runtime']['ok'])
+        self.assertEqual([c['name'] for c in answer['containers']], ['gezgin','web'], 'saved definitions stay listed')
+
     def test_managed_container_log_is_its_unit_journal_unfiltered(self):
         # DD-251: a Konsol container's log is its unit's journal (every start and re-creation), live or not,
         # and nothing in it is masked.

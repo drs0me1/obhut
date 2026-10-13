@@ -103,7 +103,7 @@ Repairs run on request, not in the background (**DD-239**): Konsol → Ayarlar �
     ├── panel/              # Konsol root API, settings/share workers, WebDAV server
     ├── files-panel/        # file and archive backend
     ├── console/            # Konsol pages
-    ├── tools/              # source of the bundled text editor (not shipped)
+    ├── tools/              # sources of the bundled text editor and the new Konsol interface (not shipped)
     ├── systemd/            # units and drop-ins
     ├── tests/              # Bats, settings worker, browser and isolated Linux tests
     ├── docs/               # contract, architecture, design rationale and decision index

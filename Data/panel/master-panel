@@ -51,9 +51,12 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import master_api
 import master_auth
 import master_containers
 import master_container_manager
+import master_erisim
+import master_olaylar
 import master_settings
 import master_shares
 import master_publications
@@ -79,6 +82,24 @@ ACTOR = "konsol"
 CSP = ("default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 # Sidebar resource sampling: bounded history, SAMPLE_SECONDS between samples.
 SYS_POINTS = 12
+# DD-259: live events. A stream ends after STREAM_SECONDS (the page reconnects and the session is
+# asked again), sends a heartbeat well inside the 180 s socket timeout and re-checks an internet
+# session every STREAM_CHECK_SECONDS. Caddy keeps 16 connections per site to this backend; at most
+# STREAM_LIMIT of them per channel may hold a stream.
+STREAM_SECONDS = 600
+STREAM_HEARTBEAT_SECONDS = 15
+STREAM_CHECK_SECONDS = 30
+STREAM_RETRY_MS = 3000
+STREAM_LIMIT = 4
+# The activity drawer keeps a finished operation this long.
+JOB_KEEP_SECONDS = 120
+JOB_MODULE_ACTIONS = {"kur": "Kurulum", "kaldir": "Kaldırma", "baslat": "Başlatma", "durdur": "Durdurma",
+                      "yeniden-baslat": "Yeniden başlatma", "uygula": "Ayarların uygulanması"}
+JOB_CONTAINER_ACTIONS = {"create": "Oluşturma", "save": "Ayar kaydı", "start": "Başlatma", "stop": "Durdurma",
+                         "restart": "Yeniden başlatma", "remove": "Kaldırma", "adopt": "Sahiplenme",
+                         "image-pull": "İmaj indirme", "image-remove": "İmaj silme", "image-update": "İmaj güncelleme",
+                         "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
+                         "network-create": "Ağ oluşturma", "network-remove": "Ağ silme"}
 # Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
 # DD-182: Sağlık kartı. Salt okunur; sekme açıkken 30 sn'de bir hesaplanır.
@@ -548,6 +569,16 @@ class Panel:
         self.traffic_cache = (-TRAFFIC_CACHE_SECONDS, None)
         self.traffic_errors = set()
         self.containers = master_container_manager.Service(self)
+        # DD-259: App Store operations seen running, kept a while after they finish (activity drawer).
+        self.module_jobs = {}
+        self.jobs_lock = threading.Lock()
+        self.events = master_olaylar.Events([
+            master_olaylar.Topic("kaynaklar", 2, self.system,
+                                 key=lambda v: json.dumps([v.get("sampled_at"), v.get("host"), v.get("version"), v.get("domain")])),
+            master_olaylar.Topic("bekleyen", 1, self.pending),
+            master_olaylar.Topic("islemler", 2, self.jobs),
+            master_olaylar.Topic("saglik", 60, self.health, key=master_olaylar.without("read_at"), slow=True),
+        ], limit=STREAM_LIMIT)
 
     def public_open(self):
         """DD-195: is Konsol published on the internet right now (name, WAN IPv4, account)?
@@ -1901,6 +1932,118 @@ class Panel:
         self.actions_cache = (now, rows)
         return rows
 
+    # -- DD-259: the new interface's read models
+    def erisim(self):
+        """GET /api/konsol/erisim: who reaches which service from where, in one view. Reads what the
+        Settings page and the share list already read; a source that fails adds an error line."""
+        env = read_env(self.args.state)
+        errors = []
+        try:
+            shares = master_shares.Manager(self.args.state).public()
+        except (master_shares.ShareError, OSError, ValueError, KeyError):
+            shares = None
+            errors.append("Paylaşım kaydı okunamadı.")
+        containers = None
+        if env.get("KONTEYNER_STATE_DIR"):
+            try:
+                containers = self.containers.view().reach()
+            except master_containers.ContainerError as err:
+                errors.append(str(err))
+        rc, out = self.health_cmd(["tailscale", "status", "--json", "--peers=false"])
+        try:
+            tailscale = json.loads(out) if rc == 0 else None
+        except (ValueError, RecursionError):
+            tailscale = None
+        try:
+            packages = master_publications.packages(env)
+        except (OSError, ValueError, KeyError, master_settings.SettingsError):
+            packages = {}
+        names = {mid: m.get("PAKET_AD") or mid for mid, m in master_settings.read_manifests(env).items()}
+        return master_erisim.build(env, self.settings(), shares, containers, tailscale, self.package_networks(env),
+                                   packages, names, time.time(), errors)
+
+    def pending(self):
+        """The settings change waiting for confirmation or rollback (the page's banner)."""
+        if not read_env(self.args.state).get("SETTINGS_FILE"):
+            return {"bekleyen": None}
+        return {"bekleyen": master_settings.Manager(self.args.state).pending_view()}
+
+    def jobs(self):
+        """Running and just-finished operations for the activity drawer: App Store packages (the
+        engine's progress line), containers (their operation records), the update and the repair."""
+        env = read_env(self.args.state)
+        now = int(time.time())
+        items = self.module_job_items(env, now)
+        with self.containers.lock:
+            records = [dict(j) for j in self.containers.jobs.values()]
+        for job in sorted(records, key=lambda j: j.get("updated_at") or 0):
+            if job.get("state") == "running":
+                try:
+                    job = self.containers.operation(job["id"])  # the worker's step, or a unit that died
+                except master_containers.ContainerError:
+                    pass
+            done = job.get("state") != "running"
+            if done and now - int(job.get("updated_at") or 0) > JOB_KEEP_SECONDS:
+                continue
+            items.append({"tur": "konteyner", "id": str(job["id"]),
+                          "ad": "%s · %s" % (job.get("name", ""), JOB_CONTAINER_ACTIONS.get(job.get("action"), job.get("action", ""))),
+                          "durum": "calisiyor" if not done else "hata" if job.get("state") == "failed" else "tamam",
+                          "adim": str((job.get("error") if done else job.get("step")) or ""),
+                          "bitis": int(job.get("updated_at") or now) if done else None})
+        if env.get("GUNCELLEME_UNIT"):
+            job = self.updates.job(env, self.unit_active(env["GUNCELLEME_UNIT"]))
+            done = job["durum"] in ("tamam", "hata")
+            if job["durum"] == "calisiyor" or (done and job["bitis"] and now - job["bitis"] <= JOB_KEEP_SECONDS):
+                items.append({"tur": "guncelleme", "id": "guncelleme",
+                              "ad": "Güncelleme · %s" % job["hedef"] if job["hedef"] else "Güncelleme",
+                              "durum": job["durum"], "adim": job["mesaj"] if done else job["asama"],
+                              "bitis": job["bitis"] if done else None})
+        if env.get("ONARIM_UNIT"):
+            report = self.repair_info()["rapor"]
+            if report and report.get("durum") in ("calisiyor", "tamam", "hata"):
+                done = report["durum"] != "calisiyor"
+                ended = report.get("bitis") if isinstance(report.get("bitis"), int) else None
+                if not done or (ended and now - ended <= JOB_KEEP_SECONDS):
+                    steps = [s for s in report["adimlar"] if isinstance(s, dict)]
+                    items.append({"tur": "onarim", "id": "onarim",
+                                  "ad": "Denetle ve onar" if report.get("kip") == "onar" else "Denetle",
+                                  "durum": report["durum"],
+                                  "adim": str(steps[-1].get("ad", "")) if steps and not done else "",
+                                  "bitis": ended if done else None})
+        return {"items": items}
+
+    def module_job_items(self, env, now):
+        """App Store operations: the engine's progress line while its unit runs; its last line
+        ("bitti"/"hata") once the unit has gone. The engine list runs only while there is one."""
+        busy = self.busy_units()
+        with self.jobs_lock:
+            watching = any(j["bitis"] is None for j in self.module_jobs.values())
+        if busy or watching:
+            try:
+                modules = self.modules()
+            except RuntimeError:
+                modules = []
+            with self.jobs_lock:
+                for m in modules:
+                    progress = m.get("progress") or {}
+                    if m.get("busy"):
+                        total = progress.get("total") or 0
+                        step = ("Adım %s/%s · %s" % (progress.get("step"), total, progress.get("text", "")) if total
+                                else progress.get("text", ""))
+                        self.module_jobs[m["id"]] = {"action": progress.get("action", ""), "durum": "calisiyor",
+                                                     "adim": step, "bitis": None}
+                    elif m["id"] in self.module_jobs and self.module_jobs[m["id"]]["bitis"] is None:
+                        failed = progress.get("step") == "hata"
+                        self.module_jobs[m["id"]].update(durum="hata" if failed else "tamam", bitis=now,
+                                                         adim=progress.get("text", "") if failed else "")
+        names = {mid: m.get("PAKET_AD") or mid for mid, m in master_settings.read_manifests(env).items()}
+        with self.jobs_lock:
+            for mid in [k for k, j in self.module_jobs.items() if j["bitis"] is not None and now - j["bitis"] > JOB_KEEP_SECONDS]:
+                del self.module_jobs[mid]
+            jobs = sorted((mid, dict(job)) for mid, job in self.module_jobs.items())
+        return [{"tur": "modul", "id": mid,
+                 "ad": "%s · %s" % (names.get(mid, mid), JOB_MODULE_ACTIONS.get(job["action"], job["action"])),
+                 "durum": job["durum"], "adim": str(job["adim"] or ""), "bitis": job["bitis"]} for mid, job in jobs]
 
 
 def num_or(value, default):
@@ -2136,10 +2279,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         DD-205: the tailnet site asks for no sign-in — gate() already required another Tailscale
         device (DD-180) — and sends its sign-in page back to Konsol. The internet site (and a
         caller without Caddy's forwarding headers) needs a session, except for the sign-in page."""
-        page = (self.headers.get("X-Forwarded-Uri") or "").split("?", 1)[0]
+        page, _, query = (self.headers.get("X-Forwarded-Uri") or "").partition("?")
+        # DD-259: the redesigned interface at /yeni/ keeps its address through the sign-in page; the
+        # page names it with the one value geri=yeni, never with an address.
+        new_ui = page == "/yeni" or page.startswith("/yeni/") or (
+            page == "/giris.html" and urllib.parse.parse_qs(query).get("geri") == ["yeni"])
+        home, login = ("/yeni/", "/giris.html?geri=yeni") if new_ui else ("/", "/giris.html")
         if self.channel() == "tailscale":
             if page == "/giris.html":
-                self.send(302, extra={"Location": "/"})
+                self.send(302, extra={"Location": home})
             else:
                 self.send(204)
             return
@@ -2157,7 +2305,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self.json(401, {"error": "Oturum gerekli; yeniden giriş yapın.", "giris": True})
         else:
-            self.send(302, extra={"Location": "/giris.html"})
+            self.send(302, extra={"Location": login})
 
     def account_post(self, path, data):
         action = path.rsplit("/", 1)[-1]
@@ -2241,6 +2389,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/oturum-denetle":
             self.session_gate()
             return
+        # DD-259: routes of the new interface come from master_api's table (shapes and OpenAPI).
+        route = master_api.find("GET", path)
+        if route is not None:
+            getattr(self, "api_" + route.name)(query)
+            return
         if path == "/api/konsol/oturum":
             try:
                 # DD-205: the user name is shown to the tailnet (trusted device), not to an anonymous internet visitor.
@@ -2255,9 +2408,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.json(200, master_shares.Manager(self.panel.args.state).public())
             except (master_shares.ShareError, OSError, ValueError, KeyError):
                 self.error(503, "Paylaşım kaydı okunamadı; kurulumu kontrol edin.")
-            return
-        if path == "/api/konsol/kaynaklar":
-            self.json(200, self.panel.system())
             return
         if path == "/api/konsol/ag":
             self.json(200, self.panel.network())
@@ -2280,15 +2430,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             info = self.panel.repair_info()
             info["baslatilabilir"] = self.channel() != "internet"  # DD-239: like the update, tailnet only
             self.json(200, info)
-            return
-        if path == "/api/konsol/guncelleme":
-            info = self.panel.update_info(force="yenile" in query)
-            # DD-233: only a Tailscale device (or root on the socket) starts an update.
-            info["baslatilabilir"] = self.channel() != "internet"
-            self.json(200, info)
-            return
-        if path == "/api/konsol/saglik":
-            self.json(200, self.panel.health())
             return
         m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)
         if m:
@@ -2325,12 +2466,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.json(200, {"items": manager.folders(query.get("path", [None])[0])} if path.endswith("klasorler") else manager.status())
             except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
                 self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
-            return
-        if path == "/api/konsol/moduller":
-            try:
-                self.json(200, {"items": self.panel.modules()})
-            except RuntimeError as err:
-                self.error(502, str(err))
             return
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/gunluk$", path)
         if m:
@@ -2381,6 +2516,95 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.package_request(user, m.group(1), m.group(2) or "/", query, None)
             return
         self.error(404, "bulunamadı")
+
+    # -- DD-259: master_api's routes (a test checks every route has its method)
+    def api_erisim(self, query):
+        self.json(200, self.panel.erisim())
+
+    def api_kaynaklar(self, query):
+        self.json(200, self.panel.system())
+
+    def api_saglik(self, query):
+        self.json(200, self.panel.health())
+
+    def api_etkinlik(self, query):
+        self.json(200, self.panel.jobs())
+
+    def api_bekleyen(self, query):
+        try:
+            self.json(200, self.panel.pending())
+        except (master_settings.SettingsError, OSError, KeyError, ValueError):
+            self.error(503, "Ayar işlemi durumu okunamadı.")
+
+    def api_moduller(self, query):
+        try:
+            self.json(200, {"items": self.panel.modules()})
+        except RuntimeError as err:
+            self.error(502, str(err))
+
+    def api_guncelleme(self, query):
+        info = self.panel.update_info(force="yenile" in query)
+        # DD-233: only a Tailscale device (or root on the socket) starts an update.
+        info["baslatilabilir"] = self.channel() != "internet"
+        self.json(200, info)
+
+    def api_olaylar(self, query):
+        """Server-Sent Events. The page reads them with fetch() so the X-Konsol gate stays as it is
+        (EventSource cannot send the header). The stream ends after STREAM_SECONDS and the page
+        reconnects; an internet session is asked again while it is open (stream_allowed)."""
+        channel = self.channel()
+        try:
+            self.panel.events.subscribe(channel)
+        except master_olaylar.TooMany:
+            self.error(503, "Bu kanalda çok fazla canlı akış açık; sayfa yenilemeyle güncellenir.")
+            return
+        try:
+            self.close_connection = True
+            self.send_response(200)
+            for name, value in (("Content-Type", "text/event-stream; charset=utf-8"), ("Cache-Control", "no-store"),
+                                ("Content-Security-Policy", CSP), ("X-Content-Type-Options", "nosniff"),
+                                ("X-Frame-Options", "DENY"), ("Referrer-Policy", "no-referrer"), ("Connection", "close")):
+                self.send_header(name, value)
+            self.end_headers()
+            if self.command == "HEAD":
+                return
+            self.wfile.write(b"retry: %d\n\n" % STREAM_RETRY_MS)
+            seen, start = 0, time.monotonic()
+            end, beat, check = start + STREAM_SECONDS, start + STREAM_HEARTBEAT_SECONDS, start + STREAM_CHECK_SECONDS
+            while True:
+                seen, batch = self.panel.events.wait(seen, min(beat, end, check) - time.monotonic())
+                now = time.monotonic()
+                out = "".join(master_olaylar.frame(*item) for item in batch)
+                reason = "sure" if now >= end else None
+                if reason is None and now >= check:
+                    check = now + STREAM_CHECK_SECONDS
+                    if not self.stream_allowed():
+                        reason = "oturum"
+                if reason:
+                    out += master_olaylar.frame("kapat", seen, json.dumps({"neden": reason}))
+                elif not out and now >= beat:
+                    out = ": canli\n\n"
+                if out:
+                    self.wfile.write(out.encode("utf-8"))
+                    beat = now + STREAM_HEARTBEAT_SECONDS
+                if reason:
+                    return
+        except (OSError, ValueError):
+            return  # the page went away or stopped reading (socket timeout)
+        finally:
+            self.panel.events.unsubscribe(channel)
+
+    def stream_allowed(self):
+        """Caddy asked for the session once, when the stream began (DD-194). On the internet site the
+        stream ends when the publication closes or the session is gone; the tailnet needs neither."""
+        if self.channel() != "internet":
+            return True
+        if not self.panel.public_open():
+            return False
+        try:
+            return bool(self.panel.auth().user_for(self.cookie_token()))
+        except (master_auth.AuthError, OSError):
+            return False
 
     def package_request(self, user, mid, sub, query, data):
         """DD-200: /api/uygulama/<id>/* → the installed package's API module, after the same

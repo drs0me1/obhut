@@ -530,7 +530,8 @@ def manual_status(env, rows):
                     pass
             else:
                 row["message"] = "Sunucunun internet IPv4 adresi kullanılamıyor; internet yayını kapalı."
-        if not upstream_answers(info["upstream"]):
+        row["answers"] = upstream_answers(info["upstream"])
+        if not row["answers"]:
             row["message"] = "Hedef %s yanıt vermiyor; uygulamanın çalıştığını ve portunu kontrol edin. %s" % (
                 info["upstream"], row["message"])
         out.append(row)

@@ -4,7 +4,9 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
-  const back = () => location.replace("/" + (location.hash.startsWith("#/") ? location.hash : ""));
+  // DD-259: the redesigned interface (/yeni/) sends ?geri=yeni and gets its own address back.
+  const home = new URLSearchParams(location.search).get("geri") === "yeni" ? "/yeni/" : "/";
+  const back = () => location.replace(home + (location.hash.startsWith("#/") ? location.hash : ""));
   async function call(path, body) {
     const init = { method: body ? "POST" : "GET", headers: { "X-Konsol": "1" }, credentials: "same-origin", cache: "no-store" };
     if (body) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }

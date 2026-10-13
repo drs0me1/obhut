@@ -90,6 +90,12 @@ def definition_row(d):
             'finished': None, 'exit_code': 0, 'restarts': 0, 'health': ''}
 
 
+def definition_ports(d, env):
+    """A stopped definition's publications as podman would show them."""
+    return [{'host_ip': {'local':'127.0.0.1','tailscale':env.get('TAILSCALE_IPV4',''),'public':'0.0.0.0'}[p['scope']],
+             **{k:p[k] for k in ('host_port','container_port','protocol')}} for p in d.get('ports', [])]
+
+
 def memory_bytes(value):
     if isinstance(value,(int,float)) and value>=0:
         return int(value)
@@ -163,8 +169,7 @@ class Inventory(Containers):
                        unit='konsol-' + name + '.service', actions=lifecycle + ['save', 'remove', 'image-update'],
                        effective_autostart=bool(d.get('autostart') and not d.get('manual_stop')))
             if not row['live']:
-                row['ports'] = [{'host_ip': {'local':'127.0.0.1','tailscale':self.env.get('TAILSCALE_IPV4',''),'public':'0.0.0.0'}[p['scope']],
-                                 **{k:p[k] for k in ('host_port','container_port','protocol')}} for p in d.get('ports', [])]
+                row['ports'] = definition_ports(d, self.env)
             if details:
                 row.update(config=config.redact(d), editable=['ports','mounts','environment','command','autostart','restart','cpus','memory','image','network','user'], protected_mounts=[])
                 if not row['live']:
@@ -281,6 +286,31 @@ class Inventory(Containers):
                                internal=bool(r.get('Internal') or r.get('internal')))
                 answer[kind].append(row)
         return answer
+
+    def reach(self):
+        """DD-259: Erişim's view of the containers: who manages each, whether it runs and the scope of
+        each published port (the container guard admits exactly these, DD-217). One `podman ps`; no
+        stats, images, inspect or package adapters."""
+        runtime = self.runtime()
+        found = []
+        if runtime['ok']:
+            ok, found, message = self.ps()
+            if not ok:
+                runtime = {'version': runtime['version'], 'ok': False, 'error': 'Konteynerler okunamadı: %s' % message}
+        rows = {r['name']: r for r in found}
+        items = []
+        for name in sorted(set(rows) | set(self.definitions) | set(self.apps)):
+            row, app, d = rows.get(name), self.apps.get(name), self.definitions.get(name)
+            if row:
+                state, ports = row['state'], row['ports']
+            elif app:
+                state, ports = 'stopped' if app['module_state'] == 'durduruldu' else 'unknown', []
+            else:
+                state, ports = 'stopped', definition_ports(d, self.env)
+            items.append({'name': name, 'source': 'appstore' if app else 'konsol' if d else 'external',
+                          'module_id': app['module_id'] if app else None, 'state': state, 'live': bool(row),
+                          'ports': [dict(p, scope=port_scope(p.get('host_ip', ''), self.env)) for p in ports]})
+        return {'runtime': runtime, 'containers': items}
 
     def ayrinti(self,name):
         name_of(name)

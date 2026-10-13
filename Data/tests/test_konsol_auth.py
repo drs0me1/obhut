@@ -375,6 +375,13 @@ class PanelEndpointTests(unittest.TestCase):
         status, headers, _ = self.gate("/giris.html")
         self.assertEqual((status, headers["Location"]), (302, "/"))
         self.assertEqual(self.gate("/giris.html?x=1")[0], 302)
+        # DD-259: the redesigned interface's sign-in returns to it; nothing else names a target.
+        self.assertEqual(self.gate("/giris.html?geri=yeni")[1]["Location"], "/yeni/")
+        self.assertEqual(self.gate("/giris.html?geri=//evil.test")[1]["Location"], "/")
+        self.assertEqual(self.local("/yeni/")[1]["Location"], "/giris.html?geri=yeni")
+        self.assertEqual(self.local("/yeni")[1]["Location"], "/giris.html?geri=yeni")
+        self.assertEqual(self.local("/yenisi")[1]["Location"], "/giris.html")
+        self.assertEqual(self.local("/giris.html?geri=yeni")[0], 204)
         # Without Caddy's forwarding headers a session is required, except for the sign-in page itself.
         status, headers, _ = self.local("/#/ayarlar")
         self.assertEqual((status, headers["Location"]), (302, "/giris.html"))

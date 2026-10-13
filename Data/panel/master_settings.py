@@ -566,21 +566,26 @@ class Manager:
             out.append(args)
         return out
 
+    def pending_view(self):
+        """The pending change as pages show it (None without one); reads only the pending file."""
+        p = self.pending()
+        if not p:
+            return None
+        pending = {"id": p["id"], "phase": p["phase"], "seconds": max(0, int(p["until"] - time.monotonic())) if p["boot"] == boot_id() else 0}
+        if p.get("attempts"):
+            pending.update(attempts=p["attempts"], error=p.get("error", ""))
+            if p["phase"] == "rollback" and p.get("retry_boot") == boot_id():
+                pending["retry_in"] = max(0, int(p.get("retry_at", 0) - time.monotonic()))
+        if p["changes"].get("domain"):
+            pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
+        if p["changes"].get("web"):
+            pending["web"] = True
+        return pending
+
     def status(self):
         import master_https
         import master_publications
-        p = self.pending()
-        pending = None
-        if p:
-            pending = {"id": p["id"], "phase": p["phase"], "seconds": max(0, int(p["until"] - time.monotonic())) if p["boot"] == boot_id() else 0}
-            if p.get("attempts"):
-                pending.update(attempts=p["attempts"], error=p.get("error", ""))
-                if p["phase"] == "rollback" and p.get("retry_boot") == boot_id():
-                    pending["retry_in"] = max(0, int(p.get("retry_at", 0) - time.monotonic()))
-            if p["changes"].get("domain"):
-                pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
-            if p["changes"].get("web"):
-                pending["web"] = True
+        pending = self.pending_view()
         return {"revision": self.revision(), "config": self.current(), "pending": pending,
                 "names": self.dns_names(), "folders": self.folders(), "https": master_https.status(self.e),
                 "publications": master_publications.status(self.e)}

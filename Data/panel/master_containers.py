@@ -265,15 +265,12 @@ class Containers:
             ok, message = False, "podman sürümü okunamadı"
         return {"version": version if ok else "", "ok": ok, "error": "" if ok else "Podman kullanılamıyor: %s" % message}
 
-    def liste(self):
-        runtime = self.runtime()
-        answer = {"read_at": int(time.time()), "runtime": runtime, "containers": [], "images": [], "storage": {"images": 0, "containers": 0, "size": None}}
-        if not runtime["ok"]:
-            return answer
+    def ps(self):
+        """`podman ps -a` as rows: (ok, rows, error text)."""
         ok, rows, message = self.podman("ps", "-a", "--format", "json")
         if not ok:
-            answer["runtime"] = {"version": runtime["version"], "ok": False, "error": "Konteynerler okunamadı: %s" % message}
-            return answer
+            return False, [], message
+        result = []
         for c in rows or []:
             if not isinstance(c, dict):
                 continue
@@ -281,7 +278,7 @@ class Containers:
             name = names[0] if isinstance(names, list) and names else str(c.get("Id", ""))[:12]
             labels = c.get("Labels") or {}
             networks = c.get("Networks") or []
-            answer["containers"].append({
+            result.append({
                 "id": str(c.get("Id", ""))[:12], "name": name, "image": c.get("Image", ""), "state": c.get("State") or "unknown",
                 "status": c.get("Status", ""), "created": epoch(c.get("Created")), "started": epoch(c.get("StartedAt")),
                 "exit_code": c.get("ExitCode", 0) if isinstance(c.get("ExitCode"), int) else 0,
@@ -290,6 +287,18 @@ class Containers:
                 "network": ", ".join(networks) if networks else "host" if (c.get("Namespaces") or {}).get("Net", "") == "host" or not networks else "",
                 "ports": ps_ports(c.get("Ports")), "mounts": len(c.get("Mounts") or []),
             })
+        return True, result, ""
+
+    def liste(self):
+        runtime = self.runtime()
+        answer = {"read_at": int(time.time()), "runtime": runtime, "containers": [], "images": [], "storage": {"images": 0, "containers": 0, "size": None}}
+        if not runtime["ok"]:
+            return answer
+        ok, rows, message = self.ps()
+        if not ok:
+            answer["runtime"] = {"version": runtime["version"], "ok": False, "error": "Konteynerler okunamadı: %s" % message}
+            return answer
+        answer["containers"] = rows
         answer["storage"]["containers"] = len(answer["containers"])
         ok, images, _ = self.podman("images", "--format", "json")
         if ok:

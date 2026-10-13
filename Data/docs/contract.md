@@ -496,12 +496,26 @@ Contract in §5–§7 and `folder-shares.md`.
   for the same console (**DD-195**). Caddy serves the page files itself from
   `CONSOLE_WEB_DIR` (CSP, `no-cache` so a browser revalidates instead of
   re-downloading, `nosniff`, `X-Frame-Options: DENY`, no referrer; pages and API
-  replies are compressed with zstd/gzip, **DD-181**), sends `/api/konsol/*` and `/api/uygulama/*` to `master-panel` and
+  replies are compressed with zstd/gzip, **DD-181**, except the event stream, **DD-259**), sends `/api/konsol/*` and
+  `/api/uygulama/*` to `master-panel` and
   every other `/api/*` to `master-files-panel`. Both backends
   accept only that host and require the header `X-Konsol` on `/api/*`
   (**DD-147**); on the public name every path except the sign-in page and API
   also needs a Konsol session, while the tailnet address asks for none
   (**DD-194**, **DD-205**).
+  - The redesigned Konsol (**DD-258**, **DD-259**) is served beside these pages at `/yeni/`, behind the
+    same session check and CSP (plus `font-src 'self'` for its local Outfit font). The installer
+    places the committed build of `tools/konsol-ui` (Vue 3 + TypeScript + Vite; nothing is built on
+    the server) from `console/yeni/` and removes files an older build left. Its pages open the
+    current Konsol until a later phase replaces them. Its backend routes come from the table in
+    `master_api.py`: `/api/konsol/erisim` (read-only reachability of every service from this server,
+    Tailscale, WireGuard and the internet, with warnings; it changes and probes nothing new),
+    `/api/konsol/olaylar` (Server-Sent Events for resources, health, operations and the pending
+    change; changed topics only, a 15 s heartbeat, a stream ends after 10 minutes, at most 4
+    streams per channel and then 503, the public name's publication and session asked again every
+    30 s) and `/api/konsol/etkinlik` and `/api/konsol/bekleyen` (the same data for polling). All of
+    them need `X-Konsol`; the page reads the stream with fetch. On the public name an ended session
+    sends the page to `/giris.html?geri=yeni`, which returns to `/yeni/` after signing in.
   - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**, **DD-216**): Ana Menü is the
     landing page, with only installed application tiles and the network widget.
     Dosyalar, Paylaşımlar, App Store and Ayarlar have no home cards. Dosyalar, App Store

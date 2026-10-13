@@ -855,9 +855,10 @@ assert not missing, missing
 
 @test "speed and log-noise settings: compressed Konsol, idle guard, quiet timers, quiet backend, lower torrent priority" {
     local site s7 unit
-    # DD-181: pages and API replies are compressed; page files revalidate instead of redownloading.
+    # DD-181: pages and API replies are compressed (DD-259: all but the event stream); page files
+    # revalidate instead of redownloading.
     site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
-    grep -qx "$(printf '\tencode zstd gzip')" <<<"$site"
+    grep -qx "$(printf '\tencode @sikistir zstd gzip')" <<<"$site"
     grep -q 'Cache-Control "no-cache"' <<<"$site"
     run ! grep -q 'Cache-Control "no-store"' "$V2_ROOT/templates/Caddyfile"
     # The WebDAV sites stay uncompressed (video).
@@ -903,8 +904,10 @@ assert not missing, missing
         "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
     # A damaged archive history is set aside instead of stopping the Files service.
     grep -qF 'aside = "jobs.json.bozuk-%d" % time.time()' "$V2_ROOT/files-panel/master_archives.py"
-    # Health card: read-only endpoint, shown on Settings → Sistem, refreshed with the page poll.
-    grep -qF 'if path == "/api/konsol/saglik":' "$V2_ROOT/panel/master-panel"
+    # Health card: read-only endpoint (DD-259: in the route table), shown on Settings → Sistem,
+    # refreshed with the page poll.
+    grep -qF 'Route("GET", "/api/konsol/saglik", "saglik",' "$V2_ROOT/panel/master_api.py"
+    grep -qF 'self.json(200, self.panel.health())' <<<"$(grep -A1 'def api_saglik(self, query):' "$V2_ROOT/panel/master-panel")"
     grep -qx 'HEALTH_CACHE_SECONDS = 30' "$V2_ROOT/panel/master-panel"
     grep -qF 'api("/api/konsol/saglik")' "$V2_ROOT/console/konsol.js"
     grep -qF 'if (current === "ayarlar" && settingsTab === "system") loadHealth();' "$V2_ROOT/console/konsol.js"
@@ -2751,7 +2754,9 @@ EOF
     # DD-205: the backend answers by Caddy's channel — the tailnet needs no cookie, its /giris.html is a redirect
     # to Konsol, the internet needs a session except for the sign-in page; the account is made without a code.
     grep -qF 'if self.channel() == "tailscale":' "$backend"
-    grep -qF 'self.send(302, extra={"Location": "/"})' "$backend"
+    grep -qF 'self.send(302, extra={"Location": home})' "$backend"
+    # DD-259: home is / or, for the redesigned interface (/yeni/, ?geri=yeni), /yeni/; never an address from the request.
+    grep -qF 'home, login = ("/yeni/", "/giris.html?geri=yeni") if new_ui else ("/", "/giris.html")' "$backend"
     grep -qF 'if user or page == "/giris.html":' "$backend"
     grep -qF 'reveal=self.channel() != "internet"' "$backend"
     grep -qF 'store.create(data.get("kullanici"), data.get("parola"))' "$backend"
@@ -5863,4 +5868,66 @@ PY
     # Both views offer the save route; the system view keeps its narrower list otherwise.
     grep -qF '"/api/text/save": ("duzenle", save_text),' "$V2_ROOT/files-panel/master-files-panel"
     [ "$(grep -cF '"/api/text/save": ("duzenle", save_text),' "$V2_ROOT/files-panel/master-files-panel")" -eq 2 ]
+}
+
+@test "the new interface's backend: route table, Erişim and live events are installed and wired (DD-259)" {
+    local install="$V2_ROOT/install.sh" panel="$V2_ROOT/panel/master-panel" caddy="$V2_ROOT/templates/Caddyfile" module stage
+    # Every module the backend imports is installed beside it in SBIN_DIR.
+    for module in $(grep -oE '^import master_[a-z_]+' "$panel" | cut -d' ' -f2); do
+        grep -qE "atomic_write \"\\\$SBIN_DIR/$module\\.py\"|^ *for [a-z_]+ in ([a-z_]+ )*$module( |;)" "$install" ||
+            { echo "not installed: $module"; return 1; }
+    done
+    stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
+    grep -qF 'for panel_module in master_api master_erisim master_olaylar; do' <<<"$stage"
+    grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"
+    # The event stream is never compressed (the encoder would hold small events back); everything else is.
+    grep -qx $'\t@sikistir not path /api/konsol/olaylar' "$caddy"
+    grep -qx $'\tencode @sikistir zstd gzip' "$caddy"
+    [ "$(grep -c 'encode zstd gzip' "$caddy")" -eq 0 ]
+    # Heartbeats well inside the backend's 180 s socket timeout; streams leave most of Caddy's 16
+    # connections per site to ordinary requests; the page reads the stream with fetch, so the X-Konsol
+    # gate has no exception.
+    grep -qx '    timeout = 180' "$panel"
+    grep -qx 'STREAM_HEARTBEAT_SECONDS = 15' "$panel"
+    grep -qx 'STREAM_LIMIT = 4' "$panel"
+    [ "$(grep -c 'max_conns_per_host 16' "$caddy")" -ge 2 ]
+    [ "$(grep -c 'olaylar' <<<"$(awk '/def gate\(self\):/,/return ACTOR/' "$panel")")" -eq 0 ]
+    # The new interface is placed beside the current one; stale files of an older build are removed.
+    grep -qF '[[ -f "$V2_ROOT/console/yeni/index.html" ]] || die "Konsol'"'"'un yeni arayüzü eksik: console/yeni/index.html"' "$install"
+    grep -qF 'atomic_write "$CONSOLE_WEB_DIR/yeni/$rel" 0644 <"$f"' "$install"
+    grep -qF '[[ "${rel##*/}" != .* && -f "$V2_ROOT/console/yeni/$rel" ]] || rm -f -- "$f"' "$install"
+    grep -qF 'find "$V2_ROOT/console/yeni" -type f ! -name '"'"'.*'"'"' \( -name '"'"'*.html'"'"'' "$install"
+}
+
+@test "the new interface's build matches its sources, stays inside the CSP and is installed whole (DD-259)" {
+    local yeni="$V2_ROOT/console/yeni" tools="$V2_ROOT/tools/konsol-ui" caddy="$V2_ROOT/templates/Caddyfile" f
+    # The committed build belongs to the committed sources: npm run derle writes the digest and POSIX
+    # tools recompute it (rebuild: cd tools/konsol-ui && npm ci && npm run derle).
+    [ "$(sh "$tools/kaynak-ozeti.sh")" = "$(cat "$yeni/kaynak.sha256")" ]
+    # The API types are generated (test_api.py compares them with panel/master_api.py).
+    head -1 "$tools/src/api/sema.ts" | grep -qxF '// Generated by Data/panel/master_api.py (DD-259); do not edit.'
+    # Exact pins, no install scripts, every package from the public registry; the banner names them.
+    grep -qx 'ignore-scripts=true' "$tools/.npmrc"
+    run ! grep -qE '": "[\^~]|": "latest"' "$tools/package.json"
+    run ! grep -q '"resolved": "http' <(grep '"resolved"' "$tools/package-lock.json" | grep -v 'https://registry.npmjs.org/')
+    head -1 "$yeni/app.js" | grep -qF '/*! Konsol (DD-258), built from Data/tools/konsol-ui'
+    head -8 "$yeni/app.js" | grep -qF " *   vue-router $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"]["vue-router"])' "$tools/package.json") — "
+    # The page loads only its own files: no inline script, style or handler, nothing from elsewhere.
+    run ! grep -qiE '<style|style=|(^|[[:space:]])on[a-z]+=|https?://' "$yeni/index.html"
+    [ "$(grep -oE '(href|src)="[^"]+"' "$yeni/index.html" | LC_ALL=C sort -u | tr '\n' ' ')" = \
+        'href="/obhut.png" href="/obhut.svg" href="/yeni/app.css" href="/yeni/fonts/Outfit-Variable.woff2" src="/yeni/app.js" src="/yeni/tema.js" ' ]
+    run ! grep -qE 'new Function|eval\(' "$yeni/app.js"
+    # The only addresses in the bundle are XML namespaces and Vue's error reference; none is fetched.
+    [ "$(grep -oE 'https?://[a-zA-Z0-9./_-]+' "$yeni/app.js" | sort -u | tr '\n' ' ')" = \
+        'http://www.w3.org/1998/Math/MathML http://www.w3.org/1999/xlink http://www.w3.org/2000/svg https://vuejs.org/error-reference/ ' ]
+    # The local font needs font-src 'self' in the console's one CSP; its licence travels with it.
+    [ "$(grep -c "font-src 'self'" "$caddy")" -eq 1 ]
+    [ -f "$yeni/fonts/OFL.txt" ]
+    # Every file of the build has an extension the installer places.
+    for f in $(cd "$yeni" && find . -type f ! -name kaynak.sha256 | sed 's|^\./||'); do
+        case "$f" in *.html | *.js | *.css | *.woff2 | *.svg | *.png | *.txt) ;; *) echo "not installed: $f"; return 1 ;; esac
+    done
+    # Sources stay in the repository: kur.sh ships console/ (with the build), never tools/.
+    run ! grep -qE '^    local items="[^"]*(^| )tools( |")' "$V2_ROOT/../kur.sh"
+    grep -qx 'node_modules/' "$V2_ROOT/../.gitignore"
 }

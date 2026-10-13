@@ -37,6 +37,62 @@ With DD-191, an independently enabled qBittorrent publication keeps the shared
 HTTPS port open; disable both rows to close it. A Tailscale row switch gates
 that named route, not the shared Caddy listener.
 
+## Redesign phase 1: route table, Erişim, live events (v2-243, DD-259)
+
+`test_api.py` checks that every route of `panel/master_api.py` has its `api_<name>` handler method,
+that `docs/konsol-api.json` and `tools/konsol-ui/src/api/sema.ts` are exactly what the table generates
+(regenerate with `python3 panel/master_api.py openapi > docs/konsol-api.json` and
+`python3 panel/master_api.py ts > tools/konsol-ui/src/api/sema.ts`), that the schema check refuses
+wrong shapes, and that the table's routes answer through the real handler with their declared shapes.
+`test_erisim.py` feeds `master_erisim.build()` the shapes the backend's sources return (documentation
+addresses only): the four cells of each service, a package's peer port as a partly open internet cell,
+a manual address joining its container, WireGuard closed for every service, warnings (plain HTTP
+WebDAV, a container port straight on the WAN, an unknown publication address, a publication that is on
+but failing, Tailscale disconnected, certificate expiry), operator rules, unreadable sources as error
+lines; then the route on a temporary Unix socket and its gates. `test_container_manager.py` checks
+`Inventory.reach()` (one `podman ps`, stopped definitions with their configured ports).
+`test_olaylar.py` drives the producer with a fake clock (changed topics only, a failing topic logged
+once, a slow topic in its own thread, the per-channel limit, the producer stopping when idle), the
+activity drawer's operations (App Store progress through to "bitti"/"hata", container records, the
+update and the repair, the 120 s window) and the pending change; then real streams on a temporary Unix
+socket: headers without `Content-Length`, `retry:`, frames, heartbeats, a change reaching an open
+stream, the end of a stream, 503 at the limit, the `X-Konsol` gate, and an internet session that ends
+while its stream is open. `common.bats` checks that every module `master-panel` imports is installed,
+the uncompressed stream in the Caddy snippet, the stream limits, the absent gate exception and the
+`/yeni/` copy in the installer.
+
+## New Konsol shell at /yeni/ (v2-243, DD-259)
+
+`yeni-ui.cjs` drives the committed build in `console/yeni/` under the production CSP read from
+`templates/Caddyfile` (with `font-src 'self'` for the local Outfit font). It starts its own static
+server for `console/` on the address in `KONSOL_URL` (default `http://127.0.0.1:8768`); that server
+also holds `/api/konsol/olaylar` open as an event stream so the suite can push events, while the other
+`/api/*` reads are fixtures. Any console error, CSP violation or page error fails it. It first checks
+that `console/yeni/kaynak.sha256` equals `kaynak-ozeti.sh`'s digest (the build matches its sources) and
+that `app.js` opens with the licence banner naming the pinned Vue and vue-router versions. It covers the
+sidebar counts (Uygulamalar, Sistem, Erişim), the problem chip, the Tailscale and version card, the
+stream (an `X-Konsol` fetch, multi-line data, comments and unknown events, `kapat` with an immediate
+reconnect), the activity drawer, the pending-change banner and its local countdown, the command palette
+(Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page or to the current UI, Esc with focus
+return), the theme kept across a reload, the links to the current UI, the skip link, the phone's bottom
+bar and menu sheet at 390 and 320 px, both themes, polling when the stream answers 404 or 503
+(resources 10 s, health 60 s, jobs and the pending change 5 s; never `ayarlar/durum`) and after three
+failed attempts (retried after 3 s and 6 s, polling ends once the stream is back), unknown values
+shown as "—" and a 401 going to the sign-in page. Screenshots go to a fresh temporary directory, printed
+at the end.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-ui.cjs
+cd Data/tools/konsol-ui && npx vue-tsc --noEmit
+```
+
+To rebuild: `cd Data/tools/konsol-ui && npm ci && npm run derle` (vue-tsc, Vite with `lisanslar.mjs`
+writing that banner — a bundled package under another licence than MIT stops the build — then
+`console/yeni/kaynak.sha256`: the sha256 of the lines "<sha256>  <path>" for every file under
+`tools/konsol-ui` except `node_modules/`, in byte order of the path). `tools/konsol-ui/kaynak-ozeti.sh`
+prints the same digest with POSIX tools (`sha256sum`, or `shasum -a 256`), so a test can tell whether the
+committed build matches its sources without Node.
+
 ## Files favourites (v2-232, DD-250)
 
 `test_favorites.py` drives `/api/konsol/favoriler` on the root backend's handler: add/remove in order,

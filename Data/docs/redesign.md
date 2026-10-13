@@ -3,7 +3,8 @@
 Status: direction accepted on 2026-10-13 (**DD-258**). Phase 0 is done: the clickable prototype (a
 private design canvas with the overview, the application list and an application page, Erişim with
 its WireGuard tab, the Yayınla flow, Dosyalar, Sistem, Gelişmiş, the command palette and two phone
-screens) was approved the same day. Phase 1 is next; nothing in the running Konsol has changed yet.
+screens) was approved the same day. Phase 1 is in v2-243 (**DD-259**): the route table, `/erisim`,
+`/olaylar` and the shell at `/yeni/`, whose pages still open the current Konsol. Phase 2 is next.
 
 This document is the plan. Each phase lands with its own `DD-*` entry, tests and a live check on the
 test host, and `main` stays installable at every step.

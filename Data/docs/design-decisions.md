@@ -13,6 +13,55 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-259: The redesign's first phase: route table, Erişim read model, live events, the shell at /yeni/ (v2-243)
+
+- **Request (user, 2026-10-13):** "commit ve push et, faz 1 geçelim tasarım onaylıyorum" (phase 1 of
+  DD-258, [`redesign.md`](redesign.md)).
+- **Route table (`panel/master_api.py`):** the new interface's routes with the shape of each reply (a
+  subset of JSON Schema). The backend dispatches them from the table; tests check real replies against
+  the shapes and generate the OpenAPI description (`docs/konsol-api.json`) and the interface's
+  TypeScript types (`tools/konsol-ui/src/api/sema.ts`) from it; a stale committed copy fails. Routes
+  that predate the table stay where they are until their page moves; `kaynaklar`, `saglik`, `moduller`
+  and `guncelleme`, which the shell reads, moved into it unchanged.
+- **`GET /api/konsol/erisim` (`panel/master_erisim.py`):** one view of who reaches which service from
+  where, projected from what the backend already reads: the publication table, folder share policies,
+  container port scopes (`Inventory.reach()`, one `podman ps`; the container guard admits exactly
+  these, DD-217), the packages' VPN networks, the port catalogue and the operator's rules. Each service
+  has four cells (this server, Tailscale, WireGuard, internet): open, partly open (a package's peer
+  port while its interface is not published), closed, not applicable, or switched on but not working.
+  WireGuard cells are closed by design: VPN networks lead only to the internet (DD-177). A manual
+  address (DD-252) joins the container whose loopback port it leads to. Warnings: WebDAV over the
+  internet in plain HTTP, a container port published straight on the WAN, an unknown publication
+  address, a publication that is on but not working, Tailscale disconnected, a certificate within
+  14 days. It changes nothing and probes nothing new: a manual address row now carries the
+  `answers` result its status already computed. A source that cannot be read adds a line to
+  `hatalar` instead of failing the view.
+- **`GET /api/konsol/olaylar` (`panel/master_olaylar.py`), Server-Sent Events:** one producer runs
+  while any stream is open and publishes a topic again only when it changed: `kaynaklar` (a new
+  sample), `bekleyen` (each second while a change is pending), `islemler` (2 s: App Store progress
+  lines, container operation records, the update and the repair, kept 120 s after they end) and
+  `saglik` (60 s, in its own thread because it runs the firewall check). A 15 s heartbeat stays well
+  inside the 180 s socket timeout (DD-257); a stream ends after 10 minutes (`kapat`, `sure`) and the
+  page reconnects; on the internet site the publication and the session are asked again every 30 s
+  (`kapat`, `oturum`), since Caddy asked only when the stream began (DD-194). At most 4 streams per
+  channel: Caddy keeps 16 connections per site to the backend and the rest stay for requests; a fifth
+  gets 503 and the page polls `kaynaklar`, `saglik`, `etkinlik` and `bekleyen`. Caddy does not
+  compress the stream (`@sikistir`), so small events are not held back.
+- **The page reads the stream with `fetch`, not `EventSource`:** `EventSource` cannot send the
+  `X-Konsol` header, and the CSRF gate (DD-180) keeps no exception.
+- **The shell (`tools/konsol-ui` → `console/yeni/`):** Vue 3 + TypeScript + Vite with exact pins and no
+  install scripts; the build is committed and `console/yeni/kaynak.sha256` (the digest of the sources,
+  recomputed by `kaynak-ozeti.sh` with POSIX tools) ties it to them. It has the sections, the palette,
+  the problem count, the activity drawer, the pending-change banner, the theme and the phone bar; its
+  pages open the current Konsol. The installer places only web files (no hidden ones) and removes what an
+  older build left; the CSP gains `font-src 'self'` for the local Outfit font (OFL).
+- **Sign-in keeps the interface:** `/yeni/` paths, and the sign-in page asked with `?geri=yeni` (the only
+  value it takes, never an address), return to `/yeni/` with the same view; everything else returns to
+  `/` as before.
+- **Rejected:** an `X-Konsol` exception for the stream; one producer per stream (cost grows with
+  tabs); building the reachability view in the browser from five endpoints (the same rules in two
+  languages); reading the container guard's nft state in this view (phase 3, with the plan endpoint).
+
 ### DD-258: Konsol is redesigned around tasks, with Gezgin as its file application (accepted 2026-10-13)
 
 - **Request (user, 2026-10-13):** "konsolun çalışma mantığını … daha öncesini bilmiyor gibi incele;

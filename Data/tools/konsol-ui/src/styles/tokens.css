@@ -1,0 +1,147 @@
+/* Konsol design tokens (DD-258): the approved prototype's colours for both themes, the type faces, radii and
+   the touch size. Components use only these variables. Dark applies with the system's dark setting unless
+   data-theme="light", or always with data-theme="dark" (Sistem / Açık / Koyu). Text pairs keep 4.5:1. */
+
+/* Outfit 1.100, variable weight 100–900, from github.com/Outfitio/Outfit-Fonts
+   (fonts/variable/Outfit[wght].woff2); SIL Open Font License 1.1, see fonts/OFL.txt. */
+@font-face {
+  font-family: "Outfit";
+  src: url("/fonts/Outfit-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --ground: #f3f5f7;
+  --surface: #ffffff;
+  --surface-muted: #f7f9fa;
+  --sunken: #eef2f5;
+  --hover: #e9eef2;
+  --line: #e1e7ec;
+  --line-strong: #dce3e8;
+  --line-button: #d5dee5;
+  --line-soft: #e8edf1;
+  --ink: #14232e;
+  --ink-2: #33434f;
+  --muted: #52616d;
+  --accent: #1f6f8b;
+  --accent-strong: #155266;
+  --accent-soft: #e2eff3;
+  --on-accent: #ffffff;
+  --ok: #1e7b4f;
+  --ok-ink: #1e6b45;
+  --ok-soft: #e2f2e9;
+  --warn: #c98a00;
+  --warn-ink: #7a4a00;
+  --warn-soft: #fff0d3;
+  --warn-tint: #fff8ea;
+  --warn-line: #f3e0b8;
+  --danger: #a3241a;
+  --danger-ink: #a3241a;
+  --danger-soft: #fbe3e0;
+  --danger-tint: #fcf5f4;
+  --danger-line: #f2d7d2;
+  --neutral-soft: #e6ecf0;
+  --bar: #ffffff;
+  --bar-line: #dce3e8;
+  --bar-active: #155266;
+  --scrim: rgba(16, 26, 34, 0.45);
+  --shadow-pop: 0 24px 60px rgba(16, 26, 34, 0.28);
+  --shadow-raised: 0 1px 2px rgba(20, 35, 46, 0.12);
+  --focus: #1f6f8b;
+
+  --font-head: "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 18px;
+  --tap: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1519;
+    --surface: #172028;
+    --surface-muted: #131b21;
+    --sunken: #111a20;
+    --hover: #1d2832;
+    --line: #2a3742;
+    --line-strong: #2a3742;
+    --line-button: #34434f;
+    --line-soft: #22303a;
+    --ink: #e6ecf1;
+    --ink-2: #c9d4dc;
+    --muted: #9aa8b5;
+    --accent: #6fc3dc;
+    --accent-strong: #9ad8ea;
+    --accent-soft: #17323d;
+    --on-accent: #0f1519;
+    --ok: #5bc48c;
+    --ok-ink: #5bc48c;
+    --ok-soft: #16301f;
+    --warn: #e8b04a;
+    --warn-ink: #e8b04a;
+    --warn-soft: #2b2414;
+    --warn-tint: #241f14;
+    --warn-line: #4a3b1a;
+    --danger: #f07a6e;
+    --danger-ink: #f4a097;
+    --danger-soft: #3a1d1b;
+    --danger-tint: #2a1a19;
+    --danger-line: #4f2724;
+    --neutral-soft: #24313b;
+    --bar: #131b21;
+    --bar-line: #2a3742;
+    --bar-active: #6fc3dc;
+    --scrim: rgba(0, 0, 0, 0.55);
+    --shadow-pop: 0 24px 60px rgba(0, 0, 0, 0.5);
+    --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --focus: #6fc3dc;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1519;
+  --surface: #172028;
+  --surface-muted: #131b21;
+  --sunken: #111a20;
+  --hover: #1d2832;
+  --line: #2a3742;
+  --line-strong: #2a3742;
+  --line-button: #34434f;
+  --line-soft: #22303a;
+  --ink: #e6ecf1;
+  --ink-2: #c9d4dc;
+  --muted: #9aa8b5;
+  --accent: #6fc3dc;
+  --accent-strong: #9ad8ea;
+  --accent-soft: #17323d;
+  --on-accent: #0f1519;
+  --ok: #5bc48c;
+  --ok-ink: #5bc48c;
+  --ok-soft: #16301f;
+  --warn: #e8b04a;
+  --warn-ink: #e8b04a;
+  --warn-soft: #2b2414;
+  --warn-tint: #241f14;
+  --warn-line: #4a3b1a;
+  --danger: #f07a6e;
+  --danger-ink: #f4a097;
+  --danger-soft: #3a1d1b;
+  --danger-tint: #2a1a19;
+  --danger-line: #4f2724;
+  --neutral-soft: #24313b;
+  --bar: #131b21;
+  --bar-line: #2a3742;
+  --bar-active: #6fc3dc;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --focus: #6fc3dc;
+}

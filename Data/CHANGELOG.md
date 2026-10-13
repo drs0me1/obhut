@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-13 — The redesigned Konsol's first phase at /yeni/ (v2-243)
+
+- The redesigned Konsol starts at `http://panel.<domain>/yeni/`, beside the current one, which is
+  unchanged at `/`. This first phase is its frame: the sections by task (Genel Bakış, Uygulamalar,
+  Erişim, Dosyalar, Sistem, Gelişmiş), search with ⌘K/Ctrl+K, the problem count and the running
+  operations in the top bar, the banner of a settings change waiting for confirmation, light/dark
+  theme and a bottom bar on phones. Its pages still open the current Konsol (DD-258, DD-259).
+- Konsol's backend can now say, for every service, whether it is reachable from the server itself,
+  from Tailscale, from WireGuard and from the internet, with warnings such as WebDAV served over
+  plain HTTP on the internet or a container port published straight on the WAN. Nothing changes on
+  the server; the Erişim page of a later phase shows it.
+- Live updates: the new interface receives resources, health, running operations and the pending
+  change from one event stream instead of asking every few seconds. Only what changed is sent; on
+  the public name the stream ends when the session does.
+
 ### 2026-10-13 — Konsol's sidebar shows the Ôbhut wordmark (v2-242)
 
 - Konsol's sidebar and its mobile header show "Ôbhut" where they showed the server's name with

@@ -437,6 +437,7 @@ class PublicationTests(unittest.TestCase):
         row = next(r for r in pubs.status(self.env) if r["service"] == "elle-gezgin")
         self.assertEqual((row["manual"], row["local"], row["upstream"]), (True, "gezgin.ayc", "127.0.0.1:8090"))
         self.assertIn("yanıt vermiyor", row["message"])  # nothing listens on the fixture port
+        self.assertIs(row["answers"], False, "DD-259: Erişim reads the probe, not the message")
 
     def test_manual_address_refuses_konsol_and_package_ports_and_foreign_upstreams(self):
         bad = {"upstream": ("10.0.0.5:80", "localhost:8090", "127.0.0.1:0", "127.0.0.1:70000",

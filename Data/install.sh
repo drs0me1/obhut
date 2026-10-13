@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-242"
+V2_VERSION="2026.08.06-v2-243"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -1019,6 +1019,12 @@ stage_4() {
     # DD-233: Konsol'un "Güncelle" düğmesi: sürüm denetimi (arka uç) ve işi yürüten root aracı.
     atomic_write "$SBIN_DIR/master_update.py" 0755 <"$V2_ROOT/panel/master_update.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    # DD-259: yeni arayüzün rota tablosu, Erişim okuma modeli ve canlı olaylar (arka uç yükler).
+    local panel_module
+    for panel_module in master_api master_erisim master_olaylar; do
+        atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
+        [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
+    done
     atomic_write "$SBIN_DIR/master-guncelle" 0755 <"$V2_ROOT/scripts/master-guncelle"
     # DD-239: denetle ve onar (Konsol'un Sağlık kartı ve SSH: sudo master-onar).
     atomic_write "$SBIN_DIR/master_onar.py" 0755 <"$V2_ROOT/panel/master_onar.py"
@@ -1361,12 +1367,27 @@ ensure_panel() {
 # Stage 7 applies changed worker/unit files through master-modul yerlesik (DD-159).
 # Caddy directly serves the console's static assets.
 ensure_console_pages() {
-    local f dir id
+    local f dir id rel
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
         konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
     done
+    # DD-259: yeni arayüz (tools/konsol-ui'den derlenip console/yeni'de tutulur), bugünkünün yanında
+    # /yeni/ adresinde. Yalnız web dosyaları konur, gizli dosyalar (ör. macOS'un ._ eşleri) konmaz;
+    # yeni derlemede olmayan eski dosyalar silinir.
+    [[ -f "$V2_ROOT/console/yeni/index.html" ]] || die "Konsol'un yeni arayüzü eksik: console/yeni/index.html"
+    install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR/yeni"
+    while IFS= read -r -d '' f; do
+        rel="${f#"$V2_ROOT/console/yeni/"}"
+        install -d -m 0755 -o root -g root "$(dirname -- "$CONSOLE_WEB_DIR/yeni/$rel")"
+        atomic_write "$CONSOLE_WEB_DIR/yeni/$rel" 0644 <"$f"
+    done < <(find "$V2_ROOT/console/yeni" -type f ! -name '.*' \( -name '*.html' -o -name '*.js' -o -name '*.css' \
+        -o -name '*.woff2' -o -name '*.svg' -o -name '*.png' -o -name '*.txt' \) -print0)
+    while IFS= read -r -d '' f; do
+        rel="${f#"$CONSOLE_WEB_DIR/yeni/"}"
+        [[ "${rel##*/}" != .* && -f "$V2_ROOT/console/yeni/$rel" ]] || rm -f -- "$f"
+    done < <(find "$CONSOLE_WEB_DIR/yeni" -type f -print0)
     # DD-200: kurulu paketlerin sayfa dosyaları uygulama/<id>/ altındadır (master-modul koyar ve
     # kaldırır). Kayıtta olmayan bir paketin klasörü sunucuda durmaz.
     for dir in "$CONSOLE_WEB_DIR"/uygulama/*/; do
