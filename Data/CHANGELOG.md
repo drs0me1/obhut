@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-13 — Container CPU and memory on the Podman page (v2-246)
+
+- Konsol's Podman page shows each running container's CPU and memory; the new interface's
+  application list gets the same numbers. They were empty: `podman stats` cannot run in Konsol's
+  sandboxed backend, because it enters each container's network namespace. The backend now reads the
+  container's own cgroup files instead, and its sandbox stays as it was (DD-263).
+- Memory leaves out the file cache the system can drop at once, as `docker stats` does. CPU is the
+  share of one core since the previous reading, so a container shows "—" until the page's next
+  refresh (ten seconds).
+- A container's detail shows the same CPU and memory; before, it showed "—" even when the list had
+  numbers. A container whose numbers cannot be read is named in the page's note.
+
 ### 2026-10-13 — Gezgin in the App Store; Genel Bakış and Uygulamalar in the new interface (v2-245)
 
 - Gezgin, the file manager, is in the App Store. Its install window asks for the first administrator;

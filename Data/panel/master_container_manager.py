@@ -29,6 +29,14 @@ APP_ACTIONS = {'start': 'baslat', 'stop': 'durdur', 'restart': 'yeniden-baslat',
 # the operator can ask again. No timer and no automatic update: an update is an explicit operation.
 UPDATE_TTL = 6 * 3600
 UPDATE_MIN_INTERVAL = 60
+# DD-263: a running container's CPU and memory come from its own cgroup v2 files. `podman stats` also
+# reads network counters inside each container's network namespace, which the backend's
+# RestrictNamespaces forbids; the cgroup files need no namespace and stay readable (read-only) under
+# ProtectControlGroups.
+CGROUP_ROOT = '/sys/fs/cgroup'
+CGROUP_PART_RE = re.compile(r'[A-Za-z0-9_.:@\\-]{1,255}\Z')
+CPU_MIN_INTERVAL = 2.0
+CPU_SAMPLES = 256
 
 
 def app_specs(env):
@@ -96,13 +104,27 @@ def definition_ports(d, env):
              **{k:p[k] for k in ('host_port','container_port','protocol')}} for p in d.get('ports', [])]
 
 
-def memory_bytes(value):
-    if isinstance(value,(int,float)) and value>=0:
-        return int(value)
-    match=re.match(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)(i?)B(?:\s*/|\s*$)',str(value),re.I)
-    if not match: return None
-    power={'':0,'K':1,'M':2,'G':3,'T':4}[match[2].upper()]
-    return int(float(match[1])*(1024 if match[3] else 1000)**power)
+def cgroup_dir(raw):
+    """The running container's own cgroup directory from `podman inspect` (State.CgroupPath), or None.
+    Only plain parts under CGROUP_ROOT, and the last one must carry the container's ID (libpod-<id>.scope,
+    quadlet's libpod-payload-<id>): a wider cgroup is never read as the container's."""
+    ident, path = raw.get('Id'), (raw.get('State') or {}).get('CgroupPath')
+    if not isinstance(ident, str) or not re.fullmatch(r'[0-9a-f]{64}', ident) or not isinstance(path, str) or len(path) > 1024:
+        return None
+    parts = path.split('/')
+    if parts[0] or any(p in ('.', '..') or not CGROUP_PART_RE.fullmatch(p) for p in parts[1:]) or ident not in parts[-1]:
+        return None
+    return os.path.join(CGROUP_ROOT, *parts[1:])
+
+
+def cgroup_read(directory, name, limit):
+    """A cgroup file's text: a regular file reached without following a symlink, at most `limit` bytes."""
+    return settings.read_regular(os.path.join(directory, name), limit)[0].decode('ascii')
+
+
+def flat_keyed(text):
+    """cpu.stat and memory.stat lines ("usage_usec 123") as {key: int}."""
+    return {k: int(v) for k, _, v in (line.partition(' ') for line in text.splitlines()) if v.isdigit()}
 
 
 class Inventory(Containers):
@@ -116,6 +138,7 @@ class Inventory(Containers):
         except config.ContainerConfigError as err:
             raise ContainerError(err.status, str(err)) from err
         self.cache = {}
+        self.unread = set()
 
     def podman(self, *args, timeout=20):
         if args not in self.cache:
@@ -128,6 +151,26 @@ class Inventory(Containers):
             return json.loads(raw)[0] if ok else None
         except (ValueError, TypeError, IndexError):
             return None
+
+    def usage(self, name, raw):
+        """DD-263: (cpu_percent, memory_bytes) of a running container from its cgroup; None where unknown.
+        Memory is memory.current less the inactive file cache, as `docker stats` counts it; CPU is the
+        percent of one core since the previous reading. A file that cannot be read names the container."""
+        directory, cpu, memory = cgroup_dir(raw) if raw else None, None, None
+        if not directory:
+            self.unread.add(name)
+            return cpu, memory
+        try:
+            current = int(cgroup_read(directory, 'memory.current', 64))
+            memory = max(current - flat_keyed(cgroup_read(directory, 'memory.stat', 16384))['inactive_file'], 0)
+        except (OSError, ValueError, KeyError, settings.SettingsError):
+            self.unread.add(name)
+        try:
+            usec = flat_keyed(cgroup_read(directory, 'cpu.stat', 4096))['usage_usec']
+            cpu = self.service.cpu_percent((raw['Id'], str((raw.get('State') or {}).get('StartedAt'))), usec, time.monotonic())
+        except (OSError, ValueError, KeyError, settings.SettingsError):
+            self.unread.add(name)
+        return cpu, memory
 
     def decorate(self, row, details=False):
         name = row['name']
@@ -144,6 +187,8 @@ class Inventory(Containers):
             addresses = lambda *keys: {self.env.get(k, '') for k in keys} - {''}
             row['listening'] = listening((raw.get('State') or {}).get('Pid'), wan=addresses('WAN_IPV4', 'WAN_IPV6'),
                                          tailscale=addresses('TAILSCALE_IPV4', 'TAILSCALE_IPV6'))
+        if row['live'] and running:
+            row['cpu_percent'], row['memory_bytes'] = self.usage(name, raw)
         lifecycle = ['stop', 'restart'] if running else ['start']
         if app:
             row.update(source='appstore', management_id='appstore:' + app['module_id'], module_id=app['module_id'], unit=app['unit'])
@@ -215,18 +260,8 @@ class Inventory(Containers):
         if not answer['runtime']['ok']:
             answer['resource_errors'] = {k:answer['runtime']['error'] for k in ('images','volumes','networks','stats')}
             return answer
-        ok, stats, _ = self.podman('stats','--no-stream','--format','json',timeout=15)
-        if ok and isinstance(stats,list):
-            by_name = {s.get('Name') or s.get('name'):s for s in stats if isinstance(s,dict)}
-            for row in answer['containers']:
-                s = by_name.get(row['name'],{})
-                cpu=next((s[k] for k in ('cpu_percent','CPU','CPUPerc') if k in s),None)
-                try: row['cpu_percent'] = float(str(cpu).rstrip('%'))
-                except (ValueError,TypeError): pass
-                mem=next((s[k] for k in ('MemUsageBytes','mem_usage','MemUsage') if k in s),None)
-                row['memory_bytes'] = memory_bytes(mem)
-        else:
-            answer['resource_errors']['stats'] = 'Kaynak kullanımı okunamadı.'
+        if self.unread:
+            answer['resource_errors']['stats'] = 'Kaynak kullanımı okunamadı: ' + ', '.join(sorted(self.unread)) + '.'
         raw_details = [self.inspect(n) for n,r in rows.items() if r.get('id')]
         uses = {'image':{},'volume':{},'network':{}}
         for r in raw_details:
@@ -346,6 +381,22 @@ class Service:
         self.update_lock=threading.Lock()
         self.update_items={}
         self.update_at=0.0
+        self.cpu_samples={}
+
+    def cpu_percent(self,key,usage,now):
+        """DD-263: percent of one CPU core between two readings of the same container run (key: its ID and
+        start time); None for the first. A reading closer than CPU_MIN_INTERVAL to the last one repeats its
+        figure, so the list and the detail asked together agree. A counter that went back starts over."""
+        with self.lock:
+            last=self.cpu_samples.get(key)
+            if last and usage>=last[0] and now-last[1]<CPU_MIN_INTERVAL:
+                return last[2]
+            value=round((usage-last[0])/(now-last[1])/1e4,2) if last and usage>=last[0] else None
+            self.cpu_samples.pop(key,None)
+            self.cpu_samples[key]=(usage,now,value)
+            if len(self.cpu_samples)>CPU_SAMPLES:
+                del self.cpu_samples[next(iter(self.cpu_samples))]
+            return value
 
     def update_of(self,name):
         with self.lock:

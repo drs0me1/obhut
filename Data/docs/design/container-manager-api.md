@@ -51,6 +51,10 @@ exit_code,restarts`. Additional fields:
 permission from source/state in the browser: honor `actions` and show `restricted_reason`.
 `id` remains the observed runtime ID. `state` uses running/stopped/exited/unknown; health is separate.
 Unknown measurements are null, not zero. Busy is an operation ID or null.
+`cpu_percent` and `memory_bytes` (DD-263) come from a running container's cgroup v2 files, not
+`podman stats`: memory is `memory.current` less the inactive file cache, CPU the percent of one core
+since the previous reading (null on the first). `resource_errors.stats` names the running containers
+whose files could not be read.
 `listening` (DD-215) is null except for a running host-network container, where it lists the sockets its
 processes listen on: `[{address, port, protocol: "tcp"|"udp", scope: "all"|"wan"|"tailscale"|"other"|"local"}]`
 (TCP LISTEN and unconnected bound UDP from `/proc`, IPv6 link-local omitted); null there means unreadable.

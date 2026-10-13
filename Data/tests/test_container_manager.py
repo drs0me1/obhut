@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -150,18 +151,6 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(e.exception.status,409)
             launch.assert_called_once()
 
-    def test_podman_json_stats_use_lowercase_fields_and_decimal_memory_units(self):
-        self.rows=[{'Id':'abc','Names':['web'],'Image':'image','State':'running','Labels':{}}]
-        original=self.fake_run
-        def run(argv,**kw):
-            if argv[:2]==['podman','stats']:
-                return 0,json.dumps([{'name':'web','cpu_percent':'0.00%','mem_usage':'3.092MB / 16.7GB'}]),''
-            return original(argv,**kw)
-        self.p.run_tool=run
-        row=self.s.view().liste()['containers'][0]
-        self.assertEqual(row['cpu_percent'],0.0)
-        self.assertEqual(row['memory_bytes'],3092000)
-
     def test_job_lookup_rejects_paths_and_returns_durable_completed_result(self):
         directory=Path(self.env['KONTEYNER_STATE_DIR'])/'operations';directory.mkdir(parents=True)
         value={'id':'c'*32,'action':'start','name':'web','state':'done','step':'Tamamlandı','updated_at':1}
@@ -196,6 +185,119 @@ class ManagerTests(unittest.TestCase):
         with patch.object(self.s,'_launch') as launch:
             self.s.submit({'action':'image-remove','image':'c'*64})
         self.assertEqual(launch.call_args.args[2]['image'],'sha256:'+'c'*64)
+
+
+class ResourceTests(unittest.TestCase):
+    """DD-263: CPU and memory come from the running container's own cgroup v2 files. `podman stats`
+    enters each container's network namespace, which the backend's RestrictNamespaces forbids."""
+    ID = 'ab'*32
+    SCOPE = '/machine.slice/libpod-'+'ab'*32+'.scope'
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        (self.root/'modules').write_text('')
+        (self.root/'state').write_text('MODULES_FILE=%s\n' % (self.root/'modules'))
+        self.cgroups = self.root/'cgroup'
+        self.state = {'Status':'running','Pid':4242,'StartedAt':'2026-10-13T10:21:32.392702319+02:00','CgroupPath':self.SCOPE}
+        self.calls, self.clock = [], [1000.0]
+        p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root/'state'), master_modul='/fixture/master-modul'),
+                                  run_tool=self.fake_run, env=lambda:{}, module_busy=lambda _:False)
+        self.s = manager.Service(p)
+        for target, attr, value in ((manager,'CGROUP_ROOT',str(self.cgroups)), (manager.time,'monotonic',lambda:self.clock[0])):
+            patcher = patch.object(target, attr, value); patcher.start(); self.addCleanup(patcher.stop)
+        # The numbers of a probe container on nrm (2026-10-13): 64 MiB of it is file cache.
+        self.group(self.SCOPE, current=69345280, inactive=67125248, usec=1000000)
+
+    def group(self, path, current, inactive, usec):
+        d = self.cgroups/path.lstrip('/'); d.mkdir(parents=True, exist_ok=True)
+        (d/'memory.current').write_text('%d\n' % current)
+        (d/'memory.stat').write_text('anon 49152\nfile %d\nshmem 0\ninactive_anon 0\nactive_anon 49152\ninactive_file %d\nactive_file 0\n' % (inactive, inactive))
+        (d/'cpu.stat').write_text('usage_usec %d\nuser_usec %d\nsystem_usec 0\nnr_periods 0\n' % (usec, usec))
+        return d
+
+    def fake_run(self, argv, timeout=30, binary=False):
+        self.calls.append(argv)
+        if argv[:2] == ['podman','version']: return 0,'5.4.2',''
+        if argv[:2] == ['podman','ps']: return 0,json.dumps([{'Id':self.ID,'Names':['web'],'Image':'image','State':'running','Labels':{}}]),''
+        if argv[:2] == ['podman','inspect']: return 0,json.dumps([{'Id':self.ID,'Name':'web','State':self.state,'Config':{'Labels':{}}}]),''
+        if argv[:2] == ['podman','stats']:  # what the sandboxed backend gets (nrm, 2026-10-13)
+            return 125,'','Error: error switching to ns /run/netns/netns-0: operation not permitted'
+        if argv[:2] in (['podman','images'],['podman','system'],['podman','volume'],['podman','network']): return 0,'[]',''
+        raise AssertionError(argv)
+
+    def listing(self):
+        answer = self.s.view().liste()
+        return answer['containers'][0], answer['resource_errors']
+
+    def test_usage_is_read_from_the_cgroup_and_podman_stats_is_never_run(self):
+        row, errors = self.listing()
+        self.assertEqual(row['memory_bytes'], 69345280-67125248, 'memory.current less the inactive file cache')
+        self.assertIsNone(row['cpu_percent'], 'one reading gives no CPU rate')
+        self.assertNotIn('stats', errors)
+        self.group(self.SCOPE, current=69345280, inactive=67125248, usec=1000000+2500000)
+        self.clock[0] += 10
+        row, errors = self.listing()
+        self.assertEqual(row['cpu_percent'], 25.0, '2.5 s of CPU in 10 s: a quarter of one core')
+        detail = self.s.view().ayrinti('web')
+        self.assertEqual((detail['cpu_percent'], detail['memory_bytes']), (25.0, 69345280-67125248))
+        self.assertFalse([c for c in self.calls if c[:2] == ['podman','stats']], 'podman stats needs a namespace switch')
+
+    def test_quadlet_payload_cgroup_is_read(self):
+        # Quadlet runs podman with --cgroups=split: the payload is a child of the unit's cgroup.
+        self.state['CgroupPath'] = '/system.slice/web.service/libpod-payload-'+self.ID
+        self.group(self.state['CgroupPath'], current=5000000, inactive=1000000, usec=10)
+        self.assertEqual(self.listing()[0]['memory_bytes'], 4000000)
+
+    def test_cpu_rate_needs_a_minimum_interval_and_a_restart_starts_over(self):
+        self.listing()
+        for step, usec, expected in ((10, 2000000, 10.0), (0.5, 2500000, 10.0), (9.5, 4000000, 20.0)):
+            self.clock[0] += step
+            self.group(self.SCOPE, current=1, inactive=0, usec=usec)
+            self.assertEqual(self.listing()[0]['cpu_percent'], expected)
+        self.clock[0] += 10
+        self.state['StartedAt'] = '2026-10-13T11:00:00+02:00'
+        self.group(self.SCOPE, current=1, inactive=0, usec=9000000)
+        self.assertIsNone(self.listing()[0]['cpu_percent'], 'a new run of the container has no earlier reading')
+        self.clock[0] += 10
+        self.group(self.SCOPE, current=1, inactive=0, usec=100)
+        self.assertIsNone(self.listing()[0]['cpu_percent'], 'a counter that went back is a new start')
+        self.clock[0] += 10
+        self.group(self.SCOPE, current=1, inactive=0, usec=100100)
+        self.assertEqual(self.listing()[0]['cpu_percent'], 1.0)
+
+    def test_unsafe_or_foreign_cgroup_paths_are_never_read(self):
+        # Every path below reaches readable files in a naive join; none of them is the container's own cgroup.
+        scope = 'libpod-'+self.ID+'.scope'
+        self.group('/../trap/'+scope, current=999, inactive=0, usec=999)  # outside the cgroup root
+        os.symlink(self.root, self.cgroups/'evil.slice')
+        other = '/machine.slice/libpod-'+'cd'*32+'.scope'
+        for wider in ('/', '/machine.slice', other):
+            self.group(wider, current=777, inactive=0, usec=777)
+        for path in ('/../trap/'+scope, '/machine.slice/../../trap/'+scope, 'machine.slice'+self.SCOPE, '/', '', None, 42,
+                     '/machine.slice//'+scope, '/machine.slice/./'+scope, '/machine.slice', other,
+                     '/evil.slice/trap/'+scope, '/evil.slice/cgroup'+self.SCOPE,
+                     self.SCOPE+'\n', self.SCOPE+'/x y', '/'+'a'*2000+'/'+scope):
+            with self.subTest(path=path):
+                self.state['CgroupPath'] = path
+                row, errors = self.listing()
+                self.assertEqual((row['cpu_percent'], row['memory_bytes']), (None, None))
+                self.assertEqual(errors['stats'], 'Kaynak kullanımı okunamadı: web.')
+
+    def test_unreadable_files_leave_only_their_own_number_unknown(self):
+        d = self.cgroups/self.SCOPE.lstrip('/')
+        (d/'cpu.stat').write_text('usage_usec 1\n' + 'x'*8192)
+        row, errors = self.listing()
+        self.assertEqual((row['cpu_percent'], row['memory_bytes']), (None, 69345280-67125248))
+        self.assertEqual(errors['stats'], 'Kaynak kullanımı okunamadı: web.', 'unreadable is not the same as no reading yet')
+        (d/'memory.current').unlink(); (d/'memory.current').mkdir()
+        self.assertIsNone(self.listing()[0]['memory_bytes'], 'a directory is not a regular file')
+
+    def test_cpu_readings_are_bounded(self):
+        for n in range(300):
+            self.s.cpu_percent(('%064x' % n, 'start'), n, float(n))
+        self.assertLessEqual(len(self.s.cpu_samples), 256)
+        self.assertIn(('%064x' % 299, 'start'), self.s.cpu_samples, 'the newest readings stay')
 
 
 

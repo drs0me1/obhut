@@ -13,6 +13,40 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
+
+- **Report (nrm, 2026-10-13):** Konsol's Podman inventory never showed CPU or memory; every listing
+  carried `resource_errors.stats` and null numbers, and `/api/konsol/uygulamalar` inherited the gap.
+  `master-panel.service` runs with `RestrictNamespaces=yes`, and `podman stats` switches into each
+  container's network namespace to read its network counters: "error switching to ns
+  /run/netns/netns-…: operation not permitted", exit 125. A transient unit with the backend's
+  properties reproduces it; without `RestrictNamespaces` the same command works.
+- **Now:** for a running container the backend takes `State.CgroupPath` from the `podman inspect` it
+  already runs and reads `memory.current`, `memory.stat` and `cpu.stat` in that cgroup v2 directory.
+  No namespace is entered and no command is added; `ProtectControlGroups=yes` leaves `/sys/fs/cgroup`
+  readable. The sandbox is unchanged: relaxing `RestrictNamespaces` would let the root backend, which
+  also loads package modules, create and enter namespaces only to show two numbers.
+- **The path is checked before any read:** absolute, at most 1024 characters, plain parts of
+  unit-name characters (no empty, `.` or `..` part), and the last part must carry the container's
+  64-hex ID — `libpod-<id>.scope` for `podman run`, `libpod-payload-<id>` inside a quadlet unit's
+  cgroup (`--cgroups=split`), both seen on nrm — so a slice, a unit or the root cgroup is never shown
+  as the container's. Files are read with `read_regular`: every directory opened without following a
+  symlink, a regular file, a bounded read.
+- **Memory** is `memory.current` less `memory.stat`'s `inactive_file`, the figure `docker stats`
+  shows (Podman 5.4 shows only `anon`). `memory.current` alone counts file cache the kernel drops at
+  once: a probe that had read a 64 MiB file showed 66 MiB against 48 KiB of process memory, and for
+  qBittorrent the cache would make up most of the number.
+- **CPU** is the percent of one core between two readings, as `podman stats` counts it: the
+  long-lived `Service` keeps the last `usage_usec` and monotonic time per container run (its ID and
+  start time), so the first reading is null and a restart, or a counter that went back, starts over.
+  A reading less than two seconds after the last repeats its figure, so a list and a detail asked
+  together agree; at most 256 readings are kept. `podman stats --no-stream` gave the average since the
+  container started; with the page's ten-second refresh the figure is now the recent use.
+- A running container whose files cannot be read keeps null numbers and is named in
+  `resource_errors.stats` ("Kaynak kullanımı okunamadı: <ad>."); a first reading without a CPU figure
+  is not an error. The detail (`ayrinti`) carries the same numbers; before, its nulls hid the list's
+  numbers in the page's detail panel.
+
 ### DD-262: Gezgin is an App Store container package (v2-245)
 
 - **Request (user, 2026-10-13):** DD-258's plan ("Gezgin becomes an App Store container package") and
@@ -121,9 +155,9 @@ with its status and the file that holds it.
   state, usage bar).
 - **The address:** the current Konsol stays at `/` until phase 4; its sidebar footer now links to
   `/yeni/` ("Yeni arayüzü dene") on both channels.
-- **Known gap:** CPU and memory stay empty on servers because `podman stats` cannot enter a container's
-  network namespace from the hardened backend (`RestrictNamespaces=yes`). Reading the cgroups directly
-  is a separate change; the sandbox is not relaxed for it.
+- **Resources:** CPU and memory come from the Podman inventory, which reads each container's cgroup
+  files since DD-263 (v2-246); before that, `podman stats` could not run in the hardened backend
+  (`RestrictNamespaces=yes`) and the list had none.
 - **Rejected:** separate action routes per kind of application (the page would have to know which
   manager owns an application); waiting for the registry inside the list request; widening
   `RestrictNamespaces` for `podman stats`; general words in the removal dialog where the package says
